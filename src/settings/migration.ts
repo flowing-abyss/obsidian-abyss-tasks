@@ -18,7 +18,7 @@ function migrateInbox(raw: Record<string, unknown>): void {
   }
   // The old `showUntagged` toggle was folded into `mode`: tag + showUntagged === both.
   const inbox = raw['inbox'];
-  if (inbox && typeof inbox === 'object') {
+  if (inbox !== null && typeof inbox === 'object') {
     const box = inbox as Record<string, unknown>;
     if ('showUntagged' in box) {
       if (box['showUntagged'] === true && box['mode'] === 'tag') box['mode'] = 'both';
@@ -27,29 +27,35 @@ function migrateInbox(raw: Record<string, unknown>): void {
   }
 }
 
+interface MigratedProjectSettings {
+  statuses?: Array<{ id: string }>;
+  defaultStatusId?: string;
+  taskInsertionMode?: string;
+  taskInsertionSection?: string;
+}
+
+function normalizeProjectSettings(projects: MigratedProjectSettings): void {
+  const ids = (projects.statuses ?? []).map((status) => status.id);
+  const defaultStatusIsValid =
+    projects.defaultStatusId !== undefined &&
+    projects.defaultStatusId.length > 0 &&
+    ids.includes(projects.defaultStatusId);
+  if (!defaultStatusIsValid) projects.defaultStatusId = ids[0] ?? '';
+
+  const defaults = buildDefaultProjectsSettings();
+  if (projects.taskInsertionMode !== 'append' && projects.taskInsertionMode !== 'section') {
+    projects.taskInsertionMode = defaults.taskInsertionMode;
+  }
+  if (typeof projects.taskInsertionSection !== 'string') {
+    projects.taskInsertionSection = defaults.taskInsertionSection;
+  }
+}
+
 function migrateProjects(raw: Record<string, unknown>): void {
   if (!('projects' in raw)) raw['projects'] = buildDefaultProjectsSettings();
   const projects = raw['projects'];
-  if (projects && typeof projects === 'object') {
-    const p = projects as {
-      statuses?: { id: string }[];
-      defaultStatusId?: string;
-      taskInsertionMode?: string;
-      taskInsertionSection?: string;
-    };
-    const ids = (p.statuses ?? []).map((s) => s.id);
-    if (!p.defaultStatusId || !ids.includes(p.defaultStatusId)) {
-      p.defaultStatusId = ids[0] ?? '';
-    }
-    // Backfill project-specific insertion settings for pre-existing configs.
-    const defaults = buildDefaultProjectsSettings();
-    if (p.taskInsertionMode !== 'append' && p.taskInsertionMode !== 'section') {
-      p.taskInsertionMode = defaults.taskInsertionMode;
-    }
-    if (typeof p.taskInsertionSection !== 'string') {
-      p.taskInsertionSection = defaults.taskInsertionSection;
-    }
-  }
+  if (projects === null || typeof projects !== 'object') return;
+  normalizeProjectSettings(projects);
 }
 
 /**
@@ -59,7 +65,7 @@ function migrateProjects(raw: Record<string, unknown>): void {
  */
 function stripLegacyStatusFields(taskStatuses: unknown[]): void {
   for (const entry of taskStatuses) {
-    if (!entry || typeof entry !== 'object') continue;
+    if (entry === null || entry === undefined || typeof entry !== 'object') continue;
     const e = entry as Record<string, unknown>;
     if (e['iconKind'] === 'glyph') e['icon'] = '';
     delete e['color'];
@@ -77,11 +83,11 @@ function stripLegacyStatusFields(taskStatuses: unknown[]): void {
 function healCoreStatuses(taskStatuses: unknown[]): void {
   const canonicalCore = buildDefaultTaskStatuses().filter((s) => s.core);
   for (const entry of taskStatuses) {
-    if (!entry || typeof entry !== 'object') continue;
+    if (entry === null || entry === undefined || typeof entry !== 'object') continue;
     const e = entry as Record<string, unknown>;
     if (e['core'] !== true) continue;
     const canonical = canonicalCore.find((c) => c.type === e['type']);
-    if (!canonical) continue;
+    if (canonical == null) continue;
     e['symbol'] = canonical.symbol;
     e['type'] = canonical.type;
     e['icon'] = canonical.icon;
@@ -108,35 +114,30 @@ function migrateTaskStatuses(raw: Record<string, unknown>): void {
  * each persisted list view state's legacy `show` into `statusGroups` (unless
  * statusGroups was already explicitly set) and drop the `show` key.
  */
+function legacyStatusGroups(show: unknown): string[] | undefined {
+  if (show === 'active') return [...ACTIVE_STATUS_GROUPS];
+  if (show === 'completed') return [...DONE_CANCELLED_STATUS_GROUPS];
+  return undefined;
+}
+
+function migrateListViewState(entry: unknown): void {
+  if (entry === null || entry === undefined || typeof entry !== 'object') return;
+  const viewState = entry as Record<string, unknown>;
+  if (!('show' in viewState)) return;
+  if (!('statusGroups' in viewState) || viewState['statusGroups'] === undefined) {
+    viewState['statusGroups'] = legacyStatusGroups(viewState['show']);
+  }
+  delete viewState['show'];
+}
+
 function migrateListViewStates(raw: Record<string, unknown>): void {
   const states = raw['listViewStates'];
-  if (!states || typeof states !== 'object') return;
-  for (const key of Object.keys(states)) {
-    const entry = (states as Record<string, unknown>)[key];
-    if (!entry || typeof entry !== 'object') continue;
-    const vs = entry as Record<string, unknown>;
-    if ('show' in vs) {
-      if (!('statusGroups' in vs) || vs['statusGroups'] === undefined) {
-        switch (vs['show']) {
-          case 'active':
-            vs['statusGroups'] = [...ACTIVE_STATUS_GROUPS];
-            break;
-          case 'completed':
-            vs['statusGroups'] = [...DONE_CANCELLED_STATUS_GROUPS];
-            break;
-          case 'all':
-          default:
-            vs['statusGroups'] = undefined;
-            break;
-        }
-      }
-      delete vs['show'];
-    }
-  }
+  if (states === null || states === undefined || typeof states !== 'object') return;
+  for (const entry of Object.values(states)) migrateListViewState(entry);
 }
 
 function migrateTaskLifecycle(raw: Record<string, unknown>): void {
-  if (!raw['taskLifecycle'] || typeof raw['taskLifecycle'] !== 'object') {
+  if (raw['taskLifecycle'] === null || typeof raw['taskLifecycle'] !== 'object') {
     raw['taskLifecycle'] = { addCreatedDate: true, addCompletionDate: true };
     return;
   }
@@ -146,7 +147,7 @@ function migrateTaskLifecycle(raw: Record<string, unknown>): void {
 }
 
 function migrateRecurrence(raw: Record<string, unknown>): void {
-  if (!raw['recurrence'] || typeof raw['recurrence'] !== 'object') {
+  if (raw['recurrence'] === null || typeof raw['recurrence'] !== 'object') {
     raw['recurrence'] = { newOccurrencePlacement: 'before', removeScheduledDate: false };
     return;
   }

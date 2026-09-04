@@ -2,7 +2,8 @@ import type { App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import type { TaskApplicationApi } from '../src/tasks';
-import { task, taskQueryApi, testStatusRegistry } from './helpers';
+import type { TaskRef } from '../src/tasks/domain/types';
+import { expectDefined, task, taskQueryApi, testStatusRegistry } from './helpers';
 
 // vi.hoisted runs BEFORE vi.mock factory execution, avoiding TDZ.
 // The factory captures these refs by closure.
@@ -17,27 +18,32 @@ const mockState = vi.hoisted(() => ({
 }));
 
 vi.mock('../src/panels/RightPanel', () => ({
-  RightPanel: vi.fn().mockImplementation(function (
-    this: unknown,
-    state: AppState,
-    _app: App,
-    _statusRegistry: unknown,
-    _settings: unknown,
-    _onSuccessfulMutation: unknown,
-    tasks: TaskApplicationApi | undefined,
-  ) {
-    mockState.capturedState = state;
-    mockState.capturedTasks = tasks;
-    return {
-      mount: (el: HTMLElement) => {
-        mockState.mountImpl(el);
-        if (mockState.includeHeaderActions.value) {
-          el.createDiv({ cls: 'abyss-right-header-actions' });
-        }
-      },
-      destroy: mockState.destroyImpl,
-    };
-  }),
+  RightPanel: class RightPanelMock {
+    constructor(
+      ...[state, _app, _statusRegistry, _settings, _onSuccessfulMutation, tasks]: readonly [
+        state: AppState,
+        app: App,
+        statusRegistry: unknown,
+        settings: unknown,
+        onSuccessfulMutation: unknown,
+        tasks: TaskApplicationApi | undefined,
+      ]
+    ) {
+      mockState.capturedState = state;
+      mockState.capturedTasks = tasks;
+    }
+
+    mount(el: HTMLElement): void {
+      mockState.mountImpl(el);
+      if (mockState.includeHeaderActions.value) {
+        el.createDiv({ cls: 'abyss-right-header-actions' });
+      }
+    }
+
+    destroy(): void {
+      mockState.destroyImpl();
+    }
+  },
 }));
 
 // Import AFTER vi.mock (hoisted)
@@ -72,7 +78,7 @@ describe('TaskModal', () => {
 
     it('inside backdrop creates .abyss-modal → .abyss-right.abyss-modal-body', () => {
       modal.open(task());
-      const backdrop = activeDocument.body.querySelector('.abyss-modal-backdrop')!;
+      const backdrop = expectDefined(activeDocument.body.querySelector('.abyss-modal-backdrop'));
       expect(backdrop.querySelector('.abyss-modal')).not.toBeNull();
       expect(backdrop.querySelector('.abyss-right.abyss-modal-body')).not.toBeNull();
     });
@@ -85,7 +91,7 @@ describe('TaskModal', () => {
     it('passes the shared task API into the modal RightPanel', () => {
       const tasks = {
         queries: taskQueryApi({
-          resolve: (ref: import('../src/tasks/domain/types').TaskRef) => ({
+          resolve: (ref: TaskRef) => ({
             type: 'not-found' as const,
             ref,
           }),
@@ -109,7 +115,9 @@ describe('TaskModal', () => {
     it('close button inserted into .abyss-right-header-actions when present', () => {
       mockState.includeHeaderActions.value = true;
       modal.open(task());
-      const actions = activeDocument.body.querySelector('.abyss-right-header-actions')!;
+      const actions = expectDefined(
+        activeDocument.body.querySelector('.abyss-right-header-actions'),
+      );
       expect(actions.querySelector('.abyss-modal-close-btn')).not.toBeNull();
     });
 
@@ -178,12 +186,16 @@ describe('TaskModal', () => {
     it('close twice is a no-op', () => {
       modal.open(task());
       modal.close();
-      expect(() => modal.close()).not.toThrow();
+      expect(() => {
+        modal.close();
+      }).not.toThrow();
     });
 
     it('close when never opened is a no-op', () => {
       const m = new TaskModal(app, testStatusRegistry());
-      expect(() => m.close()).not.toThrow();
+      expect(() => {
+        m.close();
+      }).not.toThrow();
     });
   });
 

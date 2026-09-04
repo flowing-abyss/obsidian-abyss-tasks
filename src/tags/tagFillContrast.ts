@@ -21,14 +21,21 @@
 function parseHexColor(hex: string): [number, number, number] | null {
   const trimmed = hex.trim();
   const six = /^#?([0-9a-f]{6})$/i.exec(trimmed);
-  if (six) {
-    const n = parseInt(six[1]!, 16);
+  if (six != null) {
+    const digits = six[1];
+    if (digits === undefined) return null;
+    const n = parseInt(digits, 16);
     return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   }
   const three = /^#?([0-9a-f]{3})$/i.exec(trimmed);
-  if (three) {
-    const [r, g, b] = three[1]!.split('').map((c) => parseInt(c + c, 16));
-    return [r!, g!, b!];
+  if (three != null) {
+    const digits = three[1];
+    if (digits === undefined) return null;
+    const channels = digits.split('').map((c) => parseInt(c + c, 16));
+    const r = channels[0];
+    const g = channels[1];
+    const b = channels[2];
+    return r === undefined || g === undefined || b === undefined ? null : [r, g, b];
   }
   return null;
 }
@@ -40,14 +47,18 @@ function srgbChannelToLinear(channel: number): number {
 
 /** WCAG relative luminance (0 = black, 1 = white) of an already-parsed 0-255 RGB triple. */
 function relativeLuminance(rgb: [number, number, number]): number {
-  const [r, g, b] = rgb.map(srgbChannelToLinear);
-  return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+  const [r, g, b] = rgb;
+  return (
+    0.2126 * srgbChannelToLinear(r) +
+    0.7152 * srgbChannelToLinear(g) +
+    0.0722 * srgbChannelToLinear(b)
+  );
 }
 
 /** WCAG relative luminance of a hex color string, or null if the string doesn't parse. */
 export function relativeLuminanceOfHex(hex: string): number | null {
   const rgb = parseHexColor(hex);
-  return rgb ? relativeLuminance(rgb) : null;
+  return rgb != null ? relativeLuminance(rgb) : null;
 }
 
 /** WCAG contrast ratio between two relative luminances (order-independent). */
@@ -70,7 +81,7 @@ export function mixHexColors(
 ): [number, number, number] | null {
   const fg = parseHexColor(fgHex);
   const bg = parseHexColor(bgHex);
-  if (!fg || !bg) return null;
+  if (fg == null || bg == null) return null;
   const t = fgPercent / 100;
   return [
     Math.round(fg[0] * t + bg[0] * (1 - t)),
@@ -93,9 +104,9 @@ export function tagFillTextVariant(
   backgroundHex: string,
   tagPercent = 14,
 ): TagFillTextVariant | undefined {
-  if (!tagHex) return undefined;
+  if (tagHex === undefined || tagHex.length === 0) return undefined;
   const mixed = mixHexColors(tagHex, backgroundHex, tagPercent);
-  if (!mixed) return undefined;
+  if (mixed == null) return undefined;
   const bgLuminance = relativeLuminance(mixed);
   const contrastWithLightText = contrastRatio(bgLuminance, 1);
   const contrastWithDarkText = contrastRatio(bgLuminance, 0);
@@ -114,7 +125,7 @@ export function tagFillTextVariant(
 function currentBackgroundPrimaryHex(referenceEl: HTMLElement): string {
   const doc = referenceEl.ownerDocument;
   const win = doc.defaultView;
-  if (!win) return '';
+  if (win == null) return '';
   return win.getComputedStyle(doc.body).getPropertyValue('--background-primary').trim();
 }
 
@@ -143,5 +154,5 @@ export function tagFillTextColorVar(
     currentBackgroundPrimaryHex(el),
     currentTagFillPercent(el),
   );
-  return variant ? `var(--abyss-tag-text-${variant})` : undefined;
+  return variant === undefined ? undefined : `var(--abyss-tag-text-${variant})`;
 }

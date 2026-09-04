@@ -3,20 +3,33 @@
     "inlineSourceMap": true,
     "inlineSources": true,
     "module": "ESNext",
-    "target": "ES6",
-    "allowJs": true,
-    "noImplicitAny": true,
-    "noImplicitThis": true,
-    "noImplicitReturns": true,
+    "target": "ES2021",
+    "lib": ["ES2021", "DOM"],
     "moduleResolution": "bundler",
-    "importHelpers": true,
+    "moduleDetection": "force",
+    // Explicit so devDependencies cannot silently leak ambient test globals.
+    "types": ["node"],
+
+    "strict": true,
     "noUncheckedIndexedAccess": true,
-    "isolatedModules": true,
-    "strictNullChecks": true,
-    "strictBindCallApply": true,
-    "allowSyntheticDefaultImports": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "useUnknownInCatchVariables": true,
-    "lib": ["DOM", "ES5", "ES6", "ES7"]
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "noUncheckedSideEffectImports": true,
+
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": false,
+    "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts", "vitest.bench.config.ts"]
 }

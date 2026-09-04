@@ -1,13 +1,7 @@
 import { type LocalDate, parseRecurrenceRule, type RecurrenceParseResult } from '../../tasks';
 
 export type Weekday =
-  | 'Monday'
-  | 'Tuesday'
-  | 'Wednesday'
-  | 'Thursday'
-  | 'Friday'
-  | 'Saturday'
-  | 'Sunday';
+  'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
 
 export type MonthlyChoice =
   | { readonly type: 'same-date' }
@@ -58,7 +52,9 @@ const MONTHS = [
 function weekdayFromLocalDate(value: LocalDate): Weekday {
   const [year, month, day] = value.split('-').map(Number) as [number, number, number];
   const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-  return WEEKDAYS[(weekday + 6) % 7]!;
+  const result = WEEKDAYS[(weekday + 6) % 7];
+  if (result === undefined) throw new Error('Could not resolve weekday');
+  return result;
 }
 
 export function recurrencePresetRule(
@@ -92,6 +88,24 @@ function unitRule(interval: number, unit: Unit): string {
   return interval === 1 ? `every ${singular}` : `every ${String(interval)} ${unit}`;
 }
 
+function monthlyRule(base: string, monthly: MonthlyChoice): string {
+  if (monthly.type === 'same-date') return base;
+  if (monthly.type === 'day') return `${base} on the ${ordinal(monthly.day)}`;
+  if (monthly.type === 'edge') return `${base} on the ${monthly.edge}`;
+  let ordinalText = ordinal(monthly.ordinal);
+  if (monthly.ordinal === -1) ordinalText = 'last';
+  if (monthly.ordinal === -2) ordinalText = '2nd last';
+  return `${base} on the ${ordinalText} ${monthly.weekday}`;
+}
+
+function yearlyRule(base: string, interval: number, yearly: YearlyChoice): string {
+  if (yearly.type === 'same-date') return base;
+  const month = MONTHS[yearly.month - 1];
+  return interval === 1
+    ? `every ${month} on the ${ordinal(yearly.day)}`
+    : `${base} on ${month} ${ordinal(yearly.day)}`;
+}
+
 function serializeControls(input: {
   readonly interval: number;
   readonly unit: Unit;
@@ -105,20 +119,8 @@ function serializeControls(input: {
     const selected = WEEKDAYS.filter((weekday) => input.weekdays.includes(weekday));
     return selected.length === 0 ? base : `${base} on ${naturalList(selected)}`;
   }
-  if (input.unit === 'months') {
-    if (input.monthly.type === 'same-date') return base;
-    if (input.monthly.type === 'day') return `${base} on the ${ordinal(input.monthly.day)}`;
-    if (input.monthly.type === 'edge') return `${base} on the ${input.monthly.edge}`;
-    let ordinalText = ordinal(input.monthly.ordinal);
-    if (input.monthly.ordinal === -1) ordinalText = 'last';
-    if (input.monthly.ordinal === -2) ordinalText = '2nd last';
-    return `${base} on the ${ordinalText} ${input.monthly.weekday}`;
-  }
-  if (input.yearly.type === 'same-date') return base;
-  const month = MONTHS[input.yearly.month - 1];
-  return input.interval === 1
-    ? `every ${month} on the ${ordinal(input.yearly.day)}`
-    : `${base} on ${month} ${ordinal(input.yearly.day)}`;
+  if (input.unit === 'months') return monthlyRule(base, input.monthly);
+  return yearlyRule(base, input.interval, input.yearly);
 }
 
 export function buildRecurrenceRule(input: {

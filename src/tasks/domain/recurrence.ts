@@ -1,7 +1,7 @@
 import { RRule, type Options } from 'rrule';
 import { daysBetweenLocalDates, shiftLocalDate } from './localDateMath';
 import type { LocalDate, TaskPlanning } from './types';
-import { localDate } from './validation';
+import { localDate } from './valueObjects';
 
 export type RecurrenceIssueCode =
   | 'must-start-with-every'
@@ -74,7 +74,7 @@ function normalizedRuleText(value: string): string {
 function compiledRule(raw: string): CompiledRuleEntry | undefined {
   const key = normalizedRuleText(raw);
   const cached = compiledRulesByRaw.get(key);
-  if (!cached) return undefined;
+  if (cached == null) return undefined;
   compiledRulesByRaw.delete(key);
   compiledRulesByRaw.set(key, cached);
   return cached;
@@ -109,7 +109,7 @@ const PARSER_WORD_ORDINALS: Readonly<Record<string, string>> = {
 function parserGrammarText(value: string): string {
   return value.replace(
     /\b(first|second|third|fourth|fifth)\b/giu,
-    (word) => PARSER_WORD_ORDINALS[word.toLowerCase()]!,
+    (word) => PARSER_WORD_ORDINALS[word.toLowerCase()] ?? word,
   );
 }
 
@@ -165,26 +165,25 @@ function grammarOrdinal(value: string, maximum: number): number | undefined {
   return ordinal;
 }
 
+function grammarItems(value: string): string[] | undefined {
+  const conjunctions = [...value.matchAll(/\band\b/gu)];
+  if (conjunctions.length > 1) return undefined;
+  if (conjunctions.length === 0) return value.split(',');
+  const conjunction = conjunctions[0];
+  if (conjunction === undefined) return undefined;
+  let before = value.slice(0, conjunction.index).trimEnd();
+  const after = value.slice(conjunction.index + 'and'.length).trimStart();
+  if (before.endsWith(',')) before = before.slice(0, -1).trimEnd();
+  const items = [...before.split(','), after];
+  return items.length < 2 ? undefined : items;
+}
+
 function grammarList<T>(
   value: string,
   parseItem: (item: string) => T | undefined,
 ): readonly T[] | undefined {
-  const conjunctions = [...value.matchAll(/\band\b/gu)];
-  if (conjunctions.length > 1) return undefined;
-
-  let items: string[];
-  if (conjunctions.length === 0) {
-    items = value.split(',');
-  } else {
-    const conjunction = conjunctions[0]!;
-    const conjunctionIndex = conjunction.index;
-    let before = value.slice(0, conjunctionIndex).trimEnd();
-    const after = value.slice(conjunctionIndex + 'and'.length).trimStart();
-    if (before.endsWith(',')) before = before.slice(0, -1).trimEnd();
-    items = [...before.split(','), after];
-    if (items.length < 2) return undefined;
-  }
-
+  const items = grammarItems(value);
+  if (items === undefined) return undefined;
   const parsed: T[] = [];
   const seen = new Set<T>();
   for (const item of items) {
@@ -198,7 +197,7 @@ function grammarList<T>(
   return parsed;
 }
 
-function unorderedListKey(values: readonly (number | string)[]): string {
+function unorderedListKey(values: ReadonlyArray<number | string>): string {
   return values
     .map(String)
     .sort((left, right) => left.localeCompare(right))
@@ -211,6 +210,17 @@ function optionalLeadingThe(value: string): string | undefined {
   return withoutThe.startsWith('the ') ? undefined : withoutThe;
 }
 
+function monthlyWeekdayClause(tokens: readonly string[], weekday: string): string | undefined {
+  if (tokens.length === 2 && tokens[0] === 'last') return `weekday:-1:${weekday}`;
+  if (tokens.length === 2) {
+    const ordinal = grammarOrdinal(tokens[0] ?? '', 5);
+    return ordinal === undefined ? undefined : `weekday:${ordinal}:${weekday}`;
+  }
+  if (tokens.length !== 3 || tokens[1] !== 'last') return undefined;
+  const ordinal = grammarOrdinal(tokens[0] ?? '', 5);
+  return ordinal === undefined ? undefined : `weekday:-${ordinal}:${weekday}`;
+}
+
 function monthlyClauseKey(value: string): string | undefined {
   const clause = optionalLeadingThe(value);
   if (clause === undefined) return undefined;
@@ -218,18 +228,7 @@ function monthlyClauseKey(value: string): string | undefined {
 
   const tokens = clause.split(' ');
   const weekday = WEEKDAYS.get(tokens[tokens.length - 1] ?? '');
-  if (weekday !== undefined) {
-    if (tokens.length === 2 && tokens[0] === 'last') return `weekday:-1:${weekday}`;
-    if (tokens.length === 2) {
-      const ordinal = grammarOrdinal(tokens[0]!, 5);
-      return ordinal === undefined ? undefined : `weekday:${ordinal}:${weekday}`;
-    }
-    if (tokens.length === 3 && tokens[1] === 'last') {
-      const ordinal = grammarOrdinal(tokens[0]!, 5);
-      return ordinal === undefined ? undefined : `weekday:-${ordinal}:${weekday}`;
-    }
-    return undefined;
-  }
+  if (weekday !== undefined) return monthlyWeekdayClause(tokens, weekday);
 
   const dates = grammarList(clause, (item) => grammarOrdinal(item, 31));
   return dates === undefined ? undefined : `dates:${unorderedListKey(dates)}`;
@@ -262,40 +261,89 @@ interface SupportedGrammar {
   };
 }
 
-function annualGrammar(body: string): SupportedGrammar | undefined {
-  const authoredInterval = /^(?:(\d+) )?(year|years) on (\w+) (.+)$/u.exec(body);
-  if (authoredInterval !== null) {
-    const interval = intervalKey(authoredInterval[1], authoredInterval[2]!, 'year');
-    const month = MONTHS.get(authoredInterval[3]!);
-    const monthDays = annualDateClause(authoredInterval[4]!);
-    if (interval === undefined || month === undefined || monthDays === undefined) return undefined;
-    return {
-      key: `annual:${interval}:${month}:${unorderedListKey(monthDays)}`,
-      yearlyDates: { months: [month], monthDays },
-    };
-  }
+function authoredAnnualGrammar(match: RegExpExecArray): SupportedGrammar | undefined {
+  const unit = match[2];
+  const monthName = match[3];
+  const dateClause = match[4];
+  if (unit === undefined || monthName === undefined || dateClause === undefined) return undefined;
+  const interval = intervalKey(match[1], unit, 'year');
+  const month = MONTHS.get(monthName);
+  const monthDays = annualDateClause(dateClause);
+  if (interval === undefined || month === undefined || monthDays === undefined) return undefined;
+  return {
+    key: `annual:${interval}:${month}:${unorderedListKey(monthDays)}`,
+    yearlyDates: { months: [month], monthDays },
+  };
+}
 
-  const canonicalInterval = /^(?:(\d+) )?(year|years) (.+) on (.+)$/u.exec(body);
-  if (canonicalInterval !== null) {
-    const interval = intervalKey(canonicalInterval[1], canonicalInterval[2]!, 'year');
-    const months = grammarList(canonicalInterval[3]!, (item) => MONTHS.get(item));
-    const monthDays = annualDateClause(canonicalInterval[4]!);
-    if (interval === undefined || months === undefined || monthDays === undefined) return undefined;
-    return {
-      key: `annual:${interval}:${unorderedListKey(months)}:${unorderedListKey(monthDays)}`,
-      yearlyDates: { months, monthDays },
-    };
-  }
+function canonicalAnnualGrammar(match: RegExpExecArray): SupportedGrammar | undefined {
+  const unit = match[2];
+  const monthClause = match[3];
+  const dateClause = match[4];
+  if (unit === undefined || monthClause === undefined || dateClause === undefined) return undefined;
+  const interval = intervalKey(match[1], unit, 'year');
+  const months = grammarList(monthClause, (item) => MONTHS.get(item));
+  const monthDays = annualDateClause(dateClause);
+  if (interval === undefined || months === undefined || monthDays === undefined) return undefined;
+  return {
+    key: `annual:${interval}:${unorderedListKey(months)}:${unorderedListKey(monthDays)}`,
+    yearlyDates: { months, monthDays },
+  };
+}
 
-  const namedMonths = /^(.+) on (.+)$/u.exec(body);
-  if (namedMonths === null) return undefined;
-  const months = grammarList(namedMonths[1]!, (item) => MONTHS.get(item));
-  const monthDays = annualDateClause(namedMonths[2]!);
+function namedMonthAnnualGrammar(match: RegExpExecArray): SupportedGrammar | undefined {
+  const monthClause = match[1];
+  const dateClause = match[2];
+  if (monthClause === undefined || dateClause === undefined) return undefined;
+  const months = grammarList(monthClause, (item) => MONTHS.get(item));
+  const monthDays = annualDateClause(dateClause);
   if (months === undefined || monthDays === undefined) return undefined;
   return {
     key: `annual:1:${unorderedListKey(months)}:${unorderedListKey(monthDays)}`,
     yearlyDates: { months, monthDays },
   };
+}
+
+function annualGrammar(body: string): SupportedGrammar | undefined {
+  const authoredInterval = /^(?:(\d+) )?(year|years) on (\w+) (.+)$/u.exec(body);
+  if (authoredInterval !== null) return authoredAnnualGrammar(authoredInterval);
+
+  const canonicalInterval = /^(?:(\d+) )?(year|years) (.+) on (.+)$/u.exec(body);
+  if (canonicalInterval !== null) return canonicalAnnualGrammar(canonicalInterval);
+
+  const namedMonths = /^(.+) on (.+)$/u.exec(body);
+  return namedMonths === null ? undefined : namedMonthAnnualGrammar(namedMonths);
+}
+
+function weeklyGrammar(interval: number, clause: string | undefined): SupportedGrammar | undefined {
+  if (clause === undefined) return { key: `week:${interval}` };
+  const weekdays = grammarList(clause, (item) => WEEKDAYS.get(item));
+  return weekdays === undefined
+    ? undefined
+    : { key: `week:${interval}:${unorderedListKey(weekdays)}` };
+}
+
+function monthlyGrammar(
+  interval: number,
+  clause: string | undefined,
+): SupportedGrammar | undefined {
+  if (clause === undefined) return { key: `month:${interval}` };
+  const monthlyClause = monthlyClauseKey(clause);
+  return monthlyClause === undefined ? undefined : { key: `month:${interval}:${monthlyClause}` };
+}
+
+function unitGrammar(match: RegExpExecArray): SupportedGrammar | undefined {
+  const [, rawInterval, unit, clause] = match;
+  if (unit === undefined) return undefined;
+  const singular = unit.endsWith('s') ? unit.slice(0, -1) : unit;
+  const interval = intervalKey(rawInterval, unit, singular);
+  if (interval === undefined) return undefined;
+  if (singular === 'day' || singular === 'weekday' || singular === 'year') {
+    return clause === undefined ? { key: `${singular}:${interval}` } : undefined;
+  }
+  if (singular === 'week') return weeklyGrammar(interval, clause);
+  if (singular === 'month') return monthlyGrammar(interval, clause);
+  return undefined;
 }
 
 function supportedGrammar(value: string): SupportedGrammar | undefined {
@@ -310,32 +358,11 @@ function supportedGrammar(value: string): SupportedGrammar | undefined {
     /^(?:(\d+) )?(day|days|weekday|weekdays|week|weeks|month|months|year|years)(?: on (.+))?$/u.exec(
       body,
     );
-  if (unitRule === null) return undefined;
-  const [, rawInterval, unit, clause] = unitRule;
-  const singular = unit!.endsWith('s') ? unit!.slice(0, -1) : unit!;
-  const interval = intervalKey(rawInterval, unit!, singular);
-  if (interval === undefined) return undefined;
-
-  if (singular === 'day' || singular === 'weekday' || singular === 'year') {
-    return clause === undefined ? { key: `${singular}:${interval}` } : undefined;
-  }
-  if (singular === 'week') {
-    if (clause === undefined) return { key: `week:${interval}` };
-    const weekdays = grammarList(clause, (item) => WEEKDAYS.get(item));
-    return weekdays === undefined
-      ? undefined
-      : { key: `week:${interval}:${unorderedListKey(weekdays)}` };
-  }
-  if (singular === 'month') {
-    if (clause === undefined) return { key: `month:${interval}` };
-    const monthlyClause = monthlyClauseKey(clause);
-    return monthlyClause === undefined ? undefined : { key: `month:${interval}:${monthlyClause}` };
-  }
-  return undefined;
+  return unitRule === null ? undefined : unitGrammar(unitRule);
 }
 
 function hasOnlySupportedOptions(options: Partial<Options>): boolean {
-  const common = ['freq', 'interval'] as const satisfies readonly (keyof Options)[];
+  const common = ['freq', 'interval'] as const satisfies ReadonlyArray<keyof Options>;
   let allowed: ReadonlySet<keyof Options>;
   if (options.freq === RRule.DAILY) {
     allowed = new Set(common);
@@ -353,6 +380,60 @@ function hasOnlySupportedOptions(options: Partial<Options>): boolean {
   );
 }
 
+function preliminaryRecurrenceIssue(normalized: string): RecurrenceIssueCode | undefined {
+  if (!/^every\b/iu.test(normalized)) return 'must-start-with-every';
+  if (/\bfor\s+\d+\s+times?\b/iu.test(normalized)) return 'unsupported-recurrence-count';
+  return /\buntil\b/iu.test(normalized) ? 'unsupported-recurrence-until' : undefined;
+}
+
+type WhenDoneParseResult =
+  | { readonly type: 'valid'; readonly whenDone: boolean; readonly ruleText: string }
+  | { readonly type: 'invalid'; readonly code: 'invalid-when-done' };
+
+function parseWhenDone(normalized: string): WhenDoneParseResult {
+  const matches = normalized.match(/\bwhen\s+done\b/giu) ?? [];
+  if (matches.length > 1 || (matches.length === 1 && !/\bwhen\s+done$/iu.test(normalized))) {
+    return { type: 'invalid', code: 'invalid-when-done' };
+  }
+  const whenDone = matches.length === 1;
+  const ruleText = whenDone
+    ? normalized.slice(0, normalized.length - ' when done'.length)
+    : normalized;
+  return { type: 'valid', whenDone, ruleText };
+}
+
+interface CompileRecurrenceContext {
+  readonly raw: string;
+  readonly normalized: string;
+  readonly grammar: SupportedGrammar;
+  readonly whenDone: boolean;
+  readonly ruleText: string;
+}
+
+function compileRecurrence(context: CompileRecurrenceContext): RecurrenceParseResult {
+  try {
+    const options = RRule.parseText(parserGrammarText(context.ruleText));
+    if (context.grammar.yearlyDates !== undefined) {
+      options.bymonth = [...context.grammar.yearlyDates.months];
+      options.bymonthday = [...context.grammar.yearlyDates.monthDays];
+    }
+    if (!hasOnlySupportedOptions(options)) return { type: 'invalid', code: 'unparseable-rule' };
+    const compiled = new RRule({ ...options, dtstart: utcDate(localDate('2000-01-01')) });
+    const canonical = compiled.toText();
+    if (supportedGrammar(canonical)?.key !== context.grammar.key) {
+      return { type: 'invalid', code: 'unparseable-rule' };
+    }
+    cacheCompiledRule(context.normalized, {
+      canonical,
+      whenDone: context.whenDone,
+      rule: compiled,
+    });
+    return { type: 'valid', raw: context.raw, canonical, whenDone: context.whenDone };
+  } catch {
+    return { type: 'invalid', code: 'unparseable-rule' };
+  }
+}
+
 export function parseRecurrenceRule(raw: string): RecurrenceParseResult {
   const normalized = normalizedRuleText(raw);
   const cached = compiledRule(normalized);
@@ -364,51 +445,21 @@ export function parseRecurrenceRule(raw: string): RecurrenceParseResult {
       whenDone: cached.whenDone,
     };
   }
-  if (!/^every\b/iu.test(normalized)) {
-    return { type: 'invalid', code: 'must-start-with-every' };
-  }
-  if (/\bfor\s+\d+\s+times?\b/iu.test(normalized)) {
-    return { type: 'invalid', code: 'unsupported-recurrence-count' };
-  }
-  if (/\buntil\b/iu.test(normalized)) {
-    return { type: 'invalid', code: 'unsupported-recurrence-until' };
-  }
-
-  const whenDoneMatches = normalized.match(/\bwhen\s+done\b/giu) ?? [];
-  if (
-    whenDoneMatches.length > 1 ||
-    (whenDoneMatches.length === 1 && !/\bwhen\s+done$/iu.test(normalized))
-  ) {
-    return { type: 'invalid', code: 'invalid-when-done' };
-  }
-  const whenDone = whenDoneMatches.length === 1;
-  const ruleText = whenDone
-    ? normalized.slice(0, normalized.length - ' when done'.length)
-    : normalized;
-  const inputGrammar = supportedGrammar(ruleText);
+  const preliminaryIssue = preliminaryRecurrenceIssue(normalized);
+  if (preliminaryIssue !== undefined) return { type: 'invalid', code: preliminaryIssue };
+  const whenDone = parseWhenDone(normalized);
+  if (whenDone.type === 'invalid') return whenDone;
+  const inputGrammar = supportedGrammar(whenDone.ruleText);
   if (inputGrammar === undefined) {
     return { type: 'invalid', code: 'unparseable-rule' };
   }
-
-  try {
-    const options = RRule.parseText(parserGrammarText(ruleText));
-    if (inputGrammar.yearlyDates !== undefined) {
-      options.bymonth = [...inputGrammar.yearlyDates.months];
-      options.bymonthday = [...inputGrammar.yearlyDates.monthDays];
-    }
-    if (!hasOnlySupportedOptions(options)) {
-      return { type: 'invalid', code: 'unparseable-rule' };
-    }
-    const compiled = new RRule({ ...options, dtstart: utcDate(localDate('2000-01-01')) });
-    const canonical = compiled.toText();
-    if (supportedGrammar(canonical)?.key !== inputGrammar.key) {
-      return { type: 'invalid', code: 'unparseable-rule' };
-    }
-    cacheCompiledRule(normalized, { canonical, whenDone, rule: compiled });
-    return { type: 'valid', raw, canonical, whenDone };
-  } catch {
-    return { type: 'invalid', code: 'unparseable-rule' };
-  }
+  return compileRecurrence({
+    raw,
+    normalized,
+    grammar: inputGrammar,
+    whenDone: whenDone.whenDone,
+    ruleText: whenDone.ruleText,
+  });
 }
 
 function recurrenceReference(
@@ -437,7 +488,9 @@ function leapYear(year: number): boolean {
 }
 
 function daysInMonth(year: number, month: number): number {
-  return [31, leapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]!;
+  const days = [31, leapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  if (days === undefined) throw new RangeError(`Invalid month: ${month}`);
+  return days;
 }
 
 function clampedMonthStep(value: LocalDate, months: number): LocalDate | undefined {
@@ -492,7 +545,7 @@ function nextRuleDate(rule: RRule, anchor: LocalDate): LocalDate | undefined {
   const anchorDate = utcDate(anchor);
   const anchoredRule = new RRule({ ...rule.origOptions, dtstart: anchorDate }, true);
   const next = anchoredRule.after(anchorDate, false);
-  return next ? localDateFromUtc(next) : undefined;
+  return next != null ? localDateFromUtc(next) : undefined;
 }
 
 function parsedRule(raw: string):
@@ -505,7 +558,7 @@ function parsedRule(raw: string):
   const parsed = parseRecurrenceRule(raw);
   if (parsed.type === 'invalid') return parsed;
   const rule = compiledRule(raw)?.rule;
-  if (!rule) return { type: 'invalid', code: 'unparseable-rule' };
+  if (rule == null) return { type: 'invalid', code: 'unparseable-rule' };
   return { type: 'valid', parsed, rule };
 }
 
@@ -522,9 +575,9 @@ function shiftedPlanning(
   for (const field of DATE_FIELDS) {
     if (field === 'scheduled' && policy.removeScheduledDate) continue;
     const value = planning[field];
-    if (!value) continue;
+    if (value == null) continue;
     const next = shiftLocalDate(value, dayDelta);
-    if (!next) return undefined;
+    if (next == null) return undefined;
     shifted[field] = next;
   }
   return {
@@ -538,13 +591,13 @@ export function nextOccurrencePlanning(input: NextOccurrenceInput): NextOccurren
   const validated = parsedRule(input.rule);
   if (validated.type === 'invalid') return validated;
   const reference = recurrenceReference(input.planning, input.policy);
-  if (!reference) return { type: 'next', planning: input.planning, dayDelta: 0 };
+  if (reference == null) return { type: 'next', planning: input.planning, dayDelta: 0 };
   const anchor = validated.parsed.whenDone ? input.completedOn : reference;
   const next = nextRuleDate(validated.rule, anchor);
-  if (!next) return { type: 'invalid', code: 'forecast-limit-reached' };
+  if (next == null) return { type: 'invalid', code: 'forecast-limit-reached' };
   const dayDelta = daysBetweenLocalDates(reference, next);
   const planning = shiftedPlanning(input.planning, dayDelta, input.policy);
-  if (!planning) return { type: 'invalid', code: 'invalid-descendant-date' };
+  if (planning == null) return { type: 'invalid', code: 'invalid-descendant-date' };
   return { type: 'next', planning, dayDelta };
 }
 
@@ -555,7 +608,7 @@ function directExpansion(
   maxVisible: 512,
 ): RecurrenceExpansionResult {
   const firstDay = shiftLocalDate(reference, 1);
-  if (!firstDay || visible.from > visible.to) {
+  if (firstDay == null || visible.from > visible.to) {
     return { type: 'invalid', code: 'invalid-descendant-date' };
   }
   const from = visible.from > firstDay ? visible.from : firstDay;
@@ -574,27 +627,44 @@ function directExpansion(
     : { type: 'expanded', dates };
 }
 
-function sequentialExpansion(
-  rule: RRule,
-  reference: LocalDate,
-  visible: ExpandRecurrenceInput['visible'],
-  maxVisible: 512,
-  maxSequentialSteps: 4096,
-): RecurrenceExpansionResult {
+interface SequentialExpansionInput {
+  readonly rule: RRule;
+  readonly reference: LocalDate;
+  readonly visible: ExpandRecurrenceInput['visible'];
+  readonly maxVisible: 512;
+  readonly maxSequentialSteps: 4096;
+}
+
+function sequentialVisibleResult(
+  next: LocalDate,
+  context: SequentialExpansionInput,
+  dates: LocalDate[],
+): RecurrenceExpansionResult | undefined {
+  if (next > context.visible.to) return { type: 'expanded', dates };
+  if (next >= context.visible.from) {
+    if (dates.length === context.maxVisible) {
+      return {
+        type: 'limited',
+        dates,
+        phase: 'visible-occurrences',
+        limit: context.maxVisible,
+      };
+    }
+    dates.push(next);
+  }
+  return next === context.visible.to ? { type: 'expanded', dates } : undefined;
+}
+
+function sequentialExpansion(context: SequentialExpansionInput): RecurrenceExpansionResult {
+  const { rule, reference, visible, maxSequentialSteps } = context;
   if (visible.from > visible.to) return { type: 'invalid', code: 'invalid-descendant-date' };
   const dates: LocalDate[] = [];
   let current = reference;
   for (let step = 0; step < maxSequentialSteps; step++) {
     const next = nextRuleDate(rule, current);
-    if (!next) return { type: 'invalid', code: 'forecast-limit-reached' };
-    if (next > visible.to) return { type: 'expanded', dates };
-    if (next >= visible.from) {
-      if (dates.length === maxVisible) {
-        return { type: 'limited', dates, phase: 'visible-occurrences', limit: maxVisible };
-      }
-      dates.push(next);
-    }
-    if (next === visible.to) return { type: 'expanded', dates };
+    if (next == null) return { type: 'invalid', code: 'forecast-limit-reached' };
+    const result = sequentialVisibleResult(next, context, dates);
+    if (result !== undefined) return result;
     current = next;
   }
   return { type: 'limited', dates, phase: 'sequential-seek', limit: maxSequentialSteps };
@@ -606,15 +676,15 @@ export function expandRecurrenceReferences(
   const validated = parsedRule(input.rule);
   if (validated.type === 'invalid') return validated;
   const reference = recurrenceReference(input.planning, input.policy);
-  if (!reference) return { type: 'invalid', code: 'recurrence-date-required' };
+  if (reference == null) return { type: 'invalid', code: 'recurrence-date-required' };
   if (isImplicitMonth(validated.rule) || isImplicitYear(validated.rule)) {
-    return sequentialExpansion(
-      validated.rule,
+    return sequentialExpansion({
+      rule: validated.rule,
       reference,
-      input.visible,
-      input.maxVisible,
-      input.maxSequentialSteps,
-    );
+      visible: input.visible,
+      maxVisible: input.maxVisible,
+      maxSequentialSteps: input.maxSequentialSteps,
+    });
   }
   return directExpansion(validated.rule, reference, input.visible, input.maxVisible);
 }

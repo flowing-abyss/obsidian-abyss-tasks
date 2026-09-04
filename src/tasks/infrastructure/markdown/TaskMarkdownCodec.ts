@@ -1,5 +1,5 @@
 import { parseLinks } from '../../../parser/links';
-import { StatusCatalog } from '../../domain/StatusCatalog';
+import { type StatusCatalog } from '../../domain/StatusCatalog';
 import { parseRecurrenceRule } from '../../domain/recurrence';
 import {
   editRecurrenceIterationTaskLine,
@@ -7,7 +7,13 @@ import {
   type RecurrenceTaskLineEditResult,
 } from '../../domain/recurrenceIteration';
 import { parseTaskLineSourceModel } from '../../domain/taskLineSourceModel';
-import type { OnCompletion, TaskPriority, TaskStatus } from '../../domain/types';
+import type {
+  OnCompletion,
+  TaskPriority,
+  TaskStatus,
+  TaskStatusRule,
+  TaskStatusType,
+} from '../../domain/types';
 import {
   formatDurationMinutes,
   isSingleLineText,
@@ -55,6 +61,34 @@ type PreparedLineEdit =
   | {
       readonly type: 'prepared';
       readonly content: string;
+      readonly fields: readonly TaskValidationField[];
+    }
+  | Extract<LineEditResult, { readonly type: 'unchanged' | 'invalid' }>;
+
+type TitleLineEdit = Extract<
+  LineEdit,
+  { readonly type: 'set-title' | 'append-title' | 'edit-link' }
+>;
+
+type StatusStampKind = 'completion' | 'cancelled';
+
+type StatusContentResult =
+  | { readonly type: 'content'; readonly content: string }
+  | Extract<LineEditResult, { readonly type: 'invalid' }>;
+
+type StatusTransitionPreparation =
+  | {
+      readonly type: 'status-transition';
+      readonly stampedKind: StatusStampKind | undefined;
+      readonly preservedStamp: StatusStampKind | undefined;
+    }
+  | Extract<PreparedLineEdit, { readonly type: 'unchanged' | 'invalid' }>;
+
+type AppliedLineEdit =
+  | {
+      readonly type: 'applied';
+      readonly content: string;
+      readonly parsed: ParsedTaskLine;
       readonly fields: readonly TaskValidationField[];
     }
   | Extract<LineEditResult, { readonly type: 'unchanged' | 'invalid' }>;
@@ -195,6 +229,15 @@ const METADATA_KINDS = new Set<TaskSpanKind>([
 
 const TITLE_SEMANTIC_KINDS = new Set<TaskSpanKind>([...METADATA_KINDS, 'tag']);
 
+const DATE_SPAN_KINDS = new Set<TaskSpanKind>([
+  'created',
+  'start',
+  'scheduled',
+  'due',
+  'cancelled',
+  'completion',
+]);
+
 const WIKILINK_ALIAS_RE = /\[\[([^|[\]]+)\|([^[\]]+)\]\]/gu;
 const WIKILINK_RE = /\[\[([^[\]]+)\]\]/gu;
 const MD_LINK_RE = /\[([^[\]]+)\]\(([^)]+)\)/gu;
@@ -203,7 +246,7 @@ const BRACKETS_RE = /\[([^[\]]*)\]/gu;
 function collapseLinks(input: string): string {
   return input
     .replace(WIKILINK_ALIAS_RE, '🔗$1')
-    .replace(WIKILINK_RE, (_match, link: string) => '🔗 ' + link.replace(/\.[^.]*$/u, ''))
+    .replace(WIKILINK_RE, (_match, link: string) => `🔗 ${link.replace(/\.[^.]*$/u, '')}`)
     .replace(MD_LINK_RE, '🌐 $1')
     .replace(BRACKETS_RE, '$1');
 }
@@ -224,72 +267,86 @@ function isSemanticTitleSpan(span: SourceSpan): boolean {
   return span.kind === 'title' || span.kind === 'unknown';
 }
 
+function isIgnoredTitleSpan(span: SourceSpan, contentEnd: number): boolean {
+  return span.kind === 'prefix' || (span.kind === 'separator' && span.from === contentEnd);
+}
+
+function appendTitleFragment(fragments: SourceSpan[], fragment: SourceSpan | null): void {
+  if (fragment != null) fragments.push(fragment);
+}
+
+function extendTitleFragment(fragment: SourceSpan | null, span: SourceSpan): SourceSpan {
+  return {
+    kind: 'title',
+    from: fragment === null ? span.from : fragment.from,
+    to: span.to,
+  };
+}
+
 function semanticTitleFragments(
   spans: readonly SourceSpan[],
   contentEnd: number,
 ): readonly SourceSpan[] {
   const fragments: SourceSpan[] = [];
-  let fragmentFrom: number | undefined;
-  let fragmentTo: number | undefined;
+  let fragment: SourceSpan | null = null;
   for (const span of spans) {
-    if (span.kind === 'prefix' || (span.kind === 'separator' && span.from === contentEnd)) continue;
+    if (isIgnoredTitleSpan(span, contentEnd)) continue;
     if (isSemanticTitleSpan(span)) {
-      fragmentFrom ??= span.from;
-      fragmentTo = span.to;
+      fragment = extendTitleFragment(fragment, span);
       continue;
     }
-    if (span.kind === 'separator' && fragmentFrom !== undefined) continue;
-    if (fragmentFrom !== undefined && fragmentTo !== undefined) {
-      fragments.push({ kind: 'title', from: fragmentFrom, to: fragmentTo });
-      fragmentFrom = undefined;
-      fragmentTo = undefined;
-    }
+    if (span.kind === 'separator' && fragment != null) continue;
+    appendTitleFragment(fragments, fragment);
+    fragment = null;
   }
-  if (fragmentFrom !== undefined && fragmentTo !== undefined) {
-    fragments.push({ kind: 'title', from: fragmentFrom, to: fragmentTo });
-  }
+  appendTitleFragment(fragments, fragment);
   return fragments;
+}
+
+function isValidRankedSpan(parsed: ParsedTaskLine, span: SourceSpan, rank: number): boolean {
+  const candidateRank = TOKEN_RANK[span.kind];
+  if (candidateRank === undefined || candidateRank <= rank) return false;
+  const raw = parsed.original.slice(span.from, span.to);
+  try {
+    if (DATE_SPAN_KINDS.has(span.kind)) localDate(raw.slice(-10));
+    else if (span.kind === 'time') localTime(raw.slice(-5));
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+function rankedInsertionSpan(parsed: ParsedTaskLine, rank: number): SourceSpan | undefined {
+  return parsed.spans.find((span) => isValidRankedSpan(parsed, span, rank));
+}
+
+function firstOccurrenceFrom(parsed: ParsedTaskLine, kind: TaskSpanKind): number {
+  return parsed.occurrences.get(kind)?.[0]?.from ?? Infinity;
+}
+
+function relationCarrierInsertionPoint(parsed: ParsedTaskLine, kind: TaskSpanKind): number {
+  if (kind !== 'recurrence' && kind !== 'on-completion') return Infinity;
+  return Math.min(
+    firstOccurrenceFrom(parsed, 'task-id'),
+    firstOccurrenceFrom(parsed, 'depends-on'),
+    firstOccurrenceFrom(parsed, 'block-id'),
+  );
+}
+
+function fallbackInsertionPoint(parsed: ParsedTaskLine): number {
+  return (
+    parsed.occurrences.get('block-id')?.[0]?.from ??
+    parsed.original.length - parsed.lineEnding.length
+  );
 }
 
 function insertionPoint(parsed: ParsedTaskLine, kind: TaskSpanKind): number {
   const rank = TOKEN_RANK[kind];
-  if (rank !== undefined) {
-    const later = parsed.spans.find((span) => {
-      const candidateRank = TOKEN_RANK[span.kind];
-      if (candidateRank === undefined || candidateRank <= rank) return false;
-      const raw = parsed.original.slice(span.from, span.to);
-      try {
-        if (
-          span.kind === 'created' ||
-          span.kind === 'start' ||
-          span.kind === 'scheduled' ||
-          span.kind === 'due' ||
-          span.kind === 'cancelled' ||
-          span.kind === 'completion'
-        ) {
-          localDate(raw.slice(-10));
-        } else if (span.kind === 'time') {
-          localTime(raw.slice(-5));
-        }
-      } catch {
-        return false;
-      }
-      return true;
-    });
-    const carrierAt =
-      kind === 'recurrence' || kind === 'on-completion'
-        ? Math.min(
-            parsed.occurrences.get('task-id')?.[0]?.from ?? Infinity,
-            parsed.occurrences.get('depends-on')?.[0]?.from ?? Infinity,
-            parsed.occurrences.get('block-id')?.[0]?.from ?? Infinity,
-          )
-        : Infinity;
-    if (later) return Math.min(later.from, carrierAt);
-    if (carrierAt !== Infinity) return carrierAt;
-  }
-  const blockId = parsed.occurrences.get('block-id')?.[0];
-  if (blockId) return blockId.from;
-  return parsed.original.length - parsed.lineEnding.length;
+  if (rank === undefined) return fallbackInsertionPoint(parsed);
+  const later = rankedInsertionSpan(parsed, rank);
+  const carrierAt = relationCarrierInsertionPoint(parsed, kind);
+  if (later != null) return Math.min(later.from, carrierAt);
+  return carrierAt === Infinity ? fallbackInsertionPoint(parsed) : carrierAt;
 }
 
 function insertToken(parsed: ParsedTaskLine, kind: TaskSpanKind, token: string): string {
@@ -306,6 +363,123 @@ function invalid(
   field?: string,
 ): Extract<LineEditResult, { readonly type: 'invalid' }> {
   return { type: 'invalid', issues: [{ code, ...(field !== undefined && { field }) }] };
+}
+
+function normalizedTags(tags: readonly string[]): string[] {
+  return [...new Set(tags.map((tag) => (tag.startsWith('#') ? tag : `#${tag}`)))];
+}
+
+function tagsAreValid(tags: Iterable<string>): boolean {
+  return [...tags].every((tag) => /^#[\w/-]+$/u.test(tag));
+}
+
+function contentWithoutTags(parsed: ParsedTaskLine, removals: ReadonlySet<string>): string {
+  let content = parsed.original;
+  for (const span of [...(parsed.occurrences.get('tag') ?? [])].reverse()) {
+    const tag = parsed.original.slice(span.from, span.to);
+    if (removals.has(tag)) content = removeSpan(content, span);
+  }
+  return content;
+}
+
+function insertTags(
+  content: string,
+  parsed: ParsedTaskLine,
+  tags: readonly string[],
+): PreparedLineEdit {
+  const occurrences = parsed.occurrences.get('tag') ?? [];
+  const lastTag = occurrences[occurrences.length - 1];
+  if (lastTag != null) {
+    return {
+      type: 'prepared',
+      content: spliceSource(content, lastTag.to, lastTag.to, ` ${tags.join(' ')}`),
+      fields: [],
+    };
+  }
+  const protectedSpan = parsed.spans.find(
+    (span) => METADATA_KINDS.has(span.kind) || span.kind === 'block-id',
+  );
+  const at = protectedSpan?.from ?? content.length - parsed.lineEnding.length;
+  const left = /\s/u.test(content[at - 1] ?? '') ? '' : ' ';
+  const right = /\s/u.test(content[at] ?? '') || at === content.length ? '' : ' ';
+  return {
+    type: 'prepared',
+    content: spliceSource(content, at, at, `${left}${tags.join(' ')}${right}`),
+    fields: [],
+  };
+}
+
+function hasMalformedKind(parsed: ParsedTaskLine, kind: TaskSpanKind): boolean {
+  return parsed.spans.some(
+    (span) => span.kind === 'malformed-known' && span.malformedKind === kind,
+  );
+}
+
+function hasUnparsedOccurrence(
+  parsed: ParsedTaskLine,
+  kind: TaskSpanKind,
+  value: unknown,
+): boolean {
+  return (parsed.occurrences.get(kind)?.length ?? 0) > 0 && value === undefined;
+}
+
+function replaceExistingTitle(
+  parsed: ParsedTaskLine,
+  fragments: readonly SourceSpan[],
+  markdownTitle: string,
+): string {
+  const first = fragments[0];
+  if (first == null) return parsed.original;
+  let content = parsed.original;
+  const removals = markdownTitle.length > 0 ? fragments.slice(1) : fragments;
+  for (const fragment of [...removals].reverse()) content = removeSpan(content, fragment);
+  return markdownTitle.length > 0
+    ? spliceSource(content, first.from, first.to, markdownTitle)
+    : content;
+}
+
+function insertTitleBeforeMetadata(parsed: ParsedTaskLine, markdownTitle: string): string {
+  const contentEnd = parsed.original.length - parsed.lineEnding.length;
+  const firstProtected = parsed.spans.find(
+    (span) => span.kind !== 'prefix' && span.kind !== 'separator',
+  );
+  const at = firstProtected?.from ?? contentEnd;
+  const left = /\s/u.test(parsed.original[at - 1] ?? '') ? '' : ' ';
+  const right = /\s/u.test(parsed.original[at] ?? '') || at === contentEnd ? '' : ' ';
+  return spliceSource(parsed.original, at, at, `${left}${markdownTitle}${right}`);
+}
+
+function statusStampKind(type: TaskStatusType): StatusStampKind | undefined {
+  if (type === 'done') return 'completion';
+  return type === 'cancelled' ? 'cancelled' : undefined;
+}
+
+function validStatusTarget(
+  symbol: string,
+  rule: TaskStatusRule | undefined,
+): rule is TaskStatusRule {
+  return symbol.length === 1 && rule !== undefined;
+}
+
+function statusDateIsMissing(
+  stampedKind: StatusStampKind | undefined,
+  preservesStamp: boolean,
+  today: string | undefined,
+): boolean {
+  return stampedKind !== undefined && !preservesStamp && today === undefined;
+}
+
+function isTitleLineEdit(edit: LineEdit): edit is TitleLineEdit {
+  return edit.type === 'set-title' || edit.type === 'append-title' || edit.type === 'edit-link';
+}
+
+function invalidRecurrenceValue(
+  value: string | null,
+): Extract<LineEditResult, { readonly type: 'invalid' }> | null {
+  if (value === null) return null;
+  if (!isSingleLineText(value)) return invalid('invalid-target', 'recurrence');
+  const recurrence = parseRecurrenceRule(value);
+  return recurrence.type === 'invalid' ? invalid(recurrence.code, 'recurrence') : null;
 }
 
 export class TaskMarkdownCodec {
@@ -329,7 +503,7 @@ export class TaskMarkdownCodec {
     if (!isSingleLineText(replacement)) return invalid('invalid-target', 'link');
     if (!Number.isInteger(occurrence) || occurrence < 0) return invalid('invalid-target', 'link');
     const link = parseLinks(source)[occurrence];
-    if (!link) return invalid('invalid-target', 'link');
+    if (link == null) return invalid('invalid-target', 'link');
     const content = spliceSource(source, link.index, link.index + link.raw.length, replacement);
     return content === source
       ? { type: 'unchanged', content: source }
@@ -341,24 +515,11 @@ export class TaskMarkdownCodec {
     for (const [field, kind] of Object.entries(SPAN_KIND_BY_FIELD) as Array<
       [TaskValidationField, TaskSpanKind]
     >) {
-      if (
-        parsed.spans.some((span) => span.kind === 'malformed-known' && span.malformedKind === kind)
-      ) {
-        malformed.add(field);
-      }
+      if (hasMalformedKind(parsed, kind)) malformed.add(field);
     }
-    if (
-      (parsed.occurrences.get('duration')?.length ?? 0) > 0 &&
-      parsed.planning.duration === undefined
-    ) {
+    if (hasUnparsedOccurrence(parsed, 'duration', parsed.planning.duration))
       malformed.add('duration');
-    }
-    if (
-      (parsed.occurrences.get('recurrence')?.length ?? 0) > 0 &&
-      parsed.recurrence === undefined
-    ) {
-      malformed.add('recurrence');
-    }
+    if (hasUnparsedOccurrence(parsed, 'recurrence', parsed.recurrence)) malformed.add('recurrence');
     return malformed;
   }
 
@@ -368,7 +529,7 @@ export class TaskMarkdownCodec {
       statusSymbol: parsed.statusSymbol,
       statusConfigured: this.statusCatalog.ruleForSymbol(parsed.statusSymbol) !== undefined,
       planning: parsed.planning,
-      recurrence: parsed.recurrence,
+      ...(parsed.recurrence !== undefined && { recurrence: parsed.recurrence }),
       onCompletion: parsed.onCompletion,
       malformedFields: [...this.malformedFields(parsed)],
     };
@@ -377,7 +538,7 @@ export class TaskMarkdownCodec {
   /** Validates a complete candidate line before task creation writes it to the vault. */
   validateLine(original: string): readonly TaskIssue[] {
     const parsed = this.parseLine(original, { filePath: '', line: 0 });
-    if (!parsed) return [{ code: 'invalid-task-syntax' }];
+    if (parsed == null) return [{ code: 'invalid-task-syntax' }];
     return validateTaskChange(
       this.validationState(parsed),
       new Set<TaskValidationField>([
@@ -415,7 +576,7 @@ export class TaskMarkdownCodec {
     token: string | null,
   ): string {
     const occurrence = parsed.occurrences.get(kind)?.[0];
-    if (occurrence) {
+    if (occurrence != null) {
       return token === null
         ? removeSpan(parsed.original, occurrence)
         : spliceSource(parsed.original, occurrence.from, occurrence.to, token);
@@ -435,30 +596,15 @@ export class TaskMarkdownCodec {
 
   private replaceTitle(parsed: ParsedTaskLine, markdownTitle: string): string {
     const fragments = this.editableTitleFragments(parsed);
-    const first = fragments[0];
-    if (first) {
-      let content = parsed.original;
-      const removals = markdownTitle ? fragments.slice(1) : fragments;
-      for (const fragment of [...removals].reverse()) {
-        content = removeSpan(content, fragment);
-      }
-      return markdownTitle ? spliceSource(content, first.from, first.to, markdownTitle) : content;
-    }
-
-    const contentEnd = parsed.original.length - parsed.lineEnding.length;
-    const firstProtected = parsed.spans.find(
-      (span) => span.kind !== 'prefix' && span.kind !== 'separator',
-    );
-    const at = firstProtected?.from ?? contentEnd;
-    const left = /\s/u.test(parsed.original[at - 1] ?? '') ? '' : ' ';
-    const right = /\s/u.test(parsed.original[at] ?? '') || at === contentEnd ? '' : ' ';
-    return spliceSource(parsed.original, at, at, `${left}${markdownTitle}${right}`);
+    return fragments.length > 0
+      ? replaceExistingTitle(parsed, fragments, markdownTitle)
+      : insertTitleBeforeMetadata(parsed, markdownTitle);
   }
 
   private appendTitle(parsed: ParsedTaskLine, markdown: string): string {
     const fragments = this.editableTitleFragments(parsed);
     const last = fragments[fragments.length - 1];
-    if (!last) return this.replaceTitle(parsed, markdown);
+    if (last == null) return this.replaceTitle(parsed, markdown);
     return spliceSource(parsed.original, last.to, last.to, ` ${markdown}`);
   }
 
@@ -477,7 +623,7 @@ export class TaskMarkdownCodec {
         continue;
       }
       const link = links[remaining];
-      if (!link) return invalid('invalid-target', 'link');
+      if (link == null) return invalid('invalid-target', 'link');
       return {
         type: 'prepared',
         content: spliceSource(
@@ -532,42 +678,84 @@ export class TaskMarkdownCodec {
     add: readonly string[],
     remove: readonly string[],
   ): PreparedLineEdit {
-    const normalize = (tag: string): string => (tag.startsWith('#') ? tag : `#${tag}`);
-    const additions = [...new Set(add.map(normalize))];
-    const removals = new Set(remove.map(normalize));
-    if ([...additions, ...removals].some((tag) => !/^#[\w/-]+$/u.test(tag))) {
-      return invalid('invalid-target', 'tags');
-    }
+    const additions = normalizedTags(add);
+    const removals = new Set(normalizedTags(remove));
+    if (!tagsAreValid([...additions, ...removals])) return invalid('invalid-target', 'tags');
 
-    let content = parsed.original;
-    for (const span of [...(parsed.occurrences.get('tag') ?? [])].reverse()) {
-      const tag = parsed.original.slice(span.from, span.to);
-      if (removals.has(tag)) content = removeSpan(content, span);
-    }
-    const candidate = this.parseLine(content, { filePath: '', line: 0 })!;
+    const content = contentWithoutTags(parsed, removals);
+    const candidate = this.parseLine(content, { filePath: '', line: 0 });
+    if (candidate === null) return invalid('invalid-task-syntax');
     const present = new Set(candidate.tags);
     const pending = additions.filter((tag) => !present.has(tag));
     if (pending.length === 0) return { type: 'prepared', content, fields: [] };
+    return insertTags(content, candidate, pending);
+  }
 
-    const tags = candidate.occurrences.get('tag') ?? [];
-    const lastTag = tags[tags.length - 1];
-    if (lastTag) {
-      return {
-        type: 'prepared',
-        content: spliceSource(content, lastTag.to, lastTag.to, ` ${pending.join(' ')}`),
-        fields: [],
-      };
+  private statusTransitionIssues(parsed: ParsedTaskLine): readonly TaskIssue[] {
+    const issues: TaskIssue[] = [];
+    for (const field of ['completion', 'cancelled'] as const) {
+      issues.push(...this.duplicateIssue(parsed, field, field));
+      issues.push(...this.malformedTargetIssue(parsed, field));
     }
-    const protectedSpan = candidate.spans.find(
-      (span) => METADATA_KINDS.has(span.kind) || span.kind === 'block-id',
-    );
-    const at = protectedSpan?.from ?? content.length - candidate.lineEnding.length;
-    const left = /\s/u.test(content[at - 1] ?? '') ? '' : ' ';
-    const right = /\s/u.test(content[at] ?? '') || at === content.length ? '' : ' ';
+    return issues;
+  }
+
+  private clearStatusStamps(
+    content: string,
+    preserved: StatusStampKind | undefined,
+  ): StatusContentResult {
+    let updated = content;
+    for (const kind of ['completion', 'cancelled'] as const) {
+      if (kind === preserved) continue;
+      const parsed = this.parseLine(updated, { filePath: '', line: 0 });
+      if (parsed === null) return invalid('invalid-task-syntax');
+      updated = this.replaceOrInsertToken(parsed, kind, null);
+    }
+    return { type: 'content', content: updated };
+  }
+
+  private writeStatusStamp(
+    content: string,
+    stampedKind: StatusStampKind | undefined,
+    edit: Extract<LineEdit, { readonly type: 'set-status' }>,
+  ): StatusContentResult {
+    if (stampedKind === undefined || edit.today === undefined) {
+      return { type: 'content', content };
+    }
+    if (stampedKind === 'completion' && edit.addCompletionDate === false) {
+      return { type: 'content', content };
+    }
+    const parsed = this.parseLine(content, { filePath: '', line: 0 });
+    if (parsed === null) return invalid('invalid-task-syntax');
+    const marker = stampedKind === 'completion' ? '✅' : '❌';
     return {
-      type: 'prepared',
-      content: spliceSource(content, at, at, `${left}${pending.join(' ')}${right}`),
-      fields: [],
+      type: 'content',
+      content: this.replaceOrInsertToken(parsed, stampedKind, `${marker} ${edit.today}`),
+    };
+  }
+
+  private prepareStatusTransition(
+    parsed: ParsedTaskLine,
+    edit: Extract<LineEdit, { readonly type: 'set-status' }>,
+  ): StatusTransitionPreparation {
+    if (parsed.statusSymbol === edit.symbol) {
+      return { type: 'unchanged', content: parsed.original };
+    }
+    const rule = this.statusCatalog.ruleForSymbol(edit.symbol);
+    if (!validStatusTarget(edit.symbol, rule)) return invalid('invalid-status', 'status');
+    const issues = this.statusTransitionIssues(parsed);
+    if (issues.length > 0) return { type: 'invalid', issues };
+
+    const stampedKind = statusStampKind(rule.type);
+    const currentRule = this.statusCatalog.ruleForSymbol(parsed.statusSymbol);
+    const preservesStamp = stampedKind !== undefined && currentRule?.type === rule.type;
+    if (statusDateIsMissing(stampedKind, preservesStamp, edit.today)) {
+      return invalid('invalid-status', 'status');
+    }
+    return {
+      type: 'status-transition',
+      stampedKind,
+      preservedStamp: preservesStamp ? stampedKind : undefined,
     };
   }
 
@@ -575,44 +763,19 @@ export class TaskMarkdownCodec {
     parsed: ParsedTaskLine,
     edit: Extract<LineEdit, { readonly type: 'set-status' }>,
   ): PreparedLineEdit {
-    if (parsed.statusSymbol === edit.symbol) {
-      return { type: 'unchanged', content: parsed.original };
-    }
-    const rule = this.statusCatalog.ruleForSymbol(edit.symbol);
-    if (edit.symbol.length !== 1 || !rule) return invalid('invalid-status', 'status');
-    const currentRule = this.statusCatalog.ruleForSymbol(parsed.statusSymbol);
-
-    const issues: TaskIssue[] = [];
-    for (const field of ['completion', 'cancelled'] as const) {
-      issues.push(...this.duplicateIssue(parsed, field, field));
-      issues.push(...this.malformedTargetIssue(parsed, field));
-    }
-    if (issues.length > 0) return { type: 'invalid', issues };
-
+    const transition = this.prepareStatusTransition(parsed, edit);
+    if (transition.type !== 'status-transition') return transition;
     const statusAt = (parsed.occurrences.get('prefix')?.[0]?.to ?? 0) - 2;
-    let content = spliceSource(parsed.original, statusAt, statusAt + 1, edit.symbol);
-    let stampedKind: 'completion' | 'cancelled' | undefined;
-    if (rule.type === 'done') stampedKind = 'completion';
-    if (rule.type === 'cancelled') stampedKind = 'cancelled';
-    const preservesStamp = stampedKind !== undefined && currentRule?.type === rule.type;
-    if (stampedKind !== undefined && !preservesStamp && edit.today === undefined) {
-      return invalid('invalid-status', 'status');
-    }
-    for (const kind of ['completion', 'cancelled'] as const) {
-      if (preservesStamp && kind === stampedKind) continue;
-      const current = this.parseLine(content, { filePath: '', line: 0 })!;
-      content = this.replaceOrInsertToken(current, kind, null);
-    }
-    if (
-      stampedKind !== undefined &&
-      edit.today !== undefined &&
-      (stampedKind === 'cancelled' || edit.addCompletionDate !== false)
-    ) {
-      const marker = stampedKind === 'completion' ? '✅' : '❌';
-      const current = this.parseLine(content, { filePath: '', line: 0 })!;
-      content = this.replaceOrInsertToken(current, stampedKind, `${marker} ${edit.today}`);
-    }
-    return { type: 'prepared', content, fields: ['status', 'completion', 'cancelled'] };
+    const statusContent = spliceSource(parsed.original, statusAt, statusAt + 1, edit.symbol);
+    const cleared = this.clearStatusStamps(statusContent, transition.preservedStamp);
+    if (cleared.type === 'invalid') return cleared;
+    const stamped = this.writeStatusStamp(cleared.content, transition.stampedKind, edit);
+    if (stamped.type === 'invalid') return stamped;
+    return {
+      type: 'prepared',
+      content: stamped.content,
+      fields: ['status', 'completion', 'cancelled'],
+    };
   }
 
   private preparePriorityEdit(
@@ -625,10 +788,11 @@ export class TaskMarkdownCodec {
     if (parsed.priority === edit.priority && (edit.priority !== 'D' || occurrences === 0)) {
       return { type: 'unchanged', content: parsed.original };
     }
+    const priorityToken = TOKEN_BY_PRIORITY[edit.priority];
     const content = this.replaceOrInsertToken(
       parsed,
       'priority',
-      TOKEN_BY_PRIORITY[edit.priority] || null,
+      priorityToken.length === 0 ? null : priorityToken,
     );
     return { type: 'prepared', content, fields: [] };
   }
@@ -720,18 +884,13 @@ export class TaskMarkdownCodec {
     parsed: ParsedTaskLine,
     edit: Extract<LineEdit, { readonly type: 'set-recurrence' }>,
   ): PreparedLineEdit {
-    if (edit.value !== null && !isSingleLineText(edit.value)) {
-      return invalid('invalid-target', 'recurrence');
-    }
+    const valueIssue = invalidRecurrenceValue(edit.value);
+    if (valueIssue !== null) return valueIssue;
     const issues = [
       ...this.duplicateIssue(parsed, 'recurrence', 'recurrence'),
       ...this.malformedTargetIssue(parsed, 'recurrence'),
     ];
     if (issues.length > 0) return { type: 'invalid', issues };
-    const recurrence = edit.value === null ? undefined : parseRecurrenceRule(edit.value);
-    if (recurrence?.type === 'invalid') {
-      return invalid(recurrence.code, 'recurrence');
-    }
     if (
       (edit.value === null && parsed.recurrence === undefined) ||
       (edit.value !== null && parsed.recurrence === edit.value)
@@ -753,10 +912,7 @@ export class TaskMarkdownCodec {
     parsed: ParsedTaskLine,
     edit: Extract<LineEdit, { readonly type: 'set-on-completion' }>,
   ): PreparedLineEdit {
-    if (
-      edit.value !== null &&
-      (!isSingleLineText(edit.value) || (edit.value !== 'keep' && edit.value !== 'delete'))
-    ) {
+    if (edit.value !== null && !isSingleLineText(edit.value)) {
       return invalid('invalid-target', 'on-completion');
     }
     const issues = [
@@ -781,29 +937,49 @@ export class TaskMarkdownCodec {
     };
   }
 
-  private prepareLineEdit(parsed: ParsedTaskLine, edit: LineEdit): PreparedLineEdit {
+  private prepareSetTitleEdit(
+    parsed: ParsedTaskLine,
+    edit: Extract<LineEdit, { readonly type: 'set-title' }>,
+  ): PreparedLineEdit {
+    if (!isSingleLineText(edit.markdownTitle)) return invalid('invalid-target', 'title');
+    return parsed.markdownTitle === edit.markdownTitle
+      ? { type: 'unchanged', content: parsed.original }
+      : {
+          type: 'prepared',
+          content: this.replaceTitle(parsed, edit.markdownTitle),
+          fields: ['title'],
+        };
+  }
+
+  private prepareAppendTitleEdit(
+    parsed: ParsedTaskLine,
+    edit: Extract<LineEdit, { readonly type: 'append-title' }>,
+  ): PreparedLineEdit {
+    if (!isSingleLineText(edit.markdown)) return invalid('invalid-target', 'title');
+    return edit.markdown.length === 0
+      ? { type: 'unchanged', content: parsed.original }
+      : {
+          type: 'prepared',
+          content: this.appendTitle(parsed, edit.markdown),
+          fields: ['title'],
+        };
+  }
+
+  private prepareTitleLineEdit(parsed: ParsedTaskLine, edit: TitleLineEdit): PreparedLineEdit {
     switch (edit.type) {
       case 'set-title':
-        if (!isSingleLineText(edit.markdownTitle)) return invalid('invalid-target', 'title');
-        return parsed.markdownTitle === edit.markdownTitle
-          ? { type: 'unchanged', content: parsed.original }
-          : {
-              type: 'prepared',
-              content: this.replaceTitle(parsed, edit.markdownTitle),
-              fields: ['title'],
-            };
+        return this.prepareSetTitleEdit(parsed, edit);
       case 'append-title':
-        if (!isSingleLineText(edit.markdown)) return invalid('invalid-target', 'title');
-        return edit.markdown.length === 0
-          ? { type: 'unchanged', content: parsed.original }
-          : {
-              type: 'prepared',
-              content: this.appendTitle(parsed, edit.markdown),
-              fields: ['title'],
-            };
+        return this.prepareAppendTitleEdit(parsed, edit);
       case 'edit-link':
         if (!isSingleLineText(edit.replacement)) return invalid('invalid-target', 'link');
         return this.editTitleLink(parsed, edit.occurrence, edit.replacement);
+    }
+  }
+
+  private prepareLineEdit(parsed: ParsedTaskLine, edit: LineEdit): PreparedLineEdit {
+    if (isTitleLineEdit(edit)) return this.prepareTitleLineEdit(parsed, edit);
+    switch (edit.type) {
       case 'set-status':
         return this.prepareStatusEdit(parsed, edit);
       case 'set-priority':
@@ -823,15 +999,32 @@ export class TaskMarkdownCodec {
     }
   }
 
+  private applyPreparedLineEdit(current: ParsedTaskLine, edit: LineEdit): AppliedLineEdit {
+    const prepared = this.prepareLineEdit(current, edit);
+    if (prepared.type !== 'prepared') return prepared;
+    const reparsed = this.parseLine(prepared.content, { filePath: '', line: 0 });
+    if (reparsed === null) return invalid('invalid-task-syntax');
+    if (isTitleLineEdit(edit)) {
+      const titleIssues = this.introducedTitleIssues(current, reparsed);
+      if (titleIssues.length > 0) return { type: 'invalid', issues: titleIssues };
+    }
+    return {
+      type: 'applied',
+      content: prepared.content,
+      parsed: reparsed,
+      fields: prepared.fields,
+    };
+  }
+
   applyLineEdit(original: string, edit: LineEdit): LineEditResult {
     const parsed = this.parseLine(original, { filePath: '', line: 0 });
-    if (!parsed) return invalid('invalid-task-syntax');
+    if (parsed == null) return invalid('invalid-task-syntax');
     const prepared = this.prepareLineEdit(parsed, edit);
     if (prepared.type !== 'prepared') return prepared;
     if (prepared.content === original) return { type: 'unchanged', content: original };
     const reparsed = this.parseLine(prepared.content, { filePath: '', line: 0 });
-    if (!reparsed) return invalid('invalid-task-syntax');
-    if (edit.type === 'set-title' || edit.type === 'append-title' || edit.type === 'edit-link') {
+    if (reparsed == null) return invalid('invalid-task-syntax');
+    if (isTitleLineEdit(edit)) {
       const titleIssues = this.introducedTitleIssues(parsed, reparsed);
       if (titleIssues.length > 0) return { type: 'invalid', issues: titleIssues };
     }
@@ -847,24 +1040,18 @@ export class TaskMarkdownCodec {
     requestedFields: readonly TaskValidationField[] = [],
   ): LineEditResult {
     const before = this.parseLine(original, { filePath: '', line: 0 });
-    if (!before) return invalid('invalid-task-syntax');
+    if (before == null) return invalid('invalid-task-syntax');
 
     let current = before;
     let content = original;
     const changedFields = new Set<TaskValidationField>(requestedFields);
     for (const edit of edits) {
-      const prepared = this.prepareLineEdit(current, edit);
-      if (prepared.type === 'invalid') return prepared;
-      if (prepared.type === 'unchanged') continue;
-      content = prepared.content;
-      for (const field of prepared.fields) changedFields.add(field);
-      const reparsed = this.parseLine(content, { filePath: '', line: 0 });
-      if (!reparsed) return invalid('invalid-task-syntax');
-      if (edit.type === 'set-title' || edit.type === 'append-title' || edit.type === 'edit-link') {
-        const titleIssues = this.introducedTitleIssues(current, reparsed);
-        if (titleIssues.length > 0) return { type: 'invalid', issues: titleIssues };
-      }
-      current = reparsed;
+      const applied = this.applyPreparedLineEdit(current, edit);
+      if (applied.type === 'invalid') return applied;
+      if (applied.type === 'unchanged') continue;
+      content = applied.content;
+      for (const field of applied.fields) changedFields.add(field);
+      current = applied.parsed;
     }
     const issues = validateTaskChange(this.validationState(current), changedFields);
     if (issues.length > 0) return { type: 'invalid', issues };
@@ -875,7 +1062,7 @@ export class TaskMarkdownCodec {
 
   parseLine(original: string, source: ParseSource): ParsedTaskLine | null {
     const model = parseTaskLineSourceModel(original);
-    if (!model) return null;
+    if (model == null) return null;
     return {
       original: model.original,
       lineEnding: model.lineEnding,
@@ -887,7 +1074,7 @@ export class TaskMarkdownCodec {
       occurrences: model.occurrences,
       planning: model.planning,
       priority: model.priority,
-      recurrence: model.recurrence,
+      ...(model.recurrence !== undefined && { recurrence: model.recurrence }),
       onCompletion: model.onCompletion,
       onCompletionExplicit: model.onCompletionExplicit,
       source: { ...source, originalMarkdown: original },

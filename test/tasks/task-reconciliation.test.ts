@@ -37,7 +37,7 @@ describe('task reconciliation', () => {
     (evidence: RebaseEvidence) => {
       const previous = root(4, 'Observed');
       let current = root(9, 'Observed', previous.ref.revision);
-      let previousRoots = [previous];
+      const previousRoots = [previous];
       let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
 
       if (evidence === 'authority-transition') {
@@ -149,6 +149,98 @@ describe('task reconciliation', () => {
     });
   });
 
+  it('distinguishes exact, missing, and uncertain root outcomes', () => {
+    const observed = root(4, 'Observed');
+
+    expect(reconcileRoot(observed, [observed])).toMatchObject({ type: 'exact', task: observed });
+    expect(reconcileRoot(observed, [])).toEqual({ type: 'not-found', ref: observed.ref });
+    expect(reconcileRoot(observed, [root(9, 'Different')])).toEqual({
+      type: 'uncertain',
+      ref: observed.ref,
+    });
+  });
+
+  it('reports duplicate revision and source matches as explicit root candidates', () => {
+    const observed = root(4, 'Observed');
+    const duplicateRevision = [
+      root(7, 'First', observed.ref.revision),
+      root(8, 'Second', observed.ref.revision),
+    ];
+    const duplicateSource = [
+      root(7, 'Observed', 'revision:first'),
+      root(8, 'Observed', 'revision:second'),
+    ];
+
+    for (const candidates of [duplicateRevision, duplicateSource]) {
+      const result = reconcileRoot(observed, candidates);
+      expect(result).toMatchObject({ type: 'ambiguous' });
+      if (result.type !== 'ambiguous') throw new Error('expected ambiguous resolution');
+      expect(result.candidates).toHaveLength(2);
+      expect(result.candidates[0]).toMatchObject({
+        root: candidates[0],
+        target: { type: 'task', ref: candidates[0]?.ref },
+      });
+    }
+  });
+
+  it('returns exact, relocated, and missing nested resolutions', () => {
+    const parent = root(0, 'Parent');
+    const observed = subtask({
+      title: 'Child',
+      ref: {
+        parent: { type: 'task', ref: parent.ref },
+        relativeLine: 1,
+        originalBlock: '  - [ ] Child',
+      },
+    });
+    const exact = { ...observed };
+    const relocated = {
+      ...observed,
+      ref: { ...observed.ref, relativeLine: 3 },
+    };
+
+    expect(reconcileNested(observed, { ...parent, subtasks: [exact] })).toEqual({
+      type: 'exact',
+      task: exact,
+    });
+    expect(reconcileNested(observed, { ...parent, subtasks: [relocated] })).toEqual({
+      type: 'rebased',
+      previous: observed,
+      current: relocated,
+      evidence: 'byte-identical-relocation',
+    });
+    expect(reconcileNested(observed, { ...parent, subtasks: [] })).toEqual({
+      type: 'not-found',
+      ref: observed.ref,
+    });
+  });
+
+  it('ignores duplicate and mismatched authority claims instead of pairing roots unsafely', () => {
+    const previous = root(0, 'Previous', 'revision:old');
+    const duplicatePrevious = root(1, 'Previous copy', 'revision:old');
+    const current = root(2, 'Current', 'revision:new');
+    const authority = {
+      previousRevision: 'revision:old',
+      line: current.source.line,
+      source: current.source.originalBlock,
+      revision: current.ref.revision,
+    };
+
+    expect(
+      reconcileRootTransitions([previous, duplicatePrevious], [current], [authority]).writable,
+    ).toHaveLength(0);
+    expect(
+      reconcileRootTransitions([previous], [current, { ...current }], [authority]).writable,
+    ).toHaveLength(0);
+    expect(
+      reconcileRootTransitions(
+        [previous],
+        [current],
+        [{ ...authority, previousRevision: 'revision:unknown' }],
+      ).writable,
+    ).toHaveLength(0);
+  });
+
   it('indexes authority candidates once instead of rescanning every root per transition', () => {
     const size = 200;
     let reads = 0;
@@ -156,7 +248,8 @@ describe('task reconciliation', () => {
       new Proxy(values, {
         get(target, property, receiver) {
           if (typeof property === 'string' && /^\d+$/u.test(property)) reads += 1;
-          return Reflect.get(target, property, receiver);
+          const value: unknown = Reflect.get(target, property, receiver);
+          return value;
         },
       });
     const previous = counted(

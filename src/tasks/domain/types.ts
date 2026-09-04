@@ -31,8 +31,7 @@ export interface TaskRef {
 }
 
 export type TaskInsertionPolicy =
-  | { readonly type: 'append' }
-  | { readonly type: 'section'; readonly heading: string };
+  { readonly type: 'append' } | { readonly type: 'section'; readonly heading: string };
 
 export interface TaskDestination {
   readonly filePath: string;
@@ -75,8 +74,7 @@ export function sameTaskNodeRef(left: TaskNodeRef, right: TaskNodeRef): boolean 
 }
 
 export type TaskMutationTarget =
-  | TaskNodeRef
-  | { readonly type: 'comment'; readonly ref: CommentRef };
+  TaskNodeRef | { readonly type: 'comment'; readonly ref: CommentRef };
 
 export type TaskTextTarget =
   | { readonly type: 'title'; readonly target: TaskNodeRef }

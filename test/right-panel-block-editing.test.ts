@@ -3,9 +3,10 @@ import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskApplicationApi, TaskCommandResult, TaskSnapshot } from '../src/tasks';
-import type { CommentRef, TaskRef } from '../src/tasks/domain/types';
+import type { TaskRef } from '../src/tasks/domain/types';
 import {
   createAppWithFiles,
+  expectDefined,
   flushMicrotasks,
   freshContainer,
   taskQueryApi,
@@ -57,7 +58,8 @@ function snapshot(revision: string, description = 'old description'): TaskSnapsh
 }
 
 function snapshotWithChildren(revision: string, titles: readonly string[]): TaskSnapshot {
-  const root = { ...snapshot(revision), comments: [], description: undefined };
+  const root = { ...snapshot(revision), comments: [] };
+  delete root.description;
   const parent = { type: 'task' as const, ref: root.ref };
   return {
     ...root,
@@ -112,10 +114,10 @@ function snapshotWithNestedChildren(revision: string): TaskSnapshot {
   return {
     ...root,
     subtasks: [
-      { ...root.subtasks[0]!, ref: branchRef, subtasks: nested },
+      { ...expectDefined(root.subtasks[0]), ref: branchRef, subtasks: nested },
       {
-        ...root.subtasks[1]!,
-        ref: { ...root.subtasks[1]!.ref, parent: rootNode, relativeLine: 4 },
+        ...expectDefined(root.subtasks[1]),
+        ref: { ...expectDefined(root.subtasks[1]).ref, parent: rootNode, relativeLine: 4 },
       },
     ],
   };
@@ -129,7 +131,9 @@ function api(execute: TaskApplicationApi['execute']): TaskApplicationApi {
 }
 
 function call<T>(panel: RightPanel, method: string, ...args: unknown[]): T {
-  const fn = (panel as unknown as Record<string, (...values: unknown[]) => T>)[method]!;
+  const fn = expectDefined(
+    (panel as unknown as Record<string, (...values: unknown[]) => T>)[method],
+  );
   return fn.call(panel, ...args);
 }
 
@@ -165,13 +169,17 @@ describe('RightPanel block editing', () => {
     activeDocument.body.append(container);
     panel.mount(container);
     try {
-      container.querySelector<HTMLElement>('.abyss-right-title-view')!.click();
+      expectDefined(container.querySelector<HTMLElement>('.abyss-right-title-view')).click();
       await flushMicrotasks();
-      const title = container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')!;
+      const title = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+      );
       title.value = 'unsaved title';
       title.focus();
       title.setSelectionRange(2, 7);
-      const comment = container.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+      const comment = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
       comment.value = 'already present';
       comment.setSelectionRange(3, 10);
 
@@ -180,9 +188,12 @@ describe('RightPanel block editing', () => {
       );
       await flushMicrotasks(20);
 
-      const restoredTitle =
-        container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')!;
-      const restoredComment = container.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+      const restoredTitle = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+      );
+      const restoredComment = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
       expect(restoredTitle.value).toBe('unsaved title');
       expect(restoredTitle.selectionStart).toBe(2);
       expect(restoredTitle.selectionEnd).toBe(7);
@@ -206,10 +217,14 @@ describe('RightPanel block editing', () => {
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
-    container.querySelector<HTMLElement>('.abyss-right-title-view')!.click();
+    expectDefined(container.querySelector<HTMLElement>('.abyss-right-title-view')).click();
     await flushMicrotasks();
-    const title = container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')!;
-    const comment = container.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+    const title = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+    );
+    const comment = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+    );
     comment.focus();
     title.value = 'local title draft';
     comment.value = 'local comment draft';
@@ -244,10 +259,14 @@ describe('RightPanel block editing', () => {
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
-    container.querySelector<HTMLElement>('.abyss-right-title-view')!.click();
+    expectDefined(container.querySelector<HTMLElement>('.abyss-right-title-view')).click();
     await flushMicrotasks();
-    const title = container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')!;
-    const comment = container.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+    const title = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+    );
+    const comment = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+    );
     title.value = 'dirty title';
     comment.focus();
 
@@ -283,10 +302,14 @@ describe('RightPanel block editing', () => {
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
-    const comment = container.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+    const comment = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+    );
     comment.value = 'local comment draft';
-    container.querySelector<HTMLElement>('.abyss-repeat-chip')!.click();
-    const interval = container.querySelector<HTMLInputElement>('.abyss-recurrence-interval')!;
+    expectDefined(container.querySelector<HTMLElement>('.abyss-repeat-chip')).click();
+    const interval = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-recurrence-interval'),
+    );
     interval.value = '7';
     interval.dispatchEvent(new Event('input', { bubbles: true }));
     interval.focus();
@@ -336,9 +359,11 @@ describe('RightPanel block editing', () => {
       const container = freshContainer();
       activeDocument.body.append(container);
       panel.mount(container);
-      container.querySelector<HTMLElement>(entry.open)!.click();
+      expectDefined(container.querySelector<HTMLElement>(entry.open)).click();
       await flushMicrotasks();
-      const edit = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(entry.edit)!;
+      const edit = expectDefined(
+        container.querySelector<HTMLInputElement | HTMLTextAreaElement>(entry.edit),
+      );
       edit.value = 'local unsaved';
       edit.focus();
       edit.setSelectionRange(3, 8);
@@ -352,7 +377,9 @@ describe('RightPanel block editing', () => {
       state.set('taskStack', [current]);
       panel.restoreDraftState(draft, current);
 
-      const restored = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(entry.edit)!;
+      const restored = expectDefined(
+        container.querySelector<HTMLInputElement | HTMLTextAreaElement>(entry.edit),
+      );
       expect(restored).not.toBeNull();
       expect(restored.value).toBe('local unsaved');
       expect(restored.selectionStart).toBe(3);
@@ -370,7 +397,9 @@ describe('RightPanel block editing', () => {
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
-    const edit = container.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+    const edit = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+    );
     edit.value = 'local unsaved';
     edit.focus();
     edit.setSelectionRange(3, 8);
@@ -380,7 +409,9 @@ describe('RightPanel block editing', () => {
     state.set('taskStack', [current]);
     panel.restoreDraftState(draft, current);
 
-    const restored = container.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+    const restored = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+    );
     expect(restored.value).toBe('local unsaved');
     expect(restored.selectionStart).toBe(3);
     expect(restored.selectionEnd).toBe(8);
@@ -396,8 +427,10 @@ describe('RightPanel block editing', () => {
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
-    container.querySelector<HTMLElement>('.abyss-comment-text')!.click();
-    const edit = container.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input')!;
+    expectDefined(container.querySelector<HTMLElement>('.abyss-comment-text')).click();
+    const edit = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
+    );
     edit.value = 'local unsaved';
     edit.focus();
 
@@ -406,8 +439,10 @@ describe('RightPanel block editing', () => {
     state.set('taskStack', [current]);
     panel.restoreDraftState(draft, current);
 
-    const detached = container.querySelector<HTMLElement>('.abyss-detached-draft')!;
-    const copy = container.querySelector<HTMLButtonElement>('.abyss-detached-draft-copy')!;
+    const detached = expectDefined(container.querySelector<HTMLElement>('.abyss-detached-draft'));
+    const copy = expectDefined(
+      container.querySelector<HTMLButtonElement>('.abyss-detached-draft-copy'),
+    );
     expect(detached.textContent).toContain('local unsaved');
     expect(detached.getAttribute('aria-label')).toContain('root');
     expect(detached.getAttribute('aria-label')).toContain('existing comment');
@@ -436,12 +471,14 @@ describe('RightPanel block editing', () => {
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
-    const input = container.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+    const input = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+    );
     input.value = 'first value';
-    const first = panel.captureDraftState()!;
+    const first = expectDefined(panel.captureDraftState());
     panel.detachDraftState(first);
     input.value = 'newest value';
-    const newest = panel.captureDraftState()!;
+    const newest = expectDefined(panel.captureDraftState());
     panel.detachDraftState(newest);
 
     const detached = container.querySelectorAll<HTMLElement>('.abyss-detached-draft');
@@ -460,8 +497,10 @@ describe('RightPanel block editing', () => {
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
-    container.querySelector<HTMLElement>('.abyss-comment-text')!.click();
-    const edit = container.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input')!;
+    expectDefined(container.querySelector<HTMLElement>('.abyss-comment-text')).click();
+    const edit = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
+    );
     edit.value = 'persistent detached draft';
 
     const draft = panel.captureDraftState();
@@ -488,8 +527,10 @@ describe('RightPanel block editing', () => {
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
-    container.querySelector<HTMLElement>('.abyss-comment-text')!.click();
-    const existing = container.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input')!;
+    expectDefined(container.querySelector<HTMLElement>('.abyss-comment-text')).click();
+    const existing = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
+    );
     existing.value = 'existing comment draft';
     const existingBundle = panel.captureDraftState();
     const withoutComment = { ...snapshot('current'), comments: [] };
@@ -497,7 +538,9 @@ describe('RightPanel block editing', () => {
     panel.restoreDraftState(existingBundle, withoutComment);
     panel.detachDraftState(existingBundle);
 
-    const newComment = container.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+    const newComment = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+    );
     newComment.value = 'new comment draft';
     const newBundle = panel.captureDraftState();
     panel.detachDraftState(newBundle);
@@ -508,11 +551,17 @@ describe('RightPanel block editing', () => {
     expect(entries[0]?.textContent).toContain('existing comment draft');
     expect(entries[1]?.textContent).toContain('new comment draft');
 
-    Object.defineProperty(container.ownerDocument.defaultView!.navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
-    });
-    const copy = entries[1]!.querySelector<HTMLButtonElement>('.abyss-detached-draft-copy')!;
+    Object.defineProperty(
+      expectDefined(container.ownerDocument.defaultView).navigator,
+      'clipboard',
+      {
+        configurable: true,
+        value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+      },
+    );
+    const copy = expectDefined(
+      expectDefined(entries[1]).querySelector<HTMLButtonElement>('.abyss-detached-draft-copy'),
+    );
     copy.click();
     await flushMicrotasks();
     expect(container.querySelectorAll('.abyss-detached-draft')).toHaveLength(2);
@@ -521,7 +570,9 @@ describe('RightPanel block editing', () => {
     );
     expect(activeDocument.activeElement).toBe(copy);
 
-    entries[0]!.querySelector<HTMLButtonElement>('.abyss-detached-draft-discard')!.click();
+    expectDefined(
+      expectDefined(entries[0]).querySelector<HTMLButtonElement>('.abyss-detached-draft-discard'),
+    ).click();
     const remaining = [...container.querySelectorAll<HTMLElement>('.abyss-detached-draft')];
     expect(remaining).toHaveLength(1);
     expect(remaining[0]?.textContent).toContain('new comment draft');
@@ -535,12 +586,14 @@ describe('RightPanel block editing', () => {
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
-    container.querySelector<HTMLElement>('.abyss-comment-text')!.click();
-    const edit = container.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input')!;
+    expectDefined(container.querySelector<HTMLElement>('.abyss-comment-text')).click();
+    const edit = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
+    );
     edit.value = 'local duplicate-sensitive draft';
 
     const draft = panel.captureDraftState();
-    const original = initial.comments[0]!;
+    const original = expectDefined(initial.comments[0]);
     const current = {
       ...snapshot('current'),
       comments: [original, { ...original, ref: { ...original.ref, relativeLine: 4 } }],
@@ -563,9 +616,13 @@ describe('RightPanel block editing', () => {
     activeDocument.body.append(container);
     panel.mount(container);
     try {
-      container.querySelector<HTMLElement>('.abyss-repeat-chip')!.click();
-      container.querySelector<HTMLButtonElement>('[data-recurrence-preset="daily"]')!.click();
-      const interval = container.querySelector<HTMLInputElement>('.abyss-recurrence-interval')!;
+      expectDefined(container.querySelector<HTMLElement>('.abyss-repeat-chip')).click();
+      expectDefined(
+        container.querySelector<HTMLButtonElement>('[data-recurrence-preset="daily"]'),
+      ).click();
+      const interval = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-recurrence-interval'),
+      );
       interval.value = '12345';
       interval.dispatchEvent(new Event('input', { bubbles: true }));
       interval.focus();
@@ -579,7 +636,9 @@ describe('RightPanel block editing', () => {
         activeDocument.defaultView?.setTimeout(resolve, 0);
       });
 
-      const restored = container.querySelector<HTMLInputElement>('.abyss-recurrence-interval')!;
+      const restored = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-recurrence-interval'),
+      );
       expect(restored.value).toBe('12345');
       expect(restored.selectionStart).toBe(2);
       expect(restored.selectionEnd).toBe(5);
@@ -597,7 +656,7 @@ describe('RightPanel block editing', () => {
       .fn<TaskApplicationApi['execute']>()
       .mockImplementation(() => new Promise<TaskCommandResult>((done) => (resolve = done)));
     const { panel, state, app } = await panelWith(initial, execute);
-    const root = state.get('taskStack')[0]!;
+    const root = expectDefined(state.get('taskStack')[0]);
     const process = vi.spyOn(app.vault, 'process');
 
     const pending = call<Promise<void>>(panel, 'deleteTask', root);
@@ -624,8 +683,8 @@ describe('RightPanel block editing', () => {
       outcome: { type: 'task', task: fresh },
     });
     const { panel, state } = await panelWith(initial, execute);
-    const root = state.get('taskStack')[0]!;
-    const comment = root.comments![0]!;
+    const root = expectDefined(state.get('taskStack')[0]);
+    const comment = expectDefined(root.comments[0]);
 
     await call<Promise<boolean>>(panel, 'updateDescription', root, 'new description');
     expect(execute).toHaveBeenLastCalledWith({
@@ -639,8 +698,8 @@ describe('RightPanel block editing', () => {
     });
 
     execute.mockClear();
-    const current = state.get('taskStack')[0]!;
-    const currentComment = current.comments![0]!;
+    const current = expectDefined(state.get('taskStack')[0]);
+    const currentComment = expectDefined(current.comments[0]);
     const input = freshContainer().createEl('textarea');
     input.value = 'draft';
     await call<Promise<boolean>>(panel, 'addComment', current, 'added', freshContainer(), input);
@@ -653,14 +712,14 @@ describe('RightPanel block editing', () => {
     await call<Promise<boolean>>(panel, 'updateComment', current, currentComment, 'updated');
     expect(execute).toHaveBeenLastCalledWith({
       type: 'update-comment',
-      comment: fresh.comments[0]!.ref as CommentRef,
+      comment: expectDefined(fresh.comments[0]).ref,
       text: 'updated',
     });
 
     await call<Promise<boolean>>(panel, 'deleteComment', root, comment);
     expect(execute).toHaveBeenLastCalledWith({
       type: 'delete-comment',
-      comment: initial.comments[0]!.ref as CommentRef,
+      comment: expectDefined(initial.comments[0]).ref,
     });
   });
 
@@ -678,7 +737,7 @@ describe('RightPanel block editing', () => {
     await call<Promise<boolean>>(
       panel,
       'addComment',
-      state.get('taskStack')[0]!,
+      expectDefined(state.get('taskStack')[0]),
       'draft',
       list,
       input,
@@ -692,14 +751,14 @@ describe('RightPanel block editing', () => {
   it.each([
     {
       label: 'conflict',
-      result: { type: 'conflict', current: snapshot('external') } as TaskCommandResult,
+      result: { type: 'conflict', current: snapshot('external') },
     },
     {
       label: 'not-found',
       result: {
         type: 'not-found',
         target: { type: 'task', ref: snapshot('old').ref },
-      } as TaskCommandResult,
+      },
     },
     {
       label: 'ambiguous',
@@ -711,14 +770,14 @@ describe('RightPanel block editing', () => {
             target: { type: 'task', ref: snapshot('candidate').ref },
           },
         ],
-      } as TaskCommandResult,
+      },
     },
     {
       label: 'invalid',
       result: {
         type: 'invalid',
         issues: [{ code: 'invalid-target', field: 'subtask' }],
-      } as TaskCommandResult,
+      },
     },
     {
       label: 'io-error',
@@ -726,16 +785,20 @@ describe('RightPanel block editing', () => {
         type: 'io-error',
         cause: 'process-error',
         contentState: 'unknown',
-      } as TaskCommandResult,
+      },
     },
   ])('keeps the add-subtask editor and exact draft open on $label', async ({ result }) => {
     const initial = snapshot('old');
-    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue(result);
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockResolvedValue(result as TaskCommandResult);
     const { panel } = await panelWith(initial, execute);
     const container = freshContainer();
     panel.mount(container);
-    container.querySelector<HTMLElement>('.abyss-subtask-add-row')!.click();
-    const input = container.querySelector<HTMLInputElement>('.abyss-subtask-new-input')!;
+    expectDefined(container.querySelector<HTMLElement>('.abyss-subtask-add-row')).click();
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+    );
     input.value = 'keep this draft';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
     await flushMicrotasks(20);
@@ -762,8 +825,10 @@ describe('RightPanel block editing', () => {
     const { panel } = await panelWith(initial, execute);
     const container = freshContainer();
     panel.mount(container);
-    container.querySelector<HTMLElement>('.abyss-right-desc-view')!.click();
-    const textarea = container.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit')!;
+    expectDefined(container.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+    const textarea = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+    );
     textarea.value = 'attempted change';
     textarea.dispatchEvent(new FocusEvent('blur'));
     await flushMicrotasks(20);
@@ -788,15 +853,17 @@ describe('RightPanel block editing', () => {
     panel.mount(container);
     vi.useFakeTimers();
     try {
-      container.querySelector<HTMLElement>('.abyss-comment-text')!.click();
-      const textarea = container.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input')!;
+      expectDefined(container.querySelector<HTMLElement>('.abyss-comment-text')).click();
+      const textarea = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
+      );
       textarea.value = 'attempted comment';
       textarea.dispatchEvent(new FocusEvent('blur'));
       await vi.advanceTimersByTimeAsync(151);
 
       expect(execute).toHaveBeenCalledWith({
         type: 'update-comment',
-        comment: initial.comments[0]!.ref,
+        comment: expectDefined(initial.comments[0]).ref,
         text: 'attempted comment',
       });
       expect(container.querySelector('.abyss-comment-edit-input')).toBe(textarea);
@@ -821,7 +888,7 @@ describe('RightPanel block editing', () => {
     const pending = call<Promise<boolean>>(
       panel,
       'updateDescription',
-      state.get('taskStack')[0]!,
+      expectDefined(state.get('taskStack')[0]),
       'new description',
     );
     state.set('taskStack', [other]);
@@ -850,7 +917,7 @@ describe('RightPanel block editing', () => {
         outcome: { type: 'task', task: afterReorder },
       });
     const { panel, state } = await panelWith(initial, execute);
-    const root = state.get('taskStack')[0]!;
+    const root = expectDefined(state.get('taskStack')[0]);
 
     await call<Promise<void>>(panel, 'addSubTask', root, 'new child');
     expect(execute).toHaveBeenLastCalledWith({
@@ -859,22 +926,22 @@ describe('RightPanel block editing', () => {
       text: 'new child',
     });
 
-    const current = state.get('taskStack')[0]!;
+    const current = expectDefined(state.get('taskStack')[0]);
     await call<Promise<void>>(
       panel,
       'reorderSubTask',
       current,
-      current.subtasks![0]!,
-      current.subtasks![1]!,
+      expectDefined(current.subtasks[0]),
+      expectDefined(current.subtasks[1]),
       'after',
     );
     expect(execute).toHaveBeenLastCalledWith({
       type: 'reorder-subtask',
-      subtask: afterAdd.subtasks[0]!.ref,
-      target: afterAdd.subtasks[1]!.ref,
+      subtask: expectDefined(afterAdd.subtasks[0]).ref,
+      target: expectDefined(afterAdd.subtasks[1]).ref,
       placement: 'after',
     });
-    expect(state.get('taskStack')[0]!.subtasks.map((child) => child.title)).toEqual([
+    expect(expectDefined(state.get('taskStack')[0]).subtasks.map((child) => child.title)).toEqual([
       'second',
       'first',
       'new child',
@@ -891,19 +958,21 @@ describe('RightPanel block editing', () => {
     });
     const { panel, state } = await panelWith(initial, execute);
     const root = initial;
-    state.set('taskStack', [root, root.subtasks![0]!]);
+    state.set('taskStack', [root, expectDefined(root.subtasks[0])]);
     const container = freshContainer();
     panel.mount(container);
 
-    container.querySelector<HTMLButtonElement>('[aria-label="More actions"]')!.click();
-    const deleteItem = container.querySelector<HTMLElement>('.abyss-context-danger')!;
+    expectDefined(
+      container.querySelector<HTMLButtonElement>('[aria-label="More actions"]'),
+    ).click();
+    const deleteItem = expectDefined(container.querySelector<HTMLElement>('.abyss-context-danger'));
     expect(deleteItem.textContent).toBe('Delete sub-task');
     deleteItem.click();
     await flushMicrotasks(20);
 
     expect(execute).toHaveBeenCalledWith({
       type: 'delete-subtask',
-      subtask: initial.subtasks[0]!.ref,
+      subtask: expectDefined(initial.subtasks[0]).ref,
     });
     expect(state.get('taskStack')).toHaveLength(1);
     expect(state.get('taskStack')[0]).toMatchObject({ ref: afterDelete.ref, title: 'root' });
@@ -921,13 +990,13 @@ describe('RightPanel block editing', () => {
         }),
     );
     const { panel, state } = await panelWith(initial, execute);
-    const root = state.get('taskStack')[0]!;
+    const root = expectDefined(state.get('taskStack')[0]);
     const pending = call<Promise<void>>(
       panel,
       'reorderSubTask',
       root,
-      root.subtasks![0]!,
-      root.subtasks![1]!,
+      expectDefined(root.subtasks[0]),
+      expectDefined(root.subtasks[1]),
       'after',
     );
     state.set('taskStack', [other]);
@@ -951,16 +1020,16 @@ describe('RightPanel block editing', () => {
         }),
     );
     const { panel, state } = await panelWith(initial, execute);
-    const root = state.get('taskStack')[0]!;
+    const root = expectDefined(state.get('taskStack')[0]);
     const pending = call<Promise<void>>(
       panel,
       'reorderSubTask',
       root,
-      root.subtasks![0]!,
-      root.subtasks![1]!,
+      expectDefined(root.subtasks[0]),
+      expectDefined(root.subtasks[1]),
       'after',
     );
-    const selectedChild = root.subtasks![1]!;
+    const selectedChild = expectDefined(root.subtasks[1]);
     state.set('taskStack', [root, selectedChild]);
     resolve({
       type: 'ok',
@@ -985,8 +1054,8 @@ describe('RightPanel block editing', () => {
       );
       const { panel, state } = await panelWith(initial, execute);
       const root = initial;
-      const branch = root.subtasks![0]!;
-      const sibling = root.subtasks![1]!;
+      const branch = expectDefined(root.subtasks[0]);
+      const sibling = expectDefined(root.subtasks[1]);
       state.set('taskStack', [root, branch]);
 
       let pending: Promise<unknown>;
@@ -999,8 +1068,8 @@ describe('RightPanel block editing', () => {
           panel,
           'reorderSubTask',
           branch,
-          branch.subtasks![0]!,
-          branch.subtasks![1]!,
+          expectDefined(branch.subtasks[0]),
+          expectDefined(branch.subtasks[1]),
           'after',
         );
       }

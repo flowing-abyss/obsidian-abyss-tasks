@@ -388,22 +388,14 @@ describe('parseSubItems', () => {
       expect(r.subtasks[0]).toMatchObject({ time: '14:30' });
     });
 
-    it('parses priority A (🔺) from subtask', () => {
-      const lines = ['- [ ] Parent', '  - [ ] Urgent 🔺'];
-      const r = parseSubItems(lines, 0, FILE);
-      expect(r.subtasks[0]).toMatchObject({ priority: 'A' });
-    });
-
-    it('parses priority B (⏫) from subtask', () => {
-      const lines = ['- [ ] Parent', '  - [ ] Important ⏫'];
-      const r = parseSubItems(lines, 0, FILE);
-      expect(r.subtasks[0]).toMatchObject({ priority: 'B' });
-    });
-
-    it('defaults priority to D when no priority emoji', () => {
-      const lines = ['- [ ] Parent', '  - [ ] Normal task'];
-      const r = parseSubItems(lines, 0, FILE);
-      expect(r.subtasks[0]).toMatchObject({ priority: 'D' });
+    it.each([
+      ['Urgent 🔺', 'A'],
+      ['Important ⏫', 'B'],
+      ['Normal task', 'D'],
+    ] as const)('parses %s with priority %s', (text, priority) => {
+      const lines = ['- [ ] Parent', `  - [ ] ${text}`];
+      const result = parseSubItems(lines, 0, FILE);
+      expect(result.subtasks[0]).toMatchObject({ priority });
     });
 
     it('parses recurrence from subtask', () => {

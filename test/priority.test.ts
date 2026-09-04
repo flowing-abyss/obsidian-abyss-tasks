@@ -26,7 +26,7 @@ describe('priority line edits', () => {
     expect(result.content).toContain('🆔 keep');
     expect(result.content).toContain('⛔ dep');
     expect(result.content).toContain('^block');
-    if (marker) expect(result.content).toContain(marker);
+    if (marker.length > 0) expect(result.content).toContain(marker);
   });
 
   it('rejects duplicate priority spans without changing content', () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
+import { expectDefined } from './../helpers';
 
 describe('TaskBlockEditor', () => {
   it('rejects multiline roots and malformed aggregates without changing a destination', () => {
@@ -11,6 +12,42 @@ describe('TaskBlockEditor', () => {
     expect(
       editor.insertRootBlock('', '- [ ] root\nplain sibling', { type: 'append' }),
     ).toBeUndefined();
+    expect(editor.insertRoot('', '- [ ] root', { type: 'append' })?.content).toBe('- [ ] root');
+  });
+
+  it('rejects empty recurrence subtree replacements without touching the block', () => {
+    const editor = new TaskBlockEditor();
+    const source = '- [ ] root\n  - [ ] child';
+    const block = expectDefined(editor.rootBlocks(source)[0]);
+
+    expect(editor.replaceOwnedTaskSubtree(source, block, 0, [''])).toBeUndefined();
+  });
+
+  it('rejects child evidence whose captured range extends beyond current content', () => {
+    const editor = new TaskBlockEditor();
+    const source = '- [ ] root\n  - [ ] child';
+    const block = expectDefined(editor.rootBlocks(source)[0]);
+
+    expect(
+      editor.edit(
+        source,
+        block,
+        { relativeLine: 0, lineCount: 2, childRanges: [{ from: 1, to: 2 }] },
+        {
+          type: 'delete-subtask',
+          relativeLine: 1,
+          originalBlock: '  - [ ] child\n    - [ ] missing descendant',
+        },
+      ),
+    ).toEqual({ type: 'conflict' });
+    expect(
+      editor.edit(
+        source,
+        block,
+        { relativeLine: 0, lineCount: 2, childRanges: [{ from: 0, to: 0 }] },
+        { type: 'delete-subtask', relativeLine: 0, originalBlock: '- [ ] root' },
+      ),
+    ).toEqual({ type: 'conflict' });
   });
 
   it('rejects deletion when the referenced root range is outside current content', () => {
@@ -36,7 +73,7 @@ describe('TaskBlockEditor', () => {
     const editor = new TaskBlockEditor();
     const source = 'note\n- [ ] final';
 
-    expect(editor.deleteRoot(source, editor.rootBlocks(source)[0]!)).toBe('note');
+    expect(editor.deleteRoot(source, expectDefined(editor.rootBlocks(source)[0]))).toBe('note');
   });
 
   it.each([
@@ -75,9 +112,22 @@ describe('TaskBlockEditor', () => {
       { type: 'section', heading: '## Tasks' } as const,
       '## Tasks\n- [ ] parent\n\t- [ ] child\nexisting',
     ],
-  ])('inserts a root block through %s', (_case, source, block, insertion, expected) => {
-    expect(new TaskBlockEditor().insertRootBlock(source, block, insertion)?.content).toBe(expected);
-  });
+  ])(
+    'inserts a root block through %s',
+    (
+      ...[_case, source, block, insertion, expected]: readonly [
+        string,
+        string,
+        string,
+        Parameters<TaskBlockEditor['insertRootBlock']>[2],
+        string,
+      ]
+    ) => {
+      expect(new TaskBlockEditor().insertRootBlock(source, block, insertion)?.content).toBe(
+        expected,
+      );
+    },
+  );
 
   it.each([
     [
@@ -109,7 +159,7 @@ describe('TaskBlockEditor', () => {
     const block = editor.rootBlocks(source)[rootIndex];
 
     expect(block).toBeDefined();
-    expect(editor.deleteRoot(source, block!)).toBe(expected);
+    expect(editor.deleteRoot(source, expectDefined(block))).toBe(expected);
   });
 
   it('keeps the complete root aggregate and CRLF when replacing its task line', () => {
@@ -121,7 +171,7 @@ describe('TaskBlockEditor', () => {
       '- [ ] root\r\n  - description\r\n  - [ ] child',
       '- [ ] next',
     ]);
-    expect(editor.replaceLine(source, blocks[0]!, 0, '- [ ] changed').content).toBe(
+    expect(editor.replaceLine(source, expectDefined(blocks[0]), 0, '- [ ] changed').content).toBe(
       '- [ ] changed\r\n  - description\r\n  - [ ] child\r\n- [ ] next\r\n',
     );
   });
@@ -139,7 +189,7 @@ describe('TaskBlockEditor', () => {
   it('applies structural edits synchronously while preserving the file newline boundary', () => {
     const editor = new TaskBlockEditor();
     const source = '- [ ] root\n  - > description';
-    const block = editor.rootBlocks(source)[0]!;
+    const block = expectDefined(editor.rootBlocks(source)[0]);
     const target = {
       relativeLine: 0,
       lineCount: 2,
@@ -155,8 +205,8 @@ describe('TaskBlockEditor', () => {
 
     const changed = cleared.type === 'changed' ? cleared : undefined;
     const added = editor.edit(
-      changed!.content,
-      changed!.block,
+      expectDefined(changed).content,
+      expectDefined(changed).block,
       { relativeLine: 0, lineCount: 1, childRanges: [] },
       {
         type: 'add-comment',
@@ -178,7 +228,7 @@ describe('TaskBlockEditor', () => {
   ])('preserves the exact %s prefix while updating comment text', (stamp) => {
     const editor = new TaskBlockEditor();
     const source = `- [ ] root\n  - ${stamp}: old`;
-    const block = editor.rootBlocks(source)[0]!;
+    const block = expectDefined(editor.rootBlocks(source)[0]);
     const result = editor.edit(
       source,
       block,
@@ -197,7 +247,7 @@ describe('TaskBlockEditor', () => {
   it('does not consume an invalid Atom-looking prefix when editing an undated comment', () => {
     const editor = new TaskBlockEditor();
     const source = '- [ ] root\n  - 2026-07-13T25:20:30Z: old';
-    const block = editor.rootBlocks(source)[0]!;
+    const block = expectDefined(editor.rootBlocks(source)[0]);
     const result = editor.edit(
       source,
       block,
@@ -216,7 +266,7 @@ describe('TaskBlockEditor', () => {
   it('refuses a comment edit when relative-line and original-Markdown evidence disagree', () => {
     const editor = new TaskBlockEditor();
     const source = '- [ ] root\r\n  - 2026-07-13: duplicate\r\n  - 2026-07-13: duplicate\r\n';
-    const block = editor.rootBlocks(source)[0]!;
+    const block = expectDefined(editor.rootBlocks(source)[0]);
     const result = editor.edit(
       source,
       block,
@@ -235,7 +285,7 @@ describe('TaskBlockEditor', () => {
   it('adds a quoted child without changing CRLF or the missing final newline', () => {
     const editor = new TaskBlockEditor();
     const source = '>\t- [ ] root\r\n>\t  - [ ] existing';
-    const block = editor.rootBlocks(source)[0]!;
+    const block = expectDefined(editor.rootBlocks(source)[0]);
     const result = editor.edit(
       source,
       block,
@@ -249,11 +299,26 @@ describe('TaskBlockEditor', () => {
     });
   });
 
+  it('rejects a blank subtask before changing the source block', () => {
+    const editor = new TaskBlockEditor();
+    const source = '- [ ] root\n';
+    const block = expectDefined(editor.rootBlocks(source)[0]);
+
+    expect(
+      editor.edit(
+        source,
+        block,
+        { relativeLine: 0, lineCount: 1, childRanges: [] },
+        { type: 'add-subtask', text: '   ' },
+      ),
+    ).toEqual({ type: 'invalid', field: 'subtask' });
+  });
+
   it('deletes the exact duplicate child and all of its descendants', () => {
     const editor = new TaskBlockEditor();
     const source =
       '- [ ] root\n' + '  - [ ] duplicate\n' + '    - [ ] descendant\n' + '  - [ ] duplicate\n';
-    const block = editor.rootBlocks(source)[0]!;
+    const block = expectDefined(editor.rootBlocks(source)[0]);
     const result = editor.edit(
       source,
       block,
@@ -282,7 +347,7 @@ describe('TaskBlockEditor', () => {
     const editor = new TaskBlockEditor();
     const source =
       '- [ ] root\r\n' + '\t- [ ] first\r\n' + '\t  - [ ] nested\r\n' + '    - [ ] second\r\n';
-    const block = editor.rootBlocks(source)[0]!;
+    const block = expectDefined(editor.rootBlocks(source)[0]);
     const result = editor.edit(
       source,
       block,
@@ -315,7 +380,7 @@ describe('TaskBlockEditor', () => {
   it('refuses structural edits whose exact child evidence is stale', () => {
     const editor = new TaskBlockEditor();
     const source = '- [ ] root\n  - [ ] current\n';
-    const block = editor.rootBlocks(source)[0]!;
+    const block = expectDefined(editor.rootBlocks(source)[0]);
 
     expect(
       editor.edit(
@@ -339,7 +404,7 @@ describe('TaskLocator', () => {
   it('uses the line hint, recovers unique drift, and reports duplicate exact blocks as ambiguous', () => {
     const locator = new TaskLocator(() => 'same-fingerprint');
     const editor = new TaskBlockEditor();
-    const original = editor.rootBlocks('- [ ] wanted\n')[0]!;
+    const original = expectDefined(editor.rootBlocks('- [ ] wanted\n')[0]);
     const ref = { filePath: 'tasks.md', line: 0, revision: locator.revision(original.source) };
 
     expect(locator.locate(editor.rootBlocks('- [ ] wanted\n'), ref)).toMatchObject({
@@ -358,8 +423,8 @@ describe('TaskLocator', () => {
   it('never authorizes a write from a colliding fingerprint without exact source confirmation', () => {
     const locator = new TaskLocator(() => 'collision');
     const editor = new TaskBlockEditor();
-    const first = editor.rootBlocks('- [ ] first\n')[0]!;
-    const second = editor.rootBlocks('- [ ] second\n')[0]!;
+    const first = expectDefined(editor.rootBlocks('- [ ] first\n')[0]);
+    const second = expectDefined(editor.rootBlocks('- [ ] second\n')[0]);
     const ref = { filePath: 'tasks.md', line: 0, revision: locator.revision(first.source) };
 
     expect(locator.revision(first.source)).not.toBe(locator.revision(second.source));

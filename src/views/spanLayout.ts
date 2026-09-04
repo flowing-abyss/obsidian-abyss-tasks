@@ -60,9 +60,9 @@ function compareIntervals(left: RowInterval, right: RowInterval): number {
 }
 
 function firstFreeLane(occupied: readonly RowInterval[][], interval: RowInterval): number {
-  for (let lane = 0; lane < occupied.length; lane++) {
+  for (const [lane, intervals] of occupied.entries()) {
     if (
-      !occupied[lane]!.some(
+      !intervals.some(
         (other) => other.endIndex >= interval.startIndex && other.startIndex <= interval.endIndex,
       )
     ) {
@@ -72,13 +72,117 @@ function firstFreeLane(occupied: readonly RowInterval[][], interval: RowInterval
   return occupied.length;
 }
 
+function intervalForRow(
+  task: TaskSnapshot,
+  rowDates: readonly LocalDate[],
+  rowStart: LocalDate,
+  rowEnd: LocalDate,
+): RowInterval | undefined {
+  if (!isSpan(task) || task.planning.due < rowStart || task.planning.start > rowEnd) {
+    return undefined;
+  }
+
+  const visibleStart = task.planning.start < rowStart ? rowStart : task.planning.start;
+  const visibleEnd = task.planning.due > rowEnd ? rowEnd : task.planning.due;
+  const startIndex = rowDates.indexOf(visibleStart);
+  const endIndex = rowDates.indexOf(visibleEnd);
+  if (startIndex < 0 || endIndex < startIndex) return undefined;
+
+  return {
+    task,
+    identity: taskLayoutIdentity(task),
+    actualStart: task.planning.start,
+    actualDue: task.planning.due,
+    visibleStart,
+    visibleEnd,
+    startIndex,
+    endIndex,
+    continuing: task.planning.start < rowStart,
+  };
+}
+
+function intervalsForRow(
+  tasks: readonly TaskSnapshot[],
+  rowDates: readonly LocalDate[],
+  rowStart: LocalDate,
+  rowEnd: LocalDate,
+): RowInterval[] {
+  return tasks
+    .map((task) => intervalForRow(task, rowDates, rowStart, rowEnd))
+    .filter((interval): interval is RowInterval => interval !== undefined)
+    .sort(compareIntervals);
+}
+
+function assignLanes(
+  intervals: readonly RowInterval[],
+  previousLanes: ReadonlyMap<string, number>,
+): { occupied: RowInterval[][]; laneByIdentity: Map<string, number> } {
+  const occupied: RowInterval[][] = [];
+  const laneByIdentity = new Map<string, number>();
+  for (const interval of intervals) {
+    const preferred = interval.continuing ? previousLanes.get(interval.identity) : undefined;
+    const lane =
+      preferred !== undefined && laneIsFree(occupied, preferred, interval)
+        ? preferred
+        : firstFreeLane(occupied, interval);
+    while (occupied.length <= lane) occupied.push([]);
+    const laneIntervals = occupied[lane];
+    if (laneIntervals === undefined) throw new Error('Span lane allocation failed');
+    laneIntervals.push(interval);
+    laneByIdentity.set(interval.identity, lane);
+  }
+  return { occupied, laneByIdentity };
+}
+
+function segmentsForRow(
+  intervals: readonly RowInterval[],
+  rowDates: readonly LocalDate[],
+  laneByIdentity: ReadonlyMap<string, number>,
+): VisibleSpanSegment[] {
+  return intervals.flatMap<VisibleSpanSegment>((interval) => {
+    const lane = laneByIdentity.get(interval.identity);
+    if (lane === undefined) return [];
+    return rowDates.slice(interval.startIndex, interval.endIndex + 1).map((date) => {
+      const terminal = date === interval.actualDue;
+      return {
+        task: interval.task,
+        identity: interval.identity,
+        kind: terminal ? 'terminal' : 'ghost',
+        date,
+        lane,
+        ownsStartBoundary: date === interval.actualStart,
+        ownsDueBoundary: terminal,
+        continuesBefore: interval.actualStart < date,
+        continuesAfter: interval.actualDue > date,
+      };
+    });
+  });
+}
+
+function rememberContinuingLanes(
+  previousLanes: Map<string, number>,
+  intervals: readonly RowInterval[],
+  rowEnd: LocalDate,
+  laneByIdentity: ReadonlyMap<string, number>,
+): void {
+  previousLanes.clear();
+  for (const interval of intervals) {
+    const lane = laneByIdentity.get(interval.identity);
+    if (interval.actualDue > rowEnd && lane !== undefined) {
+      previousLanes.set(interval.identity, lane);
+    }
+  }
+}
+
 function laneIsFree(
   occupied: readonly RowInterval[][],
   lane: number,
   interval: RowInterval,
 ): boolean {
-  return !occupied[lane]?.some(
-    (other) => other.endIndex >= interval.startIndex && other.startIndex <= interval.endIndex,
+  return !(
+    occupied[lane]?.some(
+      (other) => other.endIndex >= interval.startIndex && other.startIndex <= interval.endIndex,
+    ) ?? false
   );
 }
 
@@ -98,70 +202,14 @@ export function layoutVisibleSpans(
     const rowDates = visibleDates.slice(rowOffset, rowOffset + 7);
     const rowStart = rowDates[0];
     const rowEnd = rowDates[rowDates.length - 1];
-    if (!rowStart || !rowEnd) continue;
+    if (rowStart == null || rowEnd == null) continue;
 
-    const intervals = tasks
-      .flatMap<RowInterval>((task) => {
-        if (!isSpan(task) || task.planning.due < rowStart || task.planning.start > rowEnd)
-          return [];
-        const visibleStart = task.planning.start < rowStart ? rowStart : task.planning.start;
-        const visibleEnd = task.planning.due > rowEnd ? rowEnd : task.planning.due;
-        const startIndex = rowDates.indexOf(visibleStart);
-        const endIndex = rowDates.indexOf(visibleEnd);
-        if (startIndex < 0 || endIndex < startIndex) return [];
-        return [
-          {
-            task,
-            identity: taskLayoutIdentity(task),
-            actualStart: task.planning.start,
-            actualDue: task.planning.due,
-            visibleStart,
-            visibleEnd,
-            startIndex,
-            endIndex,
-            continuing: task.planning.start < rowStart,
-          },
-        ];
-      })
-      .sort(compareIntervals);
-
-    const occupied: RowInterval[][] = [];
-    const laneByIdentity = new Map<string, number>();
-    for (const interval of intervals) {
-      const preferred = interval.continuing ? previousLanes.get(interval.identity) : undefined;
-      const lane =
-        preferred !== undefined && laneIsFree(occupied, preferred, interval)
-          ? preferred
-          : firstFreeLane(occupied, interval);
-      while (occupied.length <= lane) occupied.push([]);
-      occupied[lane]!.push(interval);
-      laneByIdentity.set(interval.identity, lane);
-    }
-
-    const segments = intervals.flatMap<VisibleSpanSegment>((interval) => {
-      const lane = laneByIdentity.get(interval.identity)!;
-      return rowDates.slice(interval.startIndex, interval.endIndex + 1).map((date) => {
-        const terminal = date === interval.actualDue;
-        return {
-          task: interval.task,
-          identity: interval.identity,
-          kind: terminal ? 'terminal' : 'ghost',
-          date,
-          lane,
-          ownsStartBoundary: date === interval.actualStart,
-          ownsDueBoundary: terminal,
-          continuesBefore: interval.actualStart < date,
-          continuesAfter: interval.actualDue > date,
-        };
-      });
-    });
+    const intervals = intervalsForRow(tasks, rowDates, rowStart, rowEnd);
+    const { occupied, laneByIdentity } = assignLanes(intervals, previousLanes);
+    const segments = segmentsForRow(intervals, rowDates, laneByIdentity);
 
     rows.push({ startDate: rowStart, laneCount: occupied.length, segments });
-    previousLanes.clear();
-    for (const interval of intervals) {
-      if (interval.actualDue > rowEnd)
-        previousLanes.set(interval.identity, laneByIdentity.get(interval.identity)!);
-    }
+    rememberContinuingLanes(previousLanes, intervals, rowEnd, laneByIdentity);
   }
 
   return { rows };

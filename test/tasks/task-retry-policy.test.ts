@@ -8,8 +8,19 @@ import type {
 } from '../../src/tasks/application/TaskRepository';
 import { prepareRetry, type PreparedMutation } from '../../src/tasks/application/taskRetryPolicy';
 import { clockFrom } from '../../src/tasks/domain/clock';
+import type { TaskCommand } from '../../src/tasks/domain/commands';
+import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
-import type { TaskSnapshot } from '../../src/tasks/domain/types';
+import type {
+  DurationMinutes,
+  LocalTime,
+  SubtaskRef,
+  SubtaskSnapshot,
+  TaskCommentSnapshot,
+  TaskMutationTarget,
+  TaskPlanning,
+  TaskSnapshot,
+} from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
 
 function snapshot(markdownTitle = 'Task', revision = 'old'): TaskSnapshot {
@@ -60,6 +71,71 @@ function prepared(
   };
 }
 
+function subtask(root: TaskSnapshot, overrides: Partial<SubtaskSnapshot> = {}): SubtaskSnapshot {
+  const ref: SubtaskRef = {
+    parent: { type: 'task', ref: root.ref },
+    relativeLine: 1,
+    originalBlock: '  - [ ] child',
+  };
+  return {
+    ref,
+    title: 'child',
+    markdownTitle: 'child',
+    status: 'open',
+    statusSymbol: ' ',
+    priority: 'D',
+    planning: {},
+    tags: [],
+    onCompletion: 'keep',
+    onCompletionExplicit: false,
+    subtasks: [],
+    comments: [],
+    ...overrides,
+  };
+}
+
+function comment(parent: SubtaskSnapshot | TaskSnapshot, text = 'note'): TaskCommentSnapshot {
+  return {
+    ref: {
+      parent:
+        'source' in parent
+          ? { type: 'task', ref: parent.ref }
+          : { type: 'subtask', ref: parent.ref },
+      relativeLine: 1,
+      originalMarkdown: `  - ${text}`,
+    },
+    text,
+  };
+}
+
+function preparedFor(
+  base: TaskSnapshot,
+  command: TaskEditRequest['command'],
+  retry: PreparedMutation['retry'],
+  targetBase: TaskMutationTarget = { type: 'task', ref: base.ref },
+): PreparedMutation {
+  return {
+    ...prepared(command, retry),
+    base,
+    targetBase,
+    repositoryRequest: {
+      command,
+      baseRoot: base,
+      baseTarget: targetBase,
+      reconciliation: { observed: base },
+    },
+  };
+}
+
+function retryAgainst(
+  mutation: PreparedMutation,
+  previous: TaskSnapshot,
+  current: TaskSnapshot,
+  evidence: 'authority-transition' | 'byte-identical-relocation' = 'authority-transition',
+) {
+  return prepareRetry(mutation, { type: 'rebased', previous, current, evidence });
+}
+
 describe('prepareRetry', () => {
   it('accepts a field race that already applied the requested value', () => {
     const base = snapshot();
@@ -90,11 +166,11 @@ describe('prepareRetry', () => {
         type: 'set-time-slot' as const,
         ref: snapshot().ref,
         date: localDate('2026-08-12'),
-        time: '10:00' as import('../../src/tasks/domain/types').LocalTime,
+        time: '10:00' as LocalTime,
       },
       planning: {
         due: localDate('2026-08-12'),
-        time: '10:00' as import('../../src/tasks/domain/types').LocalTime,
+        time: '10:00' as LocalTime,
       },
     },
     {
@@ -269,6 +345,526 @@ describe('prepareRetry', () => {
         evidence: 'authority-transition',
       }),
     ).toEqual({ type: 'unsafe' });
+  });
+
+  it.each([
+    {
+      name: 'append title',
+      command: (base: TaskSnapshot): TaskEditRequest['command'] => ({
+        type: 'append-title',
+        target: { type: 'task', ref: base.ref },
+        markdown: ' #next',
+      }),
+    },
+    {
+      name: 'set description',
+      command: (base: TaskSnapshot): TaskEditRequest['command'] => ({
+        type: 'set-description',
+        target: { type: 'task', ref: base.ref },
+        text: 'details',
+      }),
+    },
+    {
+      name: 'add subtask',
+      command: (base: TaskSnapshot): TaskEditRequest['command'] => ({
+        type: 'add-subtask',
+        parent: { type: 'task', ref: base.ref },
+        text: 'child',
+        today: localDate('2026-08-11'),
+        addCreatedDate: true,
+      }),
+    },
+    {
+      name: 'add comment',
+      command: (base: TaskSnapshot): TaskEditRequest['command'] => ({
+        type: 'add-comment',
+        parent: { type: 'task', ref: base.ref },
+        text: 'note',
+        stamp: atomDateTime('2026-08-11T09:32:10+00:00'),
+      }),
+    },
+  ])('rebases an exact-target $name command onto the authoritative root', ({ command }) => {
+    const base = snapshot();
+    const current = snapshot('Task', 'new');
+    const result = retryAgainst(preparedFor(base, command(base), 'exact-target'), base, current);
+
+    expect(result).toMatchObject({
+      type: 'edit',
+      request: { baseRoot: current, baseTarget: { type: 'task', ref: current.ref } },
+    });
+  });
+
+  it('rebases subtask and comment mutation targets recursively', () => {
+    const base = snapshot();
+    const child = subtask(base);
+    const childComment = comment(child);
+    const previous = { ...base, subtasks: [{ ...child, comments: [childComment] }] };
+    const currentRoot = snapshot('Task', 'new');
+    const currentChild = subtask(currentRoot, {
+      ref: { ...child.ref, parent: { type: 'task', ref: currentRoot.ref } },
+      comments: [
+        {
+          ...childComment,
+          ref: {
+            ...childComment.ref,
+            parent: {
+              type: 'subtask',
+              ref: { ...child.ref, parent: { type: 'task', ref: currentRoot.ref } },
+            },
+          },
+        },
+      ],
+    });
+    const current = { ...currentRoot, subtasks: [currentChild] };
+    const command: TaskEditRequest['command'] = {
+      type: 'update-comment',
+      comment: childComment.ref,
+      text: 'updated',
+    };
+    const targetBase: TaskMutationTarget = { type: 'comment', ref: childComment.ref };
+
+    expect(
+      retryAgainst(preparedFor(previous, command, 'exact-target', targetBase), previous, current),
+    ).toMatchObject({
+      type: 'edit',
+      request: {
+        command: {
+          type: 'update-comment',
+          comment: {
+            parent: { type: 'subtask', ref: { parent: { type: 'task', ref: current.ref } } },
+          },
+        },
+        baseTarget: {
+          type: 'comment',
+          ref: { parent: { type: 'subtask', ref: { parent: { type: 'task', ref: current.ref } } } },
+        },
+      },
+    });
+  });
+
+  it.each(['update-comment', 'delete-comment'] as const)(
+    'retries %s only while the referenced comment still exists',
+    (type) => {
+      const base = snapshot();
+      const baseComment = comment(base);
+      const previous = { ...base, comments: [baseComment] };
+      const currentRoot = snapshot('Task', 'new');
+      const currentComment = {
+        ...baseComment,
+        ref: { ...baseComment.ref, parent: { type: 'task' as const, ref: currentRoot.ref } },
+      };
+      const current = { ...currentRoot, comments: [currentComment] };
+      const command: TaskEditRequest['command'] =
+        type === 'update-comment'
+          ? { type, comment: baseComment.ref, text: 'updated' }
+          : { type, comment: baseComment.ref };
+
+      expect(
+        retryAgainst(preparedFor(previous, command, 'exact-target'), previous, current),
+      ).toMatchObject({
+        type: 'edit',
+        request: { command: { type, comment: currentComment.ref } },
+      });
+      expect(
+        retryAgainst(preparedFor(previous, command, 'exact-target'), previous, {
+          ...current,
+          comments: [],
+        }),
+      ).toEqual({ type: 'unsafe' });
+    },
+  );
+
+  it.each([
+    {
+      name: 'title',
+      target: (base: TaskSnapshot) => ({
+        type: 'title' as const,
+        target: { type: 'task' as const, ref: base.ref },
+      }),
+      changed: (current: TaskSnapshot): TaskSnapshot => ({
+        ...current,
+        markdownTitle: 'Externally changed',
+      }),
+    },
+    {
+      name: 'description',
+      target: (base: TaskSnapshot) => ({
+        type: 'description' as const,
+        target: { type: 'task' as const, ref: base.ref },
+      }),
+      changed: (current: TaskSnapshot): TaskSnapshot => ({
+        ...current,
+        description: 'Externally changed',
+      }),
+    },
+  ])('retries an edit-link $name only while its text field is unchanged', ({ target, changed }) => {
+    const base = { ...snapshot(), description: 'details' };
+    const current = { ...base, ref: snapshot('Task', 'new').ref };
+    const command: TaskEditRequest['command'] = {
+      type: 'edit-link',
+      target: target(base),
+      occurrence: 0,
+      replacement: '[[New]]',
+    };
+
+    expect(retryAgainst(preparedFor(base, command, 'exact-target'), base, current)).toMatchObject({
+      type: 'edit',
+      request: { command: { type: 'edit-link', target: target(current) } },
+    });
+    expect(
+      retryAgainst(preparedFor(base, command, 'exact-target'), base, changed(current)),
+    ).toEqual({ type: 'unsafe' });
+  });
+
+  it('retries a comment edit-link only while that exact comment exists', () => {
+    const base = snapshot();
+    const baseComment = comment(base);
+    const previous = { ...base, comments: [baseComment] };
+    const currentRoot = snapshot('Task', 'new');
+    const currentComment = {
+      ...baseComment,
+      ref: { ...baseComment.ref, parent: { type: 'task' as const, ref: currentRoot.ref } },
+    };
+    const current = { ...currentRoot, comments: [currentComment] };
+    const command: TaskEditRequest['command'] = {
+      type: 'edit-link',
+      target: { type: 'comment', ref: baseComment.ref },
+      occurrence: 0,
+      replacement: '[[New]]',
+    };
+
+    expect(
+      retryAgainst(preparedFor(previous, command, 'exact-target'), previous, current),
+    ).toMatchObject({
+      type: 'edit',
+      request: { command: { target: { type: 'comment', ref: currentComment.ref } } },
+    });
+    expect(
+      retryAgainst(preparedFor(previous, command, 'exact-target'), previous, {
+        ...current,
+        comments: [],
+      }),
+    ).toEqual({ type: 'unsafe' });
+  });
+
+  it('retries deleting an unchanged subtask but never retries reordering one', () => {
+    const base = snapshot();
+    const child = subtask(base);
+    const previous = { ...base, subtasks: [child] };
+    const currentRoot = snapshot('Task', 'new');
+    const currentChild = subtask(currentRoot, {
+      ref: { ...child.ref, parent: { type: 'task', ref: currentRoot.ref } },
+    });
+    const current = { ...currentRoot, subtasks: [currentChild] };
+    const deleteCommand: TaskEditRequest['command'] = {
+      type: 'delete-subtask',
+      subtask: child.ref,
+    };
+    const reorderCommand: TaskEditRequest['command'] = {
+      type: 'reorder-subtask',
+      subtask: child.ref,
+      target: child.ref,
+      placement: 'after',
+    };
+
+    expect(
+      retryAgainst(
+        preparedFor(previous, deleteCommand, 'exact-target', { type: 'subtask', ref: child.ref }),
+        previous,
+        current,
+      ),
+    ).toMatchObject({
+      type: 'edit',
+      request: {
+        command: { type: 'delete-subtask', subtask: currentChild.ref },
+        baseTarget: { type: 'subtask', ref: currentChild.ref },
+      },
+    });
+    expect(
+      retryAgainst(preparedFor(previous, reorderCommand, 'exact-target'), previous, current),
+    ).toEqual({ type: 'unsafe' });
+  });
+
+  it.each([
+    ['markdownTitle', { type: 'set' as const, value: 'Requested' }, { markdownTitle: 'Requested' }],
+    ['priority', { type: 'set' as const, value: 'A' }, { priority: 'A' as const }],
+    ['recurrence', { type: 'set' as const, value: 'every day' }, { recurrence: 'every day' }],
+    [
+      'onCompletion',
+      { type: 'set' as const, value: 'delete' },
+      { onCompletion: 'delete' as const },
+    ],
+    ['due', { type: 'clear' as const }, { planning: {} }],
+  ] as const)(
+    'accepts an already-applied %s patch and preserves it during rebase',
+    (field, update, currentOverride) => {
+      const base = snapshot();
+      const command = {
+        type: 'patch' as const,
+        target: { type: 'task' as const, ref: base.ref },
+        patch: { [field]: update },
+      } as TaskEditRequest['command'];
+      const current = { ...snapshot('Task', 'new'), ...currentOverride };
+
+      expect(
+        retryAgainst(preparedFor(base, command, 'field-compare'), base, current),
+      ).toMatchObject({
+        type: 'edit',
+        request: { command: { type: 'patch', patch: { [field]: update } } },
+      });
+    },
+  );
+
+  it.each([
+    {
+      name: 'reschedule on a scheduled anchor',
+      planning: { scheduled: localDate('2026-08-11') },
+      command: (ref: TaskSnapshot['ref']): TaskEditRequest['command'] => ({
+        type: 'reschedule',
+        ref,
+        date: localDate('2026-08-15'),
+      }),
+      currentPlanning: { scheduled: localDate('2026-08-15') },
+    },
+    {
+      name: 'shift a due-only task',
+      planning: { due: localDate('2026-08-11') },
+      command: (ref: TaskSnapshot['ref']): TaskEditRequest['command'] => ({
+        type: 'shift-schedule',
+        ref,
+        days: 2,
+      }),
+      currentPlanning: { due: localDate('2026-08-13') },
+    },
+    {
+      name: 'shift a task span',
+      planning: { start: localDate('2026-08-10'), due: localDate('2026-08-11') },
+      command: (ref: TaskSnapshot['ref']): TaskEditRequest['command'] => ({
+        type: 'shift-schedule',
+        ref,
+        days: 2,
+      }),
+      currentPlanning: { start: localDate('2026-08-12'), due: localDate('2026-08-13') },
+    },
+    {
+      name: 'move a timed task',
+      planning: { due: localDate('2026-08-11'), time: '09:00' as LocalTime },
+      command: (ref: TaskSnapshot['ref']): TaskEditRequest['command'] => ({
+        type: 'move-time-slot',
+        ref,
+        days: 1,
+        time: '10:00' as LocalTime,
+      }),
+      currentPlanning: { due: localDate('2026-08-12'), time: '10:00' as LocalTime },
+    },
+    {
+      name: 'move a timed task to all day',
+      planning: {
+        due: localDate('2026-08-11'),
+        time: '09:00' as LocalTime,
+        duration: 30 as DurationMinutes,
+      },
+      command: (ref: TaskSnapshot['ref']): TaskEditRequest['command'] => ({
+        type: 'move-to-all-day',
+        ref,
+        days: 1,
+      }),
+      currentPlanning: { due: localDate('2026-08-12') },
+    },
+    {
+      name: 'set a slot with duration',
+      planning: { due: localDate('2026-08-11') },
+      command: (ref: TaskSnapshot['ref']): TaskEditRequest['command'] => ({
+        type: 'set-time-slot',
+        ref,
+        date: localDate('2026-08-15'),
+        time: '10:00' as LocalTime,
+        duration: 45 as DurationMinutes,
+      }),
+      currentPlanning: {
+        due: localDate('2026-08-15'),
+        time: '10:00' as LocalTime,
+        duration: 45 as DurationMinutes,
+      },
+    },
+    {
+      name: 'convert a timed task to all day',
+      planning: {
+        due: localDate('2026-08-11'),
+        time: '09:00' as LocalTime,
+        duration: 30 as DurationMinutes,
+      },
+      command: (ref: TaskSnapshot['ref']): TaskEditRequest['command'] => ({
+        type: 'convert-to-all-day',
+        ref,
+        date: localDate('2026-08-15'),
+      }),
+      currentPlanning: { due: localDate('2026-08-15') },
+    },
+    {
+      name: 'change a span start',
+      planning: { start: localDate('2026-08-10'), due: localDate('2026-08-11') },
+      command: (ref: TaskSnapshot['ref']): TaskEditRequest['command'] => ({
+        type: 'set-span-boundary',
+        ref,
+        boundary: 'start',
+        date: localDate('2026-08-09'),
+      }),
+      currentPlanning: { start: localDate('2026-08-09'), due: localDate('2026-08-11') },
+    },
+    {
+      name: 'extend a scheduled task into a span',
+      planning: { scheduled: localDate('2026-08-11') },
+      command: (ref: TaskSnapshot['ref']): TaskEditRequest['command'] => ({
+        type: 'extend-span',
+        ref,
+        due: localDate('2026-08-15'),
+      }),
+      currentPlanning: {
+        scheduled: localDate('2026-08-11'),
+        start: localDate('2026-08-11'),
+        due: localDate('2026-08-15'),
+      },
+    },
+  ] satisfies ReadonlyArray<{
+    name: string;
+    planning: TaskPlanning;
+    command: (ref: TaskSnapshot['ref']) => TaskEditRequest['command'];
+    currentPlanning: TaskPlanning;
+  }>)(
+    'accepts already-applied scheduling intent: $name',
+    ({ planning, command, currentPlanning }) => {
+      const base = { ...snapshot(), planning };
+      const current = { ...snapshot('Task', 'new'), planning: currentPlanning };
+      const editCommand = command(base.ref);
+
+      expect(
+        retryAgainst(preparedFor(base, editCommand, 'field-compare'), base, current),
+      ).toMatchObject({
+        type: 'edit',
+        request: { baseRoot: current, command: { type: editCommand.type, ref: current.ref } },
+      });
+    },
+  );
+
+  it('rejects field and exact-target retries when the target is missing or ambiguous', () => {
+    const base = snapshot();
+    const child = subtask(base);
+    const previous = { ...base, subtasks: [child] };
+    const command: TaskEditRequest['command'] = {
+      type: 'set-status',
+      target: { type: 'subtask', ref: child.ref },
+      symbol: 'x',
+    };
+    const exactCommand: TaskEditRequest['command'] = {
+      type: 'append-title',
+      target: { type: 'subtask', ref: child.ref },
+      markdown: ' changed',
+    };
+    const missing = snapshot('Task', 'new');
+    const duplicateChild = subtask(missing, {
+      ref: { ...child.ref, parent: { type: 'task', ref: missing.ref } },
+    });
+    const ambiguous = { ...missing, subtasks: [duplicateChild, { ...duplicateChild }] };
+
+    expect(
+      retryAgainst(preparedFor(previous, command, 'field-compare'), previous, missing),
+    ).toEqual({
+      type: 'unsafe',
+    });
+    expect(
+      retryAgainst(preparedFor(previous, exactCommand, 'exact-target'), previous, ambiguous),
+    ).toEqual({ type: 'unsafe' });
+  });
+
+  it('honors status idempotence, never, and move retry policies', () => {
+    const base = snapshot();
+    const statusCommand: TaskEditRequest['command'] = {
+      type: 'set-status',
+      target: { type: 'task', ref: base.ref },
+      symbol: 'x',
+    };
+    const completed = { ...snapshot('Task', 'new'), statusSymbol: 'x', status: 'done' as const };
+
+    expect(
+      retryAgainst(preparedFor(base, statusCommand, 'field-compare'), base, completed),
+    ).toMatchObject({
+      type: 'edit',
+    });
+    expect(retryAgainst(preparedFor(base, statusCommand, 'never'), base, completed)).toEqual({
+      type: 'unsafe',
+    });
+
+    const moveMutation: PreparedMutation = {
+      ...preparedFor(base, { type: 'delete', ref: base.ref }, 'never'),
+      publicCommand: {
+        type: 'move',
+        ref: base.ref,
+        destination: { filePath: 'archive.md', insertion: { type: 'append' } },
+      },
+      repositoryRequest: {
+        destination: { filePath: 'archive.md', insertion: { type: 'append' } },
+        baseRoot: base,
+        baseTarget: { type: 'task', ref: base.ref },
+        reconciliation: { observed: base },
+      },
+    };
+    expect(retryAgainst(moveMutation, base, completed)).toEqual({ type: 'unsafe' });
+  });
+
+  it('retries recurrence completion for an unchanged nested owner and rebases its target', () => {
+    const base = snapshot();
+    const child = subtask(base, {
+      recurrence: 'every day',
+      ref: {
+        parent: { type: 'task', ref: base.ref },
+        relativeLine: 1,
+        originalBlock: '  - [ ] child 🔁 every day\n    - note',
+      },
+    });
+    const previous = { ...base, subtasks: [child] };
+    const currentRoot = snapshot('Task', 'new');
+    const currentChild = subtask(currentRoot, {
+      ...child,
+      ref: { ...child.ref, parent: { type: 'task', ref: currentRoot.ref } },
+    });
+    const current = { ...currentRoot, subtasks: [currentChild] };
+    const request = {
+      command: {
+        target: { type: 'subtask' as const, ref: child.ref },
+        doneSymbol: 'x',
+        todoSymbol: ' ',
+        today: localDate('2026-08-11'),
+        addCreatedDate: true,
+        addCompletionDate: true,
+        placement: 'before' as const,
+        policy: {
+          type: 'rrule' as const,
+          rule: 'FREQ=DAILY',
+          removeScheduledDate: false,
+        },
+      },
+      baseRoot: previous,
+      baseTarget: { type: 'subtask' as const, ref: child.ref },
+      reconciliation: { observed: previous },
+      baseOwnedDescendants: '\n    - note',
+    };
+    const mutation: PreparedMutation = {
+      ...preparedFor(previous, { type: 'delete', ref: previous.ref }, 'never'),
+      publicCommand: { type: 'set-status', target: request.command.target, symbol: 'x' },
+      repositoryRequest: request,
+      targetBase: request.baseTarget,
+    };
+
+    expect(retryAgainst(mutation, previous, current)).toMatchObject({
+      type: 'recurrence',
+      request: {
+        command: { target: { type: 'subtask', ref: currentChild.ref } },
+        baseRoot: current,
+        baseTarget: { type: 'subtask', ref: currentChild.ref },
+        baseOwnedDescendants: '\n    - note',
+      },
+    });
   });
 });
 
@@ -502,24 +1098,26 @@ describe('TaskApplicationService one-shot retry', () => {
         statuses,
         clockFrom(Date.parse('2026-08-11T09:32:10Z'), 0),
       );
-      const command =
-        kind === 'move'
-          ? ({
-              type: 'move' as const,
-              ref: base.ref,
-              destination: { filePath: 'archive.md', insertion: { type: 'append' as const } },
-            } as const)
-          : kind === 'recurrence'
-            ? ({
-                type: 'set-status' as const,
-                target: { type: 'task' as const, ref: base.ref },
-                symbol: 'x',
-              } as const)
-            : ({
-                type: 'patch' as const,
-                target: { type: 'task' as const, ref: base.ref },
-                patch: { tags: { add: ['#work'] } },
-              } as const);
+      let command: TaskCommand;
+      if (kind === 'move') {
+        command = {
+          type: 'move',
+          ref: base.ref,
+          destination: { filePath: 'archive.md', insertion: { type: 'append' } },
+        };
+      } else if (kind === 'recurrence') {
+        command = {
+          type: 'set-status',
+          target: { type: 'task', ref: base.ref },
+          symbol: 'x',
+        };
+      } else {
+        command = {
+          type: 'patch',
+          target: { type: 'task', ref: base.ref },
+          patch: { tags: { add: ['#work'] } },
+        };
+      }
 
       await service.execute(command);
       expect(edit).not.toHaveBeenCalled();

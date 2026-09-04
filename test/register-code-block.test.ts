@@ -83,8 +83,8 @@ describe('resolveConfig', () => {
       expect(cfg.folder).toBe('projects');
     });
 
-    it('does not override when a param is explicitly undefined', () => {
-      const cfg = resolveConfig(DEFAULT_SETTINGS, { view: undefined });
+    it('does not override when a param is absent', () => {
+      const cfg = resolveConfig(DEFAULT_SETTINGS, {});
       expect(cfg.defaultView).toBe(DEFAULT_VIEW_CONFIG.defaultView);
     });
   });

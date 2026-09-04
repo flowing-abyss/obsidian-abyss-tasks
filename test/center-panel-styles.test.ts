@@ -1,8 +1,7 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { loadPluginStyles } from './helpers';
 
-const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+const css = await loadPluginStyles();
 
 function declarationsFor(selector: string): string {
   return declarationsForSource(css, selector);
@@ -85,13 +84,6 @@ describe('CenterPanel task metadata styles', () => {
     expect(metadata).toContain('grid-column: 2 / -1');
     expect(metadata).toContain('grid-row: 2');
     expect(sourceNote).toContain('white-space: nowrap');
-
-    // R1 live evidence: a 292px center leaves a 253px card main row after scrollbar/padding.
-    // Moving metadata to row 2 leaves the first row's title track at 194px instead of 0px:
-    // 253 - 19px marker - 24px delete button - two 8px gaps.
-    const titleTrack = 253 - 19 - 24 - 2 * 8;
-    expect(titleTrack).toBe(194);
-    expect(titleTrack).toBeGreaterThanOrEqual(160);
   });
 
   it('keeps hover and selection states paint-only so controls do not shift', () => {

@@ -7,17 +7,22 @@ import type { TagGroup } from '../settings/types';
 export function colorForTag(tag: string, tagGroups: TagGroup[]): string | undefined {
   const noHash = tag.replace(/^#/, '');
   for (const group of tagGroups) {
-    if (group.mode === 'prefix' && group.prefix) {
-      if (noHash === group.prefix || noHash.startsWith(`${group.prefix}/`)) {
-        return group.color;
-      }
-    } else if (group.mode === 'manual' && group.tags) {
-      if (group.tags.includes(tag) || group.tags.includes(noHash)) {
-        return group.color;
-      }
-    }
+    if (group.mode === 'prefix' && matchesPrefixGroup(noHash, group.prefix)) return group.color;
+    if (group.mode === 'manual' && matchesManualGroup(tag, noHash, group.tags)) return group.color;
   }
   return undefined;
+}
+
+function matchesPrefixGroup(noHash: string, prefix: string | undefined): boolean {
+  return prefix !== undefined && (noHash === prefix || noHash.startsWith(`${prefix}/`));
+}
+
+function matchesManualGroup(
+  tag: string,
+  noHash: string,
+  tags: readonly string[] | undefined,
+): boolean {
+  return tags?.includes(tag) === true || tags?.includes(noHash) === true;
 }
 
 /** The color for a task's first canonical tag, or undefined if no tag/no matching group. */
@@ -26,5 +31,5 @@ export function tagColorFor(
   tagGroups: TagGroup[],
 ): string | undefined {
   const first = tags?.[0];
-  return first ? colorForTag(first, tagGroups) : undefined;
+  return first !== undefined && first.length > 0 ? colorForTag(first, tagGroups) : undefined;
 }

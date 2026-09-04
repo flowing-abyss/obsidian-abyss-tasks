@@ -26,7 +26,7 @@ function closestBlockingInteraction(target: EventTarget | null): Element | null 
 }
 
 function interactionPathBlocks(event: KeyboardEvent, ownerDocument: Document): boolean {
-  if (closestBlockingInteraction(ownerDocument.activeElement)) return true;
+  if (closestBlockingInteraction(ownerDocument.activeElement) != null) return true;
   return event.composedPath().some((target) => closestBlockingInteraction(target) !== null);
 }
 
@@ -42,40 +42,42 @@ function exactShortcutMatch(event: KeyboardEvent, shortcut: ParsedShortcutAltern
 }
 
 function dispatchAction(actions: PanelNavigationActions, action: ShortcutActionId): void {
-  switch (action) {
-    case 'openQuickCapture':
+  const dispatchers: Record<ShortcutActionId, () => void> = {
+    openQuickCapture: () => {
       actions.openQuickCapture();
-      return;
-    case 'openTasks':
+    },
+    openTasks: () => {
       actions.openTasks();
-      return;
-    case 'openInbox':
+    },
+    openInbox: () => {
       actions.openList('inbox');
-      return;
-    case 'openToday':
+    },
+    openToday: () => {
       actions.openList('today');
-      return;
-    case 'openUpcoming':
+    },
+    openUpcoming: () => {
       actions.openList('upcoming');
-      return;
-    case 'openCalendar':
+    },
+    openCalendar: () => {
       actions.openCalendar();
-      return;
-    case 'openCalendarToday':
+    },
+    openCalendarToday: () => {
       actions.openCalendarView('today');
-      return;
-    case 'openCalendarWeek':
+    },
+    openCalendarWeek: () => {
       actions.openCalendarView('week');
-      return;
-    case 'openCalendarMonth':
+    },
+    openCalendarMonth: () => {
       actions.openCalendarView('month');
-      return;
-    case 'openProjects':
+    },
+    openProjects: () => {
       actions.openProjects();
-      return;
-    case 'openSearch':
+    },
+    openSearch: () => {
       actions.openSearch();
-  }
+    },
+  };
+  dispatchers[action]();
 }
 
 export class PanelShortcutRouter {
@@ -93,7 +95,9 @@ export class PanelShortcutRouter {
       readonly nativeHostBlocks: () => boolean;
     },
   ) {
-    this.onKeyDown = (event) => this.route(event);
+    this.onKeyDown = (event) => {
+      this.route(event);
+    };
     options.ownerDocument.addEventListener('keydown', this.onKeyDown, true);
   }
 
@@ -105,30 +109,35 @@ export class PanelShortcutRouter {
 
   private route(event: KeyboardEvent): void {
     if (this.destroyed || !this.options.isActive()) return;
-    let current: ReturnType<typeof validateShortcuts>;
-    try {
-      current = validateShortcuts(this.options.settings(), this.options.platform);
-    } catch {
-      return;
-    }
-    if (
-      event.defaultPrevented ||
-      event.repeat ||
-      event.isComposing ||
-      interactionPathBlocks(event, this.options.ownerDocument) ||
-      this.options.nativeHostBlocks()
-    ) {
-      return;
-    }
+    const current = this.currentShortcuts();
+    if (current === undefined || this.eventIsBlocked(event)) return;
 
     const match = [...current.bindings.entries()].find(([, bindings]) =>
       bindings.some((binding) => exactShortcutMatch(event, binding)),
     );
-    if (!match || !this.options.registry.allows(match[0])) return;
+    if (match == null || !this.options.registry.allows(match[0])) return;
 
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
     dispatchAction(this.options.actions, match[0]);
+  }
+
+  private currentShortcuts(): ReturnType<typeof validateShortcuts> | undefined {
+    try {
+      return validateShortcuts(this.options.settings(), this.options.platform);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private eventIsBlocked(event: KeyboardEvent): boolean {
+    return (
+      event.defaultPrevented ||
+      event.repeat ||
+      event.isComposing ||
+      interactionPathBlocks(event, this.options.ownerDocument) ||
+      this.options.nativeHostBlocks()
+    );
   }
 }

@@ -1,6 +1,7 @@
 import { Component, MarkdownRenderer, Menu, type App, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderTaskText } from '../src/ui/renderTaskText';
+import { expectDefined } from './helpers';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -25,7 +26,9 @@ describe('renderTaskText link occurrence pairing', () => {
       component: new Component(),
     });
     await vi.runAllTimersAsync();
-    host.querySelector('a')!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    expectDefined(host.querySelector('a')).dispatchEvent(
+      new MouseEvent('mouseover', { bubbles: true }),
+    );
 
     expect(trigger).toHaveBeenCalledWith(
       'hover-link',
@@ -78,9 +81,9 @@ describe('renderTaskText link occurrence pairing', () => {
     });
     await vi.runAllTimersAsync();
 
-    host
-      .querySelector('a')!
-      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expectDefined(host.querySelector('a')).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
     click?.(new MouseEvent('click'));
 
     expect(onEditLink).toHaveBeenCalledWith(

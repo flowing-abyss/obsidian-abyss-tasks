@@ -23,8 +23,7 @@ export interface TaskRefAuthorityObservation {
 }
 
 export type TaskRefStageResult =
-  | { readonly type: 'staged'; readonly token: object }
-  | { readonly type: 'conflict' };
+  { readonly type: 'staged'; readonly token: object } | { readonly type: 'conflict' };
 
 export interface TaskSnapshotState {
   currentRoot(filePath: string, line: number, source: string): TaskRef | undefined;
@@ -91,7 +90,7 @@ export class TaskRefAuthority {
 
   successor(consumedRevision: string, source: string): string | undefined {
     const consumed = this.evidence(consumedRevision);
-    if (!consumed) return undefined;
+    if (consumed == null) return undefined;
     const numericGeneration = Number.parseInt(consumed.generation, 36);
     if (Number.isSafeInteger(numericGeneration)) {
       this.generation = Math.max(this.generation, numericGeneration);
@@ -122,7 +121,7 @@ export class TaskRefAuthority {
   stage(transition: TaskRefTransition, currentRevision: string): TaskRefStageResult {
     if (
       currentRevision !== transition.expectedRevision ||
-      !this.evidence(transition.expectedRevision) ||
+      this.evidence(transition.expectedRevision) == null ||
       this.transitions.has(transition.filePath)
     ) {
       return { type: 'conflict' };
@@ -149,20 +148,20 @@ export class TaskRefAuthority {
 
   observeTransition(filePath: string, content: string): TaskRefAuthorityObservation | undefined {
     const transition = this.transitions.get(filePath);
-    if (!transition || !matches(transition, content)) return undefined;
+    if (transition == null || !matches(transition, content)) return undefined;
     transition.observed = true;
     return { expectedRevision: transition.expectedRevision, roots: transition.roots };
   }
 
   commit(token: object): void {
     const transition = this.tokens.get(token);
-    if (!transition || transition.token !== token || transition.phase !== 'staged') return;
+    if (transition?.token !== token || transition.phase !== 'staged') return;
     transition.phase = 'committed';
   }
 
   abort(token: object): void {
     const transition = this.tokens.get(token);
-    if (!transition || transition.token !== token || transition.phase !== 'staged') return;
+    if (transition?.token !== token || transition.phase !== 'staged') return;
     this.transitions.delete(transition.filePath);
   }
 

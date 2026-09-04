@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { Platform } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import {
   mixHexColors,
@@ -7,16 +6,24 @@ import {
   tagFillTextColorVar,
   tagFillTextVariant,
 } from '../src/tags/tagFillContrast';
+import { expectDefined } from './helpers';
 
-const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+const css = await loadStyles();
+
+async function loadStyles(): Promise<string> {
+  if (!Platform.isDesktop) return '';
+  const { readFileSync } = await import('node:fs');
+  const path = await import('node:path');
+  return readFileSync(path.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+}
 
 function rgbToHex([red, green, blue]: readonly [number, number, number]): string {
   return `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
 }
 
 function contrastRatio(left: string, right: string): number {
-  const leftLuminance = relativeLuminanceOfHex(left)!;
-  const rightLuminance = relativeLuminanceOfHex(right)!;
+  const leftLuminance = expectDefined(relativeLuminanceOfHex(left));
+  const rightLuminance = expectDefined(relativeLuminanceOfHex(right));
   return (
     (Math.max(leftLuminance, rightLuminance) + 0.05) /
     (Math.min(leftLuminance, rightLuminance) + 0.05)
@@ -38,13 +45,13 @@ describe('relativeLuminanceOfHex', () => {
   it('classifies known light colors as high luminance', () => {
     expect(relativeLuminanceOfHex('#ffffff')).toBeCloseTo(1, 2);
     // Pale yellow
-    expect(relativeLuminanceOfHex('#fff8b0')!).toBeGreaterThan(0.8);
+    expect(expectDefined(relativeLuminanceOfHex('#fff8b0'))).toBeGreaterThan(0.8);
   });
 
   it('classifies known dark colors as low luminance', () => {
     expect(relativeLuminanceOfHex('#000000')).toBeCloseTo(0, 2);
     // Navy
-    expect(relativeLuminanceOfHex('#000080')!).toBeLessThan(0.1);
+    expect(expectDefined(relativeLuminanceOfHex('#000080'))).toBeLessThan(0.1);
   });
 
   it('supports 3-digit hex shorthand', () => {
@@ -120,12 +127,14 @@ describe('tagFillTextVariant', () => {
   ])('keeps %s at WCAG 4.5:1 against the committed fill in both themes', (_name, tagColor) => {
     const lightBackground = '#ffffff';
     const darkBackground = '#1e1e1e';
-    const lightFill = tagColor
-      ? rgbToHex(mixHexColors(tagColor, lightBackground, 11)!)
-      : lightBackground;
-    const darkFill = tagColor
-      ? rgbToHex(mixHexColors(tagColor, darkBackground, 14)!)
-      : darkBackground;
+    const lightFill =
+      tagColor.length > 0
+        ? rgbToHex(expectDefined(mixHexColors(tagColor, lightBackground, 11)))
+        : lightBackground;
+    const darkFill =
+      tagColor.length > 0
+        ? rgbToHex(expectDefined(mixHexColors(tagColor, darkBackground, 14)))
+        : darkBackground;
 
     expect(contrastRatio(lightFill, '#161616')).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(darkFill, '#f5f5f5')).toBeGreaterThanOrEqual(4.5);
@@ -133,8 +142,8 @@ describe('tagFillTextVariant', () => {
 
   it('keeps an untagged task readable against the actual interactive-accent mix and text-normal fallback in both themes', () => {
     const interactiveAccent = '#7f6df2';
-    const lightFill = rgbToHex(mixHexColors(interactiveAccent, '#ffffff', 11)!);
-    const darkFill = rgbToHex(mixHexColors(interactiveAccent, '#1e1e1e', 14)!);
+    const lightFill = rgbToHex(expectDefined(mixHexColors(interactiveAccent, '#ffffff', 11)));
+    const darkFill = rgbToHex(expectDefined(mixHexColors(interactiveAccent, '#1e1e1e', 14)));
 
     expect(contrastRatio(lightFill, '#2e3338')).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(darkFill, '#dadada')).toBeGreaterThanOrEqual(4.5);
@@ -143,13 +152,15 @@ describe('tagFillTextVariant', () => {
 
 describe('tagFillTextColorVar', () => {
   it('resolves the shared committed fill strength from the rendered element owner document in both themes', () => {
-    const frame = document.createElement('iframe');
+    const frame = createEl('iframe');
     document.body.appendChild(frame);
-    const ownerDocument = frame.contentDocument!;
+    const ownerDocument = expectDefined(frame.contentDocument);
     ownerDocument.body.classList.add('theme-dark');
-    ownerDocument.body.style.setProperty('--background-primary', '#1e1e1e');
-    const event = ownerDocument.createElement('div');
-    const ghost = ownerDocument.createElement('div');
+    activeDocument.body.setCssProps.call(ownerDocument.body, {
+      '--background-primary': '#1e1e1e',
+    });
+    const event = ownerDocument.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+    const ghost = ownerDocument.createElementNS('http://www.w3.org/1999/xhtml', 'div');
     ownerDocument.body.append(event, ghost);
 
     try {
@@ -157,7 +168,9 @@ describe('tagFillTextColorVar', () => {
       expect(tagFillTextColorVar(ghost, '#ffffff')).toBe('var(--abyss-tag-text-light)');
 
       ownerDocument.body.classList.remove('theme-dark');
-      ownerDocument.body.style.setProperty('--background-primary', '#ffffff');
+      activeDocument.body.setCssProps.call(ownerDocument.body, {
+        '--background-primary': '#ffffff',
+      });
       expect(tagFillTextColorVar(event, '#ffffff')).toBe('var(--abyss-tag-text-dark)');
       expect(tagFillTextColorVar(ghost, '#ffffff')).toBe('var(--abyss-tag-text-dark)');
     } finally {
@@ -197,10 +210,14 @@ describe('calendar focus and selection contrast', () => {
       expect(focusTagStrength).not.toBeNull();
       if (focusTagStrength === null) return;
 
-      const lightFill = rgbToHex(mixHexColors(taskColor, '#ffffff', 11)!);
-      const darkFill = rgbToHex(mixHexColors(taskColor, '#1e1e1e', 14)!);
-      const lightFocus = rgbToHex(mixHexColors(taskColor, '#161616', focusTagStrength)!);
-      const darkFocus = rgbToHex(mixHexColors(taskColor, '#f5f5f5', focusTagStrength)!);
+      const lightFill = rgbToHex(expectDefined(mixHexColors(taskColor, '#ffffff', 11)));
+      const darkFill = rgbToHex(expectDefined(mixHexColors(taskColor, '#1e1e1e', 14)));
+      const lightFocus = rgbToHex(
+        expectDefined(mixHexColors(taskColor, '#161616', focusTagStrength)),
+      );
+      const darkFocus = rgbToHex(
+        expectDefined(mixHexColors(taskColor, '#f5f5f5', focusTagStrength)),
+      );
 
       expect(contrastRatio(lightFocus, lightFill)).toBeGreaterThanOrEqual(3);
       expect(contrastRatio(darkFocus, darkFill)).toBeGreaterThanOrEqual(3);

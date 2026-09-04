@@ -16,7 +16,7 @@ export function attachLongPress(
   };
 
   const onEnd = (e: TouchEvent): void => {
-    if (timer) window.clearTimeout(timer);
+    if (timer !== null) window.clearTimeout(timer);
     if (longFired) {
       e.preventDefault();
       e.stopPropagation();
@@ -24,7 +24,7 @@ export function attachLongPress(
   };
 
   const onCancel = (): void => {
-    if (timer) window.clearTimeout(timer);
+    if (timer !== null) window.clearTimeout(timer);
   };
   const onContext = (e: Event): void => {
     e.preventDefault();
@@ -36,15 +36,14 @@ export function attachLongPress(
   el.addEventListener('touchcancel', onCancel);
   el.addEventListener('contextmenu', onContext);
 
-  // eslint-disable-next-line obsidianmd/no-static-styles-assignment
-  el.style.userSelect = 'none';
-  // eslint-disable-next-line obsidianmd/no-static-styles-assignment, @typescript-eslint/no-deprecated
-  el.style.webkitUserSelect = 'none';
-  // eslint-disable-next-line obsidianmd/no-static-styles-assignment
-  el.style.touchAction = 'manipulation';
+  el.setCssStyles({
+    userSelect: 'none',
+    webkitUserSelect: 'none',
+    touchAction: 'manipulation',
+  });
 
   return () => {
-    if (timer) window.clearTimeout(timer);
+    if (timer !== null) window.clearTimeout(timer);
     el.removeEventListener('touchstart', onStart);
     el.removeEventListener('touchend', onEnd);
     el.removeEventListener('touchmove', onCancel);

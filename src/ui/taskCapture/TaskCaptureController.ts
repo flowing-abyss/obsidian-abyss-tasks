@@ -25,6 +25,12 @@ interface TaskCaptureControllerOptions {
   readonly onRequestClose: () => void;
 }
 
+interface CaptureSubmission {
+  readonly cause: CaptureSubmitCause;
+  readonly draft: string;
+  readonly token: number;
+}
+
 export class TaskCaptureController {
   readonly target: CaptureTarget;
 
@@ -81,54 +87,70 @@ export class TaskCaptureController {
   }
 
   async submit(cause: CaptureSubmitCause): Promise<void> {
-    if (this.destroyed || this.phase === 'closed') return;
+    const submission = this.beginSubmission(cause);
+    if (submission === undefined || this.isSubmissionObsolete(submission.token)) return;
+    const result = await this.target.session.execute({
+      markdownBody: commandBodyForCapture(this.target, submission.draft),
+      ...(this.target.initial !== undefined && { initial: this.target.initial }),
+    });
+    if (this.isSubmissionObsolete(submission.token)) return;
+    this.finishSubmission(submission, result);
+  }
+
+  private beginSubmission(cause: CaptureSubmitCause): CaptureSubmission | undefined {
+    if (this.destroyed || this.phase === 'closed') return undefined;
     if (this.phase === 'submitting') {
       if (cause === 'blur') this.closeAfterSuccess = true;
-      return;
+      return undefined;
     }
     if (this.draft.trim().length === 0) {
       if (cause === 'blur') this.close();
-      return;
+      return undefined;
     }
-
-    const submittedDraft = this.draft;
-    const token = ++this.submissionToken;
+    const submission = { cause, draft: this.draft, token: ++this.submissionToken };
     this.phase = 'submitting';
     this.error = undefined;
     this.closeAfterSuccess = false;
     this.emit();
-    if (this.destroyed || token !== this.submissionToken) return;
+    return submission;
+  }
 
-    const result = await this.target.session.execute({
-      markdownBody: commandBodyForCapture(this.target, submittedDraft),
-      ...(this.target.initial !== undefined && { initial: this.target.initial }),
-    });
-    if (this.destroyed || token !== this.submissionToken) return;
-
+  private finishSubmission(submission: CaptureSubmission, result: TaskCommandResult): void {
     const description = this.describe(result);
-    const shouldRequestClose =
-      description.kind === 'success' && (cause === 'blur' || this.closeAfterSuccess);
+    const shouldRequestClose = this.applySubmissionDescription(submission, description);
+    this.closeAfterSuccess = false;
+    this.emit();
+    if (this.isSubmissionObsolete(submission.token)) return;
+    this.onResult(result, description);
+    if (shouldRequestClose && !this.isSubmissionObsolete(submission.token)) {
+      this.onRequestClose();
+    }
+  }
+
+  private applySubmissionDescription(
+    submission: CaptureSubmission,
+    description: CreationResultDescription,
+  ): boolean {
     if (description.kind === 'success') {
+      const shouldClose = submission.cause === 'blur' || this.closeAfterSuccess;
       this.draft = '';
-      if (shouldRequestClose) {
+      if (shouldClose) {
         this.phase = 'closed';
       } else {
         this.phase = 'idle';
         this.focusEpoch++;
       }
-    } else {
-      this.draft = submittedDraft;
-      this.phase = 'error';
-      this.error = description;
-      if (cause === 'enter') this.focusEpoch++;
+      return shouldClose;
     }
-    this.closeAfterSuccess = false;
-    this.emit();
-    if (this.destroyed) return;
-    this.onResult(result, description);
-    if (shouldRequestClose && !this.destroyed && token === this.submissionToken) {
-      this.onRequestClose();
-    }
+    this.draft = submission.draft;
+    this.phase = 'error';
+    this.error = description;
+    if (submission.cause === 'enter') this.focusEpoch++;
+    return false;
+  }
+
+  private isSubmissionObsolete(token: number): boolean {
+    return this.destroyed || token !== this.submissionToken;
   }
 
   escape(): void {

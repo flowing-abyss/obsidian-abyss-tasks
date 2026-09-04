@@ -50,6 +50,50 @@ interface LegacyRecurrencePolicy {
   readonly removedBeforeRecurrence: ReadonlySet<TaskSpanKind>;
 }
 
+type RecurrenceTailDisposition = 'before' | 'stop' | 'consume' | 'append';
+
+function recurrenceTailDisposition(
+  span: SourceSpan,
+  recurrence: SourceSpan,
+  firstByKind: ReadonlyMap<TaskSpanKind, SourceSpan>,
+  policy: LegacyRecurrencePolicy,
+): RecurrenceTailDisposition {
+  if (span.from < recurrence.to) return 'before';
+  if (span.kind === 'priority' || span.kind === 'on-completion') return 'stop';
+  if (!policy.removedBeforeRecurrence.has(span.kind)) return 'append';
+  return firstByKind.get(span.kind) === span ? 'consume' : 'stop';
+}
+
+function firstSpansByKind(spans: readonly SourceSpan[]): ReadonlyMap<TaskSpanKind, SourceSpan> {
+  const first = new Map<TaskSpanKind, SourceSpan>();
+  for (const span of spans) {
+    if (!first.has(span.kind)) first.set(span.kind, span);
+  }
+  return first;
+}
+
+function recurrenceTail(
+  parsed: ParsedTaskLine,
+  recurrence: SourceSpan,
+  policy: LegacyRecurrencePolicy,
+): { readonly value: string; readonly consumedTo: number } {
+  const firstByKind = firstSpansByKind(parsed.spans);
+  let value = parsed.original.slice(recurrence.from + '🔁'.length, recurrence.to);
+  let consumedTo = recurrence.to;
+  for (const span of parsed.spans) {
+    const disposition = recurrenceTailDisposition(span, recurrence, firstByKind, policy);
+    if (disposition === 'before') continue;
+    if (disposition === 'stop') break;
+    if (disposition === 'consume') {
+      consumedTo = span.to;
+      continue;
+    }
+    value += parsed.original.slice(span.from, span.to);
+    consumedTo = span.to;
+  }
+  return { value, consumedTo };
+}
+
 const EXTRACTOR_RECURRENCE_POLICY: LegacyRecurrencePolicy = {
   removedBeforeRecurrence: EXTRACTOR_REMOVED_BEFORE_RECURRENCE,
 };
@@ -63,29 +107,11 @@ function legacyRecurrenceProjection(
   policy: LegacyRecurrencePolicy,
 ): { value: string | undefined; consumedTo: number } | undefined {
   const recurrence = parsed.occurrences.get('recurrence')?.[0];
-  if (!recurrence) return undefined;
+  if (recurrence == null) return undefined;
 
-  const firstByKind = new Map<TaskSpanKind, SourceSpan>();
-  for (const span of parsed.spans) {
-    if (!firstByKind.has(span.kind)) firstByKind.set(span.kind, span);
-  }
-
-  let value = parsed.original.slice(recurrence.from + '🔁'.length, recurrence.to);
-  let consumedTo = recurrence.to;
-  for (const span of parsed.spans) {
-    if (span.from < recurrence.to) continue;
-    if (span.kind === 'priority' || span.kind === 'on-completion') break;
-    if (policy.removedBeforeRecurrence.has(span.kind)) {
-      if (firstByKind.get(span.kind) === span) {
-        consumedTo = span.to;
-        continue;
-      }
-      break;
-    }
-    value += parsed.original.slice(span.from, span.to);
-    consumedTo = span.to;
-  }
-  return { value: value.trim() || undefined, consumedTo };
+  const tail = recurrenceTail(parsed, recurrence, policy);
+  const trimmed = tail.value.trim();
+  return { value: trimmed.length > 0 ? trimmed : undefined, consumedTo: tail.consumedTo };
 }
 
 /** Reproduce the old extractor's recurrence value from the codec's lossless spans. */
@@ -156,7 +182,7 @@ function legacyCleanText(parsed: ParsedTaskLine): string {
 /** Compatibility projection for legacy callers that parse a task title body. */
 export function extractMetadata(text: string): ExtractedMetadata {
   const parsed = CODEC.parseLine(SYNTHETIC_PREFIX + text, { filePath: '', line: 0 });
-  if (!parsed) {
+  if (parsed == null) {
     return {
       priority: 'D',
       onCompletion: 'keep',
@@ -165,15 +191,18 @@ export function extractMetadata(text: string): ExtractedMetadata {
     };
   }
 
+  const recurrence = legacyRecurrenceFromParsed(parsed);
   return {
-    due: parsed.planning.due,
-    scheduled: parsed.planning.scheduled,
-    start: parsed.planning.start,
-    completion: parsed.planning.completion,
-    cancelledDate: parsed.planning.cancelled,
-    created: parsed.planning.created,
-    time: parsed.planning.time,
-    recurrence: legacyRecurrenceFromParsed(parsed),
+    ...(parsed.planning.due !== undefined && { due: parsed.planning.due }),
+    ...(parsed.planning.scheduled !== undefined && { scheduled: parsed.planning.scheduled }),
+    ...(parsed.planning.start !== undefined && { start: parsed.planning.start }),
+    ...(parsed.planning.completion !== undefined && { completion: parsed.planning.completion }),
+    ...(parsed.planning.cancelled !== undefined && {
+      cancelledDate: parsed.planning.cancelled,
+    }),
+    ...(parsed.planning.created !== undefined && { created: parsed.planning.created }),
+    ...(parsed.planning.time !== undefined && { time: parsed.planning.time }),
+    ...(recurrence !== undefined && { recurrence }),
     onCompletion: parsed.onCompletion,
     onCompletionExplicit: parsed.onCompletionExplicit,
     priority: parsed.priority,

@@ -31,7 +31,10 @@ function appendElement<K extends keyof HTMLElementTagNameMap>(
   className: string,
   text?: string,
 ): HTMLElementTagNameMap[K] {
-  const element = parent.ownerDocument.createElement(tagName);
+  const element = parent.ownerDocument.createElementNS(
+    'http://www.w3.org/1999/xhtml',
+    tagName,
+  ) as HTMLElementTagNameMap[K];
   element.className = className;
   if (text !== undefined) element.textContent = text;
   parent.appendChild(element);
@@ -50,9 +53,9 @@ export function renderTimedContent(
 ): void {
   const topRow = appendElement(container, 'div', 'abyss-tg-block-toprow');
   appendElement(topRow, 'div', 'abyss-tg-block-subtitle', content.timeLabel);
-  if (content.countLabel) {
+  if (content.countLabel !== undefined && content.countLabel.length > 0) {
     const counts = appendElement(topRow, 'div', 'abyss-tg-block-badges');
-    if (hooks.renderCounts) hooks.renderCounts(counts);
+    if (hooks.renderCounts != null) hooks.renderCounts(counts);
     else appendElement(counts, 'span', '', content.countLabel);
   }
 
@@ -63,7 +66,7 @@ export function renderTimedContent(
     hooks.forecast ?? false,
     content.actionable ? hooks.renderControl : undefined,
   );
-  if (hooks.renderTitle) hooks.renderTitle(head);
+  if (hooks.renderTitle != null) hooks.renderTitle(head);
   else {
     appendElement(
       head,
@@ -71,6 +74,21 @@ export function renderTimedContent(
       'abyss-tg-block-title abyss-calendar-title abyss-calendar-preview-title',
       content.title,
     );
+  }
+}
+
+function copyPreviewColors(preview: HTMLElement, source: HTMLElement): void {
+  for (const property of COPIED_COLOR_PROPERTIES) {
+    const value = source.style.getPropertyValue(property);
+    if (value.length > 0) preview.style.setProperty(property, value);
+    else preview.style.removeProperty(property);
+  }
+}
+
+function renderUntimedPreview(shell: HTMLElement, content: CalendarPreviewContent): void {
+  appendElement(shell, 'span', 'abyss-calendar-preview-title', content.title);
+  if (content.subtitle !== undefined && content.subtitle.length > 0) {
+    appendElement(shell, 'span', 'abyss-calendar-preview-subtitle', content.subtitle);
   }
 }
 
@@ -101,7 +119,7 @@ function renderPreviewTimedContent(
     source.querySelector('.abyss-recurrence-badge[data-recurrence-forecast="true"]') !== null;
   renderTimedContent(shell, content, {
     forecast,
-    ...(sourceMarker && content.actionable
+    ...(sourceMarker != null && content.actionable
       ? {
           renderControl: (row: HTMLElement) => {
             const marker = sourceMarker.cloneNode(true) as HTMLElement;
@@ -110,7 +128,7 @@ function renderPreviewTimedContent(
           },
         }
       : {}),
-    ...(sourceCounts && content.countLabel
+    ...(sourceCounts != null && Boolean(content.countLabel)
       ? {
           renderCounts: (row: HTMLElement) => {
             for (const child of Array.from(sourceCounts.children)) {
@@ -129,7 +147,7 @@ function updateStableTimedContent(
 ): boolean {
   const topRow = shell.querySelector<HTMLElement>(':scope > .abyss-tg-block-toprow');
   const head = shell.querySelector<HTMLElement>(':scope > .abyss-tg-block-head');
-  if (!topRow || !head) return false;
+  if (topRow == null || head == null) return false;
   const markerPresent = head.querySelector('.abyss-status-marker') !== null;
   const sourceMarkerPresent =
     source.querySelector('.abyss-tg-block-head .abyss-status-marker') !== null &&
@@ -140,7 +158,7 @@ function updateStableTimedContent(
   }
   const subtitle = topRow.querySelector<HTMLElement>('.abyss-tg-block-subtitle');
   const title = head.querySelector<HTMLElement>('.abyss-calendar-title');
-  if (!subtitle || !title) return false;
+  if (subtitle == null || title == null) return false;
   subtitle.textContent = content.timeLabel;
   title.textContent = content.title;
   return true;
@@ -160,46 +178,27 @@ export function populateCalendarPreview(
   preview.dataset['density'] = content.density;
   preview.dataset['phase'] = content.phase;
 
-  for (const property of COPIED_COLOR_PROPERTIES) {
-    const value = source.style.getPropertyValue(property);
-    if (value) preview.style.setProperty(property, value);
-    else preview.style.removeProperty(property);
-  }
+  copyPreviewColors(preview, source);
 
   const existingShell = preview.querySelector<HTMLElement>(
     ':scope > .abyss-calendar-preview-shell',
   );
   if (
-    content.timed &&
-    existingShell &&
+    content.timed != null &&
+    existingShell != null &&
     updateStableTimedContent(existingShell, source, content.timed)
   ) {
     return;
   }
 
   preview.replaceChildren();
-  const targetOutline = preview.ownerDocument.createElement('div');
-  targetOutline.className = 'abyss-calendar-preview-target-outline';
-  preview.appendChild(targetOutline);
+  appendElement(preview, 'div', 'abyss-calendar-preview-target-outline');
+  const shell = appendElement(preview, 'div', 'abyss-calendar-preview-shell');
 
-  const shell = preview.ownerDocument.createElement('div');
-  shell.className = 'abyss-calendar-preview-shell';
-  preview.appendChild(shell);
-
-  if (content.timed) {
+  if (content.timed != null) {
     renderPreviewTimedContent(shell, source, content.timed);
     return;
   }
 
-  const title = preview.ownerDocument.createElement('span');
-  title.className = 'abyss-calendar-preview-title';
-  title.textContent = content.title;
-  shell.appendChild(title);
-
-  if (content.subtitle) {
-    const subtitle = preview.ownerDocument.createElement('span');
-    subtitle.className = 'abyss-calendar-preview-subtitle';
-    subtitle.textContent = content.subtitle;
-    shell.appendChild(subtitle);
-  }
+  renderUntimedPreview(shell, content);
 }

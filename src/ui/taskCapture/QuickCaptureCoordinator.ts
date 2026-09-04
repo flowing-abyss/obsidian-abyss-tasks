@@ -1,6 +1,7 @@
 import type { ShortcutActionId } from '../../settings/shortcuts';
 import type { TaskCommandResult } from '../../tasks';
 import type { InteractionOwnershipPort } from '../interactionOwnership';
+import { runAsyncAction } from '../runAsyncAction';
 import { describeTaskCreationResult, type CreationResultDescription } from '../taskCommandResult';
 import { CaptureSurface } from './CaptureSurface';
 import type { CaptureContext, CaptureTarget } from './CaptureTargetResolver';
@@ -66,7 +67,7 @@ export class QuickCaptureCoordinator {
     });
     this.armOutsidePointerPolicy(generation);
 
-    void this.resolveGeneration(generation, context);
+    runAsyncAction(this.resolveGeneration(generation, context), 'Could not open quick capture');
   }
 
   close(): void {
@@ -92,8 +93,7 @@ export class QuickCaptureCoordinator {
   private openResolvedTarget(generation: number, target: CaptureTarget): void {
     if (!this.ownsResolvingGeneration(generation)) return;
 
-    let controller!: TaskCaptureController;
-    controller = new TaskCaptureController({
+    const controller = new TaskCaptureController({
       target,
       describe: describeTaskCreationResult,
       onResult: (result, description) => {
@@ -139,35 +139,40 @@ export class QuickCaptureCoordinator {
   private armOutsidePointerPolicy(generation: number): void {
     const ownerDocument = this.options.host.ownerDocument;
     const onOutsidePointerDown = (event: Event): void => {
-      if (
-        this.destroyed ||
-        this.generation !== generation ||
-        this.currentPhase === 'closed' ||
-        event.composedPath().includes(this.options.host)
-      ) {
-        return;
-      }
-
-      this.restoreFocusOnClose = false;
-      if (this.currentPhase === 'resolving') {
-        this.releaseCurrentGeneration(false);
-        return;
-      }
-      const controller = this.controller;
-      const surface = this.surface;
-      if (!controller || !surface) return;
-      const snapshot = controller.snapshot();
-      if (snapshot.phase === 'submitting') {
-        controller.escape();
-      } else if (snapshot.draft.trim().length === 0) {
-        controller.escape();
-      } else if (ownerDocument.activeElement === surface.input) {
-        void controller.submit('blur');
-      }
+      this.handleOutsidePointer(event, generation, ownerDocument);
     };
     ownerDocument.addEventListener('pointerdown', onOutsidePointerDown, true);
-    this.outsidePointerCleanup = () =>
+    this.outsidePointerCleanup = () => {
       ownerDocument.removeEventListener('pointerdown', onOutsidePointerDown, true);
+    };
+  }
+
+  private handleOutsidePointer(event: Event, generation: number, ownerDocument: Document): void {
+    if (!this.isOutsideCurrentCapture(event, generation)) return;
+
+    this.restoreFocusOnClose = false;
+    if (this.currentPhase === 'resolving') {
+      this.releaseCurrentGeneration(false);
+      return;
+    }
+    const controller = this.controller;
+    const surface = this.surface;
+    if (controller == null || surface == null) return;
+    const snapshot = controller.snapshot();
+    if (snapshot.phase === 'submitting' || snapshot.draft.trim().length === 0) {
+      controller.escape();
+    } else if (ownerDocument.activeElement === surface.input) {
+      runAsyncAction(controller.submit('blur'), 'Could not add quick-capture task');
+    }
+  }
+
+  private isOutsideCurrentCapture(event: Event, generation: number): boolean {
+    return (
+      !this.destroyed &&
+      this.generation === generation &&
+      this.currentPhase !== 'closed' &&
+      !event.composedPath().includes(this.options.host)
+    );
   }
 
   private ownsResolvingGeneration(generation: number): boolean {
@@ -199,22 +204,29 @@ export class QuickCaptureCoordinator {
     surface?.destroy();
     controller?.destroy();
     ownershipToken?.release();
-    if (restoreFocus && captureOwnedFocus && focusOrigin && this.canRestoreFocus(focusOrigin)) {
-      focusOrigin.focus({ preventScroll: true });
-    }
+    this.restoreReleasedFocus(restoreFocus, captureOwnedFocus, focusOrigin);
+  }
+
+  private restoreReleasedFocus(
+    restoreFocus: boolean,
+    captureOwnedFocus: boolean,
+    focusOrigin: HTMLElement | null,
+  ): void {
+    if (!restoreFocus || !captureOwnedFocus || focusOrigin == null) return;
+    if (this.canRestoreFocus(focusOrigin)) focusOrigin.focus({ preventScroll: true });
   }
 
   private currentFocusOrigin(): HTMLElement | null {
     const ownerDocument = this.options.host.ownerDocument;
     const active = ownerDocument.activeElement;
     const ownerWindow = ownerDocument.defaultView;
-    return ownerWindow && active instanceof ownerWindow.HTMLElement ? active : null;
+    return ownerWindow != null && active instanceof ownerWindow.HTMLElement ? active : null;
   }
 
   private canRestoreFocus(element: HTMLElement): boolean {
     if (!element.isConnected) return false;
     const ownerWindow = element.ownerDocument.defaultView;
-    if (!ownerWindow) return false;
+    if (ownerWindow == null) return false;
     const style = ownerWindow.getComputedStyle(element);
     return (
       style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse'

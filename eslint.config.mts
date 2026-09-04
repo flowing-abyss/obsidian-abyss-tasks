@@ -1,50 +1,153 @@
-import eslint from '@eslint/js';
+import json from '@eslint/json';
+import prettier from 'eslint-config-prettier';
 import obsidianmd from 'eslint-plugin-obsidianmd';
+import { PlainTextParser } from 'eslint-plugin-obsidianmd/dist/lib/plainTextParser.js';
 import sonarjs from 'eslint-plugin-sonarjs';
-import globals from 'globals';
+import { defineConfig, globalIgnores } from 'eslint/config';
+import * as globals from 'globals';
 import tseslint from 'typescript-eslint';
-// eslint-plugin-obsidianmd requires @eslint/js ^9.30.1, so eslint v10 is blocked
 
-export default tseslint.config(
-  eslint.configs.recommended,
-  ...tseslint.configs.recommendedTypeChecked,
+const testFiles = ['test/**/*.ts', 'vitest.config.ts', 'vitest.bench.config.ts'];
+const metadataIncompatibleRules = Object.fromEntries(
+  [
+    ...new Set(
+      obsidianmd.configs.recommendedWithLocalesEn.flatMap((config) =>
+        Object.keys(config.rules ?? {}).filter((rule) => !rule.includes('/')),
+      ),
+    ),
+    ...Object.keys(sonarjs.configs.recommended.rules as Readonly<Record<string, unknown>>),
+  ].map((rule) => [rule, 'off'] as const),
+);
+
+export default defineConfig(
+  globalIgnores([
+    'node_modules',
+    'dist',
+    'coverage',
+    'esbuild.config.mjs',
+    'version-bump.mjs',
+    'versions.json',
+    'main.js',
+    'pnpm-lock.yaml',
+    'tsconfig.json',
+    '.ai',
+    '.agents',
+    '.claude',
+    '.codex',
+    '.forge',
+    '.opencode',
+    '.pi',
+  ]),
+  {
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+      parserOptions: {
+        projectService: {
+          allowDefaultProject: [
+            'eslint.config.mts',
+            'manifest.json',
+            'commitlint.config.mjs',
+            'dependency-cruiser.config.cjs',
+            'stylelint.config.mjs',
+            'release-check.mjs',
+          ],
+        },
+        tsconfigRootDir: import.meta.dirname,
+        extraFileExtensions: ['.json'],
+      },
+    },
+  },
   ...obsidianmd.configs.recommendedWithLocalesEn,
   sonarjs.configs.recommended,
   {
-    languageOptions: {
-      // Obsidian plugins run in Electron — both browser and Node.js globals available
-      globals: { ...globals.browser, ...globals.node },
-      parserOptions: {
-        projectService: {
-          allowDefaultProject: ['*.js', '*.mjs', '*.mts'],
-        },
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        tsconfigRootDir: import.meta.dirname,
-      },
-    },
+    files: ['**/*.ts'],
     rules: {
-      '@typescript-eslint/no-explicit-any': 'warn',
-      '@typescript-eslint/no-unused-vars': [
+      // Complexity budgets (cyclomatic + cognitive), mirrors the reference TypeScript template.
+      complexity: ['error', 10],
+      'sonarjs/cognitive-complexity': ['error', 10],
+      'max-depth': ['error', 4],
+      'max-lines-per-function': ['error', { max: 80, skipBlankLines: true, skipComments: true }],
+      'max-params': ['error', 4],
+      'max-statements': ['error', 30],
+
+      'array-callback-return': 'error',
+      curly: ['error', 'all'],
+      eqeqeq: ['error', 'always', { null: 'ignore' }],
+      'no-else-return': ['error', { allowElseIf: false }],
+      'no-new-wrappers': 'error',
+      'no-param-reassign': 'error',
+      'no-throw-literal': 'error',
+      'no-unused-vars': 'off',
+      'object-shorthand': ['error', 'always'],
+      'prefer-const': ['error', { destructuring: 'all', ignoreReadBeforeAssign: false }],
+      'prefer-template': 'error',
+      'require-atomic-updates': 'error',
+
+      '@typescript-eslint/array-type': ['error', { default: 'array-simple' }],
+      '@typescript-eslint/ban-ts-comment': [
         'error',
-        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+        {
+          'ts-check': false,
+          'ts-expect-error': 'allow-with-description',
+          'ts-ignore': true,
+          'ts-nocheck': true,
+          minimumDescriptionLength: 12,
+        },
       ],
-      '@typescript-eslint/no-floating-promises': 'error',
-      '@typescript-eslint/no-misused-promises': 'error',
-      '@typescript-eslint/await-thenable': 'error',
-      '@typescript-eslint/require-await': 'warn',
-      'sonarjs/cognitive-complexity': ['error', 30],
-      // Redundant with @typescript-eslint/no-unused-vars
-      'sonarjs/no-unused-vars': 'off',
-      // MCP/Obsidian deprecations are out of scope to address
-      'sonarjs/deprecation': 'off',
+      '@typescript-eslint/consistent-type-exports': 'error',
+      '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
+      '@typescript-eslint/explicit-function-return-type': [
+        'error',
+        {
+          allowExpressions: true,
+          allowHigherOrderFunctions: true,
+          allowTypedFunctionExpressions: true,
+        },
+      ],
+      '@typescript-eslint/no-confusing-void-expression': [
+        'error',
+        { ignoreArrowShorthand: false, ignoreVoidOperator: false },
+      ],
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-floating-promises': [
+        'error',
+        { ignoreIIFE: false, ignoreVoid: false },
+      ],
+      '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: true }],
+      '@typescript-eslint/no-non-null-assertion': 'error',
+      '@typescript-eslint/no-redundant-type-constituents': 'error',
+      '@typescript-eslint/no-unnecessary-condition': 'error',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'error',
+      '@typescript-eslint/no-unsafe-argument': 'error',
+      '@typescript-eslint/no-unsafe-assignment': 'error',
+      '@typescript-eslint/no-unsafe-call': 'error',
+      '@typescript-eslint/no-unsafe-member-access': 'error',
+      '@typescript-eslint/no-unsafe-return': 'error',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/only-throw-error': 'error',
+      '@typescript-eslint/prefer-nullish-coalescing': 'error',
+      '@typescript-eslint/prefer-optional-chain': 'error',
+      '@typescript-eslint/prefer-readonly': 'error',
+      '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
+      '@typescript-eslint/strict-boolean-expressions': [
+        'error',
+        { allowString: false, allowNumber: false, allowNullableObject: false },
+      ],
+      '@typescript-eslint/switch-exhaustiveness-check': 'error',
     },
   },
   {
-    // Relax type-unsafe rules in test files — vi matchers (expect.objectContaining etc.) return any
-    files: ['test/**/*.ts'],
+    files: testFiles,
+    languageOptions: {
+      globals: { ...globals.node },
+    },
     rules: {
-      '@typescript-eslint/no-unsafe-assignment': 'off',
-      '@typescript-eslint/no-unsafe-argument': 'off',
+      'max-lines-per-function': 'off',
+      'max-statements': 'off',
+      'sonarjs/cognitive-complexity': 'off',
+      '@typescript-eslint/explicit-function-return-type': 'off',
     },
   },
   {
@@ -212,6 +315,50 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['dist/', 'node_modules/', 'main.js', 'esbuild.config.mjs', 'version-bump.mjs'],
+    // Node-only tooling scripts are not part of the browser-context plugin bundle.
+    files: ['*.cjs', 'release-check.mjs'],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+    rules: {
+      'obsidianmd/no-nodejs-modules': 'off',
+      'obsidianmd/rule-custom-message': 'off',
+      'no-console': 'off',
+      'no-undef': 'off',
+    },
   },
+  {
+    files: ['package.json'],
+    language: 'json/json',
+    plugins: { json },
+    rules: {
+      ...metadataIncompatibleRules,
+      ...json.configs.recommended.rules,
+    },
+  },
+  {
+    files: ['manifest.json'],
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: {
+        projectService: false,
+        extraFileExtensions: ['.json'],
+      },
+    },
+    plugins: { obsidianmd },
+    rules: {
+      ...metadataIncompatibleRules,
+      'obsidianmd/validate-manifest': 'error',
+    },
+  },
+  {
+    files: ['LICENSE'],
+    languageOptions: { parser: PlainTextParser },
+    plugins: { obsidianmd },
+    rules: {
+      ...metadataIncompatibleRules,
+      'obsidianmd/validate-license': 'error',
+    },
+  },
+  prettier,
 );

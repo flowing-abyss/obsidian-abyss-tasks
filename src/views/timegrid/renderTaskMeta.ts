@@ -110,7 +110,7 @@ export function renderCalendarLeadingSlots(
     'data-control-slot',
     container.childElementCount > childCount ? 'occupied' : 'reserved',
   );
-  if (recurrence) {
+  if (recurrence !== undefined && recurrence.length > 0) {
     renderRecurrenceBadge(container, recurrenceBadgeInput(recurrence, forecast));
     container.setAttribute('data-recurrence-slot', 'occupied');
   } else {
@@ -136,7 +136,7 @@ function projectionIssueSignature(issues: readonly CalendarProjectionIssue[]): s
 export function createCalendarProjectionDiagnosticOwner(
   ownerDocument: Document,
 ): CalendarProjectionDiagnosticOwner {
-  const diagnostic = ownerDocument.createElement('div');
+  const diagnostic = ownerDocument.adoptNode(createFragment().createDiv());
   diagnostic.addClass('abyss-calendar-projection-diagnostic');
   diagnostic.setAttribute('aria-live', 'polite');
   diagnostic.setAttribute('aria-atomic', 'true');
@@ -165,112 +165,168 @@ export function bindMaterializedInteractions(
   bind(occurrence.source.target);
 }
 
+interface ActiveForecastMenu {
+  readonly menu: HTMLElement;
+  readonly restoreTarget: HTMLElement | null;
+  readonly onDocumentKeydown: (event: KeyboardEvent) => void;
+  readonly onDocumentMousedown: (event: MouseEvent) => void;
+  readonly ownershipToken: { release(): void };
+  readonly unregisterPopover: () => void;
+}
+
+interface ForecastMenuState {
+  active: ActiveForecastMenu | null;
+}
+
+interface ForecastMenuContext {
+  readonly ownerDocument: Document;
+  readonly interactionOwnership: InteractionOwnershipPort;
+  readonly state: ForecastMenuState;
+  readonly dismiss: (options?: { readonly restoreFocus?: boolean }) => void;
+}
+
+interface ForecastMenuRequest {
+  readonly anchor: HTMLElement;
+  readonly event: MouseEvent;
+  readonly occurrence: Extract<CalendarOccurrence, { readonly kind: 'forecast' }>;
+  readonly callbacks: ForecastInteractionCallbacks;
+}
+
+function focusedElement(ownerDocument: Document): HTMLElement | null {
+  const candidate = ownerDocument.activeElement;
+  const realm = ownerDocument.defaultView;
+  return realm !== null && candidate instanceof realm.HTMLElement ? candidate : null;
+}
+
+function dismissForecastMenu(
+  ownerDocument: Document,
+  state: ForecastMenuState,
+  options: { readonly restoreFocus?: boolean } = {},
+): void {
+  const current = state.active;
+  if (current === null) return;
+  state.active = null;
+  ownerDocument.removeEventListener('keydown', current.onDocumentKeydown, true);
+  ownerDocument.removeEventListener('mousedown', current.onDocumentMousedown, true);
+  current.unregisterPopover();
+  current.menu.remove();
+  current.ownershipToken.release();
+  if (options.restoreFocus !== false && current.restoreTarget?.isConnected === true) {
+    current.restoreTarget.focus({ preventScroll: true });
+  }
+}
+
+function positionForecastMenu(
+  menu: HTMLElement,
+  event: MouseEvent,
+  realm: (Window & { readonly DOMRect: typeof DOMRect }) | null,
+): void {
+  const measured = menu.getBoundingClientRect();
+  const width = measured.width !== 0 ? measured.width : menu.offsetWidth;
+  const height = measured.height !== 0 ? measured.height : menu.offsetHeight;
+  const viewportWidth = realm?.innerWidth ?? width + 16;
+  const viewportHeight = realm?.innerHeight ?? height + 16;
+  const point =
+    realm === null
+      ? new DOMRect(event.clientX, event.clientY, 0, 0)
+      : new realm.DOMRect(event.clientX, event.clientY, 0, 0);
+  const boundary =
+    realm === null
+      ? new DOMRect(0, 0, viewportWidth, viewportHeight)
+      : new realm.DOMRect(0, 0, viewportWidth, viewportHeight);
+  const placement = anchoredPlacement({
+    anchor: point,
+    floating: { width, height },
+    boundary,
+    gap: 0,
+    edgeGap: 8,
+    preferred: 'below-start',
+  });
+  menu.style.left = `${placement.left}px`;
+  menu.style.top = `${placement.top}px`;
+}
+
+function addForecastMenuActions(menu: HTMLElement): {
+  edit: HTMLButtonElement;
+  open: HTMLButtonElement;
+} {
+  const edit = menu.createEl('button', {
+    cls: 'abyss-forecast-context-menu-edit-repeat',
+    attr: { type: 'button', role: 'menuitem' },
+    text: 'Edit repeat…',
+  });
+  const open = menu.createEl('button', {
+    cls: 'abyss-forecast-context-menu-open-source',
+    attr: { type: 'button', role: 'menuitem' },
+    text: 'Open source task',
+  });
+  return { edit, open };
+}
+
+function openForecastMenu(context: ForecastMenuContext, request: ForecastMenuRequest): void {
+  const { ownerDocument, interactionOwnership, state, dismiss } = context;
+  const { anchor, event, occurrence, callbacks } = request;
+  const restoreTarget = state.active?.restoreTarget ?? focusedElement(ownerDocument) ?? anchor;
+  dismiss({ restoreFocus: false });
+  closeStatusPopovers(ownerDocument);
+  const ownershipToken = interactionOwnership.acquire({ blocksShortcuts: true });
+  const menu = ownerDocument.body.createDiv({
+    cls: 'abyss-status-popover abyss-forecast-context-menu',
+    attr: { role: 'menu' },
+  });
+  const { edit, open } = addForecastMenuActions(menu);
+  positionForecastMenu(menu, event, ownerDocument.defaultView);
+
+  const onDocumentKeydown = (keyboardEvent: KeyboardEvent): void => {
+    if (keyboardEvent.key !== 'Escape' || state.active?.menu !== menu) return;
+    keyboardEvent.preventDefault();
+    keyboardEvent.stopPropagation();
+    dismiss();
+  };
+  const onDocumentMousedown = (mouseEvent: MouseEvent): void => {
+    if (state.active?.menu !== menu || menu.contains(mouseEvent.target as Node)) return;
+    dismiss();
+  };
+  const unregisterPopover = registerStatusPopoverClose(menu, () => {
+    if (state.active?.menu === menu) dismiss({ restoreFocus: false });
+  });
+  const owned: ActiveForecastMenu = {
+    menu,
+    restoreTarget,
+    onDocumentKeydown,
+    onDocumentMousedown,
+    ownershipToken,
+    unregisterPopover,
+  };
+  state.active = owned;
+  ownerDocument.addEventListener('keydown', onDocumentKeydown, true);
+  ownerDocument.addEventListener('mousedown', onDocumentMousedown, true);
+  edit.addEventListener('click', () => {
+    if (state.active !== owned) return;
+    dismiss({ restoreFocus: false });
+    callbacks.onForecastContextMenu?.(occurrence.source, occurrence.referenceDate);
+  });
+  open.addEventListener('click', () => {
+    if (state.active !== owned) return;
+    dismiss({ restoreFocus: false });
+    callbacks.onForecastClick?.(occurrence.source, occurrence.referenceDate);
+  });
+  edit.focus({ preventScroll: true });
+}
+
 export function createForecastContextMenuOwner(
   ownerDocument: Document,
   interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
 ): ForecastContextMenuOwner {
-  interface ActiveMenu {
-    readonly menu: HTMLElement;
-    readonly restoreTarget: HTMLElement | null;
-    readonly onDocumentKeydown: (event: KeyboardEvent) => void;
-    readonly onDocumentMousedown: (event: MouseEvent) => void;
-    readonly ownershipToken: { release(): void };
-    readonly unregisterPopover: () => void;
-  }
-
-  let active: ActiveMenu | null = null;
-  const realm = ownerDocument.defaultView;
-  const focusedElement = (): HTMLElement | null => {
-    const candidate = ownerDocument.activeElement;
-    return realm && candidate instanceof realm.HTMLElement ? candidate : null;
-  };
+  const state: ForecastMenuState = { active: null };
   const dismiss = (options: { readonly restoreFocus?: boolean } = {}): void => {
-    const current = active;
-    if (!current) return;
-    active = null;
-    ownerDocument.removeEventListener('keydown', current.onDocumentKeydown, true);
-    ownerDocument.removeEventListener('mousedown', current.onDocumentMousedown, true);
-    current.unregisterPopover();
-    current.menu.remove();
-    current.ownershipToken.release();
-    if (options.restoreFocus !== false && current.restoreTarget?.isConnected) {
-      current.restoreTarget.focus({ preventScroll: true });
-    }
+    dismissForecastMenu(ownerDocument, state, options);
   };
+  const context = { ownerDocument, interactionOwnership, state, dismiss };
 
   return {
     open(anchor, event, occurrence, callbacks): void {
-      const restoreTarget = active?.restoreTarget ?? focusedElement() ?? anchor;
-      dismiss({ restoreFocus: false });
-      closeStatusPopovers(ownerDocument);
-      const ownershipToken = interactionOwnership.acquire({ blocksShortcuts: true });
-      const menu = ownerDocument.body.createDiv({
-        cls: 'abyss-status-popover abyss-forecast-context-menu',
-        attr: { role: 'menu' },
-      });
-      const edit = menu.createEl('button', {
-        cls: 'abyss-forecast-context-menu-edit-repeat',
-        attr: { type: 'button', role: 'menuitem' },
-        text: 'Edit repeat…',
-      });
-      const open = menu.createEl('button', {
-        cls: 'abyss-forecast-context-menu-open-source',
-        attr: { type: 'button', role: 'menuitem' },
-        text: 'Open source task',
-      });
-      const measured = menu.getBoundingClientRect();
-      const width = measured.width || menu.offsetWidth;
-      const height = measured.height || menu.offsetHeight;
-      const viewportWidth = realm?.innerWidth ?? width + 16;
-      const viewportHeight = realm?.innerHeight ?? height + 16;
-      const Rect = realm?.DOMRect ?? DOMRect;
-      const point = new Rect(event.clientX, event.clientY, 0, 0);
-      const placement = anchoredPlacement({
-        anchor: point,
-        floating: { width, height },
-        boundary: new Rect(0, 0, viewportWidth, viewportHeight),
-        gap: 0,
-        edgeGap: 8,
-        preferred: 'below-start',
-      });
-      menu.style.left = `${placement.left}px`;
-      menu.style.top = `${placement.top}px`;
-      let owned: ActiveMenu;
-      const onDocumentKeydown = (keyboardEvent: KeyboardEvent): void => {
-        if (keyboardEvent.key !== 'Escape' || active !== owned) return;
-        keyboardEvent.preventDefault();
-        keyboardEvent.stopPropagation();
-        dismiss();
-      };
-      const onDocumentMousedown = (mouseEvent: MouseEvent): void => {
-        if (active !== owned || menu.contains(mouseEvent.target as Node)) return;
-        dismiss();
-      };
-      const unregisterPopover = registerStatusPopoverClose(menu, () => {
-        if (active === owned) dismiss({ restoreFocus: false });
-      });
-      owned = {
-        menu,
-        restoreTarget,
-        onDocumentKeydown,
-        onDocumentMousedown,
-        ownershipToken,
-        unregisterPopover,
-      };
-      active = owned;
-      ownerDocument.addEventListener('keydown', onDocumentKeydown, true);
-      ownerDocument.addEventListener('mousedown', onDocumentMousedown, true);
-      edit.addEventListener('click', () => {
-        if (active !== owned) return;
-        dismiss({ restoreFocus: false });
-        callbacks.onForecastContextMenu?.(occurrence.source, occurrence.referenceDate);
-      });
-      open.addEventListener('click', () => {
-        if (active !== owned) return;
-        dismiss({ restoreFocus: false });
-        callbacks.onForecastClick?.(occurrence.source, occurrence.referenceDate);
-      });
-      edit.focus({ preventScroll: true });
+      openForecastMenu(context, { anchor, event, occurrence, callbacks });
     },
     dismiss,
   };
@@ -297,19 +353,22 @@ export function createForecastTaskCard(
   task: TaskSnapshot,
   taskClass: string,
   occurrence: Extract<CalendarOccurrence, { readonly kind: 'forecast' }>,
-  renderedDate: LocalDate,
-  callbacks: ForecastInteractionCallbacks,
+  context: {
+    readonly renderedDate: LocalDate;
+    readonly callbacks: ForecastInteractionCallbacks;
+  },
 ): HTMLElement {
-  const card = activeDocument.createElement('div');
+  const { renderedDate, callbacks } = context;
+  const card = createFragment().createDiv();
   card.className = `task ${taskClass} noNoteIcon`;
   card.setAttribute('style', taskCardVisualStyle(task));
   card.setAttribute('data-task-text', task.title);
   card.setAttribute('title', task.title);
-  if (task.planning.due) card.setAttribute('data-due', task.planning.due);
+  if (task.planning.due != null) card.setAttribute('data-due', task.planning.due);
   const inner = card.createDiv({ cls: 'inner' });
   const content = inner.createDiv({ cls: 'inner-link' });
   const icon = content.createDiv({ cls: 'icon' });
-  if (task.recurrence) {
+  if (task.recurrence !== undefined && task.recurrence.length > 0) {
     renderRecurrenceBadge(icon, recurrenceBadgeInput(task.recurrence, true));
   }
   content.createDiv({ cls: 'description', text: plainGhostTaskTitle(task) });
@@ -327,7 +386,7 @@ export function createForecastTaskCard(
 
 /** Reads up to `max` canonical semantic tags from the task index projection. */
 export function extractTags(task: TaskSnapshot, max = Infinity): string[] {
-  const tags = task.tags ?? [];
+  const tags = task.tags;
   return max === Infinity ? [...tags] : tags.slice(0, max);
 }
 
@@ -339,25 +398,25 @@ export function extractTags(task: TaskSnapshot, max = Infinity): string[] {
  * here (unlike tag chips below, which CenterPanel makes interactive — see renderTagChips).
  */
 export function renderCountBadges(container: HTMLElement, task: TaskSnapshot): void {
-  const subtaskCount = task.subtasks?.length ?? 0;
-  const commentCount = task.comments?.length ?? 0;
-  const linkCount = task.presentation.linkCount ?? 0;
+  const subtaskCount = task.subtasks.length;
+  const commentCount = task.comments.length;
+  const linkCount = task.presentation.linkCount;
 
   if (subtaskCount > 0) {
-    const doneCount = task.subtasks?.filter((s) => s.status === 'done').length ?? 0;
-    const badge = container.createEl('span', { cls: 'abyss-task-count-badge' });
+    const doneCount = task.subtasks.filter((subtask) => subtask.status === 'done').length;
+    const badge = container.createSpan({ cls: 'abyss-task-count-badge' });
     setIcon(badge, 'check-square');
-    badge.createEl('span', { text: `${doneCount}/${subtaskCount}` });
+    badge.createSpan({ text: `${doneCount}/${subtaskCount}` });
   }
   if (commentCount > 0) {
-    const badge = container.createEl('span', { cls: 'abyss-task-count-badge' });
+    const badge = container.createSpan({ cls: 'abyss-task-count-badge' });
     setIcon(badge, 'message-square');
-    badge.createEl('span', { text: String(commentCount) });
+    badge.createSpan({ text: String(commentCount) });
   }
   if (linkCount > 0) {
-    const badge = container.createEl('span', { cls: 'abyss-task-count-badge' });
+    const badge = container.createSpan({ cls: 'abyss-task-count-badge' });
     setIcon(badge, 'paperclip');
-    badge.createEl('span', { text: String(linkCount) });
+    badge.createSpan({ text: String(linkCount) });
   }
 }
 
@@ -379,9 +438,9 @@ export function renderTagChips(
 ): void {
   const tags = extractTags(task, max);
   for (const tag of tags) {
-    const tagEl = container.createEl('span', { cls: 'abyss-task-tag', text: tag });
+    const tagEl = container.createSpan({ cls: 'abyss-task-tag', text: tag });
     const color = colorForTag(tag, tagGroups);
-    if (color) {
+    if (color !== undefined && color.length > 0) {
       tagEl.setCssProps({ '--abyss-tag-color': color });
       tagEl.addClass('abyss-task-tag--colored');
     }
@@ -391,9 +450,9 @@ export function renderTagChips(
 /** True if the task has anything for renderCountBadges/renderTagChips to show. */
 export function hasMeta(task: TaskSnapshot): boolean {
   return (
-    (task.subtasks?.length ?? 0) > 0 ||
-    (task.comments?.length ?? 0) > 0 ||
-    (task.presentation.linkCount ?? 0) > 0 ||
+    task.subtasks.length > 0 ||
+    task.comments.length > 0 ||
+    task.presentation.linkCount > 0 ||
     extractTags(task, 1).length > 0
   );
 }
@@ -407,9 +466,5 @@ export function hasMeta(task: TaskSnapshot): boolean {
  * no counts to show.
  */
 export function hasCountBadges(task: TaskSnapshot): boolean {
-  return (
-    (task.subtasks?.length ?? 0) > 0 ||
-    (task.comments?.length ?? 0) > 0 ||
-    (task.presentation.linkCount ?? 0) > 0
-  );
+  return task.subtasks.length > 0 || task.comments.length > 0 || task.presentation.linkCount > 0;
 }

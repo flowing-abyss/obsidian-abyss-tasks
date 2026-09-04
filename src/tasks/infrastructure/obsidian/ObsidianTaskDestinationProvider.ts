@@ -63,7 +63,7 @@ export class ObsidianTaskDestinationProvider implements TaskDestinationProvider 
 
   async resolveConfiguredDefault(): Promise<TaskDestinationResolution> {
     const plan = await this.planConfiguredDefault();
-    return plan ? await plan.prepare() : { type: 'unavailable' };
+    return plan != null ? await plan.prepare() : { type: 'unavailable' };
   }
 
   async prepare(destination: TaskDestination): Promise<TaskDestinationResolution> {

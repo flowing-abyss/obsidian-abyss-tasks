@@ -8,6 +8,7 @@ import type { TaskSnapshot as Task } from '../src/tasks';
 import { WeekView } from '../src/views/WeekView';
 import {
   dispatchDnD,
+  expectDefined,
   fixedToday,
   freshContainer,
   resolvedConfig,
@@ -178,7 +179,7 @@ describe('WeekView', () => {
       const cellContent = c.querySelector('.cell.today .cellContent') as HTMLElement;
       dispatchDnD(cellContent, 'drop', 'b.md:::1');
       expect(spies.onDrop).toHaveBeenCalledTimes(1);
-      expect(spies.onDrop.mock.calls[0]![0]).toBe('b.md:::1');
+      expect(expectDefined(spies.onDrop.mock.calls[0])[0]).toBe('b.md:::1');
       vi.useRealTimers();
     });
 
@@ -219,7 +220,7 @@ describe('WeekView', () => {
       const card = c.querySelector('.task') as HTMLElement;
       card.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       expect(spies.onTaskClick).toHaveBeenCalledTimes(1);
-      expect(spies.onTaskClick.mock.calls[0]![0]).toBe(t);
+      expect(expectDefined(spies.onTaskClick.mock.calls[0])[0]).toBe(t);
       vi.useRealTimers();
     });
 
@@ -286,7 +287,9 @@ describe('WeekView', () => {
       const { view } = makeView();
       const c = freshContainer();
       view.render(c, [], resolvedConfig());
-      expect(() => view.destroy()).not.toThrow();
+      expect(() => {
+        view.destroy();
+      }).not.toThrow();
     });
   });
 

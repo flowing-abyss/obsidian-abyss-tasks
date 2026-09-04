@@ -29,12 +29,12 @@ export class TaskLocator {
   }
 
   revision(source: string): string {
-    if (this.authority) return this.authority.revision(source);
+    if (this.authority != null) return this.authority.revision(source);
     return `block:${this.fingerprint(source)}:${JSON.stringify(source)}`;
   }
 
   exactSource(revision: string): string | undefined {
-    if (this.authority) return this.authority.evidence(revision)?.source;
+    if (this.authority != null) return this.authority.evidence(revision)?.source;
     if (!revision.startsWith('block:')) return undefined;
     const payload = revision.slice('block:'.length);
     const separator = payload.indexOf(':');
@@ -54,8 +54,9 @@ export class TaskLocator {
     if (exact.length > 1) return { type: 'ambiguous', blocks: exact };
     if (expected !== undefined && hinted?.source === expected)
       return { type: 'exact', block: hinted };
-    if (exact.length === 1) return { type: 'exact', block: exact[0]! };
-    if (hinted) return { type: 'conflict', block: hinted };
+    const exactBlock = exact[0];
+    if (exact.length === 1 && exactBlock !== undefined) return { type: 'exact', block: exactBlock };
+    if (hinted != null) return { type: 'conflict', block: hinted };
     return { type: 'not-found' };
   }
 }

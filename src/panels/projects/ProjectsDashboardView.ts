@@ -1,5 +1,6 @@
 import { Menu, setIcon } from 'obsidian';
 import type { Project } from '../../projects/types';
+import type { ProjectStatus } from '../../settings/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { renderProgressBar } from './progressBar';
 import type { ProjectsDashboardContext } from './viewContext';
@@ -15,21 +16,32 @@ export function renderProjectDashboard(
   const back = container.createEl('button', { cls: 'abyss-project-back' });
   setIcon(back, 'arrow-left');
   back.createSpan({ text: 'Back to projects' });
-  back.addEventListener('click', () => ctx.state.set('projectsPanel', { view: 'list' }));
+  back.addEventListener('click', () => {
+    ctx.state.set('projectsPanel', { view: 'list' });
+  });
 
-  if (!project) {
+  if (project == null) {
     container.createDiv({ cls: 'abyss-projects-empty', text: 'Project not found' });
     return;
   }
 
+  renderProjectDetails(container, project, ctx);
+}
+
+function renderProjectDetails(
+  container: HTMLElement,
+  project: Project,
+  ctx: ProjectsDashboardContext,
+): void {
   const statuses = ctx.settings.projects.statuses;
-  const status = project.statusId ? statuses.find((s) => s.id === project.statusId) : undefined;
+  const status = projectStatus(project, statuses);
 
   const header = container.createDiv({ cls: 'abyss-project-dashboard-header' });
   header.createEl('h2', { cls: 'abyss-project-dashboard-title', text: project.name });
 
   const pill = header.createEl('button', { cls: 'abyss-status-pill' });
-  if (status?.color) pill.style.background = status.color;
+  const statusColor = status?.color;
+  if (statusColor !== undefined && statusColor.length > 0) pill.style.background = statusColor;
   pill.setText(status?.label ?? project.rawStatus ?? 'No status');
   pill.addEventListener('click', (e) => {
     const menu = new Menu();
@@ -38,7 +50,9 @@ export function renderProjectDashboard(
         item
           .setTitle(s.label)
           .setChecked(s.id === project.statusId)
-          .onClick(() => ctx.onSetStatus(project.path, s.id)),
+          .onClick(() => {
+            ctx.onSetStatus(project.path, s.id);
+          }),
       );
     }
     showMenuAtMouseEventWithFocus(menu, e);
@@ -49,17 +63,27 @@ export function renderProjectDashboard(
     attr: { 'aria-label': 'Open note' },
   });
   setIcon(open, 'file-text');
-  open.addEventListener('click', () => ctx.openNote(project.path));
+  open.addEventListener('click', () => {
+    ctx.openNote(project.path);
+  });
 
   const stats = container.createDiv({ cls: 'abyss-project-dashboard-stats' });
   renderProgressBar(stats, project.stats.done, project.stats.total);
 
   const rawDesc = project.frontmatter['description'];
   const desc = typeof rawDesc === 'string' ? rawDesc.trim() : '';
-  if (desc) {
+  if (desc.length > 0) {
     container.createDiv({ cls: 'abyss-project-description', text: desc });
   }
 
   const taskHost = container.createDiv({ cls: 'abyss-project-tasks' });
   ctx.renderTasks(taskHost, project.path);
+}
+
+function projectStatus(
+  project: Project,
+  statuses: ProjectsDashboardContext['settings']['projects']['statuses'],
+): ProjectStatus | undefined {
+  if (project.statusId === null || project.statusId.length === 0) return undefined;
+  return statuses.find((status) => status.id === project.statusId);
 }

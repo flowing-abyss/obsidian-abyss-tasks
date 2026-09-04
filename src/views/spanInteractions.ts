@@ -106,7 +106,8 @@ export function resolveGrabbedDate(
       clientX >= column.left &&
       (clientX < column.right || (index === columns.length - 1 && clientX === column.right)),
   );
-  return matches.length === 1 ? parsedDate(matches[0]!.date) : undefined;
+  const match = matches[0];
+  return matches.length === 1 && match !== undefined ? parsedDate(match.date) : undefined;
 }
 
 export function serializeSpanMovePayload(task: TaskSnapshot, grabbedDate: string): string {
@@ -127,8 +128,8 @@ export function parseSpanMovePayload(serialized: string): SpanMovePayload | unde
       typeof value.task?.filePath !== 'string' ||
       value.task.filePath.length === 0 ||
       !Number.isSafeInteger(value.task.line) ||
-      (value.task.line ?? -1) < 0 ||
-      !grabbedDate
+      value.task.line < 0 ||
+      grabbedDate == null
     )
       return undefined;
     return Object.freeze({
@@ -146,7 +147,7 @@ export function resolveSpanMoveTarget(
   targetDate: string,
 ): Readonly<SpanMoveTarget> | undefined {
   const target = parsedDate(targetDate);
-  if (!target) return undefined;
+  if (target == null) return undefined;
   const days = daysBetweenLocalDates(payload.grabbedDate, target);
   return days === 0
     ? undefined
@@ -166,7 +167,7 @@ interface MeasuredSpanColumn {
 
 function measuredColumns(source: HTMLElement): MeasuredSpanColumn[] {
   const root = source.closest<HTMLElement>('.abyss-tg-root, .abyss-mg-grid');
-  if (!root) return [];
+  if (root == null) return [];
   const selector = root.classList.contains('abyss-tg-root')
     ? '.abyss-tg-allday-cell[data-tg-date]'
     : '.abyss-mg-cell[data-mg-date]';
@@ -177,7 +178,7 @@ function measuredColumns(source: HTMLElement): MeasuredSpanColumn[] {
     const layer = row?.querySelector<HTMLElement>(
       ':scope > .abyss-tg-span-layer, :scope > .abyss-mg-span-layer',
     );
-    if (!date || !row || !layer) return [];
+    if (date == null || row == null || layer == null) return [];
     const rect = element.getBoundingClientRect();
     return [
       {
@@ -224,37 +225,40 @@ function rowColumns(
 }
 
 function capture(element: HTMLElement, pointerId: number): void {
+  if (typeof element.setPointerCapture !== 'function') return;
   try {
-    element.setPointerCapture?.(pointerId);
+    element.setPointerCapture(pointerId);
   } catch {
     // Window listeners remain authoritative when the host cannot capture.
   }
 }
 
 function release(element: HTMLElement, pointerId: number): void {
+  if (typeof element.releasePointerCapture !== 'function') return;
   try {
-    element.releasePointerCapture?.(pointerId);
+    element.releasePointerCapture(pointerId);
   } catch {
     // Capture may already have been released by the host.
   }
 }
 
-function createPreview(
-  source: HTMLElement,
-  className: string,
-  target: object,
-  task: TaskSnapshot,
-  phase: 'ghost' | 'terminal',
-  subtitle: string,
-): HTMLElement {
-  const preview = source.ownerDocument.createElement('div');
-  preview.className = className;
-  preview.dataset['target'] = JSON.stringify(target);
+interface SpanPreviewOptions {
+  readonly className: string;
+  readonly target: object;
+  readonly task: TaskSnapshot;
+  readonly phase: 'ghost' | 'terminal';
+  readonly subtitle: string;
+}
+
+function createPreview(source: HTMLElement, options: SpanPreviewOptions): HTMLElement {
+  const preview = source.ownerDocument.adoptNode(createFragment().createDiv());
+  preview.className = options.className;
+  preview.dataset['target'] = JSON.stringify(options.target);
   populateCalendarPreview(preview, source, {
-    title: task.title,
-    subtitle,
+    title: options.task.title,
+    subtitle: options.subtitle,
     density: 'regular',
-    phase,
+    phase: options.phase,
   });
   return preview;
 }
@@ -265,274 +269,367 @@ export interface SpanInteractionBinding {
   readonly segmentStart: string;
   readonly segmentEnd: string;
   readonly owner: SpanInteractionOwner;
-  readonly previewLayoutFor?: (
-    task: TaskSnapshot,
-    planning: TaskSnapshot['planning'],
-  ) => VisibleSpanLayout;
-  readonly boundaryHandles: readonly {
+  readonly previewLayoutFor?:
+    ((task: TaskSnapshot, planning: TaskSnapshot['planning']) => VisibleSpanLayout) | undefined;
+  readonly boundaryHandles: ReadonlyArray<{
     readonly element: HTMLElement;
     readonly boundary: 'start' | 'due' | 'create-span';
-  }[];
+  }>;
   readonly onMove: (task: TaskSnapshot, target: SpanMoveTarget) => void;
   readonly onBoundary: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;
-  readonly enableMove?: boolean;
+  readonly enableMove?: boolean | undefined;
 }
 
 const POINTER_DRAG_THRESHOLD_PX = 3;
 
-export function attachSpanInteractions(binding: SpanInteractionBinding): void {
-  const { source, task, owner } = binding;
-  const ownerDocument = source.ownerDocument;
-  const ownerWindow = ownerDocument.defaultView;
-  if (!ownerWindow) return;
+type SpanInteractionKind = 'move' | 'start' | 'due' | 'create-span';
+type SpanInteractionTarget = Readonly<SpanMoveTarget | InteractiveSpanBoundaryTarget>;
 
-  const startSession = (
-    event: PointerEvent,
-    kind: 'move' | 'start' | 'due' | 'create-span',
-  ): void => {
-    if (event.button !== 0) return;
-    if (
-      kind === 'move' &&
-      (event.target as Element).closest('.abyss-status-marker, a, [data-boundary]')
-    )
+interface SpanPreviewRangeOptions {
+  readonly source: HTMLElement;
+  readonly task: TaskSnapshot;
+  readonly columns: readonly MeasuredSpanColumn[];
+  readonly from: LocalDate;
+  readonly to: LocalDate;
+  readonly className: string;
+  readonly target: object;
+  readonly layout: VisibleSpanLayout | undefined;
+}
+
+function previewGridRow(options: SpanPreviewRangeOptions, column: MeasuredSpanColumn): string {
+  const rowStart = rowColumns(column, options.columns)[0]?.date;
+  if (options.layout == null || rowStart == null) return options.source.style.gridRow;
+  const identity = taskLayoutIdentity(options.task);
+  const row = options.layout.rows.find((candidate) => candidate.startDate === rowStart);
+  const segment = row?.segments.find(
+    (candidate) => candidate.identity === identity && candidate.date === column.date,
+  );
+  return segment == null ? options.source.style.gridRow : String(segment.lane + 1);
+}
+
+function renderSpanRangePreview(options: SpanPreviewRangeOptions): HTMLElement[] {
+  const previews: HTMLElement[] = [];
+  for (const row of new Set(options.columns.map((column) => column.row))) {
+    const candidates = options.columns.filter((column) => column.row === row);
+    const visible = candidates.filter(
+      (column) => column.date >= options.from && column.date <= options.to,
+    );
+    for (const column of visible) {
+      const index = candidates.indexOf(column);
+      const preview = createPreview(options.source, {
+        className: options.className,
+        target: options.target,
+        task: options.task,
+        phase: column.date === options.to ? 'terminal' : 'ghost',
+        subtitle: `${options.from}–${options.to}`,
+      });
+      preview.style.gridColumn = `${index + 1} / ${index + 2}`;
+      preview.style.gridRow = previewGridRow(options, column);
+      column.layer.appendChild(preview);
+      previews.push(preview);
+    }
+  }
+  return previews;
+}
+
+interface SpanDragSessionOptions {
+  readonly binding: SpanInteractionBinding;
+  readonly event: PointerEvent;
+  readonly kind: SpanInteractionKind;
+  readonly ownerWindow: Window;
+  readonly columns: readonly MeasuredSpanColumn[];
+  readonly sourceRowColumns: readonly MeasuredSpanColumn[];
+  readonly grabbedDate: LocalDate | undefined;
+  readonly isMonth: boolean;
+}
+
+interface SpanBoundaryRange {
+  readonly from: LocalDate;
+  readonly to: LocalDate;
+  readonly planning: TaskSnapshot['planning'];
+}
+
+function firstDefinedDate(...values: ReadonlyArray<LocalDate | undefined>): LocalDate | undefined {
+  return values.find((value) => value !== undefined);
+}
+
+function spanBoundaryRange(
+  binding: SpanInteractionBinding,
+  target: InteractiveSpanBoundaryTarget,
+): SpanBoundaryRange | undefined {
+  const planning = binding.task.planning;
+  const actualStart = firstDefinedDate(
+    planning.start,
+    planning.scheduled,
+    planning.due,
+    parsedDate(binding.segmentStart),
+  );
+  const actualDue = firstDefinedDate(
+    planning.due,
+    planning.scheduled,
+    planning.start,
+    parsedDate(binding.segmentEnd),
+  );
+  if (actualStart == null || actualDue == null) return undefined;
+  const from = target.boundary === 'start' ? target.date : actualStart;
+  const to = target.boundary === 'start' ? actualDue : target.date;
+  return { from, to, planning: { ...planning, start: from, due: to } };
+}
+
+class SpanDragSession {
+  private readonly binding: SpanInteractionBinding;
+  private readonly kind: SpanInteractionKind;
+  private readonly ownerWindow: Window;
+  private readonly columns: readonly MeasuredSpanColumn[];
+  private readonly sourceRowColumns: readonly MeasuredSpanColumn[];
+  private readonly grabbedDate: LocalDate | undefined;
+  private readonly isMonth: boolean;
+  private readonly pointerId: number;
+  private readonly pointerOrigin: Readonly<{ x: number; y: number }>;
+  private readonly capturedElement: HTMLElement;
+  private readonly originalDraggable: string | null;
+  private previews: HTMLElement[] = [];
+  private latest: SpanInteractionTarget | undefined;
+  private renderedTargetKey: string | undefined;
+  private dragStarted = false;
+  private disposed = false;
+
+  constructor(options: SpanDragSessionOptions) {
+    this.binding = options.binding;
+    this.kind = options.kind;
+    this.ownerWindow = options.ownerWindow;
+    this.columns = options.columns;
+    this.sourceRowColumns = options.sourceRowColumns;
+    this.grabbedDate = options.grabbedDate;
+    this.isMonth = options.isMonth;
+    this.pointerId = options.event.pointerId;
+    this.pointerOrigin = { x: options.event.clientX, y: options.event.clientY };
+    this.capturedElement = options.event.currentTarget as HTMLElement;
+    this.originalDraggable = options.binding.source.getAttribute('draggable');
+  }
+
+  start(): void {
+    const { owner, source } = this.binding;
+    owner.begin(this.dispose);
+    source.classList.toggle('is-picked-up', this.kind === 'move');
+    if (this.kind !== 'move') {
+      this.capturedElement.dataset['activeResize'] = 'true';
+      source.setAttribute('draggable', 'false');
+    }
+    capture(this.capturedElement, this.pointerId);
+    this.ownerWindow.addEventListener('pointermove', this.onPointerMove);
+    this.ownerWindow.addEventListener('pointerup', this.onPointerUp);
+    this.ownerWindow.addEventListener('pointercancel', this.onCancel);
+    this.ownerWindow.addEventListener('blur', this.onCancel);
+    this.capturedElement.addEventListener('lostpointercapture', this.onCancel);
+  }
+
+  private clearPreview(): void {
+    for (const preview of this.previews) preview.remove();
+    this.previews = [];
+    this.renderedTargetKey = undefined;
+  }
+
+  private renderMovePreview(target: SpanMoveTarget): boolean {
+    this.clearPreview();
+    const { binding, columns } = this;
+    const actualStart = binding.task.planning.start ?? localDate(binding.segmentStart);
+    const actualDue = binding.task.planning.due ?? localDate(binding.segmentEnd);
+    const shiftedStart = shiftLocalDate(actualStart, target.days);
+    const shiftedEnd = shiftLocalDate(actualDue, target.days);
+    if (shiftedStart == null || shiftedEnd == null) return false;
+    const planning = { ...binding.task.planning, start: shiftedStart, due: shiftedEnd };
+    this.previews = renderSpanRangePreview({
+      source: binding.source,
+      task: binding.task,
+      columns,
+      from: shiftedStart,
+      to: shiftedEnd,
+      className: 'abyss-span-move-preview',
+      target,
+      layout: binding.previewLayoutFor?.(binding.task, planning),
+    });
+    return this.previews.length > 0;
+  }
+
+  private renderBoundaryPreview(target: InteractiveSpanBoundaryTarget): boolean {
+    this.clearPreview();
+    const { binding } = this;
+    const range = spanBoundaryRange(binding, target);
+    if (range == null) return false;
+    this.previews = renderSpanRangePreview({
+      source: binding.source,
+      task: binding.task,
+      columns: this.isMonth ? this.columns : this.sourceRowColumns,
+      from: range.from,
+      to: range.to,
+      className: 'abyss-span-boundary-preview',
+      target,
+      layout: binding.previewLayoutFor?.(binding.task, range.planning),
+    });
+    return this.previews.length > 0;
+  }
+
+  private resolveMove(column: MeasuredSpanColumn): Readonly<SpanMoveTarget> | undefined {
+    if (this.grabbedDate == null) return undefined;
+    const { task } = this.binding;
+    return resolveSpanMoveTarget(
+      {
+        version: 1,
+        task: { filePath: task.source.filePath, line: task.source.line },
+        grabbedDate: this.grabbedDate,
+      },
+      column.date,
+    );
+  }
+
+  private resolveBoundary(
+    column: MeasuredSpanColumn,
+    pointer: PointerEvent,
+  ): Readonly<InteractiveSpanBoundaryTarget> | undefined {
+    const { planning } = this.binding.task;
+    const start = planning.start ?? planning.scheduled ?? planning.due;
+    const due = planning.due ?? planning.scheduled ?? planning.start;
+    if (start == null || due == null) return undefined;
+    const target = resolveBoundaryTarget(
+      { boundary: this.kind === 'start' ? 'start' : 'due', start, due },
+      pointer,
+      [{ date: column.date, left: column.left, right: column.right }],
+    );
+    if (target == null) return undefined;
+    return this.kind === 'create-span'
+      ? Object.freeze({ ...target, boundary: 'create-span' as const })
+      : Object.freeze(target);
+  }
+
+  private resolve(pointer: PointerEvent): SpanInteractionTarget | undefined {
+    const targetColumns =
+      this.kind === 'move' || this.isMonth ? this.columns : this.sourceRowColumns;
+    const column = columnAtPoint(pointer, targetColumns, !this.isMonth);
+    if (column == null) return undefined;
+    return this.kind === 'move' ? this.resolveMove(column) : this.resolveBoundary(column, pointer);
+  }
+
+  private update(pointer: PointerEvent): void {
+    if (this.disposed || pointer.pointerId !== this.pointerId) return;
+    this.latest = this.resolve(pointer);
+    if (this.latest == null) {
+      if (this.renderedTargetKey !== undefined) this.clearPreview();
       return;
-    event.preventDefault();
-    event.stopPropagation();
+    }
+    const targetKey = semanticTargetKey(this.kind, this.latest);
+    if (targetKey === this.renderedTargetKey) return;
+    const built =
+      'grabbedDate' in this.latest
+        ? this.renderMovePreview(this.latest)
+        : this.renderBoundaryPreview(this.latest);
+    if (built) this.renderedTargetKey = targetKey;
+  }
 
-    owner.disposeActive();
-    const columns = measuredColumns(source);
-    const sourceColumn = columns.find((column) => column.date === parsedDate(binding.segmentStart));
-    if (!sourceColumn) return;
-    const sourceRowColumns = rowColumns(sourceColumn, columns);
-    const isMonth = source.closest('.abyss-mg-grid') !== null;
-    const grabbedDate =
-      kind === 'move'
-        ? resolveGrabbedDate(
-            event.clientX,
-            sourceRowColumns.map(({ date, left, right }) => ({ date, left, right })),
-          )
-        : undefined;
-    if (kind === 'move' && !grabbedDate) return;
-
-    const pointerId = event.pointerId;
-    const pointerOrigin = { x: event.clientX, y: event.clientY };
-    const capturedElement = event.currentTarget as HTMLElement;
-    const originalDraggable = source.getAttribute('draggable');
-    let previews: HTMLElement[] = [];
-    let latest: Readonly<SpanMoveTarget | InteractiveSpanBoundaryTarget> | undefined;
-    let renderedTargetKey: string | undefined;
-    let dragStarted = false;
-    let disposed = false;
-
-    const clearPreview = (): void => {
-      for (const preview of previews) preview.remove();
-      previews = [];
-      renderedTargetKey = undefined;
-    };
-
-    const previewRow = (
-      column: MeasuredSpanColumn,
-      layout: VisibleSpanLayout | undefined,
-    ): string => {
-      const rowStart = rowColumns(column, columns)[0]?.date;
-      if (!layout || !rowStart) return source.style.gridRow;
-      const identity = taskLayoutIdentity(task);
-      const segment = layout.rows
-        .find((row) => row.startDate === rowStart)
-        ?.segments.find(
-          (candidate) => candidate.identity === identity && candidate.date === column.date,
-        );
-      return segment ? String(segment.lane + 1) : source.style.gridRow;
-    };
-
-    const renderMovePreview = (target: SpanMoveTarget): boolean => {
-      clearPreview();
-      const actualStart = task.planning.start ?? localDate(binding.segmentStart);
-      const actualDue = task.planning.due ?? localDate(binding.segmentEnd);
-      const shiftedStart = shiftLocalDate(actualStart, target.days);
-      const shiftedEnd = shiftLocalDate(actualDue, target.days);
-      if (!shiftedStart || !shiftedEnd) return false;
-      const planning = { ...task.planning, start: shiftedStart, due: shiftedEnd };
-      const layout = binding.previewLayoutFor?.(task, planning);
-      const rows = new Set(columns.map((column) => column.row));
-      for (const row of rows) {
-        const candidates = columns.filter((column) => column.row === row);
-        const visible = candidates.filter(
-          (column) => column.date >= shiftedStart && column.date <= shiftedEnd,
-        );
-        if (visible.length === 0) continue;
-        for (const column of visible) {
-          const index = candidates.indexOf(column);
-          const preview = createPreview(
-            source,
-            'abyss-span-move-preview',
-            target,
-            task,
-            column.date === shiftedEnd ? 'terminal' : 'ghost',
-            `${shiftedStart}–${shiftedEnd}`,
-          );
-          preview.style.gridColumn = `${index + 1} / ${index + 2}`;
-          preview.style.gridRow = previewRow(column, layout);
-          column.layer.appendChild(preview);
-          previews.push(preview);
-        }
-      }
-      return previews.length > 0;
-    };
-
-    const renderBoundaryPreview = (target: InteractiveSpanBoundaryTarget): boolean => {
-      clearPreview();
-      const actualStart =
-        task.planning.start ??
-        task.planning.scheduled ??
-        task.planning.due ??
-        parsedDate(binding.segmentStart);
-      const actualDue =
-        task.planning.due ??
-        task.planning.scheduled ??
-        task.planning.start ??
-        parsedDate(binding.segmentEnd);
-      if (!actualStart || !actualDue) return false;
-      const prospectiveStart = target.boundary === 'start' ? target.date : actualStart;
-      const prospectiveDue = target.boundary === 'start' ? actualDue : target.date;
-      const planning = {
-        ...task.planning,
-        start: prospectiveStart,
-        due: prospectiveDue,
-      };
-      const layout = binding.previewLayoutFor?.(task, planning);
-      const previewColumns = isMonth ? columns : sourceRowColumns;
-      const rows = new Set(previewColumns.map((column) => column.row));
-      for (const row of rows) {
-        const candidates = previewColumns.filter((column) => column.row === row);
-        const visible = candidates.filter(
-          (column) => column.date >= prospectiveStart && column.date <= prospectiveDue,
-        );
-        if (visible.length === 0) continue;
-        for (const column of visible) {
-          const index = candidates.indexOf(column);
-          const preview = createPreview(
-            source,
-            'abyss-span-boundary-preview',
-            target,
-            task,
-            column.date === prospectiveDue ? 'terminal' : 'ghost',
-            `${prospectiveStart}–${prospectiveDue}`,
-          );
-          preview.style.gridColumn = `${index + 1} / ${index + 2}`;
-          preview.style.gridRow = previewRow(column, layout);
-          column.layer.appendChild(preview);
-          previews.push(preview);
-        }
-      }
-      return previews.length > 0;
-    };
-
-    const resolve = (pointer: PointerEvent): typeof latest => {
-      const targetColumns = kind === 'move' || isMonth ? columns : sourceRowColumns;
-      const column = columnAtPoint(pointer, targetColumns, !isMonth);
-      if (!column) return undefined;
-      if (kind === 'move') {
-        const payload: SpanMovePayload = {
-          version: 1,
-          task: { filePath: task.source.filePath, line: task.source.line },
-          grabbedDate: grabbedDate!,
-        };
-        return resolveSpanMoveTarget(payload, column.date);
-      }
-      const start = task.planning.start ?? task.planning.scheduled ?? task.planning.due;
-      const due = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
-      if (!start || !due) return undefined;
-      const target = resolveBoundaryTarget(
-        { boundary: kind === 'start' ? 'start' : 'due', start, due },
-        pointer,
-        [{ date: column.date, left: column.left, right: column.right }],
-      );
-      if (!target) return undefined;
-      return Object.freeze(
-        kind === 'create-span' ? { ...target, boundary: 'create-span' as const } : target,
-      );
-    };
-
-    const update = (pointer: PointerEvent): void => {
-      if (disposed || pointer.pointerId !== pointerId) return;
-      latest = resolve(pointer);
-      if (!latest) {
-        if (renderedTargetKey !== undefined) clearPreview();
-        return;
-      }
-      const targetKey = semanticTargetKey(kind, latest);
-      if (targetKey === renderedTargetKey) return;
-      const built =
-        kind === 'move'
-          ? renderMovePreview(latest as SpanMoveTarget)
-          : renderBoundaryPreview(latest as InteractiveSpanBoundaryTarget);
-      if (built) renderedTargetKey = targetKey;
-    };
-
-    const dispose = (): void => {
-      if (disposed) return;
-      disposed = true;
-      clearPreview();
-      source.classList.remove('is-picked-up');
-      delete source.dataset['activeResize'];
-      delete capturedElement.dataset['activeResize'];
-      if (kind !== 'move') {
-        if (originalDraggable === null) source.removeAttribute('draggable');
-        else source.setAttribute('draggable', originalDraggable);
-      }
-      ownerWindow.removeEventListener('pointermove', onPointerMove);
-      ownerWindow.removeEventListener('pointerup', onPointerUp);
-      ownerWindow.removeEventListener('pointercancel', onCancel);
-      ownerWindow.removeEventListener('blur', onCancel);
-      capturedElement.removeEventListener('lostpointercapture', onCancel);
-      release(capturedElement, pointerId);
-      owner.end(dispose);
-    };
-    const onPointerMove = (pointer: PointerEvent): void => {
-      pointer.preventDefault();
-      if (!dragStarted) {
-        const x = pointer.clientX - pointerOrigin.x;
-        const y = pointer.clientY - pointerOrigin.y;
-        if (Math.hypot(x, y) < POINTER_DRAG_THRESHOLD_PX) return;
-        dragStarted = true;
-      }
-      update(pointer);
-    };
-    const onPointerUp = (pointer: PointerEvent): void => {
-      if (pointer.pointerId !== pointerId) return;
-      if (!dragStarted) {
-        const x = pointer.clientX - pointerOrigin.x;
-        const y = pointer.clientY - pointerOrigin.y;
-        dragStarted = Math.hypot(x, y) >= POINTER_DRAG_THRESHOLD_PX;
-      }
-      if (dragStarted) update(pointer);
-      const target = latest;
-      dispose();
-      if (!target) return;
-      if (kind === 'move') binding.onMove(task, target as SpanMoveTarget);
-      else binding.onBoundary(task, target as InteractiveSpanBoundaryTarget);
-    };
-    const onCancel = (): void => dispose();
-
-    owner.begin(dispose);
-    source.classList.toggle('is-picked-up', kind === 'move');
-    if (kind !== 'move') capturedElement.dataset['activeResize'] = 'true';
-    if (kind !== 'move') source.setAttribute('draggable', 'false');
-    capture(capturedElement, pointerId);
-    ownerWindow.addEventListener('pointermove', onPointerMove);
-    ownerWindow.addEventListener('pointerup', onPointerUp);
-    ownerWindow.addEventListener('pointercancel', onCancel);
-    ownerWindow.addEventListener('blur', onCancel);
-    capturedElement.addEventListener('lostpointercapture', onCancel);
+  private readonly dispose = (): void => {
+    if (this.disposed) return;
+    this.disposed = true;
+    const { owner, source } = this.binding;
+    this.clearPreview();
+    source.classList.remove('is-picked-up');
+    delete source.dataset['activeResize'];
+    delete this.capturedElement.dataset['activeResize'];
+    if (this.kind !== 'move') {
+      if (this.originalDraggable === null) source.removeAttribute('draggable');
+      else source.setAttribute('draggable', this.originalDraggable);
+    }
+    this.ownerWindow.removeEventListener('pointermove', this.onPointerMove);
+    this.ownerWindow.removeEventListener('pointerup', this.onPointerUp);
+    this.ownerWindow.removeEventListener('pointercancel', this.onCancel);
+    this.ownerWindow.removeEventListener('blur', this.onCancel);
+    this.capturedElement.removeEventListener('lostpointercapture', this.onCancel);
+    release(this.capturedElement, this.pointerId);
+    owner.end(this.dispose);
   };
 
+  private pointerMovedPastThreshold(pointer: PointerEvent): boolean {
+    const x = pointer.clientX - this.pointerOrigin.x;
+    const y = pointer.clientY - this.pointerOrigin.y;
+    return Math.hypot(x, y) >= POINTER_DRAG_THRESHOLD_PX;
+  }
+
+  private readonly onPointerMove = (pointer: PointerEvent): void => {
+    pointer.preventDefault();
+    if (!this.dragStarted && !this.pointerMovedPastThreshold(pointer)) return;
+    this.dragStarted = true;
+    this.update(pointer);
+  };
+
+  private readonly onPointerUp = (pointer: PointerEvent): void => {
+    if (pointer.pointerId !== this.pointerId) return;
+    this.dragStarted ||= this.pointerMovedPastThreshold(pointer);
+    if (this.dragStarted) this.update(pointer);
+    const target = this.latest;
+    this.dispose();
+    if (target == null) return;
+    if ('grabbedDate' in target) this.binding.onMove(this.binding.task, target);
+    else this.binding.onBoundary(this.binding.task, target);
+  };
+
+  private readonly onCancel = (): void => {
+    this.dispose();
+  };
+}
+
+function eventStartsMoveFromControl(event: PointerEvent): boolean {
+  return (event.target as Element).closest('.abyss-status-marker, a, [data-boundary]') != null;
+}
+
+function startSpanSession(
+  binding: SpanInteractionBinding,
+  ownerWindow: Window,
+  event: PointerEvent,
+  kind: SpanInteractionKind,
+): void {
+  if (event.button !== 0 || (kind === 'move' && eventStartsMoveFromControl(event))) return;
+  event.preventDefault();
+  event.stopPropagation();
+  binding.owner.disposeActive();
+  const columns = measuredColumns(binding.source);
+  const sourceDate = parsedDate(binding.segmentStart);
+  const sourceColumn = columns.find((column) => column.date === sourceDate);
+  if (sourceColumn == null) return;
+  const sourceRowColumns = rowColumns(sourceColumn, columns);
+  const grabbedDate =
+    kind === 'move'
+      ? resolveGrabbedDate(
+          event.clientX,
+          sourceRowColumns.map(({ date, left, right }) => ({ date, left, right })),
+        )
+      : undefined;
+  if (kind === 'move' && grabbedDate == null) return;
+  new SpanDragSession({
+    binding,
+    event,
+    kind,
+    ownerWindow,
+    columns,
+    sourceRowColumns,
+    grabbedDate,
+    isMonth: binding.source.closest('.abyss-mg-grid') !== null,
+  }).start();
+}
+
+export function attachSpanInteractions(binding: SpanInteractionBinding): void {
+  const { source } = binding;
+  const ownerWindow = source.ownerDocument.defaultView;
+  if (ownerWindow == null) return;
+
   if (binding.enableMove !== false) {
-    source.addEventListener('pointerdown', (event) => startSession(event, 'move'));
+    source.addEventListener('pointerdown', (event) => {
+      startSpanSession(binding, ownerWindow, event, 'move');
+    });
   }
   for (const handle of binding.boundaryHandles) {
     handle.element.dataset['resizeEdge'] = handle.boundary === 'start' ? 'start-date' : 'due-date';
     handle.element.setAttribute('draggable', 'false');
-    handle.element.addEventListener('pointerdown', (event) => startSession(event, handle.boundary));
+    handle.element.addEventListener('pointerdown', (event) => {
+      startSpanSession(binding, ownerWindow, event, handle.boundary);
+    });
   }
 }

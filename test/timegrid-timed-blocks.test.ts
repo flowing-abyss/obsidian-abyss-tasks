@@ -1,6 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { Component, type App } from 'obsidian';
+import { Component, Platform, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -12,11 +10,31 @@ import {
   attachTimedInteractions,
   createTimedInteractionOwner,
 } from '../src/views/timegrid/timedInteractions';
-import { dispatchDnD, freshContainer, task, taskComment, useRealMoment } from './helpers';
+import {
+  cssRuleParts,
+  dispatchDnD,
+  expectDefined,
+  freshContainer,
+  methodOf,
+  task,
+  taskComment,
+  useRealMoment,
+} from './helpers';
 
 useRealMoment();
 
-const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+async function loadStyles(): Promise<string> {
+  if (!Platform.isDesktop) return '';
+  const { readFileSync } = await import('node:fs');
+  const path = await import('node:path');
+  return readFileSync(path.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+}
+
+const css = await loadStyles();
+
+function createForeignDiv(owner: Document): HTMLDivElement {
+  return owner.createElementNS('http://www.w3.org/1999/xhtml', 'div') as HTMLDivElement;
+}
 
 function declarationsFor(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
@@ -31,8 +49,8 @@ function declarationsForExactRule(selector: string): string {
 }
 
 function declarationsForRuleContaining(...selectors: string[]): string {
-  for (const match of css.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
-    if (selectors.every((selector) => (match[1] ?? '').includes(selector))) return match[2] ?? '';
+  for (const rule of cssRuleParts(css)) {
+    if (selectors.every((selector) => rule.selector.includes(selector))) return rule.declarations;
   }
   return '';
 }
@@ -60,7 +78,9 @@ function expectInertTimedPreview(
   actionable: boolean,
 ): void {
   expect(preview.getAttribute('aria-hidden')).toBe('true');
-  const shell = preview.querySelector<HTMLElement>(':scope > .abyss-calendar-preview-shell')!;
+  const shell = expectDefined(
+    preview.querySelector<HTMLElement>(':scope > .abyss-calendar-preview-shell'),
+  );
   expect(Array.from(shell.children).map((child) => child.className)).toEqual([
     'abyss-tg-block-toprow',
     'abyss-tg-block-head abyss-calendar-leading-row',
@@ -109,7 +129,7 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
     width,
     height,
     toJSON: () => ({}),
-  } as DOMRect;
+  };
 }
 
 function timedGestureGrid() {
@@ -152,7 +172,7 @@ describe('Task 2 unified timed interaction contract', () => {
       callbacks(),
     );
 
-    const head = container.querySelector<HTMLElement>('.abyss-tg-block-head')!;
+    const head = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-block-head'));
     const badge = head.querySelector<HTMLElement>('.abyss-recurrence-badge');
     expect(head.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
     expect(badge?.dataset['recurrenceValidity']).toBe('invalid');
@@ -163,7 +183,7 @@ describe('Task 2 unified timed interaction contract', () => {
 
   it('uses committed event-fill contrast for terminal and ghost timed blocks', () => {
     const originalBackground = document.body.style.getPropertyValue('--background-primary');
-    document.body.style.setProperty('--background-primary', '#666666');
+    document.body.setCssProps({ '--background-primary': '#666666' });
     const tagGroups = [
       { id: 'work', name: 'Work', mode: 'prefix' as const, prefix: 'work', color: '#fff' },
     ];
@@ -194,7 +214,7 @@ describe('Task 2 unified timed interaction contract', () => {
         ),
       ).toBe('var(--abyss-tag-text-dark)');
     } finally {
-      document.body.style.setProperty('--background-primary', originalBackground);
+      document.body.setCssProps({ '--background-primary': originalBackground });
     }
   });
 
@@ -480,7 +500,7 @@ describe('Task 2 unified timed interaction contract', () => {
     const secondLane = columns[0].hour.querySelector<HTMLElement>(
       '.abyss-tg-block[data-abyss-task-file="second.md"]',
     );
-    if (!secondLane) throw new Error('missing overlapping second lane');
+    if (secondLane == null) throw new Error('missing overlapping second lane');
     expect(secondLane.style.left).toBe('50%');
     expect(secondLane.style.width).toBe('50%');
     secondLane.getBoundingClientRect = () => rect(50, 9.25 * 48 + 100, 50, 48);
@@ -528,33 +548,34 @@ describe('Task 2 unified timed interaction contract', () => {
   });
 
   it('binds session listeners to source.ownerDocument.defaultView, not the global window', () => {
-    const iframe = activeDocument.createElement('iframe');
-    activeDocument.body.append(iframe);
+    const iframe = activeDocument.body.createEl('iframe');
     const foreignDocument = iframe.contentDocument;
     const foreignWindow = iframe.contentWindow;
-    if (!foreignDocument || !foreignWindow) throw new Error('missing iframe realm');
-    const root = foreignDocument.createElement('div');
+    if (foreignDocument == null || foreignWindow == null) throw new Error('missing iframe realm');
+    const root = createForeignDiv(foreignDocument);
     root.className = 'abyss-tg-root';
-    const allDay = foreignDocument.createElement('div');
+    const allDay = createForeignDiv(foreignDocument);
     allDay.className = 'abyss-tg-allday-cell';
     allDay.dataset['tgDate'] = '2026-07-06';
     allDay.getBoundingClientRect = () => rect(0, 10, 100, 30);
-    const day = foreignDocument.createElement('div');
+    const day = createForeignDiv(foreignDocument);
     day.className = 'abyss-tg-day-column';
     day.dataset['tgDate'] = '2026-07-06';
     day.getBoundingClientRect = () => rect(0, 100, 100, 24 * 48);
-    const hour = foreignDocument.createElement('div');
+    const hour = createForeignDiv(foreignDocument);
     hour.className = 'abyss-tg-hour-column';
     hour.getBoundingClientRect = () => rect(0, 100, 100, 24 * 48);
-    const source = foreignDocument.createElement('div');
+    const source = createForeignDiv(foreignDocument);
     source.className = 'abyss-tg-block';
-    source.style.top = '432px';
-    source.style.height = '48px';
-    source.style.left = '0%';
-    source.style.width = '100%';
+    activeDocument.body.setCssProps.call(source, {
+      top: '432px',
+      height: '48px',
+      left: '0%',
+      width: '100%',
+    });
     source.getBoundingClientRect = () => rect(0, 532, 100, 48);
-    const durationHandle = foreignDocument.createElement('div');
-    const startHandle = foreignDocument.createElement('div');
+    const durationHandle = createForeignDiv(foreignDocument);
+    const startHandle = createForeignDiv(foreignDocument);
     source.append(durationHandle, startHandle);
     hour.append(source);
     day.append(hour);
@@ -650,12 +671,11 @@ describe('Task 2 unified timed interaction contract', () => {
     const sourceIdentity = block;
     const gridRow = columns[0].day.parentElement as HTMLElement;
     gridRow.scrollTop = 137;
-    const focusSentinel = document.createElement('button');
+    const focusSentinel = createEl('button');
     document.body.appendChild(focusSentinel);
     focusSentinel.focus();
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
-    block.style.setProperty('--abyss-tag-color', '#123456');
-    block.style.setProperty('--abyss-tag-text-color', '#fefefe');
+    block.setCssProps({ '--abyss-tag-color': '#123456', '--abyss-tag-text-color': '#fefefe' });
     const originalTop = block.style.top;
     const originalHeight = block.style.height;
 
@@ -704,7 +724,7 @@ describe('Task 2 unified timed interaction contract', () => {
       date: '2026-07-06',
       terminal: true,
     });
-    const block = columns[0].hour.querySelector<HTMLElement>('.abyss-tg-block')!;
+    const block = expectDefined(columns[0].hour.querySelector<HTMLElement>('.abyss-tg-block'));
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
     block.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 544, pointerId: 41 }),
@@ -712,11 +732,15 @@ describe('Task 2 unified timed interaction contract', () => {
     window.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 25, clientY: 592, pointerId: 41 }),
     );
-    const first = columns[0].hour.querySelector<HTMLElement>('.abyss-tg-drag-preview')!;
+    const first = expectDefined(
+      columns[0].hour.querySelector<HTMLElement>('.abyss-tg-drag-preview'),
+    );
     window.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 25, clientY: 640, pointerId: 41 }),
     );
-    const second = columns[0].hour.querySelector<HTMLElement>('.abyss-tg-drag-preview')!;
+    const second = expectDefined(
+      columns[0].hour.querySelector<HTMLElement>('.abyss-tg-drag-preview'),
+    );
 
     expect(second).toBe(first);
     expectInertTimedPreview(second, t.title, '11:00–12:00 (1h)', true);
@@ -929,7 +953,7 @@ describe('Task 2 unified timed interaction contract', () => {
       { date: '2026-07-06', terminal: true },
     );
     const block = columns[0].hour.querySelector('.abyss-tg-block') as HTMLElement;
-    const handle = block.querySelector<HTMLElement>('[data-resize-edge="duration"]')!;
+    const handle = expectDefined(block.querySelector<HTMLElement>('[data-resize-edge="duration"]'));
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
     handle.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 544, pointerId: 5 }),
@@ -964,7 +988,9 @@ describe('Task 2 unified timed interaction contract', () => {
         { date: '2026-07-06', terminal: true },
       );
       const block = columns[0].hour.querySelector('.abyss-tg-block') as HTMLElement;
-      const handle = block.querySelector<HTMLElement>('[data-resize-edge="duration"]')!;
+      const handle = expectDefined(
+        block.querySelector<HTMLElement>('[data-resize-edge="duration"]'),
+      );
       block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
       handle.dispatchEvent(
         new PointerEvent('pointerdown', { bubbles: true, clientY: 580, pointerId: 6 }),
@@ -1012,7 +1038,7 @@ describe('renderTimedBlocksForDay', () => {
     expect(
       Array.from(container.querySelectorAll<HTMLElement>('[data-resize-edge]'))
         .map((handle) => handle.dataset['resizeEdge'])
-        .sort(),
+        .sort((left, right) => (left ?? '').localeCompare(right ?? '')),
     ).toEqual(['due-date', 'duration', 'start-date', 'start-time']);
     expect(declarationsFor('.abyss-tg-resize-handle')).toMatch(/height\s*:\s*10px/u);
     expect(declarationsFor('.abyss-tg-resize-handle::after')).toMatch(/height\s*:\s*2px/u);
@@ -1146,12 +1172,12 @@ describe('renderTimedBlocksForDay', () => {
       interactionOwnership,
     });
 
-    container
-      .querySelector<HTMLElement>('.abyss-status-marker')!
-      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expectDefined(container.querySelector<HTMLElement>('.abyss-status-marker')).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
     expect(interactionOwnership.acquire).toHaveBeenCalledOnce();
     expect(interactionOwnership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
-    document.querySelector<HTMLButtonElement>('.abyss-status-popover-flag')!.click();
+    expectDefined(document.querySelector<HTMLButtonElement>('.abyss-status-popover-flag')).click();
     expect(release).toHaveBeenCalledOnce();
   });
 
@@ -1160,7 +1186,7 @@ describe('renderTimedBlocksForDay', () => {
     const cbs = callbacks();
     const t = task({ recurrence: 'every week', planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], cbs);
-    const marker = container.querySelector<HTMLElement>('.abyss-status-marker')!;
+    const marker = expectDefined(container.querySelector<HTMLElement>('.abyss-status-marker'));
 
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(document.querySelector('.abyss-status-popover-edit-repeat')).toBeNull();
@@ -1442,9 +1468,9 @@ describe('renderTimedBlocksForDay', () => {
     });
     const blocks = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block'));
     expect(blocks).toHaveLength(2);
-    expect(blocks[0]!.style.width).toBe('50%');
-    expect(blocks[1]!.style.width).toBe('50%');
-    expect(blocks[0]!.style.left).not.toBe(blocks[1]!.style.left);
+    expect(expectDefined(blocks[0]).style.width).toBe('50%');
+    expect(expectDefined(blocks[1]).style.width).toBe('50%');
+    expect(expectDefined(blocks[0]).style.left).not.toBe(expectDefined(blocks[1]).style.left);
   });
 
   it('dragging the block body by one hour snaps to 15-minute steps and fires onTimeChange on pointerup', () => {
@@ -2134,7 +2160,7 @@ describe('renderTimedBlocksForDay', () => {
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], cbs);
       const block = container.querySelector('.abyss-tg-block') as HTMLElement;
-      const link = block.querySelector('.abyss-tg-block-title')!.createEl('a');
+      const link = expectDefined(block.querySelector('.abyss-tg-block-title')).createEl('a');
 
       link.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
       block.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -2242,7 +2268,9 @@ describe('renderTimedBlocksForDay', () => {
       });
       renderTimedBlocksForDay(hourColumn, [first, second], callbacks());
       const blocks = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block'));
-      const link = blocks[0]!.querySelector('.abyss-tg-block-title')!.createEl('a');
+      const link = expectDefined(
+        expectDefined(blocks[0]).querySelector('.abyss-tg-block-title'),
+      ).createEl('a');
       link.href = '#';
       link.focus();
 
@@ -2293,7 +2321,7 @@ describe('renderTimedBlocksForDay', () => {
         callbacks(),
       );
       const blocks = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block'));
-      blocks[0]!.focus();
+      expectDefined(blocks[0]).focus();
 
       for (const shiftKey of [false, true]) {
         const event = new KeyboardEvent('keydown', {
@@ -2303,7 +2331,7 @@ describe('renderTimedBlocksForDay', () => {
           bubbles: true,
           cancelable: true,
         });
-        blocks[0]!.dispatchEvent(event);
+        expectDefined(blocks[0]).dispatchEvent(event);
         expect(event.defaultPrevented).toBe(false);
         expect(document.activeElement).toBe(blocks[0]);
       }
@@ -2371,7 +2399,7 @@ describe('renderTimedBlocksForDay', () => {
       renderTimedBlocksForDay(container, [t], callbacks());
       const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       const title = block.querySelector('.abyss-tg-block-title') as HTMLElement;
-      const link = document.createElement('a');
+      const link = createEl('a');
       link.href = '#';
       link.tabIndex = 0;
       title.appendChild(link);
@@ -2385,7 +2413,7 @@ describe('renderTimedBlocksForDay', () => {
       block.focus();
       expect(block.hasClass('is-selected')).toBe(true);
       // Only focus actually leaving the block entirely removes is-selected.
-      const outsider = document.createElement('button');
+      const outsider = createEl('button');
       document.body.appendChild(outsider);
       outsider.focus();
       expect(block.hasClass('is-selected')).toBe(false);
@@ -2401,7 +2429,7 @@ describe('renderTimedBlocksForDay', () => {
       renderTimedBlocksForDay(container, [t], { ...callbacks(), onKeyboardIntent });
       const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       const title = block.querySelector('.abyss-tg-block-title') as HTMLElement;
-      const link = document.createElement('a');
+      const link = createEl('a');
       link.href = '#';
       link.tabIndex = 0;
       title.appendChild(link);
@@ -2427,7 +2455,7 @@ describe('renderTimedBlocksForDay', () => {
     // block mixes real-pointerup and test-hook-driven tests.
     let originalElementFromPoint: typeof activeDocument.elementFromPoint;
     beforeEach(() => {
-      originalElementFromPoint = activeDocument.elementFromPoint;
+      originalElementFromPoint = methodOf(activeDocument, 'elementFromPoint');
       activeDocument.elementFromPoint = () => null;
     });
     afterEach(() => {
@@ -2495,7 +2523,7 @@ describe('renderTimedBlocksForDay', () => {
         const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
         renderTimedBlocksForDay(container, [t], callbacks());
         const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
-        const dayEl = document.createElement('div');
+        const dayEl = createDiv();
         dayEl.setAttribute('data-tg-date', '2026-07-12');
         activeDocument.elementFromPoint = () => dayEl;
         handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
@@ -2508,9 +2536,9 @@ describe('renderTimedBlocksForDay', () => {
         const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
         renderTimedBlocksForDay(container, [t], callbacks());
         const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
-        const dayA = document.createElement('div');
+        const dayA = createDiv();
         dayA.setAttribute('data-tg-date', '2026-07-11');
-        const dayB = document.createElement('div');
+        const dayB = createDiv();
         dayB.setAttribute('data-tg-date', '2026-07-12');
         activeDocument.elementFromPoint = () => dayA;
         handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
@@ -2527,7 +2555,7 @@ describe('renderTimedBlocksForDay', () => {
         const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
         renderTimedBlocksForDay(container, [t], callbacks());
         const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
-        const dayEl = document.createElement('div');
+        const dayEl = createDiv();
         dayEl.setAttribute('data-tg-date', '2026-07-12');
         activeDocument.elementFromPoint = () => dayEl;
         handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
@@ -2542,7 +2570,7 @@ describe('renderTimedBlocksForDay', () => {
         const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
         renderTimedBlocksForDay(container, [t], callbacks());
         const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
-        const dayEl = document.createElement('div');
+        const dayEl = createDiv();
         dayEl.setAttribute('data-tg-date', '2026-07-12');
         activeDocument.elementFromPoint = () => dayEl;
         handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
@@ -2563,7 +2591,7 @@ describe('renderTimedBlocksForDay', () => {
       // that DOES resolve to a date, so that a still-live pointerup listener would provably
       // fire onExtendToSpan — proving its absence here is due to pointercancel's cleanup, not
       // just the stub returning null anyway.
-      const fakeDayEl = document.createElement('div');
+      const fakeDayEl = createDiv();
       fakeDayEl.setAttribute('data-tg-date', '2026-07-12');
       activeDocument.elementFromPoint = () => fakeDayEl;
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
@@ -2642,7 +2670,7 @@ describe('renderTimedBlocksForDay', () => {
     // Same jsdom elementFromPoint caveat/stub as the Task 29 right-edge suite above.
     let originalElementFromPoint: typeof activeDocument.elementFromPoint;
     beforeEach(() => {
-      originalElementFromPoint = activeDocument.elementFromPoint;
+      originalElementFromPoint = methodOf(activeDocument, 'elementFromPoint');
       activeDocument.elementFromPoint = () => null;
     });
     afterEach(() => {
@@ -2721,7 +2749,7 @@ describe('renderTimedBlocksForDay', () => {
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], cbs);
       const handle = container.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
-      const fakeDayEl = document.createElement('div');
+      const fakeDayEl = createDiv();
       fakeDayEl.setAttribute('data-tg-date', '2026-07-08');
       activeDocument.elementFromPoint = () => fakeDayEl;
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
@@ -2797,9 +2825,9 @@ describe('renderTimedBlocksForDay', () => {
       // keeps each mode's resolver from lingering armed into the next mode's __tgTestEndDrag-free
       // gesture — an artificial coupling that's a test-sequencing artifact of this single test,
       // not a real interaction happening twice.
-      const leftDayEl = document.createElement('div');
+      const leftDayEl = createDiv();
       leftDayEl.setAttribute('data-tg-date', '2026-07-08');
-      const rightDayEl = document.createElement('div');
+      const rightDayEl = createDiv();
       rightDayEl.setAttribute('data-tg-date', '2026-07-12');
 
       // Mode 1: left edge -> onStartChange only.
@@ -2875,7 +2903,7 @@ describe('renderTimedBlocksForDay', () => {
     // horizontal-edge-resize suites use.
     let originalElementFromPoint: typeof activeDocument.elementFromPoint;
     beforeEach(() => {
-      originalElementFromPoint = activeDocument.elementFromPoint;
+      originalElementFromPoint = methodOf(activeDocument, 'elementFromPoint');
       activeDocument.elementFromPoint = () => null;
     });
     afterEach(() => {
@@ -2902,7 +2930,7 @@ describe('renderTimedBlocksForDay', () => {
       handle.dispatchEvent(
         new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 7 }),
       );
-      expect(handle.setPointerCapture).toHaveBeenCalledWith(7);
+      expect(methodOf(handle, 'setPointerCapture')).toHaveBeenCalledWith(7);
     });
 
     it('pointerdown on the block body (move mode) arms pointer capture on the block too (same abandoned-gesture risk exists for the plain move gesture)', () => {
@@ -2915,7 +2943,7 @@ describe('renderTimedBlocksForDay', () => {
       block.dispatchEvent(
         new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 3 }),
       );
-      expect(block.setPointerCapture).toHaveBeenCalledWith(3);
+      expect(methodOf(block, 'setPointerCapture')).toHaveBeenCalledWith(3);
     });
 
     it('pointerdown on the left-edge horizontal handle arms pointer capture on that handle', () => {
@@ -2926,7 +2954,7 @@ describe('renderTimedBlocksForDay', () => {
       handle.setPointerCapture = vi.fn();
       handle.releasePointerCapture = vi.fn();
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 5 }));
-      expect(handle.setPointerCapture).toHaveBeenCalledWith(5);
+      expect(methodOf(handle, 'setPointerCapture')).toHaveBeenCalledWith(5);
     });
 
     it('pointerdown on the right-edge horizontal handle arms pointer capture on that handle', () => {
@@ -2937,7 +2965,7 @@ describe('renderTimedBlocksForDay', () => {
       handle.setPointerCapture = vi.fn();
       handle.releasePointerCapture = vi.fn();
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 6 }));
-      expect(handle.setPointerCapture).toHaveBeenCalledWith(6);
+      expect(methodOf(handle, 'setPointerCapture')).toHaveBeenCalledWith(6);
     });
 
     it('a source lacking setPointerCapture (e.g. jsdom, or any host without Pointer Events capture support) is tolerated: no throw, and the pre-existing pointerup cleanup still runs', () => {
@@ -2973,7 +3001,7 @@ describe('renderTimedBlocksForDay', () => {
         new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 9 }),
       );
       window.dispatchEvent(new PointerEvent('pointerup', { clientY: 148, pointerId: 9 }));
-      expect(handle.releasePointerCapture).toHaveBeenCalledWith(9);
+      expect(methodOf(handle, 'releasePointerCapture')).toHaveBeenCalledWith(9);
     });
 
     it('releasePointerCapture is called on pointercancel cleanup (left-edge horizontal resize) with the same pointerId that was captured', () => {
@@ -2985,7 +3013,7 @@ describe('renderTimedBlocksForDay', () => {
       handle.releasePointerCapture = vi.fn();
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 11 }));
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 11 }));
-      expect(handle.releasePointerCapture).toHaveBeenCalledWith(11);
+      expect(methodOf(handle, 'releasePointerCapture')).toHaveBeenCalledWith(11);
     });
   });
 
@@ -3011,7 +3039,9 @@ describe('renderTimedBlocksForDay', () => {
       { date: '2026-07-02', terminal: false },
     );
 
-    const block = container.querySelector<HTMLElement>('.abyss-tg-block-continuation')!;
+    const block = expectDefined(
+      container.querySelector<HTMLElement>('.abyss-tg-block-continuation'),
+    );
     expect(block.style.top).toBe(`${((15 * 60) / 60) * 48}px`);
     expect(block.style.height).toBe(`${(90 / 60) * 48}px`);
     expect(block.style.getPropertyValue('--abyss-tag-color')).toBe('#3498db');
@@ -3070,12 +3100,12 @@ describe('renderTimedBlocksForDay', () => {
       const blocks = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block'));
       expect(blocks).toHaveLength(2);
       const [blockA, blockB] = blocks;
-      const topA = parseFloat(blockA!.style.top);
-      const topB = parseFloat(blockB!.style.top);
+      const topA = parseFloat(expectDefined(blockA).style.top);
+      const topB = parseFloat(expectDefined(blockB).style.top);
       // Without the fix, .abyss-tg-block's CSS min-height (~24.5px) would grow block A well past
       // block B's top (8px further down) — an inline min-height clamp is required here.
-      expect(blockA!.style.minHeight).not.toBe('');
-      const clampedHeight = parseFloat(blockA!.style.minHeight);
+      expect(expectDefined(blockA).style.minHeight).not.toBe('');
+      const clampedHeight = parseFloat(expectDefined(blockA).style.minHeight);
       // The clamped height must never place block A's bottom edge below block B's top edge.
       expect(topA + clampedHeight).toBeLessThanOrEqual(topB);
     });
@@ -3086,7 +3116,7 @@ describe('renderTimedBlocksForDay', () => {
       const b = task({ planning: { time: '11:00', duration: 60 }, source: { line: 1 } });
       renderTimedBlocksForDay(container, [a, b], callbacks());
       const blocks = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block'));
-      expect(blocks[0]!.style.minHeight).toBe('');
+      expect(expectDefined(blocks[0]).style.minHeight).toBe('');
     });
   });
 });
@@ -3129,14 +3159,11 @@ describe('calendar surface style contract', () => {
     expect(literal).toMatch(/width\s*:\s*10px/u);
     expect(proxy).toMatch(/width\s*:\s*16px/u);
     expect(leftProxy).toMatch(
-      /inset-inline-start\s*:\s*calc\(-1 \* var\(--abyss-calendar-ghost-rail\)\)/u,
+      /inset-inline\s*:\s*calc\(-1 \* var\(--abyss-calendar-ghost-rail\)\) auto/u,
     );
-    expect(leftProxy).toMatch(/inset-inline-end\s*:\s*auto/u);
     expect(leftProxy).not.toMatch(/(?:^|;)\s*(?:left|right)\s*:/u);
-    expect(startHandle).toMatch(/inset-inline-start\s*:\s*-5px/u);
-    expect(startHandle).toMatch(/inset-inline-end\s*:\s*auto/u);
-    expect(dueHandle).toMatch(/inset-inline-start\s*:\s*auto/u);
-    expect(dueHandle).toMatch(/inset-inline-end\s*:\s*-5px/u);
+    expect(startHandle).toMatch(/inset-inline\s*:\s*-5px auto/u);
+    expect(dueHandle).toMatch(/inset-inline\s*:\s*auto -5px/u);
     for (const declarations of [
       literalRailPosition,
       startHandle,
@@ -3156,7 +3183,7 @@ describe('calendar surface style contract', () => {
   });
 
   it('maps start and due handles to logical edges in both LTR and RTL', () => {
-    const style = document.createElement('style');
+    const style = createEl('style');
     style.textContent = `
       .abyss-tg-span-edge { ${declarationsFor('.abyss-tg-span-edge')} }
       .abyss-tg-span-edge::after { ${declarationsForExactRule('.abyss-tg-span-edge::after')} }
@@ -3175,10 +3202,10 @@ describe('calendar surface style contract', () => {
     document.head.append(style);
 
     const computedFor = (direction: 'ltr' | 'rtl') => {
-      const body = document.createElement('div');
+      const body = createDiv();
       body.className = 'abyss-tg-span-continuation';
       body.dir = direction;
-      body.style.setProperty('--abyss-calendar-ghost-rail', '3px');
+      body.setCssProps({ '--abyss-calendar-ghost-rail': '3px' });
       const start = body.createDiv({
         cls: 'abyss-tg-span-edge abyss-tg-span-edge--left abyss-tg-span-edge--proxy',
       });
@@ -3198,12 +3225,10 @@ describe('calendar surface style contract', () => {
       expect(ltr.start.direction).toBe('ltr');
       expect(rtl.start.direction).toBe('rtl');
       for (const computed of [ltr.start, rtl.start]) {
-        expect(computed.insetInlineStart).toBe('calc(-1 * var(--abyss-calendar-ghost-rail))');
-        expect(computed.insetInlineEnd).toBe('auto');
+        expect(computed.insetInline).toBe('calc(-1 * var(--abyss-calendar-ghost-rail)) auto');
       }
       for (const computed of [ltr.due, rtl.due]) {
-        expect(computed.insetInlineStart).toBe('auto');
-        expect(computed.insetInlineEnd).toBe('-5px');
+        expect(computed.insetInline).toBe('auto -5px');
       }
     } finally {
       ltr.body.remove();

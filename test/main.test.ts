@@ -31,7 +31,7 @@ interface PluginLike {
   };
   settings: CalendarSettings;
   data__: unknown;
-  commands: Map<string, { id: string; name: string }>;
+  commands__: Map<string, { id: string; name: string }>;
   views__: Map<string, (...args: unknown[]) => unknown>;
   markdownCodeBlockProcessors__: Map<string, (...args: unknown[]) => unknown>;
   settingTabs__: unknown[];
@@ -57,7 +57,7 @@ function makePlugin(data: Record<string, unknown> | null = null): PluginLike {
 }
 
 afterEach(() => {
-  delete (window as unknown as Record<string, unknown>).renderCalendar;
+  delete (window as unknown as Record<string, unknown>)['renderCalendar'];
 });
 
 describe('TaskCalendarPlugin loadSettings', () => {
@@ -144,7 +144,7 @@ describe('TaskCalendarPlugin onload', () => {
   it('adds the open-panel command', async () => {
     const plugin = makePlugin();
     await plugin.onload();
-    const cmd = plugin.commands.get('open-panel');
+    const cmd = plugin.commands__.get('open-panel');
     expect(cmd).toBeDefined();
     expect(cmd?.id).toBe('open-panel');
     expect(cmd?.name).toBe('Open view');
@@ -160,7 +160,7 @@ describe('TaskCalendarPlugin onload', () => {
     const plugin = makePlugin();
     await plugin.onload();
     const spy = vi.spyOn(plugin, 'openPanel').mockResolvedValue(undefined);
-    const cmd = plugin.commands.get('open-panel');
+    const cmd = plugin.commands__.get('open-panel');
     expect(cmd).toBeDefined();
     (cmd as unknown as { callback: () => void }).callback();
     expect(spy).toHaveBeenCalledOnce();
@@ -177,7 +177,7 @@ describe('TaskCalendarPlugin onload', () => {
   it('installs window.renderCalendar shim', async () => {
     const plugin = makePlugin();
     await plugin.onload();
-    expect((window as unknown as Record<string, unknown>).renderCalendar).toBeTypeOf('function');
+    expect((window as unknown as Record<string, unknown>)['renderCalendar']).toBeTypeOf('function');
   });
 });
 
@@ -186,9 +186,9 @@ describe('TaskCalendarPlugin renderCalendar shim', () => {
     const plugin = makePlugin();
     await plugin.onload();
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    (
-      window as unknown as { renderCalendar: (dv: unknown, params: unknown) => void }
-    ).renderCalendar({}, {});
+    (window as unknown as { renderCalendar: (dv: unknown, params: unknown) => void })[
+      'renderCalendar'
+    ]({}, {});
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no Dataview container'));
     warnSpy.mockRestore();
   });
@@ -196,12 +196,12 @@ describe('TaskCalendarPlugin renderCalendar shim', () => {
   it('mounts CalendarRenderer into the container when dv.container is present', async () => {
     const plugin = makePlugin();
     await plugin.onload();
-    const container = activeDocument.createElement('div');
+    const container = createFragment().createDiv();
     (
       window as unknown as {
         renderCalendar: (dv: { container?: HTMLElement }, params: unknown) => void;
       }
-    ).renderCalendar({ container }, {});
+    )['renderCalendar']({ container }, {});
     // CalendarRenderer adds the configured style class to the root element (the container itself)
     expect(container.classList.contains('style1')).toBe(true);
   });
@@ -219,9 +219,9 @@ describe('TaskCalendarPlugin onunload', () => {
   it('deletes window.renderCalendar', async () => {
     const plugin = makePlugin();
     await plugin.onload();
-    expect((window as unknown as Record<string, unknown>).renderCalendar).toBeDefined();
+    expect((window as unknown as Record<string, unknown>)['renderCalendar']).toBeDefined();
     plugin.onunload();
-    expect((window as unknown as Record<string, unknown>).renderCalendar).toBeUndefined();
+    expect((window as unknown as Record<string, unknown>)['renderCalendar']).toBeUndefined();
   });
 });
 

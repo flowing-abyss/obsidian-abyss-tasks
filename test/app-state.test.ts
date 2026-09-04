@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AppState, type AppStateData } from '../src/app/AppState';
-import { task } from './helpers';
+import { expectDefined, task } from './helpers';
 
 describe('AppState', () => {
   it('returns initial values', () => {
@@ -85,7 +85,7 @@ describe('AppState', () => {
     const cb = vi.fn();
     s.on('taskStack', cb);
     s.set('taskStack', []);
-    // eslint-disable-next-line sonarjs/no-element-overwrite
+    // eslint-disable-next-line sonarjs/no-element-overwrite -- repeated assignment is the behavior under test
     s.set('taskStack', []); // new ref, empty
     expect(cb).toHaveBeenCalledTimes(2);
   });
@@ -96,7 +96,7 @@ describe('AppState', () => {
     const arr: never[] = [];
     s.on('taskStack', cb);
     s.set('taskStack', arr);
-    // eslint-disable-next-line sonarjs/no-element-overwrite
+    // eslint-disable-next-line sonarjs/no-element-overwrite -- identical-reference assignment is the behavior under test
     s.set('taskStack', arr); // same ref
     expect(cb).toHaveBeenCalledTimes(1);
   });
@@ -118,7 +118,7 @@ describe('AppState', () => {
   it('finishes standalone siblings and one commit before rethrowing a listener error', () => {
     const s = new AppState();
     const trace: string[] = [];
-    const commits: ReadonlySet<keyof AppStateData>[] = [];
+    const commits: Array<ReadonlySet<keyof AppStateData>> = [];
     s.on('mode', () => {
       trace.push('throwing');
       throw new Error('boom');
@@ -129,7 +129,9 @@ describe('AppState', () => {
       commits.push(changed);
     });
 
-    expect(() => s.set('mode', 'calendar')).toThrow('boom');
+    expect(() => {
+      s.set('mode', 'calendar');
+    }).toThrow('boom');
     expect(trace).toEqual(['throwing', 'sibling', 'commit']);
     expect(s.get('mode')).toBe('calendar');
     expect(commits).toEqual([new Set(['mode'])]);
@@ -161,14 +163,16 @@ describe('AppState', () => {
   it('rejects a standalone listener write before mutation and still commits once', () => {
     const s = new AppState();
     const sibling = vi.fn();
-    const commits: ReadonlySet<keyof AppStateData>[] = [];
-    s.on('mode', () => s.set('centerFilter', 'listener-write'));
+    const commits: Array<ReadonlySet<keyof AppStateData>> = [];
+    s.on('mode', () => {
+      s.set('centerFilter', 'listener-write');
+    });
     s.on('mode', sibling);
     s.onCommit((changed) => commits.push(changed));
 
-    expect(() => s.set('mode', 'calendar')).toThrow(
-      'Cannot set AppState.centerFilter during notification delivery',
-    );
+    expect(() => {
+      s.set('mode', 'calendar');
+    }).toThrow('Cannot set AppState.centerFilter during notification delivery');
 
     expect(s.get('mode')).toBe('calendar');
     expect(s.get('centerFilter')).toBe('');
@@ -270,9 +274,7 @@ describe('AppState', () => {
       s.on('mode', cb);
 
       s.batch(() => {
-        s.set('mode', 'calendar');
-        s.set('mode', 'search');
-        s.set('mode', 'projects');
+        for (const mode of ['calendar', 'search', 'projects'] as const) s.set('mode', mode);
       });
 
       expect(cb).toHaveBeenCalledOnce();
@@ -287,10 +289,21 @@ describe('AppState', () => {
       s.on('searchQuery', () => trace.push('searchQuery'));
 
       s.batch(() => {
-        s.set('centerFilter', 'first');
-        s.set('mode', 'calendar');
-        s.set('centerFilter', 'final');
-        s.set('searchQuery', 'last');
+        const changes = [
+          (): void => {
+            s.set('centerFilter', 'first');
+          },
+          (): void => {
+            s.set('mode', 'calendar');
+          },
+          (): void => {
+            s.set('centerFilter', 'final');
+          },
+          (): void => {
+            s.set('searchQuery', 'last');
+          },
+        ];
+        for (const apply of changes) apply();
       });
 
       expect(trace).toEqual(['centerFilter', 'mode', 'searchQuery']);
@@ -302,9 +315,10 @@ describe('AppState', () => {
       s.on('centerFilter', cb);
 
       s.batch(() => {
-        s.set('centerFilter', 'a');
-        s.set('centerFilter', 'b');
-        s.batch(() => s.set('centerFilter', 'c'));
+        for (const value of ['a', 'b']) s.set('centerFilter', value);
+        s.batch(() => {
+          s.set('centerFilter', 'c');
+        });
       });
 
       expect(cb).toHaveBeenCalledOnce();
@@ -318,7 +332,9 @@ describe('AppState', () => {
 
       s.batch(() => {
         s.set('mode', 'calendar');
-        s.batch(() => s.set('centerFilter', 'focus'));
+        s.batch(() => {
+          s.set('centerFilter', 'focus');
+        });
         s.set('mode', 'search');
       });
 
@@ -346,8 +362,7 @@ describe('AppState', () => {
       s.onCommit((changed) => commits.push(changed));
 
       s.batch(() => {
-        s.set('mode', 'calendar');
-        s.set('mode', 'tasks');
+        for (const mode of ['calendar', 'tasks'] as const) s.set('mode', mode);
       });
 
       expect(keyListener).not.toHaveBeenCalled();
@@ -391,7 +406,7 @@ describe('AppState', () => {
       const filter = vi.fn((next: string, prev: string) => {
         trace.push(`filter:${prev}->${next}:${s.get('centerFilter')}`);
       });
-      const commits: ReadonlySet<keyof AppStateData>[] = [];
+      const commits: Array<ReadonlySet<keyof AppStateData>> = [];
       s.on('mode', mutator);
       s.on('mode', sibling);
       s.on('centerFilter', filter);
@@ -432,19 +447,23 @@ describe('AppState', () => {
 
     it('rejects a listener rewrite of the current key without a second notification', () => {
       const s = new AppState();
-      const mutator = vi.fn(() => s.set('mode', 'search'));
+      const mutator = vi.fn(() => {
+        s.set('mode', 'search');
+      });
       const siblingObservations: Array<[string, string, string]> = [];
       const sibling = vi.fn((next: string, prev: string) => {
         siblingObservations.push([next, prev, s.get('mode')]);
       });
-      const commits: ReadonlySet<keyof AppStateData>[] = [];
+      const commits: Array<ReadonlySet<keyof AppStateData>> = [];
       s.on('mode', mutator);
       s.on('mode', sibling);
       s.onCommit((changed) => commits.push(changed));
 
       let thrown: unknown;
       try {
-        s.batch(() => s.set('mode', 'calendar'));
+        s.batch(() => {
+          s.set('mode', 'calendar');
+        });
       } catch (error) {
         thrown = error;
       }
@@ -468,12 +487,12 @@ describe('AppState', () => {
       s.on('centerFilter', () => trace.push('centerFilter'));
       s.onCommit(() => trace.push('commit'));
 
-      expect(() =>
+      expect(() => {
         s.batch(() => {
           s.set('mode', 'calendar');
           s.set('centerFilter', 'final');
-        }),
-      ).toThrow('mode failed');
+        });
+      }).toThrow('mode failed');
 
       expect(trace).toEqual(['mode:throw', 'mode:sibling', 'centerFilter', 'commit']);
       expect(s.get('centerFilter')).toBe('final');
@@ -493,11 +512,15 @@ describe('AppState', () => {
       });
       removeSibling = s.on('mode', () => trace.push('removed'));
 
-      s.batch(() => s.set('mode', 'calendar'));
+      s.batch(() => {
+        s.set('mode', 'calendar');
+      });
       expect(trace).toEqual(['first', 'removed']);
 
       trace.length = 0;
-      s.batch(() => s.set('mode', 'search'));
+      s.batch(() => {
+        s.set('mode', 'search');
+      });
       expect(trace).toEqual(['first', 'added']);
     });
 
@@ -515,18 +538,22 @@ describe('AppState', () => {
       });
       removeSibling = s.onCommit(() => trace.push('removed'));
 
-      s.batch(() => s.set('mode', 'calendar'));
+      s.batch(() => {
+        s.set('mode', 'calendar');
+      });
       expect(trace).toEqual(['first', 'removed']);
 
       trace.length = 0;
-      s.batch(() => s.set('mode', 'search'));
+      s.batch(() => {
+        s.set('mode', 'search');
+      });
       expect(trace).toEqual(['first', 'added']);
     });
 
     it('rejects commit-listener mutation and finishes one immutable commit snapshot', () => {
       const s = new AppState();
       const trace: string[] = [];
-      const commits: ReadonlySet<keyof AppStateData>[] = [];
+      const commits: Array<ReadonlySet<keyof AppStateData>> = [];
       s.onCommit((changed) => {
         trace.push('mutator');
         commits.push(changed);
@@ -536,7 +563,9 @@ describe('AppState', () => {
 
       let thrown: unknown;
       try {
-        s.batch(() => s.set('mode', 'calendar'));
+        s.batch(() => {
+          s.set('mode', 'calendar');
+        });
       } catch (error) {
         thrown = error;
       }
@@ -554,7 +583,7 @@ describe('AppState', () => {
 
     it('gives commit listeners an immutable snapshot that stays stable across later commits', () => {
       const s = new AppState();
-      const snapshots: ReadonlySet<string>[] = [];
+      const snapshots: Array<ReadonlySet<string>> = [];
       let mutationError: unknown;
       s.onCommit((changed) => {
         snapshots.push(changed);
@@ -571,8 +600,8 @@ describe('AppState', () => {
 
       expect(mutationError).toBeInstanceOf(TypeError);
       expect(Object.isFrozen(snapshots[0])).toBe(true);
-      expect([...snapshots[0]!]).toEqual(['mode']);
-      expect([...snapshots[1]!]).toEqual(['centerFilter']);
+      expect([...expectDefined(snapshots[0])]).toEqual(['mode']);
+      expect([...expectDefined(snapshots[1])]).toEqual(['centerFilter']);
     });
   });
 });

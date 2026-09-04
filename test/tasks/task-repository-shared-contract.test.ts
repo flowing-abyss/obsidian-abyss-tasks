@@ -14,6 +14,7 @@ import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskM
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { createAppWithFiles } from '../helpers';
 import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
+import { expectDefined } from './../helpers';
 
 type Adapter = 'in-memory' | 'obsidian';
 
@@ -63,7 +64,7 @@ async function makeHarness(adapter: Adapter, source: string): Promise<ContractHa
 }
 
 function rootRef(harness: ContractHarness, source: string): TaskRef {
-  return harness.snapshots(source)[0]!.ref;
+  return expectDefined(harness.snapshots(source)[0]).ref;
 }
 
 for (const adapter of ['in-memory', 'obsidian'] as const) {
@@ -79,7 +80,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         '> - [ ] unrelated\r\n';
       const h = await makeHarness(adapter, source);
 
-      let root = h.snapshots(source)[0]!;
+      let root = expectDefined(h.snapshots(source)[0]);
       await expect(
         h.repository.edit({
           type: 'set-description',
@@ -101,8 +102,8 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
           '> - [ ] unrelated\r\n',
       );
 
-      root = h.snapshots(content)[0]!;
-      const secondDuplicate = root.comments[1]!;
+      root = expectDefined(h.snapshots(content)[0]);
+      const secondDuplicate = expectDefined(root.comments[1]);
       await expect(
         h.repository.edit({
           type: 'update-comment',
@@ -112,13 +113,13 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       ).resolves.toMatchObject({ type: 'committed', changed: true });
 
       content = await h.read();
-      root = h.snapshots(content)[0]!;
+      root = expectDefined(h.snapshots(content)[0]);
       await expect(
-        h.repository.edit({ type: 'delete-comment', comment: root.comments[0]!.ref }),
+        h.repository.edit({ type: 'delete-comment', comment: expectDefined(root.comments[0]).ref }),
       ).resolves.toMatchObject({ type: 'committed', changed: true });
 
       content = await h.read();
-      root = h.snapshots(content)[0]!;
+      root = expectDefined(h.snapshots(content)[0]);
       await expect(
         h.repository.edit({
           type: 'add-comment',
@@ -148,8 +149,8 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         '>\t    - [ ] existing\r\n' +
         '> - [ ] unrelated';
       const h = await makeHarness(adapter, source);
-      const root = h.snapshots(source)[0]!;
-      const parent = root.subtasks[0]!;
+      const root = expectDefined(h.snapshots(source)[0]);
+      const parent = expectDefined(root.subtasks[0]);
 
       const result = await h.repository.edit({
         type: 'add-subtask',
@@ -182,9 +183,9 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       );
       if (result.type === 'committed' && result.outcome.type === 'task') {
         const freshRoot = result.outcome.task;
-        const freshParent = freshRoot.subtasks[0]!;
+        const freshParent = expectDefined(freshRoot.subtasks[0]);
         expect(freshParent.ref.parent).toEqual({ type: 'task', ref: freshRoot.ref });
-        expect(freshParent.subtasks[1]!.ref.parent).toEqual({
+        expect(expectDefined(freshParent.subtasks[1]).ref.parent).toEqual({
           type: 'subtask',
           ref: freshParent.ref,
         });
@@ -200,9 +201,9 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         '    - [ ] duplicate\n' +
         '- [ ] next\n';
       const h = await makeHarness(adapter, source);
-      const root = h.snapshots(source)[0]!;
-      const branch = root.subtasks[0]!;
-      const firstDuplicate = branch.subtasks[0]!;
+      const root = expectDefined(h.snapshots(source)[0]);
+      const branch = expectDefined(root.subtasks[0]);
+      const firstDuplicate = expectDefined(branch.subtasks[0]);
       const staleAncestorRef = {
         ...firstDuplicate.ref,
         parent: {
@@ -240,10 +241,10 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         '    - [ ] branch\r\n' +
         '      - [ ] nested target\r\n';
       const h = await makeHarness(adapter, source);
-      let root = h.snapshots(source)[0]!;
-      const first = root.subtasks[0]!;
-      const second = root.subtasks[1]!;
-      const nestedTarget = root.subtasks[2]!.subtasks[0]!;
+      let root = expectDefined(h.snapshots(source)[0]);
+      const first = expectDefined(root.subtasks[0]);
+      const second = expectDefined(root.subtasks[1]);
+      const nestedTarget = expectDefined(expectDefined(root.subtasks[2]).subtasks[0]);
 
       await expect(
         h.repository.edit({
@@ -274,15 +275,15 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
           '      - [ ] nested target\r\n',
       );
 
-      root = h.snapshots(await h.read())[0]!;
+      root = expectDefined(h.snapshots(await h.read())[0]);
       expect(root.subtasks.map((child) => child.title)).toEqual(['second', 'first', 'branch']);
     });
 
     it('rejects forged child evidence and direct invalid subtask text without writing', async () => {
       const source = '- [ ] root\n  - [ ] child\n  - [ ] sibling\n';
       const h = await makeHarness(adapter, source);
-      const root = h.snapshots(source)[0]!;
-      const child = root.subtasks[0]!;
+      const root = expectDefined(h.snapshots(source)[0]);
+      const child = expectDefined(root.subtasks[0]);
 
       await expect(
         h.repository.edit({
@@ -322,8 +323,8 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
     it('returns an unchanged fresh root when reordering a child onto itself', async () => {
       const source = '- [ ] root\n  - [ ] child\n';
       const h = await makeHarness(adapter, source);
-      const root = h.snapshots(source)[0]!;
-      const child = root.subtasks[0]!;
+      const root = expectDefined(h.snapshots(source)[0]);
+      const child = expectDefined(root.subtasks[0]);
 
       await expect(
         h.repository.edit({
@@ -349,7 +350,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         '    - > child description\n' +
         '- [ ] next';
       const h = await makeHarness(adapter, source);
-      let root = h.snapshots(source)[0]!;
+      let root = expectDefined(h.snapshots(source)[0]);
 
       await expect(
         h.repository.edit({
@@ -360,7 +361,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       ).resolves.toMatchObject({ type: 'committed', changed: false });
       expect(await h.read()).toBe(source);
 
-      root = h.snapshots(await h.read())[0]!;
+      root = expectDefined(h.snapshots(await h.read())[0]);
       await expect(
         h.repository.edit({
           type: 'set-description',
@@ -386,7 +387,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         '  - > old second line\n' +
         '- [ ] next\n';
       const h = await makeHarness(adapter, source);
-      const root = h.snapshots(source)[0]!;
+      const root = expectDefined(h.snapshots(source)[0]);
 
       await expect(
         h.repository.edit({
@@ -408,7 +409,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
     it('does not consume a bare comment that only looks like a malformed description', async () => {
       const source = '- [ ] root\n  - >\n- [ ] next\n';
       const h = await makeHarness(adapter, source);
-      const root = h.snapshots(source)[0]!;
+      const root = expectDefined(h.snapshots(source)[0]);
 
       await expect(
         h.repository.edit({
@@ -428,10 +429,10 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         '    - 2026-07-13: duplicate\n' +
         '- [ ] next\n';
       const h = await makeHarness(adapter, source);
-      let root = h.snapshots(source)[0]!;
-      const child = root.subtasks[0]!;
+      let root = expectDefined(h.snapshots(source)[0]);
+      const child = expectDefined(root.subtasks[0]);
       const stale = {
-        ...child.comments[1]!.ref,
+        ...expectDefined(child.comments[1]).ref,
         originalMarkdown: '    - 2026-07-13: stale duplicate',
       };
 
@@ -443,7 +444,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       await expect(
         h.repository.edit({
           type: 'update-comment',
-          comment: child.comments[1]!.ref,
+          comment: expectDefined(child.comments[1]).ref,
           text: 'second only',
         }),
       ).resolves.toMatchObject({ type: 'committed', changed: true });
@@ -456,11 +457,14 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       );
 
       const changed = await h.read();
-      root = h.snapshots(changed)[0]!;
+      root = expectDefined(h.snapshots(changed)[0]);
       await expect(
         h.repository.edit({
           type: 'delete-comment',
-          comment: { ...root.subtasks[0]!.comments[0]!.ref, relativeLine: 99 },
+          comment: {
+            ...expectDefined(expectDefined(root.subtasks[0]).comments[0]).ref,
+            relativeLine: 99,
+          },
         }),
       ).resolves.toMatchObject({ type: 'conflict' });
       expect(await h.read()).toBe(changed);
@@ -469,7 +473,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
     it('rejects a forged comment ref that points at a description or subtask line', async () => {
       const source = '- [ ] root\n  - > description\n  - [ ] child\n';
       const h = await makeHarness(adapter, source);
-      const root = h.snapshots(source)[0]!;
+      const root = expectDefined(h.snapshots(source)[0]);
 
       for (const [relativeLine, originalMarkdown] of [
         [1, '  - > description'],
@@ -493,11 +497,11 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       const block = '- [ ] duplicate\n  - 2026-07-13: note';
       const source = `${block}\n${block}\n`;
       const h = await makeHarness(adapter, source);
-      const observed = h.snapshots(source)[0]!;
+      const observed = expectDefined(h.snapshots(source)[0]);
       const result = await h.repository.edit({
         type: 'delete-comment',
         comment: {
-          ...observed.comments[0]!.ref,
+          ...expectDefined(observed.comments[0]).ref,
           parent: {
             type: 'task',
             ref: { ...observed.ref, line: 99 },
@@ -519,7 +523,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       const source =
         '> - [ ] Old [[Root]] 🧭 future #tag 📅 nope 🆔 bad.id 🆔 keep-id ⛔ dep ^block\r\n>   - [ ] Old [[Child]] #child custom\r\n';
       const h = await makeHarness(adapter, source);
-      const root = h.snapshots(source)[0]!;
+      const root = expectDefined(h.snapshots(source)[0]);
       const editedTitle = `${root.markdownTitle} TEMP`;
       expect(root.markdownTitle).toBe('Old [[Root]] 🧭 future');
       await expect(
@@ -534,7 +538,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       );
 
       const changed = await h.read();
-      const child = h.snapshots(changed)[0]!.subtasks[0]!;
+      const child = expectDefined(expectDefined(h.snapshots(changed)[0]).subtasks[0]);
       await expect(
         h.repository.edit({
           type: 'append-title',
@@ -553,7 +557,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       ['Markdown link', '- [ ] Old [x ^bad](https://example.test)\r\n'],
     ])('replaces a terminal caret-bearing %s as one semantic title', async (_case, source) => {
       const h = await makeHarness(adapter, source);
-      const root = h.snapshots(source)[0]!;
+      const root = expectDefined(h.snapshots(source)[0]);
 
       expect(root.markdownTitle).toBe(source.slice('- [ ] '.length, -2));
       await expect(
@@ -580,7 +584,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       async (terminal) => {
         const source = `- [ ] Old ${terminal}\r\n`;
         const h = await makeHarness(adapter, source);
-        const root = h.snapshots(source)[0]!;
+        const root = expectDefined(h.snapshots(source)[0]);
 
         expect(root.markdownTitle).toBe('Old');
         await expect(
@@ -593,7 +597,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         expect(await h.read()).toBe(`- [ ] New ${terminal}\r\n`);
 
         const changed = await h.read();
-        const reparsed = h.snapshots(changed)[0]!;
+        const reparsed = expectDefined(h.snapshots(changed)[0]);
         await expect(
           h.repository.edit({
             type: 'patch',
@@ -612,7 +616,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         '  - 2026-07-14: comment [[CommentA|same]] and [[CommentB|same]]\r\n';
       const h = await makeHarness(adapter, source);
 
-      let root = h.snapshots(source)[0]!;
+      let root = expectDefined(h.snapshots(source)[0]);
       await expect(
         h.repository.edit({
           type: 'edit-link',
@@ -623,7 +627,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       ).resolves.toMatchObject({ type: 'committed', changed: true });
 
       let content = await h.read();
-      root = h.snapshots(content)[0]!;
+      root = expectDefined(h.snapshots(content)[0]);
       await expect(
         h.repository.edit({
           type: 'edit-link',
@@ -634,11 +638,11 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       ).resolves.toMatchObject({ type: 'committed', changed: true });
 
       content = await h.read();
-      root = h.snapshots(content)[0]!;
+      root = expectDefined(h.snapshots(content)[0]);
       await expect(
         h.repository.edit({
           type: 'edit-link',
-          target: { type: 'comment', ref: root.comments[0]!.ref },
+          target: { type: 'comment', ref: expectDefined(root.comments[0]).ref },
           occurrence: 1,
           replacement: '[[CommentChanged]]',
         }),
@@ -659,7 +663,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         '  - [ ] child `[[Same]]` [[Same]]\r\n';
       const h = await makeHarness(adapter, source);
 
-      let root = h.snapshots(source)[0]!;
+      let root = expectDefined(h.snapshots(source)[0]);
       await expect(
         h.repository.edit({
           type: 'edit-link',
@@ -670,7 +674,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       ).resolves.toMatchObject({ type: 'committed', changed: true });
 
       let content = await h.read();
-      root = h.snapshots(content)[0]!;
+      root = expectDefined(h.snapshots(content)[0]);
       await expect(
         h.repository.edit({
           type: 'edit-link',
@@ -681,22 +685,25 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       ).resolves.toMatchObject({ type: 'committed', changed: true });
 
       content = await h.read();
-      root = h.snapshots(content)[0]!;
+      root = expectDefined(h.snapshots(content)[0]);
       await expect(
         h.repository.edit({
           type: 'edit-link',
-          target: { type: 'comment', ref: root.comments[0]!.ref },
+          target: { type: 'comment', ref: expectDefined(root.comments[0]).ref },
           occurrence: 0,
           replacement: '[[CommentChanged]]',
         }),
       ).resolves.toMatchObject({ type: 'committed', changed: true });
 
       content = await h.read();
-      root = h.snapshots(content)[0]!;
+      root = expectDefined(h.snapshots(content)[0]);
       await expect(
         h.repository.edit({
           type: 'edit-link',
-          target: { type: 'title', target: { type: 'subtask', ref: root.subtasks[0]!.ref } },
+          target: {
+            type: 'title',
+            target: { type: 'subtask', ref: expectDefined(root.subtasks[0]).ref },
+          },
           occurrence: 0,
           replacement: '[[ChildChanged]]',
         }),
@@ -713,14 +720,17 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
     it('rejects stale comments and absent target-scoped occurrences without changing bytes', async () => {
       const source = '- [ ] root [[Title]]\n  - 2026-07-14: comment [[Comment]]\n';
       const h = await makeHarness(adapter, source);
-      const root = h.snapshots(source)[0]!;
+      const root = expectDefined(h.snapshots(source)[0]);
 
       await expect(
         h.repository.edit({
           type: 'edit-link',
           target: {
             type: 'comment',
-            ref: { ...root.comments[0]!.ref, originalMarkdown: '  - stale [[Comment]]' },
+            ref: {
+              ...expectDefined(root.comments[0]).ref,
+              originalMarkdown: '  - stale [[Comment]]',
+            },
           },
           occurrence: 0,
           replacement: '[[Changed]]',
@@ -748,7 +758,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       const h = await makeHarness(adapter, source);
 
       const commands = () => {
-        const root = h.snapshots(source)[0]!;
+        const root = expectDefined(h.snapshots(source)[0]);
         return [
           {
             type: 'patch' as const,
@@ -777,7 +787,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
           },
           {
             type: 'edit-link' as const,
-            target: { type: 'comment' as const, ref: root.comments[0]!.ref },
+            target: { type: 'comment' as const, ref: expectDefined(root.comments[0]).ref },
             occurrence: 0,
             replacement: '[[Changed]]\n- injected',
           },
@@ -797,7 +807,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       const block = '- [ ] duplicate\n  - comment [[Link]]';
       const source = `${block}\n${block}\n`;
       const h = await makeHarness(adapter, source);
-      const revision = h.snapshots(source)[0]!.ref.revision;
+      const revision = expectDefined(h.snapshots(source)[0]).ref.revision;
       const parentRef = { filePath: 'tasks.md', line: 9, revision };
       const result = await h.repository.edit({
         type: 'edit-link',
@@ -871,14 +881,16 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         expect(content).toContain('#tag');
         expect(content).toContain('🆔 keep-id ⛔ dep');
         expect(content).toContain('^block');
-        if (marker) expect(content).toContain(marker);
+        if (marker.length > 0) expect(content).toContain(marker);
       },
     );
 
     it('applies status and priority to an exactly referenced nested task', async () => {
       const source = '- [ ] root\n  - [ ] child\n    - [ ] nested\n';
       const h = await makeHarness(adapter, source);
-      const nested = h.snapshots(source)[0]!.subtasks[0]!.subtasks[0]!;
+      const nested = expectDefined(
+        expectDefined(expectDefined(h.snapshots(source)[0]).subtasks[0]).subtasks[0],
+      );
       await h.repository.edit({
         type: 'set-status',
         target: { type: 'subtask', ref: nested.ref },
@@ -886,7 +898,9 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         stamp: localDate('2026-07-14'),
       });
       const changed = await h.read();
-      const changedNested = h.snapshots(changed)[0]!.subtasks[0]!.subtasks[0]!;
+      const changedNested = expectDefined(
+        expectDefined(expectDefined(h.snapshots(changed)[0]).subtasks[0]).subtasks[0],
+      );
       await h.repository.edit({
         type: 'patch',
         target: { type: 'subtask', ref: changedNested.ref },
@@ -895,7 +909,9 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       expect(await h.read()).toContain('    - [x] nested ⏬ ✅ 2026-07-14');
 
       const prioritized = await h.read();
-      const prioritizedNested = h.snapshots(prioritized)[0]!.subtasks[0]!.subtasks[0]!;
+      const prioritizedNested = expectDefined(
+        expectDefined(expectDefined(h.snapshots(prioritized)[0]).subtasks[0]).subtasks[0],
+      );
       await h.repository.edit({
         type: 'set-status',
         target: { type: 'subtask', ref: prioritizedNested.ref },
@@ -906,7 +922,9 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       expect(await h.read()).not.toContain('✅ 2026-07-14');
 
       const cancelled = await h.read();
-      const cancelledNested = h.snapshots(cancelled)[0]!.subtasks[0]!.subtasks[0]!;
+      const cancelledNested = expectDefined(
+        expectDefined(expectDefined(h.snapshots(cancelled)[0]).subtasks[0]).subtasks[0],
+      );
       await h.repository.edit({
         type: 'set-status',
         target: { type: 'subtask', ref: cancelledNested.ref },
@@ -929,7 +947,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       if (result.type === 'committed' && result.outcome.type === 'task') {
         (result.outcome.task.planning as { due?: string }).due = '1900-01-01';
       }
-      expect(h.snapshots(await h.read())[0]!.planning.due).toBe('2026-07-20');
+      expect(expectDefined(h.snapshots(await h.read())[0]).planning.due).toBe('2026-07-20');
     });
 
     it('uses scheduled-before-due reschedule semantics', async () => {
@@ -1005,8 +1023,8 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
     it('rejects a stale child exact block without same-line adoption', async () => {
       const source = '- [ ] root\n  - [ ] child\n';
       const h = await makeHarness(adapter, source);
-      const root = h.snapshots(source)[0]!;
-      const child = root.subtasks[0]!;
+      const root = expectDefined(h.snapshots(source)[0]);
+      const child = expectDefined(root.subtasks[0]);
       await expect(
         h.repository.edit({
           type: 'patch',
@@ -1337,7 +1355,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
     it('rejects a runtime-injected subtask duration patch', async () => {
       const source = '- [ ] root\n  - [ ] child\n';
       const h = await makeHarness(adapter, source);
-      const child = h.snapshots(source)[0]!.subtasks[0]!;
+      const child = expectDefined(expectDefined(h.snapshots(source)[0]).subtasks[0]);
 
       await expect(
         h.repository.edit({

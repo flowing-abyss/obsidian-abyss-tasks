@@ -3,8 +3,8 @@ import { registerCodeBlock, resolveConfig } from '../src/code-block/registerCode
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings, CodeBlockParams } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import type { TaskApplicationApi } from '../src/tasks';
-import { queryApiForTasks, task, useRealMoment } from './helpers';
+import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
+import { expectDefined, objectMatching, queryApiForTasks, task, useRealMoment } from './helpers';
 
 useRealMoment();
 
@@ -15,11 +15,11 @@ interface CapturedProcessor {
 function setupCodeBlock(settings: CalendarSettings = DEFAULT_SETTINGS): {
   processor: CapturedProcessor;
 } {
-  let captured: CapturedProcessor | null = null;
+  const captured: CapturedProcessor[] = [];
   const fakePlugin = {
     app: {} as unknown,
     registerMarkdownCodeBlockProcessor: (_id: string, cb: CapturedProcessor) => {
-      captured = cb;
+      captured.push(cb);
     },
   };
   const queries = queryApiForTasks(() => []);
@@ -34,15 +34,14 @@ function setupCodeBlock(settings: CalendarSettings = DEFAULT_SETTINGS): {
     tasks,
     new StatusRegistry(settings.taskStatuses),
   );
-  if (!captured) throw new Error('processor not registered');
-  return { processor: captured };
+  return { processor: expectDefined(captured[0], 'processor not registered') };
 }
 
 function invokeProcessor(
   processor: CapturedProcessor,
   source: string,
 ): { el: HTMLElement; ctx: { addChild: ReturnType<typeof vi.fn> } } {
-  const el = activeDocument.createElement('div');
+  const el = createFragment().createDiv();
   const addChild = vi.fn();
   const ctx = { addChild };
   processor(source, el, ctx);
@@ -53,62 +52,36 @@ describe('parseCodeBlockYaml (indirect via registerCodeBlock)', () => {
   it('parses simple key: value', () => {
     const { processor } = setupCodeBlock();
     const { el } = invokeProcessor(processor, 'view: week');
-    const root = el.querySelector('.tasksCalendar')!;
+    const root = expectDefined(el.querySelector('.tasksCalendar'));
     expect(root.getAttribute('view')).toBe('week');
   });
 
-  it('accepts single-quoted folder value without error (quote-strip exercised)', () => {
+  it.each([
+    ["folder: 'my folder'", 'single-quoted folder'],
+    ['folder: "my folder"', 'double-quoted folder'],
+    ['firstDayOfWeek: 3', 'numeric firstDayOfWeek'],
+    ['upcomingDays: 14', 'numeric upcomingDays'],
+    ['firstDayOfWeek: "5"', 'quoted numeric firstDayOfWeek'],
+  ])('accepts %s without error (%s)', (source) => {
     const { processor } = setupCodeBlock();
-    const { el } = invokeProcessor(processor, "folder: 'my folder'");
+    const { el } = invokeProcessor(processor, source);
     expect(el.querySelector('.tasksCalendar')).not.toBeNull();
   });
 
-  it('accepts double-quoted folder value without error (quote-strip exercised)', () => {
+  it.each([
+    ['\n\nview: week\n\n', 'week', 'blank lines'],
+    ['garbage line\nview: month', 'month', 'garbage lines'],
+    ['  view  :  week  ', 'week', 'whitespace around key and value'],
+  ])('parses %s as %s while tolerating %s', (source, expectedView) => {
     const { processor } = setupCodeBlock();
-    const { el } = invokeProcessor(processor, 'folder: "my folder"');
-    expect(el.querySelector('.tasksCalendar')).not.toBeNull();
-  });
-
-  it('accepts numeric firstDayOfWeek without error (parseInt exercised for coverage)', () => {
-    const { processor } = setupCodeBlock();
-    const { el } = invokeProcessor(processor, 'firstDayOfWeek: 3');
-    expect(el.querySelector('.tasksCalendar')).not.toBeNull();
-  });
-
-  it('accepts numeric upcomingDays without error (parseInt exercised for coverage)', () => {
-    const { processor } = setupCodeBlock();
-    const { el } = invokeProcessor(processor, 'upcomingDays: 14');
-    expect(el.querySelector('.tasksCalendar')).not.toBeNull();
-  });
-
-  it('accepts quoted numeric firstDayOfWeek without error (parseInt + quote-strip exercised)', () => {
-    const { processor } = setupCodeBlock();
-    const { el } = invokeProcessor(processor, 'firstDayOfWeek: "5"');
-    expect(el.querySelector('.tasksCalendar')).not.toBeNull();
-  });
-
-  it('skips blank lines', () => {
-    const { processor } = setupCodeBlock();
-    const { el } = invokeProcessor(processor, '\n\nview: week\n\n');
-    expect(el.querySelector('.tasksCalendar')?.getAttribute('view')).toBe('week');
-  });
-
-  it('skips garbage lines (no colon)', () => {
-    const { processor } = setupCodeBlock();
-    const { el } = invokeProcessor(processor, 'garbage line\nview: month');
-    expect(el.querySelector('.tasksCalendar')?.getAttribute('view')).toBe('month');
-  });
-
-  it('tolerates whitespace around key and value', () => {
-    const { processor } = setupCodeBlock();
-    const { el } = invokeProcessor(processor, '  view  :  week  ');
-    expect(el.querySelector('.tasksCalendar')?.getAttribute('view')).toBe('week');
+    const { el } = invokeProcessor(processor, source);
+    expect(el.querySelector('.tasksCalendar')?.getAttribute('view')).toBe(expectedView);
   });
 
   it('parses multi-line source', () => {
     const { processor } = setupCodeBlock();
     const { el } = invokeProcessor(processor, 'view: week\nfirstDayOfWeek: 1\nupcomingDays: 7');
-    const root = el.querySelector('.tasksCalendar')!;
+    const root = expectDefined(el.querySelector('.tasksCalendar'));
     expect(root.getAttribute('view')).toBe('week');
   });
 });
@@ -135,17 +108,19 @@ describe('registerCodeBlock processor', () => {
       { queries, execute },
       new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
     );
-    if (!processor) throw new Error('processor not registered');
+    if (processor == null) throw new Error('processor not registered');
 
     const { el } = invokeProcessor(processor, 'view: month');
     const marker = el.querySelector<HTMLElement>('.task .abyss-status-marker');
     expect(marker).not.toBeNull();
-    marker!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expectDefined(marker).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true }),
+    );
     expect(execute).toHaveBeenCalledWith({
       type: 'toggle-completion',
       target: {
         type: 'task',
-        ref: expect.objectContaining({ filePath: 'f.md', line: 0 }),
+        ref: objectMatching<TaskSnapshot['ref']>({ filePath: 'f.md', line: 0 }),
       },
     });
   });
@@ -199,8 +174,10 @@ describe('registerCodeBlock processor', () => {
   it('MarkdownRenderChild onunload calls renderer.destroy', () => {
     const { processor } = setupCodeBlock();
     const { ctx } = invokeProcessor(processor, 'view: month');
-    const child = ctx.addChild.mock.calls[0]![0] as { onunload: () => void };
-    expect(() => child.onunload()).not.toThrow();
+    const child = expectDefined(ctx.addChild.mock.calls[0])[0] as { onunload: () => void };
+    expect(() => {
+      child.onunload();
+    }).not.toThrow();
   });
 });
 

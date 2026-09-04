@@ -4,6 +4,7 @@ import { shiftLocalDate } from '../domain/localDateMath';
 import type { RebaseEvidence } from '../domain/taskReconciliation';
 import type {
   CommentRef,
+  LocalDate,
   SubtaskRef,
   SubtaskSnapshot,
   TaskMutationTarget,
@@ -21,18 +22,12 @@ import type {
 } from './TaskRepository';
 
 export type RetryPolicy =
-  | 'commutative'
-  | 'field-compare'
-  | 'exact-target'
-  | 'relocation-only'
-  | 'never';
+  'commutative' | 'field-compare' | 'exact-target' | 'relocation-only' | 'never';
 
 export interface PreparedMutation {
   readonly publicCommand: TaskCommand;
   readonly repositoryRequest:
-    | TaskEditRequest
-    | RecurrenceCompletionRevisionRequest
-    | TaskMoveRequest;
+    TaskEditRequest | RecurrenceCompletionRevisionRequest | TaskMoveRequest;
   readonly base: TaskSnapshot;
   readonly targetBase: TaskMutationTarget;
   readonly clock: ClockReading | { readonly localDate: ClockReading['localDate'] };
@@ -45,6 +40,8 @@ export type PreparedRetryRequest =
   | { readonly type: 'recurrence'; readonly request: RecurrenceCompletionRevisionRequest }
   | { readonly type: 'move'; readonly request: TaskMoveRequest }
   | { readonly type: 'unsafe' };
+
+type TaskStatusSnapshot = TaskSnapshot | SubtaskSnapshot;
 
 function rebaseNode(node: TaskNodeRef, root: TaskRef): TaskNodeRef {
   if (node.type === 'task') return { type: 'task', ref: root };
@@ -82,15 +79,17 @@ function childChain(target: TaskStatusTarget): readonly SubtaskRef[] {
 function snapshotForTarget(
   root: TaskSnapshot,
   target: TaskStatusTarget,
-): TaskSnapshot | SubtaskSnapshot | undefined {
+): TaskStatusSnapshot | undefined {
   if (target.type === 'task') return root;
-  let current: TaskSnapshot | SubtaskSnapshot = root;
+  let current: TaskStatusSnapshot = root;
   for (const child of childChain(target)) {
     const matches: readonly SubtaskSnapshot[] = current.subtasks.filter(
       (candidate) => candidate.ref.originalBlock === child.originalBlock,
     );
     if (matches.length !== 1) return undefined;
-    current = matches[0]!;
+    const match = matches[0];
+    if (match === undefined) return undefined;
+    current = match;
   }
   return current;
 }
@@ -99,6 +98,38 @@ function ownedDescendants(task: TaskSnapshot | SubtaskSnapshot): string {
   const block = 'source' in task ? task.source.originalBlock : task.ref.originalBlock;
   const newline = block.search(/\r?\n/u);
   return newline < 0 ? '' : block.slice(newline);
+}
+
+type DirectRebaseCommand = Extract<
+  TaskEditCommand,
+  {
+    readonly type:
+      | 'patch'
+      | 'append-title'
+      | 'set-status'
+      | 'set-description'
+      | 'add-subtask'
+      | 'add-comment'
+      | 'delete-subtask'
+      | 'reorder-subtask';
+  }
+>;
+
+type RemainingRebaseCommand = Exclude<TaskEditCommand, DirectRebaseCommand>;
+
+const DIRECT_REBASE_TYPES = new Set<TaskEditCommand['type']>([
+  'patch',
+  'append-title',
+  'set-status',
+  'set-description',
+  'add-subtask',
+  'add-comment',
+  'delete-subtask',
+  'reorder-subtask',
+]);
+
+function isDirectRebaseCommand(command: TaskEditCommand): command is DirectRebaseCommand {
+  return DIRECT_REBASE_TYPES.has(command.type);
 }
 
 function recurrenceOwnerUnchanged(
@@ -127,14 +158,20 @@ export function recurrenceCompletionPreconditionHolds(
   );
   const currentTarget = snapshotForTarget(currentRoot, rebaseStatusTarget(target, currentRoot.ref));
   return Boolean(
-    previousTarget &&
-    currentTarget &&
+    previousTarget != null &&
+    currentTarget != null &&
     recurrenceOwnerUnchanged(previousTarget, currentTarget) &&
     ownedDescendants(previousTarget) === ownedDescendants(currentTarget),
   );
 }
 
 function rebaseEditCommand(command: TaskEditCommand, root: TaskRef): TaskEditCommand {
+  return isDirectRebaseCommand(command)
+    ? rebaseDirectCommand(command, root)
+    : rebaseRemainingCommand(command, root);
+}
+
+function rebaseDirectCommand(command: DirectRebaseCommand, root: TaskRef): TaskEditCommand {
   switch (command.type) {
     case 'patch':
     case 'append-title':
@@ -153,26 +190,38 @@ function rebaseEditCommand(command: TaskEditCommand, root: TaskRef): TaskEditCom
         subtask: rebaseSubtask(command.subtask, root),
         target: rebaseSubtask(command.target, root),
       };
-    case 'update-comment':
-    case 'delete-comment':
-      return { ...command, comment: rebaseComment(command.comment, root) };
-    case 'edit-link':
-      return {
-        ...command,
-        target:
-          command.target.type === 'comment'
-            ? { type: 'comment', ref: rebaseComment(command.target.ref, root) }
-            : { ...command.target, target: rebaseStatusTarget(command.target.target, root) },
-      };
-    default:
-      return { ...command, ref: root };
   }
+}
+
+function rebaseRemainingCommand(command: RemainingRebaseCommand, root: TaskRef): TaskEditCommand {
+  if (command.type === 'update-comment' || command.type === 'delete-comment') {
+    return { ...command, comment: rebaseComment(command.comment, root) };
+  }
+  if (command.type === 'edit-link') {
+    return {
+      ...command,
+      target:
+        command.target.type === 'comment'
+          ? { type: 'comment', ref: rebaseComment(command.target.ref, root) }
+          : { ...command.target, target: rebaseStatusTarget(command.target.target, root) },
+    };
+  }
+  return { ...command, ref: root };
 }
 
 function nodeForCommand(
   root: TaskSnapshot,
   command: TaskEditCommand,
-): TaskSnapshot | SubtaskSnapshot | undefined {
+): TaskStatusSnapshot | undefined {
+  return isDirectRebaseCommand(command)
+    ? nodeForDirectCommand(root, command)
+    : nodeForRemainingCommand(root, command);
+}
+
+function nodeForDirectCommand(
+  root: TaskSnapshot,
+  command: DirectRebaseCommand,
+): TaskStatusSnapshot | undefined {
   switch (command.type) {
     case 'patch':
     case 'append-title':
@@ -185,17 +234,22 @@ function nodeForCommand(
     case 'delete-subtask':
     case 'reorder-subtask':
       return snapshotForTarget(root, { type: 'subtask', ref: command.subtask });
-    case 'update-comment':
-    case 'delete-comment':
-      return snapshotForTarget(root, command.comment.parent);
-    case 'edit-link':
-      return snapshotForTarget(
-        root,
-        command.target.type === 'comment' ? command.target.ref.parent : command.target.target,
-      );
-    default:
-      return root;
   }
+}
+
+function nodeForRemainingCommand(
+  root: TaskSnapshot,
+  command: RemainingRebaseCommand,
+): TaskStatusSnapshot | undefined {
+  if (command.type === 'update-comment' || command.type === 'delete-comment') {
+    return snapshotForTarget(root, command.comment.parent);
+  }
+  if (command.type === 'edit-link') {
+    const target =
+      command.target.type === 'comment' ? command.target.ref.parent : command.target.target;
+    return snapshotForTarget(root, target);
+  }
+  return root;
 }
 
 function requestedFieldValue(update: { readonly type: string; readonly value?: unknown }): unknown {
@@ -210,66 +264,193 @@ function fieldUnchangedOrRequested(
   return previous === current || current === requestedFieldValue(update);
 }
 
+interface SchedulingContext {
+  readonly previous: TaskSnapshot | SubtaskSnapshot;
+  readonly current: TaskSnapshot | SubtaskSnapshot;
+  readonly anchor: 'scheduled' | 'due';
+}
+
+function planningField(
+  context: SchedulingContext,
+  name: keyof TaskSnapshot['planning'],
+  requested: unknown,
+): boolean {
+  const previousValue = (context.previous.planning as Record<string, unknown>)[name];
+  const currentValue = (context.current.planning as Record<string, unknown>)[name];
+  return previousValue === currentValue || currentValue === requested;
+}
+
+function shiftedDate(
+  context: SchedulingContext,
+  name: 'start' | 'due' | 'scheduled',
+  days: number,
+): LocalDate | undefined {
+  const value = context.previous.planning[name];
+  return value == null ? undefined : shiftLocalDate(value, days);
+}
+
+function shiftedPlanningHolds(context: SchedulingContext, days: number): boolean {
+  const { previous, anchor } = context;
+  if (previous.planning.start != null && previous.planning.due != null) {
+    return (
+      planningField(context, 'start', shiftedDate(context, 'start', days)) &&
+      planningField(context, 'due', shiftedDate(context, 'due', days))
+    );
+  }
+  return planningField(context, anchor, shiftedDate(context, anchor, days));
+}
+
+function moveTimeSlotHolds(
+  context: SchedulingContext,
+  command: Extract<TaskEditCommand, { readonly type: 'move-time-slot' }>,
+): boolean {
+  return (
+    shiftedPlanningHolds(context, command.days) && planningField(context, 'time', command.time)
+  );
+}
+
+function moveToAllDayHolds(
+  context: SchedulingContext,
+  command: Extract<TaskEditCommand, { readonly type: 'move-to-all-day' }>,
+): boolean {
+  return (
+    shiftedPlanningHolds(context, command.days) &&
+    planningField(context, 'time', undefined) &&
+    planningField(context, 'duration', undefined)
+  );
+}
+
+function setTimeSlotHolds(
+  context: SchedulingContext,
+  command: Extract<TaskEditCommand, { readonly type: 'set-time-slot' }>,
+): boolean {
+  return (
+    planningField(context, context.anchor, command.date) &&
+    planningField(context, 'time', command.time) &&
+    (command.duration === undefined || planningField(context, 'duration', command.duration))
+  );
+}
+
+function extendSpanHolds(
+  context: SchedulingContext,
+  command: Extract<TaskEditCommand, { readonly type: 'extend-span' }>,
+): boolean {
+  const planning = context.previous.planning;
+  const anchorValue = planning.start ?? planning.scheduled ?? planning.due;
+  return (
+    anchorValue !== undefined &&
+    planningField(context, 'start', planning.start ?? anchorValue) &&
+    planningField(context, 'due', command.due)
+  );
+}
+
+type SchedulingCommand = Extract<
+  TaskEditCommand,
+  {
+    readonly type:
+      | 'reschedule'
+      | 'shift-schedule'
+      | 'move-time-slot'
+      | 'move-to-all-day'
+      | 'set-time-slot'
+      | 'convert-to-all-day'
+      | 'set-span-boundary'
+      | 'extend-span';
+  }
+>;
+
+const SCHEDULING_COMMAND_TYPES = new Set<TaskEditCommand['type']>([
+  'reschedule',
+  'shift-schedule',
+  'move-time-slot',
+  'move-to-all-day',
+  'set-time-slot',
+  'convert-to-all-day',
+  'set-span-boundary',
+  'extend-span',
+]);
+
+function isSchedulingCommand(command: TaskEditCommand): command is SchedulingCommand {
+  return SCHEDULING_COMMAND_TYPES.has(command.type);
+}
+
+function convertToAllDayHolds(
+  context: SchedulingContext,
+  command: Extract<TaskEditCommand, { readonly type: 'convert-to-all-day' }>,
+): boolean {
+  return (
+    planningField(context, context.anchor, command.date) &&
+    planningField(context, 'time', undefined) &&
+    planningField(context, 'duration', undefined)
+  );
+}
+
 function schedulingPreconditionHolds(
-  command: TaskEditCommand,
+  command: SchedulingCommand,
+  previous: TaskStatusSnapshot,
+  current: TaskStatusSnapshot,
+): boolean {
+  const anchor = previous.planning.scheduled !== undefined ? 'scheduled' : 'due';
+  const context: SchedulingContext = { previous, current, anchor };
+  switch (command.type) {
+    case 'reschedule':
+      return planningField(context, anchor, command.date);
+    case 'shift-schedule':
+      return shiftedPlanningHolds(context, command.days);
+    case 'move-time-slot':
+      return moveTimeSlotHolds(context, command);
+    case 'move-to-all-day':
+      return moveToAllDayHolds(context, command);
+    case 'set-time-slot':
+      return setTimeSlotHolds(context, command);
+    case 'convert-to-all-day':
+      return convertToAllDayHolds(context, command);
+    case 'set-span-boundary':
+      return planningField(context, command.boundary, command.date);
+    case 'extend-span':
+      return extendSpanHolds(context, command);
+  }
+}
+
+function patchFieldPreconditionHolds(
+  field: string,
+  update: { readonly type: string; readonly value?: unknown },
   previous: TaskSnapshot | SubtaskSnapshot,
   current: TaskSnapshot | SubtaskSnapshot,
 ): boolean {
-  const anchor = previous.planning.scheduled !== undefined ? 'scheduled' : 'due';
-  const field = (name: keyof TaskSnapshot['planning'], requested: unknown) => {
-    const previousValue = (previous.planning as Record<string, unknown>)[name];
-    const currentValue = (current.planning as Record<string, unknown>)[name];
-    return previousValue === currentValue || currentValue === requested;
-  };
-  const shifted = (name: 'start' | 'due' | 'scheduled') => {
-    const value = previous.planning[name];
-    return value && shiftLocalDate(value, 'days' in command ? command.days : 0);
-  };
-  switch (command.type) {
-    case 'reschedule':
-      return field(anchor, command.date);
-    case 'shift-schedule':
-      return previous.planning.start && previous.planning.due
-        ? field('start', shifted('start')) && field('due', shifted('due'))
-        : field(anchor, shifted(anchor));
-    case 'move-time-slot':
-      return (
-        (previous.planning.start && previous.planning.due
-          ? field('start', shifted('start')) && field('due', shifted('due'))
-          : field(anchor, shifted(anchor))) && field('time', command.time)
-      );
-    case 'move-to-all-day':
-      return (
-        (previous.planning.start && previous.planning.due
-          ? field('start', shifted('start')) && field('due', shifted('due'))
-          : field(anchor, shifted(anchor))) &&
-        field('time', undefined) &&
-        field('duration', undefined)
-      );
-    case 'set-time-slot':
-      return (
-        field(anchor, command.date) &&
-        field('time', command.time) &&
-        (command.duration === undefined || field('duration', command.duration))
-      );
-    case 'convert-to-all-day':
-      return (
-        field(anchor, command.date) && field('time', undefined) && field('duration', undefined)
-      );
-    case 'set-span-boundary':
-      return field(command.boundary, command.date);
-    case 'extend-span': {
-      const anchorValue =
-        previous.planning.start ?? previous.planning.scheduled ?? previous.planning.due;
-      return (
-        anchorValue !== undefined &&
-        field('start', previous.planning.start ?? anchorValue) &&
-        field('due', command.due)
-      );
-    }
-    default:
-      return false;
+  if (field === 'markdownTitle') {
+    return fieldUnchangedOrRequested(previous.markdownTitle, current.markdownTitle, update);
   }
+  if (field === 'priority') {
+    return fieldUnchangedOrRequested(previous.priority, current.priority, update);
+  }
+  if (field === 'recurrence') {
+    return fieldUnchangedOrRequested(previous.recurrence, current.recurrence, update);
+  }
+  if (field === 'onCompletion') {
+    return fieldUnchangedOrRequested(previous.onCompletion, current.onCompletion, update);
+  }
+  return fieldUnchangedOrRequested(
+    (previous.planning as Record<string, unknown>)[field],
+    (current.planning as Record<string, unknown>)[field],
+    update,
+  );
+}
+
+function patchPreconditionHolds(
+  command: Extract<TaskEditCommand, { readonly type: 'patch' }>,
+  previous: TaskSnapshot | SubtaskSnapshot,
+  current: TaskSnapshot | SubtaskSnapshot,
+): boolean {
+  const fields = Object.keys(command.patch).filter((field) => field !== 'tags');
+  return fields.every((field) => {
+    const update = command.patch[field as keyof typeof command.patch];
+    return (
+      update != null &&
+      'type' in update &&
+      patchFieldPreconditionHolds(field, update, previous, current)
+    );
+  });
 }
 
 function fieldPreconditionHolds(
@@ -279,56 +460,105 @@ function fieldPreconditionHolds(
 ): boolean {
   const previousTarget = nodeForCommand(previous, command);
   const currentTarget = nodeForCommand(current, rebaseEditCommand(command, current.ref));
-  if (!previousTarget || !currentTarget) return false;
+  if (previousTarget == null || currentTarget == null) return false;
+  if (command.type === 'patch') {
+    return patchPreconditionHolds(command, previousTarget, currentTarget);
+  }
+  if (command.type === 'set-status') {
+    return (
+      previousTarget.statusSymbol === currentTarget.statusSymbol ||
+      currentTarget.statusSymbol === command.symbol
+    );
+  }
+  return isSchedulingCommand(command)
+    ? schedulingPreconditionHolds(command, previousTarget, currentTarget)
+    : false;
+}
+
+function commentTargetExists(target: TaskSnapshot | SubtaskSnapshot, ref: CommentRef): boolean {
+  return target.comments.some(
+    (comment) =>
+      comment.ref.relativeLine === ref.relativeLine &&
+      comment.ref.originalMarkdown === ref.originalMarkdown,
+  );
+}
+
+function deletedSubtaskUnchanged(
+  previous: TaskSnapshot | SubtaskSnapshot,
+  current: TaskSnapshot | SubtaskSnapshot,
+): boolean {
+  return (
+    !('source' in previous) &&
+    !('source' in current) &&
+    previous.ref.originalBlock === current.ref.originalBlock
+  );
+}
+
+function editLinkPreconditionHolds(
+  command: Extract<TaskEditCommand, { readonly type: 'edit-link' }>,
+  previous: TaskSnapshot | SubtaskSnapshot,
+  current: TaskSnapshot | SubtaskSnapshot,
+): boolean {
+  if (command.target.type === 'comment') return commentTargetExists(current, command.target.ref);
+  return command.target.type === 'description'
+    ? previous.description === current.description
+    : previous.markdownTitle === current.markdownTitle;
+}
+
+type ExactTargetCommand = Extract<
+  TaskEditCommand,
+  {
+    readonly type:
+      | 'append-title'
+      | 'set-description'
+      | 'delete-subtask'
+      | 'update-comment'
+      | 'delete-comment'
+      | 'edit-link'
+      | 'reorder-subtask'
+      | 'add-comment'
+      | 'add-subtask';
+  }
+>;
+
+const EXACT_TARGET_COMMAND_TYPES = new Set<TaskEditCommand['type']>([
+  'append-title',
+  'set-description',
+  'delete-subtask',
+  'update-comment',
+  'delete-comment',
+  'edit-link',
+  'reorder-subtask',
+  'add-comment',
+  'add-subtask',
+]);
+
+function isExactTargetCommand(command: TaskEditCommand): command is ExactTargetCommand {
+  return EXACT_TARGET_COMMAND_TYPES.has(command.type);
+}
+
+function exactCommandPreconditionHolds(
+  command: ExactTargetCommand,
+  previous: TaskStatusSnapshot,
+  current: TaskStatusSnapshot,
+): boolean {
   switch (command.type) {
-    case 'patch': {
-      const fields = Object.keys(command.patch).filter((field) => field !== 'tags');
-      return fields.every((field) => {
-        const update = command.patch[field as keyof typeof command.patch];
-        if (!update || !('type' in update)) return false;
-        if (field === 'markdownTitle')
-          return fieldUnchangedOrRequested(
-            previousTarget.markdownTitle,
-            currentTarget.markdownTitle,
-            update,
-          );
-        if (field === 'priority')
-          return fieldUnchangedOrRequested(previousTarget.priority, currentTarget.priority, update);
-        if (field === 'recurrence')
-          return fieldUnchangedOrRequested(
-            previousTarget.recurrence,
-            currentTarget.recurrence,
-            update,
-          );
-        if (field === 'onCompletion')
-          return fieldUnchangedOrRequested(
-            previousTarget.onCompletion,
-            currentTarget.onCompletion,
-            update,
-          );
-        return fieldUnchangedOrRequested(
-          (previousTarget.planning as Record<string, unknown>)[field],
-          (currentTarget.planning as Record<string, unknown>)[field],
-          update,
-        );
-      });
-    }
-    case 'set-status':
-      return (
-        previousTarget.statusSymbol === currentTarget.statusSymbol ||
-        currentTarget.statusSymbol === command.symbol
-      );
-    case 'reschedule':
-    case 'shift-schedule':
-    case 'move-time-slot':
-    case 'move-to-all-day':
-    case 'set-time-slot':
-    case 'convert-to-all-day':
-    case 'set-span-boundary':
-    case 'extend-span':
-      return schedulingPreconditionHolds(command, previousTarget, currentTarget);
-    default:
+    case 'append-title':
+      return previous.markdownTitle === current.markdownTitle;
+    case 'set-description':
+      return previous.description === current.description;
+    case 'delete-subtask':
+      return deletedSubtaskUnchanged(previous, current);
+    case 'update-comment':
+    case 'delete-comment':
+      return commentTargetExists(current, command.comment);
+    case 'edit-link':
+      return editLinkPreconditionHolds(command, previous, current);
+    case 'reorder-subtask':
       return false;
+    case 'add-comment':
+    case 'add-subtask':
+      return true;
   }
 }
 
@@ -340,44 +570,10 @@ function exactTargetPreconditionHolds(
   const rebased = rebaseEditCommand(command, current.ref);
   const previousTarget = nodeForCommand(previous, command);
   const currentTarget = nodeForCommand(current, rebased);
-  if (!previousTarget || !currentTarget) return false;
-  switch (command.type) {
-    case 'append-title':
-      return previousTarget.markdownTitle === currentTarget.markdownTitle;
-    case 'set-description':
-      return previousTarget.description === currentTarget.description;
-    case 'delete-subtask':
-      return (
-        !('source' in previousTarget) &&
-        !('source' in currentTarget) &&
-        previousTarget.ref.originalBlock === currentTarget.ref.originalBlock
-      );
-    case 'update-comment':
-    case 'delete-comment': {
-      const ref = command.comment;
-      return currentTarget.comments.some(
-        (comment) =>
-          comment.ref.relativeLine === ref.relativeLine &&
-          comment.ref.originalMarkdown === ref.originalMarkdown,
-      );
-    }
-    case 'edit-link':
-      if (command.target.type === 'comment') {
-        const ref = command.target.ref;
-        return currentTarget.comments.some(
-          (comment) =>
-            comment.ref.relativeLine === ref.relativeLine &&
-            comment.ref.originalMarkdown === ref.originalMarkdown,
-        );
-      }
-      return command.target.type === 'description'
-        ? previousTarget.description === currentTarget.description
-        : previousTarget.markdownTitle === currentTarget.markdownTitle;
-    case 'reorder-subtask':
-      return false;
-    default:
-      return command.type === 'add-comment' || command.type === 'add-subtask';
-  }
+  if (previousTarget == null || currentTarget == null) return false;
+  return isExactTargetCommand(command)
+    ? exactCommandPreconditionHolds(command, previousTarget, currentTarget)
+    : false;
 }
 
 function retryEdit(
@@ -393,7 +589,7 @@ function retryEdit(
     switch (prepared.retry) {
       case 'commutative':
         return Boolean(
-          nodeForCommand(previous, command) &&
+          nodeForCommand(previous, command) != null &&
           nodeForCommand(current, rebaseEditCommand(command, current.ref)),
         );
       case 'field-compare':
@@ -430,8 +626,8 @@ export function prepareRetry(
     const currentTargetRef = rebaseStatusTarget(request.command.target, authoritative.current.ref);
     const currentTarget = snapshotForTarget(authoritative.current, currentTargetRef);
     if (
-      !previousTarget ||
-      !currentTarget ||
+      previousTarget == null ||
+      currentTarget == null ||
       !recurrenceOwnerUnchanged(previousTarget, currentTarget) ||
       ownedDescendants(currentTarget) !== request.baseOwnedDescendants
     ) {

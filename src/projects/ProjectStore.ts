@@ -33,7 +33,7 @@ function wasMarkdown(path: string): boolean {
 }
 
 function metadataMayContainTasks(data: string, cache: CachedMetadata): boolean {
-  if (cache.listItems?.some((item) => item.task !== undefined)) return true;
+  if (cache.listItems?.some((item) => item.task !== undefined) ?? false) return true;
   return data.split('\n').some((line) => /^[\s>]*- \[.\]/u.test(line));
 }
 
@@ -49,17 +49,17 @@ export class ProjectStore {
   private byPath = new Map<string, Project>();
   private listeners: Array<() => void> = [];
   private eventUnsubs: Array<() => void> = [];
-  private queryUnsub?: () => void;
-  private debounce = 0;
-  private waitingPaths = new Set<string>();
-  private readyPaths = new Set<string>();
+  private queryUnsub: (() => void) | undefined;
+  private debounce: number | undefined;
+  private readonly waitingPaths = new Set<string>();
+  private readonly readyPaths = new Set<string>();
   private readyFull = false;
-  private pendingCreates = new Set<string>();
+  private readonly pendingCreates = new Set<string>();
 
   constructor(
-    private app: App,
-    private queries: TaskQueryApi,
-    private settings: CalendarSettings,
+    private readonly app: App,
+    private readonly queries: TaskQueryApi,
+    private readonly settings: CalendarSettings,
   ) {}
 
   initialize(): void {
@@ -78,7 +78,9 @@ export class ProjectStore {
         this.awaitBarrier(file.path);
       }
     });
-    this.eventUnsubs.push(() => this.app.metadataCache.offref(metadataRef));
+    this.eventUnsubs.push(() => {
+      this.app.metadataCache.offref(metadataRef);
+    });
     const createRef = this.app.vault.on('create', (file) => {
       if (isMarkdownFile(file)) this.pendingCreates.add(file.path);
     });
@@ -107,11 +109,19 @@ export class ProjectStore {
       }
     });
     this.eventUnsubs.push(
-      () => this.app.vault.offref(createRef),
-      () => this.app.vault.offref(deleteRef),
-      () => this.app.vault.offref(renameRef),
+      () => {
+        this.app.vault.offref(createRef);
+      },
+      () => {
+        this.app.vault.offref(deleteRef);
+      },
+      () => {
+        this.app.vault.offref(renameRef);
+      },
     );
-    this.queryUnsub = this.queries.subscribe((event) => this.onTaskIndexEvent(event));
+    this.queryUnsub = this.queries.subscribe((event) => {
+      this.onTaskIndexEvent(event);
+    });
   }
 
   private onTaskIndexEvent(event: TaskIndexEvent): void {
@@ -154,8 +164,10 @@ export class ProjectStore {
   }
 
   private scheduleFlush(): void {
-    if (this.debounce) window.clearTimeout(this.debounce);
-    this.debounce = window.setTimeout(() => this.flush(), 150);
+    if (this.debounce !== undefined) window.clearTimeout(this.debounce);
+    this.debounce = window.setTimeout(() => {
+      this.flush();
+    }, 150);
   }
 
   private flush(): void {
@@ -192,7 +204,7 @@ export class ProjectStore {
     for (const file of this.app.vault.getMarkdownFiles()) {
       const cache = this.app.metadataCache.getFileCache(file);
       const entry = this.makeEntry(file.path, cache, tasksByPath.get(file.path) ?? []);
-      if (entry) this.byPath.set(file.path, entry);
+      if (entry != null) this.byPath.set(file.path, entry);
     }
     this.rebuildCache();
   }
@@ -208,7 +220,7 @@ export class ProjectStore {
     const cache = this.app.metadataCache.getFileCache(file);
     const tasks = this.queries.list({ filePath: path });
     const entry = this.makeEntry(path, cache, tasks);
-    if (entry) this.byPath.set(path, entry);
+    if (entry != null) this.byPath.set(path, entry);
     else this.byPath.delete(path);
   }
 
@@ -218,7 +230,7 @@ export class ProjectStore {
     tasks: readonly TaskSnapshot[],
   ): Project | null {
     const fm = (cache?.frontmatter ?? {}) as Record<string, unknown>;
-    const tags = (cache ? (getAllTags(cache) ?? []) : []).map((tag) => tag.toLowerCase());
+    const tags = (cache != null ? (getAllTags(cache) ?? []) : []).map((tag) => tag.toLowerCase());
     if (!evaluateQuery(this.settings.projects.membershipQuery, path, tags, fm)) return null;
     const { statusId, rawStatus } = resolveStatus(this.settings.projects.statuses, tags, fm);
     return {
@@ -276,7 +288,7 @@ export class ProjectStore {
   }
 
   destroy(): void {
-    if (this.debounce) window.clearTimeout(this.debounce);
+    if (this.debounce !== undefined) window.clearTimeout(this.debounce);
     this.queryUnsub?.();
     this.queryUnsub = undefined;
     for (const unsubscribe of this.eventUnsubs) unsubscribe();

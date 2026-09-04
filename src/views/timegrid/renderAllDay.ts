@@ -1,4 +1,4 @@
-import { Component, type App } from 'obsidian';
+import { type App, type Component } from 'obsidian';
 import type { TagGroup } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import { tagColorFor } from '../../tags/tagColor';
@@ -37,13 +37,12 @@ export interface AllDayCallbacks extends ForecastInteractionCallbacks {
   onStartChange: (task: TaskSnapshot, newStart: string) => void; // pointer edge-resize
   onDueChange: (task: TaskSnapshot, newDue: string) => void; // pointer edge-resize
   onExtendToSpan: (task: TaskSnapshot, newDue: string) => void; // pointer edge-resize on a plain task
-  onSpanMove?: (task: TaskSnapshot, target: SpanMoveTarget) => void;
-  onSpanBoundary?: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;
-  spanInteractionOwner?: SpanInteractionOwner;
-  spanPreviewLayoutFor?: (
-    task: TaskSnapshot,
-    planning: TaskSnapshot['planning'],
-  ) => VisibleSpanLayout;
+  onSpanMove?: ((task: TaskSnapshot, target: SpanMoveTarget) => void) | undefined;
+  onSpanBoundary?:
+    ((task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void) | undefined;
+  spanInteractionOwner?: SpanInteractionOwner | undefined;
+  spanPreviewLayoutFor?:
+    ((task: TaskSnapshot, planning: TaskSnapshot['planning']) => VisibleSpanLayout) | undefined;
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
@@ -51,7 +50,7 @@ export interface AllDayCallbacks extends ForecastInteractionCallbacks {
   /** Click-to-create: fires when the user clicks genuinely empty space in this all-day cell
    * (not an existing span/plain/deadline item, and not the quick-add popover CenterPanel renders
    * into this same cell in response). Optional, mirroring TimeGridCallbacks.onCreateAtTime. */
-  onCreateAtDate?: (date: string) => void;
+  onCreateAtDate?: ((date: string) => void) | undefined;
 }
 
 type AllDayResizeCell = HTMLElement & {
@@ -112,7 +111,7 @@ function spanDropDateAt(
   const attr = variant === 'month' ? 'data-mg-date' : 'data-tg-date';
   const cls = variant === 'month' ? 'abyss-mg-cell' : 'abyss-tg-allday-cell';
   const parent = layerEl.parentElement;
-  if (!parent || parent.ownerDocument !== layerEl.ownerDocument) return undefined;
+  if (parent?.ownerDocument !== layerEl.ownerDocument) return undefined;
   return (
     Array.from(parent.querySelectorAll<HTMLElement>(`:scope > .${cls}[${attr}]`))
       .find((cell) => {
@@ -136,7 +135,7 @@ function attachSpanOverlayDropForwarding(
   variant: 'timegrid' | 'month',
 ): void {
   const existing = spanOverlayDropBindings.get(layerEl);
-  if (existing) {
+  if (existing != null) {
     existing.callbacks = callbacks;
     existing.variant = variant;
     return;
@@ -144,65 +143,132 @@ function attachSpanOverlayDropForwarding(
   spanOverlayDropBindings.set(layerEl, { callbacks, variant });
   layerEl.addEventListener('dragover', (event) => {
     const binding = spanOverlayDropBindings.get(layerEl);
-    if (!binding || !spanDropDateAt(layerEl, binding.variant, event.clientX)) return;
+    const targetDate =
+      binding == null ? undefined : spanDropDateAt(layerEl, binding.variant, event.clientX);
+    if (targetDate === undefined || targetDate.length === 0) return;
     event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    if (event.dataTransfer != null) event.dataTransfer.dropEffect = 'move';
   });
   layerEl.addEventListener('drop', (event) => {
     const binding = spanOverlayDropBindings.get(layerEl);
-    if (!binding) return;
+    if (binding == null) return;
     const targetDate = spanDropDateAt(layerEl, binding.variant, event.clientX);
-    if (!targetDate) return;
+    if (targetDate === undefined || targetDate.length === 0) return;
     event.preventDefault();
     const dragData = event.dataTransfer?.getData('text/plain');
-    if (dragData) binding.callbacks.onDrop(dragData, targetDate);
+    if (dragData !== undefined && dragData.length > 0) {
+      binding.callbacks.onDrop(dragData, targetDate);
+    }
   });
 }
 
-function renderAllDayBody(
-  cellEl: HTMLElement,
-  cls: string,
+interface AllDayBodyRenderContext {
+  readonly cellEl: HTMLElement;
+  readonly cls: string;
+  readonly task: TaskSnapshot;
+  readonly callbacks: AllDayCallbacks;
+  readonly tagGroups: TagGroup[];
+  readonly interactive: boolean;
+  readonly nativeDraggable?: boolean;
+  readonly continuity?: CalendarContinuity;
+  readonly spanRole?: string;
+}
+
+function renderAllDayStatusControl(
+  slot: HTMLElement,
   task: TaskSnapshot,
   callbacks: AllDayCallbacks,
-  tagGroups: TagGroup[],
-  interactive: boolean,
-  nativeDraggable = interactive,
-  continuity: CalendarContinuity = 'single',
-  spanRole = 'body',
-): HTMLElement {
+): void {
+  renderStatusMarker(slot, {
+    task,
+    registry: callbacks.statusRegistry,
+    interactive: true,
+    onLeftClick: () => {
+      callbacks.onToggle(task);
+    },
+    onContextMenu: (event) => {
+      event.stopPropagation();
+      showStatusMenuAt(event, {
+        task,
+        registry: callbacks.statusRegistry,
+        owner: callbacks.component,
+        onPickStatus: (status) => {
+          callbacks.onSetStatus(task, status);
+        },
+        onPickPriority: (priority) => {
+          callbacks.onSetPriority(task, priority);
+        },
+        ...(callbacks.interactionOwnership != null && {
+          interactionOwnership: callbacks.interactionOwnership,
+        }),
+      });
+    },
+  });
+}
+
+function applyAllDayTagFill(el: HTMLElement, task: TaskSnapshot, tagGroups: TagGroup[]): void {
+  const tagColor = tagColorFor(task.tags, tagGroups);
+  if (tagColor === undefined || tagColor.length === 0) return;
+  el.setCssProps({ '--abyss-tag-color': tagColor });
+  const textColorVar = tagFillTextColorVar(el, tagColor);
+  if (textColorVar !== undefined && textColorVar.length > 0) {
+    el.setCssProps({ '--abyss-tag-text-color': textColorVar });
+  }
+}
+
+function bindAllDayBodyInteractions(
+  el: HTMLElement,
+  task: TaskSnapshot,
+  callbacks: AllDayCallbacks,
+  nativeDraggable: boolean,
+): void {
+  const occurrence = callbacks.occurrenceFor(task);
+  bindMaterializedInteractions(occurrence, (target) => {
+    if (nativeDraggable && target.type === 'task') {
+      el.setAttribute('draggable', 'true');
+      el.addEventListener('dragstart', (event) => {
+        event.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
+        if (event.dataTransfer != null) event.dataTransfer.effectAllowed = 'move';
+        el.addClass('is-dragging');
+      });
+      el.addEventListener('dragend', () => {
+        el.removeClass('is-dragging');
+      });
+    }
+    el.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      callbacks.onTaskClick(task);
+    });
+  });
+  bindForecastInteractions(el, occurrence, callbacks);
+}
+
+function renderAllDayBody(context: AllDayBodyRenderContext): HTMLElement {
+  const {
+    cellEl,
+    cls,
+    task,
+    callbacks,
+    tagGroups,
+    interactive,
+    nativeDraggable = interactive,
+    continuity = 'single',
+    spanRole = 'body',
+  } = context;
   const el = cellEl.createDiv({ cls: `abyss-tg-body ${cls}` });
   const occurrence = callbacks.occurrenceFor(task);
   applyOccurrenceDomState(el, occurrence, continuity, spanRole);
   // Status marker first: lets a user mark the item done without opening the modal. Its own
   // contextmenu handler stops propagation and opens the status/priority popover instead —
   // distinct from right-clicking this element's body below (opens the task modal).
-  renderCalendarLeadingSlots(
-    el,
-    task.recurrence,
-    occurrence.kind === 'forecast',
+  const renderControl =
     occurrence.kind === 'materialized' && interactive
-      ? (slot) =>
-          renderStatusMarker(slot, {
-            task,
-            registry: callbacks.statusRegistry,
-            interactive: true,
-            onLeftClick: () => callbacks.onToggle(task),
-            onContextMenu: (ev) => {
-              ev.stopPropagation();
-              showStatusMenuAt(ev, {
-                task,
-                registry: callbacks.statusRegistry,
-                owner: callbacks.component,
-                onPickStatus: (c) => callbacks.onSetStatus(task, c),
-                onPickPriority: (p) => callbacks.onSetPriority(task, p),
-                ...(callbacks.interactionOwnership && {
-                  interactionOwnership: callbacks.interactionOwnership,
-                }),
-              });
-            },
-          })
-      : undefined,
-  );
+      ? (slot: HTMLElement): void => {
+          renderAllDayStatusControl(slot, task, callbacks);
+        }
+      : undefined;
+  renderCalendarLeadingSlots(el, task.recurrence, occurrence.kind === 'forecast', renderControl);
   // Task 21: `.abyss-tg-body-title` (not a bare span) so it can be a flex child that
   // truncates independently — `.abyss-tg-body` itself is now a flex row (marker + title +
   // meta) instead of block-stacking, matching renderTimedBlocks.ts's `.abyss-tg-block-head`.
@@ -235,34 +301,8 @@ function renderAllDayBody(
   // Tag-colored fill only — the priority-colored border was removed (Task 12): the
   // status marker above already conveys priority via its own border, so a second
   // priority border on the body was redundant visual noise.
-  const tagColor = tagColorFor(task.tags, tagGroups);
-  if (tagColor) {
-    el.setCssProps({ '--abyss-tag-color': tagColor });
-    // Task 40 (Round 4): see tagFillContrast.ts's own doc comment — a fixed text color loses
-    // contrast against a bright/pale or very dark/desaturated tag fill; only overridden when a
-    // variant was actually computed, otherwise the CSS rule's var(--text-normal) fallback holds.
-    // All committed calendar bodies use the shared event fill, so this resolves against the
-    // same light/dark percentage in terminals and continuations.
-    const textColorVar = tagFillTextColorVar(el, tagColor);
-    if (textColorVar) el.setCssProps({ '--abyss-tag-text-color': textColorVar });
-  }
-  bindMaterializedInteractions(occurrence, (target) => {
-    if (nativeDraggable && target.type === 'task') {
-      el.setAttribute('draggable', 'true');
-      el.addEventListener('dragstart', (e) => {
-        e.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
-        if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-        el.addClass('is-dragging');
-      });
-      el.addEventListener('dragend', () => el.removeClass('is-dragging'));
-    }
-    el.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      callbacks.onTaskClick(task);
-    });
-  });
-  bindForecastInteractions(el, occurrence, callbacks);
+  applyAllDayTagFill(el, task, tagGroups);
+  bindAllDayBodyInteractions(el, task, callbacks, nativeDraggable);
   return el;
 }
 
@@ -275,38 +315,99 @@ interface AllDaySpanSegmentRenderContext {
   readonly variant: 'timegrid' | 'month';
 }
 
-/** Render one day-local span segment, including its metadata, boundary handles, and interactions. */
-function renderAllDaySpanSegment(
-  segment: VisibleSpanSegment,
-  context: AllDaySpanSegmentRenderContext,
-): void {
-  const { layerEl, indexByDate, callbacks, tagGroups, interactionOwner, variant } = context;
-  const index = indexByDate.get(segment.date);
-  if (index === undefined) return;
-  const classes = [
+function spanSegmentClasses(segment: VisibleSpanSegment, variant: 'timegrid' | 'month'): string {
+  return [
     segment.kind === 'ghost' ? 'abyss-tg-span-continuation' : 'abyss-tg-span',
     'abyss-span-piece',
     variant === 'month' ? 'abyss-mg-span-segment' : '',
     variant === 'month' && segment.kind === 'ghost' ? 'abyss-mg-span-continuation' : '',
   ]
-    .filter(Boolean)
+    .filter((className) => className.length > 0)
     .join(' ');
+}
+
+function decorateMonthSpan(body: HTMLElement, task: TaskSnapshot): void {
+  body.querySelector('.abyss-tg-body-title')?.classList.add('abyss-mg-item-title');
+  if (task.planning.time == null) return;
+  const time = body.createSpan({ cls: 'abyss-mg-item-time', text: `${task.planning.time} ` });
+  const title = body.querySelector('.abyss-tg-body-title');
+  body.insertBefore(time, title);
+}
+
+function segmentBoundaryHandles(
+  body: HTMLElement,
+  segment: VisibleSpanSegment,
+  exposesRangeProxy: boolean,
+): Array<{ element: HTMLElement; boundary: 'start' | 'due' }> {
+  const handles: Array<{ element: HTMLElement; boundary: 'start' | 'due' }> = [];
+  const proxyClass = exposesRangeProxy ? ' abyss-tg-span-edge--proxy' : '';
+  if (segment.ownsStartBoundary || exposesRangeProxy) {
+    const element = body.createDiv({
+      cls: `abyss-tg-span-edge abyss-tg-span-edge--left${proxyClass}`,
+    });
+    element.setAttribute('data-boundary', 'start');
+    element.setAttribute('data-resize-edge', 'start-date');
+    handles.push({ element, boundary: 'start' });
+  }
+  if (segment.ownsDueBoundary || exposesRangeProxy) {
+    const element = body.createDiv({
+      cls: `abyss-tg-span-edge abyss-tg-span-edge--right${proxyClass}`,
+    });
+    element.setAttribute('data-boundary', 'due');
+    element.setAttribute('data-resize-edge', 'due-date');
+    handles.push({ element, boundary: 'due' });
+  }
+  return handles;
+}
+
+function attachSegmentInteractions(
+  body: HTMLElement,
+  segment: VisibleSpanSegment,
+  context: AllDaySpanSegmentRenderContext,
+): void {
+  const occurrence = context.callbacks.occurrenceFor(segment.task);
+  bindMaterializedInteractions(occurrence, (target) => {
+    if (target.type !== 'task') return;
+    body.setAttribute('tabindex', '0');
+    const exposesRangeProxy = context.indexByDate.size > 1 && segment.kind === 'ghost';
+    attachSpanInteractions({
+      source: body,
+      task: segment.task,
+      segmentStart: segment.date,
+      segmentEnd: segment.date,
+      owner: context.interactionOwner,
+      previewLayoutFor: context.callbacks.spanPreviewLayoutFor,
+      boundaryHandles: segmentBoundaryHandles(body, segment, exposesRangeProxy),
+      onMove: (task, moveTarget) => context.callbacks.onSpanMove?.(task, moveTarget),
+      onBoundary: (task, boundaryTarget) =>
+        context.callbacks.onSpanBoundary?.(task, boundaryTarget),
+    });
+  });
+}
+
+/** Render one day-local span segment, including its metadata, boundary handles, and interactions. */
+function renderAllDaySpanSegment(
+  segment: VisibleSpanSegment,
+  context: AllDaySpanSegmentRenderContext,
+): void {
+  const { layerEl, indexByDate, callbacks, tagGroups, variant } = context;
+  const index = indexByDate.get(segment.date);
+  if (index === undefined) return;
   const host = layerEl.createDiv({ cls: 'abyss-span-piece-host' });
   host.setAttribute(variant === 'month' ? 'data-mg-date' : 'data-tg-date', segment.date);
   host.style.gridColumn = `${index + 1} / ${index + 2}`;
   host.style.gridRow = String(segment.lane + 1);
-  const body = renderAllDayBody(
-    host,
-    classes,
-    segment.task,
+  const body = renderAllDayBody({
+    cellEl: host,
+    cls: spanSegmentClasses(segment, variant),
+    task: segment.task,
     callbacks,
     tagGroups,
-    segment.kind === 'terminal',
-    false,
-    segment.kind === 'terminal' ? 'terminal' : 'continuation',
-    `${segment.kind === 'terminal' ? 'span-terminal' : 'span-continuation'}:${segment.date}`,
-  );
-  const occurrence = callbacks.occurrenceFor(segment.task);
+    interactive: segment.kind === 'terminal',
+    nativeDraggable: false,
+    continuity: segment.kind === 'terminal' ? 'terminal' : 'continuation',
+    spanRole: `${segment.kind === 'terminal' ? 'span-terminal' : 'span-continuation'}:${segment.date}`,
+  });
   body.setAttribute('data-span-kind', segment.kind);
   body.dataset['spanDate'] = segment.date;
   body.dataset['continuesBefore'] = String(segment.continuesBefore);
@@ -315,70 +416,23 @@ function renderAllDaySpanSegment(
   body.setAttribute('data-task-line', String(segment.task.source.line));
   body.style.gridColumn = `${index + 1} / ${index + 2}`;
   body.style.gridRow = String(segment.lane + 1);
-  if (variant === 'month') {
-    body.querySelector('.abyss-tg-body-title')?.classList.add('abyss-mg-item-title');
-    if (segment.task.planning.time) {
-      const time = body.ownerDocument.createElement('span');
-      time.className = 'abyss-mg-item-time';
-      time.textContent = `${segment.task.planning.time} `;
-      const title = body.querySelector('.abyss-tg-body-title');
-      body.insertBefore(time, title);
-    }
-  }
-
-  bindMaterializedInteractions(occurrence, (target) => {
-    if (target.type !== 'task') return;
-    body.setAttribute('tabindex', '0');
-    const boundaryHandles: {
-      element: HTMLElement;
-      boundary: 'start' | 'due';
-    }[] = [];
-    // Every Week/Month ghost is an interaction proxy for the same semantic range. Limiting handles
-    // to the literal start/due dates made clipped spans start a whole-task move when the user grabbed
-    // a visible edge. Do not add proxies to a one-day Today surface (it has no adjacent target date),
-    // or to a checkbox-bearing terminal piece: those retain only their literal boundary ownership.
-    const exposesRangeProxy = indexByDate.size > 1 && segment.kind === 'ghost';
-    const proxyClass = exposesRangeProxy ? ' abyss-tg-span-edge--proxy' : '';
-    if (segment.ownsStartBoundary || exposesRangeProxy) {
-      const leftHandle = body.createDiv({
-        cls: `abyss-tg-span-edge abyss-tg-span-edge--left${proxyClass}`,
-      });
-      leftHandle.setAttribute('data-boundary', 'start');
-      leftHandle.setAttribute('data-resize-edge', 'start-date');
-      boundaryHandles.push({ element: leftHandle, boundary: 'start' });
-    }
-    if (segment.ownsDueBoundary || exposesRangeProxy) {
-      const rightHandle = body.createDiv({
-        cls: `abyss-tg-span-edge abyss-tg-span-edge--right${proxyClass}`,
-      });
-      rightHandle.setAttribute('data-boundary', 'due');
-      rightHandle.setAttribute('data-resize-edge', 'due-date');
-      boundaryHandles.push({ element: rightHandle, boundary: 'due' });
-    }
-    attachSpanInteractions({
-      source: body,
-      task: segment.task,
-      segmentStart: segment.date,
-      segmentEnd: segment.date,
-      owner: interactionOwner,
-      previewLayoutFor: callbacks.spanPreviewLayoutFor,
-      boundaryHandles,
-      onMove: (task, target) => callbacks.onSpanMove?.(task, target),
-      onBoundary: (task, target) => callbacks.onSpanBoundary?.(task, target),
-    });
-  });
+  if (variant === 'month') decorateMonthSpan(body, segment.task);
+  attachSegmentInteractions(body, segment, context);
 }
 
 /** Render one row's semantic spans as day-local grid pieces above the persistent day cells. */
 export function renderAllDaySpanLayer(
-  layerEl: HTMLElement,
-  row: VisibleSpanRow,
-  dates: readonly string[],
-  callbacks: AllDayCallbacks,
-  tagGroups: TagGroup[],
-  interactionOwner: SpanInteractionOwner,
-  variant: 'timegrid' | 'month',
+  ...args: [
+    layerEl: HTMLElement,
+    row: VisibleSpanRow,
+    dates: readonly string[],
+    callbacks: AllDayCallbacks,
+    tagGroups: TagGroup[],
+    interactionOwner: SpanInteractionOwner,
+    variant: 'timegrid' | 'month',
+  ]
 ): void {
+  const [layerEl, row, dates, callbacks, tagGroups, interactionOwner, variant] = args;
   layerEl.empty();
   layerEl.setAttribute('data-span-lanes', String(row.laneCount));
   layerEl.style.setProperty('--abyss-span-track-count', String(dates.length));
@@ -399,14 +453,27 @@ export function renderAllDaySpanLayer(
 }
 
 function renderDraggableBody(
-  cellEl: HTMLElement,
-  cls: string,
-  task: TaskSnapshot,
-  callbacks: AllDayCallbacks,
-  tagGroups: TagGroup[],
-  spanRole: string,
+  ...args: [
+    cellEl: HTMLElement,
+    cls: string,
+    task: TaskSnapshot,
+    callbacks: AllDayCallbacks,
+    tagGroups: TagGroup[],
+    spanRole: string,
+  ]
 ): HTMLElement {
-  return renderAllDayBody(cellEl, cls, task, callbacks, tagGroups, true, true, 'single', spanRole);
+  const [cellEl, cls, task, callbacks, tagGroups, spanRole] = args;
+  return renderAllDayBody({
+    cellEl,
+    cls,
+    task,
+    callbacks,
+    tagGroups,
+    interactive: true,
+    nativeDraggable: true,
+    continuity: 'single',
+    spanRole,
+  });
 }
 
 function renderSpanContinuation(
@@ -415,17 +482,17 @@ function renderSpanContinuation(
   callbacks: AllDayCallbacks,
   tagGroups: TagGroup[],
 ): HTMLElement {
-  return renderAllDayBody(
+  return renderAllDayBody({
     cellEl,
-    'abyss-tg-span-continuation',
+    cls: 'abyss-tg-span-continuation',
     task,
     callbacks,
     tagGroups,
-    false,
-    false,
-    'continuation',
-    'span-continuation',
-  );
+    interactive: false,
+    nativeDraggable: false,
+    continuity: 'continuation',
+    spanRole: 'span-continuation',
+  });
 }
 
 /**
@@ -441,12 +508,15 @@ function renderSpanContinuation(
  * `onDueChange`, or `onExtendToSpan`) so the drag mechanics stay shared.
  */
 function attachEdgeResize(
-  handle: HTMLElement,
-  cellEl: HTMLElement,
-  task: TaskSnapshot,
-  onResolve: (task: TaskSnapshot, date: string) => void,
-  interactionOwner?: SpanInteractionOwner,
+  ...args: [
+    handle: HTMLElement,
+    cellEl: HTMLElement,
+    task: TaskSnapshot,
+    onResolve: (task: TaskSnapshot, date: string) => void,
+    interactionOwner?: SpanInteractionOwner,
+  ]
 ): void {
+  const [handle, cellEl, task, onResolve, interactionOwner] = args;
   // The handle sits inside a `draggable="true"` body (renderDraggableBody, for the
   // whole-task cross-day move). draggable="false" here is NOT enough on its own to stop a
   // mousedown+drag gesture starting on the handle from arming the ancestor's native HTML5
@@ -465,7 +535,7 @@ function attachEdgeResize(
   const body = handle.closest<HTMLElement>('.abyss-tg-body');
   const ownerDocument = handle.ownerDocument;
   const ownerWindow = ownerDocument.defaultView;
-  if (!ownerWindow) return;
+  if (ownerWindow == null) return;
 
   const resolve = (date: string): void => {
     onResolve(task, date);
@@ -495,7 +565,7 @@ function attachEdgeResize(
     const target = ownerDocument.elementFromPoint(upEvent.clientX, upEvent.clientY);
     const dayEl = target?.closest('[data-tg-date]');
     const date = dayEl?.getAttribute('data-tg-date');
-    if (date) resolve(date);
+    if (date !== null && date !== undefined && date.length > 0) resolve(date);
     endResize();
   };
 
@@ -524,182 +594,248 @@ function attachEdgeResize(
   });
 }
 
-export function renderAllDayCell(
-  cellEl: HTMLElement,
-  date: string,
-  spans: TaskSnapshot[], // tasks with start && due (multi-day)
-  plain: TaskSnapshot[], // tasks with a due-or-scheduled anchor but no time/start (single-day chip)
-  deadlines: TaskSnapshot[], // tasks where scheduled is set AND due is set (due renders as marker, not body)
-  callbacks: AllDayCallbacks,
-  tagGroups: TagGroup[] = [],
-): void {
-  cellEl.setAttribute('data-tg-date', date);
-  (cellEl as unknown as { __tgTestEndDrag?: (targetDate: string) => void }).__tgTestEndDrag = (
-    targetDate: string,
-  ) => endDragTestHook(cellEl, targetDate);
+interface AllDayCellRenderContext {
+  readonly cellEl: HTMLElement;
+  readonly date: string;
+  readonly callbacks: AllDayCallbacks;
+  readonly tagGroups: TagGroup[];
+}
 
-  for (const t of spans) {
-    if (String(t.planning.due) !== date) {
-      renderSpanContinuation(cellEl, t, callbacks, tagGroups);
+function renderCellSpans(context: AllDayCellRenderContext, spans: readonly TaskSnapshot[]): void {
+  const { cellEl, date, callbacks, tagGroups } = context;
+  for (const task of spans) {
+    if (String(task.planning.due) !== date) {
+      renderSpanContinuation(cellEl, task, callbacks, tagGroups);
       continue;
     }
     const bar = renderDraggableBody(
       cellEl,
       'abyss-tg-span',
-      t,
+      task,
       callbacks,
       tagGroups,
       'span-terminal',
     );
-    const occurrence = callbacks.occurrenceFor(t);
+    const occurrence = callbacks.occurrenceFor(task);
     applyOccurrenceDomState(bar, occurrence, 'terminal', 'span-terminal');
-    bindMaterializedInteractions(occurrence, (target) => {
-      if (target.type !== 'task') return;
-      const leftEdge = bar.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--left' });
-      leftEdge.setAttribute('data-boundary', 'start');
-      leftEdge.setAttribute('data-resize-edge', 'start-date');
-      attachEdgeResize(
-        leftEdge,
-        cellEl,
-        t,
-        callbacks.onStartChange,
-        callbacks.spanInteractionOwner,
-      );
-      const rightEdge = bar.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--right' });
-      rightEdge.setAttribute('data-boundary', 'due');
-      rightEdge.setAttribute('data-resize-edge', 'due-date');
-      attachEdgeResize(rightEdge, cellEl, t, callbacks.onDueChange, callbacks.spanInteractionOwner);
+    bindMaterializedInteractions(occurrence, () => {
+      renderSpanResizeHandles(context, bar, task);
     });
   }
-  for (const t of plain) {
+}
+
+function renderSpanResizeHandles(
+  context: AllDayCellRenderContext,
+  bar: HTMLElement,
+  task: TaskSnapshot,
+): void {
+  const { cellEl, callbacks } = context;
+  const leftEdge = bar.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--left' });
+  leftEdge.setAttribute('data-boundary', 'start');
+  leftEdge.setAttribute('data-resize-edge', 'start-date');
+  attachEdgeResize(leftEdge, cellEl, task, callbacks.onStartChange, callbacks.spanInteractionOwner);
+  const rightEdge = bar.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--right' });
+  rightEdge.setAttribute('data-boundary', 'due');
+  rightEdge.setAttribute('data-resize-edge', 'due-date');
+  attachEdgeResize(rightEdge, cellEl, task, callbacks.onDueChange, callbacks.spanInteractionOwner);
+}
+
+function renderCellPlainTasks(
+  context: AllDayCellRenderContext,
+  tasks: readonly TaskSnapshot[],
+): void {
+  const { cellEl, callbacks, tagGroups } = context;
+  for (const task of tasks) {
     const role =
-      t.planning.scheduled && t.planning.scheduled !== t.planning.due
+      task.planning.scheduled != null && task.planning.scheduled !== task.planning.due
         ? 'scheduled-body'
         : 'all-day-body';
-    const chip = renderDraggableBody(cellEl, 'abyss-tg-plain', t, callbacks, tagGroups, role);
-    // A plain task has no `start` yet: dragging this handle doesn't just move `due`
-    // (there'd be nothing anchoring the other end) — it extends the task into a real
-    // multi-day span, so it's wired to onExtendToSpan rather than onDueChange.
-    bindMaterializedInteractions(callbacks.occurrenceFor(t), (target) => {
-      if (target.type !== 'task') return;
-      const rightEdge = chip.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--right' });
-      rightEdge.setAttribute('data-boundary', 'create-span');
-      rightEdge.setAttribute('data-resize-edge', 'due-date');
-      if (callbacks.spanInteractionOwner) {
-        attachSpanInteractions({
-          source: chip,
-          task: t,
-          segmentStart: date,
-          segmentEnd: date,
-          owner: callbacks.spanInteractionOwner,
-          previewLayoutFor: callbacks.spanPreviewLayoutFor,
-          boundaryHandles: [{ element: rightEdge, boundary: 'create-span' }],
-          onMove: () => {},
-          onBoundary: (task, target) => callbacks.onExtendToSpan(task, target.date),
-          enableMove: false,
-        });
-      } else {
-        attachEdgeResize(rightEdge, cellEl, t, callbacks.onExtendToSpan);
-      }
+    const chip = renderDraggableBody(cellEl, 'abyss-tg-plain', task, callbacks, tagGroups, role);
+    bindMaterializedInteractions(callbacks.occurrenceFor(task), () => {
+      renderPlainTaskResizeHandle(context, chip, task);
     });
   }
-  for (const t of deadlines) {
-    const marker = cellEl.createDiv({ cls: 'abyss-tg-deadline-marker' });
-    const occurrence = callbacks.occurrenceFor(t);
-    applyOccurrenceDomState(marker, occurrence, 'single', 'due-deadline');
-    // Priority-colored border (color = priority convention); no tag fill — deadline
-    // markers stay a compact pill, not a filled colored body (structural distinction).
-    if (t.priority !== 'D') marker.setAttribute('data-priority', t.priority);
-    renderCalendarLeadingSlots(
-      marker,
-      t.recurrence,
-      occurrence.kind === 'forecast',
-      occurrence.kind === 'materialized'
-        ? (slot) =>
-            renderStatusMarker(slot, {
-              task: t,
-              registry: callbacks.statusRegistry,
-              interactive: true,
-              onLeftClick: () => callbacks.onToggle(t),
-              onContextMenu: (ev) => {
-                ev.stopPropagation();
-                showStatusMenuAt(ev, {
-                  task: t,
-                  registry: callbacks.statusRegistry,
-                  owner: callbacks.component,
-                  onPickStatus: (c) => callbacks.onSetStatus(t, c),
-                  onPickPriority: (p) => callbacks.onSetPriority(t, p),
-                  ...(callbacks.interactionOwnership && {
-                    interactionOwnership: callbacks.interactionOwnership,
-                  }),
-                });
-              },
-            })
-        : undefined,
-    );
-    marker.createSpan({ text: '📅 ' });
-    // Task 38 follow-up: same is-done/is-cancelled strikethrough convention as timed blocks
-    // and all-day span/plain items above — previously this title had no status class at all.
-    const titleEl = marker.createSpan({
-      cls: `abyss-tg-deadline-title${statusTitleClass(t.status)}`,
-    });
-    if (occurrence.kind === 'forecast') {
-      titleEl.setText(plainGhostTaskTitle(t));
-    } else {
-      renderTaskText(titleEl, t.markdownTitle, {
-        app: callbacks.app,
-        sourcePath: t.source.filePath,
-        component: callbacks.component,
-      });
-    }
-    // Count badges only (no tag chips) — deadline markers deliberately stay a compact
-    // pill with no tag fill (see comment above), so tag chips would fight that convention.
-    if (
-      (t.subtasks?.length ?? 0) > 0 ||
-      (t.comments?.length ?? 0) > 0 ||
-      (t.presentation.linkCount ?? 0) > 0
-    ) {
-      const meta = marker.createSpan({ cls: 'abyss-tg-body-meta' });
-      renderCountBadges(meta, t);
-    }
-    bindMaterializedInteractions(occurrence, () => {
-      marker.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        callbacks.onTaskClick(t);
-      });
-    });
-    bindForecastInteractions(marker, occurrence, callbacks);
-  }
+}
 
-  cellEl.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+function renderPlainTaskResizeHandle(
+  context: AllDayCellRenderContext,
+  chip: HTMLElement,
+  task: TaskSnapshot,
+): void {
+  const { cellEl, date, callbacks } = context;
+  const rightEdge = chip.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--right' });
+  rightEdge.setAttribute('data-boundary', 'create-span');
+  rightEdge.setAttribute('data-resize-edge', 'due-date');
+  const owner = callbacks.spanInteractionOwner;
+  if (owner == null) {
+    attachEdgeResize(rightEdge, cellEl, task, callbacks.onExtendToSpan);
+    return;
+  }
+  attachSpanInteractions({
+    source: chip,
+    task,
+    segmentStart: date,
+    segmentEnd: date,
+    owner,
+    previewLayoutFor: callbacks.spanPreviewLayoutFor,
+    boundaryHandles: [{ element: rightEdge, boundary: 'create-span' }],
+    onMove: () => undefined,
+    onBoundary: (targetTask, target) => {
+      callbacks.onExtendToSpan(targetTask, target.date);
+    },
+    enableMove: false,
+  });
+}
+
+function renderDeadlineStatusControl(
+  slot: HTMLElement,
+  task: TaskSnapshot,
+  callbacks: AllDayCallbacks,
+): void {
+  renderStatusMarker(slot, {
+    task,
+    registry: callbacks.statusRegistry,
+    interactive: true,
+    onLeftClick: () => {
+      callbacks.onToggle(task);
+    },
+    onContextMenu: (event) => {
+      event.stopPropagation();
+      showStatusMenuAt(event, {
+        task,
+        registry: callbacks.statusRegistry,
+        owner: callbacks.component,
+        onPickStatus: (symbol) => {
+          callbacks.onSetStatus(task, symbol);
+        },
+        onPickPriority: (priority) => {
+          callbacks.onSetPriority(task, priority);
+        },
+        ...(callbacks.interactionOwnership != null && {
+          interactionOwnership: callbacks.interactionOwnership,
+        }),
+      });
+    },
+  });
+}
+
+function renderDeadlineTitle(
+  marker: HTMLElement,
+  task: TaskSnapshot,
+  callbacks: AllDayCallbacks,
+  occurrence: ReturnType<AllDayCallbacks['occurrenceFor']>,
+): void {
+  marker.createSpan({ text: '📅 ' });
+  const titleEl = marker.createSpan({
+    cls: `abyss-tg-deadline-title${statusTitleClass(task.status)}`,
+  });
+  if (occurrence.kind === 'forecast') {
+    titleEl.setText(plainGhostTaskTitle(task));
+    return;
+  }
+  renderTaskText(titleEl, task.markdownTitle, {
+    app: callbacks.app,
+    sourcePath: task.source.filePath,
+    component: callbacks.component,
+  });
+}
+
+function renderDeadlineTask(context: AllDayCellRenderContext, task: TaskSnapshot): void {
+  const { cellEl, callbacks } = context;
+  const marker = cellEl.createDiv({ cls: 'abyss-tg-deadline-marker' });
+  const occurrence = callbacks.occurrenceFor(task);
+  applyOccurrenceDomState(marker, occurrence, 'single', 'due-deadline');
+  if (task.priority !== 'D') marker.setAttribute('data-priority', task.priority);
+  const renderControl =
+    occurrence.kind === 'materialized'
+      ? (slot: HTMLElement): void => {
+          renderDeadlineStatusControl(slot, task, callbacks);
+        }
+      : undefined;
+  renderCalendarLeadingSlots(
+    marker,
+    task.recurrence,
+    occurrence.kind === 'forecast',
+    renderControl,
+  );
+  renderDeadlineTitle(marker, task, callbacks, occurrence);
+  if (hasCountBadges(task)) {
+    const meta = marker.createSpan({ cls: 'abyss-tg-body-meta' });
+    renderCountBadges(meta, task);
+  }
+  bindMaterializedInteractions(occurrence, () => {
+    marker.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      callbacks.onTaskClick(task);
+    });
+  });
+  bindForecastInteractions(marker, occurrence, callbacks);
+}
+
+function renderCellDeadlines(
+  context: AllDayCellRenderContext,
+  deadlines: readonly TaskSnapshot[],
+): void {
+  for (const task of deadlines) renderDeadlineTask(context, task);
+}
+
+function attachCellDropInteractions(context: AllDayCellRenderContext): void {
+  const { cellEl, date, callbacks } = context;
+  cellEl.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    if (event.dataTransfer != null) event.dataTransfer.dropEffect = 'move';
     cellEl.addClass('is-drag-over');
   });
-  cellEl.addEventListener('dragleave', (e) => {
-    if (!cellEl.contains(e.relatedTarget as Node)) cellEl.removeClass('is-drag-over');
+  cellEl.addEventListener('dragleave', (event) => {
+    if (!cellEl.contains(event.relatedTarget as Node)) cellEl.removeClass('is-drag-over');
   });
-  cellEl.addEventListener('drop', (e) => {
-    e.preventDefault();
+  cellEl.addEventListener('drop', (event) => {
+    event.preventDefault();
     cellEl.removeClass('is-drag-over');
-    const dragData = e.dataTransfer?.getData('text/plain');
-    if (dragData) callbacks.onDrop(dragData, date);
+    const dragData = event.dataTransfer?.getData('text/plain');
+    if (dragData !== undefined && dragData.length > 0) callbacks.onDrop(dragData, date);
   });
+}
 
-  if (callbacks.onCreateAtDate) {
-    // Click-to-create: fires only for a click on genuinely empty space — not on an existing
-    // span/plain/deadline item (dragged/clicked for its own context menu) and not on the
-    // quick-add popover CenterPanel renders into this same cell in response. Mirrors
-    // HourGrid.ts's onCreateAtTime guard.
-    cellEl.addEventListener('click', (e) => {
-      if (
-        (e.target as HTMLElement).closest(
-          '.abyss-tg-body, .abyss-tg-deadline-marker, .abyss-tg-allday-quick-add',
-        )
-      )
-        return;
-      callbacks.onCreateAtDate?.(date);
-    });
-  }
+function attachCellCreation(context: AllDayCellRenderContext): void {
+  const { cellEl, date, callbacks } = context;
+  const onCreateAtDate = callbacks.onCreateAtDate;
+  if (onCreateAtDate == null) return;
+  cellEl.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement;
+    if (
+      target.closest('.abyss-tg-body, .abyss-tg-deadline-marker, .abyss-tg-allday-quick-add') !=
+      null
+    ) {
+      return;
+    }
+    onCreateAtDate(date);
+  });
+}
+
+export function renderAllDayCell(
+  ...args: [
+    cellEl: HTMLElement,
+    date: string,
+    spans: TaskSnapshot[],
+    plain: TaskSnapshot[],
+    deadlines: TaskSnapshot[],
+    callbacks: AllDayCallbacks,
+    tagGroups?: TagGroup[],
+  ]
+): void {
+  const [cellEl, date, spans, plain, deadlines, callbacks, tagGroups = []] = args;
+  cellEl.setAttribute('data-tg-date', date);
+  (cellEl as unknown as { __tgTestEndDrag?: (targetDate: string) => void }).__tgTestEndDrag = (
+    targetDate: string,
+  ) => {
+    endDragTestHook(cellEl, targetDate);
+  };
+  const context = { cellEl, date, callbacks, tagGroups };
+  renderCellSpans(context, spans);
+  renderCellPlainTasks(context, plain);
+  renderCellDeadlines(context, deadlines);
+  attachCellDropInteractions(context);
+  attachCellCreation(context);
 }

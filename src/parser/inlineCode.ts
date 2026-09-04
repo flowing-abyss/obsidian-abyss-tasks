@@ -9,6 +9,14 @@ function isEscaped(source: string, at: number): boolean {
   return slashes % 2 === 1;
 }
 
+function closingDelimiterAt(source: string, delimiter: string, from: number): number {
+  let close = source.indexOf(delimiter, from);
+  while (close >= 0 && (source[close - 1] === '`' || source[close + delimiter.length] === '`')) {
+    close = source.indexOf(delimiter, close + 1);
+  }
+  return close;
+}
+
 /** Finds closed CommonMark-style code spans using exact-length backtick delimiters. */
 export function inlineCodeRanges(source: string): readonly SourceRange[] {
   const ranges: SourceRange[] = [];
@@ -23,10 +31,7 @@ export function inlineCodeRanges(source: string): readonly SourceRange[] {
     let runLength = 1;
     while (source[open + runLength] === '`') runLength++;
     const delimiter = '`'.repeat(runLength);
-    let close = source.indexOf(delimiter, open + runLength);
-    while (close >= 0 && (source[close - 1] === '`' || source[close + runLength] === '`')) {
-      close = source.indexOf(delimiter, close + 1);
-    }
+    const close = closingDelimiterAt(source, delimiter, open + runLength);
     if (close < 0) {
       cursor = open + runLength;
       continue;

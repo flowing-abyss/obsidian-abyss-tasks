@@ -1,3 +1,4 @@
+import type * as ObsidianModule from 'obsidian';
 import type { App } from 'obsidian';
 import { Notice } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,9 +11,10 @@ import {
   presentTaskMoveResult,
   requestTaskCompletion,
 } from '../src/ui/taskCommandResult';
+import { expectDefined, methodOf } from './helpers';
 
 vi.mock('obsidian', async () => {
-  const actual = await vi.importActual<typeof import('obsidian')>('obsidian');
+  const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
   return { ...actual, Notice: vi.fn() };
 });
 
@@ -22,21 +24,25 @@ function noticeCalls(): unknown[][] {
 
 function deferred(): { readonly promise: Promise<void>; resolve(): void } {
   let resolve!: () => void;
-  return { promise: new Promise<void>((done) => (resolve = done)), resolve: () => resolve() };
+  return {
+    promise: new Promise<void>((done) => (resolve = done)),
+    resolve: () => {
+      resolve();
+    },
+  };
 }
 
 function secondaryDocument(): {
   readonly frame: HTMLIFrameElement;
   readonly ownerDocument: Document;
 } {
-  const frame = activeDocument.createElement('iframe');
-  activeDocument.body.append(frame);
+  const frame = activeDocument.body.createEl('iframe');
   const ownerDocument = frame.contentDocument;
-  if (!ownerDocument?.defaultView) throw new Error('secondary document unavailable');
+  if (ownerDocument?.defaultView == null) throw new Error('secondary document unavailable');
   for (const method of ['createDiv', 'createEl'] as const) {
     Object.defineProperty(ownerDocument.defaultView.HTMLElement.prototype, method, {
       configurable: true,
-      value: HTMLElement.prototype[method],
+      value: methodOf(HTMLElement.prototype, method),
     });
   }
   return { frame, ownerDocument };
@@ -75,14 +81,18 @@ describe('task command result presentation', () => {
       const mutation = vi.fn().mockResolvedValue(undefined);
       const completion = requestTaskCompletion(invalidDeleteTask, mutation);
       let settled = false;
-      void completion.then(() => {
-        settled = true;
-      });
+      void completion
+        .then(() => {
+          settled = true;
+        })
+        .catch((error: unknown) => {
+          throw error;
+        });
       expect(settled).toBe(false);
 
-      const surface = activeDocument.querySelector<HTMLElement>(
-        '.abyss-recurrence-delete-confirm',
-      )!;
+      const surface = expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
+      );
       if (dismissal === 'Cancel') {
         Array.from(surface.querySelectorAll<HTMLButtonElement>('button'))
           .find((candidate) => candidate.textContent === 'Cancel')
@@ -107,12 +117,14 @@ describe('task command result presentation', () => {
     async (dismissal) => {
       const ownership = ownershipHarness();
       const completion = requestTaskCompletion(invalidDeleteTask, vi.fn(), ownership.port);
-      const surface = activeDocument.querySelector<HTMLElement>(
-        '.abyss-recurrence-delete-confirm',
-      )!;
-      const cancel = Array.from(surface.querySelectorAll<HTMLButtonElement>('button')).find(
-        (candidate) => candidate.textContent === 'Cancel',
-      )!;
+      const surface = expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
+      );
+      const cancel = expectDefined(
+        Array.from(surface.querySelectorAll<HTMLButtonElement>('button')).find(
+          (candidate) => candidate.textContent === 'Cancel',
+        ),
+      );
 
       expect(ownership.acquire).toHaveBeenCalledOnce();
       expect(ownership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
@@ -142,9 +154,9 @@ describe('task command result presentation', () => {
     const pending = deferred();
     const mutation = vi.fn().mockReturnValue(pending.promise);
     const completion = requestTaskCompletion(invalidDeleteTask, mutation, ownership.port);
-    const confirm = activeDocument.querySelector<HTMLButtonElement>(
-      '.abyss-recurrence-delete-confirm-button',
-    )!;
+    const confirm = expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-recurrence-delete-confirm-button'),
+    );
 
     confirm.click();
     confirm.click();
@@ -179,9 +191,9 @@ describe('task command result presentation', () => {
     const liveOwnership = ownershipHarness();
     const staleOwnership = ownershipHarness();
     const live = requestTaskCompletion(invalidDeleteTask, vi.fn(), liveOwnership.port);
-    const liveSurface = activeDocument.querySelector<HTMLElement>(
-      '.abyss-recurrence-delete-confirm',
-    )!;
+    const liveSurface = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
+    );
     const staleController = new AbortController();
     staleController.abort();
 
@@ -203,15 +215,18 @@ describe('task command result presentation', () => {
   it('cleans up in the opening document realm after activeDocument changes', async () => {
     const originalActiveDocument = activeDocument;
     const { frame, ownerDocument } = secondaryDocument();
-    const ownerWindow = ownerDocument.defaultView!;
+    const ownerWindow = expectDefined(ownerDocument.defaultView);
     const ownership = ownershipHarness();
     try {
       vi.stubGlobal('activeDocument', ownerDocument);
-      const trigger = ownerDocument.createElement('button');
+      const createElement = methodOf(ownerDocument, 'createElement');
+      const trigger = createElement.call(ownerDocument, 'button');
       ownerDocument.body.append(trigger);
       trigger.focus();
       const completion = requestTaskCompletion(invalidDeleteTask, vi.fn(), ownership.port);
-      const surface = ownerDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm')!;
+      const surface = expectDefined(
+        ownerDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
+      );
       vi.stubGlobal('activeDocument', originalActiveDocument);
 
       ownerDocument.dispatchEvent(
@@ -242,7 +257,7 @@ describe('task command result presentation', () => {
   it('removes the old document listener when a second-document alertdialog replaces it', async () => {
     const originalActiveDocument = activeDocument;
     const { frame, ownerDocument } = secondaryDocument();
-    const ownerWindow = ownerDocument.defaultView!;
+    const ownerWindow = expectDefined(ownerDocument.defaultView);
     try {
       vi.stubGlobal('activeDocument', ownerDocument);
       const first = requestTaskCompletion(invalidDeleteTask, vi.fn());
@@ -279,9 +294,13 @@ describe('task command result presentation', () => {
       controller.signal,
     );
     let settled = false;
-    void completion.then(() => {
-      settled = true;
-    });
+    void completion
+      .then(() => {
+        settled = true;
+      })
+      .catch((error: unknown) => {
+        throw error;
+      });
 
     controller.abort();
     controller.abort();
@@ -308,11 +327,13 @@ describe('task command result presentation', () => {
     const trigger = activeDocument.body.createEl('button', { text: 'Complete task' });
     trigger.focus();
     const completion = requestTaskCompletion(invalidDeleteTask, vi.fn());
-    const surface = activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm')!;
+    const surface = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
+    );
     const [cancel, confirm] = Array.from(surface.querySelectorAll<HTMLButtonElement>('button'));
 
     expect(activeDocument.activeElement).toBe(cancel);
-    cancel!.dispatchEvent(
+    expectDefined(cancel).dispatchEvent(
       new KeyboardEvent('keydown', {
         key: 'Tab',
         shiftKey: true,
@@ -321,7 +342,7 @@ describe('task command result presentation', () => {
       }),
     );
     expect(activeDocument.activeElement).toBe(confirm);
-    confirm!.dispatchEvent(
+    expectDefined(confirm).dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
     );
     expect(activeDocument.activeElement).toBe(cancel);
@@ -339,9 +360,13 @@ describe('task command result presentation', () => {
     const mutation = vi.fn().mockReturnValue(pending.promise);
     const completion = requestTaskCompletion({ status: 'open', onCompletion: 'keep' }, mutation);
     let settled = false;
-    void completion.then(() => {
-      settled = true;
-    });
+    void completion
+      .then(() => {
+        settled = true;
+      })
+      .catch((error: unknown) => {
+        throw error;
+      });
 
     await Promise.resolve();
     expect(mutation).toHaveBeenCalledOnce();
@@ -361,9 +386,13 @@ describe('task command result presentation', () => {
       .querySelector<HTMLButtonElement>('.abyss-recurrence-delete-confirm-button')
       ?.click();
     let settled = false;
-    void completion.then(() => {
-      settled = true;
-    });
+    void completion
+      .then(() => {
+        settled = true;
+      })
+      .catch((error: unknown) => {
+        throw error;
+      });
 
     await Promise.resolve();
     expect(mutation).toHaveBeenCalledOnce();
@@ -546,7 +575,7 @@ describe('task command result presentation', () => {
       'The new task is invalid and was not created.',
     ],
   ] as const)('uses creation-specific language for %s', (_name, result, message) => {
-    presentTaskCreationResult(result as TaskCommandResult);
+    presentTaskCreationResult(result);
     expect(noticeCalls()).toEqual([[message]]);
   });
 });

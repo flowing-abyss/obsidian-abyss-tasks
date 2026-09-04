@@ -14,73 +14,83 @@ export interface TaskGroup {
   cancelled: TaskSnapshot[];
 }
 
-export function getTasksForDate(tasks: TaskSnapshot[], date: string, today: string): TaskGroup {
-  const isSame = (d?: string) => (d ? window.moment(d).isSame(date, 'day') : false);
-  const isBefore = (d?: string) => (d ? window.moment(d).isBefore(today, 'day') : false);
-  const isAfter = (d?: string) => (d ? window.moment(d).isAfter(date, 'day') : false);
-  const open = (t: TaskSnapshot) => t.status !== 'done' && t.status !== 'cancelled';
+function isSameDay(value: string | undefined, date: string): boolean {
+  return value !== undefined && value.length > 0 && window.moment(value).isSame(date, 'day');
+}
 
+function isBeforeDay(value: string | undefined, date: string): boolean {
+  return value !== undefined && value.length > 0 && window.moment(value).isBefore(date, 'day');
+}
+
+function isAfterDay(value: string | undefined, date: string): boolean {
+  return value !== undefined && value.length > 0 && window.moment(value).isAfter(date, 'day');
+}
+
+function isOpen(task: TaskSnapshot): boolean {
+  return task.status !== 'done' && task.status !== 'cancelled';
+}
+
+export function getTasksForDate(tasks: TaskSnapshot[], date: string, today: string): TaskGroup {
   return {
     allDone: tasks.filter(
-      (t) =>
-        t.status === 'done' &&
-        (isSame(t.planning.due) || (!t.planning.due && isSame(t.planning.completion))),
+      (task) =>
+        task.status === 'done' &&
+        (isSameDay(task.planning.due, date) ||
+          (task.planning.due === undefined && isSameDay(task.planning.completion, date))),
     ),
-    due: tasks.filter((t) => open(t) && !t.recurrence && isSame(t.planning.due)),
-    recurrence: tasks.filter((t) => open(t) && t.recurrence && isSame(t.planning.due)),
+    due: tasks.filter(
+      (task) => isOpen(task) && task.recurrence === undefined && isSameDay(task.planning.due, date),
+    ),
+    recurrence: tasks.filter(
+      (task) => isOpen(task) && task.recurrence !== undefined && isSameDay(task.planning.due, date),
+    ),
     overdue: tasks.filter(
-      (t) =>
-        open(t) &&
-        calendarOccurrenceForRender(t).kind === 'materialized' &&
-        isBefore(t.planning.due),
+      (task) =>
+        isOpen(task) &&
+        calendarOccurrenceForRender(task).kind === 'materialized' &&
+        isBeforeDay(task.planning.due, today),
     ),
-    start: tasks.filter((t) => open(t) && isSame(t.planning.start) && !isSame(t.planning.due)),
-    scheduled: tasks.filter((t) => open(t) && isSame(t.planning.scheduled)),
+    start: tasks.filter(
+      (task) =>
+        isOpen(task) && isSameDay(task.planning.start, date) && !isSameDay(task.planning.due, date),
+    ),
+    scheduled: tasks.filter((task) => isOpen(task) && isSameDay(task.planning.scheduled, date)),
     inProcess: tasks.filter(
-      (t) =>
-        open(t) &&
-        t.planning.due &&
-        t.planning.start &&
-        isAfter(t.planning.due) &&
-        isBefore(t.planning.start),
+      (task) =>
+        isOpen(task) &&
+        isAfterDay(task.planning.due, date) &&
+        isBeforeDay(task.planning.start, today),
     ),
-    dailyNote: tasks.filter((t) => open(t) && isSame(t.presentation.dailyNoteDate)),
-    cancelled: tasks.filter((t) => t.status === 'cancelled' && isSame(t.planning.due)),
+    dailyNote: tasks.filter(
+      (task) => isOpen(task) && isSameDay(task.presentation.dailyNoteDate, date),
+    ),
+    cancelled: tasks.filter(
+      (task) => task.status === 'cancelled' && isSameDay(task.planning.due, date),
+    ),
   };
 }
 
+function compareTaskDateTime(left: TaskSnapshot, right: TaskSnapshot): number {
+  const leftDate = left.planning.due ?? left.planning.scheduled ?? left.planning.start ?? '';
+  const rightDate = right.planning.due ?? right.planning.scheduled ?? right.planning.start ?? '';
+  const dateComparison = compareNullableLast(leftDate, rightDate);
+  if (dateComparison !== 0) return dateComparison;
+  return compareNullableLast(left.planning.time ?? '', right.planning.time ?? '');
+}
+
 export function sortTasksByDateTime(tasks: TaskSnapshot[]): TaskSnapshot[] {
-  return [...tasks].sort((a, b) => {
-    const da = a.planning.due ?? a.planning.scheduled ?? a.planning.start ?? '';
-    const db = b.planning.due ?? b.planning.scheduled ?? b.planning.start ?? '';
-    if (da !== db) {
-      if (!da) return 1;
-      if (!db) return -1;
-      return da < db ? -1 : 1;
-    }
-    const ta = a.planning.time ?? '';
-    const tb = b.planning.time ?? '';
-    if (ta && !tb) return -1;
-    if (!ta && tb) return 1;
-    if (ta < tb) return -1;
-    if (ta > tb) return 1;
-    return 0;
-  });
+  return [...tasks].sort(compareTaskDateTime);
+}
+
+function compareTaskPriorityTime(left: TaskSnapshot, right: TaskSnapshot): number {
+  const priorityComparison = compareStrings(left.priority, right.priority);
+  if (priorityComparison !== 0) return priorityComparison;
+  const timeComparison = compareNullableLast(left.planning.time ?? '', right.planning.time ?? '');
+  return timeComparison !== 0 ? timeComparison : left.title.localeCompare(right.title);
 }
 
 export function sortTasks(tasks: TaskSnapshot[]): TaskSnapshot[] {
-  return [...tasks].sort((a, b) => {
-    // Priority first (A=Highest … F=Lowest, D=none — alphabetical order is correct)
-    if (a.priority < b.priority) return -1;
-    if (a.priority > b.priority) return 1;
-    // Tasks with a specific time come before tasks without
-    const aTime = a.planning.time ?? '';
-    const bTime = b.planning.time ?? '';
-    if (aTime && !bTime) return -1;
-    if (!aTime && bTime) return 1;
-    if (aTime && bTime && aTime !== bTime) return aTime < bTime ? -1 : 1;
-    return a.title.localeCompare(b.title);
-  });
+  return [...tasks].sort(compareTaskPriorityTime);
 }
 
 const PRIORITY_LABELS: Record<string, string> = {
@@ -99,9 +109,9 @@ function compareStrings(a: string, b: string): number {
 }
 
 function compareNullableLast(a: string, b: string): number {
-  if (!a && !b) return 0;
-  if (!a) return 1;
-  if (!b) return -1;
+  if (a.length === 0 && b.length === 0) return 0;
+  if (a.length === 0) return 1;
+  if (b.length === 0) return -1;
   return compareStrings(a, b);
 }
 
@@ -116,12 +126,22 @@ function compareByDate(a: TaskSnapshot, b: TaskSnapshot): number {
 }
 
 function compareByTag(a: TaskSnapshot, b: TaskSnapshot): number {
-  const ta = a.tags?.[0] ?? '';
-  const tb = b.tags?.[0] ?? '';
-  if (!ta && !tb) return 0;
-  if (!ta) return 1;
-  if (!tb) return -1;
+  const ta = a.tags[0] ?? '';
+  const tb = b.tags[0] ?? '';
+  if (ta.length === 0 && tb.length === 0) return 0;
+  if (ta.length === 0) return 1;
+  if (tb.length === 0) return -1;
   return ta.localeCompare(tb);
+}
+
+function appendToBucket(
+  buckets: Map<string, TaskSnapshot[]>,
+  key: string,
+  task: TaskSnapshot,
+): void {
+  const existing = buckets.get(key);
+  if (existing === undefined) buckets.set(key, [task]);
+  else existing.push(task);
 }
 
 export function compareByStatus(
@@ -147,7 +167,7 @@ export function sortTasksByField(
       cmp = compareStrings(a.priority, b.priority);
     } else if (field === 'title') {
       cmp = a.title.localeCompare(b.title);
-    } else if (field === 'status' && registry) {
+    } else if (field === 'status' && registry != null) {
       cmp = compareByStatus(a, b, registry);
     } else {
       cmp = compareByTag(a, b);
@@ -162,14 +182,14 @@ export function groupTasksByPriority(
   const PRIORITY_ORDER = ['A', 'B', 'C', 'D', 'E', 'F'] as const;
   const map = new Map<string, TaskSnapshot[]>();
   for (const t of tasks) {
-    const key = t.priority ?? 'D';
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(t);
+    appendToBucket(map, t.priority, t);
   }
-  return PRIORITY_ORDER.filter((p) => map.has(p)).map((p) => ({
-    label: PRIORITY_LABELS[p] ?? p,
-    tasks: map.get(p)!,
-  }));
+  return PRIORITY_ORDER.flatMap((priority) => {
+    const bucket = map.get(priority);
+    return bucket === undefined
+      ? []
+      : [{ label: PRIORITY_LABELS[priority] ?? priority, tasks: bucket }];
+  });
 }
 
 export function groupTasksByStatus(
@@ -181,9 +201,10 @@ export function groupTasksByStatus(
     const def = registry.bySymbol(t.statusSymbol);
     const key = def?.id ?? '__other__';
     const label = def?.name ?? 'Other';
-    const order = def ? registry.orderIndex(t.statusSymbol) : Number.MAX_SAFE_INTEGER;
-    if (!buckets.has(key)) buckets.set(key, { order, label, tasks: [] });
-    buckets.get(key)!.tasks.push(t);
+    const order = def != null ? registry.orderIndex(t.statusSymbol) : Number.MAX_SAFE_INTEGER;
+    const bucket = buckets.get(key);
+    if (bucket === undefined) buckets.set(key, { order, label, tasks: [t] });
+    else bucket.tasks.push(t);
   }
   return [...buckets.values()]
     .sort((x, y) => x.order - y.order)
@@ -195,18 +216,28 @@ export function groupTasksByTag(
 ): Array<{ label: string; tasks: TaskSnapshot[] }> {
   const map = new Map<string, TaskSnapshot[]>();
   for (const t of tasks) {
-    const tag = t.tags?.[0] ?? '';
-    const key = tag || 'No tag';
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(t);
+    const tag = t.tags[0] ?? '';
+    const key = tag.length > 0 ? tag : 'No tag';
+    appendToBucket(map, key, t);
   }
   const groups: Array<{ label: string; tasks: TaskSnapshot[] }> = [];
   for (const [label, gtasks] of map) {
     if (label !== 'No tag') groups.push({ label, tasks: gtasks });
   }
   groups.sort((a, b) => a.label.localeCompare(b.label));
-  if (map.has('No tag')) groups.push({ label: 'No tag', tasks: map.get('No tag')! });
+  const noTag = map.get('No tag');
+  if (noTag !== undefined) groups.push({ label: 'No tag', tasks: noTag });
   return groups;
+}
+
+type DateGroupLabel = 'Overdue' | 'Today' | 'Tomorrow' | 'Upcoming' | 'No date';
+
+function dateGroupLabel(task: TaskSnapshot, today: string, tomorrow: string): DateGroupLabel {
+  const date = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
+  if (date === undefined) return 'No date';
+  if (date < today) return 'Overdue';
+  if (date === today) return 'Today';
+  return date === tomorrow ? 'Tomorrow' : 'Upcoming';
 }
 
 export function groupTasksByDate(
@@ -214,39 +245,26 @@ export function groupTasksByDate(
   today: string,
   tomorrow: string,
 ): Array<{ label: string; tasks: TaskSnapshot[] }> {
-  const overdue: TaskSnapshot[] = [];
-  const todayTasks: TaskSnapshot[] = [];
-  const tomorrowTasks: TaskSnapshot[] = [];
-  const upcoming: TaskSnapshot[] = [];
-  const noDate: TaskSnapshot[] = [];
-
-  for (const t of tasks) {
-    const d = t.planning.due ?? t.planning.scheduled ?? t.planning.start;
-    // Tasks without a date are a distinct category, not overdue.
-    if (!d) noDate.push(t);
-    else if (d < today) overdue.push(t);
-    else if (d === today) todayTasks.push(t);
-    else if (d === tomorrow) tomorrowTasks.push(t);
-    else upcoming.push(t);
-  }
-
-  const result: Array<{ label: string; tasks: TaskSnapshot[] }> = [];
-  if (overdue.length) result.push({ label: 'Overdue', tasks: overdue });
-  if (todayTasks.length) result.push({ label: 'Today', tasks: todayTasks });
-  if (tomorrowTasks.length) result.push({ label: 'Tomorrow', tasks: tomorrowTasks });
-  if (upcoming.length) result.push({ label: 'Upcoming', tasks: upcoming });
-  if (noDate.length) result.push({ label: 'No date', tasks: noDate });
-  return result;
+  const buckets = new Map<DateGroupLabel, TaskSnapshot[]>();
+  for (const task of tasks) appendToBucket(buckets, dateGroupLabel(task, today, tomorrow), task);
+  const order: readonly DateGroupLabel[] = ['Overdue', 'Today', 'Tomorrow', 'Upcoming', 'No date'];
+  return order.flatMap((label) => {
+    const bucket = buckets.get(label);
+    return bucket === undefined ? [] : [{ label, tasks: bucket }];
+  });
 }
 
 export function renderTaskGroup(
   container: HTMLElement,
   groups: TaskGroup,
-  date: string,
-  today: string,
-  renderCard: (task: TaskSnapshot, cls: string, occurrence: CalendarOccurrence) => HTMLElement,
+  ...context: [
+    date: string,
+    today: string,
+    renderCard: (task: TaskSnapshot, cls: string, occurrence: CalendarOccurrence) => HTMLElement,
+  ]
 ): void {
-  const show = (group: TaskSnapshot[], cls: string) => {
+  const [date, today, renderCard] = context;
+  const show = (group: TaskSnapshot[], cls: string): void => {
     for (const t of sortTasks(group)) {
       container.appendChild(renderCard(t, cls, calendarOccurrenceForRender(t)));
     }
@@ -269,7 +287,7 @@ export function filterTasksByStatusGroups(
   statusGroups: TaskStatusType[] | undefined,
   registry: StatusRegistry,
 ): TaskSnapshot[] {
-  if (!statusGroups || statusGroups.length === 0 || statusGroups.length >= 4) return tasks;
+  if (statusGroups == null || statusGroups.length === 0 || statusGroups.length >= 4) return tasks;
   const allowed = new Set(statusGroups);
   return tasks.filter((t) => {
     const type = registry.bySymbol(t.statusSymbol)?.type ?? 'todo';

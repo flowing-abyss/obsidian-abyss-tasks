@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type {
   TaskApplicationApi,
+  TaskCommand,
   TaskIndexEvent,
   TaskQueryApi,
   TaskRef,
@@ -11,7 +12,9 @@ import type {
 import { TaskModal } from '../src/ui/TaskModal';
 import {
   createAppWithFiles,
+  expectDefined,
   flushMicrotasks,
+  methodOf,
   task,
   taskComment,
   taskQueryApi,
@@ -29,12 +32,36 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
   return new DOMRect(left, top, width, height);
 }
 
+function fieldDescription(field: string, observed: TaskSnapshot): Partial<TaskSnapshot> {
+  if (field === 'description') return { description: 'submitted description' };
+  return observed.description === undefined ? {} : { description: observed.description };
+}
+
+function fieldRecurrence(field: string, observed: TaskSnapshot): Partial<TaskSnapshot> {
+  if (field === 'recurrence') return { recurrence: 'every day' };
+  return observed.recurrence === undefined ? {} : { recurrence: observed.recurrence };
+}
+
+function statusAfterCommand(command: TaskCommand, current: TaskSnapshot): TaskSnapshot['status'] {
+  if (command.type === 'toggle-completion') return 'done';
+  if (command.type === 'set-status') return 'in-progress';
+  return current.status;
+}
+
+function statusSymbolAfterCommand(command: TaskCommand, current: TaskSnapshot): string {
+  if (command.type === 'toggle-completion') return 'x';
+  if (command.type === 'set-status') return command.symbol;
+  return current.statusSymbol;
+}
+
 describe('TaskModal with real RightPanel', () => {
   let modal: TaskModal | undefined;
 
   afterEach(() => {
     modal?.close();
-    activeDocument.querySelectorAll('.abyss-status-popover').forEach((element) => element.remove());
+    activeDocument.querySelectorAll('.abyss-status-popover').forEach((element) => {
+      element.remove();
+    });
   });
 
   it('preserves a dirty focused title through a proven silent refresh', async () => {
@@ -78,10 +105,14 @@ describe('TaskModal with real RightPanel', () => {
       execute,
     });
     modal.open(observed);
-    click(activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-title-view')!);
-    const edit = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-right-title-edit',
-    )!;
+    click(
+      expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-title-view'),
+      ),
+    );
+    const edit = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-right-title-edit'),
+    );
     edit.value = 'local unsaved';
     edit.focus();
     edit.setSelectionRange(3, 8);
@@ -95,9 +126,9 @@ describe('TaskModal with real RightPanel', () => {
 
     listener?.({ type: 'changed', files: ['f.md'] });
 
-    const restored = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-right-title-edit',
-    )!;
+    const restored = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-right-title-edit'),
+    );
     expect(restored.value).toBe('local unsaved');
     expect(restored.selectionStart).toBe(3);
     expect(restored.selectionEnd).toBe(8);
@@ -160,9 +191,9 @@ describe('TaskModal with real RightPanel', () => {
       execute,
     });
     modal.open(observed);
-    const input = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-comment-input',
-    )!;
+    const input = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+    );
     input.value = 'submitted once';
     input.focus();
 
@@ -223,9 +254,9 @@ describe('TaskModal with real RightPanel', () => {
       execute,
     });
     modal.open(observed);
-    const input = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-comment-input',
-    )!;
+    const input = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+    );
     input.value = 'submitted first';
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
@@ -243,9 +274,9 @@ describe('TaskModal with real RightPanel', () => {
 
     listener?.({ type: 'changed', files: ['f.md'] });
 
-    const restored = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-comment-input',
-    )!;
+    const restored = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+    );
     expect(restored.value).toBe('next local draft');
     expect(restored.selectionStart).toBe(4);
     expect(restored.selectionEnd).toBe(9);
@@ -297,9 +328,9 @@ describe('TaskModal with real RightPanel', () => {
       execute,
     });
     modal.open(observed);
-    const input = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-comment-input',
-    )!;
+    const input = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+    );
     input.value = 'submitted';
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
@@ -409,19 +440,19 @@ describe('TaskModal with real RightPanel', () => {
     const texts = [
       ...activeDocument.querySelectorAll<HTMLElement>('.abyss-modal .abyss-comment-text'),
     ];
-    click(texts[0]!);
-    const first = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-comment-edit-input',
-    )!;
+    click(expectDefined(texts[0]));
+    const first = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-edit-input'),
+    );
     first.value = 'first submitted';
-    click(texts[1]!);
+    click(expectDefined(texts[1]));
     const editors = [
       ...activeDocument.querySelectorAll<HTMLTextAreaElement>(
         '.abyss-modal .abyss-comment-edit-input',
       ),
     ];
     expect(editors).toHaveLength(2);
-    const second = editors[1]!;
+    const second = expectDefined(editors[1]);
     second.value = 'second local draft';
     second.focus();
 
@@ -485,9 +516,9 @@ describe('TaskModal with real RightPanel', () => {
       execute,
     });
     modal.open(observed);
-    const input = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-comment-input',
-    )!;
+    const input = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+    );
     input.value = 'rollback me';
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
@@ -555,9 +586,9 @@ describe('TaskModal with real RightPanel', () => {
       execute,
     });
     modal.open(observed);
-    const input = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-comment-input',
-    )!;
+    const input = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+    );
     input.value = 'first submission';
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
@@ -570,9 +601,9 @@ describe('TaskModal with real RightPanel', () => {
       basis: { observed },
     };
     listener?.({ type: 'changed', files: ['f.md'] });
-    const successorInput = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-comment-input',
-    )!;
+    const successorInput = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+    );
     successorInput.value = 'second submission';
     successorInput.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
@@ -613,10 +644,14 @@ describe('TaskModal with real RightPanel', () => {
       }),
     });
     modal.open(observed);
-    click(activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-title-view')!);
-    const edit = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-right-title-edit',
-    )!;
+    click(
+      expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-title-view'),
+      ),
+    );
+    const edit = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-right-title-edit'),
+    );
     edit.value = 'failed title';
 
     edit.dispatchEvent(
@@ -634,61 +669,85 @@ describe('TaskModal with real RightPanel', () => {
     {
       field: 'title',
       submit: () => {
-        click(activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-title-view')!);
-        const edit = activeDocument.querySelector<HTMLTextAreaElement>(
-          '.abyss-modal .abyss-right-title-edit',
-        )!;
+        click(
+          expectDefined(
+            activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-title-view'),
+          ),
+        );
+        const edit = expectDefined(
+          activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-right-title-edit'),
+        );
         edit.value = 'submitted title';
         edit.dispatchEvent(
           new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
         );
       },
-      assertClosed: () =>
-        expect(activeDocument.querySelector('.abyss-modal .abyss-right-title-edit')).toBeNull(),
+      assertClosed: () => {
+        expect(activeDocument.querySelector('.abyss-modal .abyss-right-title-edit')).toBeNull();
+      },
     },
     {
       field: 'description',
       submit: () => {
-        click(activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-desc-view')!);
-        const edit = activeDocument.querySelector<HTMLTextAreaElement>(
-          '.abyss-modal .abyss-right-desc-edit',
-        )!;
+        click(
+          expectDefined(
+            activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-desc-view'),
+          ),
+        );
+        const edit = expectDefined(
+          activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-right-desc-edit'),
+        );
         edit.value = 'submitted description';
         edit.dispatchEvent(new FocusEvent('blur', { bubbles: false }));
       },
-      assertClosed: () =>
-        expect(activeDocument.querySelector('.abyss-modal .abyss-right-desc-edit')).toBeNull(),
+      assertClosed: () => {
+        expect(activeDocument.querySelector('.abyss-modal .abyss-right-desc-edit')).toBeNull();
+      },
     },
     {
       field: 'subtask',
       submit: () => {
-        click(activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-subtask-add-row')!);
-        const edit = activeDocument.querySelector<HTMLInputElement>(
-          '.abyss-modal .abyss-subtask-new-input',
-        )!;
+        click(
+          expectDefined(
+            activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-subtask-add-row'),
+          ),
+        );
+        const edit = expectDefined(
+          activeDocument.querySelector<HTMLInputElement>('.abyss-modal .abyss-subtask-new-input'),
+        );
         edit.value = 'submitted subtask';
         edit.dispatchEvent(
           new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
         );
       },
-      assertClosed: () =>
-        expect(activeDocument.querySelector('.abyss-modal .abyss-subtask-new-input')).toBeNull(),
+      assertClosed: () => {
+        expect(activeDocument.querySelector('.abyss-modal .abyss-subtask-new-input')).toBeNull();
+      },
     },
     {
       field: 'recurrence',
       submit: () => {
-        click(activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-repeat-chip')!);
         click(
-          activeDocument.querySelector<HTMLButtonElement>(
-            '.abyss-modal [data-recurrence-preset="daily"]',
-          )!,
+          expectDefined(
+            activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-repeat-chip'),
+          ),
         );
         click(
-          activeDocument.querySelector<HTMLButtonElement>('.abyss-modal .abyss-recurrence-save')!,
+          expectDefined(
+            activeDocument.querySelector<HTMLButtonElement>(
+              '.abyss-modal [data-recurrence-preset="daily"]',
+            ),
+          ),
+        );
+        click(
+          expectDefined(
+            activeDocument.querySelector<HTMLButtonElement>('.abyss-modal .abyss-recurrence-save'),
+          ),
         );
       },
-      assertClosed: () =>
-        expect(activeDocument.querySelector('.abyss-modal .abyss-recurrence-popover')).toBeNull(),
+      assertClosed: () => {
+        expect(activeDocument.querySelector('.abyss-modal .abyss-recurrence-popover')).toBeNull();
+      },
     },
   ])(
     'does not recapture a submitted $field draft during an early owned index event',
@@ -697,8 +756,8 @@ describe('TaskModal with real RightPanel', () => {
       const observed = task({
         title: 'observed',
         markdownTitle: 'observed',
-        description: field === 'description' ? 'old description' : undefined,
-        planning: { due: '2026-08-13' as never },
+        ...(field === 'description' ? { description: 'old description' } : {}),
+        planning: { due: '2026-08-13' },
         ref: { filePath: 'f.md', line: 0, revision: 'old' },
         source: {
           filePath: 'f.md',
@@ -711,8 +770,8 @@ describe('TaskModal with real RightPanel', () => {
         ...observed,
         title: field === 'title' ? 'submitted title' : observed.title,
         markdownTitle: field === 'title' ? 'submitted title' : observed.markdownTitle,
-        description: field === 'description' ? 'submitted description' : observed.description,
-        recurrence: field === 'recurrence' ? 'every day' : observed.recurrence,
+        ...fieldDescription(field, observed),
+        ...fieldRecurrence(field, observed),
         ref: { filePath: 'f.md', line: 0, revision: 'new' },
         source: { ...observed.source, originalBlock: '- [ ] current' },
       });
@@ -795,9 +854,9 @@ describe('TaskModal with real RightPanel', () => {
       execute: vi.fn<TaskApplicationApi['execute']>(),
     });
     modal.open(observed);
-    const comment = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-comment-input',
-    )!;
+    const comment = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+    );
     comment.value = 'rename-safe draft';
     comment.focus();
 
@@ -805,7 +864,7 @@ describe('TaskModal with real RightPanel', () => {
 
     const title = activeDocument.querySelector('.abyss-modal .abyss-right-title');
     expect(title).not.toBeNull();
-    expect(title!.textContent).toContain('observed');
+    expect(expectDefined(title).textContent).toContain('observed');
     expect(
       activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input')?.value,
     ).toBe('rename-safe draft');
@@ -860,9 +919,9 @@ describe('TaskModal with real RightPanel', () => {
       execute,
     });
     modal.open(observed);
-    const comment = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-comment-input',
-    )!;
+    const comment = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+    );
     comment.value = 'stale modal draft';
 
     listener?.({ type: 'changed', files: ['f.md'] });
@@ -907,9 +966,9 @@ describe('TaskModal with real RightPanel', () => {
       execute,
     });
     modal.open(observed);
-    const comment = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-comment-input',
-    )!;
+    const comment = expectDefined(
+      activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+    );
     comment.value = 'local unsaved';
     comment.focus();
     resolution = { type: 'not-found', ref: observed.ref };
@@ -970,18 +1029,8 @@ describe('TaskModal with real RightPanel', () => {
       const next: TaskSnapshot = task({
         ...current,
         ref: nextRef,
-        status:
-          command.type === 'toggle-completion'
-            ? 'done'
-            : command.type === 'set-status'
-              ? 'in-progress'
-              : current.status,
-        statusSymbol:
-          command.type === 'toggle-completion'
-            ? 'x'
-            : command.type === 'set-status'
-              ? command.symbol
-              : current.statusSymbol,
+        status: statusAfterCommand(command, current),
+        statusSymbol: statusSymbolAfterCommand(command, current),
         priority:
           command.type === 'patch' && command.patch.priority?.type === 'set'
             ? command.patch.priority.value
@@ -995,8 +1044,12 @@ describe('TaskModal with real RightPanel', () => {
 
     modal.open(current);
 
-    const header = activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-header')!;
-    const initialMarker = header.querySelector<HTMLElement>(':scope > .abyss-status-marker')!;
+    const header = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-header'),
+    );
+    const initialMarker = expectDefined(
+      header.querySelector<HTMLElement>(':scope > .abyss-status-marker'),
+    );
     expect(initialMarker).not.toBeNull();
     expect(initialMarker.nextElementSibling).toBe(
       header.querySelector(':scope > .abyss-right-title'),
@@ -1015,12 +1068,16 @@ describe('TaskModal with real RightPanel', () => {
         ?.getAttribute('data-status'),
     ).toBe('status-3');
 
-    activeDocument
-      .querySelector<HTMLElement>('.abyss-modal .abyss-right-header > .abyss-status-marker')!
-      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    const waiting = Array.from(
-      activeDocument.querySelectorAll<HTMLElement>('.abyss-status-popover-row'),
-    ).find((row) => row.textContent?.includes('Waiting'))!;
+    expectDefined(
+      activeDocument.querySelector<HTMLElement>(
+        '.abyss-modal .abyss-right-header > .abyss-status-marker',
+      ),
+    ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const waiting = expectDefined(
+      Array.from(activeDocument.querySelectorAll<HTMLElement>('.abyss-status-popover-row')).find(
+        (row) => row.textContent.includes('Waiting'),
+      ),
+    );
     click(waiting);
     await flushMicrotasks();
     expect(execute.mock.calls[1]?.[0]).toMatchObject({ type: 'set-status', symbol: 'w' });
@@ -1031,13 +1088,17 @@ describe('TaskModal with real RightPanel', () => {
         ?.getAttribute('data-status'),
     ).toBe('status-waiting');
 
-    activeDocument
-      .querySelector<HTMLElement>('.abyss-modal .abyss-right-header > .abyss-status-marker')!
-      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    click(
+    expectDefined(
       activeDocument.querySelector<HTMLElement>(
-        ".abyss-status-popover-flag[data-abyss-priority='A']",
-      )!,
+        '.abyss-modal .abyss-right-header > .abyss-status-marker',
+      ),
+    ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    click(
+      expectDefined(
+        activeDocument.querySelector<HTMLElement>(
+          ".abyss-status-popover-flag[data-abyss-priority='A']",
+        ),
+      ),
     );
     await flushMicrotasks();
     expect(execute.mock.calls[2]?.[0]).toMatchObject({
@@ -1075,7 +1136,7 @@ describe('TaskModal with real RightPanel', () => {
     expect(refreshedMarker?.getAttribute('data-priority')).toBe('B');
     const closeButton = activeDocument.querySelector<HTMLElement>('.abyss-modal-close-btn');
     expect(closeButton).not.toBeNull();
-    click(closeButton!);
+    click(expectDefined(closeButton));
     expect(activeDocument.querySelector('.abyss-modal-backdrop')).toBeNull();
   });
 
@@ -1105,9 +1166,9 @@ describe('TaskModal with real RightPanel', () => {
     });
     modal.open(current);
 
-    const repeatChip = activeDocument.querySelector<HTMLElement>(
-      '.abyss-modal .abyss-repeat-chip',
-    )!;
+    const repeatChip = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-repeat-chip'),
+    );
     click(repeatChip);
 
     expect(activeDocument.querySelectorAll('.abyss-recurrence-editor')).toHaveLength(1);
@@ -1116,9 +1177,9 @@ describe('TaskModal with real RightPanel', () => {
     );
     expect(activeDocument.querySelector('.abyss-modal .abyss-recurrence-popover')).not.toBeNull();
 
-    activeDocument
-      .querySelector<HTMLElement>('.abyss-modal .abyss-recurrence-editor')!
-      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-recurrence-editor'),
+    ).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
     expect(activeDocument.querySelector('.abyss-modal-backdrop')).not.toBeNull();
     expect(activeDocument.querySelector('.abyss-modal .abyss-recurrence-popover')).toBeNull();
@@ -1145,18 +1206,20 @@ describe('TaskModal with real RightPanel', () => {
       execute: vi.fn<TaskApplicationApi['execute']>(),
     });
     modal.open(current);
-    const marker = activeDocument.querySelector<HTMLElement>(
-      '.abyss-modal .abyss-right-header > .abyss-status-marker',
-    )!;
+    const marker = expectDefined(
+      activeDocument.querySelector<HTMLElement>(
+        '.abyss-modal .abyss-right-header > .abyss-status-marker',
+      ),
+    );
 
     marker.focus();
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     await new Promise((resolve) => window.setTimeout(resolve, 0));
-    activeDocument
-      .querySelector<HTMLButtonElement>('.abyss-status-popover-flag')!
-      .dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
-      );
+    expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-status-popover-flag'),
+    ).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
 
     expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
     expect(activeDocument.querySelector('.abyss-modal-backdrop')).not.toBeNull();
@@ -1184,15 +1247,17 @@ describe('TaskModal with real RightPanel', () => {
       execute: vi.fn<TaskApplicationApi['execute']>(),
     });
     modal.open(current);
-    const chip = activeDocument.querySelector<HTMLButtonElement>(
-      '.abyss-modal .abyss-priority-chip',
-    )!;
+    const chip = expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-modal .abyss-priority-chip'),
+    );
 
     chip.focus();
     click(chip);
-    const selected = activeDocument.querySelector<HTMLButtonElement>(
-      '.abyss-modal .abyss-priority-option.is-active',
-    )!;
+    const selected = expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>(
+        '.abyss-modal .abyss-priority-option.is-active',
+      ),
+    );
     expect(activeDocument.activeElement).toBe(selected);
 
     selected.dispatchEvent(
@@ -1225,9 +1290,9 @@ describe('TaskModal with real RightPanel', () => {
       execute: vi.fn<TaskApplicationApi['execute']>(),
     });
     modal.open(current);
-    const modalEl = activeDocument.querySelector<HTMLElement>('.abyss-modal')!;
-    const panelEl = activeDocument.querySelector<HTMLElement>('.abyss-modal-body')!;
-    const chip = panelEl.querySelector<HTMLElement>('.abyss-priority-chip')!;
+    const modalEl = expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal'));
+    const panelEl = expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal-body'));
+    const chip = expectDefined(panelEl.querySelector<HTMLElement>('.abyss-priority-chip'));
     let containingLeft = 30;
     let scrollLeft = 17;
     let scrollTop = 19;
@@ -1274,7 +1339,7 @@ describe('TaskModal with real RightPanel', () => {
       configurable: true,
       value: anchorRect,
     });
-    const realRect = HTMLElement.prototype.getBoundingClientRect;
+    const realRect = methodOf(HTMLElement.prototype, 'getBoundingClientRect');
     const measure = vi
       .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function (this: HTMLElement) {
@@ -1290,7 +1355,7 @@ describe('TaskModal with real RightPanel', () => {
 
     try {
       click(chip);
-      const popover = panelEl.querySelector<HTMLElement>('.abyss-priority-popover')!;
+      const popover = expectDefined(panelEl.querySelector<HTMLElement>('.abyss-priority-popover'));
       expect(popover.offsetParent).toBe(modalEl);
       expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('180px');
       expect(popover.style.getPropertyValue('--abyss-pop-top')).toBe('119px');
@@ -1318,7 +1383,7 @@ describe('TaskModal with real RightPanel', () => {
       expect(scrolledViewportTop - scrolledAnchor.bottom).toBe(4);
 
       containingLeft = 40;
-      activeDocument.defaultView!.dispatchEvent(new Event('resize'));
+      expectDefined(activeDocument.defaultView).dispatchEvent(new Event('resize'));
       expect(anchorRect).toHaveBeenCalledTimes(4);
       expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('180px');
       const resizedViewportLeft =
@@ -1390,8 +1455,10 @@ describe('TaskModal with real RightPanel', () => {
       : Array.from(
           activeDocument.querySelectorAll<HTMLElement>('.abyss-modal .abyss-chip-add'),
         ).find((candidate) => candidate.textContent === entry.openSelector);
-    click(opener!);
-    const owned = activeDocument.querySelector<HTMLElement>(`.abyss-modal ${entry.ownedSelector}`)!;
+    click(expectDefined(opener));
+    const owned = expectDefined(
+      activeDocument.querySelector<HTMLElement>(`.abyss-modal ${entry.ownedSelector}`),
+    );
     const escape = new KeyboardEvent('keydown', {
       key: 'Escape',
       bubbles: true,

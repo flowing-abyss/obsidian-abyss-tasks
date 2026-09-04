@@ -23,6 +23,20 @@ import {
   type TimeGridCallbacks,
 } from './TodayView';
 
+interface WeekLayerContext {
+  readonly tasks: TaskSnapshot[];
+  readonly installCellBindings: boolean;
+  readonly timedCallbacks: TimedBlockCallbacks;
+  readonly allDayCallbacks: AllDayCallbacks;
+  readonly tagGroups: NonNullable<TimeGridCallbacks['tagGroups']>;
+  readonly spanRow: ReturnType<typeof layoutVisibleSpans>['rows'][number];
+  readonly previewPositionFor: (
+    task: TaskSnapshot,
+    planning: TaskSnapshot['planning'],
+    previewDate: string,
+  ) => PositionedBlock | undefined;
+}
+
 export class WeekTimeGridView extends BaseView {
   private containerEl: HTMLElement | null = null;
   private skeletonKey: string | null = null;
@@ -30,10 +44,10 @@ export class WeekTimeGridView extends BaseView {
   private visibleDates: string[] = [];
   private md = new Component();
   private nowLineIntervalId: number | null = null;
-  private timedInteractions = createTimedInteractionOwner();
-  private spanInteractions = createSpanInteractionOwner();
+  private readonly timedInteractions = createTimedInteractionOwner();
+  private readonly spanInteractions = createSpanInteractionOwner();
 
-  constructor(private callbacks: TimeGridCallbacks) {
+  constructor(private readonly callbacks: TimeGridCallbacks) {
     super();
   }
 
@@ -41,9 +55,9 @@ export class WeekTimeGridView extends BaseView {
     container: HTMLElement,
     tasks: TaskSnapshot[],
     config: ResolvedConfig,
-    shouldScrollToNow = true,
-    preservedScrollTop?: number,
+    ...options: [shouldScrollToNow?: boolean, preservedScrollTop?: number]
   ): void {
+    const [shouldScrollToNow = true, preservedScrollTop] = options;
     this.timedInteractions.disposeActive();
     this.spanInteractions.disposeActive();
     this.md.unload();
@@ -52,10 +66,7 @@ export class WeekTimeGridView extends BaseView {
 
     // A re-render on the same instance (e.g. week change) must not stack a second interval on
     // top of one already registered from a prior render() without an intervening destroy().
-    if (this.nowLineIntervalId !== null) {
-      window.clearInterval(this.nowLineIntervalId);
-      this.nowLineIntervalId = null;
-    }
+    this.clearNowLineInterval();
 
     this.containerEl = container;
     const dates = this.resolveDates(config);
@@ -75,37 +86,47 @@ export class WeekTimeGridView extends BaseView {
 
     const today = window.moment().format('YYYY-MM-DD');
     const containsToday = dates.includes(today);
-    const gridRowEl = handles.gridRowEl;
-    // One-time scroll-into-position: only when CenterPanel says this is a genuinely new
-    // (viewType, date) it hasn't scrolled for yet — NOT on every reactive re-render of the
-    // same view/date (Task 27). The periodic now-line repositioning below is unconditional
-    // and untouched — a separate, still-desired behavior (Round 2 Task 16).
-    if (shouldScrollToNow) {
-      if (containsToday) {
-        const nowMinutes = window.moment().hours() * 60 + window.moment().minutes();
-        const nowPx = minutesToPixels(nowMinutes);
-        window.setTimeout(() => {
-          gridRowEl.scrollTop = Math.max(0, nowPx - gridRowEl.clientHeight / 2);
-        }, 0);
-      }
-    } else if (preservedScrollTop !== undefined) {
-      // Task 31: this is a reactive re-render (destroy/recreate) of the same view/date — restore
-      // the outgoing grid-row's scroll position instead of leaving the fresh one at 0. Deferred
-      // via setTimeout like the scroll-to-now branch above: setting scrollTop synchronously,
-      // before the browser has laid out the freshly-created grid, gets silently clamped to 0.
+    this.scheduleInitialScroll(
+      handles.gridRowEl,
+      containsToday,
+      shouldScrollToNow,
+      preservedScrollTop,
+    );
+    this.startNowLineRefresh(containsToday ? handles.nowLineEl : null);
+  }
+
+  private clearNowLineInterval(): void {
+    if (this.nowLineIntervalId === null) return;
+    window.clearInterval(this.nowLineIntervalId);
+    this.nowLineIntervalId = null;
+  }
+
+  private scheduleInitialScroll(
+    grid: HTMLElement,
+    containsToday: boolean,
+    shouldScrollToNow: boolean,
+    preservedScrollTop: number | undefined,
+  ): void {
+    if (shouldScrollToNow && containsToday) {
+      const nowMinutes = window.moment().hours() * 60 + window.moment().minutes();
+      const nowPx = minutesToPixels(nowMinutes);
       window.setTimeout(() => {
-        gridRowEl.scrollTop = preservedScrollTop;
+        grid.scrollTop = Math.max(0, nowPx - grid.clientHeight / 2);
+      }, 0);
+      return;
+    }
+    if (!shouldScrollToNow && preservedScrollTop !== undefined) {
+      window.setTimeout(() => {
+        grid.scrollTop = preservedScrollTop;
       }, 0);
     }
+  }
 
-    if (containsToday) {
-      const nowLineEl = handles.nowLineEl;
-      if (nowLineEl) {
-        this.nowLineIntervalId = window.setInterval(() => {
-          repositionNowLine(nowLineEl);
-        }, NOW_LINE_REFRESH_MS);
-      }
-    }
+  private startNowLineRefresh(nowLine: HTMLElement | null): void {
+    if (nowLine === null) return;
+    this.nowLineIntervalId = window.setInterval(() => {
+      repositionNowLine(nowLine);
+    }, NOW_LINE_REFRESH_MS);
   }
 
   override patch(container: HTMLElement, tasks: TaskSnapshot[], config: ResolvedConfig): void {
@@ -153,7 +174,42 @@ export class WeekTimeGridView extends BaseView {
     installCellBindings: boolean,
   ): void {
     const occurrenceFor = calendarOccurrenceLookup(tasks);
-    const timedCallbacks: TimedBlockCallbacks = {
+    const timedCallbacks = this.buildTimedCallbacks(occurrenceFor);
+    const spanTasks = tasks.filter((task) => task.planning.time === undefined);
+    const allDayCallbacks = this.buildAllDayCallbacks(spanTasks, dates, occurrenceFor);
+    const tagGroups = this.callbacks.tagGroups ?? [];
+    const spanRow = layoutVisibleSpans(spanTasks, dates).rows[0];
+    if (spanRow === undefined) throw new Error('Week time-grid requires one visible span row');
+    renderAllDaySpanLayer(
+      handles.allDaySpanLayerEl,
+      spanRow,
+      dates,
+      allDayCallbacks,
+      tagGroups,
+      this.spanInteractions,
+      'timegrid',
+    );
+    const previewPositionFor = (
+      task: TaskSnapshot,
+      planning: TaskSnapshot['planning'],
+      previewDate: string,
+    ): PositionedBlock | undefined => previewTimedPositionFor(tasks, task, planning, previewDate);
+    const context: WeekLayerContext = {
+      tasks,
+      installCellBindings,
+      timedCallbacks,
+      allDayCallbacks,
+      tagGroups,
+      spanRow,
+      previewPositionFor,
+    };
+    for (const day of handles.days) this.renderDayLayers(day, context);
+  }
+
+  private buildTimedCallbacks(
+    occurrenceFor: ReturnType<typeof calendarOccurrenceLookup>,
+  ): TimedBlockCallbacks {
+    return {
       occurrenceFor,
       app: this.callbacks.app,
       component: this.md,
@@ -171,27 +227,28 @@ export class WeekTimeGridView extends BaseView {
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
-      ...(this.callbacks.forecastMenuOwner && {
+      ...(this.callbacks.forecastMenuOwner != null && {
         forecastMenuOwner: this.callbacks.forecastMenuOwner,
       }),
-      ...(this.callbacks.onForecastClick && {
+      ...(this.callbacks.onForecastClick != null && {
         onForecastClick: this.callbacks.onForecastClick,
       }),
-      ...(this.callbacks.onForecastContextMenu && {
+      ...(this.callbacks.onForecastContextMenu != null && {
         onForecastContextMenu: this.callbacks.onForecastContextMenu,
       }),
-      ...(this.callbacks.interactionOwnership && {
+      ...(this.callbacks.interactionOwnership != null && {
         interactionOwnership: this.callbacks.interactionOwnership,
       }),
       statusRegistry: this.callbacks.statusRegistry,
     };
-    const previewPositionFor = (
-      task: TaskSnapshot,
-      planning: TaskSnapshot['planning'],
-      previewDate: string,
-    ): PositionedBlock | undefined => previewTimedPositionFor(tasks, task, planning, previewDate);
-    const spanTasks = tasks.filter((task) => !task.planning.time);
-    const allDayCallbacks: AllDayCallbacks = {
+  }
+
+  private buildAllDayCallbacks(
+    spanTasks: readonly TaskSnapshot[],
+    dates: readonly string[],
+    occurrenceFor: ReturnType<typeof calendarOccurrenceLookup>,
+  ): AllDayCallbacks {
+    return {
       occurrenceFor,
       app: this.callbacks.app,
       component: this.md,
@@ -208,81 +265,84 @@ export class WeekTimeGridView extends BaseView {
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
-      ...(this.callbacks.forecastMenuOwner && {
+      ...(this.callbacks.forecastMenuOwner != null && {
         forecastMenuOwner: this.callbacks.forecastMenuOwner,
       }),
-      ...(this.callbacks.onForecastClick && {
+      ...(this.callbacks.onForecastClick != null && {
         onForecastClick: this.callbacks.onForecastClick,
       }),
-      ...(this.callbacks.onForecastContextMenu && {
+      ...(this.callbacks.onForecastContextMenu != null && {
         onForecastContextMenu: this.callbacks.onForecastContextMenu,
       }),
-      ...(this.callbacks.interactionOwnership && {
+      ...(this.callbacks.interactionOwnership != null && {
         interactionOwnership: this.callbacks.interactionOwnership,
       }),
       statusRegistry: this.callbacks.statusRegistry,
       onCreateAtDate: this.callbacks.onCreateAtDate,
     };
+  }
 
-    const tagGroups = this.callbacks.tagGroups ?? [];
-    const spanLayout = layoutVisibleSpans(spanTasks, dates);
-    const spanRow = spanLayout.rows[0]!;
-    renderAllDaySpanLayer(
-      handles.allDaySpanLayerEl,
-      spanRow,
-      dates,
-      allDayCallbacks,
-      tagGroups,
-      this.spanInteractions,
-      'timegrid',
+  private renderDayLayers(day: HourGridHandles['days'][number], context: WeekLayerContext): void {
+    const { timed, timedSpans, plain, deadlines } = bucketTasksForDate(context.tasks, day.date);
+    if (!context.installCellBindings) {
+      day.hourColumnEl
+        .querySelectorAll<HTMLElement>(
+          ':scope > .abyss-tg-block, :scope > .abyss-tg-block-continuation',
+        )
+        .forEach((element) => {
+          element.remove();
+        });
+    }
+    renderTimedBlocksForDay(
+      day.hourColumnEl,
+      [...timed, ...timedSpans],
+      context.timedCallbacks,
+      context.tagGroups,
+      { date: day.date, previewPositionFor: context.previewPositionFor },
     );
-    for (const day of handles.days) {
-      const { timed, timedSpans, plain, deadlines } = bucketTasksForDate(tasks, day.date);
-      if (!installCellBindings) {
-        day.hourColumnEl
-          .querySelectorAll<HTMLElement>(
-            ':scope > .abyss-tg-block, :scope > .abyss-tg-block-continuation',
-          )
-          .forEach((element) => element.remove());
-      }
-      renderTimedBlocksForDay(
-        day.hourColumnEl,
-        [...timed, ...timedSpans],
-        timedCallbacks,
-        tagGroups,
-        { date: day.date, previewPositionFor },
+    day.allDayCellEl.style.setProperty(
+      '--abyss-span-lane-count',
+      String(context.spanRow.laneCount),
+    );
+    if (context.installCellBindings) {
+      renderAllDayCell(
+        day.allDayCellEl,
+        day.date,
+        [],
+        plain,
+        deadlines,
+        context.allDayCallbacks,
+        context.tagGroups,
       );
-      day.allDayCellEl.style.setProperty('--abyss-span-lane-count', String(spanRow.laneCount));
-      if (installCellBindings) {
-        renderAllDayCell(
-          day.allDayCellEl,
-          day.date,
-          [],
-          plain,
-          deadlines,
-          allDayCallbacks,
-          tagGroups,
-        );
-        const items = day.allDayCellEl.createDiv({ cls: 'abyss-tg-cell-items' });
-        for (const child of Array.from(day.allDayCellEl.children)) {
-          if (child !== items) items.appendChild(child);
-        }
-        continue;
+      const items = day.allDayCellEl.createDiv({ cls: 'abyss-tg-cell-items' });
+      for (const child of Array.from(day.allDayCellEl.children)) {
+        if (child !== items) items.appendChild(child);
       }
-
-      const items = day.allDayCellEl.querySelector<HTMLElement>(':scope > .abyss-tg-cell-items');
-      if (!items) continue;
-      items.empty();
-      const scratch = day.allDayCellEl.ownerDocument.createElement('div');
-      renderAllDayCell(scratch, day.date, [], plain, deadlines, allDayCallbacks, tagGroups);
-      for (const child of Array.from(scratch.children)) items.appendChild(child);
-      const scratchHook = (scratch as unknown as { __tgTestEndDrag?: (targetDate: string) => void })
-        .__tgTestEndDrag;
-      if (scratchHook) {
-        (
-          day.allDayCellEl as unknown as { __tgTestEndDrag?: (targetDate: string) => void }
-        ).__tgTestEndDrag = scratchHook;
-      }
+      return;
+    }
+    const items = day.allDayCellEl.querySelector<HTMLElement>(':scope > .abyss-tg-cell-items');
+    if (items === null) return;
+    items.empty();
+    const scratch = day.allDayCellEl.ownerDocument.createElementNS(
+      'http://www.w3.org/1999/xhtml',
+      'div',
+    ) as HTMLDivElement;
+    renderAllDayCell(
+      scratch,
+      day.date,
+      [],
+      plain,
+      deadlines,
+      context.allDayCallbacks,
+      context.tagGroups,
+    );
+    for (const child of Array.from(scratch.children)) items.appendChild(child);
+    const scratchHook = (scratch as unknown as { __tgTestEndDrag?: (targetDate: string) => void })
+      .__tgTestEndDrag;
+    if (scratchHook !== undefined) {
+      (
+        day.allDayCellEl as unknown as { __tgTestEndDrag?: (targetDate: string) => void }
+      ).__tgTestEndDrag = scratchHook;
     }
   }
 
@@ -294,9 +354,6 @@ export class WeekTimeGridView extends BaseView {
     this.gridHandles = null;
     this.visibleDates = [];
     this.md.unload();
-    if (this.nowLineIntervalId !== null) {
-      window.clearInterval(this.nowLineIntervalId);
-      this.nowLineIntervalId = null;
-    }
+    this.clearNowLineInterval();
   }
 }

@@ -2,6 +2,13 @@ import { Modal, Notice, type App } from 'obsidian';
 import type { TagManager, VaultTagRenameResult } from './TagManager';
 
 type RenameScope = 'exact' | 'prefix';
+type RenameTagModalDependencies = [
+  app: App,
+  tagManager: TagManager,
+  currentTag: string,
+  onRenamed: () => void,
+  renameScope?: RenameScope,
+];
 
 function displayTag(value: string): string {
   const trimmed = value.trim();
@@ -41,18 +48,21 @@ function presentResult(result: VaultTagRenameResult): boolean {
 
 export class RenameTagModal extends Modal {
   private input!: HTMLInputElement;
+  private readonly tagManager: TagManager;
+  private readonly currentTag: string;
+  private readonly onRenamed: () => void;
+  private readonly renameScope: RenameScope;
 
-  constructor(
-    app: App,
-    private tagManager: TagManager,
-    private currentTag: string,
-    private onRenamed: () => void,
-    private renameScope: RenameScope = 'exact',
-  ) {
+  constructor(...dependencies: RenameTagModalDependencies) {
+    const [app, tagManager, currentTag, onRenamed, renameScope = 'exact'] = dependencies;
     super(app);
+    this.tagManager = tagManager;
+    this.currentTag = currentTag;
+    this.onRenamed = onRenamed;
+    this.renameScope = renameScope;
   }
 
-  onOpen(): void {
+  override onOpen(): void {
     const { contentEl } = this;
     contentEl.addClass('abyss-rename-tag-modal');
     contentEl.createEl('h3', {
@@ -125,10 +135,12 @@ export class RenameTagModal extends Modal {
     });
 
     updateConfirmation();
-    contentEl.ownerDocument.defaultView?.setTimeout(() => this.input.focus(), 0);
+    contentEl.ownerDocument.defaultView?.setTimeout(() => {
+      this.input.focus();
+    }, 0);
   }
 
-  onClose(): void {
+  override onClose(): void {
     this.contentEl.empty();
   }
 }

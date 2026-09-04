@@ -4,6 +4,7 @@ import {
   buildAttachmentLink,
   saveExternalFile,
 } from '../attachments/AttachmentService';
+import { runAsyncAction } from './runAsyncAction';
 
 export interface DraggedItems {
   externalFiles: File[];
@@ -19,10 +20,10 @@ export function resolveDraggedItems(
   dataTransfer: Pick<DataTransfer, 'files'> | null,
   dragManager: DragManagerLike | undefined,
 ): DraggedItems {
-  const externalFiles = dataTransfer?.files ? Array.from(dataTransfer.files) : [];
+  const externalFiles = dataTransfer?.files != null ? Array.from(dataTransfer.files) : [];
   if (externalFiles.length > 0) return { externalFiles, vaultFiles: [] };
   const dragged = dragManager?.draggable;
-  const vaultFiles = dragged?.files ?? (dragged?.file ? [dragged.file] : []);
+  const vaultFiles = dragged?.files ?? (dragged?.file != null ? [dragged.file] : []);
   return { externalFiles: [], vaultFiles };
 }
 
@@ -38,7 +39,7 @@ interface AppWithDragManager {
 
 function hasDraggableFiles(app: App): boolean {
   const dm = (app as unknown as AppWithDragManager).dragManager;
-  return !!(dm?.draggable?.file || dm?.draggable?.files?.length);
+  return !!(dm?.draggable?.file != null || Boolean(dm?.draggable?.files?.length));
 }
 
 /** Wire drag/drop file attachment onto `el`. Returns a disposer that removes the listeners. */
@@ -47,7 +48,7 @@ export function enableAttachmentDrop(el: HTMLElement, opts: AttachmentDropOption
     const hasFiles = (e.dataTransfer?.types ?? []).includes('Files');
     if (!hasFiles && !hasDraggableFiles(opts.app)) return;
     e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    if (e.dataTransfer != null) e.dataTransfer.dropEffect = 'copy';
     el.addClass('abyss-drop-active');
   };
 
@@ -67,7 +68,7 @@ export function enableAttachmentDrop(el: HTMLElement, opts: AttachmentDropOption
     e.preventDefault();
     e.stopPropagation();
     el.removeClass('abyss-drop-active');
-    void handleDrop(opts, externalFiles, vaultFiles);
+    runAsyncAction(handleDrop(opts, externalFiles, vaultFiles), 'Could not attach dropped files');
   };
 
   el.addEventListener('dragover', onDragOver);
@@ -94,7 +95,7 @@ const MIME_EXTENSION: Record<string, string> = {
 export function defaultPastedName(mimeType: string): string {
   const known = MIME_EXTENSION[mimeType];
   const ext = known ?? (mimeType.startsWith('image/') ? mimeType.slice('image/'.length) : '');
-  return ext ? `pasted-image.${ext}` : 'pasted-file';
+  return ext.length > 0 ? `pasted-image.${ext}` : 'pasted-file';
 }
 
 /** Save external/clipboard files sequentially and return their compact link markdown. */
@@ -106,7 +107,7 @@ export async function attachFilesAsLinks(
   const links: string[] = [];
   // Sequential so getAvailablePathForAttachment resolves name collisions deterministically.
   for (const file of files) {
-    const name = file.name || defaultPastedName(file.type);
+    const name = file.name.length > 0 ? file.name : defaultPastedName(file.type);
     try {
       const saved = await saveExternalFile(app, file, sourcePath, name);
       links.push(buildAttachmentLink(app, saved, sourcePath, aliasForName(saved.name)));
@@ -120,12 +121,12 @@ export async function attachFilesAsLinks(
 /** Insert text at the textarea's caret, padding with spaces so it never fuses with
  * adjacent text, and place the caret right after the inserted text. */
 export function insertAtCaret(textarea: HTMLTextAreaElement, text: string): void {
-  const start = textarea.selectionStart ?? textarea.value.length;
-  const end = textarea.selectionEnd ?? textarea.value.length;
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
   const before = textarea.value.slice(0, start);
   const after = textarea.value.slice(end);
-  const lead = before && !/\s$/u.test(before) ? ' ' : '';
-  const trail = after && !/^\s/u.test(after) ? ' ' : '';
+  const lead = before.length > 0 && !/\s$/u.test(before) ? ' ' : '';
+  const trail = after.length > 0 && !/^\s/u.test(after) ? ' ' : '';
   textarea.value = `${before}${lead}${text}${trail}${after}`;
   const pos = before.length + lead.length + text.length;
   textarea.setSelectionRange(pos, pos);
@@ -170,7 +171,7 @@ export function whenPasteSettled(el: HTMLElement): Promise<void> {
 /** Wire clipboard paste-to-attach onto a textarea. Returns a disposer. */
 export function enableAttachmentPaste(el: HTMLElement, opts: AttachmentPasteOptions): () => void {
   const onPaste = (e: ClipboardEvent): void => {
-    const files = e.clipboardData ? Array.from(e.clipboardData.files) : [];
+    const files = e.clipboardData != null ? Array.from(e.clipboardData.files) : [];
     if (files.length === 0) return; // no files → let the normal (text) paste happen
     e.preventDefault();
     e.stopPropagation();
@@ -183,8 +184,10 @@ export function enableAttachmentPaste(el: HTMLElement, opts: AttachmentPasteOpti
       if (pendingPastes.get(el) === tracked) pendingPastes.delete(el);
     });
     pendingPastes.set(el, tracked);
-    void tracked;
+    runAsyncAction(tracked, 'Could not attach pasted files');
   };
   el.addEventListener('paste', onPaste);
-  return () => el.removeEventListener('paste', onPaste);
+  return () => {
+    el.removeEventListener('paste', onPaste);
+  };
 }

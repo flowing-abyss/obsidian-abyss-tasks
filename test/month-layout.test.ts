@@ -6,7 +6,7 @@ import {
   type MonthVisibleLayout,
 } from '../src/views/monthLayout';
 import { layoutVisibleSpans } from '../src/views/spanLayout';
-import { task, useRealMoment } from './helpers';
+import { expectDefined, task, useRealMoment } from './helpers';
 
 useRealMoment();
 
@@ -53,11 +53,11 @@ function fixture(): TaskSnapshot[] {
 function dayEntries(
   layout: MonthVisibleLayout,
   date: string,
-): [kind: string, title: string, slot: number][] {
+): Array<[kind: string, title: string, slot: number]> {
   const row = layout.rows.find(({ spanRow }) =>
     spanRow.segments.some((segment) => segment.date === date),
   );
-  if (!row) throw new Error(`Expected row containing ${date}`);
+  if (row == null) throw new Error(`Expected row containing ${date}`);
 
   return [
     ...row.spanRow.segments
@@ -73,7 +73,7 @@ function dayEntries(
   ].sort((left, right) => left[2] - right[2]);
 }
 
-const expectedEntries: [kind: string, title: string, slot: number][] = [
+const expectedEntries: Array<[kind: string, title: string, slot: number]> = [
   ['span', '09 span', 0],
   ['span', '15 span', 1],
   ['timed', '20 compact', 2],
@@ -144,7 +144,7 @@ describe('layoutVisibleMonth', () => {
 
   it('uses the same Month slot allocator for replacement previews', () => {
     const tasks = fixture();
-    const source = tasks.find((candidate) => candidate.title === '20 compact')!;
+    const source = expectDefined(tasks.find((candidate) => candidate.title === '20 compact'));
     const layout = layoutVisibleMonthWithReplacement(tasks, dates, source, {
       ...source.planning,
       time: localTime('08:00'),

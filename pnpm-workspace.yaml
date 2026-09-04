@@ -1,0 +1,15 @@
+packages:
+  - .
+
+minimumReleaseAge: 1440
+blockExoticSubdeps: true
+saveExact: true
+peerDependencyRules:
+  allowedVersions:
+    'eslint-plugin-obsidianmd>obsidian': '*'
+
+allowBuilds:
+  '@parcel/watcher': false
+  classic-level: true
+  esbuild: true
+  unrs-resolver: true

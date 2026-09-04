@@ -5,7 +5,7 @@ import {
   renderCountBadges,
   renderTagChips,
 } from '../src/views/timegrid/renderTaskMeta';
-import { freshContainer, subtask, task, taskComment } from './helpers';
+import { expectDefined, freshContainer, subtask, task, taskComment } from './helpers';
 
 describe('renderTaskMeta', () => {
   describe('hasMeta', () => {
@@ -87,7 +87,7 @@ describe('renderTaskMeta', () => {
       renderCountBadges(container, t);
       const badges = container.querySelectorAll('.abyss-task-count-badge');
       expect(badges).toHaveLength(1);
-      expect(badges[0]!.textContent).toContain('1/2');
+      expect(expectDefined(badges[0]).textContent).toContain('1/2');
     });
 
     it('renders a comment count badge', () => {
@@ -101,7 +101,7 @@ describe('renderTaskMeta', () => {
       renderCountBadges(container, t);
       const badges = container.querySelectorAll('.abyss-task-count-badge');
       expect(badges).toHaveLength(1);
-      expect(badges[0]!.textContent).toContain('2');
+      expect(expectDefined(badges[0]).textContent).toContain('2');
     });
 
     it('renders a link count badge from the precomputed linkCount field', () => {
@@ -109,7 +109,7 @@ describe('renderTaskMeta', () => {
       renderCountBadges(container, task({ presentation: { linkCount: 3 } }));
       const badges = container.querySelectorAll('.abyss-task-count-badge');
       expect(badges).toHaveLength(1);
-      expect(badges[0]!.textContent).toContain('3');
+      expect(expectDefined(badges[0]).textContent).toContain('3');
     });
 
     it('renders all three badges together, in subtask/comment/link order', () => {

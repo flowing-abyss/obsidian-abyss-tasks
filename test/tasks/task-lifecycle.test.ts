@@ -1,3 +1,5 @@
+import type * as ObsidianModule from 'obsidian';
+import type { App } from 'obsidian';
 import { Notice, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DailyNoteResolver } from '../../src/resolvers/DailyNoteResolver';
@@ -19,11 +21,12 @@ import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskM
 import { ObsidianTaskDestinationProvider } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { presentTaskCreationResult } from '../../src/ui/taskCommandResult';
-import { createAppWithFiles, taskQueryApi, useRealMoment } from '../helpers';
+import { createAppWithFiles, methodOf, taskQueryApi, useRealMoment } from '../helpers';
 import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
+import { expectDefined } from './../helpers';
 
 vi.mock('obsidian', async () => {
-  const actual = await vi.importActual<typeof import('obsidian')>('obsidian');
+  const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
   return { ...actual, Notice: vi.fn() };
 });
 
@@ -39,6 +42,20 @@ interface Harness {
 
 const path = 'tasks.md';
 const appendDestination: TaskDestination = { filePath: path, insertion: { type: 'append' } };
+
+type ApplicationResult = Awaited<ReturnType<TaskApplicationService['execute']>>;
+
+function taskFrom(result: ApplicationResult, message: string): TaskSnapshot {
+  if (result.type !== 'ok' || result.outcome.type !== 'task') throw new Error(message);
+  return result.outcome.task;
+}
+
+function fileAt(app: App, filePath: string): TFile {
+  const file = app.vault.getAbstractFileByPath(filePath);
+  expect(file).toBeInstanceOf(TFile);
+  if (!(file instanceof TFile)) throw new Error(`missing ${filePath}`);
+  return file;
+}
 
 async function makeHarness(adapter: Adapter, source: string): Promise<Harness> {
   const app = await createAppWithFiles({ [path]: source });
@@ -74,7 +91,7 @@ async function makeHarness(adapter: Adapter, source: string): Promise<Harness> {
   };
 }
 
-function applicationFor(app: import('obsidian').App, settings: CalendarSettings) {
+function applicationFor(app: App, settings: CalendarSettings) {
   const catalog = new StatusCatalog(toStatusRules(settings.taskStatuses));
   const codec = new TaskMarkdownCodec(catalog);
   const index = new TaskIndex(app, {
@@ -103,7 +120,7 @@ function applicationFor(app: import('obsidian').App, settings: CalendarSettings)
 
 function rootRef(harness: Harness, content: string, line = 0): TaskRef {
   const task = harness.snapshots(content).find((candidate) => candidate.source.line === line);
-  if (!task) throw new Error(`missing task at line ${line}`);
+  if (task == null) throw new Error(`missing task at line ${line}`);
   return task.ref;
 }
 
@@ -365,8 +382,8 @@ describe('TaskApplicationService lifecycle routing', () => {
       outcome: { type: 'task', task: committedTask },
       changed: true,
     });
-    expect(destinationProvider.resolveConfiguredDefault).toHaveBeenCalledOnce();
-    expect(destinationProvider.prepare).not.toHaveBeenCalled();
+    expect(methodOf(destinationProvider, 'resolveConfiguredDefault')).toHaveBeenCalledOnce();
+    expect(methodOf(destinationProvider, 'prepare')).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledWith(appendDestination, {
       ...draft,
       today: localDate('2026-07-14'),
@@ -403,8 +420,8 @@ describe('TaskApplicationService lifecycle routing', () => {
       destination: { type: 'explicit', destination: appendDestination },
       markdownBody: 'explicit',
     });
-    expect(provider.resolveConfiguredDefault).not.toHaveBeenCalled();
-    expect(provider.prepare).not.toHaveBeenCalled();
+    expect(methodOf(provider, 'resolveConfiguredDefault')).not.toHaveBeenCalled();
+    expect(methodOf(provider, 'prepare')).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledWith(appendDestination, {
       markdownBody: 'explicit',
       today: localDate('2026-07-14'),
@@ -421,7 +438,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       },
       markdownBody: 'prepared',
     });
-    expect(provider.prepare).toHaveBeenCalledWith(appendDestination);
+    expect(methodOf(provider, 'prepare')).toHaveBeenCalledWith(appendDestination);
     expect(create).toHaveBeenCalledWith(appendDestination, {
       markdownBody: 'prepared',
       today: localDate('2026-07-14'),
@@ -630,24 +647,21 @@ describe('TaskApplicationService lifecycle settings', () => {
     });
     expect(await harness.read()).toBe('- [ ] Parent ➕ 2026-08-01\n  - [ ] Child ➕ 2026-08-01');
     expect(behavior).toHaveBeenCalledOnce();
-    if (created.type !== 'ok' || created.outcome.type !== 'task')
-      throw new Error('task not created');
+    const createdTask = taskFrom(created, 'task not created');
 
     const subtaskAdded = await api.execute({
       type: 'add-subtask',
-      parent: { type: 'task', ref: created.outcome.task.ref },
+      parent: { type: 'task', ref: createdTask.ref },
       text: 'Added later',
     });
     expect(await harness.read()).toBe(
       '- [ ] Parent ➕ 2026-08-01\n  - [ ] Child ➕ 2026-08-01\n  - [ ] Added later ➕ 2026-08-01',
     );
-    if (subtaskAdded.type !== 'ok' || subtaskAdded.outcome.type !== 'task') {
-      throw new Error('subtask not added');
-    }
+    const taskWithSubtask = taskFrom(subtaskAdded, 'subtask not added');
 
     const rootDone = await api.execute({
       type: 'set-status',
-      target: { type: 'task', ref: subtaskAdded.outcome.task.ref },
+      target: { type: 'task', ref: taskWithSubtask.ref },
       symbol: 'x',
     });
     expect(rootDone).toMatchObject({
@@ -655,25 +669,23 @@ describe('TaskApplicationService lifecycle settings', () => {
       outcome: { type: 'task', task: { planning: { completion: '2026-08-01' } } },
     });
     expect(await harness.read()).toContain('- [x] Parent ➕ 2026-08-01 ✅ 2026-08-01');
-    if (rootDone.type !== 'ok' || rootDone.outcome.type !== 'task')
-      throw new Error('task not completed');
+    const completedRoot = taskFrom(rootDone, 'task not completed');
 
     const childDone = await api.execute({
       type: 'set-status',
-      target: { type: 'subtask', ref: rootDone.outcome.task.subtasks[0]!.ref },
+      target: { type: 'subtask', ref: expectDefined(completedRoot.subtasks[0]).ref },
       symbol: 'x',
     });
     expect(childDone).toMatchObject({
       type: 'ok',
       outcome: { type: 'task' },
     });
-    if (childDone.type !== 'ok' || childDone.outcome.type !== 'task')
-      throw new Error('subtask not completed');
-    expect(childDone.outcome.task.subtasks[0]?.planning.completion).toBe('2026-08-01');
+    const completedChild = taskFrom(childDone, 'subtask not completed');
+    expect(completedChild.subtasks[0]?.planning.completion).toBe('2026-08-01');
 
     const rootDoneAgain = await api.execute({
       type: 'set-status',
-      target: { type: 'task', ref: childDone.outcome.task.ref },
+      target: { type: 'task', ref: completedChild.ref },
       symbol: 'x',
     });
     expect(rootDoneAgain).toMatchObject({
@@ -681,13 +693,11 @@ describe('TaskApplicationService lifecycle settings', () => {
       changed: false,
       outcome: { type: 'task', task: { planning: { completion: '2026-08-01' } } },
     });
+    const unchangedRoot = taskFrom(rootDoneAgain, 'completed task not returned');
 
     const reopened = await api.execute({
       type: 'set-status',
-      target:
-        rootDoneAgain.type === 'ok' && rootDoneAgain.outcome.type === 'task'
-          ? { type: 'task', ref: rootDoneAgain.outcome.task.ref }
-          : { type: 'task', ref: rootDone.outcome.task.ref },
+      target: { type: 'task', ref: unchangedRoot.ref },
       symbol: ' ',
     });
     expect(reopened).toMatchObject({
@@ -782,14 +792,14 @@ describe('ObsidianTaskDestinationProvider', () => {
     expect(result).toMatchObject({
       type: 'resolved',
       destination: {
-        filePath: expect.stringMatching(/^daily\/\d{4}-\d{2}-\d{2}\.md$/u),
         insertion: { type: 'section', heading: '## Tasks' },
       },
     });
     if (result.type !== 'resolved') throw new Error('daily destination unavailable');
-    const file = app.vault.getAbstractFileByPath(result.destination.filePath);
-    expect(file).toBeInstanceOf(TFile);
-    expect(await app.vault.cachedRead(file as TFile)).not.toContain('- [ ]');
+    expect(result.destination.filePath).toMatch(/^daily\/\d{4}-\d{2}-\d{2}\.md$/u);
+    expect(await app.vault.cachedRead(fileAt(app, result.destination.filePath))).not.toContain(
+      '- [ ]',
+    );
   });
 
   it('creates an empty configured custom note and reports absent or failed destinations', async () => {
@@ -884,9 +894,7 @@ describe('configured destination end-to-end lifecycle', () => {
 
     expect(create).toHaveBeenCalledOnce();
     expect(createFolder).toHaveBeenCalledOnce();
-    const file = app.vault.getAbstractFileByPath(`daily/frozen/${today}.md`);
-    expect(file).toBeInstanceOf(TFile);
-    const content = await app.vault.cachedRead(file as TFile);
+    const content = await app.vault.cachedRead(fileAt(app, `daily/frozen/${today}.md`));
     expect(content).toContain(`# ${today}`);
     expect(content).toContain('## Frozen tasks\n- [ ] second frozen task');
     expect(content).toContain('- [ ] first frozen task');
@@ -926,9 +934,9 @@ describe('configured destination end-to-end lifecycle', () => {
       type: 'ok',
       outcome: { type: 'task', task: { source: { filePath: scenario.path, line: 0 } } },
     });
-    const file = app.vault.getAbstractFileByPath(scenario.path);
-    expect(file).toBeInstanceOf(TFile);
-    expect(await app.vault.cachedRead(file as TFile)).toBe('- [ ] first task ➕ 2026-07-14');
+    expect(await app.vault.cachedRead(fileAt(app, scenario.path))).toBe(
+      '- [ ] first task ➕ 2026-07-14',
+    );
     presentTaskCreationResult(result);
     expect(Notice).toHaveBeenCalledWith(`Task added to ${scenario.path}`);
   });
@@ -974,9 +982,7 @@ describe('configured destination end-to-end lifecycle', () => {
         task: { source: { filePath: `daily/${today}.md`, line: 3 } },
       },
     });
-    const file = app.vault.getAbstractFileByPath(`daily/${today}.md`);
-    expect(file).toBeInstanceOf(TFile);
-    const content = await app.vault.cachedRead(file as TFile);
+    const content = await app.vault.cachedRead(fileAt(app, `daily/${today}.md`));
     expect(content).toContain(`# ${today}`);
     expect(content).toContain(`## Tasks\n- [ ] planned task ➕ 2026-07-14 📅 2026-07-20`);
     expect(content).toContain('Daily notes stay here.');

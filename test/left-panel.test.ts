@@ -1,3 +1,4 @@
+import type * as ObsidianModule from 'obsidian';
 import { Menu, Notice, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
@@ -8,16 +9,25 @@ import { TagManager } from '../src/tags/TagManager';
 import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
 import { TagGroupAppearanceModal } from '../src/ui/TagGroupAppearanceModal';
 import {
+  expectDefined,
   flushMicrotasks,
   freshContainer,
   makeLeftPanelForTest,
   makeStubStore,
+  methodOf,
+  objectMatching,
   task,
   useRealMoment,
 } from './helpers';
 
+function firstNoticeText(): string {
+  const message = vi.mocked(Notice).mock.calls[0]?.[0];
+  if (typeof message === 'string') return message;
+  return message?.textContent ?? '';
+}
+
 vi.mock('obsidian', async () => {
-  const actual = await vi.importActual<typeof import('obsidian')>('obsidian');
+  const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
   return { ...actual, Notice: vi.fn() };
 });
 
@@ -26,7 +36,9 @@ useRealMoment();
 afterEach(() => {
   vi.restoreAllMocks();
   vi.mocked(Notice).mockClear();
-  activeDocument.querySelectorAll('.modal-container').forEach((element) => element.remove());
+  activeDocument.querySelectorAll('.modal-container').forEach((element) => {
+    element.remove();
+  });
 });
 
 interface CapturedMenuItem {
@@ -164,7 +176,7 @@ describe('LeftPanel smart lists', () => {
     const { el } = makePanel(tasks, {
       inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
     });
-    const inboxRow = el.querySelector('.abyss-left-item')!;
+    const inboxRow = expectDefined(el.querySelector('.abyss-left-item'));
     expect(inboxRow.querySelector('.abyss-left-count')?.textContent).toBe('2');
   });
 
@@ -187,7 +199,7 @@ describe('LeftPanel smart lists', () => {
     const { el } = makePanel(tasks, {
       inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
     });
-    const inboxRow = el.querySelector('.abyss-left-item')!;
+    const inboxRow = expectDefined(el.querySelector('.abyss-left-item'));
     expect(inboxRow.querySelector('.abyss-left-count')?.textContent).toBe('1');
   });
 
@@ -202,7 +214,7 @@ describe('LeftPanel smart lists', () => {
     ];
     const { el } = makePanel(tasks);
     const rows = el.querySelectorAll('.abyss-left-item');
-    const todayRow = rows[1]!;
+    const todayRow = expectDefined(rows[1]);
     expect(todayRow.querySelector('.abyss-left-count')?.textContent).toBe('2');
   });
 
@@ -216,7 +228,7 @@ describe('LeftPanel smart lists', () => {
     ];
     const { el } = makePanel(tasks);
     const rows = el.querySelectorAll('.abyss-left-item');
-    const upcomingRow = rows[2]!;
+    const upcomingRow = expectDefined(rows[2]);
     expect(upcomingRow.querySelector('.abyss-left-count')?.textContent).toBe('2');
   });
 
@@ -224,7 +236,7 @@ describe('LeftPanel smart lists', () => {
     const { el } = makePanel([], {
       inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
     });
-    const inboxRow = el.querySelector('.abyss-left-item')!;
+    const inboxRow = expectDefined(el.querySelector('.abyss-left-item'));
     expect(inboxRow.querySelector('.abyss-left-count')).toBeNull();
   });
 
@@ -620,8 +632,8 @@ describe('LeftPanel tag groups (manual mode)', () => {
     const leaf = el.querySelector('.abyss-tag-leaf');
     expect(leaf).toBeTruthy();
     // Consistent with group rows: name without '#', plus a color dot.
-    expect(leaf!.querySelector('.abyss-left-label')?.textContent).toBe('next');
-    expect(leaf!.querySelector('.abyss-group-dot')).toBeTruthy();
+    expect(expectDefined(leaf).querySelector('.abyss-left-label')?.textContent).toBe('next');
+    expect(expectDefined(leaf).querySelector('.abyss-group-dot')).toBeTruthy();
     (leaf as HTMLElement).click();
     expect(state.get('selectedList')).toEqual({ type: 'tag', tag: '#next' });
   });
@@ -633,7 +645,7 @@ describe('LeftPanel top-level tag group menus', () => {
     const { el, state } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     });
-    const header = el.querySelector('.abyss-tag-group-header')!;
+    const header = expectDefined(el.querySelector('.abyss-tag-group-header'));
     const selectedBefore = state.get('selectedList');
 
     openContextMenu(header);
@@ -654,7 +666,7 @@ describe('LeftPanel top-level tag group menus', () => {
       tagGroups: [{ id: 'g1', name: 'Delivery', mode: 'manual', tags: ['#client', '#client/ops'] }],
     });
 
-    openContextMenu(el.querySelector('.abyss-tag-group-header')!);
+    openContextMenu(expectDefined(el.querySelector('.abyss-tag-group-header')));
 
     expect(items.map((item) => item.title)).toEqual([
       'Rename display name…',
@@ -669,7 +681,7 @@ describe('LeftPanel top-level tag group menus', () => {
     const { el, state } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Next', mode: 'manual', tags: ['#next'] }],
     });
-    const leaf = el.querySelector('.abyss-tag-leaf')!;
+    const leaf = expectDefined(el.querySelector('.abyss-tag-leaf'));
     const selectedBefore = state.get('selectedList');
 
     openContextMenu(leaf);
@@ -694,33 +706,37 @@ describe('LeftPanel top-level tag group menus', () => {
     const renameExact = vi.spyOn(tm, 'renameTagExact');
     const renamePrefix = vi.spyOn(tm, 'renameTagPrefix');
 
-    openContextMenu(el.querySelector('.abyss-tag-group-header')!);
-    items.find((item) => item.title === 'Rename display name…')!.click();
-    const nameInput = activeDocument.querySelector<HTMLInputElement>(
-      '.abyss-tag-group-appearance-modal input[type="text"]',
-    )!;
+    openContextMenu(expectDefined(el.querySelector('.abyss-tag-group-header')));
+    expectDefined(items.find((item) => item.title === 'Rename display name…')).click();
+    const nameInput = expectDefined(
+      activeDocument.querySelector<HTMLInputElement>(
+        '.abyss-tag-group-appearance-modal input[type="text"]',
+      ),
+    );
     nameInput.value = 'Focused work';
     nameInput.dispatchEvent(new Event('input', { bubbles: true }));
-    activeDocument
-      .querySelector<HTMLButtonElement>('.abyss-tag-group-appearance-modal .mod-cta')!
-      .click();
+    expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-tag-group-appearance-modal .mod-cta'),
+    ).click();
     await flushMicrotasks();
 
     expect(merged.tagGroups[0]?.name).toBe('Focused work');
     expect(merged.tagGroups[0]?.color).toBe('#ff0000');
 
     items.splice(0);
-    openContextMenu(el.querySelector('.abyss-tag-group-header')!);
-    items.find((item) => item.title === 'Change color…')!.click();
-    const reset = Array.from(
-      activeDocument.querySelectorAll<HTMLButtonElement>(
-        '.abyss-tag-group-appearance-modal button',
-      ),
-    ).find((button) => button.textContent === 'Reset')!;
+    openContextMenu(expectDefined(el.querySelector('.abyss-tag-group-header')));
+    expectDefined(items.find((item) => item.title === 'Change color…')).click();
+    const reset = expectDefined(
+      Array.from(
+        activeDocument.querySelectorAll<HTMLButtonElement>(
+          '.abyss-tag-group-appearance-modal button',
+        ),
+      ).find((button) => button.textContent === 'Reset'),
+    );
     reset.click();
-    activeDocument
-      .querySelector<HTMLButtonElement>('.abyss-tag-group-appearance-modal .mod-cta')!
-      .click();
+    expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-tag-group-appearance-modal .mod-cta'),
+    ).click();
     await flushMicrotasks();
 
     expect(merged.tagGroups[0]?.color).toBeUndefined();
@@ -737,30 +753,32 @@ describe('LeftPanel top-level tag group menus', () => {
     });
     save.mockRejectedValueOnce(new Error('settings storage unavailable'));
 
-    openContextMenu(el.querySelector('.abyss-tag-group-header')!);
-    items.find((item) => item.title === 'Rename display name…')!.click();
-    const nameInput = activeDocument.querySelector<HTMLInputElement>(
-      '.abyss-tag-group-appearance-modal input[type="text"]',
-    )!;
+    openContextMenu(expectDefined(el.querySelector('.abyss-tag-group-header')));
+    expectDefined(items.find((item) => item.title === 'Rename display name…')).click();
+    const nameInput = expectDefined(
+      activeDocument.querySelector<HTMLInputElement>(
+        '.abyss-tag-group-appearance-modal input[type="text"]',
+      ),
+    );
     nameInput.value = 'Focused work';
     nameInput.dispatchEvent(new Event('input', { bubbles: true }));
-    activeDocument
-      .querySelector<HTMLButtonElement>('.abyss-tag-group-appearance-modal .mod-cta')!
-      .click();
+    expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-tag-group-appearance-modal .mod-cta'),
+    ).click();
     await flushMicrotasks();
 
     expect(merged.tagGroups[0]?.name).toBe('Work');
     expect(merged.tagGroups[0]?.color).toBe('#ff0000');
     expect(Notice).toHaveBeenCalledOnce();
-    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('not saved');
-    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('rolled back');
+    expect(firstNoticeText()).toContain('not saved');
+    expect(firstNoticeText()).toContain('rolled back');
   });
 
   it('does not let an older rejected appearance save overwrite a newer saved appearance', async () => {
     const { panel, merged, save } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#ff0000' }],
     });
-    const group = merged.tagGroups[0]!;
+    const group = expectDefined(merged.tagGroups[0]);
     let rejectFirst!: (error: Error) => void;
     let markFirstStarted!: () => void;
     const firstStarted = new Promise<void>((resolve) => {
@@ -795,8 +813,8 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(group.color).toBe('#00ff00');
     expect(save).toHaveBeenCalledTimes(2);
     expect(Notice).toHaveBeenCalledOnce();
-    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('Newer changes were kept');
-    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).not.toContain('rolled back');
+    expect(firstNoticeText()).toContain('Newer changes were kept');
+    expect(firstNoticeText()).not.toContain('rolled back');
   });
 
   it('prefix vault rename confirmation shows both scopes and reports the changed-file count', async () => {
@@ -810,10 +828,12 @@ describe('LeftPanel top-level tag group menus', () => {
       changedFiles: ['a.md', 'b.md'],
     });
 
-    openContextMenu(el.querySelector('.abyss-tag-group-header')!);
-    items.find((item) => item.title === 'Rename prefix across vault…')!.click();
-    const modal = activeDocument.querySelector<HTMLElement>('.abyss-rename-tag-modal')!;
-    const input = modal.querySelector<HTMLInputElement>('input')!;
+    openContextMenu(expectDefined(el.querySelector('.abyss-tag-group-header')));
+    expectDefined(items.find((item) => item.title === 'Rename prefix across vault…')).click();
+    const modal = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-rename-tag-modal'),
+    );
+    const input = expectDefined(modal.querySelector<HTMLInputElement>('input'));
     input.value = '#focus';
     input.dispatchEvent(new Event('input', { bubbles: true }));
 
@@ -822,12 +842,14 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(modal.textContent).toContain('subtags');
     expect(modal.textContent).toContain('across the vault');
 
-    Array.from(modal.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent === 'Rename across vault')!
-      .click();
+    expectDefined(
+      Array.from(modal.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Rename across vault',
+      ),
+    ).click();
     await flushMicrotasks();
 
-    expect(tm.renameTagPrefix).toHaveBeenCalledWith('#work', '#focus');
+    expect(methodOf(tm, 'renameTagPrefix')).toHaveBeenCalledWith('#work', '#focus');
     expect(Notice).toHaveBeenCalledTimes(1);
     expect(vi.mocked(Notice).mock.calls[0]?.[0]).toContain('2 files');
   });
@@ -843,18 +865,20 @@ describe('LeftPanel top-level tag group menus', () => {
     const onRenamed = vi.fn();
     const modal = new RenameTagModal(null as never, tm, '#work', onRenamed);
     modal.open();
-    const input = modal.contentEl.querySelector<HTMLInputElement>('input')!;
+    const input = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
     input.value = '#focus';
-    Array.from(modal.contentEl.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent === 'Rename across vault')!
-      .click();
+    expectDefined(
+      Array.from(modal.contentEl.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Rename across vault',
+      ),
+    ).click();
     await flushMicrotasks();
 
     expect(onRenamed).toHaveBeenCalledOnce();
     expect(Notice).toHaveBeenCalledTimes(1);
-    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('Warning');
-    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('2 files');
-    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('1 file');
+    expect(firstNoticeText()).toContain('Warning');
+    expect(firstNoticeText()).toContain('2 files');
+    expect(firstNoticeText()).toContain('1 file');
   });
 
   it('settings persistence failure warns without claiming rename success', async () => {
@@ -868,16 +892,18 @@ describe('LeftPanel top-level tag group menus', () => {
     const onRenamed = vi.fn();
     const modal = new RenameTagModal(null as never, tm, '#work', onRenamed);
     modal.open();
-    const input = modal.contentEl.querySelector<HTMLInputElement>('input')!;
+    const input = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
     input.value = '#focus';
-    Array.from(modal.contentEl.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent === 'Rename across vault')!
-      .click();
+    expectDefined(
+      Array.from(modal.contentEl.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Rename across vault',
+      ),
+    ).click();
     await flushMicrotasks();
 
     expect(onRenamed).toHaveBeenCalledOnce();
     expect(Notice).toHaveBeenCalledOnce();
-    const notice = String(vi.mocked(Notice).mock.calls[0]?.[0]);
+    const notice = firstNoticeText();
     expect(notice).toContain('settings were not saved');
     expect(notice).not.toContain('Tag renamed across');
   });
@@ -892,16 +918,18 @@ describe('LeftPanel top-level tag group menus', () => {
     const onRenamed = vi.fn();
     const modal = new RenameTagModal(null as never, tm, '#work', onRenamed);
     modal.open();
-    const input = modal.contentEl.querySelector<HTMLInputElement>('input')!;
+    const input = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
     input.value = '#work/';
-    Array.from(modal.contentEl.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent === 'Rename across vault')!
-      .click();
+    expectDefined(
+      Array.from(modal.contentEl.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Rename across vault',
+      ),
+    ).click();
     await flushMicrotasks();
 
     expect(onRenamed).not.toHaveBeenCalled();
     expect(Notice).toHaveBeenCalledTimes(1);
-    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('trailing slash');
+    expect(firstNoticeText()).toContain('trailing slash');
     expect(modal.contentEl.querySelector('input')).not.toBeNull();
   });
 
@@ -920,9 +948,11 @@ describe('LeftPanel top-level tag group menus', () => {
     vi.spyOn(tm, 'renameTagExact').mockReturnValue(pending);
     const modal = new RenameTagModal(null as never, tm, '#work', vi.fn());
     modal.open();
-    const input = modal.contentEl.querySelector<HTMLInputElement>('input')!;
+    const input = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
     const buttons = Array.from(modal.contentEl.querySelectorAll<HTMLButtonElement>('button'));
-    const renameButton = buttons.find((button) => button.textContent === 'Rename across vault')!;
+    const renameButton = expectDefined(
+      buttons.find((button) => button.textContent === 'Rename across vault'),
+    );
 
     renameButton.click();
     renameButton.click();
@@ -930,7 +960,7 @@ describe('LeftPanel top-level tag group menus', () => {
 
     expect(input.disabled).toBe(true);
     expect(buttons.every((button) => button.disabled)).toBe(true);
-    expect(tm.renameTagExact).toHaveBeenCalledOnce();
+    expect(methodOf(tm, 'renameTagExact')).toHaveBeenCalledOnce();
 
     resolveRename({ type: 'invalid', reason: 'invalid-tag' });
     await flushMicrotasks();
@@ -957,12 +987,12 @@ describe('LeftPanel top-level tag group menus', () => {
       ['#pinned'],
     );
 
-    openContextMenu(el.querySelector('.abyss-pinned-tag')!);
+    openContextMenu(expectDefined(el.querySelector('.abyss-pinned-tag')));
     expect(items.map((item) => item.title)).toContain('Rename tag across vault…');
 
     items.splice(0);
     (el.querySelector('.abyss-group-arrow') as HTMLElement).click();
-    openContextMenu(el.querySelector('.abyss-tag-child')!);
+    openContextMenu(expectDefined(el.querySelector('.abyss-tag-child')));
     expect(items.map((item) => item.title)).toContain('Rename tag across vault…');
   });
 });
@@ -1226,7 +1256,7 @@ describe('LeftPanel drop zones', () => {
       type: 'patch',
       target: {
         type: 'task',
-        ref: expect.objectContaining({ filePath: t.ref.filePath, line: t.ref.line }),
+        ref: objectMatching<TaskSnapshot['ref']>({ filePath: t.ref.filePath, line: t.ref.line }),
       },
       patch: { tags: { add: ['#task/next'], remove: ['#task/inbox'] } },
     });
@@ -1316,7 +1346,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       name: `P${i}`,
     }));
     const { el } = makeFull({ projects });
-    expect(el.querySelectorAll('.abyss-project-item').length).toBe(10);
+    expect(el.querySelectorAll('.abyss-project-item')).toHaveLength(10);
     expect(el.querySelector('.abyss-left-showmore')).toBeTruthy();
   });
 
@@ -1377,7 +1407,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       },
     });
     const headers = el.querySelectorAll('.abyss-tag-group-header');
-    expect(headers.length).toBe(2);
+    expect(headers).toHaveLength(2);
     // Drop group g1 onto g2's header → g1 moves to g2's slot.
     const dt = {
       getData: (t: string) => (t === 'application/x-abyss-taggroup' ? 'g1' : ''),
@@ -1386,7 +1416,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     };
     const drop = new Event('drop', { bubbles: true });
     Object.defineProperty(drop, 'dataTransfer', { value: dt });
-    headers[1]!.dispatchEvent(drop);
+    expectDefined(headers[1]).dispatchEvent(drop);
     expect(merged.tagGroups.map((g) => g.id)).toEqual(['g2', 'g1']);
     expect(save).toHaveBeenCalled();
   });

@@ -40,6 +40,7 @@ import {
 import { PanelNavigator } from './panelNavigation';
 
 export const PANEL_VIEW_TYPE = 'task-calendar-panel';
+const PANEL_DISPLAY_TEXT = 'Abyss Tasks';
 
 let panelViewInstanceSequence = 0;
 const COMPACT_RIGHT_MAX_REM = 58;
@@ -54,10 +55,33 @@ interface CompactPaneElements {
   readonly rightButton: HTMLButtonElement;
 }
 
+interface CompactPaneAccessElements extends CompactPaneElements {
+  readonly layout: HTMLElement;
+}
+
 interface PendingCompactPane {
   readonly pane: CompactPane;
   readonly moveFocus: boolean;
 }
+
+interface PanelLayoutElements {
+  readonly layout: HTMLElement;
+  readonly rail: HTMLElement;
+  readonly left: HTMLElement;
+  readonly center: HTMLElement;
+  readonly right: HTMLElement;
+  readonly quickCaptureHost: HTMLElement;
+}
+
+type PanelViewDependencies = [
+  settings: CalendarSettings,
+  tagManager: TagManager,
+  queries: TaskQueryApi,
+  tasks: TaskApplicationApi & TaskCaptureApplicationApi,
+  statusRegistry: StatusRegistry,
+  onSaveSettings?: () => Promise<void>,
+  commentTimeContext?: CommentTimeContextProvider,
+];
 
 function rootRefOfNode(target: TaskNodeRef): TaskRef {
   let current = target;
@@ -67,17 +91,52 @@ function rootRefOfNode(target: TaskNodeRef): TaskRef {
 
 type TaskCommand = Parameters<TaskApplicationApi['execute']>[0];
 
+type DirectTargetCommand = Extract<
+  TaskCommand,
+  {
+    type: 'patch' | 'append-title' | 'set-status' | 'toggle-completion' | 'set-description';
+  }
+>;
+type SubtaskReferenceCommand = Extract<
+  TaskCommand,
+  { readonly type: 'delete-subtask' | 'reorder-subtask' }
+>;
+type CommentReferenceCommand = Extract<
+  TaskCommand,
+  { readonly type: 'update-comment' | 'delete-comment' }
+>;
+
+const DIRECT_TARGET_COMMAND_TYPES = new Set<TaskCommand['type']>([
+  'patch',
+  'append-title',
+  'set-status',
+  'toggle-completion',
+  'set-description',
+]);
+const SUBTASK_REFERENCE_COMMAND_TYPES = new Set<TaskCommand['type']>([
+  'delete-subtask',
+  'reorder-subtask',
+]);
+const COMMENT_REFERENCE_COMMAND_TYPES = new Set<TaskCommand['type']>([
+  'update-comment',
+  'delete-comment',
+]);
+
+function isDirectTargetCommand(command: TaskCommand): command is DirectTargetCommand {
+  return DIRECT_TARGET_COMMAND_TYPES.has(command.type);
+}
+
+function isSubtaskReferenceCommand(command: TaskCommand): command is SubtaskReferenceCommand {
+  return SUBTASK_REFERENCE_COMMAND_TYPES.has(command.type);
+}
+
+function isCommentReferenceCommand(command: TaskCommand): command is CommentReferenceCommand {
+  return COMMENT_REFERENCE_COMMAND_TYPES.has(command.type);
+}
+
 function commandRootRef(command: TaskCommand): TaskRef | undefined {
   if (command.type === 'create') return undefined;
-  if (
-    command.type === 'patch' ||
-    command.type === 'append-title' ||
-    command.type === 'set-status' ||
-    command.type === 'toggle-completion' ||
-    command.type === 'set-description'
-  ) {
-    return rootRefOfNode(command.target);
-  }
+  if (isDirectTargetCommand(command)) return rootRefOfNode(command.target);
   if (command.type === 'edit-link') {
     return rootRefOfNode(
       command.target.type === 'comment' ? command.target.ref.parent : command.target.target,
@@ -86,37 +145,31 @@ function commandRootRef(command: TaskCommand): TaskRef | undefined {
   if (command.type === 'add-subtask' || command.type === 'add-comment') {
     return rootRefOfNode(command.parent);
   }
-  if (command.type === 'delete-subtask' || command.type === 'reorder-subtask') {
+  if (isSubtaskReferenceCommand(command)) {
     return rootRefOfNode(command.subtask.parent);
   }
-  if (command.type === 'update-comment' || command.type === 'delete-comment') {
+  if (isCommentReferenceCommand(command)) {
     return rootRefOfNode(command.comment.parent);
   }
   return command.ref;
 }
 
+function hasFinitePositiveBounds(bounds: DOMRect): boolean {
+  const coordinates = [bounds.left, bounds.top, bounds.width, bounds.height];
+  return coordinates.every(Number.isFinite) && bounds.width > 0 && bounds.height > 0;
+}
+
+function hasPositiveClientRect(element: HTMLElement): boolean {
+  return Array.from(element.getClientRects()).some((rect) => rect.width > 0 && rect.height > 0);
+}
+
 function positiveRenderedArea(element: HTMLElement): DOMRect | null {
   const bounds = element.getBoundingClientRect();
-  if (
-    !Number.isFinite(bounds.left) ||
-    !Number.isFinite(bounds.top) ||
-    !Number.isFinite(bounds.width) ||
-    !Number.isFinite(bounds.height) ||
-    bounds.width <= 0 ||
-    bounds.height <= 0
-  ) {
-    return null;
-  }
-  const rects = element.getClientRects();
-  for (let index = 0; index < rects.length; index++) {
-    const rect = rects[index];
-    if (rect && rect.width > 0 && rect.height > 0) return bounds;
-  }
-  return null;
+  return hasFinitePositiveBounds(bounds) && hasPositiveClientRect(element) ? bounds : null;
 }
 
 function intersectsOwnerViewport(bounds: DOMRect, ownerWindow: Window | null): boolean {
-  if (!ownerWindow) return true;
+  if (ownerWindow == null) return true;
   const width = ownerWindow.innerWidth;
   const height = ownerWindow.innerHeight;
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return true;
@@ -128,69 +181,139 @@ function hasPresentedPanelGeometry(element: HTMLElement, ownerWindow: Window | n
   return bounds !== null && intersectsOwnerViewport(bounds, ownerWindow);
 }
 
+function isImeKeyboardEvent(event: KeyboardEvent): boolean {
+  const legacyCode = (event as unknown as { readonly keyCode?: number }).keyCode;
+  return event.isComposing || legacyCode === 229;
+}
+
+function hasVisibleAncestors(element: HTMLElement, ownerWindow: Window | null): boolean {
+  let current: HTMLElement | null = element;
+  while (current != null) {
+    if (current.hidden) return false;
+    const style = ownerWindow?.getComputedStyle(current);
+    if (style?.display === 'none' || style?.visibility === 'hidden') return false;
+    current = current.parentElement;
+  }
+  return true;
+}
+
+function configureCompactPaneElements(elements: CompactPaneAccessElements): void {
+  const instanceId = ++panelViewInstanceSequence;
+  elements.left.id = `abyss-task-lists-${String(instanceId)}`;
+  elements.right.id = `abyss-task-details-${String(instanceId)}`;
+  elements.left.tabIndex = -1;
+  elements.right.tabIndex = -1;
+  elements.left.setAttribute('role', 'region');
+  elements.left.setAttribute('aria-label', 'Task lists');
+  elements.right.setAttribute('role', 'region');
+  elements.right.setAttribute('aria-label', 'Task details');
+  elements.leftButton.setAttribute('aria-controls', elements.left.id);
+  elements.rightButton.setAttribute('aria-controls', elements.right.id);
+}
+
+type ResizeObserverConstructor = new (callback: ResizeObserverCallback) => ResizeObserver;
+
+function isResizeObserverConstructor(value: unknown): value is ResizeObserverConstructor {
+  return typeof value === 'function';
+}
+
 export class PanelView extends ItemView {
   private state!: AppState;
   private rail!: RailPanel;
   private left!: LeftPanel;
   private center!: CenterPanel;
   private right!: RightPanel;
-  private queryUnsub?: () => void;
-  private modeUnsub?: () => void;
-  private selectionUnsub?: () => void;
-  private selectedListRenameUnsub?: () => void;
+  private queryUnsub: (() => void) | undefined;
+  private modeUnsub: (() => void) | undefined;
+  private selectionUnsub: (() => void) | undefined;
+  private selectedListRenameUnsub: (() => void) | undefined;
   private projectStore?: ProjectStore;
   private projectStoreUnsub?: () => void;
-  private creationPresentation?: CreationPresentationController;
+  private creationPresentation: CreationPresentationController | undefined;
   private ownedWriteRef: TaskRef | undefined = undefined;
-  private interactionRegistry?: InteractionRegistry<ShortcutActionId>;
-  private quickCapture?: QuickCaptureCoordinator;
-  private shortcutRouter?: PanelShortcutRouter;
+  private interactionRegistry: InteractionRegistry<ShortcutActionId> | undefined;
+  private quickCapture: QuickCaptureCoordinator | undefined;
+  private shortcutRouter: PanelShortcutRouter | undefined;
   private panelNavigation!: PanelNavigator;
-  private compactPaneElements?: CompactPaneElements;
-  private compactPaneCleanup?: () => void;
-  private compactPaneRefresh?: () => void;
+  private compactPaneElements: CompactPaneElements | undefined;
+  private compactPaneCleanup: (() => void) | undefined;
+  private compactPaneRefresh: (() => void) | undefined;
   private compactPaneOpen: CompactPane | null = null;
   private compactTaskSelectionKey: string | undefined = undefined;
   private compactLeftCollapsed = false;
   private compactRightCollapsed = false;
   private pendingCompactPane: PendingCompactPane | undefined = undefined;
-  constructor(
-    leaf: WorkspaceLeaf,
-    private settings: CalendarSettings,
-    private tagManager: TagManager,
-    private queries: TaskQueryApi,
-    private readonly tasks: TaskApplicationApi & TaskCaptureApplicationApi,
-    private statusRegistry: StatusRegistry,
-    private onSaveSettings: () => Promise<void> = async () => {},
-    private commentTimeContext?: CommentTimeContextProvider,
-  ) {
+  private readonly settings: CalendarSettings;
+  private readonly tagManager: TagManager;
+  private readonly queries: TaskQueryApi;
+  private readonly tasks: TaskApplicationApi & TaskCaptureApplicationApi;
+  private readonly statusRegistry: StatusRegistry;
+  private readonly onSaveSettings: () => Promise<void>;
+  private readonly commentTimeContext: CommentTimeContextProvider | undefined;
+
+  constructor(leaf: WorkspaceLeaf, ...dependencies: PanelViewDependencies) {
     super(leaf);
+    const [
+      settings,
+      tagManager,
+      queries,
+      tasks,
+      statusRegistry,
+      onSaveSettings = async () => {},
+      commentTimeContext,
+    ] = dependencies;
+    this.settings = settings;
+    this.tagManager = tagManager;
+    this.queries = queries;
+    this.tasks = tasks;
+    this.statusRegistry = statusRegistry;
+    this.onSaveSettings = onSaveSettings;
+    this.commentTimeContext = commentTimeContext;
   }
 
-  getViewType(): string {
+  override getViewType(): string {
     return PANEL_VIEW_TYPE;
   }
-  getDisplayText(): string {
-    // eslint-disable-next-line obsidianmd/ui/sentence-case -- The plugin's approved display name is branded title case.
-    return 'Abyss Tasks';
+  override getDisplayText(): string {
+    return PANEL_DISPLAY_TEXT;
   }
-  getIcon(): string {
+  override getIcon(): string {
     return 'calendar-days';
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
-  async onOpen(): Promise<void> {
+  override onOpen(): Promise<void> {
     this.contentEl.empty();
     this.contentEl.addClass('abyss-panel-view');
 
     this.state = new AppState();
     this.interactionRegistry = new InteractionRegistry<ShortcutActionId>();
+    this.initializeNavigation();
+    const selectionTasks = this.createSelectionTasks();
+    const elements = this.createLayout();
+    const resolver = new DailyNoteResolver(this.app, this.settings);
+    const projectStore = new ProjectStore(this.app, this.queries, this.settings);
+    projectStore.initialize();
+    this.projectStore = projectStore;
+    const projectManager = new ProjectManager(this.app, this.settings, resolver, selectionTasks);
+    this.createPanels(selectionTasks, projectStore, projectManager);
+    this.registerProjectUpdates(projectStore);
+    this.registerWorkspaceUpdates();
+    this.mountPanels(elements);
+    this.initializeCapture(elements, selectionTasks);
+    this.subscribeToState(elements.layout);
+    this.subscribeToQueries();
+    return Promise.resolve();
+  }
+
+  private initializeNavigation(): void {
     this.panelNavigation = new PanelNavigator(
       this.state,
       this.settings,
       {
         calendarView: () => this.center.calendarView(),
-        setCalendarView: (view) => this.center.setCalendarView(view),
+        setCalendarView: (view) => {
+          this.center.setCalendarView(view);
+        },
         openQuickCapture: () => {
           this.pendingCompactPane = undefined;
           this.closeCompactPane(false);
@@ -201,19 +324,26 @@ export class PanelView extends ItemView {
     );
     this.selectedListRenameUnsub = this.tagManager.registerSelectedListState({
       getSelectedList: () => this.state.get('selectedList'),
-      setSelectedList: (selection) => this.panelNavigation.rebaseListIdentity(selection),
+      setSelectedList: (selection) => {
+        this.panelNavigation.rebaseListIdentity(selection);
+      },
     });
-    const selectionTasks: TaskApplicationApi & TaskCaptureApplicationApi = {
+  }
+
+  private createSelectionTasks(): TaskApplicationApi & TaskCaptureApplicationApi {
+    return {
       queries: this.tasks.queries,
       planCreate: (destination) => this.tasks.planCreate(destination),
       execute: async (command) => {
         const initiatingRef = commandRootRef(command);
         const result = await this.tasks.execute(command);
-        if (initiatingRef) this.convergeOwnCommand(initiatingRef, result);
+        if (initiatingRef != null) this.convergeOwnCommand(initiatingRef, result);
         return result;
       },
     };
+  }
 
+  private createLayout(): PanelLayoutElements {
     const layout = this.contentEl.createDiv({ cls: 'abyss-layout abyss-layout--tasks' });
     const railEl = layout.createDiv({ cls: 'abyss-rail' });
     const leftEl = layout.createDiv({ cls: 'abyss-left' });
@@ -245,23 +375,37 @@ export class PanelView extends ItemView {
     const centerEl = centerShell.createDiv({ cls: 'abyss-center' });
     const quickCaptureHost = centerShell.createDiv({ cls: 'abyss-quick-capture-host' });
     const rightEl = layout.createDiv({ cls: 'abyss-right' });
-    this.mountCompactPaneAccess(layout, leftEl, rightEl, compactLeftButton, compactRightButton);
+    this.mountCompactPaneAccess({
+      layout,
+      left: leftEl,
+      right: rightEl,
+      leftButton: compactLeftButton,
+      rightButton: compactRightButton,
+    });
     const creationFeedback = layout.createDiv({ cls: 'abyss-creation-feedback' });
     this.creationPresentation = new CreationPresentationController({
       host: creationFeedback,
       queries: this.queries,
       reducedMotion: () =>
-        creationFeedback.ownerDocument.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)')
+        creationFeedback.ownerDocument.defaultView?.matchMedia('(prefers-reduced-motion: reduce)')
           .matches ?? false,
       now: () => Date.now(),
     });
+    return {
+      layout,
+      rail: railEl,
+      left: leftEl,
+      center: centerEl,
+      right: rightEl,
+      quickCaptureHost,
+    };
+  }
 
-    const resolver = new DailyNoteResolver(this.app, this.settings);
-    const projectStore = new ProjectStore(this.app, this.queries, this.settings);
-    projectStore.initialize();
-    this.projectStore = projectStore;
-    const projectManager = new ProjectManager(this.app, this.settings, resolver, selectionTasks);
-
+  private createPanels(
+    selectionTasks: TaskApplicationApi & TaskCaptureApplicationApi,
+    projectStore: ProjectStore,
+    projectManager: ProjectManager,
+  ): void {
     this.rail = new RailPanel(this.state, this.app as never, this.panelNavigation);
     this.left = new LeftPanel(
       this.state,
@@ -300,29 +444,22 @@ export class PanelView extends ItemView {
       undefined,
       this.tasks,
       undefined,
-      (event) => this.trackOwnWrite(event),
+      (event) => {
+        this.trackOwnWrite(event);
+      },
       this.commentTimeContext,
       this.interactionRegistry,
     );
+  }
 
-    // Keep panels fresh when the project set / stats change. Only the left
-    // panel's Projects section and the projects-mode center depend on this;
-    // re-rendering the tasks-mode center here would double-render on every edit
-    // (TaskIndex already refreshes it), so gate the center refresh to projects mode.
+  private registerProjectUpdates(projectStore: ProjectStore): void {
     this.projectStoreUnsub = projectStore.onUpdate(() => {
       this.left.refresh();
       if (this.state.get('mode') === 'projects') this.center.refresh();
     });
+  }
 
-    // Task 40 (Round 4): the tag-fill text-color contrast fix (tagFillContrast.ts) bakes a
-    // computed `--abyss-tag-text-color` custom property into each block/item's inline style at
-    // render time, from that moment's actual `--background-primary` — unlike a plain CSS
-    // `var(--text-normal)` reference, this does NOT automatically track a live theme switch
-    // (light/dark toggle, or swapping community themes) the way the rest of this view's colors
-    // do, since nothing else here re-renders in response to one. Obsidian fires `css-change`
-    // whenever the active theme/CSS changes; re-rendering the center panel (which owns every
-    // tag-filled block: Month grid, Week/Day time grid, all-day rows) recomputes that property
-    // against the new background so it doesn't stay stuck on a stale light/dark decision.
+  private registerWorkspaceUpdates(): void {
     this.registerEvent(
       this.app.workspace.on('css-change', () => {
         this.compactPaneRefresh?.();
@@ -356,41 +493,50 @@ export class PanelView extends ItemView {
         }
       }),
     );
+  }
 
-    this.rail.mount(railEl);
-    this.left.mount(leftEl);
-    this.center.mount(centerEl);
-    this.right.mount(rightEl);
+  private mountPanels(elements: PanelLayoutElements): void {
+    this.rail.mount(elements.rail);
+    this.left.mount(elements.left);
+    this.center.mount(elements.center);
+    this.right.mount(elements.right);
+  }
 
+  private initializeCapture(
+    elements: PanelLayoutElements,
+    selectionTasks: TaskApplicationApi & TaskCaptureApplicationApi,
+  ): void {
+    const interactionRegistry = this.interactionRegistry;
+    if (interactionRegistry === undefined)
+      throw new Error('Panel interaction registry is unavailable');
     const captureTargets = new CaptureTargetResolver(selectionTasks, this.settings);
     this.quickCapture = new QuickCaptureCoordinator({
-      host: quickCaptureHost,
+      host: elements.quickCaptureHost,
       context: () => this.quickCaptureContext(),
       resolveTarget: (context) => captureTargets.resolve(context),
-      interactionOwnership: this.interactionRegistry,
+      interactionOwnership: interactionRegistry,
       onResult: (result, description) => {
         this.creationPresentation?.present(result, description);
         const pendingPane = this.pendingCompactPane;
         this.pendingCompactPane = undefined;
-        if (description.kind === 'success' && pendingPane) {
-          void Promise.resolve().then(() => {
-            this.openCompactPane(pendingPane.pane, pendingPane.moveFocus);
-          });
+        if (description.kind === 'success' && pendingPane != null) {
+          this.scheduleCompactPaneOpen(pendingPane);
         }
       },
     });
-    const ownerDocument = layout.ownerDocument;
+    const ownerDocument = elements.layout.ownerDocument;
     this.shortcutRouter = new PanelShortcutRouter({
       ownerDocument,
       isActive: () => this.ownsPanelShortcuts(),
       settings: () => this.settings.shortcuts,
       platform: { mod: Platform.isMacOS ? 'meta' : 'ctrl' },
       actions: this.panelNavigation,
-      registry: this.interactionRegistry,
+      registry: interactionRegistry,
       nativeHostBlocks: () => nativeInteractionBlocksPanelShortcuts(ownerDocument),
     });
+  }
 
-    // Update layout class whenever mode changes
+  private subscribeToState(layout: HTMLElement): void {
     this.modeUnsub = this.state.on('mode', (mode) => {
       layout.className = `abyss-layout abyss-layout--${mode}`;
       if (mode !== 'tasks') {
@@ -401,38 +547,45 @@ export class PanelView extends ItemView {
       }
     });
     this.selectionUnsub = this.state.on('taskStack', (stack) => {
-      const selected = stack[0];
-      const selectedRef = selected ? rootTaskRef(selected) : undefined;
-      const selectionKey = selectedRef
-        ? `${selectedRef.filePath}\u0000${String(selectedRef.line)}`
-        : undefined;
-      if (
-        selectionKey &&
-        selectionKey !== this.compactTaskSelectionKey &&
-        this.state.get('mode') === 'tasks' &&
-        this.compactRightCollapsed
-      ) {
-        this.openCompactPane('right', false);
-      } else if (!selectionKey && this.compactPaneOpen === 'right') {
-        this.closeCompactPane(false);
-      }
-      this.compactTaskSelectionKey = selectionKey;
-      if (!this.ownedWriteRef) return;
-      const ref = stack[0] ? rootTaskRef(stack[0]) : undefined;
-      if (!ref || !this.sameRef(ref, this.ownedWriteRef)) this.ownedWriteRef = undefined;
+      this.handleTaskStackChange(stack);
     });
+  }
 
+  private handleTaskStackChange(stack: readonly TaskSelectionNode[]): void {
+    const selected = stack[0];
+    const selectedRef = selected == null ? undefined : rootTaskRef(selected);
+    const selectionKey =
+      selectedRef == null ? undefined : `${selectedRef.filePath}\u0000${String(selectedRef.line)}`;
+    this.updateCompactTaskSelection(selectionKey);
+    if (this.ownedWriteRef == null) return;
+    if (selectedRef == null || !this.sameRef(selectedRef, this.ownedWriteRef)) {
+      this.ownedWriteRef = undefined;
+    }
+  }
+
+  private updateCompactTaskSelection(selectionKey: string | undefined): void {
+    const selectionChanged =
+      selectionKey !== undefined && selectionKey !== this.compactTaskSelectionKey;
+    if (selectionChanged && this.state.get('mode') === 'tasks' && this.compactRightCollapsed) {
+      this.openCompactPane('right', false);
+    } else if (selectionKey === undefined && this.compactPaneOpen === 'right') {
+      this.closeCompactPane(false);
+    }
+    this.compactTaskSelectionKey = selectionKey;
+  }
+
+  private subscribeToQueries(): void {
     this.queryUnsub = this.queries.subscribe((event) => {
       this.left.refresh();
       if (this.state.get('mode') !== 'calendar') this.center.refresh();
       const stack = this.state.get('taskStack');
       if (stack.length === 0) return;
       const root = stack[0];
-      const ref = root ? rootTaskRef(root) : undefined;
-      if (!ref || !this.affects(event, ref.filePath)) return;
-      if (root && 'source' in root) {
+      const ref = root != null ? rootTaskRef(root) : undefined;
+      if (ref == null || !this.affects(event, ref.filePath)) return;
+      if (root != null && 'source' in root) {
         const renamed = renamedRootSelection(event, root, this.queries);
-        if (renamed) {
+        if (renamed != null) {
           const draft = this.right.captureDraftState();
           this.ownedWriteRef = undefined;
           this.state.set('taskStack', rebuildTaskSelection(renamed, stack));
@@ -444,8 +597,15 @@ export class PanelView extends ItemView {
     });
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
-  async onClose(): Promise<void> {
+  override async onClose(): Promise<void> {
+    this.resetCompactPaneState();
+    this.destroyInteractionControllers();
+    this.releaseSubscriptions();
+    this.destroyOwnedViews();
+    this.contentEl.empty();
+  }
+
+  private resetCompactPaneState(): void {
     this.compactPaneCleanup?.();
     this.compactPaneCleanup = undefined;
     this.compactPaneRefresh = undefined;
@@ -455,50 +615,46 @@ export class PanelView extends ItemView {
     this.compactLeftCollapsed = false;
     this.compactRightCollapsed = false;
     this.pendingCompactPane = undefined;
+  }
+
+  private destroyInteractionControllers(): void {
     this.shortcutRouter?.destroy();
     this.shortcutRouter = undefined;
     this.quickCapture?.destroy();
     this.quickCapture = undefined;
+    this.interactionRegistry?.destroy();
+    this.interactionRegistry = undefined;
+  }
+
+  private releaseSubscriptions(): void {
     this.modeUnsub?.();
     this.selectionUnsub?.();
     this.selectedListRenameUnsub?.();
     this.queryUnsub?.();
     this.projectStoreUnsub?.();
+  }
+
+  private destroyOwnedViews(): void {
     this.creationPresentation?.destroy();
     this.creationPresentation = undefined;
     this.projectStore?.destroy();
-    this.rail?.destroy();
-    this.left?.destroy();
-    this.center?.destroy();
-    this.right?.destroy();
-    this.interactionRegistry?.destroy();
-    this.interactionRegistry = undefined;
-    this.contentEl.empty();
+    this.rail.destroy();
+    this.left.destroy();
+    this.center.destroy();
+    this.right.destroy();
   }
 
-  private mountCompactPaneAccess(
-    layout: HTMLElement,
-    left: HTMLElement,
-    right: HTMLElement,
-    leftButton: HTMLButtonElement,
-    rightButton: HTMLButtonElement,
-  ): void {
-    const instanceId = ++panelViewInstanceSequence;
-    left.id = `abyss-task-lists-${String(instanceId)}`;
-    right.id = `abyss-task-details-${String(instanceId)}`;
-    left.tabIndex = -1;
-    right.tabIndex = -1;
-    left.setAttribute('role', 'region');
-    left.setAttribute('aria-label', 'Task lists');
-    right.setAttribute('role', 'region');
-    right.setAttribute('aria-label', 'Task details');
-    leftButton.setAttribute('aria-controls', left.id);
-    rightButton.setAttribute('aria-controls', right.id);
-    this.compactPaneElements = { left, right, leftButton, rightButton };
-
-    const toggleLeft = (): void => this.toggleCompactPane('left');
-    const toggleRight = (): void => this.toggleCompactPane('right');
-    const ownerDocument = layout.ownerDocument;
+  private mountCompactPaneAccess(elements: CompactPaneAccessElements): void {
+    configureCompactPaneElements(elements);
+    this.compactPaneElements = elements;
+    const { layout, leftButton, rightButton } = elements;
+    const toggleLeft = (): void => {
+      this.toggleCompactPane('left');
+    };
+    const toggleRight = (): void => {
+      this.toggleCompactPane('right');
+    };
+    const ownerDocument = elements.layout.ownerDocument;
     const ownerWindow = ownerDocument.defaultView;
     const updateCompactWidth = (width?: number): void => {
       const measuredWidth = width ?? layout.getBoundingClientRect().width;
@@ -507,59 +663,26 @@ export class PanelView extends ItemView {
         ownerWindow,
       );
     };
-    const onWindowResize = (): void => updateCompactWidth();
+    const onWindowResize = (): void => {
+      updateCompactWidth();
+    };
     this.compactPaneRefresh = onWindowResize;
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (
-        event.key !== 'Escape' ||
-        event.isComposing ||
-        // eslint-disable-next-line @typescript-eslint/no-deprecated -- Chromium can expose IME ownership only through the legacy 229 sentinel.
-        event.keyCode === 229 ||
-        event.defaultPrevented ||
-        this.compactPaneOpen === null ||
-        !this.isCompactPaneCollapsed(this.compactPaneOpen) ||
-        this.interactionRegistry?.allows('openCalendar') === false ||
-        nativeInteractionBlocksPanelShortcuts(ownerDocument)
-      ) {
-        return;
-      }
-      event.preventDefault();
-      this.closeCompactPane(true);
+      this.handleCompactEscape(event, ownerDocument);
     };
     const onPointerDown = (event: PointerEvent): void => {
-      const elements = this.compactPaneElements;
-      const pane = this.compactPaneOpen;
-      if (
-        !elements ||
-        !pane ||
-        !this.isCompactPaneCollapsed(pane) ||
-        this.interactionRegistry?.allows('openCalendar') === false
-      ) {
-        return;
-      }
-      const path = event.composedPath();
-      const activePane = pane === 'left' ? elements.left : elements.right;
-      if (
-        path.includes(activePane) ||
-        path.includes(elements.leftButton) ||
-        path.includes(elements.rightButton)
-      ) {
-        return;
-      }
-      this.closeCompactPane(false);
+      this.handleCompactOutsidePointer(event);
     };
     leftButton.addEventListener('click', toggleLeft);
     rightButton.addEventListener('click', toggleRight);
     ownerDocument.addEventListener('keydown', onKeyDown);
     ownerDocument.addEventListener('pointerdown', onPointerDown, true);
     ownerWindow?.addEventListener('resize', onWindowResize);
-    const OwnerResizeObserver = ownerWindow?.ResizeObserver;
-    const resizeObserver = OwnerResizeObserver
-      ? new OwnerResizeObserver((entries) => {
-          const entry = entries.find((candidate) => candidate.target === layout);
-          updateCompactWidth(entry?.contentRect.width);
-        })
-      : null;
+    const resizeObserver = this.createCompactResizeObserver(
+      layout,
+      ownerWindow,
+      updateCompactWidth,
+    );
     resizeObserver?.observe(layout);
     updateCompactWidth();
     this.compactPaneCleanup = () => {
@@ -573,6 +696,60 @@ export class PanelView extends ItemView {
     };
   }
 
+  private createCompactResizeObserver(
+    layout: HTMLElement,
+    ownerWindow: Window | null,
+    updateWidth: (width?: number) => void,
+  ): ResizeObserver | null {
+    const candidate: unknown =
+      ownerWindow == null ? undefined : Reflect.get(ownerWindow, 'ResizeObserver');
+    if (!isResizeObserverConstructor(candidate)) return null;
+    return new candidate((entries) => {
+      const entry = entries.find((candidate) => candidate.target === layout);
+      updateWidth(entry?.contentRect.width);
+    });
+  }
+
+  private handleCompactEscape(event: KeyboardEvent, ownerDocument: Document): void {
+    const pane = this.compactPaneOpen;
+    if (
+      event.key !== 'Escape' ||
+      isImeKeyboardEvent(event) ||
+      event.defaultPrevented ||
+      pane === null ||
+      !this.isCompactPaneCollapsed(pane) ||
+      this.interactionRegistry?.allows('openCalendar') === false ||
+      nativeInteractionBlocksPanelShortcuts(ownerDocument)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    this.closeCompactPane(true);
+  }
+
+  private handleCompactOutsidePointer(event: PointerEvent): void {
+    const elements = this.compactPaneElements;
+    const pane = this.compactPaneOpen;
+    if (
+      elements == null ||
+      pane === null ||
+      !this.isCompactPaneCollapsed(pane) ||
+      this.interactionRegistry?.allows('openCalendar') === false
+    ) {
+      return;
+    }
+    const path = event.composedPath();
+    const activePane = pane === 'left' ? elements.left : elements.right;
+    if (
+      path.includes(activePane) ||
+      path.includes(elements.leftButton) ||
+      path.includes(elements.rightButton)
+    ) {
+      return;
+    }
+    this.closeCompactPane(false);
+  }
+
   private toggleCompactPane(pane: CompactPane): void {
     if (this.compactPaneOpen === pane) {
       this.closeCompactPane(true);
@@ -583,11 +760,15 @@ export class PanelView extends ItemView {
 
   private openCompactPane(pane: CompactPane, moveFocus: boolean): void {
     const elements = this.compactPaneElements;
-    if (!elements || !this.isCompactPaneCollapsed(pane) || this.state.get('mode') !== 'tasks') {
+    if (
+      elements == null ||
+      !this.isCompactPaneCollapsed(pane) ||
+      this.state.get('mode') !== 'tasks'
+    ) {
       return;
     }
     const quickCapture = this.quickCapture;
-    if (quickCapture && quickCapture.phase !== 'closed') {
+    if (quickCapture != null && quickCapture.phase !== 'closed') {
       if (quickCapture.isSubmitting) this.pendingCompactPane = { pane, moveFocus };
       return;
     }
@@ -601,16 +782,25 @@ export class PanelView extends ItemView {
     if (moveFocus) activePane.focus({ preventScroll: true });
   }
 
+  private scheduleCompactPaneOpen(pending: PendingCompactPane): void {
+    void Promise.resolve().then(
+      () => {
+        this.openCompactPane(pending.pane, pending.moveFocus);
+      },
+      () => undefined,
+    );
+  }
+
   private closeCompactPane(restoreFocus: boolean): void {
     const elements = this.compactPaneElements;
     const pane = this.compactPaneOpen;
     this.compactPaneOpen = null;
-    if (!elements) return;
+    if (elements == null) return;
     elements.left.removeClass('is-compact-open');
     elements.right.removeClass('is-compact-open');
     this.setCompactPaneButtonState(elements.leftButton, 'task lists', false);
     this.setCompactPaneButtonState(elements.rightButton, 'task details', false);
-    if (restoreFocus && pane) {
+    if (restoreFocus && pane !== null) {
       const button = pane === 'left' ? elements.leftButton : elements.rightButton;
       if (button.isConnected) button.focus({ preventScroll: true });
     }
@@ -629,21 +819,35 @@ export class PanelView extends ItemView {
   }
 
   private updateCompactPaneAvailability(width: number, ownerWindow: Window | null): void {
-    const rootFontSize = Number.parseFloat(
-      ownerWindow?.getComputedStyle(this.contentEl.ownerDocument.documentElement).fontSize ?? '',
-    );
-    const rem = Number.isFinite(rootFontSize) && rootFontSize > 0 ? rootFontSize : 16;
+    const rem = this.rootFontSize(ownerWindow);
     const wasRightCollapsed = this.compactRightCollapsed;
     this.compactRightCollapsed = width <= COMPACT_RIGHT_MAX_REM * rem;
     this.compactLeftCollapsed = width <= COMPACT_LEFT_MAX_REM * rem;
+    this.discardExpandedPendingPane();
+    this.closeExpandedCompactPane();
+    this.openNewlyCollapsedTaskDetails(wasRightCollapsed);
+  }
 
-    const pendingPane = this.pendingCompactPane;
-    if (pendingPane && !this.isCompactPaneCollapsed(pendingPane.pane)) {
+  private rootFontSize(ownerWindow: Window | null): number {
+    const value = Number.parseFloat(
+      ownerWindow?.getComputedStyle(this.contentEl.ownerDocument.documentElement).fontSize ?? '',
+    );
+    return Number.isFinite(value) && value > 0 ? value : 16;
+  }
+
+  private discardExpandedPendingPane(): void {
+    const pending = this.pendingCompactPane;
+    if (pending != null && !this.isCompactPaneCollapsed(pending.pane)) {
       this.pendingCompactPane = undefined;
     }
+  }
 
+  private closeExpandedCompactPane(): void {
     const pane = this.compactPaneOpen;
-    if (pane && !this.isCompactPaneCollapsed(pane)) this.closeCompactPane(false);
+    if (pane !== null && !this.isCompactPaneCollapsed(pane)) this.closeCompactPane(false);
+  }
+
+  private openNewlyCollapsedTaskDetails(wasRightCollapsed: boolean): void {
     if (
       !wasRightCollapsed &&
       this.compactRightCollapsed &&
@@ -673,21 +877,17 @@ export class PanelView extends ItemView {
   }
 
   private ownsPanelShortcuts(): boolean {
-    if (this.app.workspace.getActiveViewOfType(PanelView) !== this || !this.contentEl.isConnected) {
-      return false;
-    }
+    if (!this.isActiveConnectedPanel()) return false;
     const ownerWindow = this.contentEl.ownerDocument.defaultView;
-    let current: HTMLElement | null = this.contentEl;
-    while (current) {
-      if (current.hidden) return false;
-      const style = ownerWindow?.getComputedStyle(current);
-      if (style?.display === 'none' || style?.visibility === 'hidden') return false;
-      current = current.parentElement;
-    }
+    if (!hasVisibleAncestors(this.contentEl, ownerWindow)) return false;
     return (
       hasPresentedPanelGeometry(this.containerEl, ownerWindow ?? null) &&
       hasPresentedPanelGeometry(this.contentEl, ownerWindow ?? null)
     );
+  }
+
+  private isActiveConnectedPanel(): boolean {
+    return this.app.workspace.getActiveViewOfType(PanelView) === this && this.contentEl.isConnected;
   }
 
   private affects(event: TaskIndexEvent, path: string): boolean {
@@ -701,20 +901,7 @@ export class PanelView extends ItemView {
     const stack = this.state.get('taskStack');
     this.clearSelectionMessage();
     if (resolution.type === 'exact' || resolution.type === 'rebased') {
-      const current = resolution.type === 'exact' ? resolution.task : resolution.current;
-      const consumedOwnedRef =
-        resolution.type === 'rebased' &&
-        resolution.evidence === 'authority-transition' &&
-        this.ownedWriteRef &&
-        this.sameRef(this.ownedWriteRef, resolution.previous.ref)
-          ? this.ownedWriteRef
-          : undefined;
-      const draft = consumedOwnedRef
-        ? this.right.captureDraftStateForOwnedTransition(consumedOwnedRef, current.ref)
-        : this.right.captureDraftState();
-      this.ownedWriteRef = undefined;
-      this.state.set('taskStack', rebuildTaskSelection(current, stack));
-      this.right.restoreDraftState(draft, current);
+      this.applyResolvedSelection(resolution, stack);
       return;
     }
     const draft = this.right.captureDraftState();
@@ -724,24 +911,47 @@ export class PanelView extends ItemView {
       this.right.detachDraftState(draft);
       return;
     }
-    if (
-      resolution.type === 'not-found' ||
-      resolution.type === 'uncertain' ||
-      resolution.type === 'ambiguous'
-    ) {
-      this.state.set('taskStack', []);
-      this.right.detachDraftState(draft);
+    this.state.set('taskStack', []);
+    this.right.detachDraftState(draft);
+  }
+
+  private applyResolvedSelection(
+    resolution: Extract<TaskResolution, { readonly type: 'exact' | 'rebased' }>,
+    stack: readonly TaskSelectionNode[],
+  ): void {
+    const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+    const consumedOwnedRef = this.consumedOwnedRef(resolution);
+    const draft =
+      consumedOwnedRef != null
+        ? this.right.captureDraftStateForOwnedTransition(consumedOwnedRef, current.ref)
+        : this.right.captureDraftState();
+    this.ownedWriteRef = undefined;
+    this.state.set('taskStack', rebuildTaskSelection(current, stack));
+    this.right.restoreDraftState(draft, current);
+  }
+
+  private consumedOwnedRef(
+    resolution: Extract<TaskResolution, { readonly type: 'exact' | 'rebased' }>,
+  ): TaskRef | undefined {
+    if (resolution.type !== 'rebased' || resolution.evidence !== 'authority-transition') {
+      return undefined;
     }
+    const ownedWriteRef = this.ownedWriteRef;
+    return ownedWriteRef != null && this.sameRef(ownedWriteRef, resolution.previous.ref)
+      ? ownedWriteRef
+      : undefined;
   }
 
   private acknowledgeOwnWrite(taskOrRef?: TaskSelectionNode | TaskRef): void {
     const selected = this.state.get('taskStack')[0];
-    const selectedRef = selected ? rootTaskRef(selected) : undefined;
+    const selectedRef = selected != null ? rootTaskRef(selected) : undefined;
     let suppliedRef: TaskRef | undefined;
-    if (taskOrRef) suppliedRef = 'revision' in taskOrRef ? taskOrRef : rootTaskRef(taskOrRef);
-    if (suppliedRef && (!selectedRef || !this.sameRef(suppliedRef, selectedRef))) return;
+    if (taskOrRef != null)
+      suppliedRef = 'revision' in taskOrRef ? taskOrRef : rootTaskRef(taskOrRef);
+    if (suppliedRef != null && (selectedRef == null || !this.sameRef(suppliedRef, selectedRef)))
+      return;
     const acknowledged = suppliedRef ?? selectedRef;
-    this.ownedWriteRef = acknowledged ? { ...acknowledged } : undefined;
+    this.ownedWriteRef = acknowledged != null ? { ...acknowledged } : undefined;
   }
 
   private trackOwnWrite(event: {
@@ -752,7 +962,7 @@ export class PanelView extends ItemView {
       this.acknowledgeOwnWrite(event.ref);
       return;
     }
-    if (this.ownedWriteRef && this.sameRef(this.ownedWriteRef, event.ref)) {
+    if (this.ownedWriteRef != null && this.sameRef(this.ownedWriteRef, event.ref)) {
       this.ownedWriteRef = undefined;
     }
   }
@@ -760,8 +970,8 @@ export class PanelView extends ItemView {
   private convergeOwnCommand(initiatingRef: TaskRef, result: TaskCommandResult): void {
     if (result.type !== 'ok' || result.outcome.type !== 'task') return;
     const stack = this.state.get('taskStack');
-    const selectedRef = stack[0] ? rootTaskRef(stack[0]) : undefined;
-    if (!selectedRef || !this.sameRef(selectedRef, initiatingRef)) return;
+    const selectedRef = stack[0] != null ? rootTaskRef(stack[0]) : undefined;
+    if (selectedRef == null || !this.sameRef(selectedRef, initiatingRef)) return;
     const updated = result.outcome.task;
     const draft = this.right.captureDraftState();
     this.state.set('taskStack', rebuildTaskSelection(updated, stack));

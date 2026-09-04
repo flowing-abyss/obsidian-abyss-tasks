@@ -6,7 +6,7 @@ import { canonicalStatusCatalog } from './helpers';
 const list = [
   { id: 'a', symbol: 'x' },
   { id: 'b', symbol: '!' },
-] as any;
+];
 
 describe('validateStatusSymbol', () => {
   it('uses the injected semantic status catalog for status edits', () => {

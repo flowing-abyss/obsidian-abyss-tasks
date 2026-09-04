@@ -41,10 +41,36 @@ function monthCompactClass(kind: MonthCompactKind): string {
 
 function monthCompactSpanRole(task: TaskSnapshot, kind: MonthCompactKind): string {
   if (kind === 'deadline') return 'due-deadline';
-  if (task.planning.scheduled && task.planning.scheduled !== task.planning.due) {
+  if (task.planning.scheduled != null && task.planning.scheduled !== task.planning.due) {
     return 'scheduled-body';
   }
   return kind === 'timed' ? 'timed-body' : 'all-day-body';
+}
+
+type MonthGridMoment = ReturnType<typeof window.moment>;
+
+interface MonthGridRenderContext {
+  readonly tasks: TaskSnapshot[];
+  readonly config: ResolvedConfig;
+  readonly today: string;
+  readonly month: MonthGridMoment;
+  readonly monthOffset: number;
+  readonly visibleDates: readonly string[];
+  readonly monthRows: readonly MonthVisibleRow[];
+  readonly occurrenceFor: CalendarOccurrenceLookup;
+  readonly spanCallbacks: AllDayCallbacks;
+}
+
+interface MonthGridPatchContext {
+  readonly monthRows: readonly MonthVisibleRow[];
+  readonly occurrenceFor: CalendarOccurrenceLookup;
+  readonly spanCallbacks: AllDayCallbacks;
+}
+
+function configuredMonth(startPosition: string): MonthGridMoment {
+  return startPosition !== ''
+    ? window.moment(startPosition, 'YYYY-MM').date(1)
+    : window.moment().date(1);
 }
 
 export interface MonthGridViewCallbacks extends ForecastInteractionCallbacks {
@@ -68,9 +94,9 @@ export class MonthGridView extends BaseView {
   private skeletonKey: string | null = null;
   private visibleDates: string[] = [];
   private md = new Component();
-  private spanInteractions = createSpanInteractionOwner();
+  private readonly spanInteractions = createSpanInteractionOwner();
 
-  constructor(private callbacks: MonthGridViewCallbacks) {
+  constructor(private readonly callbacks: MonthGridViewCallbacks) {
     super();
   }
 
@@ -84,23 +110,13 @@ export class MonthGridView extends BaseView {
     container.empty();
 
     const today = window.moment().format('YYYY-MM-DD');
-    const month = config.startPosition
-      ? window.moment(config.startPosition, 'YYYY-MM').date(1)
-      : window.moment().date(1);
+    const month = configuredMonth(config.startPosition);
     const firstDayOfMonth = parseInt(window.moment(month).format('d'), 10);
     this.skeletonKey = this.buildSkeletonKey(month.format('YYYY-MM'), config);
 
-    const grid = container.createDiv({ cls: 'abyss-mg-grid' });
-    const headRow = grid.createDiv({ cls: 'abyss-mg-head-row' });
-    headRow.createDiv({ cls: 'abyss-mg-week-head' }); // empty corner, aligns with the week-number column
     const monthOffset = weekStartOffset(firstDayOfMonth, config.firstDayOfWeek);
-    for (let h = monthOffset; h < monthOffset + 7; h++) {
-      headRow.createDiv({
-        cls: 'abyss-mg-head',
-        text: window.moment(month).add(h, 'days').format('ddd'),
-      });
-    }
-
+    const grid = container.createDiv({ cls: 'abyss-mg-grid' });
+    this.renderHeader(grid, month, monthOffset);
     const visibleDates = Array.from({ length: 42 }, (_, index) =>
       window
         .moment(month)
@@ -111,118 +127,154 @@ export class MonthGridView extends BaseView {
     const occurrenceFor = calendarOccurrenceLookup(tasks);
     const monthRows = layoutVisibleMonth(tasks, visibleDates).rows;
     const spanCallbacks = this.buildSpanCallbacks(tasks, occurrenceFor);
+    this.renderRows(grid, {
+      tasks,
+      config,
+      today,
+      month,
+      monthOffset,
+      visibleDates,
+      monthRows,
+      occurrenceFor,
+      spanCallbacks,
+    });
+  }
 
-    let starts = monthOffset;
-    for (let w = 0; w < 6; w++) {
-      const row = grid.createDiv({ cls: 'abyss-mg-row' });
-      const rowDates = visibleDates.slice(w * 7, w * 7 + 7);
-      const monthRow: MonthVisibleRow = monthRows[w]!;
-      const spanRow = monthRow.spanRow;
-
-      // Week-number column: clicking it drills into the Week view for that ISO week
-      // (mirrors legacy MonthView.ts's wrapperButton pattern exactly).
-      const weekNr = window.moment(month).add(starts, 'days').format('w');
-      const yearNr = window.moment(month).add(starts, 'days').format('YYYY');
-      const weekBtn = row.createDiv({ cls: 'abyss-mg-week-btn', text: weekNr });
-      weekBtn.setAttribute('data-week', weekNr);
-      weekBtn.setAttribute('data-year', yearNr);
-      weekBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.callbacks.onWeekClick(weekNr, yearNr);
+  private renderHeader(grid: HTMLElement, month: MonthGridMoment, monthOffset: number): void {
+    const row = grid.createDiv({ cls: 'abyss-mg-head-row' });
+    row.createDiv({ cls: 'abyss-mg-week-head' });
+    for (let offset = monthOffset; offset < monthOffset + 7; offset++) {
+      row.createDiv({
+        cls: 'abyss-mg-head',
+        text: window.moment(month).add(offset, 'days').format('ddd'),
       });
-
-      for (let i = starts; i < starts + 7; i++) {
-        const currentDate = window.moment(month).add(i, 'days').format('YYYY-MM-DD');
-        const inCurrentMonth =
-          window.moment(month).format('MM') === window.moment(month).add(i, 'days').format('MM');
-        const cell = row.createDiv({
-          cls: `abyss-mg-cell${currentDate === today ? ' is-today' : ''}${inCurrentMonth ? '' : ' is-outside-month'}`,
-        });
-        cell.setAttribute('data-mg-date', currentDate);
-
-        // Daily-note link (preserved from the legacy MonthView per spec) — opens/creates the
-        // note directly; distinct from clicking elsewhere in the cell, which drills to Week.
-        const dailyNotePath = config.dailyNoteFolder
-          ? `${config.dailyNoteFolder}/${currentDate}`
-          : currentDate;
-        const dayLink = cell.createEl('a', {
-          cls: 'internal-link abyss-mg-day-label',
-          href: dailyNotePath,
-          text: window.moment(month).add(i, 'days').format('D'),
-        });
-        // Direct, unconditional drill-down: the day number is the one click target that's
-        // always present regardless of how full the cell is (Task 32) — a fully-packed cell
-        // may have no empty space left for the cell's own click handler below to catch, so
-        // this doesn't route through that handler's item-exclusion guard at all.
-        // stopPropagation avoids the cell handler also evaluating the same click (harmless
-        // since it already excludes .abyss-mg-day-label, but keeps the intent explicit).
-        dayLink.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.callbacks.onDayClick(currentDate);
-        });
-
-        // Hover-visible "+" affordance: a second meaning for clicking a day cell
-        // (create a task) can't share plain left-click with the existing drill-into-Week
-        // behavior below, so it gets its own small button instead (stops propagation so
-        // it never also fires onDayClick).
-        const addBtn = cell.createEl('button', {
-          cls: 'abyss-mg-add-btn',
-          attr: { type: 'button', 'aria-label': 'Add task', title: 'Add task' },
-          text: '+',
-        });
-        addBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.callbacks.onCreateAtDate(currentDate);
-        });
-
-        const items = cell.createDiv({ cls: 'abyss-mg-cell-items' });
-        this.renderCompactCell(items, monthRow.compactByDate.get(currentDate) ?? [], occurrenceFor);
-        cell.style.setProperty('--abyss-span-lane-count', String(monthRow.slotCount));
-
-        if (inCurrentMonth) {
-          cell.addEventListener('click', (e) => {
-            if (
-              (e.target as HTMLElement).closest(
-                '.abyss-mg-plain, .abyss-mg-block-dot, .abyss-mg-span-segment, .abyss-mg-deadline-marker, .abyss-mg-day-label, .abyss-mg-add-btn, .abyss-mg-quick-add',
-              )
-            )
-              return;
-            this.callbacks.onDayClick(currentDate);
-          });
-        }
-        cell.addEventListener('dragover', (e) => {
-          e.preventDefault();
-          if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-        });
-        cell.addEventListener('drop', (e) => {
-          e.preventDefault();
-          const dragData = e.dataTransfer?.getData('text/plain');
-          if (dragData) this.callbacks.onDrop(dragData, currentDate);
-        });
-      }
-      const layer = row.createDiv({ cls: 'abyss-mg-span-layer' });
-      renderAllDaySpanLayer(
-        layer,
-        spanRow,
-        rowDates,
-        spanCallbacks,
-        this.callbacks.tagGroups ?? [],
-        this.spanInteractions,
-        'month',
-      );
-      starts += 7;
     }
   }
 
+  private renderRows(grid: HTMLElement, context: MonthGridRenderContext): void {
+    for (let rowIndex = 0; rowIndex < 6; rowIndex++) {
+      const monthRow = context.monthRows[rowIndex];
+      if (monthRow === undefined) continue;
+      this.renderRow(grid, rowIndex, monthRow, context);
+    }
+  }
+
+  private renderRow(
+    grid: HTMLElement,
+    rowIndex: number,
+    monthRow: MonthVisibleRow,
+    context: MonthGridRenderContext,
+  ): void {
+    const startIndex = context.monthOffset + rowIndex * 7;
+    const row = grid.createDiv({ cls: 'abyss-mg-row' });
+    const weekStart = window.moment(context.month).add(startIndex, 'days');
+    const weekNr = weekStart.format('w');
+    const yearNr = weekStart.format('YYYY');
+    const weekButton = row.createDiv({ cls: 'abyss-mg-week-btn', text: weekNr });
+    weekButton.setAttribute('data-week', weekNr);
+    weekButton.setAttribute('data-year', yearNr);
+    weekButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.callbacks.onWeekClick(weekNr, yearNr);
+    });
+    for (let index = startIndex; index < startIndex + 7; index++) {
+      this.renderCell(row, index, monthRow, context);
+    }
+    const rowDates = context.visibleDates.slice(rowIndex * 7, rowIndex * 7 + 7);
+    renderAllDaySpanLayer(
+      row.createDiv({ cls: 'abyss-mg-span-layer' }),
+      monthRow.spanRow,
+      rowDates,
+      context.spanCallbacks,
+      this.callbacks.tagGroups ?? [],
+      this.spanInteractions,
+      'month',
+    );
+  }
+
+  private renderCell(
+    row: HTMLElement,
+    index: number,
+    monthRow: MonthVisibleRow,
+    context: MonthGridRenderContext,
+  ): void {
+    const day = window.moment(context.month).add(index, 'days');
+    const currentDate = day.format('YYYY-MM-DD');
+    const inCurrentMonth = window.moment(context.month).format('MM') === day.format('MM');
+    const cell = row.createDiv({
+      cls: `abyss-mg-cell${currentDate === context.today ? ' is-today' : ''}${inCurrentMonth ? '' : ' is-outside-month'}`,
+    });
+    cell.setAttribute('data-mg-date', currentDate);
+    this.renderCellControls(cell, currentDate, day.format('D'), context.config.dailyNoteFolder);
+    const items = cell.createDiv({ cls: 'abyss-mg-cell-items' });
+    this.renderCompactCell(
+      items,
+      monthRow.compactByDate.get(currentDate) ?? [],
+      context.occurrenceFor,
+    );
+    cell.style.setProperty('--abyss-span-lane-count', String(monthRow.slotCount));
+    this.bindCellInteractions(cell, currentDate, inCurrentMonth);
+  }
+
+  private renderCellControls(
+    cell: HTMLElement,
+    currentDate: string,
+    dayLabel: string,
+    dailyNoteFolder: string,
+  ): void {
+    const path = dailyNoteFolder !== '' ? `${dailyNoteFolder}/${currentDate}` : currentDate;
+    const link = cell.createEl('a', {
+      cls: 'internal-link abyss-mg-day-label',
+      href: path,
+      text: dayLabel,
+    });
+    link.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.callbacks.onDayClick(currentDate);
+    });
+    const addButton = cell.createEl('button', {
+      cls: 'abyss-mg-add-btn',
+      attr: { type: 'button', 'aria-label': 'Add task', title: 'Add task' },
+      text: '+',
+    });
+    addButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.callbacks.onCreateAtDate(currentDate);
+    });
+  }
+
+  private bindCellInteractions(
+    cell: HTMLElement,
+    currentDate: string,
+    inCurrentMonth: boolean,
+  ): void {
+    if (inCurrentMonth) {
+      cell.addEventListener('click', (event) => {
+        const interactive = (event.target as HTMLElement).closest(
+          '.abyss-mg-plain, .abyss-mg-block-dot, .abyss-mg-span-segment, .abyss-mg-deadline-marker, .abyss-mg-day-label, .abyss-mg-add-btn, .abyss-mg-quick-add',
+        );
+        if (interactive === null) this.callbacks.onDayClick(currentDate);
+      });
+    }
+    cell.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      if (event.dataTransfer !== null) event.dataTransfer.dropEffect = 'move';
+    });
+    cell.addEventListener('drop', (event) => {
+      event.preventDefault();
+      const dragData = event.dataTransfer?.getData('text/plain');
+      if (dragData !== undefined && dragData.length > 0)
+        this.callbacks.onDrop(dragData, currentDate);
+    });
+  }
+
   override patch(container: HTMLElement, tasks: TaskSnapshot[], config: ResolvedConfig): void {
-    const month = config.startPosition
-      ? window.moment(config.startPosition, 'YYYY-MM').date(1)
-      : window.moment().date(1);
-    if (
+    const month = configuredMonth(config.startPosition);
+    const requiresRender =
       container !== this.containerEl ||
       this.skeletonKey !== this.buildSkeletonKey(month.format('YYYY-MM'), config) ||
-      this.visibleDates.length !== 42
-    ) {
+      this.visibleDates.length !== 42;
+    if (requiresRender) {
       this.render(container, tasks, config);
       return;
     }
@@ -237,30 +289,33 @@ export class MonthGridView extends BaseView {
     const spanCallbacks = this.buildSpanCallbacks(tasks, occurrenceFor);
     const rows = Array.from(container.querySelectorAll<HTMLElement>('.abyss-mg-row'));
     for (const [rowIndex, row] of rows.entries()) {
-      const monthRow: MonthVisibleRow | undefined = monthRows[rowIndex];
-      if (!monthRow) continue;
-      const spanRow = monthRow.spanRow;
-      const rowDates = this.visibleDates.slice(rowIndex * 7, rowIndex * 7 + 7);
-      for (const date of rowDates) {
-        const cell = row.querySelector<HTMLElement>(`.abyss-mg-cell[data-mg-date="${date}"]`);
-        const items = cell?.querySelector<HTMLElement>(':scope > .abyss-mg-cell-items');
-        if (!cell || !items) continue;
-        items.empty();
-        this.renderCompactCell(items, monthRow.compactByDate.get(date) ?? [], occurrenceFor);
-        cell.style.setProperty('--abyss-span-lane-count', String(monthRow.slotCount));
-      }
-      const layer = row.querySelector<HTMLElement>(':scope > .abyss-mg-span-layer');
-      if (!layer) continue;
-      renderAllDaySpanLayer(
-        layer,
-        spanRow,
-        rowDates,
-        spanCallbacks,
-        this.callbacks.tagGroups ?? [],
-        this.spanInteractions,
-        'month',
-      );
+      this.patchRow(row, rowIndex, { monthRows, occurrenceFor, spanCallbacks });
     }
+  }
+
+  private patchRow(row: HTMLElement, rowIndex: number, context: MonthGridPatchContext): void {
+    const monthRow = context.monthRows[rowIndex];
+    if (monthRow === undefined) return;
+    const rowDates = this.visibleDates.slice(rowIndex * 7, rowIndex * 7 + 7);
+    for (const date of rowDates) {
+      const cell = row.querySelector<HTMLElement>(`.abyss-mg-cell[data-mg-date="${date}"]`);
+      const items = cell?.querySelector<HTMLElement>(':scope > .abyss-mg-cell-items');
+      if (cell === null || items === undefined || items === null) continue;
+      items.empty();
+      this.renderCompactCell(items, monthRow.compactByDate.get(date) ?? [], context.occurrenceFor);
+      cell.style.setProperty('--abyss-span-lane-count', String(monthRow.slotCount));
+    }
+    const layer = row.querySelector<HTMLElement>(':scope > .abyss-mg-span-layer');
+    if (layer === null) return;
+    renderAllDaySpanLayer(
+      layer,
+      monthRow.spanRow,
+      rowDates,
+      context.spanCallbacks,
+      this.callbacks.tagGroups ?? [],
+      this.spanInteractions,
+      'month',
+    );
   }
 
   private buildSkeletonKey(month: string, config: ResolvedConfig): string {
@@ -310,16 +365,16 @@ export class MonthGridView extends BaseView {
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
-      ...(this.callbacks.forecastMenuOwner && {
+      ...(this.callbacks.forecastMenuOwner != null && {
         forecastMenuOwner: this.callbacks.forecastMenuOwner,
       }),
-      ...(this.callbacks.onForecastClick && {
+      ...(this.callbacks.onForecastClick != null && {
         onForecastClick: this.callbacks.onForecastClick,
       }),
-      ...(this.callbacks.onForecastContextMenu && {
+      ...(this.callbacks.onForecastContextMenu != null && {
         onForecastContextMenu: this.callbacks.onForecastContextMenu,
       }),
-      ...(this.callbacks.interactionOwnership && {
+      ...(this.callbacks.interactionOwnership != null && {
         interactionOwnership: this.callbacks.interactionOwnership,
       }),
       statusRegistry: this.callbacks.statusRegistry,
@@ -344,7 +399,11 @@ export class MonthGridView extends BaseView {
         item,
         t.recurrence,
         occurrence.kind === 'forecast',
-        occurrence.kind === 'materialized' ? (slot) => this.renderMarker(slot, t) : undefined,
+        occurrence.kind === 'materialized'
+          ? (slot) => {
+              this.renderMarker(slot, t);
+            }
+          : undefined,
       );
       if (kind === 'timed')
         item.createSpan({ cls: 'abyss-mg-item-time', text: `${t.planning.time} ` });
@@ -401,16 +460,22 @@ export class MonthGridView extends BaseView {
       task: t,
       registry: this.callbacks.statusRegistry,
       interactive: true,
-      onLeftClick: () => this.callbacks.onToggle(t),
+      onLeftClick: () => {
+        this.callbacks.onToggle(t);
+      },
       onContextMenu: (ev) => {
         ev.stopPropagation();
         showStatusMenuAt(ev, {
           task: t,
           registry: this.callbacks.statusRegistry,
           owner: this.md,
-          onPickStatus: (c) => this.callbacks.onSetStatus(t, c),
-          onPickPriority: (p) => this.callbacks.onSetPriority(t, p),
-          ...(this.callbacks.interactionOwnership && {
+          onPickStatus: (c) => {
+            this.callbacks.onSetStatus(t, c);
+          },
+          onPickPriority: (p) => {
+            this.callbacks.onSetPriority(t, p);
+          },
+          ...(this.callbacks.interactionOwnership != null && {
             interactionOwnership: this.callbacks.interactionOwnership,
           }),
         });
@@ -429,10 +494,12 @@ export class MonthGridView extends BaseView {
     el.setAttribute('draggable', 'true');
     el.addEventListener('dragstart', (e) => {
       e.dataTransfer?.setData('text/plain', `${t.source.filePath}:::${t.source.line}`);
-      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+      if (e.dataTransfer != null) e.dataTransfer.effectAllowed = 'move';
       el.addClass('is-dragging');
     });
-    el.addEventListener('dragend', () => el.removeClass('is-dragging'));
+    el.addEventListener('dragend', () => {
+      el.removeClass('is-dragging');
+    });
   }
 
   /**
@@ -442,13 +509,15 @@ export class MonthGridView extends BaseView {
    */
   private applyTagFill(el: HTMLElement, t: TaskSnapshot, tagGroups: TagGroup[]): void {
     const tagColor = tagColorFor(t.tags, tagGroups);
-    if (tagColor) {
+    if (tagColor !== undefined && tagColor.length > 0) {
       el.setCssProps({ '--abyss-tag-color': tagColor });
       // Task 40 (Round 4): see tagFillContrast.ts's own doc comment — a fixed text color loses
       // contrast against a bright/pale or very dark/desaturated tag fill; only overridden when a
       // variant was actually computed, otherwise the CSS rule's var(--text-normal) fallback holds.
       const textColorVar = tagFillTextColorVar(el, tagColor);
-      if (textColorVar) el.setCssProps({ '--abyss-tag-text-color': textColorVar });
+      if (textColorVar !== undefined && textColorVar.length > 0) {
+        el.setCssProps({ '--abyss-tag-text-color': textColorVar });
+      }
     }
   }
 

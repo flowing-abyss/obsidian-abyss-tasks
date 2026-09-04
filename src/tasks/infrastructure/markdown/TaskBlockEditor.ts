@@ -27,10 +27,27 @@ interface SourceLine {
   readonly to: number;
 }
 
+interface ReadSourceLineResult {
+  readonly line: SourceLine;
+  readonly next: number;
+}
+
+function readSourceLine(content: string, from: number): ReadSourceLineResult {
+  const newline = content.indexOf('\n', from);
+  const to = newline < 0 ? content.length : newline + 1;
+  const hasCrLf = newline > from && content[newline - 1] === '\r';
+  if (newline < 0) {
+    return { line: { text: content.slice(from), ending: '', from, to }, next: to };
+  }
+  const textTo = newline - (hasCrLf ? 1 : 0);
+  const ending = hasCrLf ? '\r\n' : '\n';
+  return { line: { text: content.slice(from, textTo), ending, from, to }, next: to };
+}
+
 export interface TaskBlockTarget {
   readonly relativeLine: number;
   readonly lineCount: number;
-  readonly childRanges: readonly { readonly from: number; readonly to: number }[];
+  readonly childRanges: ReadonlyArray<{ readonly from: number; readonly to: number }>;
   readonly description?: string;
 }
 
@@ -71,17 +88,9 @@ function sourceLines(content: string): SourceLine[] {
   const result: SourceLine[] = [];
   let from = 0;
   while (from < content.length) {
-    const newline = content.indexOf('\n', from);
-    const to = newline < 0 ? content.length : newline + 1;
-    const hasCrLf = newline > from && content[newline - 1] === '\r';
-    let textTo = content.length;
-    let ending: SourceLine['ending'] = '';
-    if (newline >= 0) {
-      textTo = newline - (hasCrLf ? 1 : 0);
-      ending = hasCrLf ? '\r\n' : '\n';
-    }
-    result.push({ text: content.slice(from, textTo), ending, from, to });
-    from = to;
+    const read = readSourceLine(content, from);
+    result.push(read.line);
+    from = read.next;
   }
   return result;
 }
@@ -95,10 +104,15 @@ function quoteDepth(line: string): number {
   return [...(PREFIX_RE.exec(line)?.[1] ?? '')].filter((character) => character === '>').length;
 }
 
+function firstNonEmptyEnding(lines: readonly SourceLine[]): '\n' | '\r\n' {
+  const ending = lines.find((line) => line.ending !== '')?.ending;
+  return ending === '\r\n' ? '\r\n' : '\n';
+}
+
 function preferredEnding(lines: readonly SourceLine[], parentLine: number): '\n' | '\r\n' {
   const parentEnding = lines[parentLine]?.ending;
-  if (parentEnding) return parentEnding;
-  return lines.find((line) => line.ending !== '')?.ending || '\n';
+  if (parentEnding === '\n' || parentEnding === '\r\n') return parentEnding;
+  return firstNonEmptyEnding(lines);
 }
 
 function serializeLines(
@@ -109,9 +123,12 @@ function serializeLines(
   const last = lines[lines.length - 1];
   for (let index = 0; index < lines.length - 1; index++) {
     const line = lines[index];
-    if (line && line.ending === '') line.ending = ending;
+    if (line?.ending === '') line.ending = ending;
   }
-  if (last) last.ending = hadFinalEnding ? last.ending || ending : '';
+  if (last !== undefined) {
+    if (!hadFinalEnding) last.ending = '';
+    else if (last.ending === '') last.ending = ending;
+  }
   return lines.map((line) => line.text + line.ending).join('');
 }
 
@@ -156,7 +173,7 @@ function confirmedChildRange(
       candidate.from === child.relativeLine &&
       candidate.to === child.relativeLine + expected.length - 1,
   );
-  if (!range) return undefined;
+  if (range == null) return undefined;
   const from = parentLine + range.from;
   const to = parentLine + range.to;
   if (to >= lines.length) return undefined;
@@ -183,7 +200,79 @@ function commentParts(
   line: string,
 ): { readonly prefix: string; readonly text: string } | undefined {
   const parsed = parseCommentTimestampPrefix(line);
-  return parsed ? { prefix: parsed.prefix, text: parsed.text } : undefined;
+  return parsed != null ? { prefix: parsed.prefix, text: parsed.text } : undefined;
+}
+
+interface BlockEditContext {
+  readonly lines: SourceLine[];
+  readonly content: string;
+  readonly block: TaskRootBlock;
+  readonly target: TaskBlockTarget;
+  readonly parent: SourceLine;
+  readonly parentLine: number;
+  readonly ending: '\n' | '\r\n';
+  readonly hadFinalEnding: boolean;
+}
+
+function rootBlockAt(
+  lines: readonly SourceLine[],
+  content: string,
+  index: number,
+): { readonly block: TaskRootBlock; readonly next: number } | undefined {
+  const rootLine = lines[index];
+  if (rootLine == null || !TASK_RE.test(rootLine.text)) return undefined;
+  const rootIndent = indentation(rootLine.text);
+  const rootQuote = quoteDepth(rootLine.text);
+  let toLine = index;
+  let cursor = index + 1;
+  while (cursor < lines.length) {
+    const line = lines[cursor];
+    if (line == null) break;
+    if (/^[\s>]*$/u.test(line.text)) {
+      cursor++;
+      continue;
+    }
+    if (quoteDepth(line.text) !== rootQuote || indentation(line.text) <= rootIndent) break;
+    toLine = cursor;
+    cursor++;
+  }
+  const last = lines[toLine];
+  const to = last != null ? last.to - last.ending.length : rootLine.from;
+  return {
+    block: { line: index, toLine, source: content.slice(rootLine.from, to) },
+    next: Math.max(index + 1, cursor),
+  };
+}
+
+function validCapturedBlock(
+  source: string,
+  lines: readonly SourceLine[],
+  blocks: readonly TaskRootBlock[],
+): boolean {
+  const block = blocks[0];
+  return (
+    lines.length > 0 &&
+    blocks.length === 1 &&
+    block?.line === 0 &&
+    block.toLine === lines.length - 1 &&
+    block.source === source
+  );
+}
+
+function rootInsertionIndex(
+  lines: SourceLine[],
+  insertion: TaskInsertionPolicy,
+  ending: '\n' | '\r\n',
+): number {
+  if (insertion.type !== 'section' || insertion.heading.trim().length === 0) return lines.length;
+  const heading = insertion.heading.trim();
+  const found = lines.findIndex((line) => line.text.trim() === heading);
+  if (found >= 0) return found + 1;
+  if (lines.length > 0 && lines[lines.length - 1]?.text.trim().length !== 0) {
+    insertAt(lines, lines.length, insertedLines([''], ending), ending);
+  }
+  insertAt(lines, lines.length, insertedLines([insertion.heading], ending), ending);
+  return lines.length;
 }
 
 export class TaskBlockEditor {
@@ -199,35 +288,13 @@ export class TaskBlockEditor {
     const roots: TaskRootBlock[] = [];
     let index = 0;
     while (index < lines.length) {
-      const rootLine = lines[index];
-      if (!rootLine || !TASK_RE.test(rootLine.text)) {
+      const found = rootBlockAt(lines, content, index);
+      if (found === undefined) {
         index++;
         continue;
       }
-      const rootIndent = indentation(rootLine.text);
-      const rootQuote = quoteDepth(rootLine.text);
-      let toLine = index;
-      let cursor = index + 1;
-      while (cursor < lines.length) {
-        const line = lines[cursor];
-        if (!line) break;
-        if (/^[\s>]*$/u.test(line.text)) {
-          cursor++;
-          continue;
-        }
-        if (quoteDepth(line.text) !== rootQuote || indentation(line.text) <= rootIndent) break;
-        toLine = cursor;
-        cursor++;
-      }
-      const from = rootLine.from;
-      const last = lines[toLine];
-      const to = last ? last.to - last.ending.length : from;
-      roots.push({
-        line: index,
-        toLine,
-        source: content.slice(from, to),
-      });
-      index = Math.max(index + 1, cursor);
+      roots.push(found.block);
+      index = found.next;
     }
     return roots;
   }
@@ -248,34 +315,11 @@ export class TaskBlockEditor {
   ): { readonly content: string; readonly block: TaskRootBlock } | undefined {
     const capturedLines = sourceLines(blockSource);
     const capturedBlocks = this.rootBlocks(blockSource);
-    if (
-      capturedLines.length === 0 ||
-      capturedBlocks.length !== 1 ||
-      capturedBlocks[0]?.line !== 0 ||
-      capturedBlocks[0].toLine !== capturedLines.length - 1 ||
-      capturedBlocks[0].source !== blockSource
-    ) {
-      return undefined;
-    }
+    if (!validCapturedBlock(blockSource, capturedLines, capturedBlocks)) return undefined;
     const lines = sourceLines(content);
-    const ending = lines.find((line) => line.ending !== '')?.ending || '\n';
+    const ending = firstNonEmptyEnding(lines);
     const hadFinalEnding = content.endsWith('\n');
-    let at = lines.length;
-
-    if (insertion.type === 'section' && insertion.heading.trim().length > 0) {
-      const heading = insertion.heading.trim();
-      const found = lines.findIndex((line) => line.text.trim() === heading);
-      if (found >= 0) {
-        at = found + 1;
-      } else {
-        if (lines.length > 0 && lines[lines.length - 1]?.text.trim().length !== 0) {
-          insertAt(lines, lines.length, insertedLines([''], ending), ending);
-        }
-        insertAt(lines, lines.length, insertedLines([insertion.heading], ending), ending);
-        at = lines.length;
-      }
-    }
-
+    const at = rootInsertionIndex(lines, insertion, ending);
     insertAt(
       lines,
       at,
@@ -284,18 +328,18 @@ export class TaskBlockEditor {
     );
     const next = serializeLines(lines, hadFinalEnding, ending);
     const block = this.rootBlocks(next).find((candidate) => candidate.line === at);
-    return block ? { content: next, block } : undefined;
+    return block != null ? { content: next, block } : undefined;
   }
 
   deleteRoot(content: string, block: TaskRootBlock): string | undefined {
     const lines = sourceLines(content);
     const first = lines[block.line];
     const last = lines[block.toLine];
-    if (!first || !last) return undefined;
+    if (first == null || last == null) return undefined;
     let from = first.from;
     if (last.ending === '' && from > 0) {
       const previous = lines[block.line - 1];
-      if (previous) from -= previous.ending.length;
+      if (previous != null) from -= previous.ending.length;
     }
     return content.slice(0, from) + content.slice(last.to);
   }
@@ -307,13 +351,14 @@ export class TaskBlockEditor {
     replacements: readonly string[],
   ): string | undefined {
     const ownership = this.ownedTaskSubtree(block.source, ownerRelativeLine);
-    if (!ownership || replacements.some((replacement) => replacement.length === 0)) {
+    if (ownership == null || replacements.some((replacement) => replacement.length === 0)) {
       return undefined;
     }
     const lines = sourceLines(content);
     const first = lines[block.line + ownership.fromLine];
     const last = lines[block.line + ownership.toLine];
-    if (!first || !last || block.line + ownership.toLine > block.toLine) return undefined;
+    if (first == null || last == null || block.line + ownership.toLine > block.toLine)
+      return undefined;
 
     if (replacements.length === 0) {
       return content.slice(0, first.from) + content.slice(last.to);
@@ -332,7 +377,7 @@ export class TaskBlockEditor {
     const lines = sourceLines(content);
     const absoluteLine = block.line + relativeLine;
     const current = lines[absoluteLine];
-    if (!current || absoluteLine > block.toLine) return { content, block };
+    if (current == null || absoluteLine > block.toLine) return { content, block };
     const next =
       content.slice(0, current.from) + replacement + current.ending + content.slice(current.to);
     const updated =
@@ -360,21 +405,27 @@ export class TaskBlockEditor {
   }
 
   private editDescription(
-    lines: SourceLine[],
-    content: string,
-    block: TaskRootBlock,
-    target: TaskBlockTarget,
-    parent: SourceLine,
-    parentLine: number,
-    ending: '\n' | '\r\n',
+    context: BlockEditContext,
     edit: Extract<TaskBlockEdit, { readonly type: 'set-description' }>,
   ): TaskBlockEditResult | undefined {
-    if (edit.text?.includes('\r')) return { type: 'invalid', field: 'description' };
+    const { content, block, target } = context;
+    if (edit.text?.includes('\r') ?? false) return { type: 'invalid', field: 'description' };
     const requested = edit.text ?? undefined;
     if (requested === target.description) return { type: 'unchanged', content, block };
     const directDescriptions = this.descriptionLines(content, block, target);
+    this.replaceDescriptionLines(context, directDescriptions, requested);
+    return undefined;
+  }
+
+  private replaceDescriptionLines(
+    context: BlockEditContext,
+    directDescriptions: readonly number[],
+    requested: string | undefined,
+  ): void {
+    const { lines, block, parent, parentLine, ending } = context;
+    const firstDescription = directDescriptions[0];
     const insertionLine =
-      directDescriptions.length > 0 ? block.line + directDescriptions[0]! : parentLine + 1;
+      firstDescription === undefined ? parentLine + 1 : block.line + firstDescription;
     for (const relativeLine of [...directDescriptions].sort((left, right) => right - left)) {
       lines.splice(block.line + relativeLine, 1);
     }
@@ -383,46 +434,55 @@ export class TaskBlockEditor {
       const replacements = requested.split('\n').map((line) => `${prefix}- > ${line}`);
       insertAt(lines, insertionLine, insertedLines(replacements, ending), ending);
     }
-    return undefined;
   }
 
   private editSubtaskStructure(
-    lines: SourceLine[],
-    content: string,
-    block: TaskRootBlock,
-    target: TaskBlockTarget,
-    parent: SourceLine,
-    parentLine: number,
-    ending: '\n' | '\r\n',
+    context: BlockEditContext,
     edit: Extract<
       TaskBlockEdit,
       { readonly type: 'add-subtask' | 'delete-subtask' | 'reorder-subtask' }
     >,
   ): TaskBlockEditResult | undefined {
-    if (edit.type === 'add-subtask') {
-      if (edit.text.trim().length === 0 || /[\r\n]/u.test(edit.text)) {
-        return { type: 'invalid', field: 'subtask' };
-      }
-      const prefix = `${PREFIX_RE.exec(parent.text)?.[1] ?? ''}  `;
-      insertAt(
-        lines,
-        parentLine + target.lineCount,
-        insertedLines([`${prefix}- [ ] ${edit.text}`], ending),
-        ending,
-      );
-      return undefined;
-    }
+    if (edit.type === 'add-subtask') return this.addSubtask(context, edit);
+    if (edit.type === 'delete-subtask') return this.deleteSubtask(context, edit);
+    return this.reorderSubtask(context, edit);
+  }
 
-    if (edit.type === 'delete-subtask') {
-      const range = confirmedChildRange(lines, parentLine, target, edit);
-      if (!range) return { type: 'conflict' };
-      lines.splice(range.from, range.to - range.from + 1);
-      return undefined;
+  private addSubtask(
+    context: BlockEditContext,
+    edit: Extract<TaskBlockEdit, { readonly type: 'add-subtask' }>,
+  ): TaskBlockEditResult | undefined {
+    if (edit.text.trim().length === 0 || /[\r\n]/u.test(edit.text)) {
+      return { type: 'invalid', field: 'subtask' };
     }
+    const prefix = `${PREFIX_RE.exec(context.parent.text)?.[1] ?? ''}  `;
+    insertAt(
+      context.lines,
+      context.parentLine + context.target.lineCount,
+      insertedLines([`${prefix}- [ ] ${edit.text}`], context.ending),
+      context.ending,
+    );
+    return undefined;
+  }
 
+  private deleteSubtask(
+    context: BlockEditContext,
+    edit: Extract<TaskBlockEdit, { readonly type: 'delete-subtask' }>,
+  ): TaskBlockEditResult | undefined {
+    const range = confirmedChildRange(context.lines, context.parentLine, context.target, edit);
+    if (range == null) return { type: 'conflict' };
+    context.lines.splice(range.from, range.to - range.from + 1);
+    return undefined;
+  }
+
+  private reorderSubtask(
+    context: BlockEditContext,
+    edit: Extract<TaskBlockEdit, { readonly type: 'reorder-subtask' }>,
+  ): TaskBlockEditResult | undefined {
+    const { lines, parentLine, target, content, block } = context;
     const source = confirmedChildRange(lines, parentLine, target, edit.source);
     const destination = confirmedChildRange(lines, parentLine, target, edit.target);
-    if (!source || !destination) return { type: 'conflict' };
+    if (source == null || destination == null) return { type: 'conflict' };
     if (source.from === destination.from && source.to === destination.to) {
       return { type: 'unchanged', content, block };
     }
@@ -433,6 +493,85 @@ export class TaskBlockEditor {
     const insertion = edit.placement === 'before' ? targetFrom : targetTo + 1;
     lines.splice(insertion, 0, ...moved);
     return undefined;
+  }
+
+  private addComment(
+    context: BlockEditContext,
+    edit: Extract<TaskBlockEdit, { readonly type: 'add-comment' }>,
+  ): TaskBlockEditResult | undefined {
+    if (edit.text.length === 0 || /[\r\n]/u.test(edit.text)) {
+      return { type: 'invalid', field: 'comment' };
+    }
+    const prefix = `${PREFIX_RE.exec(context.parent.text)?.[1] ?? ''}  `;
+    const addition = `${prefix}- ${edit.stamp}: ${edit.text}`;
+    insertAt(
+      context.lines,
+      context.parentLine + context.target.lineCount,
+      insertedLines([addition], context.ending),
+      context.ending,
+    );
+    return undefined;
+  }
+
+  private editExistingComment(
+    context: BlockEditContext,
+    edit: Extract<TaskBlockEdit, { readonly type: 'update-comment' | 'delete-comment' }>,
+  ): TaskBlockEditResult | undefined {
+    const commentLine = context.parentLine + edit.relativeLine;
+    const current = context.lines[commentLine];
+    if (
+      edit.relativeLine <= 0 ||
+      edit.relativeLine >= context.target.lineCount ||
+      current?.text !== lineWithoutCr(edit.originalMarkdown)
+    ) {
+      return { type: 'conflict' };
+    }
+    const comment = commentParts(current.text);
+    if (comment == null) return { type: 'conflict' };
+    if (edit.type === 'delete-comment') {
+      context.lines.splice(commentLine, 1);
+      return undefined;
+    }
+    if (edit.text.length === 0 || /[\r\n]/u.test(edit.text)) {
+      return { type: 'invalid', field: 'comment' };
+    }
+    if (comment.text.trim() === edit.text) {
+      return { type: 'unchanged', content: context.content, block: context.block };
+    }
+    current.text = `${comment.prefix}${edit.text}`;
+    return undefined;
+  }
+
+  private applyEdit(
+    context: BlockEditContext,
+    edit: TaskBlockEdit,
+  ): TaskBlockEditResult | undefined {
+    switch (edit.type) {
+      case 'set-description':
+        return this.editDescription(context, edit);
+      case 'add-subtask':
+      case 'delete-subtask':
+      case 'reorder-subtask':
+        return this.editSubtaskStructure(context, edit);
+      case 'add-comment':
+        return this.addComment(context, edit);
+      case 'update-comment':
+      case 'delete-comment':
+        return this.editExistingComment(context, edit);
+    }
+  }
+
+  private editedResult(context: BlockEditContext): TaskBlockEditResult {
+    const next = serializeLines(context.lines, context.hadFinalEnding, context.ending);
+    if (next === context.content) {
+      return { type: 'unchanged', content: context.content, block: context.block };
+    }
+    const updated = this.rootBlocks(next).find(
+      (candidate) => candidate.line === context.block.line,
+    );
+    return updated != null
+      ? { type: 'changed', content: next, block: updated }
+      : { type: 'conflict' };
   }
 
   edit(
@@ -448,78 +587,17 @@ export class TaskBlockEditor {
       return { type: 'conflict' };
     }
 
-    const ending = preferredEnding(lines, parentLine);
-    const hadFinalEnding = content.endsWith('\n');
-
-    if (edit.type === 'set-description') {
-      const earlyResult = this.editDescription(
-        lines,
-        content,
-        block,
-        target,
-        parent,
-        parentLine,
-        ending,
-        edit,
-      );
-      if (earlyResult) return earlyResult;
-    } else if (
-      edit.type === 'add-subtask' ||
-      edit.type === 'delete-subtask' ||
-      edit.type === 'reorder-subtask'
-    ) {
-      const earlyResult = this.editSubtaskStructure(
-        lines,
-        content,
-        block,
-        target,
-        parent,
-        parentLine,
-        ending,
-        edit,
-      );
-      if (earlyResult) return earlyResult;
-    } else if (edit.type === 'add-comment') {
-      if (edit.text.length === 0 || /[\r\n]/u.test(edit.text)) {
-        return { type: 'invalid', field: 'comment' };
-      }
-      const prefix = `${PREFIX_RE.exec(parent.text)?.[1] ?? ''}  `;
-      const insertionLine = parentLine + target.lineCount;
-      insertAt(
-        lines,
-        insertionLine,
-        insertedLines([`${prefix}- ${edit.stamp}: ${edit.text}`], ending),
-        ending,
-      );
-    } else {
-      const commentLine = parentLine + edit.relativeLine;
-      const current = lines[commentLine];
-      if (
-        edit.relativeLine <= 0 ||
-        edit.relativeLine >= target.lineCount ||
-        !current ||
-        current.text !== lineWithoutCr(edit.originalMarkdown)
-      ) {
-        return { type: 'conflict' };
-      }
-      const comment = commentParts(current.text);
-      if (!comment) return { type: 'conflict' };
-      if (edit.type === 'update-comment') {
-        if (edit.text.length === 0 || /[\r\n]/u.test(edit.text)) {
-          return { type: 'invalid', field: 'comment' };
-        }
-        if (comment.text.trim() === edit.text) {
-          return { type: 'unchanged', content, block };
-        }
-        current.text = `${comment.prefix}${edit.text}`;
-      } else {
-        lines.splice(commentLine, 1);
-      }
-    }
-
-    const next = serializeLines(lines, hadFinalEnding, ending);
-    if (next === content) return { type: 'unchanged', content, block };
-    const updated = this.rootBlocks(next).find((candidate) => candidate.line === block.line);
-    return updated ? { type: 'changed', content: next, block: updated } : { type: 'conflict' };
+    const context: BlockEditContext = {
+      lines,
+      content,
+      block,
+      target,
+      parent,
+      parentLine,
+      ending: preferredEnding(lines, parentLine),
+      hadFinalEnding: content.endsWith('\n'),
+    };
+    const earlyResult = this.applyEdit(context, edit);
+    return earlyResult ?? this.editedResult(context);
   }
 }

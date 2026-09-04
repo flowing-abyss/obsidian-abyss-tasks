@@ -1,4 +1,5 @@
 import type { CommentTimestamp } from '../tasks/domain/commentTimestamp';
+import type { StatusCatalog } from '../tasks/domain/StatusCatalog';
 import type { OnCompletion, TaskPriority, TaskStatus } from '../tasks/domain/types';
 
 export interface Task {
@@ -70,5 +71,5 @@ export interface ParseContext {
   line: number;
   dailyNoteDate?: string; // pre-computed by store; parser stores it verbatim if provided
   globalTaskFilter?: string; // tag to strip, e.g. '#task'
-  statusCatalog: import('../tasks/domain/StatusCatalog').StatusCatalog;
+  statusCatalog: StatusCatalog;
 }

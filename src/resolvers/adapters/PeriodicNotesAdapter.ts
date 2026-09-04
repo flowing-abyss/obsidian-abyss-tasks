@@ -22,8 +22,12 @@ export class PeriodicNotesAdapter implements DailyNoteAdapter {
   getSettings(app: App, calSettings: CalendarSettings): DailyNoteProviderSettings {
     const daily = getPlugin(app)?.settings?.daily ?? {};
     return {
-      folder: daily.folder?.trim() || calSettings.desktop.dailyNoteFolder,
-      format: daily.format || 'YYYY-MM-DD',
+      folder:
+        typeof daily.folder === 'string' && daily.folder.trim().length > 0
+          ? daily.folder.trim()
+          : calSettings.desktop.dailyNoteFolder,
+      format:
+        typeof daily.format === 'string' && daily.format.length > 0 ? daily.format : 'YYYY-MM-DD',
       template: daily.template?.trim() ?? '',
     };
   }

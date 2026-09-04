@@ -6,9 +6,9 @@ import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { freshContainer } from './helpers';
+import { expectDefined, freshContainer } from './helpers';
 
-const ACTIVE_ID = DEFAULT_SETTINGS.projects.statuses[0]!.id;
+const ACTIVE_ID = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]).id;
 
 function proj(over: Partial<Project>): Project {
   return {

@@ -8,6 +8,7 @@ import {
   type TaskSnapshot,
 } from '../tasks';
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
+import { runAsyncAction } from './runAsyncAction';
 
 export interface TimedBlockKeyboardQueueHooks {
   onCommitted(
@@ -46,7 +47,7 @@ function sourceIdentity(task: TaskSnapshot): string {
 }
 
 function timeMinutes(value: string | undefined): number {
-  if (!value) return 0;
+  if (value === undefined || value.length === 0) return 0;
   const [hours, minutes] = value.split(':').map(Number);
   return (hours ?? 0) * 60 + (minutes ?? 0);
 }
@@ -57,6 +58,41 @@ function timeString(minutes: number): string {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function extendStartCommand(
+  task: TaskSnapshot,
+  intent: Extract<TimedBlockKeyboardIntent, { type: 'extend-start' }>,
+): TaskCommand | undefined {
+  if (task.planning.start != null && task.planning.due != null) {
+    const date = shiftLocalDate(task.planning.start, intent.days);
+    return date != null
+      ? { type: 'set-span-boundary', ref: task.ref, boundary: 'start', date }
+      : undefined;
+  }
+  const anchor = task.planning.scheduled ?? task.planning.due;
+  if (anchor == null) return undefined;
+  const start = shiftLocalDate(anchor, intent.days);
+  return start != null
+    ? {
+        type: 'patch',
+        target: { type: 'task', ref: task.ref },
+        patch: { start: { type: 'set', value: start }, due: { type: 'set', value: anchor } },
+      }
+    : undefined;
+}
+
+function extendDueCommand(
+  task: TaskSnapshot,
+  intent: Extract<TimedBlockKeyboardIntent, { type: 'extend-due' }>,
+): TaskCommand | undefined {
+  const base =
+    task.planning.start != null && task.planning.due != null
+      ? task.planning.due
+      : (task.planning.scheduled ?? task.planning.due);
+  if (base == null) return undefined;
+  const due = shiftLocalDate(base, intent.days);
+  return due != null ? { type: 'extend-span', ref: task.ref, due } : undefined;
 }
 
 function commandFor(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): TaskCommand | undefined {
@@ -88,34 +124,10 @@ function commandFor(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): TaskC
     case 'shift-schedule':
       return { type: 'shift-schedule', ref: task.ref, days: intent.days };
     case 'extend-start': {
-      if (task.planning.start && task.planning.due) {
-        const date = shiftLocalDate(task.planning.start, intent.days);
-        return date
-          ? { type: 'set-span-boundary', ref: task.ref, boundary: 'start', date }
-          : undefined;
-      }
-      const anchor = task.planning.scheduled ?? task.planning.due;
-      if (!anchor) return undefined;
-      const start = shiftLocalDate(anchor, intent.days);
-      return start
-        ? {
-            type: 'patch',
-            target: { type: 'task', ref: task.ref },
-            patch: {
-              start: { type: 'set', value: start },
-              due: { type: 'set', value: anchor },
-            },
-          }
-        : undefined;
+      return extendStartCommand(task, intent);
     }
     case 'extend-due': {
-      const base =
-        task.planning.start && task.planning.due
-          ? task.planning.due
-          : (task.planning.scheduled ?? task.planning.due);
-      if (!base) return undefined;
-      const due = shiftLocalDate(base, intent.days);
-      return due ? { type: 'extend-span', ref: task.ref, due } : undefined;
+      return extendDueCommand(task, intent);
     }
   }
 }
@@ -133,8 +145,8 @@ export class TimedBlockKeyboardQueue {
   private activeSourceChanged = false;
 
   constructor(
-    private api: TaskApplicationApi,
-    private hooks: TimedBlockKeyboardQueueHooks,
+    private readonly api: TaskApplicationApi,
+    private readonly hooks: TimedBlockKeyboardQueueHooks,
   ) {}
 
   enqueue(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): number | undefined {
@@ -170,21 +182,21 @@ export class TimedBlockKeyboardQueue {
   private processNext(): void {
     if (this.processing) return;
     const queued = this.pending.shift();
-    if (!queued) return;
-    if (queued.sequence !== this.activeSequence || !this.activeSnapshot) {
+    if (queued == null) return;
+    if (queued.sequence !== this.activeSequence || this.activeSnapshot == null) {
       this.processNext();
       return;
     }
 
     const command = commandFor(this.activeSnapshot, queued.intent);
-    if (!command) {
+    if (command == null) {
       this.finishSequence(queued.sequence);
       return;
     }
 
     this.processing = true;
     this.activeExecuted = true;
-    void this.run(command, queued);
+    runAsyncAction(this.run(command, queued), 'Could not update timed task');
   }
 
   private async run(command: TaskCommand, queued: QueuedIntent): Promise<void> {
@@ -225,7 +237,13 @@ export class TimedBlockKeyboardQueue {
   }
 
   private finishSequence(sequence: number): void {
-    if (sequence !== this.activeSequence || !this.activeTaskKey) return;
+    if (
+      sequence !== this.activeSequence ||
+      this.activeTaskKey === undefined ||
+      this.activeTaskKey.length === 0
+    ) {
+      return;
+    }
     const taskKey = this.activeTaskKey;
     const summary: TimedBlockKeyboardSequenceSummary = {
       executed: this.activeExecuted,

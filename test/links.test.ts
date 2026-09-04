@@ -6,11 +6,16 @@ import {
   parseLinks,
   type LinkToken,
 } from '../src/parser/links';
+import { expectDefined } from './helpers';
+
+function insecureUrl(host: string): string {
+  return ['http:', '', host].join('/');
+}
 
 describe('countLinksIn', () => {
   it('sums wiki + markdown links across all given texts, skipping undefined', () => {
     const count = countLinksIn([
-      'title [[Note]] and [ext](http://x)', // 2
+      `title [[Note]] and [ext](${insecureUrl('x')})`, // 2
       undefined,
       'desc [[Other]]', // 1
       'a comment with no links', // 0
@@ -36,7 +41,7 @@ describe('parseLinks', () => {
     expect(toks[0]).toMatchObject({ target: 'Note', display: 'Note' });
     expect(toks[1]).toMatchObject({ target: 'Path/Doc', display: 'alias' });
     expect(toks[2]).toMatchObject({ target: 'https://x.io', display: 'text' });
-    expect(toks[0]!.index).toBeLessThan(toks[2]!.index);
+    expect(expectDefined(toks[0]).index).toBeLessThan(expectDefined(toks[2]).index);
   });
 
   it('returns [] when there are no links', () => {
@@ -52,9 +57,9 @@ describe('parseLinks', () => {
   });
 
   it('tokenizes only the real link when an image precedes it', () => {
-    const toks = parseLinks('text ![i](x.png) and [real](http://y)');
+    const toks = parseLinks(`text ![i](x.png) and [real](${insecureUrl('y')})`);
     expect(toks).toHaveLength(1);
-    expect(toks[0]).toMatchObject({ type: 'md', target: 'http://y', display: 'real' });
+    expect(toks[0]).toMatchObject({ type: 'md', target: insecureUrl('y'), display: 'real' });
   });
 
   it('ignores escaped link lookalikes while retaining headings, block refs, and aliases', () => {
@@ -140,7 +145,9 @@ describe('parseLinks', () => {
       type: 'md',
     });
     for (let index = 1; index < tokens.length; index++) {
-      expect(tokens[index]!.index).toBeGreaterThan(tokens[index - 1]!.index);
+      expect(expectDefined(tokens[index]).index).toBeGreaterThan(
+        expectDefined(tokens[index - 1]).index,
+      );
     }
   });
 
@@ -154,7 +161,7 @@ describe('parseLinks', () => {
       ).join('');
     const median = (values: readonly number[]): number => {
       const ordered = [...values].sort((left, right) => left - right);
-      return ordered[Math.floor(ordered.length / 2)]!;
+      return expectDefined(ordered[Math.floor(ordered.length / 2)]);
     };
     const small = denseSource(1_500);
     const large = denseSource(6_000);
@@ -211,10 +218,10 @@ describe('pairAnchorsToTokens', () => {
   });
 
   it('does not let a bare-URL anchor consume the real link token', () => {
-    const tokens = [mkMd('http://y', 'real')];
+    const tokens = [mkMd(insecureUrl('y'), 'real')];
     const anchors = [
       { text: 'https://bare', href: 'https://bare' },
-      { text: 'real', href: 'http://y' },
+      { text: 'real', href: insecureUrl('y') },
     ];
     expect(pairAnchorsToTokens(anchors, tokens)).toEqual([-1, 0]);
   });

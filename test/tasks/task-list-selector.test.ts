@@ -37,10 +37,16 @@ function snapshot(
 
 const today = '2026-07-13' as LocalDate;
 
+function withoutStatusGroups(state: ListViewState): ListViewState {
+  const result = { ...state };
+  delete result.statusGroups;
+  return result;
+}
+
 function titles(
   tasks: readonly TaskSnapshot[],
   selection: ListSelection,
-  viewState: ListViewState = { ...getListViewDefaults('today'), statusGroups: undefined },
+  viewState: ListViewState = withoutStatusGroups(getListViewDefaults('today')),
   textQuery?: string,
 ): string[] {
   return selectTaskList({
@@ -348,11 +354,11 @@ describe('selectTaskList', () => {
 
   it('uses time as the secondary key for date sorting', () => {
     const later = snapshot('later', {
-      planning: { due: today, time: '10:00' as TaskSnapshot['planning']['time'] },
+      planning: { due: today, time: '10:00' as NonNullable<TaskSnapshot['planning']['time']> },
     });
     const earlier = snapshot('earlier', {
       line: 1,
-      planning: { due: today, time: '09:00' as TaskSnapshot['planning']['time'] },
+      planning: { due: today, time: '09:00' as NonNullable<TaskSnapshot['planning']['time']> },
     });
     const viewState: ListViewState = {
       groupBy: 'date',

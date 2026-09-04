@@ -4,6 +4,11 @@ import { noInteractionOwnership, type InteractionOwnershipPort } from './interac
 type TagState = 'checked' | 'partial' | 'removing' | 'unchecked';
 
 export class TagPickerModal extends Modal {
+  private readonly getTagColor: (tag: string) => string | undefined;
+  private readonly currentTags: Set<string>;
+  private readonly partialTags: Set<string>;
+  private readonly onCommit: (toAdd: string[], toRemove: string[]) => void;
+  private readonly interactionOwnership: InteractionOwnershipPort;
   private readonly pending = new Map<string, boolean>(); // true=add, false=remove
   private searchEl!: HTMLInputElement;
   private listEl!: HTMLElement;
@@ -11,19 +16,27 @@ export class TagPickerModal extends Modal {
   private ownershipToken: { release(): void } | null = null;
 
   constructor(
-    app: App,
-    private readonly getTagColor: (tag: string) => string | undefined,
-    private readonly currentTags: Set<string>, // tags ALL tasks have
-    private readonly partialTags: Set<string>, // tags SOME tasks have (bulk only)
-    private readonly onCommit: (toAdd: string[], toRemove: string[]) => void,
-    private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
+    ...args: [
+      App,
+      (tag: string) => string | undefined,
+      Set<string>,
+      Set<string>,
+      (toAdd: string[], toRemove: string[]) => void,
+      InteractionOwnershipPort?,
+    ]
   ) {
+    const [app, getTagColor, currentTags, partialTags, onCommit, ownership] = args;
     super(app);
+    this.getTagColor = getTagColor;
+    this.currentTags = currentTags;
+    this.partialTags = partialTags;
+    this.onCommit = onCommit;
+    this.interactionOwnership = ownership ?? noInteractionOwnership;
     this.modalEl.addClass('abyss-tag-picker-modal');
     this.setTitle('Select tags');
   }
 
-  onOpen(): void {
+  override onOpen(): void {
     this.ownershipToken?.release();
     this.ownershipToken = this.interactionOwnership.acquire({ blocksShortcuts: true });
     const rawTags = Object.keys(
@@ -45,16 +58,20 @@ export class TagPickerModal extends Modal {
       cls: 'abyss-tag-picker-search',
       attr: { type: 'text', placeholder: 'Search tags…' },
     });
-    this.searchEl.addEventListener('input', () => this.renderList(this.searchEl.value));
+    this.searchEl.addEventListener('input', () => {
+      this.renderList(this.searchEl.value);
+    });
 
     this.listEl = contentEl.createDiv({ cls: 'abyss-tag-picker-list' });
     this.renderList('');
-    window.setTimeout(() => this.searchEl.focus(), 10);
+    window.setTimeout(() => {
+      this.searchEl.focus();
+    }, 10);
   }
 
   private effectiveState(tag: string): TagState {
     if (this.pending.has(tag)) {
-      if (this.pending.get(tag)) return 'checked';
+      if (this.pending.get(tag) ?? false) return 'checked';
       return this.partialTags.has(tag) ? 'removing' : 'unchecked';
     }
     if (this.currentTags.has(tag)) return 'checked';
@@ -65,28 +82,34 @@ export class TagPickerModal extends Modal {
   private toggle(tag: string): void {
     const state = this.effectiveState(tag);
     if (this.currentTags.has(tag)) {
-      // Originally fully checked: checked → unchecked(remove all) → checked(undo)
-      if (state === 'checked') this.pending.set(tag, false);
-      else this.pending.delete(tag);
+      this.toggleCurrentTag(tag, state);
     } else if (this.partialTags.has(tag)) {
-      // Originally partial: partial → checked(add missing) → removing(remove partial) → partial(undo)
-      if (state === 'partial') this.pending.set(tag, true);
-      else if (state === 'checked') this.pending.set(tag, false);
-      else this.pending.delete(tag);
+      this.togglePartialTag(tag, state);
     } else {
-      // Originally unchecked: unchecked → checked(add all) → unchecked(undo)
       if (state === 'unchecked') this.pending.set(tag, true);
       else this.pending.delete(tag);
     }
     this.renderList(this.searchEl.value, tag);
   }
 
+  private toggleCurrentTag(tag: string, state: TagState): void {
+    if (state === 'checked') this.pending.set(tag, false);
+    else this.pending.delete(tag);
+  }
+
+  private togglePartialTag(tag: string, state: TagState): void {
+    if (state === 'partial') this.pending.set(tag, true);
+    else if (state === 'checked') this.pending.set(tag, false);
+    else this.pending.delete(tag);
+  }
+
   private renderList(query: string, focusTag?: string): void {
     this.listEl.empty();
     const q = query.toLowerCase().replace(/^#/, '');
-    const filtered = q
-      ? this.allTags.filter((t) => t.slice(1).toLowerCase().includes(q))
-      : this.allTags;
+    const filtered =
+      q.length > 0
+        ? this.allTags.filter((t) => t.slice(1).toLowerCase().includes(q))
+        : this.allTags;
 
     for (const tag of filtered) {
       this.renderItem(tag);
@@ -96,7 +119,7 @@ export class TagPickerModal extends Modal {
       this.listEl.createDiv({ cls: 'abyss-tag-picker-empty', text: 'No tags found' });
     }
 
-    if (focusTag) {
+    if (focusTag !== undefined && focusTag.length > 0) {
       const item = Array.from(this.listEl.querySelectorAll<HTMLButtonElement>('[data-tag]')).find(
         (button) => button.dataset['tag'] === focusTag,
       );
@@ -121,12 +144,16 @@ export class TagPickerModal extends Modal {
 
     const labelEl = item.createSpan({ cls: 'abyss-tag-picker-label', text: tag });
     const color = this.getTagColor(tag);
-    if (color) labelEl.setCssProps({ '--abyss-tag-picker-color': color });
+    if (color !== undefined && color.length > 0) {
+      labelEl.setCssProps({ '--abyss-tag-picker-color': color });
+    }
 
-    item.addEventListener('click', () => this.toggle(tag));
+    item.addEventListener('click', () => {
+      this.toggle(tag);
+    });
   }
 
-  onClose(): void {
+  override onClose(): void {
     const ownershipToken = this.ownershipToken;
     this.ownershipToken = null;
     ownershipToken?.release();

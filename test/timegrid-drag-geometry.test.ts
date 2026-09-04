@@ -10,6 +10,7 @@ import {
   type TimedDragOrigin,
   type TimedVerticalResizeOrigin,
 } from '../src/views/timegrid/dragGeometry';
+import { expectDefined } from './helpers';
 
 const origin: TimedDragOrigin = {
   date: localDate('2026-07-20'),
@@ -94,7 +95,7 @@ describe('resolveTimedDragTarget', () => {
     [
       'invalid column geometry',
       { clientX: 150, clientY: 500 },
-      [{ ...columns[0]!, timeGridBottom: 100 }],
+      [{ ...expectDefined(columns[0]), timeGridBottom: 100 }],
     ],
     [
       'invalid origin duration',
@@ -281,7 +282,7 @@ describe('resolveBoundaryTarget', () => {
     ).toBeUndefined();
     expect(
       resolveBoundaryTarget(startOrigin, { clientX: 350 }, [
-        { ...boundaryColumns[0]!, right: boundaryColumns[0]!.left },
+        { ...expectDefined(boundaryColumns[0]), right: expectDefined(boundaryColumns[0]).left },
       ]),
     ).toBeUndefined();
     expect(

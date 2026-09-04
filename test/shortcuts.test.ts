@@ -132,13 +132,13 @@ describe('validateShortcuts', () => {
     const values = { ...defaultShortcuts(), openQuickCapture: value };
     const result = validateShortcuts(values, { mod: 'meta' });
 
-    if (expectedBindings) {
+    if (expectedBindings != null) {
       expect(result.bindings.get('openQuickCapture')).toHaveLength(expectedBindings.length);
       expect(result.bindings.get('openQuickCapture')).toMatchObject(expectedBindings);
     } else {
       expect(result.bindings.has('openQuickCapture')).toBe(false);
     }
-    if (expectedIssues) {
+    if (expectedIssues != null) {
       expect(result.issues.get('openQuickCapture')).toEqual(expectedIssues);
     } else {
       expect(result.issues.has('openQuickCapture')).toBe(false);

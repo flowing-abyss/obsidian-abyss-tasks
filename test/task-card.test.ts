@@ -4,7 +4,7 @@ import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import type { TaskSnapshot as Task } from '../src/tasks';
 import { createTaskCard, type TaskCardOptions } from '../src/ui/TaskCard';
-import { task, useRealMoment, withMobile } from './helpers';
+import { expectDefined, task, useRealMoment, withMobile } from './helpers';
 
 useRealMoment();
 
@@ -166,8 +166,8 @@ describe('createTaskCard', () => {
       const onTaskBodyContextMenu = vi.fn();
       const t = task({ source: { filePath: 'notes/x.md' } });
       const el = createTaskCard(t, 'due', baseOptions({ onTaskBodyContextMenu }));
-      const body = el.querySelector<HTMLElement>('.inner-link')!;
-      const marker = el.querySelector<HTMLElement>('.abyss-status-marker')!;
+      const body = expectDefined(el.querySelector<HTMLElement>('.inner-link'));
+      const marker = expectDefined(el.querySelector<HTMLElement>('.abyss-status-marker'));
       const bodyEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
 
       body.dispatchEvent(bodyEvent);
@@ -224,13 +224,13 @@ describe('createTaskCard', () => {
       vi.useFakeTimers({ now: new Date('2026-06-24T10:00:00Z').getTime() });
       const el = createTaskCard(task({ planning: { due: '2026-06-24' } }), 'due', baseOptions());
       // exact phrasing depends on locale/timezone; assert it is non-empty
-      expect(el.querySelector<HTMLElement>('.description')?.dataset.relative).toBeTruthy();
+      expect(el.querySelector<HTMLElement>('.description')?.dataset['relative']).toBeTruthy();
       vi.useRealTimers();
     });
 
     it('sets data-relative to empty string when no due', () => {
       const el = createTaskCard(task(), 'due', baseOptions());
-      expect(el.querySelector<HTMLElement>('.description')?.dataset.relative).toBe('');
+      expect(el.querySelector<HTMLElement>('.description')?.dataset['relative']).toBe('');
     });
   });
 
@@ -240,8 +240,7 @@ describe('createTaskCard', () => {
     it('attaches long-press and sets userSelect styles', () => {
       const el = createTaskCard(task(), 'due', baseOptions());
       expect(el.style.userSelect).toBe('none');
-      // eslint-disable-next-line @typescript-eslint/no-deprecated
-      expect(el.style.webkitUserSelect).toBe('none');
+      expect(el.style.getPropertyValue('-webkit-user-select')).toBe('none');
       expect(el.style.touchAction).toBe('manipulation');
     });
   });

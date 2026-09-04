@@ -1,7 +1,4 @@
-import moment from 'moment';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import type { App } from 'obsidian';
+import { moment, Platform, type App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
@@ -29,6 +26,7 @@ import { layoutTimedDay, taskLayoutIdentity } from '../src/views/timegrid/layout
 import {
   createForecastContextMenuOwner,
   type ForecastContextMenuOwner,
+  type ForecastInteractionCallbacks,
 } from '../src/views/timegrid/renderTaskMeta';
 import { toTimedBlockInputs } from '../src/views/timegrid/renderTimedBlocks';
 import { previewTimedPositionFor, TodayView } from '../src/views/TodayView';
@@ -36,7 +34,10 @@ import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
 import { WeekView } from '../src/views/WeekView';
 import {
   createAppWithFiles,
+  cssRuleParts,
+  expectDefined,
   freshContainer,
+  methodOf,
   queryApiForTasks,
   resolvedConfig,
   subtask,
@@ -49,8 +50,15 @@ useRealMoment();
 
 const fakeApp = {} as App;
 const registry = new StatusRegistry(buildDefaultTaskStatuses());
-const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+const css = await loadStyles();
 const forecastMenuOwners: ForecastContextMenuOwner[] = [];
+
+async function loadStyles(): Promise<string> {
+  if (!Platform.isDesktop) return '';
+  const { readFileSync } = await import('node:fs');
+  const path = await import('node:path');
+  return readFileSync(path.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+}
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
   return new DOMRect(left, top, width, height);
@@ -63,8 +71,8 @@ function declarationsFor(selector: string): string {
 }
 
 function declarationsForRuleContaining(...selectors: string[]): string {
-  for (const match of css.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
-    if (selectors.every((selector) => (match[1] ?? '').includes(selector))) return match[2] ?? '';
+  for (const rule of cssRuleParts(css)) {
+    if (selectors.every((selector) => rule.selector.includes(selector))) return rule.declarations;
   }
   return '';
 }
@@ -96,18 +104,16 @@ function calendarStyleRules(style: HTMLStyleElement): readonly StyleRuleLike[] {
       if (candidate.cssRules !== undefined) visit(candidate.cssRules);
     }
   };
-  if (style.sheet) visit(style.sheet.cssRules);
+  if (style.sheet != null) visit(style.sheet.cssRules);
   return collected;
 }
 
 function selectorSpecificity(selector: string): readonly [number, number, number] {
-  const withoutNot = selector.replace(/:not\(([^)]*)\)/gu, '$1');
-  const ids = withoutNot.match(/#[\w-]+/gu)?.length ?? 0;
-  const classes = withoutNot.match(/\.[\w-]+|\[[^\]]+\]|:(?!:)[\w-]+(?:\([^)]*\))?/gu)?.length ?? 0;
-  const types = withoutNot
-    .replace(/#[\w-]+|\.[\w-]+|\[[^\]]+\]|:{1,2}[\w-]+(?:\([^)]*\))?/gu, ' ')
-    .split(/[\s>+~]+/u)
-    .filter((part) => part !== '' && part !== '*').length;
+  const count = (character: string): number => selector.split(character).length - 1;
+  const ids = count('#');
+  const pseudoClasses = count(':') - count('::') * 2 - count(':not(');
+  const classes = count('.') + count('[') + pseudoClasses;
+  const types = selector.split(/[\s>+~]+/u).filter((part) => /^[a-z][\w-]*/iu.test(part)).length;
   return [ids, classes, types];
 }
 
@@ -115,7 +121,28 @@ function compareSpecificity(
   left: readonly [number, number, number],
   right: readonly [number, number, number],
 ): number {
-  return left[0] - right[0] || left[1] - right[1] || left[2] - right[2];
+  return firstNonZero(left[0] - right[0], left[1] - right[1], left[2] - right[2]);
+}
+
+function firstNonZero(...values: readonly number[]): number {
+  return values.find((value) => value !== 0) ?? 0;
+}
+
+function selectorTargetsPseudo(selector: string, pseudo: 'none' | 'hover' | 'before'): boolean {
+  const hasHover = selector.includes(':hover');
+  const hasBefore = selector.includes('::before');
+  if (pseudo === 'none') return !hasHover && !hasBefore;
+  if (pseudo === 'hover') return !hasBefore;
+  return hasBefore;
+}
+
+function elementMatchesSelector(element: HTMLElement, selector: string): boolean {
+  const matchable = selector.replace(/:hover/gu, '').replace(/::before/gu, '');
+  try {
+    return element.matches(matchable);
+  } catch {
+    return false;
+  }
 }
 
 function winningDeclaration(
@@ -125,19 +152,11 @@ function winningDeclaration(
   pseudo: 'none' | 'hover' | 'before' = 'none',
 ): WinningDeclaration | undefined {
   const matches: Array<WinningDeclaration & { readonly important: boolean }> = [];
-  calendarStyleRules(style).forEach((rule, order) => {
+  for (const [order, rule] of calendarStyleRules(style).entries()) {
     const value = rule.style.getPropertyValue(property).trim();
-    if (value === '') return;
+    if (value === '') continue;
     for (const selector of rule.selectorText.split(',').map((part) => part.trim())) {
-      const hasHover = selector.includes(':hover');
-      const hasBefore = selector.includes('::before');
-      if (pseudo === 'none' && (hasHover || hasBefore)) continue;
-      if (pseudo === 'hover' && hasBefore) continue;
-      if (pseudo === 'before' && !hasBefore) continue;
-      const matchable = selector.replace(/:hover/gu, '').replace(/::before/gu, '');
-      try {
-        if (!element.matches(matchable)) continue;
-      } catch {
+      if (!selectorTargetsPseudo(selector, pseudo) || !elementMatchesSelector(element, selector)) {
         continue;
       }
       matches.push({
@@ -148,14 +167,17 @@ function winningDeclaration(
         important: rule.style.getPropertyPriority(property) === 'important',
       });
     }
-  });
-  const winner = matches.sort(
-    (left, right) =>
-      Number(left.important) - Number(right.important) ||
-      compareSpecificity(left.specificity, right.specificity) ||
+  }
+  const sortedMatches = [...matches];
+  sortedMatches.sort((left, right) =>
+    firstNonZero(
+      Number(left.important) - Number(right.important),
+      compareSpecificity(left.specificity, right.specificity),
       left.order - right.order,
-  )[matches.length - 1];
-  if (!winner) return undefined;
+    ),
+  );
+  const winner = sortedMatches[sortedMatches.length - 1];
+  if (winner == null) return undefined;
   return {
     selector: winner.selector,
     value: winner.value,
@@ -165,7 +187,7 @@ function winningDeclaration(
 }
 
 function installCalendarStyles(): HTMLStyleElement {
-  const style = activeDocument.createElement('style');
+  const style = createFragment().createEl('style');
   style.dataset['abyssCalendarContract'] = 'true';
   style.textContent = css;
   activeDocument.head.appendChild(style);
@@ -188,10 +210,10 @@ function rootSource(options: {
   const root = task({
     title: options.title,
     markdownTitle: options.title,
-    recurrence: options.recurrence,
-    planning: options.planning,
+    ...(options.recurrence === undefined ? {} : { recurrence: options.recurrence }),
+    ...(options.planning === undefined ? {} : { planning: options.planning }),
     source: { filePath: options.filePath ?? 'Recurring.md', line: options.line ?? 0 },
-    presentation: options.presentation,
+    ...(options.presentation === undefined ? {} : { presentation: options.presentation }),
   });
   return { root, node: root, target: { type: 'task', ref: root.ref } };
 }
@@ -240,7 +262,7 @@ function materialized(source: CalendarTaskSource): {
   readonly task: TaskSnapshot;
 } {
   const date = source.node.planning.due ?? source.node.planning.scheduled;
-  if (!date) throw new Error('Expected a materialized date');
+  if (date == null) throw new Error('Expected a materialized date');
   const projection = projectCalendarOccurrences(
     { materialized: [source], recurringSources: [] },
     { from: date, to: date },
@@ -261,7 +283,7 @@ function nestedMaterializedPair(
   const first = subtask({
     title: 'First projected child',
     recurrence: 'every week',
-    planning,
+    ...(planning === undefined ? {} : { planning }),
     ref: {
       parent: { type: 'task', ref: root.ref },
       relativeLine: 1,
@@ -271,7 +293,7 @@ function nestedMaterializedPair(
   const second = subtask({
     title: 'Second projected child',
     recurrence: 'every week',
-    planning,
+    ...(planning === undefined ? {} : { planning }),
     ref: {
       parent: { type: 'task', ref: root.ref },
       relativeLine: 2,
@@ -292,8 +314,9 @@ function forecastCallbacks() {
   forecastMenuOwners.push(forecastMenuOwner);
   return {
     forecastMenuOwner,
-    onForecastClick: vi.fn(),
-    onForecastContextMenu: vi.fn(),
+    onForecastClick: vi.fn<NonNullable<ForecastInteractionCallbacks['onForecastClick']>>(),
+    onForecastContextMenu:
+      vi.fn<NonNullable<ForecastInteractionCallbacks['onForecastContextMenu']>>(),
   };
 }
 
@@ -381,7 +404,7 @@ function renderLegacyVisualFixture(view: 'week' | 'month'): LegacyVisualFixture 
   });
   const ordinary = materialized(ordinarySource).task;
   const recurring = materialized(recurringSource).task;
-  const forecast = forecasts(forecastSource, visibleDate, visibleDate)[0]!.task;
+  const forecast = expectDefined(forecasts(forecastSource, visibleDate, visibleDate)[0]).task;
   const root = freshContainer();
   root.className = 'tasksCalendar';
   root.dataset['abyssLegacyVisualFixture'] = 'true';
@@ -403,9 +426,11 @@ function renderLegacyVisualFixture(view: 'week' | 'month'): LegacyVisualFixture 
     );
   }
   const card = (title: string): HTMLElement =>
-    Array.from(root.querySelectorAll<HTMLElement>('.task')).find(
-      (candidate) => candidate.dataset['taskText'] === title,
-    )!;
+    expectDefined(
+      Array.from(root.querySelectorAll<HTMLElement>('.task')).find(
+        (candidate) => candidate.dataset['taskText'] === title,
+      ),
+    );
   return {
     root,
     style,
@@ -444,13 +469,13 @@ function expectLegacyVisualContract(fixture: LegacyVisualFixture): void {
   expect(forecast.querySelector('.abyss-status-marker')).toBeNull();
   expect(forecast.querySelector('input[type="checkbox"]')).toBeNull();
   expect(forecast.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
-  const forecastInner = forecast.querySelector<HTMLElement>(':scope > .inner')!;
+  const forecastInner = expectDefined(forecast.querySelector<HTMLElement>(':scope > .inner'));
   expect(winningDeclaration(style, forecastInner, 'content', 'before')).toBeUndefined();
 
   for (const materialized of [ordinary, recurring]) {
     expect(materialized.dataset['controlSlot']).toBe('occupied');
     expect(materialized.querySelectorAll('.abyss-status-marker')).toHaveLength(1);
-    const inner = materialized.querySelector<HTMLElement>(':scope > .inner')!;
+    const inner = expectDefined(materialized.querySelector<HTMLElement>(':scope > .inner'));
     expect(winningDeclaration(style, inner, 'content', 'before')).toBeUndefined();
   }
   expect(recurring.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
@@ -500,13 +525,17 @@ function expectForecastInert(element: HTMLElement): void {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  forecastMenuOwners.splice(0).forEach((owner) => owner.dismiss({ restoreFocus: false }));
-  activeDocument
-    .querySelectorAll('.abyss-forecast-context-menu')
-    .forEach((element) => element.remove());
+  forecastMenuOwners.splice(0).forEach((owner) => {
+    owner.dismiss({ restoreFocus: false });
+  });
+  activeDocument.querySelectorAll('.abyss-forecast-context-menu').forEach((element) => {
+    element.remove();
+  });
   activeDocument
     .querySelectorAll('[data-abyss-calendar-contract], [data-abyss-legacy-visual-fixture]')
-    .forEach((element) => element.remove());
+    .forEach((element) => {
+      element.remove();
+    });
 });
 
 describe('forecast rendering contract', () => {
@@ -514,7 +543,7 @@ describe('forecast rendering contract', () => {
     const source = rootSource({
       title: 'Daily standup',
       recurrence: 'every day',
-      planning: { due: localDate('2026-08-07'), time: '09:00', duration: 30 as never },
+      planning: { due: localDate('2026-08-07'), time: '09:00', duration: 30 },
     });
     const [first, second] = forecasts(source, '2026-08-08', '2026-08-09');
     const firstContainer = freshContainer();
@@ -522,22 +551,22 @@ describe('forecast rendering contract', () => {
 
     new TodayView(timeGridCallbacks()).render(
       firstContainer,
-      [first!.task],
+      [expectDefined(first).task],
       resolvedConfig({ startPosition: '2026-08-08' }),
       false,
     );
     new TodayView(timeGridCallbacks()).render(
       secondContainer,
-      [second!.task],
+      [expectDefined(second).task],
       resolvedConfig({ startPosition: '2026-08-09' }),
       false,
     );
 
     for (const [container, fixture] of [
-      [firstContainer, first!],
-      [secondContainer, second!],
+      [firstContainer, expectDefined(first)],
+      [secondContainer, expectDefined(second)],
     ] as const) {
-      const block = container.querySelector<HTMLElement>('.abyss-tg-block')!;
+      const block = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-block'));
       expect(block.textContent).toContain('Daily standup');
       expect(block.querySelector('[data-recurrence-forecast="true"]')).not.toBeNull();
       expectAxes(block, 'forecast', 'single', 'true');
@@ -589,7 +618,7 @@ describe('forecast rendering contract', () => {
       },
     });
     const [forecast] = forecasts(source, '2026-08-07', '2026-08-09');
-    expect(forecast!.task.planning).toEqual({
+    expect(expectDefined(forecast).task.planning).toEqual({
       start: localDate('2026-08-07'),
       due: localDate('2026-08-09'),
     });
@@ -598,12 +627,12 @@ describe('forecast rendering contract', () => {
 
     new WeekView(legacyCallbacks()).render(
       week,
-      [forecast!.task],
+      [expectDefined(forecast).task],
       resolvedConfig({ startPosition: '2026-08-03', firstDayOfWeek: 1 }),
     );
     new MonthView(legacyCallbacks()).render(
       month,
-      [forecast!.task],
+      [expectDefined(forecast).task],
       resolvedConfig({ startPosition: '2026-08', firstDayOfWeek: 1 }),
     );
 
@@ -624,8 +653,10 @@ describe('forecast rendering contract', () => {
         true,
       );
       expect(terminal?.getAttribute('data-continuity')).toBe('terminal');
-      for (const card of [start!, ...continuations, terminal!]) {
-        expect(card.getAttribute('data-occurrence-key')).toBe(forecast!.occurrence.key);
+      for (const card of [expectDefined(start), ...continuations, expectDefined(terminal)]) {
+        expect(card.getAttribute('data-occurrence-key')).toBe(
+          expectDefined(forecast).occurrence.key,
+        );
         expectForecastInert(card);
       }
     }
@@ -646,13 +677,13 @@ describe('forecast rendering contract', () => {
 
     new WeekTimeGridView(timeGridCallbacks()).render(
       week,
-      [forecast!.task],
+      [expectDefined(forecast).task],
       resolvedConfig({ startPosition: '2026-08-10', firstDayOfWeek: 1 }),
       false,
     );
     new MonthGridView(monthCallbacks()).render(
       month,
-      [forecast!.task],
+      [expectDefined(forecast).task],
       resolvedConfig({ startPosition: '2026-08' }),
     );
 
@@ -683,9 +714,11 @@ describe('forecast rendering contract', () => {
           piece.classList.contains('abyss-tg-span-continuation') ? 'continuation' : 'terminal',
           'true',
         );
-        expect(piece.getAttribute('data-occurrence-key')).toBe(forecast!.occurrence.key);
+        expect(piece.getAttribute('data-occurrence-key')).toBe(
+          expectDefined(forecast).occurrence.key,
+        );
         expect(piece.getAttribute('data-segment-identity')).toBe(
-          `${forecast!.occurrence.key}:${piece.getAttribute('data-span-role')}`,
+          `${expectDefined(forecast).occurrence.key}:${piece.getAttribute('data-span-role')}`,
         );
         expectForecastInert(piece);
       }
@@ -708,7 +741,7 @@ describe('forecast rendering contract', () => {
 
     new WeekTimeGridView(timeGridCallbacks()).render(
       container,
-      [forecast!.task],
+      [expectDefined(forecast).task],
       resolvedConfig({ startPosition: '2026-08-10', firstDayOfWeek: 1 }),
       false,
     );
@@ -716,7 +749,9 @@ describe('forecast rendering contract', () => {
     const blocks = Array.from(
       container.querySelectorAll<HTMLElement>('.abyss-tg-block[data-occurrence-state="forecast"]'),
     ).sort((left, right) =>
-      left.dataset['tgSegmentDate']!.localeCompare(right.dataset['tgSegmentDate']!),
+      expectDefined(left.dataset['tgSegmentDate']).localeCompare(
+        expectDefined(right.dataset['tgSegmentDate']),
+      ),
     );
     expect(blocks.map((block) => block.dataset['tgSegmentDate'])).toEqual([
       '2026-08-10',
@@ -735,13 +770,13 @@ describe('forecast rendering contract', () => {
     ]);
     expect(new Set(blocks.map((block) => block.dataset['segmentIdentity'])).size).toBe(3);
     for (const block of blocks) {
-      expect(block.dataset['occurrenceKey']).toBe(forecast!.occurrence.key);
+      expect(block.dataset['occurrenceKey']).toBe(expectDefined(forecast).occurrence.key);
       expect(block.dataset['segmentIdentity']).toBe(
-        `${forecast!.occurrence.key}:${block.dataset['spanRole']}`,
+        `${expectDefined(forecast).occurrence.key}:${block.dataset['spanRole']}`,
       );
       expectForecastInert(block);
       expect(block.classList.contains('abyss-calendar-item')).toBe(true);
-      const head = block.querySelector<HTMLElement>('.abyss-calendar-leading-row')!;
+      const head = expectDefined(block.querySelector<HTMLElement>('.abyss-calendar-leading-row'));
       expect(head.dataset['controlSlot']).toBe('reserved');
       expect(head.dataset['recurrenceSlot']).toBe('occupied');
       expect(head.querySelector('.abyss-status-marker')).toBeNull();
@@ -762,26 +797,28 @@ describe('forecast rendering contract', () => {
 
     new WeekTimeGridView(timeGridCallbacks()).render(
       container,
-      [forecast!.task],
+      [expectDefined(forecast).task],
       resolvedConfig({ startPosition: '2026-08-10', firstDayOfWeek: 1 }),
       false,
     );
 
-    const body = container.querySelector<HTMLElement>(
-      '[data-tg-date="2026-08-10"] .abyss-tg-plain',
-    )!;
-    const deadline = container.querySelector<HTMLElement>(
-      '[data-tg-date="2026-08-12"] .abyss-tg-deadline-marker',
-    )!;
-    expect(body.getAttribute('data-occurrence-key')).toBe(forecast!.occurrence.key);
-    expect(deadline.getAttribute('data-occurrence-key')).toBe(forecast!.occurrence.key);
+    const body = expectDefined(
+      container.querySelector<HTMLElement>('[data-tg-date="2026-08-10"] .abyss-tg-plain'),
+    );
+    const deadline = expectDefined(
+      container.querySelector<HTMLElement>('[data-tg-date="2026-08-12"] .abyss-tg-deadline-marker'),
+    );
+    expect(body.getAttribute('data-occurrence-key')).toBe(expectDefined(forecast).occurrence.key);
+    expect(deadline.getAttribute('data-occurrence-key')).toBe(
+      expectDefined(forecast).occurrence.key,
+    );
     expect(body.getAttribute('data-span-role')).toBe('scheduled-body');
     expect(deadline.getAttribute('data-span-role')).toBe('due-deadline');
     expect(body.getAttribute('data-segment-identity')).toBe(
-      `${forecast!.occurrence.key}:scheduled-body`,
+      `${expectDefined(forecast).occurrence.key}:scheduled-body`,
     );
     expect(deadline.getAttribute('data-segment-identity')).toBe(
-      `${forecast!.occurrence.key}:due-deadline`,
+      `${expectDefined(forecast).occurrence.key}:due-deadline`,
     );
     for (const item of [body, deadline]) {
       expect(item.classList.contains('abyss-calendar-leading-row')).toBe(true);
@@ -815,16 +852,18 @@ describe('forecast visual system', () => {
         line: 2,
       }),
     ).task;
-    const forecast = forecasts(
-      rootSource({
-        title: 'Forecast repeat',
-        recurrence: 'every day',
-        planning: { due: '2026-08-08' },
-        line: 3,
-      }),
-      '2026-08-09',
-      '2026-08-09',
-    )[0]!.task;
+    const forecast = expectDefined(
+      forecasts(
+        rootSource({
+          title: 'Forecast repeat',
+          recurrence: 'every day',
+          planning: { due: '2026-08-08' },
+          line: 3,
+        }),
+        '2026-08-09',
+        '2026-08-09',
+      )[0],
+    ).task;
     const container = freshContainer();
 
     new MonthGridView(monthCallbacks()).render(
@@ -844,11 +883,15 @@ describe('forecast visual system', () => {
       expect(item.dataset['recurrenceSlot']).toMatch(/^(?:occupied|reserved)$/u);
     }
 
-    const ordinaryItem = items.find((item) => item.textContent?.includes('Ordinary item'))!;
-    const materializedItem = items.find((item) =>
-      item.textContent?.includes('Materialized repeat'),
-    )!;
-    const forecastItem = items.find((item) => item.textContent?.includes('Forecast repeat'))!;
+    const ordinaryItem = expectDefined(
+      items.find((item) => item.textContent.includes('Ordinary item')),
+    );
+    const materializedItem = expectDefined(
+      items.find((item) => item.textContent.includes('Materialized repeat')),
+    );
+    const forecastItem = expectDefined(
+      items.find((item) => item.textContent.includes('Forecast repeat')),
+    );
     const style = installCalendarStyles();
     expect(ordinaryItem.dataset['controlSlot']).toBe('occupied');
     expect(ordinaryItem.dataset['recurrenceSlot']).toBe('reserved');
@@ -857,7 +900,7 @@ describe('forecast visual system', () => {
     expect(
       winningDeclaration(
         style,
-        ordinaryItem.querySelector<HTMLElement>('.abyss-status-marker')!,
+        expectDefined(ordinaryItem.querySelector<HTMLElement>('.abyss-status-marker')),
         'margin-inline-end',
       ),
     ).toBeUndefined();
@@ -883,7 +926,7 @@ describe('forecast visual system', () => {
       'abyss-mg-span-segment',
       'abyss-mg-deadline-marker',
     ]) {
-      const ghost = activeDocument.createElement('div');
+      const ghost = createFragment().createDiv();
       ghost.className = `abyss-calendar-leading-row ${surface}`;
       ghost.setAttribute('data-control-slot', 'reserved');
       ghost.setAttribute('data-recurrence-slot', 'reserved');
@@ -897,26 +940,30 @@ describe('forecast visual system', () => {
   });
 
   it('keeps separate month forecasts compact and orders timed occurrences before untimed ones', () => {
-    const timed = forecasts(
-      rootSource({
-        title: '09:00 forecast',
-        recurrence: 'every week',
-        planning: { due: '2026-08-02', time: '09:00' },
-        line: 10,
-      }),
-      '2026-08-09',
-      '2026-08-09',
-    )[0]!;
-    const untimed = forecasts(
-      rootSource({
-        title: 'Untimed forecast',
-        recurrence: 'every week',
-        planning: { due: '2026-08-02' },
-        line: 11,
-      }),
-      '2026-08-09',
-      '2026-08-09',
-    )[0]!;
+    const timed = expectDefined(
+      forecasts(
+        rootSource({
+          title: '09:00 forecast',
+          recurrence: 'every week',
+          planning: { due: '2026-08-02', time: '09:00' },
+          line: 10,
+        }),
+        '2026-08-09',
+        '2026-08-09',
+      )[0],
+    );
+    const untimed = expectDefined(
+      forecasts(
+        rootSource({
+          title: 'Untimed forecast',
+          recurrence: 'every week',
+          planning: { due: '2026-08-02' },
+          line: 11,
+        }),
+        '2026-08-09',
+        '2026-08-09',
+      )[0],
+    );
     const independent = forecasts(
       rootSource({
         title: 'Independent daily',
@@ -946,7 +993,7 @@ describe('forecast visual system', () => {
     ]);
     const dailyItems = Array.from(
       container.querySelectorAll<HTMLElement>('.abyss-mg-plain[data-occurrence-state="forecast"]'),
-    ).filter((item) => item.textContent?.includes('Independent daily'));
+    ).filter((item) => item.textContent.includes('Independent daily'));
     expect(dailyItems).toHaveLength(3);
     expect(new Set(dailyItems.map((item) => item.dataset['occurrenceKey'])).size).toBe(3);
     expect(
@@ -1093,7 +1140,9 @@ describe('forecast visual system', () => {
     panel.mount(root);
     (panel as unknown as { calDate: moment.Moment }).calDate = moment('1400-08-01');
     state.set('mode', 'calendar');
-    const diagnostic = root.querySelector<HTMLElement>('.abyss-calendar-projection-diagnostic')!;
+    const diagnostic = expectDefined(
+      root.querySelector<HTMLElement>('.abyss-calendar-projection-diagnostic'),
+    );
     const announcements: MutationRecord[] = [];
     const observer = new MutationObserver((records) => announcements.push(...records));
     observer.observe(diagnostic, { childList: true, characterData: true, subtree: true });
@@ -1150,7 +1199,9 @@ describe('forecast visual system', () => {
       registry,
     );
     renderer.mount();
-    const diagnostic = root.querySelector<HTMLElement>('.abyss-calendar-projection-diagnostic')!;
+    const diagnostic = expectDefined(
+      root.querySelector<HTMLElement>('.abyss-calendar-projection-diagnostic'),
+    );
 
     notify?.({ type: 'changed', files: ['Legacy-stable.md'] });
     expect(root.querySelector('.abyss-calendar-projection-diagnostic')).toBe(diagnostic);
@@ -1193,11 +1244,14 @@ describe('projected preview semantic identity', () => {
 
     const preview = previewTimedPositionFor(tasks, source, { ...source.planning }, '2026-08-05');
     expect(preview).toBeDefined();
-    expect(calendarOccurrenceForTask(preview!.task)?.key).toBe(sourceIdentity);
-    expect(taskLayoutIdentity(preview!.task)).toBe(sourceIdentity);
-    expect({ column: preview!.column, columns: preview!.columns }).toEqual({
-      column: committed!.column,
-      columns: committed!.columns,
+    expect(calendarOccurrenceForTask(expectDefined(preview).task)?.key).toBe(sourceIdentity);
+    expect(taskLayoutIdentity(expectDefined(preview).task)).toBe(sourceIdentity);
+    expect({
+      column: expectDefined(preview).column,
+      columns: expectDefined(preview).columns,
+    }).toEqual({
+      column: expectDefined(committed).column,
+      columns: expectDefined(committed).columns,
     });
   });
 
@@ -1248,16 +1302,18 @@ describe('forecast interaction contract', () => {
         line: 1,
       }),
     );
-    const forecast = forecasts(
-      rootSource({
-        title: 'Forecast between',
-        recurrence: 'every day',
-        planning: { due: localDate('2026-08-07'), time: '09:00' },
-        line: 2,
-      }),
-      '2026-08-08',
-      '2026-08-08',
-    )[0]!;
+    const forecast = expectDefined(
+      forecasts(
+        rootSource({
+          title: 'Forecast between',
+          recurrence: 'every day',
+          planning: { due: localDate('2026-08-07'), time: '09:00' },
+          line: 2,
+        }),
+        '2026-08-08',
+        '2026-08-08',
+      )[0],
+    );
     const last = materialized(
       rootSource({
         title: 'Last materialized',
@@ -1279,10 +1335,14 @@ describe('forecast interaction contract', () => {
 
     const blocks = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block'));
     expect(blocks).toHaveLength(3);
-    blocks[0]!.focus();
-    blocks[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    expectDefined(blocks[0]).focus();
+    expectDefined(blocks[0]).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }),
+    );
     expect(activeDocument.activeElement).toBe(blocks[2]);
-    blocks[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expectDefined(blocks[1]).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+    );
     expect(callbacks.onKeyboardIntent).not.toHaveBeenCalledWith(forecast.task, expect.anything());
     container.remove();
   });
@@ -1299,11 +1359,11 @@ describe('forecast interaction contract', () => {
 
     new TodayView(callbacks).render(
       container,
-      [forecast!.task],
+      [expectDefined(forecast).task],
       resolvedConfig({ startPosition: '2026-08-09' }),
       false,
     );
-    container.querySelector<HTMLElement>('.abyss-tg-plain')!.click();
+    expectDefined(container.querySelector<HTMLElement>('.abyss-tg-plain')).click();
 
     expect(opened).toHaveBeenCalledWith(source.root, 'Forecast for 2026-08-09');
     expect(callbacks.onTaskClick).not.toHaveBeenCalled();
@@ -1317,26 +1377,30 @@ describe('forecast interaction contract', () => {
 
     new MonthGridView(callbacks).render(
       container,
-      [forecast!.task],
+      [expectDefined(forecast).task],
       resolvedConfig({ startPosition: '2026-08' }),
     );
-    container
-      .querySelector<HTMLElement>('[data-mg-date="2026-08-09"] .abyss-mg-plain')!
-      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expectDefined(
+      container.querySelector<HTMLElement>('[data-mg-date="2026-08-09"] .abyss-mg-plain'),
+    ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 
-    const menu = activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu')!;
+    const menu = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu'),
+    );
     const items = Array.from(menu.querySelectorAll<HTMLElement>('button'));
     expect(items.map((item) => item.textContent)).toEqual(['Edit repeat…', 'Open source task']);
     expect(menu.querySelector('.abyss-status-marker')).toBeNull();
 
-    items[0]!.click();
+    expectDefined(items[0]).click();
     expect(callbacks.onForecastContextMenu).toHaveBeenCalledWith(source, localDate('2026-08-09'));
     expect(callbacks.onForecastContextMenu.mock.calls[0]?.[0].target).toEqual(source.target);
 
-    container
-      .querySelector<HTMLElement>('[data-mg-date="2026-08-09"] .abyss-mg-plain')!
-      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    activeDocument.querySelectorAll<HTMLElement>('.abyss-forecast-context-menu button')[1]!.click();
+    expectDefined(
+      container.querySelector<HTMLElement>('[data-mg-date="2026-08-09"] .abyss-mg-plain'),
+    ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expectDefined(
+      activeDocument.querySelectorAll<HTMLElement>('.abyss-forecast-context-menu button')[1],
+    ).click();
     expect(callbacks.onForecastClick).toHaveBeenCalledWith(source, localDate('2026-08-09'));
     expect(callbacks.onToggle).not.toHaveBeenCalled();
     expect(callbacks.onSetStatus).not.toHaveBeenCalled();
@@ -1349,10 +1413,10 @@ describe('forecast interaction contract', () => {
     { edge: 'bottom-left', x: -20, y: 190 },
     { edge: 'bottom-right', x: 290, y: 190 },
   ])('measures and clamps the forecast menu inside the owner viewport at $edge', ({ x, y }) => {
-    const ownerWindow = activeDocument.defaultView!;
+    const ownerWindow = expectDefined(activeDocument.defaultView);
     vi.spyOn(ownerWindow, 'innerWidth', 'get').mockReturnValue(300);
     vi.spyOn(ownerWindow, 'innerHeight', 'get').mockReturnValue(200);
-    const realRect = HTMLElement.prototype.getBoundingClientRect;
+    const realRect = methodOf(HTMLElement.prototype, 'getBoundingClientRect');
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
       this: HTMLElement,
     ) {
@@ -1364,7 +1428,7 @@ describe('forecast interaction contract', () => {
       recurrence: 'every day',
       planning: { due: localDate('2026-08-08') },
     });
-    const forecast = forecasts(source, '2026-08-09', '2026-08-09')[0]!;
+    const forecast = expectDefined(forecasts(source, '2026-08-09', '2026-08-09')[0]);
     const owner = createForecastContextMenuOwner(activeDocument);
     forecastMenuOwners.push(owner);
     const anchor = activeDocument.body.createEl('button');
@@ -1376,7 +1440,9 @@ describe('forecast interaction contract', () => {
       {},
     );
 
-    const menu = activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu')!;
+    const menu = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu'),
+    );
     const left = Number.parseFloat(menu.style.left);
     const top = Number.parseFloat(menu.style.top);
     expect(left).toBeGreaterThanOrEqual(8);
@@ -1394,12 +1460,8 @@ describe('forecast interaction contract', () => {
     const item = menu.createEl('button', { text: 'Open source task with a long label' });
 
     expect(winningDeclaration(style, menu, 'box-sizing')?.value).toBe('border-box');
-    expect(winningDeclaration(style, menu, 'min-width')?.value).toBe(
-      'min(12rem, calc(100vw - 16px))',
-    );
-    expect(winningDeclaration(style, menu, 'max-width')?.value).toBe(
-      'min(16rem, calc(100vw - 16px))',
-    );
+    expect(winningDeclaration(style, menu, 'min-width')?.value).toBe('min(12rem, -16px + 100vw)');
+    expect(winningDeclaration(style, menu, 'max-width')?.value).toBe('min(16rem, -16px + 100vw)');
     expect(winningDeclaration(style, item, 'min-width')?.value).toBe('0px');
     expect(winningDeclaration(style, item, 'white-space')?.value).toBe('normal');
     expect(winningDeclaration(style, item, 'overflow-wrap')?.value).toBe('anywhere');
@@ -1407,12 +1469,12 @@ describe('forecast interaction contract', () => {
 
   it('uses a secondary document owner window for forecast geometry and exact lifecycle', () => {
     const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = frame.contentDocument!;
-    const ownerWindow = frame.contentWindow as Window & typeof globalThis;
+    const ownerDocument = expectDefined(frame.contentDocument);
+    const ownerWindow = frame.contentWindow as Window & typeof window;
     for (const method of ['createDiv', 'createEl'] as const) {
       Object.defineProperty(ownerWindow.HTMLElement.prototype, method, {
         configurable: true,
-        value: HTMLElement.prototype[method],
+        value: methodOf(HTMLElement.prototype, method),
       });
     }
     vi.spyOn(ownerWindow, 'innerWidth', 'get').mockReturnValue(160);
@@ -1452,7 +1514,7 @@ describe('forecast interaction contract', () => {
       recurrence: 'every day',
       planning: { due: localDate('2026-08-08') },
     });
-    const forecast = forecasts(source, '2026-08-09', '2026-08-09')[0]!;
+    const forecast = expectDefined(forecasts(source, '2026-08-09', '2026-08-09')[0]);
     const owner = createForecastContextMenuOwner(ownerDocument);
     forecastMenuOwners.push(owner);
     const anchor = ownerDocument.body.createEl('button');
@@ -1465,7 +1527,9 @@ describe('forecast interaction contract', () => {
         forecast.occurrence,
         {},
       );
-      const menu = ownerDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu')!;
+      const menu = expectDefined(
+        ownerDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu'),
+      );
       expect(menu.ownerDocument).toBe(ownerDocument);
       expect(menu.style.left).toBe('32px');
       expect(menu.style.top).toBe('30px');
@@ -1509,8 +1573,8 @@ describe('forecast interaction contract', () => {
       planning: { due: localDate('2026-08-08') },
       line: 11,
     });
-    const first = forecasts(firstSource, '2026-08-09', '2026-08-09')[0]!;
-    const second = forecasts(secondSource, '2026-08-09', '2026-08-09')[0]!;
+    const first = expectDefined(forecasts(firstSource, '2026-08-09', '2026-08-09')[0]);
+    const second = expectDefined(forecasts(secondSource, '2026-08-09', '2026-08-09')[0]);
     const callbacks = monthCallbacks();
     const container = freshContainer();
     const trigger = activeDocument.body.createEl('button', { text: 'Calendar trigger' });
@@ -1526,11 +1590,15 @@ describe('forecast interaction contract', () => {
       ),
     );
 
-    items[0]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    const staleEdit = activeDocument.querySelector<HTMLButtonElement>(
-      '.abyss-forecast-context-menu-edit-repeat',
-    )!;
-    items[1]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expectDefined(items[0]).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
+    const staleEdit = expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-forecast-context-menu-edit-repeat'),
+    );
+    expectDefined(items[1]).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
     expect(activeDocument.querySelectorAll('.abyss-forecast-context-menu')).toHaveLength(1);
 
     staleEdit.click();
@@ -1541,15 +1609,21 @@ describe('forecast interaction contract', () => {
     expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
     expect(activeDocument.activeElement).toBe(trigger);
 
-    items[1]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expectDefined(items[1]).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
     activeDocument.body.dispatchEvent(
       new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
     );
     expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
     expect(activeDocument.activeElement).toBe(trigger);
 
-    items[1]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu-edit-repeat')!.click();
+    expectDefined(items[1]).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
+    expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu-edit-repeat'),
+    ).click();
     expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
     expect(callbacks.onForecastContextMenu).toHaveBeenCalledOnce();
     expect(callbacks.onForecastContextMenu).toHaveBeenCalledWith(
@@ -1565,7 +1639,7 @@ describe('forecast interaction contract', () => {
       recurrence: 'every day',
       planning: { due: localDate('2026-08-08') },
     });
-    const forecast = forecasts(source, '2026-08-09', '2026-08-09')[0]!;
+    const forecast = expectDefined(forecasts(source, '2026-08-09', '2026-08-09')[0]);
     const releases = [vi.fn(), vi.fn()];
     const interactionOwnership = {
       acquire: vi
@@ -1616,11 +1690,11 @@ describe('forecast interaction contract', () => {
     );
     renderer.mount();
     const openMenu = (): void => {
-      root
-        .querySelector<HTMLElement>(
+      expectDefined(
+        root.querySelector<HTMLElement>(
           '.task[data-occurrence-state="forecast"][data-due="2026-08-09"]',
-        )!
-        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        ),
+      ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     };
 
     openMenu();
@@ -1667,11 +1741,11 @@ describe('forecast interaction contract', () => {
     (panel as unknown as { calDate: moment.Moment }).calDate = moment('2026-08-09');
     state.set('mode', 'calendar');
     const openMenu = (): void => {
-      root
-        .querySelector<HTMLElement>(
+      expectDefined(
+        root.querySelector<HTMLElement>(
           '[data-mg-date="2026-08-09"] [data-occurrence-state="forecast"]',
-        )!
-        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        ),
+      ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     };
 
     openMenu();
@@ -1715,9 +1789,11 @@ describe('forecast interaction contract', () => {
         registry,
       );
       renderer.mount();
-      const forecast = root.querySelector<HTMLElement>(
-        '.task[data-occurrence-state="forecast"][data-due="2026-08-02"]',
-      )!;
+      const forecast = expectDefined(
+        root.querySelector<HTMLElement>(
+          '.task[data-occurrence-state="forecast"][data-due="2026-08-02"]',
+        ),
+      );
 
       forecast.click();
       const sourceModal = activeDocument.querySelector<HTMLElement>('.abyss-modal');
@@ -1727,9 +1803,9 @@ describe('forecast interaction contract', () => {
       );
 
       forecast.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      activeDocument
-        .querySelector<HTMLElement>('.abyss-forecast-context-menu-edit-repeat')!
-        .click();
+      expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu-edit-repeat'),
+      ).click();
       expect(activeDocument.querySelector<HTMLInputElement>('.abyss-recurrence-raw')?.value).toBe(
         'every day',
       );
@@ -1771,9 +1847,11 @@ describe('forecast interaction contract', () => {
     );
     (panel as unknown as { calDate: moment.Moment }).calDate = moment('2026-08-09');
     state.set('mode', 'calendar');
-    const forecast = root.querySelector<HTMLElement>(
-      '[data-mg-date="2026-08-09"] .abyss-mg-plain[data-occurrence-state="forecast"]',
-    )!;
+    const forecast = expectDefined(
+      root.querySelector<HTMLElement>(
+        '[data-mg-date="2026-08-09"] .abyss-mg-plain[data-occurrence-state="forecast"]',
+      ),
+    );
 
     forecast.click();
     expect(openModal).toHaveBeenCalledWith(sourceRoot);
@@ -1783,7 +1861,9 @@ describe('forecast interaction contract', () => {
 
     forecast.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(activeDocument.querySelector('.abyss-forecast-context-menu-edit-repeat')).not.toBeNull();
-    activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu-edit-repeat')!.click();
+    expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu-edit-repeat'),
+    ).click();
     expect(activeDocument.querySelector<HTMLInputElement>('.abyss-recurrence-raw')?.value).toBe(
       'every day',
     );

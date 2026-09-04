@@ -48,6 +48,7 @@ import {
   renderRecurrenceBadge,
 } from '../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../ui/renderTaskText';
+import { runAsyncAction } from '../ui/runAsyncAction';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { showStatusMenuAt } from '../ui/statusMenu';
 import { showTagDropdown } from '../ui/tagDropdown';
@@ -65,6 +66,58 @@ import { openInFile } from '../ui/taskNavigation';
 import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
 
 type TaskLike = TaskSnapshot | SubtaskSnapshot;
+
+type RightPanelDependencies = readonly [
+  state: AppState,
+  app: App,
+  statusRegistry: StatusRegistry,
+  settings?: CalendarSettings,
+  onSuccessfulMutation?: (ref?: TaskRef) => void,
+  tasks?: TaskApplicationApi,
+  onRenderHeaderActions?: (actions: HTMLElement) => void,
+  onMutationLifecycle?: (event: RightPanelMutationLifecycle) => void,
+  commentTimeContext?: CommentTimeContextProvider,
+  interactionOwnership?: InteractionOwnershipPort,
+];
+
+interface TextDraftSnapshot {
+  readonly value: string;
+  readonly selectionStart: number;
+  readonly selectionEnd: number;
+  readonly hadFocus: boolean;
+  readonly dirty: boolean;
+}
+
+interface SelectedPlanningResult {
+  readonly root: TaskSnapshot;
+  readonly changed: boolean;
+  readonly target: PlanningTarget;
+  readonly initiatingRoot: TaskRef;
+  readonly stack: readonly TaskLike[];
+  readonly submission: object | undefined;
+}
+
+class AsyncEditLifecycle {
+  private phase: 'idle' | 'saving' | 'closed' = 'idle';
+
+  begin(): boolean {
+    if (this.phase !== 'idle') return false;
+    this.phase = 'saving';
+    return true;
+  }
+
+  retry(): void {
+    if (this.phase === 'saving') this.phase = 'idle';
+  }
+
+  close(): void {
+    this.phase = 'closed';
+  }
+
+  isClosed(): boolean {
+    return this.phase === 'closed';
+  }
+}
 
 export interface RightPanelMutationLifecycle {
   readonly phase: 'started' | 'settled';
@@ -131,7 +184,7 @@ function rebuildPlanningTargetStack(root: TaskSnapshot, target: PlanningTarget):
     const child: SubtaskSnapshot | undefined = current.subtasks.find(
       (candidate) => candidate.ref.relativeLine === ref.relativeLine,
     );
-    if (!child) break;
+    if (child == null) break;
     stack.push(child);
     current = child;
   }
@@ -142,20 +195,74 @@ function commentRefOf(comment: TaskCommentSnapshot): CommentRef {
   return comment.ref;
 }
 
+function textDraftSnapshot(
+  element: HTMLInputElement | HTMLTextAreaElement,
+  base: string,
+  active: Element | null,
+): TextDraftSnapshot {
+  return {
+    value: element.value,
+    selectionStart: element.selectionStart ?? 0,
+    selectionEnd: element.selectionEnd ?? 0,
+    hadFocus: active === element,
+    dirty: element.value !== base,
+  };
+}
+
+function timeChipPresentation(
+  time: string | undefined,
+  duration: number | undefined,
+): { readonly text: string; readonly label: string } {
+  if (time == null) return { text: '⏰ Time', label: 'Set time and duration' };
+  if (duration == null) {
+    return { text: `⏰ ${time}`, label: `Change time, currently ${time}, no duration` };
+  }
+  return {
+    text: `⏰ ${time} · ${formatDurationFromMinutes(duration)}`,
+    label: `Change time, currently ${time}, duration ${String(duration)} minutes`,
+  };
+}
+
+function dimensionOrFallback(primary: number, secondary: number, fallback: number): number {
+  if (Number.isFinite(primary) && primary !== 0) return primary;
+  if (Number.isFinite(secondary) && secondary !== 0) return secondary;
+  return fallback;
+}
+
+function finiteNonzeroOr(value: number, fallback: number): number {
+  return Number.isFinite(value) && value !== 0 ? value : fallback;
+}
+
+function clearOptionalTimer(ownerWindow: Window | null, timer: number | undefined): void {
+  if (timer !== undefined) ownerWindow?.clearTimeout(timer);
+}
+
 export class RightPanel {
   private readonly completionConfirmationAbortController = new AbortController();
   private el!: HTMLElement;
+  private mounted = false;
+  private readonly state: AppState;
+  private readonly app: App;
+  private readonly statusRegistry: StatusRegistry;
+  private readonly settings: CalendarSettings | undefined;
+  private readonly tasks: TaskApplicationApi | undefined;
+  private readonly onRenderHeaderActions: ((actions: HTMLElement) => void) | undefined;
+  private readonly onMutationLifecycle: ((event: RightPanelMutationLifecycle) => void) | undefined;
+  private readonly commentTimeContext: CommentTimeContextProvider | undefined;
+  private readonly interactionOwnership: InteractionOwnershipPort;
   private off?: () => void;
   private draggingSub: SubtaskSnapshot | null = null;
   private md = new Component();
-  private onSuccessfulMutation?: (ref?: TaskRef) => void;
-  private submittedDrafts = new Map<object, SubmittedDraft>();
-  private anchoredSurfaceCleanups = new Map<HTMLElement, () => void>();
-  private recurrenceDraftEditor?: {
-    readonly target: TaskNodeRef;
-    readonly handle: RecurrenceEditorHandle;
-    readonly surface: HTMLElement;
-  };
+  private readonly onSuccessfulMutation: ((ref?: TaskRef) => void) | undefined;
+  private readonly submittedDrafts = new Map<object, SubmittedDraft>();
+  private readonly anchoredSurfaceCleanups = new Map<HTMLElement, () => void>();
+  private recurrenceDraftEditor:
+    | {
+        readonly target: TaskNodeRef;
+        readonly handle: RecurrenceEditorHandle;
+        readonly surface: HTMLElement;
+      }
+    | undefined;
   private detachedDrafts: Array<{
     readonly id: number;
     readonly key: string;
@@ -166,118 +273,139 @@ export class RightPanel {
   private detachedAnnouncement = '';
   private detachedFocusTimer: number | undefined;
 
-  constructor(
-    private state: AppState,
-    private app: App,
-    private statusRegistry: StatusRegistry,
-    private settings?: CalendarSettings,
-    onSuccessfulMutation?: (ref?: TaskRef) => void,
-    private tasks?: TaskApplicationApi,
-    private onRenderHeaderActions?: (actions: HTMLElement) => void,
-    private onMutationLifecycle?: (event: RightPanelMutationLifecycle) => void,
-    private commentTimeContext?: CommentTimeContextProvider,
-    private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
-  ) {
+  constructor(...dependencies: RightPanelDependencies) {
+    const [
+      state,
+      app,
+      statusRegistry,
+      settings,
+      onSuccessfulMutation,
+      tasks,
+      onRenderHeaderActions,
+      onMutationLifecycle,
+      commentTimeContext,
+      interactionOwnership = noInteractionOwnership,
+    ] = dependencies;
+    this.state = state;
+    this.app = app;
+    this.statusRegistry = statusRegistry;
+    this.settings = settings;
     this.onSuccessfulMutation = onSuccessfulMutation;
+    this.tasks = tasks;
+    this.onRenderHeaderActions = onRenderHeaderActions;
+    this.onMutationLifecycle = onMutationLifecycle;
+    this.commentTimeContext = commentTimeContext;
+    this.interactionOwnership = interactionOwnership;
   }
 
   mount(container: HTMLElement): void {
     this.el = container;
-    this.off = this.state.on('taskStack', () => this.render());
+    this.mounted = true;
+    this.off = this.state.on('taskStack', () => {
+      this.render();
+    });
     this.render();
   }
 
   destroy(): void {
+    this.mounted = false;
     this.completionConfirmationAbortController.abort();
     this.off?.();
     if (this.detachedFocusTimer !== undefined) window.clearTimeout(this.detachedFocusTimer);
     this.clearAnchoredSurfaces();
-    this.el?.empty();
+    this.el.empty();
     this.md.unload();
   }
 
   captureDraftState(): RightPanelDraftBundle | undefined {
-    if (!this.el) return undefined;
+    if (!this.mounted) return undefined;
     const stack = this.state.get('taskStack');
     const task = stack[stack.length - 1];
-    const target = task ? this.planningTarget(task) : undefined;
     const active = this.el.ownerDocument.activeElement;
-    const recurrence = this.recurrenceDraftEditor;
     const candidates: RightPanelDraftState[] = [];
-    if (recurrence) {
-      const editor = recurrence.handle.captureDraftState();
-      const hadFocus = active !== null && recurrence.surface.contains(active);
-      if (editor.dirty || hadFocus) {
-        candidates.push({
-          kind: 'recurrence-editor',
-          target: recurrence.target,
-          editor,
-          hadFocus,
-        });
-      }
-    }
-    if (!task || !target) return candidates.length > 0 ? { entries: candidates } : undefined;
+    const recurrence = this.captureRecurrenceDraft(active);
+    if (recurrence != null) candidates.push(recurrence);
+    const target = task != null ? this.planningTarget(task) : undefined;
+    if (task == null || target == null)
+      return candidates.length > 0 ? { entries: candidates } : undefined;
+    candidates.push(...this.captureTextDrafts(task, target, active));
+    const entries = candidates.filter((candidate) => candidate.hadFocus || isDirtyDraft(candidate));
+    if (entries.length === 0) return undefined;
+    const origin = this.draftOrigin(stack, task);
+    return { entries, ...(origin != null && { origin }) };
+  }
 
-    const textDraft = (element: HTMLInputElement | HTMLTextAreaElement, base: string) => ({
-      value: element.value,
-      selectionStart: element.selectionStart ?? 0,
-      selectionEnd: element.selectionEnd ?? 0,
-      hadFocus: active === element,
-      dirty: element.value !== base,
-    });
+  private captureRecurrenceDraft(active: Element | null): RightPanelDraftState | undefined {
+    const recurrence = this.recurrenceDraftEditor;
+    if (recurrence == null) return undefined;
+    const editor = recurrence.handle.captureDraftState();
+    const hadFocus = active !== null && recurrence.surface.contains(active);
+    if (!editor.dirty && !hadFocus) return undefined;
+    return { kind: 'recurrence-editor', target: recurrence.target, editor, hadFocus };
+  }
+
+  private captureTextDrafts(
+    task: TaskLike,
+    target: PlanningTarget,
+    active: Element | null,
+  ): RightPanelDraftState[] {
+    const candidates: RightPanelDraftState[] = [];
     const title = this.el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit');
-    if (title) {
+    if (title != null) {
       candidates.push({
         kind: 'title',
         target: { type: 'title', target },
-        ...textDraft(title, task.markdownTitle),
+        ...textDraftSnapshot(title, task.markdownTitle, active),
       });
     }
     const description = this.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit');
-    if (description) {
+    if (description != null) {
       candidates.push({
         kind: 'description',
         target: { type: 'description', target },
-        ...textDraft(description, task.description ?? ''),
+        ...textDraftSnapshot(description, task.description ?? '', active),
       });
     }
     const rows = [...this.el.querySelectorAll<HTMLElement>('.abyss-comment-row')];
     for (const [index, row] of rows.entries()) {
       const commentEdit = row.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input');
-      if (!commentEdit) continue;
+      if (commentEdit == null) continue;
       const comment = task.comments[index];
-      if (comment) {
+      if (comment != null) {
         candidates.push({
           kind: 'existing-comment',
           target: { type: 'comment', ref: comment.ref },
-          ...textDraft(commentEdit, comment.text),
+          ...textDraftSnapshot(commentEdit, comment.text, active),
         });
       }
     }
     const newSubtask = this.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input');
-    if (newSubtask) {
-      candidates.push({ kind: 'new-subtask', parent: target, ...textDraft(newSubtask, '') });
+    if (newSubtask != null) {
+      candidates.push({
+        kind: 'new-subtask',
+        parent: target,
+        ...textDraftSnapshot(newSubtask, '', active),
+      });
     }
     const newComment = this.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input');
-    if (newComment) {
-      candidates.push({ kind: 'new-comment', parent: target, ...textDraft(newComment, '') });
+    if (newComment != null) {
+      candidates.push({
+        kind: 'new-comment',
+        parent: target,
+        ...textDraftSnapshot(newComment, '', active),
+      });
     }
-    const entries = candidates.filter((candidate) => candidate.hadFocus || isDirtyDraft(candidate));
+    return candidates;
+  }
+
+  private draftOrigin(stack: readonly TaskLike[], task: TaskLike): RightPanelDraftBundle['origin'] {
     const root = stack[0];
-    return entries.length > 0
-      ? {
-          entries,
-          ...(root && 'source' in root
-            ? {
-                origin: {
-                  taskTitle: task.title,
-                  filePath: root.source.filePath,
-                  line: taskNodeLine(root, task),
-                },
-              }
-            : {}),
-        }
-      : undefined;
+    if (root == null || !('source' in root)) return undefined;
+    return {
+      taskTitle: task.title,
+      filePath: root.source.filePath,
+      line: taskNodeLine(root, task),
+    };
   }
 
   captureDraftStateForOwnedTransition(
@@ -286,15 +414,16 @@ export class RightPanel {
     token?: object,
   ): RightPanelDraftBundle | undefined {
     const bundle = this.captureDraftState();
-    const submitted = token
-      ? this.submittedDrafts.get(token)
-      : [...this.submittedDrafts.values()].find(
-          (candidate) =>
-            !candidate.consumed &&
-            candidate.rootAliases.some((alias) => sameTaskRef(alias, consumedOwnedRef)),
-        );
+    const submitted =
+      token != null
+        ? this.submittedDrafts.get(token)
+        : [...this.submittedDrafts.values()].find(
+            (candidate) =>
+              !candidate.consumed &&
+              candidate.rootAliases.some((alias) => sameTaskRef(alias, consumedOwnedRef)),
+          );
     if (
-      !submitted ||
+      submitted == null ||
       submitted.consumed ||
       !submitted.rootAliases.some((alias) => sameTaskRef(alias, consumedOwnedRef))
     ) {
@@ -304,11 +433,12 @@ export class RightPanel {
       submitted.rootAliases.push({ ...successorRef });
     }
     submitted.consumed = true;
-    if (!submitted.draft || !bundle) return bundle;
+    const submittedDraft = submitted.draft;
+    if (submittedDraft == null || bundle == null) return bundle;
     const entries = bundle.entries.filter(
       (candidate) =>
-        draftIdentity(candidate) !== draftIdentity(submitted.draft!) ||
-        !this.sameDraftPayload(candidate, submitted.draft!),
+        draftIdentity(candidate) !== draftIdentity(submittedDraft) ||
+        !this.sameDraftPayload(candidate, submittedDraft),
     );
     return entries.length > 0 ? { ...bundle, entries } : undefined;
   }
@@ -332,7 +462,7 @@ export class RightPanel {
       return left.value === right.value;
     }
     if (left.kind !== 'recurrence-editor' || right.kind !== 'recurrence-editor') return false;
-    const semanticEditor = (editor: typeof left.editor) => [
+    const semanticEditor = (editor: typeof left.editor): readonly unknown[] => [
       editor.mode,
       editor.preset,
       editor.intervalText,
@@ -362,12 +492,12 @@ export class RightPanel {
       return undefined;
     }
     const bundle = this.captureDraftState();
-    const candidate = matchesDraft ? bundle?.entries.find(matchesDraft) : undefined;
+    const candidate = matchesDraft != null ? bundle?.entries.find(matchesDraft) : undefined;
     const token = Object.freeze({});
     this.submittedDrafts.set(token, {
       ref: { ...ref },
       rootAliases: [{ ...ref }],
-      ...(candidate && { draft: this.snapshotDraft(candidate) }),
+      ...(candidate != null && { draft: this.snapshotDraft(candidate) }),
       origin: bundle?.origin,
       consumed: false,
     });
@@ -393,9 +523,9 @@ export class RightPanel {
 
   private settleDraftSubmission(token: object, result: TaskCommandResult): void {
     const submitted = this.submittedDrafts.get(token);
-    if (!submitted) return;
+    if (submitted == null) return;
     this.submittedDrafts.delete(token);
-    if (result.type !== 'ok' && submitted.consumed && submitted.draft) {
+    if (result.type !== 'ok' && submitted.consumed && submitted.draft != null) {
       this.recoverSubmittedDraft(submitted);
     }
     this.onMutationLifecycle?.({ phase: 'settled', ref: { ...submitted.ref }, token });
@@ -403,35 +533,40 @@ export class RightPanel {
 
   private recoverSubmittedDraft(submitted: SubmittedDraft): void {
     const draft = submitted.draft;
-    if (!draft) return;
+    if (draft == null) return;
     const currentSameKey = this.captureDraftState()?.entries.find(
       (candidate) => draftIdentity(candidate) === draftIdentity(draft),
     );
-    if (currentSameKey && !this.sameDraftPayload(currentSameKey, draft)) {
+    if (currentSameKey != null && !this.sameDraftPayload(currentSameKey, draft)) {
       this.appendDetachedDraft(draft, submitted.origin);
       return;
     }
-    if (currentSameKey) return;
+    if (currentSameKey != null) return;
+    const bundle: RightPanelDraftBundle = {
+      entries: [draft],
+      ...(submitted.origin !== undefined && { origin: submitted.origin }),
+    };
     const root = this.state.get('taskStack')[0];
-    if (root && 'source' in root) {
-      this.restoreDraftState({ entries: [draft], origin: submitted.origin }, root);
+    if (root != null && 'source' in root) {
+      this.restoreDraftState(bundle, root);
       return;
     }
-    this.detachDraftState({ entries: [draft], origin: submitted.origin });
+    this.detachDraftState(bundle);
   }
 
   restoreDraftState(bundle: RightPanelDraftBundle | undefined, currentRoot: TaskSnapshot): void {
-    if (!bundle) return;
+    if (bundle == null) return;
     let focusTarget: HTMLElement | undefined;
     const context = createRightPanelDraftRebaseContext();
     for (const draft of bundle.entries) {
       const restoredFocus = this.restoreDraftEntry(draft, currentRoot, bundle.origin, context);
-      if (restoredFocus) focusTarget = restoredFocus;
+      if (restoredFocus != null) focusTarget = restoredFocus;
     }
-    if (focusTarget) {
-      focusTarget.focus();
+    if (focusTarget != null) {
+      const focus = focusTarget;
+      focus.focus();
       this.el.ownerDocument.defaultView?.setTimeout(() => {
-        if (focusTarget?.isConnected) focusTarget.focus();
+        if (focus.isConnected) focus.focus();
       }, 0);
     }
   }
@@ -443,58 +578,95 @@ export class RightPanel {
     context = createRightPanelDraftRebaseContext(),
   ): HTMLElement | undefined {
     const rebased = rebaseRightPanelDraft(draft, currentRoot, context);
-    if (!rebased) {
-      if (isDirtyDraft(draft)) this.appendDetachedDraft(draft, origin);
+    if (rebased == null) {
+      this.preserveDirtyDraft(draft, origin);
       return undefined;
     }
     const stack = this.state.get('taskStack');
     const task = stack[stack.length - 1];
-    if (!task) {
-      if (isDirtyDraft(rebased)) this.appendDetachedDraft(rebased, origin);
+    if (task == null) {
+      this.preserveDirtyDraft(rebased, origin);
       return undefined;
     }
     if (rebased.kind === 'recurrence-editor') {
-      const chip = this.el.querySelector<HTMLElement>('.abyss-repeat-chip');
-      if (!chip) {
-        if (isDirtyDraft(rebased)) this.appendDetachedDraft(rebased, origin);
-        return undefined;
-      }
-      this.showRecurrencePopover(chip, task, stack, false);
-      this.recurrenceDraftEditor?.handle.restoreDraftState(rebased.editor);
-      return rebased.hadFocus
-        ? (this.recurrenceDraftEditor?.surface.querySelector<HTMLElement>(':focus') ?? undefined)
-        : undefined;
+      return this.restoreRecurrenceDraft(rebased, task, stack, origin);
     }
-
-    let edit: HTMLInputElement | HTMLTextAreaElement | null;
-    if (rebased.kind === 'title') {
-      this.el.querySelector<HTMLElement>('.abyss-right-title-view')?.click();
-      edit = this.el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit');
-    } else if (rebased.kind === 'description') {
-      this.el.querySelector<HTMLElement>('.abyss-right-desc-view')?.click();
-      edit = this.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit');
-    } else if (rebased.kind === 'existing-comment') {
-      const index = task.comments.findIndex(
-        (comment) =>
-          comment.ref.relativeLine === rebased.target.ref.relativeLine &&
-          comment.ref.originalMarkdown === rebased.target.ref.originalMarkdown,
-      );
-      const row = this.el.querySelectorAll<HTMLElement>('.abyss-comment-row')[index];
-      row?.querySelector<HTMLElement>('.abyss-comment-text')?.click();
-      edit = row?.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input') ?? null;
-    } else if (rebased.kind === 'new-subtask') {
-      this.el.querySelector<HTMLElement>('.abyss-subtask-add-row')?.click();
-      edit = this.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input');
-    } else {
-      edit = this.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input');
-    }
-    if (!edit) {
+    const edit = this.restoreTextDraftElement(rebased, task);
+    if (edit == null) {
       if (rebased.dirty) this.appendDetachedDraft(rebased, origin);
       return undefined;
     }
     edit.value = rebased.value;
     edit.setSelectionRange(rebased.selectionStart, rebased.selectionEnd);
     return rebased.hadFocus ? edit : undefined;
+  }
+
+  private preserveDirtyDraft(
+    draft: RightPanelDraftState,
+    origin?: RightPanelDraftBundle['origin'],
+  ): void {
+    if (isDirtyDraft(draft)) this.appendDetachedDraft(draft, origin);
+  }
+
+  private restoreRecurrenceDraft(
+    draft: Extract<RightPanelDraftState, { readonly kind: 'recurrence-editor' }>,
+    task: TaskLike,
+    stack: readonly TaskLike[],
+    origin?: RightPanelDraftBundle['origin'],
+  ): HTMLElement | undefined {
+    const chip = this.el.querySelector<HTMLElement>('.abyss-repeat-chip');
+    if (chip == null) {
+      this.preserveDirtyDraft(draft, origin);
+      return undefined;
+    }
+    this.showRecurrencePopover(chip, task, stack, false);
+    const editor = this.recurrenceDraftEditor;
+    if (editor == null) return undefined;
+    editor.handle.restoreDraftState(draft.editor);
+    return draft.hadFocus
+      ? (editor.surface.querySelector<HTMLElement>(':focus') ?? undefined)
+      : undefined;
+  }
+
+  private restoreTextDraftElement(
+    rebased: Exclude<RightPanelDraftState, { readonly kind: 'recurrence-editor' }>,
+    task: TaskLike,
+  ): HTMLInputElement | HTMLTextAreaElement | null {
+    if (rebased.kind === 'title') {
+      this.clickElement('.abyss-right-title-view');
+      return this.el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit');
+    }
+    if (rebased.kind === 'description') {
+      this.clickElement('.abyss-right-desc-view');
+      return this.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit');
+    }
+    if (rebased.kind === 'existing-comment') {
+      return this.restoreCommentDraftElement(rebased, task);
+    }
+    if (rebased.kind === 'new-subtask') {
+      this.clickElement('.abyss-subtask-add-row');
+      return this.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input');
+    }
+    return this.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input');
+  }
+
+  private restoreCommentDraftElement(
+    draft: Extract<RightPanelDraftState, { readonly kind: 'existing-comment' }>,
+    task: TaskLike,
+  ): HTMLTextAreaElement | null {
+    const index = task.comments.findIndex(
+      (comment) =>
+        comment.ref.relativeLine === draft.target.ref.relativeLine &&
+        comment.ref.originalMarkdown === draft.target.ref.originalMarkdown,
+    );
+    const row = this.el.querySelectorAll<HTMLElement>('.abyss-comment-row')[index];
+    const text = row?.querySelector<HTMLElement>('.abyss-comment-text');
+    text?.click();
+    return row?.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input') ?? null;
+  }
+
+  private clickElement(selector: string): void {
+    this.el.querySelector<HTMLElement>(selector)?.click();
   }
 
   detachDraftState(bundle: RightPanelDraftBundle | undefined): void {
@@ -511,7 +683,8 @@ export class RightPanel {
     const index = this.detachedDrafts.findIndex((entry) => entry.key === key);
     let id: number;
     if (index >= 0) {
-      const existing = this.detachedDrafts[index]!;
+      const existing = this.detachedDrafts[index];
+      if (existing == null) return;
       id = existing.id;
       this.detachedDrafts[index] = { id, key, draft, origin: origin ?? existing.origin };
     } else {
@@ -538,7 +711,7 @@ export class RightPanel {
     origin?: RightPanelDraftBundle['origin'],
   ): string {
     const field = draft.kind.replace(/-/gu, ' ');
-    return origin ? `${origin.taskTitle}, ${field}` : field;
+    return origin != null ? `${origin.taskTitle}, ${field}` : field;
   }
 
   private renderDetachedDraftTray(): void {
@@ -577,17 +750,20 @@ export class RightPanel {
           window.clearTimeout(this.detachedFocusTimer);
           this.detachedFocusTimer = undefined;
         }
-        void (async () => {
-          try {
-            const clipboard = this.el.ownerDocument.defaultView?.navigator.clipboard;
-            if (!clipboard) throw new Error('clipboard-unavailable');
-            await clipboard.writeText(draftPlainText(entry.draft));
-            status.textContent = 'Copied.';
-          } catch {
-            status.textContent = 'Could not copy. The draft is still available.';
-          }
-          copy.focus();
-        })();
+        runAsyncAction(
+          (async () => {
+            try {
+              const clipboard = this.el.ownerDocument.defaultView?.navigator.clipboard;
+              if (clipboard == null) throw new Error('clipboard-unavailable');
+              await clipboard.writeText(draftPlainText(entry.draft));
+              status.textContent = 'Copied.';
+            } catch {
+              status.textContent = 'Could not copy. The draft is still available.';
+            }
+            copy.focus();
+          })(),
+          'Could not complete UI action',
+        );
       });
       const discard = detached.createEl('button', {
         cls: 'abyss-detached-draft-discard',
@@ -614,7 +790,8 @@ export class RightPanel {
       this.renderDetachedDraftTray();
       return;
     }
-    const task = stack[stack.length - 1]!;
+    const task = stack[stack.length - 1];
+    if (task == null) return;
     this.renderTask(task, stack, this.commentTimeContext?.());
     this.renderDetachedDraftTray();
   }
@@ -624,18 +801,23 @@ export class RightPanel {
     enableAttachmentPaste(el, {
       app: this.app,
       sourcePath: rootTaskRef(task).filePath,
-      onInsert: (links) => insertAtCaret(el, links),
+      onInsert: (links) => {
+        insertAtCaret(el, links);
+      },
     });
   }
 
   private editLink(task: TaskLike, occ: number, token: LinkToken): void {
     const target = this.planningTarget(task);
-    if (!target) return;
+    if (target == null) return;
     new LinkEditModal(
       this.app,
       token,
       (newRaw) => {
-        void this.executeLinkEdit({ type: 'title', target }, occ, newRaw);
+        runAsyncAction(
+          this.executeLinkEdit({ type: 'title', target }, occ, newRaw),
+          'Could not complete UI action',
+        );
       },
       rootTaskRef(task).filePath,
       this.interactionOwnership,
@@ -652,7 +834,9 @@ export class RightPanel {
     new LinkEditModal(
       this.app,
       token,
-      (newRaw) => void this.executeLinkEdit(target, occ, newRaw),
+      (newRaw) => {
+        runAsyncAction(this.executeLinkEdit(target, occ, newRaw), 'Could not complete UI action');
+      },
       sourcePath,
       this.interactionOwnership,
     ).open();
@@ -663,7 +847,7 @@ export class RightPanel {
     occurrence: number,
     replacement: string,
   ): Promise<void> {
-    if (!this.tasks) return;
+    if (this.tasks == null) return;
     const result = await this.tasks.execute({ type: 'edit-link', target, occurrence, replacement });
     const node = target.type === 'comment' ? target.ref.parent : target.target;
     this.applyPlanningResult(result, node);
@@ -678,80 +862,91 @@ export class RightPanel {
       onLinks: (links) => {
         // The closure carries the observed revision; a concurrent edit is surfaced as a
         // structured conflict instead of overwriting the changed block.
-        const cur = task.description ?? '';
-        void this.updateDescription(task, cur.trim() ? `${cur} ${links}` : links);
+        const current = task.description ?? '';
+        runAsyncAction(
+          this.updateDescription(task, current.trim().length > 0 ? `${current} ${links}` : links),
+          'Could not complete UI action',
+        );
       },
     });
-    let showView: () => void = () => {};
-
-    const enterEdit = (): void => {
-      const start = view.offsetHeight;
-      view.hide();
-      const ta = section.createEl('textarea', { cls: 'abyss-right-desc abyss-right-desc-edit' });
-      view.insertAdjacentElement('afterend', ta);
-      ta.value = task.description ?? '';
-      this.enablePaste(ta, task);
-      ta.setCssStyles({ height: `${Math.max(start, 60)}px` });
-      window.setTimeout(() => ta.focus(), 0);
-      let done = false;
-      const finish = async (save: boolean): Promise<void> => {
-        if (done) return;
-        // Let any in-flight paste insert its link into the value before we save/remove.
-        await whenPasteSettled(ta);
-        if (done) return;
-        if (save && ta.value !== (task.description ?? '')) {
-          const saved = await this.updateDescription(task, ta.value);
-          if (!saved) {
-            ta.focus();
-            return;
-          }
-        }
-        done = true;
-        ta.remove();
-        view.show();
-        showView();
-      };
-      ta.addEventListener('blur', () => void finish(true));
-      ta.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          void finish(false);
-        }
-      });
+    const showView = (): void => {
+      this.showDescription(view, task);
     };
-
-    showView = (): void => {
-      const desc = task.description ?? '';
-      if (desc.trim()) {
-        view.removeClass('abyss-right-desc-empty');
-        renderTaskText(view, desc, {
-          app: this.app,
-          sourcePath: rootTaskRef(task).filePath,
-          component: this.md,
-          onEditLink: (occ, token) => {
-            const target = this.planningTarget(task);
-            if (target) {
-              this.editLinkInString(
-                { type: 'description', target },
-                occ,
-                token,
-                rootTaskRef(task).filePath,
-              );
-            }
-          },
-        });
-      } else {
-        view.empty();
-        view.addClass('abyss-right-desc-empty');
-        view.setText('Add a description…');
-      }
-    };
-
     view.addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('a')) return; // let links navigate
-      enterEdit();
+      if ((e.target as HTMLElement).closest('a') != null) return; // let links navigate
+      this.enterDescriptionEdit(section, view, task, showView);
     });
     showView();
+  }
+
+  private enterDescriptionEdit(
+    section: HTMLElement,
+    view: HTMLElement,
+    task: TaskLike,
+    showView: () => void,
+  ): void {
+    const start = view.offsetHeight;
+    view.hide();
+    const textarea = section.createEl('textarea', {
+      cls: 'abyss-right-desc abyss-right-desc-edit',
+    });
+    view.insertAdjacentElement('afterend', textarea);
+    textarea.value = task.description ?? '';
+    this.enablePaste(textarea, task);
+    textarea.setCssStyles({ height: `${Math.max(start, 60)}px` });
+    window.setTimeout(() => {
+      textarea.focus();
+    }, 0);
+    const lifecycle = new AsyncEditLifecycle();
+    const finish = async (save: boolean): Promise<void> => {
+      if (!lifecycle.begin()) return;
+      await whenPasteSettled(textarea);
+      const changed = textarea.value !== (task.description ?? '');
+      if (save && changed && !(await this.updateDescription(task, textarea.value))) {
+        lifecycle.retry();
+        textarea.focus();
+        return;
+      }
+      lifecycle.close();
+      textarea.remove();
+      view.show();
+      showView();
+    };
+    textarea.addEventListener('blur', () => {
+      runAsyncAction(finish(true), 'Could not complete UI action');
+    });
+    textarea.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      runAsyncAction(finish(false), 'Could not complete UI action');
+    });
+  }
+
+  private showDescription(view: HTMLElement, task: TaskLike): void {
+    const description = task.description ?? '';
+    if (description.trim().length === 0) {
+      view.empty();
+      view.addClass('abyss-right-desc-empty');
+      view.setText('Add a description…');
+      return;
+    }
+    view.removeClass('abyss-right-desc-empty');
+    renderTaskText(view, description, {
+      app: this.app,
+      sourcePath: rootTaskRef(task).filePath,
+      component: this.md,
+      onEditLink: (occurrence, token) => {
+        const target = this.planningTarget(task);
+        if (target != null) {
+          this.editLinkInString(
+            { type: 'description', target },
+            occurrence,
+            token,
+            rootTaskRef(task).filePath,
+          );
+        }
+      },
+    });
   }
 
   private renderEmpty(): void {
@@ -770,42 +965,49 @@ export class RightPanel {
     stack: TaskLike[],
     commentTimeContext?: CommentTimeContext,
   ): void {
-    // Breadcrumb — shows only the parent path (current task is in the title input)
-    if (stack.length > 1) {
-      const breadcrumb = this.el.createDiv({ cls: 'abyss-breadcrumb' });
-      const parents = stack.slice(0, -1);
-      parents.forEach((item, idx) => {
-        if (idx > 0) breadcrumb.createEl('span', { cls: 'abyss-breadcrumb-sep', text: ' › ' });
-        const crumb = breadcrumb.createEl('span', { cls: 'abyss-breadcrumb-item' });
-        renderTaskText(crumb, item.markdownTitle, {
-          app: this.app,
-          sourcePath: rootTaskRef(item).filePath,
-          component: this.md,
-          onEditLink: (occ, token) => this.editLink(item, occ, token),
-        });
-        crumb.addEventListener('click', () => {
-          this.state.set('taskStack', stack.slice(0, idx + 1));
-        });
+    this.renderBreadcrumb(stack);
+    this.renderTaskHeader(task);
+    this.renderTaskMetadata(task, stack);
+    this.renderDescriptionSection(task);
+    this.renderSubtaskSection(task);
+    this.renderCommentSection(task, commentTimeContext);
+  }
+
+  private renderBreadcrumb(stack: readonly TaskLike[]): void {
+    if (stack.length <= 1) return;
+    const breadcrumb = this.el.createDiv({ cls: 'abyss-breadcrumb' });
+    for (const [index, item] of stack.slice(0, -1).entries()) {
+      if (index > 0) breadcrumb.createSpan({ cls: 'abyss-breadcrumb-sep', text: ' › ' });
+      const crumb = breadcrumb.createSpan({ cls: 'abyss-breadcrumb-item' });
+      renderTaskText(crumb, item.markdownTitle, {
+        app: this.app,
+        sourcePath: rootTaskRef(item).filePath,
+        component: this.md,
+        onEditLink: (occurrence, token) => {
+          this.editLink(item, occurrence, token);
+        },
+      });
+      crumb.addEventListener('click', () => {
+        this.state.set('taskStack', stack.slice(0, index + 1));
       });
     }
+  }
 
-    // Header
+  private renderTaskHeader(task: TaskLike): void {
     const header = this.el.createDiv({ cls: 'abyss-right-header' });
     renderStatusMarker(header, {
       task,
       registry: this.statusRegistry,
-      onLeftClick: () => void this.toggleTaskLike(task),
+      onLeftClick: () => {
+        runAsyncAction(this.toggleTaskLike(task), 'Could not complete UI action');
+      },
       onContextMenu: (event) => {
         event.stopPropagation();
         this.openStatusMenu(event, task);
       },
     });
     this.renderTitleBlock(header, task);
-
     const headerActions = header.createDiv({ cls: 'abyss-right-header-actions' });
-
-    // More actions menu button
-    const currentTask = task;
     const menuBtn = headerActions.createEl('button', {
       cls: 'abyss-right-action-btn',
       text: '⋯',
@@ -818,170 +1020,147 @@ export class RightPanel {
     });
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.renderContextMenu(currentTask, menuBtn);
+      this.renderContextMenu(task, menuBtn);
     });
     this.onRenderHeaderActions?.(headerActions);
+  }
 
-    // Metadata chips — available for both TaskSnapshot and SubtaskSnapshot
-    {
-      const chips = this.el.createDiv({ cls: 'abyss-chips-row' });
+  private renderTaskMetadata(task: TaskLike, stack: readonly TaskLike[]): void {
+    const chips = this.el.createDiv({ cls: 'abyss-chips-row' });
+    this.renderDateChip(chips, task);
+    this.renderTimeChip(chips, task);
+    this.renderPriorityChip(chips, task);
+    this.renderRecurrenceChip(chips, task, stack);
+    if (task.planning.scheduled != null) this.renderScheduledChip(chips, task);
+    if (task.planning.start != null) this.renderStartChip(chips, task);
+    this.renderAddDateMenu(chips, task);
+    for (const tag of task.tags) this.renderTagChip(chips, task, tag);
+    const addTagBtn = chips.createEl('button', {
+      cls: 'abyss-chip abyss-chip-add',
+      text: '+ tag',
+      attr: {
+        'aria-label': 'Add tag',
+        'aria-haspopup': 'listbox',
+        'aria-expanded': 'false',
+      },
+    });
+    addTagBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.showTagInput(chips, task, addTagBtn);
+    });
+  }
 
-      // Date chip (due-first display; if scheduled is set, prefer showing scheduled as the
-      // "when this sits on the calendar" chip, matching the due-centric anchor-priority rule)
-      this.renderDateChip(chips, task);
+  private renderTimeChip(container: HTMLElement, task: TaskLike): void {
+    const duration = 'source' in task ? task.planning.duration : undefined;
+    const time = task.planning.time;
+    const presentation = timeChipPresentation(time, duration);
+    const chip = container.createEl('button', {
+      cls: `abyss-chip abyss-chip-time${time == null ? ' abyss-chip-empty' : ''}`,
+      text: presentation.text,
+      attr: {
+        title: time == null ? 'Set time and duration' : 'Change time and duration',
+        'aria-label': presentation.label,
+        'aria-haspopup': 'dialog',
+        'aria-expanded': 'false',
+      },
+    });
+    chip.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.showTimePopover(chip, task);
+    });
+  }
 
-      // Combined time + duration chip (duration only applies to top-level TaskSnapshot, not SubtaskSnapshot)
-      const duration = 'source' in task ? task.planning.duration : undefined;
-      let timeChipText = '⏰ Time';
-      let timeChipLabel = 'Set time and duration';
-      if (task.planning.time) {
-        timeChipText = duration
-          ? `⏰ ${task.planning.time} · ${formatDurationFromMinutes(duration)}`
-          : `⏰ ${task.planning.time}`;
-        timeChipLabel = duration
-          ? `Change time, currently ${task.planning.time}, duration ${String(duration)} minutes`
-          : `Change time, currently ${task.planning.time}, no duration`;
-      }
-      const timeChip = chips.createEl('button', {
-        cls: `abyss-chip abyss-chip-time${task.planning.time ? '' : ' abyss-chip-empty'}`,
-        text: timeChipText,
-        attr: {
-          title: task.planning.time ? 'Change time and duration' : 'Set time and duration',
-          'aria-label': timeChipLabel,
-          'aria-haspopup': 'dialog',
-          'aria-expanded': 'false',
-        },
-      });
-      timeChip.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.showTimePopover(timeChip, task);
-      });
-
-      // Priority chip
-      this.renderPriorityChip(chips, task);
-
-      // Repeat chip and its one shared editor. TaskModal inherits this through RightPanel reuse.
-      this.renderRecurrenceChip(chips, task, stack);
-
-      // Scheduled ("Plan") and Start chips — once SET, rendered as a normal round-pill,
-      // same style as the date/time/priority chips above; clicking it opens the same small
-      // date-picker popover used for the due-date chip (showDatePopover, generalized with a
-      // `field` param below). While UNSET, no placeholder pill clutters the main row —
-      // instead a compact "+" control (mirroring the "+ tag" button's pattern) offers to
-      // add whichever of Start/Plan are currently unset; picking one opens the exact same
-      // popover. This intentionally reverses the "always-visible placeholder pill" unset
-      // treatment from the previous round after live testing showed it cluttered the row.
-      if (task.planning.scheduled) this.renderScheduledChip(chips, task);
-      if (task.planning.start) this.renderStartChip(chips, task);
-      this.renderAddDateMenu(chips, task);
-
-      // Tag chips
-      const tags = task.tags ?? [];
-      for (const tag of tags) {
-        this.renderTagChip(chips, task, tag);
-      }
-      // Add tag
-      const addTagBtn = chips.createEl('button', {
-        cls: 'abyss-chip abyss-chip-add',
-        text: '+ tag',
-        attr: {
-          'aria-label': 'Add tag',
-          'aria-haspopup': 'listbox',
-          'aria-expanded': 'false',
-        },
-      });
-      addTagBtn.addEventListener('click', (event) => {
-        event.stopPropagation();
-        this.showTagInput(chips, task, addTagBtn);
-      });
-    }
-
-    // Description
+  private renderDescriptionSection(task: TaskLike): void {
     const descSection = this.el.createDiv({ cls: 'abyss-right-section' });
     const descHeader = descSection.createDiv({ cls: 'abyss-right-section-header' });
-    descHeader.createEl('span', { cls: 'abyss-right-section-label', text: 'Description' });
+    descHeader.createSpan({ cls: 'abyss-right-section-label', text: 'Description' });
     this.renderDescriptionBlock(descSection, task);
+  }
 
-    // Sub-tasks
+  private renderSubtaskSection(task: TaskLike): void {
     const subSection = this.el.createDiv({ cls: 'abyss-right-section' });
     const subHeader = subSection.createDiv({ cls: 'abyss-right-section-header' });
-    subHeader.createEl('span', { cls: 'abyss-right-section-label', text: 'Sub-tasks' });
-    const totalSubs = task.subtasks?.length ?? 0;
+    subHeader.createSpan({ cls: 'abyss-right-section-label', text: 'Sub-tasks' });
+    const totalSubs = task.subtasks.length;
     if (totalSubs > 0) {
       const doneSubs = task.subtasks.filter((s) => s.status === 'done').length;
-      subHeader.createEl('span', {
+      subHeader.createSpan({
         cls: 'abyss-right-section-count',
         text: `${doneSubs}/${totalSubs}`,
       });
     }
-
     const subList = subSection.createDiv({ cls: 'abyss-subtask-list' });
-    for (const sub of task.subtasks ?? []) {
-      this.renderSubTask(subList, sub, task);
-    }
+    for (const sub of task.subtasks) this.renderSubTask(subList, sub, task);
+    this.renderAddSubtaskControl(subSection, task);
+  }
 
-    // Inline add-subtask row at the bottom of the subtask list
+  private renderAddSubtaskControl(subSection: HTMLElement, task: TaskLike): void {
     const addSubRow = subSection.createDiv({ cls: 'abyss-subtask-add-row' });
-    addSubRow.createEl('span', { cls: 'abyss-subtask-add-icon', text: '+' });
-    addSubRow.createEl('span', { cls: 'abyss-subtask-add-label', text: 'Add sub-task' });
+    addSubRow.createSpan({ cls: 'abyss-subtask-add-icon', text: '+' });
+    addSubRow.createSpan({ cls: 'abyss-subtask-add-label', text: 'Add sub-task' });
     addSubRow.addEventListener('click', () => {
-      addSubRow.addClass('abyss-subtask-add-row--hidden');
-      const input = subSection.createEl('input', {
-        cls: 'abyss-subtask-new-input',
-        attr: { type: 'text', placeholder: 'New sub-task…' },
-      });
-      input.focus();
-      let closed = false;
-      let saving = false;
-      const close = (): void => {
-        if (closed) return;
-        closed = true;
-        input.remove();
-        addSubRow.removeClass('abyss-subtask-add-row--hidden');
-      };
-      const commit = async (): Promise<void> => {
-        if (closed || saving) return;
-        const text = input.value.trim();
-        if (!text) {
-          close();
-          return;
-        }
-        saving = true;
-        const succeeded = await this.addSubTask(task, text);
-        saving = false;
-        if (closed) return;
-        if (succeeded) close();
-        else input.focus();
-      };
-      input.addEventListener('keydown', (e: KeyboardEvent) => {
-        if (e.key === 'Enter') void commit();
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          close();
-        }
-      });
-      // Delay to allow click on commit button before blur fires
-      input.addEventListener('blur', () => window.setTimeout(() => void commit(), 150));
+      this.openSubtaskInput(subSection, addSubRow, task);
     });
+  }
 
-    // Comments
+  private openSubtaskInput(section: HTMLElement, trigger: HTMLElement, task: TaskLike): void {
+    trigger.addClass('abyss-subtask-add-row--hidden');
+    const input = section.createEl('input', {
+      cls: 'abyss-subtask-new-input',
+      attr: { type: 'text', placeholder: 'New sub-task…' },
+    });
+    const lifecycle = new AsyncEditLifecycle();
+    const close = (): void => {
+      if (lifecycle.isClosed()) return;
+      lifecycle.close();
+      input.remove();
+      trigger.removeClass('abyss-subtask-add-row--hidden');
+    };
+    const commit = async (): Promise<void> => {
+      if (!lifecycle.begin()) return;
+      const text = input.value.trim();
+      if (text === '') {
+        close();
+        return;
+      }
+      const succeeded = await this.addSubTask(task, text);
+      if (lifecycle.isClosed()) return;
+      if (succeeded) close();
+      else {
+        lifecycle.retry();
+        input.focus();
+      }
+    };
+    input.addEventListener('keydown', (event: KeyboardEvent) => {
+      if (event.key === 'Enter') runAsyncAction(commit(), 'Could not complete UI action');
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+      }
+    });
+    input.addEventListener('blur', () => {
+      window.setTimeout(() => {
+        runAsyncAction(commit(), 'Could not complete UI action');
+      }, 150);
+    });
+    input.focus();
+  }
+
+  private renderCommentSection(task: TaskLike, commentTimeContext?: CommentTimeContext): void {
     const commentSection = this.el.createDiv({ cls: 'abyss-right-section' });
     const commentHeader = commentSection.createDiv({ cls: 'abyss-right-section-header' });
-    commentHeader.createEl('span', { cls: 'abyss-right-section-label', text: 'Comments' });
-    const commentCount = task.comments?.length ?? 0;
+    commentHeader.createSpan({ cls: 'abyss-right-section-label', text: 'Comments' });
+    const commentCount = task.comments.length;
     if (commentCount > 0) {
-      commentHeader.createEl('span', {
+      commentHeader.createSpan({
         cls: 'abyss-right-section-count',
         text: String(commentCount),
       });
     }
-
     const commentList = commentSection.createDiv({ cls: 'abyss-comment-list' });
-    for (const comment of task.comments ?? []) {
+    for (const comment of task.comments) {
       this.renderComment(commentList, comment, task, commentTimeContext);
     }
-
-    // Always-visible textarea — Enter submits, Shift+Enter inserts newline
     const commentInput = commentSection.createEl('textarea', {
       cls: 'abyss-comment-input',
       attr: { placeholder: 'Write a comment…', rows: '2' },
@@ -990,7 +1169,7 @@ export class RightPanel {
       app: this.app,
       sourcePath: rootTaskRef(task).filePath,
       onLinks: (links) => {
-        commentInput.value = commentInput.value ? `${commentInput.value} ${links}` : links;
+        commentInput.value = commentInput.value === '' ? links : `${commentInput.value} ${links}`;
         commentInput.focus();
       },
     });
@@ -999,8 +1178,11 @@ export class RightPanel {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         const text = commentInput.value.trim();
-        if (text) {
-          void this.addComment(task, text, commentList, commentInput);
+        if (text !== '') {
+          runAsyncAction(
+            this.addComment(task, text, commentList, commentInput),
+            'Could not complete UI action',
+          );
         }
       }
     });
@@ -1011,21 +1193,25 @@ export class RightPanel {
     enableAttachmentDrop(view, {
       app: this.app,
       sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => void this.appendToTitle(task, links),
+      onLinks: (links) => {
+        runAsyncAction(this.appendToTitle(task, links), 'Could not complete UI action');
+      },
     });
     const renderView = (): void => {
       renderTaskText(view, task.markdownTitle, {
         app: this.app,
         sourcePath: rootTaskRef(task).filePath,
         component: this.md,
-        onEditLink: (occ, token) => this.editLink(task, occ, token),
+        onEditLink: (occ, token) => {
+          this.editLink(task, occ, token);
+        },
       });
     };
     renderView();
 
     // Click on empty space / non-link text enters edit mode.
     view.addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('a')) return; // let links navigate
+      if ((e.target as HTMLElement).closest('a') != null) return; // let links navigate
       this.enterTitleEdit(header, view, task, renderView);
     });
   }
@@ -1055,46 +1241,64 @@ export class RightPanel {
       grow();
     }, 0);
 
-    let done = false;
-    let saving = false;
+    const lifecycle = new AsyncEditLifecycle();
     const finish = async (save: boolean): Promise<void> => {
-      if (done || saving) return;
+      if (!lifecycle.begin()) return;
       // Let any in-flight paste insert its link into the value before we save/remove.
       await whenPasteSettled(ta);
-      if (done || saving) return;
       // Carry the current height back to the read-mode block so the stretch persists.
       view.setCssStyles({ height: `${ta.offsetHeight}px` });
       if (save && ta.value !== task.markdownTitle) {
-        saving = true;
         const saved = await this.saveTaskTitle(task, ta.value.trim());
-        saving = false;
         if (!saved) {
+          lifecycle.retry();
           ta.focus();
           return;
         }
       }
-      done = true;
+      lifecycle.close();
       ta.remove();
       view.show();
       renderView();
     };
-    ta.addEventListener('blur', () => void finish(true));
+    ta.addEventListener('blur', () => {
+      runAsyncAction(finish(true), 'Could not complete UI action');
+    });
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        void finish(true);
+        runAsyncAction(finish(true), 'Could not complete UI action');
       }
       if (e.key === 'Escape') {
         e.preventDefault();
-        void finish(false);
+        runAsyncAction(finish(false), 'Could not complete UI action');
       }
     });
   }
 
   private renderSubTask(container: HTMLElement, sub: SubtaskSnapshot, parentTask: TaskLike): void {
     const row = container.createDiv({ cls: 'abyss-subtask-row', attr: { draggable: 'true' } });
+    this.bindSubtaskDragAndDrop(row, container, sub, parentTask);
+    renderStatusMarker(row, {
+      task: sub,
+      registry: this.statusRegistry,
+      onLeftClick: () => {
+        runAsyncAction(this.toggleSubTask(sub), 'Could not complete UI action');
+      },
+      onContextMenu: (event) => {
+        event.stopPropagation();
+        this.openStatusMenu(event, sub);
+      },
+    });
+    this.renderSubtaskContent(row, sub);
+  }
 
-    // ── Drag-and-drop ─────────────────────────────────────────
+  private bindSubtaskDragAndDrop(
+    row: HTMLElement,
+    container: HTMLElement,
+    sub: SubtaskSnapshot,
+    parentTask: TaskLike,
+  ): void {
     row.addEventListener('dragstart', (e) => {
       this.draggingSub = sub;
       row.addClass('is-dragging');
@@ -1113,7 +1317,8 @@ export class RightPanel {
 
     row.addEventListener('dragover', (e) => {
       e.preventDefault();
-      if (!this.draggingSub || this.draggingSub.ref.relativeLine === sub.ref.relativeLine) return;
+      if (this.draggingSub == null || this.draggingSub.ref.relativeLine === sub.ref.relativeLine)
+        return;
       const rect = row.getBoundingClientRect();
       const isAbove = e.clientY < rect.top + rect.height / 2;
       // Clear indicators on all siblings first
@@ -1134,34 +1339,29 @@ export class RightPanel {
     row.addEventListener('drop', (e) => {
       e.preventDefault();
       const dragged = this.draggingSub;
-      if (!dragged || dragged.ref.relativeLine === sub.ref.relativeLine) return;
+      if (dragged == null || dragged.ref.relativeLine === sub.ref.relativeLine) return;
       const position = row.hasClass('drop-above') ? 'before' : 'after';
       row.removeClass('drop-above');
       row.removeClass('drop-below');
-      void this.reorderSubTask(parentTask, dragged, sub, position);
+      runAsyncAction(
+        this.reorderSubTask(parentTask, dragged, sub, position),
+        'Could not complete UI action',
+      );
     });
+  }
 
-    // ── Status marker ─────────────────────────────────────────
-    renderStatusMarker(row, {
-      task: sub,
-      registry: this.statusRegistry,
-      onLeftClick: () => void this.toggleSubTask(sub),
-      onContextMenu: (ev) => {
-        ev.stopPropagation();
-        this.openStatusMenu(ev, sub);
-      },
-    });
-
-    // ── Content ───────────────────────────────────────────────
+  private renderSubtaskContent(row: HTMLElement, sub: SubtaskSnapshot): void {
     const content = row.createDiv({ cls: 'abyss-subtask-content' });
-    const label = content.createEl('span', {
+    const label = content.createSpan({
       cls: `abyss-subtask-label${sub.status === 'done' ? ' is-done' : ''}`,
     });
     renderTaskText(label, sub.markdownTitle, {
       app: this.app,
       sourcePath: rootTaskRef(sub).filePath,
       component: this.md,
-      onEditLink: (occ, token) => this.editLink(sub, occ, token),
+      onEditLink: (occ, token) => {
+        this.editLink(sub, occ, token);
+      },
     });
     label.addEventListener('click', () => {
       const stack = this.state.get('taskStack');
@@ -1169,16 +1369,16 @@ export class RightPanel {
     });
 
     // Progress + comment count indicators
-    const subCount = sub.subtasks?.length ?? 0;
-    const commentCount = sub.comments?.length ?? 0;
+    const subCount = sub.subtasks.length;
+    const commentCount = sub.comments.length;
     if (subCount > 0 || commentCount > 0) {
       const subMeta = content.createDiv({ cls: 'abyss-subtask-meta' });
       if (subCount > 0) {
         const done = sub.subtasks.filter((s) => s.status === 'done').length;
-        subMeta.createEl('span', { cls: 'abyss-subtask-progress', text: `${done}/${subCount}` });
+        subMeta.createSpan({ cls: 'abyss-subtask-progress', text: `${done}/${subCount}` });
       }
       if (commentCount > 0) {
-        subMeta.createEl('span', {
+        subMeta.createSpan({
           cls: 'abyss-subtask-comment-count',
           text: `💬 ${commentCount}`,
         });
@@ -1196,93 +1396,113 @@ export class RightPanel {
     enableAttachmentDrop(row, {
       app: this.app,
       sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => void this.updateComment(task, comment, `${comment.text} ${links}`.trim()),
+      onLinks: (links) => {
+        runAsyncAction(
+          this.updateComment(task, comment, `${comment.text} ${links}`.trim()),
+          'Could not complete UI action',
+        );
+      },
     });
-    if (comment.timestamp && commentTimeContext) {
-      row.createEl('span', {
+    if (comment.timestamp != null && commentTimeContext != null) {
+      row.createSpan({
         cls: 'abyss-comment-date',
         text: formatCommentTimeLabel({ timestamp: comment.timestamp, ...commentTimeContext }),
       });
     }
-    let showText: () => void = () => {};
-
-    const enterEdit = (): void => {
-      row.querySelector('.abyss-comment-text')?.remove();
-      const textarea = row.createEl('textarea', { cls: 'abyss-comment-edit-input' });
-      textarea.value = comment.text;
-      this.enablePaste(textarea, task);
-      textarea.focus();
-      textarea.select();
-      let saved = false;
-      const finish = async (): Promise<void> => {
-        if (saved) return;
-        // Let any in-flight paste insert its link into the value before we save/remove.
-        await whenPasteSettled(textarea);
-        if (saved) return;
-        const val = textarea.value.trim();
-        if (val === comment.text) {
-          saved = true;
-          textarea.remove();
-          showText();
-          return;
-        }
-        let committed: boolean;
-        if (val === '') {
-          committed = await this.deleteComment(task, comment);
-        } else {
-          committed = await this.updateComment(task, comment, val);
-        }
-        if (!committed) {
-          textarea.focus();
-          return;
-        }
-        saved = true;
-        textarea.remove();
-      };
-      textarea.addEventListener('blur', () => window.setTimeout(() => void finish(), 150));
-      textarea.addEventListener('keydown', (e: KeyboardEvent) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          textarea.blur();
-        }
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          e.stopPropagation();
-          saved = true;
-          textarea.remove();
-          showText();
-        }
-      });
+    const showText = (): void => {
+      this.renderCommentText(row, comment, task, showText);
     };
-
-    showText = (): void => {
-      const textEl = row.createEl('p', { cls: 'abyss-comment-text' });
-      renderTaskText(textEl, comment.text, {
-        app: this.app,
-        sourcePath: rootTaskRef(task).filePath,
-        component: this.md,
-        onEditLink: (occ, token) => {
-          const ref = commentRefOf(comment);
-          if (ref)
-            this.editLinkInString({ type: 'comment', ref }, occ, token, rootTaskRef(task).filePath);
-        },
-      });
-      textEl.addEventListener('click', (e) => {
-        if ((e.target as HTMLElement).closest('a')) return; // let links navigate
-        enterEdit();
-      });
-    };
-
     showText();
+  }
+
+  private renderCommentText(
+    row: HTMLElement,
+    comment: TaskCommentSnapshot,
+    task: TaskLike,
+    showText: () => void,
+  ): void {
+    const textEl = row.createEl('p', { cls: 'abyss-comment-text' });
+    renderTaskText(textEl, comment.text, {
+      app: this.app,
+      sourcePath: rootTaskRef(task).filePath,
+      component: this.md,
+      onEditLink: (occurrence, token) => {
+        this.editLinkInString(
+          { type: 'comment', ref: commentRefOf(comment) },
+          occurrence,
+          token,
+          rootTaskRef(task).filePath,
+        );
+      },
+    });
+    textEl.addEventListener('click', (event) => {
+      if ((event.target as HTMLElement).closest('a') != null) return;
+      this.openCommentEditor(row, comment, task, showText);
+    });
+  }
+
+  private openCommentEditor(
+    row: HTMLElement,
+    comment: TaskCommentSnapshot,
+    task: TaskLike,
+    showText: () => void,
+  ): void {
+    row.querySelector('.abyss-comment-text')?.remove();
+    const textarea = row.createEl('textarea', { cls: 'abyss-comment-edit-input' });
+    textarea.value = comment.text;
+    this.enablePaste(textarea, task);
+    const lifecycle = new AsyncEditLifecycle();
+    const finish = async (): Promise<void> => {
+      if (!lifecycle.begin()) return;
+      await whenPasteSettled(textarea);
+      const value = textarea.value.trim();
+      if (value === comment.text) {
+        lifecycle.close();
+        textarea.remove();
+        showText();
+        return;
+      }
+      const committed =
+        value === ''
+          ? await this.deleteComment(task, comment)
+          : await this.updateComment(task, comment, value);
+      if (!committed) {
+        lifecycle.retry();
+        textarea.focus();
+        return;
+      }
+      lifecycle.close();
+      textarea.remove();
+    };
+    textarea.addEventListener('blur', () => {
+      window.setTimeout(() => {
+        runAsyncAction(finish(), 'Could not complete UI action');
+      }, 150);
+    });
+    textarea.addEventListener('keydown', (event: KeyboardEvent) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        textarea.blur();
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        lifecycle.close();
+        textarea.remove();
+        showText();
+      }
+    });
+    textarea.focus();
+    textarea.select();
   }
 
   private renderDateChip(container: HTMLElement, task: TaskLike): void {
     const d = task.planning.due ?? task.planning.scheduled;
     let field: 'due' | 'scheduled' = 'due';
-    if (!task.planning.due && task.planning.scheduled) field = 'scheduled';
+    if (task.planning.due == null && task.planning.scheduled != null) field = 'scheduled';
     const chip = container.createEl('button', {
-      cls: `abyss-chip${d ? '' : ' abyss-chip-empty'}`,
-      text: d ? `📅 ${this.formatDate(d)}` : '📅 Date',
+      cls: `abyss-chip${d != null ? '' : ' abyss-chip-empty'}`,
+      text: d != null ? `📅 ${this.formatDate(d)}` : '📅 Date',
     });
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1294,8 +1514,8 @@ export class RightPanel {
   private renderScheduledChip(container: HTMLElement, task: TaskLike): void {
     const value = task.planning.scheduled;
     const chip = container.createEl('button', {
-      cls: `abyss-chip abyss-chip-scheduled${value ? '' : ' abyss-chip-empty'}`,
-      text: value ? `⏳ ${this.formatDate(value)}` : '⏳ Plan',
+      cls: `abyss-chip abyss-chip-scheduled${value != null ? '' : ' abyss-chip-empty'}`,
+      text: value != null ? `⏳ ${this.formatDate(value)}` : '⏳ Plan',
       attr: { title: 'Set plan date' },
     });
     chip.addEventListener('click', (e) => {
@@ -1308,8 +1528,8 @@ export class RightPanel {
   private renderStartChip(container: HTMLElement, task: TaskLike): void {
     const value = task.planning.start;
     const chip = container.createEl('button', {
-      cls: `abyss-chip abyss-chip-start${value ? '' : ' abyss-chip-empty'}`,
-      text: value ? `🛫 ${this.formatDate(value)}` : '🛫 Start',
+      cls: `abyss-chip abyss-chip-start${value != null ? '' : ' abyss-chip-empty'}`,
+      text: value != null ? `🛫 ${this.formatDate(value)}` : '🛫 Start',
       attr: { title: 'Set start date' },
     });
     chip.addEventListener('click', (e) => {
@@ -1326,8 +1546,8 @@ export class RightPanel {
    */
   private renderAddDateMenu(container: HTMLElement, task: TaskLike): void {
     const options: Array<{ field: 'start' | 'scheduled'; label: string }> = [];
-    if (!task.planning.start) options.push({ field: 'start', label: '🛫 Start' });
-    if (!task.planning.scheduled) options.push({ field: 'scheduled', label: '⏳ Plan' });
+    if (task.planning.start == null) options.push({ field: 'start', label: '🛫 Start' });
+    if (task.planning.scheduled == null) options.push({ field: 'scheduled', label: '⏳ Plan' });
     if (options.length === 0) return;
 
     const addBtn = container.createEl('button', {
@@ -1353,16 +1573,16 @@ export class RightPanel {
     options: Array<{ field: 'start' | 'scheduled'; label: string }>,
   ): void {
     const existing = this.el.querySelector('.abyss-add-date-menu');
-    if (existing) {
+    if (existing != null) {
       this.removeAnchoredSurface(existing as HTMLElement);
       return;
     }
-    this.el
-      .querySelectorAll<HTMLElement>('.abyss-add-date-menu')
-      .forEach((element) => this.removeAnchoredSurface(element));
-    this.el
-      .querySelectorAll<HTMLElement>('.abyss-context-menu')
-      .forEach((element) => this.removeAnchoredSurface(element));
+    this.el.querySelectorAll<HTMLElement>('.abyss-add-date-menu').forEach((element) => {
+      this.removeAnchoredSurface(element);
+    });
+    this.el.querySelectorAll<HTMLElement>('.abyss-context-menu').forEach((element) => {
+      this.removeAnchoredSurface(element);
+    });
 
     const menu = this.el.createDiv({
       cls: 'abyss-context-menu abyss-add-date-menu abyss-add-date-menu--compact abyss-popover-anchored',
@@ -1419,10 +1639,10 @@ export class RightPanel {
       F: '🚩 Lowest',
     };
     const chip = container.createEl('button', {
-      cls: `abyss-chip abyss-priority-chip abyss-priority-chip--${task.priority ?? 'D'}${task.priority === 'D' ? ' abyss-chip-empty' : ''}`,
+      cls: `abyss-chip abyss-priority-chip abyss-priority-chip--${task.priority}${task.priority === 'D' ? ' abyss-chip-empty' : ''}`,
       text: labels[task.priority] ?? 'Priority',
       attr: {
-        'data-priority': task.priority ?? 'D',
+        'data-priority': task.priority,
         'aria-haspopup': 'listbox',
         'aria-expanded': 'false',
       },
@@ -1438,13 +1658,15 @@ export class RightPanel {
     task: TaskLike,
     stack: readonly TaskLike[],
   ): void {
+    const recurrence = task.recurrence;
+    const hasRecurrence = recurrence !== undefined && recurrence !== '';
     const chip = container.createEl('button', {
-      cls: `abyss-chip abyss-repeat-chip${task.recurrence ? '' : ' abyss-chip-add abyss-chip-empty'}`,
-      attr: { title: task.recurrence ? 'Edit repeat' : 'Add repeat' },
+      cls: `abyss-chip abyss-repeat-chip${hasRecurrence ? '' : ' abyss-chip-add abyss-chip-empty'}`,
+      attr: { title: hasRecurrence ? 'Edit repeat' : 'Add repeat' },
     });
-    if (task.recurrence) {
-      renderRecurrenceBadge(chip, recurrenceBadgeInput(task.recurrence));
-      chip.createSpan({ cls: 'abyss-repeat-chip-label', text: task.recurrence });
+    if (hasRecurrence) {
+      renderRecurrenceBadge(chip, recurrenceBadgeInput(recurrence));
+      chip.createSpan({ cls: 'abyss-repeat-chip-label', text: recurrence });
     } else {
       chip.setText('+ repeat');
     }
@@ -1462,11 +1684,11 @@ export class RightPanel {
   ): void {
     const existing = this.el.querySelector<HTMLElement>('.abyss-recurrence-popover');
     this.clearPopovers();
-    if (existing) return;
+    if (existing != null) return;
     anchor.focus();
     const root = stack[0];
     const target = this.planningTarget(task);
-    if (!root || !('source' in root) || !target) return;
+    if (root == null || !('source' in root) || target == null) return;
 
     const popover = this.el.createDiv({
       cls: 'abyss-popover abyss-recurrence-popover abyss-popover-anchored',
@@ -1475,16 +1697,16 @@ export class RightPanel {
     const handle = mountRecurrenceEditor({
       container: popover,
       source: { root, target },
-      policy: {
-        removeScheduledDate: this.settings?.recurrence.removeScheduledDate ?? false,
-      },
+      policy: { removeScheduledDate: this.settings?.recurrence.removeScheduledDate === true },
       ownershipConflict: this.hasRecurrenceOwnershipConflict(task, stack),
       onSubmit: (patch) => this.executePlanningPatch(task, patch),
-      onClose: () => this.removeAnchoredSurface(popover),
+      onClose: () => {
+        this.removeAnchoredSurface(popover);
+      },
     });
     this.recurrenceDraftEditor = { target, handle, surface: popover };
     const title = popover.querySelector<HTMLElement>('.abyss-recurrence-title');
-    if (title?.id) popover.setAttribute('aria-labelledby', title.id);
+    if (title !== null && title.id !== '') popover.setAttribute('aria-labelledby', title.id);
     this.positionAnchoredSurface(popover, anchor, 'below-start');
     const placementCleanup = this.anchoredSurfaceCleanups.get(popover);
     const editorCleanup = (): void => {
@@ -1496,15 +1718,24 @@ export class RightPanel {
       }
     };
     this.anchoredSurfaceCleanups.set(popover, editorCleanup);
-    this.dismissMenuOnOutsideClick(popover, anchor, () => handle.dismiss());
-    if (autofocus) this.el.ownerDocument.defaultView?.setTimeout(() => handle.focus(), 0);
+    this.dismissMenuOnOutsideClick(popover, anchor, () => {
+      handle.dismiss();
+    });
+    if (autofocus) this.deferRecurrenceFocus(handle);
+  }
+
+  private deferRecurrenceFocus(handle: RecurrenceEditorHandle): void {
+    this.el.ownerDocument.defaultView?.setTimeout(() => {
+      handle.focus();
+    }, 0);
   }
 
   private hasRecurrenceOwnershipConflict(task: TaskLike, stack: readonly TaskLike[]): boolean {
     if (stack.slice(0, -1).some((ancestor) => ancestor.recurrence !== undefined)) return true;
     const queue = [...task.subtasks];
-    while (queue.length > 0) {
-      const descendant = queue.shift()!;
+    for (let index = 0; index < queue.length; index++) {
+      const descendant = queue[index];
+      if (descendant === undefined) break;
       if (descendant.recurrence !== undefined) return true;
       queue.push(...descendant.subtasks);
     }
@@ -1512,26 +1743,28 @@ export class RightPanel {
   }
 
   private renderTagChip(container: HTMLElement, task: TaskLike, tag: string): void {
-    const chip = container.createEl('span', { cls: 'abyss-chip abyss-chip-tag' });
+    const chip = container.createSpan({ cls: 'abyss-chip abyss-chip-tag' });
     const color = this.getTagColor(tag);
-    if (color) chip.setCssProps({ '--abyss-chip-tag-color': color });
-    chip.createEl('span', { text: tag });
+    if (color !== undefined && color !== '') {
+      chip.setCssProps({ '--abyss-chip-tag-color': color });
+    }
+    chip.createSpan({ text: tag });
     const x = chip.createEl('button', { cls: 'abyss-chip-remove', text: '×' });
     x.addEventListener('click', (e) => {
       e.stopPropagation();
-      void this.removeTag(task, tag);
+      runAsyncAction(this.removeTag(task, tag), 'Could not complete UI action');
     });
   }
 
   private getTagColor(tag: string): string | undefined {
-    if (!this.settings) return undefined;
+    if (this.settings == null) return undefined;
     return colorForTag(tag, this.settings.tagGroups);
   }
 
   private clearPopovers(): void {
-    this.el
-      .querySelectorAll<HTMLElement>('.abyss-popover')
-      .forEach((element) => this.removeAnchoredSurface(element));
+    this.el.querySelectorAll<HTMLElement>('.abyss-popover').forEach((element) => {
+      this.removeAnchoredSurface(element);
+    });
   }
 
   private removeAnchoredSurface(surface: HTMLElement): void {
@@ -1554,8 +1787,12 @@ export class RightPanel {
       task,
       registry: this.statusRegistry,
       owner: this.md,
-      onPickStatus: (symbol) => void this.setStatus(task, symbol),
-      onPickPriority: (priority) => void this.updatePriority(task, priority),
+      onPickStatus: (symbol) => {
+        runAsyncAction(this.setStatus(task, symbol), 'Could not complete UI action');
+      },
+      onPickPriority: (priority) => {
+        runAsyncAction(this.updatePriority(task, priority), 'Could not complete UI action');
+      },
       interactionOwnership: this.interactionOwnership,
     });
   }
@@ -1572,7 +1809,7 @@ export class RightPanel {
   ): void {
     const already = this.el.querySelector('.abyss-date-popover');
     this.clearPopovers();
-    if (already) return;
+    if (already != null) return;
 
     const previousPopupRole = anchor.getAttribute('aria-haspopup');
     anchor.setAttribute('aria-haspopup', 'dialog');
@@ -1592,31 +1829,39 @@ export class RightPanel {
       attr: { type: 'date', value: currentValue ?? '' },
     });
     input.addEventListener('change', () => {
-      if (field === 'due') void this.updateDue(task, input.value);
-      else if (field === 'scheduled') void this.updateScheduled(task, input.value);
-      else void this.updateStart(task, input.value);
+      if (field === 'due')
+        runAsyncAction(this.updateDue(task, input.value), 'Could not complete UI action');
+      else if (field === 'scheduled')
+        runAsyncAction(this.updateScheduled(task, input.value), 'Could not complete UI action');
+      else runAsyncAction(this.updateStart(task, input.value), 'Could not complete UI action');
       this.removeAnchoredSurface(pop);
     });
-    this.el.ownerDocument.defaultView?.setTimeout(() => input.focus(), 0);
+    this.el.ownerDocument.defaultView?.setTimeout(() => {
+      input.focus();
+    }, 0);
 
     const clearBtn = inputRow.createEl('button', {
       cls: 'abyss-popover-clear-icon-btn',
       attr: { title: 'Clear date', 'aria-label': 'Clear date' },
     });
     setIcon(clearBtn, 'x');
-    clearBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    clearBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+    });
     clearBtn.addEventListener('click', () => {
-      if (field === 'due') void this.clearDate(task);
-      else if (field === 'scheduled') void this.clearScheduled(task);
-      else void this.clearStart(task);
+      if (field === 'due') runAsyncAction(this.clearDate(task), 'Could not complete UI action');
+      else if (field === 'scheduled')
+        runAsyncAction(this.clearScheduled(task), 'Could not complete UI action');
+      else runAsyncAction(this.clearStart(task), 'Could not complete UI action');
       this.removeAnchoredSurface(pop);
     });
     this.positionAnchoredSurface(pop, anchor, 'below-start');
     this.dismissMenuOnOutsideClick(pop, anchor, undefined, {
       focusLeaveDelay: 200,
       onCleanup: () => {
-        if (previousPopupRole) anchor.setAttribute('aria-haspopup', previousPopupRole);
-        else anchor.removeAttribute('aria-haspopup');
+        if (previousPopupRole !== null && previousPopupRole !== '') {
+          anchor.setAttribute('aria-haspopup', previousPopupRole);
+        } else anchor.removeAttribute('aria-haspopup');
       },
     });
   }
@@ -1624,14 +1869,14 @@ export class RightPanel {
   private showPriorityPopover(anchor: HTMLElement, task: TaskLike): void {
     const already = this.el.querySelector('.abyss-priority-popover');
     this.clearPopovers();
-    if (already) return;
+    if (already != null) return;
 
     const pop = this.el.createDiv({
       cls: 'abyss-popover abyss-priority-popover abyss-popover-anchored',
       attr: { role: 'listbox', 'aria-label': 'Priority' },
     });
 
-    const currentPriority = anchor.getAttribute('data-priority') ?? task.priority ?? 'D';
+    const currentPriority = anchor.getAttribute('data-priority') ?? task.priority;
     const options: Array<{ value: string; label: string }> = [
       { value: 'A', label: 'Highest' },
       { value: 'B', label: 'High' },
@@ -1652,11 +1897,11 @@ export class RightPanel {
         },
       });
       if (isActive) selectedOption = btn;
-      const checkEl = btn.createEl('span', { cls: 'abyss-priority-option-check' });
+      const checkEl = btn.createSpan({ cls: 'abyss-priority-option-check' });
       if (isActive) setIcon(checkEl, 'check');
-      const flagEl = btn.createEl('span', { cls: 'abyss-priority-option-flag' });
+      const flagEl = btn.createSpan({ cls: 'abyss-priority-option-flag' });
       setIcon(flagEl, 'flag');
-      btn.createEl('span', { cls: 'abyss-priority-option-label', text: opt.label });
+      btn.createSpan({ cls: 'abyss-priority-option-label', text: opt.label });
       btn.addEventListener('click', () => {
         // Optimistic update on the chip
         const chipLabels: Record<string, string> = {
@@ -1672,7 +1917,7 @@ export class RightPanel {
         anchor.className = `abyss-chip abyss-priority-chip abyss-priority-chip--${opt.value}${opt.value === 'D' ? ' abyss-chip-empty' : ''}`;
         this.removeAnchoredSurface(pop);
         anchor.focus({ preventScroll: true });
-        void this.updatePriority(task, opt.value);
+        runAsyncAction(this.updatePriority(task, opt.value), 'Could not complete UI action');
       });
     }
     this.positionAnchoredSurface(pop, anchor, 'below-start');
@@ -1693,9 +1938,12 @@ export class RightPanel {
       const floatingRect = popover.getBoundingClientRect();
       const computed = ownerWindow?.getComputedStyle(popover);
       const minWidth = parseFloat(computed?.minWidth ?? '');
-      const floatingWidth =
-        floatingRect.width || popover.offsetWidth || (Number.isFinite(minWidth) ? minWidth : 160);
-      const floatingHeight = floatingRect.height || popover.offsetHeight;
+      const floatingWidth = dimensionOrFallback(
+        floatingRect.width,
+        popover.offsetWidth,
+        finiteNonzeroOr(minWidth, 160),
+      );
+      const floatingHeight = dimensionOrFallback(floatingRect.height, popover.offsetHeight, 0);
       const edgeGap = this.cssLengthToPx(
         computed?.getPropertyValue('--abyss-popover-edge-gap') ?? '',
         popover,
@@ -1745,22 +1993,22 @@ export class RightPanel {
 
   private cssLengthToPx(value: string, relativeTo: HTMLElement, fallback: number): number {
     const trimmed = value.trim();
-    if (!trimmed) return fallback;
+    if (trimmed === '') return fallback;
     if (trimmed.endsWith('px')) return parseFloat(trimmed);
     if (trimmed.endsWith('rem')) {
-      const rootFontSize =
-        parseFloat(
-          relativeTo.ownerDocument.defaultView?.getComputedStyle(
-            relativeTo.ownerDocument.documentElement,
-          ).fontSize ?? '',
-        ) || 16;
+      const parsedRootFontSize = parseFloat(
+        relativeTo.ownerDocument.defaultView?.getComputedStyle(
+          relativeTo.ownerDocument.documentElement,
+        ).fontSize ?? '',
+      );
+      const rootFontSize = finiteNonzeroOr(parsedRootFontSize, 16);
       return parseFloat(trimmed) * rootFontSize;
     }
     if (trimmed.endsWith('em')) {
-      const fontSize =
-        parseFloat(
-          relativeTo.ownerDocument.defaultView?.getComputedStyle(relativeTo).fontSize ?? '',
-        ) || 16;
+      const parsedFontSize = parseFloat(
+        relativeTo.ownerDocument.defaultView?.getComputedStyle(relativeTo).fontSize ?? '',
+      );
+      const fontSize = finiteNonzeroOr(parsedFontSize, 16);
       return parseFloat(trimmed) * fontSize;
     }
     const numeric = parseFloat(trimmed);
@@ -1769,41 +2017,54 @@ export class RightPanel {
 
   private showTagInput(container: HTMLElement, task: TaskLike, anchor: HTMLElement): void {
     const existing = this.el.querySelector<HTMLElement>('.abyss-tag-dropdown-wrap');
-    if (existing) {
+    if (existing != null) {
       this.removeAnchoredSurface(existing);
       return;
     }
-    let surface!: HTMLElement;
-    surface = showTagDropdown(
+    const surface = showTagDropdown(
       container,
       this.app,
       (tag) => this.getTagColor(tag),
-      (tag) => void this.addTag(task, tag),
-      () => this.removeAnchoredSurface(surface),
+      (tag) => {
+        runAsyncAction(this.addTag(task, tag), 'Could not complete UI action');
+      },
+      () => {
+        this.removeAnchoredSurface(surface);
+      },
     );
     anchor.addClass('abyss-chip-add--hidden');
-    this.dismissMenuOnOutsideClick(surface, anchor, () => this.removeAnchoredSurface(surface), {
-      focusLeaveDelay: 200,
-      onCleanup: () => anchor.removeClass('abyss-chip-add--hidden'),
-    });
+    this.dismissMenuOnOutsideClick(
+      surface,
+      anchor,
+      () => {
+        this.removeAnchoredSurface(surface);
+      },
+      {
+        focusLeaveDelay: 200,
+        onCleanup: () => {
+          anchor.removeClass('abyss-chip-add--hidden');
+        },
+      },
+    );
   }
 
   // ---- Write-back helpers ----
 
-  private async updateTaskTitle(task: TaskLike, newText: string): Promise<void> {
+  /** @internal Retained as the title-edit command seam used by focused integration tests. */
+  async updateTaskTitle(task: TaskLike, newText: string): Promise<void> {
     await this.saveTaskTitle(task, newText);
   }
 
   private async saveTaskTitle(task: TaskLike, newText: string): Promise<boolean> {
     const target = this.planningTarget(task);
-    if (!target || !this.tasks) return false;
+    if (target == null || this.tasks == null) return false;
     const patch = { markdownTitle: { type: 'set' as const, value: newText } };
     const command = { type: 'patch', target, patch } as TaskCommand;
     const submission = this.beginDraftSubmission(
       target,
       (draft) => draft.kind === 'title' && sameNodeRef(draft.target.target, target),
     );
-    if (!submission) return false;
+    if (submission == null) return false;
     let result: TaskCommandResult;
     try {
       result = await this.tasks.execute(command);
@@ -1817,14 +2078,14 @@ export class RightPanel {
 
   private async appendToTitle(task: TaskLike, text: string): Promise<void> {
     const target = this.planningTarget(task);
-    if (!target || !this.tasks) return;
+    if (target == null || this.tasks == null) return;
     const result = await this.tasks.execute({ type: 'append-title', target, markdown: text });
     this.applyPlanningResult(result, target);
   }
 
   private async updateDescription(task: TaskLike, newDesc: string): Promise<boolean> {
     const target = this.planningTarget(task);
-    if (!target) return false;
+    if (target == null) return false;
     return this.executeBlockCommand(
       {
         type: 'set-description',
@@ -1837,7 +2098,7 @@ export class RightPanel {
 
   private async addSubTask(task: TaskLike, text: string): Promise<boolean> {
     const parent = this.planningTarget(task);
-    if (!parent) return false;
+    if (parent == null) return false;
     return this.executeBlockCommand({ type: 'add-subtask', parent, text }, parent);
   }
 
@@ -1856,7 +2117,7 @@ export class RightPanel {
 
   private async commitTaskToggle(task: TaskLike): Promise<void> {
     const target = this.planningTarget(task);
-    if (!target || !this.tasks) return;
+    if (target == null || this.tasks == null) return;
     const result = await this.tasks.execute({ type: 'toggle-completion', target });
     this.applyPlanningResult(result, target);
   }
@@ -1868,7 +2129,7 @@ export class RightPanel {
     inputEl: HTMLTextAreaElement,
   ): Promise<boolean> {
     const parent = this.planningTarget(task);
-    if (!parent) return false;
+    if (parent == null) return false;
     const committed = await this.executeBlockCommand({ type: 'add-comment', parent, text }, parent);
     if (committed) {
       inputEl.value = '';
@@ -1883,7 +2144,6 @@ export class RightPanel {
     newText: string,
   ): Promise<boolean> {
     const ref = commentRefOf(comment);
-    if (!ref) return false;
     return this.executeBlockCommand(
       { type: 'update-comment', comment: ref, text: newText },
       ref.parent,
@@ -1892,7 +2152,6 @@ export class RightPanel {
 
   private async deleteComment(_task: TaskLike, comment: TaskCommentSnapshot): Promise<boolean> {
     const ref = commentRefOf(comment);
-    if (!ref) return false;
     return this.executeBlockCommand({ type: 'delete-comment', comment: ref }, ref.parent);
   }
 
@@ -1912,12 +2171,12 @@ export class RightPanel {
     >,
     target: PlanningTarget,
   ): Promise<boolean> {
-    if (!this.tasks) return false;
+    if (this.tasks == null) return false;
     const initiatingStack = this.state.get('taskStack');
     const submission = this.beginDraftSubmission(target, (draft) =>
       this.matchesBlockCommandDraft(draft, command),
     );
-    if (!submission) return false;
+    if (submission == null) return false;
     let result: TaskCommandResult;
     try {
       result = await this.tasks.execute(command);
@@ -1936,7 +2195,7 @@ export class RightPanel {
   private async clearDate(task: TaskLike): Promise<void> {
     await this.executePlanningPatch(
       task,
-      task.planning.due || !task.planning.scheduled
+      task.planning.due != null || task.planning.scheduled == null
         ? { due: { type: 'clear' } }
         : { scheduled: { type: 'clear' } },
     );
@@ -1966,14 +2225,14 @@ export class RightPanel {
 
   private async executePlanningPatch(task: TaskLike, patch: TaskPatch): Promise<TaskCommandResult> {
     const target = this.planningTarget(task);
-    if (!target || !this.tasks) {
+    if (target == null || this.tasks == null) {
       return { type: 'io-error', cause: 'application-unavailable', contentState: 'unchanged' };
     }
     const submission = this.beginDraftSubmission(target, (draft) => {
       if (patch.recurrence === undefined && patch.onCompletion === undefined) return false;
       return draft.kind === 'recurrence-editor' && sameNodeRef(draft.target, target);
     });
-    if (!submission) {
+    if (submission == null) {
       return { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' };
     }
     let result: TaskCommandResult;
@@ -2006,26 +2265,41 @@ export class RightPanel {
     if (result.type !== 'ok' || result.outcome.type !== 'task') return;
     const stack = this.state.get('taskStack');
     const initiatingRoot = rootRefForPlanningTarget(target);
-    const selectedRoot = stack[0] ? rootTaskRef(stack[0]) : undefined;
-    if (
-      selectedRoot &&
-      sameTaskRef(selectedRoot, initiatingRoot) &&
-      (initiatingStack === undefined || stack === initiatingStack)
-    ) {
-      const root = result.outcome.task;
-      const draft =
-        result.changed && submission
-          ? this.captureDraftStateForOwnedTransition(initiatingRoot, root.ref, submission)
-          : this.captureDraftState();
-      this.state.set(
-        'taskStack',
-        target.type === 'subtask'
-          ? rebuildPlanningTargetStack(root, target)
-          : rebuildTaskSelection(root, stack),
-      );
-      this.restoreDraftState(draft, root);
+    if (this.isSelectedPlanningResult(stack, initiatingStack, initiatingRoot)) {
+      this.applySelectedPlanningResult({
+        root: result.outcome.task,
+        changed: result.changed,
+        target,
+        initiatingRoot,
+        stack,
+        submission,
+      });
     }
     if (result.changed) this.onSuccessfulMutation?.(result.outcome.task.ref);
+  }
+
+  private isSelectedPlanningResult(
+    stack: readonly TaskLike[],
+    initiatingStack: readonly TaskLike[] | undefined,
+    initiatingRoot: TaskRef,
+  ): boolean {
+    const selected = stack[0];
+    if (selected == null || !sameTaskRef(rootTaskRef(selected), initiatingRoot)) return false;
+    return initiatingStack === undefined || stack === initiatingStack;
+  }
+
+  private applySelectedPlanningResult(result: SelectedPlanningResult): void {
+    const { root, changed, target, initiatingRoot, stack, submission } = result;
+    const draft =
+      changed && submission != null
+        ? this.captureDraftStateForOwnedTransition(initiatingRoot, root.ref, submission)
+        : this.captureDraftState();
+    const selection =
+      target.type === 'subtask'
+        ? rebuildPlanningTargetStack(root, target)
+        : rebuildTaskSelection(root, stack);
+    this.state.set('taskStack', selection);
+    this.restoreDraftState(draft, root);
   }
 
   private async updateDuration(task: TaskSnapshot, minutes: number): Promise<void> {
@@ -2056,7 +2330,7 @@ export class RightPanel {
 
   private async commitStatus(task: TaskLike, symbol: string): Promise<void> {
     const target = this.planningTarget(task);
-    if (!target || !this.tasks) return;
+    if (target == null || this.tasks == null) return;
     const result = await this.tasks.execute({ type: 'set-status', target, symbol });
     this.applyPlanningResult(result, target);
   }
@@ -2064,7 +2338,7 @@ export class RightPanel {
   private async updatePriority(task: TaskLike, priority: string): Promise<void> {
     if (!['A', 'B', 'C', 'D', 'E', 'F'].includes(priority)) return;
     const target = this.planningTarget(task);
-    if (!target || !this.tasks) return;
+    if (target == null || this.tasks == null) return;
     const patch: TaskPatch = {
       priority: { type: 'set', value: priority as TaskPriority },
     };
@@ -2082,7 +2356,7 @@ export class RightPanel {
   private showTimePopover(anchor: HTMLElement, task: TaskLike): void {
     const already = this.el.querySelector('.abyss-time-popover');
     this.clearPopovers();
-    if (already) return;
+    if (already != null) return;
 
     const pop = this.el.createDiv({
       cls: 'abyss-popover abyss-time-popover abyss-popover-anchored',
@@ -2094,9 +2368,16 @@ export class RightPanel {
       cls: 'abyss-time-input',
       attr: { type: 'time', value: task.planning.time ?? '' },
     });
-    this.el.ownerDocument.defaultView?.setTimeout(() => input.focus(), 0);
+    this.el.ownerDocument.defaultView?.setTimeout(() => {
+      input.focus();
+    }, 0);
     input.addEventListener('change', () => {
-      void this.updateTime(task, input.value).then(() => this.removeAnchoredSurface(pop));
+      runAsyncAction(
+        this.updateTime(task, input.value).then(() => {
+          this.removeAnchoredSurface(pop);
+        }),
+        'Could not complete UI action',
+      );
     });
 
     const clearBtn = inputRow.createEl('button', {
@@ -2104,48 +2385,70 @@ export class RightPanel {
       attr: { title: 'Clear time', 'aria-label': 'Clear time' },
     });
     setIcon(clearBtn, 'x');
-    clearBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    clearBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+    });
     clearBtn.addEventListener('click', () => {
-      void this.updateTime(task, '').then(() => this.removeAnchoredSurface(pop));
+      runAsyncAction(
+        this.updateTime(task, '').then(() => {
+          this.removeAnchoredSurface(pop);
+        }),
+        'Could not complete UI action',
+      );
     });
 
-    // Duration only applies to top-level TaskSnapshot (SubtaskSnapshot has no duration field) —
-    // same 'duration' in task discriminator used for the Planning section gate.
-    if ('source' in task) {
-      const durationRow = pop.createDiv({ cls: 'abyss-popover-input-row' });
-      const durationInput = durationRow.createEl('input', {
-        cls: 'abyss-duration-input',
-        attr: {
-          type: 'text',
-          // eslint-disable-next-line obsidianmd/ui/sentence-case
-          placeholder: 'Duration, e.g. 1h30m',
-          value: task.planning.duration ? formatDurationFromMinutes(task.planning.duration) : '',
-        },
-      });
-      durationInput.addEventListener('change', () => {
-        const minutes = parseDurationToMinutes(durationInput.value);
-        const done = minutes ? this.updateDuration(task, minutes) : this.clearDuration(task);
-        void done.then(() => this.removeAnchoredSurface(pop));
-      });
-      const clearDurationBtn = durationRow.createEl('button', {
-        cls: 'abyss-popover-clear-icon-btn',
-        attr: { title: 'Clear duration', 'aria-label': 'Clear duration' },
-      });
-      setIcon(clearDurationBtn, 'x');
-      clearDurationBtn.addEventListener('mousedown', (e) => e.preventDefault());
-      clearDurationBtn.addEventListener('click', () => {
-        void this.clearDuration(task).then(() => this.removeAnchoredSurface(pop));
-      });
-    }
+    if ('source' in task) this.renderDurationInputs(pop, task);
 
     this.positionAnchoredSurface(pop, anchor, 'below-start');
     this.dismissMenuOnOutsideClick(pop, anchor, undefined, { focusLeaveDelay: 200 });
   }
 
+  private renderDurationInputs(popover: HTMLElement, task: TaskSnapshot): void {
+    const row = popover.createDiv({ cls: 'abyss-popover-input-row' });
+    const input = row.createEl('input', {
+      cls: 'abyss-duration-input',
+      attr: {
+        type: 'text',
+        placeholder: 'Duration (for example, 1h30m)',
+        value:
+          task.planning.duration == null ? '' : formatDurationFromMinutes(task.planning.duration),
+      },
+    });
+    input.addEventListener('change', () => {
+      const minutes = parseDurationToMinutes(input.value);
+      const update =
+        minutes === undefined || minutes === 0
+          ? this.clearDuration(task)
+          : this.updateDuration(task, minutes);
+      runAsyncAction(
+        update.then(() => {
+          this.removeAnchoredSurface(popover);
+        }),
+        'Could not complete UI action',
+      );
+    });
+    const clearButton = row.createEl('button', {
+      cls: 'abyss-popover-clear-icon-btn',
+      attr: { title: 'Clear duration', 'aria-label': 'Clear duration' },
+    });
+    setIcon(clearButton, 'x');
+    clearButton.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+    });
+    clearButton.addEventListener('click', () => {
+      runAsyncAction(
+        this.clearDuration(task).then(() => {
+          this.removeAnchoredSurface(popover);
+        }),
+        'Could not complete UI action',
+      );
+    });
+  }
+
   private async updateTime(task: TaskLike, time: string): Promise<void> {
     try {
       await this.executePlanningPatch(task, {
-        time: time ? { type: 'set', value: localTime(time) } : { type: 'clear' },
+        time: time === '' ? { type: 'clear' } : { type: 'set', value: localTime(time) },
       });
     } catch {
       // Invalid input leaves the existing time unchanged.
@@ -2154,14 +2457,14 @@ export class RightPanel {
 
   private renderContextMenu(task: TaskLike, anchor: HTMLElement): void {
     const existing = this.el.querySelector<HTMLElement>('.abyss-task-context-menu');
-    if (existing) {
+    if (existing != null) {
       this.removeAnchoredSurface(existing);
       return;
     }
     // Close any other open context menus
-    this.el
-      .querySelectorAll<HTMLElement>('.abyss-context-menu')
-      .forEach((element) => this.removeAnchoredSurface(element));
+    this.el.querySelectorAll<HTMLElement>('.abyss-context-menu').forEach((element) => {
+      this.removeAnchoredSurface(element);
+    });
 
     const menu = this.el.createDiv({
       cls: 'abyss-context-menu abyss-task-context-menu abyss-popover-anchored',
@@ -2184,14 +2487,18 @@ export class RightPanel {
       this.planningTarget(task)?.type === 'subtask' ? 'Delete sub-task' : 'Delete task',
       () => {
         this.removeAnchoredSurface(menu);
-        void this.deleteTask(task);
+        runAsyncAction(this.deleteTask(task), 'Could not complete UI action');
       },
     );
 
     this.createContextMenuItem(menu, 'abyss-context-item', 'Open in file', () => {
       this.removeAnchoredSurface(menu);
       const root = this.state.get('taskStack')[0];
-      if (root && 'source' in root) void openInFile(this.app, root, taskNodeLine(root, task));
+      if (root != null && 'source' in root)
+        runAsyncAction(
+          openInFile(this.app, root, taskNodeLine(root, task)),
+          'Could not complete UI action',
+        );
     });
 
     this.positionAnchoredSurface(menu, anchor, 'below-end');
@@ -2202,7 +2509,7 @@ export class RightPanel {
   private recurrenceStackFor(task: TaskLike): readonly TaskLike[] {
     const root = this.state.get('taskStack')[0];
     const target = this.planningTarget(task);
-    if (!root || !('source' in root) || !target) return [];
+    if (root == null || !('source' in root) || target == null) return [];
     return rebuildPlanningTargetStack(root, target);
   }
 
@@ -2210,7 +2517,9 @@ export class RightPanel {
   private dismissMenuOnOutsideClick(
     menu: HTMLElement,
     anchor: HTMLElement,
-    dismissSurface: () => void = () => this.removeAnchoredSurface(menu),
+    dismissSurface: () => void = () => {
+      this.removeAnchoredSurface(menu);
+    },
     options: { focusLeaveDelay?: number; onCleanup?: () => void } = {},
   ): void {
     const ownerDocument = this.el.ownerDocument;
@@ -2255,8 +2564,8 @@ export class RightPanel {
       if (cleaned) return;
       cleaned = true;
       placementCleanup?.();
-      if (registrationTimer !== undefined) ownerWindow?.clearTimeout(registrationTimer);
-      if (focusLeaveTimer !== undefined) ownerWindow?.clearTimeout(focusLeaveTimer);
+      clearOptionalTimer(ownerWindow, registrationTimer);
+      clearOptionalTimer(ownerWindow, focusLeaveTimer);
       if (listening) ownerDocument.removeEventListener('click', dismiss, true);
       ownerDocument.removeEventListener('keydown', dismissOnEscape, true);
       if (options.focusLeaveDelay !== undefined) {
@@ -2274,30 +2583,35 @@ export class RightPanel {
 
   private async deleteTask(task: TaskLike): Promise<void> {
     const target = this.planningTarget(task);
-    if (target?.type === 'subtask') {
+    if (target == null) return;
+    if (target.type === 'subtask') {
       await this.executeBlockCommand(
         { type: 'delete-subtask', subtask: target.ref },
         target.ref.parent,
       );
       return;
     }
-    if (target?.type !== 'task' || !this.tasks) return;
+    await this.deleteRootTask(target.ref);
+  }
+
+  private async deleteRootTask(ref: TaskRef): Promise<void> {
+    if (this.tasks == null) return;
     const initiatingStack = this.state.get('taskStack');
     let result: TaskCommandResult;
     try {
-      result = await this.tasks.execute({ type: 'delete', ref: target.ref });
+      result = await this.tasks.execute({ type: 'delete', ref });
     } catch {
       result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
     }
     presentTaskCommandResult(result);
     const selectedRoot = this.state.get('taskStack')[0];
-    const selectedRef = selectedRoot ? rootTaskRef(selectedRoot) : undefined;
+    const selectedRef = selectedRoot != null ? rootTaskRef(selectedRoot) : undefined;
     if (
       result.type === 'ok' &&
       result.outcome.type === 'deleted' &&
       this.state.get('taskStack') === initiatingStack &&
-      selectedRef &&
-      sameTaskRef(selectedRef, target.ref)
+      selectedRef != null &&
+      sameTaskRef(selectedRef, ref)
     ) {
       this.state.set('taskStack', []);
     }
@@ -2312,7 +2626,7 @@ export class RightPanel {
     const parent = this.planningTarget(parentTask);
     const movedTarget = this.planningTarget(moved);
     const targetNode = this.planningTarget(target);
-    if (!parent || movedTarget?.type !== 'subtask' || targetNode?.type !== 'subtask') return;
+    if (parent == null || movedTarget?.type !== 'subtask' || targetNode?.type !== 'subtask') return;
     await this.executeBlockCommand(
       {
         type: 'reorder-subtask',

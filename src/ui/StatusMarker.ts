@@ -20,57 +20,96 @@ const ICON_CACHE = new Map<string, SVGElement>();
 
 function getLucideIcon(iconId: string): SVGElement | null {
   let svg = ICON_CACHE.get(iconId);
-  if (svg) return svg.cloneNode(true) as SVGElement;
+  if (svg != null) return svg.cloneNode(true) as SVGElement;
 
-  const scratch = activeDocument.createElement('span');
+  const scratch = createFragment().createSpan();
   setIcon(scratch, iconId);
   svg = scratch.querySelector('svg') ?? undefined;
-  if (!svg) return null;
+  if (svg == null) return null;
   ICON_CACHE.set(iconId, svg);
   return svg.cloneNode(true) as SVGElement;
+}
+
+function renderMarkerIcon(
+  marker: HTMLElement,
+  statusSymbol: string,
+  icon: string | undefined,
+  hasDefinition: boolean,
+): void {
+  if (icon !== undefined && icon.length > 0) {
+    const svg = getLucideIcon(icon);
+    if (svg != null) marker.appendChild(svg);
+    return;
+  }
+  if (hasDefinition) return;
+  const raw = statusSymbol.trim();
+  if (raw.length > 0) marker.setText(raw);
+}
+
+function makeMarkerInteractive(
+  ...args: [HTMLElement, string, boolean, () => void, (event: MouseEvent) => void]
+): void {
+  const [marker, label, isDone, onLeftClick, onContextMenu] = args;
+  marker.setAttribute('role', 'checkbox');
+  marker.setAttribute('aria-checked', isDone ? 'true' : 'false');
+  marker.setAttribute('aria-label', `Task status: ${label}`);
+  marker.setAttribute('tabindex', '0');
+  marker.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onLeftClick();
+  });
+  marker.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    onContextMenu(event);
+  });
+  marker.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    event.stopPropagation();
+    onLeftClick();
+  });
+}
+
+function setMarkerMetadata(
+  marker: HTMLElement,
+  statusId: string,
+  statusType: string,
+  priority: TaskPriority | undefined,
+): void {
+  marker.setAttribute('data-status', statusId);
+  marker.setAttribute('data-status-type', statusType);
+  if (priority !== undefined && priority !== 'D') marker.setAttribute('data-priority', priority);
+}
+
+function markerPresentation(
+  definition: ReturnType<StatusRegistry['bySymbol']>,
+  fallbackLabel: string,
+): { id: string; type: string; label: string; icon: string | undefined; isDone: boolean } {
+  if (definition == null) {
+    return { id: 'other', type: 'todo', label: fallbackLabel, icon: undefined, isDone: false };
+  }
+  return {
+    id: definition.id,
+    type: definition.type,
+    label: definition.name,
+    icon: definition.icon,
+    isDone: definition.type === 'done',
+  };
 }
 
 export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement {
   const { task, registry, interactive = true, onLeftClick, onContextMenu } = opts;
   const def = registry.bySymbol(task.statusSymbol);
+  const presentation = markerPresentation(def, task.statusSymbol);
   const el = parent.createSpan({ cls: 'abyss-status-marker' });
   if (!interactive) el.addClass('abyss-status-marker--inert');
-  el.setAttribute('data-status', def?.id ?? 'other');
-  el.setAttribute('data-status-type', def?.type ?? 'todo');
-  if (task.priority && task.priority !== 'D') {
-    el.setAttribute('data-priority', task.priority);
-  }
+  setMarkerMetadata(el, presentation.id, presentation.type, task.priority);
 
-  if (def && def.icon) {
-    const svg = getLucideIcon(def.icon);
-    if (svg) el.appendChild(svg);
-  } else if (!def) {
-    // Unknown symbol (not in the status table): fall back to the raw glyph
-    // in a neutral tone rather than rendering an empty chip.
-    const raw = task.statusSymbol.trim();
-    if (raw) el.setText(raw);
-  } // else: def with icon === '' → empty chip (plain to-do)
+  renderMarkerIcon(el, task.statusSymbol, presentation.icon, def != null);
 
   if (interactive) {
-    el.setAttribute('role', 'checkbox');
-    el.setAttribute('aria-checked', def?.type === 'done' ? 'true' : 'false');
-    el.setAttribute('aria-label', `Task status: ${def?.name ?? task.statusSymbol}`);
-    el.setAttribute('tabindex', '0');
-    el.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onLeftClick();
-    });
-    el.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      onContextMenu(e);
-    });
-    el.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' && event.key !== ' ') return;
-      event.preventDefault();
-      event.stopPropagation();
-      onLeftClick();
-    });
+    makeMarkerInteractive(el, presentation.label, presentation.isDone, onLeftClick, onContextMenu);
   }
   return el;
 }

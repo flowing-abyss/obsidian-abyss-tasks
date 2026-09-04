@@ -18,11 +18,11 @@ class TestView extends BaseView {
     this.renderCalls++;
     this.lastArgs = { container, tasks, config };
   }
-  patch(container: HTMLElement, tasks: Task[], config: ResolvedConfig): void {
+  override patch(container: HTMLElement, tasks: Task[], config: ResolvedConfig): void {
     this.patchCalls++;
     this.lastArgs = { container, tasks, config };
   }
-  destroy(): void {
+  override destroy(): void {
     this.destroyed = true;
   }
 }
@@ -63,7 +63,7 @@ describe('BaseView', () => {
       render(): void {
         this.renderCalls++;
       }
-      patch(c: HTMLElement, _t: Task[], _cfg: ResolvedConfig): void {
+      override patch(c: HTMLElement, _t: Task[], _cfg: ResolvedConfig): void {
         this.patchCalls++;
         c.createDiv({ text: 'patched' });
       }

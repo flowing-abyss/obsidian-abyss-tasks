@@ -1,12 +1,14 @@
 import type { LocalDate } from './types';
-import { localDate } from './validation';
+import { localDate } from './valueObjects';
 
 function leapYear(year: number): boolean {
   return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
 }
 
 function daysInMonth(year: number, month: number): number {
-  return [31, leapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]!;
+  const days = [31, leapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  if (days === undefined) throw new RangeError(`Invalid month: ${month}`);
+  return days;
 }
 
 function daysBeforeYear(year: number): number {

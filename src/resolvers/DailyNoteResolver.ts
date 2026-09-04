@@ -22,22 +22,25 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   manual: 'Manual',
 };
 
+function fallbackAdapter(): DailyNoteAdapter {
+  const adapter = ADAPTER_CHAIN[ADAPTER_CHAIN.length - 1];
+  if (adapter === undefined) throw new Error('Daily note adapter chain is empty');
+  return adapter;
+}
+
 export class DailyNoteResolver {
   constructor(
-    private app: App,
-    private settings: CalendarSettings,
+    private readonly app: App,
+    private readonly settings: CalendarSettings,
   ) {}
 
   getActiveAdapter(): DailyNoteAdapter {
     const { dailyNoteProvider } = this.settings;
     if (dailyNoteProvider === 'auto') {
-      return (
-        ADAPTER_CHAIN.find((a) => a.isAvailable(this.app)) ??
-        ADAPTER_CHAIN[ADAPTER_CHAIN.length - 1]!
-      );
+      return ADAPTER_CHAIN.find((adapter) => adapter.isAvailable(this.app)) ?? fallbackAdapter();
     }
-    const match = ADAPTER_CHAIN.find((a) => a.id === dailyNoteProvider);
-    return match?.isAvailable(this.app) ? match : ADAPTER_CHAIN[ADAPTER_CHAIN.length - 1]!;
+    const match = ADAPTER_CHAIN.find((adapter) => adapter.id === dailyNoteProvider);
+    return match?.isAvailable(this.app) === true ? match : fallbackAdapter();
   }
 
   getAvailableProviders(): Array<{ id: ProviderId | 'auto'; label: string }> {
@@ -72,7 +75,9 @@ export class DailyNoteResolver {
 
   private destinationFor(ps: DailyNoteProviderSettings): TaskDestination {
     const fileName = window.moment().format(ps.format);
-    const filePath = normalizePath(ps.folder ? `${ps.folder}/${fileName}.md` : `${fileName}.md`);
+    const filePath = normalizePath(
+      ps.folder.length > 0 ? `${ps.folder}/${fileName}.md` : `${fileName}.md`,
+    );
     return {
       filePath,
       insertion:
@@ -93,7 +98,7 @@ export class DailyNoteResolver {
     }
 
     const folderPath = destination.filePath.substring(0, destination.filePath.lastIndexOf('/'));
-    if (folderPath && !this.app.vault.getAbstractFileByPath(folderPath)) {
+    if (folderPath.length > 0 && this.app.vault.getAbstractFileByPath(folderPath) == null) {
       await this.app.vault.createFolder(folderPath);
     }
 
@@ -123,12 +128,12 @@ export class DailyNoteResolver {
     dateTitle: string,
   ): Promise<TFile> {
     const templater = this.getTemplaterPlugin();
-    if (templater && templatePath) {
+    if (templater != null && templatePath.length > 0) {
       const newFile = await this.app.vault.create(filePath, '');
       const templateTFile = this.app.metadataCache.getFirstLinkpathDest(templatePath, '');
       if (templateTFile instanceof TFile) {
         await (
-          templater as unknown as {
+          templater as {
             templater: { write_template_to_file(t: TFile, f: TFile): Promise<void> };
           }
         ).templater.write_template_to_file(templateTFile, newFile);
@@ -136,7 +141,7 @@ export class DailyNoteResolver {
       return newFile;
     }
 
-    if (templatePath) {
+    if (templatePath.length > 0) {
       const content = await this.readRawTemplate(templatePath, dateTitle);
       return this.app.vault.create(filePath, content);
     }
@@ -167,7 +172,7 @@ export class DailyNoteResolver {
 
   private autoLabel(): string {
     const detected = ADAPTER_CHAIN.find((a) => a.isAvailable(this.app));
-    if (!detected || detected.id === 'manual') return 'Auto-detect';
+    if (detected == null || detected.id === 'manual') return 'Auto-detect';
     return `Auto-detect (${PROVIDER_LABELS[detected.id]} detected)`;
   }
 }

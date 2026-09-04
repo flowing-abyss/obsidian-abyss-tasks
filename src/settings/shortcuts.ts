@@ -89,13 +89,13 @@ export function parseShortcut(
   platform: ShortcutPlatform,
 ): ParsedShortcut | undefined {
   const trimmed = value.trim();
-  if (!trimmed) return undefined;
+  if (trimmed.length === 0) return undefined;
 
   const tokens = trimmed.split(/\s+/);
   const key = tokens.pop();
-  if (!key) return undefined;
+  if (key === undefined || key.length === 0) return undefined;
   const code = parsePhysicalCode(key);
-  if (!code) return undefined;
+  if (code === undefined) return undefined;
 
   const modifiers = emptyModifiers();
   const seen = new Set<keyof ShortcutModifiers>();
@@ -124,19 +124,19 @@ function parseAlternatives(
 ): { candidates: ParsedShortcutAlternative[]; issues: ShortcutIssue[] } {
   const candidates: ParsedShortcutAlternative[] = [];
   const issues: ShortcutIssue[] = [];
-  if (!value.trim()) return { candidates, issues };
+  if (value.trim().length === 0) return { candidates, issues };
 
   const firstFragmentsBySignature = new Map<string, string>();
 
   for (const [fragmentIndex, rawFragment] of value.split('|').entries()) {
     const fragment = rawFragment.trim();
-    if (!fragment) {
+    if (fragment.length === 0) {
       issues.push({ kind: 'empty', fragment, fragmentIndex });
       continue;
     }
 
     const parsed = parseShortcut(action, fragment, platform);
-    if (!parsed) {
+    if (parsed == null) {
       issues.push({ kind: 'invalid', fragment, fragmentIndex });
       continue;
     }
@@ -155,6 +155,24 @@ function parseAlternatives(
   return { candidates, issues };
 }
 
+function indexParsedAlternatives(
+  action: ShortcutActionId,
+  parsed: ReturnType<typeof parseAlternatives>,
+  candidatesByAction: Map<ShortcutActionId, ParsedShortcutAlternative[]>,
+  candidatesBySignature: Map<
+    string,
+    Array<{ action: ShortcutActionId; candidate: ParsedShortcutAlternative }>
+  >,
+): void {
+  if (parsed.candidates.length > 0) candidatesByAction.set(action, parsed.candidates);
+  for (const candidate of parsed.candidates) {
+    const signature = shortcutSignature(candidate);
+    const candidates = candidatesBySignature.get(signature) ?? [];
+    candidates.push({ action, candidate });
+    candidatesBySignature.set(signature, candidates);
+  }
+}
+
 export function validateShortcuts(
   values: ShortcutSettings,
   platform: ShortcutPlatform,
@@ -167,39 +185,14 @@ export function validateShortcuts(
   >();
 
   for (const action of SHORTCUT_ACTION_IDS) {
-    const value = values[action];
-    const parsed = parseAlternatives(action, value, platform);
-    if (parsed.candidates.length > 0) candidatesByAction.set(action, parsed.candidates);
+    const parsed = parseAlternatives(action, values[action], platform);
+    indexParsedAlternatives(action, parsed, candidatesByAction, candidatesBySignature);
     if (parsed.issues.length > 0) issues.set(action, parsed.issues);
-    for (const candidate of parsed.candidates) {
-      const signature = shortcutSignature(candidate);
-      const candidates = candidatesBySignature.get(signature) ?? [];
-      candidates.push({ action, candidate });
-      candidatesBySignature.set(signature, candidates);
-    }
   }
 
   const bindings = new Map<ShortcutActionId, ParsedShortcutAlternative[]>();
   for (const [action, candidates] of candidatesByAction) {
-    const active: ParsedShortcutAlternative[] = [];
-    for (const candidate of candidates) {
-      const signature = shortcutSignature(candidate);
-      const owners = candidatesBySignature.get(signature) ?? [];
-      if (owners.length > 1) {
-        const actionIssues = issues.get(action) ?? [];
-        actionIssues.push({
-          kind: 'conflict',
-          fragment: candidate.fragment,
-          fragmentIndex: candidate.fragmentIndex,
-          conflictingActions: owners
-            .map((owner) => owner.action)
-            .filter((ownerAction) => ownerAction !== action),
-        });
-        issues.set(action, actionIssues);
-      } else {
-        active.push(candidate);
-      }
-    }
+    const active = activeCandidates(action, candidates, candidatesBySignature, issues);
     if (active.length > 0) bindings.set(action, active);
   }
 
@@ -210,10 +203,45 @@ export function validateShortcuts(
   return { bindings, issues };
 }
 
+function activeCandidates(
+  action: ShortcutActionId,
+  candidates: readonly ParsedShortcutAlternative[],
+  candidatesBySignature: ReadonlyMap<
+    string,
+    Array<{ action: ShortcutActionId; candidate: ParsedShortcutAlternative }>
+  >,
+  issues: Map<ShortcutActionId, ShortcutIssue[]>,
+): ParsedShortcutAlternative[] {
+  const active: ParsedShortcutAlternative[] = [];
+  for (const candidate of candidates) {
+    const owners = candidatesBySignature.get(shortcutSignature(candidate)) ?? [];
+    if (owners.length <= 1) {
+      active.push(candidate);
+      continue;
+    }
+    const actionIssues = issues.get(action) ?? [];
+    actionIssues.push({
+      kind: 'conflict',
+      fragment: candidate.fragment,
+      fragmentIndex: candidate.fragmentIndex,
+      conflictingActions: owners
+        .map((owner) => owner.action)
+        .filter((ownerAction) => ownerAction !== action),
+    });
+    issues.set(action, actionIssues);
+  }
+  return active;
+}
+
 /** Completes persisted shortcut settings without normalizing user-entered strings. */
 export function migrateShortcuts(raw: Record<string, unknown>): void {
   const stored = raw['shortcuts'];
-  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+  if (
+    stored === null ||
+    stored === undefined ||
+    typeof stored !== 'object' ||
+    Array.isArray(stored)
+  ) {
     raw['shortcuts'] = defaultShortcuts();
     return;
   }

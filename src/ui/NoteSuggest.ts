@@ -1,7 +1,20 @@
-import { AbstractInputSuggest, type App, TFile } from 'obsidian';
+import { AbstractInputSuggest, type App, type TFile } from 'obsidian';
 
 interface VaultWithConfig {
   getConfig(key: string): unknown;
+}
+
+function matcherForIgnoreFilter(filter: string): ((path: string) => boolean) | undefined {
+  if (filter.length > 2 && filter.startsWith('/') && filter.endsWith('/')) {
+    try {
+      const expression = new RegExp(filter.slice(1, -1));
+      return (path) => expression.test(path);
+    } catch {
+      return undefined;
+    }
+  }
+  const prefix = (filter.endsWith('/') ? filter : `${filter}/`).toLowerCase();
+  return (path) => path === filter || path.toLowerCase().startsWith(prefix);
 }
 
 /**
@@ -15,7 +28,7 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
 
   constructor(
     app: App,
-    private readonly inputElement: HTMLInputElement,
+    inputElement: HTMLInputElement,
     private readonly onPick: (file: TFile) => void,
   ) {
     super(app, inputElement);
@@ -28,17 +41,8 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
     const filters = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
     const matchers: Array<(path: string) => boolean> = [];
     for (const filter of filters) {
-      if (filter.length > 2 && filter.startsWith('/') && filter.endsWith('/')) {
-        try {
-          const re = new RegExp(filter.slice(1, -1));
-          matchers.push((p) => re.test(p));
-        } catch {
-          // Skip a malformed regex filter rather than breaking the whole suggester.
-        }
-      } else {
-        const prefix = (filter.endsWith('/') ? filter : `${filter}/`).toLowerCase();
-        matchers.push((p) => p === filter || p.toLowerCase().startsWith(prefix));
-      }
+      const matcher = matcherForIgnoreFilter(filter);
+      if (matcher !== undefined) matchers.push(matcher);
     }
     return matchers;
   }
@@ -55,7 +59,10 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
       .getFiles()
       .filter((file) => !this.isIgnored(file.path))
       .filter(
-        (file) => !q || file.name.toLowerCase().includes(q) || file.path.toLowerCase().includes(q),
+        (file) =>
+          q.length === 0 ||
+          file.name.toLowerCase().includes(q) ||
+          file.path.toLowerCase().includes(q),
       )
       .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, 50);
@@ -68,12 +75,12 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
       text: file.extension === 'md' ? file.basename : file.name,
     });
     const parent = file.parent?.path;
-    if (parent && parent !== '/') {
+    if (parent !== undefined && parent.length > 0 && parent !== '/') {
       el.createDiv({ cls: 'abyss-suggest-path', text: parent });
     }
   }
 
-  selectSuggestion(file: TFile): void {
+  override selectSuggestion(file: TFile): void {
     this.onPick(file);
     this.close();
   }

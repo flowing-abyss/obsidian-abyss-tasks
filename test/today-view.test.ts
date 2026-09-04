@@ -1,17 +1,22 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import type { App } from 'obsidian';
+import { Platform, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { bucketTasksForDate, TodayView } from '../src/views/TodayView';
-import { freshContainer, resolvedConfig, task, useRealMoment } from './helpers';
+import { expectDefined, freshContainer, resolvedConfig, task, useRealMoment } from './helpers';
 
 useRealMoment();
 
 const fakeApp = {} as App;
 const registry = new StatusRegistry(buildDefaultTaskStatuses());
-const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+async function loadStylesFixture(): Promise<string> {
+  if (!Platform.isDesktop) throw new Error('CSS fixture requires the desktop test runtime');
+  const fileSystem = await import('node:fs');
+  const nodePath = await import('node:path');
+  return fileSystem.readFileSync(nodePath.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+}
+
+const css = await loadStylesFixture();
 
 function callbacks() {
   return {
@@ -44,7 +49,7 @@ function gridRect(left: number, top: number, width: number, height: number): DOM
     width,
     height,
     toJSON: () => ({}),
-  } as DOMRect;
+  };
 }
 
 function recurrenceBadgeDom(root: ParentNode): Record<string, string | undefined> {
@@ -76,7 +81,9 @@ describe('TodayView', () => {
     );
 
     expect(
-      recurrenceBadgeDom(container.querySelector<HTMLElement>('.abyss-tg-block-head')!),
+      recurrenceBadgeDom(
+        expectDefined(container.querySelector<HTMLElement>('.abyss-tg-block-head')),
+      ),
     ).toEqual({
       rootClass: 'abyss-recurrence-badge',
       validity: 'valid',
@@ -108,10 +115,9 @@ describe('TodayView', () => {
       const dayColumn = container.querySelector('.abyss-tg-day-column');
       const allDayCell = container.querySelector('.abyss-tg-allday-cell');
       const nowLine = container.querySelector('.abyss-tg-now-line');
-      const todayHourColumn = (dayColumn as HTMLElement).querySelector('.abyss-tg-hour-column');
-      const quickAdd = (dayColumn as HTMLElement)
-        .querySelector<HTMLElement>('.abyss-tg-hour-column')!
-        .createDiv({ cls: 'abyss-tg-quick-add' });
+      const quickAdd = expectDefined(
+        (dayColumn as HTMLElement).querySelector<HTMLElement>('.abyss-tg-hour-column'),
+      ).createDiv({ cls: 'abyss-tg-quick-add' });
       gridRow.scrollTop = 321;
 
       for (let revision = 1; revision <= 3; revision++) {
@@ -229,8 +235,8 @@ describe('TodayView', () => {
       resolvedConfig({ startPosition: '2026-07-10' }),
     );
 
-    const layer = container.querySelector<HTMLElement>('.abyss-tg-span-layer')!;
-    const segment = layer.querySelector<HTMLElement>('.abyss-span-piece')!;
+    const layer = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-span-layer'));
+    const segment = expectDefined(layer.querySelector<HTMLElement>('.abyss-span-piece'));
     expect(layer.style.getPropertyValue('--abyss-span-track-count')).toBe('1');
     expect(segment.style.gridColumn).toBe('1 / 2');
     expect(css).toMatch(
@@ -307,7 +313,9 @@ describe('TodayView', () => {
 
   it('destroy() does not throw', () => {
     const view = new TodayView(callbacks());
-    expect(() => view.destroy()).not.toThrow();
+    expect(() => {
+      view.destroy();
+    }).not.toThrow();
   });
 
   it('patch() and destroy() cancel an active timed session without committing or leaving a preview', () => {
@@ -469,9 +477,9 @@ describe('TodayView', () => {
     const view = new TodayView(callbacks());
     const t = task({ planning: { due: '2026-07-10', time: '15:00', duration: 60 } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
-    expect(() =>
-      view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' })),
-    ).not.toThrow();
+    expect(() => {
+      view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
+    }).not.toThrow();
   });
 
   it('a task with start+due+distinct scheduled lands in spans (not deadlines) on its due day', () => {

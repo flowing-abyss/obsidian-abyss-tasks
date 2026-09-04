@@ -1,9 +1,12 @@
 import { ESLint } from 'eslint';
-import { resolve } from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
-const ROOT = resolve(import.meta.dirname, '..');
-const eslint = new ESLint({ cwd: ROOT, overrideConfigFile: resolve(ROOT, 'eslint.config.mts') });
+const ROOT = ts.sys.resolvePath(`${import.meta.dirname}/..`);
+const eslint = new ESLint({
+  cwd: ROOT,
+  overrideConfigFile: ts.sys.resolvePath(`${ROOT}/eslint.config.mts`),
+});
 const ARCHITECTURE_RULES = new Set([
   'no-restricted-imports',
   'no-restricted-syntax',
@@ -17,8 +20,16 @@ interface Diagnostic {
 }
 
 async function diagnostics(path: string, source: string): Promise<readonly Diagnostic[]> {
-  const [result] = await eslint.lintText(source, { filePath: resolve(ROOT, path) });
-  return result?.messages ?? [];
+  const [result] = await eslint.lintText(source, {
+    filePath: ts.sys.resolvePath(`${ROOT}/${path}`),
+  });
+  return (
+    result?.messages.map(({ ruleId, message, fatal }) => ({
+      ruleId,
+      message,
+      ...(fatal === undefined ? {} : { fatal }),
+    })) ?? []
+  );
 }
 
 function architectureDiagnostics(items: readonly Diagnostic[]) {

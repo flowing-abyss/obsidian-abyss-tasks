@@ -39,8 +39,8 @@ import { TaskMarkdownCodec } from './markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from './markdown/TaskSnapshotProjector';
 import { calendarDatesForPlanning, calendarRangeForPlanning, TaskDateIndex } from './TaskDateIndex';
 import {
-  TaskRefAuthority,
   type RootRevisionOverride,
+  type TaskRefAuthority,
   type TaskSnapshotState,
 } from './TaskRefAuthority';
 
@@ -64,22 +64,24 @@ interface FileObservation {
   readonly generation: number;
 }
 
+interface WritableReconciliationTransition {
+  readonly previous: TaskSnapshot;
+  readonly current: TaskSnapshot;
+  readonly evidence: ProvenRootTransition['evidence'];
+  readonly basis: RootReconciliationBasis;
+}
+
+interface VisualReconciliationTransition {
+  readonly stale: TaskRef;
+  readonly current: TaskSnapshot;
+  readonly evidence: VisualEvidence;
+}
+
 interface FileReconciliationTransition {
   readonly fromGeneration: number;
   readonly toGeneration: number;
-  readonly writable: ReadonlyMap<
-    string,
-    {
-      readonly previous: TaskSnapshot;
-      readonly current: TaskSnapshot;
-      readonly evidence: ProvenRootTransition['evidence'];
-      readonly basis: RootReconciliationBasis;
-    }
-  >;
-  readonly visual: ReadonlyMap<
-    string,
-    { readonly stale: TaskRef; readonly current: TaskSnapshot; readonly evidence: VisualEvidence }
-  >;
+  readonly writable: ReadonlyMap<string, WritableReconciliationTransition>;
+  readonly visual: ReadonlyMap<string, VisualReconciliationTransition>;
 }
 
 function momentToRegex(format: string): RegExp {
@@ -121,10 +123,8 @@ function cloneCandidate(task: TaskSnapshot): TaskResolutionCandidate {
 }
 
 function stableTaskOrder(left: TaskSnapshot, right: TaskSnapshot): number {
-  return (
-    left.source.filePath.localeCompare(right.source.filePath) ||
-    left.source.line - right.source.line
-  );
+  const pathOrder = left.source.filePath.localeCompare(right.source.filePath);
+  return pathOrder !== 0 ? pathOrder : left.source.line - right.source.line;
 }
 
 function targetPath(target: TaskNodeRef): readonly number[] {
@@ -145,7 +145,10 @@ function stableCalendarSourceOrder(left: CalendarTaskSource, right: CalendarTask
   const rightPath = targetPath(right.target);
   const shared = Math.min(leftPath.length, rightPath.length);
   for (let index = 0; index < shared; index++) {
-    const order = leftPath[index]! - rightPath[index]!;
+    const leftPart = leftPath[index];
+    const rightPart = rightPath[index];
+    if (leftPart === undefined || rightPart === undefined) continue;
+    const order = leftPart - rightPart;
     if (order !== 0) return order;
   }
   return leftPath.length - rightPath.length;
@@ -182,13 +185,17 @@ function cloneCalendarRoot(original: TaskSnapshot): ClonedCalendarRoot {
     readonly clones: readonly SubtaskSnapshot[];
   }> = [{ originals: original.subtasks, clones: root.subtasks }];
   while (pending.length > 0) {
-    const pair = pending.pop()!;
+    const pair = pending.pop();
+    if (pair === undefined) break;
     if (pair.originals.length !== pair.clones.length) {
       throw new Error('calendar-source-clone-shape-mismatch');
     }
     for (let index = 0; index < pair.originals.length; index++) {
-      const sourceNode = pair.originals[index]!;
-      const clonedNode = pair.clones[index]!;
+      const sourceNode = pair.originals[index];
+      const clonedNode = pair.clones[index];
+      if (sourceNode === undefined || clonedNode === undefined) {
+        throw new Error('calendar-source-clone-shape-mismatch');
+      }
       nodes.set(sourceNode, clonedNode);
       pending.push({ originals: sourceNode.subtasks, clones: clonedNode.subtasks });
     }
@@ -247,10 +254,38 @@ interface FallbackFenceTransition {
   readonly opening: boolean;
 }
 
+interface FallbackScanState {
+  readonly items: FallbackListItem[];
+  readonly ancestorsByQuoteDepth: Map<number, FallbackListAncestor[]>;
+  offset: number;
+  frontmatter: boolean;
+  fence: FallbackFence | undefined;
+  previousQuoteDepth: number | undefined;
+}
+
+interface FallbackListLine {
+  readonly line: string;
+  readonly lineNumber: number;
+  readonly quoteDepth: number;
+  readonly prefix: string;
+}
+
 const FALLBACK_LIST_ITEM_RE = /^([\s>]*)(?:[-*+]|\d+[.)])\s+/u;
 const FALLBACK_TASK_RE = /^[\s>]*- \[(.)\]/u;
 const FALLBACK_FENCE_RE = /^[\s>]*(`{3,}|~{3,})/u;
 const FALLBACK_PREFIX_RE = /^([\s>]*)/u;
+
+function closesFallbackFence(
+  active: FallbackFence,
+  quoteDepth: number,
+  token: string | undefined,
+): boolean {
+  return (
+    quoteDepth === active.quoteDepth &&
+    token?.[0] === active.marker &&
+    token.length >= active.length
+  );
+}
 
 function fallbackFenceState(
   line: string,
@@ -258,12 +293,12 @@ function fallbackFenceState(
   active: FallbackFence | undefined,
 ): FallbackFenceTransition {
   const token = FALLBACK_FENCE_RE.exec(line)?.[1];
-  if (active && quoteDepth >= active.quoteDepth) {
-    const closes =
-      quoteDepth === active.quoteDepth &&
-      token?.[0] === active.marker &&
-      token.length >= active.length;
-    return { active: closes ? undefined : active, skip: true, opening: false };
+  if (active != null && quoteDepth >= active.quoteDepth) {
+    return {
+      active: closesFallbackFence(active, quoteDepth, token) ? undefined : active,
+      skip: true,
+      opening: false,
+    };
   }
   if (token === undefined) return { active: undefined, skip: false, opening: false };
   const marker = token[0];
@@ -299,90 +334,130 @@ function transitionFallbackNonListBoundary(
     ancestorsByQuoteDepth,
   );
   const ancestors = ancestorsByQuoteDepth.get(quoteDepth) ?? [];
-  while (ancestors.length > 0 && ancestors[ancestors.length - 1]!.indent >= indent) {
+  while ((ancestors[ancestors.length - 1]?.indent ?? Number.NEGATIVE_INFINITY) >= indent) {
     ancestors.pop();
   }
   ancestorsByQuoteDepth.set(quoteDepth, ancestors);
   return nextQuoteDepth;
 }
 
+function fallbackIndent(prefix: string): number {
+  return prefix.replace(/\t/gu, '    ').length;
+}
+
+function advanceFallbackOffset(state: FallbackScanState, line: string): void {
+  state.offset += line.length + 1;
+}
+
+function consumeFallbackFrontmatter(
+  state: FallbackScanState,
+  line: string,
+  lineNumber: number,
+): boolean {
+  if (!state.frontmatter) return false;
+  if (lineNumber > 0 && line.trim() === '---') state.frontmatter = false;
+  advanceFallbackOffset(state, line);
+  return true;
+}
+
+function transitionFallbackBoundary(
+  state: FallbackScanState,
+  quoteDepth: number,
+  prefix: string,
+): void {
+  state.previousQuoteDepth = transitionFallbackNonListBoundary(
+    quoteDepth,
+    fallbackIndent(prefix),
+    state.previousQuoteDepth,
+    state.ancestorsByQuoteDepth,
+  );
+}
+
+function consumeFallbackFence(
+  state: FallbackScanState,
+  line: string,
+  quoteDepth: number,
+  prefix: string,
+): boolean {
+  const transition = fallbackFenceState(line, quoteDepth, state.fence);
+  state.fence = transition.active;
+  if (!transition.skip) return false;
+  if (transition.opening) transitionFallbackBoundary(state, quoteDepth, prefix);
+  advanceFallbackOffset(state, line);
+  return true;
+}
+
+function fallbackParent(
+  ancestors: FallbackListAncestor[],
+  indent: number,
+  lineNumber: number,
+): number {
+  while ((ancestors[ancestors.length - 1]?.indent ?? Number.NEGATIVE_INFINITY) >= indent) {
+    ancestors.pop();
+  }
+  return ancestors[ancestors.length - 1]?.line ?? -(lineNumber + 1);
+}
+
+function appendFallbackListItem(state: FallbackScanState, item: FallbackListLine): void {
+  const { line, lineNumber, quoteDepth, prefix } = item;
+  state.previousQuoteDepth = transitionFallbackQuoteDepth(
+    quoteDepth,
+    state.previousQuoteDepth,
+    state.ancestorsByQuoteDepth,
+  );
+  const indent = fallbackIndent(prefix);
+  const ancestors = state.ancestorsByQuoteDepth.get(quoteDepth) ?? [];
+  const task = FALLBACK_TASK_RE.exec(line)?.[1];
+  state.items.push({
+    ...(task !== undefined && { task }),
+    parent: fallbackParent(ancestors, indent, lineNumber),
+    position: {
+      start: { line: lineNumber, col: prefix.length, offset: state.offset },
+      end: { line: lineNumber, col: line.length, offset: state.offset + line.length },
+    },
+  });
+  ancestors.push({ line: lineNumber, indent });
+  state.ancestorsByQuoteDepth.set(quoteDepth, ancestors);
+}
+
+function consumeFallbackLine(state: FallbackScanState, line: string, lineNumber: number): void {
+  if (consumeFallbackFrontmatter(state, line, lineNumber)) return;
+  const leadingPrefix = FALLBACK_PREFIX_RE.exec(line)?.[1] ?? '';
+  const quoteDepth = [...leadingPrefix].filter((character) => character === '>').length;
+  if (consumeFallbackFence(state, line, quoteDepth, leadingPrefix)) return;
+  if (/^[\s>]*$/u.test(line)) {
+    advanceFallbackOffset(state, line);
+    return;
+  }
+  const listMatch = FALLBACK_LIST_ITEM_RE.exec(line);
+  if (listMatch == null) {
+    transitionFallbackBoundary(state, quoteDepth, leadingPrefix);
+    advanceFallbackOffset(state, line);
+    return;
+  }
+  appendFallbackListItem(state, {
+    line,
+    lineNumber,
+    quoteDepth,
+    prefix: listMatch[1] ?? '',
+  });
+  advanceFallbackOffset(state, line);
+}
+
 function fallbackListItems(data: string): FallbackListItem[] {
   const lines = data.split('\n');
-  const items: FallbackListItem[] = [];
-  const ancestorsByQuoteDepth = new Map<number, FallbackListAncestor[]>();
-  let offset = 0;
-  let frontmatter = lines[0]?.trim() === '---';
-  let fence: FallbackFence | undefined;
-  let previousQuoteDepth: number | undefined;
-
+  const state: FallbackScanState = {
+    items: [],
+    ancestorsByQuoteDepth: new Map(),
+    offset: 0,
+    frontmatter: lines[0]?.trim() === '---',
+    fence: undefined,
+    previousQuoteDepth: undefined,
+  };
   for (let lineNumber = 0; lineNumber < lines.length; lineNumber++) {
-    const line = lines[lineNumber] ?? '';
-    if (frontmatter) {
-      if (lineNumber > 0 && line.trim() === '---') frontmatter = false;
-      offset += line.length + 1;
-      continue;
-    }
-
-    const leadingPrefix = FALLBACK_PREFIX_RE.exec(line)?.[1] ?? '';
-    const quoteDepth = [...leadingPrefix].filter((character) => character === '>').length;
-    const nextFence = fallbackFenceState(line, quoteDepth, fence);
-    fence = nextFence.active;
-    if (nextFence.skip) {
-      if (nextFence.opening) {
-        const indent = leadingPrefix.replace(/\t/gu, '    ').length;
-        previousQuoteDepth = transitionFallbackNonListBoundary(
-          quoteDepth,
-          indent,
-          previousQuoteDepth,
-          ancestorsByQuoteDepth,
-        );
-      }
-      offset += line.length + 1;
-      continue;
-    }
-    if (/^[\s>]*$/u.test(line)) {
-      offset += line.length + 1;
-      continue;
-    }
-
-    const listMatch = FALLBACK_LIST_ITEM_RE.exec(line);
-    if (!listMatch) {
-      const indent = leadingPrefix.replace(/\t/gu, '    ').length;
-      previousQuoteDepth = transitionFallbackNonListBoundary(
-        quoteDepth,
-        indent,
-        previousQuoteDepth,
-        ancestorsByQuoteDepth,
-      );
-      offset += line.length + 1;
-      continue;
-    }
-    previousQuoteDepth = transitionFallbackQuoteDepth(
-      quoteDepth,
-      previousQuoteDepth,
-      ancestorsByQuoteDepth,
-    );
-    const prefix = listMatch[1] ?? '';
-    const indent = prefix.replace(/\t/gu, '    ').length;
-    const ancestors = ancestorsByQuoteDepth.get(quoteDepth) ?? [];
-    while (ancestors.length > 0 && ancestors[ancestors.length - 1]!.indent >= indent) {
-      ancestors.pop();
-    }
-    const parent = ancestors[ancestors.length - 1]?.line ?? -(lineNumber + 1);
-    const task = FALLBACK_TASK_RE.exec(line)?.[1];
-    items.push({
-      ...(task !== undefined && { task }),
-      parent,
-      position: {
-        start: { line: lineNumber, col: prefix.length, offset },
-        end: { line: lineNumber, col: line.length, offset: offset + line.length },
-      },
-    });
-    ancestors.push({ line: lineNumber, indent });
-    ancestorsByQuoteDepth.set(quoteDepth, ancestors);
-    offset += line.length + 1;
+    consumeFallbackLine(state, lines[lineNumber] ?? '', lineNumber);
   }
-  return items;
+  return state.items;
 }
 
 function cacheWithContentFallback(
@@ -428,6 +503,152 @@ function dailyNoteDateForPath(filePath: string, format: string): LocalDate | und
     : undefined;
 }
 
+type MetadataListItem = NonNullable<CachedMetadata['listItems']>[number];
+
+interface ParseFileInput {
+  readonly filePath: string;
+  readonly content: string;
+  readonly cache: CachedMetadata;
+  readonly allocateSuccessor?: boolean;
+  readonly captureAuthorityTransitions?: (
+    transitions: readonly ProvenRootRevisionOverride[],
+  ) => void;
+  readonly observedFile?: boolean;
+}
+
+interface ReconciledRevisionContext {
+  readonly overrides: ReadonlyMap<number, RootRevisionOverride>;
+  readonly priorByLine: ReadonlyMap<number, TaskSnapshot>;
+  readonly priorBySource: ReadonlyMap<string, readonly TaskSnapshot[]>;
+  readonly currentSourceCounts: ReadonlyMap<string, number>;
+  readonly allocateSuccessor: boolean;
+  readonly observedFile: boolean;
+}
+
+interface ReconciledRevisionInput extends ReconciledRevisionContext {
+  readonly line: number;
+  readonly source: string;
+  readonly sourceCount: number;
+}
+
+interface FileParseContext {
+  readonly filePath: string;
+  readonly lines: readonly string[];
+  readonly blockByLine: ReadonlyMap<number, { readonly source: string }>;
+  readonly sourceCounts: ReadonlyMap<string, number>;
+  readonly codec: TaskMarkdownCodec;
+  readonly presentation: TaskSnapshot['presentation'];
+  readonly itemByLine: ReadonlyMap<number, MetadataListItem>;
+  readonly revision: ReconciledRevisionContext;
+}
+
+function reusablePriorRevision(input: ReconciledRevisionInput): string | undefined {
+  const hinted = input.priorByLine.get(input.line);
+  const prior = input.priorBySource.get(input.source) ?? [];
+  const uniqueCurrentSource = input.sourceCount === 1;
+  const uniquePriorSource = prior.length === 1;
+  if (hinted?.source.originalBlock === input.source && uniqueCurrentSource && uniquePriorSource) {
+    return hinted.ref.revision;
+  }
+  const priorTask = prior[0];
+  return uniqueCurrentSource && uniquePriorSource ? priorTask?.ref.revision : undefined;
+}
+
+function hintedSourceWasRelocated(input: ReconciledRevisionInput, hinted: TaskSnapshot): boolean {
+  const source = hinted.source.originalBlock;
+  const uniqueCurrentSource = (input.currentSourceCounts.get(source) ?? 0) === 1;
+  const uniquePriorSource = (input.priorBySource.get(source)?.length ?? 0) === 1;
+  return uniqueCurrentSource && uniquePriorSource;
+}
+
+function shouldAllocateSuccessor(
+  input: ReconciledRevisionInput,
+  hinted: TaskSnapshot | undefined,
+): hinted is TaskSnapshot {
+  return (
+    hinted !== undefined && input.allocateSuccessor && !hintedSourceWasRelocated(input, hinted)
+  );
+}
+
+function shouldMintAuthorityRevision(input: ReconciledRevisionInput): boolean {
+  return input.observedFile && input.allocateSuccessor;
+}
+
+function countBlockSources(
+  blocks: Iterable<{ readonly source: string }>,
+): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const block of blocks) counts.set(block.source, (counts.get(block.source) ?? 0) + 1);
+  return counts;
+}
+
+function priorTasksBySource(
+  tasks: readonly TaskSnapshot[],
+): ReadonlyMap<string, readonly TaskSnapshot[]> {
+  const tasksBySource = new Map<string, TaskSnapshot[]>();
+  for (const task of tasks) {
+    const matches = tasksBySource.get(task.source.originalBlock) ?? [];
+    matches.push(task);
+    tasksBySource.set(task.source.originalBlock, matches);
+  }
+  return tasksBySource;
+}
+
+function frontmatterText(
+  frontmatter: CachedMetadata['frontmatter'],
+  key: string,
+): string | undefined {
+  if (frontmatter == null) return undefined;
+  const value: unknown = (frontmatter as Record<string, unknown>)[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function taskPresentation(
+  filePath: string,
+  dailyNoteFormat: string,
+  frontmatter: CachedMetadata['frontmatter'],
+): TaskSnapshot['presentation'] {
+  const dailyNoteDate = dailyNoteDateForPath(filePath, dailyNoteFormat);
+  const noteColor = frontmatterText(frontmatter, 'color');
+  const noteTextColor = frontmatterText(frontmatter, 'textColor');
+  const noteIcon = frontmatterText(frontmatter, 'icon');
+  const presentation: {
+    linkCount: number;
+    dailyNoteDate?: LocalDate;
+    noteColor?: string;
+    noteTextColor?: string;
+    noteIcon?: string;
+  } = { linkCount: 0 };
+  if (nonEmpty(dailyNoteDate)) presentation.dailyNoteDate = dailyNoteDate;
+  if (nonEmpty(noteColor)) presentation.noteColor = noteColor;
+  if (nonEmpty(noteTextColor)) presentation.noteTextColor = noteTextColor;
+  if (nonEmpty(noteIcon)) presentation.noteIcon = noteIcon;
+  return presentation;
+}
+
+function metadataItemsByLine(
+  items: readonly MetadataListItem[],
+): ReadonlyMap<number, MetadataListItem> {
+  return new Map(items.map((item) => [item.position.start.line, item] as const));
+}
+
+function hasTaskAncestor(
+  item: MetadataListItem,
+  itemByLine: ReadonlyMap<number, MetadataListItem>,
+): boolean {
+  let parentLine = item.parent;
+  const seen = new Set<number>();
+  while (parentLine >= 0 && !seen.has(parentLine)) {
+    if (parentLine === item.position.start.line) return false;
+    seen.add(parentLine);
+    const parent = itemByLine.get(parentLine);
+    if (parent == null) return false;
+    if (parent.task !== undefined) return true;
+    parentLine = parent.parent;
+  }
+  return false;
+}
+
 function relocateSubtask(task: SubtaskSnapshot, parent: TaskNodeRef): SubtaskSnapshot {
   const ref = { ...task.ref, parent };
   const node: TaskNodeRef = { type: 'subtask', ref };
@@ -461,12 +682,220 @@ function relocateSnapshot(
     })),
     presentation: {
       linkCount,
-      ...(dailyNoteDate && { dailyNoteDate }),
-      ...(noteColor && { noteColor }),
-      ...(noteTextColor && { noteTextColor }),
-      ...(noteIcon && { noteIcon }),
+      ...(dailyNoteDate != null && { dailyNoteDate }),
+      ...(Boolean(noteColor) && { noteColor }),
+      ...(Boolean(noteTextColor) && { noteTextColor }),
+      ...(Boolean(noteIcon) && { noteIcon }),
     },
   };
+}
+
+function nonEmpty(value: string | undefined): value is string {
+  return value !== undefined && value.length > 0;
+}
+
+function hasOnlyFilePath(
+  query: TaskQuery | undefined,
+): query is TaskQuery & { readonly filePath: string } {
+  return (
+    query !== undefined &&
+    nonEmpty(query.filePath) &&
+    query.folder === undefined &&
+    query.tag === undefined &&
+    query.statuses === undefined &&
+    query.dateRange === undefined
+  );
+}
+
+function initialQueryTasks(
+  taskMap: ReadonlyMap<string, readonly TaskSnapshot[]>,
+  query: TaskQuery | undefined,
+): readonly TaskSnapshot[] {
+  if (hasOnlyFilePath(query)) return taskMap.get(query.filePath) ?? [];
+  return [...taskMap.values()].flat();
+}
+
+function filterTasksByFile(
+  tasks: readonly TaskSnapshot[],
+  filePath: string | undefined,
+): readonly TaskSnapshot[] {
+  return nonEmpty(filePath) ? tasks.filter((task) => task.source.filePath === filePath) : tasks;
+}
+
+function filterTasksByFolder(
+  tasks: readonly TaskSnapshot[],
+  folder: string | undefined,
+): readonly TaskSnapshot[] {
+  return nonEmpty(folder) ? tasks.filter((task) => task.source.filePath.startsWith(folder)) : tasks;
+}
+
+function filterTasksByTag(
+  tasks: readonly TaskSnapshot[],
+  tag: string | undefined,
+): readonly TaskSnapshot[] {
+  return nonEmpty(tag) ? tasks.filter((task) => task.tags.includes(tag)) : tasks;
+}
+
+function filterTasksByStatus(
+  tasks: readonly TaskSnapshot[],
+  statuses: TaskQuery['statuses'],
+): readonly TaskSnapshot[] {
+  return statuses !== undefined && statuses.length > 0
+    ? tasks.filter((task) => statuses.includes(task.status))
+    : tasks;
+}
+
+function filterTasksByDate(
+  tasks: readonly TaskSnapshot[],
+  dateRange: TaskQuery['dateRange'],
+): readonly TaskSnapshot[] {
+  if (dateRange == null) return tasks;
+  const { from, to } = dateRange;
+  return tasks.filter((task) => {
+    const date = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
+    return date !== undefined && date >= from && date <= to;
+  });
+}
+
+function filterQueryTasks(
+  tasks: readonly TaskSnapshot[],
+  query: TaskQuery | undefined,
+): readonly TaskSnapshot[] {
+  if (query === undefined) return tasks;
+  const inFile = filterTasksByFile(tasks, query.filePath);
+  const inFolder = filterTasksByFolder(inFile, query.folder);
+  const withTag = filterTasksByTag(inFolder, query.tag);
+  const withStatus = filterTasksByStatus(withTag, query.statuses);
+  return filterTasksByDate(withStatus, query.dateRange);
+}
+
+function ambiguousResolution(tasks: readonly TaskSnapshot[]): TaskResolution {
+  return { type: 'ambiguous', candidates: tasks.map(cloneCandidate) };
+}
+
+function clonedReconciliationBasis(basis: RootReconciliationBasis): RootReconciliationBasis {
+  return {
+    observed: cloneTaskSnapshot(basis.observed),
+    ...(basis.previousRootAnchor != null && {
+      previousRootAnchor: { ...basis.previousRootAnchor },
+    }),
+    ...(basis.nextRootAnchor != null && { nextRootAnchor: { ...basis.nextRootAnchor } }),
+    ...(basis.authorityTransition != null && {
+      authorityTransition: { ...basis.authorityTransition },
+    }),
+  };
+}
+
+function transitionResolution(transition: WritableReconciliationTransition): TaskResolution {
+  return {
+    type: 'rebased',
+    previous: cloneTaskSnapshot(transition.previous),
+    current: cloneTaskSnapshot(transition.current),
+    evidence: transition.evidence,
+    basis: clonedReconciliationBasis(transition.basis),
+  };
+}
+
+function legacyRelocationResolution(ref: TaskRef, match: TaskSnapshot): TaskResolution {
+  const current = cloneTaskSnapshot(match);
+  const observedSnapshot = cloneTaskSnapshot(current);
+  const observed: TaskSnapshot = {
+    ...observedSnapshot,
+    ref: { ...ref },
+    source: { ...observedSnapshot.source, line: ref.line },
+  };
+  return {
+    type: 'rebased',
+    previous: observed,
+    current,
+    evidence: 'byte-identical-relocation',
+    basis: { observed },
+  };
+}
+
+function visualResolution(
+  ref: TaskRef,
+  current: TaskSnapshot,
+  evidence: VisualEvidence,
+): TaskResolution {
+  return {
+    type: 'visual',
+    stale: { ...ref },
+    current: cloneTaskSnapshot(current),
+    evidence,
+  };
+}
+
+function authorityAmbiguityResolution(
+  authority: TaskRefAuthority | undefined,
+  sourceMatches: readonly TaskSnapshot[],
+): TaskResolution | undefined {
+  return authority != null && sourceMatches.length > 1
+    ? ambiguousResolution(sourceMatches)
+    : undefined;
+}
+
+function directRevisionResolution(
+  ref: TaskRef,
+  current: TaskSnapshot | undefined,
+  matches: readonly TaskSnapshot[],
+): TaskResolution | undefined {
+  if (matches.length > 1) return ambiguousResolution(matches);
+  if (current?.ref.revision !== ref.revision) return undefined;
+  const task = cloneTaskSnapshot(current);
+  return { type: 'exact', task, basis: { observed: cloneTaskSnapshot(task) } };
+}
+
+function writableRebaseResolution(
+  authority: TaskRefAuthority | undefined,
+  ref: TaskRef,
+  matches: readonly TaskSnapshot[],
+  transition: WritableReconciliationTransition | undefined,
+): TaskResolution | undefined {
+  if (transition != null) return transitionResolution(transition);
+  if (authority != null || matches.length !== 1) return undefined;
+  const match = matches[0];
+  return match === undefined ? { type: 'not-found', ref } : legacyRelocationResolution(ref, match);
+}
+
+interface FallbackResolutionInput {
+  readonly ref: TaskRef;
+  readonly tasks: readonly TaskSnapshot[];
+  readonly current: TaskSnapshot | undefined;
+  readonly sourceMatches: readonly TaskSnapshot[];
+  readonly visual: VisualReconciliationTransition | undefined;
+}
+
+function fallbackTaskResolution(input: FallbackResolutionInput): TaskResolution {
+  const { ref, tasks, current, sourceMatches, visual } = input;
+  if (sourceMatches.length > 1) return ambiguousResolution(sourceMatches);
+  if (visual != null) return visualResolution(ref, visual.current, visual.evidence);
+  if (current != null) return visualResolution(ref, current, 'same-line');
+  if (sourceMatches.length === 1 || tasks.length > 0) {
+    return { type: 'uncertain', ref: { ...ref } };
+  }
+  return { type: 'not-found', ref: { ...ref } };
+}
+
+function hasQueuedAuthorityTransition(
+  filePath: string,
+  changed: boolean,
+  pendingFiles: ReadonlySet<string>,
+  transition: FileReconciliationTransition | undefined,
+): boolean {
+  if (changed || !pendingFiles.has(filePath)) return false;
+  return [...(transition?.writable.values() ?? [])].some(
+    (candidate) => candidate.evidence === 'authority-transition',
+  );
+}
+
+function activeRecurringSources(
+  sources: readonly CalendarTaskSource[],
+): readonly CalendarTaskSource[] {
+  return sources.filter(
+    ({ node }) =>
+      node.recurrence !== undefined && (node.status === 'open' || node.status === 'in-progress'),
+  );
 }
 
 export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
@@ -533,34 +962,8 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   }
 
   list(query?: TaskQuery): readonly TaskSnapshot[] {
-    let tasks: readonly TaskSnapshot[];
-    if (
-      query?.filePath &&
-      query.folder === undefined &&
-      query.tag === undefined &&
-      query.statuses === undefined &&
-      query.dateRange === undefined
-    ) {
-      tasks = this.taskMap.get(query.filePath) ?? [];
-    } else {
-      tasks = [...this.taskMap.values()].flat();
-    }
-    let filtered = tasks;
-    if (query?.filePath)
-      filtered = filtered.filter((task) => task.source.filePath === query.filePath);
-    if (query?.folder)
-      filtered = filtered.filter((task) => task.source.filePath.startsWith(query.folder!));
-    if (query?.tag) filtered = filtered.filter((task) => task.tags.includes(query.tag!));
-    if (query?.statuses?.length) {
-      filtered = filtered.filter((task) => query.statuses!.includes(task.status));
-    }
-    if (query?.dateRange) {
-      const { from, to } = query.dateRange;
-      filtered = filtered.filter((task) => {
-        const date = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
-        return date !== undefined && date >= from && date <= to;
-      });
-    }
+    const tasks = initialQueryTasks(this.taskMap, query);
+    const filtered = filterQueryTasks(tasks, query);
     return [...filtered].sort(stableTaskOrder).map(cloneTaskSnapshot);
   }
 
@@ -589,79 +992,25 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
       expectedSource === undefined
         ? []
         : tasks.filter((task) => task.source.originalBlock === expectedSource);
-    if (this.options.refAuthority && sourceMatches.length > 1) {
-      return { type: 'ambiguous', candidates: sourceMatches.map(cloneCandidate) };
-    }
+    const authorityResolution = authorityAmbiguityResolution(
+      this.options.refAuthority,
+      sourceMatches,
+    );
+    if (authorityResolution !== undefined) return authorityResolution;
     const matches = tasks.filter((task) => task.ref.revision === ref.revision);
-    if (matches.length > 1) {
-      return { type: 'ambiguous', candidates: matches.map(cloneCandidate) };
-    }
-    if (current?.ref.revision === ref.revision) {
-      const task = cloneTaskSnapshot(current);
-      return { type: 'exact', task, basis: { observed: cloneTaskSnapshot(task) } };
-    }
+    const directResolution = directRevisionResolution(ref, current, matches);
+    if (directResolution !== undefined) return directResolution;
     const fileTransition = this.reconciliationTransitions.get(ref.filePath);
     const transition = fileTransition?.writable.get(taskReconciliationKey(ref));
-    if (transition) {
-      return {
-        type: 'rebased',
-        previous: cloneTaskSnapshot(transition.previous),
-        current: cloneTaskSnapshot(transition.current),
-        evidence: transition.evidence,
-        basis: {
-          observed: cloneTaskSnapshot(transition.basis.observed),
-          ...(transition.basis.previousRootAnchor && {
-            previousRootAnchor: { ...transition.basis.previousRootAnchor },
-          }),
-          ...(transition.basis.nextRootAnchor && {
-            nextRootAnchor: { ...transition.basis.nextRootAnchor },
-          }),
-          ...(transition.basis.authorityTransition && {
-            authorityTransition: { ...transition.basis.authorityTransition },
-          }),
-        },
-      };
-    }
-    if (!this.options.refAuthority && matches.length === 1) {
-      const currentTask = cloneTaskSnapshot(matches[0]!);
-      const observedTask = cloneTaskSnapshot(currentTask);
-      const observed: TaskSnapshot = {
-        ...observedTask,
-        ref: { ...ref },
-        source: { ...observedTask.source, line: ref.line },
-      };
-      return {
-        type: 'rebased',
-        previous: observed,
-        current: currentTask,
-        evidence: 'byte-identical-relocation',
-        basis: { observed },
-      };
-    }
-    if (sourceMatches.length > 1) {
-      return { type: 'ambiguous', candidates: sourceMatches.map(cloneCandidate) };
-    }
+    const rebaseResolution = writableRebaseResolution(
+      this.options.refAuthority,
+      ref,
+      matches,
+      transition,
+    );
+    if (rebaseResolution !== undefined) return rebaseResolution;
     const visual = fileTransition?.visual.get(taskReconciliationKey(ref));
-    if (visual) {
-      return {
-        type: 'visual',
-        stale: { ...ref },
-        current: cloneTaskSnapshot(visual.current),
-        evidence: visual.evidence,
-      };
-    }
-    if (current) {
-      return {
-        type: 'visual',
-        stale: { ...ref },
-        current: cloneTaskSnapshot(current),
-        evidence: 'same-line',
-      };
-    }
-    if (sourceMatches.length === 1 || tasks.length > 0) {
-      return { type: 'uncertain', ref: { ...ref } };
-    }
-    return { type: 'not-found', ref: { ...ref } };
+    return fallbackTaskResolution({ ref, tasks, current, sourceMatches, visual });
   }
 
   subscribe(listener: Listener): () => void {
@@ -697,151 +1046,153 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     observedFile = false,
   ): Promise<boolean> {
     const observation = this.observe(file, path);
-    if (!observation) return false;
+    if (observation == null) return false;
     const cache = this.app.metadataCache.getFileCache(file);
-    if (!forceContentFallback && !cache?.listItems?.some((item) => item.task !== undefined)) {
-      try {
-        if (this.options.refAuthority) {
-          const content = await this.app.vault.cachedRead(file);
-          if (!this.isCurrent(observation)) return false;
-          this.options.refAuthority.observe(path, content);
-        }
-      } catch {
-        // The empty replacement still wins for the observed lifecycle generation.
-      }
-      if (!this.isCurrent(observation)) return false;
-      this.replaceFile(path, [], [], true);
-      return true;
+    const hasCachedTasks = cache?.listItems?.some((item) => item.task !== undefined) ?? false;
+    if (!forceContentFallback && !hasCachedTasks) {
+      return this.loadEmptyFile(observation);
     }
+    return this.loadParsedFile(observation, cache, forceContentFallback, observedFile);
+  }
+
+  private async loadEmptyFile(observation: FileObservation): Promise<boolean> {
     try {
-      const content = await this.app.vault.cachedRead(file);
+      const authority = this.options.refAuthority;
+      if (authority != null) {
+        const content = await this.app.vault.cachedRead(observation.file);
+        if (!this.isCurrent(observation)) return false;
+        authority.observe(observation.path, content);
+      }
+    } catch {
+      // The empty replacement still wins for the observed lifecycle generation.
+    }
+    return this.commitEmptyObservation(observation);
+  }
+
+  private commitEmptyObservation(observation: FileObservation): boolean {
+    if (!this.isCurrent(observation)) return false;
+    this.replaceFile(observation.path, [], [], true);
+    return true;
+  }
+
+  private async loadParsedFile(
+    observation: FileObservation,
+    cache: CachedMetadata | null,
+    forceContentFallback: boolean,
+    observedFile: boolean,
+  ): Promise<boolean> {
+    try {
+      const content = await this.app.vault.cachedRead(observation.file);
       if (!this.isCurrent(observation)) return false;
-      this.replaceFile(
-        path,
-        this.parseFile(
-          path,
-          content,
-          forceContentFallback ? cacheWithContentFallback(content, cache) : cache!,
-          true,
-          undefined,
-          observedFile,
-        ),
-        [],
-        true,
-      );
+      const selectedCache = forceContentFallback ? cacheWithContentFallback(content, cache) : cache;
+      if (selectedCache == null) return false;
+      const tasks = this.parseFile({
+        filePath: observation.path,
+        content,
+        cache: selectedCache,
+        allocateSuccessor: true,
+        observedFile,
+      });
+      this.replaceFile(observation.path, tasks, [], true);
       return true;
     } catch {
-      if (!this.isCurrent(observation)) return false;
-      this.replaceFile(path, [], [], true);
-      return true;
+      return this.commitEmptyObservation(observation);
     }
   }
 
-  private parseFile(
-    filePath: string,
-    content: string,
-    cache: CachedMetadata,
-    allocateSuccessor = false,
-    captureAuthorityTransitions?: (transitions: readonly ProvenRootRevisionOverride[]) => void,
-    observedFile = false,
-  ): readonly TaskSnapshot[] {
-    const authorityObservation = this.options.refAuthority?.observeTransition(filePath, content);
+  private parseFile(input: ParseFileInput): readonly TaskSnapshot[] {
+    const { cache } = input;
+    const overrides = this.observeAuthorityTransition(input);
+    if (cache.listItems == null) return [];
+    const context = this.createParseContext(input, overrides);
+    const snapshots: TaskSnapshot[] = [];
+    for (const item of cache.listItems) {
+      const snapshot = this.parseRootItem(item, context);
+      if (snapshot != null) snapshots.push(snapshot);
+    }
+    return snapshots.sort(stableTaskOrder);
+  }
+
+  private observeAuthorityTransition(input: ParseFileInput): readonly RootRevisionOverride[] {
+    const authorityObservation = this.options.refAuthority?.observeTransition(
+      input.filePath,
+      input.content,
+    );
     const overrides = authorityObservation?.roots ?? [];
-    if (authorityObservation) {
-      captureAuthorityTransitions?.(
+    if (authorityObservation != null) {
+      input.captureAuthorityTransitions?.(
         overrides.map((override) => ({
           ...override,
           previousRevision: authorityObservation.expectedRevision,
         })),
       );
     }
-    if (!cache.listItems) return [];
+    return overrides;
+  }
+
+  private createParseContext(
+    input: ParseFileInput,
+    overrides: readonly RootRevisionOverride[],
+  ): FileParseContext {
+    const { filePath, content, cache } = input;
     // Preserve the legacy raw-line shape (`\r` stays attached under CRLF) for compatibility
     // consumers while TaskBlockEditor independently owns exact block revision bytes.
     const lines = content.split('\n');
     const blockByLine = new Map(
       this.blockEditor.rootBlocks(content).map((block) => [block.line, block] as const),
     );
-    const sourceCounts = new Map<string, number>();
-    for (const block of blockByLine.values()) {
-      sourceCounts.set(block.source, (sourceCounts.get(block.source) ?? 0) + 1);
-    }
-    const overrideByLine = new Map(overrides.map((override) => [override.line, override] as const));
-    const priorByLine = new Map(
-      (this.taskMap.get(filePath) ?? []).map((task) => [task.source.line, task] as const),
-    );
-    const priorBySource = new Map<string, TaskSnapshot[]>();
-    for (const task of this.taskMap.get(filePath) ?? []) {
-      const matches = priorBySource.get(task.source.originalBlock) ?? [];
-      matches.push(task);
-      priorBySource.set(task.source.originalBlock, matches);
-    }
-    const dailyNoteDate = dailyNoteDateForPath(filePath, this.options.dailyNoteFormat);
-    const codec = new TaskMarkdownCodec(this.statusCatalog);
-    const frontmatter = cache.frontmatter;
-    const noteColor = typeof frontmatter?.['color'] === 'string' ? frontmatter['color'] : undefined;
-    const noteTextColor =
-      typeof frontmatter?.['textColor'] === 'string' ? frontmatter['textColor'] : undefined;
-    const noteIcon = typeof frontmatter?.['icon'] === 'string' ? frontmatter['icon'] : undefined;
-    const itemByLine = new Map<number, (typeof cache.listItems)[number]>();
-    for (const item of cache.listItems) itemByLine.set(item.position.start.line, item);
-    const hasTaskAncestor = (item: (typeof cache.listItems)[number]): boolean => {
-      let parentLine = item.parent;
-      const seen = new Set<number>();
-      while (parentLine >= 0 && !seen.has(parentLine)) {
-        if (parentLine === item.position.start.line) break;
-        seen.add(parentLine);
-        const parent = itemByLine.get(parentLine);
-        if (!parent) break;
-        if (parent.task !== undefined) return true;
-        parentLine = parent.parent;
-      }
-      return false;
+    const sourceCounts = countBlockSources(blockByLine.values());
+    const priorTasks = this.taskMap.get(filePath) ?? [];
+    return {
+      filePath,
+      lines,
+      blockByLine,
+      sourceCounts,
+      codec: new TaskMarkdownCodec(this.statusCatalog),
+      presentation: taskPresentation(filePath, this.options.dailyNoteFormat, cache.frontmatter),
+      itemByLine: metadataItemsByLine(cache.listItems ?? []),
+      revision: {
+        overrides: new Map(overrides.map((override) => [override.line, override] as const)),
+        priorByLine: new Map(priorTasks.map((task) => [task.source.line, task] as const)),
+        priorBySource: priorTasksBySource(priorTasks),
+        currentSourceCounts: sourceCounts,
+        allocateSuccessor: input.allocateSuccessor ?? false,
+        observedFile: input.observedFile ?? false,
+      },
     };
+  }
 
-    const snapshots: TaskSnapshot[] = [];
-    for (const item of cache.listItems) {
-      if (item.task === undefined || hasTaskAncestor(item)) continue;
-      const line = item.position.start.line;
-      const originalMarkdown = lines[line] ?? '';
-      const parsed = codec.parseLine(originalMarkdown, { filePath, line });
-      if (!parsed) continue;
-      const exactBlock = blockByLine.get(line)?.source ?? originalMarkdown;
-      const ref: TaskRef = {
-        filePath,
-        line,
-        revision: this.reconciledRevision(
-          line,
-          exactBlock,
-          sourceCounts.get(exactBlock) ?? 1,
-          overrideByLine,
-          priorByLine,
-          priorBySource,
-          sourceCounts,
-          allocateSuccessor,
-          observedFile,
-        ),
-      };
-      const presentation = {
-        linkCount: 0,
-        ...(dailyNoteDate && { dailyNoteDate }),
-        ...(noteColor && { noteColor }),
-        ...(noteTextColor && { noteTextColor }),
-        ...(noteIcon && { noteIcon }),
-      };
-      const snapshot = projectTaskSnapshot({
-        codec,
-        statusCatalog: this.statusCatalog,
-        filePath,
-        lines,
-        line,
-        exactBlock,
-        ref,
-        presentation,
-      });
-      if (snapshot) snapshots.push(snapshot);
+  private parseRootItem(
+    item: MetadataListItem,
+    context: FileParseContext,
+  ): TaskSnapshot | undefined {
+    if (item.task === undefined || hasTaskAncestor(item, context.itemByLine)) return undefined;
+    const line = item.position.start.line;
+    const originalMarkdown = context.lines[line] ?? '';
+    if (context.codec.parseLine(originalMarkdown, { filePath: context.filePath, line }) == null) {
+      return undefined;
     }
-    return snapshots.sort(stableTaskOrder);
+    const exactBlock = context.blockByLine.get(line)?.source ?? originalMarkdown;
+    const ref: TaskRef = {
+      filePath: context.filePath,
+      line,
+      revision: this.reconciledRevision({
+        ...context.revision,
+        line,
+        source: exactBlock,
+        sourceCount: context.sourceCounts.get(exactBlock) ?? 1,
+      }),
+    };
+    return projectTaskSnapshot({
+      codec: context.codec,
+      statusCatalog: this.statusCatalog,
+      filePath: context.filePath,
+      lines: context.lines,
+      line,
+      exactBlock,
+      ref,
+      presentation: context.presentation,
+    });
   }
 
   /** Pure infrastructure collaborator used by the repository for immediate command outcomes. */
@@ -855,7 +1206,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     if (sourceMatches.length > 1) return undefined;
     const hinted = tasks.find((task) => task.source.line === line);
     const current = hinted?.source.originalBlock === source ? hinted : (sourceMatches[0] ?? hinted);
-    return current ? { ...current.ref } : undefined;
+    return current != null ? { ...current.ref } : undefined;
   }
 
   authoritySuccessor(consumed: TaskRef): TaskRef | undefined {
@@ -870,9 +1221,10 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   previewContent(filePath: string, content: string): readonly TaskSnapshot[] {
     const cache = cacheWithContentFallback(content, null);
     const frontmatter = frontmatterFromContent(content);
-    return this.parseFile(filePath, content, {
-      ...cache,
-      ...(frontmatter && { frontmatter }),
+    return this.parseFile({
+      filePath,
+      content,
+      cache: { ...cache, ...(frontmatter != null && { frontmatter }) },
     });
   }
 
@@ -881,55 +1233,36 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     const cache = cacheWithContentFallback(content, null);
     const frontmatter = frontmatterFromContent(content);
     let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
-    const tasks = this.parseFile(
+    const tasks = this.parseFile({
       filePath,
       content,
-      { ...cache, ...(frontmatter && { frontmatter }) },
-      true,
-      (transitions) => {
+      cache: { ...cache, ...(frontmatter != null && { frontmatter }) },
+      allocateSuccessor: true,
+      captureAuthorityTransitions: (transitions) => {
         authorityTransitions = transitions;
       },
-      this.fileGenerations.has(filePath),
-    );
+      observedFile: this.fileGenerations.has(filePath),
+    });
     if (this.replaceFile(filePath, tasks, authorityTransitions)) this.queueChanged(filePath);
     return tasks.map(cloneTaskSnapshot);
   }
 
-  private reconciledRevision(
-    line: number,
-    source: string,
-    sourceCount: number,
-    overrides: ReadonlyMap<number, RootRevisionOverride>,
-    priorByLine: ReadonlyMap<number, TaskSnapshot>,
-    priorBySource: ReadonlyMap<string, readonly TaskSnapshot[]>,
-    currentSourceCounts: ReadonlyMap<string, number>,
-    allocateSuccessor: boolean,
-    observedFile: boolean,
-  ): string {
-    const override = overrides.get(line);
-    if (override?.source === source) return override.revision;
-    if (this.options.refAuthority) {
-      const hinted = priorByLine.get(line);
-      const prior = priorBySource.get(source) ?? [];
-      if (hinted?.source.originalBlock === source && sourceCount === 1 && prior.length === 1) {
-        return hinted.ref.revision;
-      }
-      if (sourceCount === 1 && prior.length === 1) return prior[0]!.ref.revision;
-      const hintedRelocated =
-        hinted !== undefined &&
-        (currentSourceCounts.get(hinted.source.originalBlock) ?? 0) === 1 &&
-        (priorBySource.get(hinted.source.originalBlock)?.length ?? 0) === 1;
-      if (hinted && !hintedRelocated && allocateSuccessor) {
-        return (
-          this.options.refAuthority.successor(hinted.ref.revision, source) ??
-          this.locator.revision(source)
-        );
-      }
-      if (observedFile && allocateSuccessor) {
-        return this.options.refAuthority.mintRevision(source);
-      }
+  private reconciledRevision(input: ReconciledRevisionInput): string {
+    const override = input.overrides.get(input.line);
+    if (override?.source === input.source) return override.revision;
+    const authority = this.options.refAuthority;
+    if (authority == null) return this.locator.revision(input.source);
+    const reusableRevision = reusablePriorRevision(input);
+    if (reusableRevision !== undefined) return reusableRevision;
+    const hinted = input.priorByLine.get(input.line);
+    if (shouldAllocateSuccessor(input, hinted)) {
+      return (
+        authority.successor(hinted.ref.revision, input.source) ??
+        this.locator.revision(input.source)
+      );
     }
-    return this.locator.revision(source);
+    if (shouldMintAuthorityRevision(input)) return authority.mintRevision(input.source);
+    return this.locator.revision(input.source);
   }
 
   private replaceFile(
@@ -945,15 +1278,21 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     // before the already-queued notification is delivered. Keep that batch's proven transition
     // visible to subscribers instead of replacing it with an unchanged self-transition.
     const queuedTransition = this.reconciliationTransitions.get(filePath);
-    if (
-      !changed &&
-      this.pendingFiles.has(filePath) &&
-      [...(queuedTransition?.writable.values() ?? [])].some(
-        (transition) => transition.evidence === 'authority-transition',
-      )
-    ) {
+    if (hasQueuedAuthorityTransition(filePath, changed, this.pendingFiles, queuedTransition)) {
       return false;
     }
+    this.recordReconciliation(filePath, current, tasks, authorityTransitions);
+    if (!changed) return false;
+    this.installFileTasks(filePath, tasks);
+    return true;
+  }
+
+  private recordReconciliation(
+    filePath: string,
+    current: readonly TaskSnapshot[],
+    tasks: readonly TaskSnapshot[],
+    authorityTransitions: readonly ProvenRootRevisionOverride[],
+  ): void {
     const fromGeneration = this.fileGenerations.get(filePath) ?? 0;
     const toGeneration = fromGeneration + 1;
     this.fileGenerations.set(filePath, toGeneration);
@@ -964,127 +1303,153 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
       writable: transitions.writable,
       visual: transitions.visual,
     });
-    if (!changed) return false;
+  }
+
+  private installFileTasks(filePath: string, tasks: readonly TaskSnapshot[]): void {
     if (tasks.length > 0) this.taskMap.set(filePath, tasks);
     else this.taskMap.delete(filePath);
     const sources = calendarSources(tasks);
     this.calendarDateIndex.updateFile(filePath, sources);
-    const recurringSources = sources.filter(
-      ({ node }) =>
-        node.recurrence !== undefined && (node.status === 'open' || node.status === 'in-progress'),
-    );
+    const recurringSources = activeRecurringSources(sources);
     if (recurringSources.length > 0) this.recurringSourcesByFile.set(filePath, recurringSources);
     else this.recurringSourcesByFile.delete(filePath);
-    return true;
   }
 
   private registerEvents(): void {
-    this.metadataCacheRefs.push(
-      this.app.metadataCache.on('changed', (file: TFile, data: string, cache: CachedMetadata) => {
-        const path = file.path;
-        if (
-          file.extension !== 'md' ||
-          this.destroyed ||
-          this.app.vault.getAbstractFileByPath(path) !== file
-        ) {
-          return;
-        }
-        this.advance(file, path);
-        let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
-        const observedFile = this.fileGenerations.has(path);
-        const tasks = this.parseFile(
-          path,
-          data,
-          cacheWithContentFallback(data, cache),
-          true,
-          (transitions) => {
-            authorityTransitions = transitions;
-          },
-          observedFile,
-        );
-        const changed = this.replaceFile(path, tasks, authorityTransitions, true);
-        if (changed) this.queueChanged(path);
-      }),
+    const metadataChanged = this.app.metadataCache.on(
+      'changed',
+      (file: TFile, data: string, cache: CachedMetadata) => {
+        this.handleMetadataChanged(file, data, cache);
+      },
     );
-    this.vaultRefs.push(
-      this.app.vault.on('create', (file: TAbstractFile) => {
-        if (!(file instanceof TFile) || file.extension !== 'md' || this.destroyed) return;
-        const path = file.path;
-        if (this.app.vault.getAbstractFileByPath(path) !== file) return;
-        this.advance(file, path);
-        const read = this.loadFile(file, path, true, true).then((committed) => {
-          if (committed) this.queueChanged(path);
-        });
-        this.trackRead(read);
-      }),
-      this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
-        if (!(file instanceof TFile) || this.destroyed) return;
-        const newPath = file.path;
-        const wasMarkdown = extensionOf(oldPath) === 'md';
-        const isMarkdown = file.extension === 'md';
-        if (
-          (!wasMarkdown && !isMarkdown) ||
-          this.app.vault.getAbstractFileByPath(newPath) !== file
-        ) {
-          return;
-        }
-        const tasks = this.taskMap.get(oldPath) ?? [];
-        this.advance(file, isMarkdown ? newPath : undefined);
-        this.removeFile(oldPath);
-        if (newPath !== oldPath) this.removeFile(newPath);
+    this.metadataCacheRefs.push(metadataChanged);
+    const created = this.app.vault.on('create', (file: TAbstractFile) => {
+      this.handleVaultCreate(file);
+    });
+    const renamed = this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
+      this.handleVaultRename(file, oldPath);
+    });
+    const deleted = this.app.vault.on('delete', (file: TAbstractFile) => {
+      this.handleVaultDelete(file);
+    });
+    this.vaultRefs.push(created, renamed, deleted);
+  }
 
-        if (wasMarkdown && isMarkdown) {
-          if (tasks.length > 0) {
-            const dailyNoteDate = dailyNoteDateForPath(newPath, this.options.dailyNoteFormat);
-            this.replaceFile(
-              newPath,
-              tasks.map((task) => {
-                const relocated = relocateSnapshot(task, newPath, dailyNoteDate);
-                const revision = this.options.refAuthority?.mintRevision(
-                  relocated.source.originalBlock,
-                );
-                return revision
-                  ? relocateSnapshot(
-                      { ...relocated, ref: { ...relocated.ref, revision } },
-                      newPath,
-                      dailyNoteDate,
-                    )
-                  : relocated;
-              }),
-            );
-            this.publish({ type: 'renamed', oldPath, newPath });
-          } else {
-            const read = this.loadFile(file, newPath, true).then((committed) => {
-              if (committed || this.isFileAt(file, newPath)) {
-                this.publish({ type: 'renamed', oldPath, newPath });
-              }
-            });
-            this.trackRead(read);
-          }
-          return;
-        }
+  private handleMetadataChanged(file: TFile, data: string, cache: CachedMetadata): void {
+    const path = file.path;
+    if (
+      file.extension !== 'md' ||
+      this.destroyed ||
+      this.app.vault.getAbstractFileByPath(path) !== file
+    ) {
+      return;
+    }
+    this.advance(file, path);
+    let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
+    const tasks = this.parseFile({
+      filePath: path,
+      content: data,
+      cache: cacheWithContentFallback(data, cache),
+      allocateSuccessor: true,
+      captureAuthorityTransitions: (transitions) => {
+        authorityTransitions = transitions;
+      },
+      observedFile: this.fileGenerations.has(path),
+    });
+    const changed = this.replaceFile(path, tasks, authorityTransitions, true);
+    if (changed) this.queueChanged(path);
+  }
 
-        if (wasMarkdown) {
-          this.publish({ type: 'renamed', oldPath, newPath });
-          return;
-        }
+  private handleVaultCreate(file: TAbstractFile): void {
+    if (!(file instanceof TFile) || file.extension !== 'md' || this.destroyed) return;
+    const path = file.path;
+    if (this.app.vault.getAbstractFileByPath(path) !== file) return;
+    this.advance(file, path);
+    const read = this.loadFile(file, path, true, true).then((committed) => {
+      if (committed) this.queueChanged(path);
+    });
+    this.trackRead(read);
+  }
 
-        const read = this.loadFile(file, newPath, true).then((committed) => {
-          if (committed || this.isFileAt(file, newPath)) {
-            this.publish({ type: 'renamed', oldPath, newPath });
-          }
-        });
-        this.trackRead(read);
-      }),
-      this.app.vault.on('delete', (file: TAbstractFile) => {
-        if (!(file instanceof TFile) || file.extension !== 'md' || this.destroyed) return;
-        const path = file.path;
-        const existed = this.taskMap.has(path);
-        this.advance(file, undefined);
-        this.removeFile(path);
-        if (existed) this.publish({ type: 'deleted', path });
-      }),
+  private handleVaultRename(file: TAbstractFile, oldPath: string): void {
+    if (!(file instanceof TFile) || this.destroyed) return;
+    const newPath = file.path;
+    const wasMarkdown = extensionOf(oldPath) === 'md';
+    const isMarkdown = file.extension === 'md';
+    if (!wasMarkdown && !isMarkdown) return;
+    if (this.app.vault.getAbstractFileByPath(newPath) !== file) return;
+    const tasks = this.taskMap.get(oldPath) ?? [];
+    this.advance(file, isMarkdown ? newPath : undefined);
+    this.removeFile(oldPath);
+    if (newPath !== oldPath) this.removeFile(newPath);
+    this.finishVaultRename({ file, oldPath, newPath, tasks, wasMarkdown, isMarkdown });
+  }
+
+  private finishVaultRename(input: {
+    readonly file: TFile;
+    readonly oldPath: string;
+    readonly newPath: string;
+    readonly tasks: readonly TaskSnapshot[];
+    readonly wasMarkdown: boolean;
+    readonly isMarkdown: boolean;
+  }): void {
+    if (input.wasMarkdown && input.isMarkdown) {
+      this.handleMarkdownRename(input.file, input.oldPath, input.newPath, input.tasks);
+      return;
+    }
+    if (input.wasMarkdown) {
+      this.publish({ type: 'renamed', oldPath: input.oldPath, newPath: input.newPath });
+      return;
+    }
+    this.scheduleRenameLoad(input.file, input.oldPath, input.newPath);
+  }
+
+  private handleMarkdownRename(
+    file: TFile,
+    oldPath: string,
+    newPath: string,
+    tasks: readonly TaskSnapshot[],
+  ): void {
+    if (tasks.length === 0) {
+      this.scheduleRenameLoad(file, oldPath, newPath);
+      return;
+    }
+    const dailyNoteDate = dailyNoteDateForPath(newPath, this.options.dailyNoteFormat);
+    this.replaceFile(
+      newPath,
+      tasks.map((task) => this.relocateRenamedTask(task, newPath, dailyNoteDate)),
     );
+    this.publish({ type: 'renamed', oldPath, newPath });
+  }
+
+  private relocateRenamedTask(
+    task: TaskSnapshot,
+    newPath: string,
+    dailyNoteDate: LocalDate | undefined,
+  ): TaskSnapshot {
+    const relocated = relocateSnapshot(task, newPath, dailyNoteDate);
+    const revision = this.options.refAuthority?.mintRevision(relocated.source.originalBlock);
+    if (!nonEmpty(revision)) return relocated;
+    const revised = { ...relocated, ref: { ...relocated.ref, revision } };
+    return relocateSnapshot(revised, newPath, dailyNoteDate);
+  }
+
+  private scheduleRenameLoad(file: TFile, oldPath: string, newPath: string): void {
+    const read = this.loadFile(file, newPath, true).then((committed) => {
+      if (committed || this.isFileAt(file, newPath)) {
+        this.publish({ type: 'renamed', oldPath, newPath });
+      }
+    });
+    this.trackRead(read);
+  }
+
+  private handleVaultDelete(file: TAbstractFile): void {
+    if (!(file instanceof TFile) || file.extension !== 'md' || this.destroyed) return;
+    const path = file.path;
+    const existed = this.taskMap.has(path);
+    this.advance(file, undefined);
+    this.removeFile(path);
+    if (existed) this.publish({ type: 'deleted', path });
   }
 
   private removeFile(filePath: string): void {
@@ -1100,9 +1465,9 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   private observe(file: TFile, path: string): FileObservation | undefined {
     if (this.destroyed || this.app.vault.getAbstractFileByPath(path) !== file) return undefined;
     const existing = this.fileLifecycles.get(file);
-    if (existing && existing.path !== path) return undefined;
+    if (existing != null && existing.path !== path) return undefined;
     const lifecycle = existing ?? { path, generation: 0 };
-    if (!existing) this.fileLifecycles.set(file, lifecycle);
+    if (existing == null) this.fileLifecycles.set(file, lifecycle);
     return { file, path, generation: lifecycle.generation };
   }
 
@@ -1137,7 +1502,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
 
   private trackRead(read: Promise<void>): void {
     this.pendingReads.add(read);
-    void read.finally(() => this.pendingReads.delete(read));
+    read.finally(() => this.pendingReads.delete(read)).catch(() => undefined);
   }
 
   private async drainPendingReads(): Promise<void> {
@@ -1151,13 +1516,15 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     this.pendingFiles.add(filePath);
     if (this.flushScheduled) return;
     this.flushScheduled = true;
-    void Promise.resolve().then(() => {
-      this.flushScheduled = false;
-      if (this.destroyed || this.pendingFiles.size === 0) return;
-      const files = [...this.pendingFiles].sort((left, right) => left.localeCompare(right));
-      this.pendingFiles.clear();
-      this.publish({ type: 'changed', files });
-    });
+    Promise.resolve()
+      .then(() => {
+        this.flushScheduled = false;
+        if (this.destroyed || this.pendingFiles.size === 0) return;
+        const files = [...this.pendingFiles].sort((left, right) => left.localeCompare(right));
+        this.pendingFiles.clear();
+        this.publish({ type: 'changed', files });
+      })
+      .catch(() => undefined);
   }
 
   private publish(event: TaskIndexEvent): void {

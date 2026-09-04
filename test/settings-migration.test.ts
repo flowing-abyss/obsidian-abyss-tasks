@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import TaskCalendarPlugin from '../src/main';
 import { migrateSettings } from '../src/settings/migration';
 import { defaultShortcuts } from '../src/settings/shortcuts';
+import { expectDefined, methodOf } from './helpers';
 
 describe('migrateSettings', () => {
   it('creates a complete shortcut collection when legacy settings have none', () => {
@@ -107,7 +108,7 @@ describe('migrateSettings', () => {
       newOccurrencePlacement: 'before',
       removeScheduledDate: false,
     });
-    expect(plugin.saveData).not.toHaveBeenCalled();
+    expect(methodOf(plugin, 'saveData')).not.toHaveBeenCalled();
   });
 
   it('adds missing pinnedTags and archivedTags arrays', () => {
@@ -175,17 +176,20 @@ describe('projects migration', () => {
     const projects = raw['projects'] as { statuses: unknown[]; defaultStatusId: string };
     expect(Array.isArray(projects.statuses)).toBe(true);
     expect(projects.statuses.length).toBeGreaterThan(0);
-    const ids = (projects.statuses as { id: string }[]).map((s) => s.id);
+    const ids = (projects.statuses as Array<{ id: string }>).map((s) => s.id);
     expect(ids).toContain(projects.defaultStatusId);
     expect(raw['sectionCollapse']).toEqual({ pinned: false, projects: false, tags: false });
   });
   it('repoints a dangling defaultStatusId to the first status', () => {
     const raw: Record<string, unknown> = {};
     migrateSettings(raw);
-    const projects = raw['projects'] as { statuses: { id: string }[]; defaultStatusId: string };
+    const projects = raw['projects'] as {
+      statuses: Array<{ id: string }>;
+      defaultStatusId: string;
+    };
     projects.defaultStatusId = 'nonexistent';
     migrateSettings(raw);
-    expect(projects.defaultStatusId).toBe(projects.statuses[0]!.id);
+    expect(projects.defaultStatusId).toBe(expectDefined(projects.statuses[0]).id);
   });
   it('backfills project task-insertion settings on a pre-existing projects config', () => {
     const raw: Record<string, unknown> = {
@@ -251,7 +255,7 @@ describe('task statuses migration', () => {
     const raw: Record<string, unknown> = { taskStatuses: existing };
     migrateSettings(raw);
     expect(raw['taskStatuses']).toHaveLength(1);
-    expect((raw['taskStatuses'] as Array<{ symbol: string }>)[0]!.symbol).toBe('q');
+    expect(expectDefined((raw['taskStatuses'] as Array<{ symbol: string }>)[0]).symbol).toBe('q');
   });
 
   it('strips legacy color and iconKind fields from every status entry', () => {
@@ -270,7 +274,7 @@ describe('task statuses migration', () => {
       ],
     };
     migrateSettings(raw);
-    const entry = (raw['taskStatuses'] as Array<Record<string, unknown>>)[0]!;
+    const entry = expectDefined((raw['taskStatuses'] as Array<Record<string, unknown>>)[0]);
     expect(entry['color']).toBeUndefined();
     expect(entry['iconKind']).toBeUndefined();
     expect(entry['icon']).toBe('star');
@@ -292,7 +296,7 @@ describe('task statuses migration', () => {
       ],
     };
     migrateSettings(raw);
-    const entry = (raw['taskStatuses'] as Array<Record<string, unknown>>)[0]!;
+    const entry = expectDefined((raw['taskStatuses'] as Array<Record<string, unknown>>)[0]);
     expect(entry['icon']).toBe('');
     expect(entry['iconKind']).toBeUndefined();
   });
@@ -311,7 +315,7 @@ describe('task statuses migration', () => {
       ],
     };
     migrateSettings(raw);
-    const entry = (raw['taskStatuses'] as Array<Record<string, unknown>>)[0]!;
+    const entry = expectDefined((raw['taskStatuses'] as Array<Record<string, unknown>>)[0]);
     expect(entry['icon']).toBe('');
     expect(entry['symbol']).toBe('/');
     expect(entry['type']).toBe('in-progress');
@@ -331,7 +335,7 @@ describe('task statuses migration', () => {
       ],
     };
     migrateSettings(raw);
-    const entry = (raw['taskStatuses'] as Array<Record<string, unknown>>)[0]!;
+    const entry = expectDefined((raw['taskStatuses'] as Array<Record<string, unknown>>)[0]);
     expect(entry['icon']).toBe('alert-triangle');
     expect(entry['symbol']).toBe('!');
     expect(entry['type']).toBe('todo');
@@ -351,7 +355,9 @@ describe('list view state show → statusGroups migration', () => {
       },
     };
     migrateSettings(raw);
-    const state = (raw['listViewStates'] as Record<string, Record<string, unknown>>)['today']!;
+    const state = expectDefined(
+      (raw['listViewStates'] as Record<string, Record<string, unknown>>)['today'],
+    );
     expect(state['statusGroups']).toEqual(['todo', 'in-progress']);
     expect(state['show']).toBeUndefined();
   });
@@ -368,7 +374,9 @@ describe('list view state show → statusGroups migration', () => {
       },
     };
     migrateSettings(raw);
-    const state = (raw['listViewStates'] as Record<string, Record<string, unknown>>)['inbox']!;
+    const state = expectDefined(
+      (raw['listViewStates'] as Record<string, Record<string, unknown>>)['inbox'],
+    );
     expect(state['statusGroups']).toEqual(['done', 'cancelled']);
     expect(state['show']).toBeUndefined();
   });
@@ -380,7 +388,9 @@ describe('list view state show → statusGroups migration', () => {
       },
     };
     migrateSettings(raw);
-    const state = (raw['listViewStates'] as Record<string, Record<string, unknown>>)['inbox']!;
+    const state = expectDefined(
+      (raw['listViewStates'] as Record<string, Record<string, unknown>>)['inbox'],
+    );
     expect(state['statusGroups']).toBeUndefined();
     expect(state['show']).toBeUndefined();
   });
@@ -398,7 +408,9 @@ describe('list view state show → statusGroups migration', () => {
       },
     };
     migrateSettings(raw);
-    const state = (raw['listViewStates'] as Record<string, Record<string, unknown>>)['inbox']!;
+    const state = expectDefined(
+      (raw['listViewStates'] as Record<string, Record<string, unknown>>)['inbox'],
+    );
     expect(state['statusGroups']).toEqual(['done']);
     expect(state['show']).toBeUndefined();
   });
@@ -415,13 +427,17 @@ describe('list view state show → statusGroups migration', () => {
       },
     };
     migrateSettings(raw);
-    const state = (raw['listViewStates'] as Record<string, Record<string, unknown>>)['inbox']!;
+    const state = expectDefined(
+      (raw['listViewStates'] as Record<string, Record<string, unknown>>)['inbox'],
+    );
     expect(state['statusGroups']).toEqual(['todo', 'in-progress']);
   });
 
   it('does nothing when listViewStates is absent', () => {
     const raw: Record<string, unknown> = {};
-    expect(() => migrateSettings(raw)).not.toThrow();
+    expect(() => {
+      migrateSettings(raw);
+    }).not.toThrow();
     expect(raw['listViewStates']).toBeUndefined();
   });
 });

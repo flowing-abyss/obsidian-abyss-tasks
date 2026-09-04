@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { Component, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
@@ -9,25 +7,35 @@ import { calendarOccurrenceForRender } from '../src/views/calendarOccurrences';
 import { createSpanInteractionOwner } from '../src/views/spanInteractions';
 import { layoutVisibleSpans } from '../src/views/spanLayout';
 import { renderAllDayCell, renderAllDaySpanLayer } from '../src/views/timegrid/renderAllDay';
-import { dispatchDnD, freshContainer, task, taskComment, taskFromCodecLine } from './helpers';
+import {
+  cssDeclarationValue,
+  cssDeclarationsFor,
+  cssRuleParts,
+  dispatchDnD,
+  expectDefined,
+  freshContainer,
+  loadPluginStyles,
+  methodOf,
+  task,
+  taskComment,
+  taskFromCodecLine,
+} from './helpers';
 
 const registry = new StatusRegistry(buildDefaultTaskStatuses());
 const fakeApp = {} as App;
 
-const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+const css = await loadPluginStyles();
 
 function declarationsFor(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
-  const match = new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(css);
-  return match?.groups?.['body'] ?? '';
+  return cssDeclarationsFor(css, selector);
 }
 
 function declarationsForRuleContaining(...selectors: string[]): string {
   let declarations = '';
-  for (const match of css.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
-    const selectorList = (match[1] ?? '').split(',').map((selector) => selector.trim());
+  for (const rule of cssRuleParts(css)) {
+    const selectorList = rule.selector.split(',').map((selector) => selector.trim());
     if (selectors.every((selector) => selectorList.includes(selector))) {
-      declarations = match[2] ?? '';
+      declarations = rule.declarations;
     }
   }
   return declarations;
@@ -46,7 +54,10 @@ function mix(foreground: string, background: string, foregroundStrength: number)
   const backgroundRgb = rgb(background);
   return `#${foregroundRgb
     .map((channel, index) =>
-      Math.round(channel * foregroundStrength + backgroundRgb[index]! * (1 - foregroundStrength))
+      Math.round(
+        channel * foregroundStrength +
+          expectDefined(backgroundRgb[index]) * (1 - foregroundStrength),
+      )
         .toString(16)
         .padStart(2, '0'),
     )
@@ -59,7 +70,9 @@ function contrastRatio(left: string, right: string): number {
       const normalized = channel / 255;
       return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
     });
-    return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+    return (
+      0.2126 * expectDefined(red) + 0.7152 * expectDefined(green) + 0.0722 * expectDefined(blue)
+    );
   };
   const leftLuminance = luminance(left);
   const rightLuminance = luminance(right);
@@ -94,7 +107,7 @@ describe('renderAllDayCell', () => {
 
     renderAllDayCell(container, '2026-07-10', [], [recurring], [], callbacks());
 
-    const body = container.querySelector<HTMLElement>('.abyss-tg-plain')!;
+    const body = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-plain'));
     const badge = body.querySelector<HTMLElement>('.abyss-recurrence-badge');
     expect(body.dataset['abyssTaskRefKey']).toBe(taskPresentationKey(recurring.ref));
     expect(body.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
@@ -113,7 +126,7 @@ describe('renderAllDayCell', () => {
 
     renderAllDayCell(container, '2026-07-10', [], [], [recurring], callbacks());
 
-    const body = container.querySelector<HTMLElement>('.abyss-tg-deadline-marker')!;
+    const body = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-deadline-marker'));
     const badge = body.querySelector<HTMLElement>('.abyss-recurrence-badge');
     expect(body.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
     expect(badge?.getAttribute('aria-label')).toBe('Repeats: every month');
@@ -127,7 +140,7 @@ describe('renderAllDayCell', () => {
     const dates = ['2026-07-14', '2026-07-15', '2026-07-16'];
     const layer = container.createDiv({ cls: 'abyss-tg-span-layer' });
     const trip = task({ title: 'Trip', planning: { start: '2026-07-14', due: '2026-07-16' } });
-    const row = layoutVisibleSpans([trip], dates).rows[0]!;
+    const row = expectDefined(layoutVisibleSpans([trip], dates).rows[0]);
 
     renderAllDaySpanLayer(
       layer,
@@ -161,7 +174,9 @@ describe('renderAllDayCell', () => {
       expect(segment.querySelector('[data-boundary="due"]')).not.toBeNull();
       expect(segment.querySelectorAll('.abyss-tg-span-edge--proxy')).toHaveLength(2);
     }
-    const terminal = segments.find((candidate) => candidate.dataset['spanKind'] === 'terminal')!;
+    const terminal = expectDefined(
+      segments.find((candidate) => candidate.dataset['spanKind'] === 'terminal'),
+    );
     expect(terminal.querySelector('[data-boundary="start"]')).toBeNull();
     expect(terminal.querySelector('[data-boundary="due"]')).not.toBeNull();
     expect(terminal.querySelector('.abyss-tg-span-edge--proxy')).toBeNull();
@@ -175,7 +190,7 @@ describe('renderAllDayCell', () => {
       title: 'Clipped',
       planning: { start: '2026-07-01', due: '2026-07-20' },
     });
-    const row = layoutVisibleSpans([clipped], dates).rows[0]!;
+    const row = expectDefined(layoutVisibleSpans([clipped], dates).rows[0]);
 
     renderAllDaySpanLayer(
       layer,
@@ -332,7 +347,7 @@ describe('renderAllDayCell', () => {
 
   it('uses committed fill strength when choosing readable title text', () => {
     const originalBackground = document.body.style.getPropertyValue('--background-primary');
-    document.body.style.setProperty('--background-primary', '#666666');
+    document.body.setCssProps({ '--background-primary': '#666666' });
     try {
       const t = task({
         title: 'Trip',
@@ -360,7 +375,7 @@ describe('renderAllDayCell', () => {
         ),
       ).toBe('var(--abyss-tag-text-dark)');
     } finally {
-      document.body.style.setProperty('--background-primary', originalBackground);
+      document.body.setCssProps({ '--background-primary': originalBackground });
     }
   });
 
@@ -564,12 +579,12 @@ describe('renderAllDayCell', () => {
       interactionOwnership,
     });
 
-    container
-      .querySelector<HTMLElement>('.abyss-status-marker')!
-      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expectDefined(container.querySelector<HTMLElement>('.abyss-status-marker')).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
     expect(interactionOwnership.acquire).toHaveBeenCalledOnce();
     expect(interactionOwnership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
-    document.querySelector<HTMLButtonElement>('.abyss-status-popover-flag')!.click();
+    expectDefined(document.querySelector<HTMLButtonElement>('.abyss-status-popover-flag')).click();
     expect(release).toHaveBeenCalledOnce();
   });
 
@@ -584,7 +599,9 @@ describe('renderAllDayCell', () => {
     statusRow.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onSetStatus).toHaveBeenCalledWith(t, expect.any(String));
 
-    document.querySelectorAll('.abyss-status-popover').forEach((el) => el.remove());
+    document.querySelectorAll('.abyss-status-popover').forEach((el) => {
+      el.remove();
+    });
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     const flagBtn = document.querySelector(
       '.abyss-status-popover-flag[data-abyss-priority="A"]',
@@ -626,7 +643,7 @@ describe('renderAllDayCell', () => {
     renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
     const bar = container.querySelector('.abyss-tg-span') as HTMLElement;
     const rightHandle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
-    const originalElementFromPoint = activeDocument.elementFromPoint;
+    const originalElementFromPoint = methodOf(activeDocument, 'elementFromPoint');
     activeDocument.elementFromPoint = () => container;
     try {
       rightHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
@@ -684,7 +701,7 @@ describe('renderAllDayCell', () => {
     renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
     const bar = container.querySelector('.abyss-tg-span') as HTMLElement;
     const leftHandle = container.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
-    const originalElementFromPoint = activeDocument.elementFromPoint;
+    const originalElementFromPoint = methodOf(activeDocument, 'elementFromPoint');
     activeDocument.elementFromPoint = () => container;
     try {
       leftHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
@@ -706,7 +723,7 @@ describe('renderAllDayCell', () => {
     const bar = container.querySelector('.abyss-tg-span') as HTMLElement;
     const leftHandle = container.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
     const rightHandle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
-    const originalElementFromPoint = activeDocument.elementFromPoint;
+    const originalElementFromPoint = methodOf(activeDocument, 'elementFromPoint');
     activeDocument.elementFromPoint = () => container;
     try {
       leftHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
@@ -797,7 +814,7 @@ describe('renderAllDayCell', () => {
     const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-10' } });
     renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
     const handles = container.querySelectorAll('.abyss-tg-span .abyss-tg-span-edge--right');
-    expect(handles.length).toBe(1);
+    expect(handles).toHaveLength(1);
   });
 
   it('clicking the status marker on a plain task with an edge handle still toggles it (handle does not steal the click)', () => {
@@ -821,7 +838,7 @@ describe('renderAllDayCell', () => {
     // Simulate a real browser resolving an element under a stationary cursor (jsdom's
     // elementFromPoint always returns null, unlike a real browser where a right-click on
     // the edge handle would resolve to the day cell beneath it).
-    const originalElementFromPoint = activeDocument.elementFromPoint;
+    const originalElementFromPoint = methodOf(activeDocument, 'elementFromPoint');
     activeDocument.elementFromPoint = () => container;
     try {
       leftHandle.dispatchEvent(
@@ -923,8 +940,8 @@ describe('renderAllDayCell', () => {
       // Also verify font-weight parity — Task 44 follow-up: an all-day title previously read
       // visibly lighter/thinner than a timed block's title directly below it in the same day
       // column, since only the block title set font-weight: 600.
-      const bodyWeight = /font-weight\s*:\s*([^;]+);/u.exec(bodyDecls)?.[1]?.trim();
-      const blockWeight = /font-weight\s*:\s*([^;]+);/u.exec(blockDecls)?.[1]?.trim();
+      const bodyWeight = cssDeclarationValue(bodyDecls, 'font-weight');
+      const blockWeight = cssDeclarationValue(blockDecls, 'font-weight');
       expect(bodyWeight).toBe(blockWeight);
     });
   });
@@ -1038,7 +1055,7 @@ describe('renderAllDayCell', () => {
 
       // jsdom has no elementFromPoint implementation at all; stub it (mirrors the existing
       // stationary-right-click test above) so the real pointerup path can run to completion.
-      const originalElementFromPoint = activeDocument.elementFromPoint;
+      const originalElementFromPoint = methodOf(activeDocument, 'elementFromPoint');
       activeDocument.elementFromPoint = () => null;
       try {
         window.dispatchEvent(
@@ -1104,7 +1121,7 @@ describe('renderAllDayCell', () => {
       expect(snapshot(container)).toEqual(before.container);
       expect(bar.getAttribute('draggable')).toBe('false');
 
-      const originalElementFromPoint = activeDocument.elementFromPoint;
+      const originalElementFromPoint = methodOf(activeDocument, 'elementFromPoint');
       activeDocument.elementFromPoint = () => null;
       try {
         window.dispatchEvent(
@@ -1131,7 +1148,7 @@ describe('renderAllDayCell', () => {
       handle.setPointerCapture = vi.fn();
       handle.releasePointerCapture = vi.fn();
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 4 }));
-      expect(handle.setPointerCapture).toHaveBeenCalledWith(4);
+      expect(methodOf(handle, 'setPointerCapture')).toHaveBeenCalledWith(4);
     });
 
     it('releasePointerCapture is called on pointercancel cleanup with the same pointerId that was captured', () => {
@@ -1145,7 +1162,7 @@ describe('renderAllDayCell', () => {
       handle.releasePointerCapture = vi.fn();
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 8 }));
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 8 }));
-      expect(handle.releasePointerCapture).toHaveBeenCalledWith(8);
+      expect(methodOf(handle, 'releasePointerCapture')).toHaveBeenCalledWith(8);
     });
 
     it('a host lacking setPointerCapture/releasePointerCapture entirely (e.g. jsdom) is tolerated: no throw, and the pre-existing pointercancel cleanup still runs', () => {

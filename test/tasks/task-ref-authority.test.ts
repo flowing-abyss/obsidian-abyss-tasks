@@ -3,6 +3,7 @@ import {
   TaskRefAuthority,
   taskRefContentFingerprint,
 } from '../../src/tasks/infrastructure/TaskRefAuthority';
+import { expectDefined } from './../helpers';
 
 describe('TaskRefAuthority', () => {
   it('keeps ordinary revisions deterministic within one session and rejects foreign evidence', () => {
@@ -38,14 +39,14 @@ describe('TaskRefAuthority', () => {
       const successor = authority.successor(revision, source);
       expect(successor).toBeDefined();
       expect(successor).not.toBe(revision);
-      revision = successor!;
+      revision = expectDefined(successor);
     }
 
     expect(authority.evidence(revision)).toMatchObject({ source, session: 'session-a' });
     expect(authority.observe('tasks.md', source)).toEqual([]);
-    expect(authority.successor(new TaskRefAuthority('session-b').revision(source), source)).toBe(
-      undefined,
-    );
+    expect(
+      authority.successor(new TaskRefAuthority('session-b').revision(source), source),
+    ).toBeUndefined();
   });
 
   it('mints a fresh observed incarnation without retaining a path history', () => {
@@ -101,7 +102,7 @@ describe('TaskRefAuthority', () => {
     const source = '- [ ] task\n';
     const expectedRevision = authority.revision(source);
     const successor = authority.successor(expectedRevision, source);
-    if (!successor) throw new Error('missing successor');
+    if (successor === undefined) throw new Error('missing successor');
     const transition = {
       filePath: 'tasks.md',
       candidateFingerprint: taskRefContentFingerprint(source),

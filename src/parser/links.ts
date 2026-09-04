@@ -10,7 +10,7 @@ const BRACKETS_RE = /\[([^[\]]*)\]/gu;
 export function collapseLinks(input: string): string {
   return input
     .replace(WIKILINK_ALIAS_RE, '🔗$1')
-    .replace(WIKILINK_RE, (_m, link: string) => '🔗 ' + link.replace(/\.[^.]*$/u, ''))
+    .replace(WIKILINK_RE, (_m, link: string) => `🔗 ${link.replace(/\.[^.]*$/u, '')}`)
     .replace(MD_LINK_RE, '🌐 $1')
     .replace(BRACKETS_RE, '$1');
 }
@@ -34,18 +34,22 @@ function insideOrderedRange(
   ranges: readonly SourceRange[],
   cursor: { index: number },
 ): boolean {
-  while (cursor.index < ranges.length && ranges[cursor.index]!.to <= at) cursor.index++;
+  while (cursor.index < ranges.length) {
+    const range = ranges[cursor.index];
+    if (range === undefined || range.to > at) break;
+    cursor.index++;
+  }
   const range = ranges[cursor.index];
   return range !== undefined && at >= range.from && at < range.to;
 }
 
 function nonOverlappingTokens(candidates: readonly LinkToken[]): LinkToken[] {
-  const ordered = [...candidates].sort(
-    (left, right) =>
-      left.index - right.index ||
-      right.raw.length - left.raw.length ||
-      left.type.localeCompare(right.type),
-  );
+  const ordered = [...candidates].sort((left, right) => {
+    const indexOrder = left.index - right.index;
+    if (indexOrder !== 0) return indexOrder;
+    const lengthOrder = right.raw.length - left.raw.length;
+    return lengthOrder !== 0 ? lengthOrder : left.type.localeCompare(right.type);
+  });
   const accepted: LinkToken[] = [];
   let acceptedTo = 0;
   for (const candidate of ordered) {
@@ -56,49 +60,62 @@ function nonOverlappingTokens(candidates: readonly LinkToken[]): LinkToken[] {
   return accepted;
 }
 
-/** Parse [[wiki]], [[wiki|alias]] and [md](url) links in document order. */
-export function parseLinks(input: string): LinkToken[] {
-  const candidates: LinkToken[] = [];
-  const inlineCode = inlineCodeRanges(input);
+function wikiLinkTokens(input: string, inlineCode: readonly SourceRange[]): LinkToken[] {
+  const tokens: LinkToken[] = [];
   const wiki = /(?<!!)\[\[((?:\\.|[^|[\]])+)(?:\|((?:\\.|[^[\]])+))?\]\]/gu;
-  const markdown = /(?<!!)\[((?:\\.|[^[\]])+)\]\(((?:\\.|[^)])+)\)/gu;
-  let m: RegExpExecArray | null;
-  const wikiRangeCursor = { index: 0 };
-  while ((m = wiki.exec(input)) !== null) {
-    if (isEscaped(input, m.index) || insideOrderedRange(m.index, inlineCode, wikiRangeCursor)) {
+  const rangeCursor = { index: 0 };
+  let match: RegExpExecArray | null;
+  while ((match = wiki.exec(input)) !== null) {
+    if (isEscaped(input, match.index) || insideOrderedRange(match.index, inlineCode, rangeCursor)) {
       continue;
     }
-    const target = m[1] ?? '';
-    const alias = m[2];
-    candidates.push({
-      raw: m[0],
+    const target = match[1] ?? '';
+    const alias = match[2];
+    tokens.push({
+      raw: match[0],
       type: 'wiki',
       target,
       display: alias ?? target.replace(/\.[^.]*$/u, '').replace(/^.*\//u, ''),
-      index: m.index,
+      index: match.index,
     });
   }
-  const markdownRangeCursor = { index: 0 };
-  while ((m = markdown.exec(input)) !== null) {
-    if (isEscaped(input, m.index) || insideOrderedRange(m.index, inlineCode, markdownRangeCursor)) {
+  return tokens;
+}
+
+function markdownLinkTokens(input: string, inlineCode: readonly SourceRange[]): LinkToken[] {
+  const tokens: LinkToken[] = [];
+  const markdown = /(?<!!)\[((?:\\.|[^[\]])+)\]\(((?:\\.|[^)])+)\)/gu;
+  const rangeCursor = { index: 0 };
+  let match: RegExpExecArray | null;
+  while ((match = markdown.exec(input)) !== null) {
+    if (isEscaped(input, match.index) || insideOrderedRange(match.index, inlineCode, rangeCursor)) {
       continue;
     }
-    candidates.push({
-      raw: m[0],
+    tokens.push({
+      raw: match[0],
       type: 'md',
-      target: m[2] ?? '',
-      display: m[1] ?? '',
-      index: m.index,
+      target: match[2] ?? '',
+      display: match[1] ?? '',
+      index: match.index,
     });
   }
-  return nonOverlappingTokens(candidates);
+  return tokens;
+}
+
+/** Parse [[wiki]], [[wiki|alias]] and [md](url) links in document order. */
+export function parseLinks(input: string): LinkToken[] {
+  const inlineCode = inlineCodeRanges(input);
+  return nonOverlappingTokens([
+    ...wikiLinkTokens(input, inlineCode),
+    ...markdownLinkTokens(input, inlineCode),
+  ]);
 }
 
 /** Total number of links (wiki + markdown) across the given texts. */
 export function countLinksIn(texts: Array<string | undefined>): number {
   let total = 0;
   for (const text of texts) {
-    if (text) total += parseLinks(text).length;
+    if (text !== undefined && text.length > 0) total += parseLinks(text).length;
   }
   return total;
 }
@@ -107,7 +124,7 @@ export function countLinksIn(texts: Array<string | undefined>): number {
 export function buildLinkRaw(type: 'wiki' | 'md', target: string, display: string): string {
   if (type === 'md') return `[${display}](${target})`;
   const basename = target.replace(/\.[^.]*$/u, '').replace(/^.*\//u, '');
-  return display && display !== basename ? `[[${target}|${display}]]` : `[[${target}]]`;
+  return Boolean(display) && display !== basename ? `[[${target}|${display}]]` : `[[${target}]]`;
 }
 
 export interface AnchorDescriptor {
@@ -126,8 +143,9 @@ export function pairAnchorsToTokens(anchors: AnchorDescriptor[], tokens: LinkTok
   const consumed = new Array(tokens.length).fill(false) as boolean[];
   return anchors.map((a) => {
     for (let k = 0; k < tokens.length; k++) {
-      if (consumed[k]) continue;
-      if (anchorMatchesToken(a, tokens[k]!)) {
+      if (consumed[k] ?? false) continue;
+      const token = tokens[k];
+      if (token !== undefined && anchorMatchesToken(a, token)) {
         consumed[k] = true;
         return k;
       }
@@ -138,8 +156,8 @@ export function pairAnchorsToTokens(anchors: AnchorDescriptor[], tokens: LinkTok
 
 function anchorMatchesToken(a: AnchorDescriptor, token: LinkToken): boolean {
   const text = a.text.trim();
-  if (text && text === token.display) return true;
-  if (!a.href) return false;
+  if (Boolean(text) && text === token.display) return true;
+  if (a.href.length === 0) return false;
   if (token.type === 'wiki') {
     const base = (s: string): string => s.replace(/\.[^.]*$/u, '').replace(/^.*\//u, '');
     return a.href === token.target || base(a.href) === base(token.target);

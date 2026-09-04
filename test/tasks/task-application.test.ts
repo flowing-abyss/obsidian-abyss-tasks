@@ -17,6 +17,7 @@ import type {
 } from '../../src/tasks/domain/types';
 import { durationMinutes, localDate, localTime } from '../../src/tasks/domain/validation';
 import { taskQueryApi } from '../helpers';
+import { expectDefined } from './../helpers';
 
 const ref: TaskRef = { filePath: 'tasks.md', line: 0, revision: 'block:test' };
 
@@ -82,16 +83,17 @@ function service(
 ) {
   const originalEdit = repository.edit;
   const edit = vi.fn<TaskRepository['edit']>(async (request) => originalEdit(unwrapEdit(request)));
-  const completeRecurrence = repository.completeRecurrence
-    ? vi.fn<TaskRepository['completeRecurrence']>(
-        async (request) =>
-          repository.completeRecurrence?.('command' in request ? request.command : request) ?? {
-            type: 'io-error',
-            cause: 'missing-repository',
-            contentState: 'unchanged',
-          },
-      )
-    : vi.fn<TaskRepository['completeRecurrence']>();
+  const completeRecurrence =
+    repository.completeRecurrence != null
+      ? vi.fn<TaskRepository['completeRecurrence']>(
+          async (request) =>
+            repository.completeRecurrence?.('command' in request ? request.command : request) ?? {
+              type: 'io-error',
+              cause: 'missing-repository',
+              contentState: 'unchanged',
+            },
+        )
+      : vi.fn<TaskRepository['completeRecurrence']>();
   return new TaskApplicationService(
     taskQueries,
     { completeRecurrence, create: vi.fn(), move: vi.fn(), ...repository, edit },
@@ -1031,7 +1033,7 @@ describe('TaskApplicationService planning commands', () => {
       patch: { priority: { type: 'set', value: 'A' } },
     });
     if (first.type !== 'ok' || first.outcome.type !== 'task') throw new Error('missing outcome');
-    const returnedChild = first.outcome.task.subtasks[0]!;
+    const returnedChild = expectDefined(first.outcome.task.subtasks[0]);
     const mutableChild = returnedChild as { status: 'done'; statusSymbol: string };
     mutableChild.status = 'done';
     mutableChild.statusSymbol = 'x';
@@ -1113,7 +1115,7 @@ describe('TaskApplicationService planning commands', () => {
         throw new Error('missing outcome');
       firstReturned ??= result.outcome.task;
     }
-    if (!firstReturned) throw new Error('missing first outcome');
+    if (firstReturned == null) throw new Error('missing first outcome');
 
     await expect(
       application.execute({
@@ -1465,12 +1467,12 @@ describe('TaskApplicationService recurrence completion routing', () => {
     await expect(
       application.execute({
         type: 'set-status',
-        target: first.outcome.completed!.target,
+        target: expectDefined(first.outcome.completed).target,
         symbol: 'x',
       }),
     ).resolves.toEqual({
       type: 'not-found',
-      target: first.outcome.completed!.target,
+      target: expectDefined(first.outcome.completed).target,
     });
     expect(edit).toHaveBeenCalledOnce();
     expect(completeRecurrence).toHaveBeenCalledOnce();
@@ -1501,7 +1503,8 @@ describe('TaskApplicationService recurrence completion routing', () => {
       subtasks: [],
       comments: [],
     });
-    const consumedRoot = recurringSnapshot({ recurrence: undefined });
+    const consumedRoot = recurringSnapshot();
+    Reflect.deleteProperty(consumedRoot, 'recurrence');
     const consumedParent: TaskNodeRef = { type: 'task', ref: consumedRoot.ref };
     const current = {
       ...consumedRoot,
@@ -1511,8 +1514,10 @@ describe('TaskApplicationService recurrence completion routing', () => {
     const activeParent: TaskNodeRef = { type: 'task', ref: activeRootRef };
     const activeChild = nested(activeParent, 1, 'Owner', 'open');
     const completedChild = nested(activeParent, 2, 'Owner', 'done');
+    const activeRootWithoutRecurrence = recurringSnapshot({ ref: activeRootRef });
+    Reflect.deleteProperty(activeRootWithoutRecurrence, 'recurrence');
     const activeRoot = {
-      ...recurringSnapshot({ ref: activeRootRef, recurrence: undefined }),
+      ...activeRootWithoutRecurrence,
       subtasks: [activeChild, completedChild],
     };
     const outcome = {
@@ -1550,7 +1555,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
 
     await application.execute({
       type: 'set-status',
-      target: { type: 'subtask', ref: current.subtasks[0]!.ref },
+      target: { type: 'subtask', ref: expectDefined(current.subtasks[0]).ref },
       symbol: 'x',
     });
 

@@ -7,12 +7,18 @@ import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import type { TaskApplicationApi } from '../src/tasks';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import { buildStatusSubmenu, showStatusMenuAt } from '../src/ui/statusMenu';
-import { createAppWithFiles, queryApiForTasks, task, testStatusRegistry } from './helpers';
+import {
+  createAppWithFiles,
+  expectDefined,
+  queryApiForTasks,
+  task,
+  testStatusRegistry,
+} from './helpers';
 
 function fakeMenuWithIconSlots(iconSlots: HTMLElement[]): Menu {
   return {
     addItem(callback: (item: MenuItem) => unknown) {
-      const dom = document.createElement('div');
+      const dom = createDiv();
       iconSlots.push(dom.createDiv({ cls: 'menu-item-icon' }));
       const item = {
         dom,
@@ -35,8 +41,12 @@ describe('status and priority consumer delegation', () => {
       onPickStatus: () => {},
       onPickPriority: () => {},
     });
-    const popover = activeDocument.querySelector<HTMLElement>('.abyss-status-popover')!;
-    const firstFlag = popover.querySelector<HTMLButtonElement>('.abyss-status-popover-flag')!;
+    const popover = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-status-popover'),
+    );
+    const firstFlag = expectDefined(
+      popover.querySelector<HTMLButtonElement>('.abyss-status-popover-flag'),
+    );
 
     expect(activeDocument.activeElement).toBe(firstFlag);
     expect(popover.contains(activeDocument.activeElement)).toBe(true);
@@ -61,7 +71,9 @@ describe('status and priority consumer delegation', () => {
         onPickStatus: () => {},
         onPickPriority: () => {},
       });
-      const popover = ownerDocument.querySelector<HTMLElement>('.abyss-status-popover')!;
+      const popover = expectDefined(
+        ownerDocument.querySelector<HTMLElement>('.abyss-status-popover'),
+      );
       vi.stubGlobal('activeDocument', replacementDocument);
       vi.runOnlyPendingTimers();
 
@@ -71,11 +83,11 @@ describe('status and priority consumer delegation', () => {
 
       ownerDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       expect(popover.isConnected).toBe(false);
-      expect(ownerRemove).toHaveBeenCalledWith('keydown', keyRegistration![1], true);
+      expect(ownerRemove).toHaveBeenCalledWith('keydown', expectDefined(keyRegistration)[1], true);
     } finally {
-      ownerDocument
-        .querySelectorAll('.abyss-status-popover')
-        .forEach((element) => element.remove());
+      ownerDocument.querySelectorAll('.abyss-status-popover').forEach((element) => {
+        element.remove();
+      });
       vi.stubGlobal('activeDocument', originalActiveDocument);
       ownerAdd.mockRestore();
       ownerRemove.mockRestore();
@@ -99,16 +111,18 @@ describe('status and priority consumer delegation', () => {
     try {
       showStatusMenuAt(new MouseEvent('contextmenu'), opts);
       vi.runOnlyPendingTimers();
-      const firstKeyRegistration = add.mock.calls.find(([type]) => type === 'keydown')!;
+      const firstKeyRegistration = expectDefined(
+        add.mock.calls.find(([type]) => type === 'keydown'),
+      );
 
       showStatusMenuAt(new MouseEvent('contextmenu'), opts);
 
       expect(activeDocument.querySelectorAll('.abyss-status-popover')).toHaveLength(1);
       expect(remove).toHaveBeenCalledWith('keydown', firstKeyRegistration[1], true);
     } finally {
-      activeDocument
-        .querySelectorAll('.abyss-status-popover')
-        .forEach((element) => element.remove());
+      activeDocument.querySelectorAll('.abyss-status-popover').forEach((element) => {
+        element.remove();
+      });
       add.mockRestore();
       remove.mockRestore();
       vi.clearAllTimers();
@@ -141,9 +155,9 @@ describe('status and priority consumer delegation', () => {
         }),
       );
       vi.runOnlyPendingTimers();
-      const firstFlag = activeDocument.querySelector<HTMLButtonElement>(
-        '.abyss-status-popover-flag',
-      )!;
+      const firstFlag = expectDefined(
+        activeDocument.querySelector<HTMLButtonElement>('.abyss-status-popover-flag'),
+      );
       const escape = new KeyboardEvent('keydown', {
         key: 'Escape',
         bubbles: true,
@@ -158,9 +172,9 @@ describe('status and priority consumer delegation', () => {
       expect(activeDocument.activeElement).toBe(trigger);
     } finally {
       activeDocument.body.removeEventListener('keydown', parentKeydown);
-      activeDocument
-        .querySelectorAll('.abyss-status-popover')
-        .forEach((element) => element.remove());
+      activeDocument.querySelectorAll('.abyss-status-popover').forEach((element) => {
+        element.remove();
+      });
       trigger.remove();
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -192,9 +206,9 @@ describe('status and priority consumer delegation', () => {
       expect(remove.mock.calls.some(([type]) => type === 'mousedown')).toBe(true);
     } finally {
       owner.unload();
-      activeDocument
-        .querySelectorAll('.abyss-status-popover')
-        .forEach((element) => element.remove());
+      activeDocument.querySelectorAll('.abyss-status-popover').forEach((element) => {
+        element.remove();
+      });
       remove.mockRestore();
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -224,9 +238,9 @@ describe('status and priority consumer delegation', () => {
       expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
     } finally {
       owner.unload();
-      activeDocument
-        .querySelectorAll('.abyss-status-popover')
-        .forEach((element) => element.remove());
+      activeDocument.querySelectorAll('.abyss-status-popover').forEach((element) => {
+        element.remove();
+      });
       addChild.mockRestore();
       removeChild.mockRestore();
     }
@@ -242,12 +256,16 @@ describe('status and priority consumer delegation', () => {
       onPickPriority,
       onClose,
     });
-    const current = handle.element.querySelector<HTMLButtonElement>(
-      ".abyss-status-popover-flag[data-abyss-priority='B']",
-    )!;
-    const other = handle.element.querySelector<HTMLButtonElement>(
-      ".abyss-status-popover-flag[data-abyss-priority='D']",
-    )!;
+    const current = expectDefined(
+      handle.element.querySelector<HTMLButtonElement>(
+        ".abyss-status-popover-flag[data-abyss-priority='B']",
+      ),
+    );
+    const other = expectDefined(
+      handle.element.querySelector<HTMLButtonElement>(
+        ".abyss-status-popover-flag[data-abyss-priority='D']",
+      ),
+    );
 
     expect(current.tagName).toBe('BUTTON');
     expect(current.tabIndex).toBe(0);
@@ -275,7 +293,9 @@ describe('status and priority consumer delegation', () => {
     };
 
     showStatusMenuAt(new MouseEvent('contextmenu'), opts);
-    let row = activeDocument.querySelector<HTMLElement>('.abyss-status-popover-row')!;
+    const row = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-status-popover-row'),
+    );
     expect(row.getAttribute('role')).toBe('menuitemradio');
     expect(row.getAttribute('aria-checked')).toBe('true');
     expect(row.tabIndex).toBe(0);
@@ -286,14 +306,18 @@ describe('status and priority consumer delegation', () => {
     showStatusMenuAt(new MouseEvent('contextmenu'), opts);
     expect(activeDocument.querySelector('.abyss-status-popover-edit-repeat')).toBeNull();
 
-    activeDocument.querySelectorAll('.abyss-status-popover').forEach((element) => element.remove());
+    activeDocument.querySelectorAll('.abyss-status-popover').forEach((element) => {
+      element.remove();
+    });
   });
 
   it('builds native-menu status icons as inert previews', () => {
     const iconSlots: HTMLElement[] = [];
     buildStatusSubmenu(fakeMenuWithIconSlots(iconSlots), task(), testStatusRegistry(), () => {});
 
-    const marker = iconSlots[0]!.querySelector<HTMLElement>('.abyss-status-marker')!;
+    const marker = expectDefined(
+      expectDefined(iconSlots[0]).querySelector<HTMLElement>('.abyss-status-marker'),
+    );
     const click = new MouseEvent('click', { bubbles: true, cancelable: true });
     marker.dispatchEvent(click);
 
@@ -310,9 +334,9 @@ describe('status and priority consumer delegation', () => {
       onPickStatus,
       onPickPriority: () => {},
     });
-    const marker = activeDocument.querySelector<HTMLElement>(
-      '.abyss-status-popover-row .abyss-status-marker',
-    )!;
+    const marker = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-status-popover-row .abyss-status-marker'),
+    );
 
     marker.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
@@ -383,9 +407,9 @@ describe('status and priority consumer delegation', () => {
       ref,
     };
     const invoke = async (method: string, ...args: unknown[]) => {
-      const fn = (panel as unknown as Record<string, (...values: unknown[]) => Promise<void>>)[
-        method
-      ]!;
+      const fn = expectDefined(
+        (panel as unknown as Record<string, (...values: unknown[]) => Promise<void>>)[method],
+      );
       await fn.call(panel, ...args);
     };
 

@@ -4,7 +4,13 @@ import type { DailyNoteAdapter, DailyNoteProviderSettings, ProviderId } from '..
 
 type CorePlugin = {
   enabled: boolean;
-  instance: { options?: { folder?: string; format?: string; template?: string } };
+  instance?: {
+    options?: {
+      folder?: string | null;
+      format?: string | null;
+      template?: string | null;
+    };
+  };
 };
 
 function getPlugin(app: App): CorePlugin | null {
@@ -24,7 +30,8 @@ export class CoreDailyNotesAdapter implements DailyNoteAdapter {
     const opts = getPlugin(app)?.instance?.options ?? {};
     return {
       folder: opts.folder?.trim() ?? '',
-      format: opts.format || 'YYYY-MM-DD',
+      format:
+        typeof opts.format === 'string' && opts.format.length > 0 ? opts.format : 'YYYY-MM-DD',
       template: opts.template?.trim() ?? '',
     };
   }

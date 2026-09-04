@@ -12,18 +12,19 @@ export interface CalendarDateRange {
 }
 
 export function calendarDatesForPlanning(planning: CalendarPlanning): readonly LocalDate[] {
-  if (planning.start && planning.due) return [];
-  if (planning.scheduled && planning.due && planning.scheduled !== planning.due) {
+  if (planning.start != null && planning.due != null) return [];
+  if (planning.scheduled != null && planning.due != null && planning.scheduled !== planning.due) {
     return [planning.scheduled, planning.due];
   }
   const anchor = planning.scheduled ?? planning.due;
-  return anchor ? [anchor] : [];
+  return anchor != null ? [anchor] : [];
 }
 
 export function calendarRangeForPlanning(
   planning: CalendarPlanning,
 ): CalendarDateRange | undefined {
-  if (!planning.start || !planning.due || planning.start > planning.due) return undefined;
+  if (planning.start == null || planning.due == null || planning.start > planning.due)
+    return undefined;
   return { start: planning.start, due: planning.due };
 }
 
@@ -37,8 +38,8 @@ interface OrderedRange<T> extends IndexedRange<T> {
 
 interface RangeNode<T> {
   readonly center: LocalDate;
-  readonly spanningByStart: readonly OrderedRange<T>[];
-  readonly spanningByDue: readonly OrderedRange<T>[];
+  readonly spanningByStart: ReadonlyArray<OrderedRange<T>>;
+  readonly spanningByDue: ReadonlyArray<OrderedRange<T>>;
   readonly left?: RangeNode<T>;
   readonly right?: RangeNode<T>;
 }
@@ -50,12 +51,14 @@ interface RangeNode<T> {
  * that node in two scan orders, so a warmed point query visits O(log R + k) entries. Rebuilding is
  * lazy after a batch of file updates and costs O(R log R); point queries never sort.
  */
-function buildRangeTree<T>(ranges: readonly OrderedRange<T>[]): RangeNode<T> | undefined {
+function buildRangeTree<T>(ranges: ReadonlyArray<OrderedRange<T>>): RangeNode<T> | undefined {
   if (ranges.length === 0) return undefined;
-  const center = ranges[Math.floor(ranges.length / 2)]!.start;
-  const leftRanges: OrderedRange<T>[] = [];
-  const rightRanges: OrderedRange<T>[] = [];
-  const spanningByStart: OrderedRange<T>[] = [];
+  const median = ranges[Math.floor(ranges.length / 2)];
+  if (median === undefined) return undefined;
+  const center = median.start;
+  const leftRanges: Array<OrderedRange<T>> = [];
+  const rightRanges: Array<OrderedRange<T>> = [];
+  const spanningByStart: Array<OrderedRange<T>> = [];
   for (const range of ranges) {
     if (range.due < center) leftRanges.push(range);
     else if (range.start > center) rightRanges.push(range);
@@ -72,8 +75,8 @@ function buildRangeTree<T>(ranges: readonly OrderedRange<T>[]): RangeNode<T> | u
     center,
     spanningByStart,
     spanningByDue,
-    ...(left && { left }),
-    ...(right && { right }),
+    ...(left != null && { left }),
+    ...(right != null && { right }),
   };
 }
 
@@ -81,7 +84,7 @@ export class TaskDateIndex<T> {
   private readonly byDate = new Map<LocalDate, T[]>();
   private readonly datesByFile = new Map<string, Set<LocalDate>>();
   private readonly tasksByFile = new Map<string, Set<T>>();
-  private readonly rangesByFile = new Map<string, readonly IndexedRange<T>[]>();
+  private readonly rangesByFile = new Map<string, ReadonlyArray<IndexedRange<T>>>();
   private rangeTree: RangeNode<T> | undefined;
   private rangeTreeDirty = false;
 
@@ -91,30 +94,53 @@ export class TaskDateIndex<T> {
   ) {}
 
   updateFile(filePath: string, tasks: readonly T[]): void {
-    const previousTasks = this.tasksByFile.get(filePath);
-    const previousDates = this.datesByFile.get(filePath);
-    if (previousTasks && previousDates) {
-      for (const date of previousDates) {
-        const remaining = (this.byDate.get(date) ?? []).filter((task) => !previousTasks.has(task));
-        if (remaining.length > 0) this.byDate.set(date, remaining);
-        else this.byDate.delete(date);
-      }
-    }
+    this.removePreviousFileTasks(filePath);
     this.rangesByFile.delete(filePath);
     this.rangeTreeDirty = true;
+    const indexed = this.indexTasks(tasks);
+    this.storeFileTasks(filePath, tasks, indexed);
+  }
 
-    const dates = new Set<LocalDate>();
-    const ranges: IndexedRange<T>[] = [];
-    for (const task of tasks) {
-      for (const date of this.datesForTask(task)) {
-        dates.add(date);
-        const bucket = this.byDate.get(date);
-        if (bucket) bucket.push(task);
-        else this.byDate.set(date, [task]);
-      }
-      const range = this.rangeForTask?.(task);
-      if (range && range.start <= range.due) ranges.push({ ...range, task });
+  private removePreviousFileTasks(filePath: string): void {
+    const previousTasks = this.tasksByFile.get(filePath);
+    const previousDates = this.datesByFile.get(filePath);
+    if (previousTasks == null || previousDates == null) return;
+    for (const date of previousDates) {
+      const remaining = (this.byDate.get(date) ?? []).filter((task) => !previousTasks.has(task));
+      if (remaining.length > 0) this.byDate.set(date, remaining);
+      else this.byDate.delete(date);
     }
+  }
+
+  private indexTasks(tasks: readonly T[]): {
+    readonly dates: Set<LocalDate>;
+    readonly ranges: Array<IndexedRange<T>>;
+  } {
+    const dates = new Set<LocalDate>();
+    const ranges: Array<IndexedRange<T>> = [];
+    for (const task of tasks) {
+      this.indexTaskDates(task, dates);
+      const range = this.rangeForTask?.(task);
+      if (range != null && range.start <= range.due) ranges.push({ ...range, task });
+    }
+    return { dates, ranges };
+  }
+
+  private indexTaskDates(task: T, dates: Set<LocalDate>): void {
+    for (const date of this.datesForTask(task)) {
+      dates.add(date);
+      const bucket = this.byDate.get(date);
+      if (bucket != null) bucket.push(task);
+      else this.byDate.set(date, [task]);
+    }
+  }
+
+  private storeFileTasks(
+    filePath: string,
+    tasks: readonly T[],
+    indexed: { readonly dates: Set<LocalDate>; readonly ranges: Array<IndexedRange<T>> },
+  ): void {
+    const { dates, ranges } = indexed;
     if (tasks.length > 0) this.tasksByFile.set(filePath, new Set(tasks));
     else this.tasksByFile.delete(filePath);
     if (dates.size > 0) this.datesByFile.set(filePath, dates);
@@ -129,7 +155,7 @@ export class TaskDateIndex<T> {
   get(date: LocalDate): readonly T[] {
     const tasks = new Set(this.byDate.get(date) ?? []);
     this.ensureRangeTree();
-    const matches: OrderedRange<T>[] = [];
+    const matches: Array<OrderedRange<T>> = [];
     // The centered tree emits in deterministic node-local scan order. Do not sort this result:
     // the overlap query must remain O(log R + k), while TaskIndex applies consumer-facing stable
     // task order afterwards.
@@ -155,26 +181,42 @@ export class TaskDateIndex<T> {
   private collectRangeMatches(
     node: RangeNode<T> | undefined,
     date: LocalDate,
-    matches: OrderedRange<T>[],
+    matches: Array<OrderedRange<T>>,
   ): void {
-    if (!node) return;
+    if (node == null) return;
     if (date < node.center) {
-      for (const range of node.spanningByStart) {
-        if (range.start > date) break;
-        matches.push(range);
-      }
-      this.collectRangeMatches(node.left, date, matches);
+      this.collectBeforeCenter(node, date, matches);
       return;
     }
     if (date > node.center) {
-      for (const range of node.spanningByDue) {
-        if (range.due < date) break;
-        matches.push(range);
-      }
-      this.collectRangeMatches(node.right, date, matches);
+      this.collectAfterCenter(node, date, matches);
       return;
     }
     matches.push(...node.spanningByStart);
+  }
+
+  private collectBeforeCenter(
+    node: RangeNode<T>,
+    date: LocalDate,
+    matches: Array<OrderedRange<T>>,
+  ): void {
+    for (const range of node.spanningByStart) {
+      if (range.start > date) break;
+      matches.push(range);
+    }
+    this.collectRangeMatches(node.left, date, matches);
+  }
+
+  private collectAfterCenter(
+    node: RangeNode<T>,
+    date: LocalDate,
+    matches: Array<OrderedRange<T>>,
+  ): void {
+    for (const range of node.spanningByDue) {
+      if (range.due < date) break;
+      matches.push(range);
+    }
+    this.collectRangeMatches(node.right, date, matches);
   }
 
   clear(): void {

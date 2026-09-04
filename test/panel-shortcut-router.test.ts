@@ -5,6 +5,7 @@ import { InteractionRegistry } from '../src/ui/interactionOwnership';
 import { nativeInteractionBlocksPanelShortcuts } from '../src/ui/nativeInteractionBlocker';
 import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
 import type { PanelNavigationActions } from '../src/views/panelNavigation';
+import { methodOf } from './helpers';
 
 function navigationActions(): PanelNavigationActions {
   return {
@@ -44,7 +45,7 @@ function rectList(rectangles: readonly DOMRect[]): DOMRectList {
   const values = [...rectangles];
   return Object.assign(values, {
     item: (index: number) => values[index] ?? null,
-  }) as unknown as DOMRectList;
+  });
 }
 
 function setGeometry(
@@ -77,7 +78,7 @@ function harness(): RouterHarness {
   const registry = new InteractionRegistry<ShortcutActionId>();
   const settings = structuredClone(DEFAULT_SETTINGS.shortcuts);
   const nativeHostBlocks = vi.fn(() => false);
-  const panel = document.createElement('section');
+  const panel = createEl('section');
   document.body.appendChild(panel);
   mounted.push(panel);
   let active = true;
@@ -107,9 +108,9 @@ function harness(): RouterHarness {
 afterEach(() => {
   for (const router of liveRouters.splice(0)) router.destroy();
   for (const element of mounted.splice(0)) element.remove();
-  document
-    .querySelectorAll('.menu, .modal-container, .suggestion-container')
-    .forEach((element) => element.remove());
+  document.querySelectorAll('.menu, .modal-container, .suggestion-container').forEach((element) => {
+    element.remove();
+  });
   vi.restoreAllMocks();
 });
 
@@ -117,7 +118,7 @@ describe('nativeInteractionBlocksPanelShortcuts', () => {
   it.each(['menu', 'modal-container', 'suggestion-container'])(
     'blocks while a connected native %s surface exists',
     (className) => {
-      const nativeSurface = document.createElement('div');
+      const nativeSurface = createDiv();
       nativeSurface.className = className;
       setGeometry(nativeSurface, rect(20, 20, 180, 80));
       document.body.appendChild(nativeSurface);
@@ -145,13 +146,13 @@ describe('nativeInteractionBlocksPanelShortcuts', () => {
     [
       'display:none',
       (surface: HTMLElement): void => {
-        surface.style.display = 'none';
+        surface.setCssProps({ display: 'none' });
       },
     ],
     [
       'visibility:hidden',
       (surface: HTMLElement): void => {
-        surface.style.visibility = 'hidden';
+        surface.setCssProps({ visibility: 'hidden' });
       },
     ],
     [
@@ -160,18 +161,26 @@ describe('nativeInteractionBlocksPanelShortcuts', () => {
         surface.remove();
       },
     ],
-    ['zero area', (surface: HTMLElement): void => setGeometry(surface, rect(20, 20, 0, 80))],
+    [
+      'zero area',
+      (surface: HTMLElement): void => {
+        setGeometry(surface, rect(20, 20, 0, 80));
+      },
+    ],
     [
       'no rendered client rectangles',
-      (surface: HTMLElement): void => setGeometry(surface, rect(20, 20, 180, 80), []),
+      (surface: HTMLElement): void => {
+        setGeometry(surface, rect(20, 20, 180, 80), []);
+      },
     ],
     [
       'offscreen geometry',
-      (surface: HTMLElement): void =>
-        setGeometry(surface, rect(window.innerWidth + 20, 20, 180, 80)),
+      (surface: HTMLElement): void => {
+        setGeometry(surface, rect(window.innerWidth + 20, 20, 180, 80));
+      },
     ],
   ] as const)('ignores a retained native surface with %s', (_reason, hideSurface) => {
-    const nativeSurface = document.createElement('div');
+    const nativeSurface = createDiv();
     nativeSurface.className = 'menu';
     setGeometry(nativeSurface, rect(20, 20, 180, 80));
     document.body.appendChild(nativeSurface);
@@ -181,10 +190,9 @@ describe('nativeInteractionBlocksPanelShortcuts', () => {
   });
 
   it('keeps partially onscreen animated native surfaces blocking', () => {
-    const nativeSurface = document.createElement('div');
+    const nativeSurface = createDiv();
     nativeSurface.className = 'suggestion-container';
-    nativeSurface.style.opacity = '0';
-    nativeSurface.style.transform = 'translateX(-10px)';
+    nativeSurface.setCssProps({ opacity: '0', transform: 'translateX(-10px)' });
     setGeometry(nativeSurface, rect(-20, 20, 80, 80));
     document.body.appendChild(nativeSurface);
 
@@ -192,7 +200,7 @@ describe('nativeInteractionBlocksPanelShortcuts', () => {
   });
 
   it('does not treat plugin popovers or similar class names as native blockers', () => {
-    const pluginPopover = document.createElement('div');
+    const pluginPopover = createDiv();
     pluginPopover.className = 'abyss-popover menu-item modal-content suggestion-item';
     document.body.appendChild(pluginPopover);
     mounted.push(pluginPopover);
@@ -221,7 +229,7 @@ describe('PanelShortcutRouter', () => {
 
       const event = keydown(h.panel, code);
 
-      const action = h.actions[method] as ReturnType<typeof vi.fn>;
+      const action = methodOf(h.actions, method) as ReturnType<typeof vi.fn>;
       if (argument === undefined) expect(action).toHaveBeenCalledWith();
       else expect(action).toHaveBeenCalledWith(argument);
       expect(action).toHaveBeenCalledOnce();
@@ -234,7 +242,7 @@ describe('PanelShortcutRouter', () => {
 
     const event = keydown(h.panel, 'KeyQ', { key: 'й' });
 
-    expect(h.actions.openQuickCapture).toHaveBeenCalledOnce();
+    expect(methodOf(h.actions, 'openQuickCapture')).toHaveBeenCalledOnce();
     expect(event.defaultPrevented).toBe(true);
   });
 
@@ -245,7 +253,7 @@ describe('PanelShortcutRouter', () => {
     keydown(h.panel, 'KeyQ', { key: 'й' });
     keydown(h.panel, 'Digit7', { key: '?', shiftKey: true });
 
-    expect(h.actions.openQuickCapture).toHaveBeenCalledTimes(2);
+    expect(methodOf(h.actions, 'openQuickCapture')).toHaveBeenCalledTimes(2);
   });
 
   it('blocks only a conflicting alternative', () => {
@@ -257,8 +265,8 @@ describe('PanelShortcutRouter', () => {
     keydown(h.panel, 'Digit7', { key: '?', shiftKey: true });
     keydown(h.panel, 'KeyS', { key: 'ы' });
 
-    expect(h.actions.openQuickCapture).toHaveBeenCalledTimes(1);
-    expect(h.actions.openSearch).toHaveBeenCalledTimes(1);
+    expect(methodOf(h.actions, 'openQuickCapture')).toHaveBeenCalledTimes(1);
+    expect(methodOf(h.actions, 'openSearch')).toHaveBeenCalledTimes(1);
   });
 
   it('requires an exact modifier set', () => {
@@ -269,7 +277,7 @@ describe('PanelShortcutRouter', () => {
     const extraAlt = keydown(h.panel, 'KeyQ', { ctrlKey: true, shiftKey: true, altKey: true });
     const exact = keydown(h.panel, 'KeyQ', { ctrlKey: true, shiftKey: true });
 
-    expect(h.actions.openQuickCapture).toHaveBeenCalledOnce();
+    expect(methodOf(h.actions, 'openQuickCapture')).toHaveBeenCalledOnce();
     expect(missingShift.defaultPrevented).toBe(false);
     expect(extraAlt.defaultPrevented).toBe(false);
     expect(exact.defaultPrevented).toBe(true);
@@ -296,7 +304,7 @@ describe('PanelShortcutRouter', () => {
     const stale = keydown(h.panel, 'KeyQ');
     const current = keydown(h.panel, 'KeyE');
 
-    expect(h.actions.openQuickCapture).toHaveBeenCalledTimes(2);
+    expect(methodOf(h.actions, 'openQuickCapture')).toHaveBeenCalledTimes(2);
     expect(stale.defaultPrevented).toBe(false);
     expect(current.defaultPrevented).toBe(true);
     expect(snapshots).toHaveBeenCalledTimes(3);
@@ -316,14 +324,14 @@ describe('PanelShortcutRouter', () => {
       nativeHostBlocks: h.nativeHostBlocks,
     });
     liveRouters.push(router);
-    const button = h.panel.appendChild(document.createElement('button'));
+    const button = h.panel.appendChild(createEl('button'));
 
     keydown(h.panel, 'KeyQ', { repeat: true });
     keydown(button, 'KeyQ');
     keydown(h.panel, 'KeyZ');
 
     expect(snapshots).toHaveBeenCalledTimes(3);
-    expect(h.actions.openQuickCapture).not.toHaveBeenCalled();
+    expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
   });
 
   it('fails closed immediately when a live settings edit creates a conflict', () => {
@@ -333,8 +341,8 @@ describe('PanelShortcutRouter', () => {
 
     const event = keydown(h.panel, 'KeyQ');
 
-    expect(h.actions.openQuickCapture).not.toHaveBeenCalled();
-    expect(h.actions.openTasks).not.toHaveBeenCalled();
+    expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
+    expect(methodOf(h.actions, 'openTasks')).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 
@@ -362,7 +370,7 @@ describe('PanelShortcutRouter', () => {
 
     const event = keydown(h.panel, 'KeyQ');
 
-    expect(h.actions.openQuickCapture).not.toHaveBeenCalled();
+    expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 
@@ -380,7 +388,7 @@ describe('PanelShortcutRouter', () => {
     h.router.destroy();
     const destroyed = keydown(h.panel, 'KeyQ');
 
-    expect(h.actions.openQuickCapture).not.toHaveBeenCalled();
+    expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
     expect(
       [inactive, hidden, disconnected, destroyed].every((event) => !event.defaultPrevented),
     ).toBe(true);
@@ -395,7 +403,7 @@ describe('PanelShortcutRouter', () => {
 
     const event = keydown(h.panel, code, options);
 
-    expect(h.actions.openQuickCapture).not.toHaveBeenCalled();
+    expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 
@@ -411,7 +419,7 @@ describe('PanelShortcutRouter', () => {
 
     h.panel.dispatchEvent(event);
 
-    expect(h.actions.openQuickCapture).not.toHaveBeenCalled();
+    expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -423,13 +431,13 @@ describe('PanelShortcutRouter', () => {
     ['contenteditable', 'div'],
   ] as const)('suppresses shortcuts from a composed-path %s', (_name, tagName) => {
     const h = harness();
-    const element = document.createElement(tagName);
+    const element = createEl(tagName);
     if (_name === 'contenteditable') element.setAttribute('contenteditable', 'true');
     h.panel.appendChild(element);
 
     const event = keydown(element, 'KeyQ');
 
-    expect(h.actions.openQuickCapture).not.toHaveBeenCalled();
+    expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 
@@ -437,38 +445,38 @@ describe('PanelShortcutRouter', () => {
     'suppresses descendants of the %s editor host',
     (className) => {
       const h = harness();
-      const editor = document.createElement('div');
+      const editor = createDiv();
       editor.className = className;
-      const line = editor.appendChild(document.createElement('div'));
+      const line = editor.appendChild(createDiv());
       h.panel.appendChild(editor);
 
       const event = keydown(line, 'KeyQ');
 
-      expect(h.actions.openQuickCapture).not.toHaveBeenCalled();
+      expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
       expect(event.defaultPrevented).toBe(false);
     },
   );
 
   it('suppresses an editable found only through the shadow composed path', () => {
     const h = harness();
-    const shadowHost = h.panel.appendChild(document.createElement('div'));
+    const shadowHost = h.panel.appendChild(createDiv());
     const shadow = shadowHost.attachShadow({ mode: 'open' });
-    const input = shadow.appendChild(document.createElement('input'));
+    const input = shadow.appendChild(createEl('input'));
 
     const event = keydown(input, 'KeyQ');
 
-    expect(h.actions.openQuickCapture).not.toHaveBeenCalled();
+    expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 
   it('suppresses when the active element is editable even if the event path is not', () => {
     const h = harness();
-    const input = h.panel.appendChild(document.createElement('input'));
+    const input = h.panel.appendChild(createEl('input'));
     input.focus();
 
     const event = keydown(h.panel, 'KeyQ');
 
-    expect(h.actions.openQuickCapture).not.toHaveBeenCalled();
+    expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 
@@ -481,8 +489,8 @@ describe('PanelShortcutRouter', () => {
     registered.registry.acquire({ blocksShortcuts: true });
     const registryEvent = keydown(registered.panel, 'KeyQ');
 
-    expect(native.actions.openQuickCapture).not.toHaveBeenCalled();
-    expect(registered.actions.openQuickCapture).not.toHaveBeenCalled();
+    expect(methodOf(native.actions, 'openQuickCapture')).not.toHaveBeenCalled();
+    expect(methodOf(registered.actions, 'openQuickCapture')).not.toHaveBeenCalled();
     expect(nativeEvent.defaultPrevented).toBe(false);
     expect(registryEvent.defaultPrevented).toBe(false);
   });

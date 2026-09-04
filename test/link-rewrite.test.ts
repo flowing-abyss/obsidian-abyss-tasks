@@ -9,7 +9,7 @@ import type { TaskRef, TaskSnapshot } from '../src/tasks/domain/types';
 import { LinkEditModal } from '../src/ui/LinkEditModal';
 import {
   createAppWithFiles,
-  makeStubStore,
+  expectDefined,
   task,
   taskQueryApi,
   testStatusRegistry,
@@ -19,11 +19,11 @@ import {
 useRealMoment();
 
 function call<T>(owner: object, method: string, ...args: unknown[]): T {
-  const fn = (owner as Record<string, (...values: unknown[]) => T>)[method]!;
+  const fn = expectDefined((owner as Record<string, (...values: unknown[]) => T>)[method]);
   return fn.call(owner, ...args);
 }
 
-function taskApi(ref: TaskRef): { tasks: TaskApplicationApi; execute: ReturnType<typeof vi.fn> } {
+function taskApi(ref: TaskRef) {
   const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
     type: 'not-found',
     target: { type: 'task', ref },
@@ -112,7 +112,6 @@ describe('task link rewrite delegation', () => {
     const ref: TaskRef = { filePath: 't.md', line: 0, revision: 'root' };
     const { tasks, execute } = taskApi(ref);
     const state = new AppState();
-    const store = makeStubStore([], app);
     const panel = new CenterPanel(
       state,
       app,
@@ -245,7 +244,12 @@ describe('task link rewrite delegation', () => {
       tasks,
     );
 
-    await call<Promise<void>>(panel, 'updateTaskTitle', state.get('taskStack')[0]!, 'New');
+    await call<Promise<void>>(
+      panel,
+      'updateTaskTitle',
+      expectDefined(state.get('taskStack')[0]),
+      'New',
+    );
 
     expect(state.get('taskStack')[0]).toMatchObject({ ref: freshRef, markdownTitle: 'New' });
     expect(acknowledged).toHaveBeenCalledWith(freshRef);

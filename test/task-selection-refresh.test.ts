@@ -16,7 +16,7 @@ import {
   type RightPanelDraftState,
 } from '../src/ui/taskDraftContinuity';
 import { rebuildTaskSelection, taskNodeLine } from '../src/ui/taskSelection';
-import { taskQueryApi, testStatusRegistry } from './helpers';
+import { expectDefined, taskQueryApi, testStatusRegistry } from './helpers';
 
 const captured = vi.hoisted(() => ({
   state: null as AppState | null,
@@ -27,24 +27,30 @@ const captured = vi.hoisted(() => ({
 }));
 
 vi.mock('../src/panels/RightPanel', () => ({
-  RightPanel: vi.fn().mockImplementation(function (
-    this: unknown,
-    state: AppState,
-    _app: unknown,
-    _statusRegistry: unknown,
-    _settings: unknown,
-    acknowledgeOwnWrite?: (ref?: TaskRef) => void,
-  ) {
-    captured.state = state;
-    captured.acknowledgeOwnWrite = acknowledgeOwnWrite;
-    return {
-      mount: (el: HTMLElement) => el.createDiv({ cls: 'abyss-right-header-actions' }),
-      destroy: vi.fn(),
-      captureDraftState: captured.captureDraftState,
-      restoreDraftState: captured.restoreDraftState,
-      detachDraftState: captured.detachDraftState,
-    };
-  }),
+  RightPanel: class RightPanelMock {
+    constructor(
+      ...[state, _app, _statusRegistry, _settings, acknowledgeOwnWrite]: readonly [
+        state: AppState,
+        app: unknown,
+        statusRegistry: unknown,
+        settings: unknown,
+        acknowledgeOwnWrite?: (ref?: TaskRef) => void,
+      ]
+    ) {
+      captured.state = state;
+      captured.acknowledgeOwnWrite = acknowledgeOwnWrite;
+    }
+
+    mount(el: HTMLElement): void {
+      el.createDiv({ cls: 'abyss-right-header-actions' });
+    }
+
+    destroy(): void {}
+
+    captureDraftState = captured.captureDraftState;
+    restoreDraftState = captured.restoreDraftState;
+    detachDraftState = captured.detachDraftState;
+  },
 }));
 
 import { TaskModal } from '../src/ui/TaskModal';
@@ -254,7 +260,7 @@ describe('revision-aware nested selection rebuild', () => {
       { ...snapshot('same', 'Root'), tags: ['#root'] },
       '  - [ ] Child `#inline` #child',
     );
-    const child = root.subtasks[0]!;
+    const child = expectDefined(root.subtasks[0]);
     const tagged = { ...root, subtasks: [{ ...child, tags: ['#child'] }] };
 
     expect(tagged).toMatchObject({
@@ -274,37 +280,46 @@ describe('revision-aware nested selection rebuild', () => {
       },
       '  - [ ] Child',
     );
-    const rebuilt = rebuildTaskSelection(movedRoot, [staleRoot, staleRoot.subtasks[0]!]);
+    const rebuilt = rebuildTaskSelection(movedRoot, [
+      staleRoot,
+      expectDefined(staleRoot.subtasks[0]),
+    ]);
     expect(rebuilt).toHaveLength(2);
     expect(rebuilt[1]).toMatchObject({ title: 'Child' });
-    expect(taskNodeLine(movedRoot, rebuilt[1]!)).toBe(10);
+    expect(taskNodeLine(movedRoot, expectDefined(rebuilt[1]))).toBe(10);
   });
 
   it('does not adopt a different child at the same relative line after reload', () => {
     const staleRoot = withChild(snapshot('old', 'Root'), '  - [ ] Original');
     const changedRoot = withChild(snapshot('new', 'Root changed'), '  - [ ] Replacement');
-    const rebuilt = rebuildTaskSelection(changedRoot, [staleRoot, staleRoot.subtasks[0]!]);
+    const rebuilt = rebuildTaskSelection(changedRoot, [
+      staleRoot,
+      expectDefined(staleRoot.subtasks[0]),
+    ]);
     expect(rebuilt).toHaveLength(1);
   });
 
   it('follows a uniquely matching child block after a sibling changes its relative line', () => {
     const staleRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
     const originalRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
-    const child = originalRoot.subtasks[0]!;
+    const child = expectDefined(originalRoot.subtasks[0]);
     const movedChildRoot = {
       ...originalRoot,
       subtasks: [{ ...child, ref: { ...child.ref, relativeLine: 2 } }],
     };
-    const rebuilt = rebuildTaskSelection(movedChildRoot, [staleRoot, staleRoot.subtasks[0]!]);
+    const rebuilt = rebuildTaskSelection(movedChildRoot, [
+      staleRoot,
+      expectDefined(staleRoot.subtasks[0]),
+    ]);
     expect(rebuilt).toHaveLength(2);
     expect(rebuilt[1]).toMatchObject({ title: 'Child' });
-    expect(taskNodeLine(movedChildRoot, rebuilt[1]!)).toBe(6);
+    expect(taskNodeLine(movedChildRoot, expectDefined(rebuilt[1]))).toBe(6);
   });
 
   it('does not guess between duplicate child blocks after relative-line drift', () => {
     const staleRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
     const originalRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
-    const child = originalRoot.subtasks[0]!;
+    const child = expectDefined(originalRoot.subtasks[0]);
     const candidateRoot = {
       ...originalRoot,
       subtasks: [
@@ -312,14 +327,14 @@ describe('revision-aware nested selection rebuild', () => {
         { ...child, ref: { ...child.ref, relativeLine: 3 } },
       ],
     };
-    expect(rebuildTaskSelection(candidateRoot, [staleRoot, staleRoot.subtasks[0]!])).toHaveLength(
-      1,
-    );
+    expect(
+      rebuildTaskSelection(candidateRoot, [staleRoot, expectDefined(staleRoot.subtasks[0])]),
+    ).toHaveLength(1);
   });
 
   it('does not let a duplicate child at the stale line capture the selection', () => {
     const staleRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
-    const child = staleRoot.subtasks[0]!;
+    const child = expectDefined(staleRoot.subtasks[0]);
     const candidateRoot = {
       ...staleRoot,
       subtasks: [child, { ...child, ref: { ...child.ref, relativeLine: 3 } }],

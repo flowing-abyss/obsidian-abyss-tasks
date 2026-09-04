@@ -18,7 +18,8 @@ export function weekStartOffset(weekday: number, firstDayOfWeek: number): number
   // `|| 0` collapses the `-0` that arithmetic yields when weekday === firstDayOfWeek
   // into a plain `0` — behaviorally identical for date math, but avoids surprising
   // `Object.is`-based equality checks (e.g. `toBe(0)` in tests).
-  return -(((weekday - firstDayOfWeek) % 7) + 7) % 7 || 0;
+  const offset = -(((weekday - firstDayOfWeek) % 7) + 7) % 7;
+  return offset === 0 ? 0 : offset;
 }
 
 /** Returns the exact local date of the configured week start containing `anchor`. */

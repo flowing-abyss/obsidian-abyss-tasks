@@ -16,8 +16,7 @@ import type {
 import type { TaskIssue } from './validation';
 
 export type FieldUpdate<T> =
-  | { readonly type: 'set'; readonly value: T }
-  | { readonly type: 'clear' };
+  { readonly type: 'set'; readonly value: T } | { readonly type: 'clear' };
 
 export interface TaskPatch {
   readonly markdownTitle?: FieldUpdate<string>;

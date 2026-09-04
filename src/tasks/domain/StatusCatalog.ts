@@ -29,19 +29,19 @@ export class StatusCatalog {
 
   statusForSymbol(symbol: string): TaskStatus {
     const rule = this.ruleForSymbol(symbol);
-    return rule ? TYPE_TO_STATUS[rule.type] : 'open';
+    return rule != null ? TYPE_TO_STATUS[rule.type] : 'open';
   }
 
   ruleForSymbol(symbol: string): TaskStatusRule | undefined {
     const rule = this.bySymbolMap.get(normalizeSymbol(symbol));
-    return rule ? { ...rule } : undefined;
+    return rule != null ? { ...rule } : undefined;
   }
 
   defaultForType(type: TaskStatusType): TaskStatusRule | undefined {
     const rule = this.rules.find(
       (candidate) => candidate.type === type && candidate.defaultForType,
     );
-    return rule ? { ...rule } : undefined;
+    return rule != null ? { ...rule } : undefined;
   }
 
   all(): TaskStatusRule[] {

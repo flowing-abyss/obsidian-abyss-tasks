@@ -1,6 +1,5 @@
-import moment from 'moment';
-import { addIcon, removeIcon, TFile, type App } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { addIcon, moment, removeIcon, TFile, type App } from 'obsidian';
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
@@ -31,9 +30,11 @@ import {
   configuredTaskApplication,
   createAppWithFiles,
   deferred,
+  expectDefined,
   fixedToday,
   flushMicrotasks,
   freshContainer,
+  methodOf,
   seedTaskCache,
   task,
   taskQueryApi,
@@ -41,6 +42,34 @@ import {
 } from './helpers';
 
 const TODAY = moment().format('YYYY-MM-DD');
+
+type CalendarViewLabel = 'Day' | 'Week' | 'Month';
+type TimeGridViewInstance = TodayView | WeekTimeGridView | null;
+type ExecutedTaskCommand = Parameters<TaskApplicationApi['execute']>[0];
+
+function successfulCapture(title = 'Captured'): TaskCommandResult {
+  return {
+    type: 'ok',
+    changed: true,
+    outcome: {
+      type: 'task',
+      task: task({ title, source: { filePath: 'Capture.md', line: 0 } }),
+    },
+  };
+}
+
+function expectRootTaskPatch(
+  command: ExecutedTaskCommand,
+  expected: { readonly line: number; readonly revision: string },
+): Extract<ExecutedTaskCommand, { readonly type: 'patch'; readonly target: { type: 'task' } }> {
+  expect(command.type).toBe('patch');
+  if (command.type !== 'patch') throw new Error(`expected patch command, got ${command.type}`);
+  expect(command.target.type).toBe('task');
+  if (command.target.type !== 'task') throw new Error('expected a root task patch');
+  expect(command.target.ref.line).toBe(expected.line);
+  expect(command.target.ref.revision).toBe(expected.revision);
+  return { type: 'patch', target: command.target, patch: command.patch };
+}
 
 useRealMoment();
 
@@ -65,7 +94,11 @@ function queryApiForSnapshots(getTasks: () => readonly TaskSnapshot[]): TaskQuer
           item.planning.start,
           item.presentation.dailyNoteDate,
         ].filter((date): date is LocalDate => date !== undefined);
-        return dates.some((date) => date >= query.dateRange!.from && date <= query.dateRange!.to);
+        return dates.some(
+          (date) =>
+            date >= expectDefined(query.dateRange).from &&
+            date <= expectDefined(query.dateRange).to,
+        );
       });
 
   return taskQueryApi({
@@ -84,7 +117,11 @@ function queryApiForSnapshots(getTasks: () => readonly TaskSnapshot[]): TaskQuer
           return (
             item.planning.start !== undefined &&
             item.planning.due !== undefined &&
-            dates.some((date) => date >= item.planning.start! && date <= item.planning.due!)
+            dates.some(
+              (date) =>
+                date >= expectDefined(item.planning.start) &&
+                date <= expectDefined(item.planning.due),
+            )
           );
         })
         .map((root) => ({
@@ -98,7 +135,7 @@ function queryApiForSnapshots(getTasks: () => readonly TaskSnapshot[]): TaskQuer
       const found = getTasks().find(
         (item) => item.ref.filePath === ref.filePath && item.ref.line === ref.line,
       );
-      return found
+      return found != null
         ? { type: 'exact', task: found, basis: { observed: found } }
         : { type: 'not-found', ref };
     },
@@ -106,11 +143,19 @@ function queryApiForSnapshots(getTasks: () => readonly TaskSnapshot[]): TaskQuer
 }
 
 function makeStaticPanel(
-  state: AppState,
-  snapshots: readonly TaskSnapshot[],
-  settings: CalendarSettings = DEFAULT_SETTINGS,
-  app: App = {} as App,
-  interactionOwnership?: InteractionOwnershipPort,
+  ...[
+    state,
+    snapshots,
+    settings = DEFAULT_SETTINGS,
+    app = {} as App,
+    interactionOwnership,
+  ]: readonly [
+    state: AppState,
+    snapshots: readonly TaskSnapshot[],
+    settings?: CalendarSettings,
+    app?: App,
+    interactionOwnership?: InteractionOwnershipPort,
+  ]
 ): CenterPanel {
   return new CenterPanel(
     state,
@@ -142,7 +187,7 @@ async function readMd(app: App, path: string): Promise<string> {
 
 /** Bracket-access helper to call private methods (preserves `this` binding). */
 function call<T>(panel: CenterPanel, method: string, ...args: unknown[]): Promise<T> | T {
-  const fn = (panel as unknown as Record<string, (...a: unknown[]) => T>)[method]!;
+  const fn = expectDefined((panel as unknown as Record<string, (...a: unknown[]) => T>)[method]);
   return fn.call(panel, ...args);
 }
 
@@ -150,7 +195,7 @@ async function openListCapture(container: HTMLElement): Promise<HTMLInputElement
   container.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
   await flushMicrotasks();
   const input = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input');
-  if (!input) throw new Error('list capture did not open');
+  if (input == null) throw new Error('list capture did not open');
   return input;
 }
 
@@ -163,9 +208,13 @@ function pressCaptureKey(input: HTMLInputElement, key: string): void {
   input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
 }
 
+function returnToTasksMode(state: AppState): void {
+  state.set('mode', 'tasks');
+}
+
 function visibleChildren(element: HTMLElement): HTMLElement[] {
   return [...element.children].filter(
-    (child): child is HTMLElement => child instanceof HTMLElement && !child.hidden,
+    (child): child is HTMLElement => child.instanceOf(HTMLElement) && !child.hidden,
   );
 }
 
@@ -206,7 +255,7 @@ async function makePanel(
     undefined,
     null,
     null,
-    taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+    taskApplication.tasks,
     undefined,
     taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
   );
@@ -239,8 +288,8 @@ describe('CenterPanel task-card primary row', () => {
     try {
       panel.mount(freshContainer());
 
-      const card = panel['el'].querySelector<HTMLElement>('.abyss-task-card')!;
-      const mainRow = card.querySelector<HTMLElement>('.abyss-task-card-main-row')!;
+      const card = expectDefined(panel['el'].querySelector<HTMLElement>('.abyss-task-card'));
+      const mainRow = expectDefined(card.querySelector<HTMLElement>('.abyss-task-card-main-row'));
       expect(Array.from(mainRow.children, (child) => child.className)).toEqual([
         expect.stringContaining('abyss-status-marker'),
         'abyss-task-body',
@@ -248,15 +297,19 @@ describe('CenterPanel task-card primary row', () => {
         'abyss-task-delete-btn',
       ]);
 
-      const titleRow = mainRow.querySelector<HTMLElement>('.abyss-task-title-row')!;
-      const recurrence = titleRow.querySelector<HTMLElement>('.abyss-recurrence-badge')!;
+      const titleRow = expectDefined(mainRow.querySelector<HTMLElement>('.abyss-task-title-row'));
+      const recurrence = expectDefined(
+        titleRow.querySelector<HTMLElement>('.abyss-recurrence-badge'),
+      );
       expect(recurrence.nextElementSibling?.classList.contains('abyss-task-title')).toBe(true);
 
-      const description = card.querySelector<HTMLElement>('.abyss-task-desc')!;
+      const description = expectDefined(card.querySelector<HTMLElement>('.abyss-task-desc'));
       expect(description.parentElement).toBe(card);
       expect(description.previousElementSibling).toBe(mainRow);
 
-      const deleteButton = mainRow.querySelector<HTMLButtonElement>('.abyss-task-delete-btn')!;
+      const deleteButton = expectDefined(
+        mainRow.querySelector<HTMLButtonElement>('.abyss-task-delete-btn'),
+      );
       expect(deleteButton.querySelector('svg[data-lucide="x"]')).not.toBeNull();
       expect(deleteButton.textContent).toBe('');
     } finally {
@@ -277,8 +330,10 @@ describe('CenterPanel task-card primary row', () => {
     try {
       panel.mount(freshContainer());
 
-      const mainRow = panel['el'].querySelector<HTMLElement>('.abyss-task-card-main-row')!;
-      const titleRow = mainRow.querySelector<HTMLElement>('.abyss-task-title-row')!;
+      const mainRow = expectDefined(
+        panel['el'].querySelector<HTMLElement>('.abyss-task-card-main-row'),
+      );
+      const titleRow = expectDefined(mainRow.querySelector<HTMLElement>('.abyss-task-title-row'));
       expect(titleRow.querySelector('.abyss-recurrence-badge')).toBeNull();
       expect(titleRow.firstElementChild?.classList.contains('abyss-task-title')).toBe(true);
       expect(mainRow.querySelector('.abyss-task-desc')).toBeNull();
@@ -301,8 +356,10 @@ describe('CenterPanel task-card primary row', () => {
     try {
       panel.mount(freshContainer());
 
-      const mainRow = panel['el'].querySelector<HTMLElement>('.abyss-task-card-main-row')!;
-      const body = mainRow.querySelector<HTMLElement>('.abyss-task-body')!;
+      const mainRow = expectDefined(
+        panel['el'].querySelector<HTMLElement>('.abyss-task-card-main-row'),
+      );
+      const body = expectDefined(mainRow.querySelector<HTMLElement>('.abyss-task-body'));
       expect(body.querySelector('.abyss-task-title')).not.toBeNull();
       expect(mainRow.querySelector('.abyss-task-meta-right')).not.toBeNull();
       expect(panel['el'].querySelector('.abyss-task-card > .abyss-task-desc')).toBeNull();
@@ -376,7 +433,9 @@ describe('CenterPanel semantic navigation render boundary', () => {
     const openQuickCapture = vi.fn();
     const navigator = new PanelNavigator(state, settings, {
       calendarView: () => panel.calendarView(),
-      setCalendarView: (view) => panel.setCalendarView(view),
+      setCalendarView: (view) => {
+        panel.setCalendarView(view);
+      },
       openQuickCapture,
     });
 
@@ -386,31 +445,43 @@ describe('CenterPanel semantic navigation render boundary', () => {
       expect(render).toHaveBeenCalledOnce();
     };
 
-    once(() => navigator.openCalendar());
+    once(() => {
+      navigator.openCalendar();
+    });
     expect(state.get('mode')).toBe('calendar');
 
     const cancelKeyboardInteraction = vi.spyOn(
       panel as unknown as { cancelKeyboardInteraction(): void },
       'cancelKeyboardInteraction',
     );
-    once(() => navigator.openCalendarView('week'));
+    once(() => {
+      navigator.openCalendarView('week');
+    });
     expect(cancelKeyboardInteraction).toHaveBeenCalledOnce();
     expect(panel.calendarView()).toBe('week');
     expect(panel['calDate'].format('YYYY-MM-DD')).toBe(
       window.moment().startOf('isoWeek').format('YYYY-MM-DD'),
     );
 
-    once(() => navigator.openProjects());
+    once(() => {
+      navigator.openProjects();
+    });
     expect(state.get('mode')).toBe('projects');
 
-    once(() => navigator.openSearch());
+    once(() => {
+      navigator.openSearch();
+    });
     expect(state.get('mode')).toBe('search');
 
-    once(() => navigator.openList('inbox'));
+    once(() => {
+      navigator.openList('inbox');
+    });
     expect(state.get('selectedList')).toBe('inbox');
     expect(panel['el'].querySelector('.abyss-center-title')?.textContent).toBe('Inbox');
 
-    once(() => navigator.openTasks());
+    once(() => {
+      navigator.openTasks();
+    });
 
     navigator.openSearch();
     render.mockClear();
@@ -430,11 +501,15 @@ describe('CenterPanel semantic navigation render boundary', () => {
     panel.mount(freshContainer());
     const render = vi.spyOn(panel as unknown as { render(): void }, 'render');
     const commits = vi.fn();
-    state.on('selectedList', () => state.set('centerFilter', 'listener-final'));
+    state.on('selectedList', () => {
+      state.set('centerFilter', 'listener-final');
+    });
     state.onCommit(commits);
     const navigator = new PanelNavigator(state, settings, {
       calendarView: () => panel.calendarView(),
-      setCalendarView: (view) => panel.setCalendarView(view),
+      setCalendarView: (view) => {
+        panel.setCalendarView(view);
+      },
       openQuickCapture: () => undefined,
     });
 
@@ -459,22 +534,25 @@ describe('CenterPanel interaction ownership', () => {
     {
       category: 'sort/group',
       mode: 'tasks' as const,
-      open: (container: HTMLElement) =>
-        container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click(),
+      open: (container: HTMLElement) => {
+        expectDefined(container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+      },
       focus: '.abyss-view-state-row-main',
     },
     {
       category: 'month',
       mode: 'calendar' as const,
-      open: (container: HTMLElement) =>
-        container.querySelector<HTMLButtonElement>('.abyss-cal-nav-month')!.click(),
+      open: (container: HTMLElement) => {
+        expectDefined(container.querySelector<HTMLButtonElement>('.abyss-cal-nav-month')).click();
+      },
       focus: '.abyss-month-picker-btn',
     },
     {
       category: 'year',
       mode: 'calendar' as const,
-      open: (container: HTMLElement) =>
-        container.querySelector<HTMLButtonElement>('.abyss-cal-nav-year')!.click(),
+      open: (container: HTMLElement) => {
+        expectDefined(container.querySelector<HTMLButtonElement>('.abyss-cal-nav-year')).click();
+      },
       focus: '.abyss-year-picker-btn',
     },
   ];
@@ -497,7 +575,7 @@ describe('CenterPanel interaction ownership', () => {
 
       try {
         open(container);
-        const focused = container.querySelector<HTMLElement>(focus)!;
+        const focused = expectDefined(container.querySelector<HTMLElement>(focus));
         focused.focus();
         focused.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }));
         expect(navigate).not.toHaveBeenCalled();
@@ -537,10 +615,12 @@ describe('CenterPanel interaction ownership', () => {
     panel.mount(container);
 
     try {
-      container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click();
+      expectDefined(container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
       expect(container.querySelector('.abyss-view-state-popover')).not.toBeNull();
 
-      const statusMarker = container.querySelector<HTMLElement>('.abyss-status-marker')!;
+      const statusMarker = expectDefined(
+        container.querySelector<HTMLElement>('.abyss-status-marker'),
+      );
       statusMarker.focus();
       statusMarker.dispatchEvent(
         new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
@@ -555,8 +635,8 @@ describe('CenterPanel interaction ownership', () => {
       expect(releases[0]).toHaveBeenCalledOnce();
       expect(releases[1]).not.toHaveBeenCalled();
       expect(activeDocument.querySelector('.abyss-status-popover')).not.toBeNull();
-      expect(releases[0]!.mock.invocationCallOrder[0]).toBeLessThan(
-        acquire.mock.invocationCallOrder[1]!,
+      expect(expectDefined(releases[0]).mock.invocationCallOrder[0]).toBeLessThan(
+        expectDefined(acquire.mock.invocationCallOrder[1]),
       );
 
       panel.destroy();
@@ -579,11 +659,15 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
 
     try {
       panel.mount(container);
-      const trigger = container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!;
+      const trigger = expectDefined(
+        container.querySelector<HTMLButtonElement>('.abyss-view-state-btn'),
+      );
       trigger.focus();
       trigger.dispatchEvent(new PointerEvent('click', { bubbles: true }));
 
-      const popover = container.querySelector<HTMLElement>('.abyss-view-state-popover')!;
+      const popover = expectDefined(
+        container.querySelector<HTMLElement>('.abyss-view-state-popover'),
+      );
       expect(activeDocument.activeElement).toBe(
         popover.querySelector<HTMLElement>('.abyss-view-state-row-main'),
       );
@@ -618,11 +702,11 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
 
     try {
       panel.mount(container);
-      const trigger = container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!;
+      const trigger = expectDefined(
+        container.querySelector<HTMLButtonElement>('.abyss-view-state-btn'),
+      );
       trigger.focus();
       trigger.dispatchEvent(new PointerEvent('click', { bubbles: true }));
-      const popover = container.querySelector<HTMLElement>('.abyss-view-state-popover')!;
-
       (activeDocument.activeElement as HTMLElement).dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
       );
@@ -648,21 +732,23 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
 
     const openAndRegisteredListener = (): EventListener => {
       const start = addListener.mock.calls.length;
-      const trigger = container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!;
+      const trigger = expectDefined(
+        container.querySelector<HTMLButtonElement>('.abyss-view-state-btn'),
+      );
       trigger.click();
       vi.runOnlyPendingTimers();
       const registration = addListener.mock.calls
         .slice(start)
         .find(([type, , options]) => type === 'click' && options === true);
       expect(registration).toBeDefined();
-      return registration![1] as EventListener;
+      return expectDefined(registration)[1] as EventListener;
     };
 
     try {
       panel.mount(container);
 
       const toggledListener = openAndRegisteredListener();
-      container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click();
+      expectDefined(container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
       expect(removeListener).toHaveBeenCalledWith('click', toggledListener, true);
 
       const rerenderedListener = openAndRegisteredListener();
@@ -699,13 +785,12 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     const state = new AppState();
     state.set('selectedList', 'today');
     const panel = makeStaticPanel(state, []);
-    const container = ownerDocument.createElement('div');
-    ownerDocument.body.append(container);
+    const container = ownerDocument.body.createDiv();
     let destroyed = false;
 
     try {
       panel.mount(container);
-      container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click();
+      expectDefined(container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
       vi.stubGlobal('activeDocument', replacementActiveDocument);
       vi.runOnlyPendingTimers();
 
@@ -719,14 +804,20 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
 
       ownerDocument.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       expect(container.querySelector('.abyss-view-state-popover')).toBeNull();
-      expect(ownerRemove).toHaveBeenCalledWith('click', outsideRegistration![1], true);
+      expect(ownerRemove).toHaveBeenCalledWith(
+        'click',
+        expectDefined(outsideRegistration)[1],
+        true,
+      );
 
-      container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click();
+      expectDefined(container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
       vi.runOnlyPendingTimers();
       const ownerClickRegistrations = ownerAdd.mock.calls.filter(
         ([type, , options]) => type === 'click' && options === true,
       );
-      const destroyRegistration = ownerClickRegistrations[ownerClickRegistrations.length - 1]!;
+      const destroyRegistration = expectDefined(
+        ownerClickRegistrations[ownerClickRegistrations.length - 1],
+      );
       vi.stubGlobal('activeDocument', originalActiveDocument);
       panel.destroy();
       destroyed = true;
@@ -760,19 +851,23 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     activeDocument.body.append(container);
 
     const open = (): HTMLElement => {
-      container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click();
-      return container.querySelector<HTMLElement>('.abyss-view-state-popover')!;
+      expectDefined(container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+      return expectDefined(container.querySelector<HTMLElement>('.abyss-view-state-popover'));
     };
     const row = (popover: HTMLElement, label: string): HTMLElement =>
-      Array.from(popover.querySelectorAll<HTMLElement>('.abyss-view-state-row')).find(
-        (candidate) =>
-          candidate.querySelector('.abyss-view-state-row-label')?.textContent === label,
-      )!;
+      expectDefined(
+        Array.from(popover.querySelectorAll<HTMLElement>('.abyss-view-state-row')).find(
+          (candidate) =>
+            candidate.querySelector('.abyss-view-state-row-label')?.textContent === label,
+        ),
+      );
     const option = (popover: HTMLElement, rowLabel: string, label: string): HTMLButtonElement =>
-      Array.from(row(popover, rowLabel).querySelectorAll<HTMLButtonElement>('button')).find(
-        (candidate) =>
-          candidate.querySelector('.abyss-view-state-option-label')?.textContent === label,
-      )!;
+      expectDefined(
+        Array.from(row(popover, rowLabel).querySelectorAll<HTMLButtonElement>('button')).find(
+          (candidate) =>
+            candidate.querySelector('.abyss-view-state-option-label')?.textContent === label,
+        ),
+      );
 
     try {
       panel.mount(container);
@@ -795,13 +890,13 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('false');
       option(popover, 'Show', 'All').click();
 
-      popover = container.querySelector<HTMLElement>('.abyss-view-state-popover')!;
+      popover = expectDefined(container.querySelector<HTMLElement>('.abyss-view-state-popover'));
       expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('true');
       expect(option(popover, 'Show', 'Active').getAttribute('aria-pressed')).toBe('false');
       expect(option(popover, 'Show', 'Done').getAttribute('aria-pressed')).toBe('true');
       option(popover, 'Show', 'Done').click();
 
-      popover = container.querySelector<HTMLElement>('.abyss-view-state-popover')!;
+      popover = expectDefined(container.querySelector<HTMLElement>('.abyss-view-state-popover'));
       expect(option(popover, 'Show', 'Done').getAttribute('aria-pressed')).toBe('false');
       expect(option(popover, 'Show', 'To do').getAttribute('aria-pressed')).toBe('true');
       expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('false');
@@ -863,17 +958,6 @@ describe('CenterPanel shared list capture', () => {
     };
   }
 
-  function captureSuccess(title = 'Captured'): TaskCommandResult {
-    return {
-      type: 'ok',
-      changed: true,
-      outcome: {
-        type: 'task',
-        task: task({ title, source: { filePath: 'Capture.md', line: 0 } }),
-      },
-    };
-  }
-
   const captureFailure = (): TaskCommandResult => ({
     type: 'io-error',
     cause: 'repository-error',
@@ -881,7 +965,7 @@ describe('CenterPanel shared list capture', () => {
   });
 
   it('keeps one focused session open across consecutive Enter successes', async () => {
-    const { panel, planCreate, sessionExecute } = captureHarness(async () => captureSuccess());
+    const { panel, planCreate, sessionExecute } = captureHarness(async () => successfulCapture());
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
@@ -914,12 +998,14 @@ describe('CenterPanel shared list capture', () => {
   });
 
   it('uses a native named Add task trigger and restores it only after Escape dismissal', async () => {
-    const { panel } = captureHarness(async () => captureSuccess());
+    const { panel } = captureHarness(async () => successfulCapture());
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
     try {
-      const trigger = container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')!;
+      const trigger = expectDefined(
+        container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger'),
+      );
       expect(trigger.tagName).toBe('BUTTON');
       expect(trigger.type).toBe('button');
       expect(trigger.textContent).toContain('Add task');
@@ -927,7 +1013,9 @@ describe('CenterPanel shared list capture', () => {
 
       trigger.click();
       await flushMicrotasks();
-      const input = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+      const input = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+      );
       expect(activeDocument.activeElement).toBe(input);
       expect(trigger.isConnected).toBe(true);
       expect(trigger.hidden).toBe(true);
@@ -962,15 +1050,19 @@ describe('CenterPanel shared list capture', () => {
         source: { filePath: 'Capture.md', line: 1 },
       }),
     ];
-    const { panel, state } = captureHarness(async () => captureSuccess(), snapshots);
+    const { panel, state } = captureHarness(async () => successfulCapture(), snapshots);
     state.set('selectedList', 'inbox');
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
     try {
       const cards = container.querySelectorAll<HTMLElement>('.abyss-task-card');
-      cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-      cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+      expectDefined(cards[0]).dispatchEvent(
+        new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+      );
+      expectDefined(cards[1]).dispatchEvent(
+        new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+      );
       expect(container.querySelectorAll('.abyss-task-card.abyss-multi-selected')).toHaveLength(2);
 
       const input = await openListCapture(container);
@@ -985,7 +1077,7 @@ describe('CenterPanel shared list capture', () => {
   });
 
   it('closes after blur success without taking focus from the next control', async () => {
-    const { panel, sessionExecute } = captureHarness(async () => captureSuccess());
+    const { panel, sessionExecute } = captureHarness(async () => successfulCapture());
     const container = freshContainer();
     const next = activeDocument.body.createEl('button', { text: 'Next control' });
     activeDocument.body.append(container);
@@ -1020,7 +1112,7 @@ describe('CenterPanel shared list capture', () => {
       input.focus();
       pressCaptureKey(input, 'Enter');
       next.focus();
-      pendingResult.resolve(captureSuccess());
+      pendingResult.resolve(successfulCapture());
       await flushMicrotasks();
 
       expect(sessionExecute).toHaveBeenCalledOnce();
@@ -1034,7 +1126,7 @@ describe('CenterPanel shared list capture', () => {
   });
 
   it('closes an empty inline capture on blur without executing or taking focus', async () => {
-    const { panel, sessionExecute } = captureHarness(async () => captureSuccess());
+    const { panel, sessionExecute } = captureHarness(async () => successfulCapture());
     const container = freshContainer();
     const next = activeDocument.body.createEl('button', { text: 'Next control' });
     activeDocument.body.append(container);
@@ -1063,14 +1155,14 @@ describe('CenterPanel shared list capture', () => {
         source: { filePath: 'Capture.md', line: 0 },
       }),
     ];
-    const { panel } = captureHarness(async () => captureSuccess(), snapshots);
+    const { panel } = captureHarness(async () => successfulCapture(), snapshots);
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
     try {
-      const scroll = container.querySelector<HTMLElement>('.abyss-center-scroll')!;
-      const card = container.querySelector<HTMLElement>('.abyss-task-card')!;
-      const bar = container.querySelector<HTMLElement>('.abyss-add-task-bar')!;
+      const scroll = expectDefined(container.querySelector<HTMLElement>('.abyss-center-scroll'));
+      const card = expectDefined(container.querySelector<HTMLElement>('.abyss-task-card'));
+      const bar = expectDefined(container.querySelector<HTMLElement>('.abyss-add-task-bar'));
       scroll.scrollTop = 41;
       const rectForCurrentBar = (): DOMRect => {
         const visibleRows = visibleChildren(bar).length;
@@ -1084,7 +1176,7 @@ describe('CenterPanel shared list capture', () => {
           width: 100,
           height: 20,
           toJSON: () => ({}),
-        } as DOMRect;
+        };
       };
       vi.spyOn(card, 'getBoundingClientRect').mockImplementation(rectForCurrentBar);
       const beforeTop = card.getBoundingClientRect().top;
@@ -1102,7 +1194,7 @@ describe('CenterPanel shared list capture', () => {
   });
 
   it('leaves composing inline Enter and Escape to the IME', async () => {
-    const { panel, sessionExecute } = captureHarness(async () => captureSuccess());
+    const { panel, sessionExecute } = captureHarness(async () => successfulCapture());
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
@@ -1136,6 +1228,34 @@ describe('CenterPanel shared list capture', () => {
     }
   });
 
+  function submitFailedCapture(
+    cause: 'Enter' | 'blur',
+    input: HTMLInputElement,
+    next: HTMLElement,
+  ): void {
+    if (cause === 'Enter') {
+      pressCaptureKey(input, cause);
+      return;
+    }
+    input.focus();
+    next.focus();
+  }
+
+  function expectFailedCaptureState(container: HTMLElement, input: HTMLInputElement): void {
+    const current = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+    );
+    const surface = expectDefined(current.closest<HTMLElement>('.abyss-capture-surface'));
+    const error = expectDefined(surface.querySelector<HTMLElement>('.abyss-capture-error'));
+    expect(current).toBe(input);
+    expect(current.value).toBe('  repair this exact draft  ');
+    expect(surface.classList).toContain('has-error');
+    expect(surface.classList.contains('abyss-capture-surface--inline')).toBe(true);
+    expect(current.getAttribute('aria-invalid')).toBe('true');
+    expect(error.hidden).toBe(false);
+    expect(current.getAttribute('aria-describedby')).toContain(error.id);
+  }
+
   it.each(['Enter', 'blur'] as const)(
     'preserves the exact draft and shared error state after a %s failure',
     async (cause) => {
@@ -1147,29 +1267,11 @@ describe('CenterPanel shared list capture', () => {
       try {
         const input = await openListCapture(container);
         setCaptureDraft(input, '  repair this exact draft  ');
-        if (cause === 'Enter') pressCaptureKey(input, cause);
-        else {
-          input.focus();
-          next.focus();
-        }
+        submitFailedCapture(cause, input, next);
         await flushMicrotasks();
 
-        const current = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input');
         expect(sessionExecute).toHaveBeenCalledOnce();
-        expect(current).toBe(input);
-        expect(current?.value).toBe('  repair this exact draft  ');
-        expect(current?.closest('.abyss-capture-surface')?.classList).toContain('has-error');
-        expect(
-          current
-            ?.closest('.abyss-capture-surface')
-            ?.classList.contains('abyss-capture-surface--inline'),
-        ).toBe(true);
-        expect(current?.getAttribute('aria-invalid')).toBe('true');
-        const error = current
-          ?.closest('.abyss-capture-surface')
-          ?.querySelector<HTMLElement>('.abyss-capture-error');
-        expect(error?.hidden).toBe(false);
-        expect(current?.getAttribute('aria-describedby')).toContain(error?.id);
+        expectFailedCaptureState(container, input);
       } finally {
         panel.destroy();
         container.remove();
@@ -1179,7 +1281,7 @@ describe('CenterPanel shared list capture', () => {
   );
 
   it('remounts the active draft and focus across a full CenterPanel rerender', async () => {
-    const { panel, state, sessionExecute } = captureHarness(async () => captureSuccess());
+    const { panel, state, sessionExecute } = captureHarness(async () => successfulCapture());
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
@@ -1205,20 +1307,28 @@ describe('CenterPanel shared list capture', () => {
   it.each([
     {
       name: 'selected-list',
-      navigate: (state: AppState) => state.set('selectedList', 'inbox'),
-      restore: (state: AppState) => state.set('selectedList', 'today'),
+      navigate: (state: AppState) => {
+        state.set('selectedList', 'inbox');
+      },
+      restore: (state: AppState) => {
+        state.set('selectedList', 'today');
+      },
     },
     {
       name: 'mode',
-      navigate: (state: AppState) => state.set('mode', 'search'),
-      restore: (state: AppState) => state.set('mode', 'tasks'),
+      navigate: (state: AppState) => {
+        state.set('mode', 'search');
+      },
+      restore: (state: AppState) => {
+        state.set('mode', 'tasks');
+      },
     },
   ])(
     'invalidates a deferred list capture after $name navigation',
     async ({ navigate, restore }) => {
       const planned = deferred<TaskCreateSession>();
       const { panel, state, planCreate, sessionExecute } = captureHarness(
-        async () => captureSuccess(),
+        async () => successfulCapture(),
         [],
         () => planned.promise,
       );
@@ -1226,7 +1336,9 @@ describe('CenterPanel shared list capture', () => {
       activeDocument.body.append(container);
       panel.mount(container);
       try {
-        container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')!.click();
+        expectDefined(
+          container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger'),
+        ).click();
         expect(planCreate).toHaveBeenCalledOnce();
 
         navigate(state);
@@ -1250,16 +1362,24 @@ describe('CenterPanel shared list capture', () => {
   it.each([
     {
       name: 'selected-list',
-      navigate: (state: AppState) => state.set('selectedList', 'inbox'),
-      restore: (state: AppState) => state.set('selectedList', 'today'),
+      navigate: (state: AppState) => {
+        state.set('selectedList', 'inbox');
+      },
+      restore: (state: AppState) => {
+        state.set('selectedList', 'today');
+      },
     },
     {
       name: 'mode',
-      navigate: (state: AppState) => state.set('mode', 'search'),
-      restore: (state: AppState) => state.set('mode', 'tasks'),
+      navigate: (state: AppState) => {
+        state.set('mode', 'search');
+      },
+      restore: (state: AppState) => {
+        state.set('mode', 'tasks');
+      },
     },
   ])('detaches an active list capture after $name navigation', async ({ navigate, restore }) => {
-    const { panel, state, sessionExecute } = captureHarness(async () => captureSuccess());
+    const { panel, state, sessionExecute } = captureHarness(async () => successfulCapture());
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
@@ -1293,7 +1413,9 @@ describe('CenterPanel shared list capture', () => {
       pressCaptureKey(before, 'Escape');
       state.set('centerFilter', 'rerender while pending');
 
-      const after = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+      const after = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+      );
       expect(after).not.toBe(before);
       expect(after.readOnly).toBe(true);
       expect(after.value).toBe('pending repair');
@@ -1327,7 +1449,9 @@ describe('CenterPanel shared list capture', () => {
     container.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
     await flushMicrotasks();
     settings.customFilePath = 'changed.md';
-    const input = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+    );
     setCaptureDraft(input, 'frozen target');
     pressCaptureKey(input, 'Enter');
 
@@ -1449,7 +1573,7 @@ describe('CenterPanel.deleteTask', () => {
       DEFAULT_SETTINGS,
       [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 1 }] }],
     );
-    const target = index.list().find((item) => item.title === 'delete me')!;
+    const target = expectDefined(index.list().find((item) => item.title === 'delete me'));
     await call<void>(panel, 'deleteTask', target);
     const content = await readMd(app, 't.md');
     expect(content).toBe('- [ ] keep\n- [ ] keep2');
@@ -1461,7 +1585,7 @@ describe('CenterPanel.deleteTask', () => {
     const { panel, index, app } = await makePanel({ 't.md': content }, DEFAULT_SETTINGS, [
       { path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] },
     ]);
-    const target = index.list()[0]!;
+    const target = expectDefined(index.list()[0]);
     await call<void>(panel, 'deleteTask', target);
     const after = await readMd(app, 't.md');
     expect(after).toBe('- [ ] other');
@@ -1471,7 +1595,7 @@ describe('CenterPanel.deleteTask', () => {
     const { panel, index } = await makePanel({ 't.md': '- [ ] x' }, DEFAULT_SETTINGS, [
       { path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] },
     ]);
-    const original = index.list()[0]!;
+    const original = expectDefined(index.list()[0]);
     const target: TaskSnapshot = {
       ...original,
       ref: { ...original.ref, filePath: 'does-not-exist.md' },
@@ -1484,7 +1608,7 @@ describe('CenterPanel.deleteTask', () => {
     const { panel, state, index } = await makePanel({ 't.md': '- [ ] x' }, DEFAULT_SETTINGS, [
       { path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] },
     ]);
-    const target = index.list()[0]!;
+    const target = expectDefined(index.list()[0]);
     state.set('taskStack', [target]);
     await call<void>(panel, 'deleteTask', target);
     expect(state.get('taskStack')).toEqual([]);
@@ -1492,65 +1616,51 @@ describe('CenterPanel.deleteTask', () => {
 });
 
 describe('CenterPanel.rescheduleTask', () => {
-  it('task with due date → 📅 replaced with targetDate', async () => {
-    const { panel, index, app } = await makePanel(
-      { 't.md': '- [ ] task 📅 2026-06-20' },
-      DEFAULT_SETTINGS,
-      [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] }],
-    );
-    const target = index.list()[0]!;
-    await call<void>(panel, 'rescheduleTask', `${target.source.filePath}:::0`, '2026-06-28');
-    const content = await readMd(app, 't.md');
-    expect(content).toBe('- [ ] task 📅 2026-06-28');
-  });
-
-  it('task with scheduled (no due) → ⏳ replaced with targetDate', async () => {
-    const { panel, index, app } = await makePanel(
-      { 't.md': '- [ ] task ⏳ 2026-06-20' },
-      DEFAULT_SETTINGS,
-      [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] }],
-    );
-    const target = index.list()[0]!;
-    await call<void>(panel, 'rescheduleTask', `${target.source.filePath}:::0`, '2026-06-28');
-    const content = await readMd(app, 't.md');
-    expect(content).toBe('- [ ] task ⏳ 2026-06-28');
-  });
-
-  it('task with no due/scheduled → 📅 targetDate appended', async () => {
-    const { panel, index, app } = await makePanel(
-      { 't.md': '- [ ] plain task' },
-      DEFAULT_SETTINGS,
-      [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] }],
-    );
-    const target = index.list()[0]!;
-    await call<void>(panel, 'rescheduleTask', `${target.source.filePath}:::0`, '2026-06-28');
-    const content = await readMd(app, 't.md');
-    expect(content).toBe('- [ ] plain task 📅 2026-06-28');
-  });
-
-  it('invalid dragData (no ::: separator) → no-op', async () => {
-    const { panel, index, app } = await makePanel(
-      { 't.md': '- [ ] task 📅 2026-06-20' },
-      DEFAULT_SETTINGS,
-      [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] }],
-    );
-    await call<void>(panel, 'rescheduleTask', 'bogus', '2026-06-28');
-    const content = await readMd(app, 't.md');
-    expect(content).toBe('- [ ] task 📅 2026-06-20');
-    expect(index.list()[0]?.planning.due).toBe('2026-06-20');
-  });
-
-  it('task not found in the query index → no-op', async () => {
-    const { panel, index, app } = await makePanel(
-      { 't.md': '- [ ] task 📅 2026-06-20' },
-      DEFAULT_SETTINGS,
-      [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] }],
-    );
-    // Reference a line that doesn't match any parsed task
-    await call<void>(panel, 'rescheduleTask', 't.md:::999', '2026-06-28');
-    const content = await readMd(app, 't.md');
-    expect(content).toBe('- [ ] task 📅 2026-06-20');
-    expect(index.list()[0]?.planning.due).toBe('2026-06-20');
+  it.each([
+    {
+      name: 'task with due date → 📅 replaced with targetDate',
+      source: '- [ ] task 📅 2026-06-20',
+      dragData: 'indexed-task',
+      expected: '- [ ] task 📅 2026-06-28',
+    },
+    {
+      name: 'task with scheduled (no due) → ⏳ replaced with targetDate',
+      source: '- [ ] task ⏳ 2026-06-20',
+      dragData: 'indexed-task',
+      expected: '- [ ] task ⏳ 2026-06-28',
+    },
+    {
+      name: 'task with no due/scheduled → 📅 targetDate appended',
+      source: '- [ ] plain task',
+      dragData: 'indexed-task',
+      expected: '- [ ] plain task 📅 2026-06-28',
+    },
+    {
+      name: 'invalid dragData (no ::: separator) → no-op',
+      source: '- [ ] task 📅 2026-06-20',
+      dragData: 'bogus',
+      expected: '- [ ] task 📅 2026-06-20',
+      expectedDue: '2026-06-20',
+    },
+    {
+      name: 'task not found in the query index → no-op',
+      source: '- [ ] task 📅 2026-06-20',
+      dragData: 't.md:::999',
+      expected: '- [ ] task 📅 2026-06-20',
+      expectedDue: '2026-06-20',
+    },
+  ])('$name', async ({ source, dragData, expected, expectedDue }) => {
+    const { panel, index, app } = await makePanel({ 't.md': source }, DEFAULT_SETTINGS, [
+      { path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] },
+    ]);
+    const target = expectDefined(index.list()[0]);
+    const resolvedDragData =
+      dragData === 'indexed-task' ? `${target.source.filePath}:::0` : dragData;
+    await call<void>(panel, 'rescheduleTask', resolvedDragData, '2026-06-28');
+    expect(await readMd(app, 't.md')).toBe(expected);
+    if (expectedDue !== undefined) {
+      expect(index.list()[0]?.planning.due).toBe(expectedDue);
+    }
   });
 
   // Task 26: dropping a previously-timed block onto the all-day/"No-time" row reuses this
@@ -1563,7 +1673,7 @@ describe('CenterPanel.rescheduleTask', () => {
       DEFAULT_SETTINGS,
       [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] }],
     );
-    const target = index.list()[0]!;
+    const target = expectDefined(index.list()[0]);
     expect(target.planning.time).toBe('09:00');
     await call<void>(panel, 'rescheduleTask', `${target.source.filePath}:::0`, '2026-06-28');
     const content = await readMd(app, 't.md');
@@ -1578,7 +1688,7 @@ describe('CenterPanel.rescheduleTask', () => {
       DEFAULT_SETTINGS,
       [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] }],
     );
-    const target = index.list()[0]!;
+    const target = expectDefined(index.list()[0]);
     await call<void>(panel, 'rescheduleTask', `${target.source.filePath}:::0`, '2026-06-28');
     const content = await readMd(app, 't.md');
     expect(content).toBe('- [ ] task 📅 2026-06-28');
@@ -1590,7 +1700,7 @@ describe('CenterPanel.rescheduleTask', () => {
       DEFAULT_SETTINGS,
       [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] }],
     );
-    const target = index.list()[0]!;
+    const target = expectDefined(index.list()[0]);
     await call<void>(panel, 'rescheduleTask', `${target.source.filePath}:::0`, '2026-06-28');
     const content = await readMd(app, 't.md');
     expect(content).toBe('- [ ] task 📅 2026-06-28');
@@ -1609,12 +1719,12 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     state.set('centerListViewState', {
       groupBy: 'date',
       sortBy: { field: 'date', dir: 'asc' },
-      statusGroups: undefined,
       filters: [],
     });
     const panel = makeStaticPanel(state, tasks);
     const container = freshContainer();
-    void call<void>(panel, 'renderWithGrouping', container, tasks);
+    const renderResult = call<void>(panel, 'renderWithGrouping', container, tasks);
+    if (renderResult instanceof Promise) throw new Error('Expected synchronous grouped rendering');
     return container;
   }
 
@@ -1643,7 +1753,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     ];
     const container = renderWithGroupingByDate(tasks);
     const headers = container.querySelectorAll('.abyss-group-header');
-    const labels = Array.from(headers).map((h) => h.textContent?.trim());
+    const labels = Array.from(headers).map((h) => h.textContent.trim());
     expect(labels).toContain('Overdue  1');
     expect(labels).toContain('Today  1');
     expect(labels).toContain('Tomorrow  1');
@@ -1671,7 +1781,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     ];
     const container = renderWithGroupingByDate(tasks);
     const headers = container.querySelectorAll('.abyss-group-header');
-    const labels = Array.from(headers).map((h) => h.textContent?.trim());
+    const labels = Array.from(headers).map((h) => h.textContent.trim());
     expect(labels).toEqual(['Today  1']);
   });
 
@@ -1679,7 +1789,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     const tasks = [task({ title: 'no date', source: { filePath: 't.md', line: 0 } })];
     const container = renderWithGroupingByDate(tasks);
     const headers = container.querySelectorAll('.abyss-group-header');
-    const labels = Array.from(headers).map((h) => h.textContent?.trim());
+    const labels = Array.from(headers).map((h) => h.textContent.trim());
     expect(labels).toEqual(['No date  1']);
   });
 });
@@ -1692,16 +1802,16 @@ describe('CenterPanel.renderSearch', () => {
   ): void {
     const callbacks = new Map<number, FrameRequestCallback>();
     let nextFrame = 1;
-    const requestAnimationFrame = window.requestAnimationFrame;
-    const cancelAnimationFrame = window.cancelAnimationFrame;
-    window.requestAnimationFrame = ((callback: FrameRequestCallback): number => {
+    const requestAnimationFrame = methodOf(window, 'requestAnimationFrame');
+    const cancelAnimationFrame = methodOf(window, 'cancelAnimationFrame');
+    window.requestAnimationFrame = (callback: FrameRequestCallback): number => {
       const frame = nextFrame++;
       callbacks.set(frame, callback);
       return frame;
-    }) as typeof window.requestAnimationFrame;
-    window.cancelAnimationFrame = ((frame: number): void => {
+    };
+    window.cancelAnimationFrame = (frame: number): void => {
       callbacks.delete(frame);
-    }) as typeof window.cancelAnimationFrame;
+    };
 
     try {
       run(() => {
@@ -1728,7 +1838,9 @@ describe('CenterPanel.renderSearch', () => {
     panel.mount(container);
     panel['navigation'].openSearch();
     vi.runOnlyPendingTimers();
-    const input = panel['el'].querySelector<HTMLInputElement>('.abyss-search-global')!;
+    const input = expectDefined(
+      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
+    );
     const focus = vi.spyOn(panel['el'], 'focus');
     const router = new PanelShortcutRouter({
       ownerDocument,
@@ -1747,8 +1859,9 @@ describe('CenterPanel.renderSearch', () => {
         input.dispatchEvent(new Event('input', { bubbles: true }));
         flush();
       });
-      const resultText =
-        panel['el'].querySelector<HTMLElement>('.abyss-center-scroll')!.textContent;
+      const resultText = expectDefined(
+        panel['el'].querySelector<HTMLElement>('.abyss-center-scroll'),
+      ).textContent;
 
       const escape = new KeyboardEvent('keydown', {
         key: 'Escape',
@@ -1759,9 +1872,9 @@ describe('CenterPanel.renderSearch', () => {
 
       expect(escape.defaultPrevented).toBe(true);
       expect(state.get('searchQuery')).toBe('milk');
-      expect(panel['el'].querySelector<HTMLElement>('.abyss-center-scroll')!.textContent).toBe(
-        resultText,
-      );
+      expect(
+        expectDefined(panel['el'].querySelector<HTMLElement>('.abyss-center-scroll')).textContent,
+      ).toBe(resultText);
       expect(state.get('mode')).toBe('search');
       expect(panel['el'].ownerDocument.activeElement).toBe(panel['el']);
       expect(focus).toHaveBeenCalledWith({ preventScroll: true });
@@ -1791,7 +1904,9 @@ describe('CenterPanel.renderSearch', () => {
     const ownerDocument = container.ownerDocument;
     ownerDocument.body.append(container);
     panel.mount(container);
-    const input = panel['el'].querySelector<HTMLInputElement>('.abyss-search-global')!;
+    const input = expectDefined(
+      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
+    );
 
     try {
       input.focus();
@@ -1891,7 +2006,9 @@ describe('CenterPanel.renderSearch', () => {
     const container = freshContainer();
     document.body.append(container);
     panel.mount(container);
-    const originalInput = panel['el'].querySelector<HTMLInputElement>('.abyss-search-global')!;
+    const originalInput = expectDefined(
+      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
+    );
     originalInput.focus();
     const renderSpy = vi.spyOn(panel as unknown as { render: () => void }, 'render');
     const renderFlatSpy = vi.spyOn(
@@ -1929,7 +2046,9 @@ describe('CenterPanel.renderSearch', () => {
     const container = freshContainer();
     document.body.append(container);
     panel.mount(container);
-    const originalInput = panel['el'].querySelector<HTMLInputElement>('.abyss-search-global')!;
+    const originalInput = expectDefined(
+      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
+    );
     originalInput.focus();
     originalInput.setSelectionRange(1, 3);
     const renderFlatSpy = vi.spyOn(
@@ -1979,15 +2098,19 @@ describe('CenterPanel.renderSearch', () => {
     const container = freshContainer();
     document.body.append(container);
     panel.mount(container);
-    const input = panel['el'].querySelector<HTMLInputElement>('.abyss-search-global')!;
+    const input = expectDefined(
+      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
+    );
 
     withQueuedAnimationFrames((_flush, callbacks) => {
       input.value = 'milk';
       input.dispatchEvent(new Event('input', { bubbles: true }));
       expect(callbacks).toHaveLength(1);
-      const callback = [...callbacks.values()][0]!;
+      const callback = expectDefined([...callbacks.values()][0]);
       state.set('mode', 'projects');
-      expect(() => callback(0)).not.toThrow();
+      expect(() => {
+        callback(0);
+      }).not.toThrow();
     });
 
     expect(panel['el'].querySelector('.abyss-search-global')).toBeNull();
@@ -2005,15 +2128,19 @@ describe('CenterPanel.renderSearch', () => {
     const container = freshContainer();
     document.body.append(container);
     panel.mount(container);
-    const input = panel['el'].querySelector<HTMLInputElement>('.abyss-search-global')!;
+    const input = expectDefined(
+      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
+    );
 
     withQueuedAnimationFrames((_flush, callbacks) => {
       input.value = 'milk';
       input.dispatchEvent(new Event('input', { bubbles: true }));
       expect(callbacks).toHaveLength(1);
-      const callback = [...callbacks.values()][0]!;
+      const callback = expectDefined([...callbacks.values()][0]);
       panel.destroy();
-      expect(() => callback(0)).not.toThrow();
+      expect(() => {
+        callback(0);
+      }).not.toThrow();
     });
 
     expect(panel['el'].childElementCount).toBe(0);
@@ -2031,16 +2158,17 @@ describe('CenterPanel.renderSearch', () => {
     state.set('searchQuery', 'milk');
     const panel = makeStaticPanel(state, [t]);
     panel.mount(freshContainer());
-    const card = panel['el'].querySelector<HTMLElement>('.abyss-task-card')!;
+    const card = expectDefined(panel['el'].querySelector<HTMLElement>('.abyss-task-card'));
     card.click();
     expect(state.get('mode')).toBe('tasks');
     expect(state.get('selectedList')).toBe('today');
-    expect(state.get('taskStack')).toEqual([
-      expect.objectContaining({
-        ref: expect.objectContaining({ filePath: t.ref.filePath, line: t.ref.line }),
-        title: t.title,
-      }),
-    ]);
+    const taskStack = state.get('taskStack');
+    expect(taskStack).toHaveLength(1);
+    const selected = expectDefined(taskStack[0]);
+    if (!('filePath' in selected.ref)) throw new Error('expected a root task selection');
+    expect(selected.ref.filePath).toBe(t.ref.filePath);
+    expect(selected.ref.line).toBe(t.ref.line);
+    expect(selected.title).toBe(t.title);
     panel.destroy();
   });
 
@@ -2051,7 +2179,7 @@ describe('CenterPanel.renderSearch', () => {
     state.set('searchQuery', 'daily');
     const panel = makeStaticPanel(state, [t]);
     panel.mount(freshContainer());
-    panel['el'].querySelector<HTMLElement>('.abyss-task-card')!.click();
+    expectDefined(panel['el'].querySelector<HTMLElement>('.abyss-task-card')).click();
     expect(state.get('selectedList')).toBe('inbox');
     panel.destroy();
   });
@@ -2138,7 +2266,7 @@ describe('CenterPanel source note chip', () => {
     const panel = makeSearchPanel([t], { sourceNoteDisplay: 'always' });
     const meta = panel['el'].querySelector('.abyss-task-meta-right');
     expect(meta).not.toBeNull();
-    const children = Array.from(meta!.children);
+    const children = Array.from(expectDefined(meta).children);
     const noteIdx = children.findIndex((el) => el.classList.contains('abyss-task-source-note'));
     const tagIdx = children.findIndex((el) => el.classList.contains('abyss-task-tag'));
     expect(noteIdx).toBeGreaterThanOrEqual(0);
@@ -2166,7 +2294,7 @@ describe('CenterPanel project selection', () => {
     const { panel, state } = await makePanel(files, DEFAULT_SETTINGS, seeds);
     state.set('selectedList', { type: 'project', path: 'Projects/A.md' });
     const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks') as TaskSnapshot[];
-    expect(tasks.length).toBe(2);
+    expect(tasks).toHaveLength(2);
     expect(tasks.every((item) => item.source.filePath === 'Projects/A.md')).toBe(true);
     expect(call<string>(panel, 'getTitle')).toBe('A');
   });
@@ -2291,7 +2419,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       name: 'A',
       frontmatter: {},
       tags: [],
-      statusId: DEFAULT_SETTINGS.projects.statuses[0]!.id,
+      statusId: expectDefined(DEFAULT_SETTINGS.projects.statuses[0]).id,
       rawStatus: null,
       stats: { total: 1, done: 0, cancelled: 0, inProgress: 0 },
     };
@@ -2335,7 +2463,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     state.set('mode', 'projects');
     // Back to tasks with a tag selection.
     state.set('selectedList', { type: 'tag', tag: '#work' });
-    state.set('mode', 'tasks');
+    returnToTasksMode(state);
     expect(el.classList.contains('abyss-projects-panel')).toBe(false);
     expect(el.classList.contains('abyss-center--projects')).toBe(false);
     expect(el.querySelector('.abyss-projects-host')).toBeNull();
@@ -2348,7 +2476,9 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     const { panel, container, sessionExecute } = await projectCaptureHarness();
     const next = activeDocument.body.createEl('button', { text: 'Next project control' });
     try {
-      const trigger = container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')!;
+      const trigger = expectDefined(
+        container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger'),
+      );
       const escaped = await openListCapture(container);
       escaped.focus();
       pressCaptureKey(escaped, 'Escape');
@@ -2431,9 +2561,11 @@ describe('CenterPanel projects mode teardown (regression)', () => {
   it('opens project inline capture without adding a visual bar row or moving its task scroll', async () => {
     const { panel, container } = await projectCaptureHarness();
     try {
-      const scroll = container.querySelector<HTMLElement>('.abyss-project-tasks-scroll')!;
-      const card = scroll.querySelector<HTMLElement>('.abyss-task-card')!;
-      const bar = container.querySelector<HTMLElement>('.abyss-add-task-bar')!;
+      const scroll = expectDefined(
+        container.querySelector<HTMLElement>('.abyss-project-tasks-scroll'),
+      );
+      const card = expectDefined(scroll.querySelector<HTMLElement>('.abyss-task-card'));
+      const bar = expectDefined(container.querySelector<HTMLElement>('.abyss-add-task-bar'));
       scroll.scrollTop = 29;
       const rectForCurrentBar = (): DOMRect => {
         const visibleRows = visibleChildren(bar).length;
@@ -2447,7 +2579,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
           width: 100,
           height: 20,
           toJSON: () => ({}),
-        } as DOMRect;
+        };
       };
       vi.spyOn(card, 'getBoundingClientRect').mockImplementation(rectForCurrentBar);
       const beforeTop = card.getBoundingClientRect().top;
@@ -2494,7 +2626,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       name: 'A',
       frontmatter: {},
       tags: [],
-      statusId: DEFAULT_SETTINGS.projects.statuses[0]!.id,
+      statusId: expectDefined(DEFAULT_SETTINGS.projects.statuses[0]).id,
       rawStatus: null,
       stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
     };
@@ -2524,7 +2656,9 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     try {
       state.set('mode', 'projects');
       const first = await openListCapture(container);
-      const trigger = container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')!;
+      const trigger = expectDefined(
+        container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger'),
+      );
       expect(trigger.isConnected).toBe(true);
       expect(trigger.hidden).toBe(true);
       expect(
@@ -2540,7 +2674,9 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       expect(container.querySelector('.abyss-quick-capture-input')).toBe(first);
 
       state.set('centerFilter', 'force project rerender');
-      const remounted = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+      const remounted = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+      );
       expect(remounted).not.toBe(first);
       expect(activeDocument.activeElement).toBe(remounted);
       setCaptureDraft(remounted, 'second project task');
@@ -2642,33 +2778,32 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
 
     state.set('mode', 'calendar');
 
-    const forecastBadge = el.querySelector<HTMLElement>("[data-recurrence-forecast='true']");
-    expect(forecastBadge).not.toBeNull();
-    const item = forecastBadge?.parentElement;
-    expect(item?.getAttribute('draggable')).toBeNull();
+    const forecastBadge = expectDefined(
+      el.querySelector<HTMLElement>("[data-recurrence-forecast='true']"),
+    );
+    const item = expectDefined(forecastBadge.parentElement);
+    expect(item.getAttribute('draggable')).toBeNull();
     item
-      ?.querySelector<HTMLElement>('.abyss-status-marker')
+      .querySelector<HTMLElement>('.abyss-status-marker')
       ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(execute).not.toHaveBeenCalled();
 
     clickCalendarView(el, 'Day');
-    const timedForecastBadge = el.querySelector<HTMLElement>(
-      ".abyss-tg-block [data-recurrence-forecast='true']",
+    const timedForecastBadge = expectDefined(
+      el.querySelector<HTMLElement>(".abyss-tg-block [data-recurrence-forecast='true']"),
     );
-    expect(timedForecastBadge).not.toBeNull();
-    const timedBlock = timedForecastBadge?.closest<HTMLElement>('.abyss-tg-block');
-    expect(timedBlock?.querySelector('.abyss-status-marker')).toBeNull();
-    expect(timedBlock?.getAttribute('tabindex')).toBeNull();
-    expect(timedBlock?.querySelector('[data-resize-edge]')).toBeNull();
-    timedBlock?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const timedBlock = expectDefined(timedForecastBadge.closest<HTMLElement>('.abyss-tg-block'));
+    expect(timedBlock.querySelector('.abyss-status-marker')).toBeNull();
+    expect(timedBlock.getAttribute('tabindex')).toBeNull();
+    expect(timedBlock.querySelector('[data-resize-edge]')).toBeNull();
+    timedBlock.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(execute).not.toHaveBeenCalled();
-    const spanBadge = el.querySelector<HTMLElement>(
-      ".abyss-tg-body [data-recurrence-forecast='true']",
+    const spanBadge = expectDefined(
+      el.querySelector<HTMLElement>(".abyss-tg-body [data-recurrence-forecast='true']"),
     );
-    const spanBody = spanBadge?.closest<HTMLElement>('.abyss-tg-body');
-    expect(spanBody).not.toBeNull();
-    expect(spanBody?.getAttribute('draggable')).toBeNull();
-    expect(spanBody?.querySelector('[data-resize-edge]')).toBeNull();
+    const spanBody = expectDefined(spanBadge.closest<HTMLElement>('.abyss-tg-body'));
+    expect(spanBody.getAttribute('draggable')).toBeNull();
+    expect(spanBody.querySelector('[data-resize-edge]')).toBeNull();
     panel.destroy();
   });
 
@@ -2827,7 +2962,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const cell = el.querySelector(
       '.abyss-mg-cell:not(.is-outside-month)[data-mg-date]',
     ) as HTMLElement;
-    const date = cell.getAttribute('data-mg-date')!;
+    const date = expectDefined(cell.getAttribute('data-mg-date'));
     cell.click();
     // A single day column for the clicked date — not a 7-column week — confirms Today, not Week.
     const columns = el.querySelectorAll('.abyss-tg-day-column');
@@ -2880,7 +3015,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       const openHarness = async () => {
         const harness = await makeCalendarPanel();
         activeDocument.body.append(harness.el);
-        const anchor = harness.el.querySelector<HTMLElement>(anchorSelector)!;
+        const anchor = expectDefined(harness.el.querySelector<HTMLElement>(anchorSelector));
         anchor.click();
         expect(anchor.getAttribute('aria-expanded')).toBe('true');
         await flushMicrotasks();
@@ -2896,9 +3031,11 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
 
       try {
         const selected = await openHarness();
-        selected.el.querySelector<HTMLElement>(`${pickerSelector} ${optionSelector}`)!.click();
+        expectDefined(
+          selected.el.querySelector<HTMLElement>(`${pickerSelector} ${optionSelector}`),
+        ).click();
         expect(selected.anchor.getAttribute('aria-expanded')).toBe('false');
-        expect(wasRemoved(selected.registration!)).toBe(true);
+        expect(wasRemoved(expectDefined(selected.registration))).toBe(true);
         selected.panel.destroy();
         selected.el.remove();
 
@@ -2906,14 +3043,14 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         toggled.anchor.click();
         expect(toggled.el.querySelector(pickerSelector)).toBeNull();
         expect(toggled.anchor.getAttribute('aria-expanded')).toBe('false');
-        expect(wasRemoved(toggled.registration!)).toBe(true);
+        expect(wasRemoved(expectDefined(toggled.registration))).toBe(true);
         toggled.panel.destroy();
         toggled.el.remove();
 
         const destroyed = await openHarness();
         destroyed.panel.destroy();
         expect(destroyed.anchor.getAttribute('aria-expanded')).toBe('false');
-        expect(wasRemoved(destroyed.registration!)).toBe(true);
+        expect(wasRemoved(expectDefined(destroyed.registration))).toBe(true);
         destroyed.el.remove();
       } finally {
         addSpy.mockRestore();
@@ -2933,8 +3070,8 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         const { panel, el } = await makeCalendarPanel();
         activeDocument.body.append(el);
         addSpy.mockClear();
-        el.querySelector<HTMLElement>(anchorSelector)!.click();
-        el.querySelector<HTMLElement>(optionSelector)!.click();
+        expectDefined(el.querySelector<HTMLElement>(anchorSelector)).click();
+        expectDefined(el.querySelector<HTMLElement>(optionSelector)).click();
         await flushMicrotasks();
 
         expect(addSpy.mock.calls.some(([type]) => type === 'click')).toBe(false);
@@ -2960,15 +3097,17 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       try {
         ({ panel, el } = await makeCalendarPanel());
         activeDocument.body.append(el);
-        const anchor = el.querySelector<HTMLElement>(anchorSelector)!;
+        const anchor = expectDefined(el.querySelector<HTMLElement>(anchorSelector));
         expect(anchor.getAttribute('aria-haspopup')).toBe('dialog');
         expect(anchor.getAttribute('aria-expanded')).toBe('false');
         anchor.focus();
         anchor.click();
         expect(anchor.getAttribute('aria-expanded')).toBe('true');
 
-        const picker = el.querySelector<HTMLElement>(pickerSelector)!;
-        const selected = picker.querySelector<HTMLElement>(`${optionSelector}.is-active`)!;
+        const picker = expectDefined(el.querySelector<HTMLElement>(pickerSelector));
+        const selected = expectDefined(
+          picker.querySelector<HTMLElement>(`${optionSelector}.is-active`),
+        );
         expect(selected).not.toBeNull();
         expect(picker.getAttribute('role')).toBe('dialog');
         expect(picker.getAttribute('aria-modal')).toBe('false');
@@ -2996,10 +3135,10 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         expect(activeDocument.activeElement).toBe(anchor);
 
         anchor.click();
-        const reopenedPicker = el.querySelector<HTMLElement>(pickerSelector)!;
-        const reopenedSelected = reopenedPicker.querySelector<HTMLElement>(
-          `${optionSelector}.is-active`,
-        )!;
+        const reopenedPicker = expectDefined(el.querySelector<HTMLElement>(pickerSelector));
+        const reopenedSelected = expectDefined(
+          reopenedPicker.querySelector<HTMLElement>(`${optionSelector}.is-active`),
+        );
         expect(activeDocument.activeElement).toBe(reopenedSelected);
         reopenedSelected.click();
         expect(el.querySelector(pickerSelector)).toBeNull();
@@ -3042,7 +3181,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     expect(popover).not.toBeNull();
     expect(document.querySelector('.modal')).toBeNull();
 
-    const flagBtn = popover!.querySelector(
+    const flagBtn = expectDefined(popover).querySelector(
       '.abyss-status-popover-flag[data-abyss-priority="A"]',
     ) as HTMLElement;
     expect(flagBtn).not.toBeNull();
@@ -3054,34 +3193,26 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
   });
 });
 
+async function makeReactiveCalendarPanel(): Promise<{
+  panel: CenterPanel;
+  state: AppState;
+  index: TaskQueryApi;
+  tasks: TaskApplicationApi;
+  el: HTMLElement;
+  app: App;
+}> {
+  const { panel, state, index, tasks, app } = await makePanel(
+    { 't.md': `- [ ] task 📅 ${TODAY}` },
+    DEFAULT_SETTINGS,
+    [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] }],
+  );
+  const el = freshContainer();
+  panel.mount(el);
+  state.set('mode', 'calendar');
+  return { panel, state, index, tasks, el, app };
+}
+
 describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
-  async function makeCalendarPanel(): Promise<{
-    panel: CenterPanel;
-    state: AppState;
-    index: TaskQueryApi;
-    tasks: TaskApplicationApi;
-    el: HTMLElement;
-    app: App;
-  }> {
-    const { panel, state, index, tasks, app } = await makePanel(
-      { 't.md': `- [ ] task 📅 ${TODAY}` },
-      DEFAULT_SETTINGS,
-      [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] }],
-    );
-    const el = freshContainer();
-    panel.mount(el);
-    state.set('mode', 'calendar');
-    return { panel, state, index, tasks, el, app };
-  }
-
-  function clickViewBtn(el: HTMLElement, label: 'Day' | 'Week' | 'Month'): void {
-    (
-      Array.from(el.querySelectorAll('.abyss-cal-view-btn')).find(
-        (b) => b.textContent === label,
-      ) as HTMLElement
-    ).click();
-  }
-
   function lastShouldScrollToNow(spy: { mock: { calls: unknown[][] } }): unknown {
     const calls = spy.mock.calls;
     const lastCall = calls[calls.length - 1];
@@ -3090,8 +3221,8 @@ describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
 
   it('switching into Week view for the first time scrolls (shouldScrollToNow=true)', async () => {
     const renderSpy = vi.spyOn(WeekTimeGridView.prototype, 'render');
-    const { el } = await makeCalendarPanel();
-    clickViewBtn(el, 'Week');
+    const { el } = await makeReactiveCalendarPanel();
+    clickCalendarView(el, 'Week');
     expect(lastShouldScrollToNow(renderSpy)).toBe(true);
     renderSpy.mockRestore();
   });
@@ -3099,12 +3230,12 @@ describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
   it('a reactive task-index update patches the same view/date without rendering or scrolling again', async () => {
     const renderSpy = vi.spyOn(WeekTimeGridView.prototype, 'render');
     const patchSpy = vi.spyOn(WeekTimeGridView.prototype, 'patch');
-    const { el, index, tasks } = await makeCalendarPanel();
-    clickViewBtn(el, 'Week');
+    const { el, index, tasks } = await makeReactiveCalendarPanel();
+    clickCalendarView(el, 'Week');
     expect(lastShouldScrollToNow(renderSpy)).toBe(true);
     const renderCalls = renderSpy.mock.calls.length;
 
-    const seededTask = index.list({ filePath: 't.md' })[0]!;
+    const seededTask = expectDefined(index.list({ filePath: 't.md' })[0]);
     await tasks.execute({
       type: 'toggle-completion',
       target: { type: 'task', ref: seededTask.ref },
@@ -3120,15 +3251,15 @@ describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
   it('switching view type (Week -> Day -> Week) scrolls again each time, since it is a new pair', async () => {
     const weekSpy = vi.spyOn(WeekTimeGridView.prototype, 'render');
     const todaySpy = vi.spyOn(TodayView.prototype, 'render');
-    const { el } = await makeCalendarPanel();
+    const { el } = await makeReactiveCalendarPanel();
 
-    clickViewBtn(el, 'Week');
+    clickCalendarView(el, 'Week');
     expect(lastShouldScrollToNow(weekSpy)).toBe(true);
 
-    clickViewBtn(el, 'Day');
+    clickCalendarView(el, 'Day');
     expect(lastShouldScrollToNow(todaySpy)).toBe(true);
 
-    clickViewBtn(el, 'Week');
+    clickCalendarView(el, 'Week');
     expect(lastShouldScrollToNow(weekSpy)).toBe(true);
 
     weekSpy.mockRestore();
@@ -3137,8 +3268,8 @@ describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
 
   it('navigating to a different date (next week) scrolls again, since it is a new pair', async () => {
     const renderSpy = vi.spyOn(WeekTimeGridView.prototype, 'render');
-    const { el } = await makeCalendarPanel();
-    clickViewBtn(el, 'Week');
+    const { el } = await makeReactiveCalendarPanel();
+    clickCalendarView(el, 'Week');
     expect(lastShouldScrollToNow(renderSpy)).toBe(true);
 
     const nextBtn = el.querySelector('.abyss-cal-nav-btn[aria-label="Next"]') as HTMLElement;
@@ -3150,13 +3281,13 @@ describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
   });
 
   it("Round 2 Task 16's periodic now-line interval remains registered across a query patch", async () => {
-    const { el, index, tasks } = await makeCalendarPanel();
-    clickViewBtn(el, 'Week');
+    const { el, index, tasks } = await makeReactiveCalendarPanel();
+    clickCalendarView(el, 'Week');
 
     const setIntervalSpy = vi.spyOn(window, 'setInterval');
     const clearIntervalSpy = vi.spyOn(window, 'clearInterval');
 
-    const seededTask = index.list({ filePath: 't.md' })[0]!;
+    const seededTask = expectDefined(index.list({ filePath: 't.md' })[0]);
     await tasks.execute({
       type: 'toggle-completion',
       target: { type: 'task', ref: seededTask.ref },
@@ -3172,36 +3303,9 @@ describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
 });
 
 describe('CenterPanel calendar mode — preserve scroll position across reactive re-render (Task 31)', () => {
-  async function makeCalendarPanel(): Promise<{
-    panel: CenterPanel;
-    state: AppState;
-    index: TaskQueryApi;
-    tasks: TaskApplicationApi;
-    el: HTMLElement;
-    app: App;
-  }> {
-    const { panel, state, index, tasks, app } = await makePanel(
-      { 't.md': `- [ ] task 📅 ${TODAY}` },
-      DEFAULT_SETTINGS,
-      [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] }],
-    );
-    const el = freshContainer();
-    panel.mount(el);
-    state.set('mode', 'calendar');
-    return { panel, state, index, tasks, el, app };
-  }
-
-  function clickViewBtn(el: HTMLElement, label: 'Day' | 'Week' | 'Month'): void {
-    (
-      Array.from(el.querySelectorAll('.abyss-cal-view-btn')).find(
-        (b) => b.textContent === label,
-      ) as HTMLElement
-    ).click();
-  }
-
   it('patches only the task layer on a query notification while retaining the calendar skeleton, view instance, and scroll position', async () => {
-    const { panel, el, index, tasks } = await makeCalendarPanel();
-    clickViewBtn(el, 'Week');
+    const { panel, el, index, tasks } = await makeReactiveCalendarPanel();
+    clickCalendarView(el, 'Week');
     await flushMicrotasks();
 
     const nav = el.querySelector('.abyss-cal-nav');
@@ -3214,13 +3318,13 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
     const taskNode = el.querySelector('.abyss-tg-plain');
     const viewInstance = (
       panel as unknown as {
-        calViewInstance: TodayView | WeekTimeGridView | null;
+        calViewInstance: TimeGridViewInstance;
       }
     ).calViewInstance;
     expect(gridRowEl).not.toBeNull();
     gridRowEl.scrollTop = 777;
 
-    const seededTask = index.list({ filePath: 't.md' })[0]!;
+    const seededTask = expectDefined(index.list({ filePath: 't.md' })[0]);
     await tasks.execute({
       type: 'toggle-completion',
       target: { type: 'task', ref: seededTask.ref },
@@ -3232,7 +3336,7 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
     expect(
       (
         panel as unknown as {
-          calViewInstance: TodayView | WeekTimeGridView | null;
+          calViewInstance: TimeGridViewInstance;
         }
       ).calViewInstance,
     ).toBe(viewInstance);
@@ -3246,15 +3350,15 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
   });
 
   it('a genuine navigation to a new view/date (Week -> Day) does not inherit the stale prior scroll position', async () => {
-    const { el } = await makeCalendarPanel();
-    clickViewBtn(el, 'Week');
+    const { el } = await makeReactiveCalendarPanel();
+    clickCalendarView(el, 'Week');
 
     const gridRowEl = el.querySelector('.abyss-tg-grid-row') as HTMLElement;
     gridRowEl.scrollTop = 777;
 
     // Genuine navigation: switching view type is a new (viewType, date) pair, so
     // shouldScrollToNow is true here and must take priority over any stale prior scrollTop.
-    clickViewBtn(el, 'Day');
+    clickCalendarView(el, 'Day');
 
     const newGridRowEl = el.querySelector('.abyss-tg-grid-row') as HTMLElement;
     expect(newGridRowEl).not.toBeNull();
@@ -3264,11 +3368,11 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
   });
 
   it('switching from Month (no grid-row) into Week does not error and scrolls to now as a fresh navigation', async () => {
-    const { el } = await makeCalendarPanel();
+    const { el } = await makeReactiveCalendarPanel();
     // Default calViewType is 'month' — no `.abyss-tg-grid-row` exists yet.
     expect(el.querySelector('.abyss-tg-grid-row')).toBeNull();
 
-    clickViewBtn(el, 'Week');
+    clickCalendarView(el, 'Week');
     const gridRowEl = el.querySelector('.abyss-tg-grid-row') as HTMLElement;
     expect(gridRowEl).not.toBeNull();
   });
@@ -3297,22 +3401,11 @@ describe('CenterPanel calendar mode — click-to-create', () => {
 
   type CalendarCaptureKind = 'month' | 'timed' | 'all-day';
 
-  function calendarCaptureSuccess(title = 'Captured'): TaskCommandResult {
-    return {
-      type: 'ok',
-      changed: true,
-      outcome: {
-        type: 'task',
-        task: task({ title, source: { filePath: 'Capture.md', line: 0 } }),
-      },
-    };
-  }
-
   function sharedCalendarCaptureHarness(implementation: () => Promise<TaskCommandResult>): {
     readonly panel: CenterPanel;
     readonly el: HTMLElement;
-    readonly planCreate: ReturnType<typeof vi.fn>;
-    readonly sessionExecute: ReturnType<typeof vi.fn>;
+    readonly planCreate: Mock<TaskCaptureApplicationApi['planCreate']>;
+    readonly sessionExecute: Mock<TaskCreateSession['execute']>;
     emitQueryChange(): void;
   } {
     const listeners = new Set<(event: TaskIndexEvent) => void>();
@@ -3322,8 +3415,8 @@ describe('CenterPanel calendar mode — click-to-create', () => {
         return () => listeners.delete(listener);
       },
     });
-    const sessionExecute = vi.fn(implementation);
-    const planCreate = vi.fn(async () => ({
+    const sessionExecute = vi.fn<TaskCreateSession['execute']>(implementation);
+    const planCreate = vi.fn<TaskCaptureApplicationApi['planCreate']>(async () => ({
       type: 'ready' as const,
       destination: { filePath: 'Capture.md', insertion: { type: 'append' as const } },
       execute: sessionExecute,
@@ -3388,21 +3481,25 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     let date: string;
     let time: string | undefined;
     if (kind === 'month') {
-      const cell = el.querySelector<HTMLElement>(
-        '.abyss-mg-cell:not(.is-outside-month)[data-mg-date]',
-      )!;
-      date = cell.dataset['mgDate']!;
-      cell.querySelector<HTMLElement>('.abyss-mg-add-btn')!.click();
+      const cell = expectDefined(
+        el.querySelector<HTMLElement>('.abyss-mg-cell:not(.is-outside-month)[data-mg-date]'),
+      );
+      date = expectDefined(cell.dataset['mgDate']);
+      expectDefined(cell.querySelector<HTMLElement>('.abyss-mg-add-btn')).click();
       wrapperSelector = '.abyss-mg-quick-add';
     } else if (kind === 'all-day') {
-      const cell = el.querySelector<HTMLElement>('.abyss-tg-allday-cell[data-tg-date]')!;
-      date = cell.dataset['tgDate']!;
+      const cell = expectDefined(
+        el.querySelector<HTMLElement>('.abyss-tg-allday-cell[data-tg-date]'),
+      );
+      date = expectDefined(cell.dataset['tgDate']);
       cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       wrapperSelector = '.abyss-tg-allday-quick-add';
     } else {
-      const day = el.querySelector<HTMLElement>('.abyss-tg-day-column[data-tg-date]')!;
-      const hourColumn = day.querySelector<HTMLElement>('.abyss-tg-hour-column')!;
-      date = day.dataset['tgDate']!;
+      const day = expectDefined(
+        el.querySelector<HTMLElement>('.abyss-tg-day-column[data-tg-date]'),
+      );
+      const hourColumn = expectDefined(day.querySelector<HTMLElement>('.abyss-tg-hour-column'));
+      date = expectDefined(day.dataset['tgDate']);
       time = '10:00';
       vi.spyOn(hourColumn, 'getBoundingClientRect').mockReturnValue({
         top: 0,
@@ -3413,9 +3510,9 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     }
 
     await flushMicrotasks();
-    const wrapper = el.querySelector<HTMLElement>(wrapperSelector)!;
-    const input = wrapper?.querySelector<HTMLInputElement>('.abyss-capture-input');
-    if (!wrapper || !input) throw new Error(`${kind} shared capture did not open`);
+    const wrapper = expectDefined(el.querySelector<HTMLElement>(wrapperSelector));
+    const input = wrapper.querySelector<HTMLInputElement>('.abyss-capture-input');
+    if (input == null) throw new Error(`${kind} shared capture did not open`);
     return { input, wrapper, date, ...(time !== undefined && { time }) };
   }
 
@@ -3423,7 +3520,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     '%s capture freezes its date/time and keeps one session across consecutive Enter successes',
     async (kind) => {
       const { panel, el, planCreate, sessionExecute } = sharedCalendarCaptureHarness(async () =>
-        calendarCaptureSuccess(),
+        successfulCapture(),
       );
       try {
         const opened = await openCalendarCapture(el, kind);
@@ -3436,8 +3533,8 @@ describe('CenterPanel calendar mode — click-to-create', () => {
 
         // Change the live DOM metadata after open: the capture request must retain the
         // placement that was selected when its controller/session was created.
-        if (kind === 'month') positionedParent!.dataset['mgDate'] = '2099-12-31';
-        else positionedParent!.dataset['tgDate'] = '2099-12-31';
+        if (kind === 'month') expectDefined(positionedParent).dataset['mgDate'] = '2099-12-31';
+        else expectDefined(positionedParent).dataset['tgDate'] = '2099-12-31';
 
         setCaptureDraft(opened.input, 'first calendar task');
         pressCaptureKey(opened.input, 'Enter');
@@ -3473,7 +3570,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
   );
 
   it('gives explicit calendar placements truthful labels and due/time values', () => {
-    const { panel, el } = sharedCalendarCaptureHarness(async () => calendarCaptureSuccess());
+    const { panel, el } = sharedCalendarCaptureHarness(async () => successfulCapture());
     const calendarTarget: CaptureTarget = {
       label: 'Today · today',
       context: { type: 'default', source: 'calendar' },
@@ -3529,14 +3626,16 @@ describe('CenterPanel calendar mode — click-to-create', () => {
       const { panel, el } = sharedCalendarCaptureHarness(() => result.promise);
       try {
         const opened = await openCalendarCapture(el, kind);
-        const feedback = el.querySelector<HTMLElement>('.abyss-calendar-capture-feedback')!;
+        const feedback = expectDefined(
+          el.querySelector<HTMLElement>('.abyss-calendar-capture-feedback'),
+        );
         expect(feedback).not.toBeNull();
         expect(opened.wrapper.contains(feedback)).toBe(false);
         expect(feedback.querySelector('.abyss-capture-destination')).not.toBeNull();
         expect(feedback.querySelector('.abyss-capture-pending')).not.toBeNull();
         expect(feedback.querySelector('.abyss-capture-error')).not.toBeNull();
         expect(opened.input.getAttribute('aria-describedby')).toContain(
-          feedback.querySelector<HTMLElement>('.abyss-capture-destination')!.id,
+          expectDefined(feedback.querySelector<HTMLElement>('.abyss-capture-destination')).id,
         );
 
         setCaptureDraft(opened.input, 'pending calendar task');
@@ -3562,9 +3661,9 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     '%s capture remounts pending/error state for query and full rerenders without updating the stale surface',
     async (kind) => {
       const result = deferred<TaskCommandResult>();
-      const { panel, el, sessionExecute, emitQueryChange } = sharedCalendarCaptureHarness(
-        () => result.promise,
-      );
+      const captureHarness = sharedCalendarCaptureHarness(() => result.promise);
+      const { panel, el, sessionExecute } = captureHarness;
+      const emitQueryChange = methodOf(captureHarness, 'emitQueryChange');
       try {
         const opened = await openCalendarCapture(el, kind);
         setCaptureDraft(opened.input, 'repair this calendar task');
@@ -3574,7 +3673,9 @@ describe('CenterPanel calendar mode — click-to-create', () => {
         expect(opened.input.readOnly).toBe(true);
 
         emitQueryChange();
-        const afterQuery = el.querySelector<HTMLInputElement>('.abyss-capture-input')!;
+        const afterQuery = expectDefined(
+          el.querySelector<HTMLInputElement>('.abyss-capture-input'),
+        );
         expect(afterQuery).not.toBe(opened.input);
         expect(opened.input.isConnected).toBe(false);
         expect(afterQuery.value).toBe('repair this calendar task');
@@ -3592,7 +3693,9 @@ describe('CenterPanel calendar mode — click-to-create', () => {
         expect(afterQuery.closest('.abyss-capture-surface')?.classList).toContain('has-error');
 
         panel.refresh();
-        const afterFullRender = el.querySelector<HTMLInputElement>('.abyss-capture-input')!;
+        const afterFullRender = expectDefined(
+          el.querySelector<HTMLInputElement>('.abyss-capture-input'),
+        );
         expect(afterFullRender).not.toBe(afterQuery);
         expect(afterQuery.isConnected).toBe(false);
         expect(afterFullRender.value).toBe('repair this calendar task');
@@ -3608,7 +3711,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     'destroying an idle %s capture does not synthesize a blur submission',
     async (kind) => {
       const { panel, el, sessionExecute } = sharedCalendarCaptureHarness(async () =>
-        calendarCaptureSuccess(),
+        successfulCapture(),
       );
       const opened = await openCalendarCapture(el, kind);
       setCaptureDraft(opened.input, 'must not submit during teardown');
@@ -3635,7 +3738,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
         calViewInstance: TodayView | WeekTimeGridView | null;
       }
     ).calViewInstance;
-    const date = cell.getAttribute('data-mg-date')!;
+    const date = expectDefined(cell.getAttribute('data-mg-date'));
     const addBtn = cell.querySelector('.abyss-mg-add-btn') as HTMLElement;
     addBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await flushMicrotasks();
@@ -3691,9 +3794,9 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     ).click();
 
     const hourColumnEl = el.querySelector('.abyss-tg-hour-column') as HTMLElement;
-    const date = (el.querySelector('.abyss-tg-day-column') as HTMLElement).getAttribute(
-      'data-tg-date',
-    )!;
+    const date = expectDefined(
+      (el.querySelector('.abyss-tg-day-column') as HTMLElement).getAttribute('data-tg-date'),
+    );
     vi.spyOn(hourColumnEl, 'getBoundingClientRect').mockReturnValue({
       top: 0,
       left: 0,
@@ -3742,9 +3845,9 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     ).click();
 
     const alldayCell = el.querySelector('.abyss-tg-allday-cell') as HTMLElement;
-    const date = (el.querySelector('.abyss-tg-day-column') as HTMLElement).getAttribute(
-      'data-tg-date',
-    )!;
+    const date = expectDefined(
+      (el.querySelector('.abyss-tg-day-column') as HTMLElement).getAttribute('data-tg-date'),
+    );
     alldayCell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await flushMicrotasks();
 
@@ -3767,7 +3870,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     ).click();
 
     const alldayCell = el.querySelector('.abyss-tg-allday-cell') as HTMLElement;
-    const date = alldayCell.getAttribute('data-tg-date')!;
+    const date = expectDefined(alldayCell.getAttribute('data-tg-date'));
     alldayCell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await flushMicrotasks();
 
@@ -3816,11 +3919,13 @@ function deferredResult(): {
 }
 
 function keyboardSnapshot(
-  date: string,
-  time = '09:00',
-  filePath = 'Folder/[qa] "task".md',
-  revision = 'revision-1',
-  line = 0,
+  ...[
+    date,
+    time = '09:00',
+    filePath = 'Folder/[qa] "task".md',
+    revision = 'revision-1',
+    line = 0,
+  ]: readonly [date: string, time?: string, filePath?: string, revision?: string, line?: number]
 ): TaskSnapshot {
   return task({
     ref: { filePath, line, revision },
@@ -3870,8 +3975,7 @@ function keyboardPanelHarness(
     null,
     tasks,
   );
-  const el = ownerDocument.createElement('div');
-  ownerDocument.body.append(el);
+  const el = ownerDocument.body.createDiv();
   panel.mount(el);
   state.set('mode', 'calendar');
   return {
@@ -3890,20 +3994,26 @@ function keyboardPanelHarness(
   };
 }
 
-function clickCalendarView(el: HTMLElement, label: 'Day' | 'Week' | 'Month'): void {
+function clickCalendarView(el: HTMLElement, label: CalendarViewLabel): void {
   const button = Array.from(el.querySelectorAll<HTMLElement>('.abyss-cal-view-btn')).find(
     (candidate) => candidate.textContent === label,
   );
-  if (!button) throw new Error(`missing ${label} calendar view button`);
+  if (button == null) throw new Error(`missing ${label} calendar view button`);
   button.click();
 }
 
 function timedBlock(el: HTMLElement, filePath?: string): HTMLElement {
   const blocks = Array.from(el.querySelectorAll<HTMLElement>('.abyss-tg-block'));
-  const found = filePath
-    ? blocks.find((block) => block.dataset['abyssTaskFile'] === filePath)
-    : blocks[0];
-  if (!found) throw new Error(`missing timed block${filePath ? ` for ${filePath}` : ''}`);
+  const found =
+    filePath !== undefined && filePath.length > 0
+      ? blocks.find((block) => block.dataset['abyssTaskFile'] === filePath)
+      : blocks[0];
+  if (found == null)
+    throw new Error(
+      filePath !== undefined && filePath.length > 0
+        ? `missing timed block for ${filePath}`
+        : 'missing timed block',
+    );
   return found;
 }
 
@@ -3957,9 +4067,11 @@ describe('CenterPanel calendar mode — task-index patch coordinator', () => {
     });
     const h = keyboardPanelHarness([original], vi.fn());
     try {
-      const marker = h.el.querySelector<HTMLElement>(
-        '.abyss-mg-plain .abyss-status-marker, .abyss-mg-deadline-marker .abyss-status-marker',
-      )!;
+      const marker = expectDefined(
+        h.el.querySelector<HTMLElement>(
+          '.abyss-mg-plain .abyss-status-marker, .abyss-mg-deadline-marker .abyss-status-marker',
+        ),
+      );
       (
         h.panel as unknown as {
           openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void;
@@ -3984,9 +4096,11 @@ describe('CenterPanel calendar mode — task-index patch coordinator', () => {
     const recurring = task({ recurrence: 'every week', planning: { due: TODAY } });
     const h = keyboardPanelHarness([recurring], vi.fn());
     try {
-      const marker = h.el.querySelector<HTMLElement>(
-        '.abyss-mg-plain .abyss-status-marker, .abyss-mg-deadline-marker .abyss-status-marker',
-      )!;
+      const marker = expectDefined(
+        h.el.querySelector<HTMLElement>(
+          '.abyss-mg-plain .abyss-status-marker, .abyss-mg-deadline-marker .abyss-status-marker',
+        ),
+      );
       (
         h.panel as unknown as {
           openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void;
@@ -4031,8 +4145,8 @@ describe('CenterPanel calendar mode — timed pointer command bridge', () => {
           height: 24 * 48,
         }) as DOMRect;
       const hour = day.querySelector<HTMLElement>('.abyss-tg-hour-column');
-      if (!hour) throw new Error('missing hour column');
-      hour.getBoundingClientRect = day.getBoundingClientRect;
+      if (hour == null) throw new Error('missing hour column');
+      hour.getBoundingClientRect = methodOf(day, 'getBoundingClientRect');
     }
     const allDayCells = Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-tg-allday-cell'));
     for (const [index, cell] of allDayCells.entries()) {
@@ -4051,7 +4165,7 @@ describe('CenterPanel calendar mode — timed pointer command bridge', () => {
       const block = h.el.querySelector<HTMLElement>(
         `.abyss-tg-block[data-tg-segment-date="${date}"]`,
       );
-      if (!block) throw new Error(`missing timed segment ${date}`);
+      if (block == null) throw new Error(`missing timed segment ${date}`);
       const index = days.findIndex((day) => day.dataset['tgDate'] === date);
       block.getBoundingClientRect = () =>
         ({
@@ -4201,7 +4315,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const outgoing = h.el.querySelector<HTMLElement>(
       `.abyss-tg-block-continuation[data-tg-segment-date="${grabbedDate}"]`,
     );
-    if (!outgoing) throw new Error('missing pre-due ghost');
+    if (outgoing == null) throw new Error('missing pre-due ghost');
     outgoing.focus();
     press(outgoing, 'ArrowDown');
     pending.resolve(okTask(updated));
@@ -4315,7 +4429,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       const outgoing = h.el.querySelector<HTMLElement>(
         `.abyss-tg-block-continuation[data-tg-segment-date="${focusedDate}"]`,
       );
-      if (!outgoing) throw new Error(`missing outgoing timed ghost ${focusedDate}`);
+      if (outgoing == null) throw new Error(`missing outgoing timed ghost ${focusedDate}`);
       outgoing.focus();
       press(outgoing, key);
 
@@ -4355,7 +4469,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       );
       expect(replacement).not.toBeNull();
       expect(replacement).not.toBe(outgoing);
-      if (preEventCandidate) expect(replacement).not.toBe(preEventCandidate);
+      if (preEventCandidate != null) expect(replacement).not.toBe(preEventCandidate);
       await vi.waitFor(() => {
         expect(h.el.ownerDocument.activeElement).toBe(replacement);
       });
@@ -4366,12 +4480,11 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
   );
 
   it('uses the mounted popout document for command origin and restoration through remount', async () => {
-    const iframe = activeDocument.createElement('iframe');
-    activeDocument.body.append(iframe);
+    const iframe = activeDocument.body.createEl('iframe');
     const foreignDocument = iframe.contentDocument;
     const foreignWindow = iframe.contentWindow;
-    if (!foreignDocument || !foreignWindow) throw new Error('missing iframe realm');
-    const foreignRealm = foreignWindow as unknown as typeof globalThis;
+    if (foreignDocument == null || foreignWindow == null) throw new Error('missing iframe realm');
+    const foreignRealm = foreignWindow as unknown as typeof window;
     // Obsidian extends the host HTMLElement prototype with createDiv/empty/etc. Mirror that
     // prototype chain in jsdom so this is a real foreign-document CenterPanel, not a synthetic
     // event aimed at a main-window panel.
@@ -4384,7 +4497,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       for (const name of Object.getOwnPropertyNames(source)) {
         if (name === 'constructor' || name in target) continue;
         const descriptor = Object.getOwnPropertyDescriptor(source, name);
-        if (descriptor) Object.defineProperty(target, name, descriptor);
+        if (descriptor != null) Object.defineProperty(target, name, descriptor);
       }
     }
     const foreignElementPrototype = foreignRealm.HTMLElement.prototype as unknown as Record<
@@ -4396,9 +4509,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       tag: string,
       options: { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
     ): HTMLElement {
-      const child = this.ownerDocument.createElement(tag);
+      const child = this.ownerDocument.createElementNS('http://www.w3.org/1999/xhtml', tag);
       const classes = Array.isArray(options.cls) ? options.cls : options.cls?.split(' ');
-      if (classes) child.classList.add(...classes.filter(Boolean));
+      if (classes != null) child.classList.add(...classes.filter(Boolean));
       if (options.text !== undefined) child.textContent = options.text;
       for (const [name, value] of Object.entries(options.attr ?? {}))
         child.setAttribute(name, value);
@@ -4409,22 +4522,20 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       createEl: { configurable: true, value: createEl },
       createDiv: {
         configurable: true,
-        value: function (
+        value(
           this: HTMLElement,
           value:
-            | string
-            | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
+            string | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
         ) {
           return createEl.call(this, 'div', typeof value === 'string' ? { cls: value } : value);
         },
       },
       createSpan: {
         configurable: true,
-        value: function (
+        value(
           this: HTMLElement,
           value:
-            | string
-            | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
+            string | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
         ) {
           return createEl.call(this, 'span', typeof value === 'string' ? { cls: value } : value);
         },
@@ -4439,8 +4550,8 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     try {
       clickCalendarView(h.el, 'Day');
       const block = timedBlock(h.el);
-      expect(block instanceof HTMLElement).toBe(false);
-      expect(block instanceof foreignRealm.HTMLElement).toBe(true);
+      expect(block).not.toBeInstanceOf(HTMLElement);
+      expect(block).toBeInstanceOf(foreignRealm.HTMLElement);
       block.focus();
       expect(foreignDocument.activeElement).toBe(block);
       press(block, 'ArrowDown');
@@ -4478,7 +4589,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     block.focus();
     press(block, 'ArrowRight');
 
-    h.el.ownerDocument.defaultView!.dispatchEvent(new Event('blur'));
+    expectDefined(h.el.ownerDocument.defaultView).dispatchEvent(new Event('blur'));
     h.setSnapshots([updated]);
     h.emit();
     pending.resolve(okTask(updated));
@@ -4519,7 +4630,6 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
 
   it('keeps vertical moves and duration changes on the same Day date', async () => {
     let current = keyboardSnapshot(TODAY);
-    let h!: ReturnType<typeof keyboardPanelHarness>;
     const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async (command) => {
       const revision = `revision-${execute.mock.calls.length + 1}`;
       const isTaskPatch = command.type === 'patch' && command.target.type === 'task';
@@ -4528,19 +4638,23 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
           ? command.patch.time.value
           : current.planning.time;
       const nextDuration =
-        isTaskPatch && 'duration' in command.patch && command.patch.duration?.type === 'set'
+        isTaskPatch && 'duration' in command.patch && command.patch.duration.type === 'set'
           ? command.patch.duration.value
           : current.planning.duration;
       current = task({
         ...current,
         ref: { ...current.ref, revision },
-        planning: { ...current.planning, time: nextTime, duration: nextDuration },
+        planning: {
+          ...current.planning,
+          ...(nextTime === undefined ? {} : { time: nextTime }),
+          ...(nextDuration === undefined ? {} : { duration: nextDuration }),
+        },
       });
       h.setSnapshots([current]);
       h.emit();
       return okTask(current);
     });
-    h = keyboardPanelHarness([current], execute);
+    const h = keyboardPanelHarness([current], execute);
     clickCalendarView(h.el, 'Day');
     const dateBefore = h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date');
 
@@ -4563,13 +4677,12 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const tomorrow = moment(TODAY).add(1, 'day').format('YYYY-MM-DD');
     const original = keyboardSnapshot(TODAY);
     const updated = keyboardSnapshot(tomorrow, '09:00', original.source.filePath, 'revision-2');
-    let h!: ReturnType<typeof keyboardPanelHarness>;
     const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async () => {
       h.setSnapshots([updated]);
       h.emit();
       return okTask(updated);
     });
-    h = keyboardPanelHarness([original], execute);
+    const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
     const block = timedBlock(h.el);
     block.focus();
@@ -4605,7 +4718,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     h.setSnapshots([dayTwo]);
     h.emit();
     first.resolve(okTask(dayTwo));
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(2);
+    });
     await flushMicrotasks();
     expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(
       dayTwoDate,
@@ -4620,18 +4735,19 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       dayThreeDate,
     );
     expect(patch).toHaveBeenCalledTimes(2);
-    await vi.waitFor(() => expect(activeDocument.activeElement).toBe(timedBlock(h.el)));
+    await vi.waitFor(() => {
+      expect(activeDocument.activeElement).toBe(timedBlock(h.el));
+    });
     patch.mockRestore();
   });
 
   it('keeps Week anchored for an in-range move and follows only after crossing its visible edge', async () => {
     const weekStart = moment().startOf('isoWeek');
-    const inside = weekStart.clone().add(2, 'days').format('YYYY-MM-DD');
-    const nextInside = weekStart.clone().add(3, 'days').format('YYYY-MM-DD');
-    const edge = weekStart.clone().add(6, 'days').format('YYYY-MM-DD');
-    const outside = weekStart.clone().add(7, 'days').format('YYYY-MM-DD');
+    const inside = localDate(weekStart.clone().add(2, 'days').format('YYYY-MM-DD'));
+    const nextInside = localDate(weekStart.clone().add(3, 'days').format('YYYY-MM-DD'));
+    const edge = localDate(weekStart.clone().add(6, 'days').format('YYYY-MM-DD'));
+    const outside = localDate(weekStart.clone().add(7, 'days').format('YYYY-MM-DD'));
     let current = keyboardSnapshot(inside);
-    let h!: ReturnType<typeof keyboardPanelHarness>;
     const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async () => {
       const nextDate = current.planning.due === inside ? nextInside : outside;
       current = keyboardSnapshot(
@@ -4644,7 +4760,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       h.emit();
       return okTask(current);
     });
-    h = keyboardPanelHarness([current], execute);
+    const h = keyboardPanelHarness([current], execute);
     clickCalendarView(h.el, 'Week');
     const originalDates = Array.from(
       h.el.querySelectorAll<HTMLElement>('.abyss-tg-day-column'),
@@ -4678,13 +4794,12 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
   it('follows ArrowRight across the exact Dec/Jan week boundary and restores focus', async () => {
     const original = keyboardSnapshot('2026-01-04');
     const updated = keyboardSnapshot('2026-01-05', '09:00', original.source.filePath, 'revision-2');
-    let h!: ReturnType<typeof keyboardPanelHarness>;
     const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async () => {
       h.setSnapshots([updated]);
       h.emit();
       return okTask(updated);
     });
-    h = keyboardPanelHarness([original], execute);
+    const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Week');
     const calendar = h.panel as unknown as {
       calDate: ReturnType<typeof moment>;
@@ -4751,7 +4866,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
         keyboardSnapshot(moment(TODAY).add(1, 'day').format('YYYY-MM-DD'), '09:00', 'a.md', 'a-2'),
       ),
     );
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(2);
+    });
     expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
 
     const updatedB = keyboardSnapshot(TODAY, '10:15', 'b.md', 'b-2');
@@ -4809,7 +4926,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     await flushMicrotasks();
     expect(activeDocument.activeElement).toBe(remounted);
 
-    const other = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
+    const other = expectDefined(h.el.querySelector<HTMLElement>('.abyss-cal-nav-today'));
     other.focus();
     h.emit();
     await flushMicrotasks();
@@ -4829,7 +4946,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const block = timedBlock(h.el);
     block.focus();
     press(block, 'ArrowRight');
-    const toolbarControl = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
+    const toolbarControl = expectDefined(h.el.querySelector<HTMLElement>('.abyss-cal-nav-today'));
     toolbarControl.focus();
     h.setSnapshots([updated]);
     h.emit();
@@ -4855,8 +4972,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const block = timedBlock(h.el);
     block.focus();
     press(block, 'ArrowRight');
-    const externalControl = activeDocument.createElement('button');
-    activeDocument.body.append(externalControl);
+    const externalControl = activeDocument.body.createEl('button');
     try {
       externalControl.focus();
       h.setSnapshots([updated]);
@@ -4883,17 +4999,19 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const h = keyboardPanelHarness([original], execute);
     const registration = addSpy.mock.calls.find(([type]) => type === 'focusin');
     addSpy.mockRestore();
-    if (!registration) throw new Error('missing CenterPanel focusin registration');
+    if (registration == null) throw new Error('missing CenterPanel focusin registration');
     clickCalendarView(h.el, 'Day');
 
-    const iframe = activeDocument.createElement('iframe');
-    activeDocument.body.append(iframe);
+    const iframe = activeDocument.body.createEl('iframe');
     const foreignDocument = iframe.contentDocument;
     const foreignWindow = iframe.contentWindow;
-    if (!foreignDocument || !foreignWindow) throw new Error('missing iframe realm');
-    const externalControl = foreignDocument.createElement('button');
+    if (foreignDocument == null || foreignWindow == null) throw new Error('missing iframe realm');
+    const externalControl = foreignDocument.createElementNS(
+      'http://www.w3.org/1999/xhtml',
+      'button',
+    );
     foreignDocument.body.append(externalControl);
-    expect(externalControl instanceof HTMLElement).toBe(false);
+    expect(externalControl).not.toBeInstanceOf(HTMLElement);
 
     try {
       const block = timedBlock(h.el);
@@ -4942,7 +5060,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       expect(
         removeSpy.mock.calls.some(
           ([type, listener, options]) =>
-            type === 'focusin' && listener === registration?.[1] && options === registration?.[2],
+            type === 'focusin' && listener === registration?.[1] && options === registration[2],
         ),
       ).toBe(true);
       expect(
@@ -4950,7 +5068,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
           ([type, listener, options]) =>
             type === 'blur' &&
             listener === blurRegistration?.[1] &&
-            options === blurRegistration?.[2],
+            options === blurRegistration[2],
         ),
       ).toBe(true);
       h.el.remove();
@@ -4975,7 +5093,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     pending.resolve(okTaskUnchanged(original));
     await flushMicrotasks();
 
-    const nav = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
+    const nav = expectDefined(h.el.querySelector<HTMLElement>('.abyss-cal-nav-today'));
     nav.focus();
     h.emit();
     await flushMicrotasks();
@@ -5013,7 +5131,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       block.focus();
       press(block, key, true);
       expect(execute).not.toHaveBeenCalled();
-      const other = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
+      const other = expectDefined(h.el.querySelector<HTMLElement>('.abyss-cal-nav-today'));
       other.focus();
       h.emit();
       await flushMicrotasks();
@@ -5049,7 +5167,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       await flushMicrotasks();
       expect(execute).toHaveBeenCalledOnce();
 
-      const nav = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
+      const nav = expectDefined(h.el.querySelector<HTMLElement>('.abyss-cal-nav-today'));
       nav.focus();
       h.emit();
       await flushMicrotasks();
@@ -5075,7 +5193,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     press(block, 'ArrowUp');
     press(block, 'ArrowUp');
     first.resolve(okTask(changed));
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(2);
+    });
     second.resolve(okTaskUnchanged(changed));
     await flushMicrotasks();
 
@@ -5105,7 +5225,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     press(outgoing, 'ArrowUp');
     press(outgoing, 'ArrowUp');
     first.resolve(okTask(boundary));
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(2);
+    });
 
     h.setSnapshots([boundary]);
     h.emit();
@@ -5115,11 +5237,13 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     press(restored, 'ArrowUp');
 
     second.resolve(okTaskUnchanged(boundary));
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(3);
+    });
     third.resolve(okTaskUnchanged(boundary));
     await flushMicrotasks();
 
-    const nav = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
+    const nav = expectDefined(h.el.querySelector<HTMLElement>('.abyss-cal-nav-today'));
     nav.focus();
     h.emit();
     await flushMicrotasks();
@@ -5147,7 +5271,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     press(outgoing, 'ArrowUp');
     press(outgoing, 'ArrowUp');
     first.resolve(okTask(boundary));
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(2);
+    });
 
     h.setSnapshots([boundary]);
     h.emit();
@@ -5157,7 +5283,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     press(restored, 'ArrowDown');
 
     second.resolve(okTaskUnchanged(boundary));
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(3);
+    });
     third.resolve(okTask(final));
     await flushMicrotasks();
 
@@ -5228,7 +5356,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       expect(focused.dataset['abyssTaskLine']).toBe('5');
       expect(activeDocument.activeElement).toBe(focused);
 
-      const nav = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
+      const nav = expectDefined(h.el.querySelector<HTMLElement>('.abyss-cal-nav-today'));
       nav.focus();
       h.emit();
       await flushMicrotasks();
@@ -5302,16 +5430,13 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     h.setSnapshots([moved]);
     h.emit();
     first.resolve(okTask(moved));
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
-    expect(execute).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        target: {
-          type: 'task',
-          ref: expect.objectContaining({ line: 5, revision: 'revision-2' }),
-        },
-      }),
-    );
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(2);
+    });
+    expectRootTaskPatch(expectDefined(execute.mock.calls[1]?.[0]), {
+      line: 5,
+      revision: 'revision-2',
+    });
 
     h.setSnapshots([final]);
     h.emit();
@@ -5341,7 +5466,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     press(outgoing, 'ArrowDown');
     press(outgoing, 'ArrowDown');
     first.resolve(okTask(intermediate));
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(2);
+    });
     h.setSnapshots([intermediate]);
     h.emit();
     await flushMicrotasks();
@@ -5379,30 +5506,30 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     press(outgoing, 'ArrowDown');
     press(outgoing, 'ArrowDown');
     first.resolve(okTask(moved));
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(2);
+    });
 
     h.setSnapshots([replacement, moved]);
     h.emit();
     await flushMicrotasks();
-    const replacementBlock = Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-tg-block')).find(
-      (block) => block.dataset['abyssTaskLine'] === '4',
-    )!;
+    const replacementBlock = expectDefined(
+      Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-tg-block')).find(
+        (block) => block.dataset['abyssTaskLine'] === '4',
+      ),
+    );
     replacementBlock.focus();
     press(replacementBlock, 'ArrowDown');
 
     staleSecond.resolve(okTask(staleFinal));
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(3));
-    expect(execute).toHaveBeenNthCalledWith(3, {
-      type: 'patch',
-      target: {
-        type: 'task',
-        ref: expect.objectContaining({
-          line: 4,
-          revision: 'shared-revision',
-        }),
-      },
-      patch: { time: { type: 'set', value: '14:15' } },
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(3);
     });
+    const replacementCommand = expectRootTaskPatch(expectDefined(execute.mock.calls[2]?.[0]), {
+      line: 4,
+      revision: 'shared-revision',
+    });
+    expect(replacementCommand.patch).toEqual({ time: { type: 'set', value: '14:15' } });
 
     replacementResult.resolve(
       okTask(keyboardSnapshot(TODAY, '14:15', 'shared.md', 'replacement-revision', 4)),
@@ -5434,23 +5561,24 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       h.emit();
       await flushMicrotasks();
 
-      const replacementBlock = Array.from(
-        h.el.querySelectorAll<HTMLElement>('.abyss-tg-block'),
-      ).find((block) => block.dataset['abyssTaskLine'] === '4')!;
+      const replacementBlock = expectDefined(
+        Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-tg-block')).find(
+          (block) => block.dataset['abyssTaskLine'] === '4',
+        ),
+      );
       expect(activeDocument.activeElement).not.toBe(replacementBlock);
       replacementBlock.focus();
       press(replacementBlock, 'ArrowDown');
       originalResult.resolve(okTask(moved));
-      await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
-
-      expect(execute).toHaveBeenNthCalledWith(2, {
-        type: 'patch',
-        target: {
-          type: 'task',
-          ref: expect.objectContaining({ line: 4, revision: replacementRevision }),
-        },
-        patch: { time: { type: 'set', value: '14:15' } },
+      await vi.waitFor(() => {
+        expect(execute).toHaveBeenCalledTimes(2);
       });
+
+      const replacementCommand = expectRootTaskPatch(expectDefined(execute.mock.calls[1]?.[0]), {
+        line: 4,
+        revision: replacementRevision,
+      });
+      expect(replacementCommand.patch).toEqual({ time: { type: 'set', value: '14:15' } });
       replacementResult.resolve(
         okTask(keyboardSnapshot(TODAY, '14:15', 'shared.md', 'replacement-revision', 4)),
       );
@@ -5472,7 +5600,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       block.focus();
       press(block, 'ArrowDown');
       await flushMicrotasks();
-      const other = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
+      const other = expectDefined(h.el.querySelector<HTMLElement>('.abyss-cal-nav-today'));
       other.focus();
       h.emit();
       await flushMicrotasks();
@@ -5490,7 +5618,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const block = timedBlock(h.el);
     block.focus();
     press(block, 'ArrowRight');
-    const other = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
+    const other = expectDefined(h.el.querySelector<HTMLElement>('.abyss-cal-nav-today'));
     other.focus();
     pending.resolve({ type: 'conflict', current: original });
     await flushMicrotasks();

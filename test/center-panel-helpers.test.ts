@@ -1,13 +1,20 @@
-import moment from 'moment';
-import type { App } from 'obsidian';
+import { moment, type App } from 'obsidian';
 import { describe, expect, it } from 'vitest';
+import type { ListSelection } from '../src/app/AppState';
 import { AppState } from '../src/app/AppState';
-import { CenterPanel } from '../src/panels/CenterPanel';
+import { type CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { CalendarSettings, TagGroup } from '../src/settings/types';
 import type { TaskSnapshot } from '../src/tasks';
 import { PanelNavigator } from '../src/views/panelNavigation';
-import { fixedToday, makeCenterPanelForTest, makeStubStore, task, useRealMoment } from './helpers';
+import {
+  expectDefined,
+  fixedToday,
+  makeCenterPanelForTest,
+  makeStubStore,
+  task,
+  useRealMoment,
+} from './helpers';
 
 const TODAY = moment().format('YYYY-MM-DD');
 
@@ -30,7 +37,7 @@ function makePanel(
 
 /** Bracket-access helper to call private methods (preserves `this` binding). */
 function call<T>(panel: CenterPanel, method: string, ...args: unknown[]): T {
-  const fn = (panel as unknown as Record<string, (...a: unknown[]) => T>)[method]!;
+  const fn = expectDefined((panel as unknown as Record<string, (...a: unknown[]) => T>)[method]);
   return fn.call(panel, ...args);
 }
 
@@ -105,12 +112,12 @@ describe('CenterPanel pure helpers', () => {
       const tasks = [
         task({
           title: 'sched-overdue',
-          planning: { scheduled: '2026-06-20', due: undefined },
+          planning: { scheduled: '2026-06-20' },
           source: { originalMarkdown: '- [ ] sched-overdue', originalBlock: '- [ ] sched-overdue' },
         }),
         task({
           title: 'dn-overdue',
-          planning: { due: undefined },
+          planning: {},
           source: { originalMarkdown: '- [ ] dn-overdue', originalBlock: '- [ ] dn-overdue' },
           presentation: { dailyNoteDate: '2026-06-20' },
         }),
@@ -457,22 +464,14 @@ describe('CenterPanel pure helpers', () => {
   });
 
   describe('getTitle', () => {
-    it('inbox → "Inbox"', () => {
+    it.each([
+      ['inbox', 'Inbox'],
+      ['today', 'Today'],
+      ['upcoming', 'Upcoming'],
+    ] as const)('%s → "%s"', (selectedList, expectedTitle) => {
       const { panel, state } = makePanel([]);
-      state.set('selectedList', 'inbox');
-      expect(call<string>(panel, 'getTitle')).toBe('Inbox');
-    });
-
-    it('today → "Today"', () => {
-      const { panel, state } = makePanel([]);
-      state.set('selectedList', 'today');
-      expect(call<string>(panel, 'getTitle')).toBe('Today');
-    });
-
-    it('upcoming → "Upcoming"', () => {
-      const { panel, state } = makePanel([]);
-      state.set('selectedList', 'upcoming');
-      expect(call<string>(panel, 'getTitle')).toBe('Upcoming');
+      state.set('selectedList', selectedList);
+      expect(call<string>(panel, 'getTitle')).toBe(expectedTitle);
     });
 
     it('{type:"tag"} → the tag string', () => {
@@ -591,7 +590,7 @@ describe('CenterPanel pure helpers', () => {
   describe('per-list state management', () => {
     it('loads default state for today list on mount', () => {
       const { state, panel } = makePanel([]);
-      const container = document.createElement('div');
+      const container = createDiv();
       panel.mount(container);
       const vs = state.get('centerListViewState');
       expect(vs.groupBy).toBe('date');
@@ -601,11 +600,13 @@ describe('CenterPanel pure helpers', () => {
     it('switches to inbox defaults through semantic navigation', () => {
       const settings = structuredClone(DEFAULT_SETTINGS);
       const { state, panel } = makePanel([], settings);
-      const container = document.createElement('div');
+      const container = createDiv();
       panel.mount(container);
       new PanelNavigator(state, settings, {
         calendarView: () => panel.calendarView(),
-        setCalendarView: (view) => panel.setCalendarView(view),
+        setCalendarView: (view) => {
+          panel.setCalendarView(view);
+        },
         openQuickCapture: () => undefined,
       }).openList('inbox');
       const vs = state.get('centerListViewState');
@@ -772,12 +773,11 @@ describe('getFilteredTasks respects the unified Show status filter (statusGroups
     state.set('centerListViewState', {
       groupBy: 'none',
       sortBy: { field: 'date', dir: 'asc' },
-      statusGroups: undefined,
       filters: [],
     });
     state.set('selectedList', 'inbox');
     const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-    expect(tasks.length).toBe(2);
+    expect(tasks).toHaveLength(2);
   });
 });
 
@@ -838,10 +838,7 @@ describe('getFilteredTasks respects property filters', () => {
       filters: [{ type: 'tag', value: '#work' }],
     });
     // 'upcoming' with no dates → default branch returns all query snapshots
-    state.set(
-      'selectedList',
-      'all-tasks' as unknown as import('../src/app/AppState').ListSelection,
-    );
+    state.set('selectedList', 'all-tasks' as unknown as ListSelection);
     const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(1);
     expect(tasks[0]?.title).toBe('exact');
@@ -857,10 +854,7 @@ describe('getFilteredTasks respects property filters', () => {
       sortBy: { field: 'date', dir: 'asc' },
       filters: [{ type: 'file', filePath: 'notes/a.md' }],
     });
-    state.set(
-      'selectedList',
-      'all-tasks' as unknown as import('../src/app/AppState').ListSelection,
-    );
+    state.set('selectedList', 'all-tasks' as unknown as ListSelection);
     const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(1);
     expect(tasks[0]?.title).toBe('from a');
@@ -877,10 +871,7 @@ describe('getFilteredTasks respects property filters', () => {
       sortBy: { field: 'date', dir: 'asc' },
       filters: [{ type: 'time', value: '09:00' }],
     });
-    state.set(
-      'selectedList',
-      'all-tasks' as unknown as import('../src/app/AppState').ListSelection,
-    );
+    state.set('selectedList', 'all-tasks' as unknown as ListSelection);
     const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(1);
     expect(tasks[0]?.title).toBe('morning');
@@ -896,10 +887,7 @@ describe('getFilteredTasks respects property filters', () => {
       sortBy: { field: 'date', dir: 'asc' },
       filters: [{ type: 'priority', value: 'B' }],
     });
-    state.set(
-      'selectedList',
-      'all-tasks' as unknown as import('../src/app/AppState').ListSelection,
-    );
+    state.set('selectedList', 'all-tasks' as unknown as ListSelection);
     const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(1);
     expect(tasks[0]?.title).toBe('high');
@@ -915,10 +903,7 @@ describe('getFilteredTasks respects property filters', () => {
       sortBy: { field: 'date', dir: 'asc' },
       filters: [{ type: 'status', value: '/' }],
     });
-    state.set(
-      'selectedList',
-      'all-tasks' as unknown as import('../src/app/AppState').ListSelection,
-    );
+    state.set('selectedList', 'all-tasks' as unknown as ListSelection);
     const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(1);
     expect(tasks[0]?.title).toBe('inProgress');
@@ -936,10 +921,7 @@ describe('getFilteredTasks respects property filters', () => {
       sortBy: { field: 'date', dir: 'asc' },
       filters: [{ type: 'date', value: '2026-01-10' }],
     });
-    state.set(
-      'selectedList',
-      'all-tasks' as unknown as import('../src/app/AppState').ListSelection,
-    );
+    state.set('selectedList', 'all-tasks' as unknown as ListSelection);
     const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(2);
     expect(tasks.map((t) => t.title)).toEqual(expect.arrayContaining(['due', 'sched']));
@@ -977,10 +959,7 @@ describe('getFilteredTasks respects property filters', () => {
         { type: 'time', value: '09:00' },
       ],
     });
-    state.set(
-      'selectedList',
-      'all-tasks' as unknown as import('../src/app/AppState').ListSelection,
-    );
+    state.set('selectedList', 'all-tasks' as unknown as ListSelection);
     const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(1);
     expect(tasks[0]?.title).toBe('work morning');

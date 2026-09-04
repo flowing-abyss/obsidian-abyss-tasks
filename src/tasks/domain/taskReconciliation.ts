@@ -58,6 +58,15 @@ interface VisualRootTransition {
   readonly evidence: VisualEvidence;
 }
 
+type IndexedRootTransition = ProvenRootTransition & { readonly currentIndex: number };
+
+interface ReconciliationContext {
+  readonly previousRoots: readonly TaskSnapshot[];
+  readonly currentRoots: readonly TaskSnapshot[];
+  readonly resolved: Map<number, IndexedRootTransition>;
+  readonly occupiedCurrent: Set<number>;
+}
+
 export interface RootReconciliationTransitions {
   readonly writable: ReadonlyMap<string, ProvenRootTransition>;
   readonly visual: ReadonlyMap<string, VisualRootTransition>;
@@ -105,7 +114,16 @@ function uniqueSourcePairs(
   const pairs: Array<readonly [number, number]> = [];
   for (const [source, previous] of previousBySource) {
     const current = currentBySource.get(source) ?? [];
-    if (previous.length === 1 && current.length === 1) pairs.push([previous[0]!, current[0]!]);
+    const previousIndex = previous[0];
+    const currentIndex = current[0];
+    if (
+      previous.length === 1 &&
+      current.length === 1 &&
+      previousIndex !== undefined &&
+      currentIndex !== undefined
+    ) {
+      pairs.push([previousIndex, currentIndex]);
+    }
   }
   return pairs;
 }
@@ -135,11 +153,143 @@ function authorityPairs(
         JSON.stringify([transition.line, transition.source, transition.revision]),
       ) ?? [];
     const previousMatches = previousByRevision.get(transition.previousRevision) ?? [];
-    if (currentMatches.length === 1 && previousMatches.length === 1) {
-      pairs.push([previousMatches[0]!, currentMatches[0]!, transition]);
+    const previousIndex = previousMatches[0];
+    const currentIndex = currentMatches[0];
+    if (
+      currentMatches.length === 1 &&
+      previousMatches.length === 1 &&
+      previousIndex !== undefined &&
+      currentIndex !== undefined
+    ) {
+      pairs.push([previousIndex, currentIndex, transition]);
     }
   }
   return pairs;
+}
+
+function addResolvedTransition(
+  context: ReconciliationContext,
+  previousIndex: number,
+  currentIndex: number,
+  transition: Omit<ProvenRootTransition, 'previous' | 'current'>,
+): void {
+  if (context.resolved.has(previousIndex) || context.occupiedCurrent.has(currentIndex)) return;
+  const previous = context.previousRoots[previousIndex];
+  const current = context.currentRoots[currentIndex];
+  if (previous === undefined || current === undefined) return;
+  context.resolved.set(previousIndex, { previous, current, ...transition, currentIndex });
+  context.occupiedCurrent.add(currentIndex);
+}
+
+function addAuthorityTransitions(
+  context: ReconciliationContext,
+  authorityTransitions: readonly ProvenRootRevisionOverride[],
+): void {
+  for (const [previousIndex, currentIndex, transition] of authorityPairs(
+    context.previousRoots,
+    context.currentRoots,
+    authorityTransitions,
+  )) {
+    const previous = context.previousRoots[previousIndex];
+    if (previous === undefined) continue;
+    addResolvedTransition(context, previousIndex, currentIndex, {
+      evidence: 'authority-transition',
+      basis: {
+        observed: previous,
+        authorityTransition: {
+          line: transition.line,
+          source: transition.source,
+          revision: transition.revision,
+        },
+      },
+    });
+  }
+}
+
+function addSourceTransitions(context: ReconciliationContext): void {
+  for (const [previousIndex, currentIndex] of uniqueSourcePairs(
+    context.previousRoots,
+    context.currentRoots,
+  )) {
+    const previous = context.previousRoots[previousIndex];
+    if (previous === undefined) continue;
+    addResolvedTransition(context, previousIndex, currentIndex, {
+      evidence: 'byte-identical-relocation',
+      basis: { observed: previous },
+    });
+  }
+}
+
+interface ReconciliationBoundary {
+  readonly previousIndex: number;
+  readonly currentIndex: number;
+  readonly real: boolean;
+}
+
+function reconciliationBoundaries(context: ReconciliationContext): ReconciliationBoundary[] {
+  const anchors = [...context.resolved.entries()]
+    .map(([previousIndex, transition]) => ({
+      previousIndex,
+      currentIndex: transition.currentIndex,
+    }))
+    .sort((left, right) => left.previousIndex - right.previousIndex);
+  const monotonic = anchors.filter((anchor, index) => {
+    const previous = anchors[index - 1];
+    return previous === undefined || anchor.currentIndex > previous.currentIndex;
+  });
+  return [
+    { previousIndex: -1, currentIndex: -1, real: false },
+    ...monotonic.map((anchor) => ({ ...anchor, real: true })),
+    {
+      previousIndex: context.previousRoots.length,
+      currentIndex: context.currentRoots.length,
+      real: false,
+    },
+  ];
+}
+
+function addVisualRange(
+  context: ReconciliationContext,
+  visual: Map<number, VisualRootTransition>,
+  left: ReconciliationBoundary,
+  right: ReconciliationBoundary,
+): void {
+  const previousCount = right.previousIndex - left.previousIndex - 1;
+  const currentCount = right.currentIndex - left.currentIndex - 1;
+  if (previousCount === 0 || previousCount !== currentCount || !left.real || !right.real) return;
+  for (let offset = 1; offset <= previousCount; offset++) {
+    const previousIndex = left.previousIndex + offset;
+    const currentIndex = left.currentIndex + offset;
+    if (context.resolved.has(previousIndex) || context.occupiedCurrent.has(currentIndex)) continue;
+    const previous = context.previousRoots[previousIndex];
+    const current = context.currentRoots[currentIndex];
+    if (previous === undefined || current === undefined) continue;
+    visual.set(previousIndex, { stale: previous.ref, current, evidence: 'anchored-range' });
+    context.occupiedCurrent.add(currentIndex);
+  }
+}
+
+function visualTransitions(context: ReconciliationContext): Map<number, VisualRootTransition> {
+  const visual = new Map<number, VisualRootTransition>();
+  const boundaries = reconciliationBoundaries(context);
+  for (let index = 0; index < boundaries.length - 1; index++) {
+    const left = boundaries[index];
+    const right = boundaries[index + 1];
+    if (left !== undefined && right !== undefined) addVisualRange(context, visual, left, right);
+  }
+  return visual;
+}
+
+function keyedVisualTransitions(
+  context: ReconciliationContext,
+  visual: ReadonlyMap<number, VisualRootTransition>,
+): Map<string, VisualRootTransition> {
+  return new Map(
+    [...visual.entries()].flatMap(([previousIndex, transition]) => {
+      const previous = context.previousRoots[previousIndex];
+      return previous === undefined ? [] : [[refKey(previous.ref), transition] as const];
+    }),
+  );
 }
 
 /**
@@ -151,97 +301,23 @@ export function reconcileRootTransitions(
   currentRoots: readonly TaskSnapshot[],
   authorityTransitions: readonly ProvenRootRevisionOverride[] = [],
 ): RootReconciliationTransitions {
-  const resolved = new Map<number, ProvenRootTransition & { readonly currentIndex: number }>();
-  const visual = new Map<number, VisualRootTransition>();
-  const occupiedCurrent = new Set<number>();
-
-  const add = (
-    previousIndex: number,
-    currentIndex: number,
-    evidence: RebaseEvidence,
-    basis: RootReconciliationBasis,
-  ): void => {
-    if (resolved.has(previousIndex) || occupiedCurrent.has(currentIndex)) return;
-    resolved.set(previousIndex, {
-      previous: previousRoots[previousIndex]!,
-      current: currentRoots[currentIndex]!,
-      evidence,
-      basis,
-      currentIndex,
-    });
-    occupiedCurrent.add(currentIndex);
-  };
-
-  for (const [previousIndex, currentIndex, transition] of authorityPairs(
+  const context: ReconciliationContext = {
     previousRoots,
     currentRoots,
-    authorityTransitions,
-  )) {
-    const previous = previousRoots[previousIndex]!;
-    add(previousIndex, currentIndex, 'authority-transition', {
-      observed: previous,
-      authorityTransition: {
-        line: transition.line,
-        source: transition.source,
-        revision: transition.revision,
-      },
-    });
-  }
-
-  for (const [previousIndex, currentIndex] of uniqueSourcePairs(previousRoots, currentRoots)) {
-    const previous = previousRoots[previousIndex]!;
-    add(previousIndex, currentIndex, 'byte-identical-relocation', { observed: previous });
-  }
-
-  const anchors = [...resolved.entries()]
-    .map(([previousIndex, transition]) => ({
-      previousIndex,
-      currentIndex: transition.currentIndex,
-    }))
-    .sort((left, right) => left.previousIndex - right.previousIndex);
-  const monotonicAnchors = anchors.filter(
-    (anchor, index) => index === 0 || anchor.currentIndex > anchors[index - 1]!.currentIndex,
-  );
-  const boundaries = [
-    { previousIndex: -1, currentIndex: -1, real: false },
-    ...monotonicAnchors.map((anchor) => ({ ...anchor, real: true })),
-    { previousIndex: previousRoots.length, currentIndex: currentRoots.length, real: false },
-  ];
-  for (let boundaryIndex = 0; boundaryIndex < boundaries.length - 1; boundaryIndex++) {
-    const left = boundaries[boundaryIndex]!;
-    const right = boundaries[boundaryIndex + 1]!;
-    const previousCount = right.previousIndex - left.previousIndex - 1;
-    const currentCount = right.currentIndex - left.currentIndex - 1;
-    if (previousCount === 0 || previousCount !== currentCount || !left.real || !right.real) {
-      continue;
-    }
-    for (let offset = 1; offset <= previousCount; offset++) {
-      const previousIndex = left.previousIndex + offset;
-      const currentIndex = left.currentIndex + offset;
-      if (resolved.has(previousIndex) || occupiedCurrent.has(currentIndex)) continue;
-      const previous = previousRoots[previousIndex]!;
-      visual.set(previousIndex, {
-        stale: previous.ref,
-        current: currentRoots[currentIndex]!,
-        evidence: 'anchored-range',
-      });
-      occupiedCurrent.add(currentIndex);
-    }
-  }
-
+    resolved: new Map(),
+    occupiedCurrent: new Set(),
+  };
+  addAuthorityTransitions(context, authorityTransitions);
+  addSourceTransitions(context);
+  const visual = visualTransitions(context);
   return {
     writable: new Map(
-      [...resolved.values()].map(({ currentIndex: _currentIndex, ...transition }) => [
+      [...context.resolved.values()].map(({ currentIndex: _currentIndex, ...transition }) => [
         refKey(transition.previous.ref),
         transition,
       ]),
     ),
-    visual: new Map(
-      [...visual.entries()].map(([previousIndex, transition]) => [
-        refKey(previousRoots[previousIndex]!.ref),
-        transition,
-      ]),
-    ),
+    visual: keyedVisualTransitions(context, visual),
   };
 }
 
@@ -258,7 +334,7 @@ export function reconcileRoot(
   if (revisionMatches.length > 1) {
     return { type: 'ambiguous', candidates: revisionMatches.map(rootCandidate) };
   }
-  if (exact) return { type: 'exact', task: exact, basis: { observed } };
+  if (exact != null) return { type: 'exact', task: exact, basis: { observed } };
 
   const previousRoots = options.previousRoots ?? [observed];
   const transitions = reconcileRootTransitions(
@@ -267,7 +343,7 @@ export function reconcileRoot(
     options.authorityTransitions,
   );
   const transition = transitions.writable.get(refKey(observed.ref));
-  if (transition) return { type: 'rebased', ...transition };
+  if (transition != null) return { type: 'rebased', ...transition };
 
   const sourceMatches = currentRoots.filter(
     (task) => task.source.originalBlock === observed.source.originalBlock,
@@ -276,9 +352,9 @@ export function reconcileRoot(
     return { type: 'ambiguous', candidates: sourceMatches.map(rootCandidate) };
   }
   const visual = transitions.visual.get(refKey(observed.ref));
-  if (visual) return { type: 'visual', ...visual };
+  if (visual != null) return { type: 'visual', ...visual };
   const sameLine = currentRoots.find((task) => task.source.line === observed.source.line);
-  if (sameLine) {
+  if (sameLine != null) {
     return {
       type: 'visual',
       stale: observed.ref,
@@ -305,7 +381,8 @@ export function reconcileNested(
     };
   }
   if (sourceMatches.length === 1) {
-    const current = sourceMatches[0]!;
+    const current = sourceMatches[0];
+    if (current === undefined) return { type: 'not-found', ref: observed.ref };
     if (current.ref.relativeLine === observed.ref.relativeLine) {
       return { type: 'exact', task: current };
     }

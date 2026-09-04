@@ -4,12 +4,9 @@ import type { TaskApplicationApi, TaskCommandResult, TaskRef } from '../tasks';
 import { presentTaskMoveResult } from './taskCommandResult';
 
 export async function moveTaskToProjectWithRecovery(
-  app: App,
-  tasks: TaskApplicationApi,
-  projectManager: ProjectManager,
-  ref: TaskRef,
-  projectPath: string,
+  ...args: [App, TaskApplicationApi, ProjectManager, TaskRef, string]
 ): Promise<TaskCommandResult> {
+  const [app, tasks, projectManager, ref, projectPath] = args;
   const result = await projectManager.moveTaskToProject(ref, projectPath);
   presentTaskMoveResult(app, tasks, result);
   return result;

@@ -56,6 +56,28 @@ function compatibilityMarkdownTitle(parsed: ParsedTaskLine): string {
     .trim();
 }
 
+function legacyPlanningFields(parsed: ParsedTaskLine): Partial<Task> {
+  return {
+    ...(parsed.planning.due !== undefined && { due: parsed.planning.due }),
+    ...(parsed.planning.scheduled !== undefined && { scheduled: parsed.planning.scheduled }),
+    ...(parsed.planning.start !== undefined && { start: parsed.planning.start }),
+    ...(parsed.planning.completion !== undefined && { completion: parsed.planning.completion }),
+    ...(parsed.planning.cancelled !== undefined && {
+      cancelledDate: parsed.planning.cancelled,
+    }),
+    ...(parsed.planning.created !== undefined && { created: parsed.planning.created }),
+    ...(parsed.planning.time !== undefined && { time: parsed.planning.time }),
+    ...(parsed.planning.duration !== undefined && { duration: parsed.planning.duration }),
+  };
+}
+
+function legacyContextFields(ctx: ParseContext, recurrence: string | undefined): Partial<Task> {
+  return {
+    ...(recurrence !== undefined && { recurrence }),
+    ...(ctx.dailyNoteDate !== undefined && { dailyNoteDate: ctx.dailyNoteDate }),
+  };
+}
+
 /** Internal compatibility projection shared by legacy consumers of a codec parse. */
 export function legacyTaskFromParsed(
   parsed: ParsedTaskLine,
@@ -65,6 +87,7 @@ export function legacyTaskFromParsed(
   const markdownText = compatibilityMarkdownTitle(parsed);
   let status = statusForSymbol(parsed.statusSymbol);
   if (parsed.planning.cancelled !== undefined) status = 'cancelled';
+  const recurrence = legacyTaskRecurrenceFromParsed(parsed);
 
   return {
     filePath: ctx.filePath,
@@ -74,18 +97,10 @@ export function legacyTaskFromParsed(
     markdownText,
     status,
     statusSymbol: parsed.statusSymbol,
-    due: parsed.planning.due,
-    scheduled: parsed.planning.scheduled,
-    start: parsed.planning.start,
-    completion: parsed.planning.completion,
-    cancelledDate: parsed.planning.cancelled,
-    created: parsed.planning.created,
-    time: parsed.planning.time,
-    duration: parsed.planning.duration,
-    recurrence: legacyTaskRecurrenceFromParsed(parsed),
+    ...legacyPlanningFields(parsed),
+    ...legacyContextFields(ctx, recurrence),
     onCompletion: parsed.onCompletion,
     onCompletionExplicit: parsed.onCompletionExplicit,
     priority: parsed.priority,
-    dailyNoteDate: ctx.dailyNoteDate,
   };
 }

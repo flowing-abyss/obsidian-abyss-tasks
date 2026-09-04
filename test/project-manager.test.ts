@@ -6,7 +6,13 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import type { TaskApplicationApi, TaskCommandResult } from '../src/tasks';
 import type { TaskRef } from '../src/tasks/domain/types';
-import { createAppWithFiles, flushMicrotasks, useRealMoment } from './helpers';
+import {
+  createAppWithFiles,
+  expectDefined,
+  flushMicrotasks,
+  methodOf,
+  useRealMoment,
+} from './helpers';
 
 useRealMoment();
 
@@ -23,8 +29,8 @@ async function readFm(app: unknown, path: string): Promise<Record<string, unknow
   const content = await a.vault.read(file);
   const m = /^---\n([\s\S]*?)\n---/.exec(content);
   const fm: Record<string, unknown> = {};
-  if (m) {
-    for (const line of m[1]!.split('\n')) {
+  if (m != null) {
+    for (const line of expectDefined(m[1]).split('\n')) {
       const idx = line.indexOf(':');
       if (idx > 0) fm[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
     }
@@ -38,8 +44,8 @@ describe('ProjectManager.setStatus', () => {
       'P.md': '---\nstatus: active\nother: keep\n---\n\n- [ ] a task\n',
     });
     const settings = clone();
-    const doneId = settings.projects.statuses[2]!.id; // Done → status=done
-    const pm = new ProjectManager(app as never, settings, {} as never, {} as never);
+    const doneId = expectDefined(settings.projects.statuses[2]).id; // Done → status=done
+    const pm = new ProjectManager(app, settings, {} as never, {} as never);
     await pm.setStatus('P.md', doneId);
     await flushMicrotasks();
     const fm = await readFm(app, 'P.md');
@@ -56,7 +62,7 @@ describe('ProjectManager.setStatus', () => {
       { id: 'todo', label: 'Todo', onLeftPanel: true, match: { kind: 'tag', tag: 'todo' } },
       { id: 'done', label: 'Done', onLeftPanel: false, match: { kind: 'tag', tag: 'done' } },
     ];
-    const pm = new ProjectManager(app as never, settings, {} as never, {} as never);
+    const pm = new ProjectManager(app, settings, {} as never, {} as never);
     await pm.setStatus('P.md', 'done');
     await flushMicrotasks();
     const file = (
@@ -65,7 +71,7 @@ describe('ProjectManager.setStatus', () => {
     const content = await (
       app as never as { vault: { read(f: TFile): Promise<string> } }
     ).vault.read(file);
-    // Inline #todo removed from body; #done applied via frontmatter; unrelated tag kept.
+    // The inline task tag is removed from the body; #done is applied via frontmatter.
     expect(content).not.toMatch(/#todo\b/);
     expect(content).toContain('keepme');
     expect(content).toMatch(/done/);
@@ -79,7 +85,7 @@ describe('ProjectManager.setStatus', () => {
       { id: 'todo', label: 'Todo', onLeftPanel: true, match: { kind: 'tag', tag: 'todo' } },
       { id: 'wip', label: 'WIP', onLeftPanel: true, match: { kind: 'tag', tag: 'wip' } },
     ];
-    const pm = new ProjectManager(app as never, settings, {} as never, {} as never);
+    const pm = new ProjectManager(app, settings, {} as never, {} as never);
     await pm.setStatus('P.md', 'wip');
     await flushMicrotasks();
     const file = (
@@ -100,7 +106,7 @@ function taskApi(
   return {
     queries: {} as never,
     execute: vi.fn().mockResolvedValue(result),
-  } as never;
+  };
 }
 
 describe('ProjectManager.moveTaskToProject', () => {
@@ -116,13 +122,13 @@ describe('ProjectManager.moveTaskToProject', () => {
     const settings = clone();
     settings.projects.taskInsertionMode = 'append';
     const tasks = taskApi(ok);
-    const pm = new ProjectManager(app as never, settings, {} as never, tasks);
+    const pm = new ProjectManager(app, settings, {} as never, tasks);
 
     const result = await pm.moveTaskToProject(ref, 'Projects/Redesign.md');
 
     expect(result).toBe(ok);
-    expect(tasks.execute).toHaveBeenCalledOnce();
-    expect(tasks.execute).toHaveBeenCalledWith({
+    expect(methodOf(tasks, 'execute')).toHaveBeenCalledOnce();
+    expect(methodOf(tasks, 'execute')).toHaveBeenCalledWith({
       type: 'move',
       ref,
       destination: { filePath: 'Projects/Redesign.md', insertion: { type: 'append' } },
@@ -135,11 +141,11 @@ describe('ProjectManager.moveTaskToProject', () => {
     settings.projects.taskInsertionMode = 'section';
     settings.projects.taskInsertionSection = '## Tasks';
     const tasks = taskApi(ok);
-    const pm = new ProjectManager(app as never, settings, {} as never, tasks);
+    const pm = new ProjectManager(app, settings, {} as never, tasks);
 
     await pm.moveTaskToProject(ref, 'Projects/P.md');
 
-    expect(tasks.execute).toHaveBeenCalledWith({
+    expect(methodOf(tasks, 'execute')).toHaveBeenCalledWith({
       type: 'move',
       ref,
       destination: {
@@ -163,12 +169,12 @@ describe('ProjectManager.moveTaskToProject', () => {
       },
     };
     const tasks = taskApi(partial);
-    const pm = new ProjectManager(app as never, clone(), {} as never, tasks);
+    const pm = new ProjectManager(app, clone(), {} as never, tasks);
 
     const result = await pm.moveTaskToProject(ref, 'Projects/P.md');
 
     expect(result).toBe(partial);
-    expect(tasks.execute).toHaveBeenCalledOnce();
+    expect(methodOf(tasks, 'execute')).toHaveBeenCalledOnce();
   });
 });
 
@@ -176,12 +182,12 @@ describe('ProjectManager.create', () => {
   it('builds a path under createFolder, applies default status, opens the note', async () => {
     const app = await createAppWithFiles({});
     const settings = clone();
-    const resolver = new DailyNoteResolver(app as never, settings);
-    const pm = new ProjectManager(app as never, settings, resolver, {} as never);
+    const resolver = new DailyNoteResolver(app, settings);
+    const pm = new ProjectManager(app, settings, resolver, {} as never);
     const file = await pm.create('My Project');
     await flushMicrotasks();
     expect(file).not.toBeNull();
-    expect(file!.path).toBe('Projects/My Project.md');
+    expect(expectDefined(file).path).toBe('Projects/My Project.md');
     const fm = await readFm(app, 'Projects/My Project.md');
     expect(fm['status']).toBe('active');
   });
@@ -189,15 +195,15 @@ describe('ProjectManager.create', () => {
   it('dedupes the path when a note already exists', async () => {
     const app = await createAppWithFiles({ 'Projects/Dup.md': '# existing\n' });
     const settings = clone();
-    const resolver = new DailyNoteResolver(app as never, settings);
-    const pm = new ProjectManager(app as never, settings, resolver, {} as never);
+    const resolver = new DailyNoteResolver(app, settings);
+    const pm = new ProjectManager(app, settings, resolver, {} as never);
     const file = await pm.create('Dup');
-    expect(file!.path).toBe('Projects/Dup 2.md');
+    expect(expectDefined(file).path).toBe('Projects/Dup 2.md');
   });
 
   it('returns null for an empty name', async () => {
     const app = await createAppWithFiles({});
-    const pm = new ProjectManager(app as never, clone(), {} as never, {} as never);
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
     expect(await pm.create('   ')).toBeNull();
   });
 });

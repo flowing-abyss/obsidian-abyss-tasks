@@ -1,3 +1,5 @@
+import { isImeOwnedEvent } from '../ime';
+import { runAsyncAction } from '../runAsyncAction';
 import type { CaptureSnapshot, TaskCaptureController } from './TaskCaptureController';
 
 export type CapturePresentation = 'default' | 'inline';
@@ -31,52 +33,62 @@ export class CaptureSurface {
     private readonly controller: TaskCaptureController,
     options: CaptureSurfaceOptions = {},
   ) {
-    const ownerDocument = host.ownerDocument;
     const id = ++nextCaptureSurfaceId;
     this.feedbackHost = options.feedbackHost;
     this.presentation = options.presentation ?? 'default';
     this.appliedFocusEpoch = controller.snapshot().focusEpoch;
 
-    this.element = ownerDocument.createElement('div');
+    this.element = host.createDiv();
     this.element.className = 'abyss-capture-surface abyss-quick-capture';
     this.element.classList.toggle('abyss-capture-surface--inline', this.presentation === 'inline');
 
-    this.input = ownerDocument.createElement('input');
+    this.input = this.element.createEl('input');
     this.input.className = 'abyss-capture-input abyss-quick-capture-input';
     this.input.type = 'text';
     this.input.placeholder = options.placeholder ?? 'Task name…';
     this.input.setAttribute('aria-label', options.inputLabel ?? 'Add task');
 
-    this.destination = ownerDocument.createElement('span');
+    this.destination = this.element.createSpan();
     this.destination.className = 'abyss-capture-destination';
     this.destination.id = `abyss-capture-destination-${id}`;
     this.destination.textContent = controller.target.label;
 
-    this.pending = ownerDocument.createElement('span');
+    this.pending = this.element.createSpan();
     this.pending.className = 'abyss-capture-pending';
     this.pending.textContent = 'Adding task…';
 
-    this.error = ownerDocument.createElement('div');
+    this.error = this.element.createDiv();
     this.error.className = 'abyss-capture-error';
     this.error.id = `abyss-capture-error-${id}`;
 
-    this.element.append(this.input);
+    this.attachFeedback();
+    this.bindInput(options);
+
+    const subscription = controller.subscribe((snapshot) => {
+      this.render(snapshot);
+    });
+    this.cleanup.push(() => {
+      subscription.release();
+    });
+  }
+
+  private attachFeedback(): void {
     const feedbackHost = this.feedbackHost ?? this.element;
     if (feedbackHost !== this.element) feedbackHost.classList.add('abyss-capture-feedback-layer');
     feedbackHost.append(this.destination, this.pending, this.error);
-    host.appendChild(this.element);
+  }
 
+  private bindInput(options: CaptureSurfaceOptions): void {
     const onInput = (): void => {
       this.controller.setDraft(this.input.value);
       this.render(this.controller.snapshot());
     };
     const onKeyDown = (event: KeyboardEvent): void => {
-      // eslint-disable-next-line @typescript-eslint/no-deprecated -- Chromium can expose IME ownership only through the legacy 229 sentinel.
-      if (event.isComposing || event.keyCode === 229) return;
+      if (isImeOwnedEvent(event)) return;
       if (event.key === 'Enter') {
         event.preventDefault();
         event.stopPropagation();
-        void this.controller.submit('enter');
+        runAsyncAction(this.controller.submit('enter'), 'Could not add task');
       } else if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
@@ -91,20 +103,23 @@ export class CaptureSurface {
       ) {
         return;
       }
-      void this.controller.submit('blur');
+      runAsyncAction(this.controller.submit('blur'), 'Could not add task');
     };
 
     this.input.addEventListener('input', onInput);
     this.input.addEventListener('keydown', onKeyDown);
     this.input.addEventListener('blur', onBlur);
     this.cleanup.push(
-      () => this.input.removeEventListener('input', onInput),
-      () => this.input.removeEventListener('keydown', onKeyDown),
-      () => this.input.removeEventListener('blur', onBlur),
+      () => {
+        this.input.removeEventListener('input', onInput);
+      },
+      () => {
+        this.input.removeEventListener('keydown', onKeyDown);
+      },
+      () => {
+        this.input.removeEventListener('blur', onBlur);
+      },
     );
-
-    const subscription = controller.subscribe((snapshot) => this.render(snapshot));
-    this.cleanup.push(() => subscription.release());
   }
 
   focus(): void {

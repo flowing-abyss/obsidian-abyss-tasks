@@ -1,5 +1,7 @@
 import { parseRecurrenceRule, type RecurrenceIssueCode } from './recurrence';
-import type { DurationMinutes, LocalDate, LocalTime } from './types';
+import { durationMinutes, localDate, localTime } from './valueObjects';
+
+export { durationMinutes, formatDurationMinutes, localDate, localTime } from './valueObjects';
 
 type TaskIssueCode =
   | 'invalid-title'
@@ -54,41 +56,6 @@ export interface TaskValidationState {
   readonly recurrence?: string;
   readonly onCompletion: 'keep' | 'delete';
   readonly malformedFields?: readonly TaskValidationField[];
-}
-
-export function localDate(value: string): LocalDate {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
-  if (!match) throw new Error('invalid-date');
-  const [, ys, ms, ds] = match;
-  const y = Number(ys);
-  const m = Number(ms);
-  const d = Number(ds);
-  const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
-  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  if (m < 1 || m > 12 || d < 1 || d > days[m - 1]!) {
-    throw new Error('invalid-date');
-  }
-  return value as LocalDate;
-}
-
-export function localTime(value: string): LocalTime {
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/u.test(value)) throw new Error('invalid-time');
-  return value as LocalTime;
-}
-
-export function durationMinutes(value: number): DurationMinutes {
-  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
-    throw new Error('invalid-duration');
-  }
-  return value as DurationMinutes;
-}
-
-export function formatDurationMinutes(value: DurationMinutes): string {
-  const hours = Math.floor(value / 60);
-  const minutes = value % 60;
-  if (hours > 0 && minutes > 0) return `${hours}h${minutes}m`;
-  if (hours > 0) return `${hours}h`;
-  return `${minutes}m`;
 }
 
 function isValidDate(value: string | undefined): boolean {
@@ -146,18 +113,21 @@ function completionPolicyIssues(
     : [];
 }
 
-/** Validate only fields introduced by an edit, plus their semantic dependencies. */
-export function validateTaskChange(
-  state: TaskValidationState,
+function expandedValidationFields(
   changedFields: ReadonlySet<TaskValidationField>,
-): TaskIssue[] {
+): Set<TaskValidationField> {
   const fields = new Set(changedFields);
   if (fields.has('start') || fields.has('due')) {
     fields.add('start');
     fields.add('due');
   }
+  return fields;
+}
 
-  const malformed = new Set(state.malformedFields ?? []);
+function identityIssues(
+  state: TaskValidationState,
+  fields: ReadonlySet<TaskValidationField>,
+): TaskIssue[] {
   const issues: TaskIssue[] = [];
   if (fields.has('title') && state.markdownTitle.trim().length === 0) {
     issues.push({ code: 'invalid-title', field: 'title' });
@@ -165,10 +135,19 @@ export function validateTaskChange(
   if (fields.has('status') && (state.statusSymbol.length !== 1 || !state.statusConfigured)) {
     issues.push({ code: 'invalid-status', field: 'status' });
   }
+  return issues;
+}
 
-  const dateFields = ['start', 'scheduled', 'due', 'completion', 'cancelled'] as const;
+const DATE_FIELDS = ['start', 'scheduled', 'due', 'completion', 'cancelled'] as const;
+
+function dateIssues(
+  state: TaskValidationState,
+  fields: ReadonlySet<TaskValidationField>,
+  malformed: ReadonlySet<TaskValidationField>,
+): { readonly issues: TaskIssue[]; readonly validDates: Set<string> } {
+  const issues: TaskIssue[] = [];
   const validDates = new Set<string>();
-  for (const field of dateFields) {
+  for (const field of DATE_FIELDS) {
     if (!fields.has(field)) continue;
     const value = state.planning[field];
     if (value === undefined && !malformed.has(field)) continue;
@@ -178,30 +157,60 @@ export function validateTaskChange(
       validDates.add(field);
     }
   }
+  return { issues, validDates };
+}
 
-  if (fields.has('time')) {
-    const value = state.planning.time;
-    if (malformed.has('time') || (value !== undefined && !isValidTime(value))) {
-      issues.push({ code: 'invalid-time', field: 'time' });
-    }
+function timeAndDurationIssues(
+  state: TaskValidationState,
+  fields: ReadonlySet<TaskValidationField>,
+  malformed: ReadonlySet<TaskValidationField>,
+): TaskIssue[] {
+  const issues: TaskIssue[] = [];
+  const time = state.planning.time;
+  if (fields.has('time') && (malformed.has('time') || (time !== undefined && !isValidTime(time)))) {
+    issues.push({ code: 'invalid-time', field: 'time' });
   }
-  if (fields.has('duration')) {
-    const value = state.planning.duration;
-    if (malformed.has('duration') || (value !== undefined && !isValidDuration(value))) {
-      issues.push({ code: 'invalid-duration', field: 'duration' });
-    }
-  }
-  issues.push(...recurrenceIssues(state, malformed, fields));
-  issues.push(...completionPolicyIssues(malformed, fields));
-
+  const duration = state.planning.duration;
   if (
-    fields.has('start') &&
+    fields.has('duration') &&
+    (malformed.has('duration') || (duration !== undefined && !isValidDuration(duration)))
+  ) {
+    issues.push({ code: 'invalid-duration', field: 'duration' });
+  }
+  return issues;
+}
+
+function invertedSpanIssue(
+  state: TaskValidationState,
+  fields: ReadonlySet<TaskValidationField>,
+  validDates: ReadonlySet<string>,
+): TaskIssue[] {
+  const { start, due } = state.planning;
+  return fields.has('start') &&
     fields.has('due') &&
     validDates.has('start') &&
     validDates.has('due') &&
-    state.planning.start! > state.planning.due!
-  ) {
-    issues.push({ code: 'inverted-span', field: 'start,due' });
-  }
-  return issues;
+    start !== undefined &&
+    due !== undefined &&
+    start > due
+    ? [{ code: 'inverted-span', field: 'start,due' }]
+    : [];
+}
+
+/** Validate only fields introduced by an edit, plus their semantic dependencies. */
+export function validateTaskChange(
+  state: TaskValidationState,
+  changedFields: ReadonlySet<TaskValidationField>,
+): TaskIssue[] {
+  const fields = expandedValidationFields(changedFields);
+  const malformed = new Set(state.malformedFields ?? []);
+  const dates = dateIssues(state, fields, malformed);
+  return [
+    ...identityIssues(state, fields),
+    ...dates.issues,
+    ...timeAndDurationIssues(state, fields, malformed),
+    ...recurrenceIssues(state, malformed, fields),
+    ...completionPolicyIssues(malformed, fields),
+    ...invertedSpanIssue(state, fields, dates.validDates),
+  ];
 }

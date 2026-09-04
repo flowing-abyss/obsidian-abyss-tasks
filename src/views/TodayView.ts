@@ -67,6 +67,50 @@ export interface TimeGridCallbacks extends ForecastInteractionCallbacks {
   tagGroups?: TagGroup[];
 }
 
+interface DateTaskBuckets {
+  readonly timed: TaskSnapshot[];
+  readonly spans: TaskSnapshot[];
+  readonly timedSpans: TaskSnapshot[];
+  readonly plain: TaskSnapshot[];
+  readonly deadlines: TaskSnapshot[];
+}
+
+interface TodayAllDayContext {
+  readonly date: string;
+  readonly day: HourGridHandles['days'][number];
+  readonly buckets: DateTaskBuckets;
+  readonly callbacks: AllDayCallbacks;
+  readonly tagGroups: TagGroup[];
+  readonly spanRow: ReturnType<typeof layoutVisibleSpans>['rows'][number];
+  readonly installCellBindings: boolean;
+}
+
+function taskSourceIdentity(task: TaskSnapshot): string {
+  return `${task.source.filePath}:::${task.source.line}`;
+}
+
+function classifyTaskForDate(
+  task: TaskSnapshot,
+  date: string,
+  buckets: DateTaskBuckets,
+  spanIdentities: Set<string>,
+): void {
+  const { start, due, time, scheduled } = task.planning;
+  if (start !== undefined && due !== undefined) {
+    if (!window.moment(date).isBetween(start, due, 'day', '[]')) return;
+    (time === undefined ? buckets.spans : buckets.timedSpans).push(task);
+    spanIdentities.add(taskSourceIdentity(task));
+    return;
+  }
+  if (String(scheduled ?? due) !== date) return;
+  (time === undefined ? buckets.plain : buckets.timed).push(task);
+}
+
+function isDistinctDeadline(task: TaskSnapshot, date: string): boolean {
+  const { due, scheduled } = task.planning;
+  return String(due) === date && scheduled !== undefined && scheduled !== due;
+}
+
 /**
  * Bucket tasks for a single date per the due-centric anchor rule (spec: due-centric contract).
  *
@@ -75,70 +119,22 @@ export interface TimeGridCallbacks extends ForecastInteractionCallbacks {
  * hour-grid overlap pass. The due segment alone owns the marker/rich title; continuation roots
  * keep the same move, duration, keyboard, focus, and identity contract.
  */
-export function bucketTasksForDate(
-  tasks: TaskSnapshot[],
-  date: string,
-): {
-  timed: TaskSnapshot[];
-  spans: TaskSnapshot[];
-  timedSpans: TaskSnapshot[];
-  plain: TaskSnapshot[];
-  deadlines: TaskSnapshot[];
-} {
-  const timed: TaskSnapshot[] = [];
-  const spans: TaskSnapshot[] = [];
-  const timedSpans: TaskSnapshot[] = [];
-  const plain: TaskSnapshot[] = [];
-  const deadlines: TaskSnapshot[] = [];
-  // Identity convention for task de-duplication (matches drag-payload identity used elsewhere,
-  // e.g. MonthView.ts's `${task.source.filePath}:::${task.source.line}`).
+export function bucketTasksForDate(tasks: TaskSnapshot[], date: string): DateTaskBuckets {
+  const buckets: DateTaskBuckets = {
+    timed: [],
+    spans: [],
+    timedSpans: [],
+    plain: [],
+    deadlines: [],
+  };
   const spanIdentities = new Set<string>();
-
-  for (const t of tasks) {
-    // Task 38: done/cancelled tasks are NOT filtered out here — a completed timed/all-day task
-    // must stay visible in place (checkbox checked, title struck-through) so the calendar keeps
-    // a visual history of what was done and when. A separate, deliberate, user-configurable
-    // "hide done tasks" feature (if any) lives elsewhere in the plugin and is out of scope here.
-
-    // Multi-day span: anchored on every day from start to due
-    if (t.planning.start && t.planning.due) {
-      const inRange = window.moment(date).isBetween(t.planning.start, t.planning.due, 'day', '[]');
-      if (inRange) {
-        if (t.planning.time) {
-          timedSpans.push(t);
-        } else {
-          spans.push(t);
-        }
-        spanIdentities.add(`${t.source.filePath}:::${t.source.line}`);
-      }
-      continue;
-    }
-
-    const anchor = t.planning.scheduled ?? t.planning.due;
-    if (String(anchor) !== date) continue;
-
-    if (t.planning.time) {
-      timed.push(t);
-    } else {
-      plain.push(t);
+  for (const task of tasks) classifyTaskForDate(task, date, buckets, spanIdentities);
+  for (const task of tasks) {
+    if (!spanIdentities.has(taskSourceIdentity(task)) && isDistinctDeadline(task, date)) {
+      buckets.deadlines.push(task);
     }
   }
-
-  // Deadline markers: tasks whose `due` falls on this date AND a distinct `scheduled` is also set
-  // (so their body renders elsewhere, on the scheduled day, per the due-centric contract).
-  // Spans take priority: a task already rendered as a span (its due edge communicates the
-  // deadline structurally) never also gets a separate deadline marker for the same date.
-  for (const t of tasks) {
-    if (spanIdentities.has(`${t.source.filePath}:::${t.source.line}`)) continue;
-    if (
-      String(t.planning.due) === date &&
-      t.planning.scheduled &&
-      t.planning.scheduled !== t.planning.due
-    )
-      deadlines.push(t);
-  }
-
-  return { timed, spans, timedSpans, plain, deadlines };
+  return buckets;
 }
 
 export function previewTimedPositionFor(
@@ -168,10 +164,10 @@ export class TodayView extends BaseView {
   private gridHandles: HourGridHandles | null = null;
   private md = new Component();
   private nowLineIntervalId: number | null = null;
-  private timedInteractions = createTimedInteractionOwner();
-  private spanInteractions = createSpanInteractionOwner();
+  private readonly timedInteractions = createTimedInteractionOwner();
+  private readonly spanInteractions = createSpanInteractionOwner();
 
-  constructor(private callbacks: TimeGridCallbacks) {
+  constructor(private readonly callbacks: TimeGridCallbacks) {
     super();
   }
 
@@ -179,9 +175,9 @@ export class TodayView extends BaseView {
     container: HTMLElement,
     tasks: TaskSnapshot[],
     config: ResolvedConfig,
-    shouldScrollToNow = true,
-    preservedScrollTop?: number,
+    ...options: [shouldScrollToNow?: boolean, preservedScrollTop?: number]
   ): void {
+    const [shouldScrollToNow = true, preservedScrollTop] = options;
     this.timedInteractions.disposeActive();
     this.spanInteractions.disposeActive();
     this.md.unload();
@@ -190,13 +186,11 @@ export class TodayView extends BaseView {
 
     // A re-render on the same instance (e.g. config change) must not stack a second interval
     // on top of one already registered from a prior render() without an intervening destroy().
-    if (this.nowLineIntervalId !== null) {
-      window.clearInterval(this.nowLineIntervalId);
-      this.nowLineIntervalId = null;
-    }
+    this.clearNowLineInterval();
 
     this.containerEl = container;
-    const date = config.startPosition || window.moment().format('YYYY-MM-DD');
+    const date =
+      config.startPosition.length > 0 ? config.startPosition : window.moment().format('YYYY-MM-DD');
     this.skeletonKey = this.buildSkeletonKey(date);
 
     const handles = renderHourGrid(
@@ -210,41 +204,47 @@ export class TodayView extends BaseView {
     this.renderTaskLayers(tasks, date, handles, true);
 
     const isToday = date === window.moment().format('YYYY-MM-DD');
-    const gridRowEl = handles.gridRowEl;
-    // One-time scroll-into-position: only when CenterPanel says this is a genuinely new
-    // (viewType, date) it hasn't scrolled for yet — NOT on every reactive re-render of the
-    // same view/date (Task 27). The periodic now-line repositioning below is unconditional
-    // and untouched — a separate, still-desired behavior (Round 2 Task 16).
-    if (shouldScrollToNow) {
-      if (isToday) {
-        const nowMinutes = window.moment().hours() * 60 + window.moment().minutes();
-        const nowPx = minutesToPixels(nowMinutes);
-        window.setTimeout(() => {
-          gridRowEl.scrollTop = Math.max(0, nowPx - gridRowEl.clientHeight / 2);
-        }, 0);
-      }
-    } else if (preservedScrollTop !== undefined) {
-      // Task 31: this is a reactive re-render (destroy/recreate) of the same view/date — restore
-      // the outgoing grid-row's scroll position instead of leaving the fresh one at 0. Deferred
-      // via setTimeout like the scroll-to-now branch above: setting scrollTop synchronously,
-      // before the browser has laid out the freshly-created grid, gets silently clamped to 0.
-      window.setTimeout(() => {
-        gridRowEl.scrollTop = preservedScrollTop;
-      }, 0);
-    }
+    this.scheduleInitialScroll(handles.gridRowEl, isToday, shouldScrollToNow, preservedScrollTop);
+    this.startNowLineRefresh(isToday ? handles.nowLineEl : null);
+  }
 
-    if (isToday) {
-      const nowLineEl = handles.nowLineEl;
-      if (nowLineEl) {
-        this.nowLineIntervalId = window.setInterval(() => {
-          repositionNowLine(nowLineEl);
-        }, NOW_LINE_REFRESH_MS);
-      }
+  private clearNowLineInterval(): void {
+    if (this.nowLineIntervalId === null) return;
+    window.clearInterval(this.nowLineIntervalId);
+    this.nowLineIntervalId = null;
+  }
+
+  private scheduleInitialScroll(
+    grid: HTMLElement,
+    isToday: boolean,
+    shouldScrollToNow: boolean,
+    preservedScrollTop: number | undefined,
+  ): void {
+    if (shouldScrollToNow && isToday) {
+      const nowMinutes = window.moment().hours() * 60 + window.moment().minutes();
+      const nowPx = minutesToPixels(nowMinutes);
+      window.setTimeout(() => {
+        grid.scrollTop = Math.max(0, nowPx - grid.clientHeight / 2);
+      }, 0);
+      return;
+    }
+    if (!shouldScrollToNow && preservedScrollTop !== undefined) {
+      window.setTimeout(() => {
+        grid.scrollTop = preservedScrollTop;
+      }, 0);
     }
   }
 
+  private startNowLineRefresh(nowLine: HTMLElement | null): void {
+    if (nowLine === null) return;
+    this.nowLineIntervalId = window.setInterval(() => {
+      repositionNowLine(nowLine);
+    }, NOW_LINE_REFRESH_MS);
+  }
+
   override patch(container: HTMLElement, tasks: TaskSnapshot[], config: ResolvedConfig): void {
-    const date = config.startPosition || window.moment().format('YYYY-MM-DD');
+    const date =
+      config.startPosition.length > 0 ? config.startPosition : window.moment().format('YYYY-MM-DD');
     if (
       container !== this.containerEl ||
       this.skeletonKey !== this.buildSkeletonKey(date) ||
@@ -276,12 +276,61 @@ export class TodayView extends BaseView {
     handles: HourGridHandles,
     installCellBindings: boolean,
   ): void {
-    const day = handles.days[0]!;
+    const day = handles.days[0];
+    if (day === undefined) throw new Error('Today time-grid requires one day column');
     const occurrenceFor = calendarOccurrenceLookup(tasks);
-    const { timed, spans, timedSpans, plain, deadlines } = bucketTasksForDate(tasks, date);
-    // Terminal and continuation timed segments share one renderer/packing pass. Terminal status
-    // ownership is decided from `date`; interactivity is intentionally identical on every root.
-    const timedCallbacks: TimedBlockCallbacks = {
+    const buckets = bucketTasksForDate(tasks, date);
+    const timedCallbacks = this.buildTimedCallbacks(occurrenceFor);
+    const previewPositionFor = (
+      task: TaskSnapshot,
+      planning: TaskSnapshot['planning'],
+      previewDate: string,
+    ): PositionedBlock | undefined => previewTimedPositionFor(tasks, task, planning, previewDate);
+    const tagGroups = this.callbacks.tagGroups ?? [];
+    if (!installCellBindings) {
+      day.hourColumnEl
+        .querySelectorAll<HTMLElement>(
+          ':scope > .abyss-tg-block, :scope > .abyss-tg-block-continuation',
+        )
+        .forEach((element) => {
+          element.remove();
+        });
+    }
+    renderTimedBlocksForDay(
+      day.hourColumnEl,
+      [...buckets.timed, ...buckets.timedSpans],
+      timedCallbacks,
+      tagGroups,
+      { date, previewPositionFor },
+    );
+    const spanTasks = tasks.filter((task) => task.planning.time === undefined);
+    const allDayCallbacks = this.buildAllDayCallbacks(spanTasks, date, occurrenceFor);
+    const spanRow = layoutVisibleSpans(buckets.spans, [date]).rows[0];
+    if (spanRow === undefined) throw new Error('Today time-grid requires one visible span row');
+    renderAllDaySpanLayer(
+      handles.allDaySpanLayerEl,
+      spanRow,
+      [date],
+      allDayCallbacks,
+      tagGroups,
+      this.spanInteractions,
+      'timegrid',
+    );
+    this.renderTodayAllDay({
+      date,
+      day,
+      buckets,
+      callbacks: allDayCallbacks,
+      tagGroups,
+      spanRow,
+      installCellBindings,
+    });
+  }
+
+  private buildTimedCallbacks(
+    occurrenceFor: ReturnType<typeof calendarOccurrenceLookup>,
+  ): TimedBlockCallbacks {
+    return {
       occurrenceFor,
       app: this.callbacks.app,
       component: this.md,
@@ -299,43 +348,28 @@ export class TodayView extends BaseView {
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
-      ...(this.callbacks.forecastMenuOwner && {
+      ...(this.callbacks.forecastMenuOwner != null && {
         forecastMenuOwner: this.callbacks.forecastMenuOwner,
       }),
-      ...(this.callbacks.onForecastClick && {
+      ...(this.callbacks.onForecastClick != null && {
         onForecastClick: this.callbacks.onForecastClick,
       }),
-      ...(this.callbacks.onForecastContextMenu && {
+      ...(this.callbacks.onForecastContextMenu != null && {
         onForecastContextMenu: this.callbacks.onForecastContextMenu,
       }),
-      ...(this.callbacks.interactionOwnership && {
+      ...(this.callbacks.interactionOwnership != null && {
         interactionOwnership: this.callbacks.interactionOwnership,
       }),
       statusRegistry: this.callbacks.statusRegistry,
     };
-    const previewPositionFor = (
-      task: TaskSnapshot,
-      planning: TaskSnapshot['planning'],
-      previewDate: string,
-    ): PositionedBlock | undefined => previewTimedPositionFor(tasks, task, planning, previewDate);
-    const tagGroups = this.callbacks.tagGroups ?? [];
-    if (!installCellBindings) {
-      day.hourColumnEl
-        .querySelectorAll<HTMLElement>(
-          ':scope > .abyss-tg-block, :scope > .abyss-tg-block-continuation',
-        )
-        .forEach((element) => element.remove());
-    }
-    renderTimedBlocksForDay(
-      day.hourColumnEl,
-      [...timed, ...timedSpans],
-      timedCallbacks,
-      tagGroups,
-      { date, previewPositionFor },
-    );
+  }
 
-    const spanTasks = tasks.filter((task) => !task.planning.time);
-    const allDayCallbacks: AllDayCallbacks = {
+  private buildAllDayCallbacks(
+    spanTasks: readonly TaskSnapshot[],
+    date: string,
+    occurrenceFor: ReturnType<typeof calendarOccurrenceLookup>,
+  ): AllDayCallbacks {
+    return {
       occurrenceFor,
       app: this.callbacks.app,
       component: this.md,
@@ -352,34 +386,36 @@ export class TodayView extends BaseView {
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
-      ...(this.callbacks.forecastMenuOwner && {
+      ...(this.callbacks.forecastMenuOwner != null && {
         forecastMenuOwner: this.callbacks.forecastMenuOwner,
       }),
-      ...(this.callbacks.onForecastClick && {
+      ...(this.callbacks.onForecastClick != null && {
         onForecastClick: this.callbacks.onForecastClick,
       }),
-      ...(this.callbacks.onForecastContextMenu && {
+      ...(this.callbacks.onForecastContextMenu != null && {
         onForecastContextMenu: this.callbacks.onForecastContextMenu,
       }),
-      ...(this.callbacks.interactionOwnership && {
+      ...(this.callbacks.interactionOwnership != null && {
         interactionOwnership: this.callbacks.interactionOwnership,
       }),
       statusRegistry: this.callbacks.statusRegistry,
       onCreateAtDate: this.callbacks.onCreateAtDate,
     };
-    const spanRow = layoutVisibleSpans(spans, [date]).rows[0]!;
-    renderAllDaySpanLayer(
-      handles.allDaySpanLayerEl,
-      spanRow,
-      [date],
-      allDayCallbacks,
-      tagGroups,
-      this.spanInteractions,
-      'timegrid',
-    );
+  }
+
+  private renderTodayAllDay(context: TodayAllDayContext): void {
+    const { date, day, buckets, callbacks, tagGroups, spanRow, installCellBindings } = context;
     day.allDayCellEl.style.setProperty('--abyss-span-lane-count', String(spanRow.laneCount));
     if (installCellBindings) {
-      renderAllDayCell(day.allDayCellEl, date, [], plain, deadlines, allDayCallbacks, tagGroups);
+      renderAllDayCell(
+        day.allDayCellEl,
+        date,
+        [],
+        buckets.plain,
+        buckets.deadlines,
+        callbacks,
+        tagGroups,
+      );
       const allDayItems = day.allDayCellEl.createDiv({ cls: 'abyss-tg-cell-items' });
       for (const child of Array.from(day.allDayCellEl.children)) {
         if (child !== allDayItems) allDayItems.appendChild(child);
@@ -390,14 +426,17 @@ export class TodayView extends BaseView {
     const allDayItems = day.allDayCellEl.querySelector<HTMLElement>(
       ':scope > .abyss-tg-cell-items',
     );
-    if (!allDayItems) return;
+    if (allDayItems === null) return;
     allDayItems.empty();
-    const scratch = day.allDayCellEl.ownerDocument.createElement('div');
-    renderAllDayCell(scratch, date, [], plain, deadlines, allDayCallbacks, tagGroups);
+    const scratch = day.allDayCellEl.ownerDocument.createElementNS(
+      'http://www.w3.org/1999/xhtml',
+      'div',
+    ) as HTMLDivElement;
+    renderAllDayCell(scratch, date, [], buckets.plain, buckets.deadlines, callbacks, tagGroups);
     for (const child of Array.from(scratch.children)) allDayItems.appendChild(child);
     const scratchHook = (scratch as unknown as { __tgTestEndDrag?: (targetDate: string) => void })
       .__tgTestEndDrag;
-    if (scratchHook) {
+    if (scratchHook !== undefined) {
       (
         day.allDayCellEl as unknown as { __tgTestEndDrag?: (targetDate: string) => void }
       ).__tgTestEndDrag = scratchHook;
@@ -411,9 +450,6 @@ export class TodayView extends BaseView {
     this.skeletonKey = null;
     this.gridHandles = null;
     this.md.unload();
-    if (this.nowLineIntervalId !== null) {
-      window.clearInterval(this.nowLineIntervalId);
-      this.nowLineIntervalId = null;
-    }
+    this.clearNowLineInterval();
   }
 }

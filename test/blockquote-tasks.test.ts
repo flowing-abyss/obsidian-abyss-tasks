@@ -8,6 +8,7 @@ import {
   canonicalStatusCatalog,
   configuredTaskApplication,
   createAppWithFiles,
+  expectDefined,
   seedTaskCache,
   useRealMoment,
 } from './helpers';
@@ -234,7 +235,7 @@ describe('blockquote tasks — TaskIndex integration', () => {
     expect(tasks).toHaveLength(1);
     expect(tasks[0]?.title).toBe('Parent');
     expect(tasks[0]?.subtasks).toHaveLength(1);
-    expect(tasks[0]?.subtasks?.[0]?.title).toBe('Child');
+    expect(tasks[0]?.subtasks[0]?.title).toBe('Child');
   });
 
   it('does not phantom-nest a blockquote task after a plain-list task', async () => {
@@ -276,7 +277,7 @@ describe('blockquote tasks — TaskIndex integration', () => {
     const tasks = stack.tasks.queries.list();
     expect(tasks).toHaveLength(1);
     expect(tasks[0]?.subtasks).toHaveLength(1);
-    expect(tasks[0]?.subtasks?.[0]?.title).toBe('Child');
+    expect(tasks[0]?.subtasks[0]?.title).toBe('Child');
   });
 
   it('emits a deeper-quote (> >) task as an independent top-level sibling', async () => {
@@ -325,12 +326,12 @@ describe('blockquote tasks — toggle write-path', () => {
     seedTaskCache(app, 't.md', [{ task: ' ', parent: -1, line: 0 }]);
     const stack = configuredTaskApplication(app, DEFAULT_SETTINGS);
     await stack.index.initialize();
-    const task = stack.tasks.queries.list()[0]!;
+    const task = expectDefined(stack.tasks.queries.list()[0]);
     await stack.tasks.execute({
       type: 'toggle-completion',
       target: { type: 'task', ref: task.ref },
     });
-    const content = await app.vault.cachedRead(app.vault.getMarkdownFiles()[0]!);
+    const content = await app.vault.cachedRead(expectDefined(app.vault.getMarkdownFiles()[0]));
     expect(content).toBe(`> - [x] quoted ✅ ${today}`);
   });
 
@@ -339,12 +340,12 @@ describe('blockquote tasks — toggle write-path', () => {
     seedTaskCache(app, 't.md', [{ task: 'x', parent: -1, line: 0 }]);
     const stack = configuredTaskApplication(app, DEFAULT_SETTINGS);
     await stack.index.initialize();
-    const task = stack.tasks.queries.list()[0]!;
+    const task = expectDefined(stack.tasks.queries.list()[0]);
     await stack.tasks.execute({
       type: 'toggle-completion',
       target: { type: 'task', ref: task.ref },
     });
-    const content = await app.vault.cachedRead(app.vault.getMarkdownFiles()[0]!);
+    const content = await app.vault.cachedRead(expectDefined(app.vault.getMarkdownFiles()[0]));
     expect(content).toBe('>> - [ ] quoted');
   });
 
@@ -357,12 +358,12 @@ describe('blockquote tasks — toggle write-path', () => {
     ]);
     const stack = configuredTaskApplication(app, DEFAULT_SETTINGS);
     await stack.index.initialize();
-    const task = stack.tasks.queries.list()[0]!;
+    const task = expectDefined(stack.tasks.queries.list()[0]);
     await stack.tasks.execute({
       type: 'toggle-completion',
       target: { type: 'task', ref: task.ref },
     });
-    const content = await app.vault.cachedRead(app.vault.getMarkdownFiles()[0]!);
+    const content = await app.vault.cachedRead(expectDefined(app.vault.getMarkdownFiles()[0]));
     expect(content).toContain(`> - [x] quoted ✅ ${today}\r\n`);
   });
 });

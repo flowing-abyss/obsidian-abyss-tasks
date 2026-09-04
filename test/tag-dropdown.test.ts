@@ -1,9 +1,11 @@
 import type { App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { showTagDropdown } from '../src/ui/tagDropdown';
+import { expectDefined, freshContainer } from './helpers';
 
 function key(target: HTMLElement, value: string): KeyboardEvent {
-  const event = new target.ownerDocument.defaultView!.KeyboardEvent('keydown', {
+  const KeyboardEventConstructor = expectDefined(target.ownerDocument.defaultView).KeyboardEvent;
+  const event = new KeyboardEventConstructor('keydown', {
     key: value,
     bubbles: true,
     cancelable: true,
@@ -19,8 +21,8 @@ describe('inline tag dropdown', () => {
 
   it('uses a focused combobox and listbox with truthful active-option state', () => {
     const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = frame.contentDocument!;
-    const container = activeDocument.createElement('div');
+    const ownerDocument = expectDefined(frame.contentDocument);
+    const container = freshContainer();
     ownerDocument.body.append(ownerDocument.adoptNode(container));
     const app = {
       metadataCache: { getTags: () => ({ '#alpha': 2, '#beta': 1 }) },
@@ -28,8 +30,8 @@ describe('inline tag dropdown', () => {
 
     try {
       showTagDropdown(container, app, () => undefined, vi.fn());
-      const input = container.querySelector<HTMLInputElement>('.abyss-tag-input')!;
-      const listbox = container.querySelector<HTMLElement>('.abyss-tag-dropdown')!;
+      const input = expectDefined(container.querySelector<HTMLInputElement>('.abyss-tag-input'));
+      const listbox = expectDefined(container.querySelector<HTMLElement>('.abyss-tag-dropdown'));
       const options = listbox.querySelectorAll<HTMLElement>('.abyss-tag-dropdown-opt');
 
       expect(ownerDocument.activeElement).toBe(input);
@@ -38,11 +40,11 @@ describe('inline tag dropdown', () => {
       expect(input.getAttribute('aria-expanded')).toBe('true');
       expect(listbox.getAttribute('role')).toBe('listbox');
       expect(options).toHaveLength(2);
-      expect(Array.from(options, (option) => option.getAttribute('role'))).toEqual([
+      expect([...options].map((option) => option.getAttribute('role'))).toEqual([
         'option',
         'option',
       ]);
-      expect(Array.from(options, (option) => option.getAttribute('aria-selected'))).toEqual([
+      expect([...options].map((option) => option.getAttribute('aria-selected'))).toEqual([
         'false',
         'false',
       ]);
@@ -53,8 +55,8 @@ describe('inline tag dropdown', () => {
 
   it('retains an active option across filtering and commits it with Enter', () => {
     const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = frame.contentDocument!;
-    const container = activeDocument.createElement('div');
+    const ownerDocument = expectDefined(frame.contentDocument);
+    const container = freshContainer();
     ownerDocument.body.append(ownerDocument.adoptNode(container));
     const app = {
       metadataCache: { getTags: () => ({ '#alpha': 2, '#beta': 1 }) },
@@ -63,21 +65,21 @@ describe('inline tag dropdown', () => {
 
     try {
       showTagDropdown(container, app, () => undefined, commit);
-      const input = container.querySelector<HTMLInputElement>('.abyss-tag-input')!;
+      const input = expectDefined(container.querySelector<HTMLInputElement>('.abyss-tag-input'));
       key(input, 'ArrowDown');
       key(input, 'ArrowDown');
-      const activeBefore = container.querySelector<HTMLElement>(
-        '.abyss-tag-dropdown-opt.is-active',
-      )!;
+      const activeBefore = expectDefined(
+        container.querySelector<HTMLElement>('.abyss-tag-dropdown-opt.is-active'),
+      );
       expect(activeBefore.textContent).toBe('#beta');
       expect(activeBefore.getAttribute('aria-selected')).toBe('true');
       expect(input.getAttribute('aria-activedescendant')).toBe(activeBefore.id);
 
       input.value = 'be';
       input.dispatchEvent(new Event('input', { bubbles: true }));
-      const activeAfter = container.querySelector<HTMLElement>(
-        '.abyss-tag-dropdown-opt.is-active',
-      )!;
+      const activeAfter = expectDefined(
+        container.querySelector<HTMLElement>('.abyss-tag-dropdown-opt.is-active'),
+      );
       expect(ownerDocument.activeElement).toBe(input);
       expect(activeAfter.textContent).toBe('#beta');
       expect(activeAfter.id).toBe(activeBefore.id);

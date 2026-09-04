@@ -16,28 +16,92 @@ interface CompletionConfirmationTask {
 
 let dismissActiveCompletionConfirmation: (() => void) | undefined;
 
+interface CompletionConfirmationUi {
+  readonly surface: HTMLElement;
+  readonly cancel: HTMLButtonElement;
+  readonly confirm: HTMLButtonElement;
+}
+
+function createCompletionConfirmationUi(ownerDocument: Document): CompletionConfirmationUi {
+  const surface = ownerDocument.body.createDiv({
+    cls: 'abyss-recurrence-delete-confirm',
+    attr: {
+      role: 'alertdialog',
+      'aria-modal': 'true',
+      'aria-labelledby': 'abyss-recurrence-delete-confirm-title',
+      'aria-describedby': 'abyss-recurrence-delete-confirm-description',
+    },
+  });
+  const dialog = surface.createDiv({ cls: 'abyss-recurrence-delete-confirm-dialog' });
+  dialog.createEl('h3', {
+    cls: 'abyss-recurrence-delete-confirm-title',
+    text: 'Delete completed task?',
+    attr: { id: 'abyss-recurrence-delete-confirm-title' },
+  });
+  dialog.createEl('p', {
+    cls: 'abyss-recurrence-delete-confirm-description',
+    text: 'The complete task and its sub-tasks will be deleted. No next occurrence will be created.',
+    attr: { id: 'abyss-recurrence-delete-confirm-description' },
+  });
+  const actions = dialog.createDiv({ cls: 'abyss-recurrence-delete-confirm-actions' });
+  const cancel = actions.createEl('button', { text: 'Cancel', attr: { type: 'button' } });
+  const confirm = actions.createEl('button', {
+    cls: 'mod-warning abyss-recurrence-delete-confirm-button',
+    text: 'Delete completed task',
+    attr: { type: 'button' },
+  });
+  return { surface, cancel, confirm };
+}
+
 export function requestTaskCompletion(
   task: CompletionConfirmationTask,
   onConfirm: () => void | Promise<unknown>,
   interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
   teardownSignal?: AbortSignal,
 ): Promise<void> {
-  const recurrence = task.recurrence;
-  if (
-    task.status === 'done' ||
-    task.onCompletion !== 'delete' ||
-    recurrence === undefined ||
-    parseRecurrenceRule(recurrence).type === 'valid'
-  ) {
+  if (!requiresCompletionConfirmation(task)) {
     try {
       return Promise.resolve(onConfirm()).then(() => undefined);
     } catch (error) {
       return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
   }
-  if (teardownSignal?.aborted) return Promise.resolve();
+  if (teardownSignal?.aborted ?? false) return Promise.resolve();
 
-  const ownerDocument = activeDocument;
+  return showCompletionConfirmation(
+    onConfirm,
+    interactionOwnership,
+    teardownSignal,
+    activeDocument,
+  );
+}
+
+function requiresCompletionConfirmation(task: CompletionConfirmationTask): boolean {
+  const recurrence = task.recurrence;
+  return (
+    task.status !== 'done' &&
+    task.onCompletion === 'delete' &&
+    recurrence !== undefined &&
+    parseRecurrenceRule(recurrence).type !== 'valid'
+  );
+}
+
+function focusTrapTarget(
+  event: KeyboardEvent,
+  active: Element | null,
+  ui: CompletionConfirmationUi,
+): HTMLButtonElement | undefined {
+  if (event.shiftKey && active === ui.cancel) return ui.confirm;
+  if ((!event.shiftKey && active === ui.confirm) || !ui.surface.contains(active)) return ui.cancel;
+  return undefined;
+}
+
+function showCompletionConfirmation(
+  onConfirm: () => void | Promise<unknown>,
+  interactionOwnership: InteractionOwnershipPort,
+  teardownSignal: AbortSignal | undefined,
+  ownerDocument: Document,
+): Promise<void> {
   const ownerWindow = ownerDocument.defaultView;
   const isOwnerHTMLElement = (element: Element | null): element is HTMLElement =>
     ownerWindow !== null && element instanceof ownerWindow.HTMLElement;
@@ -46,33 +110,8 @@ export function requestTaskCompletion(
     dismissActiveCompletionConfirmation?.();
     const previousFocus = ownerDocument.activeElement;
     const ownershipToken = interactionOwnership.acquire({ blocksShortcuts: true });
-    const surface = ownerDocument.body.createDiv({
-      cls: 'abyss-recurrence-delete-confirm',
-      attr: {
-        role: 'alertdialog',
-        'aria-modal': 'true',
-        'aria-labelledby': 'abyss-recurrence-delete-confirm-title',
-        'aria-describedby': 'abyss-recurrence-delete-confirm-description',
-      },
-    });
-    const dialog = surface.createDiv({ cls: 'abyss-recurrence-delete-confirm-dialog' });
-    dialog.createEl('h3', {
-      cls: 'abyss-recurrence-delete-confirm-title',
-      text: 'Delete completed task?',
-      attr: { id: 'abyss-recurrence-delete-confirm-title' },
-    });
-    dialog.createEl('p', {
-      cls: 'abyss-recurrence-delete-confirm-description',
-      text: 'The complete task and its sub-tasks will be deleted. No next occurrence will be created.',
-      attr: { id: 'abyss-recurrence-delete-confirm-description' },
-    });
-    const actions = dialog.createDiv({ cls: 'abyss-recurrence-delete-confirm-actions' });
-    const cancel = actions.createEl('button', { text: 'Cancel', attr: { type: 'button' } });
-    const confirm = actions.createEl('button', {
-      cls: 'mod-warning abyss-recurrence-delete-confirm-button',
-      text: 'Delete completed task',
-      attr: { type: 'button' },
-    });
+    const ui = createCompletionConfirmationUi(ownerDocument);
+    const { surface, cancel, confirm } = ui;
 
     let removed = false;
     const remove = (): boolean => {
@@ -99,18 +138,14 @@ export function requestTaskCompletion(
       if (isOwnerHTMLElement(previousFocus) && previousFocus.isConnected) previousFocus.focus();
       Promise.resolve()
         .then(onConfirm)
-        .then(() => resolve(), reject);
+        .then(() => {
+          resolve();
+        }, reject);
     };
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Tab') {
-        const active = ownerDocument.activeElement;
-        let target: HTMLButtonElement | undefined;
-        if (event.shiftKey && active === cancel) {
-          target = confirm;
-        } else if ((!event.shiftKey && active === confirm) || !surface.contains(active)) {
-          target = cancel;
-        }
-        if (target) {
+        const target = focusTrapTarget(event, ownerDocument.activeElement, ui);
+        if (target != null) {
           event.preventDefault();
           target.focus();
         }
@@ -121,9 +156,15 @@ export function requestTaskCompletion(
         cancelCompletion(true);
       }
     };
-    const dismiss = (): void => cancelCompletion(false);
-    const onTeardown = (): void => dismiss();
-    cancel.addEventListener('click', () => cancelCompletion(true));
+    const dismiss = (): void => {
+      cancelCompletion(false);
+    };
+    const onTeardown = (): void => {
+      dismiss();
+    };
+    cancel.addEventListener('click', () => {
+      cancelCompletion(true);
+    });
     confirm.addEventListener('click', confirmCompletion);
     surface.addEventListener('click', (event) => {
       if (event.target === surface) cancelCompletion(true);

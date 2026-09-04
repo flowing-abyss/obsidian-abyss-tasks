@@ -14,10 +14,32 @@ import {
 } from '../ui/TagGroupAppearanceModal';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
+import { runAsyncAction } from '../ui/runAsyncAction';
 import { presentTaskCommandResult } from '../ui/taskCommandResult';
 import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
 
 const PROJECTS_CAP = 10;
+
+type LeftPanelConstructorArgs = [
+  state: AppState,
+  settings: CalendarSettings,
+  tagManager: TagManager,
+  app: App,
+  queries: TaskQueryApi,
+  tasks: TaskApplicationApi,
+  onSaveSettings?: () => Promise<void>,
+  projectStore?: ProjectStore | null,
+  projectManager?: ProjectManager | null,
+  navigation?: PanelNavigationActions,
+];
+
+interface TagGroupRenderContext {
+  readonly group: TagGroup;
+  readonly tags: readonly string[];
+  readonly allTasks: readonly TaskSnapshot[];
+  readonly isExpanded: boolean;
+  readonly isGroupActive: boolean;
+}
 
 /** A task is "active" (actionable) when open or in-progress — the same set the
  *  center list shows by default, so left-panel badges match the opened list. */
@@ -30,28 +52,47 @@ function uniqueStrings(values: readonly string[]): string[] {
 }
 
 export class LeftPanel {
+  private readonly state: AppState;
+  private readonly settings: CalendarSettings;
+  private readonly tagManager: TagManager;
+  private readonly app: App;
+  private readonly queries: TaskQueryApi;
+  private readonly tasks: TaskApplicationApi;
+  private readonly onSaveSettings: () => Promise<void>;
+  private readonly projectStore: ProjectStore | null;
+  private readonly projectManager: ProjectManager | null;
   private el!: HTMLElement;
-  private offs: Array<() => void> = [];
-  private expandedGroups = new Set<string>();
-  private explicitlyCollapsed = new Set<string>();
+  private readonly offs: Array<() => void> = [];
+  private readonly expandedGroups = new Set<string>();
+  private readonly explicitlyCollapsed = new Set<string>();
   private showAllProjects = false;
   // When a tag is opened from the Pinned section, don't auto-expand the group
   // that contains it in the Tags tree — the pin exists precisely to avoid that.
   private tagSelectedFromPinned = false;
   private readonly navigation: PanelNavigationActions;
 
-  constructor(
-    private state: AppState,
-    private settings: CalendarSettings,
-    private tagManager: TagManager,
-    private app: App,
-    private queries: TaskQueryApi,
-    private tasks: TaskApplicationApi,
-    private onSaveSettings: () => Promise<void> = async () => {},
-    private projectStore: ProjectStore | null = null,
-    private projectManager: ProjectManager | null = null,
-    navigation?: PanelNavigationActions,
-  ) {
+  constructor(...args: LeftPanelConstructorArgs) {
+    const [
+      state,
+      settings,
+      tagManager,
+      app,
+      queries,
+      tasks,
+      onSaveSettings = async () => {},
+      projectStore = null,
+      projectManager = null,
+      navigation,
+    ] = args;
+    this.state = state;
+    this.settings = settings;
+    this.tagManager = tagManager;
+    this.app = app;
+    this.queries = queries;
+    this.tasks = tasks;
+    this.onSaveSettings = onSaveSettings;
+    this.projectStore = projectStore;
+    this.projectManager = projectManager;
     this.navigation =
       navigation ??
       new PanelNavigator(
@@ -69,11 +110,17 @@ export class LeftPanel {
   mount(container: HTMLElement): void {
     this.el = container;
     this.offs.push(
-      this.state.on('selectedList', () => this.render()),
-      this.state.on('mode', () => this.render()),
+      this.state.on('selectedList', () => {
+        this.render();
+      }),
+      this.state.on('mode', () => {
+        this.render();
+      }),
       // Re-render when the active container's view state changes so the
       // "customized" dot appears/disappears live as filters/sort/group change.
-      this.state.on('centerListViewState', () => this.render()),
+      this.state.on('centerListViewState', () => {
+        this.render();
+      }),
     );
     this.render();
   }
@@ -83,8 +130,10 @@ export class LeftPanel {
   }
 
   destroy(): void {
-    this.offs.forEach((f) => f());
-    this.el?.empty();
+    this.offs.forEach((f) => {
+      f();
+    });
+    this.el.empty();
   }
 
   /** Append the "customized" dot after a container label when its saved view
@@ -92,8 +141,8 @@ export class LeftPanel {
   private appendCustomDot(labelParent: HTMLElement, sel: ListSelection): void {
     const key = listSelectionToKey(sel);
     const vs = this.settings.listViewStates?.[key];
-    if (vs && isListViewCustomized(vs, key)) {
-      labelParent.createEl('span', {
+    if (vs != null && isListViewCustomized(vs, key)) {
+      labelParent.createSpan({
         cls: 'abyss-left-custom-dot',
         attr: { role: 'img', 'aria-label': 'Custom view applied' },
       });
@@ -136,11 +185,14 @@ export class LeftPanel {
       this.renderCollapsibleSection(
         'projects',
         'Projects',
-        this.projectManager
-          ? (): void =>
-              this.startInlineAdd('projects', 'Project name…', (name) => this.createProject(name))
+        this.projectManager != null
+          ? (): void => {
+              this.startInlineAdd('projects', 'Project name…', (name) => this.createProject(name));
+            }
           : null,
-        (body) => this.renderProjectsList(body, activeProjects),
+        (body) => {
+          this.renderProjectsList(body, activeProjects);
+        },
       );
     }
 
@@ -150,8 +202,9 @@ export class LeftPanel {
     this.renderCollapsibleSection(
       'tags',
       'Tags',
-      (): void =>
-        this.startInlineAdd('tags', 'Tag name…', (name) => this.tagManager.createManualGroup(name)),
+      (): void => {
+        this.startInlineAdd('tags', 'Tag name…', (name) => this.tagManager.createManualGroup(name));
+      },
       (body) => {
         for (const group of groups) {
           this.renderTagGroup(body, group, allTasks);
@@ -161,7 +214,7 @@ export class LeftPanel {
   }
 
   private async createProject(name: string): Promise<void> {
-    if (!this.projectManager) return;
+    if (this.projectManager == null) return;
     await this.projectManager.create(name);
     this.projectStore?.refresh();
   }
@@ -186,7 +239,7 @@ export class LeftPanel {
     setIcon(chevron, collapsed ? 'chevron-right' : 'chevron-down');
     header.createSpan({ cls: 'abyss-left-section-title', text: title });
 
-    if (addAction) {
+    if (addAction != null) {
       const add = header.createSpan({
         cls: 'abyss-left-add',
         attr: { 'aria-label': `Add to ${title}` },
@@ -200,7 +253,7 @@ export class LeftPanel {
 
     header.addEventListener('click', () => {
       this.settings.sectionCollapse[key] = !collapsed;
-      void this.onSaveSettings();
+      runAsyncAction(this.onSaveSettings(), 'Could not complete UI action');
       this.render();
     });
 
@@ -231,16 +284,21 @@ export class LeftPanel {
       row.createDiv({ cls: 'abyss-left-item-left' }, (l) => {
         // Diamond colour indicator — deliberately not round, to read differently
         // from the round tag dots. Colour comes from the project's status.
-        const status = project.statusId ? statusById.get(project.statusId) : undefined;
-        const dot = l.createEl('span', { cls: 'abyss-project-dot' });
-        if (status?.color) dot.style.background = status.color;
-        l.createEl('span', { cls: 'abyss-left-label', text: project.name });
+        const status =
+          project.statusId !== null && project.statusId !== ''
+            ? statusById.get(project.statusId)
+            : undefined;
+        const dot = l.createSpan({ cls: 'abyss-project-dot' });
+        if (status?.color !== undefined && status.color !== '') {
+          dot.style.background = status.color;
+        }
+        l.createSpan({ cls: 'abyss-left-label', text: project.name });
         this.appendCustomDot(l, { type: 'project', path: project.path });
       });
       this.attachProjectDropZone(row, project.path);
       this.attachProjectDragSource(row, project.path);
       if (openCount > 0) {
-        row.createEl('span', { cls: 'abyss-left-count', text: String(openCount) });
+        row.createSpan({ cls: 'abyss-left-count', text: String(openCount) });
       }
       row.addEventListener('click', () => {
         this.navigation.openList({ type: 'project', path: project.path });
@@ -253,7 +311,7 @@ export class LeftPanel {
 
     if (!this.showAllProjects && projects.length > PROJECTS_CAP) {
       const more = parent.createDiv({ cls: 'abyss-left-item abyss-left-showmore' });
-      more.createEl('span', {
+      more.createSpan({
         cls: 'abyss-left-label',
         text: `Show ${projects.length - PROJECTS_CAP} more…`,
       });
@@ -278,13 +336,13 @@ export class LeftPanel {
     // Ensure the section is expanded so the input is visible.
     if (this.settings.sectionCollapse[key]) {
       this.settings.sectionCollapse[key] = false;
-      void this.onSaveSettings();
+      runAsyncAction(this.onSaveSettings(), 'Could not complete UI action');
       this.render();
     }
     const section = this.el.querySelector(`.abyss-left-section--${key}`);
-    if (!section) return;
+    if (section == null) return;
     const existing = section.querySelector('.abyss-left-add-input');
-    if (existing) {
+    if (existing != null) {
       (existing as HTMLInputElement).focus();
       return;
     }
@@ -303,7 +361,13 @@ export class LeftPanel {
       if (committed) return;
       committed = true;
       const value = input.value.trim();
-      if (value) void onCommit(value).then(() => this.render());
+      if (value.length > 0)
+        runAsyncAction(
+          onCommit(value).then(() => {
+            this.render();
+          }),
+          'Could not complete UI action',
+        );
       else this.render();
     };
     input.addEventListener('keydown', (e) => {
@@ -321,7 +385,9 @@ export class LeftPanel {
         if (activeDocument.activeElement !== input) commit();
       }, 150);
     });
-    window.setTimeout(() => input.focus(), 0);
+    window.setTimeout(() => {
+      input.focus();
+    }, 0);
   }
 
   private showProjectMenu(
@@ -330,7 +396,7 @@ export class LeftPanel {
   ): void {
     const menu = new Menu();
     const statuses = this.settings.projects.statuses;
-    if (statuses.length > 0 && this.projectManager) {
+    if (statuses.length > 0 && this.projectManager != null) {
       menu.addItem((item) => {
         item.setTitle('Change status').setIcon('circle-dot');
         // setSubmenu is available at runtime but not in the public typings.
@@ -340,7 +406,9 @@ export class LeftPanel {
             si
               .setTitle(s.label)
               .setChecked(s.id === project.statusId)
-              .onClick(() => this.changeProjectStatus(project.path, s.id)),
+              .onClick(() => {
+                this.changeProjectStatus(project.path, s.id);
+              }),
           );
         }
       });
@@ -349,36 +417,47 @@ export class LeftPanel {
       item
         .setTitle('Open note')
         .setIcon('file-text')
-        .onClick(() => this.openProjectNote(project.path)),
+        .onClick(() => {
+          this.openProjectNote(project.path);
+        }),
     );
     showMenuAtMouseEventWithFocus(menu, e);
   }
 
   private changeProjectStatus(path: string, statusId: string): void {
-    void this.projectManager?.setStatus(path, statusId).then(() => {
-      this.projectStore?.refresh();
-      this.render();
-    });
+    const projectManager = this.projectManager;
+    if (projectManager === null) return;
+    runAsyncAction(
+      projectManager.setStatus(path, statusId).then(() => {
+        this.projectStore?.refresh();
+        this.render();
+      }),
+      'Could not complete UI action',
+    );
   }
 
   private openProjectNote(path: string): void {
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+    if (file instanceof TFile)
+      runAsyncAction(
+        this.app.workspace.getLeaf(false).openFile(file),
+        'Could not complete UI action',
+      );
   }
 
   private renderPinnedTag(parent: HTMLElement, tag: string, allTasks: TaskSnapshot[]): void {
     const sel = this.state.get('selectedList');
     const isActive = typeof sel === 'object' && sel.type === 'tag' && sel.tag === tag;
-    const count = allTasks.filter((t) => isActiveTask(t) && t.tags?.includes(tag) === true).length;
+    const count = allTasks.filter((t) => isActiveTask(t) && t.tags.includes(tag)).length;
 
     const row = parent.createDiv({
       cls: `abyss-left-item abyss-pinned-tag${isActive ? ' is-active' : ''}`,
     });
     row.createDiv({ cls: 'abyss-left-item-left' }, (l) => {
-      l.createEl('span', { cls: 'abyss-left-label', text: tag });
+      l.createSpan({ cls: 'abyss-left-label', text: tag });
       this.appendCustomDot(l, { type: 'tag', tag });
     });
-    if (count > 0) row.createEl('span', { cls: 'abyss-left-count', text: String(count) });
+    if (count > 0) row.createSpan({ cls: 'abyss-left-count', text: String(count) });
 
     row.addEventListener('click', () => {
       this.tagSelectedFromPinned = true;
@@ -403,21 +482,21 @@ export class LeftPanel {
   ): void {
     const sel = this.state.get('selectedList');
     const isActive = typeof sel === 'object' && sel.type === 'tag' && sel.tag === tag;
-    const count = allTasks.filter((t) => isActiveTask(t) && t.tags?.includes(tag) === true).length;
+    const count = allTasks.filter((t) => isActiveTask(t) && t.tags.includes(tag)).length;
 
     const row = parent.createDiv({
       cls: `abyss-left-item abyss-tag-leaf${isActive ? ' is-active' : ''}`,
     });
     row.createDiv({ cls: 'abyss-left-item-left' }, (l) => {
       // Match group rows: a color dot + the group name (no leading '#').
-      if (group.color) {
-        const dot = l.createEl('span', { cls: 'abyss-group-dot' });
+      if (group.color !== undefined && group.color !== '') {
+        const dot = l.createSpan({ cls: 'abyss-group-dot' });
         dot.style.background = group.color;
       }
-      l.createEl('span', { cls: 'abyss-left-label', text: group.name });
+      l.createSpan({ cls: 'abyss-left-label', text: group.name });
       this.appendCustomDot(l, { type: 'tag', tag });
     });
-    if (count > 0) row.createEl('span', { cls: 'abyss-left-count', text: String(count) });
+    if (count > 0) row.createSpan({ cls: 'abyss-left-count', text: String(count) });
 
     row.addEventListener('click', () => {
       this.tagSelectedFromPinned = false;
@@ -433,25 +512,20 @@ export class LeftPanel {
     this.attachGroupReorder(row, group.id);
   }
 
-  private renderSmartList(
-    parent: HTMLElement,
-    selection: ListSelection,
-    label: string,
-    icon: string,
-    count: number,
-  ): void {
+  private renderSmartList(...args: [HTMLElement, ListSelection, string, string, number]): void {
+    const [parent, selection, label, icon, count] = args;
     const current = this.state.get('selectedList');
     const isActive = current === selection;
     const row = parent.createDiv({ cls: `abyss-left-item${isActive ? ' is-active' : ''}` });
 
     const left = row.createDiv({ cls: 'abyss-left-item-left' });
-    const iconEl = left.createEl('span', { cls: 'abyss-left-icon' });
+    const iconEl = left.createSpan({ cls: 'abyss-left-icon' });
     setIcon(iconEl, icon);
-    left.createEl('span', { cls: 'abyss-left-label', text: label });
+    left.createSpan({ cls: 'abyss-left-label', text: label });
     this.appendCustomDot(left, selection);
 
     if (count > 0) {
-      row.createEl('span', { cls: 'abyss-left-count', text: String(count) });
+      row.createSpan({ cls: 'abyss-left-count', text: String(count) });
     }
 
     row.addEventListener('click', () => {
@@ -460,78 +534,70 @@ export class LeftPanel {
   }
 
   private renderTagGroup(parent: HTMLElement, group: TagGroup, allTasks: TaskSnapshot[]): void {
+    if (this.renderSingleTagGroup(parent, group, allTasks)) return;
     const sel = this.state.get('selectedList');
-
-    // A manual group holding a single tag is a leaf, not an expandable group —
-    // you can't nest more tags under it, so a chevron would be misleading.
-    if (group.mode === 'manual' && (group.tags?.length ?? 0) === 1) {
-      const soleTag = group.tags![0]!;
-      if (!this.settings.archivedTags.includes(soleTag)) {
-        this.renderTagLeaf(parent, group, soleTag, allTasks);
-      }
-      return;
-    }
-
     const isGroupActive =
       typeof sel === 'object' && sel.type === 'group' && sel.groupId === group.id;
-
     const tags = this.resolveGroupTags(group, allTasks).filter(
       (t) => !this.settings.archivedTags.includes(t),
     );
-
     const hasActiveChild = tags.some(
       (t) => typeof sel === 'object' && sel.type === 'tag' && sel.tag === t,
     );
-    // Auto-expand when a child is active, UNLESS the user explicitly collapsed
-    // this group, or the tag was opened from the Pinned section (pinning exists
-    // precisely to reach the tag without unfolding the tree).
-    if (hasActiveChild && !this.explicitlyCollapsed.has(group.id) && !this.tagSelectedFromPinned) {
-      this.expandedGroups.add(group.id);
-    }
-
+    this.expandActiveTagGroup(group.id, hasActiveChild);
     const isExpanded = this.expandedGroups.has(group.id);
-
     const container = parent.createDiv({ cls: 'abyss-tag-group' });
+    const context = { group, tags, allTasks, isExpanded, isGroupActive };
+    this.renderTagGroupHeader(container, context);
+    if (isExpanded) this.renderTagGroupChildren(container, context);
+  }
+
+  private renderSingleTagGroup(
+    parent: HTMLElement,
+    group: TagGroup,
+    allTasks: TaskSnapshot[],
+  ): boolean {
+    const soleTag = group.mode === 'manual' && group.tags?.length === 1 ? group.tags[0] : undefined;
+    if (soleTag === undefined) return false;
+    if (!this.settings.archivedTags.includes(soleTag)) {
+      this.renderTagLeaf(parent, group, soleTag, allTasks);
+    }
+    return true;
+  }
+
+  private expandActiveTagGroup(groupId: string, hasActiveChild: boolean): void {
+    if (!hasActiveChild || this.explicitlyCollapsed.has(groupId) || this.tagSelectedFromPinned) {
+      return;
+    }
+    this.expandedGroups.add(groupId);
+  }
+
+  private renderTagGroupHeader(container: HTMLElement, context: TagGroupRenderContext): void {
+    const { group, tags, allTasks, isExpanded, isGroupActive } = context;
     const header = container.createDiv({
       cls: `abyss-tag-group-header${isGroupActive ? ' is-active' : ''}`,
     });
     this.attachGroupReorder(header, group.id);
-
-    // Chevron: toggles expand/collapse only, does NOT select the group
-    const chevron = header.createEl('span', {
+    const chevron = header.createSpan({
       cls: `abyss-left-icon abyss-group-arrow${isExpanded ? ' is-open' : ''}`,
     });
     setIcon(chevron, isExpanded ? 'chevron-down' : 'chevron-right');
     chevron.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (isExpanded) {
-        this.expandedGroups.delete(group.id);
-        this.explicitlyCollapsed.add(group.id);
-      } else {
-        this.expandedGroups.add(group.id);
-        this.explicitlyCollapsed.delete(group.id);
-      }
+      this.toggleTagGroup(group.id);
       this.render();
     });
-
-    if (group.color) {
-      const dot = header.createEl('span', { cls: 'abyss-group-dot' });
+    if (group.color !== undefined && group.color !== '') {
+      const dot = header.createSpan({ cls: 'abyss-group-dot' });
       dot.style.background = group.color;
     }
-    header.createEl('span', { cls: 'abyss-left-label', text: group.name });
+    header.createSpan({ cls: 'abyss-left-label', text: group.name });
     this.appendCustomDot(header, { type: 'group', groupId: group.id });
 
-    // Count all tasks matching any tag in this group (including root prefix tag)
-    const rootTag = group.mode === 'prefix' && group.prefix ? `#${group.prefix}` : null;
-    const allGroupTags = rootTag ? [rootTag, ...tags] : tags;
-    const groupCount = allTasks.filter(
-      (t) => isActiveTask(t) && allGroupTags.some((tag) => t.tags?.includes(tag) === true),
-    ).length;
+    const groupCount = this.tagGroupTaskCount(group, tags, allTasks);
     if (groupCount > 0) {
-      header.createEl('span', { cls: 'abyss-left-count', text: String(groupCount) });
+      header.createSpan({ cls: 'abyss-left-count', text: String(groupCount) });
     }
-
-    // Header click: select the group (expand/collapse is handled by the chevron above)
     header.addEventListener('click', () => {
       this.navigation.openList({ type: 'group', groupId: group.id });
     });
@@ -540,46 +606,68 @@ export class LeftPanel {
       e.stopPropagation();
       this.showTagGroupMenu(e, group);
     });
+  }
 
-    if (isExpanded) {
-      const children = container.createDiv({ cls: 'abyss-tag-group-children' });
-      for (const tag of tags) {
-        // Strip the group prefix from display label: #work/dev → dev
-        const label =
-          group.mode === 'prefix' && group.prefix ? tag.replace(`#${group.prefix}/`, '') : tag;
+  private tagGroupTaskCount(
+    group: TagGroup,
+    tags: readonly string[],
+    allTasks: readonly TaskSnapshot[],
+  ): number {
+    const prefix = group.mode === 'prefix' ? group.prefix : undefined;
+    const allGroupTags = prefix !== undefined && prefix.length > 0 ? [`#${prefix}`, ...tags] : tags;
+    return allTasks.filter(
+      (task) => isActiveTask(task) && allGroupTags.some((tag) => task.tags.includes(tag)),
+    ).length;
+  }
 
-        const tagSel = this.state.get('selectedList');
-        const isTagActive =
-          typeof tagSel === 'object' && tagSel.type === 'tag' && tagSel.tag === tag;
-        const tagCount = allTasks.filter(
-          (t) => t.tags?.includes(tag) === true && isActiveTask(t),
-        ).length;
-
-        const child = children.createDiv({
-          cls: `abyss-left-item abyss-tag-child${isTagActive ? ' is-active' : ''}`,
-        });
-        child.createDiv({ cls: 'abyss-left-item-left' }, (l) => {
-          l.createEl('span', { cls: 'abyss-left-label', text: label });
-          this.appendCustomDot(l, { type: 'tag', tag });
-        });
-        if (tagCount > 0)
-          child.createEl('span', { cls: 'abyss-left-count', text: String(tagCount) });
-
-        child.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.tagSelectedFromPinned = false;
-          this.navigation.openList({ type: 'tag', tag });
-        });
-
-        child.addEventListener('contextmenu', (e) => {
-          e.preventDefault();
-          this.showChildTagMenu(e, tag);
-        });
-
-        this.attachTagDragSource(child, tag);
-        this.attachDropZone(child, tag);
-      }
+  private toggleTagGroup(groupId: string): void {
+    if (this.expandedGroups.has(groupId)) {
+      this.expandedGroups.delete(groupId);
+      this.explicitlyCollapsed.add(groupId);
+    } else {
+      this.expandedGroups.add(groupId);
+      this.explicitlyCollapsed.delete(groupId);
     }
+  }
+
+  private renderTagGroupChildren(container: HTMLElement, context: TagGroupRenderContext): void {
+    const children = container.createDiv({ cls: 'abyss-tag-group-children' });
+    for (const tag of context.tags) {
+      this.renderTagGroupChild(children, context.group, tag, context.allTasks);
+    }
+  }
+
+  private renderTagGroupChild(
+    parent: HTMLElement,
+    group: TagGroup,
+    tag: string,
+    allTasks: readonly TaskSnapshot[],
+  ): void {
+    const prefix = group.mode === 'prefix' ? group.prefix : undefined;
+    const label = prefix !== undefined && prefix.length > 0 ? tag.replace(`#${prefix}/`, '') : tag;
+    const selected = this.state.get('selectedList');
+    const isActive =
+      typeof selected === 'object' && selected.type === 'tag' && selected.tag === tag;
+    const count = allTasks.filter((task) => task.tags.includes(tag) && isActiveTask(task)).length;
+    const child = parent.createDiv({
+      cls: `abyss-left-item abyss-tag-child${isActive ? ' is-active' : ''}`,
+    });
+    child.createDiv({ cls: 'abyss-left-item-left' }, (left) => {
+      left.createSpan({ cls: 'abyss-left-label', text: label });
+      this.appendCustomDot(left, { type: 'tag', tag });
+    });
+    if (count > 0) child.createSpan({ cls: 'abyss-left-count', text: String(count) });
+    child.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.tagSelectedFromPinned = false;
+      this.navigation.openList({ type: 'tag', tag });
+    });
+    child.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      this.showChildTagMenu(event, tag);
+    });
+    this.attachTagDragSource(child, tag);
+    this.attachDropZone(child, tag);
   }
 
   private showPinnedTagMenu(e: MouseEvent, tag: string): void {
@@ -601,7 +689,9 @@ export class LeftPanel {
         .setTitle('Rename tag across vault…')
         .setIcon('pencil')
         .onClick(() => {
-          new RenameTagModal(this.app, this.tagManager, tag, () => this.render()).open();
+          new RenameTagModal(this.app, this.tagManager, tag, () => {
+            this.render();
+          }).open();
         }),
     );
     showMenuAtMouseEventWithFocus(menu, e);
@@ -631,7 +721,9 @@ export class LeftPanel {
         .setTitle('Rename tag across vault…')
         .setIcon('pencil')
         .onClick(() => {
-          new RenameTagModal(this.app, this.tagManager, tag, () => this.render()).open();
+          new RenameTagModal(this.app, this.tagManager, tag, () => {
+            this.render();
+          }).open();
         }),
     );
     showMenuAtMouseEventWithFocus(menu, e);
@@ -643,16 +735,20 @@ export class LeftPanel {
       item
         .setTitle('Rename display name…')
         .setIcon('pencil')
-        .onClick(() => this.openTagGroupAppearance(group, 'name')),
+        .onClick(() => {
+          this.openTagGroupAppearance(group, 'name');
+        }),
     );
     menu.addItem((item) =>
       item
         .setTitle('Change color…')
         .setIcon('palette')
-        .onClick(() => this.openTagGroupAppearance(group, 'color')),
+        .onClick(() => {
+          this.openTagGroupAppearance(group, 'color');
+        }),
     );
 
-    if (group.mode === 'prefix' && group.prefix) {
+    if (group.mode === 'prefix' && group.prefix !== undefined && group.prefix !== '') {
       const prefix = `#${group.prefix}`;
       menu.addItem((item) =>
         item
@@ -663,26 +759,32 @@ export class LeftPanel {
               this.app,
               this.tagManager,
               prefix,
-              () => this.render(),
+              () => {
+                this.render();
+              },
               'prefix',
             ).open();
           }),
       );
     } else {
-      const tags = uniqueStrings(flattenedTag ? [flattenedTag] : (group.tags ?? []));
+      const tags = uniqueStrings(
+        flattenedTag !== undefined && flattenedTag !== '' ? [flattenedTag] : (group.tags ?? []),
+      );
       for (const tag of tags) {
         menu.addItem((item) =>
           item
             .setTitle(`Rename ${tag} across vault…`)
             .setIcon('replace')
             .onClick(() => {
-              new RenameTagModal(this.app, this.tagManager, tag, () => this.render()).open();
+              new RenameTagModal(this.app, this.tagManager, tag, () => {
+                this.render();
+              }).open();
             }),
         );
       }
     }
 
-    if (flattenedTag) {
+    if (flattenedTag !== undefined && flattenedTag !== '') {
       const isPinned = this.settings.pinnedTags.includes(flattenedTag);
       menu.addItem((item) =>
         item
@@ -709,8 +811,10 @@ export class LeftPanel {
   private openTagGroupAppearance(group: TagGroup, field: 'name' | 'color'): void {
     new TagGroupAppearanceModal(
       this.app,
-      { name: group.name, color: group.color },
-      (result) => this.applyTagGroupAppearance(group, result),
+      { name: group.name, ...(group.color !== undefined && { color: group.color }) },
+      (result) => {
+        this.applyTagGroupAppearance(group, result);
+      },
       field,
     ).open();
   }
@@ -728,7 +832,9 @@ export class LeftPanel {
     const save = this.onSaveSettings();
     const saveRevision = latestSettingsSaveRevision(this.settings);
     void save
-      .then(() => this.render())
+      .then(() => {
+        this.render();
+      })
       .catch(() => {
         let rolledBack = false;
         if (latestSettingsSaveRevision(this.settings) === saveRevision) {
@@ -750,9 +856,12 @@ export class LeftPanel {
 
   private makeTagOp(op: () => Promise<void>): () => void {
     return () => {
-      void op().then(() => {
-        this.render();
-      });
+      runAsyncAction(
+        op().then(() => {
+          this.render();
+        }),
+        'Could not complete UI action',
+      );
     };
   }
 
@@ -770,20 +879,24 @@ export class LeftPanel {
       e.dataTransfer?.setData(LeftPanel.GROUP_DND, groupId);
       el.classList.add('abyss-dragging');
     });
-    el.addEventListener('dragend', () => el.classList.remove('abyss-dragging'));
+    el.addEventListener('dragend', () => {
+      el.classList.remove('abyss-dragging');
+    });
     el.addEventListener('dragover', (e) => {
-      if (!e.dataTransfer?.types.includes(LeftPanel.GROUP_DND)) return;
+      if (!(e.dataTransfer?.types.includes(LeftPanel.GROUP_DND) ?? false)) return;
       e.preventDefault();
       el.classList.add('abyss-reorder-target');
     });
-    el.addEventListener('dragleave', () => el.classList.remove('abyss-reorder-target'));
+    el.addEventListener('dragleave', () => {
+      el.classList.remove('abyss-reorder-target');
+    });
     el.addEventListener('drop', (e) => {
       const draggedId = e.dataTransfer?.getData(LeftPanel.GROUP_DND);
       el.classList.remove('abyss-reorder-target');
-      if (!draggedId || draggedId === groupId) return;
+      if (draggedId === undefined || draggedId === '' || draggedId === groupId) return;
       e.preventDefault();
       e.stopPropagation();
-      void this.reorderTagGroups(draggedId, groupId);
+      runAsyncAction(this.reorderTagGroups(draggedId, groupId), 'Could not complete UI action');
     });
   }
 
@@ -793,7 +906,7 @@ export class LeftPanel {
     const to = groups.findIndex((g) => g.id === targetId);
     if (from < 0 || to < 0) return;
     const [item] = groups.splice(from, 1);
-    if (item) groups.splice(to, 0, item);
+    if (item != null) groups.splice(to, 0, item);
     await this.onSaveSettings();
     this.render();
   }
@@ -816,7 +929,8 @@ export class LeftPanel {
   private attachProjectDropZone(el: HTMLElement, projectPath: string): void {
     el.addEventListener('dragover', (e) => {
       const task = this.state.get('draggingTask');
-      if (!this.projectManager || !task || task.source.filePath === projectPath) return;
+      if (this.projectManager == null || task == null || task.source.filePath === projectPath)
+        return;
       e.preventDefault();
       el.classList.add('abyss-drop-target');
     });
@@ -826,14 +940,18 @@ export class LeftPanel {
     el.addEventListener('drop', (e) => {
       el.classList.remove('abyss-drop-target');
       const task = this.state.get('draggingTask');
-      if (!task || task.source.filePath === projectPath || !this.projectManager) return;
+      if (task == null || task.source.filePath === projectPath || this.projectManager == null)
+        return;
       e.preventDefault();
-      void moveTaskToProjectWithRecovery(
-        this.app,
-        this.tasks,
-        this.projectManager,
-        task.ref,
-        projectPath,
+      runAsyncAction(
+        moveTaskToProjectWithRecovery(
+          this.app,
+          this.tasks,
+          this.projectManager,
+          task.ref,
+          projectPath,
+        ),
+        'Could not complete UI action',
       );
     });
   }
@@ -855,7 +973,7 @@ export class LeftPanel {
 
   private attachDropZone(el: HTMLElement, tag: string): void {
     el.addEventListener('dragover', (e) => {
-      if (!this.state.get('draggingTask')) return;
+      if (this.state.get('draggingTask') == null) return;
       e.preventDefault();
       el.classList.add('abyss-drop-target');
     });
@@ -866,14 +984,14 @@ export class LeftPanel {
       e.preventDefault();
       el.classList.remove('abyss-drop-target');
       const dragging = this.state.get('draggingTask');
-      if (!dragging) return;
-      void this.assignTagFromInbox(dragging, tag);
+      if (dragging == null) return;
+      runAsyncAction(this.assignTagFromInbox(dragging, tag), 'Could not complete UI action');
     });
   }
 
   private async assignTagFromInbox(task: TaskSnapshot, tag: string): Promise<void> {
     const inboxTag = this.settings.inbox.tag;
-    const tags = new Set(task.tags ?? []);
+    const tags = new Set(task.tags);
     const remove = this.settings.inbox.removeTagOnAssign && tags.has(inboxTag) ? [inboxTag] : [];
     presentTaskCommandResult(
       await this.tasks.execute({
@@ -885,29 +1003,30 @@ export class LeftPanel {
   }
 
   private resolveGroupTags(group: TagGroup, allTasks: TaskSnapshot[]): string[] {
-    if (group.mode === 'prefix' && group.prefix) {
-      const prefix = group.prefix;
-      const found = new Set<string>();
-      for (const task of allTasks) {
-        for (const tag of task.tags ?? []) {
-          // Only include subtags (e.g. #work/dev), not the root tag (#work) itself
-          if (tag.startsWith(`#${prefix}/`)) {
-            found.add(tag);
-          }
-        }
-      }
-      return Array.from(found).sort((a, b) => a.localeCompare(b));
+    if (group.mode === 'prefix' && group.prefix !== undefined && group.prefix.length > 0) {
+      return this.collectPrefixTags(group.prefix, allTasks);
     }
     return group.tags ?? [];
+  }
+
+  private collectPrefixTags(prefix: string, allTasks: readonly TaskSnapshot[]): string[] {
+    const found = new Set<string>();
+    const nestedPrefix = `#${prefix}/`;
+    for (const task of allTasks) {
+      for (const tag of task.tags) {
+        if (tag.startsWith(nestedPrefix)) found.add(tag);
+      }
+    }
+    return Array.from(found).sort((left, right) => left.localeCompare(right));
   }
 
   private countInbox(tasks: TaskSnapshot[]): number {
     const { inbox } = this.settings;
     const allOpen = tasks.filter((t) => t.status === 'open');
     const withTag =
-      inbox.mode !== 'untagged' ? allOpen.filter((t) => t.tags?.includes(inbox.tag) === true) : [];
+      inbox.mode !== 'untagged' ? allOpen.filter((t) => t.tags.includes(inbox.tag)) : [];
     const includeUntagged = inbox.mode !== 'tag';
-    const untagged = includeUntagged ? allOpen.filter((t) => (t.tags?.length ?? 0) === 0) : [];
+    const untagged = includeUntagged ? allOpen.filter((t) => t.tags.length === 0) : [];
     if (withTag.length === 0) return untagged.length;
     if (untagged.length === 0) return withTag.length;
     const seen = new Set<string>();

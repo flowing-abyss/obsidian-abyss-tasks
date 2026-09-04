@@ -20,16 +20,16 @@ export class TagGroupAppearanceModal extends Modal {
 
   constructor(
     app: App,
-    private current: TagGroupAppearance,
-    private onSubmit: (result: TagGroupAppearanceResult) => void,
-    private initialField: AppearanceField = 'name',
+    private readonly current: TagGroupAppearance,
+    private readonly onSubmit: (result: TagGroupAppearanceResult) => void,
+    private readonly initialField: AppearanceField = 'name',
   ) {
     super(app);
     this.name = current.name;
     this.color = current.color ?? null;
   }
 
-  onOpen(): void {
+  override onOpen(): void {
     const { contentEl } = this;
     contentEl.addClass('abyss-tag-group-appearance-modal');
     contentEl.createEl('h3', { text: 'Tag group appearance' });
@@ -51,7 +51,9 @@ export class TagGroupAppearanceModal extends Modal {
       picker.setValue(this.color ?? COLOR_PICKER_FALLBACK).onChange((value) => {
         this.color = value;
       });
-      colorInput = contentEl.querySelector<HTMLInputElement>('input[type="color"]')!;
+      const renderedInput = contentEl.querySelector<HTMLInputElement>('input[type="color"]');
+      if (renderedInput === null) throw new Error('Obsidian did not render the color input');
+      colorInput = renderedInput;
       colorInput.addEventListener('input', () => {
         this.color = colorInput.value;
       });
@@ -78,10 +80,12 @@ export class TagGroupAppearanceModal extends Modal {
     });
 
     const target = this.initialField === 'color' ? colorInput : nameInput;
-    contentEl.ownerDocument.defaultView?.setTimeout(() => target.focus(), 0);
+    contentEl.ownerDocument.defaultView?.setTimeout(() => {
+      target.focus();
+    }, 0);
   }
 
-  onClose(): void {
+  override onClose(): void {
     this.contentEl.empty();
   }
 }

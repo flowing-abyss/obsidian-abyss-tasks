@@ -31,7 +31,7 @@ import { CalendarRenderer } from './ui/CalendarRenderer';
 import { PANEL_VIEW_TYPE, PanelView } from './views/PanelView';
 
 export default class TaskCalendarPlugin extends Plugin {
-  settings!: CalendarSettings;
+  override settings!: CalendarSettings;
   tagManager!: TagManager;
   queries!: TaskQueryApi;
   tasks!: TaskApplicationApi & TaskCaptureApplicationApi;
@@ -39,17 +39,28 @@ export default class TaskCalendarPlugin extends Plugin {
   private statusCatalog!: StatusCatalog;
   private statusRegistry!: StatusRegistry;
 
-  async onload(): Promise<void> {
+  override async onload(): Promise<void> {
     await this.loadSettings();
+    this.initializeTaskServices();
+    const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
+    this.registerPanel(commentTimeContext);
+    registerCodeBlock(this, this.settings, this.queries, this.tasks, this.statusRegistry);
+    this.registerCommands();
+    this.addSettingTab(new CalendarSettingsTab(this.app, this));
+    this.initializeIndexWhenReady();
+    this.installLegacyCalendarShim(commentTimeContext);
+  }
+
+  private initializeTaskServices(): void {
     this.statusCatalog = new StatusCatalog(toStatusRules(this.settings.taskStatuses));
     this.statusRegistry = new StatusRegistry(this.settings.taskStatuses);
     const refAuthority = new TaskRefAuthority();
     this.taskIndex = new TaskIndex(this.app, {
       statusCatalog: this.statusCatalog,
       dailyNoteFormat: this.settings.desktop.dailyNoteFormat,
-      ...(this.settings.desktop.globalTaskFilter && {
-        globalTaskFilter: this.settings.desktop.globalTaskFilter,
-      }),
+      ...(this.settings.desktop.globalTaskFilter.length > 0
+        ? { globalTaskFilter: this.settings.desktop.globalTaskFilter }
+        : {}),
       refAuthority,
     });
     const codec = new TaskMarkdownCodec(this.statusCatalog);
@@ -83,8 +94,9 @@ export default class TaskCalendarPlugin extends Plugin {
     );
     this.queries = this.tasks.queries;
     this.tagManager = new TagManager(this.app, this.settings, () => this.saveSettings());
-    const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
+  }
 
+  private registerPanel(commentTimeContext: CommentTimeContextProvider): void {
     this.registerView(
       PANEL_VIEW_TYPE,
       (leaf) =>
@@ -99,30 +111,34 @@ export default class TaskCalendarPlugin extends Plugin {
           commentTimeContext,
         ),
     );
+  }
 
-    registerCodeBlock(this, this.settings, this.queries, this.tasks, this.statusRegistry);
-
+  private registerCommands(): void {
     this.addCommand({
       id: 'open-panel',
       name: 'Open view',
-      callback: () => {
-        void this.openPanel();
+      callback: async () => {
+        await this.openPanel();
       },
     });
+  }
 
-    this.addSettingTab(new CalendarSettingsTab(this.app, this));
-
+  private initializeIndexWhenReady(): void {
     this.app.workspace.onLayoutReady(() => {
-      void this.taskIndex.initialize();
+      this.taskIndex.initialize().catch((error: unknown) => {
+        console.error('[abyss-tasks] task index initialization failed', error);
+      });
     });
+  }
 
+  private installLegacyCalendarShim(commentTimeContext: CommentTimeContextProvider): void {
     // Legacy Dataview shim — remove after users migrate to native `task-calendar` code blocks
-    (window as unknown as Record<string, unknown>).renderCalendar = (
+    (window as unknown as Record<string, unknown>)['renderCalendar'] = (
       dv: unknown,
       params: CodeBlockParams,
     ) => {
       const container = (dv as { container?: HTMLElement } | null)?.container ?? null;
-      if (!container) {
+      if (container == null) {
         console.warn('[abyss-tasks] renderCalendar: no Dataview container found');
         return;
       }
@@ -141,16 +157,16 @@ export default class TaskCalendarPlugin extends Plugin {
     };
   }
 
-  onunload(): void {
+  override onunload(): void {
     this.taskIndex.destroy();
-    delete (window as unknown as Record<string, unknown>).renderCalendar;
+    delete (window as unknown as Record<string, unknown>)['renderCalendar'];
   }
 
   async loadSettings(): Promise<void> {
     const raw = (await this.loadData()) as Record<string, unknown> | null | undefined;
     const data: Record<string, unknown> = raw ?? {};
     migrateSettings(data);
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- Runtime settings are migrated before being merged with the complete defaults object.
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data) as CalendarSettings;
   }
 
@@ -167,12 +183,12 @@ export default class TaskCalendarPlugin extends Plugin {
 
   private async openPanel(): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(PANEL_VIEW_TYPE);
-    if (existing.length > 0 && existing[0]) {
-      void this.app.workspace.revealLeaf(existing[0]);
+    if (existing.length > 0 && existing[0] != null) {
+      await this.app.workspace.revealLeaf(existing[0]);
       return;
     }
     const leaf = this.app.workspace.getLeaf('tab');
     await leaf.setViewState({ type: PANEL_VIEW_TYPE, active: true });
-    void this.app.workspace.revealLeaf(leaf);
+    await this.app.workspace.revealLeaf(leaf);
   }
 }

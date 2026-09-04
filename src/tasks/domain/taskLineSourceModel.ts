@@ -130,6 +130,15 @@ function isEscaped(source: string, at: number): boolean {
   return slashes % 2 === 1;
 }
 
+function closingBacktick(source: string, open: number, runLength: number): number {
+  const delimiter = '`'.repeat(runLength);
+  let close = source.indexOf(delimiter, open + runLength);
+  while (close >= 0 && (source[close - 1] === '`' || source[close + runLength] === '`')) {
+    close = source.indexOf(delimiter, close + 1);
+  }
+  return close;
+}
+
 function inlineCodeRanges(source: string): readonly SourceRange[] {
   const ranges: SourceRange[] = [];
   let cursor = 0;
@@ -142,11 +151,7 @@ function inlineCodeRanges(source: string): readonly SourceRange[] {
     }
     let runLength = 1;
     while (source[open + runLength] === '`') runLength++;
-    const delimiter = '`'.repeat(runLength);
-    let close = source.indexOf(delimiter, open + runLength);
-    while (close >= 0 && (source[close - 1] === '`' || source[close + runLength] === '`')) {
-      close = source.indexOf(delimiter, close + 1);
-    }
+    const close = closingBacktick(source, open, runLength);
     if (close < 0) {
       cursor = open + runLength;
       continue;
@@ -162,7 +167,7 @@ function insideOrderedRange(
   ranges: readonly SourceRange[],
   cursor: { index: number },
 ): boolean {
-  while (cursor.index < ranges.length && ranges[cursor.index]!.to <= at) cursor.index++;
+  while ((ranges[cursor.index]?.to ?? Number.POSITIVE_INFINITY) <= at) cursor.index++;
   const range = ranges[cursor.index];
   return range !== undefined && at >= range.from && at < range.to;
 }
@@ -200,7 +205,10 @@ function parseLinkRanges(input: string): readonly LinkRange[] {
       raw: match[0],
     });
   }
-  candidates.sort((left, right) => left.index - right.index || right.raw.length - left.raw.length);
+  candidates.sort((left, right) => {
+    const indexOrder = left.index - right.index;
+    return indexOrder !== 0 ? indexOrder : right.raw.length - left.raw.length;
+  });
   const ordered = candidates;
   const accepted: LinkRange[] = [];
   let acceptedTo = 0;
@@ -221,13 +229,16 @@ function matches(regex: RegExp, text: string): RegExpExecArray[] {
 }
 
 function pushPatternCandidates(
-  candidates: Candidate[],
-  body: string,
-  bodyFrom: number,
-  kind: TaskLineSourceSpanKind,
-  regex: RegExp,
-  valueGroup?: number,
+  ...args: [
+    candidates: Candidate[],
+    body: string,
+    bodyFrom: number,
+    kind: TaskLineSourceSpanKind,
+    regex: RegExp,
+    valueGroup?: number,
+  ]
 ): void {
+  const [candidates, body, bodyFrom, kind, regex, valueGroup] = args;
   for (const match of matches(regex, body)) {
     if (match[0].length === 0) continue;
     candidates.push({
@@ -242,11 +253,14 @@ function pushPatternCandidates(
 }
 
 function mergedRanges(ranges: readonly SourceRange[]): readonly SourceRange[] {
-  const sorted = [...ranges].sort((left, right) => left.from - right.from || left.to - right.to);
+  const sorted = [...ranges].sort((left, right) => {
+    const startOrder = left.from - right.from;
+    return startOrder !== 0 ? startOrder : left.to - right.to;
+  });
   const merged: SourceRange[] = [];
   for (const range of sorted) {
     const previous = merged[merged.length - 1];
-    if (!previous || range.from > previous.to) {
+    if (previous == null || range.from > previous.to) {
       merged.push(range);
     } else if (range.to > previous.to) {
       merged[merged.length - 1] = { from: previous.from, to: range.to };
@@ -262,14 +276,12 @@ function excludeOverlappingRanges<T extends SourceRange>(
   const accepted: T[] = [];
   let exclusionIndex = 0;
   for (const candidate of sortedCandidates) {
-    while (
-      exclusionIndex < sortedExclusions.length &&
-      sortedExclusions[exclusionIndex]!.to <= candidate.from
-    ) {
+    while ((sortedExclusions[exclusionIndex]?.to ?? Number.POSITIVE_INFINITY) <= candidate.from) {
       exclusionIndex++;
     }
     const exclusion = sortedExclusions[exclusionIndex];
-    if (exclusion && candidate.from < exclusion.to && candidate.to > exclusion.from) continue;
+    if (exclusion != null && candidate.from < exclusion.to && candidate.to > exclusion.from)
+      continue;
     accepted.push(candidate);
   }
   return accepted;
@@ -308,13 +320,16 @@ function pushTagCandidates(candidates: Candidate[], body: string, bodyFrom: numb
 }
 
 function pushPinnedCarrierCandidates(
-  candidates: Candidate[],
-  body: string,
-  bodyFrom: number,
-  marker: '🆔' | '⛔',
-  regex: RegExp,
-  kind: 'task-id' | 'depends-on',
+  ...args: [
+    candidates: Candidate[],
+    body: string,
+    bodyFrom: number,
+    marker: '🆔' | '⛔',
+    regex: RegExp,
+    kind: 'task-id' | 'depends-on',
+  ]
 ): void {
+  const [candidates, body, bodyFrom, marker, regex, kind] = args;
   let searchFrom = 0;
   while (searchFrom < body.length) {
     const markerAt = body.indexOf(marker, searchFrom);
@@ -322,11 +337,12 @@ function pushPinnedCarrierCandidates(
     regex.lastIndex = markerAt;
     const match = regex.exec(body);
     if (match?.index === markerAt) {
+      const value = match[1];
       candidates.push({
         kind,
         from: bodyFrom + markerAt,
         to: bodyFrom + markerAt + match[0].length,
-        value: match[1],
+        ...(value !== undefined && { value }),
       });
     }
     searchFrom = markerAt + marker.length;
@@ -356,21 +372,34 @@ function terminalCaretRange(
   sortedAtomicRanges: readonly SourceRange[],
 ): SourceRange | undefined {
   let to = body.length;
-  while (to > 0 && /\s/u.test(body[to - 1]!)) to--;
-  let from = to;
+  while (to > 0 && /\s/u.test(body[to - 1] ?? '')) to--;
+  const from = terminalTokenStart(body, to, sortedAtomicRanges);
+  return body[from] === '^' ? { from, to } : undefined;
+}
+
+function terminalTokenStart(
+  body: string,
+  end: number,
+  sortedAtomicRanges: readonly SourceRange[],
+): number {
+  let from = end;
   let atomicIndex = sortedAtomicRanges.length - 1;
   while (from > 0) {
-    while (atomicIndex >= 0 && sortedAtomicRanges[atomicIndex]!.to > from) atomicIndex--;
+    while (atomicIndex >= 0) {
+      const atomic = sortedAtomicRanges[atomicIndex];
+      if (atomic === undefined || atomic.to <= from) break;
+      atomicIndex--;
+    }
     const atomic = sortedAtomicRanges[atomicIndex];
     if (atomic?.to === from) {
       from = atomic.from;
       atomicIndex--;
       continue;
     }
-    if (/\s/u.test(body[from - 1]!)) break;
+    if (/\s/u.test(body[from - 1] ?? '')) break;
     from--;
   }
-  return body[from] === '^' ? { from, to } : undefined;
+  return from;
 }
 
 function malformedValueEnd(
@@ -380,28 +409,44 @@ function malformedValueEnd(
   kind: NonNullable<TaskLineSourceSpan['malformedKind']>,
 ): number {
   let to = valueFrom;
-  while (to < boundary && !/\s/u.test(body[to]!)) to++;
-  if (kind !== 'depends-on') return to;
+  while (to < boundary && !/\s/u.test(body[to] ?? '')) to++;
+  return kind === 'depends-on' ? dependsOnValueEnd(body, to, boundary) : to;
+}
+
+function dependsOnValueEnd(body: string, initialTo: number, boundary: number): number {
+  let to = initialTo;
   while (to < boundary) {
     let next = to;
-    while (next < boundary && /\s/u.test(body[next]!)) next++;
-    if (next >= boundary || (body[to - 1] !== ',' && body[next] !== ',')) break;
+    while (next < boundary && /\s/u.test(body[next] ?? '')) next++;
+    if (!continuesDependsOnValue(body, to, next, boundary)) break;
     to = next;
-    while (to < boundary && !/\s/u.test(body[to]!)) to++;
+    while (to < boundary && !/\s/u.test(body[to] ?? '')) to++;
   }
   return to;
 }
 
-function pushRecurrenceCandidates(
-  candidates: Candidate[],
+function continuesDependsOnValue(
   body: string,
-  bodyFrom: number,
-  recurrenceMarkers: readonly number[],
-  boundaries: readonly number[],
+  currentEnd: number,
+  next: number,
+  boundary: number,
+): boolean {
+  return next < boundary && (body[currentEnd - 1] === ',' || body[next] === ',');
+}
+
+function pushRecurrenceCandidates(
+  ...args: [
+    candidates: Candidate[],
+    body: string,
+    bodyFrom: number,
+    recurrenceMarkers: readonly number[],
+    boundaries: readonly number[],
+  ]
 ): void {
+  const [candidates, body, bodyFrom, recurrenceMarkers, boundaries] = args;
   let boundaryIndex = 0;
   for (const recurrenceAt of recurrenceMarkers) {
-    while (boundaryIndex < boundaries.length && boundaries[boundaryIndex]! <= recurrenceAt) {
+    while ((boundaries[boundaryIndex] ?? Number.POSITIVE_INFINITY) <= recurrenceAt) {
       boundaryIndex++;
     }
     const recurrenceBoundary = boundaries[boundaryIndex] ?? body.length;
@@ -414,44 +459,32 @@ function pushRecurrenceCandidates(
       kind: 'recurrence',
       from: bodyFrom + recurrenceAt,
       to: bodyFrom + recurrenceTo,
-      ...(rawValue ? { value: rawValue } : {}),
+      ...(rawValue.length > 0 ? { value: rawValue } : {}),
     });
   }
 }
 
 function pushMalformedKnownCandidates(
-  candidates: Candidate[],
-  body: string,
-  bodyFrom: number,
-  markers: ReturnType<typeof markerPositions>,
-  boundaries: readonly number[],
+  ...args: [
+    candidates: Candidate[],
+    body: string,
+    bodyFrom: number,
+    markers: ReturnType<typeof markerPositions>,
+    boundaries: readonly number[],
+  ]
 ): void {
+  const [candidates, body, bodyFrom, markers, boundaries] = args;
   const protectedRanges = mergedRanges(candidates);
   let protectedIndex = 0;
   let boundaryIndex = 0;
   for (const { at, marker, kind } of markers) {
     const absoluteFrom = bodyFrom + at;
-    while (
-      protectedIndex < protectedRanges.length &&
-      protectedRanges[protectedIndex]!.to <= absoluteFrom
-    ) {
-      protectedIndex++;
-    }
+    protectedIndex = rangeIndexAfter(protectedRanges, protectedIndex, absoluteFrom);
     const protectedRange = protectedRanges[protectedIndex];
-    if (
-      protectedRange &&
-      absoluteFrom < protectedRange.to &&
-      absoluteFrom + marker.length > protectedRange.from
-    ) {
-      continue;
-    }
-    let markerEnd = at + marker.length;
-    if ((kind === 'task-id' || kind === 'depends-on') && body[markerEnd] === '\ufe0f') markerEnd++;
-    let valueFrom = markerEnd;
-    while (/\s/u.test(body[valueFrom] ?? '')) valueFrom++;
-    while (boundaryIndex < boundaries.length && boundaries[boundaryIndex]! < valueFrom) {
-      boundaryIndex++;
-    }
+    if (overlapsMarker(protectedRange, absoluteFrom, marker.length)) continue;
+    const markerEnd = carrierMarkerEnd(body, at, marker, kind);
+    const valueFrom = nonWhitespaceIndex(body, markerEnd);
+    boundaryIndex = boundaryIndexAtOrAfter(boundaries, boundaryIndex, valueFrom);
     const boundary = boundaries[boundaryIndex] ?? body.length;
     const valueTo = malformedValueEnd(body, valueFrom, boundary, kind);
     candidates.push({
@@ -461,6 +494,43 @@ function pushMalformedKnownCandidates(
       to: bodyFrom + (valueTo > valueFrom ? valueTo : markerEnd),
     });
   }
+}
+
+function rangeIndexAfter(ranges: readonly SourceRange[], initialIndex: number, at: number): number {
+  let index = initialIndex;
+  while (index < ranges.length && (ranges[index]?.to ?? Number.POSITIVE_INFINITY) <= at) index++;
+  return index;
+}
+
+function overlapsMarker(range: SourceRange | undefined, from: number, length: number): boolean {
+  return range != null && from < range.to && from + length > range.from;
+}
+
+function carrierMarkerEnd(
+  body: string,
+  at: number,
+  marker: string,
+  kind: NonNullable<TaskLineSourceSpan['malformedKind']>,
+): number {
+  const end = at + marker.length;
+  const supportsVariation = kind === 'task-id' || kind === 'depends-on';
+  return supportsVariation && body[end] === '\ufe0f' ? end + 1 : end;
+}
+
+function nonWhitespaceIndex(body: string, initialIndex: number): number {
+  let index = initialIndex;
+  while (/\s/u.test(body[index] ?? '')) index++;
+  return index;
+}
+
+function boundaryIndexAtOrAfter(
+  boundaries: readonly number[],
+  initialIndex: number,
+  at: number,
+): number {
+  let index = initialIndex;
+  while ((boundaries[index] ?? Number.POSITIVE_INFINITY) < at) index++;
+  return index;
 }
 
 function durationMinutes(
@@ -491,6 +561,28 @@ function addGapSpans(
   }
 }
 
+function ignoresSemanticTitleSpan(span: TaskLineSourceSpan, contentEnd: number): boolean {
+  return span.kind === 'prefix' || (span.kind === 'separator' && span.from === contentEnd);
+}
+
+function extendsSemanticTitle(span: TaskLineSourceSpan): boolean {
+  return span.kind === 'title' || span.kind === 'unknown';
+}
+
+function continuesSemanticTitle(
+  span: TaskLineSourceSpan,
+  fragmentFrom: number | undefined,
+): boolean {
+  return span.kind === 'separator' && fragmentFrom !== undefined;
+}
+
+function titleFragment(
+  from: number | undefined,
+  to: number | undefined,
+): TaskLineSourceSpan | undefined {
+  return from === undefined || to === undefined ? undefined : { kind: 'title', from, to };
+}
+
 function semanticTitleFragments(
   spans: readonly TaskLineSourceSpan[],
   contentEnd: number,
@@ -499,22 +591,22 @@ function semanticTitleFragments(
   let fragmentFrom: number | undefined;
   let fragmentTo: number | undefined;
   for (const span of spans) {
-    if (span.kind === 'prefix' || (span.kind === 'separator' && span.from === contentEnd)) continue;
-    if (span.kind === 'title' || span.kind === 'unknown') {
+    if (ignoresSemanticTitleSpan(span, contentEnd)) continue;
+    if (extendsSemanticTitle(span)) {
       fragmentFrom ??= span.from;
       fragmentTo = span.to;
       continue;
     }
-    if (span.kind === 'separator' && fragmentFrom !== undefined) continue;
-    if (fragmentFrom !== undefined && fragmentTo !== undefined) {
-      fragments.push({ kind: 'title', from: fragmentFrom, to: fragmentTo });
+    if (continuesSemanticTitle(span, fragmentFrom)) continue;
+    const fragment = titleFragment(fragmentFrom, fragmentTo);
+    if (fragment !== undefined) {
+      fragments.push(fragment);
       fragmentFrom = undefined;
       fragmentTo = undefined;
     }
   }
-  if (fragmentFrom !== undefined && fragmentTo !== undefined) {
-    fragments.push({ kind: 'title', from: fragmentFrom, to: fragmentTo });
-  }
+  const terminal = titleFragment(fragmentFrom, fragmentTo);
+  if (terminal !== undefined) fragments.push(terminal);
   return fragments;
 }
 
@@ -559,24 +651,56 @@ function candidateBoundaries(
   ].sort((left, right) => left - right);
 }
 
-export function parseTaskLineSourceModel(original: string): TaskLineSourceModel | null {
+interface TaskLineParseContext {
+  readonly original: string;
+  readonly lineEnding: TaskLineSourceModel['lineEnding'];
+  readonly contentEnd: number;
+  readonly statusSymbol: string;
+  readonly prefixEnd: number;
+  readonly body: string;
+  readonly atomicBodyRanges: readonly SourceRange[];
+  readonly atomicTitleRanges: readonly SourceRange[];
+}
+
+function taskLineParseContext(original: string): TaskLineParseContext | null {
   const lineEnding = lineEndingOf(original);
   const contentEnd = original.length - lineEnding.length;
   const content = original.slice(0, contentEnd);
   const taskMatch = TASK_LINE_RE.exec(content);
-  if (!taskMatch) return null;
-  const statusSymbol = taskMatch[1] ?? '';
+  if (taskMatch == null) return null;
   const prefixEnd = taskMatch[0].length;
   const body = content.slice(prefixEnd);
-  const inlineCodeInBody = inlineCodeRanges(body);
-  const links = parseLinkRanges(body);
-  const atomicBodyRanges = mergedRanges([...inlineCodeInBody, ...links]);
-  const atomicTitleRanges = atomicBodyRanges.map((range) => ({
-    from: prefixEnd + range.from,
-    to: prefixEnd + range.to,
-  }));
-  let candidates: Candidate[] = [];
+  const atomicBodyRanges = mergedRanges([...inlineCodeRanges(body), ...parseLinkRanges(body)]);
+  return {
+    original,
+    lineEnding,
+    contentEnd,
+    statusSymbol: taskMatch[1] ?? '',
+    prefixEnd,
+    body,
+    atomicBodyRanges,
+    atomicTitleRanges: atomicBodyRanges.map((range) => ({
+      from: prefixEnd + range.from,
+      to: prefixEnd + range.to,
+    })),
+  };
+}
 
+function pushDurationCandidates(candidates: Candidate[], body: string, prefixEnd: number): void {
+  for (const match of matches(DURATION_RE, body)) {
+    if ([match[1], match[2], match[3], match[4]].every((value) => value === undefined)) continue;
+    const value = durationMinutes(match[1] ?? match[3], match[2] ?? match[4]);
+    candidates.push({
+      kind: 'duration',
+      from: prefixEnd + match.index,
+      to: prefixEnd + match.index + match[0].length,
+      ...(value !== undefined && { value }),
+    });
+  }
+}
+
+function initialCandidates(body: string, prefixEnd: number): Candidate[] {
+  const candidates: Candidate[] = [];
   for (const pattern of DATE_PATTERNS) {
     pushPatternCandidates(candidates, body, prefixEnd, pattern.kind, pattern.regex, 1);
   }
@@ -587,135 +711,200 @@ export function parseTaskLineSourceModel(original: string): TaskLineSourceModel 
   pushBlockIdCandidates(candidates, body, prefixEnd);
   pushPinnedCarrierCandidates(candidates, body, prefixEnd, '🆔', TASK_ID_RE, 'task-id');
   pushPinnedCarrierCandidates(candidates, body, prefixEnd, '⛔', DEPENDS_ON_RE, 'depends-on');
-  for (const match of matches(DURATION_RE, body)) {
-    if ([match[1], match[2], match[3], match[4]].every((value) => value === undefined)) continue;
-    const hours = match[1] ?? match[3];
-    const minutes = match[2] ?? match[4];
-    candidates.push({
-      kind: 'duration',
-      from: prefixEnd + match.index,
-      to: prefixEnd + match.index + match[0].length,
-      ...(durationMinutes(hours, minutes) !== undefined
-        ? { value: durationMinutes(hours, minutes) }
-        : {}),
-    });
-  }
+  pushDurationCandidates(candidates, body, prefixEnd);
+  return candidates;
+}
 
-  candidates.sort((left, right) => left.from - right.from || left.to - right.to);
-  candidates = excludeOverlappingRanges(candidates, atomicTitleRanges);
+function sortedCandidates(candidates: readonly Candidate[]): Candidate[] {
+  return [...candidates].sort((left, right) => {
+    const startOrder = left.from - right.from;
+    return startOrder !== 0 ? startOrder : left.to - right.to;
+  });
+}
+
+interface TerminalCandidateResult {
+  readonly candidates: Candidate[];
+  readonly malformed?: Candidate;
+}
+
+function withMalformedTerminal(
+  context: TaskLineParseContext,
+  sourceCandidates: readonly Candidate[],
+): TerminalCandidateResult {
+  const { body, prefixEnd, atomicBodyRanges, atomicTitleRanges } = context;
   const terminalCaret = terminalCaretRange(body, atomicBodyRanges);
-  let malformedTerminal: Candidate | undefined;
-  if (terminalCaret) {
-    const terminalRange = {
-      from: prefixEnd + terminalCaret.from,
-      to: prefixEnd + terminalCaret.to,
-    };
-    const validBlock = includesExactCandidate(candidates, terminalRange, 'block-id');
-    if (!containsSortedPoint(terminalRange.from, atomicTitleRanges) && !validBlock) {
-      malformedTerminal = {
-        kind: 'malformed-known',
-        malformedKind: 'block-id',
-        ...terminalRange,
-      };
-      candidates = excludeOverlappingRanges(candidates, [terminalRange]);
-      candidates.push(malformedTerminal);
-    }
+  if (terminalCaret == null) return { candidates: [...sourceCandidates] };
+  const terminalRange = {
+    from: prefixEnd + terminalCaret.from,
+    to: prefixEnd + terminalCaret.to,
+  };
+  const validBlock = includesExactCandidate(sourceCandidates, terminalRange, 'block-id');
+  if (containsSortedPoint(terminalRange.from, atomicTitleRanges) || validBlock) {
+    return { candidates: [...sourceCandidates] };
   }
-  candidates.push(...atomicTitleRanges.map((range) => ({ kind: 'title' as const, ...range })));
-  const recurrenceExcluded = mergedRanges([
-    ...atomicTitleRanges,
-    ...(malformedTerminal ? [malformedTerminal] : []),
-  ]);
-  const recurrenceMarkerRanges = matches(RECURRENCE_MARKER_RE, body).map((match) => ({
-    at: match.index,
-    from: prefixEnd + match.index,
-    to: prefixEnd + match.index + '🔁'.length,
-  }));
-  const recurrenceMarkers = excludeOverlappingRanges(
-    recurrenceMarkerRanges,
-    recurrenceExcluded,
-  ).map(({ at }) => at);
-  const knownMarkers = markerPositions(body);
-  const boundaries = candidateBoundaries(candidates, knownMarkers, recurrenceMarkers, prefixEnd);
-  pushRecurrenceCandidates(candidates, body, prefixEnd, recurrenceMarkers, boundaries);
-  pushMalformedKnownCandidates(candidates, body, prefixEnd, knownMarkers, boundaries);
+  const malformed: Candidate = {
+    kind: 'malformed-known',
+    malformedKind: 'block-id',
+    ...terminalRange,
+  };
+  return {
+    candidates: [...excludeOverlappingRanges(sourceCandidates, [terminalRange]), malformed],
+    malformed,
+  };
+}
 
-  candidates.sort((left, right) => left.from - right.from || left.to - right.to);
+function recurrenceMarkerPositions(
+  context: TaskLineParseContext,
+  malformed: Candidate | undefined,
+): readonly number[] {
+  const exclusions = mergedRanges([
+    ...context.atomicTitleRanges,
+    ...(malformed == null ? [] : [malformed]),
+  ]);
+  const markerRanges = matches(RECURRENCE_MARKER_RE, context.body).map((match) => ({
+    at: match.index,
+    from: context.prefixEnd + match.index,
+    to: context.prefixEnd + match.index + '🔁'.length,
+  }));
+  return excludeOverlappingRanges(markerRanges, exclusions).map(({ at }) => at);
+}
+
+function collectCandidates(context: TaskLineParseContext): Candidate[] {
+  let candidates = excludeOverlappingRanges(
+    sortedCandidates(initialCandidates(context.body, context.prefixEnd)),
+    context.atomicTitleRanges,
+  );
+  const terminal = withMalformedTerminal(context, candidates);
+  candidates = terminal.candidates;
+  candidates.push(
+    ...context.atomicTitleRanges.map((range) => ({ kind: 'title' as const, ...range })),
+  );
+  const recurrenceMarkers = recurrenceMarkerPositions(context, terminal.malformed);
+  const knownMarkers = markerPositions(context.body);
+  const boundaries = candidateBoundaries(
+    candidates,
+    knownMarkers,
+    recurrenceMarkers,
+    context.prefixEnd,
+  );
+  pushRecurrenceCandidates(
+    candidates,
+    context.body,
+    context.prefixEnd,
+    recurrenceMarkers,
+    boundaries,
+  );
+  pushMalformedKnownCandidates(
+    candidates,
+    context.body,
+    context.prefixEnd,
+    knownMarkers,
+    boundaries,
+  );
+  return sortedCandidates(candidates);
+}
+
+function acceptedCandidates(context: TaskLineParseContext): Candidate[] {
   const accepted: Candidate[] = [];
-  let acceptedTo = prefixEnd;
-  for (const candidate of candidates) {
-    if (candidate.from < acceptedTo || candidate.to > contentEnd) continue;
+  let acceptedTo = context.prefixEnd;
+  for (const candidate of collectCandidates(context)) {
+    if (candidate.from < acceptedTo || candidate.to > context.contentEnd) continue;
     accepted.push(candidate);
     acceptedTo = candidate.to;
   }
+  return accepted;
+}
 
-  const spans: TaskLineSourceSpan[] = [{ kind: 'prefix', from: 0, to: prefixEnd }];
-  let cursor = prefixEnd;
+function spansFor(
+  context: TaskLineParseContext,
+  accepted: readonly Candidate[],
+): TaskLineSourceSpan[] {
+  const spans: TaskLineSourceSpan[] = [{ kind: 'prefix', from: 0, to: context.prefixEnd }];
+  let cursor = context.prefixEnd;
   for (const candidate of accepted) {
-    addGapSpans(spans, original, cursor, candidate.from);
+    addGapSpans(spans, context.original, cursor, candidate.from);
     spans.push({
       kind: candidate.kind,
       from: candidate.from,
       to: candidate.to,
-      ...(candidate.malformedKind !== undefined && {
-        malformedKind: candidate.malformedKind,
-      }),
+      ...(candidate.malformedKind !== undefined && { malformedKind: candidate.malformedKind }),
     });
     cursor = candidate.to;
   }
-  addGapSpans(spans, original, cursor, contentEnd);
-  if (lineEnding) spans.push({ kind: 'separator', from: contentEnd, to: original.length });
+  addGapSpans(spans, context.original, cursor, context.contentEnd);
+  if (context.lineEnding.length > 0) {
+    spans.push({ kind: 'separator', from: context.contentEnd, to: context.original.length });
+  }
+  return spans;
+}
 
+function occurrencesFor(
+  spans: readonly TaskLineSourceSpan[],
+): ReadonlyMap<TaskLineSourceSpanKind, readonly TaskLineSourceSpan[]> {
   const occurrences = new Map<TaskLineSourceSpanKind, TaskLineSourceSpan[]>();
   for (const span of spans) {
     const group = occurrences.get(span.kind) ?? [];
     group.push(span);
     occurrences.set(span.kind, group);
   }
-  const markdownTitle = semanticTitleFragments(spans, contentEnd)
+  return occurrences;
+}
+
+function priorityFor(original: string, accepted: readonly Candidate[]): TaskPriority {
+  const priorities = accepted
+    .filter((candidate) => candidate.kind === 'priority')
+    .map((candidate) => PRIORITY_BY_MARKER[original.slice(candidate.from, candidate.to)])
+    .filter((priority): priority is TaskPriority => priority !== undefined);
+  return PRIORITY_PRECEDENCE.find((candidate) => priorities.includes(candidate)) ?? 'D';
+}
+
+type MutablePlanning = {
+  -readonly [Key in keyof TaskLineSourceModel['planning']]: TaskLineSourceModel['planning'][Key];
+};
+
+function assignPlanningString(
+  planning: MutablePlanning,
+  field: Exclude<keyof MutablePlanning, 'duration'>,
+  value: string | undefined,
+): void {
+  if (value !== undefined) planning[field] = value;
+}
+
+function planningFor(accepted: readonly Candidate[]): TaskLineSourceModel['planning'] {
+  const durationCarrier = accepted.find((candidate) => candidate.kind === 'duration');
+  const duration = typeof durationCarrier?.value === 'number' ? durationCarrier.value : undefined;
+  const planning: MutablePlanning = {};
+  assignPlanningString(planning, 'due', firstString(accepted, 'due'));
+  assignPlanningString(planning, 'created', firstString(accepted, 'created'));
+  assignPlanningString(planning, 'scheduled', firstString(accepted, 'scheduled'));
+  assignPlanningString(planning, 'start', firstString(accepted, 'start'));
+  assignPlanningString(planning, 'completion', firstString(accepted, 'completion'));
+  assignPlanningString(planning, 'cancelled', firstString(accepted, 'cancelled'));
+  assignPlanningString(planning, 'time', firstString(accepted, 'time'));
+  if (duration !== undefined) planning.duration = duration;
+  return planning;
+}
+
+export function parseTaskLineSourceModel(original: string): TaskLineSourceModel | null {
+  const context = taskLineParseContext(original);
+  if (context == null) return null;
+  const accepted = acceptedCandidates(context);
+  const spans = spansFor(context, accepted);
+  const occurrences = occurrencesFor(spans);
+  const markdownTitle = semanticTitleFragments(spans, context.contentEnd)
     .map((fragment) => original.slice(fragment.from, fragment.to))
     .join(' ')
     .replace(/\s{2,}/gu, ' ')
     .trim();
-  const priorityCandidates = accepted
-    .filter((candidate) => candidate.kind === 'priority')
-    .map((candidate) => PRIORITY_BY_MARKER[original.slice(candidate.from, candidate.to)])
-    .filter((priority): priority is TaskPriority => priority !== undefined);
-  const priority =
-    PRIORITY_PRECEDENCE.find((candidate) => priorityCandidates.includes(candidate)) ?? 'D';
-  const durationCarrier = accepted.find((candidate) => candidate.kind === 'duration');
-  const duration =
-    durationCarrier && typeof durationCarrier.value === 'number'
-      ? durationCarrier.value
-      : undefined;
-  const planning: TaskLineSourceModel['planning'] = {
-    ...(firstString(accepted, 'due') !== undefined && { due: firstString(accepted, 'due') }),
-    ...(firstString(accepted, 'created') !== undefined && {
-      created: firstString(accepted, 'created'),
-    }),
-    ...(firstString(accepted, 'scheduled') !== undefined && {
-      scheduled: firstString(accepted, 'scheduled'),
-    }),
-    ...(firstString(accepted, 'start') !== undefined && {
-      start: firstString(accepted, 'start'),
-    }),
-    ...(firstString(accepted, 'completion') !== undefined && {
-      completion: firstString(accepted, 'completion'),
-    }),
-    ...(firstString(accepted, 'cancelled') !== undefined && {
-      cancelled: firstString(accepted, 'cancelled'),
-    }),
-    ...(firstString(accepted, 'time') !== undefined && { time: firstString(accepted, 'time') }),
-    ...(duration !== undefined && { duration }),
-  };
+  const recurrence = firstString(accepted, 'recurrence');
   const onCompletionValue = firstString(accepted, 'on-completion')?.toLowerCase();
   const onCompletion: OnCompletion = onCompletionValue === 'delete' ? 'delete' : 'keep';
   return {
     original,
-    lineEnding,
-    contentEnd,
-    statusSymbol,
-    statusAt: prefixEnd - 2,
+    lineEnding: context.lineEnding,
+    contentEnd: context.contentEnd,
+    statusSymbol: context.statusSymbol,
+    statusAt: context.prefixEnd - 2,
     markdownTitle,
     tags: accepted
       .filter((candidate) => candidate.kind === 'tag')
@@ -723,9 +912,9 @@ export function parseTaskLineSourceModel(original: string): TaskLineSourceModel 
     spans,
     carriers: accepted,
     occurrences,
-    planning,
-    priority,
-    recurrence: firstString(accepted, 'recurrence'),
+    planning: planningFor(accepted),
+    priority: priorityFor(original, accepted),
+    ...(recurrence !== undefined && { recurrence }),
     onCompletion,
     onCompletionExplicit: onCompletionValue !== undefined,
   };

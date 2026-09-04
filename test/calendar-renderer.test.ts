@@ -8,6 +8,7 @@ import {
   type LocalDate,
   type TaskApplicationApi,
   type TaskIndexEvent,
+  type TaskRef,
   type TaskSnapshot,
 } from '../src/tasks';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
@@ -27,6 +28,7 @@ import {
 import {
   configuredTaskApplication,
   createAppWithFiles,
+  expectDefined,
   fixedToday,
   flushMicrotasks,
   freshContainer,
@@ -38,11 +40,15 @@ import {
 } from './helpers';
 import { InMemoryTaskRepository } from './support/InMemoryTaskRepository';
 
+function matchingTaskRef(expected: Partial<TaskRef>): TaskRef {
+  return expect.objectContaining(expected) as TaskRef;
+}
+
 useRealMoment();
 
 class StubStore {
   private tasks: TaskSnapshot[] = [];
-  private listeners = new Set<(event: TaskIndexEvent) => void>();
+  private readonly listeners = new Set<(event: TaskIndexEvent) => void>();
   statusRegistry = new StatusRegistry(buildDefaultTaskStatuses());
   taskQueries = queryApiForTasks(
     () => this.tasks,
@@ -53,7 +59,7 @@ class StubStore {
   );
   emit(changedFile?: string): void {
     for (const listener of this.listeners) {
-      listener({ type: 'changed', files: changedFile ? [changedFile] : [] });
+      listener({ type: 'changed', files: changedFile === undefined ? [] : [changedFile] });
     }
   }
   setTasks(t: TaskSnapshot[]): void {
@@ -88,6 +94,44 @@ function makeRenderer(
     store.statusRegistry,
     '- [ ] ',
   );
+}
+
+function expectLegacyOverdueTask(root: HTMLElement): void {
+  const overdueSection = root.querySelector('.abyss-list-overdue-header')?.parentElement;
+  expect(
+    overdueSection?.querySelector('.abyss-list-date-count')?.textContent,
+    'the ordinary root retains legacy overdue rendering',
+  ).toBe('1');
+  expect(overdueSection?.querySelector('.abyss-task-time')?.textContent).toBe('06:11');
+}
+
+function nestedOwnerRow(root: HTMLElement): HTMLElement {
+  const todaySection = Array.from(root.querySelectorAll<HTMLElement>('.abyss-list-section')).find(
+    (section) => section.querySelector('.abyss-list-date-label')?.textContent === 'Today',
+  );
+  return expectDefined(
+    Array.from(todaySection?.querySelectorAll<HTMLElement>('.abyss-list-task') ?? []).find(
+      (row) => row.querySelector('.abyss-task-progress')?.textContent === '0/1',
+    ),
+    'the persisted root represents its nested owner',
+  );
+}
+
+function expectPersistedNestedOwner(
+  root: HTMLElement,
+  execute: TaskApplicationApi['execute'],
+  persistedRoot: TaskSnapshot,
+): void {
+  const row = nestedOwnerRow(root);
+  expect(row.querySelector('.abyss-task-time')).toBeNull();
+  expect(root.textContent).not.toContain('07:31');
+  row
+    .querySelector<HTMLElement>('.abyss-status-marker')
+    ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  expect(execute).toHaveBeenCalledWith({
+    type: 'toggle-completion',
+    target: { type: 'task', ref: persistedRoot.ref },
+  });
 }
 
 describe('CalendarRenderer', () => {
@@ -470,7 +514,7 @@ describe('CalendarRenderer', () => {
         type: 'toggle-completion',
         target: {
           type: 'task',
-          ref: expect.objectContaining({ filePath: t.ref.filePath, line: t.ref.line }),
+          ref: matchingTaskRef({ filePath: t.ref.filePath, line: t.ref.line }),
         },
       });
       r.destroy();
@@ -552,19 +596,19 @@ describe('CalendarRenderer', () => {
       const projectionFor = (dates: LocalDate[]) =>
         projectCalendarOccurrences(
           index.forCalendarProjection(dates),
-          { from: dates[0]!, to: dates[dates.length - 1]! },
+          { from: expectDefined(dates[0]), to: expectDefined(dates[dates.length - 1]) },
           { removeScheduledDate: false },
         );
       const monthBefore = projectionFor(monthDates);
       const weekBefore = projectionFor(weekDates);
-      const materialized = monthBefore.occurrences.find(
-        (occurrence) => occurrence.kind === 'materialized',
-      )!;
+      const materialized = expectDefined(
+        monthBefore.occurrences.find((occurrence) => occurrence.kind === 'materialized'),
+      );
       const calendarTask = taskSnapshotForCalendarOccurrence(materialized);
-      const exactTarget = calendarMutationTarget(calendarTask)!;
+      const exactTarget = expectDefined(calendarMutationTarget(calendarTask));
       const consumedRevision = exactTarget.type === 'task' ? exactTarget.ref.revision : '';
 
-      expect(monthBefore.occurrences.filter(({ kind }) => kind === 'forecast').length).toBe(28);
+      expect(monthBefore.occurrences.filter(({ kind }) => kind === 'forecast')).toHaveLength(28);
       expect(weekBefore.occurrences.map(({ kind, planning }) => [kind, planning.due])).toEqual([
         ['materialized', '2026-08-03'],
         ['forecast', '2026-08-04'],
@@ -607,9 +651,8 @@ describe('CalendarRenderer', () => {
 
         const persisted = index.list({ filePath: path });
         const active = persisted.filter((candidate) => candidate.status === 'open');
-        expect(
-          active.map(({ planning, ref }) => ({ due: planning.due, revision: ref.revision })),
-        ).toEqual([{ due: '2026-08-04', revision: expect.any(String) }]);
+        expect(active.map(({ planning }) => planning.due)).toEqual([localDate('2026-08-04')]);
+        expect(typeof active[0]?.ref.revision).toBe('string');
         expect(active[0]?.ref.revision).not.toBe(consumedRevision);
         expect(persisted.filter((candidate) => candidate.status === 'done')).toHaveLength(1);
 
@@ -635,7 +678,9 @@ describe('CalendarRenderer', () => {
         ).resolves.toMatchObject({ type: 'conflict' });
         expect(repository.content(path)).toBe(beforeStaleRetry);
 
-        const reloadedApp = await createAppWithFiles({ [path]: repository.content(path)! });
+        const reloadedApp = await createAppWithFiles({
+          [path]: expectDefined(repository.content(path)),
+        });
         seedTaskCache(reloadedApp, path, [
           { task: ' ', parent: -1, line: 0 },
           { task: 'x', parent: -1, line: 1 },
@@ -676,17 +721,19 @@ describe('CalendarRenderer', () => {
           ]);
           expect(
             reloadedPersisted.filter(
-              ({ status, planning }) => status === 'open' && planning.due === '2026-08-04',
+              ({ status, planning }) =>
+                status === 'open' && planning.due === localDate('2026-08-04'),
             ),
           ).toHaveLength(1);
           expect(reloadedPersisted[0]?.ref.revision).not.toBe(active[0]?.ref.revision);
-          expect(reloaded.resolve(active[0]!.ref)).toMatchObject({
+          expect(reloaded.resolve(expectDefined(active[0]).ref)).toMatchObject({
             type: 'visual',
             evidence: 'same-line',
           });
           expect(
             reloadedProjection.occurrences.filter(
-              ({ kind, planning }) => kind === 'materialized' && planning.due === '2026-08-04',
+              ({ kind, planning }) =>
+                kind === 'materialized' && planning.due === localDate('2026-08-04'),
             ),
           ).toHaveLength(1);
           expect(new Set(reloadedProjection.occurrences.map(({ key }) => key)).size).toBe(
@@ -720,7 +767,7 @@ describe('CalendarRenderer', () => {
         { title: 'Parent', planning: { due: nestedDate } },
         { title: 'Legacy overdue', planning: { due: overdueDate, time: '06:11' } },
       ]);
-      const persistedRoot = configured.tasks.queries.list()[0]!;
+      const persistedRoot = expectDefined(configured.tasks.queries.list()[0]);
       const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
         type: 'invalid',
         issues: [{ code: 'invalid-target' }],
@@ -740,28 +787,8 @@ describe('CalendarRenderer', () => {
 
       r.mount();
 
-      const overdueSection = root.querySelector('.abyss-list-overdue-header')?.parentElement;
-      expect(
-        overdueSection?.querySelector('.abyss-list-date-count')?.textContent,
-        'the ordinary root retains legacy overdue rendering',
-      ).toBe('1');
-      expect(overdueSection?.querySelector('.abyss-task-time')?.textContent).toBe('06:11');
-      const todaySection = Array.from(
-        root.querySelectorAll<HTMLElement>('.abyss-list-section'),
-      ).find((section) => section.querySelector('.abyss-list-date-label')?.textContent === 'Today');
-      const persistedRow = Array.from(
-        todaySection?.querySelectorAll<HTMLElement>('.abyss-list-task') ?? [],
-      ).find((row) => row.querySelector('.abyss-task-progress')?.textContent === '0/1');
-      expect(persistedRow, 'the persisted root represents its nested owner').toBeDefined();
-      expect(persistedRow?.querySelector('.abyss-task-time')).toBeNull();
-      expect(root.textContent).not.toContain('07:31');
-      persistedRow
-        ?.querySelector<HTMLElement>('.abyss-status-marker')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      expect(execute).toHaveBeenCalledWith({
-        type: 'toggle-completion',
-        target: { type: 'task', ref: persistedRoot.ref },
-      });
+      expectLegacyOverdueTask(root);
+      expectPersistedNestedOwner(root, execute, persistedRoot);
 
       r.destroy();
       configured.index.destroy();
@@ -777,8 +804,8 @@ describe('CalendarRenderer', () => {
       ]);
       r.mount();
 
-      const body = root.querySelector<HTMLElement>('.task .inner-link')!;
-      const marker = root.querySelector<HTMLElement>('.task .abyss-status-marker')!;
+      const body = expectDefined(root.querySelector<HTMLElement>('.task .inner-link'));
+      const marker = expectDefined(root.querySelector<HTMLElement>('.task .abyss-status-marker'));
 
       body.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       const recurrence = activeDocument.querySelector<HTMLElement>('.abyss-recurrence-popover');
@@ -807,29 +834,31 @@ describe('CalendarRenderer', () => {
       r.mount();
 
       try {
-        root
-          .querySelector<HTMLElement>('.task .abyss-status-marker')!
-          .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        expectDefined(root.querySelector<HTMLElement>('.task .abyss-status-marker')).dispatchEvent(
+          new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+        );
         vi.runOnlyPendingTimers();
         expect(activeDocument.querySelector('.abyss-status-popover')).not.toBeNull();
         expect(owned.statusMenuCleanup).not.toBeNull();
 
-        activeDocument.querySelector<HTMLButtonElement>('.abyss-status-popover-flag')!.click();
+        expectDefined(
+          activeDocument.querySelector<HTMLButtonElement>('.abyss-status-popover-flag'),
+        ).click();
         expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
         expect(owned.statusMenuCleanup).toBeNull();
 
-        root
-          .querySelector<HTMLElement>('.task .abyss-status-marker')!
-          .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        expectDefined(root.querySelector<HTMLElement>('.task .abyss-status-marker')).dispatchEvent(
+          new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+        );
         vi.runOnlyPendingTimers();
 
         store.setTasks([task({ title: 'After patch', planning: { due: todayStr } })]);
         store.emit();
         expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
 
-        root
-          .querySelector<HTMLElement>('.task .abyss-status-marker')!
-          .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        expectDefined(root.querySelector<HTMLElement>('.task .abyss-status-marker')).dispatchEvent(
+          new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+        );
         vi.runOnlyPendingTimers();
         expect(activeDocument.querySelector('.abyss-status-popover')).not.toBeNull();
 
@@ -839,9 +868,9 @@ describe('CalendarRenderer', () => {
         expect(remove.mock.calls.some(([type]) => type === 'mousedown')).toBe(true);
       } finally {
         r.destroy();
-        activeDocument
-          .querySelectorAll('.abyss-status-popover')
-          .forEach((element) => element.remove());
+        activeDocument.querySelectorAll('.abyss-status-popover').forEach((element) => {
+          element.remove();
+        });
         remove.mockRestore();
         vi.clearAllTimers();
         vi.useRealTimers();
@@ -881,20 +910,20 @@ describe('CalendarRenderer', () => {
       r.mount();
 
       try {
-        const marker = root.querySelector<HTMLElement>('.task .abyss-status-marker')!;
+        const marker = expectDefined(root.querySelector<HTMLElement>('.task .abyss-status-marker'));
         marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
         expect(owned.statusMenuCleanup).not.toBeNull();
 
-        handles[0]!.close();
+        expectDefined(handles[0]).close();
         expect(owned.statusMenuCleanup).toBeNull();
 
         marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
         const successorCleanup = owned.statusMenuCleanup;
         expect(successorCleanup).not.toBeNull();
 
-        closeNotifications[0]!();
+        expectDefined(closeNotifications[0])();
         expect(owned.statusMenuCleanup).toBe(successorCleanup);
-        expect(handles[1]!.element.isConnected).toBe(true);
+        expect(expectDefined(handles[1]).element.isConnected).toBe(true);
       } finally {
         r.destroy();
         for (const handle of handles) handle.close();
@@ -921,9 +950,9 @@ describe('CalendarRenderer', () => {
       );
       r.mount();
 
-      root
-        .querySelector<HTMLElement>('.task .abyss-status-marker')!
-        .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expectDefined(root.querySelector<HTMLElement>('.task .abyss-status-marker')).dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true }),
+      );
 
       const confirmation = activeDocument.querySelector<HTMLElement>(
         '.abyss-recurrence-delete-confirm',
@@ -963,12 +992,12 @@ describe('CalendarRenderer', () => {
       );
       r.mount();
 
-      root
-        .querySelector<HTMLElement>('.task .abyss-status-marker')!
-        .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      const confirmation = activeDocument.querySelector<HTMLElement>(
-        '.abyss-recurrence-delete-confirm',
-      )!;
+      expectDefined(root.querySelector<HTMLElement>('.task .abyss-status-marker')).dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true }),
+      );
+      const confirmation = expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
+      );
       Array.from(confirmation.querySelectorAll<HTMLButtonElement>('button'))
         .find((candidate) => candidate.textContent === 'Cancel')
         ?.click();
@@ -1004,12 +1033,12 @@ describe('CalendarRenderer', () => {
       );
       renderer.mount();
 
-      root
-        .querySelector<HTMLElement>('.task .abyss-status-marker')!
-        .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      const confirmation = activeDocument.querySelector<HTMLElement>(
-        '.abyss-recurrence-delete-confirm',
-      )!;
+      expectDefined(root.querySelector<HTMLElement>('.task .abyss-status-marker')).dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true }),
+      );
+      const confirmation = expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
+      );
       expect(registry.allows('navigate')).toBe(false);
 
       renderer.destroy();
@@ -1115,7 +1144,9 @@ describe('CalendarRenderer', () => {
       r.mount();
       r.destroy();
       // emit after destroy should not throw and should not update DOM
-      expect(() => store.emit()).not.toThrow();
+      expect(() => {
+        store.emit();
+      }).not.toThrow();
     });
 
     it('empties rootEl', () => {

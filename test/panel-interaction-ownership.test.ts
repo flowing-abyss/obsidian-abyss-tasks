@@ -11,7 +11,7 @@ import { requestTaskCompletion } from '../src/ui/taskCommandResult';
 import { TaskModal } from '../src/ui/TaskModal';
 import type { CalendarOccurrence } from '../src/views/calendarOccurrences';
 import { createForecastContextMenuOwner } from '../src/views/timegrid/renderTaskMeta';
-import { task, testStatusRegistry } from './helpers';
+import { expectDefined, methodOf, task, testStatusRegistry } from './helpers';
 
 interface OwnedSurface {
   readonly control: HTMLElement;
@@ -30,17 +30,23 @@ const categories: ReadonlyArray<{
         vi.fn(),
         registry,
       );
-      const surface = activeDocument.querySelector<HTMLElement>(
-        '.abyss-recurrence-delete-confirm',
-      )!;
-      const cancel = Array.from(surface.querySelectorAll<HTMLButtonElement>('button')).find(
-        (candidate) => candidate.textContent === 'Cancel',
-      )!;
+      const surface = expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
+      );
+      const cancel = expectDefined(
+        Array.from(surface.querySelectorAll<HTMLButtonElement>('button')).find(
+          (candidate) => candidate.textContent === 'Cancel',
+        ),
+      );
       return {
-        control: surface.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm-dialog')!,
+        control: expectDefined(
+          surface.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm-dialog'),
+        ),
         close: () => {
           cancel.click();
-          void completion;
+          void completion.catch((error: unknown) => {
+            throw error;
+          });
         },
       };
     },
@@ -56,8 +62,12 @@ const categories: ReadonlyArray<{
         interactionOwnership: registry,
       });
       return {
-        control: handle.element.querySelector<HTMLElement>('.abyss-status-popover-flag')!,
-        close: () => handle.close(),
+        control: expectDefined(
+          handle.element.querySelector<HTMLElement>('.abyss-status-popover-flag'),
+        ),
+        close: () => {
+          handle.close();
+        },
       };
     },
   },
@@ -99,7 +109,9 @@ const categories: ReadonlyArray<{
         interactionOwnership: registry,
       });
       return {
-        control: activeDocument.querySelector<HTMLElement>('.abyss-recurrence-presets button')!,
+        control: expectDefined(
+          activeDocument.querySelector<HTMLElement>('.abyss-recurrence-presets button'),
+        ),
         close: () => {
           handle.destroy();
           anchor.remove();
@@ -125,7 +137,7 @@ const categories: ReadonlyArray<{
       activeDocument.body.append(modal.containerEl);
       modal.onOpen();
       return {
-        control: modal.contentEl.querySelector<HTMLElement>('[data-tag="#owned"]')!,
+        control: expectDefined(modal.contentEl.querySelector<HTMLElement>('[data-tag="#owned"]')),
         close: () => {
           modal.onClose();
           modal.containerEl.remove();
@@ -147,8 +159,10 @@ const categories: ReadonlyArray<{
       );
       modal.open(task());
       return {
-        control: activeDocument.querySelector<HTMLElement>('.abyss-modal-close-btn')!,
-        close: () => modal.close(),
+        control: expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal-close-btn')),
+        close: () => {
+          modal.close();
+        },
       };
     },
   },
@@ -171,9 +185,11 @@ const categories: ReadonlyArray<{
       activeDocument.body.append(modal.containerEl);
       modal.onOpen();
       return {
-        control: Array.from(modal.contentEl.querySelectorAll<HTMLElement>('button')).find(
-          (button) => button.textContent === 'Save',
-        )!,
+        control: expectDefined(
+          Array.from(modal.contentEl.querySelectorAll<HTMLElement>('button')).find(
+            (button) => button.textContent === 'Save',
+          ),
+        ),
         close: () => {
           modal.onClose();
           modal.containerEl.remove();
@@ -202,9 +218,9 @@ const categories: ReadonlyArray<{
       const owner = createForecastContextMenuOwner(activeDocument, registry);
       owner.open(anchor, new MouseEvent('contextmenu'), occurrence, {});
       return {
-        control: activeDocument.querySelector<HTMLElement>(
-          '.abyss-forecast-context-menu-edit-repeat',
-        )!,
+        control: expectDefined(
+          activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu-edit-repeat'),
+        ),
         close: () => {
           owner.dismiss({ restoreFocus: false });
           anchor.remove();
@@ -222,7 +238,8 @@ afterEach(() => {
 describe('PanelView interaction ownership categories', () => {
   it.each(categories)(
     'blocks semantic navigation from a non-editable control in the $category',
-    ({ open }) => {
+    (category) => {
+      const open = methodOf(category, 'open');
       const registry = new InteractionRegistry<'navigate'>();
       const semanticNavigator = vi.fn();
       const onKeydown = (event: KeyboardEvent): void => {

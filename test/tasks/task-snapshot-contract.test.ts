@@ -8,6 +8,7 @@ import {
   seedTaskCache,
   useRealMoment,
 } from '../helpers';
+import { expectDefined } from './../helpers';
 
 useRealMoment();
 
@@ -18,7 +19,7 @@ function cache(lines: number[]): CachedMetadata {
       parent: -1,
       position: { start: { line, col: 0, offset: 0 }, end: { line, col: 40, offset: 40 } },
     })),
-  } as CachedMetadata;
+  };
 }
 
 async function snapshotIndex(content: string): Promise<{
@@ -99,9 +100,9 @@ describe('TaskSnapshot contract', () => {
     const { index } = await snapshotIndex(content);
 
     const first = index.list();
-    const task = first[0]!;
+    const task = expectDefined(first[0]);
     (first as unknown as unknown[]).length = 0;
-    (task as unknown as { title: string }).title = 'mutated';
+    (task as unknown as { title: string }).title = 'Mutated';
     (task.tags as unknown as string[]).push('#bad');
     (task.planning as unknown as { due: string }).due = '2099-01-01';
     (task.source as unknown as { filePath: string }).filePath = 'bad.md';
@@ -110,7 +111,7 @@ describe('TaskSnapshot contract', () => {
     const bucket = index.forCalendarProjection(['2026-07-13' as never]).materialized;
     (bucket as unknown as unknown[]).length = 0;
 
-    const fresh = index.list()[0]!;
+    const fresh = expectDefined(index.list()[0]);
     expect(fresh.title).toBe('root');
     expect(fresh.tags).toEqual(['#tag']);
     expect(fresh.planning.due).toBe('2026-07-13');
@@ -125,7 +126,7 @@ describe('TaskSnapshot contract', () => {
     const { index, fireChanged, file } = await snapshotIndex(
       ['- [ ] root', '  - [ ] child one'].join('\n'),
     );
-    const before = index.list()[0]!;
+    const before = expectDefined(index.list()[0]);
     expect(before.ref.revision).not.toBe(before.source.originalMarkdown);
 
     fireChanged(file, ['- [ ] root', '  - [ ] child two'].join('\n'), {
@@ -142,7 +143,7 @@ describe('TaskSnapshot contract', () => {
         },
       ],
     } as CachedMetadata);
-    const after = index.list()[0]!;
+    const after = expectDefined(index.list()[0]);
     expect(after.source.originalMarkdown).toBe(before.source.originalMarkdown);
     expect(after.ref.revision).not.toBe(before.ref.revision);
     index.destroy();
@@ -158,13 +159,13 @@ describe('TaskSnapshot contract', () => {
     ].join('\r\n');
     const { index } = await snapshotIndex(`${block}\r\n- [ ] sibling`);
 
-    expect(index.list()[0]!.source.originalBlock).toBe(block);
+    expect(expectDefined(index.list()[0]).source.originalBlock).toBe(block);
     index.destroy();
   });
 
   it('resolves exact, proven drift, visual continuity, uncertainty, and ambiguity safely', async () => {
     const { index, fireChanged, file } = await snapshotIndex('- [ ] same');
-    const observed = index.list()[0]!;
+    const observed = expectDefined(index.list()[0]);
     expect(index.resolve(observed.ref)).toMatchObject({ type: 'exact', task: { title: 'same' } });
 
     fireChanged(file, ['plain', '- [ ] same'].join('\n'), cache([1]));

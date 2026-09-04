@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
+import { expectDefined } from './helpers';
 
 function reorder(
   content: string,
@@ -8,7 +9,7 @@ function reorder(
   placement: 'before' | 'after',
 ): string {
   const editor = new TaskBlockEditor();
-  const block = editor.rootBlocks(content)[0]!;
+  const block = expectDefined(editor.rootBlocks(content)[0]);
   const sourceLines = source.originalBlock.split(/\r?\n/u).length;
   const targetLines = target.originalBlock.split(/\r?\n/u).length;
   const result = editor.edit(

@@ -1,6 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { Component, type App } from 'obsidian';
+import { Component, Platform, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -10,9 +8,13 @@ import { createSpanInteractionOwner } from '../src/views/spanInteractions';
 import { layoutVisibleSpans } from '../src/views/spanLayout';
 import { renderAllDaySpanLayer } from '../src/views/timegrid/renderAllDay';
 import {
+  cssDeclarationValue,
+  cssRuleParts,
   DataTransferStub,
+  expectDefined,
   freshContainer,
   resolvedConfig,
+  stripCssComments,
   subtask,
   task,
   taskComment,
@@ -23,7 +25,14 @@ import {
 useRealMoment();
 const fakeApp = {} as App;
 const registry = new StatusRegistry(buildDefaultTaskStatuses());
-const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+const css = await loadStyles();
+
+async function loadStyles(): Promise<string> {
+  if (!Platform.isDesktop) return '';
+  const { readFileSync } = await import('node:fs');
+  const path = await import('node:path');
+  return readFileSync(path.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+}
 
 function declarationsFor(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
@@ -32,37 +41,40 @@ function declarationsFor(selector: string): string {
 }
 
 function declarationsForRuleContaining(...selectors: string[]): string {
-  for (const match of css.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
-    const roots = (match[1] ?? '')
-      .replace(/\/\*[\s\S]*?\*\//gu, '')
+  for (const rule of cssRuleParts(css)) {
+    const roots = stripCssComments(rule.selector)
       .split(',')
       .map((selector) => selector.trim());
-    if (selectors.every((selector) => roots.includes(selector))) return match[2] ?? '';
+    if (selectors.every((selector) => roots.includes(selector))) return rule.declarations;
   }
   return '';
 }
 
+function selectorMatches(element: Element, selector: string): boolean {
+  if (selector.length === 0) return false;
+  try {
+    return element.matches(selector);
+  } catch {
+    return false;
+  }
+}
+
+function specificityScore(selector: string): number {
+  const count = (character: string): number => selector.split(character).length - 1;
+  const pseudoClasses = count(':') - count('::') * 2;
+  return count('#') * 100 + (count('.') + count('[') + pseudoClasses) * 10;
+}
+
 function winningCssDeclaration(element: Element, property: string): string {
-  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//gu, '');
+  const withoutComments = stripCssComments(css);
   let winner = '';
   let winnerSpecificity = -1;
-  for (const rule of withoutComments.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
-    const value = new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`, 'u').exec(
-      rule[2] ?? '',
-    )?.[1];
-    if (!value) continue;
-    for (const selector of (rule[1] ?? '').split(',').map((part) => part.trim())) {
-      if (!selector) continue;
-      let matches = false;
-      try {
-        matches = element.matches(selector);
-      } catch {
-        continue;
-      }
-      if (!matches) continue;
-      const specificity =
-        (selector.match(/#[\w-]+/gu)?.length ?? 0) * 100 +
-        (selector.match(/\.[\w-]+|\[[^\]]+\]|:(?!:)[\w-]+/gu)?.length ?? 0) * 10;
+  for (const rule of cssRuleParts(withoutComments)) {
+    const value = cssDeclarationValue(rule.declarations, property);
+    if (value === undefined || value.length === 0) continue;
+    for (const selector of rule.selector.split(',').map((part) => part.trim())) {
+      if (!selectorMatches(element, selector)) continue;
+      const specificity = specificityScore(selector);
       if (specificity >= winnerSpecificity) {
         winner = value.trim();
         winnerSpecificity = specificity;
@@ -74,7 +86,7 @@ function winningCssDeclaration(element: Element, property: string): string {
 
 function requiredElement(root: ParentNode, selector: string): HTMLElement {
   const element = root.querySelector<HTMLElement>(selector);
-  if (!element) throw new Error(`Expected element matching ${selector}`);
+  if (element == null) throw new Error(`Expected element matching ${selector}`);
   return element;
 }
 
@@ -167,7 +179,7 @@ function monthChronologyTasks(
 function monthGridRowFor(container: HTMLElement, date: string, title: string): number {
   const cell = requiredElement(container, `[data-mg-date="${date}"]`);
   const row = cell.closest<HTMLElement>('.abyss-mg-row');
-  if (!row) throw new Error(`Expected Month row containing ${date}`);
+  if (row == null) throw new Error(`Expected Month row containing ${date}`);
   const candidates = [
     ...row.querySelectorAll<HTMLElement>(`[data-span-date="${date}"]`),
     ...cell.querySelectorAll<HTMLElement>(
@@ -177,7 +189,7 @@ function monthGridRowFor(container: HTMLElement, date: string, title: string): n
   const element = candidates.find(
     (candidate) => candidate.querySelector('.abyss-mg-item-title')?.textContent === title,
   );
-  if (!element) throw new Error(`Expected Month item "${title}" on ${date}`);
+  if (element == null) throw new Error(`Expected Month item "${title}" on ${date}`);
   return Number(element.style.gridRow);
 }
 
@@ -358,10 +370,10 @@ describe('MonthGridView', () => {
       });
     }
     const layer = parent.createDiv({ cls: 'abyss-tg-span-layer' });
-    const row = layoutVisibleSpans(
-      [task({ planning: { start: '2026-07-13', due: '2026-07-15' } })],
-      dates,
-    ).rows[0]!;
+    const row = expectDefined(
+      layoutVisibleSpans([task({ planning: { start: '2026-07-13', due: '2026-07-15' } })], dates)
+        .rows[0],
+    );
     const old = allDayCallbacks();
     const latest = allDayCallbacks();
     const owner = createSpanInteractionOwner();
@@ -395,7 +407,9 @@ describe('MonthGridView', () => {
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
 
-    const row = requiredElement(container, '[data-mg-date="2026-07-13"]').closest('.abyss-mg-row')!;
+    const row = expectDefined(
+      requiredElement(container, '[data-mg-date="2026-07-13"]').closest('.abyss-mg-row'),
+    );
     const cells = Array.from(row.querySelectorAll<HTMLElement>('.abyss-mg-cell'));
     for (const [index, cell] of cells.entries()) {
       vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue({
@@ -447,7 +461,9 @@ describe('MonthGridView', () => {
 
     view.render(container, [long, single], resolvedConfig({ startPosition: '2026-07' }));
 
-    const row = requiredElement(container, '[data-mg-date="2026-07-14"]').closest('.abyss-mg-row')!;
+    const row = expectDefined(
+      requiredElement(container, '[data-mg-date="2026-07-14"]').closest('.abyss-mg-row'),
+    );
     expect(row.querySelectorAll('.abyss-mg-span-layer')).toHaveLength(1);
     expect(row.querySelectorAll('[data-span-kind="ghost"]')).toHaveLength(2);
     expect(row.querySelectorAll('[data-span-kind="terminal"]')).toHaveLength(1);
@@ -461,7 +477,7 @@ describe('MonthGridView', () => {
       expect(segment.querySelector('[data-boundary="start"]')).not.toBeNull();
       expect(segment.querySelector('[data-boundary="due"]')).not.toBeNull();
     }
-    const terminal = row.querySelector<HTMLElement>('[data-span-kind="terminal"]')!;
+    const terminal = expectDefined(row.querySelector<HTMLElement>('[data-span-kind="terminal"]'));
     expect(terminal.querySelector('[data-boundary="start"]')).toBeNull();
     expect(terminal.querySelector('[data-boundary="due"]')).not.toBeNull();
     expect(
@@ -496,7 +512,9 @@ describe('MonthGridView', () => {
 
     view.render(container, spans, resolvedConfig({ startPosition: '2026-07' }));
 
-    const row = requiredElement(container, '[data-mg-date="2026-07-30"]').closest('.abyss-mg-row')!;
+    const row = expectDefined(
+      requiredElement(container, '[data-mg-date="2026-07-30"]').closest('.abyss-mg-row'),
+    );
     expect(
       Array.from(row.querySelectorAll<HTMLElement>('[data-span-date="2026-07-30"]')).map(
         (segment) => segment.style.gridRow,
@@ -583,14 +601,16 @@ describe('MonthGridView', () => {
       new PointerEvent('pointermove', { clientX: 350, clientY: 150, pointerId: 41 }),
     );
 
-    const previousRow = requiredElement(
-      container,
-      '[data-mg-date="2026-07-09"]',
-    ).closest<HTMLElement>('.abyss-mg-row')!;
-    const sourceRow = requiredElement(
-      container,
-      '[data-mg-date="2026-07-14"]',
-    ).closest<HTMLElement>('.abyss-mg-row')!;
+    const previousRow = expectDefined(
+      requiredElement(container, '[data-mg-date="2026-07-09"]').closest<HTMLElement>(
+        '.abyss-mg-row',
+      ),
+    );
+    const sourceRow = expectDefined(
+      requiredElement(container, '[data-mg-date="2026-07-14"]').closest<HTMLElement>(
+        '.abyss-mg-row',
+      ),
+    );
     const previews = Array.from(
       container.querySelectorAll<HTMLElement>('.abyss-span-boundary-preview'),
     );
@@ -605,8 +625,10 @@ describe('MonthGridView', () => {
         (preview) => preview.style.gridColumn,
       ),
     ).toEqual(['1 / 2', '2 / 3', '3 / 4', '4 / 5']);
-    expect(previews.map((preview) => JSON.parse(preview.dataset['target']!))).toEqual(
-      Array.from({ length: 8 }, () => ({ boundary: 'start', date: '2026-07-09', dayDelta: -5 })),
+    expect(previews.map((preview) => preview.dataset['target'])).toEqual(
+      Array.from({ length: 8 }, () =>
+        JSON.stringify({ boundary: 'start', date: '2026-07-09', dayDelta: -5 }),
+      ),
     );
 
     window.dispatchEvent(
@@ -643,14 +665,16 @@ describe('MonthGridView', () => {
       new PointerEvent('pointermove', { clientX: 150, clientY: 350, pointerId: 42 }),
     );
 
-    const sourceRow = requiredElement(
-      container,
-      '[data-mg-date="2026-07-14"]',
-    ).closest<HTMLElement>('.abyss-mg-row')!;
-    const followingRow = requiredElement(
-      container,
-      '[data-mg-date="2026-07-21"]',
-    ).closest<HTMLElement>('.abyss-mg-row')!;
+    const sourceRow = expectDefined(
+      requiredElement(container, '[data-mg-date="2026-07-14"]').closest<HTMLElement>(
+        '.abyss-mg-row',
+      ),
+    );
+    const followingRow = expectDefined(
+      requiredElement(container, '[data-mg-date="2026-07-21"]').closest<HTMLElement>(
+        '.abyss-mg-row',
+      ),
+    );
     const previews = Array.from(
       container.querySelectorAll<HTMLElement>('.abyss-span-boundary-preview'),
     );
@@ -665,8 +689,10 @@ describe('MonthGridView', () => {
         (preview) => preview.style.gridColumn,
       ),
     ).toEqual(['1 / 2', '2 / 3']);
-    expect(previews.map((preview) => JSON.parse(preview.dataset['target']!))).toEqual(
-      Array.from({ length: 8 }, () => ({ boundary: 'due', date: '2026-07-21', dayDelta: 5 })),
+    expect(previews.map((preview) => preview.dataset['target'])).toEqual(
+      Array.from({ length: 8 }, () =>
+        JSON.stringify({ boundary: 'due', date: '2026-07-21', dayDelta: 5 }),
+      ),
     );
 
     window.dispatchEvent(
@@ -697,7 +723,7 @@ describe('MonthGridView', () => {
         button: 0,
         clientX: 150,
         clientY: 250,
-      }) as PointerEvent,
+      }),
     );
     window.dispatchEvent(
       new MouseEvent('pointermove', {
@@ -705,19 +731,28 @@ describe('MonthGridView', () => {
         button: 0,
         clientX: 150,
         clientY: 350,
-      }) as PointerEvent,
+      }),
     );
     expect(
       Array.from(container.querySelectorAll<HTMLElement>('.abyss-span-move-preview')).map(
         (preview) => ({
           column: preview.style.gridColumn,
-          target: JSON.parse(preview.dataset['target']!),
+          target: preview.dataset['target'],
         }),
       ),
     ).toEqual([
-      { column: '2 / 3', target: { grabbedDate: '2026-07-14', targetDate: '2026-07-21', days: 7 } },
-      { column: '3 / 4', target: { grabbedDate: '2026-07-14', targetDate: '2026-07-21', days: 7 } },
-      { column: '4 / 5', target: { grabbedDate: '2026-07-14', targetDate: '2026-07-21', days: 7 } },
+      {
+        column: '2 / 3',
+        target: JSON.stringify({ grabbedDate: '2026-07-14', targetDate: '2026-07-21', days: 7 }),
+      },
+      {
+        column: '3 / 4',
+        target: JSON.stringify({ grabbedDate: '2026-07-14', targetDate: '2026-07-21', days: 7 }),
+      },
+      {
+        column: '4 / 5',
+        target: JSON.stringify({ grabbedDate: '2026-07-14', targetDate: '2026-07-21', days: 7 }),
+      },
     ]);
     window.dispatchEvent(
       new MouseEvent('pointerup', {
@@ -725,7 +760,7 @@ describe('MonthGridView', () => {
         button: 0,
         clientX: 150,
         clientY: 350,
-      }) as PointerEvent,
+      }),
     );
     expect(cbs.onSpanMove).toHaveBeenCalledWith(
       t,
@@ -877,7 +912,7 @@ describe('MonthGridView', () => {
 
   it('uses event contrast for both native Month drag origins', () => {
     const originalBackground = document.body.style.getPropertyValue('--background-primary');
-    document.body.style.setProperty('--background-primary', '#666666');
+    document.body.setCssProps({ '--background-primary': '#666666' });
     try {
       const container = freshContainer();
       const view = new MonthGridView({
@@ -905,7 +940,7 @@ describe('MonthGridView', () => {
         ).toBe('var(--abyss-tag-text-dark)');
       }
     } finally {
-      document.body.style.setProperty('--background-primary', originalBackground);
+      document.body.setCssProps({ '--background-primary': originalBackground });
     }
   });
 
@@ -944,7 +979,9 @@ describe('MonthGridView', () => {
     const cell = container.querySelector('[data-mg-date="2026-07-15"]') as HTMLElement;
     const link = cell.querySelector('a.internal-link') as HTMLAnchorElement;
     expect(link.getAttribute('href')).toBe('Daily/2026-07-15');
-    link.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    click.preventDefault();
+    link.dispatchEvent(click);
     expect(cbs.onDayClick).toHaveBeenCalledWith('2026-07-15');
   });
 
@@ -961,9 +998,11 @@ describe('MonthGridView', () => {
     );
     view.render(container, tasks, resolvedConfig({ startPosition: '2026-07' }));
     const cell = container.querySelector('[data-mg-date="2026-07-15"]') as HTMLElement;
-    expect(cell.querySelectorAll('.abyss-mg-plain').length).toBe(8); // cell is fully packed
+    expect(cell.querySelectorAll('.abyss-mg-plain')).toHaveLength(8); // cell is fully packed
     const dayLabel = cell.querySelector('.abyss-mg-day-label') as HTMLElement;
-    dayLabel.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    click.preventDefault();
+    dayLabel.dispatchEvent(click);
     expect(cbs.onDayClick).toHaveBeenCalledWith('2026-07-15');
   });
 
@@ -974,7 +1013,9 @@ describe('MonthGridView', () => {
     view.render(container, [], resolvedConfig({ startPosition: '2026-07' }));
     const cell = container.querySelector('[data-mg-date="2026-07-15"]') as HTMLElement;
     const dayLabel = cell.querySelector('.abyss-mg-day-label') as HTMLElement;
-    dayLabel.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    click.preventDefault();
+    dayLabel.dispatchEvent(click);
     expect(cbs.onDayClick).toHaveBeenCalledTimes(1);
   });
 
@@ -1239,14 +1280,14 @@ describe('MonthGridView', () => {
       resolvedConfig({ startPosition: '2026-07' }),
     );
 
-    container
-      .querySelector<HTMLElement>(
+    expectDefined(
+      container.querySelector<HTMLElement>(
         '[data-mg-date="2026-07-15"] .abyss-mg-plain .abyss-status-marker',
-      )!
-      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      ),
+    ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(interactionOwnership.acquire).toHaveBeenCalledOnce();
     expect(interactionOwnership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
-    document.querySelector<HTMLButtonElement>('.abyss-status-popover-flag')!.click();
+    expectDefined(document.querySelector<HTMLButtonElement>('.abyss-status-popover-flag')).click();
     expect(release).toHaveBeenCalledOnce();
     view.destroy();
   });
@@ -1265,7 +1306,9 @@ describe('MonthGridView', () => {
     statusRow.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onSetStatus).toHaveBeenCalledWith(t, expect.any(String));
 
-    document.querySelectorAll('.abyss-status-popover').forEach((el) => el.remove());
+    document.querySelectorAll('.abyss-status-popover').forEach((el) => {
+      el.remove();
+    });
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     const flagBtn = document.querySelector(
       '.abyss-status-popover-flag[data-abyss-priority="A"]',
@@ -1276,7 +1319,9 @@ describe('MonthGridView', () => {
 
   it('destroy() does not throw', () => {
     const view = new MonthGridView(callbacks());
-    expect(() => view.destroy()).not.toThrow();
+    expect(() => {
+      view.destroy();
+    }).not.toThrow();
   });
 
   it('renders a compact plain-row title via renderTaskText (markdown-link-aware) for a task with a [[wikilink]]', () => {
@@ -1321,7 +1366,7 @@ describe('MonthGridView', () => {
     const view = new MonthGridView(cbs);
     view.render(container, [], resolvedConfig({ startPosition: '2026-07' }));
     const weekBtns = container.querySelectorAll('.abyss-mg-week-btn');
-    expect(weekBtns.length).toBe(6);
+    expect(weekBtns).toHaveLength(6);
     (weekBtns[0] as HTMLElement).click();
     expect(cbs.onWeekClick).toHaveBeenCalled();
   });
@@ -1770,7 +1815,7 @@ describe('MonthGridView', () => {
 
     it('uses committed fill strength when choosing readable title text', () => {
       const originalBackground = document.body.style.getPropertyValue('--background-primary');
-      document.body.style.setProperty('--background-primary', '#666666');
+      document.body.setCssProps({ '--background-primary': '#666666' });
       try {
         const container = freshContainer();
         const view = new MonthGridView({
@@ -1799,7 +1844,7 @@ describe('MonthGridView', () => {
           'var(--abyss-tag-text-dark)',
         );
       } finally {
-        document.body.style.setProperty('--background-primary', originalBackground);
+        document.body.setCssProps({ '--background-primary': originalBackground });
       }
     });
   });

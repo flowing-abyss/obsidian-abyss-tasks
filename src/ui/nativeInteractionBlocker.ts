@@ -15,7 +15,7 @@ function hasPositiveClientRect(element: HTMLElement): boolean {
   const rects = element.getClientRects();
   for (let index = 0; index < rects.length; index++) {
     const rect = rects[index];
-    if (rect && hasPositiveArea(rect)) return true;
+    if (rect != null && hasPositiveArea(rect)) return true;
   }
   return false;
 }
@@ -27,24 +27,28 @@ function intersectsViewport(rect: DOMRect, ownerWindow: Window): boolean {
   return rect.right > 0 && rect.bottom > 0 && rect.left < width && rect.top < height;
 }
 
-function isPresentedNativeSurface(surface: HTMLElement, ownerWindow: Window | null): boolean {
-  if (!surface.isConnected) return false;
+function elementIsHidden(element: HTMLElement): boolean {
+  return element.hidden || element.getAttribute('aria-hidden')?.trim().toLowerCase() === 'true';
+}
 
+function styleIsHidden(style: CSSStyleDeclaration | undefined): boolean {
+  return (
+    style?.display === 'none' || style?.visibility === 'hidden' || style?.visibility === 'collapse'
+  );
+}
+
+function surfaceHierarchyIsVisible(surface: HTMLElement, ownerWindow: Window | null): boolean {
   let current: HTMLElement | null = surface;
-  while (current) {
-    if (current.hidden || current.getAttribute('aria-hidden')?.trim().toLowerCase() === 'true') {
+  while (current != null) {
+    if (elementIsHidden(current) || styleIsHidden(ownerWindow?.getComputedStyle(current)))
       return false;
-    }
-    const style = ownerWindow?.getComputedStyle(current);
-    if (
-      style?.display === 'none' ||
-      style?.visibility === 'hidden' ||
-      style?.visibility === 'collapse'
-    ) {
-      return false;
-    }
     current = current.parentElement;
   }
+  return true;
+}
+
+function isPresentedNativeSurface(surface: HTMLElement, ownerWindow: Window | null): boolean {
+  if (!surface.isConnected || !surfaceHierarchyIsVisible(surface, ownerWindow)) return false;
 
   const bounds = surface.getBoundingClientRect();
   if (!hasPositiveArea(bounds) || !hasPositiveClientRect(surface)) return false;

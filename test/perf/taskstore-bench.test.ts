@@ -3,14 +3,12 @@
  *
  * Excluded from the normal test suite via vitest.config.ts.
  * Run with:
- *   npm run bench
- *   npx vitest run test/perf/taskstore-bench.test.ts
+ *   pnpm bench
+ *   pnpm exec vitest run test/perf/taskstore-bench.test.ts
  *
  * Prints metrics to the test output in both human-readable and JSON form.
  */
-// eslint-disable-next-line no-restricted-imports, import/no-extraneous-dependencies
-import moment from 'moment';
-import { App as ObsidianApp } from 'obsidian';
+import { moment, App as ObsidianApp } from 'obsidian';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import type { LocalDate } from '../../src/tasks';
@@ -229,17 +227,18 @@ async function runScenario(fileCount: number, tasksPerFile: number): Promise<Sce
 }
 
 function printMetrics(label: string, metrics: ScenarioMetrics): void {
-  console.log(`\n📊 ${label}`);
-  console.log(`   Total tasks:                ${metrics.totalTasks}`);
-  console.log(`   Initial index:              ${metrics.initialIndexMs.toFixed(3)} ms`);
-  console.log(`   query list all:             ${metrics.queryAllMs.toFixed(3)} ms (30 avg)`);
-  console.log(`   query list by tag:          ${metrics.queryByTagMs.toFixed(3)} ms (30 avg)`);
-  console.log(`   query list date range:      ${metrics.queryByListDateMs.toFixed(3)} ms (30 avg)`);
-  console.log(
+  const lines = [
+    `\n📊 ${label}`,
+    `   Total tasks:                ${metrics.totalTasks}`,
+    `   Initial index:              ${metrics.initialIndexMs.toFixed(3)} ms`,
+    `   query list all:             ${metrics.queryAllMs.toFixed(3)} ms (30 avg)`,
+    `   query list by tag:          ${metrics.queryByTagMs.toFixed(3)} ms (30 avg)`,
+    `   query list date range:      ${metrics.queryByListDateMs.toFixed(3)} ms (30 avg)`,
     `   calendar date union:        ${metrics.queryByCalendarDateMs.toFixed(3)} ms (30 avg)`,
-  );
-  console.log(`   query list filePath:        ${metrics.queryByFileMs.toFixed(3)} ms (30 avg)`);
-  console.log(`   JSON: ${JSON.stringify(metrics)}`);
+    `   query list filePath:        ${metrics.queryByFileMs.toFixed(3)} ms (30 avg)`,
+    `   JSON: ${JSON.stringify(metrics)}`,
+  ];
+  process.stdout.write(`${lines.join('\n')}\n`);
 }
 
 function expectWithinBudget(metrics: ScenarioMetrics, budget: PerformanceBudget): void {

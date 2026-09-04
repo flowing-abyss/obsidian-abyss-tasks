@@ -55,7 +55,9 @@ export class PanelNavigator implements PanelNavigationActions {
   }
 
   openCalendarView(view: CalViewType): void {
-    this.openMode('calendar', () => this.center.setCalendarView(view));
+    this.openMode('calendar', () => {
+      this.center.setCalendarView(view);
+    });
   }
 
   openProjects(): void {
@@ -79,7 +81,7 @@ export class PanelNavigator implements PanelNavigationActions {
       this.state.set('selectedList', selection);
       this.state.set('centerListViewState', this.listState(selection));
       this.state.set('centerFilter', '');
-      void this.onSaveSettings();
+      this.saveSettings();
     });
   }
 
@@ -93,7 +95,13 @@ export class PanelNavigator implements PanelNavigationActions {
 
   private persistListState(selection: ListSelection): void {
     this.storeListState(selection);
-    void this.onSaveSettings();
+    this.saveSettings();
+  }
+
+  private saveSettings(): void {
+    this.onSaveSettings().catch((error: unknown) => {
+      console.error('[abyss-tasks] failed to persist list view settings', error);
+    });
   }
 
   private storeListState(selection: ListSelection): void {
@@ -111,14 +119,14 @@ export class PanelNavigator implements PanelNavigationActions {
     if (previousKey === nextKey) return;
     const states = this.listViewStates();
     const previousState = states[previousKey];
-    if (previousState) states[nextKey] = previousState;
+    if (previousState != null) states[nextKey] = previousState;
     delete states[previousKey];
   }
 
   private listState(selection: ListSelection): ListViewState {
     const key = listSelectionToKey(selection);
     const saved = this.settings.listViewStates?.[key];
-    if (saved) return saved;
+    if (saved != null) return saved;
     const defaults = getListViewDefaults(key);
     this.listViewStates()[key] = defaults;
     return defaults;

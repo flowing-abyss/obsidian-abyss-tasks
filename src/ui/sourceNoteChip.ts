@@ -20,13 +20,13 @@ export function renderSourceNoteChip(
   onClick?: (filePath: string) => void,
 ): void {
   const noteName = task.source.filePath.split('/').pop()?.replace(/\.md$/, '') ?? '';
-  const chip = container.createEl('span', {
-    cls: `abyss-task-source-note${onClick ? ' abyss-task-source-note--clickable' : ''}`,
+  const chip = container.createSpan({
+    cls: `abyss-task-source-note${onClick != null ? ' abyss-task-source-note--clickable' : ''}`,
   });
-  const iconEl = chip.createEl('span', { cls: 'abyss-task-source-note-icon' });
+  const iconEl = chip.createSpan({ cls: 'abyss-task-source-note-icon' });
   setIcon(iconEl, 'file-text');
-  chip.createEl('span', { cls: 'abyss-task-source-note-name', text: noteName });
-  if (onClick) {
+  chip.createSpan({ cls: 'abyss-task-source-note-name', text: noteName });
+  if (onClick != null) {
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
       onClick(task.source.filePath);

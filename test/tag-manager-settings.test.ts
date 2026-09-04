@@ -1,3 +1,4 @@
+import { expectDefined } from './helpers';
 // test/tag-manager-settings.test.ts
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -21,9 +22,9 @@ describe('TagManager.createManualGroup', () => {
     const { tm, settings, save } = makeManager({ tagGroups: [] });
     await tm.createManualGroup('Work Stuff');
     expect(settings.tagGroups).toHaveLength(1);
-    expect(settings.tagGroups[0]!.mode).toBe('manual');
-    expect(settings.tagGroups[0]!.name).toBe('Work Stuff');
-    expect(settings.tagGroups[0]!.tags).toEqual(['#work-stuff']);
+    expect(expectDefined(settings.tagGroups[0]).mode).toBe('manual');
+    expect(expectDefined(settings.tagGroups[0]).name).toBe('Work Stuff');
+    expect(expectDefined(settings.tagGroups[0]).tags).toEqual(['#work-stuff']);
     expect(save).toHaveBeenCalledOnce();
   });
 
@@ -38,7 +39,9 @@ describe('TagManager.createManualGroup', () => {
     const { tm, settings } = makeManager({ tagGroups: [] });
     await tm.createManualGroup('A');
     await tm.createManualGroup('B');
-    expect(settings.tagGroups[0]!.id).not.toBe(settings.tagGroups[1]!.id);
+    expect(expectDefined(settings.tagGroups[0]).id).not.toBe(
+      expectDefined(settings.tagGroups[1]).id,
+    );
   });
 });
 

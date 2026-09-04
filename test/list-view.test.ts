@@ -7,7 +7,14 @@ import { StatusRegistry } from '../src/status/StatusRegistry';
 import { localDate, type CalendarTaskSource, type TaskSnapshot as Task } from '../src/tasks';
 import { projectCalendarOccurrences } from '../src/views/calendarOccurrences';
 import { ListView } from '../src/views/ListView';
-import { freshContainer, resolvedConfig, subtask, task, useRealMoment } from './helpers';
+import {
+  expectDefined,
+  freshContainer,
+  resolvedConfig,
+  subtask,
+  task,
+  useRealMoment,
+} from './helpers';
 
 useRealMoment();
 
@@ -341,8 +348,8 @@ describe('ListView', () => {
       const c = freshContainer();
       const t = task({ status: 'open', planning: { due: today() } });
       view.render(c, [t], resolvedConfig());
-      const row = c.querySelector<HTMLElement>('.abyss-list-task')!;
-      const marker = row.querySelector<HTMLElement>('.abyss-status-marker')!;
+      const row = expectDefined(c.querySelector<HTMLElement>('.abyss-list-task'));
+      const marker = expectDefined(row.querySelector<HTMLElement>('.abyss-status-marker'));
       const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
 
       row.dispatchEvent(event);
@@ -458,7 +465,9 @@ describe('ListView', () => {
 
     it('destroy is a no-op (no throw)', () => {
       const { view } = makeView();
-      expect(() => view.destroy()).not.toThrow();
+      expect(() => {
+        view.destroy();
+      }).not.toThrow();
     });
   });
 
@@ -470,7 +479,7 @@ describe('ListView', () => {
         status: 'open',
         planning: { due: today() },
         source: { filePath: 'Projects/alpha.md' },
-        presentation: { dailyNoteDate: undefined },
+        presentation: {},
       });
       view.render(c, [t], resolvedConfig({ sourceNoteDisplay: 'never' }));
       expect(c.querySelector('.abyss-task-source-note')).toBeNull();
@@ -483,7 +492,7 @@ describe('ListView', () => {
         status: 'open',
         planning: { due: today() },
         source: { filePath: 'Projects/alpha.md' },
-        presentation: { dailyNoteDate: undefined },
+        presentation: {},
       });
       view.render(c, [t], resolvedConfig({ sourceNoteDisplay: 'always' }));
       const chip = c.querySelector('.abyss-task-source-note');
@@ -524,7 +533,7 @@ describe('ListView', () => {
         status: 'open',
         planning: { due: today() },
         source: { filePath: 'Inbox/tasks.md' },
-        presentation: { dailyNoteDate: undefined },
+        presentation: {},
       });
       view.render(
         c,
@@ -541,7 +550,7 @@ describe('ListView', () => {
         status: 'open',
         planning: { due: today() },
         source: { filePath: 'Projects/beta.md' },
-        presentation: { dailyNoteDate: undefined },
+        presentation: {},
       });
       view.render(c, [t], resolvedConfig({ sourceNoteDisplay: 'non-default', customFilePath: '' }));
       const chip = c.querySelector('.abyss-task-source-note');
@@ -556,7 +565,7 @@ describe('ListView', () => {
         status: 'open',
         planning: { due: today() },
         source: { filePath: 'a/b/c/deep-note.md' },
-        presentation: { dailyNoteDate: undefined },
+        presentation: {},
       });
       view.render(c, [t], resolvedConfig({ sourceNoteDisplay: 'always' }));
       const chip = c.querySelector('.abyss-task-source-note');
@@ -577,12 +586,12 @@ describe('ListView', () => {
           originalMarkdown: '- [ ] task #work',
           originalBlock: '- [ ] task #work',
         },
-        presentation: { dailyNoteDate: undefined },
+        presentation: {},
       });
       view.render(c, [t], resolvedConfig({ sourceNoteDisplay: 'always' }));
       const meta = c.querySelector('.abyss-list-task-meta');
       expect(meta).not.toBeNull();
-      const children = Array.from(meta!.children);
+      const children = Array.from(expectDefined(meta).children);
       const noteIdx = children.findIndex((el) => el.classList.contains('abyss-task-source-note'));
       const tagIdx = children.findIndex((el) => el.classList.contains('abyss-task-tag'));
       expect(noteIdx).toBeGreaterThanOrEqual(0);

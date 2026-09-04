@@ -1,5 +1,4 @@
-import moment from 'moment';
-import { App, TFile } from 'obsidian';
+import { moment, TFile, type App } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import { DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';

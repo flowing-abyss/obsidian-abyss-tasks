@@ -25,27 +25,29 @@ export class RailPanel {
   } | null = null;
 
   constructor(
-    private state: AppState,
-    private app: {
+    private readonly state: AppState,
+    private readonly app: {
       setting?: {
         open?: () => void;
         openTabById?: (id: string) => void;
         modalEl?: HTMLElement;
       };
     },
-    private navigation?: PanelNavigationActions,
+    private readonly navigation?: PanelNavigationActions,
   ) {}
 
   mount(container: HTMLElement): void {
     this.el = container;
-    this.offMode = this.state.on('mode', () => this.render());
+    this.offMode = this.state.on('mode', () => {
+      this.render();
+    });
     this.render();
   }
 
   destroy(): void {
     this.disposeSettingsLifecycle();
     this.offMode?.();
-    this.el?.empty();
+    this.el.empty();
   }
 
   private render(): void {
@@ -73,23 +75,42 @@ export class RailPanel {
     });
     setIcon(settingsBtn, 'settings');
     settingsBtn.addEventListener('click', () => {
-      this.disposeSettingsLifecycle();
-      this.app.setting?.open?.();
-      this.app.setting?.openTabById?.('abyss-tasks');
-      const modal = this.app.setting?.modalEl;
-      const OwnerMutationObserver = modal?.ownerDocument.defaultView?.MutationObserver;
-      if (!modal?.isConnected || !OwnerMutationObserver) return;
-      settingsBtn.addClass('is-active');
-      let observer!: MutationObserver;
-      observer = new OwnerMutationObserver(() => {
-        const lifecycle = this.settingsLifecycle;
-        if (lifecycle?.modal === modal && lifecycle.observer === observer && !modal.isConnected) {
-          this.disposeSettingsLifecycle();
-        }
-      });
-      this.settingsLifecycle = { button: settingsBtn, modal, observer };
-      observer.observe(modal.ownerDocument.body, { childList: true, subtree: true });
+      this.openSettings(settingsBtn);
     });
+  }
+
+  private openSettings(settingsButton: HTMLButtonElement): void {
+    this.disposeSettingsLifecycle();
+    const modal = this.openSettingsTab();
+    const OwnerMutationObserver = modal?.ownerDocument.defaultView?.MutationObserver;
+    if (modal === undefined || !modal.isConnected || OwnerMutationObserver == null) return;
+    settingsButton.addClass('is-active');
+    const observer = new OwnerMutationObserver(() => {
+      if (this.isClosedSettingsLifecycle(this.settingsLifecycle, modal, observer)) {
+        this.disposeSettingsLifecycle();
+      }
+    });
+    this.settingsLifecycle = { button: settingsButton, modal, observer };
+    observer.observe(modal.ownerDocument.body, { childList: true, subtree: true });
+  }
+
+  private openSettingsTab(): HTMLElement | undefined {
+    this.app.setting?.open?.();
+    this.app.setting?.openTabById?.('abyss-tasks');
+    return this.app.setting?.modalEl;
+  }
+
+  private isClosedSettingsLifecycle(
+    lifecycle: RailPanel['settingsLifecycle'],
+    modal: HTMLElement,
+    observer: MutationObserver,
+  ): boolean {
+    return (
+      lifecycle !== null &&
+      lifecycle.modal === modal &&
+      lifecycle.observer === observer &&
+      !modal.isConnected
+    );
   }
 
   private openMode(mode: ViewMode): void {

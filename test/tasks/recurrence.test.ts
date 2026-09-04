@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { Platform } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import {
   expandRecurrenceReferences,
@@ -93,6 +93,10 @@ describe('parseRecurrenceRule', () => {
     ['fourth ordinal', 'every month on the fourth Tuesday', 'every month on the 4th Tuesday'],
     ['fifth ordinal', 'every month on the fifth Tuesday', 'every month on the 5th Tuesday'],
     ['interval-one plural', 'every 1 days', 'every day'],
+    ['teen ordinal suffix', 'every month on the 11th', 'every month on the 11th'],
+    ['teen ordinal suffix', 'every month on the 12th', 'every month on the 12th'],
+    ['teen ordinal suffix', 'every month on the 13th', 'every month on the 13th'],
+    ['twenty-third ordinal suffix', 'every month on the 23rd', 'every month on the 23rd'],
   ] as const)('accepts the supported %s alias', (_name, raw, canonical) => {
     expect(parseRecurrenceRule(raw)).toMatchObject({ type: 'valid', raw, canonical });
   });
@@ -184,6 +188,10 @@ describe('parseRecurrenceRule', () => {
     ['every April and April on the 1st', 'unparseable-rule'],
     ['every April and December on the 1st and 1st', 'unparseable-rule'],
     ['every 2 years on February 29th trailing', 'unparseable-rule'],
+    ['every month on the the last Friday', 'unparseable-rule'],
+    ['every month on the first middle Friday', 'unparseable-rule'],
+    ['every 0 days', 'unparseable-rule'],
+    ['every 2 day', 'unparseable-rule'],
   ] as const)('rejects %s', (raw, code) => {
     expect(parseRecurrenceRule(raw)).toEqual({ type: 'invalid', code });
   });
@@ -223,13 +231,24 @@ describe('nextOccurrencePlanning', () => {
       23,
     ],
     ['biennial leap date', 'every 2 years on February 29th', '2024-02-29', '2028-02-29', 1461],
-  ] as const)('advances %s', (_name, rule, reference, expected, dayDelta) => {
-    expect(next(rule, { due: localDate(reference) })).toEqual({
-      type: 'next',
-      planning: { due: expected },
-      dayDelta,
-    });
-  });
+  ] as const)(
+    'advances %s',
+    (
+      ...[_name, rule, reference, expected, dayDelta]: readonly [
+        string,
+        string,
+        string,
+        string,
+        number,
+      ]
+    ) => {
+      expect(next(rule, { due: localDate(reference) })).toEqual({
+        type: 'next',
+        planning: { due: expected },
+        dayDelta,
+      });
+    },
+  );
 
   it('clamps an implicit month to the last valid day', () => {
     expect(next('every month', { due: localDate('2022-01-31') })).toEqual({
@@ -331,11 +350,52 @@ describe('nextOccurrencePlanning', () => {
     });
   });
 
+  it('can use a removed scheduled date solely as the recurrence anchor', () => {
+    expect(
+      nextOccurrencePlanning({
+        rule: 'every day',
+        planning: { scheduled: localDate('2026-08-03') },
+        completedOn: localDate('2026-08-03'),
+        policy: { removeScheduledDate: true },
+      }),
+    ).toEqual({ type: 'next', planning: {}, dayDelta: 1 });
+  });
+
+  it('preserves time and duration while shifting planning dates', () => {
+    expect(
+      next('every day', {
+        due: localDate('2026-08-03'),
+        time: '09:30',
+        duration: 45,
+      } as TaskPlanning),
+    ).toMatchObject({
+      type: 'next',
+      planning: { due: '2026-08-04', time: '09:30', duration: 45 },
+    });
+  });
+
   it('returns a structured invalid result for an invalid rule', () => {
     expect(next('weekly', { due: localDate('2026-08-03') })).toEqual({
       type: 'invalid',
       code: 'must-start-with-every',
     });
+  });
+
+  it('reports calendar overflow while shifting implicit rules and descendants', () => {
+    expect(next('every month', { due: localDate('9999-12-31') })).toEqual({
+      type: 'invalid',
+      code: 'forecast-limit-reached',
+    });
+    expect(next('every year', { due: localDate('9999-12-31') })).toEqual({
+      type: 'invalid',
+      code: 'forecast-limit-reached',
+    });
+    expect(
+      next('every day', {
+        start: localDate('9999-12-31'),
+        due: localDate('9999-12-30'),
+      }),
+    ).toEqual({ type: 'invalid', code: 'invalid-descendant-date' });
   });
 });
 
@@ -373,6 +433,21 @@ describe('expandRecurrenceReferences', () => {
     ).toEqual({ type: 'invalid', code: 'recurrence-date-required' });
   });
 
+  it('rejects invalid rules and inverted direct or sequential visible ranges', () => {
+    expect(expandResult('weekly', '2026-01-01', '2026-01-02', '2026-01-03')).toEqual({
+      type: 'invalid',
+      code: 'must-start-with-every',
+    });
+    expect(expandResult('every day', '2026-01-01', '2026-01-03', '2026-01-02')).toEqual({
+      type: 'invalid',
+      code: 'invalid-descendant-date',
+    });
+    expect(expandResult('every month', '2026-01-01', '2026-01-03', '2026-01-02')).toEqual({
+      type: 'invalid',
+      code: 'invalid-descendant-date',
+    });
+  });
+
   it('reports the visible occurrence cap instead of silently truncating', () => {
     const result = expandResult('every day', '2026-01-01', '2026-01-02', '2027-12-31');
     expect(result).toMatchObject({
@@ -381,6 +456,44 @@ describe('expandRecurrenceReferences', () => {
       limit: 512,
     });
     expect(result.type === 'limited' ? result.dates : []).toHaveLength(512);
+  });
+
+  it('returns an empty direct expansion when the window precedes the first occurrence', () => {
+    expect(expandResult('every day', '2026-08-10', '2026-08-01', '2026-08-05')).toEqual({
+      type: 'expanded',
+      dates: [],
+    });
+  });
+
+  it('applies the visible cap to sequential recurrence', () => {
+    const result = expandRecurrenceReferences({
+      rule: 'every month',
+      planning: { due: localDate('1900-01-01') },
+      visible: { from: localDate('1900-02-01'), to: localDate('1950-12-01') },
+      policy: keepScheduled,
+      maxVisible: 512,
+      maxSequentialSteps: 4096,
+    });
+
+    expect(result).toMatchObject({
+      type: 'limited',
+      phase: 'visible-occurrences',
+      limit: 512,
+    });
+    expect(result.type === 'limited' ? result.dates : []).toHaveLength(512);
+  });
+
+  it('reports overflow while seeking a sequential occurrence', () => {
+    expect(
+      expandRecurrenceReferences({
+        rule: 'every year',
+        planning: { due: localDate('9999-01-01') },
+        visible: { from: localDate('9999-01-02'), to: localDate('9999-12-31') },
+        policy: keepScheduled,
+        maxVisible: 512,
+        maxSequentialSteps: 4096,
+      }),
+    ).toEqual({ type: 'invalid', code: 'forecast-limit-reached' });
   });
 
   it('expands when the 4096th sequential step reaches the visible endpoint', () => {
@@ -399,8 +512,11 @@ describe('expandRecurrenceReferences', () => {
     });
   });
 
-  it('is timezone independent in spawned Vitest processes', () => {
-    if (process.env.RECURRENCE_TZ_CHILD === '1') {
+  it('is timezone independent in spawned Vitest processes', async () => {
+    if (!Platform.isDesktop) throw new Error('Timezone process test requires desktop APIs');
+    const { execFileSync } = await import('node:child_process');
+
+    if (process.env['RECURRENCE_TZ_CHILD'] === '1') {
       expect(next('every weekday', { due: localDate('2026-08-07') })).toMatchObject({
         type: 'next',
         planning: { due: '2026-08-10' },

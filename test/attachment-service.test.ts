@@ -1,4 +1,4 @@
-import type { App, TFile } from 'obsidian';
+import { TFile, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import {
   aliasForExtension,
@@ -6,6 +6,14 @@ import {
   buildAttachmentLink,
   saveExternalFile,
 } from '../src/attachments/AttachmentService';
+import { createAppWithFiles, methodOf } from './helpers';
+
+async function tfile(path: string): Promise<TFile> {
+  const app = await createAppWithFiles({ [path]: '' });
+  const candidate = app.vault.getAbstractFileByPath(path);
+  if (!(candidate instanceof TFile)) throw new Error(`Missing test file ${path}`);
+  return candidate;
+}
 
 describe('aliasForExtension', () => {
   it('maps image extensions (case-insensitive, dot optional) to image', () => {
@@ -49,7 +57,7 @@ describe('saveExternalFile', () => {
   it('requests a path for the filename+sourcePath and writes the bytes there', async () => {
     const bytes = new Uint8Array([1, 2, 3]).buffer;
     const file = { name: 'a.png', arrayBuffer: () => Promise.resolve(bytes) } as unknown as File;
-    const created = { path: 'attach/a.png' } as TFile;
+    const created = await tfile('attach/a.png');
     const app = {
       fileManager: { getAvailablePathForAttachment: vi.fn().mockResolvedValue('attach/a.png') },
       vault: { createBinary: vi.fn().mockResolvedValue(created) },
@@ -57,23 +65,23 @@ describe('saveExternalFile', () => {
 
     const result = await saveExternalFile(app, file, 'Tasks/T.md');
 
-    expect(app.fileManager.getAvailablePathForAttachment).toHaveBeenCalledWith(
+    expect(methodOf(app.fileManager, 'getAvailablePathForAttachment')).toHaveBeenCalledWith(
       'a.png',
       'Tasks/T.md',
     );
-    expect(app.vault.createBinary).toHaveBeenCalledWith('attach/a.png', bytes);
+    expect(methodOf(app.vault, 'createBinary')).toHaveBeenCalledWith('attach/a.png', bytes);
     expect(result).toBe(created);
   });
 });
 
 describe('buildAttachmentLink', () => {
-  it('delegates to generateMarkdownLink with the alias', () => {
-    const file = { path: 'attach/a.png' } as TFile;
+  it('delegates to generateMarkdownLink with the alias', async () => {
+    const file = await tfile('attach/a.png');
     const app = {
       fileManager: { generateMarkdownLink: vi.fn().mockReturnValue('[[attach/a.png|image]]') },
     } as unknown as App;
     const link = buildAttachmentLink(app, file, 'Tasks/T.md', 'image');
-    expect(app.fileManager.generateMarkdownLink).toHaveBeenCalledWith(
+    expect(methodOf(app.fileManager, 'generateMarkdownLink')).toHaveBeenCalledWith(
       file,
       'Tasks/T.md',
       undefined,

@@ -5,6 +5,12 @@ import type { ListViewState } from '../src/settings/types';
 
 const base = (key: string): ListViewState => getListViewDefaults(key);
 
+function withoutStatusGroups(state: ListViewState): ListViewState {
+  const result = { ...state };
+  delete result.statusGroups;
+  return result;
+}
+
 describe('isListViewCustomized', () => {
   it('returns false for a container at its defaults', () => {
     expect(isListViewCustomized(base('inbox'), 'inbox')).toBe(false);
@@ -26,7 +32,7 @@ describe('isListViewCustomized', () => {
 
   it('returns true when the Show status filter differs from default (Active)', () => {
     // undefined === "Show: All", which differs from the Active default
-    expect(isListViewCustomized({ ...base('inbox'), statusGroups: undefined }, 'inbox')).toBe(true);
+    expect(isListViewCustomized(withoutStatusGroups(base('inbox')), 'inbox')).toBe(true);
     // a different subset
     expect(isListViewCustomized({ ...base('inbox'), statusGroups: ['done'] }, 'inbox')).toBe(true);
   });

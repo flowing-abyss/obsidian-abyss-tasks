@@ -18,7 +18,7 @@ export function normalizeStatusGroups(
   statusGroups: TaskStatusType[] | undefined,
 ): TaskStatusType[] | undefined {
   if (
-    !statusGroups ||
+    statusGroups == null ||
     statusGroups.length === 0 ||
     statusGroups.length >= ALL_STATUS_GROUPS.length
   ) {

@@ -24,10 +24,10 @@ export function rootTaskRef(node: TaskSelectionNode): TaskRef {
 
 export function taskNodeLine(root: TaskSnapshot, node: TaskSelectionNode): number {
   if (!('parent' in node.ref)) return (node as TaskSnapshot).source.line;
-  let line = root.source.line;
+  const line = root.source.line;
   let ref: SubtaskRef | undefined = node.ref;
   const offsets: number[] = [];
-  while (ref) {
+  while (ref != null) {
     offsets.push(ref.relativeLine);
     ref = ref.parent.type === 'subtask' ? ref.parent.ref : undefined;
   }
@@ -42,13 +42,13 @@ export function rebuildTaskSelection(
   for (let index = 1; index < staleStack.length; index++) {
     const parent = stack[index - 1];
     const stale = staleStack[index];
-    if (!parent || !stale || 'source' in stale) break;
+    if (parent == null || stale == null || 'source' in stale) break;
     const candidates = parent.subtasks;
     const matches = candidates.filter(
       (candidate) => candidate.ref.originalBlock === stale.ref.originalBlock,
     );
     const child = matches.length === 1 ? matches[0] : undefined;
-    if (!child) break;
+    if (child == null) break;
     stack.push(child);
   }
   return stack;

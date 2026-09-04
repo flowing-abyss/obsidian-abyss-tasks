@@ -1,16 +1,23 @@
+import type * as ObsidianModule from 'obsidian';
 import { Notice, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import type { TaskApplicationApi, TaskIndexEvent, TaskSnapshot } from '../src/tasks';
 import type { InteractionOwnershipPort } from '../src/ui/interactionOwnership';
-import { freshContainer, queryApiForTasks, resolvedConfig, useRealMoment } from './helpers';
+import {
+  expectDefined,
+  freshContainer,
+  queryApiForTasks,
+  resolvedConfig,
+  useRealMoment,
+} from './helpers';
 
 useRealMoment();
 vi.useFakeTimers();
 
 vi.mock('obsidian', async () => {
-  const actual = await vi.importActual<typeof import('obsidian')>('obsidian');
+  const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
   class MockModal {
     app: App;
     contentEl: HTMLElement;
@@ -18,7 +25,7 @@ vi.mock('obsidian', async () => {
     onSubmit?: (text: string) => Promise<void>;
     constructor(app: App) {
       this.app = app;
-      this.containerEl = activeDocument.createElement('div');
+      this.containerEl = createFragment().createDiv();
       activeDocument.body.appendChild(this.containerEl);
       this.contentEl = this.containerEl.createDiv();
     }
@@ -40,7 +47,7 @@ import { CalendarRenderer } from '../src/ui/CalendarRenderer';
 
 class StubStore {
   private tasks: TaskSnapshot[] = [];
-  private listeners = new Set<(event: TaskIndexEvent) => void>();
+  private readonly listeners = new Set<(event: TaskIndexEvent) => void>();
   taskQueries = queryApiForTasks(
     () => this.tasks,
     (listener) => {
@@ -50,7 +57,7 @@ class StubStore {
   );
   emit(changedFile?: string): void {
     for (const listener of this.listeners) {
-      listener({ type: 'changed', files: changedFile ? [changedFile] : [] });
+      listener({ type: 'changed', files: changedFile === undefined ? [] : [changedFile] });
     }
   }
   setTasks(t: TaskSnapshot[]): void {
@@ -68,12 +75,25 @@ function fakeApp(): App {
   return {} as App;
 }
 
+function expectCreateCommand(store: StubStore, markdownBody: string): void {
+  const command = expectDefined(store.execute.mock.calls[0]?.[0]);
+  expect(command.type).toBe('create');
+  if (command.type !== 'create') throw new Error('Expected a create command');
+  expect(command.destination).toEqual({ type: 'configured-default' });
+  expect(command.markdownBody).toBe(markdownBody);
+  expect(command.initial?.due?.type).toBe('set');
+  if (command.initial?.due?.type !== 'set') throw new Error('Expected a due date');
+  expect(typeof command.initial.due.value).toBe('string');
+}
+
 function makeRenderer(
-  root: HTMLElement,
-  store: StubStore,
-  config: ReturnType<typeof resolvedConfig>,
-  app: App,
-  interactionOwnership?: InteractionOwnershipPort,
+  ...[root, store, config, app, interactionOwnership]: readonly [
+    root: HTMLElement,
+    store: StubStore,
+    config: ReturnType<typeof resolvedConfig>,
+    app: App,
+    interactionOwnership?: InteractionOwnershipPort,
+  ]
 ): CalendarRenderer {
   return new CalendarRenderer(
     root,
@@ -136,12 +156,14 @@ describe('CalendarRenderer TaskInputModal submit', () => {
     );
     renderer.mount();
 
-    root
-      .querySelector<HTMLElement>('.cell.currentMonth')!
-      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expectDefined(root.querySelector<HTMLElement>('.cell.currentMonth')).dispatchEvent(
+      new MouseEvent('click', { bubbles: true }),
+    );
     expect(interactionOwnership.acquire).toHaveBeenCalledOnce();
     expect(interactionOwnership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
-    const input = activeDocument.body.querySelector<HTMLInputElement>('input[type="text"]')!;
+    const input = expectDefined(
+      activeDocument.body.querySelector<HTMLInputElement>('input[type="text"]'),
+    );
     input.value = 'Owned capture';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     expect(release).toHaveBeenCalledOnce();
@@ -164,7 +186,7 @@ describe('CalendarRenderer TaskInputModal submit', () => {
       interactionOwnership,
     );
     renderer.mount();
-    const cell = root.querySelector<HTMLElement>('.cell.currentMonth')!;
+    const cell = expectDefined(root.querySelector<HTMLElement>('.cell.currentMonth'));
 
     cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -185,12 +207,7 @@ describe('CalendarRenderer TaskInputModal submit', () => {
     const input = activeDocument.body.querySelector('input[type="text"]') as HTMLInputElement;
     input.value = '  Buy milk  ';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    expect(store.execute).toHaveBeenCalledWith({
-      type: 'create',
-      destination: { type: 'configured-default' },
-      markdownBody: '- [ ] Buy milk',
-      initial: { due: { type: 'set', value: expect.any(String) } },
-    });
+    expectCreateCommand(store, '- [ ] Buy milk');
     expect(store.addTask).not.toHaveBeenCalled();
   });
 
@@ -199,16 +216,13 @@ describe('CalendarRenderer TaskInputModal submit', () => {
     cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     const input = activeDocument.body.querySelector('input[type="text"]') as HTMLInputElement;
     input.value = 'Task via button';
-    const addBtn = Array.from(activeDocument.body.querySelectorAll('button')).find(
-      (b) => b.textContent === 'Add',
-    )!;
+    const addBtn = expectDefined(
+      Array.from(activeDocument.body.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Add',
+      ),
+    );
     addBtn.click();
-    expect(store.execute).toHaveBeenCalledWith({
-      type: 'create',
-      destination: { type: 'configured-default' },
-      markdownBody: '- [ ] Task via button',
-      initial: { due: { type: 'set', value: expect.any(String) } },
-    });
+    expectCreateCommand(store, '- [ ] Task via button');
   });
 
   it('empty/whitespace input sends no create command', () => {

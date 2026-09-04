@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
+import type { TaskSnapshot } from '../src/tasks';
 import {
   compareByStatus,
   filterTasksByStatusGroups,
   groupTasksByStatus,
 } from '../src/views/taskGrouping';
+import { expectDefined, task as taskFixture } from './helpers';
 
 const reg = new StatusRegistry(buildDefaultTaskStatuses());
-const task = (statusSymbol: string) => ({ statusSymbol, text: statusSymbol }) as any;
+const task = (statusSymbol: string): TaskSnapshot => taskFixture({ statusSymbol });
 
 describe('group/sort by status', () => {
   it('groups by status name in settings order', () => {
@@ -18,7 +20,7 @@ describe('group/sort by status', () => {
 
   it('puts unknown-status tasks in an "Other" group last', () => {
     const groups = groupTasksByStatus([task('@'), task(' ')], reg);
-    expect(groups[groups.length - 1]!.label).toBe('Other');
+    expect(expectDefined(groups[groups.length - 1]).label).toBe('Other');
   });
 
   it('compareByStatus ranks by registry order', () => {

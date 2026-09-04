@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseTaskLineSourceModel } from '../../src/tasks/domain/taskLineSourceModel';
 import type { TaskRef } from '../../src/tasks/domain/types';
-import { localTime } from '../../src/tasks/domain/validation';
+import { localDate, localTime } from '../../src/tasks/domain/validation';
 import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
 import {
   TaskMarkdownCodec,
@@ -9,6 +9,7 @@ import {
   type TaskSpanKind,
 } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { canonicalStatusCatalog } from '../helpers';
+import { expectDefined } from './../helpers';
 
 const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
 const location = { filePath: 'Projects/Test.md', line: 4 };
@@ -17,7 +18,7 @@ const ref: TaskRef = { ...location, revision: 'test-revision' };
 function parse(source: string): ParsedTaskLine {
   const parsed = codec.parseLine(source, location);
   expect(parsed).not.toBeNull();
-  return parsed!;
+  return expectDefined(parsed);
 }
 
 function spanText(parsed: ParsedTaskLine, kind: TaskSpanKind | 'malformed-known'): string[] {
@@ -37,40 +38,130 @@ function expectLosslessPartition(parsed: ParsedTaskLine): void {
   );
 }
 
+type AuthoritativePartition = Pick<
+  ParsedTaskLine,
+  | 'statusSymbol'
+  | 'markdownTitle'
+  | 'tags'
+  | 'spans'
+  | 'occurrences'
+  | 'planning'
+  | 'priority'
+  | 'recurrence'
+  | 'onCompletion'
+  | 'onCompletionExplicit'
+>;
+
+function authoritativePartition(parsed: AuthoritativePartition): readonly unknown[] {
+  return [
+    parsed.statusSymbol,
+    parsed.markdownTitle,
+    parsed.tags,
+    parsed.spans,
+    parsed.occurrences,
+    parsed.planning,
+    parsed.priority,
+    parsed.recurrence,
+    parsed.onCompletion,
+    parsed.onCompletionExplicit,
+  ];
+}
+
 describe('TaskMarkdownCodec', () => {
+  it('guards and delegates recurrence-iteration line edits through the codec boundary', () => {
+    const edit = {
+      type: 'clean-owner' as const,
+      planning: {},
+      todoSymbol: ' ',
+      today: localDate('2026-08-01'),
+      addCreatedDate: false,
+    };
+
+    expect(codec.applyRecurrenceIterationLineEdit('not a task', edit)).toEqual({
+      type: 'invalid',
+      code: 'invalid-task-syntax',
+    });
+    expect(codec.applyRecurrenceIterationLineEdit('- [x] Owner 🔁 every day', edit)).toEqual({
+      type: 'changed',
+      content: '- [ ] Owner 🔁 every day',
+    });
+  });
+
+  it('reports the targeted issue for each malformed metadata carrier', () => {
+    expect(codec.applyLineEdit('- [ ] Task ⏰ nope', { type: 'set-time', value: '09:30' })).toEqual(
+      {
+        type: 'invalid',
+        issues: [{ code: 'invalid-time', field: 'time' }],
+      },
+    );
+    expect(codec.applyLineEdit('- [ ] Task ⏱️ nope', { type: 'set-duration', value: 30 })).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-duration', field: 'duration' }],
+    });
+    expect(
+      codec.applyLineEdit('- [ ] Task 🏁 nope', { type: 'set-on-completion', value: 'keep' }),
+    ).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-on-completion', field: 'on-completion' }],
+    });
+    expect(
+      codec.applyLineEdit('- [ ] Task 📅 nope', {
+        type: 'set-date',
+        field: 'due',
+        value: localDate('2026-08-01'),
+      }),
+    ).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-date', field: 'due' }],
+    });
+  });
+
+  it('handles metadata-only titles, invalid tag input, and semantically empty edits', () => {
+    expect(
+      codec.applyLineEdit('- [ ] 📅 2026-08-01', { type: 'append-title', markdown: 'Task' }),
+    ).toEqual({
+      type: 'changed',
+      content: '- [ ] Task 📅 2026-08-01',
+    });
+    expect(
+      codec.applyLineEdit('- [ ] Task', { type: 'change-tags', add: ['#bad!'], remove: [] }),
+    ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'tags' }] });
+    expect(
+      codec.applyLineEdit('- [ ] Task', { type: 'change-tags', add: [], remove: ['#absent'] }),
+    ).toEqual({ type: 'unchanged', content: '- [ ] Task' });
+    expect(
+      codec.applyLineEdit('- [ ] Task 🏁 keep', { type: 'set-on-completion', value: 'keep' }),
+    ).toEqual({ type: 'unchanged', content: '- [ ] Task 🏁 keep' });
+  });
+
+  it('rejects malformed source and invalid title-link positions at both edit entry points', () => {
+    expect(codec.applyLineEdit('not a task', { type: 'set-title', markdownTitle: 'Task' })).toEqual(
+      {
+        type: 'invalid',
+        issues: [{ code: 'invalid-task-syntax' }],
+      },
+    );
+    expect(
+      codec.applyLineEdits('not a task', [{ type: 'set-title', markdownTitle: 'Task' }]),
+    ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] });
+    expect(
+      codec.applyLineEdit('- [ ] [[Task]]', {
+        type: 'edit-link',
+        occurrence: -1,
+        replacement: '[[New]]',
+      }),
+    ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'link' }] });
+  });
+
   it.each([
     '- [/] Punctuation 🔁 every day ⏫ #tag 📅 2026-08-02. ⏰ 09:30,',
     '- [ ] Malformed 📅 nope ⛔ one,two!',
     '- [ ] Protected `🔁 every hour 📅 2026-01-01` [🔁 link](https://example.com) 🔁 every day',
   ])('delegates the authoritative source partition for %j', (source) => {
-    const model = parseTaskLineSourceModel(source);
-    const parsed = codec.parseLine(source, location);
+    const model = expectDefined(parseTaskLineSourceModel(source));
+    const parsed = parse(source);
 
-    expect(model).not.toBeNull();
-    expect(parsed).not.toBeNull();
-    expect({
-      statusSymbol: parsed?.statusSymbol,
-      markdownTitle: parsed?.markdownTitle,
-      tags: parsed?.tags,
-      spans: parsed?.spans,
-      occurrences: parsed?.occurrences,
-      planning: parsed?.planning,
-      priority: parsed?.priority,
-      recurrence: parsed?.recurrence,
-      onCompletion: parsed?.onCompletion,
-      onCompletionExplicit: parsed?.onCompletionExplicit,
-    }).toEqual({
-      statusSymbol: model?.statusSymbol,
-      markdownTitle: model?.markdownTitle,
-      tags: model?.tags,
-      spans: model?.spans,
-      occurrences: model?.occurrences,
-      planning: model?.planning,
-      priority: model?.priority,
-      recurrence: model?.recurrence,
-      onCompletion: model?.onCompletion,
-      onCompletionExplicit: model?.onCompletionExplicit,
-    });
+    expect(authoritativePartition(parsed)).toEqual(authoritativePartition(model));
   });
 
   describe('atomic schedule commands', () => {
@@ -1066,7 +1157,7 @@ describe('TaskMarkdownCodec', () => {
     ['🔽', 'E'],
     ['⏬', 'F'],
   ] as const)('decodes priority %s as %s', (marker, priority) => {
-    const parsed = parse(`- [ ] Task${marker ? ` ${marker}` : ''}`);
+    const parsed = parse(marker.length > 0 ? `- [ ] Task ${marker}` : '- [ ] Task');
     expect(parsed.priority).toBe(priority);
     expect(parsed.markdownTitle).toBe('Task');
     expectLosslessPartition(parsed);
@@ -1113,7 +1204,9 @@ describe('TaskMarkdownCodec', () => {
     ['🏁 Keep', 'keep', true],
     ['', 'keep', false],
   ] as const)('normalizes completion policy %j', (suffix, onCompletion, onCompletionExplicit) => {
-    const parsed = parse(`- [ ] Ship 🔁 every week${suffix ? ` ${suffix}` : ''}`);
+    const parsed = parse(
+      suffix.length > 0 ? `- [ ] Ship 🔁 every week ${suffix}` : '- [ ] Ship 🔁 every week',
+    );
 
     expect(parsed).toMatchObject({ onCompletion, onCompletionExplicit });
     expectLosslessPartition(parsed);

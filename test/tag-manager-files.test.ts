@@ -1,11 +1,10 @@
 // test/tag-manager-files.test.ts
-import { performance } from 'node:perf_hooks';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { transformMarkdownTags } from '../src/tags/markdownTagRename';
 import { TagManager } from '../src/tags/TagManager';
-import { createAppWithFiles } from './helpers';
+import { createAppWithFiles, expectDefined } from './helpers';
 
 async function makeManager(files: Record<string, string> = {}) {
   const settings: CalendarSettings = {
@@ -14,7 +13,7 @@ async function makeManager(files: Record<string, string> = {}) {
     archivedTags: [...DEFAULT_SETTINGS.archivedTags],
     tagGroups: DEFAULT_SETTINGS.tagGroups.map((group) => ({
       ...group,
-      tags: group.tags ? [...group.tags] : undefined,
+      ...(group.tags === undefined ? {} : { tags: [...group.tags] }),
     })),
   };
   const save = vi.fn().mockResolvedValue(undefined);
@@ -34,9 +33,9 @@ function countedString(value: string): {
 } {
   let indexedReads = 0;
   let nativeSearchWork = 0;
-  const target = Object(value);
+  const target = Object(value) as object;
   const source = new Proxy(target, {
-    get(candidate, property) {
+    get(candidate, property): unknown {
       if (typeof property === 'string' && /^(?:0|[1-9]\d*)$/u.test(property)) indexedReads++;
       if (property === 'indexOf') {
         return (search: string, position = 0): number => {
@@ -57,7 +56,8 @@ function countedString(value: string): {
         };
       }
       const member = Reflect.get(candidate, property, candidate) as unknown;
-      return typeof member === 'function' ? member.bind(candidate) : member;
+      if (typeof member !== 'function') return member;
+      return (...args: unknown[]): unknown => Reflect.apply(member, candidate, args) as unknown;
     },
   }) as unknown as string;
   return {
@@ -526,9 +526,9 @@ describe('TagManager exact and prefix vault rename', () => {
       ): { readonly searchWork: number; readonly length: number; readonly elapsedMs: number } => {
         const original = `${candidate.repeat(count)} trailing #work`;
         const counted = countedString(original);
-        const started = performance.now();
+        const started = activeWindow.performance.now();
         const transformed = transformMarkdownTags(counted.source, '#work', '#focus', 'exact');
-        const elapsedMs = performance.now() - started;
+        const elapsedMs = activeWindow.performance.now() - started;
         const expected =
           candidate === '<!--' ? original : `${candidate.repeat(count)} trailing #focus`;
         expect(transformed).toBe(expected);
@@ -842,7 +842,7 @@ describe('TagManager exact and prefix vault rename', () => {
 
     const rename = tm.renameTagPrefix('#work', '#focus');
     await firstStarted;
-    settings.tagGroups[0]!.name = 'Newer name';
+    expectDefined(settings.tagGroups[0]).name = 'Newer name';
     await tm.pinTag('#later');
     rejectFirst(new Error('older save rejected'));
 

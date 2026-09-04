@@ -1,4 +1,4 @@
-import { App } from 'obsidian';
+import { type App } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import { CoreDailyNotesAdapter } from '../src/resolvers/adapters/CoreDailyNotesAdapter';
 import { JournalAdapter } from '../src/resolvers/adapters/JournalAdapter';

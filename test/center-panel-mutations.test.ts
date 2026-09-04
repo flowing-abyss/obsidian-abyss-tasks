@@ -1,13 +1,16 @@
-// eslint-disable-next-line no-restricted-imports, import/no-extraneous-dependencies
-import moment from 'moment';
-import { TFile, type App } from 'obsidian';
+import { moment, TFile, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import type { TaskApplicationApi, TaskCaptureApplicationApi, TaskSnapshot } from '../src/tasks';
+import type {
+  TaskApplicationApi,
+  TaskCaptureApplicationApi,
+  TaskCreateSession,
+  TaskSnapshot,
+} from '../src/tasks';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import type { TaskRef } from '../src/tasks/domain/types';
@@ -18,6 +21,7 @@ import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMark
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import {
   createAppWithFiles,
+  expectDefined,
   flushMicrotasks,
   freshContainer,
   makeStubStore,
@@ -35,7 +39,7 @@ async function readMd(app: App, path: string): Promise<string> {
 }
 
 function callPrivate<T>(panel: CenterPanel, method: string, ...args: unknown[]): T {
-  const fn = (panel as unknown as Record<string, (...a: unknown[]) => T>)[method]!;
+  const fn = expectDefined((panel as unknown as Record<string, (...a: unknown[]) => T>)[method]);
   return fn.call(panel, ...args);
 }
 
@@ -43,9 +47,9 @@ async function submitCapture(panel: CenterPanel, value: string): Promise<void> {
   const mounted = (panel as unknown as { el?: HTMLElement }).el;
   const container = mounted ?? freshContainer();
   if (!container.isConnected) activeDocument.body.append(container);
-  if (!mounted) panel.mount(container);
+  if (mounted == null) panel.mount(container);
   const existing = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input');
-  if (existing) {
+  if (existing != null) {
     existing.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
     );
@@ -54,13 +58,18 @@ async function submitCapture(panel: CenterPanel, value: string): Promise<void> {
   container.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
   await flushMicrotasks();
   const input = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input');
-  if (!input) throw new Error('capture did not open');
+  if (input == null) throw new Error('capture did not open');
   input.value = value;
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(
     new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
   );
-  await flushMicrotasks();
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await flushMicrotasks();
+    const current = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input');
+    if (current?.readOnly !== true) return;
+  }
+  throw new Error('capture submission did not settle');
 }
 
 async function makePanel(
@@ -77,10 +86,9 @@ async function makePanel(
     const snapshot = index
       .snapshotsFromContent(current.source.filePath, files[current.source.filePath] ?? '')
       .find((candidate) => candidate.source.line === current.source.line);
-    if (snapshot) Object.assign(current, { ref: snapshot.ref });
+    if (snapshot != null) Object.assign(current, { ref: snapshot.ref });
   }
   const state = new AppState();
-  const store = makeStubStore(extraTasks, app);
   const snapshots = Object.entries(files).flatMap(([path, content]) =>
     index.snapshotsFromContent(path, content),
   );
@@ -101,7 +109,7 @@ async function makePanel(
       const found = snapshots.find(
         (snapshot) => snapshot.ref.filePath === ref.filePath && snapshot.ref.line === ref.line,
       );
-      return found
+      return found != null
         ? { type: 'exact', task: found, basis: { observed: found } }
         : { type: 'not-found', ref };
     },
@@ -343,7 +351,7 @@ describe('CenterPanel root lifecycle API delegation', () => {
       type: 'invalid',
       issues: [{ code: 'invalid-target' }],
     });
-    const sessionExecute = vi.fn().mockResolvedValue({
+    const sessionExecute = vi.fn<TaskCreateSession['execute']>().mockResolvedValue({
       type: 'invalid',
       issues: [{ code: 'invalid-target' }],
     });
@@ -378,10 +386,12 @@ describe('CenterPanel root lifecycle API delegation', () => {
     state.set('selectedList', 'today');
     await submitCapture(panel, 'buy milk');
     expect(planCreate).toHaveBeenLastCalledWith({ type: 'configured-default' });
-    expect(sessionExecute).toHaveBeenLastCalledWith({
-      markdownBody: '#task/one-off buy milk',
-      initial: { due: { type: 'set', value: expect.any(String) } },
-    });
+    const [todayRequest] = expectDefined(sessionExecute.mock.lastCall);
+    expect(todayRequest.markdownBody).toBe('#task/one-off buy milk');
+    const due = todayRequest.initial?.due;
+    expect(due?.type).toBe('set');
+    if (due?.type !== 'set') throw new Error('Expected a due date for the Today capture');
+    expect(due.value).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
 
     state.set('selectedList', { type: 'project', path: 'Projects/A.md' });
     await submitCapture(panel, 'project task');

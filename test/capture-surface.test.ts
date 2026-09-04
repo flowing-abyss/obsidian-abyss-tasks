@@ -1,17 +1,31 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { Platform } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import type { TaskCommandResult, TaskCreateSession } from '../src/tasks';
 import { CaptureSurface } from '../src/ui/taskCapture/CaptureSurface';
 import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
 import { TaskCaptureController } from '../src/ui/taskCapture/TaskCaptureController';
 import { describeTaskCreationResult } from '../src/ui/taskCommandResult';
-import { deferred, flushMicrotasks, task } from './helpers';
+import {
+  cssDeclarationValue,
+  cssRuleParts,
+  deferred,
+  expectDefined,
+  flushMicrotasks,
+  stripCssComments,
+  task,
+} from './helpers';
 
-const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+async function loadStylesFixture(): Promise<string> {
+  if (!Platform.isDesktop) throw new Error('CSS fixture requires the desktop test runtime');
+  const fileSystem = await import('node:fs');
+  const nodePath = await import('node:path');
+  return fileSystem.readFileSync(nodePath.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+}
+
+const css = await loadStylesFixture();
 
 function expectDeclaration(source: string, property: string, value: string): void {
-  expect(source).toMatch(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*${value}\\s*(?:;|$)`, 'u'));
+  expect(cssDeclarationValue(source, property)).toBe(value);
 }
 
 function declarationsFor(selector: string): string {
@@ -19,13 +33,13 @@ function declarationsFor(selector: string): string {
 }
 
 function declarationsForSource(source: string, selector: string): string {
-  const uncommentedCss = source.replace(/\/\*[\s\S]*?\*\//gu, '');
+  const uncommentedCss = stripCssComments(source);
   const normalize = (value: string): string =>
-    value.trim().replace(/\s+/gu, ' ').replace(/\(\s+/gu, '(').replace(/\s+\)/gu, ')');
-  const matches = [...uncommentedCss.matchAll(/([^{}]+)\{([^}]*)\}/gu)].filter(
-    (match) => normalize(match[1] ?? '') === normalize(selector),
+    value.trim().split(/\s+/u).join(' ').replaceAll('( ', '(').replaceAll(' )', ')');
+  const matches = cssRuleParts(uncommentedCss).filter(
+    (rule) => normalize(rule.selector) === normalize(selector),
   );
-  return matches[matches.length - 1]?.[2] ?? '';
+  return matches[matches.length - 1]?.declarations ?? '';
 }
 
 function lastAtRuleBlock(header: string): string {
@@ -93,7 +107,7 @@ function harness(implementation: TaskCreateSession['execute'] = async () => succ
 }
 
 function host(): HTMLElement {
-  return document.createElement('div');
+  return createDiv();
 }
 
 function type(surface: CaptureSurface, value: string): void {
@@ -113,9 +127,13 @@ describe('CaptureSurface', () => {
     const positioningHost = host();
 
     const surface = new CaptureSurface(positioningHost, controller);
-    const destination = surface.element.querySelector<HTMLElement>('.abyss-capture-destination')!;
-    const pending = surface.element.querySelector<HTMLElement>('.abyss-capture-pending')!;
-    const error = surface.element.querySelector<HTMLElement>('.abyss-capture-error')!;
+    const destination = expectDefined(
+      surface.element.querySelector<HTMLElement>('.abyss-capture-destination'),
+    );
+    const pending = expectDefined(
+      surface.element.querySelector<HTMLElement>('.abyss-capture-pending'),
+    );
+    const error = expectDefined(surface.element.querySelector<HTMLElement>('.abyss-capture-error'));
 
     expect(positioningHost.firstElementChild).toBe(surface.element);
     expect(destination.textContent).toBe('Inbox · #inbox');
@@ -137,8 +155,10 @@ describe('CaptureSurface', () => {
     const surface = new CaptureSurface(positioningHost, controller, {
       presentation: 'inline',
     });
-    const destination = surface.element.querySelector<HTMLElement>('.abyss-capture-destination')!;
-    const error = surface.element.querySelector<HTMLElement>('.abyss-capture-error')!;
+    const destination = expectDefined(
+      surface.element.querySelector<HTMLElement>('.abyss-capture-destination'),
+    );
+    const error = expectDefined(surface.element.querySelector<HTMLElement>('.abyss-capture-error'));
     const initialChildren = surface.element.childElementCount;
 
     expect(surface.element.classList.contains('abyss-capture-surface--inline')).toBe(true);
@@ -166,9 +186,13 @@ describe('CaptureSurface', () => {
     const feedbackHost = host();
 
     const surface = new CaptureSurface(positioningHost, controller, { feedbackHost });
-    const destination = feedbackHost.querySelector<HTMLElement>('.abyss-capture-destination')!;
-    const pending = feedbackHost.querySelector<HTMLElement>('.abyss-capture-pending')!;
-    const error = feedbackHost.querySelector<HTMLElement>('.abyss-capture-error')!;
+    const destination = expectDefined(
+      feedbackHost.querySelector<HTMLElement>('.abyss-capture-destination'),
+    );
+    const pending = expectDefined(
+      feedbackHost.querySelector<HTMLElement>('.abyss-capture-pending'),
+    );
+    const error = expectDefined(feedbackHost.querySelector<HTMLElement>('.abyss-capture-error'));
 
     expect(surface.element.parentElement).toBe(positioningHost);
     expect(surface.element.querySelector('.abyss-capture-destination')).toBeNull();
@@ -188,8 +212,12 @@ describe('CaptureSurface', () => {
     const surface = new CaptureSurface(host(), controller);
     const originalInput = surface.input;
     const originalDestination = surface.element.querySelector('.abyss-capture-destination');
-    const originalPending = surface.element.querySelector<HTMLElement>('.abyss-capture-pending')!;
-    const originalError = surface.element.querySelector<HTMLElement>('.abyss-capture-error')!;
+    const originalPending = expectDefined(
+      surface.element.querySelector<HTMLElement>('.abyss-capture-pending'),
+    );
+    const originalError = expectDefined(
+      surface.element.querySelector<HTMLElement>('.abyss-capture-error'),
+    );
     type(surface, '  exact failure  ');
 
     key(surface, 'Enter');
@@ -213,7 +241,7 @@ describe('CaptureSurface', () => {
     expect(surface.input.getAttribute('aria-busy')).toBe('false');
     expect(surface.input.getAttribute('aria-invalid')).toBe('true');
     expect(surface.input.getAttribute('aria-describedby')).toBe(
-      `${originalDestination!.id} ${originalError.id}`,
+      `${expectDefined(originalDestination).id} ${originalError.id}`,
     );
     expect(originalError.textContent).toBe('Failed to create task. Please try again.');
     expect(originalError.hidden).toBe(false);
@@ -221,7 +249,9 @@ describe('CaptureSurface', () => {
 
     type(surface, 'corrected');
     expect(surface.input.getAttribute('aria-invalid')).toBe('false');
-    expect(surface.input.getAttribute('aria-describedby')).toBe(originalDestination!.id);
+    expect(surface.input.getAttribute('aria-describedby')).toBe(
+      expectDefined(originalDestination).id,
+    );
     expect(originalError.hidden).toBe(true);
   });
 
@@ -365,9 +395,9 @@ describe('CaptureSurface', () => {
   it('keeps connected external focus when blur follows a pending Enter success', async () => {
     const pendingResult = deferred<TaskCommandResult>();
     const current = harness(() => pendingResult.promise);
-    const container = document.createElement('div');
-    const positioningHost = document.createElement('div');
-    const externalFocus = document.createElement('button');
+    const container = createDiv();
+    const positioningHost = createDiv();
+    const externalFocus = createEl('button');
     container.append(positioningHost, externalFocus);
     document.body.appendChild(container);
     const surface = new CaptureSurface(positioningHost, current.controller);
@@ -397,8 +427,8 @@ describe('CaptureSurface', () => {
     await controller.submit('enter');
     controller.setDraft('later blur');
     const submission = controller.submit('blur');
-    const container = document.createElement('div');
-    const externalFocus = document.createElement('button');
+    const container = createDiv();
+    const externalFocus = createEl('button');
     const positioningHost = host();
     container.append(externalFocus, positioningHost);
     document.body.appendChild(container);
@@ -518,7 +548,7 @@ describe('CaptureSurface', () => {
     expect(screenReaderOnly).toContain('padding: 0');
     expect(screenReaderOnly).toContain('margin: -1px');
     expect(screenReaderOnly).toContain('overflow: hidden');
-    expect(screenReaderOnly).toContain('clip: rect(0 0 0 0)');
+    expect(screenReaderOnly).toContain('clip-path: inset(50%)');
     expect(screenReaderOnly).toContain('white-space: nowrap');
     expect(screenReaderOnly).toContain('border: 0');
     expect(screenReaderOnly).not.toContain('display: none');
@@ -557,19 +587,19 @@ describe('CaptureSurface', () => {
     expectDeclaration(bar, 'padding', '0');
     expectDeclaration(bar, 'border', '0');
     expectDeclaration(trigger, 'width', '100%');
-    expectDeclaration(trigger, 'block-size', 'var\\(--abyss-inline-capture-block-size\\)');
+    expectDeclaration(trigger, 'block-size', 'var(--abyss-inline-capture-block-size)');
     expectDeclaration(trigger, 'box-sizing', 'border-box');
-    expectDeclaration(trigger, 'border', '1px solid var\\(--background-modifier-border\\)');
+    expectDeclaration(trigger, 'border', '1px solid var(--background-modifier-border)');
     expectDeclaration(trigger, 'border-radius', '0');
     expectDeclaration(trigger, 'box-shadow', 'none');
     expectDeclaration(inlineSurface, 'width', '100%');
-    expectDeclaration(inlineSurface, 'block-size', 'var\\(--abyss-inline-capture-block-size\\)');
+    expectDeclaration(inlineSurface, 'block-size', 'var(--abyss-inline-capture-block-size)');
     expectDeclaration(inlineSurface, 'padding', '0');
     expectDeclaration(inlineSurface, 'border', '0');
     expectDeclaration(inlineInput, 'width', '100%');
     expectDeclaration(inlineInput, 'block-size', '100%');
     expectDeclaration(inlineInput, 'box-sizing', 'border-box');
-    expectDeclaration(inlineInput, 'border', '1px solid var\\(--background-modifier-border\\)');
+    expectDeclaration(inlineInput, 'border', '1px solid var(--background-modifier-border)');
     expectDeclaration(inlineInput, 'border-radius', '0');
     expectDeclaration(inlineInput, 'box-shadow', 'none');
     expect(trigger).toContain('padding-block: 0');
@@ -582,11 +612,11 @@ describe('CaptureSurface', () => {
       '.abyss-capture-surface--inline .abyss-capture-input:focus-visible',
     );
 
-    expectDeclaration(inlineFocus, 'border-color', 'var\\(--interactive-accent\\)');
+    expectDeclaration(inlineFocus, 'border-color', 'var(--interactive-accent)');
     expectDeclaration(
       inlineFocus,
       'box-shadow',
-      '0 0 0 2px var\\(--background-modifier-border-focus\\)',
+      '0 0 0 2px var(--background-modifier-border-focus)',
     );
   });
 

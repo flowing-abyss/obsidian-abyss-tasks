@@ -12,7 +12,7 @@ import {
   type TaskQueryApi,
   type TaskSnapshot,
 } from '../tasks';
-import { BaseView } from '../views/BaseView';
+import { type BaseView } from '../views/BaseView';
 import {
   calendarMutationTarget,
   calendarOccurrenceForTask,
@@ -36,6 +36,7 @@ import {
 import { WeekView } from '../views/WeekView';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 import { mountAnchoredRecurrenceEditor } from './recurrence/RecurrenceEditor';
+import { runAsyncAction } from './runAsyncAction';
 import { showStatusMenuAt } from './statusMenu';
 import {
   presentTaskCommandResult,
@@ -54,6 +55,19 @@ const VIEWS: ViewEntry[] = [
 
 type ActiveView = 'month' | 'week' | 'list';
 
+interface CalendarCallbacks {
+  readonly onToggle: (task: TaskSnapshot) => void;
+  readonly onCellClick: (date: string) => void;
+  readonly onWeekClick: (weekNumber: string, year: string) => void;
+  readonly onDateClick: (date: string) => void;
+  readonly onTaskBodyContextMenu: (
+    event: MouseEvent,
+    task: TaskSnapshot,
+    anchor: HTMLElement,
+  ) => void;
+  readonly onContextMenu: (event: MouseEvent, task: TaskSnapshot) => void;
+}
+
 export class CalendarRenderer {
   private readonly completionConfirmationAbortController = new AbortController();
   private toolbar: Toolbar | null = null;
@@ -68,23 +82,55 @@ export class CalendarRenderer {
   private unsubscribe: (() => void) | null = null;
   private recurrenceEditorCleanup: (() => void) | null = null;
   private statusMenuCleanup: (() => void) | null = null;
-  private projectionDiagnosticOwner: CalendarProjectionDiagnosticOwner;
-  private forecastMenuOwner: ForecastContextMenuOwner;
-  private taskModal: TaskModal;
+  private readonly projectionDiagnosticOwner: CalendarProjectionDiagnosticOwner;
+  private readonly forecastMenuOwner: ForecastContextMenuOwner;
+  private readonly taskModal: TaskModal;
   private taskInputModal: TaskInputModal | null = null;
+  private readonly rootEl: HTMLElement;
+  private config: ResolvedConfig;
+  private readonly app: App;
+  private readonly queries: TaskQueryApi;
+  private readonly tasks: TaskApplicationApi;
+  private readonly statusRegistry: StatusRegistry;
+  private readonly taskPrefix: string;
+  private readonly recurrencePolicy: RecurrencePolicy;
+  private readonly interactionOwnership: InteractionOwnershipPort;
 
   constructor(
-    private rootEl: HTMLElement,
-    private config: ResolvedConfig,
-    private app: App,
-    private queries: TaskQueryApi,
-    private tasks: TaskApplicationApi,
-    private statusRegistry: StatusRegistry,
-    private taskPrefix = '',
-    private recurrencePolicy: RecurrencePolicy = { removeScheduledDate: false },
-    private commentTimeContext?: CommentTimeContextProvider,
-    private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
+    ...args: [
+      rootEl: HTMLElement,
+      config: ResolvedConfig,
+      app: App,
+      queries: TaskQueryApi,
+      tasks: TaskApplicationApi,
+      statusRegistry: StatusRegistry,
+      taskPrefix?: string,
+      recurrencePolicy?: RecurrencePolicy,
+      commentTimeContext?: CommentTimeContextProvider,
+      interactionOwnership?: InteractionOwnershipPort,
+    ]
   ) {
+    const [
+      rootEl,
+      config,
+      app,
+      queries,
+      tasks,
+      statusRegistry,
+      taskPrefix = '',
+      recurrencePolicy = { removeScheduledDate: false },
+      commentTimeContext,
+      interactionOwnership = noInteractionOwnership,
+    ] = args;
+    this.rootEl = rootEl;
+    this.config = config;
+    this.app = app;
+    this.queries = queries;
+    this.tasks = tasks;
+    this.statusRegistry = statusRegistry;
+    this.taskPrefix = taskPrefix;
+    this.recurrencePolicy = recurrencePolicy;
+    this.interactionOwnership = interactionOwnership;
     this.projectionDiagnosticOwner = createCalendarProjectionDiagnosticOwner(rootEl.ownerDocument);
     this.forecastMenuOwner = createForecastContextMenuOwner(
       rootEl.ownerDocument,
@@ -107,24 +153,35 @@ export class CalendarRenderer {
         window.moment(),
       );
     } else {
-      this.selectedDate = config.startPosition
-        ? window.moment(config.startPosition, 'YYYY-MM').date(1)
-        : window.moment().date(1);
+      this.selectedDate =
+        config.startPosition.length > 0
+          ? window.moment(config.startPosition, 'YYYY-MM').date(1)
+          : window.moment().date(1);
     }
   }
 
   mount(): void {
     this.rootEl.setAttribute('view', this.activeViewType);
-    if (this.config.style) this.rootEl.addClass(this.config.style);
+    if (this.config.style.length > 0) {
+      this.rootEl.addClass(this.config.style);
+    }
 
     // Wrap everything in a span (matches existing CSS selectors)
-    const span = this.rootEl.createEl('span');
+    const span = this.rootEl.createSpan();
 
     this.toolbar = new Toolbar(span, VIEWS, {
-      onPrev: () => this.navigate(-1),
-      onNext: () => this.navigate(1),
-      onToday: () => this.goToday(),
-      onViewSwitch: (id) => this.switchView(id as ActiveView),
+      onPrev: () => {
+        this.navigate(-1);
+      },
+      onNext: () => {
+        this.navigate(1);
+      },
+      onToday: () => {
+        this.goToday();
+      },
+      onViewSwitch: (id) => {
+        this.switchView(id as ActiveView);
+      },
       onFilterToggle: () => {
         this.filterActive = !this.filterActive;
         this.rootEl.classList.toggle('filter', this.filterActive);
@@ -139,7 +196,9 @@ export class CalendarRenderer {
         this.applyStatFilter(group);
       },
       onStyleChange: (style) => {
-        if (this.config.style) this.rootEl.removeClass(this.config.style);
+        if (this.config.style.length > 0) {
+          this.rootEl.removeClass(this.config.style);
+        }
         this.config = { ...this.config, style };
         this.rootEl.addClass(style);
         this.updateToolbar();
@@ -154,8 +213,10 @@ export class CalendarRenderer {
       this.forecastMenuOwner.dismiss();
       this.dismissRecurrenceEditor();
       const tasks = this.calendarTasks();
-      this.activeView?.patch(this.viewContainer!, tasks, this.buildConfig());
-      this.projectionDiagnosticOwner.update(this.viewContainer!, this.projectionIssues);
+      const viewContainer = this.viewContainer;
+      if (viewContainer === null) return;
+      this.activeView?.patch(viewContainer, tasks, this.buildConfig());
+      this.projectionDiagnosticOwner.update(viewContainer, this.projectionIssues);
       this.updateToolbar();
     });
   }
@@ -189,76 +250,111 @@ export class CalendarRenderer {
     this.renderView();
   }
 
-  private buildCallbacks() {
+  private buildCallbacks(): CalendarCallbacks {
     return {
-      onToggle: (task: TaskSnapshot) => {
-        if (isForecastCalendarTask(task)) return;
-        const target = calendarMutationTarget(task);
-        if (!target) return;
-        void requestTaskCompletion(
-          task,
-          () =>
-            this.tasks
-              .execute({ type: 'toggle-completion', target })
-              .then(presentTaskCommandResult),
-          this.interactionOwnership,
-          this.completionConfirmationAbortController.signal,
-        );
+      onToggle: (task) => {
+        this.toggleCalendarTask(task);
       },
-      onCellClick: (date: string) => this.openAddTaskModal(date),
+      onCellClick: (date: string) => {
+        this.openAddTaskModal(date);
+      },
       onWeekClick: (weekNr: string, year: string) => {
-        this.selectedDate = window
-          .moment()
-          .isoWeekYear(parseInt(year, 10))
-          .isoWeek(parseInt(weekNr, 10))
-          .startOf('isoWeek');
-        this.switchView('week');
+        this.openWeek(weekNr, year);
       },
-      onDateClick: (date: string) => this.openAddTaskModal(date),
-      onTaskBodyContextMenu: (_ev: MouseEvent, task: TaskSnapshot, anchor: HTMLElement) => {
+      onDateClick: (date: string) => {
+        this.openAddTaskModal(date);
+      },
+      onTaskBodyContextMenu: (_event, task, anchor) => {
         if (isForecastCalendarTask(task)) return;
         this.openRecurrenceEditor(anchor, task);
       },
-      onContextMenu: (ev: MouseEvent, task: TaskSnapshot) => {
-        if (isForecastCalendarTask(task)) return;
-        const target = calendarMutationTarget(task);
-        if (!target) return;
-        this.dismissStatusMenu();
-        let cleanup: () => void;
-        const statusMenu = showStatusMenuAt(ev, {
-          task,
-          registry: this.statusRegistry,
-          onPickStatus: (symbol) => {
-            const apply = (): Promise<void> =>
-              this.tasks
-                .execute({ type: 'set-status', target, symbol })
-                .then(presentTaskCommandResult);
-            if (this.statusRegistry.bySymbol(symbol)?.type === 'done') {
-              void requestTaskCompletion(
-                task,
-                apply,
-                this.interactionOwnership,
-                this.completionConfirmationAbortController.signal,
-              );
-            } else {
-              void apply();
-            }
-          },
-          onPickPriority: (priority) => {
-            const command = calendarPatchCommand(task, {
-              priority: { type: 'set', value: priority },
-            });
-            if (command) void this.tasks.execute(command).then(presentTaskCommandResult);
-          },
-          onClose: () => {
-            if (this.statusMenuCleanup === cleanup) this.statusMenuCleanup = null;
-          },
-          interactionOwnership: this.interactionOwnership,
-        });
-        cleanup = () => statusMenu.close();
-        this.statusMenuCleanup = cleanup;
+      onContextMenu: (event, task) => {
+        this.openTaskStatusMenu(event, task);
       },
     };
+  }
+
+  private openWeek(weekNumber: string, year: string): void {
+    this.selectedDate = window
+      .moment()
+      .isoWeekYear(parseInt(year, 10))
+      .isoWeek(parseInt(weekNumber, 10))
+      .startOf('isoWeek');
+    this.switchView('week');
+  }
+
+  private toggleCalendarTask(task: TaskSnapshot): void {
+    if (isForecastCalendarTask(task)) return;
+    const target = calendarMutationTarget(task);
+    if (target == null) return;
+    runAsyncAction(
+      requestTaskCompletion(
+        task,
+        () =>
+          this.tasks.execute({ type: 'toggle-completion', target }).then(presentTaskCommandResult),
+        this.interactionOwnership,
+        this.completionConfirmationAbortController.signal,
+      ),
+      'Could not update task completion',
+    );
+  }
+
+  private openTaskStatusMenu(event: MouseEvent, task: TaskSnapshot): void {
+    if (isForecastCalendarTask(task)) return;
+    const target = calendarMutationTarget(task);
+    if (target == null) return;
+    this.dismissStatusMenu();
+    const cleanup = (): void => {
+      statusMenu.close();
+    };
+    const statusMenu = showStatusMenuAt(event, {
+      task,
+      registry: this.statusRegistry,
+      onPickStatus: (symbol) => {
+        this.pickTaskStatus(task, target, symbol);
+      },
+      onPickPriority: (priority) => {
+        this.pickTaskPriority(task, priority);
+      },
+      onClose: () => {
+        if (this.statusMenuCleanup === cleanup) this.statusMenuCleanup = null;
+      },
+      interactionOwnership: this.interactionOwnership,
+    });
+    this.statusMenuCleanup = cleanup;
+  }
+
+  private pickTaskStatus(
+    task: TaskSnapshot,
+    target: NonNullable<ReturnType<typeof calendarMutationTarget>>,
+    symbol: string,
+  ): void {
+    const apply = (): Promise<void> =>
+      this.tasks.execute({ type: 'set-status', target, symbol }).then(presentTaskCommandResult);
+    if (this.statusRegistry.bySymbol(symbol)?.type !== 'done') {
+      runAsyncAction(apply(), 'Could not update task status');
+      return;
+    }
+    runAsyncAction(
+      requestTaskCompletion(
+        task,
+        apply,
+        this.interactionOwnership,
+        this.completionConfirmationAbortController.signal,
+      ),
+      'Could not update task completion',
+    );
+  }
+
+  private pickTaskPriority(task: TaskSnapshot, priority: TaskSnapshot['priority']): void {
+    const command = calendarPatchCommand(task, {
+      priority: { type: 'set', value: priority },
+    });
+    if (command == null) return;
+    runAsyncAction(
+      this.tasks.execute(command).then(presentTaskCommandResult),
+      'Could not update task priority',
+    );
   }
 
   private openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void {
@@ -270,7 +366,9 @@ export class CalendarRenderer {
       target: { type: 'task' as const, ref: task.ref },
       node: task,
     };
-    let cleanup: () => void;
+    const cleanup = (): void => {
+      handle.dismiss();
+    };
     const handle = mountAnchoredRecurrenceEditor({
       anchor,
       source,
@@ -278,7 +376,7 @@ export class CalendarRenderer {
       ownershipConflict: hasOtherCalendarRecurrenceOwner(source),
       onSubmit: (patch) => {
         const command = calendarPatchCommand(task, patch);
-        return command
+        return command != null
           ? this.tasks.execute(command)
           : Promise.resolve({
               type: 'io-error',
@@ -293,13 +391,14 @@ export class CalendarRenderer {
       },
       interactionOwnership: this.interactionOwnership,
     });
-    cleanup = () => handle.dismiss();
     this.recurrenceEditorCleanup = cleanup;
   }
 
   private openForecastRecurrenceEditor(source: CalendarTaskSource): void {
     this.dismissRecurrenceEditor();
-    let cleanup: () => void;
+    const cleanup = (): void => {
+      handle.dismiss();
+    };
     const handle = mountAnchoredRecurrenceEditor({
       anchor: this.rootEl,
       source,
@@ -307,7 +406,7 @@ export class CalendarRenderer {
       ownershipConflict: hasOtherCalendarRecurrenceOwner(source),
       onSubmit: (patch) => {
         const command = calendarSourcePatchCommand(source, patch);
-        return command
+        return command != null
           ? this.tasks.execute(command)
           : Promise.resolve({
               type: 'io-error',
@@ -322,7 +421,6 @@ export class CalendarRenderer {
       },
       interactionOwnership: this.interactionOwnership,
     });
-    cleanup = () => handle.dismiss();
     this.recurrenceEditorCleanup = cleanup;
   }
 
@@ -353,10 +451,13 @@ export class CalendarRenderer {
     }
     const viewType = this.activeViewType === 'week' ? 'week' : 'month';
     const dates = visibleCalendarDates(viewType, this.selectedDate, this.config.firstDayOfWeek);
+    const firstDate = dates[0];
+    const lastDate = dates[dates.length - 1];
+    if (firstDate === undefined || lastDate === undefined) return [];
     const sources = this.queries.forCalendarProjection(dates.map(localDate));
     const projection = projectCalendarOccurrences(
       sources,
-      { from: localDate(dates[0]!), to: localDate(dates[dates.length - 1]!) },
+      { from: localDate(firstDate), to: localDate(lastDate) },
       this.recurrencePolicy,
     );
     this.projectionIssues = projection.issues;
@@ -364,7 +465,7 @@ export class CalendarRenderer {
   }
 
   private renderView(): void {
-    if (!this.viewContainer) return;
+    if (this.viewContainer == null) return;
     this.dismissStatusMenu();
     this.forecastMenuOwner.dismiss();
     this.dismissRecurrenceEditor();
@@ -373,7 +474,7 @@ export class CalendarRenderer {
     const cb = this.buildCallbacks();
 
     // Instantiate new view when type changes (callbacks are baked into constructor)
-    if (!this.activeView || !this.isSameViewType()) {
+    if (this.activeView == null || !this.isSameViewType()) {
       this.activeView?.destroy();
       if (this.activeViewType === 'month') {
         this.activeView = new MonthView({
@@ -383,11 +484,16 @@ export class CalendarRenderer {
           onWeekClick: cb.onWeekClick,
           onTaskClick: () => {},
           onDrop: () => {},
-          onOpenNote: (t) => void openInFile(this.app, t),
+          onOpenNote: (t) => {
+            runAsyncAction(openInFile(this.app, t), 'Could not open task note');
+          },
           forecastMenuOwner: this.forecastMenuOwner,
-          onForecastClick: (source, referenceDate) =>
-            this.openForecastSource(source, referenceDate),
-          onForecastContextMenu: (source) => this.openForecastRecurrenceEditor(source),
+          onForecastClick: (source, referenceDate) => {
+            this.openForecastSource(source, referenceDate);
+          },
+          onForecastContextMenu: (source) => {
+            this.openForecastRecurrenceEditor(source);
+          },
           statusRegistry: this.statusRegistry,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
@@ -399,11 +505,16 @@ export class CalendarRenderer {
           onCellClick: cb.onCellClick,
           onTaskClick: () => {},
           onDrop: () => {},
-          onOpenNote: (t) => void openInFile(this.app, t),
+          onOpenNote: (t) => {
+            runAsyncAction(openInFile(this.app, t), 'Could not open task note');
+          },
           forecastMenuOwner: this.forecastMenuOwner,
-          onForecastClick: (source, referenceDate) =>
-            this.openForecastSource(source, referenceDate),
-          onForecastContextMenu: (source) => this.openForecastRecurrenceEditor(source),
+          onForecastClick: (source, referenceDate) => {
+            this.openForecastSource(source, referenceDate);
+          },
+          onForecastContextMenu: (source) => {
+            this.openForecastRecurrenceEditor(source);
+          },
           statusRegistry: this.statusRegistry,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
@@ -426,36 +537,39 @@ export class CalendarRenderer {
   }
 
   private isSameViewType(): boolean {
-    if (!this.activeView) return false;
+    if (this.activeView == null) return false;
     if (this.activeViewType === 'month') return this.activeView instanceof MonthView;
     if (this.activeViewType === 'week') return this.activeView instanceof WeekView;
     return this.activeView instanceof ListView;
   }
 
   private updateToolbar(): void {
-    if (!this.toolbar) return;
+    if (this.toolbar == null) return;
     const tasks = this.queries.list();
     const today = window.moment().format('YYYY-MM-DD');
     this.toolbar.update({
       currentView: this.activeViewType,
       currentTitle: this.currentTitle(),
-      currentStyle: this.config.style ?? 'style1',
+      currentStyle: this.config.style,
       filterActive: this.filterActive,
       overdueHighlightActive: this.overdueHighlightActive,
       activeStatGroup: this.activeStatGroup,
       stats: {
         done: tasks.filter((t) => t.status === 'done').length,
-        due: tasks.filter((t) => t.planning.due && t.status === 'open').length,
+        due: tasks.filter((t) => t.planning.due != null && t.status === 'open').length,
         overdue: tasks.filter(
           (t) =>
-            t.planning.due &&
+            t.planning.due != null &&
             t.status === 'open' &&
             window.moment(t.planning.due).isBefore(today, 'day'),
         ).length,
-        start: tasks.filter((t) => t.planning.start && t.status === 'open').length,
-        scheduled: tasks.filter((t) => t.planning.scheduled && t.status === 'open').length,
-        recurrence: tasks.filter((t) => t.recurrence && t.status === 'open').length,
-        dailyNote: tasks.filter((t) => t.presentation.dailyNoteDate && t.status === 'open').length,
+        start: tasks.filter((t) => t.planning.start != null && t.status === 'open').length,
+        scheduled: tasks.filter((t) => t.planning.scheduled != null && t.status === 'open').length,
+        recurrence: tasks.filter(
+          (t) => t.recurrence !== undefined && t.recurrence.length > 0 && t.status === 'open',
+        ).length,
+        dailyNote: tasks.filter((t) => t.presentation.dailyNoteDate != null && t.status === 'open')
+          .length,
       },
     });
   }
@@ -471,26 +585,27 @@ export class CalendarRenderer {
     // Remove all focus classes
     Array.from(this.rootEl.classList)
       .filter((c) => c.startsWith('focus'))
-      .forEach((c) => this.rootEl.classList.remove(c));
-    if (group) {
-      this.rootEl.classList.add('focus' + group.charAt(0).toUpperCase() + group.slice(1));
+      .forEach((c) => {
+        this.rootEl.classList.remove(c);
+      });
+    if (group !== null && group.length > 0) {
+      this.rootEl.classList.add(`focus${group.charAt(0).toUpperCase()}${group.slice(1)}`);
     }
   }
 
   private openAddTaskModal(date: string): void {
     this.dismissTaskInputModal();
-    let modal!: TaskInputModal;
-    modal = new TaskInputModal(
+    const modal = new TaskInputModal(
       this.app,
       async (text) => {
         const body = text.trim();
-        if (!body) return;
+        if (body.length === 0) return;
         const prefix = this.taskPrefix.trim();
         presentTaskCreationResult(
           await this.tasks.execute({
             type: 'create',
             destination: { type: 'configured-default' },
-            markdownBody: prefix ? `${prefix} ${body}` : body,
+            markdownBody: prefix.length > 0 ? `${prefix} ${body}` : body,
             initial: { due: { type: 'set', value: localDate(date) } },
           }),
         );
@@ -535,20 +650,19 @@ class TaskInputModal extends Modal {
 
   constructor(
     app: App,
-    private onSubmit: (text: string) => Promise<void>,
+    private readonly onSubmit: (text: string) => Promise<void>,
     private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
     private readonly onClosed: () => void = () => {},
   ) {
     super(app);
   }
 
-  onOpen(): void {
+  override onOpen(): void {
     this.ownershipToken?.release();
     this.ownershipToken = this.interactionOwnership.acquire({ blocksShortcuts: true });
     const { contentEl } = this;
     contentEl.empty();
-    // eslint-disable-next-line obsidianmd/no-static-styles-assignment
-    contentEl.style.cssText = 'display:block;padding:16px 20px 12px';
+    contentEl.setCssStyles({ display: 'block', padding: '16px 20px 12px' });
     const form = contentEl.createDiv({
       attr: {
         style:
@@ -556,27 +670,41 @@ class TaskInputModal extends Modal {
       },
     });
     const input = form.createEl('input', { type: 'text', placeholder: 'Task description' });
-    // eslint-disable-next-line obsidianmd/no-static-styles-assignment
-    input.style.cssText =
-      'flex:1;padding:8px 12px;font-size:1.05em;border:1px solid var(--interactive-accent);border-radius:6px;background:var(--background-secondary);color:var(--text-normal);outline:none';
+    input.setCssStyles({
+      flex: '1',
+      padding: '8px 12px',
+      fontSize: '1.05em',
+      border: '1px solid var(--interactive-accent)',
+      borderRadius: '6px',
+      background: 'var(--background-secondary)',
+      color: 'var(--text-normal)',
+      outline: 'none',
+    });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         this.close();
-        void this.onSubmit(input.value);
+        runAsyncAction(this.onSubmit(input.value), 'Could not add task');
       }
     });
     input.focus();
     const btn = form.createEl('button', { text: 'Add' });
-    // eslint-disable-next-line obsidianmd/no-static-styles-assignment
-    btn.style.cssText =
-      'flex:0 0 auto;padding:8px 16px;font-size:1.05em;border:none;border-radius:6px;background:var(--interactive-accent);color:var(--text-on-accent);cursor:pointer';
+    btn.setCssStyles({
+      flex: '0 0 auto',
+      padding: '8px 16px',
+      fontSize: '1.05em',
+      border: 'none',
+      borderRadius: '6px',
+      background: 'var(--interactive-accent)',
+      color: 'var(--text-on-accent)',
+      cursor: 'pointer',
+    });
     btn.addEventListener('click', () => {
       this.close();
-      void this.onSubmit(input.value);
+      runAsyncAction(this.onSubmit(input.value), 'Could not add task');
     });
   }
 
-  onClose(): void {
+  override onClose(): void {
     const ownershipToken = this.ownershipToken;
     this.ownershipToken = null;
     ownershipToken?.release();

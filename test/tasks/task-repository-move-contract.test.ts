@@ -12,6 +12,7 @@ import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskM
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { createAppWithFiles } from '../helpers';
 import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
+import { expectDefined } from './../helpers';
 
 type Adapter = 'in-memory' | 'obsidian';
 
@@ -71,7 +72,7 @@ async function harness(
 
 function sourceRef(h: Harness, source: string, line = 0): TaskRef {
   const task = h.snapshots('source.md', source).find((candidate) => candidate.source.line === line);
-  if (!task) throw new Error(`missing source task at line ${line}`);
+  if (task == null) throw new Error(`missing source task at line ${line}`);
   return task.ref;
 }
 
@@ -229,11 +230,14 @@ describe('Obsidian move failure state machine', () => {
 
   it('returns ordinary invalid when target validation fails and never removes the source', async () => {
     const source = '- [ ] task\n';
-    let normalSnapshots: ((path: string, content: string) => readonly TaskSnapshot[]) | undefined;
+    const normalSnapshots = {
+      current: undefined as
+        ((path: string, content: string) => readonly TaskSnapshot[]) | undefined,
+    };
     const h = await harness('obsidian', source, '# Target\n', (path, content) =>
-      path === 'target.md' ? [] : (normalSnapshots?.(path, content) ?? []),
+      path === 'target.md' ? [] : (normalSnapshots.current?.(path, content) ?? []),
     );
-    normalSnapshots = (path, content) => {
+    normalSnapshots.current = (path, content) => {
       const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
       const appIndex = new TaskIndex(h.app, {
         statusCatalog: catalog,
@@ -241,7 +245,7 @@ describe('Obsidian move failure state machine', () => {
       });
       return appIndex.snapshotsFromContent(path, content);
     };
-    const ref = normalSnapshots('source.md', source)[0]!.ref;
+    const ref = expectDefined(normalSnapshots.current('source.md', source)[0]).ref;
 
     await expect(h.repository.move(ref, destination())).resolves.toEqual({
       type: 'invalid',
@@ -277,14 +281,13 @@ describe('Obsidian move failure state machine', () => {
       const ref = sourceRef(h, source);
       const sourceFile = h.app.vault.getAbstractFileByPath('source.md');
       if (!(sourceFile instanceof TFile)) throw new Error('missing source');
+      const originalProcess = h.app.vault.process.bind(h.app.vault);
       const process = vi.spyOn(h.app.vault, 'process');
-      const originalProcess = process.getMockImplementation();
       let calls = 0;
-      process.mockImplementation(async (file, transform) => {
+      process.mockImplementation(async (file, transform, options) => {
         calls++;
         if (calls === 2) await h.app.vault.modify(sourceFile, changedSource);
-        if (originalProcess) return originalProcess(file, transform);
-        return Object.getPrototypeOf(h.app.vault).process.call(h.app.vault, file, transform);
+        return originalProcess(file, transform, options);
       });
 
       const result = await h.repository.move(ref, destination());
@@ -385,7 +388,7 @@ describe('Obsidian move failure state machine', () => {
     vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, transform, options) => {
       const result = await originalProcess(file, transform, options);
       calls++;
-      if (calls === 1) await h.app.vault.delete(sourceFile);
+      if (calls === 1) await h.app.fileManager.trashFile(sourceFile);
       return result;
     });
 

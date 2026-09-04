@@ -10,7 +10,15 @@ import {
   type ToolbarState,
   type ViewEntry,
 } from '../src/ui/Toolbar';
-import { freshContainer, resolvedConfig, task, taskQueryApi, useRealMoment } from './helpers';
+import {
+  expectDefined,
+  freshContainer,
+  methodOf,
+  resolvedConfig,
+  task,
+  taskQueryApi,
+  useRealMoment,
+} from './helpers';
 
 useRealMoment();
 
@@ -39,18 +47,23 @@ function makeCallbacks(): { callbacks: ToolbarCallbacks; spies: ToolbarSpies } {
 }
 
 function secondaryDocument(): { ownerDocument: Document; remove: () => void } {
-  const frame = document.createElement('iframe');
+  const frame = createEl('iframe');
   frame.dataset['abyssToolbarTest'] = 'true';
   document.body.append(frame);
-  const ownerDocument = frame.contentDocument!;
-  const ownerWindow = frame.contentWindow as Window & typeof globalThis;
+  const ownerDocument = expectDefined(frame.contentDocument);
+  const ownerWindow = frame.contentWindow as Window & typeof window;
   for (const method of ['createDiv', 'createEl', 'empty', 'addClass'] as const) {
     Object.defineProperty(ownerWindow.HTMLElement.prototype, method, {
       configurable: true,
-      value: HTMLElement.prototype[method],
+      value: methodOf(HTMLElement.prototype, method),
     });
   }
-  return { ownerDocument, remove: () => frame.remove() };
+  return {
+    ownerDocument,
+    remove: () => {
+      frame.remove();
+    },
+  };
 }
 
 const baseState: ToolbarState = {
@@ -72,17 +85,21 @@ describe('Toolbar', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
-    activeDocument
-      .querySelectorAll('iframe[data-abyss-toolbar-test]')
-      .forEach((element) => element.remove());
+    activeDocument.querySelectorAll('iframe[data-abyss-toolbar-test]').forEach((element) => {
+      element.remove();
+    });
     container.remove();
   });
 
   describe('construction', () => {
-    it('adds one .buttons div to container', () => {
+    it.each([
+      ['.buttons', 1],
+      ['.weekViewContext li', 11],
+      ['.statisticPopup li', 6],
+    ])('creates %s with %i entries', (selector, expectedCount) => {
       const { callbacks } = makeCallbacks();
       const tb = new Toolbar(container, VIEWS, callbacks);
-      expect(container.querySelectorAll('.buttons')).toHaveLength(1);
+      expect(container.querySelectorAll(selector)).toHaveLength(expectedCount);
       tb.destroy();
     });
 
@@ -103,20 +120,6 @@ describe('Toolbar', () => {
       for (const c of cls) {
         expect(container.querySelector(c), `missing ${c}`).not.toBeNull();
       }
-      tb.destroy();
-    });
-
-    it('weekViewContext has 11 style li entries', () => {
-      const { callbacks } = makeCallbacks();
-      const tb = new Toolbar(container, VIEWS, callbacks);
-      expect(container.querySelectorAll('.weekViewContext li')).toHaveLength(11);
-      tb.destroy();
-    });
-
-    it('statisticPopup has 6 stat li entries', () => {
-      const { callbacks } = makeCallbacks();
-      const tb = new Toolbar(container, VIEWS, callbacks);
-      expect(container.querySelectorAll('.statisticPopup li')).toHaveLength(6);
       tb.destroy();
     });
 
@@ -256,9 +259,9 @@ describe('Toolbar', () => {
       const { callbacks } = makeCallbacks();
       const tb = new Toolbar(container, VIEWS, callbacks);
       const buttons = {
-        list: container.querySelector<HTMLButtonElement>('.listView')!,
-        month: container.querySelector<HTMLButtonElement>('.monthView')!,
-        week: container.querySelector<HTMLButtonElement>('.weekView')!,
+        list: expectDefined(container.querySelector<HTMLButtonElement>('.listView')),
+        month: expectDefined(container.querySelector<HTMLButtonElement>('.monthView')),
+        week: expectDefined(container.querySelector<HTMLButtonElement>('.weekView')),
       };
       const expectOwner = (current: keyof typeof buttons): void => {
         for (const [id, button] of Object.entries(buttons)) {
@@ -456,15 +459,16 @@ describe('Toolbar', () => {
     it('owns accessible popup focus and keyboard activation in the toolbar document', () => {
       const secondary = secondaryDocument();
       const { ownerDocument } = secondary;
-      const ownerContainer = ownerDocument.createElement('div');
-      ownerDocument.body.append(ownerContainer);
+      const ownerContainer = ownerDocument.body.createDiv();
       const { callbacks, spies } = makeCallbacks();
       let tb: Toolbar | undefined;
       try {
         tb = new Toolbar(ownerContainer, VIEWS, callbacks);
         tb.update({ ...baseState, currentView: 'month', currentStyle: 'style3' });
-        const trigger = ownerContainer.querySelector<HTMLButtonElement>('.monthView')!;
-        const popup = ownerContainer.querySelector<HTMLElement>('.weekViewContext')!;
+        const trigger = expectDefined(
+          ownerContainer.querySelector<HTMLButtonElement>('.monthView'),
+        );
+        const popup = expectDefined(ownerContainer.querySelector<HTMLElement>('.weekViewContext'));
 
         expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
         expect(trigger.getAttribute('aria-expanded')).toBe('false');
@@ -472,7 +476,7 @@ describe('Toolbar', () => {
 
         trigger.focus();
         trigger.click();
-        const selected = popup.querySelector<HTMLElement>('li[data-style="style3"]')!;
+        const selected = expectDefined(popup.querySelector<HTMLElement>('li[data-style="style3"]'));
         expect(trigger.getAttribute('aria-expanded')).toBe('true');
         expect(ownerDocument.activeElement).toBe(selected);
         expect(selected.getAttribute('role')).toBe('menuitemradio');
@@ -493,8 +497,7 @@ describe('Toolbar', () => {
     it('uses one exact owner-document lifecycle for Escape, toggle, update, and destroy', () => {
       const secondary = secondaryDocument();
       const { ownerDocument } = secondary;
-      const ownerContainer = ownerDocument.createElement('div');
-      ownerDocument.body.append(ownerContainer);
+      const ownerContainer = ownerDocument.body.createDiv();
       const addSpy = vi.spyOn(ownerDocument, 'addEventListener');
       const removeSpy = vi.spyOn(ownerDocument, 'removeEventListener');
       const globalAddSpy = vi.spyOn(activeDocument, 'addEventListener');
@@ -503,13 +506,15 @@ describe('Toolbar', () => {
       try {
         tb = new Toolbar(ownerContainer, VIEWS, callbacks);
         tb.update({ ...baseState, currentView: 'month' });
-        const trigger = ownerContainer.querySelector<HTMLButtonElement>('.monthView')!;
-        const popup = ownerContainer.querySelector<HTMLElement>('.weekViewContext')!;
-        const registrations = (): (typeof addSpy.mock.calls)[number][] => {
+        const trigger = expectDefined(
+          ownerContainer.querySelector<HTMLButtonElement>('.monthView'),
+        );
+        const popup = expectDefined(ownerContainer.querySelector<HTMLElement>('.weekViewContext'));
+        const registrations = (): Array<(typeof addSpy.mock.calls)[number]> => {
           vi.runAllTimers();
           return addSpy.mock.calls.filter(([type]) => type === 'mousedown' || type === 'keydown');
         };
-        const expectRemoved = (registered: (typeof addSpy.mock.calls)[number][]): void => {
+        const expectRemoved = (registered: Array<(typeof addSpy.mock.calls)[number]>): void => {
           expect(registered).toHaveLength(2);
           for (const listener of registered) expect(removeSpy.mock.calls).toContainEqual(listener);
         };
@@ -555,12 +560,12 @@ describe('Toolbar', () => {
       activeDocument.body.append(container);
       const { callbacks, spies } = makeCallbacks();
       const tb = new Toolbar(container, VIEWS, callbacks);
-      const trigger = container.querySelector<HTMLButtonElement>('.statistic')!;
-      const popup = container.querySelector<HTMLElement>('.statisticPopup')!;
+      const trigger = expectDefined(container.querySelector<HTMLButtonElement>('.statistic'));
+      const popup = expectDefined(container.querySelector<HTMLElement>('.statisticPopup'));
       trigger.focus();
       trigger.click();
 
-      const first = popup.querySelector<HTMLElement>('li[data-group="done"]')!;
+      const first = expectDefined(popup.querySelector<HTMLElement>('li[data-group="done"]'));
       expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
       expect(trigger.getAttribute('aria-expanded')).toBe('true');
       expect(popup.getAttribute('role')).toBe('menu');
@@ -596,9 +601,9 @@ describe('Toolbar', () => {
       activeDocument.body.append(container);
       const tb = new Toolbar(container, VIEWS, callbacks);
       tb.update({ ...baseState, currentView: 'month' });
-      const trigger = container.querySelector<HTMLButtonElement>('.monthView')!;
-      const icon = trigger.querySelector<SVGElement>('svg')!;
-      const popup = container.querySelector<HTMLElement>('.weekViewContext')!;
+      const trigger = expectDefined(container.querySelector<HTMLButtonElement>('.monthView'));
+      const icon = trigger.createSpan({ cls: 'nested-trigger-target' });
+      const popup = expectDefined(container.querySelector<HTMLElement>('.weekViewContext'));
       trigger.click();
       vi.advanceTimersByTime(1);
 

@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { addIcon } from 'obsidian';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import {
   recurrenceBadgeInput,
@@ -9,9 +8,16 @@ import {
 
 addIcon('repeat-2', '<svg data-lucide="repeat-2"><path d="M17 2l4 4-4 4"/></svg>');
 
+function styles(): string {
+  const path = ts.sys.resolvePath(`${import.meta.dirname}/../styles.css`);
+  const content = ts.sys.readFile(path);
+  if (content === undefined) throw new Error(`Unable to read ${path}`);
+  return content;
+}
+
 describe('renderRecurrenceBadge', () => {
   it('renders one fixed repeat-2 icon slot with an accessible valid-rule tooltip', () => {
-    const container = activeDocument.createElement('div');
+    const container = createFragment().createDiv();
 
     const badge = renderRecurrenceBadge(container, {
       rule: 'every week',
@@ -30,7 +36,7 @@ describe('renderRecurrenceBadge', () => {
   });
 
   it('keeps invalid and forecast recurrence on the same badge component and geometry contract', () => {
-    const container = activeDocument.createElement('div');
+    const container = createFragment().createDiv();
 
     const badge = renderRecurrenceBadge(container, {
       rule: 'tomorrow',
@@ -62,7 +68,7 @@ describe('renderRecurrenceBadge', () => {
   });
 
   it('keeps valid, invalid, and forecast states on one tokenized fixed geometry without opacity', () => {
-    const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+    const css = styles();
     const base = /\.abyss-recurrence-badge\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
     const icon = /\.abyss-recurrence-badge-icon\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
     const invalid =
@@ -88,7 +94,7 @@ describe('renderRecurrenceBadge', () => {
   });
 
   it('keeps the body-mounted editor fixed above the later generic anchored-popover rule', () => {
-    const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+    const css = styles();
     const floating =
       /\.abyss-popover-anchored\.abyss-recurrence-popover-floating\s*\{([^}]*)\}/u.exec(css)?.[1] ??
       '';
@@ -97,7 +103,7 @@ describe('renderRecurrenceBadge', () => {
   });
 
   it('layers destructive confirmation above the task-detail modal', () => {
-    const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+    const css = styles();
     const confirmation = /\.abyss-recurrence-delete-confirm\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
     const modal = /\.abyss-modal-backdrop\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
     const confirmationLayer = Number(/z-index:\s*(\d+)/u.exec(confirmation)?.[1]);

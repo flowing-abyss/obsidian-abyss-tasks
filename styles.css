@@ -22,6 +22,7 @@
   --abyss-event-outline-strength: 24%;
   --abyss-event-focus-tag-strength: 55%;
   --abyss-preview-fill-strength: 7%;
+
   /* Preview outlines mix toward the theme's text color. Pale tags need a stronger text share on
      light backgrounds, while dark tags need more of their own hue to stay recognizable in dark. */
   --abyss-preview-border-tag-strength: 35%;
@@ -47,6 +48,7 @@
   );
   --abyss-calendar-foreground: var(--abyss-tag-text-color, var(--text-normal));
   --abyss-calendar-now: color-mix(in srgb, var(--text-error) 48%, transparent);
+
   /* Task 40 (Round 4): fixed contrast anchors consumed by --abyss-tag-text-color (set per-element,
      in JS, by tagFillContrast.ts's tagFillTextColorVar — see that module's own doc comment for
      the full reasoning). Deliberately NOT theme-variable tokens like --text-normal: their whole
@@ -157,6 +159,7 @@
 
 .abyss-quick-capture-host {
   --abyss-quick-capture-edge: var(--size-4-4, 1rem);
+
   position: absolute;
   z-index: var(--layer-popover, 30);
   inset-block-start: calc(var(--abyss-shell-top-inset, 0px) + var(--size-4-3, 0.75rem));
@@ -182,6 +185,7 @@
 
 .is-just-created {
   --abyss-creation-accent: var(--abyss-tag-color, var(--task-color, var(--interactive-accent)));
+
   outline: 2px solid var(--abyss-creation-accent);
   outline-offset: 2px;
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--abyss-creation-accent) 28%, transparent);
@@ -193,6 +197,7 @@
     outline-color: var(--abyss-creation-accent);
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--abyss-creation-accent) 28%, transparent);
   }
+
   to {
     outline-color: transparent;
     box-shadow: 0 0 0 8px transparent;
@@ -296,8 +301,7 @@
   flex-direction: column;
   background: var(--background-secondary);
   border-right: 1px solid var(--background-modifier-border);
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden auto;
 }
 
 /* Center panel */
@@ -395,15 +399,16 @@
 .tasksCalendar span {
   display: contents;
 }
+
 .tasksCalendar .buttons {
   cursor: default;
   width: 100%;
   height: 30px;
   display: flex;
-  flex-wrap: nowrap;
-  flex-direction: row;
+  flex-flow: row nowrap;
   margin-bottom: 4px;
 }
+
 .tasksCalendar[view='list'] button.listView,
 .tasksCalendar[view='week'] button.weekView,
 .tasksCalendar[view='month'] button.monthView,
@@ -412,6 +417,7 @@
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
+
 body:not(.is-mobile) .tasksCalendar button.listView:hover,
 body:not(.is-mobile) .tasksCalendar button.weekView:hover,
 body:not(.is-mobile) .tasksCalendar button.monthView:hover,
@@ -422,14 +428,15 @@ body:not(.is-mobile) .tasksCalendar button.filter:hover,
 body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   background: var(--interactive-hover);
 }
+
 .tasksCalendar[view='list'] button.listView svg,
 .tasksCalendar[view='month'] button.monthView svg,
 .tasksCalendar[view='week'] button.weekView svg,
 .tasksCalendar.filter button.filter svg {
   stroke: var(--text-on-accent) !important;
 }
+
 .tasksCalendar button {
-  background-color: transparent;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -448,10 +455,12 @@ body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   white-space: nowrap;
   flex: 0;
 }
+
 .tasksCalendar button:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
+
 .tasksCalendar button:nth-child(2),
 .tasksCalendar button:nth-child(3),
 .tasksCalendar button:nth-child(6) {
@@ -460,6 +469,7 @@ body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   border-right: 0.5px solid var(--background-modifier-border);
   margin-right: 0;
 }
+
 .tasksCalendar button:nth-child(3),
 .tasksCalendar button:nth-child(4),
 .tasksCalendar button:nth-child(7) {
@@ -468,6 +478,7 @@ body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   border-left: 0.5px solid var(--background-modifier-border);
   margin-left: 0;
 }
+
 .tasksCalendar .current {
   margin: 0 4px;
   display: inline;
@@ -476,25 +487,31 @@ body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   white-space: nowrap;
   flex: 1;
 }
+
 .tasksCalendar .current span:first-child {
   font-weight: bold;
   color: var(--icon-color);
 }
+
 .tasksCalendar .current span:last-child {
   font-weight: normal;
   color: var(--icon-color-active);
 }
+
 .tasksCalendar button:nth-child(1) {
   margin-right: 4px;
 }
+
 .tasksCalendar button:nth-child(8) {
   margin-left: 4px;
 }
+
 .tasksCalendar svg {
   height: var(--icon-size);
   width: var(--icon-size);
   stroke-width: var(--icon-stroke);
 }
+
 .tasksCalendar .statisticPopup,
 .tasksCalendar .weekViewContext {
   display: none;
@@ -509,9 +526,10 @@ body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   list-style: none;
   padding: 2px !important;
   z-index: 99;
-  box-shadow: 0px 0px 10px 0px var(--nav-item-background-active);
+  box-shadow: 0 0 10px 0 var(--nav-item-background-active);
   background: var(--background-secondary);
 }
+
 .tasksCalendar .statisticPopup {
   max-width: 220px;
   min-width: 140px;
@@ -524,32 +542,38 @@ body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   font-size: 14px !important;
   color: var(--text-normal) !important;
 }
+
 .tasksCalendar .weekViewContext {
   left: 65px;
 }
-.tasksCalendar .statisticPopup:before,
-.tasksCalendar .weekViewContext:before {
+
+.tasksCalendar .statisticPopup::before,
+.tasksCalendar .weekViewContext::before {
   content: '';
-  width: 0px;
-  height: 0px;
-  -webkit-transform: rotate(360deg);
+  width: 0;
+  height: 0;
+  transform: rotate(360deg);
   border-style: solid;
-  border-width: 0 10px 10px 10px;
+  border-width: 0 10px 10px;
   border-color: transparent transparent var(--background-secondary) transparent;
   position: absolute;
 }
-.tasksCalendar .statisticPopup:before {
+
+.tasksCalendar .statisticPopup::before {
   top: -10px;
   right: 5px;
 }
-.tasksCalendar .weekViewContext:before {
+
+.tasksCalendar .weekViewContext::before {
   top: -10px;
   left: 5px;
 }
+
 .tasksCalendar .statisticPopup.active,
 .tasksCalendar .weekViewContext.active {
   display: block;
 }
+
 .tasksCalendar .statisticPopup li {
   display: flex;
   align-items: center;
@@ -560,12 +584,14 @@ body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   padding-right: 8px;
   margin-left: 0;
 }
+
 .tasksCalendar .stat-label {
   font-size: 13px;
   color: var(--text-muted);
   margin-left: 0.3em;
   white-space: nowrap;
 }
+
 .tasksCalendar .stat-count {
   font-weight: bold;
   margin-left: auto;
@@ -574,19 +600,23 @@ body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   text-align: right;
   display: inline-block;
 }
+
 .tasksCalendar button.statistic {
   max-width: 40px;
   min-width: 30px;
   overflow: hidden;
   position: relative;
 }
+
 .tasksCalendar button.statistic svg {
   stroke: var(--icon-color);
 }
-.tasksCalendar button.statistic[data-percentage='100']:after {
+
+.tasksCalendar button.statistic[data-percentage='100']::after {
   display: none !important;
 }
-.tasksCalendar button.statistic:after {
+
+.tasksCalendar button.statistic::after {
   content: attr(data-remaining);
   position: absolute;
   height: 14px;
@@ -603,6 +633,7 @@ body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   color: var(--icon-color);
   background: var(--background-secondary);
 }
+
 .tasksCalendar .weekViewContext .liIcon {
   display: grid !important;
   height: 18px;
@@ -610,6 +641,7 @@ body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   margin-right: 5px;
   padding: 2px;
 }
+
 .tasksCalendar .weekViewContext .liIcon .box {
   background: var(--icon-color);
   z-index: 1;
@@ -618,22 +650,25 @@ body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   margin: 0.5px;
   border-radius: 1px;
 }
+
 .tasksCalendar .weekViewContext li.active .liIcon .box {
   background: var(--icon-color-active) !important;
 }
+
 .tasksCalendar .grid {
   overflow: hidden;
   cursor: default;
   width: 100%;
   height: 75vh;
 }
+
 .tasksCalendar .list {
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden auto;
   cursor: default;
   width: 100%;
   height: 75vh;
 }
+
 .tasksCalendar .cell {
   z-index: 1;
   display: grid;
@@ -642,15 +677,17 @@ body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   overflow: hidden;
   margin: 1px 0;
 }
+
 .tasksCalendar .cellContent {
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden auto;
   align-content: start;
   padding: 1px 0;
 }
+
 .tasksCalendar .cellContent::-webkit-scrollbar {
   display: none;
 }
+
 .tasksCalendar .cellName {
   display: block;
   font-weight: normal;
@@ -666,11 +703,14 @@ body:not(.is-mobile) .tasksCalendar button.statistic:hover {
   font-size: 14px;
   opacity: 0.8;
 }
+
 body:not(.is-mobile) .tasksCalendar .cellName:hover {
   opacity: 1;
 }
+
 .tasksCalendar .task {
   --abyss-tag-color: var(--task-color, var(--interactive-accent));
+
   display: flex;
   align-items: baseline;
   gap: 4px;
@@ -680,7 +720,7 @@ body:not(.is-mobile) .tasksCalendar .cellName:hover {
   border-inline-start: var(--abyss-calendar-item-rail) solid var(--abyss-tag-color);
   border-radius: 3px;
   box-shadow: inset 0 0 0 var(--abyss-calendar-border-width) var(--abyss-calendar-border);
-  margin: 1px 1px 2px 1px;
+  margin: 1px 1px 2px;
   font-size: var(--font-smallest, 11px);
   line-height: 1.4;
   cursor: pointer;
@@ -689,50 +729,59 @@ body:not(.is-mobile) .tasksCalendar .cellName:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .tasksCalendar .task {
   color: var(--text-normal);
 }
+
 .tasksCalendar .task .note {
   color: var(--text-muted);
 }
+
 body:not(.is-mobile) .tasksCalendar .task:hover {
   box-shadow: inset 0 0 0 var(--abyss-calendar-border-width) var(--background-modifier-hover);
 }
+
 .tasksCalendar .task[draggable='true'] {
   cursor: grab;
 }
+
 .tasksCalendar .task.overdue {
   color: var(--color-red, #e74c3c);
 }
+
 .tasksCalendar .task.hide {
   opacity: 0.2;
 }
+
 .tasksCalendar .task .inner {
-  overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
-  text-decoration: none;
   word-break: break-all !important;
-  -webkit-hyphens: none !important;
+  hyphens: none !important;
   line-height: 1.3;
   text-decoration: none !important;
   border-radius: 3px;
   overflow: hidden;
 }
+
 .tasksCalendar .task.abyss-calendar-item > .inner > .abyss-status-marker {
   display: inline-grid;
   margin-inline-end: var(--abyss-calendar-slot-gap);
   vertical-align: middle;
 }
+
 .tasksCalendar a {
   text-decoration: none !important;
 }
+
 .tasksCalendar .task .inner .inner-link {
   display: inline;
   cursor: pointer;
 }
+
 .tasksCalendar .task .note {
   display: block;
   width: 100%;
@@ -743,6 +792,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   overflow: hidden;
   white-space: nowrap;
 }
+
 .tasksCalendar .task .icon {
   display: inline;
   width: 18px;
@@ -750,45 +800,53 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   text-align: center;
   margin-right: 3px;
 }
+
 .tasksCalendar .task .description {
   display: inline;
   padding: 1px;
 }
-.tasksCalendar .task .description:before {
+
+.tasksCalendar .task .description::before {
   display: inline;
   content: attr(data-relative);
-  margin-right: 3px;
   border-radius: 3px;
   margin-right: 3px;
   padding: 0 3px;
   font-size: 9px;
   vertical-align: middle;
 }
-.tasksCalendar .task.overdue .description:before {
+
+.tasksCalendar .task.overdue .description::before {
   color: var(--text-on-accent);
   background: var(--abyss-priority-b);
 }
-.tasksCalendar .task:not(.overdue) .description:before {
+
+.tasksCalendar .task:not(.overdue) .description::before {
   display: none;
 }
-.tasksCalendar .task.dailyNote .description:before,
-.tasksCalendar .task.done .description:before,
-.tasksCalendar .task.cancelled .description:before {
+
+.tasksCalendar .task.dailyNote .description::before,
+.tasksCalendar .task.done .description::before,
+.tasksCalendar .task.cancelled .description::before {
   display: none !important;
 }
+
 .tasksCalendar .task.cancelled .note,
 .tasksCalendar .task.done .note {
   background: var(--nav-item-background-active) !important;
   color: var(--text-faint) !important;
 }
+
 .tasksCalendar .task.cancelled .description,
 .tasksCalendar .task.done .description {
   color: var(--text-faint) !important;
 }
+
 .tasksCalendar .task.cancelled,
 .tasksCalendar .task.done {
   background: none !important;
 }
+
 .tasksCalendar .task.overdue .inner {
   background: repeating-linear-gradient(
     45deg,
@@ -805,20 +863,24 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   color: var(--text-normal);
   opacity: 1;
 }
+
 .tasksCalendar .cell[data-weekday='0'].today .cellName {
   font-weight: bold;
   color: var(--icon-color-active);
   opacity: 1;
 }
+
 .tasksCalendar[view='month'] .cell.today {
   background: var(--background-modifier-active-hover) !important;
-  border: 1px solid hsla(var(--interactive-accent-hsl), 0.25) !important;
+  border: 1px solid hsl(var(--interactive-accent-hsl), 0.25) !important;
   border-radius: 5px;
 }
+
 .tasksCalendar[view='week'] .cell.today {
   background: var(--background-modifier-active-hover) !important;
-  border: 1px solid hsla(var(--interactive-accent-hsl), 0.25) !important;
+  border: 1px solid hsl(var(--interactive-accent-hsl), 0.25) !important;
 }
+
 .tasksCalendar .cell[data-weekday='0'] .cellName,
 .tasksCalendar .gridHead[data-weekday='0'] {
   color: var(--icon-color-active);
@@ -831,6 +893,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   grid-template-rows: 20px 1fr !important;
   grid-template-columns: 1fr !important;
 }
+
 .tasksCalendar[view='month'] .gridHeads {
   display: grid;
   grid-template-columns: 20px 1fr 1fr 1fr 1fr 1fr 1fr 1fr !important;
@@ -839,6 +902,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border: 1px solid var(--nav-item-background-active);
   border-radius: 5px;
 }
+
 .tasksCalendar[view='month'] .gridHead {
   display: inline;
   box-sizing: border-box;
@@ -848,26 +912,28 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
   margin: 0;
-  font-size: 14px;
   height: 20px;
   line-height: 20px;
   font-size: 10px;
 }
+
 .tasksCalendar[view='month'] .wrappers {
   display: grid;
   grid-template-rows: repeat(6, calc(100% / 6));
   grid-template-columns: 1fr !important;
   min-height: 0;
   height: calc(100% - 20px);
-  gap: 4px 4px;
+  gap: 4px;
 }
+
 .tasksCalendar[view='month'] .wrappers,
 .tasksCalendar[view='week'] .grid {
   position: relative;
 }
-.tasksCalendar[view='month'] .wrappers:before,
-.tasksCalendar[view='week'] .grid:before,
-.tasksCalendar[view='list'] .list:before {
+
+.tasksCalendar[view='month'] .wrappers::before,
+.tasksCalendar[view='week'] .grid::before,
+.tasksCalendar[view='list'] .list::before {
   z-index: 0;
   position: absolute;
   top: 50%;
@@ -877,13 +943,16 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   font-weight: bold;
   color: var(--background-modifier-active-hover);
 }
-.tasksCalendar[view='month'] .wrappers:before,
-.tasksCalendar[view='list'] .list:before {
+
+.tasksCalendar[view='month'] .wrappers::before,
+.tasksCalendar[view='list'] .list::before {
   content: attr(data-month);
 }
-.tasksCalendar[view='week'] .grid:before {
+
+.tasksCalendar[view='week'] .grid::before {
   content: attr(data-week);
 }
+
 .tasksCalendar[view='month'] .wrapper {
   z-index: 1;
   display: grid;
@@ -895,30 +964,33 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border-radius: 5px;
   overflow: hidden;
 }
+
 .tasksCalendar[view='month'] .wrapperButton {
   display: flex;
   writing-mode: vertical-lr;
   transform: rotate(180deg);
-  background: none;
   text-align: center;
   align-items: center;
   justify-content: center;
   font-size: 10px;
   font-weight: normal;
-  color: var(--text-normal);
   color: var(--icon-color-active);
   cursor: pointer;
   width: 100%;
   overflow: hidden;
+
   /* background: var(--background-primary); */
   background: var(--background-secondary);
 }
+
 .tasksCalendar[view='month'] .wrapperButton:hover {
   background: var(--background-modifier-hover);
 }
+
 .tasksCalendar[view='month'] .cell {
   margin: 0;
 }
+
 .tasksCalendar[view='month'] .prevMonth,
 .tasksCalendar[view='month'] .nextMonth {
   background: var(--background-secondary);
@@ -929,6 +1001,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   display: grid;
   gap: 2px 4px;
 }
+
 .tasksCalendar[view='week'] .cell {
   border: 1px solid var(--nav-item-background-active);
   border-radius: 5px;
@@ -940,74 +1013,87 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border: 1px solid var(--nav-item-background-active);
   border-radius: 5px;
 }
+
 .tasksCalendar[view='list'] .list .task,
 .tasksCalendar[view='list'] .list .task.done,
 .tasksCalendar[view='list'] .list .task .note,
 .tasksCalendar[view='list'] .list .task.done .note {
   background: transparent !important;
 }
+
 .tasksCalendar[view='list'] .list .task .inner {
   display: flex !important;
-  flex-direction: row;
-  flex-wrap: nowrap;
+  flex-flow: row nowrap;
   padding: 0 10px;
   white-space: nowrap;
 }
+
 .tasksCalendar[view='list'] .list .task .note {
   display: inline-block;
   width: 150px;
   flex-shrink: 0;
   flex-grow: 0;
 }
+
 .tasksCalendar[view='list'] .list .task .description {
   width: 100%;
   flex-shrink: 1;
   flex-grow: 1;
 }
+
 .tasksCalendar[view='list'] .list .task.done .note,
 .tasksCalendar[view='list'] .list .task.done .description,
 .tasksCalendar[view='list'] .list .task.cancelled .note,
 .tasksCalendar[view='list'] .list .task.cancelled .description {
   color: var(--text-faint) !important;
 }
+
 .tasksCalendar[view='list'] .list .task .note,
 .tasksCalendar[view='list'] .list .task .description {
   color: var(--task-color) !important;
-  line-clamp: 0 !important;
+  -webkit-line-clamp: unset !important;
   white-space: nowrap !important;
   text-overflow: ellipsis;
   overflow: hidden;
   font-size: 14px;
 }
+
 .tasksCalendar summary::marker,
 .tasksCalendar summary::-webkit-details-marker {
   display: none !important;
   content: '' !important;
 }
+
 .tasksCalendar[view='list'] details.today {
   background: var(--background-modifier-active-hover);
-  border: 1px solid hsla(var(--interactive-accent-hsl), 0.25);
+  border: 1px solid hsl(var(--interactive-accent-hsl), 0.25);
 }
+
 .tasksCalendar[view='list'] details.today summary {
   font-weight: bold;
   background: none;
 }
+
 .tasksCalendar[view='list'] details.today .content {
   margin: 3px;
 }
+
 .tasksCalendar[view='list'] details {
   display: block;
   margin: 5px;
   border-radius: 5px;
   overflow: hidden;
-  /*background: var(--background-secondary);*/
+
+  /* background: var(--background-secondary); */
   border: 1px solid var(--nav-item-background-active);
 }
+
 .tasksCalendar[view='list'] summary {
   background: var(--background-secondary);
   padding: 0 10px;
   border-radius: 5px;
 }
+
 .tasksCalendar[view='list'] summary span.weekNr {
   font-size: 11px;
   color: var(--text-faint);
@@ -1019,287 +1105,356 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   grid-template-columns: repeat(4, 1fr);
   grid-template-rows: repeat(6, 1fr);
 }
+
 .tasksCalendar[view='week'].style1 .grid .cell:nth-child(1),
 .iconStyle1 .box:nth-child(1) {
   grid-area: 1 / 1 / 3 / 3;
 }
+
 .tasksCalendar[view='week'].style1 .grid .cell:nth-child(2),
 .iconStyle1 .box:nth-child(2) {
   grid-area: 3 / 1 / 5 / 3;
 }
+
 .tasksCalendar[view='week'].style1 .grid .cell:nth-child(3),
 .iconStyle1 .box:nth-child(3) {
   grid-area: 5 / 1 / 7 / 3;
 }
+
 .tasksCalendar[view='week'].style1 .grid .cell:nth-child(4),
 .iconStyle1 .box:nth-child(4) {
   grid-area: 1 / 3 / 3 / 5;
 }
+
 .tasksCalendar[view='week'].style1 .grid .cell:nth-child(5),
 .iconStyle1 .box:nth-child(5) {
   grid-area: 3 / 3 / 5 / 5;
 }
+
 .tasksCalendar[view='week'].style1 .grid .cell:nth-child(6),
 .iconStyle1 .box:nth-child(6) {
   grid-area: 5 / 3 / 6 / 5;
 }
+
 .tasksCalendar[view='week'].style1 .grid .cell:nth-child(7),
 .iconStyle1 .box:nth-child(7) {
   grid-area: 6 / 3 / 7 / 5;
 }
+
 .tasksCalendar[view='week'].style2 .grid,
 .iconStyle2 {
   grid-template-columns: repeat(4, 1fr);
   grid-template-rows: repeat(6, 1fr);
 }
+
 .tasksCalendar[view='week'].style2 .grid .cell:nth-child(1),
 .iconStyle2 .box:nth-child(1) {
   grid-area: 1 / 1 / 3 / 3;
 }
+
 .tasksCalendar[view='week'].style2 .grid .cell:nth-child(3),
 .iconStyle2 .box:nth-child(3) {
   grid-area: 3 / 1 / 5 / 3;
 }
+
 .tasksCalendar[view='week'].style2 .grid .cell:nth-child(5),
 .iconStyle2 .box:nth-child(5) {
   grid-area: 5 / 1 / 7 / 3;
 }
+
 .tasksCalendar[view='week'].style2 .grid .cell:nth-child(2),
 .iconStyle2 .box:nth-child(2) {
   grid-area: 1 / 3 / 3 / 5;
 }
+
 .tasksCalendar[view='week'].style2 .grid .cell:nth-child(4),
 .iconStyle2 .box:nth-child(4) {
   grid-area: 3 / 3 / 5 / 5;
 }
+
 .tasksCalendar[view='week'].style2 .grid .cell:nth-child(6),
 .iconStyle2 .box:nth-child(6) {
   grid-area: 5 / 3 / 6 / 5;
 }
+
 .tasksCalendar[view='week'].style2 .grid .cell:nth-child(7),
 .iconStyle2 .box:nth-child(7) {
   grid-area: 6 / 3 / 7 / 5;
 }
+
 .tasksCalendar[view='week'].style3 .grid,
 .iconStyle3 {
   grid-template-rows: 1fr 1fr 1fr 1fr 1fr 1fr 1fr;
   grid-template-columns: 1fr;
 }
+
 .tasksCalendar[view='week'].style4 .grid,
 .iconStyle4 {
   grid-template-rows: 1fr;
   grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 1fr;
 }
+
 .tasksCalendar[view='week'].style5 .grid,
 .iconStyle5 {
   grid-template-columns: repeat(2, 1fr);
   grid-template-rows: repeat(10, 1fr);
 }
+
 .tasksCalendar[view='week'].style5 .grid .cell:nth-child(1),
 .iconStyle5 .box:nth-child(1) {
   grid-area: 1 / 1 / 3 / 2;
 }
+
 .tasksCalendar[view='week'].style5 .grid .cell:nth-child(2),
 .iconStyle5 .box:nth-child(2) {
   grid-area: 3 / 1 / 5 / 2;
 }
+
 .tasksCalendar[view='week'].style5 .grid .cell:nth-child(3),
 .iconStyle5 .box:nth-child(3) {
   grid-area: 5 / 1 / 7 / 2;
 }
+
 .tasksCalendar[view='week'].style5 .grid .cell:nth-child(4),
 .iconStyle5 .box:nth-child(4) {
   grid-area: 7 / 1 / 9 / 2;
 }
+
 .tasksCalendar[view='week'].style5 .grid .cell:nth-child(5),
 .iconStyle5 .box:nth-child(5) {
   grid-area: 9 / 1 / 11 / 2;
 }
+
 .tasksCalendar[view='week'].style5 .grid .cell:nth-child(6),
 .iconStyle5 .box:nth-child(6) {
   grid-area: 1 / 2 / 6 / 3;
 }
+
 .tasksCalendar[view='week'].style5 .grid .cell:nth-child(7),
 .iconStyle5 .box:nth-child(7) {
   grid-area: 6 / 2 / 11 / 3;
 }
+
 .tasksCalendar[view='week'].style6 .grid,
 .iconStyle6 {
   grid-template-columns: repeat(3, 1fr);
   grid-template-rows: repeat(10, 1fr);
 }
+
 .tasksCalendar[view='week'].style6 .grid .cell:nth-child(1),
 .iconStyle6 .box:nth-child(1) {
   grid-area: 1 / 1 / 3 / 3;
 }
+
 .tasksCalendar[view='week'].style6 .grid .cell:nth-child(2),
 .iconStyle6 .box:nth-child(2) {
   grid-area: 3 / 1 / 5 / 3;
 }
+
 .tasksCalendar[view='week'].style6 .grid .cell:nth-child(3),
 .iconStyle6 .box:nth-child(3) {
   grid-area: 5 / 1 / 7 / 3;
 }
+
 .tasksCalendar[view='week'].style6 .grid .cell:nth-child(4),
 .iconStyle6 .box:nth-child(4) {
   grid-area: 7 / 1 / 9 / 3;
 }
+
 .tasksCalendar[view='week'].style6 .grid .cell:nth-child(5),
 .iconStyle6 .box:nth-child(5) {
   grid-area: 9 / 1 / 11 / 3;
 }
+
 .tasksCalendar[view='week'].style6 .grid .cell:nth-child(6),
 .iconStyle6 .box:nth-child(6) {
   grid-area: 1 / 3 / 6 / 4;
 }
+
 .tasksCalendar[view='week'].style6 .grid .cell:nth-child(7),
 .iconStyle6 .box:nth-child(7) {
   grid-area: 6 / 3 / 11 / 4;
 }
+
 .tasksCalendar[view='week'].style7 .grid,
 .iconStyle7 {
   grid-template-columns: repeat(2, 1fr);
   grid-template-rows: repeat(8, 1fr);
 }
+
 .tasksCalendar[view='week'].style7 .grid .cell:nth-child(1),
 .iconStyle7 .box:nth-child(1) {
   grid-area: 1 / 1 / 3 / 2;
 }
+
 .tasksCalendar[view='week'].style7 .grid .cell:nth-child(2),
 .iconStyle7 .box:nth-child(2) {
   grid-area: 3 / 1 / 5 / 2;
 }
+
 .tasksCalendar[view='week'].style7 .grid .cell:nth-child(3),
 .iconStyle7 .box:nth-child(3) {
   grid-area: 5 / 1 / 7 / 2;
 }
+
 .tasksCalendar[view='week'].style7 .grid .cell:nth-child(4),
 .iconStyle7 .box:nth-child(4) {
   grid-area: 7 / 1 / 9 / 2;
 }
+
 .tasksCalendar[view='week'].style7 .grid .cell:nth-child(5),
 .iconStyle7 .box:nth-child(5) {
   grid-area: 1 / 2 / 3 / 3;
 }
+
 .tasksCalendar[view='week'].style7 .grid .cell:nth-child(6),
 .iconStyle7 .box:nth-child(6) {
   grid-area: 3 / 2 / 6 / 3;
 }
+
 .tasksCalendar[view='week'].style7 .grid .cell:nth-child(7),
 .iconStyle7 .box:nth-child(7) {
   grid-area: 6 / 2 / 9 / 3;
 }
+
 .tasksCalendar[view='week'].style8 .grid,
 .iconStyle8 {
   grid-template-columns: repeat(3, 1fr);
   grid-template-rows: repeat(5, 1fr);
 }
+
 .tasksCalendar[view='week'].style8 .grid .cell:nth-child(1),
 .iconStyle8 .box:nth-child(1) {
   grid-area: 1 / 1 / 3 / 2;
 }
+
 .tasksCalendar[view='week'].style8 .grid .cell:nth-child(2),
 .iconStyle8 .box:nth-child(2) {
   grid-area: 1 / 2 / 3 / 3;
 }
+
 .tasksCalendar[view='week'].style8 .grid .cell:nth-child(3),
 .iconStyle8 .box:nth-child(3) {
   grid-area: 1 / 3 / 3 / 4;
 }
+
 .tasksCalendar[view='week'].style8 .grid .cell:nth-child(4),
 .iconStyle8 .box:nth-child(4) {
   grid-area: 3 / 1 / 5 / 2;
 }
+
 .tasksCalendar[view='week'].style8 .grid .cell:nth-child(5),
 .iconStyle8 .box:nth-child(5) {
   grid-area: 3 / 2 / 5 / 3;
 }
+
 .tasksCalendar[view='week'].style8 .grid .cell:nth-child(6),
 .iconStyle8 .box:nth-child(6) {
   grid-area: 3 / 3 / 5 / 4;
 }
+
 .tasksCalendar[view='week'].style8 .grid .cell:nth-child(7),
 .iconStyle8 .box:nth-child(7) {
   grid-area: 5 / 1 / 6 / 4;
 }
+
 .tasksCalendar[view='week'].style9 .grid,
 .iconStyle9 {
   grid-template-columns: repeat(10, 1fr);
   grid-template-rows: repeat(3, 1fr);
 }
+
 .tasksCalendar[view='week'].style9 .grid .cell:nth-child(1),
 .iconStyle9 .box:nth-child(1) {
   grid-area: 1 / 1 / 3 / 3;
 }
+
 .tasksCalendar[view='week'].style9 .grid .cell:nth-child(2),
 .iconStyle9 .box:nth-child(2) {
   grid-area: 1 / 3 / 3 / 5;
 }
+
 .tasksCalendar[view='week'].style9 .grid .cell:nth-child(3),
 .iconStyle9 .box:nth-child(3) {
   grid-area: 1 / 5 / 3 / 7;
 }
+
 .tasksCalendar[view='week'].style9 .grid .cell:nth-child(4),
 .iconStyle9 .box:nth-child(4) {
   grid-area: 1 / 7 / 3 / 9;
 }
+
 .tasksCalendar[view='week'].style9 .grid .cell:nth-child(5),
 .iconStyle9 .box:nth-child(5) {
   grid-area: 1 / 9 / 3 / 11;
 }
+
 .tasksCalendar[view='week'].style9 .grid .cell:nth-child(6),
 .iconStyle9 .box:nth-child(6) {
   grid-area: 3 / 1 / 4 / 6;
 }
+
 .tasksCalendar[view='week'].style9 .grid .cell:nth-child(7),
 .iconStyle9 .box:nth-child(7) {
   grid-area: 3 / 6 / 4 / 11;
 }
+
 .tasksCalendar[view='week'].style10 .grid,
 .iconStyle10 {
   grid-template-columns: repeat(10, 1fr);
   grid-template-rows: repeat(3, 1fr);
 }
+
 .tasksCalendar[view='week'].style10 .grid .cell:nth-child(1),
 .iconStyle10 .box:nth-child(1) {
   grid-area: 1 / 1 / 4 / 3;
 }
+
 .tasksCalendar[view='week'].style10 .grid .cell:nth-child(2),
 .iconStyle10 .box:nth-child(2) {
   grid-area: 1 / 3 / 4 / 5;
 }
+
 .tasksCalendar[view='week'].style10 .grid .cell:nth-child(3),
 .iconStyle10 .box:nth-child(3) {
   grid-area: 1 / 5 / 4 / 7;
 }
+
 .tasksCalendar[view='week'].style10 .grid .cell:nth-child(4),
 .iconStyle10 .box:nth-child(4) {
   grid-area: 1 / 7 / 3 / 9;
 }
+
 .tasksCalendar[view='week'].style10 .grid .cell:nth-child(5),
 .iconStyle10 .box:nth-child(5) {
   grid-area: 1 / 9 / 3 / 11;
 }
+
 .tasksCalendar[view='week'].style10 .grid .cell:nth-child(6),
 .iconStyle10 .box:nth-child(6) {
   grid-area: 3 / 7 / 4 / 9;
 }
+
 .tasksCalendar[view='week'].style10 .grid .cell:nth-child(7),
 .iconStyle10 .box:nth-child(7) {
   grid-area: 3 / 9 / 4 / 11;
 }
+
 .tasksCalendar[view='week'].style11 .grid,
 .iconStyle11 {
   grid-template-rows: 1fr;
   grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
 }
+
 .tasksCalendar[view='week'].style11 .grid {
   height: 300px;
 }
+
 .tasksCalendar[view='week'].style11 .cell[data-weekday='0'],
 .iconStyle11 {
   display: none !important;
 }
+
 .tasksCalendar[view='week'].style11 .cell[data-weekday='6'],
 .iconStyle11 {
   display: none !important;
@@ -1309,146 +1464,189 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .tasksCalendar.noIcons .task .icon {
   display: none !important;
 }
+
 .tasksCalendar:not(.noFilename) .task.noNoteIcon .icon {
   display: none !important;
 }
+
 .tasksCalendar.noFilename .task .note {
   display: none !important;
 }
+
 .tasksCalendar.filter .task.done,
 .tasksCalendar.filter .task.cancelled {
   display: none !important;
 }
+
 .tasksCalendar.filter #statisticDone {
   pointer-events: none !important;
   color: var(--text-faint) !important;
 }
+
 .tasksCalendar.noScheduled .task.scheduled {
   display: none !important;
 }
+
 .tasksCalendar.noStart .task.start {
   display: none !important;
 }
+
 .tasksCalendar.noDue .task.due {
   display: none !important;
 }
+
 .tasksCalendar.noDone .task.done {
   display: none !important;
 }
+
 .tasksCalendar.noProcess .task.process {
   display: none !important;
 }
+
 .tasksCalendar.noRecurrence .task.recurrence {
   display: none !important;
 }
+
 .tasksCalendar.noOverdue .task.overdue {
   display: none !important;
 }
+
 .tasksCalendar.noDailyNote .task.dailyNote {
   display: none !important;
 }
+
 .tasksCalendar.noCellNameEvent .cellName {
   pointer-events: none !important;
 }
-.tasksCalendar.noLayer .grid .wrappers:before,
-.tasksCalendar.noLayer .grid:before,
-.tasksCalendar.noLayer .list:before {
+
+.tasksCalendar.noLayer .grid .wrappers::before,
+.tasksCalendar.noLayer .grid::before,
+.tasksCalendar.noLayer .list::before {
   display: none !important;
 }
+
 .tasksCalendar.focusDone .task {
   opacity: 0.25 !important;
 }
+
 .tasksCalendar.focusDone .task.done {
   opacity: 1 !important;
 }
+
 .tasksCalendar.focusDue .task {
   opacity: 0.25 !important;
 }
+
 .tasksCalendar.focusDue .task.due {
   opacity: 1 !important;
 }
+
 .tasksCalendar.focusOverdue .task {
   opacity: 0.25 !important;
 }
+
 .tasksCalendar.focusOverdue .task.overdue {
   opacity: 1 !important;
 }
+
 .tasksCalendar.focusStart .task {
   opacity: 0.25 !important;
 }
+
 .tasksCalendar.focusStart .task.start {
   opacity: 1 !important;
 }
+
 .tasksCalendar.focusScheduled .task {
   opacity: 0.25 !important;
 }
+
 .tasksCalendar.focusScheduled .task.scheduled {
   opacity: 1 !important;
 }
+
 .tasksCalendar.focusRecurrence .task {
   opacity: 0.25 !important;
 }
+
 .tasksCalendar.focusRecurrence .task.recurrence {
   opacity: 1 !important;
 }
+
 .tasksCalendar.focusDailyNote .task {
   opacity: 0.25 !important;
 }
+
 .tasksCalendar.focusDailyNote .task.dailyNote {
   opacity: 1 !important;
 }
+
 .tasksCalendar.mini {
   max-width: 500px !important;
   margin: 0 auto;
 }
+
 .tasksCalendar.mini .grid {
   height: 400px !important;
 }
+
 .tasksCalendar.mini .gridHead,
 .tasksCalendar.mini .cellName,
 .tasksCalendar.mini .task,
 .tasksCalendar.mini .wrapperButton {
   font-size: 9px !important;
 }
-.tasksCalendar.mini .wrappers:before,
-.tasksCalendar.mini .grid:before {
+
+.tasksCalendar.mini .wrappers::before,
+.tasksCalendar.mini .grid::before {
   font-size: 70px !important;
 }
+
 .tasksCalendar.mini .statisticPopup li,
 .tasksCalendar.mini .weekViewContext li {
   font-size: 9px !important;
 }
+
 .tasksCalendar.noWeekNr .wrapperButton {
   visibility: hidden !important;
   width: 0 !important;
 }
+
 .tasksCalendar.noWeekNr .gridHead:first-child {
   visibility: hidden !important;
   width: 0 !important;
 }
+
 .tasksCalendar.noWeekNr .wrapper {
-  grid-template-columns: 0px 1fr 1fr 1fr 1fr 1fr 1fr 1fr !important;
+  grid-template-columns: 0 1fr 1fr 1fr 1fr 1fr 1fr 1fr !important;
 }
+
 .tasksCalendar.noWeekNr .gridHeads {
-  grid-template-columns: 0px 1fr 1fr 1fr 1fr 1fr 1fr 1fr !important;
+  grid-template-columns: 0 1fr 1fr 1fr 1fr 1fr 1fr 1fr !important;
 }
+
 .tasksCalendar.noWeekNr .list .weekNr {
   display: none !important;
 }
+
 .tasksCalendar.lineClamp1 .task .inner {
   -webkit-line-clamp: 1 !important;
   white-space: nowrap !important;
 }
+
 .tasksCalendar.lineClamp2 .task .inner {
   -webkit-line-clamp: 2 !important;
 }
+
 .tasksCalendar.lineClamp3 .task .inner {
   -webkit-line-clamp: 3 !important;
 }
+
 .tasksCalendar.noLineClamp .task .inner {
   display: block !important;
 }
-.tasksCalendar.noOverdueFlag .task .description:before {
+
+.tasksCalendar.noOverdueFlag .task .description::before {
   display: none !important;
 }
 
@@ -1560,6 +1758,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 .abyss-tg-allday-cell {
   flex: 1;
+
   /* Task 47: without this, a flex item's default `min-width: auto` lets its own content's
      intrinsic minimum size (here, a long `.abyss-tg-body-title`'s nowrap text) override its
      flex-computed share of the row — the cell grows to fit the text instead of the text
@@ -1669,6 +1868,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 .abyss-tg-grid-row {
   display: flex;
+
   /* flex-start, not the stretch default: without it, flex items (the hour-gutter and each
      day-column) are stretched to this scroll container's *visible* cross-size (its clientHeight)
      rather than sized to their own 24-hour content (1152px). That silently truncated every
@@ -1713,9 +1913,11 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .abyss-tg-hour-column {
   position: absolute;
   inset: 0;
+
   /* Explicit, deliberate stacking (not DOM-order accident): sits above the hour-grid
      lines painted by the day-column's plain (non-positioned) .abyss-tg-hour-row siblings. */
   z-index: 1;
+
   /* Auto (not none): empty space now has a meaning of its own (click-to-create — see
      onCreateAtTime), so this layer needs to receive the click. Blocks/the quick-add popover
      sit on top as ordinary auto-pointer-events children either way. */
@@ -1807,6 +2009,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 .abyss-tg-block {
   position: absolute;
+
   /* Explicit, deliberate stacking (not DOM-order accident): above the hour-grid lines
      and the now-line track, so task content remains legible. */
   z-index: 2;
@@ -1819,6 +2022,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   display: flex;
   flex-direction: column;
   gap: 1px;
+
   /* Task 36: a very short-duration task (e.g. 5-15min) previously rendered a block shorter than
      one legible line of text, effectively clipping/hiding its title. Floor derived from this
      rule's own box model, not guessed: `padding: 2px 6px` above contributes 2px top + 2px bottom
@@ -1840,6 +2044,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   align-items: center;
   gap: 0.4em;
   min-width: 0;
+
   /* Task 36: `.abyss-tg-block`'s flex-column layout has exactly two in-flow rows — this one and
      `.abyss-tg-block-toprow` above it — so when the block is squeezed down toward its own
      min-height (a short-duration task), something has to give. `flex-shrink: 0` here paired with
@@ -1860,6 +2065,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   min-width: 1.6em;
   flex: 0 0 1.6em;
 }
+
 .abyss-tg-block-head .abyss-status-marker svg {
   width: 0.85em;
   height: 0.85em;
@@ -1868,6 +2074,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .abyss-tg-block-title {
   font-weight: 600;
   line-height: 1.4;
+
   /* Task 40 (Round 4): --abyss-tag-text-color is set per-block in JS (tagFillContrast.ts) from the
      ACTUAL contrast-winning variant against this block's own tag-colored fill — falls back to
      the pre-existing var(--text-normal) when the block has no tag color at all (nothing was set)
@@ -1888,6 +2095,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   text-decoration: line-through;
   color: var(--text-muted);
 }
+
 .abyss-tg-block-title.is-cancelled,
 .abyss-tg-block-continuation-title.is-cancelled {
   text-decoration: line-through;
@@ -1906,6 +2114,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   text-decoration: line-through;
   color: var(--text-muted);
 }
+
 .abyss-tg-body-title.is-cancelled,
 .abyss-tg-deadline-title.is-cancelled,
 .abyss-mg-item-title.is-cancelled {
@@ -1923,6 +2132,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
    of compounding down to two-thirds of it. */
 .abyss-tg-block-subtitle {
   font-size: 0.95em;
+
   /* Task 40 (Round 4): same --abyss-tag-text-color fallback pattern as .abyss-tg-block-title above.
      Deliberately the SAME full-strength color as the title rather than a dimmer mix of it:
      --abyss-tag-text-color is already a near-maximum-contrast anchor (plain near-black/near-white,
@@ -1959,6 +2169,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   justify-content: space-between;
   gap: 6px;
   min-width: 0;
+
   /* Task 36: the LEAST important row — collapses first (down to 0 height, `overflow: hidden`
      clipping its content away cleanly rather than letting it spill) under the pressure of a
      short block squeezed toward `.abyss-tg-block`'s min-height, so the title in the sibling
@@ -1967,6 +2178,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   min-height: 0;
   overflow: hidden;
 }
+
 .abyss-tg-block-toprow .abyss-tg-block-subtitle {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2063,17 +2275,20 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .abyss-tg-body-title {
   flex: 1;
   min-width: 0;
+
   /* Task 44: matches .abyss-tg-block-title's overflow/text-overflow/white-space treatment exactly
      (asserted in test/timegrid-allday.test.ts) so a long all-day title truncates/ellipsizes
      identically to a timed block's, instead of the two rows following visually different rules. */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+
   /* Task 44: bold weight to match .abyss-tg-block-title — previously unset here (inheriting
      normal weight from .abyss-tg-body), so an all-day item's title read visibly lighter/thinner
      than a timed block's title directly below it in the same day column. */
   font-weight: 600;
   line-height: 1.4;
+
   /* Task 40 (Round 4): all-day span/plain items share the same tag-colored fill (renderAllDay.ts's
      renderDraggableBody), so their title needs the same contrast-driven override — previously
      this had no explicit color at all and simply inherited Obsidian's own body text color, which
@@ -2143,12 +2358,14 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   position: absolute;
   top: 0;
   bottom: 0;
+
   /* The exact 10px edge remains reachable even when a terminal marker occupies the same leading
      pixels. Only the edge itself is above the marker; its visual rail stays hidden until hover. */
   z-index: 5;
   width: 10px;
   cursor: ew-resize;
 }
+
 .abyss-tg-span-edge::after {
   content: '';
   position: absolute;
@@ -2161,41 +2378,43 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   opacity: 0;
   pointer-events: none;
 }
+
 .abyss-tg-span-edge--proxy {
   width: 16px;
 }
+
 .abyss-tg-span-edge--proxy::after {
   inset-inline-start: calc(50% - 1px);
 }
+
 .abyss-tg-span-continuation > .abyss-tg-span-edge--proxy.abyss-tg-span-edge--left {
-  inset-inline-start: calc(-1 * var(--abyss-calendar-ghost-rail));
-  inset-inline-end: auto;
+  inset-inline: calc(-1 * var(--abyss-calendar-ghost-rail)) auto;
 }
+
 .abyss-tg-span-edge--left {
-  inset-inline-start: -5px;
-  inset-inline-end: auto;
+  inset-inline: -5px auto;
 }
+
 .abyss-tg-span-edge--right {
-  inset-inline-start: auto;
-  inset-inline-end: -5px;
+  inset-inline: auto -5px;
 }
+
 /* Clipping roots keep the complete 10px target inside their box. */
 .abyss-tg-block > .abyss-tg-span-edge--right {
-  inset-inline-start: auto;
-  inset-inline-end: 0;
+  inset-inline: auto 0;
 }
+
 /* Task 34: left edge gets the same overflow-hidden-clipping fix as the right edge above. */
 .abyss-tg-block > .abyss-tg-span-edge--left {
-  inset-inline-start: 0;
-  inset-inline-end: auto;
+  inset-inline: 0 auto;
 }
+
 .abyss-tg-body > .abyss-tg-span-edge--right {
-  inset-inline-start: auto;
-  inset-inline-end: 0;
+  inset-inline: auto 0;
 }
+
 .abyss-tg-body > .abyss-tg-span-edge--left {
-  inset-inline-start: 0;
-  inset-inline-end: auto;
+  inset-inline: 0 auto;
 }
 
 /* Status controls remain above ordinary content; exact boundary targets intentionally use z-index
@@ -2222,6 +2441,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   font-size: var(--abyss-calendar-item-font-size);
   overflow: hidden;
   background: var(--abyss-calendar-surface);
+
   /* Task 36: same flex-column layout as `.abyss-tg-block` (see its own comment) so this segment's
      two in-flow rows — `.abyss-tg-block-toprow` (subtitle+badges) and the title below — can
      participate in the same "collapse the subtitle first" shrink behavior at a short min-height,
@@ -2229,6 +2449,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   display: flex;
   flex-direction: column;
   gap: 1px;
+
   /* Same derivation as `.abyss-tg-block`'s min-height, minus the marker (this segment has none):
      2*2px padding plus one legible line of the title's
      own font-size (this rule's `font-size: 0.8em`) at a generous 1.4 line-height. */
@@ -2332,6 +2553,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   min-height: 1.6em;
   width: 100%;
 }
+
 .abyss-tg-block-continuation-title {
   /* Same --abyss-tag-text-color fallback pattern as .abyss-tg-block-title, resolved against this
      continuation segment's shared committed fill. */
@@ -2341,6 +2563,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   text-overflow: ellipsis;
   display: block;
   line-height: 1.4;
+
   /* Task 36: never shrinks — see `.abyss-tg-block-continuation`'s own comment on this segment's
      flex-column "collapse the subtitle row first" behavior. */
   flex-shrink: 0;
@@ -2360,22 +2583,27 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   color: var(--text-muted);
   cursor: pointer;
 }
+
 .abyss-tg-deadline-marker[data-priority='A'] {
   border-color: var(--abyss-priority-a);
   color: var(--abyss-priority-a);
 }
+
 .abyss-tg-deadline-marker[data-priority='B'] {
   border-color: var(--abyss-priority-b);
   color: var(--abyss-priority-b);
 }
+
 .abyss-tg-deadline-marker[data-priority='C'] {
   border-color: var(--abyss-priority-c);
   color: var(--abyss-priority-c);
 }
+
 .abyss-tg-deadline-marker[data-priority='E'] {
   border-color: var(--abyss-priority-e);
   color: var(--abyss-priority-e);
 }
+
 .abyss-tg-deadline-marker[data-priority='F'] {
   border-color: var(--abyss-priority-f);
   color: var(--abyss-priority-f);
@@ -2408,6 +2636,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   background: var(--background-primary);
   box-shadow: 0 0 0 1px var(--background-primary);
 }
+
 .abyss-tg-body .abyss-status-marker svg,
 .abyss-tg-deadline-marker .abyss-status-marker svg,
 .abyss-mg-block-dot .abyss-status-marker svg,
@@ -2705,6 +2934,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
   line-height: 1.4;
+
   /* Task 40 (Round 4): Month view's compact items share the same tag-colored fill
      (MonthGridView.ts's applyTagFill), so their title needs the same contrast-driven override —
      see tagFillContrast.ts's own doc comment. */
@@ -2745,10 +2975,12 @@ body.is-mobile .tasksCalendar .cellName,
 body.is-mobile .tasksCalendar .task {
   font-size: 9px;
 }
+
 body.is-mobile .tasksCalendar[view='week']:not(.style4) .cellName,
 body.is-mobile .tasksCalendar[view='week']:not(.style4) .task {
   font-size: 13px !important;
 }
+
 body.is-mobile .tasksCalendar .statisticPopup li {
   font-size: 13px !important;
 }
@@ -2763,6 +2995,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   vertical-align: middle;
   padding: 0 4px;
 }
+
 .tasksCalendar .statisticButton:focus {
   outline: none;
 }
@@ -2787,8 +3020,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 /* Show standard tooltip via title */
-.tasksCalendar .statisticPopup li[title]:hover:after,
-.tasksCalendar .statisticPopup li[title]:active:after {
+.tasksCalendar .statisticPopup li[title]:hover::after,
+.tasksCalendar .statisticPopup li[title]:active::after {
   content: attr(title);
   position: absolute;
   left: 100%;
@@ -2823,6 +3056,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   background: var(--interactive-accent) !important;
   color: var(--text-on-accent);
 }
+
 .tasksCalendar button.active svg {
   stroke: var(--text-on-accent);
 }
@@ -2835,12 +3069,14 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 2px;
   flex: 1;
 }
+
 .abyss-rail-bottom {
   display: flex;
   flex-direction: column;
   align-items: center;
   padding-bottom: 4px;
 }
+
 .abyss-rail-btn {
   width: 36px;
   height: 36px;
@@ -2857,16 +3093,19 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     background 0.1s,
     color 0.1s;
 }
+
 .abyss-rail-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--icon-color-active);
 }
+
 .abyss-rail-btn.is-active {
   /* Use the theme accent (like the calendar view switcher's active button) so
      the selected rail item tracks the theme instead of reading as a flat grey. */
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
+
 .abyss-rail-btn svg {
   width: 18px;
   height: 18px;
@@ -2882,9 +3121,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-faint);
   user-select: none;
 }
+
 .abyss-left-section {
   padding: 4px 0;
 }
+
 .abyss-left-item {
   display: flex;
   align-items: center;
@@ -2898,26 +3139,31 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--nav-item-color);
   font-size: var(--font-ui-small);
 }
+
 .abyss-left-item:hover {
   background: var(--nav-item-background-hover);
   color: var(--nav-item-color-hover);
 }
+
 .abyss-left-item.is-active {
   background: var(--nav-item-background-active);
   color: var(--nav-item-color-active);
   font-weight: 500;
 }
+
 .abyss-left-item-left {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
+
 .abyss-left-label {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .abyss-left-icon {
   width: 16px;
   height: 16px;
@@ -2927,10 +3173,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   align-items: center;
   justify-content: center;
 }
+
 .abyss-left-icon svg {
   width: 15px;
   height: 15px;
 }
+
 .abyss-left-count {
   font-size: 11px;
   color: var(--text-muted);
@@ -2943,11 +3191,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-tag-group {
   margin: 1px 6px;
 }
+
 .abyss-tag-group-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px 5px 12px;
+  padding: 5px 12px;
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.1s;
@@ -2956,6 +3205,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   font-size: var(--font-ui-small);
   font-weight: 500;
 }
+
 .abyss-tag-group-header .abyss-left-label {
   /* Don't grow: keep the label natural-width so a trailing custom dot hugs the
      text instead of being pushed right toward the count (which uses margin-left:auto).
@@ -2963,27 +3213,33 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex: 0 1 auto;
   min-width: 0;
 }
+
 .abyss-tag-group-header .abyss-left-count {
   margin-left: auto;
 }
+
 .abyss-tag-group-header:hover {
   background: var(--nav-item-background-hover);
 }
+
 .abyss-tag-group-header.is-active {
   background: var(--nav-item-background-active);
   font-weight: 600;
 }
+
 .abyss-group-arrow {
   font-size: 10px;
   opacity: 0.5;
   transition: transform 0.15s;
 }
+
 .abyss-group-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
 }
+
 /* Project colour indicator. Deliberately a diamond (rotated square) rather than
    the round tag dot, so project vs. tag reads at a glance. Colour comes from the
    project's status; a faint default keeps the shape visible when none is set. */
@@ -2995,6 +3251,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   background: var(--text-faint);
   border-radius: 1px;
 }
+
 /* Marks a left-panel container whose view state (group/sort/show or filters)
    differs from defaults. Sits after the label, before the count badge; the
    fixed size + flex-shrink:0 keep it from resizing or eliding the label. */
@@ -3002,10 +3259,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-shrink: 0;
   width: 5px;
   height: 5px;
+
   /* Pull tight to the label: the parent flex `gap` (6-8px) would otherwise
      leave the dot floating well clear of the text; a negative margin lets it
      hug the name, matching the tag color-dot spacing. */
   margin-left: -3px;
+
   /* Nudge up ~2px from the label's vertical centre: enough to read as a small
      "badge" in the upper-right of the text, but still visually attached (a full
      top-align felt detached). Relative to centre so it holds across row heights. */
@@ -3014,9 +3273,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   background: var(--color-accent);
   opacity: 0.9;
 }
+
 .abyss-tag-group-children {
   padding-left: 8px;
 }
+
 .abyss-tag-child {
   font-weight: normal;
 }
@@ -3192,7 +3453,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   display: none;
 }
 
-@media (max-width: 480px) {
+@media (width <= 480px) {
   .abyss-shortcut-row {
     grid-template-columns: 1fr;
   }
@@ -3207,6 +3468,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-shrink: 0;
   border-bottom: 1px solid var(--background-modifier-border);
 }
+
 .abyss-center-title {
   font-size: 16px;
   font-weight: 600;
@@ -3214,6 +3476,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex: 1;
   color: var(--text-normal);
 }
+
 .abyss-center-search {
   height: 28px;
   border-radius: 6px;
@@ -3228,10 +3491,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     border-color 0.15s,
     width 0.2s;
 }
+
 .abyss-center-search:focus {
   border-color: var(--interactive-accent);
   width: 200px;
 }
+
 .abyss-search-global {
   flex: 1;
   width: auto;
@@ -3239,20 +3504,24 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   max-width: 360px;
   transition: border-color 0.15s;
 }
+
 .abyss-search-global:focus {
   width: auto;
 }
+
 .abyss-center-scroll {
   flex: 1;
   overflow-y: auto;
   padding: 8px 0;
 }
+
 .abyss-center-empty {
   text-align: center;
   color: var(--text-muted);
   padding: 40px 20px;
   font-size: 14px;
 }
+
 .abyss-group-header {
   padding: 16px 16px 6px;
   font-size: 10px;
@@ -3267,6 +3536,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   margin-top: 2px;
   border-top: 1px solid var(--background-modifier-border);
 }
+
 .abyss-group-header--first {
   border-top: none;
   padding-top: 8px;
@@ -3277,6 +3547,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-task-card {
   --abyss-task-card-marker-size: 19px;
   --abyss-task-card-primary-gap: 8px;
+
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -3288,6 +3559,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   transition: background 0.1s;
   position: relative;
 }
+
 .abyss-task-card-main-row {
   display: flex;
   align-items: center;
@@ -3295,26 +3567,32 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   width: 100%;
   min-width: 0;
 }
+
 .abyss-task-card-main-row > .abyss-status-marker {
   width: var(--abyss-task-card-marker-size);
   height: var(--abyss-task-card-marker-size);
   min-width: var(--abyss-task-card-marker-size);
   flex-basis: var(--abyss-task-card-marker-size);
 }
+
 .abyss-task-card:hover {
   background: var(--background-modifier-hover);
 }
+
 .abyss-task-card.is-selected {
   background: var(--background-modifier-active-hover);
 }
+
 .abyss-task-card.abyss-multi-selected {
   background: var(--background-modifier-active-hover);
   box-shadow: inset 2px 0 0 var(--interactive-accent);
 }
+
 .abyss-task-card:focus-visible {
   outline: 1px solid var(--background-modifier-border-focus);
   outline-offset: -1px;
 }
+
 .abyss-sr-only {
   position: absolute;
   width: 1px;
@@ -3322,10 +3600,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
 }
+
 /* Status marker — chip replacing the native checkbox at task render sites.
    Visual contract: PRIORITY = border color (only use of color), STATUS
    GROUP (type) = container shape, CUSTOM STATUS = neutral-tone icon inside.
@@ -3341,6 +3620,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   box-sizing: border-box;
   display: grid;
   place-items: center;
+
   /* --text-faint is clearly visible on both the list and the (darker) right
      panel; the old --background-modifier-border was near-invisible for the
      empty To-do marker, which has no inner icon to fall back on. Priority
@@ -3349,31 +3629,38 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   background: transparent;
   color: var(--text-normal);
   cursor: pointer;
+
   /* Center a text glyph/emoji marker exactly: kill baseline/line-box offset
      so the character sits dead-center like the SVG icons do. */
   font-size: 12px;
   line-height: 1;
   text-align: center;
 }
+
 .abyss-status-marker--inert {
   cursor: default;
 }
+
 /* Shape by status-group (type): in-progress is the only circular group. */
 .abyss-status-marker[data-status-type='in-progress'] {
   border-radius: 50%;
 }
+
 .abyss-status-marker > svg {
   display: block;
 }
+
 .abyss-status-marker[data-status='other'] {
   color: var(--text-muted);
 }
+
 .abyss-status-marker svg {
   width: 13px;
   height: 13px;
-  color: currentColor;
-  stroke: currentColor;
+  color: currentcolor;
+  stroke: currentcolor;
 }
+
 /* Priority — colors BOTH the chip border and the inner icon (via currentColor),
    so the whole marker reads as one priority hue. Footprint stays 19px (border,
    not an outer halo). No-priority markers keep the neutral color from the base
@@ -3388,45 +3675,54 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-color: var(--abyss-priority-a, var(--color-red));
   color: var(--abyss-priority-a, var(--color-red));
 }
+
 .abyss-status-marker[data-priority='B'] {
   border-color: var(--abyss-priority-b, var(--color-orange));
   color: var(--abyss-priority-b, var(--color-orange));
 }
+
 .abyss-status-marker[data-priority='C'] {
   border-color: var(--abyss-priority-c, var(--color-yellow));
   color: var(--abyss-priority-c, var(--color-yellow));
 }
+
 .abyss-status-marker[data-priority='E'] {
   border-color: var(--abyss-priority-e, var(--color-blue));
   color: var(--abyss-priority-e, var(--color-blue));
 }
+
 .abyss-status-marker[data-priority='F'] {
   border-color: var(--abyss-priority-f, var(--color-purple));
   color: var(--abyss-priority-f, var(--color-purple));
 }
+
 .abyss-task-body {
   flex: 1;
   min-width: 0;
 }
+
 .abyss-task-title-row {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: nowrap;
 }
+
 .abyss-task-title {
   flex: 1;
   min-width: 0;
-  word-break: break-word;
+  overflow-wrap: anywhere;
   font-size: var(--font-ui-medium);
   color: var(--text-normal);
 }
+
 .abyss-task-meta {
   display: flex;
   flex-direction: column;
   gap: 3px;
   margin-top: 2px;
 }
+
 .abyss-task-desc {
   font-size: var(--font-smallest, 11px);
   color: var(--text-muted);
@@ -3435,18 +3731,21 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .abyss-task-card > .abyss-task-desc {
   margin-top: 0;
   margin-inline-start: calc(
     var(--abyss-task-card-marker-size) + var(--abyss-task-card-primary-gap)
   );
 }
+
 .abyss-task-pills {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
 }
+
 .abyss-task-meta-right {
   flex-shrink: 1;
   min-width: 0;
@@ -3456,6 +3755,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-wrap: nowrap;
   overflow: hidden;
 }
+
 .abyss-task-date {
   font-size: 11px;
   color: var(--text-muted);
@@ -3465,11 +3765,13 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 3px;
   white-space: nowrap;
 }
+
 .abyss-task-date svg {
   width: 11px;
   height: 11px;
   flex-shrink: 0;
 }
+
 .abyss-date-icon {
   display: inline-flex;
   align-items: center;
@@ -3477,23 +3779,29 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-shrink: 0;
   line-height: 0;
 }
+
 .abyss-date-icon svg {
   width: 11px;
   height: 11px;
   display: block;
 }
+
 .abyss-task-date.is-overdue {
   color: var(--abyss-date-overdue);
 }
+
 .abyss-task-date.is-today {
   color: var(--interactive-accent);
 }
+
 .abyss-task-date.is-tomorrow {
   color: var(--abyss-date-tomorrow);
 }
+
 .abyss-task-date.is-soon {
   color: var(--interactive-accent);
 }
+
 .abyss-task-tag {
   font-size: 11px;
   color: var(--abyss-tag-color, var(--text-faint));
@@ -3506,14 +3814,17 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   opacity: 0.88;
   cursor: pointer;
 }
+
 .abyss-task-tag--colored {
   opacity: 1;
 }
+
 .abyss-center .abyss-task-tag:hover {
   text-decoration: underline;
   text-underline-offset: 2px;
   opacity: 1;
 }
+
 .abyss-task-source-note {
   font-size: 11px;
   color: var(--text-muted);
@@ -3524,21 +3835,25 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   cursor: default;
   pointer-events: none;
 }
+
 .abyss-task-source-note-icon {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
 }
+
 .abyss-task-source-note-icon svg {
   width: 11px;
   height: 11px;
 }
+
 .abyss-task-source-note-name {
   text-decoration: underline;
   text-decoration-color: var(--text-faint);
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
+
 .abyss-task-progress {
   font-size: 11px;
   color: var(--text-muted);
@@ -3548,6 +3863,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   align-items: center;
   gap: 2px;
 }
+
 .abyss-task-count-badge {
   font-size: 11px;
   color: var(--text-muted);
@@ -3556,6 +3872,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 2px;
   font-variant-numeric: tabular-nums;
 }
+
 .abyss-task-count-badge svg {
   width: 11px;
   height: 11px;
@@ -3596,17 +3913,20 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 0;
   line-height: 1;
 }
+
 .abyss-task-delete-btn svg {
   display: block;
   width: 16px;
   height: 16px;
 }
+
 .abyss-task-card:hover .abyss-task-delete-btn {
   opacity: 1;
 }
+
 .abyss-task-delete-btn:hover {
   color: var(--text-error);
-  background: hsla(0, 70%, 50%, 0.1);
+  background: hsl(0deg 70% 50% / 10%);
 }
 
 /* Keep the title readable when the center pane is squeezed between both side panels. Metadata
@@ -3616,8 +3936,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   .abyss-task-card-main-row {
     display: grid;
     grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr) 24px;
-    column-gap: var(--abyss-task-card-primary-gap);
-    row-gap: 2px;
+    gap: 2px var(--abyss-task-card-primary-gap);
   }
 
   .abyss-task-card-main-row > .abyss-status-marker {
@@ -3654,6 +3973,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-shrink: 0;
   border: 0;
 }
+
 .abyss-add-task-trigger {
   display: flex;
   align-items: center;
@@ -3676,23 +3996,28 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     background 0.1s,
     color 0.1s;
 }
+
 .abyss-add-task-trigger[hidden] {
   display: none;
 }
+
 .abyss-add-task-trigger:hover {
   color: var(--interactive-accent);
-  background: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.08);
+  background: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 8%);
 }
+
 .abyss-add-task-trigger:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 1px;
 }
+
 .abyss-add-task-plus {
   font-size: 16px;
   line-height: 1;
   color: var(--interactive-accent);
   font-weight: 400;
 }
+
 .abyss-quick-capture {
   padding: 4px 4px 6px;
 }
@@ -3794,7 +4119,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
 }
@@ -4021,6 +4346,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   opacity: 0.6;
   transition: opacity 0.1s;
 }
+
 .abyss-cal-style-btn:hover {
   opacity: 1;
 }
@@ -4078,6 +4404,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   display: flex;
   flex-direction: column;
 }
+
 .abyss-cal-body .grid,
 .abyss-cal-body .list {
   flex: 1;
@@ -4177,22 +4504,26 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 6px;
   user-select: none;
 }
+
 .abyss-right-empty-icon {
   width: 56px;
   height: 56px;
   opacity: 0.2;
   margin-bottom: 8px;
 }
+
 .abyss-right-empty-icon svg {
   width: 56px;
   height: 56px;
 }
+
 .abyss-right-empty-title {
   font-size: 14px;
   font-weight: 500;
   color: var(--text-muted);
   margin: 0;
 }
+
 .abyss-right-empty-hint {
   font-size: 12px;
   color: var(--text-faint);
@@ -4204,9 +4535,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 6px 0;
   border-bottom: 1px solid var(--background-modifier-border);
 }
+
 .abyss-comment-row:last-child {
   border-bottom: none;
 }
+
 .abyss-comment-date {
   font-size: 10px;
   color: var(--text-faint);
@@ -4214,6 +4547,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   margin-bottom: 2px;
   font-variant-numeric: tabular-nums;
 }
+
 .abyss-comment-text {
   font-size: 13px;
   color: var(--text-normal);
@@ -4231,18 +4565,22 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-wrap: wrap;
   gap: 0;
 }
+
 .abyss-breadcrumb-item {
   cursor: pointer;
   color: var(--text-accent);
 }
+
 .abyss-breadcrumb-item:hover {
   text-decoration: underline;
 }
+
 .abyss-breadcrumb-item.is-current {
   color: var(--text-muted);
   cursor: default;
   text-decoration: none;
 }
+
 .abyss-breadcrumb-sep {
   color: var(--text-faint);
 }
@@ -4256,6 +4594,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   position: relative;
   border-bottom: 1px solid var(--background-modifier-border);
 }
+
 .abyss-right-title {
   flex: 1;
   font-size: 17px;
@@ -4268,9 +4607,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: 4px;
   min-width: 0;
 }
+
 .abyss-right-title:focus {
   background: var(--background-modifier-hover);
 }
+
 .abyss-right-title-view {
   min-height: var(--input-height, 30px);
   padding: 4px 6px;
@@ -4279,30 +4620,36 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   overflow: auto;
   resize: vertical; /* user can stretch the block */
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
+
 .abyss-right-title-view:hover {
   background: var(--background-modifier-hover);
 }
+
 .abyss-suggest-path {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
 }
+
 .abyss-right-title-edit {
   width: 100%;
   min-height: var(--input-height, 30px);
   resize: vertical;
+
   /* font-size/weight come from the shared .abyss-right-title class; inherit the
      UI font-family so the textarea doesn't fall back to the UA monospace and
      read/edit modes match visually. */
   font-family: inherit;
   line-height: inherit;
 }
+
 .abyss-right-header-actions {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
 }
+
 .abyss-right-action-btn {
   width: 28px;
   height: 28px;
@@ -4316,6 +4663,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   align-items: center;
   justify-content: center;
 }
+
 .abyss-right-action-btn:hover {
   background: var(--background-modifier-hover);
 }
@@ -4327,6 +4675,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 6px;
   padding: 4px 16px 10px;
 }
+
 .abyss-chip {
   display: inline-flex;
   align-items: center;
@@ -4347,33 +4696,41 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   box-sizing: border-box;
   vertical-align: middle;
 }
+
 .abyss-chip:hover {
   background: var(--background-modifier-hover);
   border-color: var(--interactive-accent);
 }
+
 .abyss-chip-empty {
   color: var(--text-muted);
   border-style: dashed;
 }
+
 .abyss-chip-tag {
   cursor: default;
   color: var(--abyss-chip-tag-color, var(--text-normal));
 }
+
 .abyss-chip-tag:hover {
   background: var(--background-modifier-hover);
   border-color: var(--interactive-accent);
 }
+
 .abyss-chip-add--hidden {
   display: none;
 }
+
 .abyss-chip-add {
   background: transparent;
   border-style: dashed;
   color: var(--text-muted);
 }
+
 .abyss-chip-add-date {
   position: relative;
 }
+
 .abyss-chip-remove {
   display: inline-flex;
   align-items: center;
@@ -4393,6 +4750,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     background 0.1s,
     color 0.1s;
 }
+
 .abyss-chip-remove:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
@@ -4409,12 +4767,14 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 0.5rem;
   min-width: 10rem;
 }
+
 .abyss-popover-input-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   height: 2rem;
 }
+
 .abyss-date-input,
 .abyss-time-input,
 .abyss-duration-input {
@@ -4428,6 +4788,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-normal);
   font-size: 13px;
 }
+
 .abyss-popover-clear-icon-btn {
   flex-shrink: 0;
   width: 1.5rem;
@@ -4442,30 +4803,36 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   align-items: center;
   justify-content: center;
 }
+
 .abyss-popover-clear-icon-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
+
 .abyss-popover-clear-icon-btn svg {
   width: 0.75rem;
   height: 0.75rem;
 }
+
 .abyss-date-popover,
 .abyss-time-popover {
   border: 0;
   border-radius: 0.5rem;
   box-shadow: var(--shadow-s);
 }
+
 .abyss-date-popover .abyss-date-input,
 .abyss-time-popover .abyss-time-input {
   border: 1px solid var(--background-modifier-border);
   background: transparent;
   box-shadow: none;
 }
+
 .abyss-date-picker-popover {
   inline-size: max-content;
   max-inline-size: calc(100% - (var(--abyss-popover-edge-gap, 0.5rem) * 2));
 }
+
 .abyss-priority-popover {
   display: grid;
   min-width: 0;
@@ -4477,6 +4844,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   overflow: hidden;
   box-shadow: var(--shadow-s);
 }
+
 .abyss-priority-option {
   display: grid;
   grid-template-columns: 0.8em 0.9em max-content;
@@ -4502,6 +4870,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   --abyss-recurrence-badge-radius: var(--radius-s);
   --abyss-recurrence-badge-padding: 0 var(--size-2-1);
   --abyss-recurrence-badge-icon-size: 0.7rem;
+
   box-sizing: border-box;
   display: inline-flex;
   flex: 0 0 auto;
@@ -4837,6 +5206,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     transition: none !important;
   }
 }
+
 .abyss-priority-option-flag {
   width: 0.9em;
   display: inline-flex;
@@ -4845,38 +5215,48 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-shrink: 0;
   color: var(--text-muted);
 }
+
 /* Filled flag: the banner path is filled with the current colour so every
    priority flag across the plugin reads the same (see the shared fill rule
    below). The Lucide `flag` pole stays a stroke. */
 .abyss-priority-option-flag svg {
   width: 0.9em;
   height: 0.9em;
-  fill: currentColor;
+  fill: currentcolor;
 }
+
 .abyss-priority-option[data-priority='A'] .abyss-priority-option-flag {
   color: var(--abyss-priority-a);
 }
+
 .abyss-priority-option[data-priority='B'] .abyss-priority-option-flag {
   color: var(--abyss-priority-b);
 }
+
 .abyss-priority-option[data-priority='C'] .abyss-priority-option-flag {
   color: var(--abyss-priority-c);
 }
+
 .abyss-priority-option[data-priority='E'] .abyss-priority-option-flag {
   color: var(--abyss-priority-e);
 }
+
 .abyss-priority-option[data-priority='F'] .abyss-priority-option-flag {
   color: var(--abyss-priority-f);
 }
+
 .abyss-priority-option:hover {
   background: var(--background-modifier-hover);
 }
+
 .abyss-priority-option.is-active {
   font-weight: 600;
 }
+
 .abyss-priority-option-label {
   white-space: nowrap;
 }
+
 .abyss-priority-option-check {
   width: 0.8em;
   height: 0.8em;
@@ -4885,6 +5265,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   justify-content: center;
   color: var(--color-accent);
 }
+
 .abyss-priority-option-check svg {
   width: 0.75em;
   height: 0.75em;
@@ -4902,6 +5283,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-direction: column;
   min-width: 12rem;
   max-width: 16rem;
+
   /* Match Obsidian's native menu: same design tokens for padding, radius,
      shadow, font metrics and colour, so the checkbox menu is visually identical
      to the task context menu regardless of theme. */
@@ -4914,17 +5296,20 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   line-height: var(--line-height-tight);
   color: var(--text-normal);
 }
+
 .abyss-status-popover.abyss-forecast-context-menu {
   box-sizing: border-box;
   min-width: min(12rem, calc(100vw - 16px));
   max-width: min(16rem, calc(100vw - 16px));
 }
+
 .abyss-status-popover.abyss-forecast-context-menu > button {
   min-width: 0;
   max-width: 100%;
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
 .abyss-status-popover-priority-row {
   display: flex;
   align-items: center;
@@ -4932,6 +5317,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: var(--size-2-1);
   padding: var(--size-2-1) var(--size-2-1) var(--size-2-3);
 }
+
 .abyss-status-popover-flag {
   display: inline-flex;
   align-items: center;
@@ -4945,57 +5331,74 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-muted);
   cursor: pointer;
 }
+
 .abyss-status-popover-flag:hover {
   background: var(--background-modifier-hover);
 }
+
 .abyss-status-popover-flag.is-active {
   border-color: var(--color-accent);
   background: var(--background-modifier-hover);
   box-shadow: inset 0 0 0 1px var(--color-accent);
 }
+
 .abyss-status-popover-flag svg {
   width: 0.95rem;
   height: 0.95rem;
+
   /* Filled banner so this matches the right-panel priority flags. */
-  fill: currentColor;
+  fill: currentcolor;
 }
+
 .abyss-status-popover-flag[data-abyss-priority='A'] {
   color: var(--color-red);
 }
+
 .abyss-status-popover-flag[data-abyss-priority='B'] {
   color: var(--color-orange);
 }
+
 .abyss-status-popover-flag[data-abyss-priority='C'] {
   color: var(--color-yellow);
 }
+
 .abyss-status-popover-flag[data-abyss-priority='E'] {
   color: var(--color-blue);
 }
+
 .abyss-status-popover-flag[data-abyss-priority='F'] {
   color: var(--color-purple);
 }
+
 .abyss-menu-priority-flag[data-abyss-priority='A'] .menu-item-icon {
   color: var(--color-red);
 }
+
 .abyss-menu-priority-flag[data-abyss-priority='B'] .menu-item-icon {
   color: var(--color-orange);
 }
+
 .abyss-menu-priority-flag[data-abyss-priority='C'] .menu-item-icon {
   color: var(--color-yellow);
 }
+
 .abyss-menu-priority-flag[data-abyss-priority='D'] .menu-item-icon {
   color: var(--text-muted);
 }
+
 .abyss-menu-priority-flag[data-abyss-priority='E'] .menu-item-icon {
   color: var(--color-blue);
 }
+
 .abyss-menu-priority-flag[data-abyss-priority='F'] .menu-item-icon {
   color: var(--color-purple);
 }
+
 /* Filled banner so native-menu priority flags match the popover / right panel. */
 .abyss-menu-priority-flag .menu-item-icon svg {
-  fill: currentColor;
+  fill: currentcolor;
 }
+
 /* Status shape-marker injected into a native menu item's icon slot
    (buildStatusSubmenu, src/ui/statusMenu.ts) — rendered outside
    `.abyss-panel-view`, always with priority 'D' so no colored border is drawn;
@@ -5007,35 +5410,43 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex: 0 0 15px;
   cursor: default;
 }
+
 .menu-item-icon .abyss-status-marker svg {
   width: 10px;
   height: 10px;
 }
+
 .abyss-status-popover-divider {
   height: 1px;
   margin: var(--size-2-2) var(--size-2-1);
   background: var(--background-modifier-border);
 }
+
 .abyss-status-popover-list {
   display: flex;
   flex-direction: column;
+
   /* Grow to fit all statuses; only scroll when there are really many
      (or the popover would run off-screen) rather than at a fixed small cap. */
   max-height: min(55vh, 32rem);
   overflow-y: auto;
 }
+
 .abyss-status-popover-row {
   display: flex;
   align-items: center;
+
   /* Native menu-item metrics: icon gap, padding and radius from the same tokens. */
   gap: var(--size-4-2);
   padding: var(--size-4-1) var(--size-4-2);
   border-radius: var(--radius-s);
   cursor: pointer;
 }
+
 .abyss-status-popover-row:hover {
   background: var(--background-modifier-hover);
 }
+
 /* Shrink the status marker to the native menu-item icon slot (16px) so rows are
    as compact as Obsidian's own menu — the card-sized 19px marker read as chunky. */
 .abyss-status-popover-row .abyss-status-marker {
@@ -5047,24 +5458,29 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: 4px;
   cursor: default;
 }
+
 .abyss-status-popover-row .abyss-status-marker[data-status-type='in-progress'],
 .menu-item-icon .abyss-status-marker[data-status-type='in-progress'] {
   border-radius: 50%;
 }
+
 .abyss-status-popover-row .abyss-status-marker svg {
   width: 11px;
   height: 11px;
 }
+
 .abyss-status-popover-row.is-current {
   font-weight: 600;
   color: var(--text-normal);
 }
+
 .abyss-status-popover-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .abyss-status-popover-check {
   display: inline-flex;
   align-items: center;
@@ -5074,6 +5490,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   height: 0.9rem;
   color: var(--color-accent);
 }
+
 .abyss-status-popover-check svg {
   width: 0.8rem;
   height: 0.8rem;
@@ -5088,15 +5505,19 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-priority-chip[data-priority='A'] {
   color: var(--abyss-priority-a, var(--color-red));
 }
+
 .abyss-priority-chip[data-priority='B'] {
   color: var(--abyss-priority-b, var(--color-orange));
 }
+
 .abyss-priority-chip[data-priority='C'] {
   color: var(--abyss-priority-c, var(--color-yellow));
 }
+
 .abyss-priority-chip[data-priority='E'] {
   color: var(--abyss-priority-e, var(--color-blue));
 }
+
 .abyss-priority-chip[data-priority='F'] {
   color: var(--abyss-priority-f, var(--color-purple));
 }
@@ -5105,15 +5526,18 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-right-section {
   padding: 16px 16px 0;
 }
+
 .abyss-right-section + .abyss-right-section {
   margin-top: 8px;
 }
+
 .abyss-right-section-header {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
 }
+
 .abyss-right-section-label {
   font-size: var(--font-ui-smaller, 11px);
   font-weight: 600;
@@ -5121,6 +5545,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   letter-spacing: 0.06em;
   color: var(--text-muted);
 }
+
 .abyss-right-section-count {
   font-size: var(--font-ui-small);
   color: var(--text-faint);
@@ -5128,6 +5553,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: 10px;
   padding: 0 6px;
 }
+
 .abyss-right-desc {
   width: 100%;
   border: 1px solid var(--background-modifier-border);
@@ -5142,18 +5568,22 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   outline: none;
   box-sizing: border-box;
 }
+
 .abyss-right-desc:focus {
   border-color: var(--interactive-accent);
 }
+
 .abyss-right-desc-view {
   cursor: text;
   overflow: auto;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
+
 .abyss-right-desc-view:hover {
   border-color: var(--background-modifier-border-hover);
 }
+
 .abyss-right-desc-empty {
   color: var(--text-faint);
 }
@@ -5164,6 +5594,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-direction: column;
   gap: 4px;
 }
+
 .abyss-subtask-row {
   display: flex;
   align-items: center;
@@ -5173,12 +5604,15 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   position: relative;
   user-select: none;
 }
+
 .abyss-subtask-row:active {
   cursor: grabbing;
 }
+
 .abyss-subtask-row.is-dragging {
   opacity: 0.4;
 }
+
 .abyss-subtask-row.drop-above::before {
   content: '';
   position: absolute;
@@ -5190,6 +5624,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: 1px;
   pointer-events: none;
 }
+
 .abyss-subtask-row.drop-below::after {
   content: '';
   position: absolute;
@@ -5201,24 +5636,29 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: 1px;
   pointer-events: none;
 }
+
 .abyss-subtask-label {
   font-size: var(--font-ui-small);
   color: var(--text-normal);
   cursor: pointer;
   flex: 1;
 }
+
 .abyss-subtask-label:hover {
   text-decoration: underline;
   color: var(--text-accent);
 }
+
 .abyss-subtask-label.is-done {
   text-decoration: line-through;
   color: var(--text-muted);
 }
+
 .abyss-subtask-content {
   flex: 1;
   min-width: 0;
 }
+
 .abyss-subtask-progress {
   font-size: var(--font-smallest, 11px);
   color: var(--text-muted);
@@ -5226,15 +5666,18 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: 8px;
   padding: 0 5px;
 }
+
 .abyss-subtask-meta {
   display: flex;
   gap: 6px;
   margin-top: 2px;
 }
+
 .abyss-subtask-comment-count {
   font-size: var(--font-smallest, 11px);
   color: var(--text-muted);
 }
+
 .abyss-subtask-new-input {
   width: 100%;
   padding: 4px 8px;
@@ -5259,16 +5702,20 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: 4px;
   transition: color 0.1s;
 }
+
 .abyss-subtask-add-row:hover {
   color: var(--text-normal);
 }
+
 .abyss-subtask-add-row--hidden {
   display: none;
 }
+
 .abyss-subtask-add-icon {
   font-size: 16px;
   line-height: 1;
 }
+
 .abyss-subtask-add-label {
   font-size: var(--font-ui-small);
 }
@@ -5280,6 +5727,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 6px;
   margin-bottom: 10px;
 }
+
 .abyss-comment-row {
   font-size: 13px;
   color: var(--text-normal);
@@ -5290,13 +5738,16 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-direction: column;
   gap: 2px;
 }
+
 .abyss-comment-text {
   line-height: 1.4;
 }
+
 .abyss-comment-date {
   font-size: 11px;
   color: var(--text-muted);
 }
+
 .abyss-comment-input {
   width: 100%;
   min-height: 60px;
@@ -5313,10 +5764,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   font-family: var(--font-text);
   outline: none;
 }
+
 .abyss-comment-input:focus {
   outline: none;
   border-color: var(--interactive-accent);
 }
+
 .abyss-comment-edit-input {
   width: 100%;
   border: 1px solid var(--interactive-accent);
@@ -5332,6 +5785,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   box-sizing: border-box;
   margin-top: 4px;
 }
+
 .abyss-tag-input {
   padding: 3px 8px;
   font-size: 12px;
@@ -5342,11 +5796,13 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   outline: none;
   width: 100px;
 }
+
 .abyss-tag-dropdown-wrap {
   position: relative;
   display: inline-flex;
   flex-direction: column;
 }
+
 .abyss-tag-suggest-item {
   color: var(--abyss-tag-suggest-color, var(--text-normal));
 }
@@ -5356,6 +5812,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 0;
   overflow: hidden;
 }
+
 .abyss-tag-picker-search {
   width: 100%;
   padding: 10px 16px;
@@ -5366,11 +5823,13 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   outline: none;
   box-sizing: border-box;
 }
+
 .abyss-tag-picker-list {
   max-height: 320px;
   overflow-y: auto;
   padding: 4px 0;
 }
+
 .abyss-tag-picker-modal button.abyss-tag-picker-item {
   display: flex;
   align-items: center;
@@ -5393,55 +5852,69 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   margin: 1px 6px;
   user-select: none;
 }
+
 .abyss-tag-picker-modal button.abyss-tag-picker-item:hover {
   background: var(--background-modifier-hover);
 }
+
 .abyss-tag-picker-modal button.abyss-tag-picker-item--checked {
   background: var(--background-modifier-active-hover);
 }
+
 .abyss-tag-picker-modal button.abyss-tag-picker-item--checked:hover {
   background: var(--background-modifier-active-hover);
 }
+
 .abyss-tag-picker-item--partial {
   opacity: 0.7;
 }
+
 .abyss-tag-picker-modal button.abyss-tag-picker-item--removing {
-  background: rgba(var(--color-red-rgb), 0.08);
+  background: rgb(var(--color-red-rgb), 0.08);
 }
+
 .abyss-tag-picker-modal button.abyss-tag-picker-item--removing:hover {
-  background: rgba(var(--color-red-rgb), 0.08);
+  background: rgb(var(--color-red-rgb), 0.08);
 }
+
 .abyss-tag-picker-modal button.abyss-tag-picker-item--removing .abyss-tag-picker-icon {
   color: var(--color-red);
 }
+
 .abyss-tag-picker-modal button.abyss-tag-picker-item--removing .abyss-tag-picker-label {
   text-decoration: line-through;
   opacity: 0.7;
 }
+
 .abyss-tag-picker-modal button.abyss-tag-picker-item:focus-visible,
 .abyss-status-icon-field button.abyss-status-icon-result:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
+
 .abyss-tag-picker-icon {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
   color: var(--interactive-accent);
 }
+
 .abyss-tag-picker-item--partial .abyss-tag-picker-icon {
   color: var(--text-muted);
 }
+
 .abyss-tag-picker-label {
   font-size: var(--font-ui-small);
   color: var(--abyss-tag-picker-color, var(--tag-color, var(--text-normal)));
 }
+
 .abyss-tag-picker-empty {
   padding: 16px;
   text-align: center;
   color: var(--text-muted);
   font-size: var(--font-ui-small);
 }
+
 .abyss-tag-dropdown {
   position: absolute;
   top: calc(100% + 4px);
@@ -5456,9 +5929,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   overflow-y: auto;
   padding: 4px 0;
 }
+
 .abyss-tag-dropdown--hidden {
   display: none;
 }
+
 .abyss-tag-dropdown-opt {
   padding: 5px 12px;
   font-size: 12px;
@@ -5466,6 +5941,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   cursor: pointer;
   white-space: nowrap;
 }
+
 .abyss-tag-dropdown-opt:hover,
 .abyss-tag-dropdown-opt.is-active {
   background: var(--background-modifier-hover);
@@ -5485,21 +5961,25 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   min-width: 140px;
   overflow: hidden;
 }
+
 .abyss-add-date-menu--compact {
   right: auto;
   min-width: 0;
   inline-size: max-content;
   max-inline-size: calc(100% - (var(--abyss-popover-edge-gap, 0.5rem) * 2));
 }
+
 .abyss-context-item {
   padding: 8px 14px;
   cursor: pointer;
   font-size: 13px;
   color: var(--text-normal);
 }
+
 .abyss-context-item:hover {
   background: var(--background-modifier-hover);
 }
+
 .abyss-context-item.abyss-context-danger {
   color: var(--color-red, #e74c3c);
 }
@@ -5516,6 +5996,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-popover-anchored {
   --abyss-popover-anchor-gap: 0.25rem;
   --abyss-popover-edge-gap: 0.5rem;
+
   position: absolute;
   top: var(--abyss-pop-top, 100%);
   left: var(--abyss-pop-left, 0);
@@ -5528,7 +6009,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: var(--modal-scrim-background, rgba(0, 0, 0, 0.45));
+  background: var(--modal-scrim-background, rgb(0 0 0 / 45%));
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -5564,9 +6045,7 @@ body.abyss-modal-open .popover.hover-popover {
 
 /* ── Drag-and-drop states ────────────────────────────────── */
 
-.is-dragging:not(.abyss-tg-block):not(.abyss-tg-body):not(.abyss-mg-block-dot):not(
-    .abyss-mg-plain
-  ) {
+.is-dragging:not(.abyss-tg-block, .abyss-tg-body, .abyss-mg-block-dot, .abyss-mg-plain) {
   opacity: 0.4;
   cursor: grabbing;
 }
@@ -5897,6 +6376,7 @@ body.abyss-modal-open .popover.hover-popover {
   display: flex;
   flex-direction: column;
 }
+
 .abyss-projects-panel > div {
   display: flex;
   flex-direction: column;
@@ -5912,15 +6392,18 @@ body.abyss-modal-open .popover.hover-popover {
   cursor: pointer;
   user-select: none;
 }
+
 .abyss-left-section-chevron {
   display: inline-flex;
   align-items: center;
   color: var(--text-faint);
 }
+
 .abyss-left-section-chevron svg {
   width: 14px;
   height: 14px;
 }
+
 .abyss-left-section-title {
   flex: 1;
   font-size: var(--font-ui-smaller);
@@ -5928,6 +6411,7 @@ body.abyss-modal-open .popover.hover-popover {
   letter-spacing: 0.05em;
   color: var(--text-muted);
 }
+
 .abyss-left-add {
   display: inline-flex;
   align-items: center;
@@ -5939,30 +6423,37 @@ body.abyss-modal-open .popover.hover-popover {
   opacity: 0;
   transition: opacity 0.1s ease;
 }
+
 .abyss-left-section-header--collapsible:hover .abyss-left-add {
   opacity: 1;
 }
+
 .abyss-left-add:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
+
 .abyss-left-add svg {
   width: 14px;
   height: 14px;
 }
+
 .abyss-left-add-input {
   width: 100%;
   margin: 4px 0;
   font-size: var(--font-ui-small);
 }
+
 .abyss-left-showmore {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   cursor: pointer;
 }
+
 .abyss-left-showmore:hover {
   color: var(--text-normal);
 }
+
 .abyss-group-arrow svg {
   width: 14px;
   height: 14px;
@@ -5975,6 +6466,7 @@ body.abyss-modal-open .popover.hover-popover {
   gap: 6px;
   min-width: 90px;
 }
+
 .abyss-progress {
   flex: 1;
   height: 5px;
@@ -5982,11 +6474,13 @@ body.abyss-modal-open .popover.hover-popover {
   background: var(--background-modifier-border);
   overflow: hidden;
 }
+
 .abyss-progress-fill {
   height: 100%;
   border-radius: 3px;
   background: var(--interactive-accent);
 }
+
 .abyss-progress-label {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
@@ -6011,27 +6505,33 @@ body.abyss-modal-open .popover.hover-popover {
   border-bottom: 1px solid var(--background-modifier-border);
   flex: 0 0 auto;
 }
+
 .abyss-projects-title {
   margin: 0;
   font-size: var(--font-ui-large);
 }
+
 .abyss-projects-new {
   cursor: pointer;
 }
+
 .abyss-projects-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 8px 12px;
 }
+
 .abyss-projects-empty {
   color: var(--text-muted);
   text-align: center;
   padding: 24px;
 }
+
 .abyss-projects-group {
   margin-bottom: 12px;
 }
+
 .abyss-projects-group-header {
   display: flex;
   align-items: center;
@@ -6042,9 +6542,11 @@ body.abyss-modal-open .popover.hover-popover {
   letter-spacing: 0.04em;
   color: var(--text-muted);
 }
+
 .abyss-projects-group-count {
   margin-left: auto;
 }
+
 .abyss-project-row {
   display: flex;
   align-items: center;
@@ -6053,25 +6555,30 @@ body.abyss-modal-open .popover.hover-popover {
   border-radius: 6px;
   cursor: pointer;
 }
+
 .abyss-project-row:hover {
   background: var(--background-modifier-hover);
 }
+
 .abyss-project-row-name {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
 }
+
 .abyss-project-name {
   color: var(--text-normal);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .abyss-project-folder {
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);
 }
+
 .abyss-project-row-actions {
   display: flex;
   align-items: center;
@@ -6079,9 +6586,11 @@ body.abyss-modal-open .popover.hover-popover {
   opacity: 0;
   transition: opacity 0.1s ease;
 }
+
 .abyss-project-row:hover .abyss-project-row-actions {
   opacity: 1;
 }
+
 .abyss-project-status-btn,
 .abyss-project-open-btn {
   display: inline-flex;
@@ -6097,6 +6606,7 @@ body.abyss-modal-open .popover.hover-popover {
   border-radius: 4px;
   box-shadow: none;
 }
+
 .abyss-project-status-btn:hover,
 .abyss-project-open-btn:hover {
   background: var(--background-modifier-hover);
@@ -6108,6 +6618,7 @@ body.abyss-modal-open .popover.hover-popover {
   padding: 12px 16px;
   overflow-y: auto;
 }
+
 .abyss-project-back {
   display: inline-flex;
   align-self: flex-start;
@@ -6122,20 +6633,24 @@ body.abyss-modal-open .popover.hover-popover {
   padding: 4px 6px;
   margin-bottom: 8px;
 }
+
 .abyss-project-back:hover {
   color: var(--text-normal);
 }
+
 .abyss-project-dashboard-header {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
+
 .abyss-project-dashboard-title {
   margin: 0;
   flex: 1;
   min-width: 0;
 }
+
 .abyss-status-pill {
   padding: 2px 10px;
   border-radius: var(--radius-l);
@@ -6144,21 +6659,25 @@ body.abyss-modal-open .popover.hover-popover {
   border: none;
   cursor: pointer;
 }
+
 .abyss-project-dashboard-stats {
   display: flex;
   align-items: center;
   gap: 16px;
   margin: 12px 0;
 }
+
 .abyss-project-time-label {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
 }
+
 .abyss-project-description {
   color: var(--text-muted);
   margin: 8px 0 16px;
   white-space: pre-wrap;
 }
+
 .abyss-project-tasks {
   border-top: 1px solid var(--background-modifier-border);
   padding-top: 8px;
@@ -6171,6 +6690,7 @@ body.abyss-modal-open .popover.hover-popover {
 }
 
 /* ── Settings: collapsible drag-to-reorder cards (statuses + tag groups) ────── */
+
 /* Cards share the filled-row look of native setting items for a consistent feel;
    grip + chevron are the only added affordances. */
 .abyss-settings-card {
@@ -6178,13 +6698,16 @@ body.abyss-modal-open .popover.hover-popover {
   margin-bottom: 6px;
   background: var(--background-secondary);
 }
+
 .abyss-settings-card.abyss-dragging {
   opacity: 0.5;
 }
+
 .abyss-settings-card.abyss-drag-over {
   outline: 2px solid var(--interactive-accent);
   outline-offset: -2px;
 }
+
 .abyss-settings-card-header {
   display: flex;
   align-items: center;
@@ -6193,6 +6716,7 @@ body.abyss-modal-open .popover.hover-popover {
   cursor: pointer;
   user-select: none;
 }
+
 .abyss-settings-card-badge {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
@@ -6200,16 +6724,19 @@ body.abyss-modal-open .popover.hover-popover {
   border-radius: 6px;
   padding: 1px 7px;
 }
+
 .abyss-settings-card-grip {
   display: inline-flex;
   align-items: center;
   color: var(--text-faint);
   cursor: grab;
 }
+
 .abyss-settings-card-grip svg {
   width: 14px;
   height: 14px;
 }
+
 .abyss-settings-card-title {
   flex: 1;
   font-weight: var(--font-semibold);
@@ -6217,15 +6744,18 @@ body.abyss-modal-open .popover.hover-popover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .abyss-settings-card-chevron {
   display: inline-flex;
   align-items: center;
   color: var(--text-muted);
 }
+
 .abyss-settings-card-chevron svg {
   width: 16px;
   height: 16px;
 }
+
 .abyss-settings-card-body {
   padding: 0 12px 8px;
   border-top: 1px solid var(--background-modifier-border);
@@ -6240,6 +6770,7 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-status-type-group {
   margin-bottom: 16px;
 }
+
 .abyss-status-type-group-label {
   font-size: var(--font-ui-smaller);
   font-weight: var(--font-semibold);
@@ -6248,25 +6779,31 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-muted);
   margin: 0 0 6px 2px;
 }
+
 /* Symbol badges in this section are single characters — monospace reads clearer. */
 .abyss-status-type-group .abyss-settings-card-badge {
   font-family: var(--font-monospace);
 }
+
 .abyss-status-header-preview {
   display: inline-flex;
   align-items: center;
 }
+
 .abyss-status-symbol-error {
   color: var(--text-error);
   font-size: var(--font-ui-smaller);
   margin-top: 4px;
 }
+
 .abyss-status-icon-field {
   margin-bottom: 12px;
 }
+
 .abyss-status-icon-input-host {
   margin-top: 4px;
 }
+
 .abyss-status-icon-results {
   display: flex;
   flex-wrap: wrap;
@@ -6278,6 +6815,7 @@ body.abyss-modal-open .popover.hover-popover {
   padding: 8px;
   margin-top: 8px;
 }
+
 .abyss-status-icon-field button.abyss-status-icon-result {
   display: inline-flex;
   align-items: center;
@@ -6295,36 +6833,44 @@ body.abyss-modal-open .popover.hover-popover {
   border-radius: 4px;
   cursor: pointer;
 }
+
 .abyss-status-icon-field button.abyss-status-icon-result:hover {
   background: var(--background-modifier-hover);
 }
+
 .abyss-status-icon-field button.abyss-status-icon-result.is-selected {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
+
 .abyss-status-icon-field
   button.abyss-status-icon-result.is-selected
   .abyss-status-icon-result-icon {
   color: var(--text-on-accent);
 }
+
 .abyss-status-icon-result-icon {
   display: inline-flex;
   align-items: center;
   color: var(--text-muted);
 }
+
 .abyss-status-icon-result-icon svg {
   width: 16px;
   height: 16px;
 }
+
 .abyss-status-icon-empty {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   padding: 4px 2px;
 }
+
 .abyss-status-icon-clear .abyss-status-icon-result-icon {
   font-size: 16px;
   line-height: 1;
 }
+
 .abyss-status-symbol-lock {
   display: inline-flex;
   align-items: center;
@@ -6332,14 +6878,17 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-muted);
   vertical-align: middle;
 }
+
 .abyss-status-symbol-lock svg {
   width: 12px;
   height: 12px;
 }
+
 .abyss-status-symbol-locked {
   opacity: 0.6;
   cursor: not-allowed;
 }
+
 .abyss-status-icon-lock {
   display: inline-flex;
   align-items: center;
@@ -6347,10 +6896,12 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-muted);
   vertical-align: middle;
 }
+
 .abyss-status-icon-lock svg {
   width: 12px;
   height: 12px;
 }
+
 .abyss-status-icon-locked-preview {
   display: inline-flex;
   align-items: center;
@@ -6361,15 +6912,18 @@ body.abyss-modal-open .popover.hover-popover {
   opacity: 0.6;
   color: var(--text-muted);
 }
+
 .abyss-status-icon-locked-preview svg {
   width: 16px;
   height: 16px;
 }
+
 .abyss-status-preview {
   display: flex;
   align-items: center;
   gap: 8px;
 }
+
 .abyss-status-preview-title {
   color: var(--text-muted);
 }
@@ -6469,7 +7023,7 @@ body.abyss-modal-open .popover.hover-popover {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
 }

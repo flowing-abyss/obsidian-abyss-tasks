@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { localDate, type TaskCommandResult, type TaskCreateSession } from '../src/tasks';
 import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
-import { TaskCaptureController } from '../src/ui/taskCapture/TaskCaptureController';
+import {
+  type CaptureSnapshot,
+  TaskCaptureController,
+} from '../src/ui/taskCapture/TaskCaptureController';
 import { describeTaskCreationResult } from '../src/ui/taskCommandResult';
 import { deferred, task } from './helpers';
 
@@ -60,8 +63,8 @@ function harness(
 describe('TaskCaptureController', () => {
   it('starts idle and lets observers detach and remount without owning the controller', () => {
     const { controller } = harness();
-    const first = vi.fn();
-    const second = vi.fn();
+    const first = vi.fn<(snapshot: CaptureSnapshot) => void>();
+    const second = vi.fn<(snapshot: CaptureSnapshot) => void>();
 
     const subscription = controller.subscribe(first);
     controller.setDraft('first draft');
@@ -115,13 +118,12 @@ describe('TaskCaptureController', () => {
   it('skips an observer released by an earlier observer during the same emission', () => {
     const { controller } = harness();
     const notifications: string[] = [];
-    let laterSubscription!: { release(): void };
     controller.subscribe((snapshot) => {
       if (snapshot.draft !== 'release later') return;
       notifications.push('earlier');
       laterSubscription.release();
     });
-    laterSubscription = controller.subscribe((snapshot) => {
+    const laterSubscription = controller.subscribe((snapshot) => {
       if (snapshot.draft === 'release later') notifications.push('later');
     });
 
@@ -302,11 +304,12 @@ describe('TaskCaptureController', () => {
   it('does not duplicate a close requested reentrantly by the result callback', async () => {
     const base = harness(async () => failedResult());
     const onRequestClose = vi.fn();
-    let controller!: TaskCaptureController;
-    controller = new TaskCaptureController({
+    const controller = new TaskCaptureController({
       target: base.controller.target,
       describe: describeTaskCreationResult,
-      onResult: () => controller.escape(),
+      onResult: () => {
+        controller.escape();
+      },
       onRequestClose,
     });
     controller.setDraft('invalid');
@@ -320,11 +323,12 @@ describe('TaskCaptureController', () => {
   it('does not request a pending blur close after the result callback destroys the capture', async () => {
     const base = harness();
     const onRequestClose = vi.fn();
-    let controller!: TaskCaptureController;
-    controller = new TaskCaptureController({
+    const controller = new TaskCaptureController({
       target: base.controller.target,
       describe: describeTaskCreationResult,
-      onResult: () => controller.destroy(),
+      onResult: () => {
+        controller.destroy();
+      },
       onRequestClose,
     });
     controller.setDraft('successful');

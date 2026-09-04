@@ -1,43 +1,86 @@
-name: Release
+name: Release Obsidian plugin
 
 on:
   push:
     tags:
-      - '*.*.*'
+      - '*'
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
-
     permissions:
       contents: write
-      attestations: write
       id-token: write
-
+      attestations: write
+      artifact-metadata: write
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
         with:
-          node-version: '24.x'
-          cache: 'npm'
+          # Full history (and tags) is required by the changelog-builder step below —
+          # a shallow checkout leaves it only the tagged commit itself, which it then
+          # misreads as the repo's root commit, producing an empty "no changes" log.
+          fetch-depth: 0
 
-      - run: npm ci
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
 
-      - run: npm run review:local
+      - name: Use Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - name: Verify and build plugin
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run ci
+          node release-check.mjs --release-ready
+
+      - name: Check for optional styles
+        id: styles
+        run: |
+          [ -f styles.css ] && echo "exists=true" >> "$GITHUB_OUTPUT" || echo "exists=false" >> "$GITHUB_OUTPUT"
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest@v4
         with:
           subject-path: |
             main.js
-            styles.css
             manifest.json
+            ${{ steps.styles.outputs.exists == 'true' && 'styles.css' || '' }}
 
-      - name: Create GitHub Release
+      - name: Build changelog from commits
+        id: release_notes
+        uses: mikepenz/release-changelog-builder-action@v6
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          mode: 'COMMIT'
+          configurationJson: |
+            {
+              "label_extractor": [{
+                "pattern": "^(\\w+)(\\([\\w\\-\\.]+\\))?(!)?: .+",
+                "on_property": "title",
+                "target": "$1"
+              }],
+              "categories": [
+                { "title": "## 🚀 New features", "labels": ["feat"] },
+                { "title": "## 🛠️ Fixes", "labels": ["fix"] },
+                { "title": "## 👾 Other", "labels": [] }
+              ],
+              "ignore_labels": ["release", "chore"]
+            }
+
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_NOTES: ${{ steps.release_notes.outputs.changelog }}
         run: |
-          gh release create "$GITHUB_REF_NAME" main.js styles.css manifest.json \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          tag="${GITHUB_REF#refs/tags/}"
+
+          gh release create "$tag" \
+            --title="$tag" \
+            --draft \
+            --notes "$RELEASE_NOTES" \
+            main.js manifest.json ${{ steps.styles.outputs.exists == 'true' && 'styles.css' || '' }}

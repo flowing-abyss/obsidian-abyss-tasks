@@ -11,7 +11,7 @@ import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockE
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
-import { createAppWithFiles } from './helpers';
+import { createAppWithFiles, expectDefined } from './helpers';
 
 const catalog = new StatusCatalog([
   { id: 'todo', symbol: 't', type: 'todo', defaultForType: true },
@@ -33,7 +33,7 @@ async function setup(source: string) {
     locator,
     snapshotsFromContent: (path, content) => index.snapshotsFromContent(path, content),
   });
-  const root = index.snapshotsFromContent('tasks.md', source)[0]!;
+  const root = expectDefined(index.snapshotsFromContent('tasks.md', source)[0]);
   const read = async () => {
     const file = app.vault.getAbstractFileByPath('tasks.md');
     if (!(file instanceof TFile)) throw new Error('missing file');
@@ -54,12 +54,12 @@ describe('status repository contract', () => {
       type: 'set-status',
       target: { type: 'task', ref: h.root.ref },
       symbol,
-      ...(stampMarker && { stamp: localDate('2026-07-14') }),
+      ...(stampMarker === undefined ? {} : { stamp: localDate('2026-07-14') }),
     });
     expect(result).toMatchObject({ type: 'committed', changed: true });
     const content = await h.read();
     expect(content).toContain(`- [${symbol}] task`);
-    if (stampMarker) expect(content).toContain(`${stampMarker} 2026-07-14`);
+    if (stampMarker !== undefined) expect(content).toContain(`${stampMarker} 2026-07-14`);
     expect(content).toContain('🆔 keep ⛔ dep');
     expect(content).toContain('^block');
   });
@@ -91,7 +91,7 @@ describe('status repository contract', () => {
 
   it('edits an exactly referenced nested task and returns the updated root', async () => {
     const h = await setup('- [t] root\n  - [t] child\n    - [t] nested');
-    const nested = h.root.subtasks[0]!.subtasks[0]!;
+    const nested = expectDefined(expectDefined(h.root.subtasks[0]).subtasks[0]);
     const result = await h.repository.edit({
       type: 'set-status',
       target: { type: 'subtask', ref: nested.ref },
@@ -152,7 +152,7 @@ async function liveCatalogHarness(mutableType: 'in-progress' | 'done' = 'in-prog
     dailyNoteFormat: settings.desktop.dailyNoteFormat,
   });
   await index.initialize();
-  const indexed = index.list()[0]!;
+  const indexed = expectDefined(index.list()[0]);
   const clock = { today: vi.fn(() => localDate('2026-07-14')) };
   const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
     type: 'committed',

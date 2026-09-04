@@ -81,7 +81,9 @@ export function systemClock(
     read(): ClockReading {
       const epochMs = instantSource();
       const captured = reading(epochMs, offsetSource(epochMs));
-      return localDateSource ? { ...captured, localDate: localDateSource(epochMs) } : captured;
+      return localDateSource != null
+        ? { ...captured, localDate: localDateSource(epochMs) }
+        : captured;
     },
   };
 }

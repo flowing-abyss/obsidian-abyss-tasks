@@ -146,6 +146,72 @@ function quoteDepth(line: string): number {
   return [...(PREFIX_RE.exec(line)?.[1] ?? '')].filter((character) => character === '>').length;
 }
 
+function blankSourceLine(line: SourceLine): boolean {
+  return /^[\s>]*$/u.test(line.text);
+}
+
+function rootBlockStructureIsValid(lines: readonly SourceLine[], root: SourceLine): boolean {
+  const rootIndent = indentation(root.text);
+  const rootQuote = quoteDepth(root.text);
+  for (let index = 1; index < lines.length; index++) {
+    const line = lines[index];
+    if (line === undefined) return false;
+    if (blankSourceLine(line)) continue;
+    if (quoteDepth(line.text) !== rootQuote || indentation(line.text) <= rootIndent) return false;
+  }
+  return true;
+}
+
+function withinOwner(line: SourceLine, ownerIndent: number, ownerQuote: number): boolean {
+  return (
+    blankSourceLine(line) ||
+    (quoteDepth(line.text) === ownerQuote && indentation(line.text) > ownerIndent)
+  );
+}
+
+function trimTrailingBlankLines(
+  lines: readonly SourceLine[],
+  fromLine: number,
+  toLine: number,
+): number {
+  let trimmed = toLine;
+  while (trimmed > fromLine && blankSourceLine(lines[trimmed] ?? { text: '', ending: '' })) {
+    trimmed--;
+  }
+  return trimmed;
+}
+
+function ownedSubtreeEnd(
+  lines: readonly SourceLine[],
+  ownerRelativeLine: number,
+  owner: SourceLine,
+): number | undefined {
+  const ownerIndent = indentation(owner.text);
+  const ownerQuote = quoteDepth(owner.text);
+  let toLine = ownerRelativeLine;
+  for (let index = ownerRelativeLine + 1; index < lines.length; index++) {
+    const line = lines[index];
+    if (line === undefined) return undefined;
+    if (!withinOwner(line, ownerIndent, ownerQuote)) break;
+    toLine = index;
+  }
+  return trimTrailingBlankLines(lines, ownerRelativeLine, toLine);
+}
+
+function ownedTaskLines(
+  lines: readonly SourceLine[],
+  fromLine: number,
+  toLine: number,
+): number[] | undefined {
+  const taskLines: number[] = [];
+  for (let index = fromLine; index <= toLine; index++) {
+    const line = lines[index];
+    if (line === undefined) return undefined;
+    if (TASK_RE.test(line.text)) taskLines.push(index);
+  }
+  return taskLines;
+}
+
 /** Shared ownership primitive used by TaskBlockEditor and the pure recurrence transformer. */
 export function recurrenceOwnedSubtree(
   rootBlock: string,
@@ -155,8 +221,8 @@ export function recurrenceOwnedSubtree(
   const root = lines[0];
   const owner = lines[ownerRelativeLine];
   if (
-    !root ||
-    !owner ||
+    root == null ||
+    owner == null ||
     !Number.isInteger(ownerRelativeLine) ||
     ownerRelativeLine < 0 ||
     !TASK_RE.test(root.text) ||
@@ -164,41 +230,18 @@ export function recurrenceOwnedSubtree(
   ) {
     return undefined;
   }
-
-  const rootIndent = indentation(root.text);
-  const rootQuote = quoteDepth(root.text);
-  for (let index = 1; index < lines.length; index++) {
-    const line = lines[index]!;
-    if (/^[\s>]*$/u.test(line.text)) continue;
-    if (quoteDepth(line.text) !== rootQuote || indentation(line.text) <= rootIndent)
-      return undefined;
-  }
-
-  const ownerIndent = indentation(owner.text);
-  const ownerQuote = quoteDepth(owner.text);
-  let toLine = ownerRelativeLine;
-  for (let index = ownerRelativeLine + 1; index < lines.length; index++) {
-    const line = lines[index]!;
-    if (!/^[\s>]*$/u.test(line.text)) {
-      if (quoteDepth(line.text) !== ownerQuote || indentation(line.text) <= ownerIndent) break;
-      toLine = index;
-    } else if (toLine >= ownerRelativeLine) {
-      toLine = index;
-    }
-  }
-  while (toLine > ownerRelativeLine && /^[\s>]*$/u.test(lines[toLine]!.text)) toLine--;
-
-  const taskLines: number[] = [];
-  for (let index = ownerRelativeLine; index <= toLine; index++) {
-    if (TASK_RE.test(lines[index]!.text)) taskLines.push(index);
-  }
+  if (!rootBlockStructureIsValid(lines, root)) return undefined;
+  const toLine = ownedSubtreeEnd(lines, ownerRelativeLine, owner);
+  if (toLine === undefined) return undefined;
+  const taskLines = ownedTaskLines(lines, ownerRelativeLine, toLine);
+  if (taskLines === undefined) return undefined;
   return { fromLine: ownerRelativeLine, toLine, taskLines };
 }
 
 /** Removes only a whitespace-delimited terminal Obsidian block ID. */
 export function stripRecurrenceTerminalBlockId(line: string): string {
   // The brief requires this exact line-safe terminal-only expression.
-  // eslint-disable-next-line sonarjs/super-linear-regex
+  // eslint-disable-next-line sonarjs/super-linear-regex -- terminal-only bounded line grammar
   return line.replace(/\s+\^[A-Za-z0-9-]+(?=\r?$)/u, '');
 }
 
@@ -257,6 +300,38 @@ function carrierIssue(carriers: readonly Carrier[]): IterationIssueCode | undefi
     : undefined;
 }
 
+function validCarrierTime(value: Carrier['value']): boolean {
+  try {
+    localTime(String(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function dateCarrierIssue(value: Carrier['value']): IterationIssueCode | undefined {
+  return typeof value === 'string' && calendarDate(value) ? undefined : 'invalid-task-syntax';
+}
+
+function durationCarrierIssue(value: Carrier['value']): IterationIssueCode | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+    ? undefined
+    : 'invalid-task-syntax';
+}
+
+function recurrenceCarrierIssue(value: Carrier['value']): IterationIssueCode | undefined {
+  const recurrence = parseRecurrenceRule(String(value ?? ''));
+  return recurrence.type === 'invalid' ? recurrence.code : undefined;
+}
+
+function carrierValueIssue(carrier: Carrier): IterationIssueCode | undefined {
+  if (carrier.kind in DATE_MARKERS) return dateCarrierIssue(carrier.value);
+  if (carrier.kind === 'time')
+    return validCarrierTime(carrier.value) ? undefined : 'invalid-task-syntax';
+  if (carrier.kind === 'duration') return durationCarrierIssue(carrier.value);
+  return carrier.kind === 'recurrence' ? recurrenceCarrierIssue(carrier.value) : undefined;
+}
+
 function parseIterationTaskLine(original: string):
   | { readonly type: 'valid'; readonly parsed: ParsedIterationTaskLine }
   | {
@@ -264,40 +339,16 @@ function parseIterationTaskLine(original: string):
       readonly code: IterationIssueCode;
     } {
   const model = parseTaskLineSourceModel(original);
-  if (!model || model.carriers.some((carrier) => carrier.kind === 'malformed-known')) {
+  if (model == null || model.carriers.some((carrier) => carrier.kind === 'malformed-known')) {
     return { type: 'invalid', code: 'invalid-task-syntax' };
   }
   const carriers = model.carriers.filter(isCarrier);
-
   for (const carrier of carriers) {
-    if (carrier.kind in DATE_MARKERS) {
-      if (typeof carrier.value !== 'string' || !calendarDate(carrier.value)) {
-        return { type: 'invalid', code: 'invalid-task-syntax' };
-      }
-    }
-    if (carrier.kind === 'time') {
-      try {
-        localTime(String(carrier.value));
-      } catch {
-        return { type: 'invalid', code: 'invalid-task-syntax' };
-      }
-    }
-    if (
-      carrier.kind === 'duration' &&
-      (typeof carrier.value !== 'number' ||
-        !Number.isSafeInteger(carrier.value) ||
-        carrier.value <= 0)
-    ) {
-      return { type: 'invalid', code: 'invalid-task-syntax' };
-    }
-    if (carrier.kind === 'recurrence') {
-      const recurrence = parseRecurrenceRule(String(carrier.value ?? ''));
-      if (recurrence.type === 'invalid') return recurrence;
-    }
+    const issue = carrierValueIssue(carrier);
+    if (issue !== undefined) return { type: 'invalid', code: issue };
   }
-
   const issue = carrierIssue(carriers);
-  if (issue) return { type: 'invalid', code: issue };
+  if (issue !== undefined) return { type: 'invalid', code: issue };
 
   return {
     type: 'valid',
@@ -323,12 +374,15 @@ export function recurrenceMarkerCountInOwnedSubtree(
   ownerRelativeLine: number,
 ): number | undefined {
   const ownership = recurrenceOwnedSubtree(rootBlock, ownerRelativeLine);
-  if (!ownership) return undefined;
+  if (ownership == null) return undefined;
   const lines = sourceLines(rootBlock);
-  return ownership.taskLines.reduce(
-    (count, line) => count + semanticRecurrenceMarkerCount(lines[line]!.text + lines[line]!.ending),
-    0,
-  );
+  let count = 0;
+  for (const lineIndex of ownership.taskLines) {
+    const line = lines[lineIndex];
+    if (line === undefined) return undefined;
+    count += semanticRecurrenceMarkerCount(line.text + line.ending);
+  }
+  return count;
 }
 
 function removeSpan(source: string, span: SourceRange): string {
@@ -339,12 +393,14 @@ function removeSpan(source: string, span: SourceRange): string {
   return source.slice(0, from) + source.slice(to);
 }
 
-function applyCarrierChanges(
+type CarrierChanges = Readonly<Partial<Record<CarrierKind, string | null>>>;
+type CarrierReplacement = SourceRange & { readonly replacement: string | null };
+
+function carrierReplacements(
   parsed: ParsedIterationTaskLine,
-  changes: Readonly<Partial<Record<CarrierKind, string | null>>>,
-): string {
-  let content = parsed.original;
-  const replacements: Array<SourceRange & { readonly replacement: string | null }> = [];
+  changes: CarrierChanges,
+): CarrierReplacement[] {
+  const replacements: CarrierReplacement[] = [];
   for (const [kind, replacement] of Object.entries(changes) as Array<
     [CarrierKind, string | null]
   >) {
@@ -353,34 +409,68 @@ function applyCarrierChanges(
       replacements.push({ ...carrier, replacement: index === 0 ? replacement : null });
     });
   }
-  const descendingReplacements = [...replacements];
-  descendingReplacements.sort((left, right) => right.from - left.from);
-  for (const change of descendingReplacements) {
-    content =
-      change.replacement === null
-        ? removeSpan(content, change)
-        : content.slice(0, change.from) + change.replacement + content.slice(change.to);
-  }
+  return replacements.sort((left, right) => right.from - left.from);
+}
 
-  const missing = (Object.entries(changes) as Array<[CarrierKind, string | null]>)
+function applyCarrierReplacements(
+  content: string,
+  replacements: readonly CarrierReplacement[],
+): string {
+  let updated = content;
+  for (const change of replacements) {
+    updated =
+      change.replacement === null
+        ? removeSpan(updated, change)
+        : updated.slice(0, change.from) + change.replacement + updated.slice(change.to);
+  }
+  return updated;
+}
+
+function missingCarriers(
+  parsed: ParsedIterationTaskLine,
+  changes: CarrierChanges,
+): Array<[CarrierKind, string | null]> {
+  return (Object.entries(changes) as Array<[CarrierKind, string | null]>)
     .filter(
       ([kind, replacement]) =>
         replacement !== null && !parsed.carriers.some((carrier) => carrier.kind === kind),
     )
     .sort(([left], [right]) => INSERTION_RANK[left] - INSERTION_RANK[right]);
+}
+
+function insertMissingCarrier(
+  content: string,
+  kind: CarrierKind,
+  token: string,
+): string | undefined {
+  const current = parseIterationTaskLine(content);
+  if (current.type === 'invalid') return undefined;
+  const later = current.parsed.carriers.find(
+    (carrier) => INSERTION_RANK[carrier.kind] > INSERTION_RANK[kind],
+  );
+  const at = later?.from ?? current.parsed.contentEnd;
+  const left = /\s/u.test(content[at - 1] ?? '') ? '' : ' ';
+  const right = /\s/u.test(content[at] ?? '') || at === current.parsed.contentEnd ? '' : ' ';
+  return `${content.slice(0, at)}${left}${token}${right}${content.slice(at)}`;
+}
+
+function insertMissingCarriers(
+  content: string,
+  missing: ReadonlyArray<readonly [CarrierKind, string | null]>,
+): string {
+  let updated = content;
   for (const [kind, token] of missing) {
     if (token === null) continue;
-    const current = parseIterationTaskLine(content);
-    if (current.type === 'invalid') return content;
-    const later = current.parsed.carriers.find(
-      (carrier) => INSERTION_RANK[carrier.kind] > INSERTION_RANK[kind],
-    );
-    const at = later?.from ?? current.parsed.contentEnd;
-    const left = /\s/u.test(content[at - 1] ?? '') ? '' : ' ';
-    const right = /\s/u.test(content[at] ?? '') || at === current.parsed.contentEnd ? '' : ' ';
-    content = content.slice(0, at) + `${left}${token}${right}` + content.slice(at);
+    const inserted = insertMissingCarrier(updated, kind, token);
+    if (inserted === undefined) return updated;
+    updated = inserted;
   }
-  return content;
+  return updated;
+}
+
+function applyCarrierChanges(parsed: ParsedIterationTaskLine, changes: CarrierChanges): string {
+  const content = applyCarrierReplacements(parsed.original, carrierReplacements(parsed, changes));
+  return insertMissingCarriers(content, missingCarriers(parsed, changes));
 }
 
 function shiftedDate(value: string | undefined, dayDelta: number): LocalDate | undefined | null {
@@ -393,40 +483,42 @@ function validPlanningDate(value: LocalDate | undefined): boolean {
   return value === undefined || calendarDate(value);
 }
 
+function validPlanningTime(value: string | undefined): boolean {
+  if (value === undefined) return true;
+  try {
+    localTime(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function validPlanningDuration(value: number | undefined): boolean {
+  return value === undefined || (Number.isSafeInteger(value) && value > 0);
+}
+
+function validOwnerPlanning(planning: TaskPlanning): boolean {
+  if (!validPlanningDate(planning.start)) return false;
+  if (!validPlanningDate(planning.scheduled)) return false;
+  if (!validPlanningDate(planning.due)) return false;
+  if (planning.start !== undefined && planning.due !== undefined && planning.start > planning.due) {
+    return false;
+  }
+  return validPlanningTime(planning.time) && validPlanningDuration(planning.duration);
+}
+
 function cleanOwnerChanges(
   edit: Extract<RecurrenceTaskLineEdit, { readonly type: 'clean-owner' }>,
 ): Partial<Record<CarrierKind, string | null>> | undefined {
-  if (
-    !validPlanningDate(edit.planning.start) ||
-    !validPlanningDate(edit.planning.scheduled) ||
-    !validPlanningDate(edit.planning.due) ||
-    (edit.planning.start !== undefined &&
-      edit.planning.due !== undefined &&
-      edit.planning.start > edit.planning.due)
-  ) {
-    return undefined;
-  }
-  if (edit.planning.time !== undefined) {
-    try {
-      localTime(edit.planning.time);
-    } catch {
-      return undefined;
-    }
-  }
-  if (
-    edit.planning.duration !== undefined &&
-    (!Number.isSafeInteger(edit.planning.duration) || edit.planning.duration <= 0)
-  ) {
-    return undefined;
-  }
+  if (!validOwnerPlanning(edit.planning)) return undefined;
   return {
     created: edit.addCreatedDate ? `➕ ${edit.today}` : null,
-    start: edit.planning.start ? `🛫 ${edit.planning.start}` : null,
-    scheduled: edit.planning.scheduled ? `⏳ ${edit.planning.scheduled}` : null,
-    due: edit.planning.due ? `📅 ${edit.planning.due}` : null,
+    start: edit.planning.start != null ? `🛫 ${edit.planning.start}` : null,
+    scheduled: edit.planning.scheduled != null ? `⏳ ${edit.planning.scheduled}` : null,
+    due: edit.planning.due != null ? `📅 ${edit.planning.due}` : null,
     completion: null,
     cancelled: null,
-    time: edit.planning.time ? `⏰ ${edit.planning.time}` : null,
+    time: edit.planning.time != null ? `⏰ ${edit.planning.time}` : null,
     duration:
       edit.planning.duration === undefined
         ? null
@@ -475,7 +567,7 @@ function changesForEdit(
 ): CarrierChangesResult {
   if (edit.type === 'clean-owner') {
     const changes = cleanOwnerChanges(edit);
-    return changes
+    return changes != null
       ? { type: 'valid', changes }
       : { type: 'invalid', code: 'invalid-descendant-date' };
   }
@@ -534,73 +626,113 @@ function invalid(code: IterationIssueCode): RecurrenceIterationResult {
   return { type: 'invalid', code };
 }
 
+type IterationLinesResult =
+  | { readonly type: 'valid'; readonly lines: SourceLine[] }
+  | { readonly type: 'invalid'; readonly code: IterationIssueCode };
+
+function recurrenceStructureIssue(
+  lines: readonly SourceLine[],
+  ownership: RecurrenceOwnedSubtree,
+): IterationIssueCode | undefined {
+  const counts = lines.map((line) => semanticRecurrenceMarkerCount(line.text + line.ending));
+  const total = counts.reduce((sum, count) => sum + count, 0);
+  return total === 1 && counts[ownership.fromLine] === 1 ? undefined : 'nested-recurrence-conflict';
+}
+
+function iterationLinesIssue(lines: readonly SourceLine[]): IterationIssueCode | undefined {
+  for (const line of lines) {
+    if (!TASK_RE.test(line.text)) continue;
+    const parsed = parseIterationTaskLine(line.text + line.ending);
+    if (parsed.type === 'invalid') return parsed.code;
+  }
+  return undefined;
+}
+
+function completedIterationLines(
+  lines: readonly SourceLine[],
+  ownership: RecurrenceOwnedSubtree,
+  input: RecurrenceIterationInput,
+): IterationLinesResult {
+  const completedLines = lines.map((line) => ({ ...line }));
+  const source = completedLines[ownership.fromLine];
+  if (source === undefined) return { type: 'invalid', code: 'invalid-task-syntax' };
+  const completed = editRecurrenceIterationTaskLine(source.text + source.ending, {
+    type: 'complete-owner',
+    doneSymbol: input.doneSymbol,
+    today: input.today,
+    addCompletionDate: input.addCompletionDate,
+  });
+  if (completed.type === 'invalid') return completed;
+  const updated = sourceLines(completed.content)[0];
+  if (updated == null) return { type: 'invalid', code: 'invalid-task-syntax' };
+  completedLines[ownership.fromLine] = updated;
+  return { type: 'valid', lines: completedLines };
+}
+
+function cleanLineEdit(
+  taskLine: number,
+  ownership: RecurrenceOwnedSubtree,
+  input: RecurrenceIterationInput,
+): RecurrenceTaskLineEdit {
+  const common = {
+    todoSymbol: input.todoSymbol,
+    today: input.today,
+    addCreatedDate: input.addCreatedDate,
+  };
+  return taskLine === ownership.fromLine
+    ? { type: 'clean-owner', planning: input.nextPlanning, ...common }
+    : { type: 'clean-descendant', dayDelta: input.dayDelta, ...common };
+}
+
+function cleanIterationLines(
+  lines: readonly SourceLine[],
+  ownership: RecurrenceOwnedSubtree,
+  input: RecurrenceIterationInput,
+): IterationLinesResult {
+  const cleanLines = lines.map((line) => ({ ...line }));
+  for (const taskLine of ownership.taskLines) {
+    const source = cleanLines[taskLine];
+    if (source === undefined) return { type: 'invalid', code: 'invalid-task-syntax' };
+    const edited = editRecurrenceIterationTaskLine(
+      source.text + source.ending,
+      cleanLineEdit(taskLine, ownership, input),
+    );
+    if (edited.type === 'invalid') return edited;
+    const updated = sourceLines(edited.content)[0];
+    if (updated == null) return { type: 'invalid', code: 'invalid-task-syntax' };
+    cleanLines[taskLine] = updated;
+  }
+  if (!stripOwnedBlockIds(cleanLines, ownership)) {
+    return { type: 'invalid', code: 'invalid-task-syntax' };
+  }
+  return { type: 'valid', lines: cleanLines };
+}
+
+function stripOwnedBlockIds(lines: SourceLine[], ownership: RecurrenceOwnedSubtree): boolean {
+  for (let index = ownership.fromLine; index <= ownership.toLine; index++) {
+    const source = lines[index];
+    if (source === undefined) return false;
+    lines[index] = { ...source, text: stripRecurrenceTerminalBlockId(source.text) };
+  }
+  return true;
+}
+
 export function prepareRecurrenceIteration(
   input: RecurrenceIterationInput,
 ): RecurrenceIterationResult {
   const lines = sourceLines(input.rootBlock);
   const ownership = recurrenceOwnedSubtree(input.rootBlock, input.ownerRelativeLine);
-  if (!ownership || !calendarDate(input.today)) return invalid('invalid-task-syntax');
+  if (ownership == null || !calendarDate(input.today)) return invalid('invalid-task-syntax');
   if (!Number.isSafeInteger(input.dayDelta)) return invalid('invalid-descendant-date');
-  const recurrenceMarkersByLine = lines.map((line) =>
-    semanticRecurrenceMarkerCount(line.text + line.ending),
-  );
-  const recurrenceMarkerCount = recurrenceMarkersByLine.reduce((sum, count) => sum + count, 0);
-  if (recurrenceMarkerCount !== 1 || recurrenceMarkersByLine[ownership.fromLine] !== 1) {
-    return invalid('nested-recurrence-conflict');
-  }
-
-  for (let index = 0; index < lines.length; index++) {
-    const original = lines[index]!.text + lines[index]!.ending;
-    if (!TASK_RE.test(lines[index]!.text)) continue;
-    const parsed = parseIterationTaskLine(original);
-    if (parsed.type === 'invalid') return invalid(parsed.code);
-  }
-
-  const completedLines = lines.map((line) => ({ ...line }));
-  const completedOwner = editRecurrenceIterationTaskLine(
-    completedLines[ownership.fromLine]!.text + completedLines[ownership.fromLine]!.ending,
-    {
-      type: 'complete-owner',
-      doneSymbol: input.doneSymbol,
-      today: input.today,
-      addCompletionDate: input.addCompletionDate,
-    },
-  );
-  if (completedOwner.type === 'invalid') return invalid(completedOwner.code);
-  const completedSource = sourceLines(completedOwner.content)[0];
-  if (!completedSource) return invalid('invalid-task-syntax');
-  completedLines[ownership.fromLine] = completedSource;
-
-  const cleanLines = lines.map((line) => ({ ...line }));
-  for (const taskLine of ownership.taskLines) {
-    const source = cleanLines[taskLine]!;
-    const edited = editRecurrenceIterationTaskLine(source.text + source.ending, {
-      ...(taskLine === ownership.fromLine
-        ? {
-            type: 'clean-owner' as const,
-            planning: input.nextPlanning,
-          }
-        : {
-            type: 'clean-descendant' as const,
-            dayDelta: input.dayDelta,
-          }),
-      todoSymbol: input.todoSymbol,
-      today: input.today,
-      addCreatedDate: input.addCreatedDate,
-    });
-    if (edited.type === 'invalid') return invalid(edited.code);
-    const editedSource = sourceLines(edited.content)[0];
-    if (!editedSource) return invalid('invalid-task-syntax');
-    cleanLines[taskLine] = editedSource;
-  }
-  for (let index = ownership.fromLine; index <= ownership.toLine; index++) {
-    const source = cleanLines[index]!;
-    cleanLines[index] = { ...source, text: stripRecurrenceTerminalBlockId(source.text) };
-  }
-
+  const issue = recurrenceStructureIssue(lines, ownership) ?? iterationLinesIssue(lines);
+  if (issue !== undefined) return invalid(issue);
+  const completed = completedIterationLines(lines, ownership, input);
+  if (completed.type === 'invalid') return invalid(completed.code);
+  const clean = cleanIterationLines(lines, ownership, input);
+  if (clean.type === 'invalid') return invalid(clean.code);
   return {
     type: 'prepared',
-    cleanSubtree: serializeSubtree(cleanLines, ownership.fromLine, ownership.toLine),
-    completedSubtree: serializeSubtree(completedLines, ownership.fromLine, ownership.toLine),
+    cleanSubtree: serializeSubtree(clean.lines, ownership.fromLine, ownership.toLine),
+    completedSubtree: serializeSubtree(completed.lines, ownership.fromLine, ownership.toLine),
   };
 }

@@ -20,7 +20,7 @@ interface PendingPresentation {
   resolvedRef?: TaskRef;
   readonly expiresAt: number;
   highlightUntil?: number;
-  highlightedElement?: HTMLElement;
+  highlightedElement?: HTMLElement | undefined;
   timeout: number;
 }
 
@@ -52,9 +52,9 @@ function hasArea(rect: DOMRect): boolean {
 
 function hiddenByStyle(root: HTMLElement, element: HTMLElement): boolean {
   const ownerWindow = element.ownerDocument.defaultView;
-  if (!ownerWindow) return false;
+  if (ownerWindow == null) return false;
   let current: HTMLElement | null = element;
-  while (current) {
+  while (current != null) {
     const style = ownerWindow.getComputedStyle(current);
     if (
       style.display === 'none' ||
@@ -74,40 +74,48 @@ function clips(value: string): boolean {
   return value === 'auto' || value === 'clip' || value === 'hidden' || value === 'scroll';
 }
 
+function intersectsViewport(rect: DOMRect, ownerWindow: Window): boolean {
+  const viewport = {
+    top: 0,
+    left: 0,
+    right: ownerWindow.innerWidth,
+    bottom: ownerWindow.innerHeight,
+  } as DOMRect;
+  return intersects(rect, viewport);
+}
+
+function effectiveOverflow(value: string, fallback: string): string {
+  return value.length > 0 ? value : fallback;
+}
+
+function clippedByAncestor(
+  elementRect: DOMRect,
+  ancestor: HTMLElement,
+  root: HTMLElement,
+  ownerWindow: Window | null,
+): boolean {
+  const ancestorRect = ancestor.getBoundingClientRect();
+  if (ancestor === root) return !hasArea(ancestorRect) || !intersects(elementRect, ancestorRect);
+  if (ownerWindow == null) return false;
+  const style = ownerWindow.getComputedStyle(ancestor);
+  const overflowX = effectiveOverflow(style.overflowX, style.overflow);
+  const overflowY = effectiveOverflow(style.overflowY, style.overflow);
+  const outsideX = elementRect.right <= ancestorRect.left || elementRect.left >= ancestorRect.right;
+  const outsideY = elementRect.bottom <= ancestorRect.top || elementRect.top >= ancestorRect.bottom;
+  return (clips(overflowX) && outsideX) || (clips(overflowY) && outsideY);
+}
+
 function visibleWithin(root: HTMLElement, element: HTMLElement): boolean {
   if (hiddenByStyle(root, element)) return false;
   const elementRect = element.getBoundingClientRect();
   if (!hasArea(elementRect)) return false;
 
   const ownerWindow = element.ownerDocument.defaultView;
-  if (ownerWindow) {
-    const viewport = {
-      top: 0,
-      left: 0,
-      right: ownerWindow.innerWidth,
-      bottom: ownerWindow.innerHeight,
-    } as DOMRect;
-    if (!intersects(elementRect, viewport)) return false;
-  }
+  if (ownerWindow != null && !intersectsViewport(elementRect, ownerWindow)) return false;
 
   let ancestor: HTMLElement | null = element.parentElement;
-  while (ancestor) {
-    const ancestorRect = ancestor.getBoundingClientRect();
-    if (ancestor === root) {
-      if (!hasArea(ancestorRect) || !intersects(elementRect, ancestorRect)) return false;
-    } else if (ownerWindow) {
-      const style = ownerWindow.getComputedStyle(ancestor);
-      const overflowX = style.overflowX || style.overflow;
-      const overflowY = style.overflowY || style.overflow;
-      if (
-        (clips(overflowX) &&
-          (elementRect.right <= ancestorRect.left || elementRect.left >= ancestorRect.right)) ||
-        (clips(overflowY) &&
-          (elementRect.bottom <= ancestorRect.top || elementRect.top >= ancestorRect.bottom))
-      ) {
-        return false;
-      }
-    }
+  while (ancestor != null) {
+    if (clippedByAncestor(elementRect, ancestor, root, ownerWindow)) return false;
     if (ancestor === root) break;
     ancestor = ancestor.parentElement;
   }
@@ -162,11 +170,13 @@ export class CreationPresentationController {
       expiresAt: this.options.now() + PRESENTATION_TIMEOUT_MS,
       timeout: 0,
     };
-    entry.timeout = this.setTimeout(() => this.expire(entry), PRESENTATION_TIMEOUT_MS);
+    entry.timeout = this.setTimeout(() => {
+      this.expire(entry);
+    }, PRESENTATION_TIMEOUT_MS);
     this.pending.push(entry);
     while (this.pending.length > MAX_PENDING_PRESENTATIONS) {
       const oldest = this.pending.shift();
-      if (oldest) this.discard(oldest);
+      if (oldest != null) this.discard(oldest);
     }
     this.resolve(entry);
     this.presentResolved();
@@ -205,10 +215,9 @@ export class CreationPresentationController {
     this.options.host.toggleAttribute('data-requires-recovery', description.requiresRecovery);
     this.options.host.dataset['resultKind'] = description.kind;
     this.options.host.textContent = description.message;
-    this.announcementTimeout = this.setTimeout(
-      () => this.clearAnnouncement(generation),
-      ANNOUNCEMENT_TIMEOUT_MS,
-    );
+    this.announcementTimeout = this.setTimeout(() => {
+      this.clearAnnouncement(generation);
+    }, ANNOUNCEMENT_TIMEOUT_MS);
   }
 
   private clearAnnouncement(generation: number): void {
@@ -230,26 +239,32 @@ export class CreationPresentationController {
 
   private presentResolved(): void {
     const root = this.renderRoot;
-    if (!root) return;
+    if (root == null) return;
     for (const entry of [...this.pending]) {
-      if (entry.highlightedElement && !root.contains(entry.highlightedElement)) {
-        this.releaseHighlight(entry);
-      }
-      if (entry.resolvedRef === undefined) continue;
-      const matches = renderedTaskElements(root, entry.resolvedRef);
-      if (matches.length === 0) continue;
-      const target = matches.find((element) => visibleWithin(root, element)) ?? matches[0];
-      if (!target) continue;
-      if (entry.highlightUntil === undefined) this.startHighlight(entry);
-      this.highlight(root, entry, target);
+      this.presentEntry(root, entry);
     }
+  }
+
+  private presentEntry(root: HTMLElement, entry: PendingPresentation): void {
+    if (entry.highlightedElement != null && !root.contains(entry.highlightedElement)) {
+      this.releaseHighlight(entry);
+    }
+    if (entry.resolvedRef === undefined) return;
+    const matches = renderedTaskElements(root, entry.resolvedRef);
+    if (matches.length === 0) return;
+    const target = matches.find((element) => visibleWithin(root, element)) ?? matches[0];
+    if (target == null) return;
+    if (entry.highlightUntil === undefined) this.startHighlight(entry);
+    this.highlight(root, entry, target);
   }
 
   private startHighlight(entry: PendingPresentation): void {
     this.clearTimeout(entry.timeout);
     const duration = this.options.reducedMotion() ? REDUCED_HIGHLIGHT_MS : NORMAL_HIGHLIGHT_MS;
     entry.highlightUntil = this.options.now() + duration;
-    entry.timeout = this.setTimeout(() => this.expire(entry), duration);
+    entry.timeout = this.setTimeout(() => {
+      this.expire(entry);
+    }, duration);
   }
 
   private highlight(root: HTMLElement, entry: PendingPresentation, element: HTMLElement): void {
@@ -260,7 +275,7 @@ export class CreationPresentationController {
     }
     element.classList.add('is-just-created');
     if (newlyBound && !visibleWithin(root, element)) {
-      element.scrollIntoView?.({
+      element.scrollIntoView({
         behavior: this.options.reducedMotion() ? 'auto' : 'smooth',
         block: 'nearest',
         inline: 'nearest',
@@ -273,7 +288,9 @@ export class CreationPresentationController {
     const deadline = entry.highlightUntil ?? entry.expiresAt;
     const remaining = deadline - this.options.now();
     if (remaining > 0) {
-      entry.timeout = this.setTimeout(() => this.expire(entry), remaining);
+      entry.timeout = this.setTimeout(() => {
+        this.expire(entry);
+      }, remaining);
       return;
     }
     this.finish(entry);
@@ -303,7 +320,7 @@ export class CreationPresentationController {
     const element = entry.highlightedElement;
     entry.highlightedElement = undefined;
     if (
-      element &&
+      element != null &&
       !this.pending.some(
         (candidate) => candidate !== entry && candidate.highlightedElement === element,
       )

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RailPanel } from '../src/panels/RailPanel';
 import type { PanelNavigationActions } from '../src/views/panelNavigation';
-import { freshContainer } from './helpers';
+import { expectDefined, freshContainer, methodOf } from './helpers';
 
 describe('RailPanel', () => {
   function navigationActions(): PanelNavigationActions {
@@ -20,18 +20,26 @@ describe('RailPanel', () => {
 
   function stateNavigationActions(state: AppState): PanelNavigationActions {
     const actions = navigationActions();
-    actions.openTasks = vi.fn(() => state.set('mode', 'tasks'));
-    actions.openCalendar = vi.fn(() => state.set('mode', 'calendar'));
-    actions.openProjects = vi.fn(() => state.set('mode', 'projects'));
-    actions.openSearch = vi.fn(() => state.set('mode', 'search'));
+    actions.openTasks = vi.fn(() => {
+      state.set('mode', 'tasks');
+    });
+    actions.openCalendar = vi.fn(() => {
+      state.set('mode', 'calendar');
+    });
+    actions.openProjects = vi.fn(() => {
+      state.set('mode', 'projects');
+    });
+    actions.openSearch = vi.fn(() => {
+      state.set('mode', 'search');
+    });
     return actions;
   }
 
   function foreignSettingsHarness() {
-    const iframe = activeDocument.createElement('iframe');
+    const iframe = createFragment().createEl('iframe');
     activeDocument.body.appendChild(iframe);
-    const ownerDocument = iframe.contentDocument!;
-    const ownerWindow = ownerDocument.defaultView!;
+    const ownerDocument = expectDefined(iframe.contentDocument);
+    const ownerWindow = expectDefined(ownerDocument.defaultView);
     const NativeMutationObserver = ownerWindow.MutationObserver;
     const observers: TrackingMutationObserver[] = [];
 
@@ -50,7 +58,7 @@ describe('RailPanel', () => {
       }
 
       override observe(target: Node, options?: MutationObserverInit): void {
-        this.observeCalls.push({ target, options });
+        this.observeCalls.push(options === undefined ? { target } : { target, options });
         super.observe(target, options);
       }
 
@@ -69,16 +77,21 @@ describe('RailPanel', () => {
       value: TrackingMutationObserver,
     });
 
-    let modalEl: HTMLElement | undefined;
-    const setting = {
+    const setting: {
+      open(): void;
+      openTabById(id: string): void;
+      modalEl?: HTMLElement;
+    } = {
       open: vi.fn(() => {
-        modalEl = ownerDocument.createElement('div');
-        modalEl.className = 'modal mod-settings';
-        ownerDocument.body.appendChild(modalEl);
-        setting.modalEl = modalEl;
+        const nextModal = ownerDocument.createElementNS(
+          'http://www.w3.org/1999/xhtml',
+          'div',
+        ) as HTMLDivElement;
+        nextModal.className = 'modal mod-settings';
+        ownerDocument.body.appendChild(nextModal);
+        setting.modalEl = nextModal;
       }),
       openTabById: vi.fn(),
-      modalEl,
     };
 
     return {
@@ -86,7 +99,7 @@ describe('RailPanel', () => {
       ownerDocument,
       observers,
       setting,
-      modal: () => setting.modalEl!,
+      modal: () => expectDefined(setting.modalEl),
       restore: () => {
         Object.defineProperty(ownerWindow, 'MutationObserver', {
           configurable: true,
@@ -116,15 +129,23 @@ describe('RailPanel', () => {
     expect(labels).toEqual(['Tasks', 'Calendar', 'Projects', 'Search', 'Settings']);
   });
 
-  it('click Projects button sets mode to projects', () => {
+  it.each([
+    ['Projects', 'projects'],
+    ['Tasks', 'tasks'],
+    ['Calendar', 'calendar'],
+    ['Search', 'search'],
+  ] as const)('click %s button sets mode to %s', (label, expectedMode) => {
     const state = new AppState();
+    if (label === 'Tasks') state.set('mode', 'calendar');
     const panel = new RailPanel(state, { setting: {} }, stateNavigationActions(state));
     panel.mount(freshContainer());
-    const btn = Array.from(panel['el'].querySelectorAll('button')).find(
-      (b) => b.getAttribute('aria-label') === 'Projects',
-    )!;
-    btn.click();
-    expect(state.get('mode')).toBe('projects');
+    const button = expectDefined(
+      Array.from(panel['el'].querySelectorAll('button')).find(
+        (candidate) => candidate.getAttribute('aria-label') === label,
+      ),
+    );
+    button.click();
+    expect(state.get('mode')).toBe(expectedMode);
   });
 
   it('routes mode buttons through semantic navigation actions', () => {
@@ -134,12 +155,14 @@ describe('RailPanel', () => {
     panel.mount(freshContainer());
 
     for (const [label, action] of [
-      ['Tasks', navigation.openTasks],
-      ['Calendar', navigation.openCalendar],
-      ['Projects', navigation.openProjects],
-      ['Search', navigation.openSearch],
+      ['Tasks', methodOf(navigation, 'openTasks')],
+      ['Calendar', methodOf(navigation, 'openCalendar')],
+      ['Projects', methodOf(navigation, 'openProjects')],
+      ['Search', methodOf(navigation, 'openSearch')],
     ] as const) {
-      panel['el'].querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click();
+      expectDefined(
+        panel['el'].querySelector<HTMLButtonElement>(`[aria-label="${label}"]`),
+      ).click();
       expect(action).toHaveBeenCalledOnce();
     }
 
@@ -153,40 +176,6 @@ describe('RailPanel', () => {
     panel.mount(freshContainer());
     const active = panel['el'].querySelector('.abyss-rail-btn.is-active');
     expect(active?.getAttribute('aria-label')).toBe('Calendar');
-  });
-
-  it('click Tasks button sets mode to tasks', () => {
-    const state = new AppState();
-    state.set('mode', 'calendar');
-    const panel = new RailPanel(state, { setting: {} }, stateNavigationActions(state));
-    panel.mount(freshContainer());
-    const btn = Array.from(panel['el'].querySelectorAll('button')).find(
-      (b) => b.getAttribute('aria-label') === 'Tasks',
-    )!;
-    btn.click();
-    expect(state.get('mode')).toBe('tasks');
-  });
-
-  it('click Calendar button sets mode to calendar', () => {
-    const state = new AppState();
-    const panel = new RailPanel(state, { setting: {} }, stateNavigationActions(state));
-    panel.mount(freshContainer());
-    const btn = Array.from(panel['el'].querySelectorAll('button')).find(
-      (b) => b.getAttribute('aria-label') === 'Calendar',
-    )!;
-    btn.click();
-    expect(state.get('mode')).toBe('calendar');
-  });
-
-  it('click Search button sets mode to search', () => {
-    const state = new AppState();
-    const panel = new RailPanel(state, { setting: {} }, stateNavigationActions(state));
-    panel.mount(freshContainer());
-    const btn = Array.from(panel['el'].querySelectorAll('button')).find(
-      (b) => b.getAttribute('aria-label') === 'Search',
-    )!;
-    btn.click();
-    expect(state.get('mode')).toBe('search');
   });
 
   it('state change re-renders active class', () => {
@@ -204,9 +193,11 @@ describe('RailPanel', () => {
     const openTabById = vi.fn();
     const panel = new RailPanel(state, { setting: { open, openTabById } });
     panel.mount(freshContainer());
-    const btn = Array.from(panel['el'].querySelectorAll('button')).find(
-      (b) => b.getAttribute('aria-label') === 'Settings',
-    )!;
+    const btn = expectDefined(
+      Array.from(panel['el'].querySelectorAll('button')).find(
+        (b) => b.getAttribute('aria-label') === 'Settings',
+      ),
+    );
     btn.click();
     expect(open).toHaveBeenCalledOnce();
   });
@@ -216,9 +207,11 @@ describe('RailPanel', () => {
     const openTabById = vi.fn();
     const panel = new RailPanel(state, { setting: { open: vi.fn(), openTabById } });
     panel.mount(freshContainer());
-    const btn = Array.from(panel['el'].querySelectorAll('button')).find(
-      (b) => b.getAttribute('aria-label') === 'Settings',
-    )!;
+    const btn = expectDefined(
+      Array.from(panel['el'].querySelectorAll('button')).find(
+        (b) => b.getAttribute('aria-label') === 'Settings',
+      ),
+    );
     btn.click();
     expect(openTabById).toHaveBeenCalledWith('abyss-tasks');
   });
@@ -233,8 +226,9 @@ describe('RailPanel', () => {
 
       try {
         panel.mount(freshContainer());
-        const settingsButton =
-          panel['el'].querySelector<HTMLButtonElement>('[aria-label="Settings"]')!;
+        const settingsButton = expectDefined(
+          panel['el'].querySelector<HTMLButtonElement>('[aria-label="Settings"]'),
+        );
         settingsButton.click();
 
         expect(
@@ -243,7 +237,7 @@ describe('RailPanel', () => {
           ),
         ).toEqual([mode === 'projects' ? 'Projects' : 'Search', 'Settings']);
         expect(harness.observers).toHaveLength(1);
-        expect(harness.observers[0]!.observeCalls).toEqual([
+        expect(expectDefined(harness.observers[0]).observeCalls).toEqual([
           {
             target: harness.ownerDocument.body,
             options: { childList: true, subtree: true },
@@ -251,12 +245,14 @@ describe('RailPanel', () => {
         ]);
 
         harness.modal().remove();
-        await vi.waitFor(() => expect(settingsButton.classList.contains('is-active')).toBe(false));
+        await vi.waitFor(() => {
+          expect(settingsButton.classList.contains('is-active')).toBe(false);
+        });
 
         expect(
           panel['el'].querySelector('.abyss-rail-btn.is-active')?.getAttribute('aria-label'),
         ).toBe(mode === 'projects' ? 'Projects' : 'Search');
-        expect(harness.observers[0]!.disconnectCalls).toBe(1);
+        expect(expectDefined(harness.observers[0]).disconnectCalls).toBe(1);
       } finally {
         panel.destroy();
         harness.restore();
@@ -270,12 +266,14 @@ describe('RailPanel', () => {
 
     try {
       panel.mount(freshContainer());
-      panel['el'].querySelector<HTMLButtonElement>('[aria-label="Settings"]')!.click();
+      expectDefined(
+        panel['el'].querySelector<HTMLButtonElement>('[aria-label="Settings"]'),
+      ).click();
       expect(harness.observers).toHaveLength(1);
 
       panel.destroy();
 
-      expect(harness.observers[0]!.disconnectCalls).toBe(1);
+      expect(expectDefined(harness.observers[0]).disconnectCalls).toBe(1);
       expect(panel['el'].children).toHaveLength(0);
     } finally {
       harness.restore();
@@ -288,15 +286,16 @@ describe('RailPanel', () => {
 
     try {
       panel.mount(freshContainer());
-      const settingsButton =
-        panel['el'].querySelector<HTMLButtonElement>('[aria-label="Settings"]')!;
+      const settingsButton = expectDefined(
+        panel['el'].querySelector<HTMLButtonElement>('[aria-label="Settings"]'),
+      );
       settingsButton.click();
       const staleModal = harness.modal();
-      const staleObserver = harness.observers[0]!;
+      const staleObserver = expectDefined(harness.observers[0]);
 
       settingsButton.click();
       const currentModal = harness.modal();
-      const currentObserver = harness.observers[1]!;
+      const currentObserver = expectDefined(harness.observers[1]);
 
       expect(staleObserver.disconnectCalls).toBe(1);
       expect(currentObserver.disconnectCalls).toBe(0);
@@ -309,7 +308,9 @@ describe('RailPanel', () => {
       expect(currentObserver.disconnectCalls).toBe(0);
 
       currentModal.remove();
-      await vi.waitFor(() => expect(settingsButton.classList.contains('is-active')).toBe(false));
+      await vi.waitFor(() => {
+        expect(settingsButton.classList.contains('is-active')).toBe(false);
+      });
       expect(currentObserver.disconnectCalls).toBe(1);
     } finally {
       panel.destroy();
@@ -325,8 +326,10 @@ describe('RailPanel', () => {
 
     try {
       panel.mount(freshContainer());
-      panel['el'].querySelector<HTMLButtonElement>('[aria-label="Settings"]')!.click();
-      const observer = harness.observers[0]!;
+      expectDefined(
+        panel['el'].querySelector<HTMLButtonElement>('[aria-label="Settings"]'),
+      ).click();
+      const observer = expectDefined(harness.observers[0]);
       expect(observer.disconnectCalls).toBe(0);
 
       state.set('mode', 'search');
@@ -337,9 +340,9 @@ describe('RailPanel', () => {
         panel['el'].querySelector('.abyss-rail-btn.is-active')?.getAttribute('aria-label'),
       ).toBe('Search');
       expect(
-        panel['el']
-          .querySelector<HTMLButtonElement>('[aria-label="Settings"]')!
-          .classList.contains('is-active'),
+        expectDefined(
+          panel['el'].querySelector<HTMLButtonElement>('[aria-label="Settings"]'),
+        ).classList.contains('is-active'),
       ).toBe(false);
     } finally {
       panel.destroy();
@@ -349,12 +352,16 @@ describe('RailPanel', () => {
 
   it('settings button click with undefined setting does not throw', () => {
     const state = new AppState();
-    const panel = new RailPanel(state, { setting: undefined });
+    const panel = new RailPanel(state, {});
     panel.mount(freshContainer());
-    const btn = Array.from(panel['el'].querySelectorAll('button')).find(
-      (b) => b.getAttribute('aria-label') === 'Settings',
-    )!;
-    expect(() => btn.click()).not.toThrow();
+    const btn = expectDefined(
+      Array.from(panel['el'].querySelectorAll('button')).find(
+        (b) => b.getAttribute('aria-label') === 'Settings',
+      ),
+    );
+    expect(() => {
+      btn.click();
+    }).not.toThrow();
   });
 
   it('destroy removes state listener (no re-render after)', () => {

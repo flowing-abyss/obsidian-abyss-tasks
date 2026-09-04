@@ -1,26 +1,33 @@
-import { App, Modal, Setting } from 'obsidian';
+import { Modal, Setting, type App } from 'obsidian';
 import { buildLinkRaw, type LinkToken } from '../parser/links';
 import { NoteSuggest } from './NoteSuggest';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 
 export class LinkEditModal extends Modal {
+  private readonly token: LinkToken;
+  private readonly onSave: (newRaw: string) => void;
+  private readonly sourcePath: string;
+  private readonly interactionOwnership: InteractionOwnershipPort;
+  private noteSuggest: NoteSuggest | undefined;
   private display: string;
   private target: string;
   private ownershipToken: { release(): void } | null = null;
 
   constructor(
-    app: App,
-    private token: LinkToken,
-    private onSave: (newRaw: string) => void,
-    private sourcePath = '',
-    private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
+    ...args: [App, LinkToken, (newRaw: string) => void, string?, InteractionOwnershipPort?]
   ) {
+    const [app, token, onSave, sourcePath = '', ownership = noInteractionOwnership] = args;
     super(app);
+    this.noteSuggest = undefined;
+    this.token = token;
+    this.onSave = onSave;
+    this.sourcePath = sourcePath;
+    this.interactionOwnership = ownership;
     this.display = token.display;
     this.target = token.target;
   }
 
-  onOpen(): void {
+  override onOpen(): void {
     this.ownershipToken?.release();
     this.ownershipToken = this.interactionOwnership.acquire({ blocksShortcuts: true });
     const { contentEl, token } = this;
@@ -33,9 +40,7 @@ export class LinkEditModal extends Modal {
       // Wiki links get a note-search dropdown honouring Obsidian's excluded files.
       if (token.type === 'wiki') {
         t.inputEl.setAttribute('spellcheck', 'false');
-        // AbstractInputSuggest registers itself onto the input via its constructor.
-        // eslint-disable-next-line sonarjs/constructor-for-side-effects
-        new NoteSuggest(this.app, t.inputEl, (file) => {
+        this.noteSuggest = new NoteSuggest(this.app, t.inputEl, (file) => {
           this.target = this.app.metadataCache.fileToLinktext(file, this.sourcePath, true);
           t.setValue(this.target);
         });
@@ -61,10 +66,12 @@ export class LinkEditModal extends Modal {
     );
   }
 
-  onClose(): void {
+  override onClose(): void {
     const ownershipToken = this.ownershipToken;
     this.ownershipToken = null;
     ownershipToken?.release();
+    this.noteSuggest?.close();
+    this.noteSuggest = undefined;
     this.contentEl.empty();
   }
 }

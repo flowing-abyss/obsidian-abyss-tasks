@@ -8,7 +8,9 @@ import type { Menu } from 'obsidian';
 export function showMenuAtMouseEventWithFocus(menu: Menu, event: MouseEvent): Menu {
   const eventTarget = event.currentTarget ?? event.target;
   const targetDocument =
-    eventTarget && 'ownerDocument' in eventTarget ? (eventTarget as Node).ownerDocument : null;
+    eventTarget != null && 'ownerDocument' in eventTarget
+      ? (eventTarget as Node).ownerDocument
+      : null;
   const ownerDocument = targetDocument ?? activeDocument;
   const existingMenus = new Set(ownerDocument.querySelectorAll<HTMLElement>('.menu'));
 
@@ -18,7 +20,7 @@ export function showMenuAtMouseEventWithFocus(menu: Menu, event: MouseEvent): Me
     (candidate) => !existingMenus.has(candidate),
   );
   const firstItem = surface?.querySelector<HTMLElement>('.menu-item:not(.is-disabled)');
-  if (firstItem) {
+  if (firstItem != null) {
     firstItem.tabIndex = 0;
     firstItem.focus({ preventScroll: true });
   }

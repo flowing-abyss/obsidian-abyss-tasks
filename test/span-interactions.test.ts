@@ -8,7 +8,7 @@ import {
   serializeSpanMovePayload,
 } from '../src/views/spanInteractions';
 import { layoutVisibleSpans } from '../src/views/spanLayout';
-import { task } from './helpers';
+import { expectDefined, parseJson, task } from './helpers';
 
 const columns = [
   { date: '2026-07-06', left: 100, right: 200 },
@@ -62,7 +62,9 @@ describe('span interaction geometry', () => {
 
   it('returns one immutable whole-schedule delta and rejects a no-op drop', () => {
     const snapshot = task({ source: { filePath: 'folder/a.md', line: 7 } });
-    const payload = parseSpanMovePayload(serializeSpanMovePayload(snapshot, '2026-07-07'))!;
+    const payload = expectDefined(
+      parseSpanMovePayload(serializeSpanMovePayload(snapshot, '2026-07-07')),
+    );
 
     expect(resolveSpanMoveTarget(payload, '2026-07-10')).toEqual({
       grabbedDate: '2026-07-07',
@@ -75,11 +77,13 @@ describe('span interaction geometry', () => {
 
   it.each(['', '{}', '{"version":2}', '{"version":1,"task":{},"grabbedDate":"bad"}'])(
     'rejects malformed payload %s',
-    (payload) => expect(parseSpanMovePayload(payload)).toBeUndefined(),
+    (payload) => {
+      expect(parseSpanMovePayload(payload)).toBeUndefined();
+    },
   );
 
   it('uses the source document window for a single active create-span session', () => {
-    const root = document.createElement('div');
+    const root = createDiv();
     root.className = 'abyss-tg-root';
     const row = root.createDiv({ cls: 'abyss-tg-allday-days' });
     const layer = row.createDiv({ cls: 'abyss-tg-span-layer' });
@@ -94,7 +98,9 @@ describe('span interaction geometry', () => {
     const foreignWindow = new EventTarget();
     const ownerDocument = {
       defaultView: foreignWindow,
-      createElement: document.createElement.bind(document),
+      adoptNode: <T extends Node>(node: T) => node,
+      createElementNS: (namespace: string, qualifiedName: string) =>
+        activeDocument.createElementNS(namespace, qualifiedName),
     } as unknown as Document;
     Object.defineProperty(source, 'ownerDocument', { configurable: true, value: ownerDocument });
     vi.spyOn(first, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 100, 100));
@@ -133,7 +139,7 @@ describe('span interaction geometry', () => {
   });
 
   it('computes one prospective layout per multi-row Month pointer update', () => {
-    const root = document.createElement('div');
+    const root = createDiv();
     root.className = 'abyss-mg-grid';
     const dates = [
       '2026-07-06',
@@ -165,8 +171,8 @@ describe('span interaction geometry', () => {
       return layer;
     });
     document.body.appendChild(root);
-    const source = layers[0]!.createDiv();
-    source.style.gridRow = '1';
+    const source = expectDefined(layers[0]).createDiv();
+    source.setCssProps({ gridRow: '1' });
     const snapshot = task({
       source: { filePath: 'span.md', line: 1 },
       planning: { start: '2026-07-10', due: '2026-07-15' },
@@ -211,7 +217,11 @@ describe('span interaction geometry', () => {
           (preview) => ({
             column: preview.style.gridColumn,
             row: preview.style.gridRow,
-            target: JSON.parse(preview.dataset['target']!),
+            target: parseJson<{
+              grabbedDate: string;
+              targetDate: string;
+              days: number;
+            }>(expectDefined(preview.dataset['target'])),
           }),
         ),
       ).toEqual([
@@ -259,7 +269,7 @@ describe('span interaction geometry', () => {
   });
 
   it('clears a boundary preview once when returning to its unchanged date', () => {
-    const root = document.createElement('div');
+    const root = createDiv();
     root.className = 'abyss-tg-root';
     const row = root.createDiv({ cls: 'abyss-tg-allday-days' });
     const layer = row.createDiv({ cls: 'abyss-tg-span-layer' });
@@ -272,7 +282,7 @@ describe('span interaction geometry', () => {
     }
     document.body.appendChild(root);
     const source = layer.createDiv();
-    source.style.gridRow = '1';
+    source.setCssProps({ gridRow: '1' });
     const handle = source.createDiv();
     const snapshot = task({ planning: { start: '2026-07-07', due: '2026-07-08' } });
     let layoutComputations = 0;
@@ -308,7 +318,9 @@ describe('span interaction geometry', () => {
       window.dispatchEvent(
         new PointerEvent('pointermove', { clientX: 50, clientY: 50, pointerId: 4 }),
       );
-      const firstPreview = root.querySelector<HTMLElement>('.abyss-span-boundary-preview')!;
+      const firstPreview = expectDefined(
+        root.querySelector<HTMLElement>('.abyss-span-boundary-preview'),
+      );
       const remove = vi.spyOn(firstPreview, 'remove');
 
       window.dispatchEvent(
@@ -336,7 +348,7 @@ describe('span interaction geometry', () => {
   });
 
   it('does not cache a move target when its preview cannot be built', () => {
-    const root = document.createElement('div');
+    const root = createDiv();
     root.className = 'abyss-tg-root';
     const row = root.createDiv({ cls: 'abyss-tg-allday-days' });
     const layer = row.createDiv({ cls: 'abyss-tg-span-layer' });
@@ -349,7 +361,7 @@ describe('span interaction geometry', () => {
     }
     document.body.appendChild(root);
     const source = layer.createDiv();
-    source.style.gridRow = '1';
+    source.setCssProps({ gridRow: '1' });
     const snapshot = task({ planning: { start: '0000-01-01', due: '2026-07-08' } });
     let layoutComputations = 0;
 

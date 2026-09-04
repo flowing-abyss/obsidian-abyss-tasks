@@ -2,9 +2,15 @@ import { TFile, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
-import type { TaskEditCommand, TaskEditRequest } from '../../src/tasks/application/TaskRepository';
+import type {
+  RecurrenceCompletionRevisionRequest,
+  TaskEditCommand,
+  TaskEditRequest,
+  TaskMoveRequest,
+} from '../../src/tasks/application/TaskRepository';
+import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
-import type { TaskRef } from '../../src/tasks/domain/types';
+import type { TaskRef, TaskSnapshot } from '../../src/tasks/domain/types';
 import { localDate, localTime } from '../../src/tasks/domain/validation';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
@@ -16,16 +22,14 @@ import {
   taskRefContentFingerprint,
 } from '../../src/tasks/infrastructure/TaskRefAuthority';
 import { createAppWithFiles, seedTaskCache } from '../helpers';
+import { expectDefined } from './../helpers';
 
 interface Harness {
   readonly app: App;
   readonly repository: ObsidianTaskRepository;
   readonly locator: TaskLocator;
   readonly editor: TaskBlockEditor;
-  readonly snapshotsFromContent: (
-    path: string,
-    content: string,
-  ) => readonly import('../../src/tasks/domain/types').TaskSnapshot[];
+  readonly snapshotsFromContent: (path: string, content: string) => readonly TaskSnapshot[];
 }
 
 async function harness(
@@ -55,7 +59,7 @@ async function harness(
 
 function refFor(h: Harness, path: string, content: string, line = 0): TaskRef {
   const block = h.editor.rootBlocks(content).find((candidate) => candidate.line === line);
-  if (!block) throw new Error(`missing task at ${line}`);
+  if (block == null) throw new Error(`missing task at ${line}`);
   return { filePath: path, line, revision: h.locator.revision(block.source) };
 }
 
@@ -99,9 +103,9 @@ describe('ObsidianTaskRepository planning contract', () => {
       refAuthority: authority,
     });
     await index.initialize();
-    const baseRoot = index.list()[0]!;
+    const baseRoot = expectDefined(index.list()[0]);
     const successor = authority.successor(baseRoot.ref.revision, candidate.trimEnd());
-    if (!successor) throw new Error('missing successor');
+    if (successor === undefined) throw new Error('missing successor');
     const staged = authority.stage(
       {
         filePath: path,
@@ -117,7 +121,7 @@ describe('ObsidianTaskRepository planning contract', () => {
     const file = app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) throw new Error('missing file');
     await app.vault.modify(file, candidate);
-    const current = index.installCommittedContent(path, candidate)[0]!;
+    const current = expectDefined(index.installCommittedContent(path, candidate)[0]);
     authority.acknowledge(path, candidate);
     const repository = new ObsidianTaskRepository(app, {
       codec,
@@ -161,7 +165,7 @@ describe('ObsidianTaskRepository planning contract', () => {
     const source = '- [ ] task\n- [ ] other\n';
     const relocated = 'intro\n- [ ] task\n- [ ] other\n';
     const h = await harness({ 'tasks.md': source });
-    const baseRoot = h.snapshotsFromContent('tasks.md', source)[0]!;
+    const baseRoot = expectDefined(h.snapshotsFromContent('tasks.md', source)[0]);
     const file = h.app.vault.getAbstractFileByPath('tasks.md');
     if (!(file instanceof TFile)) throw new Error('missing file');
     await h.app.vault.modify(file, relocated);
@@ -189,7 +193,7 @@ describe('ObsidianTaskRepository planning contract', () => {
     const source = '- [ ] task\n';
     const externallyEdited = '- [ ] task #external\n';
     const h = await harness({ 'tasks.md': source });
-    const baseRoot = h.snapshotsFromContent('tasks.md', source)[0]!;
+    const baseRoot = expectDefined(h.snapshotsFromContent('tasks.md', source)[0]);
     const file = h.app.vault.getAbstractFileByPath('tasks.md');
     if (!(file instanceof TFile)) throw new Error('missing file');
     await h.app.vault.modify(file, externallyEdited);
@@ -216,7 +220,7 @@ describe('ObsidianTaskRepository planning contract', () => {
     const source = '- [ ] task\r\n  - > old\r\n- [ ] other\r\n';
     const h = await harness({ 'tasks.md': source });
     const process = vi.spyOn(h.app.vault, 'process');
-    const root = h.snapshotsFromContent('tasks.md', source)[0]!;
+    const root = expectDefined(h.snapshotsFromContent('tasks.md', source)[0]);
 
     await expect(
       h.repository.edit({
@@ -463,6 +467,234 @@ describe('ObsidianTaskRepository planning contract', () => {
     ).resolves.toMatchObject({ type: 'not-found' });
   });
 
+  it('fails closed for invalid creation collaborators and a skipped create callback', async () => {
+    const destination = { filePath: 'tasks.md', insertion: { type: 'append' as const } };
+
+    const invalidEditor = await harness({ 'tasks.md': '' });
+    vi.spyOn(invalidEditor.editor, 'insertRootBlock').mockReturnValue(undefined);
+    await expect(
+      invalidEditor.repository.create(destination, { markdownBody: 'Created' }),
+    ).resolves.toEqual({ type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] });
+
+    const invalidProjection = await harness({ 'tasks.md': '' }, () => []);
+    await expect(
+      invalidProjection.repository.create(destination, { markdownBody: 'Created' }),
+    ).resolves.toEqual({ type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] });
+
+    const skipped = await harness({ 'tasks.md': '' });
+    vi.spyOn(skipped.app.vault, 'process').mockResolvedValue('');
+    await expect(
+      skipped.repository.create(destination, { markdownBody: 'Created' }),
+    ).resolves.toEqual({
+      type: 'io-error',
+      cause: 'process-error',
+      path: 'tasks.md',
+      contentState: 'unknown',
+    });
+  });
+
+  it('accepts revision-precondition move and recurrence requests through their public overloads', async () => {
+    const source = '- [ ] recurring 🔁 every day 📅 2026-07-20\n';
+    const h = await harness({ 'tasks.md': source });
+    const baseRoot = expectDefined(h.snapshotsFromContent('tasks.md', source)[0]);
+    const target = { type: 'task' as const, ref: baseRoot.ref };
+    const moveRequest: TaskMoveRequest = {
+      destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+      baseRoot,
+      baseTarget: target,
+      reconciliation: { observed: baseRoot },
+    };
+
+    await expect(h.repository.move(moveRequest)).resolves.toMatchObject({
+      type: 'committed',
+      changed: false,
+    });
+
+    const recurrenceRequest: RecurrenceCompletionRevisionRequest = {
+      command: {
+        target,
+        doneSymbol: 'x',
+        todoSymbol: ' ',
+        today: localDate('2026-07-20'),
+        addCreatedDate: false,
+        addCompletionDate: true,
+        placement: 'before',
+        policy: { removeScheduledDate: false },
+      },
+      baseRoot,
+      baseTarget: target,
+      reconciliation: { observed: baseRoot },
+      baseOwnedDescendants: '',
+    };
+    await expect(h.repository.completeRecurrence(recurrenceRequest)).resolves.toMatchObject({
+      type: 'committed',
+      changed: true,
+    });
+  });
+
+  it('returns typed failures for omitted move destinations, source reads, and recurrence files', async () => {
+    const source = '- [ ] task\n';
+    const missingDestination = await harness({ 'tasks.md': source });
+    const ref = refFor(missingDestination, 'tasks.md', source);
+    await expect(missingDestination.repository.move(ref)).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target', field: 'destination' }],
+    });
+
+    const readFailure = await harness({ 'tasks.md': source, 'target.md': '' });
+    vi.spyOn(readFailure.app.vault, 'read').mockRejectedValue(new Error('read failed'));
+    await expect(
+      readFailure.repository.move(refFor(readFailure, 'tasks.md', source), {
+        filePath: 'target.md',
+        insertion: { type: 'append' },
+      }),
+    ).resolves.toEqual({
+      type: 'io-error',
+      cause: 'read-error',
+      path: 'tasks.md',
+      contentState: 'unchanged',
+    });
+
+    const missingRef = { filePath: 'missing.md', line: 0, revision: 'missing' };
+    await expect(
+      missingDestination.repository.completeRecurrence({
+        target: { type: 'task', ref: missingRef },
+        doneSymbol: 'x',
+        todoSymbol: ' ',
+        today: localDate('2026-07-20'),
+        addCreatedDate: false,
+        addCompletionDate: true,
+        placement: 'before',
+        policy: { removeScheduledDate: false },
+      }),
+    ).resolves.toEqual({ type: 'not-found', target: { type: 'task', ref: missingRef } });
+  });
+
+  it('returns target-specific not-found results for missing structural and comment edits', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] existing\n' });
+    const root = { filePath: 'missing.md', line: 0, revision: 'missing' };
+    const child = {
+      parent: { type: 'task' as const, ref: root },
+      relativeLine: 1,
+      originalBlock: '  - [ ] child',
+    };
+    const comment = {
+      parent: { type: 'task' as const, ref: root },
+      relativeLine: 1,
+      originalMarkdown: '  - note [[Link]]',
+    };
+
+    await expect(
+      h.repository.edit({
+        type: 'add-comment',
+        parent: { type: 'task', ref: root },
+        text: 'note',
+        stamp: atomDateTime('2026-07-20T12:00:00+00:00'),
+      }),
+    ).resolves.toEqual({ type: 'not-found', target: { type: 'task', ref: root } });
+    await expect(h.repository.edit({ type: 'delete-subtask', subtask: child })).resolves.toEqual({
+      type: 'not-found',
+      target: { type: 'subtask', ref: child },
+    });
+    await expect(
+      h.repository.edit({
+        type: 'edit-link',
+        target: { type: 'comment', ref: comment },
+        occurrence: 0,
+        replacement: '[[Changed]]',
+      }),
+    ).resolves.toEqual({ type: 'not-found', target: { type: 'comment', ref: comment } });
+  });
+
+  it('fails closed when ambiguous blocks cannot be projected into candidates', async () => {
+    const source = '- [ ] duplicate\n- [ ] duplicate\n';
+    const h = await harness({ 'tasks.md': source, 'target.md': '' }, () => []);
+    const stale = {
+      filePath: 'tasks.md',
+      line: 9,
+      revision: h.locator.revision('- [ ] duplicate'),
+    };
+
+    await expect(h.repository.edit(patch(stale, 'due', '2026-07-20'))).resolves.toEqual({
+      type: 'not-found',
+      target: { type: 'task', ref: stale },
+    });
+    await expect(
+      h.repository.move(stale, { filePath: 'target.md', insertion: { type: 'append' } }),
+    ).resolves.toEqual({ type: 'ambiguous', candidates: [] });
+    await expect(
+      h.repository.completeRecurrence({
+        target: { type: 'task', ref: stale },
+        doneSymbol: 'x',
+        todoSymbol: ' ',
+        today: localDate('2026-07-20'),
+        addCreatedDate: false,
+        addCompletionDate: true,
+        placement: 'before',
+        policy: { removeScheduledDate: false },
+      }),
+    ).resolves.toEqual({ type: 'not-found', target: { type: 'task', ref: stale } });
+  });
+
+  it('returns prepared relocation evidence before moving and fails closed without a projection', async () => {
+    const source = '- [ ] task\n';
+    const relocated = 'intro\n- [ ] task\n';
+    const h = await harness({ 'tasks.md': source });
+    const baseRoot = expectDefined(h.snapshotsFromContent('tasks.md', source)[0]);
+    const target = { type: 'task' as const, ref: baseRoot.ref };
+    const file = h.app.vault.getAbstractFileByPath('tasks.md');
+    if (!(file instanceof TFile)) throw new Error('missing task file');
+    await h.app.vault.modify(file, relocated);
+    const request: TaskMoveRequest = {
+      destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+      baseRoot,
+      baseTarget: target,
+      reconciliation: { observed: baseRoot },
+    };
+
+    await expect(h.repository.move(request)).resolves.toMatchObject({
+      type: 'rebased',
+      previous: baseRoot,
+      current: { source: { line: 1 } },
+      evidence: 'byte-identical-relocation',
+    });
+
+    const withoutProjection = await harness({ 'tasks.md': relocated }, () => []);
+    await expect(withoutProjection.repository.move(request)).resolves.toEqual({
+      type: 'not-found',
+      target,
+    });
+  });
+
+  it('handles absent, invalid, and already-completed recurrence owners explicitly', async () => {
+    for (const [source, expected] of [
+      [
+        '- [ ] no recurrence\n',
+        { type: 'invalid', issues: [{ code: 'unparseable-rule', field: 'recurrence' }] },
+      ],
+      [
+        '- [ ] invalid 🔁 nope 📅 2026-07-20\n',
+        { type: 'invalid', issues: [{ code: 'must-start-with-every', field: 'recurrence' }] },
+      ],
+      ['- [x] done 🔁 every day 📅 2026-07-20\n', { type: 'committed', changed: false }],
+    ] as const) {
+      const h = await harness({ 'tasks.md': source });
+      const root = expectDefined(h.snapshotsFromContent('tasks.md', source)[0]);
+      const result = await h.repository.completeRecurrence({
+        target: { type: 'task', ref: root.ref },
+        doneSymbol: 'x',
+        todoSymbol: ' ',
+        today: localDate('2026-07-20'),
+        addCreatedDate: false,
+        addCompletionDate: true,
+        placement: 'before',
+        policy: { removeScheduledDate: false },
+      });
+
+      expect(result).toMatchObject(expected);
+    }
+  });
+
   it('fails closed when an exact block cannot be projected before or after a mutation', async () => {
     const source = '- [ ] task\n';
     const h = await harness({ 'tasks.md': source, 'target.md': '' }, () => []);
@@ -510,8 +742,8 @@ describe('ObsidianTaskRepository planning contract', () => {
   it('confirms every child block before editing and never adopts a same-line replacement', async () => {
     const source = '- [ ] root\n  - [ ] child 📅 2026-07-20\n';
     const h = await harness({ 'tasks.md': source });
-    const root = h.snapshotsFromContent('tasks.md', source)[0]!;
-    const child = root.subtasks[0]!;
+    const root = expectDefined(h.snapshotsFromContent('tasks.md', source)[0]);
+    const child = expectDefined(root.subtasks[0]);
     const forged = {
       ...child.ref,
       originalBlock: '  - [ ] replacement 📅 2026-07-20',
@@ -531,8 +763,8 @@ describe('ObsidianTaskRepository planning contract', () => {
   it('edits an exactly confirmed nested child and returns the updated root aggregate', async () => {
     const source = '- [ ] root\n  - [ ] child\n    - [ ] nested 📅 2026-07-20\n';
     const h = await harness({ 'tasks.md': source });
-    const root = h.snapshotsFromContent('tasks.md', source)[0]!;
-    const nested = root.subtasks[0]!.subtasks[0]!;
+    const root = expectDefined(h.snapshotsFromContent('tasks.md', source)[0]);
+    const nested = expectDefined(expectDefined(root.subtasks[0]).subtasks[0]);
 
     const result = await h.repository.edit({
       type: 'patch',

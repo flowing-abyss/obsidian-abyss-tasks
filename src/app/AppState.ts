@@ -72,8 +72,8 @@ export class AppState {
     projectsPanel: { view: 'list' },
   };
 
-  private listeners = new Map<keyof AppStateData, Set<Listener<unknown>>>();
-  private commitListeners = new Set<CommitListener>();
+  private readonly listeners = new Map<keyof AppStateData, Set<Listener<unknown>>>();
+  private readonly commitListeners = new Set<CommitListener>();
   private pendingChanges = new Map<keyof AppStateData, PendingChange>();
   private batchDepth = 0;
   private delivering = false;
@@ -89,7 +89,7 @@ export class AppState {
     this.data[key] = value;
     if (this.batchDepth > 0) {
       const pending = this.pendingChanges.get(key);
-      if (pending) pending.value = value;
+      if (pending != null) pending.value = value;
       else this.pendingChanges.set(key, { prev, value });
       return;
     }
@@ -139,7 +139,7 @@ export class AppState {
     errors: unknown[],
   ): void {
     const bucket = this.listeners.get(key);
-    if (!bucket) return;
+    if (bucket == null) return;
     for (const cb of [...bucket]) {
       try {
         cb(value, prev);
@@ -185,8 +185,11 @@ export class AppState {
   }
 
   on<K extends keyof AppStateData>(key: K, listener: Listener<AppStateData[K]>): () => void {
-    if (!this.listeners.has(key)) this.listeners.set(key, new Set());
-    const bucket = this.listeners.get(key)!;
+    let bucket = this.listeners.get(key);
+    if (bucket === undefined) {
+      bucket = new Set();
+      this.listeners.set(key, bucket);
+    }
     bucket.add(listener as Listener<unknown>);
     return () => {
       bucket.delete(listener as Listener<unknown>);

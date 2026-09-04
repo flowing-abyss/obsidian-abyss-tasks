@@ -3,6 +3,7 @@ import { orderedGroups, type StatusGroup } from '../../projects/status';
 import type { Project } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import { runAsyncAction } from '../../ui/runAsyncAction';
 import { renderProgressBar } from './progressBar';
 import type { ProjectsListContext } from './viewContext';
 
@@ -21,7 +22,7 @@ function parentFolder(path: string): string {
 
 function showNewProjectInput(scroll: HTMLElement, onCreate: (name: string) => Promise<void>): void {
   const existing = scroll.querySelector('.abyss-projects-new-input');
-  if (existing) {
+  if (existing != null) {
     (existing as HTMLInputElement).focus();
     return;
   }
@@ -35,7 +36,7 @@ function showNewProjectInput(scroll: HTMLElement, onCreate: (name: string) => Pr
     if (committed) return;
     committed = true;
     const name = input.value.trim();
-    if (name) void onCreate(name);
+    if (name.length > 0) runAsyncAction(onCreate(name), 'Could not create project');
     else input.remove();
   };
   input.addEventListener('keydown', (e) => {
@@ -52,7 +53,9 @@ function showNewProjectInput(scroll: HTMLElement, onCreate: (name: string) => Pr
       if (activeDocument.activeElement !== input) commit();
     }, 150);
   });
-  window.setTimeout(() => input.focus(), 0);
+  window.setTimeout(() => {
+    input.focus();
+  }, 0);
 }
 
 /** Overview: all projects grouped by status (defined order → discovered → No status). */
@@ -78,7 +81,9 @@ export function renderProjectsList(
 
   // "New project" shows an inline input at the top of the list — the same
   // interaction as the left-panel "+", never a modal (kept consistent).
-  newBtn.addEventListener('click', () => showNewProjectInput(scroll, ctx.onCreate));
+  newBtn.addEventListener('click', () => {
+    showNewProjectInput(scroll, ctx.onCreate);
+  });
 
   if (projects.length === 0) {
     scroll.createDiv({ cls: 'abyss-projects-empty', text: 'No projects yet' });
@@ -91,7 +96,7 @@ export function renderProjectsList(
 
     const groupEl = scroll.createDiv({ cls: 'abyss-projects-group' });
     const gHeader = groupEl.createDiv({ cls: 'abyss-projects-group-header' });
-    if (group.color) {
+    if (group.color !== undefined && group.color !== '') {
       const dot = gHeader.createSpan({ cls: 'abyss-status-dot' });
       dot.style.background = group.color;
     }
@@ -105,18 +110,26 @@ export function renderProjectsList(
 }
 
 function renderRow(
-  parent: HTMLElement,
-  project: Project,
-  statusById: Map<string, ProjectStatus>,
-  statuses: ProjectStatus[],
-  nameCounts: Map<string, number>,
-  ctx: ProjectsListContext,
+  ...args: [
+    HTMLElement,
+    Project,
+    Map<string, ProjectStatus>,
+    ProjectStatus[],
+    Map<string, number>,
+    ProjectsListContext,
+  ]
 ): void {
+  const [parent, project, statusById, statuses, nameCounts, ctx] = args;
   const row = parent.createDiv({ cls: 'abyss-project-row' });
 
-  const status = project.statusId ? statusById.get(project.statusId) : undefined;
+  const status =
+    project.statusId !== null && project.statusId !== ''
+      ? statusById.get(project.statusId)
+      : undefined;
   const dot = row.createSpan({ cls: 'abyss-status-dot' });
-  if (status?.color) dot.style.background = status.color;
+  if (status?.color !== undefined && status.color !== '') {
+    dot.style.background = status.color;
+  }
 
   const nameWrap = row.createDiv({ cls: 'abyss-project-row-name' });
   nameWrap.createSpan({ cls: 'abyss-project-name', text: project.name });
@@ -141,7 +154,9 @@ function renderRow(
         item
           .setTitle(s.label)
           .setChecked(s.id === project.statusId)
-          .onClick(() => ctx.onSetStatus(project.path, s.id)),
+          .onClick(() => {
+            ctx.onSetStatus(project.path, s.id);
+          }),
       );
     }
     showMenuAtMouseEventWithFocus(menu, e);

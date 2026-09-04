@@ -5,7 +5,10 @@ export function toStatusRules(defs: readonly TaskStatusDef[]): TaskStatusRule[] 
   const defaultIdByType = new Map<TaskStatusType, string>();
   for (const def of defs) {
     const chosen = defaultIdByType.get(def.type);
-    if (chosen === undefined || (def.core && !defs.find((item) => item.id === chosen)?.core)) {
+    if (
+      chosen === undefined ||
+      (def.core && !(defs.find((item) => item.id === chosen)?.core ?? false))
+    ) {
       defaultIdByType.set(def.type, def.id);
     }
   }

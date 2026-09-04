@@ -1,6 +1,7 @@
 import { App, Modal } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { TagPickerModal } from '../src/ui/TagPickerModal';
+import { expectDefined, methodOf } from './helpers';
 
 interface TagPickerHarness {
   modal: TagPickerModal;
@@ -15,24 +16,28 @@ interface ModalHostSeam {
 
 function installInheritedModalHostEscapeSeam(): ModalHostSeam {
   const cleanups = new WeakMap<Modal, () => void>();
-  const inheritedClose = Modal.prototype.close;
+  const inheritedClose = methodOf(Modal.prototype, 'close');
   const close = vi.spyOn(Modal.prototype, 'close').mockImplementation(function (this: Modal) {
     cleanups.get(this)?.();
     inheritedClose.call(this);
     this.containerEl.remove();
   });
   const open = vi.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
-    this.onOpen();
-    const modal = this;
-    const ownerDocument = modal.containerEl.ownerDocument;
+    const opening = this.onOpen();
+    if (opening instanceof Promise) {
+      opening.catch((error: unknown) => {
+        throw error;
+      });
+    }
+    const ownerDocument = this.containerEl.ownerDocument;
     const onKeydown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !event.defaultPrevented) modal.close();
+      if (event.key === 'Escape' && !event.defaultPrevented) this.close();
     };
     const cleanup = (): void => {
       ownerDocument.removeEventListener('keydown', onKeydown);
-      cleanups.delete(modal);
+      cleanups.delete(this);
     };
-    cleanups.set(modal, cleanup);
+    cleanups.set(this, cleanup);
     ownerDocument.addEventListener('keydown', onKeydown);
   });
   return {
@@ -69,7 +74,7 @@ function makeTagPicker(
 }
 
 function tagButton(modal: TagPickerModal, tag: string): HTMLButtonElement {
-  return modal.contentEl.querySelector<HTMLButtonElement>(`[data-tag="${tag}"]`)!;
+  return expectDefined(modal.contentEl.querySelector<HTMLButtonElement>(`[data-tag="${tag}"]`));
 }
 
 afterEach(() => {
@@ -104,7 +109,9 @@ describe('TagPickerModal', () => {
 
   it('renders filtered tag choices as native pressed buttons with truthful bulk states', () => {
     const { modal } = makeTagPicker();
-    const search = modal.contentEl.querySelector<HTMLInputElement>('.abyss-tag-picker-search')!;
+    const search = expectDefined(
+      modal.contentEl.querySelector<HTMLInputElement>('.abyss-tag-picker-search'),
+    );
 
     expect(tagButton(modal, '#all')).toBeInstanceOf(HTMLButtonElement);
     expect(tagButton(modal, '#all').getAttribute('aria-pressed')).toBe('true');
@@ -120,7 +127,9 @@ describe('TagPickerModal', () => {
 
   it('keeps focus on the toggled tag as native activation rebuilds the filtered list', () => {
     const { modal } = makeTagPicker();
-    const search = modal.contentEl.querySelector<HTMLInputElement>('.abyss-tag-picker-search')!;
+    const search = expectDefined(
+      modal.contentEl.querySelector<HTMLInputElement>('.abyss-tag-picker-search'),
+    );
     search.value = 'some';
     search.dispatchEvent(new Event('input', { bubbles: true }));
     const partial = tagButton(modal, '#some');

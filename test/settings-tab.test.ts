@@ -1,16 +1,21 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { App } from 'obsidian';
+import { App, Platform } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import { SHORTCUT_ACTIONS } from '../src/settings/shortcuts';
 import type { CalendarSettings } from '../src/settings/types';
-import { useRealMoment } from './helpers';
+import { expectDefined, useRealMoment } from './helpers';
 
 useRealMoment();
 
-const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+async function loadStylesFixture(): Promise<string> {
+  if (!Platform.isDesktop) throw new Error('CSS fixture requires the desktop test runtime');
+  const fileSystem = await import('node:fs');
+  const nodePath = await import('node:path');
+  return fileSystem.readFileSync(nodePath.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+}
+
+const css = await loadStylesFixture();
 
 function expectDeclaration(source: string, property: string, value: string): void {
   expect(source).toMatch(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*${value}\\s*(?:;|$)`, 'u'));
@@ -18,7 +23,7 @@ function expectDeclaration(source: string, property: string, value: string): voi
 
 function declarationsFor(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-  return css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'u'))?.[1] ?? '';
+  return new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'u').exec(css)?.[1] ?? '';
 }
 
 interface StubPlugin {
@@ -30,8 +35,10 @@ interface StubPlugin {
 function makeTab(): CalendarSettingsTab {
   const app = new App();
   // Mock plugins so DailyNoteResolver adapters don't throw on app.plugins access
-  (app as unknown as Record<string, unknown>).plugins = { getPlugin: () => null };
-  (app as unknown as Record<string, unknown>).internalPlugins = { getPluginById: () => null };
+  (app as unknown as Record<string, unknown>)['plugins'] = { getPlugin: () => null };
+  (app as unknown as Record<string, unknown>)['internalPlugins'] = {
+    getPluginById: () => null,
+  };
   const plugin: StubPlugin = {
     app,
     settings: structuredClone(DEFAULT_SETTINGS),
@@ -41,7 +48,7 @@ function makeTab(): CalendarSettingsTab {
     app,
     plugin as unknown as ConstructorParameters<typeof CalendarSettingsTab>[1],
   );
-  tab.display();
+  (tab as unknown as { display(): void }).display();
   return tab;
 }
 
@@ -50,15 +57,16 @@ describe('CalendarSettingsTab sections', () => {
     const tab = makeTab();
     const sections = [...tab.containerEl.querySelectorAll(':scope > .abyss-settings-section')];
     for (const section of sections) {
-      const body = section.querySelector(':scope > .abyss-settings-section-body')!;
+      const body = expectDefined(section.querySelector(':scope > .abyss-settings-section-body'));
       expect(body.children).toHaveLength(1);
       expect(body.firstElementChild?.classList.contains('abyss-settings-section-body-inner')).toBe(
         true,
       );
     }
-    expect(sections[0]!.querySelector('.abyss-settings-section-body-inner')!.textContent).toContain(
-      'Task prefix',
-    );
+    expect(
+      expectDefined(expectDefined(sections[0]).querySelector('.abyss-settings-section-body-inner'))
+        .textContent,
+    ).toContain('Task prefix');
   });
 
   it('uses compact theme-native settings card geometry', () => {
@@ -91,7 +99,9 @@ describe('CalendarSettingsTab sections', () => {
 
   it('renders lifecycle and recurrence setting rows in General', () => {
     const tab = makeTab();
-    tab.containerEl.querySelector<HTMLElement>('.abyss-settings-section-header')!.click();
+    expectDefined(
+      tab.containerEl.querySelector<HTMLElement>('.abyss-settings-section-header'),
+    ).click();
     expect(tab.containerEl.textContent).toContain('Add created date');
     expect(tab.containerEl.textContent).toContain('Add completion date');
     expect(tab.containerEl.textContent).toContain('New occurrence placement');
@@ -103,8 +113,8 @@ describe('CalendarSettingsTab sections', () => {
     const sections = tab.containerEl.querySelectorAll('.abyss-settings-section');
     expect(sections).toHaveLength(8);
 
-    const hotkeys = sections[7]!;
-    hotkeys.querySelector<HTMLElement>('.abyss-settings-section-header')!.click();
+    const hotkeys = expectDefined(sections[7]);
+    expectDefined(hotkeys.querySelector<HTMLElement>('.abyss-settings-section-header')).click();
     expect(hotkeys.textContent).toContain('Hotkeys');
     expect(hotkeys.querySelectorAll('.abyss-shortcut-row')).toHaveLength(SHORTCUT_ACTIONS.length);
     expect(hotkeys.textContent).toContain('Quick capture');
@@ -128,11 +138,11 @@ describe('CalendarSettingsTab sections', () => {
 
   it('uses native disclosure buttons and removes collapsed bodies from interaction', () => {
     const tab = makeTab();
-    const header = tab.containerEl.querySelector<HTMLButtonElement>(
-      '.abyss-settings-section-header',
-    )!;
+    const header = expectDefined(
+      tab.containerEl.querySelector<HTMLButtonElement>('.abyss-settings-section-header'),
+    );
     const controlled = header.getAttribute('aria-controls');
-    const body = tab.containerEl.querySelector<HTMLElement>(`#${controlled}`)!;
+    const body = expectDefined(tab.containerEl.querySelector<HTMLElement>(`#${controlled}`));
 
     expect(header.tagName).toBe('BUTTON');
     expect(header.type).toBe('button');
@@ -152,17 +162,17 @@ describe('CalendarSettingsTab sections', () => {
     const tab = makeTab();
     const header = tab.containerEl.querySelector<HTMLElement>('.abyss-settings-section-header');
     expect(header).not.toBeNull();
-    header!.click();
-    const section = header!.closest('.abyss-settings-section');
+    expectDefined(header).click();
+    const section = expectDefined(header).closest('.abyss-settings-section');
     expect(section?.classList.contains('is-open')).toBe(true);
   });
 
   it('clicking header again removes is-open', () => {
     const tab = makeTab();
     const header = tab.containerEl.querySelector<HTMLElement>('.abyss-settings-section-header');
-    header!.click();
-    header!.click();
-    const section = header!.closest('.abyss-settings-section');
+    expectDefined(header).click();
+    expectDefined(header).click();
+    const section = expectDefined(header).closest('.abyss-settings-section');
     expect(section?.classList.contains('is-open')).toBe(false);
   });
 
@@ -200,19 +210,21 @@ describe('CalendarSettingsTab sections', () => {
     const headers = Array.from(
       tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
     );
-    headers[1]!.click(); // open Desktop (index 1)
-    headers[2]!.click(); // open Mobile (index 2)
-    tab.display();
+    expectDefined(headers[1]).click(); // open Desktop (index 1)
+    expectDefined(headers[2]).click(); // open Mobile (index 2)
+    (tab as unknown as { display(): void }).display();
     const sections = Array.from(tab.containerEl.querySelectorAll('.abyss-settings-section'));
-    expect(sections[0]!.classList.contains('is-open')).toBe(false);
-    expect(sections[1]!.classList.contains('is-open')).toBe(true);
-    expect(sections[2]!.classList.contains('is-open')).toBe(true);
-    expect(sections[3]!.classList.contains('is-open')).toBe(false);
+    expect(expectDefined(sections[0]).classList.contains('is-open')).toBe(false);
+    expect(expectDefined(sections[1]).classList.contains('is-open')).toBe(true);
+    expect(expectDefined(sections[2]).classList.contains('is-open')).toBe(true);
+    expect(expectDefined(sections[3]).classList.contains('is-open')).toBe(false);
     expect(
-      sections[1]!.querySelector('.abyss-settings-section-header')?.getAttribute('aria-expanded'),
+      expectDefined(sections[1])
+        .querySelector('.abyss-settings-section-header')
+        ?.getAttribute('aria-expanded'),
     ).toBe('true');
-    expect(sections[1]!.querySelector<HTMLElement>('.abyss-settings-section-body')?.hidden).toBe(
-      false,
-    );
+    expect(
+      expectDefined(sections[1]).querySelector<HTMLElement>('.abyss-settings-section-body')?.hidden,
+    ).toBe(false);
   });
 });

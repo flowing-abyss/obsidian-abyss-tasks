@@ -98,7 +98,7 @@ function uniqueIndex<T>(
   for (const value of values) {
     const key = source(value);
     const entry = index.get(key);
-    if (entry) entry.count += 1;
+    if (entry != null) entry.count += 1;
     else index.set(key, { candidate: value, count: 1 });
   }
   return index;
@@ -110,7 +110,7 @@ function childPath(
 ): readonly SubtaskRef[] {
   if (target.type === 'task') return [];
   const cached = context.paths.get(target.ref);
-  if (cached) return cached;
+  if (cached != null) return cached;
   const path: SubtaskRef[] = [];
   let current: TaskNodeRef = target;
   while (current.type === 'subtask') {
@@ -132,13 +132,13 @@ function rebaseNode(
   let ref: TaskNodeRef = { type: 'task', ref: root.ref };
   for (const staleChild of childPath(stale, context)) {
     let index = context.children.get(node);
-    if (!index) {
+    if (index == null) {
       index = uniqueIndex(node.subtasks, (candidate) => candidate.ref.originalBlock);
       context.children.set(node, index);
     }
     const match: UniqueEntry<SubtaskSnapshot> | undefined = index.get(staleChild.originalBlock);
     const child: SubtaskSnapshot | undefined = match?.count === 1 ? match.candidate : undefined;
-    if (!child) return undefined;
+    if (child == null) return undefined;
     node = child;
     ref = { type: 'subtask', ref: child.ref };
   }
@@ -151,15 +151,57 @@ function rebaseComment(
   context: RightPanelDraftRebaseContext,
 ): Extract<TaskTextTarget, { readonly type: 'comment' }> | undefined {
   const parent = rebaseNode(root, draft.target.ref.parent, context);
-  if (!parent) return undefined;
+  if (parent == null) return undefined;
   let index = context.comments.get(parent.node);
-  if (!index) {
+  if (index == null) {
     index = uniqueIndex(parent.node.comments, (candidate) => candidate.ref.originalMarkdown);
     context.comments.set(parent.node, index);
   }
   const match = index.get(draft.target.ref.originalMarkdown);
   const comment: TaskCommentSnapshot | undefined = match?.count === 1 ? match.candidate : undefined;
-  return comment ? { type: 'comment', ref: comment.ref } : undefined;
+  return comment != null ? { type: 'comment', ref: comment.ref } : undefined;
+}
+
+function rebaseTitleDraft(
+  draft: Extract<RightPanelDraftState, { readonly kind: 'title' }>,
+  currentRoot: TaskSnapshot,
+  context: RightPanelDraftRebaseContext,
+): RightPanelDraftState | undefined {
+  const target = rebaseNode(currentRoot, draft.target.target, context)?.ref;
+  return target == null ? undefined : { ...draft, target: { type: 'title', target } };
+}
+
+function rebaseDescriptionDraft(
+  draft: Extract<RightPanelDraftState, { readonly kind: 'description' }>,
+  currentRoot: TaskSnapshot,
+  context: RightPanelDraftRebaseContext,
+): RightPanelDraftState | undefined {
+  const target = rebaseNode(currentRoot, draft.target.target, context)?.ref;
+  return target == null ? undefined : { ...draft, target: { type: 'description', target } };
+}
+
+type NodeDraftState = Exclude<RightPanelDraftState, { readonly kind: 'existing-comment' }>;
+
+function rebaseNodeDraft(
+  draft: NodeDraftState,
+  currentRoot: TaskSnapshot,
+  context: RightPanelDraftRebaseContext,
+): RightPanelDraftState | undefined {
+  switch (draft.kind) {
+    case 'title':
+      return rebaseTitleDraft(draft, currentRoot, context);
+    case 'description':
+      return rebaseDescriptionDraft(draft, currentRoot, context);
+    case 'recurrence-editor': {
+      const target = rebaseNode(currentRoot, draft.target, context)?.ref;
+      return target == null ? undefined : { ...draft, target };
+    }
+    case 'new-comment':
+    case 'new-subtask': {
+      const parent = rebaseNode(currentRoot, draft.parent, context)?.ref;
+      return parent == null ? undefined : { ...draft, parent };
+    }
+  }
 }
 
 export function rebaseRightPanelDraft(
@@ -169,60 +211,47 @@ export function rebaseRightPanelDraft(
 ): RightPanelDraftState | undefined {
   if (draft.kind === 'existing-comment') {
     const target = rebaseComment(currentRoot, draft, context);
-    return target ? { ...draft, target } : undefined;
+    return target == null ? undefined : { ...draft, target };
   }
-  if (draft.kind === 'title') {
-    const target = rebaseNode(currentRoot, draft.target.target, context)?.ref;
-    return target ? { ...draft, target: { type: 'title', target } } : undefined;
+  return rebaseNodeDraft(draft, currentRoot, context);
+}
+
+function structuredRecurrenceText(editor: RecurrenceEditorDraft): string {
+  if (editor.preset === 'weekdays') {
+    return `every weekday${editor.whenDone ? ' when done' : ''}`;
   }
-  if (draft.kind === 'description') {
-    const target = rebaseNode(currentRoot, draft.target.target, context)?.ref;
-    return target ? { ...draft, target: { type: 'description', target } } : undefined;
-  }
-  if (draft.kind === 'new-comment' || draft.kind === 'new-subtask') {
-    const parent = rebaseNode(currentRoot, draft.parent, context)?.ref;
-    return parent ? { ...draft, parent } : undefined;
-  }
-  if (draft.kind === 'recurrence-editor') {
-    const target = rebaseNode(currentRoot, draft.target, context)?.ref;
-    return target ? { ...draft, target } : undefined;
-  }
-  return undefined;
+  const parsed = buildRecurrenceRule({
+    interval: Number(editor.intervalText),
+    unit: editor.unit,
+    weekdays: editor.weekdays,
+    monthly: editor.monthly,
+    yearly: editor.yearly,
+    whenDone: editor.whenDone,
+  });
+  return parsed.type === 'valid' ? parsed.raw : 'invalid structured recurrence';
+}
+
+function recurrenceDraftPlainText(editor: RecurrenceEditorDraft): string {
+  if (editor.mode === 'custom') return editor.customDraft;
+  const details = [
+    `preset: ${editor.preset ?? 'customized'}`,
+    `interval: ${editor.intervalText}`,
+    `unit: ${editor.unit}`,
+    `weekdays: ${editor.weekdays.join(', ')}`,
+    `monthly: ${JSON.stringify(editor.monthly)}`,
+    `yearly: ${JSON.stringify(editor.yearly)}`,
+    `when done: ${editor.whenDone ? 'yes' : 'no'}`,
+    `on completion: ${editor.onCompletion}`,
+  ];
+  return [structuredRecurrenceText(editor), ...details].join('\n');
 }
 
 export function draftPlainText(draft: RightPanelDraftState): string {
-  if (draft.kind === 'recurrence-editor') {
-    const editor = draft.editor;
-    if (editor.mode === 'custom') return editor.customDraft;
-    const parsed =
-      editor.preset === 'weekdays'
-        ? { type: 'valid' as const, raw: `every weekday${editor.whenDone ? ' when done' : ''}` }
-        : buildRecurrenceRule({
-            interval: Number(editor.intervalText),
-            unit: editor.unit,
-            weekdays: editor.weekdays,
-            monthly: editor.monthly,
-            yearly: editor.yearly,
-            whenDone: editor.whenDone,
-          });
-    const recurrence = parsed.type === 'valid' ? parsed.raw : 'invalid structured recurrence';
-    const details = [
-      `preset: ${editor.preset ?? 'customized'}`,
-      `interval: ${editor.intervalText}`,
-      `unit: ${editor.unit}`,
-      `weekdays: ${editor.weekdays.join(', ')}`,
-      `monthly: ${JSON.stringify(editor.monthly)}`,
-      `yearly: ${JSON.stringify(editor.yearly)}`,
-      `when done: ${editor.whenDone ? 'yes' : 'no'}`,
-      `on completion: ${editor.onCompletion}`,
-    ];
-    return [recurrence, ...details].join('\n');
-  }
-  return draft.value;
+  return draft.kind === 'recurrence-editor' ? recurrenceDraftPlainText(draft.editor) : draft.value;
 }
 
 export function isDirtyDraft(draft: RightPanelDraftState | undefined): boolean {
-  if (!draft) return false;
+  if (draft == null) return false;
   return draft.kind === 'recurrence-editor' ? draft.editor.dirty : draft.dirty;
 }
 

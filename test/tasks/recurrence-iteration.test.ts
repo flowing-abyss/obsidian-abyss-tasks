@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { prepareRecurrenceIteration } from '../../src/tasks/domain/recurrenceIteration';
+import {
+  editRecurrenceIterationTaskLine,
+  prepareRecurrenceIteration,
+  recurrenceMarkerCountInOwnedSubtree,
+  recurrenceOwnedSubtree,
+} from '../../src/tasks/domain/recurrenceIteration';
 import type { TaskPlanning } from '../../src/tasks/domain/types';
 import { localDate, localTime } from '../../src/tasks/domain/validation';
 import { stripTerminalBlockId } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
@@ -11,6 +16,48 @@ const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
 function planning(overrides: TaskPlanning = {}): TaskPlanning {
   return overrides;
 }
+
+describe('recurrence subtree contracts', () => {
+  it('finds only the selected task and its structurally owned descendants', () => {
+    const rootBlock = [
+      '- [ ] Root',
+      '  - [/] Owner 🔁 every day',
+      '    - [ ] Child',
+      '      - child note',
+      '  - [ ] Sibling',
+    ].join('\n');
+
+    expect(recurrenceOwnedSubtree(rootBlock, 1)).toEqual({
+      fromLine: 1,
+      toLine: 3,
+      taskLines: [1, 2],
+    });
+    expect(recurrenceMarkerCountInOwnedSubtree(rootBlock, 1)).toBe(1);
+  });
+
+  it.each([
+    ['empty source', '', 0],
+    ['non-task root', 'ordinary text', 0],
+    ['non-integer owner line', '- [ ] Root', 0.5],
+    ['sibling outside a root block', '- [ ] Root\n- [ ] Sibling', 0],
+    ['mismatched quote depth', '> - [ ] Root\n  - [ ] Child', 0],
+  ] as const)('rejects an invalid ownership boundary: %s', (_name, rootBlock, ownerLine) => {
+    expect(recurrenceOwnedSubtree(rootBlock, ownerLine)).toBeUndefined();
+    expect(recurrenceMarkerCountInOwnedSubtree(rootBlock, ownerLine)).toBeUndefined();
+  });
+
+  it('rejects a multi-character target status before mutating a recurrence line', () => {
+    expect(
+      editRecurrenceIterationTaskLine('- [/] Owner 🔁 every day', {
+        type: 'clean-owner',
+        planning: {},
+        todoSymbol: 'xx',
+        today: localDate('2026-08-01'),
+        addCreatedDate: false,
+      }),
+    ).toEqual({ type: 'invalid', code: 'invalid-task-syntax' });
+  });
+});
 
 describe('prepareRecurrenceIteration', () => {
   it('uses the canonical start marker when replacing and shifting start dates', () => {
@@ -29,6 +76,32 @@ describe('prepareRecurrenceIteration', () => {
     ).toMatchObject({
       type: 'prepared',
       cleanSubtree: '- [ ] Owner 🔁 every day 🛫 2026-08-09\n  - [ ] Child 🛫 2026-08-10',
+    });
+  });
+
+  it('inserts multiple missing planning carriers in canonical order', () => {
+    expect(
+      prepareRecurrenceIteration({
+        rootBlock: '- [/] Owner 🔁 every day',
+        ownerRelativeLine: 0,
+        nextPlanning: {
+          start: localDate('2026-08-09'),
+          scheduled: localDate('2026-08-10'),
+          due: localDate('2026-08-11'),
+          time: localTime('09:30'),
+          duration: 90 as NonNullable<TaskPlanning['duration']>,
+        },
+        dayDelta: 7,
+        doneSymbol: 'x',
+        todoSymbol: ' ',
+        today: localDate('2026-08-01'),
+        addCreatedDate: true,
+        addCompletionDate: true,
+      }),
+    ).toMatchObject({
+      type: 'prepared',
+      cleanSubtree:
+        '- [ ] Owner ⏰ 09:30 ⏱️ 1h30m 🔁 every day ➕ 2026-08-01 🛫 2026-08-09 ⏳ 2026-08-10 📅 2026-08-11',
     });
   });
 
@@ -77,7 +150,7 @@ describe('prepareRecurrenceIteration', () => {
           scheduled: localDate('2026-08-10'),
           due: localDate('2026-08-11'),
           time: localTime('09:30'),
-          duration: 90 as TaskPlanning['duration'],
+          duration: 90 as NonNullable<TaskPlanning['duration']>,
         }),
         dayDelta: 7,
         doneSymbol: 'x',

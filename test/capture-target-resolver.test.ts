@@ -14,6 +14,7 @@ import {
   commandBodyForCapture,
   type CaptureContext,
 } from '../src/ui/taskCapture/CaptureTargetResolver';
+import { methodOf } from './helpers';
 
 const configuredDestination: TaskDestination = {
   filePath: 'Daily/2026-08-22.md',
@@ -181,16 +182,16 @@ describe('CaptureTargetResolver', () => {
       markdownPrefix: scenario.prefix ?? '',
       markdownSuffixes: scenario.suffixes ?? [],
     });
-    if (scenario.due) {
+    if (scenario.due !== undefined && scenario.due.length > 0) {
       expect(target.initial).toEqual({
         due: { type: 'set', value: localDate(scenario.due) },
       });
     } else {
       expect(target.initial).toBeUndefined();
     }
-    if (scenario.unavailable) {
+    if (scenario.unavailable === true) {
       expect(target.session.type).toBe('unavailable');
-      expect(captureApplication.planCreate).not.toHaveBeenCalled();
+      expect(methodOf(captureApplication, 'planCreate')).not.toHaveBeenCalled();
       await expect(target.session.execute({ markdownBody: 'draft' })).resolves.toEqual({
         type: 'invalid',
         issues: [{ code: 'destination-unavailable', field: 'destination' }],
@@ -201,8 +202,8 @@ describe('CaptureTargetResolver', () => {
       type: 'ready',
       destination: scenario.destination ?? configuredDestination,
     });
-    expect(captureApplication.planCreate).toHaveBeenCalledWith(
-      scenario.destination
+    expect(methodOf(captureApplication, 'planCreate')).toHaveBeenCalledWith(
+      scenario.destination != null
         ? { type: 'explicit', destination: scenario.destination }
         : { type: 'configured-default' },
     );

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { attachLongPress } from '../src/ui/MobileTouch';
+import { freshContainer } from './helpers';
 
 describe('attachLongPress', () => {
   beforeEach(() => {
@@ -10,7 +11,7 @@ describe('attachLongPress', () => {
   });
 
   it('does not fire onLongPress when touchend comes before delay', () => {
-    const el = activeDocument.createElement('div');
+    const el = freshContainer();
     el.dataset['taskText'] = 'hello';
     const onLongPress = vi.fn();
     attachLongPress(el, onLongPress, 500);
@@ -22,7 +23,7 @@ describe('attachLongPress', () => {
   });
 
   it('fires onLongPress with dataset.taskText after the delay', () => {
-    const el = activeDocument.createElement('div');
+    const el = freshContainer();
     el.dataset['taskText'] = 'hello';
     const onLongPress = vi.fn();
     attachLongPress(el, onLongPress, 500);
@@ -34,7 +35,7 @@ describe('attachLongPress', () => {
   });
 
   it('prevents default and stops propagation on touchend after a long press', () => {
-    const el = activeDocument.createElement('div');
+    const el = freshContainer();
     el.dataset['taskText'] = 'x';
     attachLongPress(el, vi.fn(), 500);
 
@@ -50,7 +51,7 @@ describe('attachLongPress', () => {
   });
 
   it('cancel timer on touchmove (no fire)', () => {
-    const el = activeDocument.createElement('div');
+    const el = freshContainer();
     el.dataset['taskText'] = 'x';
     const onLongPress = vi.fn();
     attachLongPress(el, onLongPress, 500);
@@ -62,7 +63,7 @@ describe('attachLongPress', () => {
   });
 
   it('cancel timer on touchcancel (no fire)', () => {
-    const el = activeDocument.createElement('div');
+    const el = freshContainer();
     el.dataset['taskText'] = 'x';
     const onLongPress = vi.fn();
     attachLongPress(el, onLongPress, 500);
@@ -74,7 +75,7 @@ describe('attachLongPress', () => {
   });
 
   it('suppresses contextmenu (preventDefault)', () => {
-    const el = activeDocument.createElement('div');
+    const el = freshContainer();
     attachLongPress(el, vi.fn(), 500);
 
     const ctx = new Event('contextmenu', { cancelable: true });
@@ -84,16 +85,16 @@ describe('attachLongPress', () => {
   });
 
   it('sets userSelect, webkitUserSelect, touchAction on the element', () => {
-    const el = activeDocument.createElement('div');
+    const el = freshContainer();
     attachLongPress(el, vi.fn(), 500);
     expect(el.style.userSelect).toBe('none');
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    expect(el.style.webkitUserSelect).toBe('none');
+
+    expect(el.style.getPropertyValue('-webkit-user-select')).toBe('none');
     expect(el.style.touchAction).toBe('manipulation');
   });
 
   it('passes an empty string to onLongPress when dataset.taskText is absent', () => {
-    const el = activeDocument.createElement('div');
+    const el = freshContainer();
     const onLongPress = vi.fn();
     attachLongPress(el, onLongPress, 500);
 
@@ -103,7 +104,7 @@ describe('attachLongPress', () => {
   });
 
   it('respects a custom delayMs', () => {
-    const el = activeDocument.createElement('div');
+    const el = freshContainer();
     el.dataset['taskText'] = 'x';
     const onLongPress = vi.fn();
     attachLongPress(el, onLongPress, 2000);
@@ -116,7 +117,7 @@ describe('attachLongPress', () => {
   });
 
   it('cleanup removes all listeners (no further fire)', () => {
-    const el = activeDocument.createElement('div');
+    const el = freshContainer();
     el.dataset['taskText'] = 'x';
     const onLongPress = vi.fn();
     const cleanup = attachLongPress(el, onLongPress, 500);

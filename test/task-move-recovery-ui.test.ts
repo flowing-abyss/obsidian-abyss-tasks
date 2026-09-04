@@ -5,7 +5,7 @@ import type { TaskRef, TaskSnapshot } from '../src/tasks/domain/types';
 import { TaskMoveRecoveryModal } from '../src/ui/TaskMoveRecoveryModal';
 import { moveTaskToProjectWithRecovery } from '../src/ui/moveTaskToProject';
 import { presentTaskMoveResult } from '../src/ui/taskCommandResult';
-import { createAppWithFiles, flushMicrotasks, taskQueryApi } from './helpers';
+import { createAppWithFiles, flushMicrotasks, methodOf, taskQueryApi } from './helpers';
 
 const source: TaskRef = { filePath: 'source.md', line: 2, revision: 'old-revision' };
 
@@ -120,12 +120,12 @@ describe('partial move recovery presentation', () => {
     expect(modal.contentEl.textContent).toContain('source.md');
     expect(button(modal.contentEl, 'Keep both')).toBeDefined();
     expect(button(modal.contentEl, 'Remove original')).toBeDefined();
-    expect(tasks.queries.resolve).not.toHaveBeenCalled();
-    expect(tasks.execute).not.toHaveBeenCalled();
+    expect(methodOf(tasks.queries, 'resolve')).not.toHaveBeenCalled();
+    expect(methodOf(tasks, 'execute')).not.toHaveBeenCalled();
 
     button(modal.contentEl, 'Keep both').click();
     expect(modal.contentEl.textContent).not.toContain('Remove original');
-    expect(tasks.execute).not.toHaveBeenCalled();
+    expect(methodOf(tasks, 'execute')).not.toHaveBeenCalled();
   });
 
   it('resolves immediately before deleting an exact original ref', async () => {
@@ -137,10 +137,10 @@ describe('partial move recovery presentation', () => {
     button(modal.contentEl, 'Remove original').click();
     await flushMicrotasks();
 
-    expect(tasks.queries.resolve).toHaveBeenCalledOnce();
-    expect(tasks.queries.resolve).toHaveBeenCalledWith(source);
-    expect(tasks.execute).toHaveBeenCalledOnce();
-    expect(tasks.execute).toHaveBeenCalledWith({ type: 'delete', ref: exact.ref });
+    expect(methodOf(tasks.queries, 'resolve')).toHaveBeenCalledOnce();
+    expect(methodOf(tasks.queries, 'resolve')).toHaveBeenCalledWith(source);
+    expect(methodOf(tasks, 'execute')).toHaveBeenCalledOnce();
+    expect(methodOf(tasks, 'execute')).toHaveBeenCalledWith({ type: 'delete', ref: exact.ref });
   });
 
   it('requires a second explicit acceptance before deleting a conflicting newer revision', async () => {
@@ -164,15 +164,15 @@ describe('partial move recovery presentation', () => {
     button(modal.contentEl, 'Remove original').click();
     await flushMicrotasks();
 
-    expect(tasks.execute).not.toHaveBeenCalled();
+    expect(methodOf(tasks, 'execute')).not.toHaveBeenCalled();
     expect(modal.contentEl.textContent).toContain('changed since the move');
     expect(modal.contentEl.querySelector('pre')?.textContent).toBe(changedBlock);
 
     button(modal.contentEl, 'Remove changed original').click();
     await flushMicrotasks();
 
-    expect(tasks.execute).toHaveBeenCalledOnce();
-    expect(tasks.execute).toHaveBeenCalledWith({ type: 'delete', ref: changed.ref });
+    expect(methodOf(tasks, 'execute')).toHaveBeenCalledOnce();
+    expect(methodOf(tasks, 'execute')).toHaveBeenCalledWith({ type: 'delete', ref: changed.ref });
   });
 
   it('does not claim both copies remain when original removal commit state is unknown', async () => {
@@ -226,12 +226,12 @@ describe('partial move recovery presentation', () => {
   it.each([
     {
       name: 'missing',
-      resolution: { type: 'not-found', ref: source } as TaskResolution,
+      resolution: { type: 'not-found', ref: source },
       message: 'could not be found',
     },
     {
       name: 'ambiguous',
-      resolution: { type: 'ambiguous', candidates: [] } as TaskResolution,
+      resolution: { type: 'ambiguous', candidates: [] },
       message: 'Multiple possible originals',
     },
     {
@@ -241,20 +241,20 @@ describe('partial move recovery presentation', () => {
         stale: source,
         current: snapshot({ ...source, revision: 'visual-current' }),
         evidence: 'same-line',
-      } as TaskResolution,
+      },
       message: 'could not be identified safely',
     },
   ])(
     'stops $name recovery without guessing or issuing a delete',
     async ({ resolution, message }) => {
       const app = await createAppWithFiles({});
-      const tasks = taskApi(resolution);
+      const tasks = taskApi(resolution as TaskResolution);
       const modal = openRecovery(app, tasks);
 
       button(modal.contentEl, 'Remove original').click();
       await flushMicrotasks();
 
-      expect(tasks.execute).not.toHaveBeenCalled();
+      expect(methodOf(tasks, 'execute')).not.toHaveBeenCalled();
       expect(modal.contentEl.textContent).toContain(message);
     },
   );

@@ -17,10 +17,10 @@ function toStringArray(raw: unknown): string[] {
  */
 export class ProjectManager {
   constructor(
-    private app: App,
-    private settings: CalendarSettings,
-    private resolver: DailyNoteResolver,
-    private tasks: TaskApplicationApi,
+    private readonly app: App,
+    private readonly settings: CalendarSettings,
+    private readonly resolver: DailyNoteResolver,
+    private readonly tasks: TaskApplicationApi,
   ) {}
 
   /**
@@ -48,7 +48,7 @@ export class ProjectManager {
     if (!(file instanceof TFile)) return;
     const statuses = this.settings.projects.statuses;
     const target = statuses.find((s) => s.id === statusId);
-    if (!target) return;
+    if (target == null) return;
 
     const propStatuses = statuses.filter((s) => s.match.kind === 'property');
     const tagStatuses = statuses.filter((s) => s.match.kind === 'tag');
@@ -60,7 +60,7 @@ export class ProjectManager {
         for (const s of propStatuses) {
           const m = s.match as { property: string; value: string };
           const cur = fm[m.property];
-          // eslint-disable-next-line @typescript-eslint/no-base-to-string
+          // eslint-disable-next-line @typescript-eslint/no-base-to-string -- Frontmatter scalar values are compared using Obsidian's string semantics.
           const curStr = cur === null || cur === undefined ? '' : String(cur);
           if (curStr === m.value) delete fm[m.property];
         }
@@ -120,30 +120,41 @@ export class ProjectManager {
   async create(name: string): Promise<TFile | null> {
     const folder = this.settings.projects.createFolder.trim();
     const clean = name.trim().replace(/[\\/:*?"<>|]/g, '-');
-    if (!clean) return null;
-    if (folder && !this.app.vault.getAbstractFileByPath(folder)) {
-      try {
-        await this.app.vault.createFolder(folder);
-      } catch {
-        /* already exists — benign race */
-      }
-    }
-    const base = folder ? `${folder}/${clean}` : clean;
-    let path = normalizePath(`${base}.md`);
-    let n = 2;
-    while (this.app.vault.getAbstractFileByPath(path)) {
-      path = normalizePath(`${base} ${n}.md`);
-      n++;
-    }
+    if (clean.length === 0) return null;
+    await this.ensureFolder(folder);
+    const path = this.uniqueProjectPath(folder, clean);
     const file = await this.resolver.createNoteFromTemplate(
       path,
       this.settings.projects.templatePath,
       clean,
     );
+    const configuredDefault = this.settings.projects.defaultStatusId;
     const defaultId =
-      this.settings.projects.defaultStatusId || this.settings.projects.statuses[0]?.id;
-    if (defaultId) await this.setStatus(file.path, defaultId);
+      configuredDefault.length > 0 ? configuredDefault : this.settings.projects.statuses[0]?.id;
+    if (defaultId !== undefined && defaultId.length > 0) {
+      await this.setStatus(file.path, defaultId);
+    }
     await this.app.workspace.getLeaf(false).openFile(file);
     return file;
+  }
+
+  private async ensureFolder(folder: string): Promise<void> {
+    if (folder.length === 0 || this.app.vault.getAbstractFileByPath(folder) != null) return;
+    try {
+      await this.app.vault.createFolder(folder);
+    } catch {
+      // Another writer may have created the folder after the existence check.
+    }
+  }
+
+  private uniqueProjectPath(folder: string, cleanName: string): string {
+    const base = folder.length > 0 ? `${folder}/${cleanName}` : cleanName;
+    let path = normalizePath(`${base}.md`);
+    let suffix = 2;
+    while (this.app.vault.getAbstractFileByPath(path) != null) {
+      path = normalizePath(`${base} ${suffix}.md`);
+      suffix++;
+    }
+    return path;
   }
 }

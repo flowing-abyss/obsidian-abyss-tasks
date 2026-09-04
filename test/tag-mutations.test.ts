@@ -12,7 +12,7 @@ import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockE
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
-import { createAppWithFiles, taskQueryApi } from './helpers';
+import { createAppWithFiles, expectDefined, taskQueryApi } from './helpers';
 import { InMemoryTaskRepository } from './support/InMemoryTaskRepository';
 
 type Adapter = 'in-memory' | 'obsidian';
@@ -56,7 +56,7 @@ async function makeHarness(adapter: Adapter, source: string): Promise<Harness> {
           task.ref.line === ref.line &&
           task.ref.revision === ref.revision,
       );
-      if (exact) return { type: 'exact', task: exact, basis: { observed: exact } };
+      if (exact != null) return { type: 'exact', task: exact, basis: { observed: exact } };
       const candidates = current.filter((task) => task.ref.revision === ref.revision);
       return candidates.length > 1
         ? {
@@ -91,7 +91,7 @@ function rootTarget(
   index = 0,
 ): { readonly type: 'task'; readonly ref: TaskRef } {
   const task = harness.snapshots(source)[index];
-  if (!task) throw new Error(`missing task ${index}`);
+  if (task == null) throw new Error(`missing task ${index}`);
   return { type: 'task', ref: task.ref };
 }
 
@@ -147,7 +147,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
     it('edits an exactly referenced nested child and returns a fresh root aggregate', async () => {
       const source = '- [ ] root #root\n  - [ ] child `#inline` #old\n    - [ ] nested #keep\n';
       const h = await makeHarness(adapter, source);
-      const child = h.snapshots(source)[0]!.subtasks[0]!;
+      const child = expectDefined(expectDefined(h.snapshots(source)[0]).subtasks[0]);
 
       const result = await h.tasks.execute({
         type: 'patch',
@@ -206,7 +206,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       const source = '- [ ] root\n  - [ ] child `code #inline \\` #real\n';
       const h = await makeHarness(adapter, source);
       const child = h.snapshots(source)[0]?.subtasks[0];
-      if (!child) throw new Error('missing child');
+      if (child == null) throw new Error('missing child');
 
       const result = await h.tasks.execute({
         type: 'patch',
@@ -312,7 +312,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       const source = '```md\n- [ ] fake #keep\n```\n- [ ] live #keep\n';
       const h = await makeHarness(adapter, source);
       const live = h.snapshots(source)[0];
-      if (!live) throw new Error('missing live task');
+      if (live == null) throw new Error('missing live task');
 
       await h.tasks.execute({
         type: 'patch',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { layoutVisibleSpans } from '../src/views/spanLayout';
-import { task } from './helpers';
+import { expectDefined, task } from './helpers';
 
 const week1 = [
   '2026-07-06',
@@ -105,7 +105,7 @@ describe('layoutVisibleSpans', () => {
 
   it('emits one day-local segment for every visible date in a range', () => {
     const layout = layoutVisibleSpans([span('Trip', '2026-07-14', '2026-07-16', 2)], week2);
-    const row = layout.rows[0]!;
+    const row = expectDefined(layout.rows[0]);
 
     expect(
       row.segments.map((segment) => ({
@@ -180,7 +180,7 @@ describe('layoutVisibleSpans', () => {
   it('uses stable tie-breaking independent of input order', () => {
     const first = span('First identity', '2026-07-07', '2026-07-10', 1);
     const second = span('Second identity', '2026-07-07', '2026-07-10', 2);
-    const lanes = (input: (typeof first)[]) =>
+    const lanes = (input: Array<typeof first>) =>
       layoutVisibleSpans(input, week1)
         .rows[0]?.segments.filter((segment) => segment.ownsStartBoundary)
         .map((segment) => [segment.task.source.line, segment.lane]);
@@ -222,7 +222,7 @@ describe('layoutVisibleSpans', () => {
       [blocker, continuing, newLong, newMedium],
       [...week1, ...week2],
     );
-    const secondRow = layout.rows[1]!;
+    const secondRow = expectDefined(layout.rows[1]);
 
     expect(layout.rows[0]?.segments.find((segment) => segment.task === continuing)?.lane).toBe(1);
     expect(secondRow.segments.find((segment) => segment.task === continuing)?.lane).not.toBe(

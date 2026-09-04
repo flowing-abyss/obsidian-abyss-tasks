@@ -1,6 +1,6 @@
 import { Notice, TFile, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AppState, type ListSelection } from '../src/app/AppState';
+import { type AppState, type ListSelection } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
@@ -18,7 +18,7 @@ import type { InteractionRegistry } from '../src/ui/interactionOwnership';
 import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
 import type { QuickCaptureCoordinator } from '../src/ui/taskCapture/QuickCaptureCoordinator';
 import { requestTaskCompletion } from '../src/ui/taskCommandResult';
-import { taskNodeLine } from '../src/ui/taskSelection';
+import { taskNodeLine, type TaskSelectionNode } from '../src/ui/taskSelection';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import type { PanelNavigator } from '../src/views/panelNavigation';
@@ -26,11 +26,16 @@ import {
   configuredTaskApplication,
   createAppWithFiles,
   deferred,
+  expectDefined,
   flushMicrotasks,
   seedTaskCache,
   task,
   useRealMoment,
 } from './helpers';
+
+function workspaceState(app: App): { activeLeaf: WorkspaceLeaf | null } {
+  return app.workspace;
+}
 
 function makeTagManager(app: App, settings: CalendarSettings = DEFAULT_SETTINGS): TagManager {
   const save = vi.fn().mockResolvedValue(undefined);
@@ -72,7 +77,7 @@ function rectList(rectangles: readonly DOMRect[]): DOMRectList {
   const values = [...rectangles];
   return Object.assign(values, {
     item: (index: number) => values[index] ?? null,
-  }) as unknown as DOMRectList;
+  });
 }
 
 function setGeometry(
@@ -92,6 +97,20 @@ function emitQueryEvent(queries: TaskQueryApi, event: TaskIndexEvent): void {
     listeners: Array<(published: TaskIndexEvent) => void>;
   };
   for (const listener of [...source.listeners]) listener(event);
+}
+
+function setTaskStack(state: AppState, stack: TaskSelectionNode[]): void {
+  state.set('taskStack', stack);
+}
+
+function computedStyleWithFontSize(
+  style: CSSStyleDeclaration,
+  fontSize: string,
+): CSSStyleDeclaration {
+  return new Proxy(style, {
+    get: (target, property): unknown =>
+      property === 'fontSize' ? fontSize : Reflect.get(target, property, target),
+  });
 }
 
 type TaskApplication = ReturnType<typeof configuredTaskApplication>;
@@ -122,7 +141,7 @@ describe('PanelView', () => {
         taskApplication.statusRegistry,
       );
       vi.spyOn(app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
-        type === PanelView && app.workspace.activeLeaf === leaf ? (view as never) : null,
+        type === PanelView && workspaceState(app).activeLeaf === leaf ? view : null,
       );
       await view.onOpen();
       setGeometry(view.containerEl, rect(20, 20, 640, 480));
@@ -132,7 +151,7 @@ describe('PanelView', () => {
     afterEach(async () => {
       await view.onClose();
       view.containerEl.remove();
-      app.workspace.activeLeaf = null;
+      workspaceState(app).activeLeaf = null;
       taskApplication.index.destroy();
     });
 
@@ -161,7 +180,7 @@ describe('PanelView', () => {
     });
 
     it('owns one stable Quick Capture host in the center shell across every mode rerender', () => {
-      const layout = view.contentEl.querySelector('.abyss-layout')!;
+      const layout = expectDefined(view.contentEl.querySelector('.abyss-layout'));
       const host = layout.querySelector('.abyss-quick-capture-host');
       const shell = layout.querySelector('.abyss-center-shell');
       const center = layout.querySelector('.abyss-center');
@@ -190,11 +209,15 @@ describe('PanelView', () => {
     it('keeps collapsed Tasks panes reachable through keyboard-native compact controls', () => {
       activeDocument.body.appendChild(view.containerEl);
       const internals = view as unknown as { state: AppState; panelNavigation: PanelNavigator };
-      const layout = view.contentEl.querySelector<HTMLElement>('.abyss-layout')!;
-      const left = layout.querySelector<HTMLElement>('.abyss-left')!;
-      const right = layout.querySelector<HTMLElement>('.abyss-right')!;
-      const lists = layout.querySelector<HTMLButtonElement>('[aria-label="Show task lists"]')!;
-      const details = layout.querySelector<HTMLButtonElement>('[aria-label="Show task details"]')!;
+      const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+      const left = expectDefined(layout.querySelector<HTMLElement>('.abyss-left'));
+      const right = expectDefined(layout.querySelector<HTMLElement>('.abyss-right'));
+      const lists = expectDefined(
+        layout.querySelector<HTMLButtonElement>('[aria-label="Show task lists"]'),
+      );
+      const details = expectDefined(
+        layout.querySelector<HTMLButtonElement>('[aria-label="Show task details"]'),
+      );
 
       expect(lists.tagName).toBe('BUTTON');
       expect(details.tagName).toBe('BUTTON');
@@ -290,8 +313,8 @@ describe('PanelView', () => {
       expect(lists.getAttribute('aria-expanded')).toBe('false');
       expect(details.getAttribute('aria-expanded')).toBe('false');
 
-      internals.state.set('taskStack', []);
-      internals.state.set('taskStack', [task()]);
+      setTaskStack(internals.state, []);
+      setTaskStack(internals.state, [task()]);
       const calendarEscape = new KeyboardEvent('keydown', {
         key: 'Escape',
         bubbles: true,
@@ -306,11 +329,11 @@ describe('PanelView', () => {
       'does not destroy a %s Quick Capture generation when a compact pane is requested',
       (phase) => {
         const internals = view as unknown as { quickCapture: QuickCaptureCoordinator };
-        const layout = view.contentEl.querySelector<HTMLElement>('.abyss-layout')!;
-        const right = layout.querySelector<HTMLElement>('.abyss-right')!;
-        const details = layout.querySelector<HTMLButtonElement>(
-          '[aria-label="Show task details"]',
-        )!;
+        const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+        const right = expectDefined(layout.querySelector<HTMLElement>('.abyss-right'));
+        const details = expectDefined(
+          layout.querySelector<HTMLButtonElement>('[aria-label="Show task details"]'),
+        );
         setGeometry(layout, rect(0, 0, 390, 480));
         window.dispatchEvent(new Event('resize'));
         const close = vi.spyOn(internals.quickCapture, 'close');
@@ -326,11 +349,15 @@ describe('PanelView', () => {
 
     it('reconciles compact-pane ownership at the exact 58rem and 38rem boundaries', () => {
       activeDocument.body.appendChild(view.containerEl);
-      const layout = view.contentEl.querySelector<HTMLElement>('.abyss-layout')!;
-      const left = layout.querySelector<HTMLElement>('.abyss-left')!;
-      const right = layout.querySelector<HTMLElement>('.abyss-right')!;
-      const lists = layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--left')!;
-      const details = layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right')!;
+      const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+      const left = expectDefined(layout.querySelector<HTMLElement>('.abyss-left'));
+      const right = expectDefined(layout.querySelector<HTMLElement>('.abyss-right'));
+      const lists = expectDefined(
+        layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--left'),
+      );
+      const details = expectDefined(
+        layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right'),
+      );
       const resizeTo = (width: number): void => {
         setGeometry(layout, rect(0, 0, width, 480));
         window.dispatchEvent(new Event('resize'));
@@ -370,30 +397,39 @@ describe('PanelView', () => {
 
     it('reconciles rem-based pane ownership on css-change without a width change', () => {
       activeDocument.body.appendChild(view.containerEl);
-      const layout = view.contentEl.querySelector<HTMLElement>('.abyss-layout')!;
-      const right = layout.querySelector<HTMLElement>('.abyss-right')!;
-      const details = layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right')!;
+      const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+      const right = expectDefined(layout.querySelector<HTMLElement>('.abyss-right'));
+      const details = expectDefined(
+        layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right'),
+      );
       const root = activeDocument.documentElement;
-      const previousFontSize = root.style.fontSize;
+      const ownerWindow = expectDefined(activeDocument.defaultView);
+      const getComputedStyle = ownerWindow.getComputedStyle.bind(ownerWindow);
+      let fontSize = '16px';
+      const styleSpy = vi
+        .spyOn(ownerWindow, 'getComputedStyle')
+        .mockImplementation((element, pseudoElement) => {
+          const style = getComputedStyle(element, pseudoElement);
+          return element === root ? computedStyleWithFontSize(style, fontSize) : style;
+        });
       setGeometry(layout, rect(0, 0, 950, 480));
 
       try {
-        root.style.fontSize = '16px';
         window.dispatchEvent(new Event('resize'));
         details.click();
         expect(right.classList.contains('is-compact-open')).toBe(false);
 
-        root.style.fontSize = '17px';
+        fontSize = '17px';
         app.workspace.trigger('css-change');
         details.click();
         expect(right.classList.contains('is-compact-open')).toBe(true);
 
-        root.style.fontSize = '16px';
+        fontSize = '16px';
         app.workspace.trigger('css-change');
         expect(right.classList.contains('is-compact-open')).toBe(false);
         expect(details.getAttribute('aria-expanded')).toBe('false');
       } finally {
-        root.style.fontSize = previousFontSize;
+        styleSpy.mockRestore();
         app.workspace.trigger('css-change');
       }
     });
@@ -408,15 +444,15 @@ describe('PanelView', () => {
           creationPresentation: CreationPresentationController;
           interactionRegistry: InteractionRegistry<string>;
         };
-        const layout = view.contentEl.querySelector<HTMLElement>('.abyss-layout')!;
-        const left = layout.querySelector<HTMLElement>('.abyss-left')!;
-        const right = layout.querySelector<HTMLElement>('.abyss-right')!;
-        const leftButton = layout.querySelector<HTMLButtonElement>(
-          '.abyss-compact-pane-button--left',
-        )!;
-        const rightButton = layout.querySelector<HTMLButtonElement>(
-          '.abyss-compact-pane-button--right',
-        )!;
+        const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+        const left = expectDefined(layout.querySelector<HTMLElement>('.abyss-left'));
+        const right = expectDefined(layout.querySelector<HTMLElement>('.abyss-right'));
+        const leftButton = expectDefined(
+          layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--left'),
+        );
+        const rightButton = expectDefined(
+          layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right'),
+        );
         setGeometry(layout, rect(0, 0, 390, 480));
         window.dispatchEvent(new Event('resize'));
 
@@ -434,15 +470,14 @@ describe('PanelView', () => {
 
         internals.quickCapture.openOrFocus();
         await flushMicrotasks(0);
-        const input = layout.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+        const input = expectDefined(
+          layout.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+        );
         input.value = '  exact failed draft  ';
         input.dispatchEvent(new Event('input', { bubbles: true }));
-        const conflictTarget =
-          trigger === 'left control'
-            ? leftButton
-            : trigger === 'right control'
-              ? rightButton
-              : layout;
+        let conflictTarget: HTMLElement = layout;
+        if (trigger === 'left control') conflictTarget = leftButton;
+        if (trigger === 'right control') conflictTarget = rightButton;
         conflictTarget.dispatchEvent(
           new Event('pointerdown', { bubbles: true, cancelable: true, composed: true }),
         );
@@ -491,9 +526,11 @@ describe('PanelView', () => {
         creationPresentation: CreationPresentationController;
         interactionRegistry: InteractionRegistry<string>;
       };
-      const layout = view.contentEl.querySelector<HTMLElement>('.abyss-layout')!;
-      const right = layout.querySelector<HTMLElement>('.abyss-right')!;
-      const details = layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right')!;
+      const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+      const right = expectDefined(layout.querySelector<HTMLElement>('.abyss-right'));
+      const details = expectDefined(
+        layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right'),
+      );
       setGeometry(layout, rect(0, 0, 390, 480));
       window.dispatchEvent(new Event('resize'));
 
@@ -511,7 +548,9 @@ describe('PanelView', () => {
 
       internals.quickCapture.openOrFocus();
       await flushMicrotasks(0);
-      const input = layout.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+      const input = expectDefined(
+        layout.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+      );
       input.value = 'captured once';
       input.dispatchEvent(new Event('input', { bubbles: true }));
       details.dispatchEvent(
@@ -538,7 +577,7 @@ describe('PanelView', () => {
       const openQuickCapture = vi
         .spyOn(internals.panelNavigation, 'openQuickCapture')
         .mockImplementation(() => undefined);
-      app.workspace.activeLeaf = leaf;
+      workspaceState(app).activeLeaf = leaf;
 
       document.body.dispatchEvent(
         new KeyboardEvent('keydown', {
@@ -551,7 +590,7 @@ describe('PanelView', () => {
       expect(openQuickCapture).not.toHaveBeenCalled();
 
       document.body.appendChild(view.containerEl);
-      app.workspace.activeLeaf = null;
+      workspaceState(app).activeLeaf = null;
       view.contentEl.dispatchEvent(
         new KeyboardEvent('keydown', {
           key: 'q',
@@ -562,8 +601,8 @@ describe('PanelView', () => {
       );
       expect(openQuickCapture).not.toHaveBeenCalled();
 
-      app.workspace.activeLeaf = leaf;
-      view.containerEl.style.display = 'none';
+      workspaceState(app).activeLeaf = leaf;
+      view.containerEl.setCssProps({ display: 'none' });
       view.contentEl.dispatchEvent(
         new KeyboardEvent('keydown', {
           key: 'q',
@@ -574,7 +613,7 @@ describe('PanelView', () => {
       );
       expect(openQuickCapture).not.toHaveBeenCalled();
 
-      view.containerEl.style.display = '';
+      view.containerEl.setCssProps({ display: '' });
       view.contentEl.dispatchEvent(
         new KeyboardEvent('keydown', {
           key: 'й',
@@ -599,7 +638,7 @@ describe('PanelView', () => {
 
     it('gives the recurrence-delete alertdialog modal precedence in the live panel router', async () => {
       document.body.appendChild(view.containerEl);
-      app.workspace.activeLeaf = leaf;
+      workspaceState(app).activeLeaf = leaf;
       document.body.tabIndex = -1;
       document.body.focus();
       const internals = view as unknown as {
@@ -617,12 +656,14 @@ describe('PanelView', () => {
         vi.fn(),
         internals.interactionRegistry,
       );
-      const surface = activeDocument.querySelector<HTMLElement>(
-        '.abyss-recurrence-delete-confirm',
-      )!;
-      const cancel = Array.from(surface.querySelectorAll<HTMLButtonElement>('button')).find(
-        (candidate) => candidate.textContent === 'Cancel',
-      )!;
+      const surface = expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
+      );
+      const cancel = expectDefined(
+        Array.from(surface.querySelectorAll<HTMLButtonElement>('button')).find(
+          (candidate) => candidate.textContent === 'Cancel',
+        ),
+      );
       cancel.blur();
       document.body.focus();
 
@@ -649,7 +690,9 @@ describe('PanelView', () => {
       suppressed.forEach((event) => document.body.dispatchEvent(event));
       await flushMicrotasks(0);
 
-      suppressed.forEach((event) => expect(event.defaultPrevented).toBe(false));
+      suppressed.forEach((event) => {
+        expect(event.defaultPrevented).toBe(false);
+      });
       expect({
         mode: internals.state.get('mode'),
         selectedList: internals.state.get('selectedList'),
@@ -686,9 +729,9 @@ describe('PanelView', () => {
             ? internals.center.toggleTask(invalidDelete)
             : internals.right.toggleTaskLike(invalidDelete);
         const registry = internals.interactionRegistry;
-        const surface = activeDocument.querySelector<HTMLElement>(
-          '.abyss-recurrence-delete-confirm',
-        )!;
+        const surface = expectDefined(
+          activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
+        );
 
         expect(registry.allows('openCalendar')).toBe(false);
         await view.onClose();
@@ -714,9 +757,9 @@ describe('PanelView', () => {
       const modal = internals.center.taskModal;
       modal.open(invalidDelete);
       const completion = modal.innerPanel.toggleTaskLike(invalidDelete);
-      const surface = activeDocument.querySelector<HTMLElement>(
-        '.abyss-recurrence-delete-confirm',
-      )!;
+      const surface = expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
+      );
 
       expect(internals.interactionRegistry.allows('openCalendar')).toBe(false);
       surface.querySelector<HTMLButtonElement>('button')?.click();
@@ -749,9 +792,9 @@ describe('PanelView', () => {
 
       modal.open(invalidDelete);
       const completion = modal.innerPanel.toggleTaskLike(invalidDelete);
-      const surface = activeDocument.querySelector<HTMLElement>(
-        '.abyss-recurrence-delete-confirm',
-      )!;
+      const surface = expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
+      );
       expect(surface.isConnected).toBe(true);
       expect(acquire).toHaveBeenCalledTimes(2);
 
@@ -765,20 +808,29 @@ describe('PanelView', () => {
     });
 
     it.each([
-      ['zero-area bounds', (element: HTMLElement) => setGeometry(element, rect(20, 20, 0, 480))],
+      [
+        'zero-area bounds',
+        (element: HTMLElement) => {
+          setGeometry(element, rect(20, 20, 0, 480));
+        },
+      ],
       [
         'no rendered client rectangles',
-        (element: HTMLElement) => setGeometry(element, rect(20, 20, 640, 480), []),
+        (element: HTMLElement) => {
+          setGeometry(element, rect(20, 20, 640, 480), []);
+        },
       ],
       [
         'offscreen bounds',
-        (element: HTMLElement) => setGeometry(element, rect(window.innerWidth + 20, 20, 640, 480)),
+        (element: HTMLElement) => {
+          setGeometry(element, rect(window.innerWidth + 20, 20, 640, 480));
+        },
       ],
     ] as const)(
       'does not route shortcuts from an active connected pane with %s',
       (_reason, hide) => {
         document.body.appendChild(view.containerEl);
-        app.workspace.activeLeaf = leaf;
+        workspaceState(app).activeLeaf = leaf;
         hide(view.contentEl);
         const event = new KeyboardEvent('keydown', {
           key: 'q',
@@ -796,7 +848,7 @@ describe('PanelView', () => {
 
     it('applies shortcut settings edits immediately without recreating the PanelView', () => {
       document.body.appendChild(view.containerEl);
-      app.workspace.activeLeaf = leaf;
+      workspaceState(app).activeLeaf = leaf;
       const internals = view as unknown as { panelNavigation: PanelNavigator };
       const openSearch = vi.spyOn(internals.panelNavigation, 'openSearch');
 
@@ -831,7 +883,7 @@ describe('PanelView', () => {
 
     it('opens and owns Quick Capture without changing mode, then refocuses only from panel chrome', async () => {
       document.body.appendChild(view.containerEl);
-      app.workspace.activeLeaf = leaf;
+      workspaceState(app).activeLeaf = leaf;
       const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
       const execute = vi.fn().mockResolvedValue({
         type: 'ok',
@@ -849,7 +901,7 @@ describe('PanelView', () => {
       const internals = view as unknown as { state: AppState; panelNavigation: PanelNavigator };
       internals.panelNavigation.openSearch();
       await flushMicrotasks(0);
-      const chrome = view.contentEl.querySelector<HTMLElement>('.abyss-rail')!;
+      const chrome = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-rail'));
       chrome.tabIndex = 0;
       chrome.focus();
 
@@ -861,9 +913,11 @@ describe('PanelView', () => {
       });
       chrome.dispatchEvent(openEvent);
       await flushMicrotasks(0);
-      const input = view.contentEl.querySelector<HTMLInputElement>(
-        '.abyss-quick-capture-host .abyss-quick-capture-input',
-      )!;
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLInputElement>(
+          '.abyss-quick-capture-host .abyss-quick-capture-input',
+        ),
+      );
 
       expect(openEvent.defaultPrevented).toBe(true);
       expect(internals.state.get('mode')).toBe('search');
@@ -961,7 +1015,9 @@ describe('PanelView', () => {
       );
       view.contentEl.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
       await flushMicrotasks();
-      const input = view.contentEl.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+      );
       input.value = 'captured task';
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(
@@ -1052,10 +1108,10 @@ describe('PanelView', () => {
       const openList = vi.spyOn(internals.panelNavigation, 'openList');
       const rebaseListIdentity = vi.spyOn(internals.panelNavigation, 'rebaseListIdentity');
 
-      view.contentEl
-        .querySelector<HTMLButtonElement>('.abyss-rail [aria-label="Calendar"]')!
-        .click();
-      view.contentEl.querySelector<HTMLElement>('.abyss-left-item')!.click();
+      expectDefined(
+        view.contentEl.querySelector<HTMLButtonElement>('.abyss-rail [aria-label="Calendar"]'),
+      ).click();
+      expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-left-item')).click();
 
       expect(openCalendar).toHaveBeenCalledOnce();
       expect(openList).toHaveBeenCalledWith('inbox');
@@ -1141,7 +1197,7 @@ describe('PanelView', () => {
             await app.vault.rename(file, 'Renamed.md');
             expected = { type: 'project', path: 'Renamed.md' };
           } else {
-            await app.vault.delete(file);
+            await app.fileManager.trashFile(file);
             expected = 'today';
           }
         }
@@ -1175,9 +1231,9 @@ describe('PanelView', () => {
     it('query update with empty taskStack → no error', () => {
       const state = (view as unknown as { state: AppState }).state;
       state.set('taskStack', []);
-      expect(() =>
-        emitQueryEvent(taskApplication.index, { type: 'changed', files: ['x.md'] }),
-      ).not.toThrow();
+      expect(() => {
+        emitQueryEvent(taskApplication.index, { type: 'changed', files: ['x.md'] });
+      }).not.toThrow();
     });
 
     it('recomputes rendered tag contrast when Obsidian emits css-change', () => {
@@ -1285,7 +1341,7 @@ describe('PanelView', () => {
     it('query update matching root task path → taskStack replaced with fresh task', () => {
       const state = (view as unknown as { state: AppState }).state;
       const tasks = taskApplication.index.list();
-      const root = tasks[0]!;
+      const root = expectDefined(tasks[0]);
       state.set('taskStack', [root]);
       emitQueryEvent(taskApplication.index, {
         type: 'changed',
@@ -1293,14 +1349,14 @@ describe('PanelView', () => {
       });
       const stack = state.get('taskStack');
       expect(stack).toHaveLength(1);
-      expect(stack[0] && 'source' in stack[0] ? stack[0].source.filePath : undefined).toBe(
+      expect(stack[0] != null && 'source' in stack[0] ? stack[0].source.filePath : undefined).toBe(
         root.source.filePath,
       );
     });
 
     it('query update with non-matching changedFile → taskStack unchanged', () => {
       const state = (view as unknown as { state: AppState }).state;
-      const root = taskApplication.index.list()[0]!;
+      const root = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [root]);
       const before = state.get('taskStack');
       emitQueryEvent(taskApplication.index, { type: 'changed', files: ['other.md'] });
@@ -1309,24 +1365,26 @@ describe('PanelView', () => {
 
     it('query update when root task deleted → taskStack reset to []', async () => {
       const state = (view as unknown as { state: AppState }).state;
-      const root = taskApplication.index.list()[0]!;
+      const root = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [root]);
       const file = app.vault.getAbstractFileByPath(root.source.filePath);
-      if (!file) throw new Error('root task file missing');
-      await app.vault.delete(file);
+      if (file == null) throw new Error('root task file missing');
+      await app.fileManager.trashFile(file);
       await flushMicrotasks();
       expect(state.get('taskStack')).toHaveLength(0);
     });
 
     it('keeps the selected task and dirty draft on the fresh ref across a vault rename', async () => {
       const state = (view as unknown as { state: AppState }).state;
-      const root = taskApplication.index.list()[0]!;
+      const root = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [root]);
-      const comment = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+      const comment = expectDefined(
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
       comment.value = 'rename-safe panel draft';
       comment.focus();
       const file = app.vault.getAbstractFileByPath(root.source.filePath);
-      if (!file) throw new Error('root task file missing');
+      if (file == null) throw new Error('root task file missing');
 
       await app.vault.rename(file, 'renamed.md');
       await flushMicrotasks();
@@ -1336,14 +1394,16 @@ describe('PanelView', () => {
         ref: { filePath: 'renamed.md' },
         source: { filePath: 'renamed.md' },
       });
-      const restored = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+      const restored = expectDefined(
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
       expect(restored.value).toBe('rename-safe panel draft');
       expect(view.contentEl.querySelector('.abyss-detached-draft')).toBeNull();
     });
 
     it('consumes an actual submitted comment across the service/index early event', async () => {
       const state = (view as unknown as { state: AppState }).state;
-      const root = taskApplication.index.list()[0]!;
+      const root = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [root]);
       const observedResolutions: unknown[] = [];
       const off = taskApplication.index.subscribe((event) => {
@@ -1351,7 +1411,9 @@ describe('PanelView', () => {
           observedResolutions.push(taskApplication.index.resolve(root.ref));
         }
       });
-      const input = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
       input.value = 'actual interleaving comment';
 
       input.dispatchEvent(
@@ -1380,18 +1442,20 @@ describe('PanelView', () => {
 
     it('restores one escrow after an observed repository candidate rolls back on process failure', async () => {
       const state = (view as unknown as { state: AppState }).state;
-      const root = taskApplication.index.list()[0]!;
+      const root = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [root]);
-      const original = await app.vault.read(app.vault.getMarkdownFiles()[0]!);
+      const original = await app.vault.read(expectDefined(app.vault.getMarkdownFiles()[0]));
       vi.spyOn(app.vault, 'process').mockImplementation(async (file, transform) => {
         const candidate = transform(original);
         const cache = app.metadataCache.getFileCache(file);
-        if (!cache) throw new Error('task cache missing');
+        if (cache == null) throw new Error('task cache missing');
         app.metadataCache.trigger('changed', file, candidate, cache);
         await flushMicrotasks();
         throw new Error('simulated process rollback');
       });
-      const input = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
       input.value = 'rollback actual comment';
 
       input.dispatchEvent(
@@ -1400,7 +1464,7 @@ describe('PanelView', () => {
       await flushMicrotasks();
       await flushMicrotasks();
 
-      const file = app.vault.getMarkdownFiles()[0]!;
+      const file = expectDefined(app.vault.getMarkdownFiles()[0]);
       expect(await app.vault.read(file)).toBe(original);
       expect(taskApplication.index.list()[0]?.comments).toHaveLength(0);
       const live =
@@ -1412,7 +1476,7 @@ describe('PanelView', () => {
 
     it('clears owned-write acknowledgement when deletion/switch changes the selected root', () => {
       const state = (view as unknown as { state: AppState }).state;
-      const root = taskApplication.index.list()[0]!;
+      const root = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [root]);
       (view as unknown as { acknowledgeOwnWrite(task: typeof root): void }).acknowledgeOwnWrite(
         root,
@@ -1435,15 +1499,15 @@ describe('PanelView', () => {
 
     it('rejects a late write acknowledgement after selection switched away from its root', () => {
       const state = (view as unknown as { state: AppState }).state;
-      const first = taskApplication.index.list()[0]!;
+      const first = expectDefined(taskApplication.index.list()[0]);
       const firstView = first;
       const secondView = {
         ...firstView,
         ref: { filePath: 'other.md', line: 0, revision: 'second' },
         source: { ...first.source, filePath: 'other.md', line: 0 },
       };
-      state.set('taskStack', [firstView]);
-      state.set('taskStack', [secondView]);
+      setTaskStack(state, [firstView]);
+      setTaskStack(state, [secondView]);
       (view as unknown as { acknowledgeOwnWrite(ref: typeof first.ref): void }).acknowledgeOwnWrite(
         first.ref,
       );
@@ -1459,7 +1523,7 @@ describe('PanelView', () => {
 
     it('converges a selected Center or Left command immediately and accepts the next index event', () => {
       const state = (view as unknown as { state: AppState }).state;
-      const observed = taskApplication.index.list()[0]!;
+      const observed = expectDefined(taskApplication.index.list()[0]);
       const updated = {
         ...observed,
         ref: { ...observed.ref, revision: 'owned-update' },
@@ -1490,16 +1554,20 @@ describe('PanelView', () => {
 
     it('preserves the full RightPanel DOM draft bundle while a no-op Center command converges', async () => {
       const state = (view as unknown as { state: AppState }).state;
-      const observed = taskApplication.index.list()[0]!;
+      const observed = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [observed]);
       activeDocument.body.append(view.contentEl);
-      view.contentEl.querySelector<HTMLElement>('.abyss-right-title-view')!.click();
+      expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-right-title-view')).click();
       await flushMicrotasks();
-      const title = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')!;
+      const title = expectDefined(
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+      );
       title.value = 'unsaved title';
       title.focus();
       title.setSelectionRange(1, 6);
-      const comment = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+      const comment = expectDefined(
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
       comment.value = 'unsaved comment';
       comment.setSelectionRange(2, 9);
       const execute = vi.spyOn(taskApplication.tasks, 'execute');
@@ -1515,10 +1583,12 @@ describe('PanelView', () => {
       });
       await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
 
-      const restoredTitle =
-        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')!;
-      const restoredComment =
-        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+      const restoredTitle = expectDefined(
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+      );
+      const restoredComment = expectDefined(
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
       expect(restoredTitle.value).toBe('unsaved title');
       expect(restoredTitle.selectionStart).toBe(1);
       expect(restoredTitle.selectionEnd).toBe(6);
@@ -1531,7 +1601,7 @@ describe('PanelView', () => {
 
     it('keeps uncertainty silent when the matching command result wins the race', () => {
       const state = (view as unknown as { state: AppState }).state;
-      const observed = taskApplication.index.list()[0]!;
+      const observed = expectDefined(taskApplication.index.list()[0]);
       const updated = {
         ...observed,
         ref: { ...observed.ref, revision: 'owned-after-conflict' },
@@ -1561,7 +1631,7 @@ describe('PanelView', () => {
 
     it('renders a fresh visual candidate and detaches the stale draft without a message', () => {
       const state = (view as unknown as { state: AppState }).state;
-      const observed = taskApplication.index.list()[0]!;
+      const observed = expectDefined(taskApplication.index.list()[0]);
       const current = {
         ...observed,
         ref: { ...observed.ref, revision: 'visual-current' },
@@ -1569,7 +1639,9 @@ describe('PanelView', () => {
         markdownTitle: 'Visual current',
       };
       state.set('taskStack', [observed]);
-      const comment = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
+      const comment = expectDefined(
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
       comment.value = 'stale local draft';
 
       (
@@ -1600,7 +1672,7 @@ describe('PanelView', () => {
 
     it('does not let a late Center or Left result replace a different selection', () => {
       const state = (view as unknown as { state: AppState }).state;
-      const first = taskApplication.index.list()[0]!;
+      const first = expectDefined(taskApplication.index.list()[0]);
       const second = {
         ...first,
         ref: { filePath: 'other.md', line: 0, revision: 'second' },
@@ -1611,8 +1683,8 @@ describe('PanelView', () => {
         ref: { ...first.ref, revision: 'late-update' },
         title: 'Late update',
       };
-      state.set('taskStack', [first]);
-      state.set('taskStack', [second]);
+      setTaskStack(state, [first]);
+      setTaskStack(state, [second]);
 
       (
         view as unknown as {
@@ -1635,7 +1707,7 @@ describe('PanelView', () => {
       ) as HTMLElement | undefined;
       expect(todayItem?.querySelector('.abyss-left-count')?.textContent).toBe('1');
       // Toggle the task done via file mutation (simulates an external vault edit).
-      const file = app.vault.getMarkdownFiles()[0]!;
+      const file = expectDefined(app.vault.getMarkdownFiles()[0]);
       await app.vault.process(file, (data) => data.replace('- [ ]', '- [x]'));
       await flushMicrotasks();
       // After refresh: no open tasks due today → Today count badge absent (count 0 → not rendered)
@@ -1683,12 +1755,14 @@ describe('PanelView', () => {
     it('exact resolution rebuilds a deep stack with the fresh subtask', () => {
       const state = (view as unknown as { state: AppState }).state;
       const tasks = taskApplication.index.list();
-      const root = tasks[0]!;
+      const root = expectDefined(tasks[0]);
       const sub = root.subtasks[0];
       expect(sub).toBeDefined();
       // Set a 2-level stack: [root, subtask]
-      state.set('taskStack', [root, sub!]);
-      const snapshot = taskApplication.index.list({ filePath: root.source.filePath })[0]!;
+      state.set('taskStack', [root, expectDefined(sub)]);
+      const snapshot = expectDefined(
+        taskApplication.index.list({ filePath: root.source.filePath })[0],
+      );
       (
         view as unknown as {
           applyResolution(result: { type: 'exact'; task: typeof snapshot }): void;
@@ -1697,18 +1771,20 @@ describe('PanelView', () => {
       const stack = state.get('taskStack');
       // Stack should still have 2 elements (root + fresh subtask found by line match)
       expect(stack).toHaveLength(2);
-      expect(stack[0] && 'source' in stack[0] ? stack[0].source.filePath : undefined).toBe(
+      expect(stack[0] != null && 'source' in stack[0] ? stack[0].source.filePath : undefined).toBe(
         root.source.filePath,
       );
-      expect(taskNodeLine(snapshot, stack[1]!)).toBe(taskNodeLine(root, sub!));
+      expect(taskNodeLine(snapshot, expectDefined(stack[1]))).toBe(
+        taskNodeLine(root, expectDefined(sub)),
+      );
     });
 
     it('exact resolution truncates a deep stack when the subtask identity is stale', () => {
       const state = (view as unknown as { state: AppState }).state;
       const tasks = taskApplication.index.list();
-      const root = tasks[0]!;
+      const root = expectDefined(tasks[0]);
       // Create a fake subtask with a line number that doesn't exist in fresh data
-      const original = root.subtasks[0]!;
+      const original = expectDefined(root.subtasks[0]);
       const fakeSub = {
         ...original,
         ref: {
@@ -1718,7 +1794,9 @@ describe('PanelView', () => {
         },
       };
       state.set('taskStack', [root, fakeSub]);
-      const snapshot = taskApplication.index.list({ filePath: root.source.filePath })[0]!;
+      const snapshot = expectDefined(
+        taskApplication.index.list({ filePath: root.source.filePath })[0],
+      );
       (
         view as unknown as {
           applyResolution(result: { type: 'exact'; task: typeof snapshot }): void;

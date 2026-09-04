@@ -7,6 +7,7 @@ import {
   type CalViewType,
   type PanelNavigationCenterPort,
 } from '../src/views/panelNavigation';
+import { methodOf } from './helpers';
 
 function settings(overrides: Partial<CalendarSettings> = {}): CalendarSettings {
   return { ...structuredClone(DEFAULT_SETTINGS), ...overrides };
@@ -30,12 +31,12 @@ function harness(
   } = {},
 ) {
   const state = new AppState();
-  if (options.mode) state.set('mode', options.mode);
-  if (options.selection) state.set('selectedList', options.selection);
+  if (options.mode !== undefined) state.set('mode', options.mode);
+  if (options.selection !== undefined) state.set('selectedList', options.selection);
   let calendarView = options.calendarView ?? 'month';
   const center: PanelNavigationCenterPort = {
     calendarView: vi.fn(() => calendarView),
-    setCalendarView: vi.fn((view) => {
+    setCalendarView: vi.fn((view: CalViewType) => {
       calendarView = view;
     }),
     openQuickCapture: vi.fn(),
@@ -111,8 +112,8 @@ describe('PanelNavigator', () => {
 
     navigator.openCalendar();
 
-    expect(center.calendarView).toHaveBeenCalledOnce();
-    expect(center.setCalendarView).toHaveBeenCalledWith('week');
+    expect(methodOf(center, 'calendarView')).toHaveBeenCalledOnce();
+    expect(methodOf(center, 'setCalendarView')).toHaveBeenCalledWith('week');
     expect(state.get('mode')).toBe('calendar');
   });
 
@@ -123,7 +124,7 @@ describe('PanelNavigator', () => {
 
       navigator.openCalendarView(view);
 
-      expect(center.setCalendarView).toHaveBeenCalledWith(view);
+      expect(methodOf(center, 'setCalendarView')).toHaveBeenCalledWith(view);
       expect(state.get('mode')).toBe('calendar');
     },
   );
@@ -149,7 +150,7 @@ describe('PanelNavigator', () => {
 
     expect(state.get('mode')).toBe('search');
     expect(state.get('selectedList')).toEqual(selection);
-    expect(center.openQuickCapture).toHaveBeenCalledOnce();
+    expect(methodOf(center, 'openQuickCapture')).toHaveBeenCalledOnce();
     expect(commits).not.toHaveBeenCalled();
   });
 
@@ -200,7 +201,15 @@ describe('PanelNavigator', () => {
     ],
   ])(
     'migrates an active %s list identity without losing its view state',
-    (_kind, previous, renamed, previousKey, renamedKey) => {
+    (
+      ...[_kind, previous, renamed, previousKey, renamedKey]: readonly [
+        string,
+        ListSelection,
+        ListSelection,
+        string,
+        string,
+      ]
+    ) => {
       const current = listState('priority');
       const calendarSettings = settings({ listViewStates: { [previousKey]: current } });
       const { state, navigator, save } = harness({

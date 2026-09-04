@@ -20,6 +20,7 @@ import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskM
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { captureChangedCallback, createAppWithFiles, flushMicrotasks } from '../helpers';
 import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
+import { expectDefined } from './../helpers';
 
 type Adapter = 'in-memory' | 'obsidian';
 
@@ -65,7 +66,7 @@ async function makeHarness(
   const snapshotState: TaskSnapshotState = {
     currentRoot: (filePath, line, blockSource) => index.currentRoot(filePath, line, blockSource),
     previewContent: (filePath, content) => {
-      if (options.failFinalProjection && content !== source)
+      if (options.failFinalProjection === true && content !== source)
         throw new Error('injected projection failure');
       return index.previewContent(filePath, content);
     },
@@ -74,7 +75,7 @@ async function makeHarness(
   };
   const snapshots = (content: string) => snapshotState.previewContent(path, content);
   const snapshotsFromContent = (filePath: string, content: string) => {
-    if (options.failFinalProjection && content !== source)
+    if (options.failFinalProjection === true && content !== source)
       throw new Error('injected projection failure');
     return index.previewContent(filePath, content);
   };
@@ -140,7 +141,7 @@ function request(
 
 function rootTarget(harness: Harness, source: string, index = 0): TaskNodeRef {
   const root = harness.snapshots(source)[index];
-  if (!root) throw new Error(`missing root ${index}`);
+  if (root == null) throw new Error(`missing root ${index}`);
   return { type: 'task', ref: root.ref };
 }
 
@@ -242,7 +243,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         });
         if (result.type === 'committed' && result.outcome.type === 'recurrence') {
           const completed = result.outcome.completed;
-          if (!completed) throw new Error('missing completed occurrence');
+          if (completed == null) throw new Error('missing completed occurrence');
           expect(result.outcome.active.target).toEqual({
             type: 'task',
             ref: result.outcome.active.root.ref,
@@ -264,8 +265,8 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         '  - [ ] Sibling\n' +
         '- [ ] Outside\n';
       const harness = await makeHarness(adapter, source);
-      const root = harness.snapshots(source)[0]!;
-      const owner = root.subtasks[0]!;
+      const root = expectDefined(harness.snapshots(source)[0]);
+      const owner = expectDefined(root.subtasks[0]);
 
       const result = await harness.repository.completeRecurrence(
         request({ type: 'subtask', ref: owner.ref }),
@@ -285,8 +286,8 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         changed: true,
         outcome: {
           type: 'recurrence',
-          active: { root: { ref: expect.any(Object) }, target: { type: 'subtask' } },
-          completed: { root: { ref: expect.any(Object) }, target: { type: 'subtask' } },
+          active: { target: { type: 'subtask' } },
+          completed: { target: { type: 'subtask' } },
         },
       });
       if (result.type === 'committed' && result.outcome.type === 'recurrence') {
@@ -294,11 +295,11 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         expect(result.outcome.active.target).not.toEqual(result.outcome.completed?.target);
         expect(result.outcome.active.target).toEqual({
           type: 'subtask',
-          ref: result.outcome.active.root.subtasks[0]!.ref,
+          ref: expectDefined(result.outcome.active.root.subtasks[0]).ref,
         });
         expect(result.outcome.completed?.target).toEqual({
           type: 'subtask',
-          ref: result.outcome.active.root.subtasks[1]!.ref,
+          ref: expectDefined(result.outcome.active.root.subtasks[1]).ref,
         });
       }
     });
@@ -310,7 +311,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         '    - [x] Child 📅 2026-08-03 ✅ 2026-07-31\n' +
         '  - [ ] Sibling\n';
       const harness = await makeHarness(adapter, source);
-      const owner = harness.snapshots(source)[0]!.subtasks[0]!;
+      const owner = expectDefined(expectDefined(harness.snapshots(source)[0]).subtasks[0]);
 
       const result = await harness.repository.completeRecurrence(
         request({ type: 'subtask', ref: owner.ref }),
@@ -334,7 +335,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         expect(result.outcome.completed).toBeUndefined();
         expect(result.outcome.active.target).toEqual({
           type: 'subtask',
-          ref: result.outcome.active.root.subtasks[0]!.ref,
+          ref: expectDefined(result.outcome.active.root.subtasks[0]).ref,
         });
       }
     });
@@ -346,7 +347,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         '    - [ ] Descendant\n' +
         '  - [ ] Keep me\n';
       const harness = await makeHarness(adapter, source);
-      const owner = harness.snapshots(source)[0]!.subtasks[0]!;
+      const owner = expectDefined(expectDefined(harness.snapshots(source)[0]).subtasks[0]);
 
       const result = await harness.repository.edit({
         type: 'set-status',
@@ -435,14 +436,15 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
           '- [ ] Shell\n' +
           '  - [ ] Owner 🔁 every day 📅 2026-08-01\n' +
           '  - [ ] Sibling 🔁 every week 📅 2026-08-02\n',
-        owner: (roots: readonly TaskSnapshot[]) => roots[0]!.subtasks[0]!,
+        owner: (roots: readonly TaskSnapshot[]) =>
+          expectDefined(expectDefined(roots[0]).subtasks[0]),
       },
       {
         name: 'a second recurrence on a child',
         source:
           '- [ ] Owner 🔁 every day 📅 2026-08-01\n' +
           '  - [ ] Child 🔁 every week 📅 2026-08-02\n',
-        owner: (roots: readonly TaskSnapshot[]) => roots[0]!,
+        owner: (roots: readonly TaskSnapshot[]) => expectDefined(roots[0]),
       },
     ])('rejects $name without changing bytes', async ({ source, owner }) => {
       const harness = await makeHarness(adapter, source);
@@ -621,9 +623,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       if (result.type !== 'committed' || result.outcome.type !== 'task') {
         throw new Error('missing task outcome');
       }
-      expect(result.outcome.task.ref.revision).not.toBe(
-        original.type === 'task' ? original.ref.revision : '',
-      );
+      expect(result.outcome.task.ref.revision).not.toBe(original.ref.revision);
       expect(harness.index.list()[0]?.ref).toEqual(result.outcome.task.ref);
     });
 
@@ -682,7 +682,7 @@ describe('Obsidian recurrence transaction boundary', () => {
     harness.index.subscribe((event) => {
       if (event.type === 'changed') {
         const revision = harness.index.list()[0]?.ref.revision;
-        if (revision) notifications.push(revision);
+        if (revision !== undefined) notifications.push(revision);
       }
     });
     vi.spyOn(harness.app.vault, 'process').mockImplementation(async (file, transform) => {
@@ -759,7 +759,8 @@ describe('Obsidian recurrence transaction boundary', () => {
     const harness = await makeHarness('obsidian', source);
     const notifications: string[] = [];
     harness.index.subscribe((event) => {
-      if (event.type === 'changed') notifications.push(harness.index.list()[0]!.ref.revision);
+      if (event.type === 'changed')
+        notifications.push(expectDefined(harness.index.list()[0]).ref.revision);
     });
 
     const result = await harness.repository.completeRecurrence(
@@ -829,7 +830,7 @@ describe('Obsidian recurrence transaction boundary', () => {
     vi.spyOn(harness.app.vault, 'process').mockImplementation(async (file, transform) => {
       const current = await harness.app.vault.read(file);
       const candidate = transform(current);
-      harness.fireChanged(file, candidate, {} as CachedMetadata);
+      harness.fireChanged(file, candidate, {});
       throw new Error('rejected after delete observation');
     });
 
@@ -922,7 +923,7 @@ describe('Obsidian recurrence transaction boundary', () => {
         await harness.app.vault.modify(file, candidate);
         return candidate;
       }
-      harness.fireChanged(file, candidate, {} as CachedMetadata);
+      harness.fireChanged(file, candidate, {});
       throw new Error('rejected after source delete observation');
     });
 

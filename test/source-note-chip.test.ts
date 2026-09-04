@@ -28,7 +28,7 @@ describe('shouldShowSourceNote', () => {
   it("'non-default' hides when filePath matches customFilePath", () => {
     const t = task({
       source: { filePath: 'Inbox/tasks.md' },
-      presentation: { dailyNoteDate: undefined },
+      presentation: {},
     });
     expect(shouldShowSourceNote(t, 'non-default', 'Inbox/tasks.md')).toBe(false);
   });
@@ -36,7 +36,7 @@ describe('shouldShowSourceNote', () => {
   it("'non-default' does NOT hide when customFilePath is empty (prevents false positive)", () => {
     const t = task({
       source: { filePath: 'Inbox/tasks.md' },
-      presentation: { dailyNoteDate: undefined },
+      presentation: {},
     });
     expect(shouldShowSourceNote(t, 'non-default', '')).toBe(true);
   });
@@ -44,7 +44,7 @@ describe('shouldShowSourceNote', () => {
   it("'non-default' shows for regular project note", () => {
     const t = task({
       source: { filePath: 'Projects/alpha.md' },
-      presentation: { dailyNoteDate: undefined },
+      presentation: {},
     });
     expect(shouldShowSourceNote(t, 'non-default', '')).toBe(true);
   });

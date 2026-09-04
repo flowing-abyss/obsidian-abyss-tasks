@@ -1,4 +1,4 @@
-import { Component, type App } from 'obsidian';
+import { type App, type Component } from 'obsidian';
 import { formatDurationFromMinutes } from '../../parser/TaskParser';
 import type { TagGroup } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
@@ -65,11 +65,11 @@ export interface TimedBlockCallbacks extends ForecastInteractionCallbacks {
    * or not (a fresh 🛫 is appended, anchored on the task's own unmoved `due`), `due` is never
    * part of this mutation's `build()` closure, so it can't be touched by it either way. */
   onStartChange: (task: TaskSnapshot, newStart: string) => void;
-  onDueChange?: (task: TaskSnapshot, newDue: string) => void;
-  onTimedMove?: (task: TaskSnapshot, target: TimedDragTarget) => void;
-  onTimedDuration?: (task: TaskSnapshot, target: TimedVerticalResizeTarget) => void;
-  onTimedBoundary?: (task: TaskSnapshot, target: TimedBoundaryTarget) => void;
-  interactionOwner?: TimedInteractionOwner;
+  onDueChange?: ((task: TaskSnapshot, newDue: string) => void) | undefined;
+  onTimedMove?: ((task: TaskSnapshot, target: TimedDragTarget) => void) | undefined;
+  onTimedDuration?: ((task: TaskSnapshot, target: TimedVerticalResizeTarget) => void) | undefined;
+  onTimedBoundary?: ((task: TaskSnapshot, target: TimedBoundaryTarget) => void) | undefined;
+  interactionOwner?: TimedInteractionOwner | undefined;
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
@@ -78,12 +78,14 @@ export interface TimedBlockCallbacks extends ForecastInteractionCallbacks {
 
 export interface TimedDayRenderOptions {
   readonly date: string;
-  readonly terminal?: boolean;
-  readonly previewPositionFor?: (
-    task: TaskSnapshot,
-    planning: TaskSnapshot['planning'],
-    date: string,
-  ) => PositionedBlock | undefined;
+  readonly terminal?: boolean | undefined;
+  readonly previewPositionFor?:
+    | ((
+        task: TaskSnapshot,
+        planning: TaskSnapshot['planning'],
+        date: string,
+      ) => PositionedBlock | undefined)
+    | undefined;
 }
 
 type BoundaryHandleBinding = {
@@ -148,7 +150,7 @@ function timedContinuity(
   task: TaskSnapshot,
   terminal: boolean,
 ): 'single' | 'continuation' | 'terminal' {
-  if (!task.planning.start || !task.planning.due) return 'single';
+  if (task.planning.start == null || task.planning.due == null) return 'single';
   return terminal ? 'terminal' : 'continuation';
 }
 
@@ -158,7 +160,7 @@ function timedSpanRole(
   renderedDate?: string,
 ): string {
   let baseRole: string;
-  if (task.planning.scheduled && task.planning.scheduled !== task.planning.due) {
+  if (task.planning.scheduled != null && task.planning.scheduled !== task.planning.due) {
     baseRole = 'scheduled-body';
   } else if (continuity === 'single') {
     baseRole = 'timed-body';
@@ -168,7 +170,7 @@ function timedSpanRole(
   if (continuity === 'single') return baseRole;
   const localDate =
     renderedDate ?? (continuity === 'terminal' ? task.planning.due : task.planning.start);
-  return localDate ? `${baseRole}:${localDate}` : baseRole;
+  return localDate != null && localDate.length > 0 ? `${baseRole}:${localDate}` : baseRole;
 }
 
 function timedCountLabel(task: TaskSnapshot): string | undefined {
@@ -192,16 +194,22 @@ function renderTimedBlockControl(
     task,
     registry: callbacks.statusRegistry,
     interactive: true,
-    onLeftClick: () => callbacks.onToggle(task),
+    onLeftClick: () => {
+      callbacks.onToggle(task);
+    },
     onContextMenu: (event) => {
       event.stopPropagation();
       showStatusMenuAt(event, {
         task,
         registry: callbacks.statusRegistry,
         owner: callbacks.component,
-        onPickStatus: (status) => callbacks.onSetStatus(task, status),
-        onPickPriority: (priority) => callbacks.onSetPriority(task, priority),
-        ...(callbacks.interactionOwnership && {
+        onPickStatus: (status) => {
+          callbacks.onSetStatus(task, status);
+        },
+        onPickPriority: (priority) => {
+          callbacks.onSetPriority(task, priority);
+        },
+        ...(callbacks.interactionOwnership != null && {
           interactionOwnership: callbacks.interactionOwnership,
         }),
       });
@@ -209,13 +217,16 @@ function renderTimedBlockControl(
   });
 }
 
-function renderTimedBlockTitle(
-  head: HTMLElement,
-  task: TaskSnapshot,
-  occurrence: CalendarOccurrence,
-  terminal: boolean,
-  callbacks: TimedBlockCallbacks,
-): void {
+type TimedBlockTitleInput = {
+  head: HTMLElement;
+  task: TaskSnapshot;
+  occurrence: CalendarOccurrence;
+  terminal: boolean;
+  callbacks: TimedBlockCallbacks;
+};
+
+function renderTimedBlockTitle(input: TimedBlockTitleInput): void {
+  const { head, task, occurrence, terminal, callbacks } = input;
   if (terminal && occurrence.kind === 'materialized') {
     const title = head.createDiv({
       cls: `abyss-tg-block-title abyss-calendar-title${statusTitleClass(task.status)}`,
@@ -234,11 +245,13 @@ function renderTimedBlockTitle(
 }
 
 export function renderTimedBlocksForDay(
-  hourColumnEl: HTMLElement,
-  tasksWithTime: TaskSnapshot[],
-  callbacks: TimedBlockCallbacks,
-  tagGroups: TagGroup[] = [],
-  options?: TimedDayRenderOptions,
+  ...[hourColumnEl, tasksWithTime, callbacks, tagGroups = [], options]: [
+    HTMLElement,
+    TaskSnapshot[],
+    TimedBlockCallbacks,
+    TagGroup[]?,
+    TimedDayRenderOptions?,
+  ]
 ): void {
   const inputs: TimedBlockInput[] = toTimedBlockInputs(tasksWithTime);
   const { positioned, minHeightCaps } = layoutTimedDay(inputs);
@@ -246,144 +259,177 @@ export function renderTimedBlocksForDay(
   // but only ever grows a block past its duration-derived height — see capMinHeightsPx's own
   // doc comment for why a same-column neighbor can still need that growth clamped back down so
   // the two blocks never visually cross.
-  for (const p of positioned) {
-    const occurrence = callbacks.occurrenceFor(p.task);
-    const widthPct = 100 / p.columns;
-    const terminal = options
-      ? (options.terminal ?? (!p.task.planning.due || p.task.planning.due === options.date))
-      : true;
-    const block = hourColumnEl.createDiv({
-      cls: `abyss-tg-block${terminal ? '' : ' abyss-tg-block-continuation'}`,
+  for (const positionedBlock of positioned)
+    renderTimedBlock({
+      hourColumnEl,
+      positionedBlock,
+      minHeightCap: minHeightCaps.get(positionedBlock) ?? Infinity,
+      callbacks,
+      tagGroups,
+      options,
     });
-    const continuity = timedContinuity(p.task, terminal);
-    const spanRole = timedSpanRole(p.task, continuity, options?.date);
-    applyOccurrenceDomState(block, occurrence, continuity, spanRole);
-    block.setAttribute('data-abyss-task-file', p.task.source.filePath);
-    block.setAttribute('data-abyss-task-line', String(p.task.source.line));
-    block.setAttribute('data-abyss-start-minutes', String(p.startMinutes));
-    if (options) block.setAttribute('data-tg-segment-date', options.date);
-    // Keep each block as the stable focus root used by relative arrow intents and same-day
-    // Tab/Shift+Tab navigation, including when a key event starts from a nested link.
-    bindMaterializedInteractions(occurrence, (target) => {
-      if (target.type === 'task') block.setAttribute('tabindex', '0');
-    });
-    block.style.top = `${minutesToPixels(p.startMinutes)}px`;
-    const heightPx = minutesToPixels(p.durationMinutes);
-    block.style.height = `${heightPx}px`;
-    // Only intervene when the CSS min-height would otherwise cross into the next same-column
-    // block — leave the CSS rule (which uses real `em`s, more accurate than this JS-side
-    // approximation) in full effect everywhere else.
-    const cap = minHeightCaps.get(p) ?? Infinity;
-    if (cap < MIN_BLOCK_HEIGHT_PX) {
-      block.style.minHeight = `${Math.max(heightPx, cap)}px`;
-    }
-    block.style.width = `${widthPct}%`;
-    block.style.left = `${p.column * widthPct}%`;
-    // Tag-colored fill only — the priority-colored border was removed (Task 12): the
-    // status marker below already conveys priority via its own border, so a second
-    // priority border on the block itself was redundant visual noise.
-    const tagColor = tagColorFor(p.task.tags, tagGroups);
-    if (tagColor) {
-      block.setCssProps({ '--abyss-tag-color': tagColor });
-      // Task 40 (Round 4): a single fixed var(--text-normal) title/subtitle color (the
-      // pre-existing behavior) loses contrast against a bright/pale tag color's fill in light
-      // mode, or a very dark/desaturated one in dark mode — see tagFillContrast.ts's own doc
-      // comment for the full reasoning. Only set when a variant was actually computed (falls
-      // through to the CSS rule's own var(--text-normal) fallback otherwise).
-      const textColorVar = tagFillTextColorVar(block, tagColor);
-      if (textColorVar) block.setCssProps({ '--abyss-tag-text-color': textColorVar });
-    }
-    const hasCounts = hasCountBadges(p.task);
-    const countLabel = timedCountLabel(p.task);
-    renderTimedContent(
-      block,
-      {
-        timeLabel: `${minutesToTimeString(p.startMinutes)}–${minutesToTimeString(p.startMinutes + p.durationMinutes)} (${formatDurationFromMinutes(p.durationMinutes)})`,
-        title: p.task.title,
-        ...(p.task.recurrence && { recurrence: p.task.recurrence }),
-        actionable: occurrence.kind === 'materialized' && terminal,
-        ...(countLabel && { countLabel }),
-      },
-      {
-        forecast: occurrence.kind === 'forecast',
-        ...(occurrence.kind === 'materialized' && terminal
-          ? { renderControl: (row) => renderTimedBlockControl(row, p.task, callbacks) }
-          : {}),
-        ...(hasCounts ? { renderCounts: (row) => renderCountBadges(row, p.task) } : {}),
-        renderTitle: (head) => renderTimedBlockTitle(head, p.task, occurrence, terminal, callbacks),
-      },
-    );
-    bindMaterializedInteractions(occurrence, (target) => {
-      if (target.type !== 'task') return;
-      attachTimedBlockControls(
-        block,
-        hourColumnEl,
-        p.task,
-        p.startMinutes,
-        p.durationMinutes,
-        terminal,
-        callbacks,
-        options,
-      );
-    });
-    bindForecastInteractions(block, occurrence, callbacks);
-  }
 }
 
-function attachTimedBlockControls(
-  block: HTMLElement,
-  hourColumnEl: HTMLElement,
-  task: TaskSnapshot,
-  startMinutes: number,
-  durationMinutes: number,
-  terminal: boolean,
-  callbacks: TimedBlockCallbacks,
-  options?: TimedDayRenderOptions,
-): void {
-  const durationHandle = block.createDiv({
-    cls: 'abyss-tg-resize-handle abyss-tg-resize-handle--duration',
-  });
-  durationHandle.dataset['resizeEdge'] = 'duration';
-  durationHandle.setAttribute('draggable', 'false');
-  const startHandle = block.createDiv({
-    cls: 'abyss-tg-resize-handle abyss-tg-resize-handle--start-time',
-  });
-  startHandle.dataset['resizeEdge'] = 'start-time';
-  startHandle.setAttribute('draggable', 'false');
-  const boundaryHandles: BoundaryHandleBinding[] = [];
+type TimedBlockRenderInput = {
+  hourColumnEl: HTMLElement;
+  positionedBlock: PositionedBlock;
+  minHeightCap: number;
+  callbacks: TimedBlockCallbacks;
+  tagGroups: TagGroup[];
+  options: TimedDayRenderOptions | undefined;
+};
 
-  if (options) {
-    const isSpan = Boolean(task.planning.start && task.planning.due);
-    if (isSpan && String(task.planning.start) === options.date) {
-      boundaryHandles.push({
-        element: createBoundaryHandle(block, 'left', 'start'),
-        boundary: 'start',
-      });
-    }
-    if (isSpan && String(task.planning.due) === options.date) {
-      boundaryHandles.push({
-        element: createBoundaryHandle(block, 'right', 'due'),
-        boundary: 'due',
-      });
-    } else if (!isSpan && terminal) {
-      boundaryHandles.push({
-        element: createBoundaryHandle(block, 'right', 'create-span'),
-        boundary: 'create-span',
-      });
-    }
-  } else {
-    attachLegacyBoundaryHandles(block, hourColumnEl, task, callbacks);
-  }
+function renderTimedBlock(input: TimedBlockRenderInput): void {
+  const { hourColumnEl, positionedBlock: blockLayout, callbacks, tagGroups, options } = input;
+  const task = blockLayout.task;
+  const occurrence = callbacks.occurrenceFor(task);
+  const terminal =
+    options?.terminal ??
+    (options == null || task.planning.due == null || task.planning.due === options.date);
+  const block = createTimedBlockElement(hourColumnEl, blockLayout, terminal, options, occurrence);
+  applyTimedBlockGeometry(block, blockLayout, input.minHeightCap);
+  applyTimedBlockColor(block, task, tagGroups);
+  renderTimedBlockContent(block, task, blockLayout, occurrence, terminal, callbacks);
+  bindMaterializedInteractions(occurrence, (target) => {
+    if (target.type !== 'task') return;
+    attachTimedBlockControls({
+      block,
+      hourColumnEl,
+      task,
+      startMinutes: blockLayout.startMinutes,
+      durationMinutes: blockLayout.durationMinutes,
+      terminal,
+      callbacks,
+      options,
+    });
+  });
+  bindForecastInteractions(block, occurrence, callbacks);
+}
+
+function createTimedBlockElement(
+  ...[hourColumnEl, layout, terminal, options, occurrence]: [
+    HTMLElement,
+    PositionedBlock,
+    boolean,
+    TimedDayRenderOptions | undefined,
+    CalendarOccurrence,
+  ]
+): HTMLElement {
+  const block = hourColumnEl.createDiv({
+    cls: `abyss-tg-block${terminal ? '' : ' abyss-tg-block-continuation'}`,
+  });
+  const continuity = timedContinuity(layout.task, terminal);
+  applyOccurrenceDomState(
+    block,
+    occurrence,
+    continuity,
+    timedSpanRole(layout.task, continuity, options?.date),
+  );
+  block.setAttribute('data-abyss-task-file', layout.task.source.filePath);
+  block.setAttribute('data-abyss-task-line', String(layout.task.source.line));
+  block.setAttribute('data-abyss-start-minutes', String(layout.startMinutes));
+  if (options != null) block.setAttribute('data-tg-segment-date', options.date);
+  bindMaterializedInteractions(occurrence, (target) => {
+    if (target.type === 'task') block.setAttribute('tabindex', '0');
+  });
+  return block;
+}
+
+function applyTimedBlockGeometry(
+  block: HTMLElement,
+  layout: PositionedBlock,
+  minHeightCap: number,
+): void {
+  block.style.top = `${minutesToPixels(layout.startMinutes)}px`;
+  const heightPx = minutesToPixels(layout.durationMinutes);
+  block.style.height = `${heightPx}px`;
+  if (minHeightCap < MIN_BLOCK_HEIGHT_PX)
+    block.style.minHeight = `${Math.max(heightPx, minHeightCap)}px`;
+  const widthPct = 100 / layout.columns;
+  block.style.width = `${widthPct}%`;
+  block.style.left = `${layout.column * widthPct}%`;
+}
+
+function applyTimedBlockColor(block: HTMLElement, task: TaskSnapshot, tagGroups: TagGroup[]): void {
+  const tagColor = tagColorFor(task.tags, tagGroups);
+  if (tagColor == null || tagColor.length === 0) return;
+  block.setCssProps({ '--abyss-tag-color': tagColor });
+  const textColorVar = tagFillTextColorVar(block, tagColor);
+  if (textColorVar != null && textColorVar.length > 0)
+    block.setCssProps({ '--abyss-tag-text-color': textColorVar });
+}
+
+function renderTimedBlockContent(
+  ...[block, task, layout, occurrence, terminal, callbacks]: [
+    HTMLElement,
+    TaskSnapshot,
+    PositionedBlock,
+    CalendarOccurrence,
+    boolean,
+    TimedBlockCallbacks,
+  ]
+): void {
+  const countLabel = timedCountLabel(task);
+  renderTimedContent(
+    block,
+    {
+      timeLabel: `${minutesToTimeString(layout.startMinutes)}–${minutesToTimeString(layout.startMinutes + layout.durationMinutes)} (${formatDurationFromMinutes(layout.durationMinutes)})`,
+      title: task.title,
+      ...(task.recurrence != null && task.recurrence.length > 0 && { recurrence: task.recurrence }),
+      actionable: occurrence.kind === 'materialized' && terminal,
+      ...(countLabel != null && countLabel.length > 0 && { countLabel }),
+    },
+    {
+      forecast: occurrence.kind === 'forecast',
+      ...(occurrence.kind === 'materialized' && terminal
+        ? {
+            renderControl: (row: HTMLElement): void => {
+              renderTimedBlockControl(row, task, callbacks);
+            },
+          }
+        : {}),
+      ...(hasCountBadges(task)
+        ? {
+            renderCounts: (row: HTMLElement): void => {
+              renderCountBadges(row, task);
+            },
+          }
+        : {}),
+      renderTitle: (head: HTMLElement): void => {
+        renderTimedBlockTitle({ head, task, occurrence, terminal, callbacks });
+      },
+    },
+  );
+}
+
+type TimedBlockControlsInput = {
+  block: HTMLElement;
+  hourColumnEl: HTMLElement;
+  task: TaskSnapshot;
+  startMinutes: number;
+  durationMinutes: number;
+  terminal: boolean;
+  callbacks: TimedBlockCallbacks;
+  options: TimedDayRenderOptions | undefined;
+};
+
+function attachTimedBlockControls(input: TimedBlockControlsInput): void {
+  const { block, task, startMinutes, durationMinutes, callbacks, options } = input;
+  const durationHandle = createVerticalHandle(block, 'duration');
+  const startHandle = createVerticalHandle(block, 'start-time');
+  const boundaryHandles = createBoundaryHandles(input);
 
   block.addEventListener('contextmenu', (event) => {
     event.preventDefault();
-    if ((event.target as HTMLElement).closest('.abyss-tg-resize-handle, .abyss-tg-span-edge'))
+    if (
+      (event.target as HTMLElement).closest('.abyss-tg-resize-handle, .abyss-tg-span-edge') != null
+    )
       return;
     callbacks.onTaskClick(task);
   });
 
-  if (options) {
-    attachOwnedInteractions(
+  if (options != null) {
+    attachOwnedInteractions({
       block,
       startHandle,
       durationHandle,
@@ -393,12 +439,48 @@ function attachTimedBlockControls(
       durationMinutes,
       callbacks,
       options,
-    );
+    });
   } else {
-    attachDrag(block, durationHandle, startMinutes, durationMinutes, callbacks, task);
+    attachDrag({
+      block,
+      handle: durationHandle,
+      initialStart: startMinutes,
+      initialDuration: durationMinutes,
+      callbacks,
+      task,
+    });
   }
   attachKeyboardHandling(block, callbacks, task);
   attachSelectedState(block);
+}
+
+function createVerticalHandle(block: HTMLElement, edge: 'duration' | 'start-time'): HTMLElement {
+  const handle = block.createDiv({
+    cls: `abyss-tg-resize-handle abyss-tg-resize-handle--${edge}`,
+  });
+  handle.dataset['resizeEdge'] = edge;
+  handle.setAttribute('draggable', 'false');
+  return handle;
+}
+
+function createBoundaryHandles(input: TimedBlockControlsInput): BoundaryHandleBinding[] {
+  const { block, hourColumnEl, task, terminal, callbacks, options } = input;
+  if (options == null) {
+    attachLegacyBoundaryHandles(block, hourColumnEl, task, callbacks);
+    return [];
+  }
+  const handles: BoundaryHandleBinding[] = [];
+  const isSpan = task.planning.start != null && task.planning.due != null;
+  if (isSpan && task.planning.start === options.date)
+    handles.push({ element: createBoundaryHandle(block, 'left', 'start'), boundary: 'start' });
+  if (isSpan && task.planning.due === options.date)
+    handles.push({ element: createBoundaryHandle(block, 'right', 'due'), boundary: 'due' });
+  else if (!isSpan && terminal)
+    handles.push({
+      element: createBoundaryHandle(block, 'right', 'create-span'),
+      boundary: 'create-span',
+    });
+  return handles;
 }
 
 function createBoundaryHandle(
@@ -420,35 +502,48 @@ function attachLegacyBoundaryHandles(
   callbacks: TimedBlockCallbacks,
 ): void {
   const left = block.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--left' });
-  attachHorizontalResize(
-    left,
+  attachHorizontalResize({
+    handle: left,
     hourColumnEl,
     task,
-    callbacks.onStartChange,
-    task.planning.due ? { date: task.planning.due, kind: 'max' } : undefined,
-  );
+    onResolve: callbacks.onStartChange,
+    bound: task.planning.due != null ? { date: task.planning.due, kind: 'max' } : undefined,
+  });
   const right = block.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--right' });
   const rightEdgeAnchor = task.planning.start ?? task.planning.scheduled ?? task.planning.due;
-  attachHorizontalResize(
-    right,
+  attachHorizontalResize({
+    handle: right,
     hourColumnEl,
     task,
-    callbacks.onExtendToSpan,
-    rightEdgeAnchor ? { date: rightEdgeAnchor, kind: 'min' } : undefined,
-  );
+    onResolve: callbacks.onExtendToSpan,
+    bound: rightEdgeAnchor != null ? { date: rightEdgeAnchor, kind: 'min' } : undefined,
+  });
 }
 
-function attachOwnedInteractions(
-  block: HTMLElement,
-  startHandle: HTMLElement,
-  durationHandle: HTMLElement,
-  boundaryHandles: BoundaryHandleBinding[],
-  task: TaskSnapshot,
-  startMinutes: number,
-  durationMinutes: number,
-  callbacks: TimedBlockCallbacks,
-  options: TimedDayRenderOptions,
-): void {
+type OwnedInteractionsInput = {
+  block: HTMLElement;
+  startHandle: HTMLElement;
+  durationHandle: HTMLElement;
+  boundaryHandles: BoundaryHandleBinding[];
+  task: TaskSnapshot;
+  startMinutes: number;
+  durationMinutes: number;
+  callbacks: TimedBlockCallbacks;
+  options: TimedDayRenderOptions;
+};
+
+function attachOwnedInteractions(input: OwnedInteractionsInput): void {
+  const {
+    block,
+    startHandle,
+    durationHandle,
+    boundaryHandles,
+    task,
+    startMinutes,
+    durationMinutes,
+    callbacks,
+    options,
+  } = input;
   const owner = callbacks.interactionOwner ?? createTimedInteractionOwner();
   attachTimedInteractions({
     source: block,
@@ -462,22 +557,39 @@ function attachOwnedInteractions(
     owner,
     previewPositionFor: options.previewPositionFor,
     onMove: (movedTask, target) => {
-      if (callbacks.onTimedMove) callbacks.onTimedMove(movedTask, target);
+      if (callbacks.onTimedMove != null) callbacks.onTimedMove(movedTask, target);
       else if (target.destination === 'time-grid') {
         callbacks.onTimeChange(movedTask, target.startMinutes);
       }
     },
     onDuration: (resizedTask, target) => {
-      if (callbacks.onTimedDuration) callbacks.onTimedDuration(resizedTask, target);
+      if (callbacks.onTimedDuration != null) callbacks.onTimedDuration(resizedTask, target);
       else callbacks.onDurationChange(resizedTask, target.durationMinutes);
     },
     onBoundary: (resizedTask, target: TimedBoundaryTarget) => {
-      if (callbacks.onTimedBoundary) callbacks.onTimedBoundary(resizedTask, target);
+      if (callbacks.onTimedBoundary != null) callbacks.onTimedBoundary(resizedTask, target);
       else if (target.boundary === 'start') callbacks.onStartChange(resizedTask, target.date);
       else if (target.boundary === 'due') callbacks.onDueChange?.(resizedTask, target.date);
       else callbacks.onExtendToSpan(resizedTask, target.date);
     },
   });
+}
+
+const KEYBOARD_INTENTS: Readonly<Record<string, TimedBlockKeyboardIntent>> = {
+  ArrowUp: { type: 'move-time', deltaMinutes: -15 },
+  ArrowDown: { type: 'move-time', deltaMinutes: 15 },
+  ArrowLeft: { type: 'shift-schedule', days: -1 },
+  ArrowRight: { type: 'shift-schedule', days: 1 },
+};
+const SHIFT_KEYBOARD_INTENTS: Readonly<Record<string, TimedBlockKeyboardIntent>> = {
+  ArrowUp: { type: 'resize-duration', deltaMinutes: -5 },
+  ArrowDown: { type: 'resize-duration', deltaMinutes: 5 },
+  ArrowLeft: { type: 'extend-start', days: -1 },
+  ArrowRight: { type: 'extend-due', days: 1 },
+};
+
+function keyboardIntent(event: KeyboardEvent): TimedBlockKeyboardIntent | undefined {
+  return (event.shiftKey ? SHIFT_KEYBOARD_INTENTS : KEYBOARD_INTENTS)[event.key];
 }
 
 /**
@@ -500,26 +612,8 @@ function attachKeyboardHandling(
       return;
     }
 
-    let intent: TimedBlockKeyboardIntent | undefined;
-    if (event.key === 'ArrowUp') {
-      intent = event.shiftKey
-        ? { type: 'resize-duration', deltaMinutes: -5 }
-        : { type: 'move-time', deltaMinutes: -15 };
-    } else if (event.key === 'ArrowDown') {
-      intent = event.shiftKey
-        ? { type: 'resize-duration', deltaMinutes: 5 }
-        : { type: 'move-time', deltaMinutes: 15 };
-    } else if (event.key === 'ArrowLeft') {
-      intent = event.shiftKey
-        ? { type: 'extend-start', days: -1 }
-        : { type: 'shift-schedule', days: -1 };
-    } else if (event.key === 'ArrowRight') {
-      intent = event.shiftKey
-        ? { type: 'extend-due', days: 1 }
-        : { type: 'shift-schedule', days: 1 };
-    }
-
-    if (!intent) return;
+    const intent = keyboardIntent(event);
+    if (intent == null) return;
     event.preventDefault();
     callbacks.onKeyboardIntent(task, intent);
   });
@@ -529,7 +623,7 @@ function focusAdjacentTimedBlock(block: HTMLElement, direction: -1 | 1): void {
   const scope =
     block.closest<HTMLElement>('.abyss-tg-day-column') ??
     block.closest<HTMLElement>('.abyss-tg-hour-column');
-  if (!scope) return;
+  if (scope == null) return;
 
   const domBlocks = Array.from(
     scope.querySelectorAll<HTMLElement>('.abyss-tg-block[tabindex="0"]'),
@@ -538,36 +632,47 @@ function focusAdjacentTimedBlock(block: HTMLElement, direction: -1 | 1): void {
   const visualBlocks = [...domBlocks].sort((a, b) => {
     const startDifference =
       Number(a.dataset['abyssStartMinutes']) - Number(b.dataset['abyssStartMinutes']);
-    return startDifference || domIndex.get(a)! - domIndex.get(b)!;
+    return startDifference !== 0
+      ? startDifference
+      : (domIndex.get(a) ?? 0) - (domIndex.get(b) ?? 0);
   });
   const currentIndex = visualBlocks.indexOf(block);
   if (currentIndex < 0 || visualBlocks.length === 0) return;
 
   const targetIndex = (currentIndex + direction + visualBlocks.length) % visualBlocks.length;
-  visualBlocks[targetIndex]!.focus();
+  visualBlocks[targetIndex]?.focus();
 }
 
 function attachSelectedState(block: HTMLElement): void {
-  block.addEventListener('focusin', () => block.addClass('is-selected'));
+  block.addEventListener('focusin', () => {
+    block.addClass('is-selected');
+  });
   block.addEventListener('focusout', (e: FocusEvent) => {
     // A focusout where focus is moving to another element still inside `block` (e.g. from the
     // block itself onto its own embedded link, or back) must not drop `.is-selected` — only a
     // focusout whose new focus target (`relatedTarget`) is outside `block` entirely (or focus is
     // leaving the document altogether, `relatedTarget === null`) is a real "deselect".
     const next = e.relatedTarget as Node | null;
-    if (next && block.contains(next)) return;
+    if (next != null && block.contains(next)) return;
     block.removeClass('is-selected');
   });
 }
 
-function attachDrag(
-  block: HTMLElement,
-  handle: HTMLElement,
-  initialStart: number,
-  initialDuration: number,
-  callbacks: TimedBlockCallbacks,
-  task: TaskSnapshot,
-): void {
+type LegacyDragInput = {
+  block: HTMLElement;
+  handle: HTMLElement;
+  initialStart: number;
+  initialDuration: number;
+  callbacks: TimedBlockCallbacks;
+  task: TaskSnapshot;
+};
+
+function pointerDeltaMinutes(event: PointerEvent, startY: number): number {
+  return snapMinutes(((event.clientY - startY) / minutesToPixels(60)) * 60, SNAP_MINUTES);
+}
+
+function attachDrag(input: LegacyDragInput): void {
+  const { block, handle, initialStart, initialDuration, callbacks, task } = input;
   let mode: 'move' | 'resize' | null = null;
   let startY = 0;
   let startMinutes = initialStart;
@@ -580,9 +685,8 @@ function attachDrag(
   let capturedPointerId: number | null = null;
 
   const onPointerMove = (e: PointerEvent): void => {
-    if (!mode) return;
-    const rawDelta = ((e.clientY - startY) / minutesToPixels(60)) * 60;
-    const deltaMinutes = snapMinutes(rawDelta, SNAP_MINUTES);
+    if (mode == null) return;
+    const deltaMinutes = pointerDeltaMinutes(e, startY);
     if (mode === 'move') {
       const next = Math.min(MAX_START_MINUTES, Math.max(0, startMinutes + deltaMinutes));
       block.style.top = `${minutesToPixels(next)}px`;
@@ -606,15 +710,15 @@ function attachDrag(
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerCancel);
-    if (capturedEl && capturedPointerId !== null) tryReleasePointer(capturedEl, capturedPointerId);
+    if (capturedEl != null && capturedPointerId !== null)
+      tryReleasePointer(capturedEl, capturedPointerId);
     capturedEl = null;
     capturedPointerId = null;
   };
 
   const onPointerUp = (e: PointerEvent): void => {
-    if (!mode) return;
-    const rawDelta = ((e.clientY - startY) / minutesToPixels(60)) * 60;
-    const deltaMinutes = snapMinutes(rawDelta, SNAP_MINUTES);
+    if (mode == null) return;
+    const deltaMinutes = pointerDeltaMinutes(e, startY);
     if (mode === 'move') {
       callbacks.onTimeChange(
         task,
@@ -633,7 +737,7 @@ function attachDrag(
   // restore that geometry and tear down listeners without committing. Production owned sessions
   // never mutate source geometry and do not enter this branch.
   const onPointerCancel = (): void => {
-    if (!mode) return;
+    if (mode == null) return;
     if (mode === 'move') {
       block.style.top = `${minutesToPixels(startMinutes)}px`;
     } else {
@@ -656,8 +760,9 @@ function attachDrag(
     // block-level listener would ever see it, so this closest() never actually matches in
     // practice — kept as a defensive, explicit belt-and-suspenders guard rather than relying
     // solely on stopPropagation ordering.
-    if ((e.target as HTMLElement).closest('.abyss-status-marker, a, .abyss-tg-span-edge')) return;
-    mode = (e.target as HTMLElement).closest('.abyss-tg-resize-handle') ? 'resize' : 'move';
+    if ((e.target as HTMLElement).closest('.abyss-status-marker, a, .abyss-tg-span-edge') != null)
+      return;
+    mode = (e.target as HTMLElement).closest('.abyss-tg-resize-handle') != null ? 'resize' : 'move';
     startY = e.clientY;
     startMinutes = initialStart;
     startDuration = initialDuration;
@@ -684,55 +789,37 @@ function attachDrag(
   handle.addEventListener('pointerdown', onPointerDown);
 }
 
-/**
- * Legacy no-date horizontal drag-resize compatibility path. Production start/due/create-span
- * handles use timedInteractions.ts. This path mirrors renderAllDay.ts's Pointer-Events pattern: no
- * live visual feedback while dragging, just a commit-on-release that resolves the day under the
- * pointer) rather than inventing a new interaction style — the day boundary crossing is resolved
- * from the pointer's final (clientX, clientY) via `activeDocument.elementFromPoint`, walking up
- * to the nearest `[data-tg-date]` ancestor (HourGrid.ts's `.abyss-tg-day-column`, one per rendered
- * date), NOT by accumulating a per-pixel delta within a single column — so dragging across 2-3
- * day columns resolves to whichever column the pointer is over at release, however far that is.
- *
- * `hourColumnEl` (the per-day column this block was rendered into) doubles as the test seam
- * anchor: real usage never reads from it directly, but jsdom's `elementFromPoint` always returns
- * null, so tests drive the same deterministic `__tgPendingEdgeResizes`/`__tgTestEndDrag` seam
- * renderAllDay.ts established (Round 2 Task 9), registered here per-day-column instead of
- * per-all-day-cell.
- *
- * Task 34: also used for the left edge (moves/adds `start`) — both edges share this same
- * mechanics function, differing only in which mutation callback `onResolve` invokes on
- * resolution, mirroring how renderAllDay.ts's single `attachEdgeResize` already serves its
- * left/right/plain-right handles alike.
- */
-function attachHorizontalResize(
-  handle: HTMLElement,
-  hourColumnEl: HTMLElement,
-  task: TaskSnapshot,
-  onResolve: (task: TaskSnapshot, newDate: string) => void,
-  // Task 51: live-clamp bound (UX nice-to-have layered on top of the application command
-  // validation safety net). Without this, `elementFromPoint`'s absolute "day under the cursor"
-  // resolution let the left edge get dragged arbitrarily far past the block's own `due` day (or
-  // the right edge past the anchor that would freeze as `start`), producing an inverted span
-  // that the validator now rejects wholesale — correct, but the user only discovers the failed
-  // drag AFTER release, with no live feedback that they'd crossed a limit. Clamping the resolved
-  // date here, on every pointermove AND at commit, means the drag visually stops at the boundary
-  // day column instead of continuing to track the cursor past it, and the committed value is
-  // never invalid in the first place (command validation remains the safety net for every other path
-  // that can touch these fields, this is purely presentational/UX for this one gesture).
-  bound?: { date: string; kind: 'max' | 'min' },
-): void {
-  // Compatibility-only horizontal handles remain explicitly non-draggable. Their root is also
-  // marked non-draggable while armed and returns to the normal attribute-free state on cleanup.
+type HorizontalResizeInput = {
+  handle: HTMLElement;
+  hourColumnEl: HTMLElement;
+  task: TaskSnapshot;
+  onResolve: (task: TaskSnapshot, newDate: string) => void;
+  bound?: { date: string; kind: 'max' | 'min' } | undefined;
+};
+
+function dayElementAtPointer(
+  event: PointerEvent,
+  clampDate: (date: string) => string,
+): Element | null {
+  const rawDayEl =
+    activeDocument.elementFromPoint(event.clientX, event.clientY)?.closest('[data-tg-date]') ??
+    null;
+  const rawDate = rawDayEl?.getAttribute('data-tg-date');
+  if (rawDate == null || rawDate.length === 0) return rawDayEl;
+  const clamped = clampDate(rawDate);
+  return clamped === rawDate
+    ? rawDayEl
+    : activeDocument.querySelector(`[data-tg-date="${clamped}"]`);
+}
+
+/** Legacy no-date horizontal drag-resize compatibility path. */
+function attachHorizontalResize(input: HorizontalResizeInput): void {
+  const { handle, hourColumnEl, task, onResolve, bound } = input;
   handle.setAttribute('draggable', 'false');
   const block = handle.closest<HTMLElement>('.abyss-tg-block');
 
-  // Dates are always well-formed, zero-padded `YYYY-MM-DD` strings by the time they reach here
-  // (either `task.planning.due`/`task.planning.start`/`task.planning.scheduled`, already-parsed fields, or a `data-tg-date`
-  // attribute HourGrid.ts stamps from the same shape) — plain string comparison agrees with
-  // chronological order exactly for that shape, no `Date` parsing needed.
   const clampDate = (date: string): string => {
-    if (!bound) return date;
+    if (bound == null) return date;
     if (bound.kind === 'max' && date > bound.date) return bound.date;
     if (bound.kind === 'min' && date < bound.date) return bound.date;
     return date;
@@ -746,16 +833,6 @@ function attachHorizontalResize(
     __tgPendingEdgeResizes?: Array<(d: string) => void>;
   };
 
-  // Task 39: live feedback for horizontal (day-crossing) edge-resize, which — unlike the
-  // vertical move/resize drag above — had NO visual feedback at all while dragging, only a
-  // commit-on-release (see this function's own doc comment). The commit itself already
-  // resolves which day the pointer is over via `elementFromPoint` on release; this surfaces
-  // that same resolution live, on every pointermove, by toggling `.is-drag-over` on whichever
-  // `[data-tg-date]` day column is currently under the pointer — reusing the day cell's
-  // existing native-DnD dragover highlight (renderAllDay.ts) rather than inventing a new
-  // convention, since both signal the same thing: "this is the day you'd land on if you let
-  // go now." `hoveredDayEl` tracks the currently-highlighted column so a fast drag across
-  // several columns only ever has one column highlighted at a time.
   let hoveredDayEl: Element | null = null;
 
   const clearHoveredDay = (): void => {
@@ -765,41 +842,20 @@ function attachHorizontalResize(
 
   const onPointerMove = (e: PointerEvent): void => {
     e.preventDefault();
-    const target = activeDocument.elementFromPoint(e.clientX, e.clientY);
-    const rawDayEl = target?.closest('[data-tg-date]') ?? null;
-    const rawDate = rawDayEl?.getAttribute('data-tg-date');
-    // Task 51: once the cursor has crossed the clamp bound, keep highlighting the BOUND day
-    // column (not whichever real column is under the cursor) so the live preview visibly stops
-    // at the limit rather than continuing to follow the pointer past it.
-    let dayEl = rawDayEl;
-    if (bound && rawDate) {
-      const clamped = clampDate(rawDate);
-      if (clamped !== rawDate) {
-        dayEl = activeDocument.querySelector(`[data-tg-date="${clamped}"]`);
-      }
-    }
+    const dayEl = dayElementAtPointer(e, clampDate);
     if (dayEl === hoveredDayEl) return;
     hoveredDayEl?.classList.remove('is-drag-over');
     dayEl?.classList.add('is-drag-over');
     hoveredDayEl = dayEl;
   };
 
-  // Task 34: unlike Task 29 (where this was the ONLY horizontal handle sharing
-  // `hourColumnEl`'s `__tgPendingEdgeResizes` array), a block now carries both a left and a
-  // right edge handle registered against the SAME hourColumnEl — so `resolve` is pushed/removed
-  // here around the armed window (pointerdown→pointerup/cancel) rather than unconditionally at
-  // attach time. Otherwise `__tgTestEndDrag` (and, in principle, a stray real pointerup with no
-  // matching pointerdown) would resolve BOTH edges' callbacks instead of only the one actually
-  // being dragged.
   const unregisterPending = (): void => {
     const pending = withHook.__tgPendingEdgeResizes;
-    if (!pending) return;
+    if (pending == null) return;
     const idx = pending.indexOf(resolve);
     if (idx !== -1) pending.splice(idx, 1);
   };
 
-  // See attachDrag's mirror of this same (element, pointerId) pattern, and this file's
-  // pointer-capture comment above MAX_DURATION_MINUTES for why it exists.
   let capturedPointerId: number | null = null;
 
   const cleanup = (): void => {
@@ -817,14 +873,10 @@ function attachHorizontalResize(
     const target = activeDocument.elementFromPoint(upEvent.clientX, upEvent.clientY);
     const dayEl = target?.closest('[data-tg-date]');
     const date = dayEl?.getAttribute('data-tg-date');
-    if (date) resolve(date);
+    if (date !== null && date !== undefined && date.length > 0) resolve(date);
     cleanup();
   };
 
-  // Defensive belt-and-suspenders (mirrors renderAllDay.ts's attachEdgeResize): if a native drag
-  // were ever armed despite the draggable="false" flip below, the pointer session would end in
-  // `pointercancel` rather than `pointerup`, and without this the window
-  // pointermove/pointerup/pointercancel listeners would leak instead of being torn down.
   const onPointerCancel = (): void => {
     cleanup();
   };
@@ -845,12 +897,12 @@ function attachHorizontalResize(
   const withEndDrag = hourColumnEl as unknown as {
     __tgTestEndDrag?: (targetDate: string) => void;
   };
-  if (!withEndDrag.__tgTestEndDrag) {
-    withEndDrag.__tgTestEndDrag = (targetDate: string) => {
-      const pending = (
-        hourColumnEl as unknown as { __tgPendingEdgeResizes?: Array<(d: string) => void> }
-      ).__tgPendingEdgeResizes;
-      pending?.forEach((cb) => cb(targetDate));
-    };
-  }
+  withEndDrag.__tgTestEndDrag ??= (targetDate: string) => {
+    const pending = (
+      hourColumnEl as unknown as { __tgPendingEdgeResizes?: Array<(d: string) => void> }
+    ).__tgPendingEdgeResizes;
+    pending?.forEach((cb) => {
+      cb(targetDate);
+    });
+  };
 }

@@ -1,7 +1,5 @@
-// eslint-disable-next-line no-restricted-imports, import/no-extraneous-dependencies
-import moment from 'moment';
-import { App as ObsidianApp, Platform, TFile, type CachedMetadata } from 'obsidian';
-import { afterEach, beforeEach, vi } from 'vitest';
+import { moment, App as ObsidianApp, Platform, type CachedMetadata, type TFile } from 'obsidian';
+import { afterEach, beforeEach, expect, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { LeftPanel } from '../src/panels/LeftPanel';
@@ -35,6 +33,109 @@ import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/Obs
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 
+export async function loadPluginStyles(): Promise<string> {
+  if (!Platform.isDesktop) return '';
+  const { readFileSync } = await import('node:fs');
+  const path = await import('node:path');
+  return readFileSync(path.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+}
+
+/**
+ * Narrow a value that a test fixture or DOM query requires to exist.
+ *
+ * Unlike a non-null assertion, this keeps the test's precondition observable: a missing fixture
+ * fails at the point where it is first consumed instead of producing a later, unrelated error.
+ */
+export function expectDefined<T>(
+  value: T | null | undefined,
+  message = 'Expected test value to be defined',
+): T {
+  if (value === null || value === undefined) {
+    throw new Error(message);
+  }
+  return value;
+}
+
+/** Read a method as a value in tests that intentionally inspect, replace, or pass it around. */
+export function methodOf<T extends object, K extends keyof T>(object: T, key: K): T[K] {
+  return object[key];
+}
+
+export function objectMatching<T extends object>(expected: Partial<T>): T {
+  return expect.objectContaining(expected as never) as T;
+}
+
+export function parseJson<T>(source: string): T {
+  return JSON.parse(source) as T;
+}
+
+export interface CssRuleParts {
+  readonly selector: string;
+  readonly declarations: string;
+}
+
+export function cssRuleParts(source: string): readonly CssRuleParts[] {
+  const rules: CssRuleParts[] = [];
+  for (const segment of stripCssComments(source).split('}')) {
+    const openingBrace = segment.lastIndexOf('{');
+    if (openingBrace < 0) continue;
+    rules.push({
+      selector: segment.slice(0, openingBrace).trim(),
+      declarations: segment.slice(openingBrace + 1),
+    });
+  }
+  return rules;
+}
+
+export function cssSelectorList(selectorList: string): readonly string[] {
+  const selectors: string[] = [];
+  let start = 0;
+  let parenthesisDepth = 0;
+  for (let index = 0; index < selectorList.length; index += 1) {
+    const character = selectorList[index];
+    if (character === '(') parenthesisDepth += 1;
+    if (character === ')') parenthesisDepth = Math.max(0, parenthesisDepth - 1);
+    if (character !== ',' || parenthesisDepth !== 0) continue;
+    selectors.push(selectorList.slice(start, index).trim());
+    start = index + 1;
+  }
+  selectors.push(selectorList.slice(start).trim());
+  return selectors;
+}
+
+export function cssDeclarationsFor(source: string, selector: string): string {
+  const declarations: string[] = [];
+  for (const rule of cssRuleParts(source)) {
+    if (rule.selector === selector || cssSelectorList(rule.selector).includes(selector)) {
+      declarations.push(rule.declarations);
+    }
+  }
+  return declarations.join('\n');
+}
+
+export function stripCssComments(source: string): string {
+  let result = '';
+  let cursor = 0;
+  while (cursor < source.length) {
+    const opening = source.indexOf('/*', cursor);
+    if (opening < 0) return result + source.slice(cursor);
+    result += source.slice(cursor, opening);
+    const closing = source.indexOf('*/', opening + 2);
+    if (closing < 0) return result;
+    cursor = closing + 2;
+  }
+  return result;
+}
+
+export function cssDeclarationValue(declarations: string, property: string): string | undefined {
+  for (const declaration of declarations.split(';')) {
+    const colon = declaration.indexOf(':');
+    if (colon < 0 || declaration.slice(0, colon).trim() !== property) continue;
+    return declaration.slice(colon + 1).trim();
+  }
+  return undefined;
+}
+
 export function queryApiForTasks(
   getTasks: () => readonly TaskSnapshot[],
   onSubscribe?: (listener: (event: TaskIndexEvent) => void) => () => void,
@@ -49,7 +150,7 @@ export function queryApiForTasks(
         .filter((task) => query?.tag === undefined || task.tags.includes(query.tag))
         .filter((task) => query?.statuses === undefined || query.statuses.includes(task.status))
         .filter((task) => {
-          if (!query?.dateRange) return true;
+          if (query?.dateRange == null) return true;
           const date =
             task.planning.due ??
             task.planning.scheduled ??
@@ -67,7 +168,8 @@ export function queryApiForTasks(
       return {
         materialized: sources.filter(({ node }) => {
           const { start, scheduled, due } = node.planning;
-          if (start && due) return dates.some((date) => date >= start && date <= due);
+          if (start != null && due != null)
+            return dates.some((date) => date >= start && date <= due);
           return [scheduled, due, rootDailyNoteDate(node)].some(
             (date) => date !== undefined && wanted.has(date),
           );
@@ -83,11 +185,11 @@ export function queryApiForTasks(
       const found = getTasks().find(
         (task) => task.ref.filePath === ref.filePath && task.ref.line === ref.line,
       );
-      return found
+      return found != null
         ? { type: 'exact', task: found, basis: { observed: found } }
         : { type: 'not-found', ref };
     },
-    ...(onSubscribe && { subscribe: onSubscribe }),
+    ...(onSubscribe === undefined ? {} : { subscribe: onSubscribe }),
   });
 }
 
@@ -113,16 +215,30 @@ export interface TestTaskHarness extends TaskApplicationApi {
   readonly setTaskStatus: ReturnType<typeof vi.fn>;
 }
 
-export function makeCenterPanelForTest(
+type CenterPanelTestArgs = readonly [
   state: AppState,
   taskHarness: TestTaskHarness,
   app: ObsidianApp,
   settings: CalendarSettings,
-  _tagManager: TagManager,
-  onSaveSettings: () => Promise<void> = async () => {},
-  projectStore: ProjectStore | null = null,
-  projectManager: ProjectManager | null = null,
+  tagManager: TagManager,
+  onSaveSettings?: () => Promise<void>,
+  projectStore?: ProjectStore | null,
+  projectManager?: ProjectManager | null,
   tasks?: TaskApplicationApi,
+];
+
+export function makeCenterPanelForTest(
+  ...[
+    state,
+    taskHarness,
+    app,
+    settings,
+    _tagManager,
+    onSaveSettings = async () => {},
+    projectStore = null,
+    projectManager = null,
+    tasks,
+  ]: CenterPanelTestArgs
 ): CenterPanel {
   const application = tasks ?? taskHarness;
   return new CenterPanel(
@@ -138,16 +254,30 @@ export function makeCenterPanelForTest(
   );
 }
 
-export function makeLeftPanelForTest(
+type LeftPanelTestArgs = readonly [
   state: AppState,
   taskHarness: TestTaskHarness,
   settings: CalendarSettings,
   tagManager: TagManager,
   app: ObsidianApp,
-  onSaveSettings: () => Promise<void> = async () => {},
-  projectStore: ProjectStore | null = null,
-  projectManager: ProjectManager | null = null,
+  onSaveSettings?: () => Promise<void>,
+  projectStore?: ProjectStore | null,
+  projectManager?: ProjectManager | null,
   tasks?: TaskApplicationApi,
+];
+
+export function makeLeftPanelForTest(
+  ...[
+    state,
+    taskHarness,
+    settings,
+    tagManager,
+    app,
+    onSaveSettings = async () => {},
+    projectStore = null,
+    projectManager = null,
+    tasks,
+  ]: LeftPanelTestArgs
 ): LeftPanel {
   const application = tasks ?? taskHarness;
   return new LeftPanel(
@@ -290,14 +420,14 @@ export function taskFromCodecLine(
     line: overrides.source?.line ?? 0,
   };
   const parsed = new TaskMarkdownCodec(canonicalStatusCatalog()).parseLine(sourceLine, source);
-  if (!parsed) throw new Error(`Expected a task line: ${sourceLine}`);
+  if (parsed == null) throw new Error(`Expected a task line: ${sourceLine}`);
   return task({
     ...overrides,
     title: parsed.title,
     markdownTitle: parsed.markdownTitle,
     planning: parsed.planning,
     priority: parsed.priority,
-    recurrence: parsed.recurrence,
+    ...(parsed.recurrence === undefined ? {} : { recurrence: parsed.recurrence }),
     onCompletion: parsed.onCompletion,
     onCompletionExplicit: parsed.onCompletionExplicit,
     tags: [...parsed.tags],
@@ -326,39 +456,85 @@ export type SubtaskFixtureInput = Omit<Partial<SubtaskSnapshot>, 'planning' | 'r
   readonly root?: Partial<TaskSnapshot['ref']>;
 };
 
+function normalizedSubtaskFields(overrides: SubtaskFixtureInput): {
+  readonly title: string;
+  readonly markdownTitle: string;
+  readonly status: SubtaskSnapshot['status'];
+  readonly statusSymbol: string;
+  readonly priority: SubtaskSnapshot['priority'];
+  readonly planning: NonNullable<SubtaskFixtureInput['planning']>;
+  readonly tags: readonly string[];
+  readonly subtasks: readonly SubtaskSnapshot[];
+  readonly comments: readonly TaskCommentSnapshot[];
+} {
+  const {
+    title = 'subtask',
+    markdownTitle = title,
+    status = 'open',
+    statusSymbol = ' ',
+    priority = 'D',
+    planning = {},
+    tags = [],
+    subtasks = [],
+    comments = [],
+  } = overrides;
+  return {
+    title,
+    markdownTitle,
+    status,
+    statusSymbol,
+    priority,
+    planning,
+    tags,
+    subtasks,
+    comments,
+  };
+}
+
 /** Build one detached final-contract subtask snapshot. */
 export function subtask(overrides: SubtaskFixtureInput = {}): SubtaskSnapshot {
-  const title = overrides.title ?? 'subtask';
-  const originalBlock = overrides.ref?.originalBlock ?? `  - [ ] ${title}`;
+  const {
+    title,
+    markdownTitle,
+    status,
+    statusSymbol,
+    priority,
+    planning,
+    tags,
+    subtasks,
+    comments,
+  } = normalizedSubtaskFields(overrides);
+  const refOverrides = { ...overrides.ref };
+  const { originalBlock = `  - [ ] ${title}`, relativeLine = 1 } = refOverrides;
+  const rootOverrides = { ...overrides.root };
+  const { filePath = 'f.md', line = 0 } = rootOverrides;
   const baseRoot = task({
     source: {
-      filePath: overrides.root?.filePath ?? 'f.md',
-      line: overrides.root?.line ?? 0,
+      filePath,
+      line,
       originalBlock,
     },
   }).ref;
-  const parent =
-    overrides.ref?.parent ??
-    ({ type: 'task', ref: { ...baseRoot, ...overrides.root } } satisfies TaskNodeRef);
+  const { parent = { type: 'task', ref: { ...baseRoot, ...overrides.root } } } = refOverrides;
   return {
     ref: {
       parent,
-      relativeLine: overrides.ref?.relativeLine ?? 1,
+      relativeLine,
       originalBlock,
     },
     title,
-    markdownTitle: overrides.markdownTitle ?? title,
-    status: overrides.status ?? 'open',
-    statusSymbol: overrides.statusSymbol ?? ' ',
-    priority: overrides.priority ?? 'D',
+    markdownTitle,
+    status,
+    statusSymbol,
+    priority,
     onCompletion: 'keep' as const,
     onCompletionExplicit: false,
-    planning: { ...overrides.planning } as SubtaskSnapshot['planning'],
-    tags: [...(overrides.tags ?? [])],
-    recurrence: overrides.recurrence,
-    subtasks: [...(overrides.subtasks ?? [])],
-    comments: [...(overrides.comments ?? [])],
-    description: overrides.description,
+    planning: { ...planning } as SubtaskSnapshot['planning'],
+    tags: [...tags],
+    subtasks: [...subtasks],
+    comments: [...comments],
+    ...(overrides.recurrence === undefined ? {} : { recurrence: overrides.recurrence }),
+    ...(overrides.description === undefined ? {} : { description: overrides.description }),
   };
 }
 
@@ -371,33 +547,33 @@ export type TaskCommentFixtureInput = Omit<Partial<TaskCommentSnapshot>, 'timest
   };
 };
 
+function commentTimestampFields(
+  timestamp: CommentTimestamp | undefined,
+  date: string | undefined,
+): Pick<TaskCommentSnapshot, 'timestamp'> | Record<never, never> {
+  if (timestamp != null) return { timestamp };
+  if (date === undefined || date.length === 0) return {};
+  return { timestamp: { precision: 'day', value: localDate(date), raw: date } };
+}
+
 /** Build one detached final-contract comment snapshot. */
 export function taskComment(overrides: TaskCommentFixtureInput = {}): TaskCommentSnapshot {
-  const text = overrides.text ?? 'comment';
-  const originalMarkdown = overrides.ref?.originalMarkdown ?? `  - ${text}`;
-  const parent =
-    overrides.ref?.parent ??
-    ({
+  const { text = 'comment', timestamp, date } = overrides;
+  const refOverrides = { ...overrides.ref };
+  const { originalMarkdown = `  - ${text}`, relativeLine = 1 } = refOverrides;
+  const {
+    parent = {
       type: 'task',
       ref: task({ source: { originalBlock: originalMarkdown } }).ref,
-    } satisfies TaskNodeRef);
+    },
+  } = refOverrides;
   return {
     ref: {
       parent,
-      relativeLine: overrides.ref?.relativeLine ?? 1,
+      relativeLine,
       originalMarkdown,
     },
-    ...(overrides.timestamp
-      ? { timestamp: overrides.timestamp }
-      : overrides.date
-        ? {
-            timestamp: {
-              precision: 'day' as const,
-              value: localDate(overrides.date),
-              raw: overrides.date,
-            },
-          }
-        : {}),
+    ...commentTimestampFields(timestamp, date),
     text,
   };
 }
@@ -439,7 +615,7 @@ export function seedTaskCache(
         end: { line: i.line, col: 80, offset: 80 },
       },
     })),
-    ...(frontmatter ? { frontmatter } : {}),
+    ...(frontmatter != null ? { frontmatter } : {}),
   };
   (
     app.metadataCache as unknown as { setCache__: (path: string, cache: unknown) => void }
@@ -467,7 +643,7 @@ export function captureChangedCallback(
     return origOn(name, cb);
   }) as typeof app.metadataCache.on;
   return (file: TFile, content: string, cache: CachedMetadata) => {
-    if (!captured) throw new Error('captureChangedCallback: no changed handler registered');
+    if (captured == null) throw new Error('captureChangedCallback: no changed handler registered');
     captured(file, content, cache);
   };
 }
@@ -487,7 +663,7 @@ export function resolvedConfig(overrides: Partial<ResolvedConfig> = {}): Resolve
  * Minimal DataTransfer shim — jsdom does not define DataTransfer.
  */
 export class DataTransferStub {
-  private store = new Map<string, string>();
+  private readonly store = new Map<string, string>();
   setData(format: string, data: string): void {
     this.store.set(format, data);
   }
@@ -495,7 +671,7 @@ export class DataTransferStub {
     return this.store.get(format) ?? '';
   }
   clearData(format?: string): void {
-    if (format) this.store.delete(format);
+    if (format !== undefined && format.length > 0) this.store.delete(format);
     else this.store.clear();
   }
   get dropEffect(): string {
@@ -541,7 +717,7 @@ export function dispatchDnD(
 
 /** Fresh detached div for view render tests. */
 export function freshContainer(): HTMLElement {
-  return activeDocument.createElement('div');
+  return createFragment().createDiv();
 }
 
 /**
@@ -577,23 +753,22 @@ export function configuredTaskApplication(
   readonly statusRegistry: StatusRegistry;
 } {
   const statusCatalog = new StatusCatalog(toStatusRules(settings.taskStatuses));
-  const refAuthority = options.authority
-    ? new TaskRefAuthority('configured-test-session')
-    : undefined;
+  const refAuthority =
+    options.authority === true ? new TaskRefAuthority('configured-test-session') : undefined;
   const index = new TaskIndex(app, {
     statusCatalog,
     dailyNoteFormat: settings.desktop.dailyNoteFormat,
-    ...(settings.desktop.globalTaskFilter && {
+    ...(settings.desktop.globalTaskFilter.length > 0 && {
       globalTaskFilter: settings.desktop.globalTaskFilter,
     }),
-    ...(refAuthority && { refAuthority }),
+    ...(refAuthority === undefined ? {} : { refAuthority }),
   });
   const repository = new ObsidianTaskRepository(app, {
     codec: new TaskMarkdownCodec(statusCatalog),
     editor: new TaskBlockEditor(),
     locator: new TaskLocator(refAuthority),
     snapshotsFromContent: (path, content) => index.snapshotsFromContent(path, content),
-    ...(refAuthority && { refAuthority, snapshotState: index }),
+    ...(refAuthority === undefined ? {} : { refAuthority, snapshotState: index }),
   });
   const tasks = new TaskApplicationService(
     index,
@@ -621,7 +796,7 @@ export function configuredTaskApplication(
 export function fixedToday(dateStr: string): void {
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(dateStr + 'T12:00:00Z'));
+    vi.setSystemTime(new Date(`${dateStr}T12:00:00Z`));
     (window as unknown as { moment: unknown }).moment = moment;
   });
   afterEach(() => {

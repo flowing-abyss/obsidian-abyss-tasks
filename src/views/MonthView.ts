@@ -3,7 +3,7 @@ import { weekStartOffset } from '../domain/weekGridOffset';
 import type { LinkToken } from '../parser/links';
 import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
-import type { TaskSnapshot } from '../tasks';
+import type { LocalDate, TaskSnapshot } from '../tasks';
 import { createTaskCard } from '../ui/TaskCard';
 import { BaseView } from './BaseView';
 import type { CalendarTaskSource } from './calendarOccurrences';
@@ -12,11 +12,39 @@ import {
   applyOccurrenceDomState,
   bindMaterializedInteractions,
   createForecastTaskCard,
+  type ForecastContextMenuOwner,
 } from './timegrid/renderTaskMeta';
+
+type MonthMoment = ReturnType<typeof window.moment>;
+
+interface MonthRenderContext {
+  readonly tasks: TaskSnapshot[];
+  readonly config: ResolvedConfig;
+  readonly today: string;
+  readonly month: MonthMoment;
+  readonly lastDateOfMonth: number;
+}
+
+interface MonthCellContext extends MonthRenderContext {
+  readonly index: number;
+}
+
+function configuredMonth(startPosition: string): MonthMoment {
+  return startPosition !== ''
+    ? window.moment(startPosition, 'YYYY-MM').date(1)
+    : window.moment().date(1);
+}
+
+function monthCellClass(context: MonthCellContext, currentDate: string): string {
+  const { index, lastDateOfMonth, today } = context;
+  if (index < 0) return 'cell prevMonth';
+  if (index >= lastDateOfMonth) return 'cell nextMonth';
+  return currentDate === today ? 'cell currentMonth today' : 'cell currentMonth';
+}
 
 export interface MonthViewCallbacks {
   app: App;
-  forecastMenuOwner?: import('./timegrid/renderTaskMeta').ForecastContextMenuOwner;
+  forecastMenuOwner?: ForecastContextMenuOwner;
   onToggle: (task: TaskSnapshot) => void;
   onCellClick: (date: string) => void;
   onWeekClick: (weekNr: string, year: string) => void;
@@ -27,21 +55,14 @@ export interface MonthViewCallbacks {
   statusRegistry: StatusRegistry;
   onContextMenu: (ev: MouseEvent, task: TaskSnapshot) => void;
   onTaskBodyContextMenu?: (ev: MouseEvent, task: TaskSnapshot, anchor: HTMLElement) => void;
-  onForecastClick?: (
-    source: CalendarTaskSource,
-    referenceDate: import('../tasks').LocalDate,
-  ) => void;
-  onForecastContextMenu?: (
-    source: CalendarTaskSource,
-    referenceDate: import('../tasks').LocalDate,
-  ) => void;
+  onForecastClick?: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
+  onForecastContextMenu?: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
 }
 
 export class MonthView extends BaseView {
-  private containerEl: HTMLElement | null = null;
   private md = new Component();
 
-  constructor(private callbacks: MonthViewCallbacks) {
+  constructor(private readonly callbacks: MonthViewCallbacks) {
     super();
   }
 
@@ -50,103 +71,98 @@ export class MonthView extends BaseView {
     this.md = new Component();
     this.md.load();
 
-    this.containerEl = container;
     container.empty();
 
     const today = window.moment().format('YYYY-MM-DD');
-    const tDay = window.moment().format('d');
-    const tMonth = window.moment().format('M');
-    const tYear = window.moment().format('YYYY');
-
-    const month = config.startPosition
-      ? window.moment(config.startPosition, 'YYYY-MM').date(1)
-      : window.moment().date(1);
+    const month = configuredMonth(config.startPosition);
 
     const firstDayOfMonth = parseInt(window.moment(month).format('d'));
     const lastDateOfMonth = parseInt(window.moment(month).endOf('month').format('D'));
-
     const grid = container.createDiv('grid');
-
-    // Day headers row
-    const gridHeads = grid.createDiv('gridHeads');
-    gridHeads.createDiv('gridHead'); // empty corner for week number column
-
     const monthOffset = weekStartOffset(firstDayOfMonth, config.firstDayOfWeek);
-    for (let h = monthOffset; h < monthOffset + 7; h++) {
-      const m = window.moment(month).add(h, 'days');
-      const weekDayNr = m.format('d');
-      const isToday =
-        tDay === weekDayNr &&
-        tMonth === window.moment(month).format('M') &&
-        tYear === window.moment(month).format('YYYY');
-
-      const head = gridHeads.createDiv({ cls: isToday ? 'gridHead today' : 'gridHead' });
-      head.setAttribute('data-weekday', weekDayNr);
-      head.textContent = m.format('ddd');
-    }
-
-    // Week rows
+    this.renderDayHeaders(grid, month, monthOffset, today);
     const wrappersEl = grid.createDiv('wrappers');
     wrappersEl.setAttribute(
       'data-month',
       window.moment(month).format('MMM').replace('.', '').substring(0, 3),
     );
 
-    let starts = monthOffset;
+    this.renderWeeks(wrappersEl, monthOffset, { tasks, config, today, month, lastDateOfMonth });
+  }
 
-    for (let w = 1; w < 7; w++) {
-      const weekNr = window.moment(month).add(starts, 'days').format('w');
-      const yearNr = window.moment(month).add(starts, 'days').format('YYYY');
-
-      const wrapper = wrappersEl.createDiv('wrapper');
-      const wBtn = wrapper.createDiv('wrapperButton');
-      wBtn.setAttribute('data-week', weekNr);
-      wBtn.setAttribute('data-year', yearNr);
-      wBtn.textContent = 'W' + weekNr;
-      wBtn.addEventListener('click', () => this.callbacks.onWeekClick(weekNr, yearNr));
-
-      for (let i = starts; i < starts + 7; i++) {
-        const currentDate = window.moment(month).add(i, 'days').format('YYYY-MM-DD');
-        const weekDay = window.moment(month).add(i, 'days').format('d');
-        const isFirstOfMonth = window.moment(month).add(i, 'days').format('D') === '1';
-        const dayLabel = isFirstOfMonth
-          ? window.moment(month).add(i, 'days').format('D. MMM')
-          : window.moment(month).add(i, 'days').format('D');
-        const inCurrentMonth =
-          window.moment(month).format('MM') === window.moment(month).add(i, 'days').format('MM');
-
-        let cellCls = 'cell ';
-        if (i < 0) cellCls += 'prevMonth';
-        else if (i >= lastDateOfMonth) cellCls += 'nextMonth';
-        else if (currentDate === today) cellCls += 'currentMonth today';
-        else cellCls += 'currentMonth';
-        if (isFirstOfMonth) cellCls += ' newMonth';
-
-        const cell = wrapper.createDiv({ cls: cellCls });
-        cell.setAttribute('data-weekday', weekDay);
-
-        const dailyNotePath = config.dailyNoteFolder
-          ? `${config.dailyNoteFolder}/${currentDate}`
-          : currentDate;
-        const cellLink = cell.createEl('a', { cls: 'internal-link cellName', href: dailyNotePath });
-        cellLink.textContent = dayLabel;
-
-        const cellContent = cell.createDiv('cellContent');
-
-        // Render tasks for all visible cells (prev month, current month, next month)
-        this.renderTasksForDate(cellContent, tasks, currentDate, today);
-
-        if (inCurrentMonth) {
-          cell.addEventListener('click', (e) => {
-            if ((e.target as HTMLElement).closest('.task')) return;
-            if ((e.target as HTMLElement).closest('.cellName')) return;
-            this.callbacks.onCellClick(currentDate);
-          });
-        }
-      }
-
-      starts += 7;
+  private renderDayHeaders(
+    grid: HTMLElement,
+    month: MonthMoment,
+    monthOffset: number,
+    today: string,
+  ): void {
+    const gridHeads = grid.createDiv('gridHeads');
+    gridHeads.createDiv('gridHead');
+    for (let offset = monthOffset; offset < monthOffset + 7; offset++) {
+      const day = window.moment(month).add(offset, 'days');
+      const weekDayNr = day.format('d');
+      const head = gridHeads.createDiv({
+        cls: day.format('YYYY-MM-DD') === today ? 'gridHead today' : 'gridHead',
+      });
+      head.setAttribute('data-weekday', weekDayNr);
+      head.textContent = day.format('ddd');
     }
+  }
+
+  private renderWeeks(
+    wrappers: HTMLElement,
+    monthOffset: number,
+    context: MonthRenderContext,
+  ): void {
+    for (let week = 0; week < 6; week++) {
+      this.renderWeek(wrappers, monthOffset + week * 7, context);
+    }
+  }
+
+  private renderWeek(wrappers: HTMLElement, startIndex: number, context: MonthRenderContext): void {
+    const weekStart = window.moment(context.month).add(startIndex, 'days');
+    const weekNr = weekStart.format('w');
+    const yearNr = weekStart.format('YYYY');
+    const wrapper = wrappers.createDiv('wrapper');
+    const button = wrapper.createDiv('wrapperButton');
+    button.setAttribute('data-week', weekNr);
+    button.setAttribute('data-year', yearNr);
+    button.textContent = `W${weekNr}`;
+    button.addEventListener('click', () => {
+      this.callbacks.onWeekClick(weekNr, yearNr);
+    });
+    for (let index = startIndex; index < startIndex + 7; index++) {
+      this.renderMonthCell(wrapper, { ...context, index });
+    }
+  }
+
+  private renderMonthCell(wrapper: HTMLElement, context: MonthCellContext): void {
+    const day = window.moment(context.month).add(context.index, 'days');
+    const currentDate = day.format('YYYY-MM-DD');
+    const isFirstOfMonth = day.format('D') === '1';
+    const dayLabel = day.format(isFirstOfMonth ? 'D. MMM' : 'D');
+    const inCurrentMonth = window.moment(context.month).format('MM') === day.format('MM');
+    const firstMonthClass = isFirstOfMonth ? ' newMonth' : '';
+    const cell = wrapper.createDiv({
+      cls: `${monthCellClass(context, currentDate)}${firstMonthClass}`,
+    });
+    cell.setAttribute('data-weekday', day.format('d'));
+    const folder = context.config.dailyNoteFolder;
+    const dailyNotePath = folder !== '' ? `${folder}/${currentDate}` : currentDate;
+    const link = cell.createEl('a', { cls: 'internal-link cellName', href: dailyNotePath });
+    link.textContent = dayLabel;
+    this.renderTasksForDate(
+      cell.createDiv('cellContent'),
+      context.tasks,
+      currentDate,
+      context.today,
+    );
+    if (!inCurrentMonth) return;
+    cell.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest('.task') !== null || target.closest('.cellName') !== null) return;
+      this.callbacks.onCellClick(currentDate);
+    });
   }
 
   private renderTasksForDate(
@@ -159,20 +175,22 @@ export class MonthView extends BaseView {
     const onEditLink = this.callbacks.onEditLink;
     renderTaskGroup(container, groups, date, today, (task, cls, occurrence) => {
       if (occurrence.kind === 'forecast') {
-        return createForecastTaskCard(
-          task,
-          cls,
-          occurrence,
-          date as import('../tasks').LocalDate,
-          this.callbacks,
-        );
+        return createForecastTaskCard(task, cls, occurrence, {
+          renderedDate: date as LocalDate,
+          callbacks: this.callbacks,
+        });
       }
       const card = createTaskCard(task, cls, {
         app: this.callbacks.app,
         component: this.md,
         onToggle: this.callbacks.onToggle,
         onOpenNote: this.callbacks.onOpenNote,
-        onEditLink: onEditLink ? (occ, token) => onEditLink(task, occ, token) : undefined,
+        onEditLink:
+          onEditLink != null
+            ? (occ, token) => {
+                onEditLink(task, occ, token);
+              }
+            : undefined,
         statusRegistry: this.callbacks.statusRegistry,
         onContextMenu: this.callbacks.onContextMenu,
         onTaskBodyContextMenu: this.callbacks.onTaskBodyContextMenu,
@@ -183,10 +201,12 @@ export class MonthView extends BaseView {
           card.setAttribute('draggable', 'true');
           card.addEventListener('dragstart', (e) => {
             e.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
-            if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+            if (e.dataTransfer != null) e.dataTransfer.effectAllowed = 'move';
             card.addClass('is-dragging');
           });
-          card.addEventListener('dragend', () => card.removeClass('is-dragging'));
+          card.addEventListener('dragend', () => {
+            card.removeClass('is-dragging');
+          });
         }
         card.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -200,7 +220,7 @@ export class MonthView extends BaseView {
     // Drop target on cellContent
     container.addEventListener('dragover', (e) => {
       e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      if (e.dataTransfer != null) e.dataTransfer.dropEffect = 'move';
       container.addClass('is-drag-over');
     });
     container.addEventListener('dragleave', (e) => {
@@ -213,12 +233,11 @@ export class MonthView extends BaseView {
       e.preventDefault();
       container.removeClass('is-drag-over');
       const dragData = e.dataTransfer?.getData('text/plain');
-      if (dragData) this.callbacks.onDrop(dragData, date);
+      if (dragData !== undefined && dragData.length > 0) this.callbacks.onDrop(dragData, date);
     });
   }
 
   destroy(): void {
-    this.containerEl = null;
     this.md.unload();
   }
 }

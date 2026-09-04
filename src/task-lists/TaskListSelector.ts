@@ -21,38 +21,53 @@ function selected(
   settings: CalendarSettings,
   today: LocalDate,
 ): boolean {
-  if (selection === 'inbox') {
-    const tagged = settings.inbox.mode !== 'untagged' && task.tags.includes(settings.inbox.tag);
-    const untagged = settings.inbox.mode !== 'tag' && task.tags.length === 0;
-    return tagged || untagged;
+  if (selection === 'inbox' || selection === 'today' || selection === 'upcoming') {
+    return selectedNamedList(task, selection, settings, today);
   }
-  if (selection === 'today') {
-    return (
-      task.planning.due === today ||
-      task.planning.scheduled === today ||
-      (task.planning.due !== undefined && task.planning.due < today)
-    );
+  if (typeof selection === 'string') return true;
+  if (selection.type === 'tag') return task.tags.includes(selection.tag);
+  if (selection.type === 'project') return task.source.filePath === selection.path;
+  return selectedTagGroup(task, selection.groupId, settings);
+}
+
+function selectedNamedList(
+  task: TaskSnapshot,
+  selection: 'inbox' | 'today' | 'upcoming',
+  settings: CalendarSettings,
+  today: LocalDate,
+): boolean {
+  if (selection === 'inbox') return selectedInbox(task, settings);
+  if (selection === 'today') return selectedToday(task, today);
+  const date = task.planning.due ?? task.planning.scheduled;
+  return date !== undefined && date > today;
+}
+
+function selectedInbox(task: TaskSnapshot, settings: CalendarSettings): boolean {
+  const tagged = settings.inbox.mode !== 'untagged' && task.tags.includes(settings.inbox.tag);
+  const untagged = settings.inbox.mode !== 'tag' && task.tags.length === 0;
+  return tagged || untagged;
+}
+
+function selectedToday(task: TaskSnapshot, today: LocalDate): boolean {
+  return (
+    task.planning.due === today ||
+    task.planning.scheduled === today ||
+    (task.planning.due !== undefined && task.planning.due < today)
+  );
+}
+
+function selectedTagGroup(
+  task: TaskSnapshot,
+  groupId: string,
+  settings: CalendarSettings,
+): boolean {
+  const group = settings.tagGroups.find((candidate) => candidate.id === groupId);
+  if (group == null) return false;
+  if (group.mode === 'prefix' && group.prefix !== undefined && group.prefix.length > 0) {
+    const root = `#${group.prefix}`;
+    return task.tags.some((tag) => tag === root || tag.startsWith(`${root}/`));
   }
-  if (selection === 'upcoming') {
-    const date = task.planning.due ?? task.planning.scheduled;
-    return date !== undefined && date > today;
-  }
-  if (typeof selection === 'object' && selection.type === 'tag') {
-    return task.tags.includes(selection.tag);
-  }
-  if (typeof selection === 'object' && selection.type === 'project') {
-    return task.source.filePath === selection.path;
-  }
-  if (typeof selection === 'object' && selection.type === 'group') {
-    const group = settings.tagGroups.find((candidate) => candidate.id === selection.groupId);
-    if (!group) return false;
-    if (group.mode === 'prefix' && group.prefix) {
-      const root = `#${group.prefix}`;
-      return task.tags.some((tag) => tag === root || tag.startsWith(`${root}/`));
-    }
-    return (group.tags ?? []).some((tag) => task.tags.includes(tag));
-  }
-  return true;
+  return (group.tags ?? []).some((tag) => task.tags.includes(tag));
 }
 
 function statusTypeOf(task: TaskSnapshot): TaskStatusType {
@@ -91,10 +106,8 @@ function compareCreated(left: TaskSnapshot, right: TaskSnapshot): number {
 function compare(left: TaskSnapshot, right: TaskSnapshot, input: TaskListSelectionInput): number {
   const field = input.viewState.sortBy.field;
   if (field === 'date') {
-    return (
-      compareOptional(dateOf(left), dateOf(right)) ||
-      compareOptional(left.planning.time, right.planning.time)
-    );
+    const dateOrder = compareOptional(dateOf(left), dateOf(right));
+    return dateOrder !== 0 ? dateOrder : compareOptional(left.planning.time, right.planning.time);
   }
   if (field === 'priority') return left.priority.localeCompare(right.priority);
   if (field === 'title') return left.title.localeCompare(right.title);
@@ -109,12 +122,12 @@ function compare(left: TaskSnapshot, right: TaskSnapshot, input: TaskListSelecti
 
 export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnapshot[] {
   const allowed = input.viewState.statusGroups;
-  const query = input.textQuery?.toLowerCase();
+  const query = input.textQuery?.toLowerCase() ?? '';
   return input.tasks
     .filter((task) => selected(task, input.selection, input.settings, input.today))
     .filter(
       (task) =>
-        !allowed ||
+        allowed == null ||
         allowed.length === 0 ||
         allowed.length >= 4 ||
         allowed.includes(statusTypeOf(task)),
@@ -122,7 +135,7 @@ export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnap
     .filter((task) => input.viewState.filters.every((filter) => matchesProperty(task, filter)))
     .filter(
       (task) =>
-        !query ||
+        query.length === 0 ||
         task.title.toLowerCase().includes(query) ||
         task.source.originalMarkdown.toLowerCase().includes(query),
     )
@@ -139,7 +152,7 @@ export function searchTaskList(
   textQuery: string,
 ): readonly TaskSnapshot[] {
   const query = textQuery.toLowerCase();
-  if (!query) return [];
+  if (query.length === 0) return [];
   return tasks.filter(
     (task) =>
       task.title.toLowerCase().includes(query) ||

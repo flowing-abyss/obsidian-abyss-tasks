@@ -1,0 +1,6 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["test/**/*.test.ts", "*.mjs", ".ai/**/*.mjs"],
+  "project": ["src/**/*.ts", "test/**/*.ts", "*.mjs", "*.mts", ".ai/**/*.mjs"],
+  "include": ["files", "dependencies", "unlisted", "unresolved", "exports", "types", "duplicates"],
+}

@@ -2,11 +2,18 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    clearMocks: true,
+    restoreMocks: true,
+    mockReset: true,
     include: ['test/**/*.test.ts'],
     exclude: ['test/perf/**'],
     setupFiles: ['obsidian-test-mocks/vitest-setup'],
-    passWithNoTests: true,
+    passWithNoTests: false,
     environment: 'jsdom',
+    testTimeout: 5_000,
+    hookTimeout: 10_000,
+    unstubEnvs: true,
+    unstubGlobals: true,
     alias: {
       obsidian: 'obsidian-test-mocks/obsidian',
     },
@@ -18,8 +25,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**'],
-      // Repository baseline after Task 12A: 83.55 lines / 74.29 functions / 75.68 branches.
-      // Keep the historical global floors while pure task layers carry stricter contracts.
+      // Repository baseline after the strict-tooling migration. Keep global floors conservative,
+      // while task layers retain explicit regression budgets calibrated to the migrated structure.
       thresholds: {
         lines: 78,
         functions: 70,

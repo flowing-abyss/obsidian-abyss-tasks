@@ -1,16 +1,14 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { App, Setting } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import { SHORTCUT_ACTION_IDS } from '../src/settings/shortcuts';
 import type { CalendarSettings } from '../src/settings/types';
-import { deferred, useRealMoment } from './helpers';
+import { deferred, expectDefined, loadPluginStyles, useRealMoment } from './helpers';
 
 useRealMoment();
 
-const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+const css = await loadPluginStyles();
 
 function declarationsFor(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -37,11 +35,11 @@ interface CapturedComp {
 function patchSetting(captured: CapturedComp[]): () => void {
   const proto = Setting.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
   const refs: Record<string, (...args: unknown[]) => unknown> = {
-    addText: proto.addText!,
-    addDropdown: proto.addDropdown!,
-    addToggle: proto.addToggle!,
-    addButton: proto.addButton!,
-    addColorPicker: proto.addColorPicker!,
+    addText: expectDefined(proto['addText']),
+    addDropdown: expectDefined(proto['addDropdown']),
+    addToggle: expectDefined(proto['addToggle']),
+    addButton: expectDefined(proto['addButton']),
+    addColorPicker: expectDefined(proto['addColorPicker']),
   };
   const wrap = (orig: (...args: unknown[]) => unknown, type: CapturedComp['type']) =>
     function (this: { components: unknown[]; nameEl?: { textContent?: string } }, cb: unknown) {
@@ -56,17 +54,17 @@ function patchSetting(captured: CapturedComp[]): () => void {
   const set = (name: string, fn: unknown) => {
     (Setting.prototype as unknown as Record<string, unknown>)[name] = fn;
   };
-  set('addText', wrap(refs.addText!, 'text'));
-  set('addDropdown', wrap(refs.addDropdown!, 'dropdown'));
-  set('addToggle', wrap(refs.addToggle!, 'toggle'));
-  set('addButton', wrap(refs.addButton!, 'button'));
-  set('addColorPicker', wrap(refs.addColorPicker!, 'color'));
+  set('addText', wrap(expectDefined(refs['addText']), 'text'));
+  set('addDropdown', wrap(expectDefined(refs['addDropdown']), 'dropdown'));
+  set('addToggle', wrap(expectDefined(refs['addToggle']), 'toggle'));
+  set('addButton', wrap(expectDefined(refs['addButton']), 'button'));
+  set('addColorPicker', wrap(expectDefined(refs['addColorPicker']), 'color'));
   return () => {
-    set('addText', refs.addText!);
-    set('addDropdown', refs.addDropdown!);
-    set('addToggle', refs.addToggle!);
-    set('addButton', refs.addButton!);
-    set('addColorPicker', refs.addColorPicker!);
+    set('addText', expectDefined(refs['addText']));
+    set('addDropdown', expectDefined(refs['addDropdown']));
+    set('addToggle', expectDefined(refs['addToggle']));
+    set('addButton', expectDefined(refs['addButton']));
+    set('addColorPicker', expectDefined(refs['addColorPicker']));
   };
 }
 
@@ -82,8 +80,10 @@ function makeTab(
   const expandCards = opts.expand ?? true;
   const app = new App();
   // Mock plugins so DailyNoteResolver adapters don't throw on app.plugins access
-  (app as unknown as Record<string, unknown>).plugins = { getPlugin: () => null };
-  (app as unknown as Record<string, unknown>).internalPlugins = { getPluginById: () => null };
+  (app as unknown as Record<string, unknown>)['plugins'] = { getPlugin: () => null };
+  (app as unknown as Record<string, unknown>)['internalPlugins'] = {
+    getPluginById: () => null,
+  };
   const settings = { ...structuredClone(DEFAULT_SETTINGS), ...settingsOverrides };
   const saveSettings = opts.saveSettings ?? vi.fn().mockResolvedValue(undefined);
   const plugin: StubPlugin = { app, settings, saveSettings };
@@ -100,18 +100,19 @@ function makeTab(
     for (const g of settings.tagGroups) expanded.add(g.id);
     for (const s of settings.projects.statuses) expanded.add(s.id);
   }
-  // eslint-disable-next-line @typescript-eslint/no-deprecated
-  tab.display();
+  (tab as unknown as { display(): void }).display();
   restore();
   return { tab, plugin, app, captured };
 }
 
 function openSection(tab: CalendarSettingsTab, index: number): HTMLElement {
   const headers = tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header');
-  headers[index]!.click();
-  return tab.containerEl
-    .querySelectorAll<HTMLElement>('.abyss-settings-section')
-    [index]!.querySelector('.abyss-settings-section-body')!;
+  expectDefined(headers[index]).click();
+  return expectDefined(
+    expectDefined(
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section')[index],
+    ).querySelector<HTMLElement>('.abyss-settings-section-body'),
+  );
 }
 
 /** Find a Setting's root element within a section body by its nameEl text.
@@ -130,7 +131,7 @@ function findSettingEl(body: HTMLElement, name: string): HTMLElement | null {
 
 function findInput(body: HTMLElement, name: string): HTMLInputElement | null {
   const el = findSettingEl(body, name);
-  if (!el) return null;
+  if (el == null) return null;
   // TextComponent creates a plain <input> (no type attr); exclude color inputs.
   const inputs = Array.from(el.querySelectorAll<HTMLInputElement>('input'));
   return inputs.find((i) => i.type !== 'color') ?? null;
@@ -142,7 +143,7 @@ function findDropdown(body: HTMLElement, name: string): HTMLSelectElement | null
 
 function findColorInput(body: HTMLElement, name: string): HTMLInputElement | null {
   const el = findSettingEl(body, name);
-  if (!el) return null;
+  if (el == null) return null;
   return (
     Array.from(el.querySelectorAll<HTMLInputElement>('input')).find((i) => i.type === 'color') ??
     null
@@ -163,8 +164,8 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     const body = openSection(tab, 0);
     const input = findInput(body, 'Task prefix');
     expect(input).not.toBeNull();
-    expect(input!.value).toBe('#task');
-    findComp(captured, 'Task prefix', 'text')!.comp.setValue('#todo');
+    expect(expectDefined(input).value).toBe('#task');
+    expectDefined(findComp(captured, 'Task prefix', 'text')).comp.setValue('#todo');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.taskPrefix).toBe('#todo');
   });
@@ -173,8 +174,11 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     const { tab, plugin, captured } = makeTab({ addToToday: true });
     openSection(tab, 0);
     // Toggle has no checkbox input in the mock; verify via captured component value
-    const toggleComp = findComp(captured, "Add to today's note", 'toggle')!;
-    expect(toggleComp.comp.getValue!()).toBe(true);
+    const toggleComp = expectDefined(findComp(captured, "Add to today's note", 'toggle'));
+    if (toggleComp.comp.getValue === undefined) {
+      throw new Error('Expected the toggle component to expose getValue');
+    }
+    expect(toggleComp.comp.getValue()).toBe(true);
     toggleComp.comp.setValue(false);
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.addToToday).toBe(false);
@@ -185,7 +189,7 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     const body = openSection(tab, 0);
     const input = findInput(body, 'Custom file path');
     expect(input).not.toBeNull();
-    expect(input!.value).toBe('inbox.md');
+    expect(expectDefined(input).value).toBe('inbox.md');
   });
 
   it('custom file path hidden when addToToday is true', () => {
@@ -198,7 +202,7 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
   it('custom file path change saves', () => {
     const { tab, plugin, captured } = makeTab({ addToToday: false, customFilePath: 'old.md' });
     openSection(tab, 0);
-    findComp(captured, 'Custom file path', 'text')!.comp.setValue('new.md');
+    expectDefined(findComp(captured, 'Custom file path', 'text')).comp.setValue('new.md');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.customFilePath).toBe('new.md');
   });
@@ -210,7 +214,9 @@ describe('CalendarSettingsTab Hotkeys', () => {
   }
 
   function shortcutInput(body: HTMLElement, action: string): HTMLInputElement {
-    return body.querySelector<HTMLInputElement>(`[data-shortcut-action="${action}"]`)!;
+    return expectDefined(
+      body.querySelector<HTMLInputElement>(`[data-shortcut-action="${action}"]`),
+    );
   }
 
   it('persists raw invalid values and announces the row-level issue', () => {
@@ -232,9 +238,13 @@ describe('CalendarSettingsTab Hotkeys', () => {
 
   it('keeps collapsed Hotkeys inputs out of sequential focus and exposes disclosure state', () => {
     const { tab } = makeTab();
-    const section = tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section')[7]!;
-    const header = section.querySelector<HTMLButtonElement>('.abyss-settings-section-header')!;
-    const body = section.querySelector<HTMLElement>('.abyss-settings-section-body')!;
+    const section = expectDefined(
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section')[7],
+    );
+    const header = expectDefined(
+      section.querySelector<HTMLButtonElement>('.abyss-settings-section-header'),
+    );
+    const body = expectDefined(section.querySelector<HTMLElement>('.abyss-settings-section-body'));
 
     expect(header.tagName).toBe('BUTTON');
     expect(header.getAttribute('aria-expanded')).toBe('false');
@@ -251,7 +261,9 @@ describe('CalendarSettingsTab Hotkeys', () => {
     const { tab } = makeTab();
     const body = hotkeysBody(tab);
     const tasks = shortcutInput(body, 'openTasks');
-    const status = body.querySelector<HTMLElement>('.abyss-shortcut-validation-status')!;
+    const status = expectDefined(
+      body.querySelector<HTMLElement>('.abyss-shortcut-validation-status'),
+    );
 
     for (const value of ['C', 'Ct', 'Ctr', 'Ctrl', 'Q']) {
       tasks.value = value;
@@ -313,19 +325,20 @@ describe('CalendarSettingsTab Hotkeys', () => {
     const { tab, plugin } = makeTab();
     plugin.settings.shortcuts.openQuickCapture = 'Q | shift 7';
     plugin.settings.shortcuts.openSearch = 'Q | S';
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    tab.display();
+    (tab as unknown as { display(): void }).display();
     const body = hotkeysBody(tab);
     const quickCapture = shortcutInput(body, 'openQuickCapture');
     const issueId = quickCapture.getAttribute('aria-describedby');
-    const issue = body.querySelector<HTMLElement>(`#${issueId}`)!;
+    const issue = expectDefined(body.querySelector<HTMLElement>(`#${issueId}`));
 
     expect(quickCapture.getAttribute('aria-invalid')).toBe('true');
     expect(issue.textContent).toContain(
       'Q conflicts with Search and is disabled. shift 7 remains active.',
     );
-    const warning = issue.querySelector<HTMLElement>('.abyss-shortcut-warning-icon')!;
-    const status = body.querySelector<HTMLElement>('.abyss-shortcut-validation-status')!;
+    const warning = expectDefined(issue.querySelector<HTMLElement>('.abyss-shortcut-warning-icon'));
+    const status = expectDefined(
+      body.querySelector<HTMLElement>('.abyss-shortcut-validation-status'),
+    );
     expect(warning.getAttribute('aria-hidden')).toBe('true');
     expect(issue.classList).not.toContain('abyss-sr-only');
     expect(declarationsFor('.abyss-shortcut-issue')).toContain('display: flex');
@@ -336,7 +349,7 @@ describe('CalendarSettingsTab Hotkeys', () => {
     expect(screenReaderOnly).toContain('width: 1px');
     expect(screenReaderOnly).toContain('height: 1px');
     expect(screenReaderOnly).toContain('margin: -1px');
-    expect(screenReaderOnly).toContain('clip: rect(0, 0, 0, 0)');
+    expect(screenReaderOnly).toContain('clip-path: inset(50%)');
     expect(screenReaderOnly).not.toContain('display: none');
     expect(screenReaderOnly).not.toContain('visibility: hidden');
   });
@@ -359,29 +372,34 @@ describe('CalendarSettingsTab Hotkeys', () => {
     const { tab, plugin } = makeTab();
     plugin.settings.shortcuts.openQuickCapture = value;
     if (_name === 'duplicate plus conflict') plugin.settings.shortcuts.openSearch = 'Q';
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    tab.display();
+    (tab as unknown as { display(): void }).display();
     const body = hotkeysBody(tab);
     const input = shortcutInput(body, 'openQuickCapture');
-    const issue = body.querySelector<HTMLElement>(`#${input.getAttribute('aria-describedby')}`)!;
+    const issue = expectDefined(
+      body.querySelector<HTMLElement>(`#${input.getAttribute('aria-describedby')}`),
+    );
 
     expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(issue.textContent).toContain(message);
   });
 
   it('coalesces rapid hotkey saves so out-of-order persistence cannot regress the final value', async () => {
-    let settings: CalendarSettings | undefined;
+    const settings = { current: undefined as CalendarSettings | undefined };
     const persisted: string[] = [];
     const saves: Array<{ value: string; completion: ReturnType<typeof deferred<void>> }> = [];
     const saveSettings = vi.fn(() => {
       const completion = deferred<void>();
-      const value = settings!.shortcuts.openQuickCapture;
+      const value = expectDefined(settings.current).shortcuts.openQuickCapture;
       saves.push({ value, completion });
-      void completion.promise.then(() => persisted.push(value));
+      void completion.promise
+        .then(() => persisted.push(value))
+        .catch((error: unknown) => {
+          throw error;
+        });
       return completion.promise;
     });
     const { tab, plugin } = makeTab({}, { saveSettings });
-    settings = plugin.settings;
+    settings.current = plugin.settings;
     const input = shortcutInput(hotkeysBody(tab), 'openQuickCapture');
     document.body.appendChild(tab.containerEl);
     input.focus();
@@ -397,12 +415,12 @@ describe('CalendarSettingsTab Hotkeys', () => {
     expect(document.activeElement).toBe(input);
     expect(input.selectionStart).toBe(1);
 
-    saves[0]!.completion.resolve();
+    expectDefined(saves[0]).completion.resolve();
     await Promise.resolve();
     await Promise.resolve();
 
     expect(saves.map((save) => save.value)).toEqual(['Q', 'E']);
-    saves[1]!.completion.resolve();
+    expectDefined(saves[1]).completion.resolve();
     await Promise.resolve();
     await Promise.resolve();
 
@@ -457,8 +475,10 @@ describe('CalendarSettingsTab Hotkeys', () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      const status = body.querySelector<HTMLElement>('.abyss-shortcut-save-status')!;
-      const retry = body.querySelector<HTMLButtonElement>('.abyss-shortcut-save-retry')!;
+      const status = expectDefined(body.querySelector<HTMLElement>('.abyss-shortcut-save-status'));
+      const retry = expectDefined(
+        body.querySelector<HTMLButtonElement>('.abyss-shortcut-save-retry'),
+      );
       expect(status.textContent).toContain('not saved');
       expect(retry.hidden).toBe(false);
       expect(input.value).toBe('Q | shift 7');
@@ -484,7 +504,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     const body = openSection(tab, 3);
     const dd = findDropdown(body, 'Inbox source');
     expect(dd).not.toBeNull();
-    const options = Array.from(dd!.options).map((o) => o.value);
+    const options = Array.from(expectDefined(dd).options).map((o) => o.value);
     expect(options).toContain('tag');
     expect(options).toContain('untagged');
   });
@@ -494,7 +514,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
       inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
     });
     openSection(tab, 3);
-    findComp(captured, 'Inbox source', 'dropdown')!.comp.setValue('tag');
+    expectDefined(findComp(captured, 'Inbox source', 'dropdown')).comp.setValue('tag');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.inbox.mode).toBe('tag');
   });
@@ -506,7 +526,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     const body = openSection(tab, 3);
     const input = findInput(body, 'Inbox tag');
     expect(input).not.toBeNull();
-    expect(input!.value).toBe('#inbox');
+    expect(expectDefined(input).value).toBe('#inbox');
   });
 
   it('inbox tag field hidden when inboxMode is untagged', () => {
@@ -523,7 +543,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
       inbox: { mode: 'tag', tag: '#old', removeTagOnAssign: true },
     });
     openSection(tab, 3);
-    findComp(captured, 'Inbox tag', 'text')!.comp.setValue('  #new  ');
+    expectDefined(findComp(captured, 'Inbox tag', 'text')).comp.setValue('  #new  ');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.inbox.tag).toBe('#new');
   });
@@ -536,10 +556,14 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     expect(addBtn).toBeDefined();
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-25T10:00:00Z'));
-    addBtn!.comp.clickHandler!();
+    const addButton = expectDefined(addBtn).comp;
+    if (addButton.clickHandler === undefined) {
+      throw new Error('Expected the add button to expose a click handler');
+    }
+    addButton.clickHandler();
     vi.useRealTimers();
     expect(plugin.settings.tagGroups).toHaveLength(1);
-    expect(plugin.settings.tagGroups[0]!.id).toMatch(/^group-\d+$/);
+    expect(expectDefined(plugin.settings.tagGroups[0]).id).toMatch(/^group-\d+$/);
     expect(plugin.saveSettings).toHaveBeenCalled();
   });
 });
@@ -550,9 +574,9 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
   it('group name input saves on change', () => {
     const { tab, plugin, captured } = makeTab({ tagGroups: [{ ...baseGroup }] });
     openSection(tab, 4);
-    findComp(captured, 'Group name', 'text')!.comp.setValue('Personal');
+    expectDefined(findComp(captured, 'Group name', 'text')).comp.setValue('Personal');
     expect(plugin.saveSettings).toHaveBeenCalled();
-    expect(plugin.settings.tagGroups[0]!.name).toBe('Personal');
+    expect(expectDefined(plugin.settings.tagGroups[0]).name).toBe('Personal');
   });
 
   it('mode dropdown has prefix/manual options', () => {
@@ -560,7 +584,7 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
     const body = openSection(tab, 4);
     const dd = findDropdown(body, 'Mode');
     expect(dd).not.toBeNull();
-    const options = Array.from(dd!.options).map((o) => o.value);
+    const options = Array.from(expectDefined(dd).options).map((o) => o.value);
     expect(options).toEqual(['prefix', 'manual']);
   });
 
@@ -581,9 +605,9 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
   it('prefix input change saves (trimmed)', () => {
     const { tab, plugin, captured } = makeTab({ tagGroups: [{ ...baseGroup, prefix: '' }] });
     openSection(tab, 4);
-    findComp(captured, 'Prefix', 'text')!.comp.setValue('  work  ');
+    expectDefined(findComp(captured, 'Prefix', 'text')).comp.setValue('  work  ');
     expect(plugin.saveSettings).toHaveBeenCalled();
-    expect(plugin.settings.tagGroups[0]!.prefix).toBe('work');
+    expect(expectDefined(plugin.settings.tagGroups[0]).prefix).toBe('work');
   });
 
   it('tags CSV input parses to array (split, trim, filter empty)', () => {
@@ -591,9 +615,9 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
       tagGroups: [{ ...baseGroup, mode: 'manual', tags: [] }],
     });
     openSection(tab, 4);
-    findComp(captured, 'Tags', 'text')!.comp.setValue('a, b, c');
+    expectDefined(findComp(captured, 'Tags', 'text')).comp.setValue('a, b, c');
     expect(plugin.saveSettings).toHaveBeenCalled();
-    expect(plugin.settings.tagGroups[0]!.tags).toEqual(['a', 'b', 'c']);
+    expect(expectDefined(plugin.settings.tagGroups[0]).tags).toEqual(['a', 'b', 'c']);
   });
 
   it('tags CSV input filters out empty values', () => {
@@ -601,8 +625,8 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
       tagGroups: [{ ...baseGroup, mode: 'manual', tags: [] }],
     });
     openSection(tab, 4);
-    findComp(captured, 'Tags', 'text')!.comp.setValue('a,, ,b');
-    expect(plugin.settings.tagGroups[0]!.tags).toEqual(['a', 'b']);
+    expectDefined(findComp(captured, 'Tags', 'text')).comp.setValue('a,, ,b');
+    expect(expectDefined(plugin.settings.tagGroups[0]).tags).toEqual(['a', 'b']);
   });
 
   it('color picker saves on change', () => {
@@ -610,9 +634,9 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
     const body = openSection(tab, 4);
     const colorInput = findColorInput(body, 'Color');
     expect(colorInput).not.toBeNull();
-    findComp(captured, 'Color', 'color')!.comp.setValue('#00ff00');
+    expectDefined(findComp(captured, 'Color', 'color')).comp.setValue('#00ff00');
     expect(plugin.saveSettings).toHaveBeenCalled();
-    expect(plugin.settings.tagGroups[0]!.color).toBe('#00ff00');
+    expect(expectDefined(plugin.settings.tagGroups[0]).color).toBe('#00ff00');
   });
 
   it('delete button splices group and saves', () => {
@@ -629,10 +653,14 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
       return el?.textContent === 'Delete group';
     });
     expect(delBtns).toHaveLength(2);
-    delBtns[0]!.comp.clickHandler!();
+    const deleteButton = expectDefined(delBtns[0]).comp;
+    if (deleteButton.clickHandler === undefined) {
+      throw new Error('Expected the delete button to expose a click handler');
+    }
+    deleteButton.clickHandler();
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.tagGroups).toHaveLength(1);
-    expect(plugin.settings.tagGroups[0]!.id).toBe('g2');
+    expect(expectDefined(plugin.settings.tagGroups[0]).id).toBe('g2');
   });
 });
 
@@ -642,14 +670,14 @@ describe('CalendarSettingsTab renderViewConfigSettings', () => {
     const body = openSection(tab, 1); // Desktop
     const dd = findDropdown(body, 'Default view');
     expect(dd).not.toBeNull();
-    const options = Array.from(dd!.options).map((o) => o.value);
+    const options = Array.from(expectDefined(dd).options).map((o) => o.value);
     expect(options).toEqual(['month', 'week', 'list']);
   });
 
   it('default view change saves', () => {
     const { tab, plugin, captured } = makeTab();
     openSection(tab, 1);
-    findComp(captured, 'Default view', 'dropdown')!.comp.setValue('week');
+    expectDefined(findComp(captured, 'Default view', 'dropdown')).comp.setValue('week');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.desktop.defaultView).toBe('week');
   });
@@ -663,7 +691,7 @@ describe('CalendarSettingsTab renderViewConfigSettings', () => {
   it('first day of week dropdown parses int on change', () => {
     const { tab, plugin, captured } = makeTab();
     openSection(tab, 1);
-    findComp(captured, 'First day of week', 'dropdown')!.comp.setValue('1');
+    expectDefined(findComp(captured, 'First day of week', 'dropdown')).comp.setValue('1');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.desktop.firstDayOfWeek).toBe(1);
   });
@@ -671,7 +699,7 @@ describe('CalendarSettingsTab renderViewConfigSettings', () => {
   it('daily note folder input saves (manual provider)', () => {
     const { tab, plugin, captured } = makeTab({ dailyNoteProvider: 'manual' });
     openSection(tab, 1);
-    findComp(captured, 'Daily note folder', 'text')!.comp.setValue('notes/daily');
+    expectDefined(findComp(captured, 'Daily note folder', 'text')).comp.setValue('notes/daily');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.desktop.dailyNoteFolder).toBe('notes/daily');
   });
@@ -679,7 +707,7 @@ describe('CalendarSettingsTab renderViewConfigSettings', () => {
   it('daily note format input saves (manual provider)', () => {
     const { tab, plugin, captured } = makeTab({ dailyNoteProvider: 'manual' });
     openSection(tab, 1);
-    findComp(captured, 'Daily note format', 'text')!.comp.setValue('DD-MM-YYYY');
+    expectDefined(findComp(captured, 'Daily note format', 'text')).comp.setValue('DD-MM-YYYY');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.desktop.dailyNoteFormat).toBe('DD-MM-YYYY');
   });
@@ -694,7 +722,7 @@ describe('CalendarSettingsTab renderViewConfigSettings', () => {
   it('global task filter input saves', () => {
     const { tab, plugin, captured } = makeTab();
     openSection(tab, 1);
-    findComp(captured, 'Global task filter', 'text')!.comp.setValue('#task');
+    expectDefined(findComp(captured, 'Global task filter', 'text')).comp.setValue('#task');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.desktop.globalTaskFilter).toBe('#task');
   });
@@ -702,37 +730,17 @@ describe('CalendarSettingsTab renderViewConfigSettings', () => {
   it('upcoming days valid number saves', () => {
     const { tab, plugin, captured } = makeTab();
     openSection(tab, 1);
-    findComp(captured, 'Upcoming days', 'text')!.comp.setValue('14');
+    expectDefined(findComp(captured, 'Upcoming days', 'text')).comp.setValue('14');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.desktop.upcomingDays).toBe(14);
   });
 
-  it('upcoming days NaN input does not save (CURRENT BEHAVIOR)', () => {
+  it.each(['abc', '-5', '0'])('upcoming days invalid input %s does not save', (invalidValue) => {
     const { tab, plugin, captured } = makeTab({
       desktop: { ...DEFAULT_SETTINGS.desktop, upcomingDays: 7 },
     });
     openSection(tab, 1);
-    findComp(captured, 'Upcoming days', 'text')!.comp.setValue('abc');
-    expect(plugin.saveSettings).not.toHaveBeenCalled();
-    expect(plugin.settings.desktop.upcomingDays).toBe(7); // unchanged
-  });
-
-  it('upcoming days negative input does not save (CURRENT BEHAVIOR)', () => {
-    const { tab, plugin, captured } = makeTab({
-      desktop: { ...DEFAULT_SETTINGS.desktop, upcomingDays: 7 },
-    });
-    openSection(tab, 1);
-    findComp(captured, 'Upcoming days', 'text')!.comp.setValue('-5');
-    expect(plugin.saveSettings).not.toHaveBeenCalled();
-    expect(plugin.settings.desktop.upcomingDays).toBe(7); // unchanged
-  });
-
-  it('upcoming days zero does not save (CURRENT BEHAVIOR, n > 0 required)', () => {
-    const { tab, plugin, captured } = makeTab({
-      desktop: { ...DEFAULT_SETTINGS.desktop, upcomingDays: 7 },
-    });
-    openSection(tab, 1);
-    findComp(captured, 'Upcoming days', 'text')!.comp.setValue('0');
+    expectDefined(findComp(captured, 'Upcoming days', 'text')).comp.setValue(invalidValue);
     expect(plugin.saveSettings).not.toHaveBeenCalled();
     expect(plugin.settings.desktop.upcomingDays).toBe(7);
   });
@@ -753,7 +761,7 @@ describe('sourceNoteDisplay setting', () => {
     const headers = Array.from(
       tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
     );
-    headers[0]!.click();
+    expectDefined(headers[0]).click();
     const selects = tab.containerEl.querySelectorAll<HTMLSelectElement>('select');
     const values = Array.from(selects).map((s) => s.value);
     expect(values).toContain('non-default');
@@ -764,13 +772,13 @@ describe('sourceNoteDisplay setting', () => {
     const headers = Array.from(
       tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
     );
-    headers[0]!.click();
+    expectDefined(headers[0]).click();
     const selects = Array.from(tab.containerEl.querySelectorAll<HTMLSelectElement>('select'));
     const sourceSelect = selects.find((s) =>
       Array.from(s.options).some((o) => o.value === 'non-default'),
     );
     expect(sourceSelect).not.toBeUndefined();
-    const optionValues = Array.from(sourceSelect!.options).map((o) => o.value);
+    const optionValues = Array.from(expectDefined(sourceSelect).options).map((o) => o.value);
     expect(optionValues).toContain('never');
     expect(optionValues).toContain('always');
     expect(optionValues).toContain('non-default');
@@ -779,12 +787,11 @@ describe('sourceNoteDisplay setting', () => {
   it('dropdown reflects current settings value', () => {
     const { tab, plugin } = makeTab();
     plugin.settings.sourceNoteDisplay = 'always';
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    tab.display();
+    (tab as unknown as { display(): void }).display();
     const headers = Array.from(
       tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
     );
-    headers[0]!.click();
+    expectDefined(headers[0]).click();
     const selects = Array.from(tab.containerEl.querySelectorAll<HTMLSelectElement>('select'));
     const sourceSelect = selects.find((s) =>
       Array.from(s.options).some((o) => o.value === 'non-default'),
@@ -798,19 +805,23 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     const { tab } = makeTab({}, { expand: false });
     const body = openSection(tab, 5); // Projects
     const cards = body.querySelectorAll('.abyss-settings-card');
-    expect(cards.length).toBe(DEFAULT_SETTINGS.projects.statuses.length);
+    expect(cards).toHaveLength(DEFAULT_SETTINGS.projects.statuses.length);
     // Collapsed: title shown, no expanded body.
-    expect(cards[0]!.querySelector('.abyss-settings-card-title')?.textContent).toBe('Active');
-    expect(cards[0]!.querySelector('.abyss-settings-card-body')).toBeNull();
+    expect(expectDefined(cards[0]).querySelector('.abyss-settings-card-title')?.textContent).toBe(
+      'Active',
+    );
+    expect(expectDefined(cards[0]).querySelector('.abyss-settings-card-body')).toBeNull();
   });
 
   it('clicking a card header expands it to reveal the body', () => {
     const { tab } = makeTab({}, { expand: false });
     const body = openSection(tab, 5);
     (body.querySelector('.abyss-settings-card .abyss-settings-card-header') as HTMLElement).click();
-    const bodyAgain = tab.containerEl
-      .querySelectorAll<HTMLElement>('.abyss-settings-section')[5]!
-      .querySelector('.abyss-settings-section-body')!;
+    const bodyAgain = expectDefined(
+      expectDefined(
+        tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section')[5],
+      ).querySelector('.abyss-settings-section-body'),
+    );
     expect(
       bodyAgain.querySelector('.abyss-settings-card.is-open .abyss-settings-card-body'),
     ).toBeTruthy();
@@ -821,8 +832,8 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     openSection(tab, 5);
     const dd = captured.find((c) => c.name === 'Default status' && c.type === 'dropdown');
     expect(dd).toBeTruthy();
-    const plannedId = plugin.settings.projects.statuses[1]!.id;
-    dd!.comp.setValue(plannedId);
+    const plannedId = expectDefined(plugin.settings.projects.statuses[1]).id;
+    expectDefined(dd).comp.setValue(plannedId);
     expect(plugin.settings.projects.defaultStatusId).toBe(plannedId);
     // No per-status "Default for new projects" toggle remains.
     expect(captured.some((c) => c.name === 'Default for new projects')).toBe(false);
@@ -831,15 +842,21 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
   it('deleting the default status repoints defaultStatusId to the first remaining', () => {
     const { tab, plugin, captured } = makeTab();
     // Make the first status the default, then delete it.
-    plugin.settings.projects.defaultStatusId = plugin.settings.projects.statuses[0]!.id;
+    plugin.settings.projects.defaultStatusId = expectDefined(
+      plugin.settings.projects.statuses[0],
+    ).id;
     openSection(tab, 5);
     const delBtns = captured.filter((c) => {
       if (c.type !== 'button') return false;
       const el = (c.comp as unknown as { buttonEl?: HTMLElement }).buttonEl;
       return el?.textContent === 'Delete status';
     });
-    const survivorId = plugin.settings.projects.statuses[1]!.id;
-    delBtns[0]!.comp.clickHandler!();
+    const survivorId = expectDefined(plugin.settings.projects.statuses[1]).id;
+    const deleteButton = expectDefined(delBtns[0]).comp;
+    if (deleteButton.clickHandler === undefined) {
+      throw new Error('Expected the delete button to expose a click handler');
+    }
+    deleteButton.clickHandler();
     expect(plugin.settings.projects.defaultStatusId).toBe(survivorId);
   });
 });

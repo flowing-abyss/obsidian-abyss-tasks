@@ -1,31 +1,54 @@
 {
   "name": "obsidian-abyss-tasks",
   "version": "1.2.0",
-  "description": "A task management interface for Markdown tasks in Obsidian",
+  "private": true,
+  "description": "A task management interface for Markdown tasks.",
   "main": "main.js",
   "type": "module",
-  "engines": {
-    "node": ">=22.13.0"
-  },
   "scripts": {
-    "prepare": "husky",
     "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "build": "pnpm typecheck && node esbuild.config.mjs production",
+    "build:analyze": "pnpm typecheck && node esbuild.config.mjs production analyze",
+    "preversion": "pnpm run verify && node release-check.mjs --release-ready",
     "version": "node version-bump.mjs && git add manifest.json versions.json",
-    "postversion": "git push origin master && git push origin --tags",
-    "test": "npm run review:obsidian && npm run test:unit",
-    "test:unit": "vitest run",
-    "bench": "vitest run --config vitest.bench.config.ts --reporter=verbose",
-    "coverage": "vitest run --coverage",
-    "lint": "eslint src",
-    "lint:fix": "eslint src --fix",
-    "review:obsidian": "npm run review:obsidian:code && npm run review:obsidian:metadata",
-    "review:obsidian:code": "eslint --config eslint.obsidian.config.mjs src",
-    "review:obsidian:metadata": "eslint --config eslint.obsidian.metadata.config.mjs --no-error-on-unmatched-pattern manifest.json package.json LICENSE",
-    "review:local": "npm run review:obsidian && npm run lint && npm run knip && npm run format:check && npm audit --audit-level=moderate && npm run build && npm run test:unit",
+    "postversion": "git push --follow-tags",
+    "release": "pnpm version --tag-version-prefix ''",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "knip": "knip"
+    "lint": "eslint . --max-warnings 0",
+    "lint:css": "stylelint '**/*.css'",
+    "typecheck": "tsc -noEmit --skipLibCheck",
+    "test": "vitest run",
+    "test:unit": "pnpm test",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "coverage": "pnpm test:coverage",
+    "bench": "vitest run --config vitest.bench.config.ts --reporter=verbose",
+    "deadcode": "knip",
+    "arch": "depcruise src --config dependency-cruiser.config.cjs --output-type err-long",
+    "audit:dependencies": "pnpm audit --audit-level moderate",
+    "release:check": "node release-check.mjs",
+    "verify:task": "pnpm lint && pnpm typecheck && pnpm test",
+    "test:ai": "node --test \".ai/**/*.test.mjs\"",
+    "verify": "pnpm format:check && pnpm lint && pnpm lint:css && pnpm typecheck && pnpm arch && pnpm deadcode && pnpm test:ai && pnpm test:coverage && pnpm build && pnpm release:check && pnpm audit:dependencies",
+    "ci": "pnpm verify",
+    "prepare": "husky && node .ai/setup.mjs"
+  },
+  "nano-staged": {
+    "*.{ts,mts,cts,js,mjs,cjs}": [
+      "eslint --max-warnings 0 --no-warn-ignored --fix",
+      "prettier --write"
+    ],
+    "*.css": [
+      "stylelint --fix",
+      "prettier --write"
+    ],
+    "*.{json,jsonc,yml,yaml,md}": [
+      "prettier --write"
+    ]
+  },
+  "release": {
+    "mainJsBudgetBytes": 696320
   },
   "keywords": [
     "obsidian",
@@ -39,34 +62,42 @@
     "type": "git",
     "url": "git@github.com:flowing-abyss/obsidian-abyss-tasks.git"
   },
-  "devDependencies": {
-    "@commitlint/cli": "21.0.2",
-    "@commitlint/config-conventional": "21.0.2",
-    "@eslint/js": "10.0.1",
-    "@eslint/json": "2.0.0",
-    "@types/jsdom": "28.0.3",
-    "@types/node": "26.0.0",
-    "@vitest/coverage-v8": "4.1.9",
-    "esbuild": "0.28.1",
-    "eslint": "10.5.0",
-    "eslint-plugin-depend": "1.5.0",
-    "eslint-plugin-obsidianmd": "0.3.0",
-    "eslint-plugin-sonarjs": "4.1.0",
-    "globals": "17.6.0",
-    "husky": "9.1.7",
-    "jiti": "2.7.0",
-    "jsdom": "29.1.1",
-    "knip": "6.17.2",
-    "obsidian-test-mocks": "3.3.0",
-    "prettier": "3.8.4",
-    "prettier-plugin-organize-imports": "4.3.0",
-    "tslib": "2.8.1",
-    "typescript": "6.0.3",
-    "typescript-eslint": "8.61.1",
-    "vitest": "4.1.9"
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0",
+    "pnpm": ">=11"
   },
   "dependencies": {
-    "obsidian": "1.13.1",
     "rrule": "2.8.1"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.1",
+    "@commitlint/config-conventional": "^21.2.0",
+    "@commitlint/types": "^21.2.0",
+    "@eslint/json": "^0.14.0",
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^24.13.3",
+    "@vitest/coverage-v8": "4.1.10",
+    "dependency-cruiser": "^18.1.0",
+    "esbuild": "0.28.1",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-obsidianmd": "^0.4.1",
+    "eslint-plugin-sonarjs": "^4.2.0",
+    "globals": "^17.8.0",
+    "husky": "^9.1.7",
+    "jiti": "^2.7.0",
+    "jsdom": "^30.0.1",
+    "knip": "^6.29.0",
+    "nano-staged": "^1.0.2",
+    "obsidian": "1.13.1",
+    "obsidian-test-mocks": "^3.9.0",
+    "prettier": "^3.9.6",
+    "prettier-plugin-organize-imports": "^4.3.0",
+    "stylelint": "^17.14.1",
+    "stylelint-config-standard": "^40.0.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "4.1.10"
   }
 }

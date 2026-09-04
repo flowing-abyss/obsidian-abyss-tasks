@@ -1,5 +1,6 @@
 import { Modal, Notice, type App } from 'obsidian';
 import type { MoveRecovery, TaskApplicationApi, TaskRef, TaskSnapshot } from '../tasks';
+import { runAsyncAction } from './runAsyncAction';
 
 export class TaskMoveRecoveryModal extends Modal {
   constructor(
@@ -11,11 +12,11 @@ export class TaskMoveRecoveryModal extends Modal {
     this.modalEl.addClass('abyss-task-move-recovery');
   }
 
-  onOpen(): void {
+  override onOpen(): void {
     this.renderChoices();
   }
 
-  onClose(): void {
+  override onClose(): void {
     this.contentEl.empty();
   }
 
@@ -27,10 +28,12 @@ export class TaskMoveRecoveryModal extends Modal {
     });
     const actions = this.contentEl.createDiv({ cls: 'abyss-task-move-recovery-actions' });
     const keep = actions.createEl('button', { text: 'Keep both' });
-    keep.addEventListener('click', () => this.close());
+    keep.addEventListener('click', () => {
+      this.close();
+    });
     const remove = actions.createEl('button', { text: 'Remove original' });
     remove.addEventListener('click', () => {
-      void this.resolveOriginal();
+      runAsyncAction(this.resolveOriginal(), 'Could not resolve original task');
     });
   }
 
@@ -69,10 +72,12 @@ export class TaskMoveRecoveryModal extends Modal {
     });
     const actions = this.contentEl.createDiv({ cls: 'abyss-task-move-recovery-actions' });
     const keep = actions.createEl('button', { text: 'Keep both' });
-    keep.addEventListener('click', () => this.close());
+    keep.addEventListener('click', () => {
+      this.close();
+    });
     const remove = actions.createEl('button', { text: 'Remove changed original' });
     remove.addEventListener('click', () => {
-      void this.removeOriginal(current.ref);
+      runAsyncAction(this.removeOriginal(current.ref), 'Could not remove original task');
     });
   }
 
@@ -81,7 +86,9 @@ export class TaskMoveRecoveryModal extends Modal {
     this.contentEl.createEl('h3', { text: 'Original was not removed' });
     this.contentEl.createEl('p', { text: message });
     const close = this.contentEl.createEl('button', { text: 'Close' });
-    close.addEventListener('click', () => this.close());
+    close.addEventListener('click', () => {
+      this.close();
+    });
   }
 
   private renderRemovalUnknown(path: string): void {
@@ -91,7 +98,9 @@ export class TaskMoveRecoveryModal extends Modal {
       text: `Could not confirm whether the original in ${path} was removed. Rescan and inspect ${path} and ${this.recovery.targetPath} before taking any action. Do not repeat removal until the vault state is confirmed.`,
     });
     const close = this.contentEl.createEl('button', { text: 'Close' });
-    close.addEventListener('click', () => this.close());
+    close.addEventListener('click', () => {
+      this.close();
+    });
   }
 
   private async removeOriginal(ref: TaskRef): Promise<void> {

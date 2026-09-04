@@ -1,4 +1,4 @@
-import { TFile, type App } from 'obsidian';
+import { Platform, TFile, type App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
@@ -21,8 +21,10 @@ import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/in
 import { rootTaskRef, taskNodeLine } from '../src/ui/taskSelection';
 import {
   createAppWithFiles,
+  expectDefined,
   flushMicrotasks,
   freshContainer,
+  methodOf,
   queryApiForTasks,
   subtask,
   task,
@@ -39,15 +41,31 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+async function stylesCss(): Promise<string> {
+  if (!Platform.isDesktop) throw new Error('CSS fixture requires the desktop test runtime');
+  const fileSystem = await import('node:fs');
+  const nodePath = await import('node:path');
+  return fileSystem.readFileSync(nodePath.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+}
+
+function appendElement<K extends keyof HTMLElementTagNameMap>(
+  ownerDocument: Document,
+  tag: K,
+): HTMLElementTagNameMap[K] {
+  const element = freshContainer().createEl(tag);
+  ownerDocument.body.append(ownerDocument.adoptNode(element));
+  return element;
+}
+
 describe('RightPanel recurrence editor integration', () => {
   it('keeps repeat editing in explicit RightPanel controls', async () => {
     const { state, el } = await makePanel();
     activeDocument.body.append(el);
     state.set('taskStack', [task({ title: 'Repeat me', planning: { due: '2026-08-09' } })]);
 
-    const chip = el.querySelector<HTMLButtonElement>('.abyss-repeat-chip')!;
+    const chip = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-repeat-chip'));
     expect(chip.textContent).toBe('+ repeat');
-    const kebab = el.querySelector<HTMLButtonElement>('[aria-label="More actions"]')!;
+    const kebab = expectDefined(el.querySelector<HTMLButtonElement>('[aria-label="More actions"]'));
     click(kebab);
     expect(
       Array.from(
@@ -63,7 +81,7 @@ describe('RightPanel recurrence editor integration', () => {
       'abyss-popover-anchored',
     );
 
-    el.querySelector<HTMLElement>('.abyss-recurrence-editor')!.dispatchEvent(
+    expectDefined(el.querySelector<HTMLElement>('.abyss-recurrence-editor')).dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
     );
     expect(el.querySelector('.abyss-recurrence-popover')).toBeNull();
@@ -76,12 +94,12 @@ describe('RightPanel recurrence editor integration', () => {
     activeDocument.body.append(el);
     state.set('taskStack', [task({ title: 'Repeat me', planning: { due: '2026-08-09' } })]);
     const outside = activeDocument.body.createEl('button', { text: 'Outside' });
-    const chip = el.querySelector<HTMLButtonElement>('.abyss-repeat-chip')!;
+    const chip = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-repeat-chip'));
 
     click(chip);
     await tick();
-    const popover = el.querySelector<HTMLElement>('.abyss-recurrence-popover')!;
-    const title = popover.querySelector<HTMLElement>('.abyss-recurrence-title')!;
+    const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-recurrence-popover'));
+    const title = expectDefined(popover.querySelector<HTMLElement>('.abyss-recurrence-title'));
     expect(popover.getAttribute('role')).toBe('dialog');
     expect(popover.getAttribute('aria-modal')).toBe('false');
     expect(popover.getAttribute('aria-labelledby')).toBe(title.id);
@@ -106,7 +124,7 @@ describe('RightPanel recurrence editor integration', () => {
     });
     state.set('taskStack', [root]);
 
-    const chip = el.querySelector<HTMLButtonElement>('.abyss-repeat-chip')!;
+    const chip = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-repeat-chip'));
     expect(chip.textContent).toBe('every week');
     expect(chip.querySelector('.abyss-recurrence-badge')?.getAttribute('aria-label')).toBe(
       'Repeats: every week',
@@ -135,15 +153,17 @@ describe('RightPanel recurrence editor integration', () => {
     const { state, el } = await makePanel({}, { queries: queryApiForTasks(() => [root]), execute });
     state.set('taskStack', [root, child]);
 
-    const more = Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-right-action-btn')).find(
-      (button) => button.textContent === '⋯',
-    )!;
+    const more = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-right-action-btn')).find(
+        (button) => button.textContent === '⋯',
+      ),
+    );
     click(more);
     const edit = Array.from(
       el.querySelectorAll<HTMLElement>('.abyss-task-context-menu .abyss-context-item'),
     ).find((item) => item.textContent === 'Edit repeat…');
     expect(edit).not.toBeUndefined();
-    click(edit!);
+    click(expectDefined(edit));
 
     expect(el.querySelectorAll('.abyss-recurrence-popover .abyss-recurrence-editor')).toHaveLength(
       1,
@@ -151,10 +171,10 @@ describe('RightPanel recurrence editor integration', () => {
     expect(el.querySelector<HTMLInputElement>('.abyss-recurrence-raw')?.value).toBe(
       'every weekday',
     );
-    const raw = el.querySelector<HTMLInputElement>('.abyss-recurrence-raw')!;
+    const raw = expectDefined(el.querySelector<HTMLInputElement>('.abyss-recurrence-raw'));
     raw.value = 'every month';
     raw.dispatchEvent(new Event('input', { bubbles: true }));
-    click(el.querySelector<HTMLButtonElement>('.abyss-recurrence-save')!);
+    click(expectDefined(el.querySelector<HTMLButtonElement>('.abyss-recurrence-save')));
     await flushMicrotasks();
 
     expect(execute).toHaveBeenCalledWith({
@@ -177,15 +197,17 @@ describe('RightPanel recurrence editor integration', () => {
     );
     activeDocument.body.append(el);
     state.set('taskStack', [root]);
-    const more = Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-right-action-btn')).find(
-      (button) => button.textContent === '⋯',
-    )!;
+    const more = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-right-action-btn')).find(
+        (button) => button.textContent === '⋯',
+      ),
+    );
 
     try {
       more.focus();
       click(more);
-      const menu = el.querySelector<HTMLElement>('.abyss-task-context-menu')!;
-      const firstItem = menu.querySelector<HTMLElement>('.abyss-context-item')!;
+      const menu = expectDefined(el.querySelector<HTMLElement>('.abyss-task-context-menu'));
+      const firstItem = expectDefined(menu.querySelector<HTMLElement>('.abyss-context-item'));
 
       expect(menu.getAttribute('role')).toBe('menu');
       expect(firstItem.getAttribute('role')).toBe('menuitem');
@@ -198,7 +220,9 @@ describe('RightPanel recurrence editor integration', () => {
       expect(activeDocument.activeElement).toBe(more);
 
       click(more);
-      el.querySelector<HTMLElement>('.abyss-task-context-menu .abyss-context-item')!.dispatchEvent(
+      expectDefined(
+        el.querySelector<HTMLElement>('.abyss-task-context-menu .abyss-context-item'),
+      ).dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
       );
       expect(el.querySelector('.abyss-task-context-menu')).toBeNull();
@@ -212,7 +236,7 @@ describe('RightPanel recurrence editor integration', () => {
   it('owns overflow-menu listeners in its mounted document and removes them on rerender', async () => {
     const originalActiveDocument = activeDocument;
     const frame = originalActiveDocument.body.createEl('iframe');
-    const ownerDocument = frame.contentDocument!;
+    const ownerDocument = expectDefined(frame.contentDocument);
     const replacementDocument = originalActiveDocument.implementation.createHTMLDocument('next');
     const ownerAdd = vi.spyOn(ownerDocument, 'addEventListener');
     const ownerRemove = vi.spyOn(ownerDocument, 'removeEventListener');
@@ -230,15 +254,21 @@ describe('RightPanel recurrence editor integration', () => {
     state.set('taskStack', [first]);
 
     try {
-      const more = Array.from(
-        el.querySelectorAll<HTMLButtonElement>('.abyss-right-action-btn'),
-      ).find((button) => button.textContent === '⋯')!;
+      const more = expectDefined(
+        Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-right-action-btn')).find(
+          (button) => button.textContent === '⋯',
+        ),
+      );
       click(more);
       vi.stubGlobal('activeDocument', replacementDocument);
       await tick();
 
-      const keyRegistration = ownerAdd.mock.calls.find(([type]) => type === 'keydown')!;
-      const clickRegistration = ownerAdd.mock.calls.find(([type]) => type === 'click')!;
+      const keyRegistration = expectDefined(
+        ownerAdd.mock.calls.find(([type]) => type === 'keydown'),
+      );
+      const clickRegistration = expectDefined(
+        ownerAdd.mock.calls.find(([type]) => type === 'click'),
+      );
       expect(keyRegistration).toBeDefined();
       expect(clickRegistration).toBeDefined();
       expect(
@@ -288,15 +318,9 @@ function el2Text(el: HTMLElement, sel: string): string {
   return el.querySelector(sel)?.textContent ?? '';
 }
 
-/** Bracket-access helper to call private methods (preserves `this` binding). */
-function call<T>(panel: RightPanel, method: string, ...args: unknown[]): T {
-  const fn = (panel as unknown as Record<string, (...a: unknown[]) => T>)[method]!;
-  return fn.call(panel, ...args);
-}
-
 function absoluteFixtureLine(taskLike: TaskSnapshot | SubtaskSnapshot): number {
   if ('source' in taskLike) return taskLike.source.line;
-  let line = rootTaskRef(taskLike).line;
+  const line = rootTaskRef(taskLike).line;
   let ref = taskLike.ref;
   const offsets: number[] = [];
   while ('parent' in ref) {
@@ -312,7 +336,7 @@ function attachCurrentRef(panel: RightPanel, taskLike: TaskSnapshot | SubtaskSna
   for (const root of roots) {
     const queue: Array<TaskSnapshot | SubtaskSnapshot> = [root];
     while (queue.length > 0) {
-      const current = queue.shift()!;
+      const current = expectDefined(queue.shift());
       if (
         root.source.filePath === rootTaskRef(taskLike).filePath &&
         taskNodeLine(root, current) === absoluteFixtureLine(taskLike)
@@ -330,12 +354,21 @@ function attachCurrentRef(panel: RightPanel, taskLike: TaskSnapshot | SubtaskSna
  * seeded at `f.md` so vault-write tests can assert on the resulting content.
  */
 async function makePanel(
-  files: Record<string, string> = {},
-  tasks?: TaskApplicationApi,
-  statusRegistry: StatusRegistry = testStatusRegistry(),
-  onSuccessfulMutation?: (ref?: TaskRef) => void,
-  commentTimeContext?: CommentTimeContextProvider,
-  interactionOwnership?: InteractionOwnershipPort,
+  ...[
+    files = {},
+    tasks,
+    statusRegistry = testStatusRegistry(),
+    onSuccessfulMutation,
+    commentTimeContext,
+    interactionOwnership,
+  ]: readonly [
+    files?: Record<string, string>,
+    tasks?: TaskApplicationApi,
+    statusRegistry?: StatusRegistry,
+    onSuccessfulMutation?: (ref?: TaskRef) => void,
+    commentTimeContext?: CommentTimeContextProvider,
+    interactionOwnership?: InteractionOwnershipPort,
+  ]
 ): Promise<{ panel: RightPanel; state: AppState; app: App; el: HTMLElement }> {
   const app = await createAppWithFiles(files);
   const state = new AppState();
@@ -377,41 +410,51 @@ describe('RightPanel interaction ownership', () => {
   const cases = [
     {
       category: 'action',
-      open: (el: HTMLElement) =>
-        click(el.querySelector<HTMLElement>('[aria-label="More actions"]')!),
+      open: (el: HTMLElement) => {
+        click(expectDefined(el.querySelector<HTMLElement>('[aria-label="More actions"]')));
+      },
       focus: '.abyss-task-context-menu [role="menuitem"]',
     },
     {
       category: 'add-date',
-      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-chip-add-date')!),
+      open: (el: HTMLElement) => {
+        click(expectDefined(el.querySelector<HTMLElement>('.abyss-chip-add-date')));
+      },
       focus: '.abyss-add-date-menu [role="menuitem"]',
     },
     {
       category: 'date',
-      open: (el: HTMLElement) =>
+      open: (el: HTMLElement) => {
         click(
-          Array.from(el.querySelectorAll<HTMLElement>('.abyss-chips-row > button')).find(
-            (candidate) => candidate.textContent?.startsWith('📅'),
-          )!,
-        ),
+          expectDefined(
+            Array.from(el.querySelectorAll<HTMLElement>('.abyss-chips-row > button')).find(
+              (candidate) => candidate.textContent.startsWith('📅'),
+            ),
+          ),
+        );
+      },
       focus: '.abyss-date-popover [aria-label="Clear date"]',
     },
     {
       category: 'priority',
-      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-priority-chip')!),
+      open: (el: HTMLElement) => {
+        click(expectDefined(el.querySelector<HTMLElement>('.abyss-priority-chip')));
+      },
       focus: '.abyss-priority-popover [role="option"]',
     },
     {
       category: 'time/duration',
-      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-chip-time')!),
+      open: (el: HTMLElement) => {
+        click(expectDefined(el.querySelector<HTMLElement>('.abyss-chip-time')));
+      },
       focus: '.abyss-time-popover [aria-label="Clear time"]',
     },
     {
       category: 'status',
       open: (el: HTMLElement) =>
-        el
-          .querySelector<HTMLElement>('.abyss-status-marker')!
-          .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })),
+        expectDefined(el.querySelector<HTMLElement>('.abyss-status-marker')).dispatchEvent(
+          new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+        ),
       focus: '.abyss-status-popover [role="menuitemradio"]',
     },
   ] as const;
@@ -447,8 +490,10 @@ describe('RightPanel interaction ownership', () => {
         const focused =
           el.querySelector<HTMLElement>(focus) ?? activeDocument.querySelector<HTMLElement>(focus);
         expect(focused).not.toBeNull();
-        focused!.focus();
-        focused!.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }));
+        expectDefined(focused).focus();
+        expectDefined(focused).dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'n', bubbles: true }),
+        );
         expect(navigate).not.toHaveBeenCalled();
 
         state.set('taskStack', [task({ title: 'Replacement' })]);
@@ -468,43 +513,57 @@ describe('RightPanel interaction ownership', () => {
   const statusReplacementCases = [
     {
       category: 'action',
-      open: (el: HTMLElement) =>
-        click(el.querySelector<HTMLElement>('[aria-label="More actions"]')!),
+      open: (el: HTMLElement) => {
+        click(expectDefined(el.querySelector<HTMLElement>('[aria-label="More actions"]')));
+      },
       surface: '.abyss-task-context-menu',
     },
     {
       category: 'add-date',
-      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-chip-add-date')!),
+      open: (el: HTMLElement) => {
+        click(expectDefined(el.querySelector<HTMLElement>('.abyss-chip-add-date')));
+      },
       surface: '.abyss-add-date-menu',
     },
     {
       category: 'date',
-      open: (el: HTMLElement) =>
+      open: (el: HTMLElement) => {
         click(
-          Array.from(el.querySelectorAll<HTMLElement>('.abyss-chips-row > button')).find(
-            (candidate) => candidate.textContent?.startsWith('📅'),
-          )!,
-        ),
+          expectDefined(
+            Array.from(el.querySelectorAll<HTMLElement>('.abyss-chips-row > button')).find(
+              (candidate) => candidate.textContent.startsWith('📅'),
+            ),
+          ),
+        );
+      },
       surface: '.abyss-date-popover',
     },
     {
       category: 'priority',
-      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-priority-chip')!),
+      open: (el: HTMLElement) => {
+        click(expectDefined(el.querySelector<HTMLElement>('.abyss-priority-chip')));
+      },
       surface: '.abyss-priority-popover',
     },
     {
       category: 'time/duration',
-      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-chip-time')!),
+      open: (el: HTMLElement) => {
+        click(expectDefined(el.querySelector<HTMLElement>('.abyss-chip-time')));
+      },
       surface: '.abyss-time-popover',
     },
     {
       category: 'recurrence',
-      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-repeat-chip')!),
+      open: (el: HTMLElement) => {
+        click(expectDefined(el.querySelector<HTMLElement>('.abyss-repeat-chip')));
+      },
       surface: '.abyss-recurrence-popover',
     },
     {
       category: 'tag input',
-      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('[aria-label="Add tag"]')!),
+      open: (el: HTMLElement) => {
+        click(expectDefined(el.querySelector<HTMLElement>('[aria-label="Add tag"]')));
+      },
       surface: '.abyss-tag-dropdown-wrap',
     },
   ] as const;
@@ -542,9 +601,9 @@ describe('RightPanel interaction ownership', () => {
         open(el);
         expect(el.querySelector(surface)).not.toBeNull();
 
-        const statusMarker = el.querySelector<HTMLElement>(
-          '.abyss-right-header > .abyss-status-marker',
-        )!;
+        const statusMarker = expectDefined(
+          el.querySelector<HTMLElement>('.abyss-right-header > .abyss-status-marker'),
+        );
         statusMarker.focus();
         statusMarker.dispatchEvent(
           new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
@@ -559,8 +618,8 @@ describe('RightPanel interaction ownership', () => {
         expect(releases[0]).toHaveBeenCalledOnce();
         expect(releases[1]).not.toHaveBeenCalled();
         expect(activeDocument.querySelector('.abyss-status-popover')).not.toBeNull();
-        expect(releases[0]!.mock.invocationCallOrder[0]).toBeLessThan(
-          acquire.mock.invocationCallOrder[1]!,
+        expect(expectDefined(releases[0]).mock.invocationCallOrder[0]).toBeLessThan(
+          expectDefined(acquire.mock.invocationCallOrder[1]),
         );
 
         panel.destroy();
@@ -593,12 +652,12 @@ describe('RightPanel interaction ownership', () => {
     state.set('taskStack', [root]);
 
     try {
-      click(el.querySelector<HTMLElement>('.abyss-priority-chip')!);
+      click(expectDefined(el.querySelector<HTMLElement>('.abyss-priority-chip')));
       expect(el.querySelector('.abyss-priority-popover')).not.toBeNull();
 
-      const statusMarker = el.querySelector<HTMLElement>(
-        '.abyss-subtask-row .abyss-status-marker',
-      )!;
+      const statusMarker = expectDefined(
+        el.querySelector<HTMLElement>('.abyss-subtask-row .abyss-status-marker'),
+      );
       statusMarker.focus();
       statusMarker.dispatchEvent(
         new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
@@ -612,8 +671,8 @@ describe('RightPanel interaction ownership', () => {
       ).toBe(true);
       expect(releases[0]).toHaveBeenCalledOnce();
       expect(releases[1]).not.toHaveBeenCalled();
-      expect(releases[0]!.mock.invocationCallOrder[0]).toBeLessThan(
-        acquire.mock.invocationCallOrder[1]!,
+      expect(expectDefined(releases[0]).mock.invocationCallOrder[0]).toBeLessThan(
+        expectDefined(acquire.mock.invocationCallOrder[1]),
       );
     } finally {
       panel.destroy();
@@ -747,9 +806,11 @@ describe('RightPanel.renderTask', () => {
       const { state, el } = await makePanel({}, tasks, registry, acknowledge);
       state.set('taskStack', selection === 'root' ? [root] : [root, child]);
 
-      const header = el.querySelector<HTMLElement>('.abyss-right-header')!;
-      const marker = header.querySelector<HTMLElement>(':scope > .abyss-status-marker')!;
-      const title = header.querySelector<HTMLElement>(':scope > .abyss-right-title')!;
+      const header = expectDefined(el.querySelector<HTMLElement>('.abyss-right-header'));
+      const marker = expectDefined(
+        header.querySelector<HTMLElement>(':scope > .abyss-status-marker'),
+      );
+      const title = expectDefined(header.querySelector<HTMLElement>(':scope > .abyss-right-title'));
       expect(header.querySelectorAll(':scope > .abyss-status-marker')).toHaveLength(1);
       expect(marker).not.toBeNull();
       expect(marker.nextElementSibling).toBe(title);
@@ -771,20 +832,24 @@ describe('RightPanel.renderTask', () => {
         selection === 'root' ? [freshRoot] : [freshRoot, freshChild],
       );
 
-      const currentMarker = el.querySelector<HTMLElement>(
-        '.abyss-right-header > .abyss-status-marker',
-      )!;
+      const currentMarker = expectDefined(
+        el.querySelector<HTMLElement>('.abyss-right-header > .abyss-status-marker'),
+      );
       currentMarker.dispatchEvent(
         new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
       );
-      const popover = activeDocument.body.querySelector<HTMLElement>('.abyss-status-popover')!;
+      const popover = expectDefined(
+        activeDocument.body.querySelector<HTMLElement>('.abyss-status-popover'),
+      );
       expect(
         popover.querySelectorAll('.abyss-status-popover-list .abyss-status-popover-row'),
       ).toHaveLength(registry.all().length);
       expect(popover.querySelectorAll('.abyss-status-popover-flag')).toHaveLength(6);
-      const waiting = Array.from(
-        popover.querySelectorAll<HTMLElement>('.abyss-status-popover-row'),
-      ).find((row) => row.textContent?.includes('Waiting'))!;
+      const waiting = expectDefined(
+        Array.from(popover.querySelectorAll<HTMLElement>('.abyss-status-popover-row')).find((row) =>
+          row.textContent.includes('Waiting'),
+        ),
+      );
       click(waiting);
       await flushMicrotasks();
 
@@ -798,13 +863,15 @@ describe('RightPanel.renderTask', () => {
         symbol: 'w',
       });
 
-      el.querySelector<HTMLElement>('.abyss-right-header > .abyss-status-marker')!.dispatchEvent(
-        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
-      );
+      expectDefined(
+        el.querySelector<HTMLElement>('.abyss-right-header > .abyss-status-marker'),
+      ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       click(
-        activeDocument.body.querySelector<HTMLElement>(
-          ".abyss-status-popover-flag[data-abyss-priority='A']",
-        )!,
+        expectDefined(
+          activeDocument.body.querySelector<HTMLElement>(
+            ".abyss-status-popover-flag[data-abyss-priority='A']",
+          ),
+        ),
       );
       await flushMicrotasks();
 
@@ -839,14 +906,14 @@ describe('RightPanel.renderTask', () => {
   it('title view renders idle; clicking it enters edit mode with markdownText', async () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'My task' })]);
-    const view = el.querySelector<HTMLElement>('.abyss-right-title-view')!;
+    const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
     expect(view).not.toBeNull();
     expect(el.querySelector('.abyss-right-title-edit')).toBeNull();
 
     click(view);
     const ta = el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit');
     expect(ta).not.toBeNull();
-    expect(ta!.value).toBe('My task');
+    expect(expectDefined(ta).value).toBe('My task');
   });
 
   it('editing the title and blurring writes back via updateTaskTitle', async () => {
@@ -858,9 +925,9 @@ describe('RightPanel.renderTask', () => {
     });
     attachCurrentRef(panel, current);
     state.set('taskStack', [current]);
-    const view = el.querySelector<HTMLElement>('.abyss-right-title-view')!;
+    const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
     click(view);
-    const ta = el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')!;
+    const ta = expectDefined(el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'));
     ta.value = 'Updated task';
     ta.dispatchEvent(new Event('blur', { bubbles: true }));
     await flushMicrotasks();
@@ -884,7 +951,7 @@ describe('RightPanel.renderTask', () => {
       }),
     ]);
     const chips = el.querySelectorAll('.abyss-chips-row .abyss-chip');
-    const dateChip = Array.from(chips).find((c) => c.textContent?.startsWith('📅'));
+    const dateChip = Array.from(chips).find((c) => c.textContent.startsWith('📅'));
     expect(dateChip).toBeDefined();
     expect(dateChip?.classList.contains('abyss-chip-empty')).toBe(false);
   });
@@ -915,9 +982,7 @@ describe('RightPanel.renderTask', () => {
   // task detail modal even though the correct data-priority attribute was
   // always present. Guard the fallback so this can't silently regress.
   it('priority chip color rule in styles.css falls back to a global color var (works outside .abyss-panel-view)', async () => {
-    const { readFileSync } = await import('node:fs');
-    const { resolve } = await import('node:path');
-    const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+    const css = await stylesCss();
     const rule = /\.abyss-priority-chip\[data-priority='A'\]\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
     expect(rule).toMatch(/var\(--abyss-priority-a,\s*var\(--color-red\)\)/);
   });
@@ -1001,9 +1066,9 @@ describe('RightPanel.renderSubTask', () => {
         core: false,
       },
     ]);
-    el.querySelector<HTMLElement>('.abyss-subtask-row .abyss-status-marker')!.dispatchEvent(
-      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
-    );
+    expectDefined(
+      el.querySelector<HTMLElement>('.abyss-subtask-row .abyss-status-marker'),
+    ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 
     expect(activeDocument.body.querySelector('.abyss-status-popover')?.textContent).toContain(
       'Waiting',
@@ -1034,7 +1099,9 @@ describe('RightPanel.renderSubTask', () => {
     state.set('taskStack', [
       task({ title: 'parent', subtasks: [sub], source: { filePath: 'f.md', line: 0 } }),
     ]);
-    const marker = el.querySelector<HTMLElement>('.abyss-subtask-row .abyss-status-marker')!;
+    const marker = expectDefined(
+      el.querySelector<HTMLElement>('.abyss-subtask-row .abyss-status-marker'),
+    );
     marker.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     await flushMicrotasks(20);
     const content = await readMd(app, 'f.md');
@@ -1057,9 +1124,7 @@ describe('RightPanel.renderSubTask', () => {
   ] as const)(
     "status marker priority='%s' rule in styles.css falls back to var(--color-%s) (works outside .abyss-panel-view)",
     async (priority, colorName) => {
-      const { readFileSync } = await import('node:fs');
-      const { resolve } = await import('node:path');
-      const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+      const css = await stylesCss();
       const rule =
         new RegExp(
           `\\.abyss-status-marker\\[data-priority='${priority}'\\]\\s*\\{([^}]*)\\}`,
@@ -1129,7 +1194,7 @@ describe('RightPanel.renderComment', () => {
     const { state, el } = await makePanel();
     const comment = taskComment({ text: 'editable', date: '2026-06-20' });
     state.set('taskStack', [task({ title: 'T', comments: [comment] })]);
-    const textEl = el.querySelector<HTMLElement>('.abyss-comment-text')!;
+    const textEl = expectDefined(el.querySelector<HTMLElement>('.abyss-comment-text'));
     click(textEl);
     expect(el.querySelector('.abyss-comment-edit-input')).not.toBeNull();
     expect(el.querySelector('.abyss-comment-text')).toBeNull();
@@ -1159,18 +1224,18 @@ describe('RightPanel popovers', () => {
         originalBlock: '- [ ] Parent',
       },
     });
-    const child = root.subtasks[0]!;
+    const child = expectDefined(root.subtasks[0]);
     state.set('taskStack', [root, child]);
     const leaf = app.workspace.getLeaf('tab');
     const setCursor = vi.fn();
     (leaf as unknown as { view: unknown }).view = { editor: { setCursor } };
     vi.spyOn(app.workspace, 'getLeaf').mockReturnValue(leaf);
 
-    click(el.querySelector<HTMLElement>('[aria-label="More actions"]')!);
+    click(expectDefined(el.querySelector<HTMLElement>('[aria-label="More actions"]')));
     const openItem = Array.from(el.querySelectorAll<HTMLElement>('.abyss-context-item')).find(
       (item) => item.textContent === 'Open in file',
     );
-    click(openItem!);
+    click(expectDefined(openItem));
     await flushMicrotasks();
 
     expect(setCursor).toHaveBeenCalledWith({ line: 7, ch: 0 });
@@ -1189,7 +1254,7 @@ describe('RightPanel popovers', () => {
       }),
     ]);
     const chips = el.querySelectorAll('.abyss-chips-row .abyss-chip');
-    const dateChip = Array.from(chips).find((c) => c.textContent?.startsWith('📅')) as HTMLElement;
+    const dateChip = Array.from(chips).find((c) => c.textContent.startsWith('📅')) as HTMLElement;
     expect(dateChip).toBeDefined();
     click(dateChip);
     expect(el.querySelector('.abyss-date-popover')).not.toBeNull();
@@ -1200,7 +1265,7 @@ describe('RightPanel popovers', () => {
   it('owns Escape in the mounted document and restores focus from the date popover', async () => {
     const { panel, state, el } = await makePanel();
     const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = frame.contentDocument!;
+    const ownerDocument = expectDefined(frame.contentDocument);
     ownerDocument.body.append(ownerDocument.adoptNode(el));
     state.set('taskStack', [
       task({
@@ -1212,9 +1277,11 @@ describe('RightPanel popovers', () => {
         },
       }),
     ]);
-    const chip = Array.from(
-      el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button'),
-    ).find((candidate) => candidate.textContent?.startsWith('📅'))!;
+    const chip = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')).find(
+        (candidate) => candidate.textContent.startsWith('📅'),
+      ),
+    );
     const escapedToDocument = vi.fn();
     ownerDocument.addEventListener('keydown', escapedToDocument);
 
@@ -1222,8 +1289,8 @@ describe('RightPanel popovers', () => {
       chip.focus();
       click(chip);
       await tick();
-      const popover = el.querySelector<HTMLElement>('.abyss-date-popover')!;
-      const input = popover.querySelector<HTMLInputElement>('.abyss-date-input')!;
+      const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-date-popover'));
+      const input = expectDefined(popover.querySelector<HTMLInputElement>('.abyss-date-input'));
       expect(ownerDocument.activeElement).toBe(input);
 
       const escape = new KeyboardEvent('keydown', {
@@ -1248,23 +1315,26 @@ describe('RightPanel popovers', () => {
   it('keeps the date popover open while focus traverses to Clear beyond the blur delay', async () => {
     const { panel, state, el } = await makePanel();
     const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = frame.contentDocument!;
+    const ownerDocument = expectDefined(frame.contentDocument);
     ownerDocument.body.append(ownerDocument.adoptNode(el));
-    const outside = ownerDocument.createElement('button');
+    const outside = appendElement(ownerDocument, 'button');
     outside.textContent = 'Outside';
-    ownerDocument.body.append(outside);
     state.set('taskStack', [task({ title: 'Date traversal', planning: { due: '2026-08-11' } })]);
-    const chip = Array.from(
-      el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button'),
-    ).find((candidate) => candidate.textContent?.startsWith('📅'))!;
+    const chip = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')).find(
+        (candidate) => candidate.textContent.startsWith('📅'),
+      ),
+    );
     vi.useFakeTimers();
 
     try {
       click(chip);
       vi.runOnlyPendingTimers();
-      const popover = el.querySelector<HTMLElement>('.abyss-date-popover')!;
-      const input = popover.querySelector<HTMLInputElement>('.abyss-date-input')!;
-      const clear = popover.querySelector<HTMLButtonElement>('[aria-label="Clear date"]')!;
+      const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-date-popover'));
+      const input = expectDefined(popover.querySelector<HTMLInputElement>('.abyss-date-input'));
+      const clear = expectDefined(
+        popover.querySelector<HTMLButtonElement>('[aria-label="Clear date"]'),
+      );
       expect(ownerDocument.activeElement).toBe(input);
 
       clear.focus();
@@ -1285,16 +1355,17 @@ describe('RightPanel popovers', () => {
   it('cancels pending date focus-leave cleanup when the panel is destroyed', async () => {
     const { panel, state, el } = await makePanel();
     const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = frame.contentDocument!;
+    const ownerDocument = expectDefined(frame.contentDocument);
     ownerDocument.body.append(ownerDocument.adoptNode(el));
-    const outside = ownerDocument.createElement('button');
-    ownerDocument.body.append(outside);
+    const outside = appendElement(ownerDocument, 'button');
     state.set('taskStack', [task({ title: 'Date cleanup', planning: { due: '2026-08-11' } })]);
-    const chip = Array.from(
-      el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button'),
-    ).find((candidate) => candidate.textContent?.startsWith('📅'))!;
+    const chip = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')).find(
+        (candidate) => candidate.textContent.startsWith('📅'),
+      ),
+    );
     vi.useFakeTimers();
-    const clearTimeout = vi.spyOn(ownerDocument.defaultView!, 'clearTimeout');
+    const clearTimeout = vi.spyOn(expectDefined(ownerDocument.defaultView), 'clearTimeout');
 
     try {
       click(chip);
@@ -1352,7 +1423,7 @@ describe('RightPanel popovers', () => {
       Object.assign(
         task({
           title: 'Scheduled',
-          planning: { due: undefined, scheduled: '2026-07-05' },
+          planning: { scheduled: '2026-07-05' },
           source: {
             filePath: 'f.md',
             originalMarkdown: '- [ ] Scheduled ⏳ 2026-07-05',
@@ -1365,10 +1436,10 @@ describe('RightPanel popovers', () => {
 
     const dateChip = Array.from(
       el.querySelectorAll<HTMLElement>('.abyss-chips-row .abyss-chip'),
-    ).find((chip) => chip.textContent?.startsWith('📅'));
+    ).find((chip) => chip.textContent.startsWith('📅'));
     expect(dateChip).toBeDefined();
-    click(dateChip!);
-    click(el.querySelector<HTMLElement>('.abyss-popover-clear-icon-btn')!);
+    click(expectDefined(dateChip));
+    click(expectDefined(el.querySelector<HTMLElement>('.abyss-popover-clear-icon-btn')));
     await flushMicrotasks();
 
     expect(execute).toHaveBeenCalledWith({
@@ -1392,12 +1463,14 @@ describe('RightPanel popovers', () => {
         },
       }),
     ]);
-    const chip = el.querySelector<HTMLElement>('.abyss-chip-time')!;
+    const chip = expectDefined(el.querySelector<HTMLElement>('.abyss-chip-time'));
     click(chip);
     expect(el.querySelector('.abyss-time-popover')).not.toBeNull();
-    const timeInput = el.querySelector<HTMLInputElement>('.abyss-time-input')!;
+    const timeInput = expectDefined(el.querySelector<HTMLInputElement>('.abyss-time-input'));
     expect(timeInput.value).toBe('15:00');
-    const durationInput = el.querySelector<HTMLInputElement>('.abyss-duration-input')!;
+    const durationInput = expectDefined(
+      el.querySelector<HTMLInputElement>('.abyss-duration-input'),
+    );
     expect(durationInput).not.toBeNull();
     expect(durationInput.value).toBe('1h30m');
     panel.destroy();
@@ -1406,10 +1479,10 @@ describe('RightPanel popovers', () => {
   it('owns Escape in the mounted document and restores focus from the time popover', async () => {
     const { panel, state, el } = await makePanel();
     const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = frame.contentDocument!;
+    const ownerDocument = expectDefined(frame.contentDocument);
     ownerDocument.body.append(ownerDocument.adoptNode(el));
     state.set('taskStack', [task({ title: 'Keyboard time', planning: { time: '09:15' } })]);
-    const chip = el.querySelector<HTMLButtonElement>('.abyss-chip-time')!;
+    const chip = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-chip-time'));
     const escapedToDocument = vi.fn();
     ownerDocument.addEventListener('keydown', escapedToDocument);
 
@@ -1417,8 +1490,8 @@ describe('RightPanel popovers', () => {
       chip.focus();
       click(chip);
       await tick();
-      const popover = el.querySelector<HTMLElement>('.abyss-time-popover')!;
-      const input = popover.querySelector<HTMLInputElement>('.abyss-time-input')!;
+      const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-time-popover'));
+      const input = expectDefined(popover.querySelector<HTMLInputElement>('.abyss-time-input'));
       expect(ownerDocument.activeElement).toBe(input);
 
       const escape = new KeyboardEvent('keydown', {
@@ -1443,27 +1516,30 @@ describe('RightPanel popovers', () => {
   it('keeps the time popover open while focus traverses its controls beyond the blur delay', async () => {
     const { panel, state, el } = await makePanel();
     const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = frame.contentDocument!;
+    const ownerDocument = expectDefined(frame.contentDocument);
     ownerDocument.body.append(ownerDocument.adoptNode(el));
-    const outside = ownerDocument.createElement('button');
+    const outside = appendElement(ownerDocument, 'button');
     outside.textContent = 'Outside';
-    ownerDocument.body.append(outside);
     state.set('taskStack', [
       task({ title: 'Keyboard traversal', planning: { time: '09:15', duration: 45 } }),
     ]);
-    const chip = el.querySelector<HTMLButtonElement>('.abyss-chip-time')!;
+    const chip = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-chip-time'));
     vi.useFakeTimers();
 
     try {
       click(chip);
       vi.runOnlyPendingTimers();
-      const popover = el.querySelector<HTMLElement>('.abyss-time-popover')!;
-      const timeInput = popover.querySelector<HTMLInputElement>('.abyss-time-input')!;
-      const clearTime = popover.querySelector<HTMLButtonElement>('[aria-label="Clear time"]')!;
-      const durationInput = popover.querySelector<HTMLInputElement>('.abyss-duration-input')!;
-      const clearDuration = popover.querySelector<HTMLButtonElement>(
-        '[aria-label="Clear duration"]',
-      )!;
+      const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-time-popover'));
+      const timeInput = expectDefined(popover.querySelector<HTMLInputElement>('.abyss-time-input'));
+      const clearTime = expectDefined(
+        popover.querySelector<HTMLButtonElement>('[aria-label="Clear time"]'),
+      );
+      const durationInput = expectDefined(
+        popover.querySelector<HTMLInputElement>('.abyss-duration-input'),
+      );
+      const clearDuration = expectDefined(
+        popover.querySelector<HTMLButtonElement>('[aria-label="Clear duration"]'),
+      );
 
       expect(ownerDocument.activeElement).toBe(timeInput);
       for (const control of [clearTime, durationInput, clearDuration]) {
@@ -1492,24 +1568,30 @@ describe('RightPanel popovers', () => {
     });
     state.set('taskStack', [task({ title: 'Overlay roles' })]);
 
-    const inlineTagTrigger = Array.from(
-      el.querySelectorAll<HTMLButtonElement>('.abyss-chip-add'),
-    ).find((candidate) => candidate.textContent === '+ tag')!;
+    const inlineTagTrigger = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chip-add')).find(
+        (candidate) => candidate.textContent === '+ tag',
+      ),
+    );
     const cases = [
       [
-        el.querySelector<HTMLButtonElement>('[aria-label="More actions"]')!,
+        expectDefined(el.querySelector<HTMLButtonElement>('[aria-label="More actions"]')),
         '.abyss-task-context-menu',
         'menu',
       ],
-      [el.querySelector<HTMLButtonElement>('.abyss-chip-time')!, '.abyss-time-popover', 'dialog'],
+      [
+        expectDefined(el.querySelector<HTMLButtonElement>('.abyss-chip-time')),
+        '.abyss-time-popover',
+        'dialog',
+      ],
       [inlineTagTrigger, '.abyss-tag-dropdown', 'listbox'],
       [
-        el.querySelector<HTMLButtonElement>('.abyss-chip-add-date')!,
+        expectDefined(el.querySelector<HTMLButtonElement>('.abyss-chip-add-date')),
         '.abyss-add-date-menu',
         'menu',
       ],
       [
-        el.querySelector<HTMLButtonElement>('.abyss-priority-chip')!,
+        expectDefined(el.querySelector<HTMLButtonElement>('.abyss-priority-chip')),
         '.abyss-priority-popover',
         'listbox',
       ],
@@ -1521,7 +1603,7 @@ describe('RightPanel popovers', () => {
         expect(trigger.getAttribute('aria-expanded')).toBe('false');
 
         click(trigger);
-        const popup = el.querySelector<HTMLElement>(popupSelector)!;
+        const popup = expectDefined(el.querySelector<HTMLElement>(popupSelector));
         expect(popup.getAttribute('role')).toBe(popupRole);
         expect(trigger.getAttribute('aria-expanded')).toBe('true');
 
@@ -1538,22 +1620,22 @@ describe('RightPanel popovers', () => {
   it('updates the +date trigger while its menu hands ownership to the date dialog', async () => {
     const { panel, state, el } = await makePanel();
     const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = frame.contentDocument!;
+    const ownerDocument = expectDefined(frame.contentDocument);
     ownerDocument.body.append(ownerDocument.adoptNode(el));
     state.set('taskStack', [task({ title: 'Add a date' })]);
-    const trigger = el.querySelector<HTMLButtonElement>('.abyss-chip-add-date')!;
+    const trigger = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-chip-add-date'));
 
     try {
       click(trigger);
-      click(el.querySelector<HTMLElement>('.abyss-add-date-menu-item')!);
-      const dialog = el.querySelector<HTMLElement>('.abyss-date-popover')!;
+      click(expectDefined(el.querySelector<HTMLElement>('.abyss-add-date-menu-item')));
+      const dialog = expectDefined(el.querySelector<HTMLElement>('.abyss-date-popover'));
 
       expect(dialog.getAttribute('role')).toBe('dialog');
       expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');
       expect(trigger.getAttribute('aria-expanded')).toBe('true');
 
-      dialog.querySelector<HTMLInputElement>('.abyss-date-input')!.dispatchEvent(
-        new ownerDocument.defaultView!.KeyboardEvent('keydown', {
+      expectDefined(dialog.querySelector<HTMLInputElement>('.abyss-date-input')).dispatchEvent(
+        new (expectDefined(ownerDocument.defaultView).KeyboardEvent)('keydown', {
           key: 'Escape',
           bubbles: true,
           cancelable: true,
@@ -1572,11 +1654,10 @@ describe('RightPanel popovers', () => {
   it('owns inline-tag Escape/outside/toggle/rerender/destroy cleanup in its mounted document', async () => {
     const { panel, state, el, app } = await makePanel();
     const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = frame.contentDocument!;
+    const ownerDocument = expectDefined(frame.contentDocument);
     ownerDocument.body.append(ownerDocument.adoptNode(el));
-    const outside = ownerDocument.createElement('button');
+    const outside = appendElement(ownerDocument, 'button');
     outside.textContent = 'Outside';
-    ownerDocument.body.append(outside);
     Object.defineProperty(app.metadataCache, 'getTags', {
       configurable: true,
       value: () => ({ '#alpha': 1, '#beta': 1 }),
@@ -1586,17 +1667,19 @@ describe('RightPanel popovers', () => {
     state.set('taskStack', [task({ title: 'Tag lifecycle' })]);
 
     const trigger = (): HTMLButtonElement =>
-      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chip-add')).find(
-        (candidate) => candidate.textContent === '+ tag',
-      )!;
+      expectDefined(
+        Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chip-add')).find(
+          (candidate) => candidate.textContent === '+ tag',
+        ),
+      );
 
     try {
       const escapeTrigger = trigger();
       escapeTrigger.focus();
       click(escapeTrigger);
-      const input = el.querySelector<HTMLInputElement>('.abyss-tag-input')!;
+      const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-tag-input'));
       expect(ownerDocument.activeElement).toBe(input);
-      const escape = new ownerDocument.defaultView!.KeyboardEvent('keydown', {
+      const escape = new (expectDefined(ownerDocument.defaultView).KeyboardEvent)('keydown', {
         key: 'Escape',
         bubbles: true,
         cancelable: true,
@@ -1621,14 +1704,18 @@ describe('RightPanel popovers', () => {
       expect(escapeTrigger.classList.contains('abyss-chip-add--hidden')).toBe(false);
 
       click(escapeTrigger);
-      const rerenderedSurface = el.querySelector<HTMLElement>('.abyss-tag-dropdown-wrap')!;
+      const rerenderedSurface = expectDefined(
+        el.querySelector<HTMLElement>('.abyss-tag-dropdown-wrap'),
+      );
       state.set('taskStack', [task({ title: 'Rerendered tag lifecycle' })]);
       expect(rerenderedSurface.isConnected).toBe(false);
       expect(escapeTrigger.getAttribute('aria-expanded')).toBe('false');
 
       const destroyTrigger = trigger();
       click(destroyTrigger);
-      const destroyedSurface = el.querySelector<HTMLElement>('.abyss-tag-dropdown-wrap')!;
+      const destroyedSurface = expectDefined(
+        el.querySelector<HTMLElement>('.abyss-tag-dropdown-wrap'),
+      );
       panel.destroy();
       expect(destroyedSurface.isConnected).toBe(false);
       expect(destroyTrigger.getAttribute('aria-expanded')).toBe('false');
@@ -1666,7 +1753,7 @@ describe('RightPanel popovers', () => {
       Object.assign(
         task({
           title: 'T',
-          planning: { time: '15:00', duration: undefined },
+          planning: { time: '15:00' },
           source: {
             filePath: 'f.md',
             line: 0,
@@ -1677,9 +1764,11 @@ describe('RightPanel popovers', () => {
         { ref },
       ),
     ]);
-    const chip = el.querySelector<HTMLElement>('.abyss-chip-time')!;
+    const chip = expectDefined(el.querySelector<HTMLElement>('.abyss-chip-time'));
     click(chip);
-    const durationInput = el.querySelector<HTMLInputElement>('.abyss-duration-input')!;
+    const durationInput = expectDefined(
+      el.querySelector<HTMLInputElement>('.abyss-duration-input'),
+    );
     durationInput.value = '2h';
     durationInput.dispatchEvent(new Event('change', { bubbles: true }));
     await flushMicrotasks();
@@ -1699,8 +1788,8 @@ describe('RightPanel popovers', () => {
       ref: { originalBlock: '  - [ ] sub ⏰ 09:00' },
     });
     const parent = task({ title: 'Parent', subtasks: [sub] });
-    state.set('taskStack', [parent, parent.subtasks[0]!]);
-    const chip = el.querySelector<HTMLElement>('.abyss-chip-time')!;
+    state.set('taskStack', [parent, expectDefined(parent.subtasks[0])]);
+    const chip = expectDefined(el.querySelector<HTMLElement>('.abyss-chip-time'));
     click(chip);
     expect(el.querySelector('.abyss-time-popover')).not.toBeNull();
     expect(el.querySelector('.abyss-duration-input')).toBeNull();
@@ -1709,7 +1798,7 @@ describe('RightPanel popovers', () => {
   it('priority chip click → priority popover appears with options', async () => {
     const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
-    const chip = el.querySelector<HTMLElement>('.abyss-priority-chip')!;
+    const chip = expectDefined(el.querySelector<HTMLElement>('.abyss-priority-chip'));
     click(chip);
     const pop = el.querySelector('.abyss-priority-popover');
     expect(pop).not.toBeNull();
@@ -1720,7 +1809,7 @@ describe('RightPanel popovers', () => {
   it('priority popover options use the shared menu option structure', async () => {
     const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'F' })]);
-    const chip = el.querySelector<HTMLElement>('.abyss-priority-chip')!;
+    const chip = expectDefined(el.querySelector<HTMLElement>('.abyss-priority-chip'));
     click(chip);
 
     const active = el.querySelector<HTMLElement>('.abyss-priority-option.is-active');
@@ -1741,20 +1830,20 @@ describe('RightPanel popovers', () => {
   it('moves focus into the selected priority option and owns Escape dismissal', async () => {
     const { panel, state, el } = await makePanel();
     const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = frame.contentDocument!;
+    const ownerDocument = expectDefined(frame.contentDocument);
     ownerDocument.body.append(ownerDocument.adoptNode(el));
     state.set('taskStack', [task({ title: 'Keyboard priority', priority: 'F' })]);
-    const chip = el.querySelector<HTMLButtonElement>('.abyss-priority-chip')!;
+    const chip = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-priority-chip'));
     const escapedToDocument = vi.fn();
     ownerDocument.addEventListener('keydown', escapedToDocument);
 
     try {
       chip.focus();
       click(chip);
-      const popover = el.querySelector<HTMLElement>('.abyss-priority-popover')!;
-      const selected = popover.querySelector<HTMLButtonElement>(
-        '.abyss-priority-option.is-active',
-      )!;
+      const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-priority-popover'));
+      const selected = expectDefined(
+        popover.querySelector<HTMLButtonElement>('.abyss-priority-option.is-active'),
+      );
 
       expect(popover.contains(ownerDocument.activeElement)).toBe(true);
       expect(ownerDocument.activeElement).toBe(selected);
@@ -1772,9 +1861,9 @@ describe('RightPanel popovers', () => {
       expect(ownerDocument.activeElement).toBe(chip);
 
       click(chip);
-      const highest = el.querySelector<HTMLButtonElement>(
-        '.abyss-priority-option[data-priority="A"]',
-      )!;
+      const highest = expectDefined(
+        el.querySelector<HTMLButtonElement>('.abyss-priority-option[data-priority="A"]'),
+      );
       click(highest);
       expect(el.querySelector('.abyss-priority-popover')).toBeNull();
       expect(ownerDocument.activeElement).toBe(chip);
@@ -1789,7 +1878,7 @@ describe('RightPanel popovers', () => {
   it('converts viewport placement to a bordered and scrolled panel padding box', async () => {
     const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
-    const chip = el.querySelector<HTMLElement>('.abyss-priority-chip')!;
+    const chip = expectDefined(el.querySelector<HTMLElement>('.abyss-priority-chip'));
     Object.defineProperty(el, 'getBoundingClientRect', {
       configurable: true,
       value: () => rect(100, 50, 300, 240),
@@ -1804,7 +1893,7 @@ describe('RightPanel popovers', () => {
       configurable: true,
       value: () => rect(370, 80, 20, 20),
     });
-    const real = HTMLElement.prototype.getBoundingClientRect;
+    const real = methodOf(HTMLElement.prototype, 'getBoundingClientRect');
     const measure = vi
       .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function (this: HTMLElement) {
@@ -1814,7 +1903,7 @@ describe('RightPanel popovers', () => {
 
     click(chip);
 
-    const popover = el.querySelector<HTMLElement>('.abyss-priority-popover')!;
+    const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-priority-popover'));
     expect(popover.parentElement).toBe(el);
     expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('180px');
     expect(popover.style.getPropertyValue('--abyss-pop-top')).toBe('62px');
@@ -1832,8 +1921,7 @@ describe('RightPanel popovers', () => {
     'anchors every floating task surface to its actual containing block: %s',
     async (_surface, triggerSelector, popoverSelector, expectedLeft) => {
       const { panel, state, el } = await makePanel();
-      const containingBlock = el.ownerDocument.createElement('div');
-      el.ownerDocument.body.append(containingBlock);
+      const containingBlock = appendElement(el.ownerDocument, 'div');
       containingBlock.append(el);
       state.set('taskStack', [
         task({
@@ -1862,12 +1950,12 @@ describe('RightPanel popovers', () => {
         configurable: true,
         value: () => rect(30, 20, 500, 400),
       });
-      const trigger = el.querySelector<HTMLElement>(triggerSelector)!;
+      const trigger = expectDefined(el.querySelector<HTMLElement>(triggerSelector));
       Object.defineProperty(trigger, 'getBoundingClientRect', {
         configurable: true,
         value: () => rect(200, 100, 20, 20),
       });
-      const realRect = HTMLElement.prototype.getBoundingClientRect;
+      const realRect = methodOf(HTMLElement.prototype, 'getBoundingClientRect');
       const measure = vi
         .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
         .mockImplementation(function (this: HTMLElement) {
@@ -1884,7 +1972,7 @@ describe('RightPanel popovers', () => {
       try {
         click(trigger);
 
-        const popover = el.querySelector<HTMLElement>(popoverSelector)!;
+        const popover = expectDefined(el.querySelector<HTMLElement>(popoverSelector));
         expect(popover.offsetParent).toBe(containingBlock);
         expect(popover.offsetParent).not.toBe(el);
         expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe(`${expectedLeft}px`);
@@ -1907,11 +1995,11 @@ describe('RightPanel popovers', () => {
     const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
     const ownerDocument = el.ownerDocument;
-    const ownerWindow = ownerDocument.defaultView!;
+    const ownerWindow = expectDefined(ownerDocument.defaultView);
     const removeWindowListener = vi.spyOn(ownerWindow, 'removeEventListener');
     const removeDocumentListener = vi.spyOn(ownerDocument, 'removeEventListener');
 
-    click(el.querySelector<HTMLElement>('.abyss-priority-chip')!);
+    click(expectDefined(el.querySelector<HTMLElement>('.abyss-priority-chip')));
     panel.destroy();
 
     expect(removeWindowListener).toHaveBeenCalledWith('resize', expect.any(Function));
@@ -1924,8 +2012,8 @@ describe('RightPanel popovers', () => {
     vi.useFakeTimers();
     const addListener = vi.spyOn(el.ownerDocument, 'addEventListener');
 
-    click(el.querySelector<HTMLElement>('.abyss-priority-chip')!);
-    click(el.querySelector<HTMLElement>('.abyss-chip-time')!);
+    click(expectDefined(el.querySelector<HTMLElement>('.abyss-priority-chip')));
+    click(expectDefined(el.querySelector<HTMLElement>('.abyss-chip-time')));
     vi.runOnlyPendingTimers();
 
     const installedDismissals = addListener.mock.calls.filter(
@@ -1942,7 +2030,7 @@ describe('RightPanel popovers', () => {
     vi.useFakeTimers();
     const addListener = vi.spyOn(el.ownerDocument, 'addEventListener');
 
-    click(el.querySelector<HTMLElement>('.abyss-priority-chip')!);
+    click(expectDefined(el.querySelector<HTMLElement>('.abyss-priority-chip')));
     panel.destroy();
     vi.runOnlyPendingTimers();
 
@@ -1958,7 +2046,7 @@ describe('RightPanel popovers', () => {
     const addListener = vi.spyOn(el.ownerDocument, 'addEventListener');
     const removeListener = vi.spyOn(el.ownerDocument, 'removeEventListener');
 
-    click(el.querySelector<HTMLElement>('.abyss-priority-chip')!);
+    click(expectDefined(el.querySelector<HTMLElement>('.abyss-priority-chip')));
     vi.runOnlyPendingTimers();
     const dismissalListener = addListener.mock.calls.find(
       ([type, , options]) => type === 'click' && options === true,
@@ -1973,13 +2061,13 @@ describe('RightPanel popovers', () => {
     const { panel, state, el } = await makePanel();
     activeDocument.body.append(el);
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
-    const chip = el.querySelector<HTMLElement>('.abyss-priority-chip')!;
+    const chip = expectDefined(el.querySelector<HTMLElement>('.abyss-priority-chip'));
     click(chip);
     expect(el.querySelector('.abyss-priority-popover')).not.toBeNull();
     // The outside-click listener is registered via setTimeout(0); wait for it.
     await tick(5);
     // Click on an unrelated element (the title view) — bubbles to el → once:click removes pop.
-    const title = el.querySelector<HTMLElement>('.abyss-right-title-view')!;
+    const title = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
     click(title);
     expect(el.querySelector('.abyss-priority-popover')).toBeNull();
     panel.destroy();
@@ -1990,9 +2078,7 @@ describe('RightPanel popovers', () => {
 describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priority)', () => {
   it('unset Start and Plan render NO placeholder badges in the top chip row; a "+" control is offered instead', async () => {
     const { state, el } = await makePanel();
-    state.set('taskStack', [
-      task({ title: 'Dated', planning: { due: '2026-06-25', duration: undefined } }),
-    ]);
+    state.set('taskStack', [task({ title: 'Dated', planning: { due: '2026-06-25' } })]);
     // No placeholder pills for unset Start/Plan clutter the main row any more.
     expect(el.querySelector('.abyss-chip-start')).toBeNull();
     expect(el.querySelector('.abyss-chip-scheduled')).toBeNull();
@@ -2008,7 +2094,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     state.set('taskStack', [
       task({
         title: 'Sched',
-        planning: { due: undefined, scheduled: '2026-07-05', duration: undefined },
+        planning: { scheduled: '2026-07-05' },
       }),
     ]);
     const chip = el.querySelector('.abyss-chip-scheduled');
@@ -2021,7 +2107,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     state.set('taskStack', [
       task({
         title: 'Started',
-        planning: { due: undefined, start: '2026-07-05', duration: undefined },
+        planning: { start: '2026-07-05' },
       }),
     ]);
     const chip = el.querySelector('.abyss-chip-start');
@@ -2031,18 +2117,16 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
 
   it('the "+" control\'s menu offers both Start and Plan when neither is set', async () => {
     const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = frame.contentDocument!;
+    const ownerDocument = expectDefined(frame.contentDocument);
     const { state, el, panel } = await makePanel();
     ownerDocument.body.append(ownerDocument.adoptNode(el));
-    state.set('taskStack', [
-      task({ title: 'Dated', planning: { due: '2026-06-25', duration: undefined } }),
-    ]);
-    const addBtn = el.querySelector<HTMLElement>('.abyss-chip-add-date')!;
+    state.set('taskStack', [task({ title: 'Dated', planning: { due: '2026-06-25' } })]);
+    const addBtn = expectDefined(el.querySelector<HTMLElement>('.abyss-chip-add-date'));
     try {
       addBtn.focus();
       click(addBtn);
-      const menu = el.querySelector<HTMLElement>('.abyss-add-date-menu')!;
-      const firstItem = menu.querySelector<HTMLElement>('.abyss-add-date-menu-item')!;
+      const menu = expectDefined(el.querySelector<HTMLElement>('.abyss-add-date-menu'));
+      const firstItem = expectDefined(menu.querySelector<HTMLElement>('.abyss-add-date-menu-item'));
       expect(menu.getAttribute('role')).toBe('menu');
       expect(firstItem.getAttribute('role')).toBe('menuitem');
       expect(firstItem.tabIndex).toBe(0);
@@ -2051,7 +2135,10 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
       expect(menu.textContent).toContain('Plan');
 
       firstItem.dispatchEvent(
-        new ownerDocument.defaultView!.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+        new (expectDefined(ownerDocument.defaultView).KeyboardEvent)('keydown', {
+          key: 'Escape',
+          bubbles: true,
+        }),
       );
       expect(el.querySelector('.abyss-add-date-menu')).toBeNull();
       expect(ownerDocument.activeElement).toBe(addBtn);
@@ -2064,10 +2151,8 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
 
   it('keeps a wrapped left-edge "+ date" chooser inside a narrow panel as a compact child surface', async () => {
     const { state, el } = await makePanel();
-    state.set('taskStack', [
-      task({ title: 'Dated', planning: { due: '2026-06-25', duration: undefined } }),
-    ]);
-    const addBtn = el.querySelector<HTMLElement>('.abyss-chip-add-date')!;
+    state.set('taskStack', [task({ title: 'Dated', planning: { due: '2026-06-25' } })]);
+    const addBtn = expectDefined(el.querySelector<HTMLElement>('.abyss-chip-add-date'));
     Object.defineProperty(el, 'getBoundingClientRect', {
       configurable: true,
       value: () => rect(100, 40, 180, 280),
@@ -2076,7 +2161,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
       configurable: true,
       value: () => rect(96, 120, 50, 24),
     });
-    const real = HTMLElement.prototype.getBoundingClientRect;
+    const real = methodOf(HTMLElement.prototype, 'getBoundingClientRect');
     const measure = vi
       .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function (this: HTMLElement) {
@@ -2086,7 +2171,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
 
     click(addBtn);
 
-    const menu = el.querySelector<HTMLElement>('.abyss-add-date-menu')!;
+    const menu = expectDefined(el.querySelector<HTMLElement>('.abyss-add-date-menu'));
     expect(menu.parentElement).toBe(el);
     expect(addBtn.contains(menu)).toBe(false);
     expect(menu.classList.contains('abyss-add-date-menu--compact')).toBe(true);
@@ -2104,12 +2189,12 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     state.set('taskStack', [
       task({
         title: 'Sched',
-        planning: { due: undefined, scheduled: '2026-07-05', duration: undefined },
+        planning: { scheduled: '2026-07-05' },
       }),
     ]);
     // Plan is set, so it renders as a normal pill and is no longer offered in the menu.
     expect(el.querySelector('.abyss-chip-scheduled')).not.toBeNull();
-    const addBtn = el.querySelector<HTMLElement>('.abyss-chip-add-date')!;
+    const addBtn = expectDefined(el.querySelector<HTMLElement>('.abyss-chip-add-date'));
     click(addBtn);
     const menu = el.querySelector('.abyss-add-date-menu');
     expect(menu).not.toBeNull();
@@ -2122,7 +2207,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     state.set('taskStack', [
       task({
         title: 'Both',
-        planning: { start: '2026-07-01', scheduled: '2026-07-05', duration: undefined },
+        planning: { start: '2026-07-01', scheduled: '2026-07-05' },
       }),
     ]);
     expect(el.querySelector('.abyss-chip-add-date')).toBeNull();
@@ -2130,14 +2215,14 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
 
   it('Space on "Start" in the "+" menu opens the shared date popover', async () => {
     const { state, el } = await makePanel();
-    state.set('taskStack', [
-      task({ title: 'Dated', planning: { due: '2026-06-25', duration: undefined } }),
-    ]);
-    const addBtn = el.querySelector<HTMLElement>('.abyss-chip-add-date')!;
+    state.set('taskStack', [task({ title: 'Dated', planning: { due: '2026-06-25' } })]);
+    const addBtn = expectDefined(el.querySelector<HTMLElement>('.abyss-chip-add-date'));
     click(addBtn);
-    const startOption = Array.from(
-      el.querySelectorAll<HTMLElement>('.abyss-add-date-menu-item'),
-    ).find((o) => o.textContent?.includes('Start'))!;
+    const startOption = expectDefined(
+      Array.from(el.querySelectorAll<HTMLElement>('.abyss-add-date-menu-item')).find((o) =>
+        o.textContent.includes('Start'),
+      ),
+    );
     startOption.dispatchEvent(
       new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),
     );
@@ -2148,14 +2233,14 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
 
   it('clicking "Plan" in the "+" menu opens the same date popover style used for the due-date chip', async () => {
     const { state, el } = await makePanel();
-    state.set('taskStack', [
-      task({ title: 'Dated', planning: { due: '2026-06-25', duration: undefined } }),
-    ]);
-    const addBtn = el.querySelector<HTMLElement>('.abyss-chip-add-date')!;
+    state.set('taskStack', [task({ title: 'Dated', planning: { due: '2026-06-25' } })]);
+    const addBtn = expectDefined(el.querySelector<HTMLElement>('.abyss-chip-add-date'));
     click(addBtn);
-    const planOption = Array.from(
-      el.querySelectorAll<HTMLElement>('.abyss-add-date-menu-item'),
-    ).find((o) => o.textContent?.includes('Plan'))!;
+    const planOption = expectDefined(
+      Array.from(el.querySelectorAll<HTMLElement>('.abyss-add-date-menu-item')).find((o) =>
+        o.textContent.includes('Plan'),
+      ),
+    );
     click(planOption);
     const popover = el.querySelector('.abyss-date-popover');
     expect(popover).not.toBeNull();
@@ -2177,7 +2262,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
       Object.assign(
         task({
           title: 'Dated',
-          planning: { due: '2026-06-25', duration: undefined },
+          planning: { due: '2026-06-25' },
           source: {
             filePath: 'f.md',
             line: 0,
@@ -2188,13 +2273,17 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
         { ref },
       ),
     ]);
-    const addBtn = el.querySelector<HTMLElement>('.abyss-chip-add-date')!;
+    const addBtn = expectDefined(el.querySelector<HTMLElement>('.abyss-chip-add-date'));
     click(addBtn);
-    const startOption = Array.from(
-      el.querySelectorAll<HTMLElement>('.abyss-add-date-menu-item'),
-    ).find((o) => o.textContent?.includes('Start'))!;
+    const startOption = expectDefined(
+      Array.from(el.querySelectorAll<HTMLElement>('.abyss-add-date-menu-item')).find((o) =>
+        o.textContent.includes('Start'),
+      ),
+    );
     click(startOption);
-    const input = el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input')!;
+    const input = expectDefined(
+      el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input'),
+    );
     input.value = '2026-07-01';
     input.dispatchEvent(new Event('change'));
     await flushMicrotasks();
@@ -2215,7 +2304,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     });
     // Drill into the sub-task directly, the same way clicking its label would.
     const parent = task({ title: 'Parent', subtasks: [sub] });
-    state.set('taskStack', [parent, parent.subtasks[0]!]);
+    state.set('taskStack', [parent, expectDefined(parent.subtasks[0])]);
     expect(el.querySelector('.abyss-planning-section')).toBeNull();
     expect(el.querySelector('.abyss-chip-start')).toBeNull();
     expect(el.querySelector('.abyss-chip-scheduled')).toBeNull();
@@ -2225,7 +2314,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
   it('time chip keeps the alarm marker and exposes exact empty, time, and duration states', async () => {
     const emptyPanel = await makePanel();
     emptyPanel.state.set('taskStack', [task({ title: 'Empty time' })]);
-    const empty = emptyPanel.el.querySelector<HTMLButtonElement>('.abyss-chip-time')!;
+    const empty = expectDefined(emptyPanel.el.querySelector<HTMLButtonElement>('.abyss-chip-time'));
     expect(empty.textContent).toBe('⏰ Time');
     expect(empty.getAttribute('aria-label')).toBe('Set time and duration');
 
@@ -2233,7 +2322,9 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     withBothPanel.state.set('taskStack', [
       task({ title: 'TD', planning: { time: '15:00', duration: 90 } }),
     ]);
-    const withBoth = withBothPanel.el.querySelector<HTMLButtonElement>('.abyss-chip-time')!;
+    const withBoth = expectDefined(
+      withBothPanel.el.querySelector<HTMLButtonElement>('.abyss-chip-time'),
+    );
     expect(withBoth.textContent).toBe('⏰ 15:00 · 1h30m');
     expect(withBoth.getAttribute('aria-label')).toBe(
       'Change time, currently 15:00, duration 90 minutes',
@@ -2241,7 +2332,9 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
 
     const timeOnlyPanel = await makePanel();
     timeOnlyPanel.state.set('taskStack', [task({ title: 'T', planning: { time: '15:00' } })]);
-    const timeOnly = timeOnlyPanel.el.querySelector<HTMLButtonElement>('.abyss-chip-time')!;
+    const timeOnly = expectDefined(
+      timeOnlyPanel.el.querySelector<HTMLButtonElement>('.abyss-chip-time'),
+    );
     expect(timeOnly.textContent).toBe('⏰ 15:00');
     expect(timeOnly.getAttribute('aria-label')).toBe('Change time, currently 15:00, no duration');
   });

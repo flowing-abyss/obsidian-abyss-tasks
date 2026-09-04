@@ -1,10 +1,8 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
-const ROOT = resolve(import.meta.dirname, '..');
-const SRC_ROOT = resolve(ROOT, 'src');
+const ROOT = ts.sys.resolvePath(`${import.meta.dirname}/..`);
+const SRC_ROOT = ts.sys.resolvePath(`${ROOT}/src`);
 const TASK_PUBLIC_ENTRY = 'src/tasks';
 const RECURRENCE_ENGINE = 'src/tasks/domain/recurrence.ts';
 
@@ -54,7 +52,7 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
     mutation: 'destination provisioning',
     reason: 'Creates an empty daily or project destination note.',
   },
-  'src/tags/TagManager.ts#TagManager.renameAcrossVault#process#1': {
+  'src/tags/TagManager.ts#TagManager.applyVaultRenames#process#1': {
     mutation: 'vault-wide tag rename',
     reason: 'A global tag rename intentionally updates task and non-task text across the vault.',
   },
@@ -126,45 +124,45 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {
 };
 
 function source(path: string): string {
-  return readFileSync(resolve(ROOT, path), 'utf8');
+  const content = ts.sys.readFile(ts.sys.resolvePath(`${ROOT}/${path}`));
+  if (content === undefined) throw new Error(`Unable to read ${path}`);
+  return content;
 }
 
 function sourceFiles(directory = SRC_ROOT): string[] {
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const path = resolve(directory, entry.name);
-    if (entry.isDirectory()) return sourceFiles(path);
-    return entry.isFile() && entry.name.endsWith('.ts') ? [path] : [];
-  });
+  return ts.sys.readDirectory(directory, ['.ts'], undefined, ['**/*.ts']);
 }
 
 function typeScriptFiles(directory: string): string[] {
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const path = resolve(directory, entry.name);
-    if (entry.isDirectory()) return typeScriptFiles(path);
-    return entry.isFile() && entry.name.endsWith('.ts') ? [path] : [];
-  });
+  return sourceFiles(directory);
 }
 
 function retiredNamespaceSites(): string[] {
   const retiredPrefix = ['t', 'c', '-'].join('');
   const files = [
     ...typeScriptFiles(SRC_ROOT),
-    ...typeScriptFiles(resolve(ROOT, 'test')),
-    resolve(ROOT, 'styles.css'),
+    ...typeScriptFiles(ts.sys.resolvePath(`${ROOT}/test`)),
+    ts.sys.resolvePath(`${ROOT}/styles.css`),
   ];
   return files.flatMap((absolute) => {
     const path = repoPath(absolute);
-    const matches = source(path).match(new RegExp(retiredPrefix, 'gu')) ?? [];
+    const matches = [...source(path).matchAll(new RegExp(retiredPrefix, 'gu'))];
     return matches.map(() => path);
   });
 }
 
 function calendarModules(): string[] {
-  return [...CALENDAR_COMPOSITION_ROOTS, ...sourceFiles(resolve(SRC_ROOT, 'views')).map(repoPath)];
+  return [
+    ...CALENDAR_COMPOSITION_ROOTS,
+    ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/views`)).map(repoPath),
+  ];
 }
 
 function repoPath(path: string): string {
-  return relative(ROOT, path).replace(/\\/gu, '/');
+  const normalizedRoot = ROOT.replace(/\\/gu, '/');
+  const normalizedPath = path.replace(/\\/gu, '/');
+  const prefix = `${normalizedRoot}/`;
+  return normalizedPath.startsWith(prefix) ? normalizedPath.slice(prefix.length) : normalizedPath;
 }
 
 function syntax(path: string): ts.SourceFile {
@@ -181,7 +179,10 @@ function moduleStem(path: string): string {
 
 function resolvedImport(path: string, specifier: string): string | undefined {
   if (!specifier.startsWith('.')) return undefined;
-  return moduleStem(repoPath(resolve(dirname(resolve(ROOT, path)), specifier)));
+  const absolute = ts.sys.resolvePath(`${ROOT}/${path}`);
+  const separator = absolute.lastIndexOf('/');
+  const directory = separator < 0 ? ROOT : absolute.slice(0, separator);
+  return moduleStem(repoPath(ts.sys.resolvePath(`${directory}/${specifier}`)));
 }
 
 interface ImportRecord {
@@ -193,114 +194,137 @@ function imports(path: string): ImportRecord[] {
   return importsFromSyntax(syntax(path));
 }
 
+function importBindingNames(clause: ts.ImportClause | undefined): string[] {
+  const names: string[] = [];
+  if (clause?.name != null) names.push(clause.name.text);
+  if (clause?.namedBindings != null && ts.isNamedImports(clause.namedBindings)) {
+    names.push(...clause.namedBindings.elements.map((item) => item.name.text));
+  }
+  if (clause?.namedBindings != null && ts.isNamespaceImport(clause.namedBindings)) names.push('*');
+  return names;
+}
+
+function importDeclarationRecord(node: ts.Node): ImportRecord | undefined {
+  if (!ts.isImportDeclaration(node) || !ts.isStringLiteralLike(node.moduleSpecifier)) {
+    return undefined;
+  }
+  return { specifier: node.moduleSpecifier.text, names: importBindingNames(node.importClause) };
+}
+
+function exportDeclarationRecord(node: ts.Node): ImportRecord | undefined {
+  if (
+    ts.isExportDeclaration(node) &&
+    node.moduleSpecifier != null &&
+    ts.isStringLiteralLike(node.moduleSpecifier)
+  ) {
+    return { specifier: node.moduleSpecifier.text, names: [] };
+  }
+  return undefined;
+}
+
+function typedImportRecord(node: ts.Node): ImportRecord | undefined {
+  if (
+    ts.isImportEqualsDeclaration(node) &&
+    ts.isExternalModuleReference(node.moduleReference) &&
+    ts.isStringLiteralLike(node.moduleReference.expression)
+  ) {
+    return { specifier: node.moduleReference.expression.text, names: [node.name.text] };
+  }
+  if (
+    ts.isImportTypeNode(node) &&
+    ts.isLiteralTypeNode(node.argument) &&
+    ts.isStringLiteralLike(node.argument.literal)
+  ) {
+    return {
+      specifier: node.argument.literal.text,
+      names: node.qualifier != null ? [node.qualifier.getText()] : ['*'],
+    };
+  }
+  return undefined;
+}
+
+function dynamicImportRecord(node: ts.Node): ImportRecord | undefined {
+  if (!ts.isCallExpression(node)) return undefined;
+  const firstArgument = node.arguments[0];
+  if (firstArgument === undefined || !ts.isStringLiteralLike(firstArgument)) return undefined;
+  const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+  const isRequire =
+    node.arguments.length === 1 &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === 'require';
+  return isDynamicImport || isRequire ? { specifier: firstArgument.text, names: ['*'] } : undefined;
+}
+
+function importRecord(node: ts.Node): ImportRecord | undefined {
+  return (
+    importDeclarationRecord(node) ??
+    exportDeclarationRecord(node) ??
+    typedImportRecord(node) ??
+    dynamicImportRecord(node)
+  );
+}
+
 function importsFromSyntax(module: ts.SourceFile): ImportRecord[] {
   const result: ImportRecord[] = [];
   const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
-      const names: string[] = [];
-      const clause = node.importClause;
-      if (clause?.name) names.push(clause.name.text);
-      if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
-        names.push(...clause.namedBindings.elements.map((item) => item.name.text));
-      }
-      if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
-        names.push('*');
-      }
-      result.push({ specifier: node.moduleSpecifier.text, names });
-    }
-    if (
-      ts.isExportDeclaration(node) &&
-      node.moduleSpecifier &&
-      ts.isStringLiteralLike(node.moduleSpecifier)
-    ) {
-      result.push({ specifier: node.moduleSpecifier.text, names: [] });
-    }
-    if (
-      ts.isImportEqualsDeclaration(node) &&
-      ts.isExternalModuleReference(node.moduleReference) &&
-      node.moduleReference.expression &&
-      ts.isStringLiteralLike(node.moduleReference.expression)
-    ) {
-      result.push({
-        specifier: node.moduleReference.expression.text,
-        names: [node.name.text],
-      });
-    }
-    if (
-      ts.isImportTypeNode(node) &&
-      ts.isLiteralTypeNode(node.argument) &&
-      ts.isStringLiteralLike(node.argument.literal)
-    ) {
-      result.push({
-        specifier: node.argument.literal.text,
-        names: node.qualifier ? [node.qualifier.getText()] : ['*'],
-      });
-    }
-    if (
-      ts.isCallExpression(node) &&
-      node.arguments.length >= 1 &&
-      ts.isStringLiteralLike(node.arguments[0]!) &&
-      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-        (node.arguments.length === 1 &&
-          ts.isIdentifier(node.expression) &&
-          node.expression.text === 'require'))
-    ) {
-      result.push({ specifier: node.arguments[0]!.text, names: ['*'] });
-    }
+    const record = importRecord(node);
+    if (record !== undefined) result.push(record);
     ts.forEachChild(node, visit);
   };
   visit(module);
   return result;
 }
 
-function dependencyViolationsFor(path: string, records: readonly ImportRecord[]): string[] {
+function domainDependencyViolation(path: string, record: ImportRecord): string | undefined {
+  if (!path.startsWith('src/tasks/domain/')) return undefined;
+  if (path === RECURRENCE_ENGINE && record.specifier === 'rrule') return undefined;
+  const target = resolvedImport(path, record.specifier);
+  const forbiddenTarget = target?.startsWith('src/tasks/domain/') !== true;
+  return forbiddenTarget ? `${path} -> ${record.specifier}` : undefined;
+}
+
+function applicationDependencyViolation(path: string, record: ImportRecord): string | undefined {
+  if (!path.startsWith('src/tasks/application/')) return undefined;
+  const target = resolvedImport(path, record.specifier);
+  const allowed =
+    target?.startsWith('src/tasks/application/') === true ||
+    target?.startsWith('src/tasks/domain/') === true;
+  return allowed ? undefined : `${path} -> ${record.specifier}`;
+}
+
+function infrastructureDependencyViolations(path: string, record: ImportRecord): string[] {
+  if (!path.startsWith('src/tasks/infrastructure/')) return [];
   const violations: string[] = [];
-  if (path.startsWith('src/tasks/domain/')) {
-    for (const record of records) {
-      const target = resolvedImport(path, record.specifier);
-      const allowedRecurrenceBoundary = path === RECURRENCE_ENGINE && record.specifier === 'rrule';
-      if (
-        !allowedRecurrenceBoundary &&
-        (record.specifier === 'obsidian' ||
-          target === undefined ||
-          !target.startsWith('src/tasks/domain/'))
-      ) {
-        violations.push(`${path} -> ${record.specifier}`);
-      }
-    }
+  const target = resolvedImport(path, record.specifier);
+  if (target !== undefined && /^(?:src\/(?:panels|ui|views))(?:\/|$)/u.test(target)) {
+    violations.push(`${path} -> ${record.specifier}`);
   }
-  if (path.startsWith('src/tasks/application/')) {
-    for (const record of records) {
-      const target = resolvedImport(path, record.specifier);
-      const allowed =
-        target?.startsWith('src/tasks/application/') === true ||
-        target?.startsWith('src/tasks/domain/') === true;
-      if (!allowed) violations.push(`${path} -> ${record.specifier}`);
-    }
-  }
-  if (path.startsWith('src/tasks/infrastructure/')) {
-    for (const record of records) {
-      const target = resolvedImport(path, record.specifier);
-      if (target && /^(?:src\/(?:panels|ui|views))(?:\/|$)/u.test(target)) {
-        violations.push(`${path} -> ${record.specifier}`);
-      }
-      if (
-        record.specifier === 'obsidian' &&
-        (record.names.includes('Notice') || record.names.includes('*'))
-      ) {
-        violations.push(`${path} -> obsidian:${record.names.join(',')}`);
-      }
-    }
-  }
-  if (PRESENTATION_PATH.test(path) || PRESENTATION_FILES.has(path)) {
-    for (const record of records) {
-      const target = resolvedImport(path, record.specifier);
-      if (target?.startsWith('src/tasks/') && target !== TASK_PUBLIC_ENTRY) {
-        violations.push(`${path} -> ${record.specifier}`);
-      }
-    }
+  if (
+    record.specifier === 'obsidian' &&
+    (record.names.includes('Notice') || record.names.includes('*'))
+  ) {
+    violations.push(`${path} -> obsidian:${record.names.join(',')}`);
   }
   return violations;
+}
+
+function presentationDependencyViolation(path: string, record: ImportRecord): string | undefined {
+  if (!PRESENTATION_PATH.test(path) && !PRESENTATION_FILES.has(path)) return undefined;
+  const target = resolvedImport(path, record.specifier);
+  return target?.startsWith('src/tasks/') === true && target !== TASK_PUBLIC_ENTRY
+    ? `${path} -> ${record.specifier}`
+    : undefined;
+}
+
+function dependencyViolationsFor(path: string, records: readonly ImportRecord[]): string[] {
+  return records.flatMap((record) => {
+    const single = [
+      domainDependencyViolation(path, record),
+      applicationDependencyViolation(path, record),
+      presentationDependencyViolation(path, record),
+    ].filter((value): value is string => value !== undefined);
+    return [...single, ...infrastructureDependencyViolations(path, record)];
+  });
 }
 
 function dependencyViolations(): string[] {
@@ -308,39 +332,45 @@ function dependencyViolations(): string[] {
     const path = repoPath(absolute);
     return dependencyViolationsFor(path, imports(path));
   });
-  return violations.sort();
+  return violations.sort((left, right) => left.localeCompare(right));
+}
+
+function constructedDateBoundarySite(path: string, node: ts.Node): string | undefined {
+  if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
+    const explicitRecurrenceDate = path === RECURRENCE_ENGINE && node.arguments?.length === 1;
+    if (node.expression.text === 'Date' && !explicitRecurrenceDate) return `${path}:new Date`;
+  }
+  return undefined;
+}
+
+function calledDateBoundarySite(path: string, node: ts.Node): string | undefined {
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+    if (node.expression.text === 'Date') return `${path}:Date()`;
+  }
+  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) {
+    return undefined;
+  }
+  const receiver = node.expression.expression;
+  return ts.isIdentifier(receiver) &&
+    receiver.text === 'Date' &&
+    node.expression.name.text === 'now'
+    ? `${path}:Date.now`
+    : undefined;
+}
+
+function globalBoundarySite(path: string, node: ts.Node): string | undefined {
+  if (!ts.isIdentifier(node)) return undefined;
+  return node.text === 'window' || node.text === 'document' ? `${path}:${node.text}` : undefined;
 }
 
 function ambientBoundarySitesFor(path: string, module: ts.SourceFile): string[] {
   const sites: string[] = [];
   const visit = (node: ts.Node): void => {
-    if (
-      ts.isNewExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === 'Date' &&
-      !(path === RECURRENCE_ENGINE && node.arguments?.length === 1)
-    ) {
-      sites.push(`${path}:new Date`);
-    }
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === 'Date'
-    ) {
-      sites.push(`${path}:Date()`);
-    }
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === 'Date' &&
-      node.expression.name.text === 'now'
-    ) {
-      sites.push(`${path}:Date.now`);
-    }
-    if (ts.isIdentifier(node) && (node.text === 'window' || node.text === 'document')) {
-      sites.push(`${path}:${node.text}`);
-    }
+    const site =
+      constructedDateBoundarySite(path, node) ??
+      calledDateBoundarySite(path, node) ??
+      globalBoundarySite(path, node);
+    if (site !== undefined) sites.push(site);
     ts.forEachChild(node, visit);
   };
   visit(module);
@@ -349,7 +379,7 @@ function ambientBoundarySitesFor(path: string, module: ts.SourceFile): string[] 
 
 function ambientBoundarySites(): string[] {
   return ['tasks/domain', 'tasks/application'].flatMap((layer) =>
-    sourceFiles(resolve(SRC_ROOT, layer)).flatMap((absolute) => {
+    sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/${layer}`)).flatMap((absolute) => {
       const path = repoPath(absolute);
       return ambientBoundarySitesFor(path, syntax(path));
     }),
@@ -358,19 +388,19 @@ function ambientBoundarySites(): string[] {
 
 function memberName(node: ts.Node): string | undefined {
   if (ts.isConstructorDeclaration(node)) return 'constructor';
-  if (ts.isMethodDeclaration(node) && node.name) return node.name.getText();
+  if (ts.isMethodDeclaration(node)) return node.name.getText();
   if (ts.isFunctionDeclaration(node)) return node.name?.text;
   return undefined;
 }
 
 function ownerName(node: ts.Node): string {
-  let current: ts.Node | undefined = node.parent;
-  while (current) {
+  let current = node.parent;
+  while (!ts.isSourceFile(current)) {
     const member = memberName(current);
-    if (member) {
+    if (member !== undefined) {
       const parent = current.parent;
       const className = ts.isClassDeclaration(parent) ? parent.name?.text : undefined;
-      return className ? `${className}.${member}` : member;
+      return className !== undefined ? `${className}.${member}` : member;
     }
     current = current.parent;
   }
@@ -393,30 +423,40 @@ function unwrapCallTarget(expression: ts.Expression): ts.Expression {
   return current;
 }
 
+function callOperation(target: ts.Expression): string | undefined {
+  if (ts.isPropertyAccessExpression(target)) return target.name.text;
+  if (ts.isElementAccessExpression(target) && ts.isStringLiteralLike(target.argumentExpression)) {
+    return target.argumentExpression.text;
+  }
+  return undefined;
+}
+
+function directVaultReceiver(target: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(target) && !ts.isElementAccessExpression(target)) return false;
+  const receiver = target.expression;
+  return (
+    (ts.isPropertyAccessExpression(receiver) && receiver.name.text === 'vault') ||
+    (ts.isIdentifier(receiver) && receiver.text === 'vault')
+  );
+}
+
+function writerSiteBase(path: string, node: ts.CallExpression): string | undefined {
+  const target = unwrapCallTarget(node.expression);
+  const operation = callOperation(target);
+  const isWriter =
+    operation === 'process' || (operation === 'create' && directVaultReceiver(target));
+  if (!isWriter) return undefined;
+  const label = operation === 'process' ? 'process' : 'vault.create';
+  return `${path}#${ownerName(node)}#${label}`;
+}
+
 function writerSitesFor(path: string, module: ts.SourceFile): string[] {
   const sites: string[] = [];
   const occurrenceByOwner = new Map<string, number>();
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
-      const target = unwrapCallTarget(node.expression);
-      const operation = ts.isPropertyAccessExpression(target)
-        ? target.name.text
-        : ts.isElementAccessExpression(target) &&
-            target.argumentExpression &&
-            ts.isStringLiteralLike(target.argumentExpression)
-          ? target.argumentExpression.text
-          : undefined;
-      const receiver =
-        ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)
-          ? target.expression
-          : undefined;
-      const directVaultReceiver =
-        receiver !== undefined &&
-        ((ts.isPropertyAccessExpression(receiver) && receiver.name.text === 'vault') ||
-          (ts.isIdentifier(receiver) && receiver.text === 'vault'));
-      if (operation === 'process' || (operation === 'create' && directVaultReceiver)) {
-        const label = operation === 'process' ? 'process' : 'vault.create';
-        const base = `${path}#${ownerName(node)}#${label}`;
+      const base = writerSiteBase(path, node);
+      if (base !== undefined) {
         const ordinal = (occurrenceByOwner.get(base) ?? 0) + 1;
         occurrenceByOwner.set(base, ordinal);
         sites.push(`${base}#${ordinal}`);
@@ -433,38 +473,46 @@ function writerSites(): string[] {
     const path = repoPath(absolute);
     return writerSitesFor(path, syntax(path));
   });
-  return sites.sort();
+  return sites.sort((left, right) => left.localeCompare(right));
+}
+
+function calendarWriteSite(
+  path: string,
+  module: ts.SourceFile,
+  node: ts.CallExpression,
+): string | undefined {
+  const target = unwrapCallTarget(node.expression);
+  if (!ts.isPropertyAccessExpression(target) && !ts.isElementAccessExpression(target)) {
+    return undefined;
+  }
+  const operation = callOperation(target);
+  if (operation === undefined) return undefined;
+  const receiver = target.expression.getText(module);
+  const isVaultWrite =
+    /(?:^|\.)vault(?:\.|$)/u.test(receiver) &&
+    ['process', 'modify', 'create', 'delete', 'rename', 'write', 'append'].includes(operation);
+  const isRepositoryWrite =
+    /(?:^|\.)repository(?:\.|$)/u.test(receiver) &&
+    ['edit', 'create', 'move', 'completeRecurrence'].includes(operation);
+  return isVaultWrite || isRepositoryWrite ? `${path}:${receiver}.${operation}` : undefined;
 }
 
 function calendarWriteSitesFor(path: string, module: ts.SourceFile): string[] {
   const sites: string[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
-      const target = unwrapCallTarget(node.expression);
-      if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
-        const operation = ts.isPropertyAccessExpression(target)
-          ? target.name.text
-          : target.argumentExpression && ts.isStringLiteralLike(target.argumentExpression)
-            ? target.argumentExpression.text
-            : undefined;
-        const receiver = target.expression.getText(module);
-        const isVaultWrite =
-          /(?:^|\.)vault(?:\.|$)/u.test(receiver) &&
-          operation !== undefined &&
-          ['process', 'modify', 'create', 'delete', 'rename', 'write', 'append'].includes(
-            operation,
-          );
-        const isRepositoryWrite =
-          /(?:^|\.)repository(?:\.|$)/u.test(receiver) &&
-          operation !== undefined &&
-          ['edit', 'create', 'move', 'completeRecurrence'].includes(operation);
-        if (isVaultWrite || isRepositoryWrite) sites.push(`${path}:${receiver}.${operation}`);
-      }
+      const site = calendarWriteSite(path, module, node);
+      if (site !== undefined) sites.push(site);
     }
     ts.forEachChild(node, visit);
   };
   visit(module);
   return sites;
+}
+
+function callName(target: ts.Expression): string | undefined {
+  if (ts.isIdentifier(target)) return target.text;
+  return ts.isPropertyAccessExpression(target) ? target.name.text : undefined;
 }
 
 function unsafeForecastSnapshotCastsFor(path: string, module: ts.SourceFile): string[] {
@@ -491,19 +539,15 @@ function recurrenceSubmitRoutesFor(path: string, module: ts.SourceFile): string[
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const target = unwrapCallTarget(node.expression);
-      const name = ts.isIdentifier(target)
-        ? target.text
-        : ts.isPropertyAccessExpression(target)
-          ? target.name.text
-          : undefined;
+      const name = callName(target);
       if (name === 'mountRecurrenceEditor' || name === 'mountAnchoredRecurrenceEditor') {
         const options = node.arguments[0];
-        if (!options || !ts.isObjectLiteralExpression(options)) return;
+        if (options == null || !ts.isObjectLiteralExpression(options)) return;
         const submit = options.properties.find(
           (property): property is ts.PropertyAssignment =>
             ts.isPropertyAssignment(property) && property.name.getText(module) === 'onSubmit',
         );
-        if (!submit) {
+        if (submit == null) {
           routes.push(`${path}:missing-onSubmit`);
           return;
         }
@@ -571,13 +615,13 @@ function barrelExports(): string[] {
   for (const statement of syntax('src/tasks/index.ts').statements) {
     if (
       !ts.isExportDeclaration(statement) ||
-      !statement.exportClause ||
+      statement.exportClause == null ||
       !ts.isNamedExports(statement.exportClause)
     )
       continue;
     names.push(...statement.exportClause.elements.map((item) => item.name.text));
   }
-  return names.sort();
+  return names.sort((left, right) => left.localeCompare(right));
 }
 
 function publicTaskImports(path: string): ReadonlySet<string> {
@@ -594,11 +638,11 @@ function publicInterfaceMembers(): string[] {
     if (statement.name.text !== 'TaskApplicationApi' && statement.name.text !== 'TaskQueryApi')
       continue;
     for (const member of statement.members) {
-      if (member.name && ts.isIdentifier(member.name))
+      if (member.name != null && ts.isIdentifier(member.name))
         result.push(`${statement.name.text}.${member.name.text}`);
     }
   }
-  return result.sort();
+  return result.sort((left, right) => left.localeCompare(right));
 }
 
 function propertyAccesses(path: string): ReadonlySet<string> {
@@ -730,7 +774,9 @@ describe('task architecture boundaries', () => {
   });
 
   it('removes every temporary mutation bridge and bridge marker', () => {
-    const existing = LEGACY_BRIDGE_FILES.filter((path) => existsSync(resolve(ROOT, path)));
+    const existing = LEGACY_BRIDGE_FILES.filter((path) =>
+      ts.sys.fileExists(ts.sys.resolvePath(`${ROOT}/${path}`)),
+    );
     const markers = sourceFiles()
       .map(repoPath)
       .filter((path) => source(path).includes('TASK-ARCH-BRIDGE'));
@@ -739,7 +785,9 @@ describe('task architecture boundaries', () => {
   });
 
   it('keeps every process or vault-create call on one exact, reasoned allowlist', () => {
-    expect(writerSites()).toEqual(Object.keys(ALLOWED_WRITER_CALLS).sort());
+    expect(writerSites()).toEqual(
+      Object.keys(ALLOWED_WRITER_CALLS).sort((left, right) => left.localeCompare(right)),
+    );
     expect(
       Object.values(ALLOWED_WRITER_CALLS).every(
         (entry) => entry.mutation.length > 0 && entry.reason.trim().length > 0,
@@ -815,7 +863,9 @@ describe('task architecture boundaries', () => {
   });
 
   it('keeps the public task barrel exact and backed by named production consumers', () => {
-    expect(barrelExports()).toEqual(Object.keys(PUBLIC_TASK_EXPORT_CONSUMERS).sort());
+    expect(barrelExports()).toEqual(
+      Object.keys(PUBLIC_TASK_EXPORT_CONSUMERS).sort((left, right) => left.localeCompare(right)),
+    );
     for (const [exportName, consumers] of Object.entries(PUBLIC_TASK_EXPORT_CONSUMERS)) {
       expect(
         consumers.some((path) => publicTaskImports(path).has(exportName)),
@@ -825,7 +875,11 @@ describe('task architecture boundaries', () => {
   });
 
   it('keeps every public application/query member exercised by a named production consumer', () => {
-    expect(publicInterfaceMembers()).toEqual(Object.keys(PUBLIC_INTERFACE_MEMBER_CONSUMERS).sort());
+    expect(publicInterfaceMembers()).toEqual(
+      Object.keys(PUBLIC_INTERFACE_MEMBER_CONSUMERS).sort((left, right) =>
+        left.localeCompare(right),
+      ),
+    );
     for (const [member, path] of Object.entries(PUBLIC_INTERFACE_MEMBER_CONSUMERS)) {
       const name = member.slice(member.indexOf('.') + 1);
       expect(propertyAccesses(path).has(name)).toBe(true);

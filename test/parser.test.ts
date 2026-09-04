@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { formatTaskLine, parseTask as parseTaskWithCatalog } from '../src/parser/TaskParser';
 import type { ParseContext } from '../src/parser/types';
-import { canonicalStatusCatalog } from './helpers';
+import { canonicalStatusCatalog, expectDefined } from './helpers';
 
 const statusCatalog = canonicalStatusCatalog();
 const parseTask = (rawText: string, ctx: Omit<ParseContext, 'statusCatalog'>) =>
@@ -502,7 +502,7 @@ describe('markdownText preserves link markup', () => {
   it('keeps wiki, alias and markdown links verbatim while stripping metadata + tags', () => {
     const raw =
       '- [ ] Read [[Sources|secondary sources]] and [docs](https://x.io) #task/reference 📅 2026-07-01 🔼';
-    const t = parseTask(raw, ctx)!;
+    const t = expectDefined(parseTask(raw, ctx));
     expect(t.markdownText).toBe('Read [[Sources|secondary sources]] and [docs](https://x.io)');
     // text keeps the collapsed, human-readable form (note name, not alias — matches
     // existing collapseLinks/wikilink-alias behavior, unchanged by this feature)
@@ -512,15 +512,17 @@ describe('markdownText preserves link markup', () => {
   });
 
   it('markdownText has no leftover tags or metadata emoji', () => {
-    const t = parseTask('- [ ] Plain task #task 📅 2026-07-01', ctx)!;
+    const t = expectDefined(parseTask('- [ ] Plain task #task 📅 2026-07-01', ctx));
     expect(t.markdownText).toBe('Plain task');
   });
 
   it('preserves inline-code tag lookalikes while removing only canonical tag spans', () => {
-    const t = parseTask('- [ ] Task `#task` #real #real', {
-      ...ctx,
-      globalTaskFilter: '#task',
-    })!;
+    const t = expectDefined(
+      parseTask('- [ ] Task `#task` #real #real', {
+        ...ctx,
+        globalTaskFilter: '#task',
+      }),
+    );
 
     expect(t.markdownText).toBe('Task `#task`');
     expect(t.text).toBe('Task `#task`');

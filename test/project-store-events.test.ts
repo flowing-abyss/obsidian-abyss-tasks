@@ -6,10 +6,12 @@ import type { TaskIndexEvent, TaskQueryApi, TaskSnapshot } from '../src/tasks';
 import { taskQueryApi } from './helpers';
 
 function tfile(path: string, extension = 'md'): TFile {
-  return Object.assign(Object.create(TFile.prototype) as object, {
+  const candidate: unknown = Object.assign(Object.create(TFile.prototype), {
     path,
     extension,
-  }) as TFile;
+  });
+  if (!(candidate instanceof TFile)) throw new Error('Expected a test file');
+  return candidate;
 }
 
 function task(status: TaskSnapshot['status']): TaskSnapshot {
@@ -49,7 +51,7 @@ function harness() {
   const file = tfile('Projects/A.md');
   let files = [file];
   const metadataChanged: Array<(file: TFile, data: string, cache: CachedMetadata) => void> = [];
-  const vaultHandlers = new Map<string, Array<() => void>>();
+  const vaultHandlers = new Map<string, Array<(file: TFile, oldPath?: string) => void>>();
   const refs = new Set<object>();
   const offref = vi.fn((ref: object) => refs.delete(ref));
   const on = (event: string, listener: (...args: never[]) => void): object => {
@@ -61,7 +63,7 @@ function harness() {
       );
     } else {
       const handlers = vaultHandlers.get(event) ?? [];
-      handlers.push(listener as unknown as () => void);
+      handlers.push(listener as unknown as (file: TFile, oldPath?: string) => void);
       vaultHandlers.set(event, handlers);
     }
     return ref;
@@ -105,7 +107,7 @@ function harness() {
       oldPath = 'Old.md',
     ) => {
       for (const listener of vaultHandlers.get(event) ?? []) {
-        (listener as (...args: unknown[]) => void)(changedFile, oldPath);
+        listener(changedFile, oldPath);
       }
     },
     index: (event: TaskIndexEvent) => indexListener?.(event),
@@ -190,7 +192,7 @@ describe('ProjectStore event convergence', () => {
           },
         },
       ],
-    } as CachedMetadata);
+    });
 
     expect(store.get(created.path)).toBeUndefined();
     expect(listener).not.toHaveBeenCalled();

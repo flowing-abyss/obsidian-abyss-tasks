@@ -1,4 +1,4 @@
-import { App, TFile } from 'obsidian';
+import { type App, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -144,8 +144,8 @@ describe('DailyNoteResolver destination planning', () => {
     expect(createFolder).toHaveBeenCalledOnce();
     expect(create).toHaveBeenCalledOnce();
     const file = app.vault.getAbstractFileByPath(`daily/original/${today}.md`);
-    expect(file).toBeInstanceOf(TFile);
-    expect(await app.vault.cachedRead(file as TFile)).toContain(`# ${today}`);
+    if (!(file instanceof TFile)) throw new Error('Expected a daily note file');
+    expect(await app.vault.cachedRead(file)).toContain(`# ${today}`);
   });
 
   it('keeps the legacy resolver adapter returning a TaskDestination', async () => {

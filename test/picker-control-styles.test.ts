@@ -1,8 +1,15 @@
-// eslint-disable-next-line import/no-nodejs-modules -- this contract reads the shipped stylesheet.
-import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
-const css = readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8');
+const stylesPath = ts.sys.resolvePath(`${import.meta.dirname}/../styles.css`);
+
+function readStyles(): string {
+  const content = ts.sys.readFile(stylesPath);
+  if (content === undefined) throw new Error(`Unable to read ${stylesPath}`);
+  return content;
+}
+
+const css = readStyles();
 
 function declarationsFor(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
@@ -112,7 +119,7 @@ describe('native picker button visual reset', () => {
     expect(focus).toContain('outline: 2px solid var(--interactive-accent)');
     expect(focus).toContain('outline-offset: 2px');
     expect(checked).toContain('background: var(--background-modifier-active-hover)');
-    expect(removing).toContain('background: rgba(var(--color-red-rgb), 0.08)');
+    expect(removing).toContain('background: rgb(var(--color-red-rgb), 0.08)');
     expect(
       css.indexOf('.abyss-tag-picker-modal button.abyss-tag-picker-item--checked'),
     ).toBeGreaterThan(css.indexOf('.abyss-tag-picker-modal button.abyss-tag-picker-item {'));
@@ -129,9 +136,7 @@ describe('native picker button visual reset', () => {
     expect(declarationsFor(checkedHover)).toContain(
       'background: var(--background-modifier-active-hover)',
     );
-    expect(declarationsFor(removingHover)).toContain(
-      'background: rgba(var(--color-red-rgb), 0.08)',
-    );
+    expect(declarationsFor(removingHover)).toContain('background: rgb(var(--color-red-rgb), 0.08)');
     expect(
       compareSpecificity(specificity(checkedHover), specificity(hover)),
     ).toBeGreaterThanOrEqual(0);

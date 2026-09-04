@@ -1,3 +1,4 @@
+import type * as ObsidianModule from 'obsidian';
 import { Notice } from 'obsidian';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { presentTaskCommandResult } from '../src/ui/taskCommandResult';
@@ -5,7 +6,7 @@ import { presentTaskCommandResult } from '../src/ui/taskCommandResult';
 // File-level mock: override Notice with a vi.fn so presentation messages are captured.
 // Everything else from obsidian stays real (spread actual). Verified empirically.
 vi.mock('obsidian', async () => {
-  const actual = await vi.importActual<typeof import('obsidian')>('obsidian');
+  const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
   return { ...actual, Notice: vi.fn() };
 });
 

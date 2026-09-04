@@ -1,6 +1,6 @@
 import type { StatusCatalog } from '../tasks/domain/StatusCatalog';
 import { parseCommentTimestampPrefix } from '../tasks/domain/commentTimestamp';
-import { extractMetadata } from './extractMetadata';
+import { extractMetadata, type ExtractedMetadata } from './extractMetadata';
 import { collapseLinks } from './links';
 import type { SubTask, TaskComment } from './types';
 
@@ -36,27 +36,8 @@ function getQuoteDepth(line: string): number {
   return depth;
 }
 
-function parseSubtask(
-  lines: string[],
-  i: number,
-  filePath: string,
-  subtaskMatch: RegExpExecArray,
-  statusCatalog: StatusCatalog,
-): { subtask: SubTask; nextIdx: number; rangeTo: number } {
-  const rawText = lines[i] ?? '';
-  const statusChar = subtaskMatch[2] ?? ' ';
-  const rawContent = (subtaskMatch[3] ?? '').trim();
-  const meta = extractMetadata(rawContent);
-  const childResult = parseSubItems(lines, i, filePath, statusCatalog);
-  const subtask: SubTask = {
-    filePath,
-    line: i,
-    rawText,
-    text: collapseLinks(meta.cleanText),
-    markdownText: meta.cleanText,
-    status: statusCatalog.statusForSymbol(statusChar),
-    statusSymbol: statusChar,
-    priority: meta.priority,
+function subtaskMetadataFields(meta: ExtractedMetadata): Partial<SubTask> {
+  return {
     ...(meta.due !== undefined && { due: meta.due }),
     ...(meta.scheduled !== undefined && { scheduled: meta.scheduled }),
     ...(meta.start !== undefined && { start: meta.start }),
@@ -65,20 +46,98 @@ function parseSubtask(
     ...(meta.created !== undefined && { created: meta.created }),
     ...(meta.time !== undefined && { time: meta.time }),
     ...(meta.recurrence !== undefined && { recurrence: meta.recurrence }),
+  };
+}
+
+function subtaskChildFields(childResult: SubItemResult): Partial<SubTask> {
+  return {
+    ...(childResult.subtasks.length > 0 && { subtasks: childResult.subtasks }),
+    ...(childResult.comments.length > 0 && { comments: childResult.comments }),
+    ...(childResult.description.length > 0 && { description: childResult.description }),
+    ...(childResult.subtaskRange !== undefined && { subtaskRange: childResult.subtaskRange }),
+  };
+}
+
+interface ParseSubtaskContext {
+  readonly lines: string[];
+  readonly index: number;
+  readonly filePath: string;
+  readonly match: RegExpExecArray;
+  readonly statusCatalog: StatusCatalog;
+}
+
+interface SubItemAccumulator {
+  readonly subtasks: SubTask[];
+  readonly comments: TaskComment[];
+  readonly descriptionLines: string[];
+}
+
+interface ConsumeNestedLineContext {
+  readonly lines: string[];
+  readonly index: number;
+  readonly filePath: string;
+  readonly statusCatalog: StatusCatalog;
+  readonly accumulator: SubItemAccumulator;
+}
+
+function parseSubtask(context: ParseSubtaskContext): {
+  subtask: SubTask;
+  nextIdx: number;
+  rangeTo: number;
+} {
+  const { lines, index, filePath, match, statusCatalog } = context;
+  const rawText = lines[index] ?? '';
+  const statusChar = match[2] ?? ' ';
+  const rawContent = (match[3] ?? '').trim();
+  const meta = extractMetadata(rawContent);
+  const childResult = parseSubItems(lines, index, filePath, statusCatalog);
+  const subtask: SubTask = {
+    filePath,
+    line: index,
+    rawText,
+    text: collapseLinks(meta.cleanText),
+    markdownText: meta.cleanText,
+    status: statusCatalog.statusForSymbol(statusChar),
+    statusSymbol: statusChar,
+    priority: meta.priority,
+    ...subtaskMetadataFields(meta),
+    ...subtaskChildFields(childResult),
     onCompletion: meta.onCompletion,
     onCompletionExplicit: meta.onCompletionExplicit,
   };
-  if (childResult.subtasks.length) subtask.subtasks = childResult.subtasks;
-  if (childResult.comments.length) subtask.comments = childResult.comments;
-  if (childResult.description) subtask.description = childResult.description;
-  let rangeTo = i;
-  let nextIdx = i + 1;
-  if (childResult.subtaskRange) {
-    subtask.subtaskRange = childResult.subtaskRange;
-    rangeTo = childResult.subtaskRange.to;
-    nextIdx = childResult.subtaskRange.to + 1;
-  }
+  const rangeTo = childResult.subtaskRange?.to ?? index;
+  const nextIdx = rangeTo + 1;
   return { subtask, nextIdx, rangeTo };
+}
+
+function consumeNestedLine(context: ConsumeNestedLineContext): {
+  readonly nextIndex: number;
+  readonly rangeTo: number;
+} {
+  const { lines, index, filePath, statusCatalog, accumulator } = context;
+  const line = lines[index] ?? '';
+  const subtaskMatch = SUBTASK_RE.exec(line);
+  if (subtaskMatch != null) {
+    const parsed = parseSubtask({ lines, index, filePath, match: subtaskMatch, statusCatalog });
+    accumulator.subtasks.push(parsed.subtask);
+    return { nextIndex: parsed.nextIdx, rangeTo: parsed.rangeTo };
+  }
+
+  const descriptionMatch = DESCRIPTION_RE.exec(line);
+  if (descriptionMatch != null) {
+    accumulator.descriptionLines.push((descriptionMatch[2] ?? '').trim());
+    return { nextIndex: index + 1, rangeTo: index };
+  }
+
+  const comment = parseCommentTimestampPrefix(line);
+  if (comment != null) {
+    accumulator.comments.push({
+      line: index,
+      ...(comment.timestamp != null && { timestamp: comment.timestamp }),
+      text: comment.text.trim(),
+    });
+  }
+  return { nextIndex: index + 1, rangeTo: index };
 }
 
 export function parseSubItems(
@@ -91,9 +150,11 @@ export function parseSubItems(
   const taskIndent = getIndent(taskLine);
   const taskQuote = getQuoteDepth(taskLine);
 
-  const subtasks: SubTask[] = [];
-  const comments: TaskComment[] = [];
-  const descLines: string[] = [];
+  const accumulator: SubItemAccumulator = {
+    subtasks: [],
+    comments: [],
+    descriptionLines: [],
+  };
   let rangeFrom: number | undefined;
   let rangeTo: number | undefined;
 
@@ -115,43 +176,16 @@ export function parseSubItems(
     // task followed by a `>` blockquote task), which is a sibling block, not a child.
     if (getQuoteDepth(line) !== taskQuote || lineIndent <= taskIndent) break;
 
-    if (rangeFrom === undefined) rangeFrom = i;
-    rangeTo = i;
-
-    const subtaskMatch = SUBTASK_RE.exec(line);
-    if (subtaskMatch) {
-      const parsed = parseSubtask(lines, i, filePath, subtaskMatch, statusCatalog);
-      subtasks.push(parsed.subtask);
-      rangeTo = parsed.rangeTo;
-      i = parsed.nextIdx;
-      continue;
-    }
-
-    const descMatch = DESCRIPTION_RE.exec(line);
-    if (descMatch) {
-      descLines.push((descMatch[2] ?? '').trim());
-      i++;
-      continue;
-    }
-
-    const comment = parseCommentTimestampPrefix(line);
-    if (comment) {
-      comments.push({
-        line: i,
-        ...(comment.timestamp && { timestamp: comment.timestamp }),
-        text: comment.text.trim(),
-      });
-      i++;
-      continue;
-    }
-
-    i++;
+    rangeFrom ??= i;
+    const consumed = consumeNestedLine({ lines, index: i, filePath, statusCatalog, accumulator });
+    rangeTo = consumed.rangeTo;
+    i = consumed.nextIndex;
   }
 
   return {
-    subtasks,
-    comments,
-    description: descLines.join('\n'),
+    subtasks: accumulator.subtasks,
+    comments: accumulator.comments,
+    description: accumulator.descriptionLines.join('\n'),
     subtaskRange:
       rangeFrom !== undefined && rangeTo !== undefined
         ? { from: rangeFrom, to: rangeTo }

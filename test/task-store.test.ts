@@ -3,6 +3,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import {
   configuredTaskApplication,
   createAppWithFiles,
+  expectDefined,
   seedTaskCache,
   useRealMoment,
 } from './helpers';
@@ -12,7 +13,7 @@ useRealMoment();
 async function toggleFirstTask(app: Awaited<ReturnType<typeof createAppWithFiles>>) {
   const stack = configuredTaskApplication(app, DEFAULT_SETTINGS);
   await stack.index.initialize();
-  const task = stack.tasks.queries.list()[0]!;
+  const task = expectDefined(stack.tasks.queries.list()[0]);
   await stack.tasks.execute({ type: 'toggle-completion', target: { type: 'task', ref: task.ref } });
   return stack;
 }
@@ -22,7 +23,7 @@ describe('TaskApplicationApi toggle-completion', () => {
     const app = await createAppWithFiles({ 't.md': '- [ ] task 📅 2026-06-24 ✅ 2026-01-01' });
     seedTaskCache(app, 't.md', [{ task: ' ', parent: -1, line: 0 }]);
     await toggleFirstTask(app);
-    const content = await app.vault.cachedRead(app.vault.getMarkdownFiles()[0]!);
+    const content = await app.vault.cachedRead(expectDefined(app.vault.getMarkdownFiles()[0]));
     expect(content).toMatch(/^- \[x\] task 📅 2026-06-24 ✅ \d{4}-\d{2}-\d{2}$/);
     expect(content).not.toContain('2026-01-01');
   });
@@ -32,7 +33,7 @@ describe('TaskApplicationApi toggle-completion', () => {
     const app = await createAppWithFiles({ 't.md': `- [ ] task 📅 ${today}` });
     seedTaskCache(app, 't.md', [{ task: ' ', parent: -1, line: 0 }]);
     await toggleFirstTask(app);
-    const content = await app.vault.cachedRead(app.vault.getMarkdownFiles()[0]!);
+    const content = await app.vault.cachedRead(expectDefined(app.vault.getMarkdownFiles()[0]));
     expect(content).toBe(`- [x] task 📅 ${today} ✅ ${today}`);
   });
 
@@ -41,7 +42,7 @@ describe('TaskApplicationApi toggle-completion', () => {
     const app = await createAppWithFiles({ 't.md': '> - [ ] quoted task' });
     seedTaskCache(app, 't.md', [{ task: ' ', parent: -1, line: 0 }]);
     await toggleFirstTask(app);
-    const content = await app.vault.cachedRead(app.vault.getMarkdownFiles()[0]!);
+    const content = await app.vault.cachedRead(expectDefined(app.vault.getMarkdownFiles()[0]));
     expect(content).toBe(`> - [x] quoted task ✅ ${today}`);
   });
 
@@ -49,7 +50,7 @@ describe('TaskApplicationApi toggle-completion', () => {
     const app = await createAppWithFiles({ 't.md': '- [x] task ✅ 2026-06-22' });
     seedTaskCache(app, 't.md', [{ task: 'x', parent: -1, line: 0 }]);
     await toggleFirstTask(app);
-    const content = await app.vault.cachedRead(app.vault.getMarkdownFiles()[0]!);
+    const content = await app.vault.cachedRead(expectDefined(app.vault.getMarkdownFiles()[0]));
     expect(content).toBe('- [ ] task');
   });
 
@@ -58,7 +59,7 @@ describe('TaskApplicationApi toggle-completion', () => {
     const app = await createAppWithFiles({ 't.md': '- [-] cancelled task' });
     seedTaskCache(app, 't.md', [{ task: '-', parent: -1, line: 0 }]);
     await toggleFirstTask(app);
-    const content = await app.vault.cachedRead(app.vault.getMarkdownFiles()[0]!);
+    const content = await app.vault.cachedRead(expectDefined(app.vault.getMarkdownFiles()[0]));
     expect(content).toBe(`- [x] cancelled task ✅ ${today}`);
   });
 
@@ -69,12 +70,12 @@ describe('TaskApplicationApi toggle-completion', () => {
     seedTaskCache(app, 't.md', [{ task: ' ', parent: -1, line: 0 }]);
     const stack = configuredTaskApplication(app, DEFAULT_SETTINGS);
     await stack.index.initialize();
-    const task = stack.tasks.queries.list()[0]!;
+    const task = expectDefined(stack.tasks.queries.list()[0]);
     await stack.tasks.execute({
       type: 'toggle-completion',
       target: { type: 'task', ref: { ...task.ref, line: 999 } },
     });
-    const content = await app.vault.cachedRead(app.vault.getMarkdownFiles()[0]!);
+    const content = await app.vault.cachedRead(expectDefined(app.vault.getMarkdownFiles()[0]));
     expect(content).toContain('- [x] task');
   });
 });
@@ -86,6 +87,8 @@ describe('TaskIndex destroy', () => {
     const stack = configuredTaskApplication(app, DEFAULT_SETTINGS);
     await stack.index.initialize();
     stack.index.destroy();
-    expect(() => stack.index.destroy()).not.toThrow();
+    expect(() => {
+      stack.index.destroy();
+    }).not.toThrow();
   });
 });

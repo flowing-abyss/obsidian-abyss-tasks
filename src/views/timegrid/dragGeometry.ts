@@ -89,6 +89,10 @@ function validDateColumn(column: DragDateColumn): boolean {
 }
 
 function validTimedColumn(column: TimedDragColumn): boolean {
+  return validDateColumn(column) && validAllDayRange(column) && validTimeGridRange(column);
+}
+
+function validAllDayRange(column: TimedDragColumn): boolean {
   const allDayAbsent = column.allDayTop === undefined && column.allDayBottom === undefined;
   const allDayValid =
     column.allDayTop !== undefined &&
@@ -96,12 +100,14 @@ function validTimedColumn(column: TimedDragColumn): boolean {
     Number.isFinite(column.allDayTop) &&
     Number.isFinite(column.allDayBottom) &&
     column.allDayTop < column.allDayBottom;
+  return allDayAbsent || allDayValid;
+}
+
+function validTimeGridRange(column: TimedDragColumn): boolean {
   return (
-    validDateColumn(column) &&
     Number.isFinite(column.timeGridTop) &&
     Number.isFinite(column.timeGridBottom) &&
-    column.timeGridTop < column.timeGridBottom &&
-    (allDayAbsent || allDayValid)
+    column.timeGridTop < column.timeGridBottom
   );
 }
 
@@ -120,31 +126,23 @@ export function resolveTimedDragTarget(
   columns: readonly TimedDragColumn[],
 ): TimedDragTarget | undefined {
   const renderedHeightMinutes = origin.renderedHeightMinutes ?? origin.durationMinutes;
-  if (
-    !validDate(origin.date) ||
-    !Number.isInteger(origin.startMinutes) ||
-    origin.startMinutes < 0 ||
-    origin.startMinutes >= MINUTES_PER_DAY ||
-    !Number.isInteger(origin.durationMinutes) ||
-    origin.durationMinutes <= 0 ||
-    origin.durationMinutes > MINUTES_PER_DAY ||
-    !Number.isFinite(renderedHeightMinutes) ||
-    renderedHeightMinutes < origin.durationMinutes ||
-    !Number.isFinite(origin.grabOffsetMinutes) ||
-    origin.grabOffsetMinutes < 0 ||
-    origin.grabOffsetMinutes > renderedHeightMinutes ||
-    !Number.isFinite(pointer.clientX) ||
-    !Number.isFinite(pointer.clientY) ||
-    columns.length === 0 ||
-    columns.some((column) => !validTimedColumn(column))
-  ) {
-    return undefined;
-  }
+  if (!validTimedDragInput(origin, pointer, columns, renderedHeightMinutes)) return undefined;
 
   const column = columnAt(pointer.clientX, columns);
-  if (!column) return undefined;
+  if (column == null) return undefined;
   const dayDelta = daysBetweenLocalDates(origin.date, column.date);
+  return (
+    resolveAllDayTarget(origin, pointer, column, dayDelta) ??
+    resolveTimeGridTarget(origin, pointer, column, dayDelta)
+  );
+}
 
+function resolveAllDayTarget(
+  origin: TimedDragOrigin,
+  pointer: TimedDragPointer,
+  column: TimedDragColumn,
+  dayDelta: number,
+): TimedDragTarget | undefined {
   if (
     column.allDayTop !== undefined &&
     column.allDayBottom !== undefined &&
@@ -158,7 +156,15 @@ export function resolveTimedDragTarget(
       destination: 'all-day',
     };
   }
+  return undefined;
+}
 
+function resolveTimeGridTarget(
+  origin: TimedDragOrigin,
+  pointer: TimedDragPointer,
+  column: TimedDragColumn,
+  dayDelta: number,
+): TimedDragTarget | undefined {
   if (pointer.clientY < column.timeGridTop || pointer.clientY > column.timeGridBottom) {
     return undefined;
   }
@@ -175,24 +181,43 @@ export function resolveTimedDragTarget(
   return { date: column.date, startMinutes, dayDelta, destination: 'time-grid' };
 }
 
+function validTimedDragInput(
+  origin: TimedDragOrigin,
+  pointer: TimedDragPointer,
+  columns: readonly TimedDragColumn[],
+  renderedHeightMinutes: number,
+): boolean {
+  return (
+    validTimedDragOrigin(origin, renderedHeightMinutes) &&
+    Number.isFinite(pointer.clientX) &&
+    Number.isFinite(pointer.clientY) &&
+    columns.length > 0 &&
+    columns.every(validTimedColumn)
+  );
+}
+
+function validTimedDragOrigin(origin: TimedDragOrigin, renderedHeightMinutes: number): boolean {
+  return [
+    validDate(origin.date) && Number.isInteger(origin.startMinutes),
+    origin.startMinutes >= 0,
+    origin.startMinutes < MINUTES_PER_DAY,
+    Number.isInteger(origin.durationMinutes),
+    origin.durationMinutes > 0,
+    origin.durationMinutes <= MINUTES_PER_DAY,
+    Number.isFinite(renderedHeightMinutes),
+    renderedHeightMinutes >= origin.durationMinutes,
+    Number.isFinite(origin.grabOffsetMinutes),
+    origin.grabOffsetMinutes >= 0,
+    origin.grabOffsetMinutes <= renderedHeightMinutes,
+  ].every((condition) => condition);
+}
+
 export function resolveTimedVerticalResizeTarget(
   origin: TimedVerticalResizeOrigin,
   pointer: TimedDurationPointer,
 ): TimedVerticalResizeTarget {
   const originEndMinutes = origin.startMinutes + origin.durationMinutes;
-  if (
-    (origin.edge !== 'start' && origin.edge !== 'end') ||
-    !Number.isInteger(origin.startMinutes) ||
-    origin.startMinutes < 0 ||
-    origin.startMinutes >= MINUTES_PER_DAY ||
-    !Number.isInteger(origin.durationMinutes) ||
-    origin.durationMinutes <= 0 ||
-    originEndMinutes > MINUTES_PER_DAY ||
-    !Number.isFinite(origin.grabClientY) ||
-    !Number.isFinite(origin.pixelsPerMinute) ||
-    origin.pixelsPerMinute <= 0 ||
-    !Number.isFinite(pointer.clientY)
-  ) {
+  if (!validVerticalResizeInput(origin, pointer, originEndMinutes)) {
     throw new RangeError('Invalid timed vertical resize geometry');
   }
 
@@ -231,33 +256,64 @@ export function resolveTimedVerticalResizeTarget(
   };
 }
 
+function validVerticalResizeInput(
+  origin: TimedVerticalResizeOrigin,
+  pointer: TimedDurationPointer,
+  originEndMinutes: number,
+): boolean {
+  const runtimeEdge: unknown = origin.edge;
+  return [
+    (runtimeEdge === 'start' || runtimeEdge === 'end') && Number.isInteger(origin.startMinutes),
+    origin.startMinutes >= 0,
+    origin.startMinutes < MINUTES_PER_DAY,
+    Number.isInteger(origin.durationMinutes),
+    origin.durationMinutes > 0,
+    originEndMinutes <= MINUTES_PER_DAY,
+    Number.isFinite(origin.grabClientY),
+    Number.isFinite(origin.pixelsPerMinute),
+    origin.pixelsPerMinute > 0,
+    Number.isFinite(pointer.clientY),
+  ].every((condition) => condition);
+}
+
 export function resolveBoundaryTarget(
   origin: SpanBoundaryOrigin,
   pointer: Pick<TimedDragPointer, 'clientX'>,
   columns: readonly DragDateColumn[],
 ): SpanBoundaryTarget | undefined {
-  if (
-    (origin.boundary !== 'start' && origin.boundary !== 'due') ||
-    !validDate(origin.start) ||
-    !validDate(origin.due) ||
-    origin.start > origin.due ||
-    !Number.isFinite(pointer.clientX) ||
-    columns.length === 0 ||
-    columns.some((column) => !validDateColumn(column))
-  ) {
-    return undefined;
-  }
+  if (!validBoundaryInput(origin, pointer, columns)) return undefined;
 
   const column = columnAt(pointer.clientX, columns);
-  if (!column) return undefined;
+  if (column == null) return undefined;
   const current = origin[origin.boundary];
-  let date = column.date;
-  if (origin.boundary === 'start' && date > origin.due) date = origin.due;
-  if (origin.boundary === 'due' && date < origin.start) date = origin.start;
+  const date = clampBoundaryDate(origin, column.date);
   if (date === current) return undefined;
   return {
     boundary: origin.boundary,
     date,
     dayDelta: daysBetweenLocalDates(current, date),
   };
+}
+
+function validBoundaryInput(
+  origin: SpanBoundaryOrigin,
+  pointer: Pick<TimedDragPointer, 'clientX'>,
+  columns: readonly DragDateColumn[],
+): boolean {
+  const runtimeBoundary: unknown = origin.boundary;
+  return (
+    (runtimeBoundary === 'start' || runtimeBoundary === 'due') &&
+    validDate(origin.start) &&
+    validDate(origin.due) &&
+    origin.start <= origin.due &&
+    Number.isFinite(pointer.clientX) &&
+    columns.length > 0 &&
+    columns.every(validDateColumn)
+  );
+}
+
+function clampBoundaryDate(origin: SpanBoundaryOrigin, candidate: LocalDate): LocalDate {
+  if (origin.boundary === 'start' && candidate > origin.due) return origin.due;
+  if (origin.boundary === 'due' && candidate < origin.start) return origin.start;
+  return candidate;
 }

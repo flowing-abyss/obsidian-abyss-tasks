@@ -19,6 +19,42 @@ function taskPresentationIdentity(task: TaskSnapshot): string {
   return calendarOccurrenceForTask(task)?.key ?? `${task.source.filePath}:${task.source.line}`;
 }
 
+function configuredMonth(startPosition: string): ReturnType<typeof window.moment> {
+  return startPosition !== ''
+    ? window.moment(startPosition, 'YYYY-MM').date(1)
+    : window.moment().date(1);
+}
+
+function uniqueOpenTasksForDate(
+  tasks: TaskSnapshot[],
+  currentDate: string,
+  today: string,
+  overdueIds: ReadonlySet<string>,
+): TaskSnapshot[] {
+  const groups = getTasksForDate(tasks, currentDate, today);
+  const seen = new Set<string>();
+  return Object.entries(groups)
+    .filter(([key, group]) => key !== 'overdue' && Array.isArray(group))
+    .flatMap(([, group]) => group as TaskSnapshot[])
+    .filter((task) => {
+      const identity = taskPresentationIdentity(task);
+      if (seen.has(identity)) return false;
+      seen.add(identity);
+      return task.status === 'open' && !overdueIds.has(identity);
+    });
+}
+
+function dateLabel(currentDate: string, today: string, yesterday: string): string {
+  if (currentDate === today) return 'Today';
+  if (currentDate === yesterday) return 'Yesterday';
+  return window.moment(currentDate).format('ddd, D MMM');
+}
+
+function taskStatusClass(task: TaskSnapshot): string {
+  if (task.status === 'done') return ' is-done';
+  return task.status === 'cancelled' ? ' is-cancelled' : '';
+}
+
 export interface ListViewCallbacks {
   app: App;
   onToggle: (task: TaskSnapshot) => void;
@@ -30,6 +66,13 @@ export interface ListViewCallbacks {
   onTaskBodyContextMenu?: (ev: MouseEvent, task: TaskSnapshot, anchor: HTMLElement) => void;
 }
 
+interface DateSectionContext {
+  readonly currentDate: string;
+  readonly today: string;
+  readonly yesterday: string;
+  readonly overdueIds: ReadonlySet<string>;
+}
+
 export class ListView extends BaseView {
   private config: ResolvedConfig = {
     ...DEFAULT_VIEW_CONFIG,
@@ -39,7 +82,7 @@ export class ListView extends BaseView {
   };
   private md = new Component();
 
-  constructor(private callbacks: ListViewCallbacks) {
+  constructor(private readonly callbacks: ListViewCallbacks) {
     super();
   }
 
@@ -53,77 +96,60 @@ export class ListView extends BaseView {
 
     const today = window.moment().format('YYYY-MM-DD');
     const yesterday = window.moment().subtract(1, 'day').format('YYYY-MM-DD');
-    const month = config.startPosition
-      ? window.moment(config.startPosition, 'YYYY-MM').date(1)
-      : window.moment().date(1);
+    const month = configuredMonth(config.startPosition);
 
     const grid = container.createDiv({ cls: 'abyss-list-view' });
-
-    // Overdue section first
-    const overdueTasks = tasks.filter(
-      (t) => t.status === 'open' && t.planning.due && t.planning.due < today,
-    );
-    const overdueIds = new Set(overdueTasks.map(taskPresentationIdentity));
-    if (overdueTasks.length > 0) {
-      const section = grid.createDiv({ cls: 'abyss-list-section' });
-      const overdueHeader = section.createDiv({
-        cls: 'abyss-list-date-header abyss-list-overdue-header',
-      });
-      overdueHeader.createEl('span', { cls: 'abyss-list-date-label', text: 'Overdue' });
-      overdueHeader.createEl('span', {
-        cls: 'abyss-list-date-count',
-        text: String(overdueTasks.length),
-      });
-      for (const task of sortTasks(overdueTasks)) {
-        this.renderListTask(section, task);
-      }
-    }
+    const overdueIds = this.renderOverdueSection(grid, tasks, today);
 
     for (let i = 1; i <= 31; i++) {
       const currentDate = window.moment(month).date(i).format('YYYY-MM-DD');
       if (window.moment(currentDate).month() !== window.moment(month).month()) break;
-
-      const groups = getTasksForDate(tasks, currentDate, today);
-      // Combine all task groups (due, recurrence, start, scheduled, process, dailyNote, allDone, cancelled)
-      // Exclude overdue — it has its own section at the top
-      const allTasks: TaskSnapshot[] = [];
-      for (const [key, group] of Object.entries(groups)) {
-        if (key === 'overdue') continue;
-        if (Array.isArray(group)) allTasks.push(...(group as TaskSnapshot[]));
-      }
-      // Deduplicate: a task may appear in multiple groups (e.g. due + scheduled on same day)
-      const seen = new Set<string>();
-      const uniqueTasks = allTasks.filter((t) => {
-        const id = taskPresentationIdentity(t);
-        if (seen.has(id)) return false;
-        seen.add(id);
-        return true;
-      });
-      // Filter to only open tasks; also exclude tasks already shown in the overdue section
-      const openDayTasks = uniqueTasks.filter(
-        (t) => t.status === 'open' && !overdueIds.has(taskPresentationIdentity(t)),
-      );
-      if (openDayTasks.length === 0) continue;
-
-      const section = grid.createDiv({ cls: 'abyss-list-section' });
-
-      let dateLabel: string;
-      if (currentDate === today) dateLabel = 'Today';
-      else if (currentDate === yesterday) dateLabel = 'Yesterday';
-      else dateLabel = window.moment(currentDate).format('ddd, D MMM');
-
-      const dateHeader = section.createDiv({ cls: 'abyss-list-date-header' });
-      dateHeader.createEl('span', { cls: 'abyss-list-date-label', text: dateLabel });
-      dateHeader.createEl('span', {
-        cls: 'abyss-list-date-count',
-        text: String(openDayTasks.length),
-      });
-      dateHeader.addEventListener('click', () => this.callbacks.onDateClick(currentDate));
-
-      for (const task of sortTasks(openDayTasks)) {
-        this.renderListTask(section, task);
-      }
+      this.renderDateSection(grid, tasks, { currentDate, today, yesterday, overdueIds });
     }
+  }
+
+  private renderOverdueSection(
+    grid: HTMLElement,
+    tasks: TaskSnapshot[],
+    today: string,
+  ): Set<string> {
+    const overdueTasks = tasks.filter(
+      (task) =>
+        task.status === 'open' && task.planning.due !== undefined && task.planning.due < today,
+    );
+    const overdueIds = new Set(overdueTasks.map(taskPresentationIdentity));
+    if (overdueTasks.length === 0) return overdueIds;
+
+    const section = grid.createDiv({ cls: 'abyss-list-section' });
+    const header = section.createDiv({
+      cls: 'abyss-list-date-header abyss-list-overdue-header',
+    });
+    header.createSpan({ cls: 'abyss-list-date-label', text: 'Overdue' });
+    header.createSpan({ cls: 'abyss-list-date-count', text: String(overdueTasks.length) });
+    for (const task of sortTasks(overdueTasks)) this.renderListTask(section, task);
+    return overdueIds;
+  }
+
+  private renderDateSection(
+    grid: HTMLElement,
+    tasks: TaskSnapshot[],
+    context: DateSectionContext,
+  ): void {
+    const { currentDate, today, yesterday, overdueIds } = context;
+    const openDayTasks = uniqueOpenTasksForDate(tasks, currentDate, today, overdueIds);
+    if (openDayTasks.length === 0) return;
+
+    const section = grid.createDiv({ cls: 'abyss-list-section' });
+    const header = section.createDiv({ cls: 'abyss-list-date-header' });
+    header.createSpan({
+      cls: 'abyss-list-date-label',
+      text: dateLabel(currentDate, today, yesterday),
+    });
+    header.createSpan({ cls: 'abyss-list-date-count', text: String(openDayTasks.length) });
+    header.addEventListener('click', () => {
+      this.callbacks.onDateClick(currentDate);
+    });
+    for (const task of sortTasks(openDayTasks)) this.renderListTask(section, task);
   }
 
   private renderListTask(container: HTMLElement, task: TaskSnapshot): void {
@@ -133,35 +159,43 @@ export class ListView extends BaseView {
       task,
       registry: this.callbacks.statusRegistry,
       interactive: !isForecastCalendarTask(task),
-      onLeftClick: () => this.callbacks.onToggle(task),
-      onContextMenu: (e) => this.callbacks.onContextMenu(e, task),
+      onLeftClick: () => {
+        this.callbacks.onToggle(task);
+      },
+      onContextMenu: (e) => {
+        this.callbacks.onContextMenu(e, task);
+      },
     });
 
-    if (task.recurrence) {
+    if (task.recurrence !== undefined && task.recurrence.length > 0) {
       renderRecurrenceBadge(
         row,
         recurrenceBadgeInput(task.recurrence, isForecastCalendarTask(task)),
       );
     }
 
-    let statusClass = '';
-    if (task.status === 'done') {
-      statusClass = ' is-done';
-    } else if (task.status === 'cancelled') {
-      statusClass = ' is-cancelled';
-    }
-    const titleEl = row.createEl('span', { cls: `abyss-list-task-title${statusClass}` });
+    const titleEl = row.createSpan({ cls: `abyss-list-task-title${taskStatusClass(task)}` });
     const onEditLink = this.callbacks.onEditLink;
     renderTaskText(titleEl, task.markdownTitle, {
       app: this.callbacks.app,
       sourcePath: task.source.filePath,
       component: this.md,
-      onEditLink: onEditLink ? (occ, token) => onEditLink(task, occ, token) : undefined,
+      onEditLink:
+        onEditLink != null
+          ? (occ, token) => {
+              onEditLink(task, occ, token);
+            }
+          : undefined,
     });
 
+    this.renderTaskMeta(row, task);
+    this.registerTaskInteractions(row, marker, task);
+  }
+
+  private renderTaskMeta(row: HTMLElement, task: TaskSnapshot): void {
     const meta = row.createDiv({ cls: 'abyss-list-task-meta' });
-    if (task.planning.time) {
-      meta.createEl('span', { cls: 'abyss-task-time', text: task.planning.time });
+    if (task.planning.time != null) {
+      meta.createSpan({ cls: 'abyss-task-time', text: task.planning.time });
     }
 
     // Source note chip — before tags
@@ -169,31 +203,36 @@ export class ListView extends BaseView {
       renderSourceNoteChip(meta, task);
     }
 
-    const tags = task.tags ?? [];
-    for (const tag of tags.slice(0, 1)) {
-      meta.createEl('span', { cls: 'abyss-task-tag', text: tag });
+    for (const tag of task.tags.slice(0, 1)) {
+      meta.createSpan({ cls: 'abyss-task-tag', text: tag });
     }
-    if ((task.subtasks?.length ?? 0) > 0) {
+    if (task.subtasks.length > 0) {
       const done = task.subtasks.filter((s) => s.status === 'done').length;
-      meta.createEl('span', {
+      meta.createSpan({
         cls: 'abyss-task-progress',
         text: `${done}/${task.subtasks.length}`,
       });
     }
+  }
 
+  private registerTaskInteractions(
+    row: HTMLElement,
+    marker: HTMLElement,
+    task: TaskSnapshot,
+  ): void {
     row.addEventListener('click', (e) => {
       if (marker.contains(e.target as Node)) return;
       this.callbacks.onTaskClick?.(task);
     });
-    if (this.callbacks.onTaskBodyContextMenu) {
-      row.addEventListener('contextmenu', (event) => {
-        if (marker.contains(event.target as Node)) return;
-        if ((event.target as HTMLElement | null)?.closest('a')) return;
-        event.preventDefault();
-        event.stopPropagation();
-        this.callbacks.onTaskBodyContextMenu?.(event, task, row);
-      });
-    }
+    const onTaskBodyContextMenu = this.callbacks.onTaskBodyContextMenu;
+    if (onTaskBodyContextMenu === undefined) return;
+    row.addEventListener('contextmenu', (event) => {
+      if (marker.contains(event.target as Node)) return;
+      if ((event.target as HTMLElement | null)?.closest('a') !== null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onTaskBodyContextMenu(event, task, row);
+    });
   }
 
   destroy(): void {

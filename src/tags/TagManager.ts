@@ -1,5 +1,5 @@
 // src/tags/TagManager.ts
-import type { App } from 'obsidian';
+import type { App, TFile } from 'obsidian';
 import type { ListSelection } from '../app/AppState';
 import { beginSettingsSave, latestSettingsSaveRevision } from '../settings/settingsSaveRevision';
 import type { CalendarSettings } from '../settings/types';
@@ -56,6 +56,89 @@ export interface SelectedListState {
   readonly setSelectedList: (selection: ListSelection) => void;
 }
 
+interface PreparedTagRename {
+  readonly file: TFile;
+  readonly transform: (content: string) => string;
+}
+
+interface TagRenameFilesResult {
+  readonly changedFiles: string[];
+  readonly failedFiles: string[];
+}
+
+interface SettingListUpdate {
+  readonly current: readonly string[];
+  readonly apply: (values: string[]) => void;
+  readonly latest: () => readonly string[];
+  readonly replace: (value: string) => string;
+  readonly rollbacks: Array<() => void>;
+}
+
+function updateSettingList(context: SettingListUpdate): void {
+  const { current, apply, latest, replace, rollbacks } = context;
+  const updated = uniqueInOrder(current.map(replace));
+  if (sameValues(updated, current)) return;
+  const applied = [...updated];
+  apply(updated);
+  rollbacks.push(() => {
+    if (sameValues(latest(), applied)) apply([...current]);
+  });
+}
+
+function updateTagGroups(
+  settings: CalendarSettings,
+  replace: (value: string) => string,
+  scope: TagRenameScope,
+  rollbacks: Array<() => void>,
+): void {
+  for (const group of settings.tagGroups) {
+    if (updateManualTagGroup(group, replace, rollbacks)) continue;
+    updatePrefixTagGroup(group, replace, scope, rollbacks);
+  }
+}
+
+type TagGroup = CalendarSettings['tagGroups'][number];
+
+function updateManualTagGroup(
+  group: TagGroup,
+  replace: (value: string) => string,
+  rollbacks: Array<() => void>,
+): boolean {
+  if (group.mode !== 'manual' || group.tags == null) return false;
+  const previous = group.tags;
+  const updated = uniqueInOrder(previous.map(replace));
+  if (sameValues(updated, previous)) return true;
+  const applied = [...updated];
+  group.tags = updated;
+  rollbacks.push(() => {
+    if (group.tags != null && sameValues(group.tags, applied)) group.tags = previous;
+  });
+  return true;
+}
+
+function updatePrefixTagGroup(
+  group: TagGroup,
+  replace: (value: string) => string,
+  scope: TagRenameScope,
+  rollbacks: Array<() => void>,
+): void {
+  if (
+    scope !== 'prefix' ||
+    group.mode !== 'prefix' ||
+    group.prefix === undefined ||
+    group.prefix.length === 0
+  ) {
+    return;
+  }
+  const previous = group.prefix;
+  const updated = replace(`#${previous}`).slice(1);
+  if (updated === previous) return;
+  group.prefix = updated;
+  rollbacks.push(() => {
+    if (group.prefix === updated) group.prefix = previous;
+  });
+}
+
 function updateTagSettings(
   settings: CalendarSettings,
   oldTag: string,
@@ -65,19 +148,6 @@ function updateTagSettings(
   const replaceReference = (value: string): string =>
     replaceSettingTag(value, oldTag, newTag, scope);
   const rollbacks: Array<() => void> = [];
-  const updateList = (
-    current: readonly string[],
-    apply: (values: string[]) => void,
-    latest: () => readonly string[],
-  ): void => {
-    const updated = uniqueInOrder(current.map(replaceReference));
-    if (sameValues(updated, current)) return;
-    const applied = [...updated];
-    apply(updated);
-    rollbacks.push(() => {
-      if (sameValues(latest(), applied)) apply([...current]);
-    });
-  };
   const applyPinnedTags = (values: string[]): void => {
     settings.pinnedTags = values;
   };
@@ -85,28 +155,21 @@ function updateTagSettings(
     settings.archivedTags = values;
   };
 
-  updateList(settings.pinnedTags, applyPinnedTags, () => settings.pinnedTags);
-  updateList(settings.archivedTags, applyArchivedTags, () => settings.archivedTags);
-  for (const group of settings.tagGroups) {
-    if (group.mode === 'manual' && group.tags) {
-      const previous = group.tags;
-      const updated = uniqueInOrder(previous.map(replaceReference));
-      if (sameValues(updated, previous)) continue;
-      const applied = [...updated];
-      group.tags = updated;
-      rollbacks.push(() => {
-        if (group.tags && sameValues(group.tags, applied)) group.tags = previous;
-      });
-    } else if (scope === 'prefix' && group.mode === 'prefix' && group.prefix) {
-      const previous = group.prefix;
-      const updated = replaceReference(`#${previous}`).slice(1);
-      if (updated === previous) continue;
-      group.prefix = updated;
-      rollbacks.push(() => {
-        if (group.prefix === updated) group.prefix = previous;
-      });
-    }
-  }
+  updateSettingList({
+    current: settings.pinnedTags,
+    apply: applyPinnedTags,
+    latest: () => settings.pinnedTags,
+    replace: replaceReference,
+    rollbacks,
+  });
+  updateSettingList({
+    current: settings.archivedTags,
+    apply: applyArchivedTags,
+    latest: () => settings.archivedTags,
+    replace: replaceReference,
+    rollbacks,
+  });
+  updateTagGroups(settings, replaceReference, scope, rollbacks);
 
   return {
     changed: rollbacks.length > 0,
@@ -118,12 +181,12 @@ function updateTagSettings(
 
 export class TagManager {
   private renameQueue: Promise<void> = Promise.resolve();
-  private selectedListStates = new Set<SelectedListState>();
+  private readonly selectedListStates = new Set<SelectedListState>();
 
   constructor(
-    private app: App,
-    private settings: CalendarSettings,
-    private saveSettings: () => Promise<void>,
+    private readonly app: App,
+    private readonly settings: CalendarSettings,
+    private readonly saveSettings: () => Promise<void>,
   ) {}
 
   registerSelectedListState(state: SelectedListState): () => void {
@@ -139,15 +202,15 @@ export class TagManager {
    */
   async createManualGroup(name: string): Promise<void> {
     const label = name.trim();
-    if (!label) return;
+    if (label.length === 0) return;
     const slug = label
       .toLowerCase()
       .replace(/\s+/g, '-')
       .replace(/[^\w/-]/g, '');
-    if (!slug) return;
+    if (slug.length === 0) return;
     const tag = slug.startsWith('#') ? slug : `#${slug}`;
     // Collision-proof id (length-based ids repeat after add/delete cycles).
-    const base = `group-${slug || 'tag'}`;
+    const base = `group-${slug}`;
     let id = base;
     let n = 2;
     while (this.settings.tagGroups.some((g) => g.id === id)) id = `${base}-${n++}`;
@@ -208,24 +271,14 @@ export class TagManager {
     return this.saveSettings();
   }
 
-  private async renameAcrossVault(
-    oldValue: string,
-    newValue: string,
+  private async prepareVaultRenames(
+    oldTag: string,
+    newTag: string,
     scope: TagRenameScope,
-  ): Promise<VaultTagRenameResult> {
-    const oldTag = normalizeTag(oldValue);
-    const newTag = normalizeTag(newValue);
-    if (!oldTag || !newTag) return { type: 'invalid', reason: 'invalid-tag' };
-    if (oldTag === newTag) return { type: 'invalid', reason: 'same-tag' };
-
-    const files = this.app.vault.getMarkdownFiles();
-    const prepared: Array<{
-      readonly file: (typeof files)[number];
-      readonly transform: (content: string) => string;
-    }> = [];
+  ): Promise<{ readonly prepared: PreparedTagRename[]; readonly failedFiles: string[] }> {
+    const prepared: PreparedTagRename[] = [];
     const failedFiles: string[] = [];
-
-    for (const file of files) {
+    for (const file of this.app.vault.getMarkdownFiles()) {
       try {
         const content = await this.app.vault.cachedRead(file);
         const transform = (latest: string): string =>
@@ -235,37 +288,67 @@ export class TagManager {
         failedFiles.push(file.path);
       }
     }
+    return { prepared, failedFiles };
+  }
 
+  private async applyVaultRenames(
+    prepared: readonly PreparedTagRename[],
+    failedFiles: string[],
+  ): Promise<string[]> {
     const changedFiles: string[] = [];
     for (const { file, transform } of prepared) {
       try {
-        let changed = false;
+        const changeState = { changed: false };
         await this.app.vault.process(file, (content) => {
           const updated = transform(content);
-          changed = updated !== content;
+          changeState.changed = updated !== content;
           return updated;
         });
-        if (changed) changedFiles.push(file.path);
+        if (changeState.changed) changedFiles.push(file.path);
       } catch {
         failedFiles.push(file.path);
       }
     }
+    return changedFiles;
+  }
+
+  private async persistRenameSettings(
+    settingsUpdate: SettingsRenameUpdate,
+    files: TagRenameFilesResult,
+  ): Promise<VaultTagRenameResult | undefined> {
+    if (!settingsUpdate.changed) return undefined;
+    let saveRevision = latestSettingsSaveRevision(this.settings);
+    try {
+      const pendingSave = this.persistSettings();
+      saveRevision = latestSettingsSaveRevision(this.settings);
+      await pendingSave;
+      return undefined;
+    } catch {
+      if (latestSettingsSaveRevision(this.settings) === saveRevision) settingsUpdate.rollback();
+      return { type: 'settings-error', ...files };
+    }
+  }
+
+  private async renameAcrossVault(
+    oldValue: string,
+    newValue: string,
+    scope: TagRenameScope,
+  ): Promise<VaultTagRenameResult> {
+    const oldTag = normalizeTag(oldValue);
+    const newTag = normalizeTag(newValue);
+    if (oldTag === null || newTag === null) return { type: 'invalid', reason: 'invalid-tag' };
+    if (oldTag === newTag) return { type: 'invalid', reason: 'same-tag' };
+
+    const preparation = await this.prepareVaultRenames(oldTag, newTag, scope);
+    const { failedFiles } = preparation;
+    const changedFiles = await this.applyVaultRenames(preparation.prepared, failedFiles);
 
     const settingsUpdate = updateTagSettings(this.settings, oldTag, newTag, scope);
-
-    if (settingsUpdate.changed) {
-      let saveRevision = latestSettingsSaveRevision(this.settings);
-      try {
-        const pendingSave = this.persistSettings();
-        saveRevision = latestSettingsSaveRevision(this.settings);
-        await pendingSave;
-      } catch {
-        if (latestSettingsSaveRevision(this.settings) === saveRevision) {
-          settingsUpdate.rollback();
-        }
-        return { type: 'settings-error', changedFiles, failedFiles };
-      }
-    }
+    const settingsError = await this.persistRenameSettings(settingsUpdate, {
+      changedFiles,
+      failedFiles,
+    });
+    if (settingsError !== undefined) return settingsError;
 
     this.rebaseSelectedLists(oldTag, newTag, scope);
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   captureChangedCallback,
   createAppWithFiles,
+  expectDefined,
   flushMicrotasks,
   seedTaskCache,
   useRealMoment,
@@ -27,7 +28,7 @@ describe('store test helpers', () => {
   it('seedTaskCache sets a cache with parent=-1 listItems and frontmatter', async () => {
     const app = await createAppWithFiles({ 'a.md': '- [ ] task1 📅 2026-06-24' });
     seedTaskCache(app, 'a.md', [{ task: ' ', parent: -1, line: 0 }], { color: '#abc' });
-    const file = app.vault.getMarkdownFiles()[0]!;
+    const file = expectDefined(app.vault.getMarkdownFiles()[0]);
     const cache = app.metadataCache.getFileCache(file);
     expect(cache?.listItems).toHaveLength(1);
     expect(cache?.listItems?.[0]?.parent).toBe(-1);

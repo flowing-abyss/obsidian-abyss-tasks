@@ -1,13 +1,14 @@
-// eslint-disable-next-line no-restricted-imports, import/no-extraneous-dependencies
+import { expectDefined, freshContainer, methodOf } from './helpers';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { showDatePickerPopover } from '../src/ui/DatePickerPopover';
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
-  activeDocument
-    .querySelectorAll('.abyss-date-picker-popover')
-    .forEach((element) => element.remove());
+  activeDocument.querySelectorAll('.abyss-date-picker-popover').forEach((element) => {
+    element.remove();
+  });
 });
 
 function host(ownerDocument: Document = activeDocument): {
@@ -15,8 +16,8 @@ function host(ownerDocument: Document = activeDocument): {
   boundary: HTMLElement;
   owner: HTMLElement;
 } {
-  const owner = ownerDocument.createElement('div');
-  const anchor = ownerDocument.createElement('button');
+  const owner = ownerDocument.adoptNode(freshContainer());
+  const anchor = ownerDocument.adoptNode(freshContainer().createEl('button'));
   owner.append(anchor);
   ownerDocument.body.append(owner);
   return { anchor, boundary: owner, owner };
@@ -27,7 +28,7 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
 }
 
 function mockPopoverRect(width: number, height: number): void {
-  const real = HTMLElement.prototype.getBoundingClientRect;
+  const real = methodOf(HTMLElement.prototype, 'getBoundingClientRect');
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
     this: HTMLElement,
   ) {
@@ -87,7 +88,7 @@ describe('showDatePickerPopover', () => {
       onPick,
       onClose,
     });
-    const input = owner.querySelector<HTMLInputElement>('input[type="date"]')!;
+    const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
     vi.runAllTimers();
 
     expect(input.value).toBe('2026-07-30');
@@ -128,7 +129,9 @@ describe('showDatePickerPopover', () => {
     const blurHost = host();
     const blurClose = vi.fn();
     showDatePickerPopover({ ...blurHost, onPick: vi.fn(), onClose: blurClose });
-    const input = blurHost.owner.querySelector<HTMLInputElement>('input[type="date"]')!;
+    const input = expectDefined(
+      blurHost.owner.querySelector<HTMLInputElement>('input[type="date"]'),
+    );
     input.dispatchEvent(new FocusEvent('blur'));
     vi.runAllTimers();
     expect(blurClose).toHaveBeenCalledOnce();
@@ -156,7 +159,7 @@ describe('showDatePickerPopover', () => {
     anchor.focus();
     showDatePickerPopover({ owner, anchor, boundary, onPick: vi.fn() });
     vi.advanceTimersByTime(0);
-    const input = owner.querySelector<HTMLInputElement>('input[type="date"]')!;
+    const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
     expect(owner.ownerDocument.activeElement).toBe(input);
 
     next.focus();
@@ -173,7 +176,7 @@ describe('showDatePickerPopover', () => {
     const { anchor, boundary, owner } = host(ownerDocument);
     const onClose = vi.fn();
     showDatePickerPopover({ owner, anchor, boundary, onPick: vi.fn(), onClose });
-    const input = owner.querySelector<HTMLInputElement>('input[type="date"]')!;
+    const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
     const focus = vi.spyOn(input, 'focus');
 
     vi.runAllTimers();
@@ -201,7 +204,7 @@ describe('showDatePickerPopover', () => {
 
     showDatePickerPopover({ owner, anchor, boundary, onPick: vi.fn() });
 
-    const popover = owner.querySelector<HTMLElement>('.abyss-date-picker-popover')!;
+    const popover = expectDefined(owner.querySelector<HTMLElement>('.abyss-date-picker-popover'));
     expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('40px');
     expect(popover.style.getPropertyValue('--abyss-pop-top')).toBe('44px');
     expect(popover.dataset['side']).toBe('below');
@@ -228,7 +231,7 @@ describe('showDatePickerPopover', () => {
 
     showDatePickerPopover({ owner, anchor, boundary, onPick: vi.fn() });
 
-    const popover = owner.querySelector<HTMLElement>('.abyss-date-picker-popover')!;
+    const popover = expectDefined(owner.querySelector<HTMLElement>('.abyss-date-picker-popover'));
     expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('48px');
     expect(popover.style.getPropertyValue('--abyss-pop-top')).toBe('52px');
     owner.remove();
@@ -278,7 +281,7 @@ describe('showDatePickerPopover', () => {
 
     showDatePickerPopover({ owner, anchor, boundary, onPick: vi.fn() });
 
-    const popover = owner.querySelector<HTMLElement>('.abyss-date-picker-popover')!;
+    const popover = expectDefined(owner.querySelector<HTMLElement>('.abyss-date-picker-popover'));
     expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe(expected.left);
     expect(popover.style.getPropertyValue('--abyss-pop-top')).toBe(expected.top);
     expect(popover.dataset['side']).toBe(expected.side);
@@ -297,7 +300,7 @@ describe('showDatePickerPopover', () => {
       value: () => anchorRect,
     });
     mockPopoverRect(120, 40);
-    const ownerWindow = owner.ownerDocument.defaultView!;
+    const ownerWindow = expectDefined(owner.ownerDocument.defaultView);
     const removeWindowListener = vi.spyOn(ownerWindow, 'removeEventListener');
     const removeDocumentListener = vi.spyOn(owner.ownerDocument, 'removeEventListener');
 
@@ -307,7 +310,7 @@ describe('showDatePickerPopover', () => {
       boundary,
       onPick: vi.fn(),
     });
-    const popover = owner.querySelector<HTMLElement>('.abyss-date-picker-popover')!;
+    const popover = expectDefined(owner.querySelector<HTMLElement>('.abyss-date-picker-popover'));
     expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('40px');
 
     anchorRect = rect(280, 20, 20, 20);

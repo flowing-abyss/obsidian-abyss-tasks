@@ -5,7 +5,16 @@ import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
 import * as spanLayout from '../src/views/spanLayout';
-import { fixedToday, freshContainer, resolvedConfig, task, useRealMoment } from './helpers';
+import {
+  expectDefined,
+  fixedToday,
+  freshContainer,
+  methodOf,
+  parseJson,
+  resolvedConfig,
+  task,
+  useRealMoment,
+} from './helpers';
 
 useRealMoment();
 const fakeApp = {} as App;
@@ -39,7 +48,7 @@ function measureAllDayCells(container: HTMLElement): () => void {
   cells.forEach((cell, index) => {
     vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(new DOMRect(index * 100, 0, 100, 100));
   });
-  const originalElementFromPoint = document.elementFromPoint;
+  const originalElementFromPoint = methodOf(document, 'elementFromPoint');
   document.elementFromPoint = (clientX) => cells[Math.floor(clientX / 100)] ?? null;
   return () => {
     document.elementFromPoint = originalElementFromPoint;
@@ -52,7 +61,7 @@ function measureTimedColumns(container: HTMLElement): void {
     vi.spyOn(day, 'getBoundingClientRect').mockReturnValue(
       new DOMRect(index * 100, 100, 100, 24 * 48),
     );
-    const hour = day.querySelector<HTMLElement>('.abyss-tg-hour-column')!;
+    const hour = expectDefined(day.querySelector<HTMLElement>('.abyss-tg-hour-column'));
     vi.spyOn(hour, 'getBoundingClientRect').mockReturnValue(
       new DOMRect(index * 100, 100, 100, 24 * 48),
     );
@@ -87,7 +96,9 @@ describe('WeekTimeGridView', () => {
       false,
     );
 
-    expect(recurrenceBadgeDom(container.querySelector<HTMLElement>('.abyss-tg-plain')!)).toEqual({
+    expect(
+      recurrenceBadgeDom(expectDefined(container.querySelector<HTMLElement>('.abyss-tg-plain'))),
+    ).toEqual({
       rootClass: 'abyss-recurrence-badge',
       validity: 'valid',
       label: 'Repeats: every week',
@@ -120,9 +131,9 @@ describe('WeekTimeGridView', () => {
         '[data-tg-date="2026-07-08"].abyss-tg-allday-cell',
       );
       const nowLine = container.querySelector('.abyss-tg-now-line');
-      const quickAdd = (dayColumn as HTMLElement)
-        .querySelector<HTMLElement>('.abyss-tg-hour-column')!
-        .createDiv({ cls: 'abyss-tg-quick-add' });
+      const quickAdd = expectDefined(
+        (dayColumn as HTMLElement).querySelector<HTMLElement>('.abyss-tg-hour-column'),
+      ).createDiv({ cls: 'abyss-tg-quick-add' });
       gridRow.scrollTop = 412;
 
       for (let revision = 1; revision <= 3; revision++) {
@@ -200,7 +211,7 @@ describe('WeekTimeGridView', () => {
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }));
 
     const layer = container.querySelector('.abyss-tg-span-layer');
-    const row = layer!;
+    const row = expectDefined(layer);
     expect(layer).not.toBeNull();
     expect(container.querySelector('.abyss-tg-root--week')).not.toBeNull();
     expect(row.querySelectorAll('[data-span-kind="ghost"]')).toHaveLength(2);
@@ -277,10 +288,12 @@ describe('WeekTimeGridView', () => {
     );
     const restoreElementFromPoint = measureAllDayCells(container);
     try {
-      const ghost = container.querySelector<HTMLElement>(
-        '[data-task-path="clipped.md"][data-span-date="2026-07-06"]',
-      )!;
-      const handle = ghost.querySelector<HTMLElement>('[data-boundary="start"]')!;
+      const ghost = expectDefined(
+        container.querySelector<HTMLElement>(
+          '[data-task-path="clipped.md"][data-span-date="2026-07-06"]',
+        ),
+      );
+      const handle = expectDefined(ghost.querySelector<HTMLElement>('[data-boundary="start"]'));
 
       handle.dispatchEvent(
         new PointerEvent('pointerdown', {
@@ -334,12 +347,14 @@ describe('WeekTimeGridView', () => {
     );
     const restoreElementFromPoint = measureAllDayCells(container);
     try {
-      const ghost = container.querySelector<HTMLElement>(
-        '[data-task-path="clipped.md"][data-span-date="2026-07-08"]',
-      )!;
-      const proxy = ghost.querySelector<HTMLElement>(
-        '.abyss-tg-span-edge--left.abyss-tg-span-edge--proxy',
-      )!;
+      const ghost = expectDefined(
+        container.querySelector<HTMLElement>(
+          '[data-task-path="clipped.md"][data-span-date="2026-07-08"]',
+        ),
+      );
+      const proxy = expectDefined(
+        ghost.querySelector<HTMLElement>('.abyss-tg-span-edge--left.abyss-tg-span-edge--proxy'),
+      );
 
       expect(document.activeElement).not.toBe(ghost);
       proxy.dispatchEvent(
@@ -393,9 +408,11 @@ describe('WeekTimeGridView', () => {
     );
     const restoreElementFromPoint = measureAllDayCells(container);
     try {
-      const handle = container.querySelector<HTMLElement>(
-        '[data-task-path="clipped.md"][data-span-date="2026-07-06"] [data-boundary="start"]',
-      )!;
+      const handle = expectDefined(
+        container.querySelector<HTMLElement>(
+          '[data-task-path="clipped.md"][data-span-date="2026-07-06"] [data-boundary="start"]',
+        ),
+      );
 
       handle.dispatchEvent(
         new PointerEvent('pointerdown', {
@@ -448,7 +465,9 @@ describe('WeekTimeGridView', () => {
     expect(
       container.querySelector('[data-tg-date="2026-07-08"] .abyss-tg-cell-items .abyss-tg-plain'),
     ).not.toBeNull();
-    const target = container.querySelector<HTMLElement>('[data-tg-date="2026-07-12"]')!;
+    const target = expectDefined(
+      container.querySelector<HTMLElement>('[data-tg-date="2026-07-12"]'),
+    );
     const drop = new MouseEvent('drop', { bubbles: true });
     Object.defineProperty(drop, 'dataTransfer', {
       value: { getData: () => 'f.md:::3' },
@@ -466,7 +485,7 @@ describe('WeekTimeGridView', () => {
       resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
     );
 
-    const body = container.querySelector('.abyss-tg-plain')!;
+    const body = expectDefined(container.querySelector('.abyss-tg-plain'));
     expect(body.querySelectorAll('.abyss-status-marker')).toHaveLength(1);
     expect(body.querySelector('[data-boundary="create-span"]')).not.toBeNull();
   });
@@ -513,8 +532,8 @@ describe('WeekTimeGridView', () => {
     const t = task({ planning: { scheduled: '2026-07-08' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }));
     const restoreElementFromPoint = measureAllDayCells(container);
-    const body = container.querySelector<HTMLElement>('.abyss-tg-plain')!;
-    const handle = body.querySelector<HTMLElement>('[data-boundary="create-span"]')!;
+    const body = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-plain'));
+    const handle = expectDefined(body.querySelector<HTMLElement>('[data-boundary="create-span"]'));
     expect(handle.dataset['resizeEdge']).toBe('due-date');
 
     handle.dispatchEvent(
@@ -536,7 +555,9 @@ describe('WeekTimeGridView', () => {
     expect(
       previews.map((preview) => ({
         column: preview.style.gridColumn,
-        target: JSON.parse(preview.dataset['target']!),
+        target: parseJson<{ boundary: string; date: string; dayDelta: number }>(
+          expectDefined(preview.dataset['target']),
+        ),
       })),
     ).toEqual([
       { column: '3 / 4', target: { boundary: 'create-span', date: '2026-07-10', dayDelta: 2 } },
@@ -547,7 +568,7 @@ describe('WeekTimeGridView', () => {
     expect(body.getAttribute('draggable')).toBe('false');
     expect(handle.dataset['activeResize']).toBe('true');
     expect(body.dataset['activeResize']).toBeUndefined();
-    const preview = previews[0]!;
+    const preview = expectDefined(previews[0]);
     expect(preview.getAttribute('aria-hidden')).toBe('true');
     expect(preview.textContent).toContain(t.title);
     expect(preview.querySelector(':scope > .abyss-calendar-preview-target-outline')).not.toBeNull();
@@ -587,8 +608,8 @@ describe('WeekTimeGridView', () => {
     const config = resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 });
     view.render(container, [plain, overlap], config);
     const restoreElementFromPoint = measureAllDayCells(container);
-    const body = container.querySelector<HTMLElement>('.abyss-tg-plain')!;
-    const handle = body.querySelector<HTMLElement>('[data-boundary="create-span"]')!;
+    const body = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-plain'));
+    const handle = expectDefined(body.querySelector<HTMLElement>('[data-boundary="create-span"]'));
 
     handle.dispatchEvent(
       new PointerEvent('pointerdown', {
@@ -613,7 +634,7 @@ describe('WeekTimeGridView', () => {
       { column: '4 / 5', row: '1' },
       { column: '5 / 6', row: '1' },
     ]);
-    const previewRow = previews[0]!.style.gridRow;
+    const previewRow = expectDefined(previews[0]).style.gridRow;
 
     window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 34 }));
     const extended = task({
@@ -621,9 +642,9 @@ describe('WeekTimeGridView', () => {
       planning: { start: '2026-07-08', due: '2026-07-10' },
     });
     view.patch(container, [extended, overlap], config);
-    const committed = container.querySelector<HTMLElement>(
-      '[data-task-path="a.md"][data-span-kind="ghost"]',
-    )!;
+    const committed = expectDefined(
+      container.querySelector<HTMLElement>('[data-task-path="a.md"][data-span-kind="ghost"]'),
+    );
     expect(committed.style.gridRow).toBe(previewRow);
 
     view.destroy();
@@ -643,8 +664,10 @@ describe('WeekTimeGridView', () => {
         resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
       );
       const restoreElementFromPoint = measureAllDayCells(container);
-      const body = container.querySelector<HTMLElement>('.abyss-tg-plain')!;
-      const handle = body.querySelector<HTMLElement>('[data-boundary="create-span"]')!;
+      const body = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-plain'));
+      const handle = expectDefined(
+        body.querySelector<HTMLElement>('[data-boundary="create-span"]'),
+      );
       handle.dispatchEvent(
         new PointerEvent('pointerdown', {
           bubbles: true,
@@ -690,8 +713,10 @@ describe('WeekTimeGridView', () => {
       const config = resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 });
       view.render(container, [t], config);
       const restoreElementFromPoint = measureAllDayCells(container);
-      const body = container.querySelector<HTMLElement>('.abyss-tg-plain')!;
-      const handle = body.querySelector<HTMLElement>('[data-boundary="create-span"]')!;
+      const body = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-plain'));
+      const handle = expectDefined(
+        body.querySelector<HTMLElement>('[data-boundary="create-span"]'),
+      );
       handle.dispatchEvent(
         new PointerEvent('pointerdown', {
           bubbles: true,
@@ -815,9 +840,11 @@ describe('WeekTimeGridView', () => {
     view.render(container, [moving, destination], config);
     measureTimedColumns(container);
 
-    const source = container.querySelector<HTMLElement>(
-      '[data-tg-date="2026-07-06"] [data-abyss-task-file="a.md"]',
-    )!;
+    const source = expectDefined(
+      container.querySelector<HTMLElement>(
+        '[data-tg-date="2026-07-06"] [data-abyss-task-file="a.md"]',
+      ),
+    );
     vi.spyOn(source, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 532, 100, 48));
     source.dispatchEvent(
       new PointerEvent('pointerdown', {
@@ -832,9 +859,9 @@ describe('WeekTimeGridView', () => {
       new PointerEvent('pointermove', { clientX: 150, clientY: 544, pointerId: 41 }),
     );
 
-    const preview = container.querySelector<HTMLElement>(
-      '[data-tg-date="2026-07-07"] .abyss-tg-drag-preview',
-    )!;
+    const preview = expectDefined(
+      container.querySelector<HTMLElement>('[data-tg-date="2026-07-07"] .abyss-tg-drag-preview'),
+    );
     expect(preview.style.left).toBe('0%');
     expect(preview.style.width).toBe('50%');
     const previewGeometry = { left: preview.style.left, width: preview.style.width };
@@ -845,9 +872,11 @@ describe('WeekTimeGridView', () => {
       planning: { due: '2026-07-07', time: '09:00', duration: 60 },
     });
     view.patch(container, [moved, destination], config);
-    const committed = container.querySelector<HTMLElement>(
-      '[data-tg-date="2026-07-07"] [data-abyss-task-file="a.md"]',
-    )!;
+    const committed = expectDefined(
+      container.querySelector<HTMLElement>(
+        '[data-tg-date="2026-07-07"] [data-abyss-task-file="a.md"]',
+      ),
+    );
     expect({ left: committed.style.left, width: committed.style.width }).toEqual(previewGeometry);
     view.destroy();
   });
@@ -867,9 +896,11 @@ describe('WeekTimeGridView', () => {
     view.render(container, [incumbent, moving], config);
     measureTimedColumns(container);
 
-    const source = container.querySelector<HTMLElement>(
-      '[data-tg-date="2026-07-06"] [data-abyss-task-file="b.md"]',
-    )!;
+    const source = expectDefined(
+      container.querySelector<HTMLElement>(
+        '[data-tg-date="2026-07-06"] [data-abyss-task-file="b.md"]',
+      ),
+    );
     expect(source.style.left).toBe('50%');
     expect(source.style.width).toBe('50%');
     vi.spyOn(source, 'getBoundingClientRect').mockReturnValue(new DOMRect(50, 532, 50, 48));
@@ -886,9 +917,9 @@ describe('WeekTimeGridView', () => {
       new PointerEvent('pointermove', { clientX: 150, clientY: 544, pointerId: 42 }),
     );
 
-    const preview = container.querySelector<HTMLElement>(
-      '[data-tg-date="2026-07-07"] .abyss-tg-drag-preview',
-    )!;
+    const preview = expectDefined(
+      container.querySelector<HTMLElement>('[data-tg-date="2026-07-07"] .abyss-tg-drag-preview'),
+    );
     expect(preview.style.left).toBe('0%');
     expect(preview.style.width).toBe('100%');
     const previewGeometry = { left: preview.style.left, width: preview.style.width };
@@ -899,9 +930,11 @@ describe('WeekTimeGridView', () => {
       planning: { due: '2026-07-07', time: '09:00', duration: 60 },
     });
     view.patch(container, [incumbent, moved], config);
-    const committed = container.querySelector<HTMLElement>(
-      '[data-tg-date="2026-07-07"] [data-abyss-task-file="b.md"]',
-    )!;
+    const committed = expectDefined(
+      container.querySelector<HTMLElement>(
+        '[data-tg-date="2026-07-07"] [data-abyss-task-file="b.md"]',
+      ),
+    );
     expect({ left: committed.style.left, width: committed.style.width }).toEqual(previewGeometry);
     view.destroy();
   });
@@ -921,11 +954,15 @@ describe('WeekTimeGridView', () => {
     view.render(container, [extending, destination], config);
     measureTimedColumns(container);
 
-    const source = container.querySelector<HTMLElement>(
-      '[data-tg-date="2026-07-06"] [data-abyss-task-file="a.md"]',
-    )!;
+    const source = expectDefined(
+      container.querySelector<HTMLElement>(
+        '[data-tg-date="2026-07-06"] [data-abyss-task-file="a.md"]',
+      ),
+    );
     vi.spyOn(source, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 532, 100, 48));
-    const handle = source.querySelector<HTMLElement>('[data-boundary="create-span"]')!;
+    const handle = expectDefined(
+      source.querySelector<HTMLElement>('[data-boundary="create-span"]'),
+    );
     handle.dispatchEvent(
       new PointerEvent('pointerdown', {
         bubbles: true,
@@ -939,9 +976,11 @@ describe('WeekTimeGridView', () => {
       new PointerEvent('pointermove', { clientX: 150, clientY: 544, pointerId: 43 }),
     );
 
-    const preview = container.querySelector<HTMLElement>(
-      '[data-tg-date="2026-07-07"] .abyss-tg-boundary-preview',
-    )!;
+    const preview = expectDefined(
+      container.querySelector<HTMLElement>(
+        '[data-tg-date="2026-07-07"] .abyss-tg-boundary-preview',
+      ),
+    );
     // Equal-time lanes are identity-stable: a.md owns column 0 even though bucket ordering places
     // the pre-existing one-day destination before the prospective span segment.
     expect(preview.style.left).toBe('0%');
@@ -959,9 +998,11 @@ describe('WeekTimeGridView', () => {
       },
     });
     view.patch(container, [extended, destination], config);
-    const committed = container.querySelector<HTMLElement>(
-      '[data-tg-date="2026-07-07"] [data-abyss-task-file="a.md"]',
-    )!;
+    const committed = expectDefined(
+      container.querySelector<HTMLElement>(
+        '[data-tg-date="2026-07-07"] [data-abyss-task-file="a.md"]',
+      ),
+    );
     expect({ left: committed.style.left, width: committed.style.width }).toEqual(previewGeometry);
     view.destroy();
   });
@@ -990,9 +1031,9 @@ describe('WeekTimeGridView', () => {
     view.render(container, [moving, destination], config);
     const restoreElementFromPoint = measureAllDayCells(container);
 
-    const source = container.querySelector<HTMLElement>(
-      '[data-task-path="a.md"][data-span-kind="ghost"]',
-    )!;
+    const source = expectDefined(
+      container.querySelector<HTMLElement>('[data-task-path="a.md"][data-span-kind="ghost"]'),
+    );
     source.dispatchEvent(
       new PointerEvent('pointerdown', {
         bubbles: true,
@@ -1055,9 +1096,9 @@ describe('WeekTimeGridView', () => {
     view.render(container, [blocker, moving], config);
     const restoreElementFromPoint = measureAllDayCells(container);
 
-    const source = container.querySelector<HTMLElement>(
-      '[data-task-path="b.md"][data-span-kind="ghost"]',
-    )!;
+    const source = expectDefined(
+      container.querySelector<HTMLElement>('[data-task-path="b.md"][data-span-kind="ghost"]'),
+    );
     expect(source.style.gridRow).toBe('2');
     source.dispatchEvent(
       new PointerEvent('pointerdown', {
@@ -1114,11 +1155,11 @@ describe('WeekTimeGridView', () => {
     view.render(container, [resizing, blocker], config);
     const restoreElementFromPoint = measureAllDayCells(container);
 
-    const source = container.querySelector<HTMLElement>(
-      '[data-task-path="a.md"][data-span-kind="ghost"]',
-    )!;
+    const source = expectDefined(
+      container.querySelector<HTMLElement>('[data-task-path="a.md"][data-span-kind="ghost"]'),
+    );
     expect(source.style.gridRow).toBe('2');
-    const handle = source.querySelector<HTMLElement>('[data-boundary="start"]')!;
+    const handle = expectDefined(source.querySelector<HTMLElement>('[data-boundary="start"]'));
     handle.dispatchEvent(
       new PointerEvent('pointerdown', {
         bubbles: true,
@@ -1178,10 +1219,10 @@ describe('WeekTimeGridView', () => {
     const layoutComputations = vi.spyOn(spanLayout, 'layoutVisibleSpansWithReplacement');
 
     try {
-      const source = container.querySelector<HTMLElement>(
-        '[data-task-path="a.md"][data-span-kind="ghost"]',
-      )!;
-      const handle = source.querySelector<HTMLElement>('[data-boundary="start"]')!;
+      const source = expectDefined(
+        container.querySelector<HTMLElement>('[data-task-path="a.md"][data-span-kind="ghost"]'),
+      );
+      const handle = expectDefined(source.querySelector<HTMLElement>('[data-boundary="start"]'));
       handle.dispatchEvent(
         new PointerEvent('pointerdown', {
           bubbles: true,
@@ -1216,7 +1257,9 @@ describe('WeekTimeGridView', () => {
         container.querySelectorAll<HTMLElement>('.abyss-span-boundary-preview'),
       );
 
-      expect(JSON.parse(adjacentPreviews[0]!.dataset['target']!)).toEqual({
+      expect(
+        JSON.parse(expectDefined(expectDefined(adjacentPreviews[0]).dataset['target'])),
+      ).toEqual({
         boundary: 'start',
         date: '2026-07-07',
         dayDelta: -1,
@@ -1237,7 +1280,9 @@ describe('WeekTimeGridView', () => {
 
   it('destroy() does not throw', () => {
     const view = new WeekTimeGridView(callbacks());
-    expect(() => view.destroy()).not.toThrow();
+    expect(() => {
+      view.destroy();
+    }).not.toThrow();
   });
 
   it('periodically repositions the now-line while the mounted week includes today, and clears the interval on destroy', () => {
@@ -1563,9 +1608,9 @@ describe('WeekTimeGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-28', firstDayOfWeek: 1 }));
 
-      const dueColumn = container.querySelector<HTMLElement>(
-        '.abyss-tg-day-column[data-tg-date="2026-07-08"]',
-      )!;
+      const dueColumn = expectDefined(
+        container.querySelector<HTMLElement>('.abyss-tg-day-column[data-tg-date="2026-07-08"]'),
+      );
       const dueBlock = dueColumn.querySelector('.abyss-tg-block') as HTMLElement;
       expect(dueBlock).not.toBeNull();
       expect(dueColumn.querySelector('.abyss-tg-block-continuation')).toBeNull();
@@ -1577,12 +1622,12 @@ describe('WeekTimeGridView', () => {
         ['2026-07-06', 'start'],
         ['2026-07-07', null],
       ] as const) {
-        const col = container.querySelector<HTMLElement>(
-          `.abyss-tg-day-column[data-tg-date="${date}"]`,
-        )!;
+        const col = expectDefined(
+          container.querySelector<HTMLElement>(`.abyss-tg-day-column[data-tg-date="${date}"]`),
+        );
         const seg = col.querySelector('.abyss-tg-block.abyss-tg-block-continuation') as HTMLElement;
         expect(seg).not.toBeNull();
-        expect(seg?.textContent).toContain('Conference');
+        expect(seg.textContent).toContain('Conference');
         expect(seg.tabIndex).toBe(0);
         expect(seg.getAttribute('draggable')).toBeNull();
         expect(seg.querySelector('.abyss-tg-resize-handle')).not.toBeNull();
@@ -1597,9 +1642,9 @@ describe('WeekTimeGridView', () => {
       expect(container.querySelectorAll('.abyss-tg-block')).toHaveLength(3);
 
       // Not part of the span: no block, no continuation.
-      const outside = container.querySelector<HTMLElement>(
-        '.abyss-tg-day-column[data-tg-date="2026-07-09"]',
-      )!;
+      const outside = expectDefined(
+        container.querySelector<HTMLElement>('.abyss-tg-day-column[data-tg-date="2026-07-09"]'),
+      );
       expect(outside.querySelector('.abyss-tg-block')).toBeNull();
       expect(outside.querySelector('.abyss-tg-block-continuation')).toBeNull();
     });
@@ -1622,9 +1667,9 @@ describe('WeekTimeGridView', () => {
         [continuation, terminal],
         resolvedConfig({ startPosition: '2026-28', firstDayOfWeek: 1 }),
       );
-      const day = container.querySelector<HTMLElement>(
-        '.abyss-tg-day-column[data-tg-date="2026-07-07"]',
-      )!;
+      const day = expectDefined(
+        container.querySelector<HTMLElement>('.abyss-tg-day-column[data-tg-date="2026-07-07"]'),
+      );
       const blocks = Array.from(day.querySelectorAll<HTMLElement>('.abyss-tg-block'));
       expect(blocks).toHaveLength(2);
       expect(blocks.map((block) => block.style.width)).toEqual(['50%', '50%']);

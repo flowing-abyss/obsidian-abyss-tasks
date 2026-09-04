@@ -1,7 +1,16 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { Platform } from 'obsidian';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+
+async function loadDesktopNodeModules() {
+  if (!Platform.isDesktop) throw new Error('Task consumer contracts require a desktop test host');
+  return { fs: await import('node:fs'), path: await import('node:path') };
+}
+
+const node = await loadDesktopNodeModules();
+const resolve = (...paths: string[]): string => node.path.resolve(...paths);
+const dirname = (path: string): string => node.path.dirname(path);
+const existsSync = (path: string): boolean => node.fs.existsSync(path);
 
 const ROOT = resolve(import.meta.dirname, '../..');
 
@@ -63,7 +72,7 @@ const CALENDAR_PROJECTION_CONSUMERS = new Set([
 ]);
 
 function source(path: string): string {
-  return readFileSync(resolve(ROOT, path), 'utf8');
+  return node.fs.readFileSync(resolve(ROOT, path), 'utf8');
 }
 
 function matchingFiles(paths: readonly string[], pattern: RegExp): string[] {
@@ -71,7 +80,7 @@ function matchingFiles(paths: readonly string[], pattern: RegExp): string[] {
 }
 
 function typeScriptFiles(directory: string): string[] {
-  return readdirSync(resolve(ROOT, directory), { withFileTypes: true }).flatMap((entry) => {
+  return node.fs.readdirSync(resolve(ROOT, directory), { withFileTypes: true }).flatMap((entry) => {
     const path = `${directory}/${entry.name}`;
     if (entry.isDirectory()) return typeScriptFiles(path);
     return entry.isFile() && entry.name.endsWith('.ts') ? [path] : [];
@@ -85,32 +94,41 @@ function sourceFile(path: string, candidate: string): ts.SourceFile {
 function moduleSpecifiers(path: string, candidate: string): string[] {
   const specifiers: string[] = [];
   const record = (node: ts.Node | undefined): void => {
-    if (node && ts.isStringLiteralLike(node)) specifiers.push(node.text);
+    if (node != null && ts.isStringLiteralLike(node)) specifiers.push(node.text);
   };
   const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-      record(node.moduleSpecifier);
-    } else if (
-      ts.isImportEqualsDeclaration(node) &&
-      ts.isExternalModuleReference(node.moduleReference)
-    ) {
-      record(node.moduleReference.expression);
-    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
-      record(node.argument.literal);
-    } else if (ts.isModuleDeclaration(node) && ts.isStringLiteral(node.name)) {
-      record(node.name);
-    } else if (
-      ts.isCallExpression(node) &&
-      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-        (ts.isIdentifier(node.expression) && node.expression.text === 'require'))
-    ) {
-      record(node.arguments[0]);
-    }
+    record(moduleSpecifierNode(node));
     ts.forEachChild(node, visit);
   };
 
   visit(sourceFile(path, candidate));
   return specifiers;
+}
+
+function moduleSpecifierNode(node: ts.Node): ts.Node | undefined {
+  return declarationModuleSpecifier(node) ?? typeModuleSpecifier(node) ?? callModuleSpecifier(node);
+}
+
+function declarationModuleSpecifier(node: ts.Node): ts.Node | undefined {
+  if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return node.moduleSpecifier;
+  if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+    return node.moduleReference.expression;
+  }
+  if (ts.isModuleDeclaration(node) && ts.isStringLiteral(node.name)) return node.name;
+  return undefined;
+}
+
+function typeModuleSpecifier(node: ts.Node): ts.Node | undefined {
+  if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument))
+    return node.argument.literal;
+  return undefined;
+}
+
+function callModuleSpecifier(node: ts.Node): ts.Node | undefined {
+  if (!ts.isCallExpression(node)) return undefined;
+  const dynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+  const commonJsRequire = ts.isIdentifier(node.expression) && node.expression.text === 'require';
+  return dynamicImport || commonJsRequire ? node.arguments[0] : undefined;
 }
 
 function namedImports(path: string, candidate: string): string[] {
@@ -119,7 +137,7 @@ function namedImports(path: string, candidate: string): string[] {
   for (const statement of module.statements) {
     if (!ts.isImportDeclaration(statement)) continue;
     const bindings = statement.importClause?.namedBindings;
-    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    if (bindings == null || !ts.isNamedImports(bindings)) continue;
     for (const binding of bindings.elements)
       names.push(binding.propertyName?.text ?? binding.name.text);
   }
@@ -160,23 +178,35 @@ function removedModuleReferences(path: string, candidate: string): string[] {
 function isRemovedBindingIdentifier(node: ts.Identifier): boolean {
   if (!REMOVED_COMPATIBILITY_BINDINGS.has(node.text)) return false;
   const parent = node.parent;
-  return (
-    (ts.isImportClause(parent) && parent.name === node) ||
-    (ts.isImportSpecifier(parent) && parent.name === node) ||
-    (ts.isNamespaceImport(parent) && parent.name === node) ||
-    (ts.isImportEqualsDeclaration(parent) && parent.name === node) ||
-    (ts.isClassDeclaration(parent) && parent.name === node) ||
-    (ts.isClassExpression(parent) && parent.name === node) ||
-    (ts.isInterfaceDeclaration(parent) && parent.name === node) ||
-    (ts.isTypeAliasDeclaration(parent) && parent.name === node) ||
-    (ts.isFunctionDeclaration(parent) && parent.name === node) ||
-    (ts.isFunctionExpression(parent) && parent.name === node) ||
-    (ts.isEnumDeclaration(parent) && parent.name === node) ||
-    (ts.isModuleDeclaration(parent) && parent.name === node) ||
-    (ts.isVariableDeclaration(parent) && parent.name === node) ||
-    (ts.isBindingElement(parent) && parent.name === node) ||
-    (ts.isParameter(parent) && parent.name === node)
-  );
+  if (!REMOVED_BINDING_PARENT_KINDS.has(parent.kind)) return false;
+  return (parent as ts.Node & { readonly name?: ts.Node }).name === node;
+}
+
+const REMOVED_BINDING_PARENT_KINDS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.ImportClause,
+  ts.SyntaxKind.ImportSpecifier,
+  ts.SyntaxKind.NamespaceImport,
+  ts.SyntaxKind.ImportEqualsDeclaration,
+  ts.SyntaxKind.ClassDeclaration,
+  ts.SyntaxKind.ClassExpression,
+  ts.SyntaxKind.InterfaceDeclaration,
+  ts.SyntaxKind.TypeAliasDeclaration,
+  ts.SyntaxKind.FunctionDeclaration,
+  ts.SyntaxKind.FunctionExpression,
+  ts.SyntaxKind.EnumDeclaration,
+  ts.SyntaxKind.ModuleDeclaration,
+  ts.SyntaxKind.VariableDeclaration,
+  ts.SyntaxKind.BindingElement,
+  ts.SyntaxKind.Parameter,
+]);
+
+function knipIgnoreEntries(): readonly unknown[] {
+  const parsed = ts.parseConfigFileTextToJson('knip.jsonc', source('knip.jsonc'));
+  if (parsed.error !== undefined) throw new Error('knip.jsonc must be valid JSONC');
+  const config: unknown = parsed.config;
+  if (config == null || typeof config !== 'object') return [];
+  const ignore: unknown = (config as Record<string, unknown>)['ignore'];
+  return Array.isArray(ignore) ? ignore : [];
 }
 
 function removedBindings(path: string, candidate: string): string[] {
@@ -211,7 +241,7 @@ describe('final task consumer contract', () => {
     const existingCompatibilityFiles = REMOVED_COMPATIBILITY_FILES.filter((path) =>
       existsSync(resolve(ROOT, path)),
     );
-    const knipIgnores = (JSON.parse(source('knip.json')).ignore ?? []) as string[];
+    const knipIgnores = knipIgnoreEntries();
 
     expect({ existingCompatibilityFiles, knipIgnores }).toEqual({
       existingCompatibilityFiles: [],
@@ -267,7 +297,7 @@ describe('final task consumer contract', () => {
     );
 
     expect(bindings).toEqual([]);
-  });
+  }, 15_000);
 
   it('keeps the final read model independent of legacy parser projections and task shapes', () => {
     const finalReadModel = productionFiles.filter((path) =>

@@ -56,7 +56,7 @@ interface ForecastTemplate {
 
 interface ForecastCacheEntry {
   readonly forecasts: readonly ForecastTemplate[];
-  readonly issues: readonly Omit<CalendarProjectionIssue, 'source'>[];
+  readonly issues: ReadonlyArray<Omit<CalendarProjectionIssue, 'source'>>;
 }
 
 const MAX_PROJECTION_CACHE_ENTRIES = 256;
@@ -104,7 +104,7 @@ function projectionCacheKey(
 
 function cachedForecast(key: string): ForecastCacheEntry | undefined {
   const cached = projectionCache.get(key);
-  if (!cached) return undefined;
+  if (cached == null) return undefined;
   projectionCache.delete(key);
   projectionCache.set(key, cached);
   return cached;
@@ -190,21 +190,12 @@ function computeForecasts(
   visible: DateRange,
   policy: RecurrencePolicy,
 ): ForecastCacheEntry {
-  const { node } = source;
-  if (node.recurrence === undefined || (node.status !== 'open' && node.status !== 'in-progress')) {
-    return emptyCacheEntry();
-  }
-  const parsed = parseRecurrenceRule(node.recurrence);
-  if (parsed.type === 'invalid' || parsed.whenDone) return emptyCacheEntry();
-  const reference = recurrenceReference(node.planning, policy);
-  if (reference === undefined) return emptyCacheEntry();
-  const bounds = expansionBounds(node.planning, reference, visible, policy);
-  if (bounds === undefined) return emptyCacheEntry();
-
+  const request = forecastExpansionRequest(source, visible, policy);
+  if (request === undefined) return emptyCacheEntry();
   const expansion = expandRecurrenceReferences({
-    rule: node.recurrence,
-    planning: node.planning,
-    visible: bounds,
+    rule: request.rule,
+    planning: source.node.planning,
+    visible: request.bounds,
     policy,
     maxVisible: 512,
     maxSequentialSteps: 4096,
@@ -213,7 +204,12 @@ function computeForecasts(
 
   const forecasts: ForecastTemplate[] = [];
   for (const [index, referenceDate] of expansion.dates.entries()) {
-    const planning = shiftedPlanning(node.planning, reference, referenceDate, policy);
+    const planning = shiftedPlanning(
+      source.node.planning,
+      request.reference,
+      referenceDate,
+      policy,
+    );
     if (planning === undefined || !intersectsVisible(planning, visible)) continue;
     forecasts.push(
       Object.freeze({
@@ -238,6 +234,29 @@ function computeForecasts(
     forecasts: Object.freeze(forecasts),
     issues: Object.freeze(issues),
   });
+}
+
+interface ForecastExpansionRequest {
+  readonly rule: string;
+  readonly reference: LocalDate;
+  readonly bounds: DateRange;
+}
+
+function forecastExpansionRequest(
+  source: CalendarTaskSource,
+  visible: DateRange,
+  policy: RecurrencePolicy,
+): ForecastExpansionRequest | undefined {
+  const { node } = source;
+  if (node.recurrence === undefined || (node.status !== 'open' && node.status !== 'in-progress')) {
+    return undefined;
+  }
+  const parsed = parseRecurrenceRule(node.recurrence);
+  if (parsed.type === 'invalid' || parsed.whenDone) return undefined;
+  const reference = recurrenceReference(node.planning, policy);
+  if (reference === undefined) return undefined;
+  const bounds = expansionBounds(node.planning, reference, visible, policy);
+  return bounds === undefined ? undefined : { rule: node.recurrence, reference, bounds };
 }
 
 function forecastEntry(
@@ -277,12 +296,12 @@ function occurrenceDate(occurrence: CalendarOccurrence): LocalDate {
 
 function stableOccurrenceOrder(left: CalendarOccurrence, right: CalendarOccurrence): number {
   const kindOrder = Number(left.kind === 'forecast') - Number(right.kind === 'forecast');
-  return (
-    occurrenceDate(left).localeCompare(occurrenceDate(right)) ||
-    (left.planning.time ?? '99:99').localeCompare(right.planning.time ?? '99:99') ||
-    left.key.localeCompare(right.key) ||
-    kindOrder
-  );
+  const dateOrder = occurrenceDate(left).localeCompare(occurrenceDate(right));
+  if (dateOrder !== 0) return dateOrder;
+  const timeOrder = (left.planning.time ?? '99:99').localeCompare(right.planning.time ?? '99:99');
+  if (timeOrder !== 0) return timeOrder;
+  const keyOrder = left.key.localeCompare(right.key);
+  return keyOrder !== 0 ? keyOrder : kindOrder;
 }
 
 export function projectCalendarOccurrences(
@@ -291,38 +310,70 @@ export function projectCalendarOccurrences(
   policy: RecurrencePolicy,
 ): CalendarProjection {
   const occurrencesByKey = new Map<string, CalendarOccurrence>();
-  for (const source of sources.materialized) {
-    const occurrence = materializedOccurrence(source, visible, policy);
-    if (occurrence !== undefined && !occurrencesByKey.has(occurrence.key)) {
-      occurrencesByKey.set(occurrence.key, occurrence);
-    }
-  }
+  addMaterializedOccurrences(sources.materialized, visible, policy, occurrencesByKey);
 
   const issues: CalendarProjectionIssue[] = [];
   const issueKeys = new Set<string>();
+  const accumulator = { occurrencesByKey, issues, issueKeys };
   for (const source of sources.recurringSources) {
-    const entry = forecastEntry(source, visible, policy);
-    for (const template of entry.forecasts) {
-      if (occurrencesByKey.has(template.key)) continue;
-      occurrencesByKey.set(template.key, Object.freeze({ kind: 'forecast', source, ...template }));
-    }
-    for (const issue of entry.issues) {
-      const key = `${semanticSourceKey(source)}:${issue.phase}:${issue.limit}`;
-      if (issueKeys.has(key)) continue;
-      issueKeys.add(key);
-      issues.push(
-        Object.freeze({
-          ...issue,
-          source: Object.freeze({ ...source.root.ref }),
-        }),
-      );
-    }
+    addForecastEntry(source, visible, policy, accumulator);
   }
 
   return Object.freeze({
     occurrences: Object.freeze([...occurrencesByKey.values()].sort(stableOccurrenceOrder)),
     issues: Object.freeze(issues),
   });
+}
+
+function addMaterializedOccurrences(
+  sources: readonly CalendarTaskSource[],
+  visible: DateRange,
+  policy: RecurrencePolicy,
+  occurrencesByKey: Map<string, CalendarOccurrence>,
+): void {
+  for (const source of sources) {
+    const occurrence = materializedOccurrence(source, visible, policy);
+    if (occurrence !== undefined && !occurrencesByKey.has(occurrence.key)) {
+      occurrencesByKey.set(occurrence.key, occurrence);
+    }
+  }
+}
+
+function addForecastEntry(
+  source: CalendarTaskSource,
+  visible: DateRange,
+  policy: RecurrencePolicy,
+  accumulator: ProjectionAccumulator,
+): void {
+  const entry = forecastEntry(source, visible, policy);
+  for (const template of entry.forecasts) {
+    if (!accumulator.occurrencesByKey.has(template.key)) {
+      accumulator.occurrencesByKey.set(
+        template.key,
+        Object.freeze({ kind: 'forecast', source, ...template }),
+      );
+    }
+  }
+  for (const issue of entry.issues) addProjectionIssue(source, issue, accumulator);
+}
+
+interface ProjectionAccumulator {
+  readonly occurrencesByKey: Map<string, CalendarOccurrence>;
+  readonly issues: CalendarProjectionIssue[];
+  readonly issueKeys: Set<string>;
+}
+
+function addProjectionIssue(
+  source: CalendarTaskSource,
+  issue: Omit<CalendarProjectionIssue, 'source'>,
+  accumulator: ProjectionAccumulator,
+): void {
+  const key = `${semanticSourceKey(source)}:${issue.phase}:${issue.limit}`;
+  if (accumulator.issueKeys.has(key)) return;
+  accumulator.issueKeys.add(key);
+  accumulator.issues.push(
+    Object.freeze({ ...issue, source: Object.freeze({ ...source.root.ref }) }),
+  );
 }
 
 export function taskSnapshotForCalendarOccurrence(occurrence: CalendarOccurrence): TaskSnapshot {
@@ -432,7 +483,8 @@ export function hasOtherCalendarRecurrenceOwner(source: CalendarTaskSource): boo
   if (source.root !== source.node && source.root.recurrence !== undefined) return true;
   const pending = [...source.root.subtasks];
   while (pending.length > 0) {
-    const node = pending.shift()!;
+    const node = pending.shift();
+    if (node === undefined) continue;
     if (node !== source.node && node.recurrence !== undefined) return true;
     pending.push(...node.subtasks);
   }

@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { Platform } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { ShortcutActionId } from '../src/settings/shortcuts';
@@ -18,16 +17,27 @@ import {
   type QuickCapturePhase,
 } from '../src/ui/taskCapture/QuickCaptureCoordinator';
 import { TaskCaptureController } from '../src/ui/taskCapture/TaskCaptureController';
-import { deferred, flushMicrotasks, task } from './helpers';
+import {
+  cssRuleParts,
+  deferred,
+  expectDefined,
+  flushMicrotasks,
+  stripCssComments,
+  task,
+} from './helpers';
 
-const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+async function loadStylesFixture(): Promise<string> {
+  if (!Platform.isDesktop) throw new Error('CSS fixture requires the desktop test runtime');
+  const fileSystem = await import('node:fs');
+  const nodePath = await import('node:path');
+  return fileSystem.readFileSync(nodePath.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+}
+
+const css = await loadStylesFixture();
 
 function declarationsFor(selector: string): string {
-  const uncommentedCss = css.replace(/\/\*[\s\S]*?\*\//gu, '');
-  const matches = [...uncommentedCss.matchAll(/([^{}]+)\{([^}]*)\}/gu)].filter(
-    (match) => match[1]?.trim() === selector,
-  );
-  return matches[matches.length - 1]?.[2] ?? '';
+  const matches = cssRuleParts(stripCssComments(css)).filter((rule) => rule.selector === selector);
+  return matches[matches.length - 1]?.declarations ?? '';
 }
 
 const success = (): TaskCommandResult => ({
@@ -82,7 +92,7 @@ function harness(
   resolution: (context: CaptureContext) => Promise<CaptureTarget> = async (context) =>
     target(context),
 ): Harness {
-  const host = document.createElement('div');
+  const host = createDiv();
   host.className = 'abyss-quick-capture-host';
   document.body.appendChild(host);
   mounted.push(host);
@@ -121,7 +131,7 @@ afterEach(() => {
 async function open(h: Harness): Promise<HTMLInputElement> {
   h.coordinator.openOrFocus();
   await flushMicrotasks(0);
-  return h.host.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+  return expectDefined(h.host.querySelector<HTMLInputElement>('.abyss-quick-capture-input'));
 }
 
 function phase(h: Harness): QuickCapturePhase {
@@ -191,7 +201,7 @@ describe('QuickCaptureCoordinator', () => {
   it('cancels a resolving generation on an outside pointer and ignores its late target', async () => {
     const pending = deferred<CaptureTarget>();
     const h = harness(() => pending.promise);
-    const outside = document.body.appendChild(document.createElement('button'));
+    const outside = document.body.appendChild(createEl('button'));
     mounted.push(outside);
     h.coordinator.openOrFocus();
 
@@ -207,7 +217,7 @@ describe('QuickCaptureCoordinator', () => {
   it('makes repeated Q idempotent while resolving and refocuses without resolving again when open', async () => {
     const pending = deferred<CaptureTarget>();
     const h = harness(() => pending.promise);
-    const external = document.body.appendChild(document.createElement('div'));
+    const external = document.body.appendChild(createDiv());
     external.tabIndex = 0;
     mounted.push(external);
 
@@ -218,7 +228,9 @@ describe('QuickCaptureCoordinator', () => {
     expect(h.acquire).toHaveBeenCalledOnce();
     pending.resolve(target({ type: 'list', selection: 'today' }));
     await flushMicrotasks(0);
-    const input = h.host.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+    const input = expectDefined(
+      h.host.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+    );
     external.focus();
 
     h.coordinator.openOrFocus();
@@ -231,7 +243,7 @@ describe('QuickCaptureCoordinator', () => {
   it('closes an empty capture only for an outside pointer and releases its owner once', async () => {
     const h = harness();
     await open(h);
-    const outside = document.body.appendChild(document.createElement('button'));
+    const outside = document.body.appendChild(createEl('button'));
     mounted.push(outside);
     const pointer = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
 
@@ -246,7 +258,7 @@ describe('QuickCaptureCoordinator', () => {
   it('keeps an empty programmatic blur open so repeated Q can refocus the same surface', async () => {
     const h = harness();
     const input = await open(h);
-    const outside = document.body.appendChild(document.createElement('button'));
+    const outside = document.body.appendChild(createEl('button'));
     mounted.push(outside);
 
     input.blur();
@@ -265,7 +277,7 @@ describe('QuickCaptureCoordinator', () => {
     const execute = vi.fn<TaskCreateSession['execute']>(async () => success());
     const h = harness(async (context) => target(context, 'Frozen blur target', execute));
     const input = await open(h);
-    const outside = document.body.appendChild(document.createElement('button'));
+    const outside = document.body.appendChild(createEl('button'));
     mounted.push(outside);
     input.value = '  pointer blur draft  ';
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -289,7 +301,7 @@ describe('QuickCaptureCoordinator', () => {
     }));
     const h = harness(async (context) => target(context, 'Failed blur target', execute));
     const input = await open(h);
-    const outside = document.body.appendChild(document.createElement('button'));
+    const outside = document.body.appendChild(createEl('button'));
     mounted.push(outside);
     input.value = '  exact failed draft  ';
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -305,7 +317,7 @@ describe('QuickCaptureCoordinator', () => {
     expect(document.activeElement).toBe(outside);
     expect(h.release).not.toHaveBeenCalled();
 
-    const laterOutside = document.body.appendChild(document.createElement('button'));
+    const laterOutside = document.body.appendChild(createEl('button'));
     mounted.push(laterOutside);
     laterOutside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
     laterOutside.focus();
@@ -325,7 +337,7 @@ describe('QuickCaptureCoordinator', () => {
     const execute = vi.fn<TaskCreateSession['execute']>(() => pending.promise);
     const h = harness(async (context) => target(context, 'Pending pointer target', execute));
     const input = await open(h);
-    const outside = document.body.appendChild(document.createElement('button'));
+    const outside = document.body.appendChild(createEl('button'));
     mounted.push(outside);
     input.value = 'pending once';
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -362,7 +374,7 @@ describe('QuickCaptureCoordinator', () => {
     const second = await open(h);
     second.value = 'winning draft';
     second.dispatchEvent(new Event('input', { bubbles: true }));
-    const outside = document.body.appendChild(document.createElement('button'));
+    const outside = document.body.appendChild(createEl('button'));
     mounted.push(outside);
 
     outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
@@ -417,7 +429,9 @@ describe('QuickCaptureCoordinator', () => {
     h.setContext({ type: 'list', selection: 'inbox' });
     planned.resolve(readySession(execute));
     await flushMicrotasks(0);
-    const input = h.host.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+    const input = expectDefined(
+      h.host.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+    );
     input.value = 'draft';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(
@@ -534,7 +548,7 @@ describe('QuickCaptureCoordinator', () => {
   it.each(['task card', 'rail control'] as const)(
     'restores the connected %s origin after Escape dismissal',
     async (kind) => {
-      const origin = document.body.appendChild(document.createElement('button'));
+      const origin = document.body.appendChild(createEl('button'));
       origin.className = kind === 'task card' ? 'abyss-task-card' : 'abyss-rail-btn';
       mounted.push(origin);
       origin.focus();
@@ -551,7 +565,7 @@ describe('QuickCaptureCoordinator', () => {
   );
 
   it('does not restore a disconnected origin after Escape dismissal', async () => {
-    const origin = document.body.appendChild(document.createElement('button'));
+    const origin = document.body.appendChild(createEl('button'));
     origin.focus();
     const h = harness();
     const input = await open(h);
@@ -567,7 +581,7 @@ describe('QuickCaptureCoordinator', () => {
 
   it('restores the origin when Escape requests close during a successful pending submit', async () => {
     const pending = deferred<TaskCommandResult>();
-    const origin = document.body.appendChild(document.createElement('button'));
+    const origin = document.body.appendChild(createEl('button'));
     mounted.push(origin);
     origin.focus();
     const h = harness(async (context) => target(context, 'Pending target', () => pending.promise));
@@ -591,8 +605,8 @@ describe('QuickCaptureCoordinator', () => {
 
   it('does not steal focus back when the user moves elsewhere after pending Escape', async () => {
     const pending = deferred<TaskCommandResult>();
-    const origin = document.body.appendChild(document.createElement('button'));
-    const elsewhere = document.body.appendChild(document.createElement('button'));
+    const origin = document.body.appendChild(createEl('button'));
+    const elsewhere = document.body.appendChild(createEl('button'));
     mounted.push(origin, elsewhere);
     origin.focus();
     const h = harness(async (context) => target(context, 'Pending target', () => pending.promise));
@@ -615,8 +629,8 @@ describe('QuickCaptureCoordinator', () => {
   });
 
   it('does not restore focus during destroy teardown', async () => {
-    const origin = document.body.appendChild(document.createElement('button'));
-    const elsewhere = document.body.appendChild(document.createElement('button'));
+    const origin = document.body.appendChild(createEl('button'));
+    const elsewhere = document.body.appendChild(createEl('button'));
     mounted.push(origin, elsewhere);
     origin.focus();
     const h = harness();

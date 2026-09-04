@@ -1,4 +1,5 @@
 import { countLinksIn } from '../../../parser/links';
+import type { CommentTimestamp } from '../../domain/commentTimestamp';
 import { parseCommentTimestampPrefix } from '../../domain/commentTimestamp';
 import type { StatusCatalog } from '../../domain/StatusCatalog';
 import type {
@@ -100,14 +101,14 @@ function planningFrom(planning: {
   const time = asLocalTime(planning.time);
   const duration = asDuration(planning.duration);
   return {
-    ...(created && { created }),
-    ...(due && { due }),
-    ...(scheduled && { scheduled }),
-    ...(start && { start }),
-    ...(completion && { completion }),
-    ...(cancelled && { cancelled }),
-    ...(time && { time }),
-    ...(duration && { duration }),
+    ...(created != null && { created }),
+    ...(due != null && { due }),
+    ...(scheduled != null && { scheduled }),
+    ...(start != null && { start }),
+    ...(completion != null && { completion }),
+    ...(cancelled != null && { cancelled }),
+    ...(time != null && { time }),
+    ...(duration != null && { duration }),
   };
 }
 
@@ -128,13 +129,13 @@ function subtaskPlanningFrom(planning: {
   const cancelled = asLocalDate(planning.cancelled);
   const time = asLocalTime(planning.time);
   return {
-    ...(created && { created }),
-    ...(due && { due }),
-    ...(scheduled && { scheduled }),
-    ...(start && { start }),
-    ...(completion && { completion }),
-    ...(cancelled && { cancelled }),
-    ...(time && { time }),
+    ...(created != null && { created }),
+    ...(due != null && { due }),
+    ...(scheduled != null && { scheduled }),
+    ...(start != null && { start }),
+    ...(completion != null && { completion }),
+    ...(cancelled != null && { cancelled }),
+    ...(time != null && { time }),
   };
 }
 
@@ -142,20 +143,63 @@ function blockFor(lines: readonly string[], from: number, to: number): string {
   return lines.slice(from, to + 1).join('\n');
 }
 
-function commentSnapshot(
-  parent: TaskNodeRef,
-  parentLine: number,
-  line: number,
-  originalMarkdown: string,
-  text: string,
-  timestamp?: import('../../domain/commentTimestamp').CommentTimestamp,
-): TaskCommentSnapshot {
+interface CommentSnapshotInput {
+  readonly parent: TaskNodeRef;
+  readonly parentLine: number;
+  readonly line: number;
+  readonly originalMarkdown: string;
+  readonly text: string;
+  readonly timestamp?: CommentTimestamp;
+}
+
+function commentSnapshot(input: CommentSnapshotInput): TaskCommentSnapshot {
+  const { parent, parentLine, line, originalMarkdown, text, timestamp } = input;
   const ref: CommentRef = {
     parent,
     relativeLine: line - parentLine,
     originalMarkdown,
   };
-  return { ref, ...(timestamp && { timestamp }), text };
+  return { ref, ...(timestamp != null && { timestamp }), text };
+}
+
+function projectedSubtask(
+  context: ProjectionContext,
+  parent: TaskNodeRef,
+  line: number,
+  source: string,
+): { readonly snapshot: SubtaskSnapshot; readonly toLine: number } | undefined {
+  if (SUBTASK_RE.exec(source) == null) return undefined;
+  const parsed = context.codec.parseLine(source, { filePath: context.filePath, line });
+  return parsed == null ? undefined : projectSubtask(context, line, parent, parsed);
+}
+
+interface ProjectedContentTarget {
+  readonly parent: TaskNodeRef;
+  readonly parentLine: number;
+  readonly line: number;
+  readonly source: string;
+  readonly descriptions: string[];
+  readonly comments: TaskCommentSnapshot[];
+}
+
+function appendProjectedContent(target: ProjectedContentTarget): void {
+  const description = DESCRIPTION_RE.exec(target.source);
+  if (description != null) {
+    target.descriptions.push((description[2] ?? '').trim());
+    return;
+  }
+  const comment = parseCommentTimestampPrefix(target.source);
+  if (comment == null) return;
+  target.comments.push(
+    commentSnapshot({
+      parent: target.parent,
+      parentLine: target.parentLine,
+      line: target.line,
+      originalMarkdown: target.source,
+      text: comment.text.trim(),
+      ...(comment.timestamp !== undefined && { timestamp: comment.timestamp }),
+    }),
+  );
 }
 
 function projectChildren(
@@ -182,33 +226,14 @@ function projectChildren(
     if (quoteDepth(source) !== parentQuoteDepth || indentation(source) <= parentIndent) break;
     toLine = line;
 
-    const taskMatch = SUBTASK_RE.exec(source);
-    if (taskMatch) {
-      const parsed = context.codec.parseLine(source, { filePath: context.filePath, line });
-      if (parsed) {
-        const child = projectSubtask(context, line, parent, parsed);
-        subtasks.push(child.snapshot);
-        toLine = child.toLine;
-        line = child.toLine + 1;
-        continue;
-      }
-    }
-
-    const description = DESCRIPTION_RE.exec(source);
-    if (description) {
-      descriptions.push((description[2] ?? '').trim());
-      line++;
+    const child = projectedSubtask(context, parent, line, source);
+    if (child != null) {
+      subtasks.push(child.snapshot);
+      toLine = child.toLine;
+      line = child.toLine + 1;
       continue;
     }
-
-    const comment = parseCommentTimestampPrefix(source);
-    if (comment) {
-      comments.push(
-        commentSnapshot(parent, parentLine, line, source, comment.text.trim(), comment.timestamp),
-      );
-      line++;
-      continue;
-    }
+    appendProjectedContent({ parent, parentLine, line, source, descriptions, comments });
     line++;
   }
 
@@ -216,7 +241,7 @@ function projectChildren(
   return {
     subtasks,
     comments,
-    ...(description && { description }),
+    ...(Boolean(description) && { description }),
     toLine,
   };
 }
@@ -240,9 +265,10 @@ function projectSubtask(
   };
   const node: TaskNodeRef = { type: 'subtask', ref };
   const relocatedChildren = relocateChildren(children, node);
-  const status = parsed.planning.cancelled
-    ? 'cancelled'
-    : context.statusCatalog.statusForSymbol(parsed.statusSymbol);
+  const status =
+    parsed.planning.cancelled !== undefined && parsed.planning.cancelled.length > 0
+      ? 'cancelled'
+      : context.statusCatalog.statusForSymbol(parsed.statusSymbol);
   return {
     snapshot: {
       ref,
@@ -302,13 +328,14 @@ export function projectTaskSnapshot(projection: TaskSnapshotProjection): TaskSna
     filePath: projection.filePath,
     line: projection.line,
   });
-  if (!parsed) return undefined;
+  if (parsed == null) return undefined;
   const rootNode: TaskNodeRef = { type: 'task', ref: projection.ref };
   const context: ProjectionContext = projection;
   const children = projectChildren(context, projection.line, rootNode);
-  const status = parsed.planning.cancelled
-    ? 'cancelled'
-    : projection.statusCatalog.statusForSymbol(parsed.statusSymbol);
+  const status =
+    parsed.planning.cancelled !== undefined && parsed.planning.cancelled.length > 0
+      ? 'cancelled'
+      : projection.statusCatalog.statusForSymbol(parsed.statusSymbol);
   return {
     ref: projection.ref,
     title: parsed.title,

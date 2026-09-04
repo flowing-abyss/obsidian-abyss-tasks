@@ -32,9 +32,7 @@ export type TimedBoundaryTarget =
     };
 
 type TimedPreviewTarget =
-  | Readonly<TimedDragTarget>
-  | Readonly<TimedVerticalResizeTarget>
-  | Readonly<TimedBoundaryTarget>;
+  Readonly<TimedDragTarget> | Readonly<TimedVerticalResizeTarget> | Readonly<TimedBoundaryTarget>;
 
 export interface TimedInteractionOwner {
   begin(dispose: () => void): void;
@@ -64,20 +62,22 @@ export interface TimedInteractionBinding {
   readonly source: HTMLElement;
   readonly startHandle: HTMLElement;
   readonly durationHandle: HTMLElement;
-  readonly boundaryHandles: readonly {
+  readonly boundaryHandles: ReadonlyArray<{
     readonly element: HTMLElement;
     readonly boundary: 'start' | 'due' | 'create-span';
-  }[];
+  }>;
   readonly task: TaskSnapshot;
   readonly segmentDate: string;
   readonly startMinutes: number;
   readonly durationMinutes: number;
   readonly owner: TimedInteractionOwner;
-  readonly previewPositionFor?: (
-    task: TaskSnapshot,
-    planning: TaskSnapshot['planning'],
-    date: string,
-  ) => PositionedBlock | undefined;
+  readonly previewPositionFor?:
+    | ((
+        task: TaskSnapshot,
+        planning: TaskSnapshot['planning'],
+        date: string,
+      ) => PositionedBlock | undefined)
+    | undefined;
   readonly onMove: (task: TaskSnapshot, target: TimedDragTarget) => void;
   readonly onDuration: (task: TaskSnapshot, target: TimedVerticalResizeTarget) => void;
   readonly onBoundary: (task: TaskSnapshot, target: TimedBoundaryTarget) => void;
@@ -87,20 +87,20 @@ interface MeasuredColumn {
   readonly date: string;
   readonly day: HTMLElement;
   readonly hour: HTMLElement;
-  readonly allDay?: HTMLElement;
+  readonly allDay?: HTMLElement | undefined;
   readonly drag: TimedDragColumn;
   readonly boundary: DragDateColumn;
 }
 
 function measuredColumns(source: HTMLElement): MeasuredColumn[] {
   const root = source.closest<HTMLElement>('.abyss-tg-root');
-  if (!root) return [];
+  if (root == null) return [];
   return Array.from(
     root.querySelectorAll<HTMLElement>('.abyss-tg-day-column[data-tg-date]'),
   ).flatMap((day) => {
     const date = day.dataset['tgDate'];
     const hour = day.querySelector<HTMLElement>('.abyss-tg-hour-column');
-    if (!date || !hour) return [];
+    if (date === undefined || date.length === 0 || hour === null) return [];
     const dayRect = day.getBoundingClientRect();
     const hourRect = hour.getBoundingClientRect();
     const allDay = root.querySelector<HTMLElement>(`.abyss-tg-allday-cell[data-tg-date="${date}"]`);
@@ -111,7 +111,7 @@ function measuredColumns(source: HTMLElement): MeasuredColumn[] {
       right: dayRect.right,
       timeGridTop: hourRect.top,
       timeGridBottom: hourRect.bottom,
-      ...(allDayRect && allDayRect.bottom > allDayRect.top
+      ...(allDayRect != null && allDayRect.bottom > allDayRect.top
         ? { allDayTop: allDayRect.top, allDayBottom: allDayRect.bottom }
         : {}),
     };
@@ -132,24 +132,32 @@ function frozen<T extends object>(value: T): Readonly<T> {
   return Object.freeze({ ...value });
 }
 
-function previewElement(
-  existing: HTMLElement | undefined,
-  source: HTMLElement,
-  target: object,
-  className: 'abyss-tg-drag-preview' | 'abyss-tg-boundary-preview',
-  content: {
+interface PreviewElementOptions {
+  readonly existing: HTMLElement | undefined;
+  readonly source: HTMLElement;
+  readonly target: object;
+  readonly className: 'abyss-tg-drag-preview' | 'abyss-tg-boundary-preview';
+  readonly content: {
     readonly title: string;
     readonly timeLabel: string;
     readonly recurrence?: string;
     readonly phase: 'ghost' | 'terminal';
-  },
-  copyLaneGeometry = true,
-): HTMLElement {
-  const preview = existing ?? source.ownerDocument.createElement('div');
+  };
+  readonly copyLaneGeometry?: boolean;
+}
+
+function nonEmptyText(value: string | null | undefined): value is string {
+  return value != null && value.length > 0;
+}
+
+function previewElement(options: PreviewElementOptions): HTMLElement {
+  const { existing, source, target, className, content } = options;
+  const preview =
+    existing ?? source.ownerDocument.createElementNS('http://www.w3.org/1999/xhtml', 'div');
   const countLabel = source.querySelector<HTMLElement>('.abyss-tg-block-badges')?.textContent;
   preview.className = className;
   preview.dataset['target'] = JSON.stringify(target);
-  if (copyLaneGeometry) {
+  if (options.copyLaneGeometry ?? true) {
     preview.style.left = source.style.left;
     preview.style.width = source.style.width;
   }
@@ -158,10 +166,11 @@ function previewElement(
     timed: {
       timeLabel: content.timeLabel,
       title: content.title,
-      ...(content.recurrence && { recurrence: content.recurrence }),
+      ...(content.recurrence !== undefined &&
+        content.recurrence.length > 0 && { recurrence: content.recurrence }),
       actionable:
         content.phase === 'terminal' && source.querySelector('.abyss-status-marker') !== null,
-      ...(countLabel && { countLabel }),
+      ...(nonEmptyText(countLabel) && { countLabel }),
     },
     density: 'regular',
     phase: content.phase,
@@ -169,22 +178,47 @@ function previewElement(
   return preview;
 }
 
+function shiftedStartAndDue(
+  planning: TaskSnapshot['planning'],
+  days: number,
+): TaskSnapshot['planning'] | undefined {
+  if (planning.start == null || planning.due == null) return undefined;
+  const start = shiftLocalDate(planning.start, days);
+  const due = shiftLocalDate(planning.due, days);
+  return start != null && due != null ? { ...planning, start, due } : undefined;
+}
+
+function shiftedScheduled(
+  planning: TaskSnapshot['planning'],
+  days: number,
+): TaskSnapshot['planning'] | undefined {
+  if (planning.scheduled == null) return undefined;
+  const scheduled = shiftLocalDate(planning.scheduled, days);
+  return scheduled != null ? { ...planning, scheduled } : undefined;
+}
+
+function shiftedDue(
+  planning: TaskSnapshot['planning'],
+  days: number,
+): TaskSnapshot['planning'] | undefined {
+  if (planning.due == null) return undefined;
+  const due = shiftLocalDate(planning.due, days);
+  return due != null ? { ...planning, due } : undefined;
+}
+
 function shiftedPlanning(task: TaskSnapshot, days: number): TaskSnapshot['planning'] | undefined {
   const planning = task.planning;
-  if (planning.start && planning.due) {
-    const start = shiftLocalDate(planning.start, days);
-    const due = shiftLocalDate(planning.due, days);
-    return start && due ? { ...planning, start, due } : undefined;
-  }
-  if (planning.scheduled) {
-    const scheduled = shiftLocalDate(planning.scheduled, days);
-    return scheduled ? { ...planning, scheduled } : undefined;
-  }
-  if (planning.due) {
-    const due = shiftLocalDate(planning.due, days);
-    return due ? { ...planning, due } : undefined;
-  }
+  if (planning.start != null && planning.due != null) return shiftedStartAndDue(planning, days);
+  if (planning.scheduled != null) return shiftedScheduled(planning, days);
+  if (planning.due != null) return shiftedDue(planning, days);
   return undefined;
+}
+
+function withoutTimedPlanning(planning: TaskSnapshot['planning']): TaskSnapshot['planning'] {
+  const result = { ...planning };
+  delete result.time;
+  delete result.duration;
+  return result;
 }
 
 function prospectivePlanning(
@@ -193,10 +227,10 @@ function prospectivePlanning(
 ): TaskSnapshot['planning'] | undefined {
   if ('destination' in target) {
     const shifted = shiftedPlanning(task, target.dayDelta);
-    if (!shifted) return undefined;
+    if (shifted == null) return undefined;
     return target.destination === 'time-grid'
       ? { ...shifted, time: localTime(minutesToTimeString(target.startMinutes)) }
-      : { ...shifted, time: undefined, duration: undefined };
+      : withoutTimedPlanning(shifted);
   }
   if ('durationMinutes' in target) {
     return {
@@ -208,7 +242,7 @@ function prospectivePlanning(
   if (target.boundary === 'start') return { ...task.planning, start: target.date };
   if (target.boundary === 'due') return { ...task.planning, due: target.date };
   const anchor = task.planning.start ?? task.planning.scheduled ?? task.planning.due;
-  return anchor ? { ...task.planning, start: anchor, due: target.date } : undefined;
+  return anchor != null ? { ...task.planning, start: anchor, due: target.date } : undefined;
 }
 
 function applyPreviewPacking(
@@ -218,8 +252,9 @@ function applyPreviewPacking(
   date: string,
 ): void {
   const planning = prospectivePlanning(binding.task, target);
-  const positioned = planning && binding.previewPositionFor?.(binding.task, planning, date);
-  if (!positioned) return;
+  if (planning === undefined || binding.previewPositionFor === undefined) return;
+  const positioned = binding.previewPositionFor(binding.task, planning, date);
+  if (positioned === undefined) return;
   const width = 100 / positioned.columns;
   preview.style.left = `${positioned.column * width}%`;
   preview.style.width = `${width}%`;
@@ -231,7 +266,7 @@ function previewPhase(
   date: string,
 ): 'ghost' | 'terminal' {
   const planning = prospectivePlanning(binding.task, target);
-  return !planning?.due || String(planning.due) === date ? 'terminal' : 'ghost';
+  return planning?.due == null || String(planning.due) === date ? 'terminal' : 'ghost';
 }
 
 function timedPreviewText(startMinutes: number, durationMinutes: number): string {
@@ -263,251 +298,390 @@ function release(element: HTMLElement, pointerId: number): void {
   }
 }
 
-export function attachTimedInteractions(binding: TimedInteractionBinding): void {
-  const {
-    source,
-    startHandle,
-    durationHandle,
-    boundaryHandles,
-    task,
-    segmentDate,
-    startMinutes,
-    durationMinutes,
-    owner,
-  } = binding;
-  const ownerDocument = source.ownerDocument;
-  const ownerWindow = ownerDocument.defaultView;
-  if (!ownerWindow) return;
+type TimedInteractionKind = 'move' | 'start-time' | 'duration' | 'start' | 'due' | 'create-span';
 
-  const startSession = (
-    event: PointerEvent,
-    kind: 'move' | 'start-time' | 'duration' | 'start' | 'due' | 'create-span',
-  ): void => {
-    if (event.button !== 0) return;
-    if (
-      kind === 'move' &&
-      (event.target as HTMLElement).closest(
-        '.abyss-status-marker, a, .abyss-tg-resize-handle, .abyss-tg-span-edge',
-      )
-    ) {
+interface TimedSessionGeometry {
+  readonly columns: readonly MeasuredColumn[];
+  readonly originColumn: MeasuredColumn;
+  readonly sourceRect: DOMRect;
+  readonly pixelsPerMinute: number;
+  readonly renderedHeightMinutes: number;
+  readonly grabOffsetMinutes: number;
+}
+
+interface TimedSessionInput {
+  readonly binding: TimedInteractionBinding;
+  readonly ownerWindow: Window;
+  readonly startEvent: PointerEvent;
+  readonly kind: TimedInteractionKind;
+  readonly capturedElement: HTMLElement;
+  readonly geometry: TimedSessionGeometry;
+}
+
+function previewContent(
+  binding: TimedInteractionBinding,
+  timeLabel: string,
+  phase: 'ghost' | 'terminal',
+): PreviewElementOptions['content'] {
+  const content: {
+    title: string;
+    timeLabel: string;
+    phase: 'ghost' | 'terminal';
+    recurrence?: string;
+  } = { title: binding.task.title, timeLabel, phase };
+  if (nonEmptyText(binding.task.recurrence)) content.recurrence = binding.task.recurrence;
+  return content;
+}
+
+function clearAllDayPreviewGeometry(preview: HTMLElement): void {
+  preview.classList.add('is-all-day');
+  preview.style.removeProperty('left');
+  preview.style.removeProperty('width');
+  preview.style.removeProperty('top');
+  preview.style.removeProperty('height');
+}
+
+class TimedPreviewRenderer {
+  private preview: HTMLElement | undefined;
+
+  constructor(
+    private readonly binding: TimedInteractionBinding,
+    private readonly geometry: TimedSessionGeometry,
+  ) {}
+
+  clear(): void {
+    this.preview?.remove();
+    this.preview = undefined;
+  }
+
+  render(kind: TimedInteractionKind, target: TimedPreviewTarget): void {
+    if (kind === 'move') {
+      this.renderMove(target as Readonly<TimedDragTarget>);
       return;
     }
-    event.preventDefault();
-    event.stopPropagation();
+    if (kind === 'duration' || kind === 'start-time') {
+      this.renderDuration(target as Readonly<TimedVerticalResizeTarget>);
+      return;
+    }
+    this.renderBoundary(target as Readonly<TimedBoundaryTarget>);
+  }
 
-    const columns = measuredColumns(source);
-    const originColumn = columns.find((column) => column.date === segmentDate);
-    if (!originColumn) return;
-    const pointerId = event.pointerId;
-    const capturedElement = event.currentTarget as HTMLElement;
-    const sourceRect = source.getBoundingClientRect();
-    const pixelsPerMinute =
-      (originColumn.drag.timeGridBottom - originColumn.drag.timeGridTop) / (24 * 60);
-    const renderedHeightMinutes = sourceRect.height / pixelsPerMinute;
-    const grabOffsetMinutes = Math.min(
-      renderedHeightMinutes,
-      Math.max(0, (event.clientY - sourceRect.top) / pixelsPerMinute),
+  private renderMove(target: Readonly<TimedDragTarget>): void {
+    const column = this.geometry.columns.find((candidate) => candidate.date === target.date);
+    const host = target.destination === 'all-day' ? column?.allDay : column?.hour;
+    if (host == null) return;
+    const timeLabel =
+      target.destination === 'time-grid'
+        ? timedPreviewText(target.startMinutes, this.binding.durationMinutes)
+        : 'All day';
+    const preview = this.replace({
+      target,
+      className: 'abyss-tg-drag-preview',
+      content: previewContent(
+        this.binding,
+        timeLabel,
+        previewPhase(this.binding, target, target.date),
+      ),
+      copyLaneGeometry: target.destination === 'time-grid',
+    });
+    if (target.destination === 'time-grid') this.applyTimedMoveGeometry(preview, target);
+    else clearAllDayPreviewGeometry(preview);
+    if (preview.parentElement !== host) host.appendChild(preview);
+  }
+
+  private applyTimedMoveGeometry(preview: HTMLElement, target: Readonly<TimedDragTarget>): void {
+    preview.classList.remove('is-all-day');
+    applyPreviewPacking(preview, this.binding, target, target.date);
+    preview.style.top = `${minutesToPixels(target.startMinutes)}px`;
+    preview.style.height = `${this.geometry.sourceRect.height}px`;
+  }
+
+  private renderDuration(target: Readonly<TimedVerticalResizeTarget>): void {
+    const preview = this.replace({
+      target,
+      className: 'abyss-tg-drag-preview',
+      content: previewContent(
+        this.binding,
+        timedPreviewText(target.startMinutes, target.durationMinutes),
+        previewPhase(this.binding, target, this.binding.segmentDate),
+      ),
+    });
+    applyPreviewPacking(preview, this.binding, target, this.binding.segmentDate);
+    preview.style.top = `${minutesToPixels(target.startMinutes)}px`;
+    preview.style.height = `${Math.max(
+      minutesToPixels(target.durationMinutes),
+      minimumPreviewHeight(this.binding.source),
+    )}px`;
+    const host = this.geometry.originColumn.hour;
+    if (preview.parentElement !== host) host.appendChild(preview);
+  }
+
+  private renderBoundary(target: Readonly<TimedBoundaryTarget>): void {
+    const column = this.geometry.columns.find((candidate) => candidate.date === target.date);
+    if (column == null) return;
+    const preview = this.replace({
+      target,
+      className: 'abyss-tg-boundary-preview',
+      content: previewContent(
+        this.binding,
+        timedPreviewText(this.binding.startMinutes, this.binding.durationMinutes),
+        previewPhase(this.binding, target, target.date),
+      ),
+    });
+    applyPreviewPacking(preview, this.binding, target, target.date);
+    preview.style.top = this.binding.source.style.top;
+    preview.style.height = `${this.geometry.sourceRect.height}px`;
+    if (preview.parentElement !== column.hour) column.hour.appendChild(preview);
+  }
+
+  private replace(options: Omit<PreviewElementOptions, 'existing' | 'source'>): HTMLElement {
+    this.preview = previewElement({
+      ...options,
+      existing: this.preview,
+      source: this.binding.source,
+    });
+    return this.preview;
+  }
+}
+
+class TimedTargetResolver {
+  constructor(
+    private readonly binding: TimedInteractionBinding,
+    private readonly startEvent: PointerEvent,
+    private readonly geometry: TimedSessionGeometry,
+  ) {}
+
+  resolve(kind: TimedInteractionKind, pointer: PointerEvent): TimedPreviewTarget | undefined {
+    if (kind === 'move') return this.resolveMove(pointer);
+    if (kind === 'duration' || kind === 'start-time') {
+      return this.resolveVertical(kind, pointer);
+    }
+    return this.resolveBoundary(kind, pointer);
+  }
+
+  private resolveMove(pointer: PointerEvent): TimedPreviewTarget | undefined {
+    const target = resolveTimedDragTarget(
+      {
+        date: this.binding.segmentDate as TimedDragColumn['date'],
+        startMinutes: this.binding.startMinutes,
+        durationMinutes: this.binding.durationMinutes,
+        renderedHeightMinutes: this.geometry.renderedHeightMinutes,
+        grabOffsetMinutes: this.geometry.grabOffsetMinutes,
+      },
+      pointer,
+      this.geometry.columns.map((column) => column.drag),
     );
-    let preview: HTMLElement | undefined;
-    let latest:
-      | Readonly<TimedDragTarget>
-      | Readonly<TimedVerticalResizeTarget>
-      | Readonly<TimedBoundaryTarget>
-      | undefined;
-    let disposed = false;
+    return target == null ? undefined : frozen(target);
+  }
 
-    const clearPreview = (): void => {
-      preview?.remove();
-      preview = undefined;
-    };
-
-    const renderMovePreview = (target: Readonly<TimedDragTarget>): void => {
-      const column = columns.find((candidate) => candidate.date === target.date);
-      const host = target.destination === 'all-day' ? column?.allDay : column?.hour;
-      if (!host) return;
-      preview = previewElement(
-        preview,
-        source,
-        target,
-        'abyss-tg-drag-preview',
+  private resolveVertical(
+    kind: 'duration' | 'start-time',
+    pointer: PointerEvent,
+  ): TimedPreviewTarget | undefined {
+    let target: TimedVerticalResizeTarget;
+    try {
+      target = resolveTimedVerticalResizeTarget(
         {
-          title: task.title,
-          ...(task.recurrence && { recurrence: task.recurrence }),
-          timeLabel:
-            target.destination === 'time-grid'
-              ? timedPreviewText(target.startMinutes, durationMinutes)
-              : 'All day',
-          phase: previewPhase(binding, target, target.date),
-        },
-        target.destination === 'time-grid',
-      );
-      if (target.destination === 'time-grid') {
-        preview.classList.remove('is-all-day');
-        applyPreviewPacking(preview, binding, target, target.date);
-        preview.style.top = `${minutesToPixels(target.startMinutes)}px`;
-        preview.style.height = `${sourceRect.height}px`;
-      } else {
-        preview.classList.add('is-all-day');
-        preview.style.removeProperty('left');
-        preview.style.removeProperty('width');
-        preview.style.removeProperty('top');
-        preview.style.removeProperty('height');
-      }
-      if (preview.parentElement !== host) host.appendChild(preview);
-    };
-
-    const renderDurationPreview = (target: Readonly<TimedVerticalResizeTarget>): void => {
-      preview = previewElement(preview, source, target, 'abyss-tg-drag-preview', {
-        title: task.title,
-        ...(task.recurrence && { recurrence: task.recurrence }),
-        timeLabel: timedPreviewText(target.startMinutes, target.durationMinutes),
-        phase: previewPhase(binding, target, segmentDate),
-      });
-      applyPreviewPacking(preview, binding, target, segmentDate);
-      preview.style.top = `${minutesToPixels(target.startMinutes)}px`;
-      preview.style.height = `${Math.max(
-        minutesToPixels(target.durationMinutes),
-        minimumPreviewHeight(source),
-      )}px`;
-      if (preview.parentElement !== originColumn.hour) originColumn.hour.appendChild(preview);
-    };
-
-    const renderBoundaryPreview = (target: Readonly<TimedBoundaryTarget>): void => {
-      const column = columns.find((candidate) => candidate.date === target.date);
-      if (!column) return;
-      preview = previewElement(preview, source, target, 'abyss-tg-boundary-preview', {
-        title: task.title,
-        ...(task.recurrence && { recurrence: task.recurrence }),
-        timeLabel: timedPreviewText(startMinutes, durationMinutes),
-        phase: previewPhase(binding, target, target.date),
-      });
-      applyPreviewPacking(preview, binding, target, target.date);
-      preview.style.top = source.style.top;
-      preview.style.height = `${sourceRect.height}px`;
-      if (preview.parentElement !== column.hour) column.hour.appendChild(preview);
-    };
-
-    const resolve = (pointer: PointerEvent): typeof latest => {
-      if (kind === 'move') {
-        const target = resolveTimedDragTarget(
-          {
-            date: segmentDate as TimedDragColumn['date'],
-            startMinutes,
-            durationMinutes,
-            renderedHeightMinutes,
-            grabOffsetMinutes,
-          },
-          pointer,
-          columns.map((column) => column.drag),
-        );
-        return target ? frozen(target) : undefined;
-      }
-      if (kind === 'duration' || kind === 'start-time') {
-        let target: TimedVerticalResizeTarget;
-        try {
-          target = resolveTimedVerticalResizeTarget(
-            {
-              edge: kind === 'start-time' ? 'start' : 'end',
-              startMinutes,
-              durationMinutes,
-              grabClientY: event.clientY,
-              pixelsPerMinute,
-            },
-            pointer,
-          );
-        } catch {
-          return undefined;
-        }
-        if (target.startMinutes === startMinutes && target.durationMinutes === durationMinutes) {
-          return undefined;
-        }
-        return frozen(target);
-      }
-      const start = task.planning.start ?? task.planning.scheduled ?? task.planning.due;
-      const due = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
-      if (!start || !due) return undefined;
-      const geometryBoundary = kind === 'start' ? 'start' : 'due';
-      const target = resolveBoundaryTarget(
-        {
-          boundary: geometryBoundary,
-          start,
-          due,
+          edge: kind === 'start-time' ? 'start' : 'end',
+          startMinutes: this.binding.startMinutes,
+          durationMinutes: this.binding.durationMinutes,
+          grabClientY: this.startEvent.clientY,
+          pixelsPerMinute: this.geometry.pixelsPerMinute,
         },
         pointer,
-        columns.map((column) => column.boundary),
       );
-      if (!target) return undefined;
-      return kind === 'create-span'
-        ? frozen({ boundary: 'create-span' as const, date: target.date, dayDelta: target.dayDelta })
-        : frozen(target);
-    };
+    } catch {
+      return undefined;
+    }
+    return this.isOriginalVerticalTarget(target) ? undefined : frozen(target);
+  }
 
-    const update = (pointer: PointerEvent): void => {
-      if (disposed || pointer.pointerId !== pointerId) return;
-      const target = resolve(pointer);
-      latest = target;
-      if (!target) {
-        clearPreview();
-        return;
-      }
-      if (kind === 'move') renderMovePreview(target as Readonly<TimedDragTarget>);
-      else if (kind === 'duration' || kind === 'start-time') {
-        renderDurationPreview(target as Readonly<TimedVerticalResizeTarget>);
-      } else {
-        renderBoundaryPreview(target as Readonly<TimedBoundaryTarget>);
-      }
-    };
+  private isOriginalVerticalTarget(target: TimedVerticalResizeTarget): boolean {
+    return (
+      target.startMinutes === this.binding.startMinutes &&
+      target.durationMinutes === this.binding.durationMinutes
+    );
+  }
 
-    const dispose = (): void => {
-      if (disposed) return;
-      disposed = true;
-      clearPreview();
-      source.classList.remove('is-picked-up');
-      delete source.dataset['activeResize'];
-      delete capturedElement.dataset['activeResize'];
-      ownerWindow.removeEventListener('pointermove', onPointerMove);
-      ownerWindow.removeEventListener('pointerup', onPointerUp);
-      ownerWindow.removeEventListener('pointercancel', onCancel);
-      ownerWindow.removeEventListener('blur', onCancel);
-      capturedElement.removeEventListener('lostpointercapture', onCancel);
-      release(capturedElement, pointerId);
-      owner.end(dispose);
-    };
+  private resolveBoundary(
+    kind: 'start' | 'due' | 'create-span',
+    pointer: PointerEvent,
+  ): TimedPreviewTarget | undefined {
+    const planning = this.binding.task.planning;
+    const start = planning.start ?? planning.scheduled ?? planning.due;
+    const due = planning.due ?? planning.scheduled ?? planning.start;
+    if (start == null || due == null) return undefined;
+    const target = resolveBoundaryTarget(
+      { boundary: kind === 'start' ? 'start' : 'due', start, due },
+      pointer,
+      this.geometry.columns.map((column) => column.boundary),
+    );
+    if (target == null) return undefined;
+    if (kind !== 'create-span') return frozen(target);
+    return frozen({
+      boundary: 'create-span' as const,
+      date: target.date,
+      dayDelta: target.dayDelta,
+    });
+  }
+}
 
-    const onPointerMove = (pointer: PointerEvent): void => {
-      pointer.preventDefault();
-      update(pointer);
-    };
-    const onPointerUp = (pointer: PointerEvent): void => {
-      if (pointer.pointerId !== pointerId) return;
-      update(pointer);
-      const committed = latest;
-      dispose();
-      if (!committed) return;
-      if (kind === 'move') binding.onMove(task, committed as TimedDragTarget);
-      else if (kind === 'duration' || kind === 'start-time') {
-        binding.onDuration(task, committed as TimedVerticalResizeTarget);
-      } else {
-        binding.onBoundary(task, committed as TimedBoundaryTarget);
-      }
-    };
-    const onCancel = (): void => dispose();
+class TimedInteractionSession {
+  private readonly resolver: TimedTargetResolver;
+  private readonly renderer: TimedPreviewRenderer;
+  private latest: TimedPreviewTarget | undefined;
+  private disposed = false;
 
-    owner.begin(dispose);
-    source.classList.toggle('is-picked-up', kind === 'move');
+  constructor(private readonly input: TimedSessionInput) {
+    this.resolver = new TimedTargetResolver(input.binding, input.startEvent, input.geometry);
+    this.renderer = new TimedPreviewRenderer(input.binding, input.geometry);
+  }
+
+  start(): void {
+    const { binding, capturedElement, kind, ownerWindow, startEvent } = this.input;
+    binding.owner.begin(this.dispose);
+    binding.source.classList.toggle('is-picked-up', kind === 'move');
     if (kind !== 'move') capturedElement.dataset['activeResize'] = 'true';
-    capture(capturedElement, pointerId);
-    ownerWindow.addEventListener('pointermove', onPointerMove);
-    ownerWindow.addEventListener('pointerup', onPointerUp);
-    ownerWindow.addEventListener('pointercancel', onCancel);
-    ownerWindow.addEventListener('blur', onCancel);
-    capturedElement.addEventListener('lostpointercapture', onCancel);
+    capture(capturedElement, startEvent.pointerId);
+    ownerWindow.addEventListener('pointermove', this.onPointerMove);
+    ownerWindow.addEventListener('pointerup', this.onPointerUp);
+    ownerWindow.addEventListener('pointercancel', this.onCancel);
+    ownerWindow.addEventListener('blur', this.onCancel);
+    capturedElement.addEventListener('lostpointercapture', this.onCancel);
+  }
+
+  private readonly onPointerMove = (pointer: PointerEvent): void => {
+    pointer.preventDefault();
+    this.update(pointer);
   };
 
-  source.addEventListener('pointerdown', (event) => startSession(event, 'move'));
-  startHandle.addEventListener('pointerdown', (event) => startSession(event, 'start-time'));
-  durationHandle.addEventListener('pointerdown', (event) => startSession(event, 'duration'));
-  for (const handle of boundaryHandles) {
-    handle.element.addEventListener('pointerdown', (event) => startSession(event, handle.boundary));
+  private readonly onPointerUp = (pointer: PointerEvent): void => {
+    if (pointer.pointerId !== this.input.startEvent.pointerId) return;
+    this.update(pointer);
+    const committed = this.latest;
+    this.dispose();
+    if (committed != null) this.commit(committed);
+  };
+
+  private readonly onCancel = (): void => {
+    this.dispose();
+  };
+
+  private update(pointer: PointerEvent): void {
+    if (this.disposed || pointer.pointerId !== this.input.startEvent.pointerId) return;
+    const target = this.resolver.resolve(this.input.kind, pointer);
+    this.latest = target;
+    if (target == null) {
+      this.renderer.clear();
+      return;
+    }
+    this.renderer.render(this.input.kind, target);
+  }
+
+  private commit(target: TimedPreviewTarget): void {
+    const { binding, kind } = this.input;
+    if (kind === 'move') {
+      binding.onMove(binding.task, target as TimedDragTarget);
+      return;
+    }
+    if (kind === 'duration' || kind === 'start-time') {
+      binding.onDuration(binding.task, target as TimedVerticalResizeTarget);
+      return;
+    }
+    binding.onBoundary(binding.task, target as TimedBoundaryTarget);
+  }
+
+  private readonly dispose = (): void => {
+    if (this.disposed) return;
+    this.disposed = true;
+    const { binding, capturedElement, ownerWindow, startEvent } = this.input;
+    this.renderer.clear();
+    binding.source.classList.remove('is-picked-up');
+    delete binding.source.dataset['activeResize'];
+    delete capturedElement.dataset['activeResize'];
+    ownerWindow.removeEventListener('pointermove', this.onPointerMove);
+    ownerWindow.removeEventListener('pointerup', this.onPointerUp);
+    ownerWindow.removeEventListener('pointercancel', this.onCancel);
+    ownerWindow.removeEventListener('blur', this.onCancel);
+    capturedElement.removeEventListener('lostpointercapture', this.onCancel);
+    release(capturedElement, startEvent.pointerId);
+    binding.owner.end(this.dispose);
+  };
+}
+
+function isBlockedMoveTarget(event: PointerEvent, kind: TimedInteractionKind): boolean {
+  if (kind !== 'move') return false;
+  const target = event.target as Element | null;
+  return (
+    target?.closest('.abyss-status-marker, a, .abyss-tg-resize-handle, .abyss-tg-span-edge') != null
+  );
+}
+
+function measureSession(
+  binding: TimedInteractionBinding,
+  event: PointerEvent,
+): TimedSessionGeometry | undefined {
+  const columns = measuredColumns(binding.source);
+  const originColumn = columns.find((column) => column.date === binding.segmentDate);
+  if (originColumn == null) return undefined;
+  const sourceRect = binding.source.getBoundingClientRect();
+  const pixelsPerMinute =
+    (originColumn.drag.timeGridBottom - originColumn.drag.timeGridTop) / (24 * 60);
+  const renderedHeightMinutes = sourceRect.height / pixelsPerMinute;
+  const grabOffsetMinutes = Math.min(
+    renderedHeightMinutes,
+    Math.max(0, (event.clientY - sourceRect.top) / pixelsPerMinute),
+  );
+  return {
+    columns,
+    originColumn,
+    sourceRect,
+    pixelsPerMinute,
+    renderedHeightMinutes,
+    grabOffsetMinutes,
+  };
+}
+
+function beginTimedSession(
+  binding: TimedInteractionBinding,
+  ownerWindow: Window,
+  event: PointerEvent,
+  kind: TimedInteractionKind,
+): void {
+  if (event.button !== 0 || isBlockedMoveTarget(event, kind)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const geometry = measureSession(binding, event);
+  if (geometry === undefined) return;
+  const capturedElement = event.currentTarget as HTMLElement;
+  new TimedInteractionSession({
+    binding,
+    ownerWindow,
+    startEvent: event,
+    kind,
+    capturedElement,
+    geometry,
+  }).start();
+}
+
+function attachPointerStart(
+  element: HTMLElement,
+  binding: TimedInteractionBinding,
+  ownerWindow: Window,
+  kind: TimedInteractionKind,
+): void {
+  element.addEventListener('pointerdown', (event) => {
+    beginTimedSession(binding, ownerWindow, event, kind);
+  });
+}
+
+export function attachTimedInteractions(binding: TimedInteractionBinding): void {
+  const ownerWindow = binding.source.ownerDocument.defaultView;
+  if (ownerWindow == null) return;
+  attachPointerStart(binding.source, binding, ownerWindow, 'move');
+  attachPointerStart(binding.startHandle, binding, ownerWindow, 'start-time');
+  attachPointerStart(binding.durationHandle, binding, ownerWindow, 'duration');
+  for (const handle of binding.boundaryHandles) {
+    attachPointerStart(handle.element, binding, ownerWindow, handle.boundary);
   }
 }

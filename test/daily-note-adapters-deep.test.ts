@@ -1,4 +1,4 @@
-import { App } from 'obsidian';
+import { type App } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import { CoreDailyNotesAdapter } from '../src/resolvers/adapters/CoreDailyNotesAdapter';
 import { ManualAdapter } from '../src/resolvers/adapters/ManualAdapter';
@@ -81,28 +81,19 @@ describe('CoreDailyNotesAdapter deep', () => {
 describe('ManualAdapter deep', () => {
   const adapter = new ManualAdapter();
 
-  it('parseManualPath with no date token → folder empty (L10)', () => {
-    // parseManualPath: if no regex match or match.index === 0 → { folder: '', format: pattern }
-    const settings = { ...DEFAULT_SETTINGS, manualDailyNotePath: 'just-a-name' };
-    const result = adapter.getSettings({} as App, settings);
-    expect(result.folder).toBe('');
-    expect(result.format).toBe('just-a-name');
-  });
-
-  it('parseManualPath with date token at index 0 → folder empty (L10)', () => {
-    // Pattern starts with date token → match.index === 0 → folder: ''
-    const settings = { ...DEFAULT_SETTINGS, manualDailyNotePath: 'YYYY-MM-DD' };
-    const result = adapter.getSettings({} as App, settings);
-    expect(result.folder).toBe('');
-    expect(result.format).toBe('YYYY-MM-DD');
-  });
-
-  it('parseManualPath with date token after slash → folder and format split', () => {
-    const settings = { ...DEFAULT_SETTINGS, manualDailyNotePath: 'notes/daily/YYYY-MM-DD' };
-    const result = adapter.getSettings({} as App, settings);
-    expect(result.folder).toBe('notes/daily');
-    expect(result.format).toBe('YYYY-MM-DD');
-  });
+  it.each([
+    ['just-a-name', '', 'just-a-name'],
+    ['YYYY-MM-DD', '', 'YYYY-MM-DD'],
+    ['notes/daily/YYYY-MM-DD', 'notes/daily', 'YYYY-MM-DD'],
+  ] as const)(
+    'parses manual path %s into folder %s and format %s',
+    (manualDailyNotePath, expectedFolder, expectedFormat) => {
+      const settings = { ...DEFAULT_SETTINGS, manualDailyNotePath };
+      const result = adapter.getSettings({} as App, settings);
+      expect(result.folder).toBe(expectedFolder);
+      expect(result.format).toBe(expectedFormat);
+    },
+  );
 
   it('getSettings with null manualDailyNotePath → defaults (L22)', () => {
     const settings = { ...DEFAULT_SETTINGS, manualDailyNotePath: null as unknown as string };

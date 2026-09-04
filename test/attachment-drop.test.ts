@@ -1,4 +1,4 @@
-import type { App, TFile } from 'obsidian';
+import { TFile, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import {
   attachFilesAsLinks,
@@ -8,9 +8,16 @@ import {
   resolveDraggedItems,
   whenPasteSettled,
 } from '../src/ui/attachmentDrop';
+import { createAppWithFiles, methodOf } from './helpers';
 
 const file = (name: string): File => ({ name }) as unknown as File;
-const tfile = (path: string): TFile => ({ path }) as TFile;
+
+async function tfile(path: string): Promise<TFile> {
+  const app = await createAppWithFiles({ [path]: '' });
+  const candidate = app.vault.getAbstractFileByPath(path);
+  if (!(candidate instanceof TFile)) throw new Error(`Missing test file ${path}`);
+  return candidate;
+}
 
 describe('defaultPastedName', () => {
   it('derives a filename from the image MIME type', () => {
@@ -29,7 +36,7 @@ describe('defaultPastedName', () => {
 
 describe('insertAtCaret', () => {
   const ta = (value: string, start: number, end = start): HTMLTextAreaElement => {
-    const el = document.createElement('textarea');
+    const el = createEl('textarea');
     el.value = value;
     el.setSelectionRange(start, end);
     return el;
@@ -66,7 +73,7 @@ describe('attachFilesAsLinks', () => {
       type: 'image/png',
       arrayBuffer: () => Promise.resolve(bytes),
     } as unknown as File;
-    const saved = { name: 'pasted-image.png' } as TFile;
+    const saved = await tfile('pasted-image.png');
     const app = {
       fileManager: {
         getAvailablePathForAttachment: vi.fn().mockResolvedValue('pasted-image.png'),
@@ -77,7 +84,7 @@ describe('attachFilesAsLinks', () => {
 
     const links = await attachFilesAsLinks(app, [pasted], 'Tasks/T.md');
 
-    expect(app.fileManager.getAvailablePathForAttachment).toHaveBeenCalledWith(
+    expect(methodOf(app.fileManager, 'getAvailablePathForAttachment')).toHaveBeenCalledWith(
       'pasted-image.png',
       'Tasks/T.md',
     );
@@ -102,12 +109,12 @@ describe('enableAttachmentPaste + whenPasteSettled', () => {
   };
 
   it('whenPasteSettled resolves immediately when nothing is pending', async () => {
-    const el = document.createElement('textarea');
+    const el = createEl('textarea');
     await expect(whenPasteSettled(el)).resolves.toBeUndefined();
   });
 
   it('inserts only after the async attach settles; whenPasteSettled awaits it', async () => {
-    const el = document.createElement('textarea');
+    const el = createEl('textarea');
     const inserted: string[] = [];
     const f = {
       name: 'a.png',
@@ -128,7 +135,7 @@ describe('enableAttachmentPaste + whenPasteSettled', () => {
   });
 
   it('ignores a paste with no files (lets normal text paste proceed)', async () => {
-    const el = document.createElement('textarea');
+    const el = createEl('textarea');
     const inserted: string[] = [];
     enableAttachmentPaste(el, {
       app: pngApp(),
@@ -149,22 +156,24 @@ describe('resolveDraggedItems', () => {
     expect(r.vaultFiles).toEqual([]);
   });
 
-  it('falls back to the vault drag manager when there are no OS files', () => {
+  it('falls back to the vault drag manager when there are no OS files', async () => {
     const dt = { files: [] } as unknown as DataTransfer;
-    const r = resolveDraggedItems(dt, { draggable: { file: tfile('Notes/x.md') } });
+    const r = resolveDraggedItems(dt, { draggable: { file: await tfile('Notes/x.md') } });
     expect(r.externalFiles).toEqual([]);
     expect(r.vaultFiles.map((f) => f.path)).toEqual(['Notes/x.md']);
   });
 
-  it('supports a multi-file vault drag', () => {
+  it('supports a multi-file vault drag', async () => {
     const dt = { files: [] } as unknown as DataTransfer;
-    const r = resolveDraggedItems(dt, { draggable: { files: [tfile('a.md'), tfile('b.png')] } });
+    const r = resolveDraggedItems(dt, {
+      draggable: { files: [await tfile('a.md'), await tfile('b.png')] },
+    });
     expect(r.vaultFiles.map((f) => f.path)).toEqual(['a.md', 'b.png']);
   });
 
-  it('prefers external files over the drag manager when both exist', () => {
+  it('prefers external files over the drag manager when both exist', async () => {
     const dt = { files: [file('a.png')] } as unknown as DataTransfer;
-    const r = resolveDraggedItems(dt, { draggable: { file: tfile('x.md') } });
+    const r = resolveDraggedItems(dt, { draggable: { file: await tfile('x.md') } });
     expect(r.externalFiles.map((f) => f.name)).toEqual(['a.png']);
     expect(r.vaultFiles).toEqual([]);
   });

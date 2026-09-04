@@ -11,19 +11,14 @@ import type { TaskSnapshot } from '../tasks';
  * `noDate` means no relevant date is present; this is distinct from overdue.
  */
 export type TaskDateCategory =
-  | 'overdue'
-  | 'today'
-  | 'upcoming'
-  | 'noDate'
-  | 'completed'
-  | 'cancelled';
+  'overdue' | 'today' | 'upcoming' | 'noDate' | 'completed' | 'cancelled';
 
 export function getTaskDateCategory(task: TaskSnapshot, today: string): TaskDateCategory {
   if (task.status === 'done') return 'completed';
   if (task.status === 'cancelled') return 'cancelled';
 
   const relevantDate = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
-  if (!relevantDate) return 'noDate';
+  if (relevantDate == null) return 'noDate';
   if (relevantDate < today) return 'overdue';
   if (relevantDate === today) return 'today';
   return 'upcoming';

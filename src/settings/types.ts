@@ -46,8 +46,7 @@ interface InboxSettings {
 }
 
 type StatusMatch =
-  | { kind: 'property'; property: string; value: string }
-  | { kind: 'tag'; tag: string };
+  { kind: 'property'; property: string; value: string } | { kind: 'tag'; tag: string };
 
 export interface ProjectStatus {
   id: string;

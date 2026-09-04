@@ -1,24 +1,28 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { renderHourGrid, repositionNowLine } from '../src/views/timegrid/HourGrid';
-import { DataTransferStub, freshContainer, useRealMoment } from './helpers';
+import {
+  cssDeclarationsFor,
+  cssRuleParts,
+  DataTransferStub,
+  expectDefined,
+  freshContainer,
+  loadPluginStyles,
+  useRealMoment,
+} from './helpers';
 
 useRealMoment();
 
-const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+const css = await loadPluginStyles();
 
 function declarationsFor(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
-  const match = new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(css);
-  return match?.groups?.['body'] ?? '';
+  return cssDeclarationsFor(css, selector);
 }
 
 function declarationsForRuleContaining(...selectors: string[]): string {
-  for (const match of css.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
-    const selectorList = (match[1] ?? '').replace(/\s+/gu, '');
+  for (const rule of cssRuleParts(css)) {
+    const selectorList = rule.selector.replace(/\s+/gu, '');
     if (selectors.every((selector) => selectorList.includes(selector.replace(/\s+/gu, '')))) {
-      return match[2] ?? '';
+      return rule.declarations;
     }
   }
   return '';
@@ -86,10 +90,11 @@ describe('renderHourGrid', () => {
     expect(css).not.toMatch(/(?:^|\n)\.is-dragging\s*\{[^}]*opacity\s*:/u);
     expect(
       declarationsForRuleContaining(
-        '.is-dragging:not(.abyss-tg-block)',
-        ':not(.abyss-tg-body)',
-        ':not(.abyss-mg-block-dot)',
-        ':not(.abyss-mg-plain)',
+        '.is-dragging:not(',
+        '.abyss-tg-block',
+        '.abyss-tg-body',
+        '.abyss-mg-block-dot',
+        '.abyss-mg-plain',
       ),
     ).toMatch(/opacity\s*:\s*0\.4/u);
   });
@@ -332,8 +337,8 @@ describe('renderHourGrid', () => {
     const container = freshContainer();
     const today = window.moment().format('YYYY-MM-DD');
     const handles = renderHourGrid(container, [today]);
-    const nowLineEl = handles.nowLineEl!;
-    nowLineEl.style.top = '0px';
+    const nowLineEl = expectDefined(handles.nowLineEl);
+    nowLineEl.setCssProps({ top: '0px' });
     repositionNowLine(nowLineEl);
     const top = parseFloat(nowLineEl.style.top);
     expect(top).toBeGreaterThanOrEqual(0);
@@ -349,7 +354,7 @@ describe('renderHourGrid', () => {
     const container = freshContainer();
     const onDropTime = vi.fn();
     const handles = renderHourGrid(container, ['2026-07-10'], onDropTime);
-    const hourColumnEl = handles.days[0]!.hourColumnEl;
+    const hourColumnEl = expectDefined(handles.days[0]).hourColumnEl;
     // Stub getBoundingClientRect so a clientY of 148 maps to a known offset
     vi.spyOn(hourColumnEl, 'getBoundingClientRect').mockReturnValue({
       top: 100,
@@ -367,7 +372,7 @@ describe('renderHourGrid', () => {
     const container = freshContainer();
     const onCreateAtTime = vi.fn();
     const handles = renderHourGrid(container, ['2026-07-10'], undefined, onCreateAtTime);
-    const hourColumnEl = handles.days[0]!.hourColumnEl;
+    const hourColumnEl = expectDefined(handles.days[0]).hourColumnEl;
     vi.spyOn(hourColumnEl, 'getBoundingClientRect').mockReturnValue({
       top: 100,
       left: 0,
@@ -380,7 +385,7 @@ describe('renderHourGrid', () => {
     const container = freshContainer();
     const onCreateAtTime = vi.fn();
     const handles = renderHourGrid(container, ['2026-07-10'], undefined, onCreateAtTime);
-    const hourColumnEl = handles.days[0]!.hourColumnEl;
+    const hourColumnEl = expectDefined(handles.days[0]).hourColumnEl;
     const block = hourColumnEl.createDiv({ cls: 'abyss-tg-block' });
     block.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(onCreateAtTime).not.toHaveBeenCalled();
@@ -390,7 +395,7 @@ describe('renderHourGrid', () => {
     const container = freshContainer();
     const onCreateAtTime = vi.fn();
     const handles = renderHourGrid(container, ['2026-07-10'], undefined, onCreateAtTime);
-    const hourColumnEl = handles.days[0]!.hourColumnEl;
+    const hourColumnEl = expectDefined(handles.days[0]).hourColumnEl;
     const continuation = hourColumnEl.createDiv({ cls: 'abyss-tg-block-continuation' });
     continuation.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(onCreateAtTime).not.toHaveBeenCalled();
@@ -399,7 +404,7 @@ describe('renderHourGrid', () => {
   it('does not wire a click listener when onCreateAtTime is not provided (no throw on click)', () => {
     const container = freshContainer();
     const handles = renderHourGrid(container, ['2026-07-10']);
-    const hourColumnEl = handles.days[0]!.hourColumnEl;
+    const hourColumnEl = expectDefined(handles.days[0]).hourColumnEl;
     expect(() =>
       hourColumnEl.dispatchEvent(new MouseEvent('click', { bubbles: true })),
     ).not.toThrow();
@@ -444,7 +449,7 @@ describe('renderHourGrid', () => {
   it('does not wire drop listeners when onDropTime is not provided (no throw on drop)', () => {
     const container = freshContainer();
     const handles = renderHourGrid(container, ['2026-07-10']);
-    const hourColumnEl = handles.days[0]!.hourColumnEl;
+    const hourColumnEl = expectDefined(handles.days[0]).hourColumnEl;
     vi.spyOn(hourColumnEl, 'getBoundingClientRect').mockReturnValue({
       top: 100,
       left: 0,

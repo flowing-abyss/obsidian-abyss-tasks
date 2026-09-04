@@ -3,14 +3,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { computeStats, ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskIndexEvent, TaskSnapshot } from '../src/tasks';
-import { queryApiForTasks, task, taskQueryApi, type TaskFixtureInput } from './helpers';
+import {
+  expectDefined,
+  queryApiForTasks,
+  task,
+  taskQueryApi,
+  type TaskFixtureInput,
+} from './helpers';
 
 /** A minimal object that passes `instanceof TFile` (TFile isn't standalone-constructable). */
 function tfile(path: string): { path: string; extension: string } {
-  return Object.assign(Object.create(TFile.prototype) as object, { path, extension: 'md' }) as {
-    path: string;
-    extension: string;
-  };
+  return Object.assign(Object.create(TFile.prototype) as object, { path, extension: 'md' });
 }
 
 function t(over: TaskFixtureInput): TaskSnapshot {
@@ -54,8 +57,12 @@ function makeApp(files: FakeFile[]): MockApp {
   const changedHandlers: Array<(file: { path: string }) => void> = [];
   const handlers: Record<string, Array<() => void>> = {};
   const on = (event: string, cb: (...a: unknown[]) => void): { event: string } => {
-    if (event === 'changed') changedHandlers.push(cb as (file: { path: string }) => void);
-    else (handlers[event] ??= []).push(cb as () => void);
+    if (event === 'changed') changedHandlers.push(cb);
+    else {
+      const eventHandlers = handlers[event] ?? [];
+      eventHandlers.push(cb);
+      handlers[event] = eventHandlers;
+    }
     return { event };
   };
   const app = {
@@ -98,10 +105,13 @@ describe('ProjectStore enumeration', () => {
     const ps = new ProjectStore(app, storeWith([]), { ...DEFAULT_SETTINGS });
     ps.initialize();
     const list = ps.list();
-    expect(list.map((p) => p.path).sort()).toEqual(['Projects/A.md', 'Projects/B.md']);
-    const a = ps.get('Projects/A.md')!;
-    expect(a.statusId).toBe(DEFAULT_SETTINGS.projects.statuses[0]!.id);
-    const b = ps.get('Projects/B.md')!;
+    expect(list.map((p) => p.path).sort((left, right) => left.localeCompare(right))).toEqual([
+      'Projects/A.md',
+      'Projects/B.md',
+    ]);
+    const a = expectDefined(ps.get('Projects/A.md'));
+    expect(a.statusId).toBe(expectDefined(DEFAULT_SETTINGS.projects.statuses[0]).id);
+    const b = expectDefined(ps.get('Projects/B.md'));
     expect(b.statusId).toBeNull();
     expect(b.rawStatus).toBe('archive');
     ps.destroy();
@@ -116,7 +126,7 @@ describe('ProjectStore enumeration', () => {
     ];
     const ps = new ProjectStore(app, storeWith(tasks), { ...DEFAULT_SETTINGS });
     ps.initialize();
-    expect(ps.get('Projects/A.md')!.stats).toEqual({
+    expect(expectDefined(ps.get('Projects/A.md')).stats).toEqual({
       total: 2,
       done: 1,
       cancelled: 0,
@@ -200,7 +210,7 @@ describe('ProjectStore incremental update', () => {
     ) as never;
     const ps = new ProjectStore(mock.app, store, { ...DEFAULT_SETTINGS });
     ps.initialize();
-    expect(ps.get('Projects/A.md')!.stats.done).toBe(0);
+    expect(expectDefined(ps.get('Projects/A.md')).stats.done).toBe(0);
     const cb = vi.fn();
     ps.onUpdate(cb);
 
@@ -209,9 +219,9 @@ describe('ProjectStore incremental update', () => {
     mock.fireChanged('Projects/A.md');
     indexListener?.({ type: 'changed', files: ['Projects/A.md'] });
     // Debounced: not applied yet.
-    expect(ps.get('Projects/A.md')!.stats.done).toBe(0);
+    expect(expectDefined(ps.get('Projects/A.md')).stats.done).toBe(0);
     vi.advanceTimersByTime(150);
-    expect(ps.get('Projects/A.md')!.stats.done).toBe(1);
+    expect(expectDefined(ps.get('Projects/A.md')).stats.done).toBe(1);
     expect(cb).toHaveBeenCalledTimes(1);
 
     ps.destroy();

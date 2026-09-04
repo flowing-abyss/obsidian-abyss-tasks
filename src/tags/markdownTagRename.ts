@@ -35,6 +35,66 @@ function replaceCanonicalTag(
   return value;
 }
 
+interface TagReplacement {
+  readonly oldTag: string;
+  readonly newTag: string;
+  readonly scope: TagRenameScope;
+}
+
+interface YamlScalarParts {
+  readonly leading: string;
+  readonly scalar: string;
+  readonly trailing: string;
+}
+
+function splitYamlScalarWhitespace(source: string): YamlScalarParts {
+  let from = 0;
+  while (from < source.length && /\s/u.test(source[from] ?? '')) from++;
+  let to = source.length;
+  while (to > from && /\s/u.test(source[to - 1] ?? '')) to--;
+  return {
+    leading: source.slice(0, from),
+    scalar: source.slice(from, to),
+    trailing: source.slice(to),
+  };
+}
+
+function splitYamlScalarComment(scalar: string): {
+  readonly value: string;
+  readonly comment: string;
+} {
+  const commentAt = yamlCommentStart(scalar);
+  return commentAt < 0
+    ? { value: scalar, comment: '' }
+    : { value: scalar.slice(0, commentAt), comment: scalar.slice(commentAt) };
+}
+
+function yamlScalarQuote(scalar: string): string {
+  if (scalar.length < 2) return '';
+  const opener = scalar[0] ?? '';
+  if (opener !== '"' && opener !== "'") return '';
+  return scalar[scalar.length - 1] === opener ? opener : '';
+}
+
+function replaceYamlScalarValue(
+  scalar: string,
+  replacement: TagReplacement,
+): { readonly quote: string; readonly displayed: string } | null {
+  const quote = yamlScalarQuote(scalar);
+  const rawValue = quote.length > 0 ? scalar.slice(1, -1) : scalar;
+  if (rawValue.length === 0) return null;
+  const hasHash = rawValue.startsWith('#');
+  const canonical = hasHash ? rawValue : `#${rawValue}`;
+  const updated = replaceCanonicalTag(
+    canonical,
+    replacement.oldTag,
+    replacement.newTag,
+    replacement.scope,
+  );
+  if (updated === canonical) return null;
+  return { quote, displayed: hasHash ? updated : updated.slice(1) };
+}
+
 function transformYamlScalar(
   source: string,
   oldTag: string,
@@ -48,39 +108,36 @@ function transformYamlScalar(
       transformYamlScalar(source.slice(commentPrefixEnd), oldTag, newTag, scope)
     );
   }
+  const parts = splitYamlScalarWhitespace(source);
+  if (parts.scalar.length === 0) return source;
+  const content = splitYamlScalarComment(parts.scalar);
+  const updated = replaceYamlScalarValue(content.value, { oldTag, newTag, scope });
+  if (updated === null) return source;
+  return `${parts.leading}${updated.quote}${updated.displayed}${updated.quote}${content.comment}${parts.trailing}`;
+}
 
-  let from = 0;
-  while (from < source.length && /\s/u.test(source[from] ?? '')) from++;
-  let to = source.length;
-  while (to > from && /\s/u.test(source[to - 1] ?? '')) to--;
-  const leading = source.slice(0, from);
-  let scalar = source.slice(from, to);
-  const trailing = source.slice(to);
-  if (!scalar) return source;
+interface YamlQuoteStep {
+  readonly index: number;
+  readonly quote: string;
+}
 
-  let comment = '';
-  const commentAt = yamlCommentStart(scalar);
-  if (commentAt >= 0) {
-    comment = scalar.slice(commentAt);
-    scalar = scalar.slice(0, commentAt);
-  }
+function yamlQuoteStep(source: string, index: number, quote: string): YamlQuoteStep | null {
+  if (quote.length === 0) return null;
+  const character = source[index] ?? '';
+  if (quote === '"' && character === '\\') return { index: index + 1, quote };
+  if (character !== quote) return { index, quote };
+  if (quote === "'" && source[index + 1] === "'") return { index: index + 1, quote };
+  return { index, quote: '' };
+}
 
-  const quote =
-    scalar.length >= 2 &&
-    (scalar[0] === '"' || scalar[0] === "'") &&
-    scalar[scalar.length - 1] === scalar[0]
-      ? scalar[0]
-      : '';
-  const rawValue = quote ? scalar.slice(1, -1) : scalar;
-  if (!rawValue) return source;
+function yamlCommentMarker(source: string, index: number): boolean {
+  return source[index] === '#' && /\s/u.test(source[index - 1] ?? '');
+}
 
-  const hasHash = rawValue.startsWith('#');
-  const canonical = hasHash ? rawValue : `#${rawValue}`;
-  const replacement = replaceCanonicalTag(canonical, oldTag, newTag, scope);
-  if (replacement === canonical) return source;
-
-  const displayed = hasHash ? replacement : replacement.slice(1);
-  return `${leading}${quote}${displayed}${quote}${comment}${trailing}`;
+function yamlCommentOffset(source: string, marker: number): number {
+  let commentAt = marker;
+  while (commentAt > 0 && /[ \t]/u.test(source[commentAt - 1] ?? '')) commentAt--;
+  return commentAt;
 }
 
 function leadingYamlCommentPrefixEnd(source: string): number {
@@ -91,7 +148,7 @@ function leadingYamlCommentPrefixEnd(source: string): number {
     const lineEnd = newline < 0 ? source.length : newline + 1;
     const coreEnd = newline < 0 ? lineEnd : newline;
     const trimmed = source.slice(cursor, coreEnd).replace(/\r$/u, '').trim();
-    if (!trimmed) {
+    if (trimmed.length === 0) {
       cursor = lineEnd;
       continue;
     }
@@ -104,49 +161,67 @@ function leadingYamlCommentPrefixEnd(source: string): number {
 
 function yamlCommentStart(source: string): number {
   let quote = '';
-  for (let index = 0; index < source.length; index++) {
+  let index = 0;
+  while (index < source.length) {
     const character = source[index] ?? '';
-    if (quote) {
-      if (quote === '"' && character === '\\') {
-        index++;
-      } else if (character === quote) {
-        if (quote === "'" && source[index + 1] === "'") index++;
-        else quote = '';
-      }
+    const quoted = yamlQuoteStep(source, index, quote);
+    if (quoted != null) {
+      index = quoted.index;
+      quote = quoted.quote;
     } else if (character === '"' || character === "'") {
       quote = character;
-    } else if (character === '#' && index > 0 && /\s/u.test(source[index - 1] ?? '')) {
-      let commentAt = index;
-      while (commentAt > 0 && /[ \t]/u.test(source[commentAt - 1] ?? '')) commentAt--;
-      return commentAt;
-    }
+    } else if (index > 0 && yamlCommentMarker(source, index))
+      return yamlCommentOffset(source, index);
+    index++;
   }
   return -1;
+}
+
+interface YamlFlowScanState {
+  quote: string;
+  comment: boolean;
+}
+
+type YamlFlowSignal = 'none' | 'close' | 'separator';
+
+interface YamlFlowStep {
+  readonly index: number;
+  readonly signal: YamlFlowSignal;
+}
+
+function yamlFlowStep(source: string, index: number, state: YamlFlowScanState): YamlFlowStep {
+  const character = source[index] ?? '';
+  if (state.comment) {
+    if (character === '\n') state.comment = false;
+    return { index, signal: 'none' };
+  }
+  const quoted = yamlQuoteStep(source, index, state.quote);
+  if (quoted != null) {
+    state.quote = quoted.quote;
+    return { index: quoted.index, signal: 'none' };
+  }
+  if (character === '"' || character === "'") {
+    state.quote = character;
+    return { index, signal: 'none' };
+  }
+  if (yamlCommentMarker(source, index)) {
+    state.comment = true;
+    return { index, signal: 'none' };
+  }
+  if (character === ']') return { index, signal: 'close' };
+  return { index, signal: character === ',' ? 'separator' : 'none' };
 }
 
 function flowSequenceClose(source: string): number {
   const open = source.indexOf('[');
   if (open < 0) return -1;
-  let quote = '';
-  let comment = false;
-  for (let index = open + 1; index < source.length; index++) {
-    const character = source[index] ?? '';
-    if (comment) {
-      if (character === '\n') comment = false;
-    } else if (quote) {
-      if (quote === '"' && character === '\\') {
-        index++;
-      } else if (character === quote) {
-        if (quote === "'" && source[index + 1] === "'") index++;
-        else quote = '';
-      }
-    } else if (character === '"' || character === "'") {
-      quote = character;
-    } else if (character === '#' && /\s/u.test(source[index - 1] ?? '')) {
-      comment = true;
-    } else if (character === ']') {
-      return index;
-    }
+  const state: YamlFlowScanState = { quote: '', comment: false };
+  let index = open + 1;
+  while (index < source.length) {
+    const step = yamlFlowStep(source, index, state);
+    index = step.index;
+    if (step.signal === 'close') return index;
+    index++;
   }
   return -1;
 }
@@ -164,28 +239,17 @@ function transformFlowSequence(
   const inner = source.slice(open + 1, close);
   const parts: string[] = [];
   let start = 0;
-  let quote = '';
-  let comment = false;
-  for (let index = 0; index < inner.length; index++) {
-    const character = inner[index] ?? '';
-    if (comment) {
-      if (character === '\n') comment = false;
-    } else if (quote) {
-      if (quote === '"' && character === '\\') {
-        index++;
-      } else if (character === quote) {
-        if (quote === "'" && inner[index + 1] === "'") index++;
-        else quote = '';
-      }
-    } else if (character === '"' || character === "'") {
-      quote = character;
-    } else if (character === '#' && /\s/u.test(inner[index - 1] ?? '')) {
-      comment = true;
-    } else if (character === ',') {
+  const state: YamlFlowScanState = { quote: '', comment: false };
+  let index = 0;
+  while (index < inner.length) {
+    const step = yamlFlowStep(inner, index, state);
+    index = step.index;
+    if (step.signal === 'separator') {
       parts.push(inner.slice(start, index));
       parts.push(',');
       start = index + 1;
     }
+    index++;
   }
   parts.push(inner.slice(start));
 
@@ -246,26 +310,27 @@ interface TransformedTagsProperty {
   readonly beginsBlock: boolean;
 }
 
-function transformTagsProperty(
-  lines: readonly string[],
-  index: number,
-  property: YamlProperty,
-  ending: string,
-  oldTag: string,
-  newTag: string,
-  scope: TagRenameScope,
-): TransformedTagsProperty {
+interface TagsPropertyTransformOptions {
+  readonly lines: readonly string[];
+  readonly index: number;
+  readonly property: YamlProperty;
+  readonly ending: string;
+  readonly replacement: TagReplacement;
+}
+
+function transformTagsProperty(options: TagsPropertyTransformOptions): TransformedTagsProperty {
+  const { lines, index, property, ending, replacement } = options;
   const { separator, value } = property;
-  if (!value || value.startsWith('#')) {
+  if (value.length === 0 || value.startsWith('#')) {
     return { text: lines[index] ?? '', nextIndex: index, beginsBlock: true };
   }
   if (!value.trimStart().startsWith('[')) {
     return {
       text: `${property.key}:${separator}${transformYamlScalar(
         value,
-        oldTag,
-        newTag,
-        scope,
+        replacement.oldTag,
+        replacement.newTag,
+        replacement.scope,
       )}${ending}`,
       nextIndex: index,
       beginsBlock: false,
@@ -273,15 +338,108 @@ function transformTagsProperty(
   }
 
   let flow = `${value}${ending}`;
-  while (flowSequenceClose(flow) < 0 && index + 1 < lines.length) {
-    index++;
-    flow += lines[index] ?? '';
+  let nextIndex = index;
+  while (flowSequenceClose(flow) < 0 && nextIndex + 1 < lines.length) {
+    nextIndex++;
+    flow += lines[nextIndex] ?? '';
   }
   return {
-    text: `${property.key}:${separator}${transformFlowSequence(flow, oldTag, newTag, scope)}`,
-    nextIndex: index,
+    text: `${property.key}:${separator}${transformFlowSequence(
+      flow,
+      replacement.oldTag,
+      replacement.newTag,
+      replacement.scope,
+    )}`,
+    nextIndex,
     beginsBlock: false,
   };
+}
+
+interface YamlLineParts {
+  readonly line: string;
+  readonly ending: string;
+  readonly core: string;
+}
+
+function yamlLineParts(line: string): YamlLineParts {
+  let ending = '';
+  if (line.endsWith('\r\n')) ending = '\r\n';
+  else if (line.endsWith('\n')) ending = '\n';
+  return {
+    line,
+    ending,
+    core: ending.length > 0 ? line.slice(0, -ending.length) : line,
+  };
+}
+
+interface FrontmatterLineResult {
+  readonly text: string;
+  readonly nextIndex: number;
+  readonly inTagsBlock: boolean;
+}
+
+interface FrontmatterLineOptions {
+  readonly lines: readonly string[];
+  readonly index: number;
+  readonly inTagsBlock: boolean;
+  readonly replacement: TagReplacement;
+}
+
+function transformFrontmatterProperty(
+  parts: YamlLineParts,
+  property: YamlProperty,
+  options: FrontmatterLineOptions,
+): FrontmatterLineResult {
+  if (property.key.trim() !== 'tags') {
+    return { text: parts.line, nextIndex: options.index, inTagsBlock: false };
+  }
+  const transformed = transformTagsProperty({
+    lines: options.lines,
+    index: options.index,
+    property,
+    ending: parts.ending,
+    replacement: options.replacement,
+  });
+  return {
+    text: transformed.text,
+    nextIndex: transformed.nextIndex,
+    inTagsBlock: transformed.beginsBlock,
+  };
+}
+
+function transformTagsBlockLine(
+  parts: YamlLineParts,
+  options: FrontmatterLineOptions,
+): FrontmatterLineResult {
+  const unchanged = { text: parts.line, nextIndex: options.index, inTagsBlock: true };
+  const trimmed = parts.core.trim();
+  if (trimmed.length === 0 || trimmed.startsWith('#')) return unchanged;
+  const item = yamlListItem(parts.core);
+  if (item != null) {
+    const replacement = options.replacement;
+    return {
+      text: `${item.prefix}${transformYamlScalar(
+        item.value,
+        replacement.oldTag,
+        replacement.newTag,
+        replacement.scope,
+      )}${parts.ending}`,
+      nextIndex: options.index,
+      inTagsBlock: true,
+    };
+  }
+  const staysInBlock = parts.core[0] === ' ' || parts.core[0] === '\t';
+  return { ...unchanged, inTagsBlock: staysInBlock };
+}
+
+function transformFrontmatterLine(options: FrontmatterLineOptions): FrontmatterLineResult {
+  const parts = yamlLineParts(options.lines[options.index] ?? '');
+  const property = yamlProperty(parts.core);
+  if (property != null) return transformFrontmatterProperty(parts, property, options);
+  if (!options.inTagsBlock) {
+    return { text: parts.line, nextIndex: options.index, inTagsBlock: false };
+  }
+  return transformTagsBlockLine(parts, options);
 }
 
 function transformFrontmatterYaml(
@@ -291,59 +449,20 @@ function transformFrontmatterYaml(
   scope: TagRenameScope,
 ): string {
   const lines = linesPreservingEndings(yaml);
-  let inTagsBlock = false;
   const transformedLines: string[] = [];
-
+  const replacement: TagReplacement = { oldTag, newTag, scope };
+  let inTagsBlock = false;
   let index = 0;
   while (index < lines.length) {
-    const lineIndex = index;
-    index++;
-    const line = lines[lineIndex] ?? '';
-    let ending = '';
-    if (line.endsWith('\r\n')) ending = '\r\n';
-    else if (line.endsWith('\n')) ending = '\n';
-    const core = ending ? line.slice(0, -ending.length) : line;
-    const property = yamlProperty(core);
-    if (property) {
-      inTagsBlock = false;
-      if (property.key.trim() !== 'tags') {
-        transformedLines.push(line);
-        continue;
-      }
-
-      const transformed = transformTagsProperty(
-        lines,
-        lineIndex,
-        property,
-        ending,
-        oldTag,
-        newTag,
-        scope,
-      );
-      index = transformed.nextIndex + 1;
-      inTagsBlock = transformed.beginsBlock;
-      transformedLines.push(transformed.text);
-      continue;
-    }
-
-    if (!inTagsBlock) {
-      transformedLines.push(line);
-      continue;
-    }
-    const trimmed = core.trim();
-    if (!trimmed || trimmed.startsWith('#')) {
-      transformedLines.push(line);
-      continue;
-    }
-    const item = yamlListItem(core);
-    if (!item) {
-      if (core[0] !== ' ' && core[0] !== '\t') inTagsBlock = false;
-      transformedLines.push(line);
-      continue;
-    }
-    transformedLines.push(
-      `${item.prefix}${transformYamlScalar(item.value, oldTag, newTag, scope)}${ending}`,
-    );
+    const transformed = transformFrontmatterLine({
+      lines,
+      index,
+      inTagsBlock,
+      replacement,
+    });
+    transformedLines.push(transformed.text);
+    inTagsBlock = transformed.inTagsBlock;
+    index = transformed.nextIndex + 1;
   }
   return transformedLines.join('');
 }
@@ -356,7 +475,7 @@ interface FrontmatterRange {
 
 function frontmatterRange(source: string): FrontmatterRange | null {
   const opening = /^(?:\uFEFF)?---[ \t]*\r?\n/u.exec(source);
-  if (!opening) return null;
+  if (opening == null) return null;
 
   let lineStart = opening[0].length;
   while (lineStart <= source.length) {
@@ -373,56 +492,84 @@ function frontmatterRange(source: string): FrontmatterRange | null {
   return null;
 }
 
+interface OpenFence {
+  readonly from: number;
+  readonly marker: string;
+  readonly length: number;
+  readonly quoteDepth: number;
+}
+
+interface MarkdownSourceLine {
+  readonly from: number;
+  readonly to: number;
+  readonly container: ReturnType<typeof blockquoteContainer>;
+}
+
+function markdownSourceLine(source: string, from: number): MarkdownSourceLine {
+  const newline = source.indexOf('\n', from);
+  const to = newline < 0 ? source.length : newline + 1;
+  const core = source.slice(from, newline < 0 ? to : newline).replace(/\r$/u, '');
+  return { from, to, container: blockquoteContainer(core) };
+}
+
+function closingFenceRange(line: MarkdownSourceLine, open: OpenFence): SourceRange | null {
+  const leading = /^ {0,3}/u.exec(line.container.content)?.[0].length ?? 0;
+  const candidate = line.container.content.slice(leading);
+  let run = 0;
+  while (candidate[run] === open.marker) run++;
+  if (line.container.quoteDepth !== open.quoteDepth || run < open.length) return null;
+  return /^[ \t]*$/u.test(candidate.slice(run)) ? { from: open.from, to: line.to } : null;
+}
+
+function openingFence(line: MarkdownSourceLine): OpenFence | null {
+  const match = /^ {0,3}(`{3,}|~{3,})/u.exec(line.container.content);
+  if (match === null) return null;
+  const delimiter = match[1];
+  if (delimiter === undefined) return null;
+  const rest = line.container.content.slice(match[0].length);
+  if (delimiter[0] === '`' && rest.includes('`')) return null;
+  return {
+    from: line.from,
+    marker: delimiter[0] ?? '`',
+    length: delimiter.length,
+    quoteDepth: line.container.quoteDepth,
+  };
+}
+
+function droppedBlockquoteFence(line: MarkdownSourceLine, open: OpenFence): SourceRange | null {
+  if (open.quoteDepth === 0 || line.container.quoteDepth >= open.quoteDepth) return null;
+  return { from: open.from, to: line.from };
+}
+
+interface FenceLineTransition {
+  readonly open: OpenFence | null;
+  readonly range?: SourceRange;
+}
+
+function fenceLineTransition(
+  line: MarkdownSourceLine,
+  open: OpenFence | null,
+): FenceLineTransition {
+  if (open === null) return { open: openingFence(line) };
+  const dropped = droppedBlockquoteFence(line, open);
+  if (dropped != null) return { open: openingFence(line), range: dropped };
+  const closed = closingFenceRange(line, open);
+  return closed == null ? { open } : { open: null, range: closed };
+}
+
 function fencedCodeRanges(source: string): readonly SourceRange[] {
   const ranges: SourceRange[] = [];
-  let open: {
-    readonly from: number;
-    readonly marker: string;
-    readonly length: number;
-    readonly quoteDepth: number;
-  } | null = null;
+  let open: OpenFence | null = null;
   let lineStart = 0;
 
   while (lineStart < source.length) {
-    const newline = source.indexOf('\n', lineStart);
-    const lineEnd = newline < 0 ? source.length : newline + 1;
-    const core = source.slice(lineStart, newline < 0 ? lineEnd : newline).replace(/\r$/u, '');
-    const container = blockquoteContainer(core);
-
-    if (open && open.quoteDepth > 0 && container.quoteDepth < open.quoteDepth) {
-      ranges.push({ from: open.from, to: lineStart });
-      open = null;
-    }
-    if (open) {
-      const leading = /^ {0,3}/u.exec(container.content)?.[0].length ?? 0;
-      const candidate = container.content.slice(leading);
-      let run = 0;
-      while (candidate[run] === open.marker) run++;
-      if (
-        container.quoteDepth === open.quoteDepth &&
-        run >= open.length &&
-        /^[ \t]*$/u.test(candidate.slice(run))
-      ) {
-        ranges.push({ from: open.from, to: lineEnd });
-        open = null;
-      }
-    } else {
-      const match = /^ {0,3}(`{3,}|~{3,})/u.exec(container.content);
-      const delimiter = match?.[1];
-      const rest = match ? container.content.slice(match[0].length) : '';
-      if (delimiter && (delimiter[0] !== '`' || !rest.includes('`'))) {
-        open = {
-          from: lineStart,
-          marker: delimiter[0] ?? '`',
-          length: delimiter.length,
-          quoteDepth: container.quoteDepth,
-        };
-      }
-    }
-
-    lineStart = lineEnd;
+    const line = markdownSourceLine(source, lineStart);
+    const transition = fenceLineTransition(line, open);
+    if (transition.range != null) ranges.push(transition.range);
+    open = transition.open;
+    lineStart = line.to;
   }
-  if (open) ranges.push({ from: open.from, to: source.length });
+  if (open != null) ranges.push({ from: open.from, to: source.length });
   return ranges;
 }
 
@@ -494,29 +641,89 @@ function singleLineWhitespaceEnd(source: string, from: number): number {
   return cursor;
 }
 
+interface LinkTitleScanStep {
+  readonly cursor: number;
+  readonly lineHasContent: boolean;
+  readonly result: 'continue' | 'close' | 'invalid';
+}
+
+interface LinkTitleScanOptions {
+  readonly source: string;
+  readonly cursor: number;
+  readonly opener: string;
+  readonly closer: string;
+  readonly lineHasContent: boolean;
+}
+
+function isLinkTitleContent(character: string): boolean {
+  return character !== ' ' && character !== '\t' && character !== '\r';
+}
+
+function escapedLinkTitleStep(source: string, cursor: number): LinkTitleScanStep {
+  const followedByLineBreak = source[cursor + 1] === '\n' || source[cursor + 1] === '\r';
+  return {
+    cursor: cursor + (followedByLineBreak ? 1 : 2),
+    lineHasContent: true,
+    result: 'continue',
+  };
+}
+
+function lineBreakTitleStep(cursor: number, lineHasContent: boolean): LinkTitleScanStep {
+  return {
+    cursor: cursor + 1,
+    lineHasContent: false,
+    result: lineHasContent ? 'continue' : 'invalid',
+  };
+}
+
+function linkTitleScanStep(options: LinkTitleScanOptions): LinkTitleScanStep {
+  const { source, cursor, opener, closer, lineHasContent } = options;
+  const character = source[cursor] ?? '';
+  if (character === '\\') return escapedLinkTitleStep(source, cursor);
+  if (character === '\n') return lineBreakTitleStep(cursor, lineHasContent);
+  const hasContent = isLinkTitleContent(character);
+  if (opener === '(' && character === '(') {
+    return { cursor: cursor + 1, lineHasContent: true, result: 'invalid' };
+  }
+  return {
+    cursor: cursor + 1,
+    lineHasContent: lineHasContent || hasContent,
+    result: character === closer ? 'close' : 'continue',
+  };
+}
+
 function linkTitleEnd(source: string, from: number): number | null {
   const opener = source[from] ?? '';
   const closer = opener === '(' ? ')' : opener;
   if (opener !== '"' && opener !== "'" && opener !== '(') return null;
   let lineHasContent = true;
-  for (let cursor = from + 1; cursor < source.length; cursor++) {
-    if (source[cursor] === '\\') {
-      lineHasContent = true;
-      if (source[cursor + 1] !== '\n' && source[cursor + 1] !== '\r') cursor++;
-      continue;
-    }
-    if (source[cursor] === '\n') {
-      if (!lineHasContent) return null;
-      lineHasContent = false;
-      continue;
-    }
-    if (source[cursor] !== ' ' && source[cursor] !== '\t' && source[cursor] !== '\r') {
-      lineHasContent = true;
-    }
-    if (opener === '(' && source[cursor] === '(') return null;
-    if (source[cursor] === closer) return cursor + 1;
+  let cursor = from + 1;
+  while (cursor < source.length) {
+    const step = linkTitleScanStep({ source, cursor, opener, closer, lineHasContent });
+    if (step.result === 'invalid') return null;
+    if (step.result === 'close') return step.cursor;
+    cursor = step.cursor;
+    lineHasContent = step.lineHasContent;
   }
   return null;
+}
+
+interface DestinationDepthStep {
+  readonly result: 'continue' | 'close' | 'invalid';
+  readonly depth: number;
+}
+
+function destinationDepthStep(character: string, depth: number): DestinationDepthStep {
+  if (character === '(') {
+    return depth >= 32 ? { result: 'invalid', depth } : { result: 'continue', depth: depth + 1 };
+  }
+  if (character !== ')') return { result: 'continue', depth };
+  return depth === 0 ? { result: 'close', depth } : { result: 'continue', depth: depth - 1 };
+}
+
+function isBareDestinationWhitespace(character: string): boolean {
+  const code = character.charCodeAt(0);
+  return code <= 32 || code === 127;
 }
 
 function bareLinkDestinationEnd(source: string, from: number): number | null {
@@ -528,14 +735,10 @@ function bareLinkDestinationEnd(source: string, from: number): number | null {
       cursor += 2;
       continue;
     }
-    if (character === '(') {
-      if (++depth > 32) return null;
-    } else if (character === ')') {
-      if (depth === 0) return cursor;
-      depth--;
-    } else if (character.charCodeAt(0) <= 32 || character.charCodeAt(0) === 127) {
-      return cursor;
-    }
+    const nextDepth = destinationDepthStep(character, depth);
+    if (nextDepth.result === 'invalid') return null;
+    if (nextDepth.result === 'close' || isBareDestinationWhitespace(character)) return cursor;
+    depth = nextDepth.depth;
     cursor++;
   }
   return null;
@@ -554,18 +757,18 @@ function angleLinkDestinationEnd(source: string, from: number): number | null {
   return null;
 }
 
+function linkDestinationContentEnd(source: string, from: number): number | null {
+  return source[from] === '<'
+    ? angleLinkDestinationEnd(source, from)
+    : bareLinkDestinationEnd(source, from);
+}
+
 function markdownLinkDestinationEnd(source: string, closeBracket: number): number | null {
   if (source[closeBracket + 1] !== '(') return null;
   let cursor = singleLineWhitespaceEnd(source, closeBracket + 2);
-  if (source[cursor] === '<') {
-    const destinationEnd = angleLinkDestinationEnd(source, cursor);
-    if (destinationEnd === null) return null;
-    cursor = destinationEnd;
-  } else {
-    const destinationEnd = bareLinkDestinationEnd(source, cursor);
-    if (destinationEnd === null) return null;
-    cursor = destinationEnd;
-  }
+  const destinationEnd = linkDestinationContentEnd(source, cursor);
+  if (destinationEnd === null) return null;
+  cursor = destinationEnd;
 
   if (source[cursor] === ')') return cursor + 1;
   const titleFrom = singleLineWhitespaceEnd(source, cursor);
@@ -615,7 +818,30 @@ function isEmailAutolink(source: string): boolean {
 
 function tokenEnd(pattern: RegExp, source: string, from: number): number | null {
   pattern.lastIndex = from;
-  return pattern.exec(source) ? pattern.lastIndex : null;
+  return pattern.exec(source) != null ? pattern.lastIndex : null;
+}
+
+type HtmlAttributeScanResult =
+  | { readonly type: 'continue'; readonly cursor: number }
+  | { readonly type: 'complete' }
+  | { readonly type: 'invalid' };
+
+function htmlAttributeScan(body: string, cursor: number): HtmlAttributeScanResult {
+  const attributeFrom = singleLineWhitespaceEnd(body, cursor);
+  if (attributeFrom === cursor) {
+    return body.slice(cursor) === '/' ? { type: 'complete' } : { type: 'invalid' };
+  }
+  if (attributeFrom === body.length) return { type: 'complete' };
+  if (body[attributeFrom] === '/') {
+    return attributeFrom + 1 === body.length ? { type: 'complete' } : { type: 'invalid' };
+  }
+  const attributeEnd = tokenEnd(HTML_ATTRIBUTE_NAME, body, attributeFrom);
+  if (attributeEnd === null) return { type: 'invalid' };
+  const separatorEnd = singleLineWhitespaceEnd(body, attributeEnd);
+  if (body[separatorEnd] !== '=') return { type: 'continue', cursor: attributeEnd };
+  const valueFrom = singleLineWhitespaceEnd(body, separatorEnd + 1);
+  const valueEnd = tokenEnd(HTML_ATTRIBUTE_VALUE, body, valueFrom);
+  return valueEnd === null ? { type: 'invalid' } : { type: 'continue', cursor: valueEnd };
 }
 
 function isHtmlTag(source: string): boolean {
@@ -632,21 +858,10 @@ function isHtmlTag(source: string): boolean {
   }
 
   while (cursor < body.length) {
-    const attributeFrom = singleLineWhitespaceEnd(body, cursor);
-    if (attributeFrom === cursor) return body.slice(cursor) === '/';
-    if (attributeFrom === body.length) return true;
-    if (body[attributeFrom] === '/') return attributeFrom + 1 === body.length;
-    const attributeEnd = tokenEnd(HTML_ATTRIBUTE_NAME, body, attributeFrom);
-    if (attributeEnd === null) return false;
-    cursor = singleLineWhitespaceEnd(body, attributeEnd);
-    if (body[cursor] !== '=') {
-      cursor = attributeEnd;
-      continue;
-    }
-    cursor = singleLineWhitespaceEnd(body, cursor + 1);
-    const valueEnd = tokenEnd(HTML_ATTRIBUTE_VALUE, body, cursor);
-    if (valueEnd === null) return false;
-    cursor = valueEnd;
+    const result = htmlAttributeScan(body, cursor);
+    if (result.type === 'complete') return true;
+    if (result.type === 'invalid') return false;
+    cursor = result.cursor;
   }
   return true;
 }
@@ -655,7 +870,7 @@ function quotedAngleEnd(source: string, from: number): number | null {
   let quote = '';
   for (let cursor = from + 1; cursor < source.length; cursor++) {
     const character = source[cursor] ?? '';
-    if (quote) {
+    if (quote.length > 0) {
       if (character === quote) quote = '';
       continue;
     }
@@ -672,39 +887,83 @@ interface SemanticScanState {
   declarationFailed: boolean;
 }
 
+interface TerminatedAngleLiteralOptions {
+  readonly source: string;
+  readonly from: number;
+  readonly state: SemanticScanState;
+  readonly delimiter: string;
+  readonly failure: keyof Omit<SemanticScanState, 'htmlCommentFailed'>;
+}
+
+function terminatedAngleLiteral(options: TerminatedAngleLiteralOptions): number | null {
+  if (options.state[options.failure]) return null;
+  const close = options.source.indexOf(options.delimiter, options.from + 2);
+  if (close >= 0) return close + options.delimiter.length;
+  options.state[options.failure] = true;
+  return null;
+}
+
+function declarationLiteralEnd(
+  source: string,
+  from: number,
+  state: SemanticScanState,
+): number | null {
+  const to = terminatedAngleLiteral({
+    source,
+    from,
+    state,
+    delimiter: '>',
+    failure: 'declarationFailed',
+  });
+  if (to === null) return null;
+  return ASCII_LETTER.test(source[from + 2] ?? '') ? to : null;
+}
+
+function autolinkLiteralEnd(source: string, from: number): number | null {
+  const close = source.indexOf('>', from + 1);
+  if (close < 0) return null;
+  const content = source.slice(from + 1, close);
+  return isUriAutolink(content) || isEmailAutolink(content) ? close + 1 : null;
+}
+
+function htmlLiteralEnd(source: string, from: number): number | null {
+  const close = quotedAngleEnd(source, from);
+  if (close === null) return null;
+  return isHtmlTag(source.slice(from, close)) ? close : null;
+}
+
 function angleLiteralEnd(source: string, from: number, state: SemanticScanState): number | null {
   if (source[from] !== '<' || isEscaped(source, from)) return null;
-
-  const terminatedLiteral = (
-    delimiter: string,
-    failure: keyof Omit<SemanticScanState, 'htmlCommentFailed'>,
-  ): number | null => {
-    if (state[failure]) return null;
-    const close = source.indexOf(delimiter, from + 2);
-    if (close >= 0) return close + delimiter.length;
-    state[failure] = true;
-    return null;
-  };
   if (source.startsWith('<?', from)) {
-    return terminatedLiteral('?>', 'processingInstructionFailed');
+    return terminatedAngleLiteral({
+      source,
+      from,
+      state,
+      delimiter: '?>',
+      failure: 'processingInstructionFailed',
+    });
   }
-  if (source.startsWith('<![CDATA[', from)) return terminatedLiteral(']]>', 'cdataFailed');
-  if (source.startsWith('<!', from)) {
-    const to = terminatedLiteral('>', 'declarationFailed');
-    if (to === null) return null;
-    return ASCII_LETTER.test(source[from + 2] ?? '') ? to : null;
+  if (source.startsWith('<![CDATA[', from)) {
+    return terminatedAngleLiteral({
+      source,
+      from,
+      state,
+      delimiter: ']]>',
+      failure: 'cdataFailed',
+    });
   }
+  if (source.startsWith('<!', from)) return declarationLiteralEnd(source, from, state);
+  return autolinkLiteralEnd(source, from) ?? htmlLiteralEnd(source, from);
+}
 
-  const autolinkClose = source.indexOf('>', from + 1);
-  if (autolinkClose >= 0) {
-    const content = source.slice(from + 1, autolinkClose);
-    if (isUriAutolink(content) || isEmailAutolink(content)) return autolinkClose + 1;
+function referenceLabelEnd(line: string, from: number): number {
+  let cursor = from;
+  while (cursor < line.length) {
+    if (line[cursor] === '\\') cursor += 2;
+    else if (line[cursor] === ']') return cursor;
+    else cursor++;
   }
-
-  const htmlClose = quotedAngleEnd(source, from);
-  if (htmlClose === null) return null;
-  const candidate = source.slice(from, htmlClose);
-  return isHtmlTag(candidate) ? htmlClose : null;
+  return cursor;
 }
 
 function referenceDefinitionEnd(source: string, from: number): number | null {
@@ -715,25 +974,20 @@ function referenceDefinitionEnd(source: string, from: number): number | null {
   let cursor = 0;
   while (cursor < 3 && line[cursor] === ' ') cursor++;
   if (line[cursor] !== '[') return null;
-  cursor++;
-  while (cursor < line.length) {
-    if (line[cursor] === '\\') {
-      cursor += 2;
-      continue;
-    }
-    if (line[cursor] === ']') break;
-    cursor++;
-  }
+  cursor = referenceLabelEnd(line, cursor + 1);
   if (line[cursor] !== ']' || line[cursor + 1] !== ':') return null;
   return to;
 }
 
 function mergeSourceRanges(ranges: readonly SourceRange[]): readonly SourceRange[] {
-  const ordered = [...ranges].sort((left, right) => left.from - right.from || left.to - right.to);
+  const ordered = [...ranges].sort((left, right) => {
+    const startOrder = left.from - right.from;
+    return startOrder !== 0 ? startOrder : left.to - right.to;
+  });
   const merged: SourceRange[] = [];
   for (const range of ordered) {
     const previous = merged[merged.length - 1];
-    if (!previous || previous.to < range.from) {
+    if (previous == null || previous.to < range.from) {
       merged.push(range);
       continue;
     }
@@ -767,58 +1021,93 @@ interface LinkLabelState {
   readonly blankLines: number;
 }
 
+interface InlineLinkScanState {
+  readonly labels: LinkLabelState[];
+  readonly destinations: SourceRange[];
+  linkEpoch: number;
+  opaqueIndex: number;
+  cursor: number;
+}
+
+interface InlineLinkScanContext {
+  readonly source: string;
+  readonly blankLines: Uint32Array;
+  readonly opaqueRanges: readonly SourceRange[];
+  readonly state: InlineLinkScanState;
+}
+
+function skipInlineLinkOpaqueRange(context: InlineLinkScanContext): boolean {
+  const { state, opaqueRanges } = context;
+  while ((opaqueRanges[state.opaqueIndex]?.to ?? Number.POSITIVE_INFINITY) <= state.cursor) {
+    state.opaqueIndex++;
+  }
+  const opaque = opaqueRanges[state.opaqueIndex];
+  if (opaque == null || opaque.from > state.cursor) return false;
+  state.cursor = opaque.to;
+  return true;
+}
+
+function openInlineLinkLabel(context: InlineLinkScanContext): void {
+  const { source, blankLines, state } = context;
+  state.labels.push({
+    image: source[state.cursor - 1] === '!' && !isEscaped(source, state.cursor - 1),
+    linkEpoch: state.linkEpoch,
+    blankLines: blankLines[state.cursor] ?? 0,
+  });
+  state.cursor++;
+}
+
+function closeInlineLinkLabel(context: InlineLinkScanContext): void {
+  const { source, blankLines, state } = context;
+  const label = state.labels.pop();
+  if (label === undefined) {
+    state.cursor++;
+    return;
+  }
+  const destinationEnd = markdownLinkDestinationEnd(source, state.cursor);
+  const labelIsValid =
+    label.blankLines === blankLines[state.cursor] &&
+    (label.image || label.linkEpoch === state.linkEpoch);
+  if (!labelIsValid || destinationEnd === null) {
+    state.cursor++;
+    return;
+  }
+  state.destinations.push({ from: state.cursor + 1, to: destinationEnd });
+  if (!label.image) state.linkEpoch++;
+  state.cursor = destinationEnd;
+}
+
+function scanInlineLinkCharacter(context: InlineLinkScanContext): void {
+  const { source, state } = context;
+  const character = source[state.cursor] ?? '';
+  if (character === '\\') {
+    state.cursor += 2;
+  } else if (character === '[') {
+    openInlineLinkLabel(context);
+  } else if (character === ']') {
+    closeInlineLinkLabel(context);
+  } else {
+    state.cursor++;
+  }
+}
+
 function inlineLinkDestinationRanges(
   source: string,
   opaqueRanges: readonly SourceRange[],
 ): readonly SourceRange[] {
   const blankLines = blankLineCounts(source);
-  const labels: LinkLabelState[] = [];
-  const destinations: SourceRange[] = [];
-  let linkEpoch = 0;
-  let opaqueIndex = 0;
-  let cursor = 0;
-  while (cursor < source.length) {
-    while (opaqueRanges[opaqueIndex] && opaqueRanges[opaqueIndex]!.to <= cursor) opaqueIndex++;
-    const opaque = opaqueRanges[opaqueIndex];
-    if (opaque && opaque.from <= cursor) {
-      cursor = opaque.to;
-      continue;
-    }
-
-    const character = source[cursor] ?? '';
-    if (character === '\\') {
-      cursor += 2;
-      continue;
-    }
-    if (character === '[') {
-      labels.push({
-        image: source[cursor - 1] === '!' && !isEscaped(source, cursor - 1),
-        linkEpoch,
-        blankLines: blankLines[cursor] ?? 0,
-      });
-      cursor++;
-      continue;
-    }
-    if (character !== ']') {
-      cursor++;
-      continue;
-    }
-
-    const label = labels.pop();
-    const destinationEnd = label ? markdownLinkDestinationEnd(source, cursor) : null;
-    const labelIsValid =
-      label &&
-      label.blankLines === blankLines[cursor] &&
-      (label.image || label.linkEpoch === linkEpoch);
-    if (!labelIsValid || destinationEnd === null) {
-      cursor++;
-      continue;
-    }
-    destinations.push({ from: cursor + 1, to: destinationEnd });
-    if (!label.image) linkEpoch++;
-    cursor = destinationEnd;
+  const state: InlineLinkScanState = {
+    labels: [],
+    destinations: [],
+    linkEpoch: 0,
+    opaqueIndex: 0,
+    cursor: 0,
+  };
+  const context: InlineLinkScanContext = { source, blankLines, opaqueRanges, state };
+  while (state.cursor < source.length) {
+    if (!skipInlineLinkOpaqueRange(context)) scanInlineLinkCharacter(context);
   }
-  return destinations;
+  return state.destinations;
 }
 
 interface SemanticLiteralMatch {
@@ -834,29 +1123,39 @@ function isHtmlBlockStart(source: string, from: number): boolean {
   return true;
 }
 
+function htmlCommentEnd(source: string, from: number, state: SemanticScanState): number | null {
+  if (source.startsWith('<!-->', from)) return from + 5;
+  if (source.startsWith('<!--->', from)) return from + 6;
+  if (state.htmlCommentFailed) return isHtmlBlockStart(source, from) ? source.length : null;
+  const close = source.indexOf('-->', from + 4);
+  if (close >= 0) return close + 3;
+  if (isHtmlBlockStart(source, from)) return source.length;
+  state.htmlCommentFailed = true;
+  return null;
+}
+
+function htmlCommentLiteralAt(
+  source: string,
+  from: number,
+  state: SemanticScanState,
+): SemanticLiteralMatch | null {
+  if (!source.startsWith('<!--', from) || isEscaped(source, from)) return null;
+  const to = htmlCommentEnd(source, from, state);
+  return to === null ? null : { range: { from, to }, scanTo: to };
+}
+
+function obsidianCommentLiteralAt(source: string, from: number): SemanticLiteralMatch | null {
+  if (!source.startsWith('%%', from) || isEscaped(source, from)) return null;
+  const to = closingDelimiter(source, from + 2, '%%');
+  return to === null ? null : { range: { from, to }, scanTo: to };
+}
+
 function commentLiteralAt(
   source: string,
   from: number,
   state: SemanticScanState,
 ): SemanticLiteralMatch | null {
-  if (source.startsWith('<!--', from) && !isEscaped(source, from)) {
-    let to: number | null = null;
-    if (source.startsWith('<!-->', from)) to = from + 5;
-    else if (source.startsWith('<!--->', from)) to = from + 6;
-    else if (state.htmlCommentFailed) {
-      if (isHtmlBlockStart(source, from)) to = source.length;
-    } else {
-      const close = source.indexOf('-->', from + 4);
-      if (close >= 0) to = close + 3;
-      else if (isHtmlBlockStart(source, from)) to = source.length;
-      else state.htmlCommentFailed = true;
-    }
-    if (to === null) return null;
-    return { range: { from, to }, scanTo: to };
-  }
-  if (!source.startsWith('%%', from) || isEscaped(source, from)) return null;
-  const to = closingDelimiter(source, from + 2, '%%');
-  return to === null ? null : { range: { from, to }, scanTo: to };
+  return htmlCommentLiteralAt(source, from, state) ?? obsidianCommentLiteralAt(source, from);
 }
 
 function mathLiteralAt(source: string, from: number): SemanticLiteralMatch | null {
@@ -879,7 +1178,7 @@ function semanticLiteralAt(
   }
 
   const comment = commentLiteralAt(source, from, state);
-  if (comment) return comment;
+  if (comment != null) return comment;
 
   if (source[from] === '<') {
     const to = angleLiteralEnd(source, from, state);
@@ -905,23 +1204,22 @@ function resetWikiScan(state: WikiScanState): void {
   state.pipe = -1;
 }
 
-function wikiScanAt(source: string, cursor: number, state: WikiScanState): WikiScanResult | null {
-  const opener = source.startsWith('[[', cursor) && !isEscaped(source, cursor);
-  if (state.from < 0) {
-    if (!opener) return null;
-    state.from = cursor;
-    state.pipe = -1;
-    return { to: cursor + 2 };
-  }
+function isWikiOpener(source: string, cursor: number): boolean {
+  return source.startsWith('[[', cursor) && !isEscaped(source, cursor);
+}
+
+function openWikiScan(cursor: number, state: WikiScanState): WikiScanResult {
+  state.from = cursor;
+  state.pipe = -1;
+  return { to: cursor + 2 };
+}
+
+function activeWikiScanAt(source: string, cursor: number, state: WikiScanState): WikiScanResult {
   if (source[cursor] === '\n') {
     resetWikiScan(state);
     return { to: cursor + 1 };
   }
-  if (opener) {
-    state.from = cursor;
-    state.pipe = -1;
-    return { to: cursor + 2 };
-  }
+  if (isWikiOpener(source, cursor)) return openWikiScan(cursor, state);
   if (source[cursor] === '|' && state.pipe < 0 && !isEscaped(source, cursor)) {
     state.pipe = cursor;
     return { to: cursor + 1 };
@@ -929,7 +1227,6 @@ function wikiScanAt(source: string, cursor: number, state: WikiScanState): WikiS
   if (!source.startsWith(']]', cursor) || isEscaped(source, cursor)) {
     return { to: cursor + 1 };
   }
-
   const to = cursor + 2;
   const from = state.from;
   const pipe = state.pipe;
@@ -941,6 +1238,70 @@ function wikiScanAt(source: string, cursor: number, state: WikiScanState): WikiS
   };
 }
 
+function wikiScanAt(source: string, cursor: number, state: WikiScanState): WikiScanResult | null {
+  if (state.from < 0) {
+    return isWikiOpener(source, cursor) ? openWikiScan(cursor, state) : null;
+  }
+  return activeWikiScanAt(source, cursor, state);
+}
+
+interface SemanticRangeScanContext {
+  readonly source: string;
+  readonly codeRanges: readonly SourceRange[];
+  readonly ranges: SourceRange[];
+  readonly opaqueRanges: SourceRange[];
+  readonly semanticState: SemanticScanState;
+  readonly wikiState: WikiScanState;
+  codeIndex: number;
+  cursor: number;
+}
+
+function resetWikiAcrossRange(context: SemanticRangeScanContext, to: number): void {
+  if (context.wikiState.from < 0) return;
+  if (context.source.slice(context.cursor, to).includes('\n')) resetWikiScan(context.wikiState);
+}
+
+function consumeCodeRange(context: SemanticRangeScanContext): boolean {
+  while (
+    (context.codeRanges[context.codeIndex]?.to ?? Number.POSITIVE_INFINITY) <= context.cursor
+  ) {
+    context.codeIndex++;
+  }
+  const code = context.codeRanges[context.codeIndex];
+  if (code == null || code.from > context.cursor) return false;
+  resetWikiAcrossRange(context, code.to);
+  context.cursor = code.to;
+  return true;
+}
+
+function consumeSemanticLiteral(context: SemanticRangeScanContext): boolean {
+  const literal = semanticLiteralAt(context.source, context.cursor, context.semanticState);
+  if (literal == null) return false;
+  context.ranges.push(literal.range);
+  context.opaqueRanges.push({ from: context.cursor, to: literal.scanTo });
+  resetWikiAcrossRange(context, literal.scanTo);
+  context.cursor = literal.scanTo;
+  return true;
+}
+
+function consumeWikiLiteral(context: SemanticRangeScanContext): boolean {
+  const wiki = wikiScanAt(context.source, context.cursor, context.wikiState);
+  if (wiki == null) return false;
+  if (wiki.target != null && wiki.opaque != null) {
+    context.ranges.push(wiki.target);
+    context.opaqueRanges.push(wiki.opaque);
+  }
+  context.cursor = wiki.to;
+  return true;
+}
+
+function scanSemanticRange(context: SemanticRangeScanContext): void {
+  if (consumeCodeRange(context)) return;
+  if (consumeSemanticLiteral(context)) return;
+  if (consumeWikiLiteral(context)) return;
+  context.cursor++;
+}
+
 /**
  * Locates Markdown regions whose bytes are syntax or literal content rather than visible prose.
  * The rename pass consumes this one ordered range set, so destinations, raw markup, comments,
@@ -950,49 +1311,22 @@ function markdownSemanticLiteralRanges(source: string): readonly SourceRange[] {
   const codeRanges = excludedCodeRanges(source);
   const ranges: SourceRange[] = [...codeRanges];
   const opaqueRanges: SourceRange[] = [...codeRanges];
-  const semanticState: SemanticScanState = {
-    htmlCommentFailed: false,
-    processingInstructionFailed: false,
-    cdataFailed: false,
-    declarationFailed: false,
+  const context: SemanticRangeScanContext = {
+    source,
+    codeRanges,
+    ranges,
+    opaqueRanges,
+    semanticState: {
+      htmlCommentFailed: false,
+      processingInstructionFailed: false,
+      cdataFailed: false,
+      declarationFailed: false,
+    },
+    wikiState: { from: -1, pipe: -1 },
+    codeIndex: 0,
+    cursor: 0,
   };
-  const wikiState: WikiScanState = { from: -1, pipe: -1 };
-  let codeIndex = 0;
-  let cursor = 0;
-  while (cursor < source.length) {
-    while (codeRanges[codeIndex] && codeRanges[codeIndex]!.to <= cursor) codeIndex++;
-    const code = codeRanges[codeIndex];
-    if (code && code.from <= cursor) {
-      if (wikiState.from >= 0 && source.slice(cursor, code.to).includes('\n')) {
-        resetWikiScan(wikiState);
-      }
-      cursor = code.to;
-      continue;
-    }
-
-    const literal = semanticLiteralAt(source, cursor, semanticState);
-    if (literal) {
-      ranges.push(literal.range);
-      opaqueRanges.push({ from: cursor, to: literal.scanTo });
-      if (wikiState.from >= 0 && source.slice(cursor, literal.scanTo).includes('\n')) {
-        resetWikiScan(wikiState);
-      }
-      cursor = literal.scanTo;
-      continue;
-    }
-
-    const wiki = wikiScanAt(source, cursor, wikiState);
-    if (wiki) {
-      if (wiki.target && wiki.opaque) {
-        ranges.push(wiki.target);
-        opaqueRanges.push(wiki.opaque);
-      }
-      cursor = wiki.to;
-      continue;
-    }
-
-    cursor++;
-  }
+  while (context.cursor < source.length) scanSemanticRange(context);
   ranges.push(...inlineLinkDestinationRanges(source, mergeSourceRanges(opaqueRanges)));
   return mergeSourceRanges(ranges);
 }
@@ -1012,9 +1346,9 @@ function transformBodyTags(
   const excluded = markdownSemanticLiteralRanges(source);
   let rangeIndex = 0;
   return source.replace(replacementPattern(oldTag, scope), (match, offset: number) => {
-    while (excluded[rangeIndex] && (excluded[rangeIndex]?.to ?? 0) <= offset) rangeIndex++;
+    while (excluded[rangeIndex] != null && (excluded[rangeIndex]?.to ?? 0) <= offset) rangeIndex++;
     const range = excluded[rangeIndex];
-    if ((range && range.from <= offset && offset < range.to) || isEscaped(source, offset)) {
+    if ((range != null && range.from <= offset && offset < range.to) || isEscaped(source, offset)) {
       return match;
     }
     return newTag;
@@ -1028,7 +1362,7 @@ export function transformMarkdownTags(
   scope: TagRenameScope,
 ): string {
   const frontmatter = frontmatterRange(source);
-  if (!frontmatter) return transformBodyTags(source, oldTag, newTag, scope);
+  if (frontmatter == null) return transformBodyTags(source, oldTag, newTag, scope);
 
   const yaml = transformFrontmatterYaml(
     source.slice(frontmatter.yamlFrom, frontmatter.yamlTo),

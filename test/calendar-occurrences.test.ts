@@ -10,7 +10,7 @@ import {
   type CalendarTaskSource,
 } from '../src/views/calendarOccurrences';
 import { taskLayoutIdentity } from '../src/views/timegrid/layout';
-import { task } from './helpers';
+import { expectDefined, task } from './helpers';
 
 const keepScheduled = { removeScheduledDate: false } as const;
 
@@ -41,8 +41,8 @@ function rootSource(
     task({
       title,
       status: options.status ?? 'open',
-      recurrence: options.recurrence,
-      planning: options.planning,
+      ...(options.recurrence === undefined ? {} : { recurrence: options.recurrence }),
+      ...(options.planning === undefined ? {} : { planning: options.planning }),
       source: { filePath: options.filePath ?? 'Tasks.md', line: options.line ?? 0 },
       ref: { revision: options.revision ?? `revision:${title}` },
     }),
@@ -301,8 +301,9 @@ describe('projectCalendarOccurrences', () => {
 
     expect(snapshots.length).toBeGreaterThan(1);
     expect(new Set(snapshots.map(taskLayoutIdentity)).size).toBe(snapshots.length);
-    const firstOccurrence = project({ recurringSources: [span] }, range('2026-08-02', '2026-08-02'))
-      .occurrences[0]!;
+    const firstOccurrence = expectDefined(
+      project({ recurringSources: [span] }, range('2026-08-02', '2026-08-02')).occurrences[0],
+    );
     const firstSnapshot = taskSnapshotForCalendarOccurrence(firstOccurrence);
     expect(firstSnapshot.ref).toBe(firstOccurrence.source.root.ref);
   });
@@ -372,7 +373,7 @@ describe('projectCalendarOccurrences', () => {
     const span = rootSource('span', {
       planning: { start: localDate('2026-08-06'), due: localDate('2026-08-08') },
     });
-    const occurrence = project({ materialized: [span] }).occurrences[0]!;
+    const occurrence = expectDefined(project({ materialized: [span] }).occurrences[0]);
 
     const bodyOccurrence = occurrence;
     const deadlineOccurrence = occurrence;
@@ -402,7 +403,7 @@ describe('projectCalendarOccurrences', () => {
     expect(Object.isFrozen(result.occurrences)).toBe(true);
     expect(Object.isFrozen(result.occurrences[0])).toBe(true);
     expect(Object.isFrozen(result.occurrences[0]?.planning)).toBe(true);
-    expect('ref' in result.occurrences[0]!).toBe(false);
+    expect('ref' in expectDefined(result.occurrences[0])).toBe(false);
   });
 
   it('returns an explicit 4096 sequential-seek diagnostic', () => {

@@ -1,15 +1,16 @@
-// eslint-disable-next-line no-restricted-imports, import/no-extraneous-dependencies
 import { Menu } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
-import { CenterPanel } from '../src/panels/CenterPanel';
+import { type CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
 import type { TaskSnapshot } from '../src/tasks';
 import {
+  expectDefined,
   freshContainer,
   makeCenterPanelForTest,
   makeStubStore,
+  methodOf,
   task,
   useRealMoment,
 } from './helpers';
@@ -17,9 +18,9 @@ import {
 useRealMoment();
 
 afterEach(() => {
-  activeDocument
-    .querySelectorAll('.abyss-test-center-attached')
-    .forEach((element) => element.remove());
+  activeDocument.querySelectorAll('.abyss-test-center-attached').forEach((element) => {
+    element.remove();
+  });
 });
 
 function makeCenter(tasks: TaskSnapshot[]): {
@@ -103,9 +104,9 @@ describe('CenterPanel multi-selection', () => {
   it('plain click selects only one card (no abyss-multi-selected)', () => {
     const { el } = makeCenter([t1, t2]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
-    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    expect(cards[0]!.classList.contains('abyss-multi-selected')).toBe(false);
-    expect(cards[1]!.classList.contains('abyss-multi-selected')).toBe(false);
+    expectDefined(cards[0]).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(expectDefined(cards[0]).classList.contains('abyss-multi-selected')).toBe(false);
+    expect(expectDefined(cards[1]).classList.contains('abyss-multi-selected')).toBe(false);
   });
 
   it('creates the selection live region without an initial announcement', () => {
@@ -116,7 +117,7 @@ describe('CenterPanel multi-selection', () => {
 
   it('does not mutate the live region for plain activation, refresh, or a no-op visual update', () => {
     const { el, panel } = makeCenter([t1, t2]);
-    const live = el.querySelector<HTMLElement>('.abyss-selection-live')!;
+    const live = expectDefined(el.querySelector<HTMLElement>('.abyss-selection-live'));
     const observer = new MutationObserver(() => undefined);
     observer.observe(el, { childList: true, characterData: true, subtree: true });
     const liveMutations = (): MutationRecord[] =>
@@ -124,11 +125,11 @@ describe('CenterPanel multi-selection', () => {
         .takeRecords()
         .filter(
           (record) =>
-            record.target instanceof HTMLElement &&
+            record.target.instanceOf(HTMLElement) &&
             record.target.classList.contains('abyss-selection-live'),
         );
 
-    click(cards(el)[0]!);
+    click(expectDefined(cards(el)[0]));
     expect(liveMutations()).toHaveLength(0);
 
     (panel as unknown as { updateSelectionVisuals(): void }).updateSelectionVisuals();
@@ -143,7 +144,7 @@ describe('CenterPanel multi-selection', () => {
 
   it('mutates the live region once for each real 0 to 1 to 2 to 1 to 0 count transition', () => {
     const { el, panel } = makeCenter([t1, t2]);
-    const live = el.querySelector<HTMLElement>('.abyss-selection-live')!;
+    const live = expectDefined(el.querySelector<HTMLElement>('.abyss-selection-live'));
     const observer = new MutationObserver(() => undefined);
     observer.observe(live, { childList: true, characterData: true, subtree: true });
     const expectAnnouncement = (message: string): void => {
@@ -152,16 +153,16 @@ describe('CenterPanel multi-selection', () => {
       expect(live.textContent).toBe(message);
     };
 
-    click(cards(el)[0]!, { ctrlKey: true });
+    click(expectDefined(cards(el)[0]), { ctrlKey: true });
     expectAnnouncement('1 task selected');
     (panel as unknown as { updateSelectionVisuals(): void }).updateSelectionVisuals();
     expect(observer.takeRecords()).toHaveLength(0);
 
-    click(cards(el)[1]!, { ctrlKey: true });
+    click(expectDefined(cards(el)[1]), { ctrlKey: true });
     expectAnnouncement('2 tasks selected');
-    click(cards(el)[1]!, { ctrlKey: true });
+    click(expectDefined(cards(el)[1]), { ctrlKey: true });
     expectAnnouncement('1 task selected');
-    click(cards(el)[0]!, { ctrlKey: true });
+    click(expectDefined(cards(el)[0]), { ctrlKey: true });
     expectAnnouncement('0 tasks selected');
     observer.disconnect();
   });
@@ -169,45 +170,65 @@ describe('CenterPanel multi-selection', () => {
   it('Ctrl+Click adds card to multi-selection', () => {
     const { el } = makeCenter([t1, t2]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
-    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    expect(cards[0]!.classList.contains('abyss-multi-selected')).toBe(true);
+    expectDefined(cards[0]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+    expect(expectDefined(cards[0]).classList.contains('abyss-multi-selected')).toBe(true);
   });
 
   it('Ctrl+Click two cards selects both', () => {
     const { el } = makeCenter([t1, t2]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
-    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    expect(cards[0]!.classList.contains('abyss-multi-selected')).toBe(true);
-    expect(cards[1]!.classList.contains('abyss-multi-selected')).toBe(true);
+    expectDefined(cards[0]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+    expectDefined(cards[1]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+    expect(expectDefined(cards[0]).classList.contains('abyss-multi-selected')).toBe(true);
+    expect(expectDefined(cards[1]).classList.contains('abyss-multi-selected')).toBe(true);
   });
 
   it('Ctrl+Click already-selected card deselects it', () => {
     const { el } = makeCenter([t1, t2]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
-    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    expect(cards[0]!.classList.contains('abyss-multi-selected')).toBe(false);
+    expectDefined(cards[0]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+    expectDefined(cards[0]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+    expect(expectDefined(cards[0]).classList.contains('abyss-multi-selected')).toBe(false);
   });
 
   it('announces multi-selection without changing task-scroll children', () => {
     const { el } = makeCenter([t1, t2]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
-    const scroll = el.querySelector<HTMLElement>('.abyss-center-scroll')!;
+    const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
     const childOrder = Array.from(scroll.children);
-    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    expectDefined(cards[0]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+    expectDefined(cards[1]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
 
     const live = el.querySelector<HTMLElement>('.abyss-selection-live');
     expect(el.querySelector('.abyss-selection-badge')).toBeNull();
     expect(live?.textContent).toBe('2 tasks selected');
-    expect(scroll.contains(live!)).toBe(false);
+    expect(scroll.contains(live)).toBe(false);
     expect(Array.from(scroll.children)).toEqual(childOrder);
-    expect(cards[0]!.getAttribute('aria-describedby')).toContain('abyss-selected-state-');
-    expect(cards[0]!.querySelector('.abyss-selected-state')?.textContent).toBe('Selected');
+    expect(expectDefined(cards[0]).getAttribute('aria-describedby')).toContain(
+      'abyss-selected-state-',
+    );
+    expect(expectDefined(cards[0]).querySelector('.abyss-selected-state')?.textContent).toBe(
+      'Selected',
+    );
     const selectedStates = Array.from(el.querySelectorAll<HTMLElement>('.abyss-selected-state'));
     expect(selectedStates).toHaveLength(2);
-    selectedStates.forEach((state) => expect(state.classList.contains('abyss-sr-only')).toBe(true));
+    selectedStates.forEach((state) => {
+      expect(state.classList.contains('abyss-sr-only')).toBe(true);
+    });
 
     const menuTitles: string[] = [];
     const makeMenu = (): { addItem: (callback: (item: never) => unknown) => unknown } => ({
@@ -237,7 +258,9 @@ describe('CenterPanel multi-selection', () => {
       return this;
     });
     try {
-      cards[1]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      expectDefined(cards[1]).dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
       expect(menuTitles).toContain('2 tasks selected');
     } finally {
       addItem.mockRestore();
@@ -247,20 +270,30 @@ describe('CenterPanel multi-selection', () => {
   it('removes a deselected card description while preserving the remaining selection state', () => {
     const { el } = makeCenter([t1, t2]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
-    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    expectDefined(cards[0]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+    expectDefined(cards[1]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+    expectDefined(cards[1]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
 
     expect(el.querySelector('.abyss-selection-badge')).toBeNull();
     expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('1 task selected');
-    expect(cards[0]!.querySelector('.abyss-selected-state')?.textContent).toBe('Selected');
-    expect(cards[1]!.querySelector('.abyss-selected-state')).toBeNull();
-    expect(cards[1]!.getAttribute('aria-describedby') ?? '').not.toContain('abyss-selected-state-');
+    expect(expectDefined(cards[0]).querySelector('.abyss-selected-state')?.textContent).toBe(
+      'Selected',
+    );
+    expect(expectDefined(cards[1]).querySelector('.abyss-selected-state')).toBeNull();
+    expect(expectDefined(cards[1]).getAttribute('aria-describedby') ?? '').not.toContain(
+      'abyss-selected-state-',
+    );
   });
 
   it('preserves another component description while toggling selection state', () => {
     const { el } = makeCenter([t1]);
-    const card = cards(el)[0]!;
+    const card = expectDefined(cards(el)[0]);
     const externalDescription = el.createDiv({ attr: { id: 'other-component-description' } });
     card.setAttribute('aria-describedby', externalDescription.id);
 
@@ -275,21 +308,27 @@ describe('CenterPanel multi-selection', () => {
   it('Escape key clears selection', () => {
     const { el } = makeCenter([t1, t2]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
-    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    expectDefined(cards[0]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
     el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    expect(cards[0]!.classList.contains('abyss-multi-selected')).toBe(false);
+    expect(expectDefined(cards[0]).classList.contains('abyss-multi-selected')).toBe(false);
   });
 
   it('Shift+Click selects range', () => {
     const { el } = makeCenter([t1, t2, t3]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     // Ctrl+Click first to set anchor
-    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    expectDefined(cards[0]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
     // Shift+Click last
-    cards[2]!.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
-    expect(cards[0]!.classList.contains('abyss-multi-selected')).toBe(true);
-    expect(cards[1]!.classList.contains('abyss-multi-selected')).toBe(true);
-    expect(cards[2]!.classList.contains('abyss-multi-selected')).toBe(true);
+    expectDefined(cards[2]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, shiftKey: true }),
+    );
+    expect(expectDefined(cards[0]).classList.contains('abyss-multi-selected')).toBe(true);
+    expect(expectDefined(cards[1]).classList.contains('abyss-multi-selected')).toBe(true);
+    expect(expectDefined(cards[2]).classList.contains('abyss-multi-selected')).toBe(true);
   });
 
   it.each([
@@ -305,10 +344,11 @@ describe('CenterPanel multi-selection', () => {
 
     key(el, arrow);
 
-    const expectedCard = arrow === 'ArrowDown' ? visibleCards[0]! : visibleCards[2]!;
+    const expectedCard =
+      arrow === 'ArrowDown' ? expectDefined(visibleCards[0]) : expectDefined(visibleCards[2]);
     expect(state.get('taskStack')).toEqual([expected]);
     expect(activeDocument.activeElement).toBe(expectedCard);
-    expect(expectedCard.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    expect(methodOf(expectedCard, 'scrollIntoView')).toHaveBeenCalledWith({ block: 'nearest' });
     expect(selectedLines(el)).toEqual([]);
     el.remove();
   });
@@ -317,8 +357,8 @@ describe('CenterPanel multi-selection', () => {
     const { el, state } = makeCenter([t1, t2, t3]);
     attach(el);
     const [first, second, third] = cards(el);
-    const scroll = first!.parentElement!;
-    scroll.append(second!, third!, first!);
+    const scroll = expectDefined(expectDefined(first).parentElement);
+    scroll.append(expectDefined(second), expectDefined(third), expectDefined(first));
 
     key(el, 'ArrowDown');
 
@@ -331,14 +371,14 @@ describe('CenterPanel multi-selection', () => {
     const { el, state } = makeCenter([t1, t2, t3]);
     attach(el);
     const visibleCards = cards(el);
-    click(visibleCards[0]!);
+    click(expectDefined(visibleCards[0]));
 
-    key(visibleCards[0]!, 'ArrowDown');
+    key(expectDefined(visibleCards[0]), 'ArrowDown');
     expect(state.get('taskStack')).toEqual([t2]);
     expect(activeDocument.activeElement).toBe(visibleCards[1]);
     expect(selectedLines(el)).toEqual([]);
 
-    key(visibleCards[1]!, 'ArrowUp');
+    key(expectDefined(visibleCards[1]), 'ArrowUp');
     expect(state.get('taskStack')).toEqual([t1]);
     expect(activeDocument.activeElement).toBe(visibleCards[0]);
     el.remove();
@@ -359,13 +399,13 @@ describe('CenterPanel multi-selection', () => {
     const { el, state } = makeCenter([t1, t2, t3]);
     attach(el);
     const visibleCards = cards(el);
-    click(visibleCards[0]!);
-    key(visibleCards[0]!, 'ArrowUp');
+    click(expectDefined(visibleCards[0]));
+    key(expectDefined(visibleCards[0]), 'ArrowUp');
     expect(state.get('taskStack')).toEqual([t1]);
     expect(activeDocument.activeElement).toBe(visibleCards[0]);
 
-    click(visibleCards[2]!);
-    key(visibleCards[2]!, 'ArrowDown');
+    click(expectDefined(visibleCards[2]));
+    key(expectDefined(visibleCards[2]), 'ArrowDown');
     expect(state.get('taskStack')).toEqual([t3]);
     expect(activeDocument.activeElement).toBe(visibleCards[2]);
     el.remove();
@@ -375,15 +415,15 @@ describe('CenterPanel multi-selection', () => {
     const { el } = makeCenter([t1, t2, t3]);
     attach(el);
     const visibleCards = cards(el);
-    click(visibleCards[1]!, { ctrlKey: true });
+    click(expectDefined(visibleCards[1]), { ctrlKey: true });
 
-    key(visibleCards[1]!, 'ArrowDown', { shiftKey: true });
+    key(expectDefined(visibleCards[1]), 'ArrowDown', { shiftKey: true });
     expect(selectedLines(el)).toEqual(['1', '2']);
 
-    key(visibleCards[2]!, 'ArrowUp', { shiftKey: true });
+    key(expectDefined(visibleCards[2]), 'ArrowUp', { shiftKey: true });
     expect(selectedLines(el)).toEqual(['1']);
 
-    key(visibleCards[1]!, 'ArrowUp', { shiftKey: true });
+    key(expectDefined(visibleCards[1]), 'ArrowUp', { shiftKey: true });
     expect(selectedLines(el)).toEqual(['0', '1']);
     expect(activeDocument.activeElement).toBe(visibleCards[0]);
     el.remove();
@@ -405,9 +445,9 @@ describe('CenterPanel multi-selection', () => {
     const { el } = makeCenter([t1, t2, t3]);
     attach(el);
     const visibleCards = cards(el);
-    click(visibleCards[0]!, { ctrlKey: true });
+    click(expectDefined(visibleCards[0]), { ctrlKey: true });
 
-    key(visibleCards[0]!, 'ArrowUp', { shiftKey: true });
+    key(expectDefined(visibleCards[0]), 'ArrowUp', { shiftKey: true });
     expect(selectedLines(el)).toEqual(['0']);
     expect(activeDocument.activeElement).toBe(visibleCards[0]);
     el.remove();
@@ -416,11 +456,11 @@ describe('CenterPanel multi-selection', () => {
   it('Shift+Click replaces an earlier range and shrinks toward the anchor', () => {
     const { el } = makeCenter([t1, t2, t3]);
     const visibleCards = cards(el);
-    click(visibleCards[0]!, { ctrlKey: true });
-    click(visibleCards[2]!, { shiftKey: true });
+    click(expectDefined(visibleCards[0]), { ctrlKey: true });
+    click(expectDefined(visibleCards[2]), { shiftKey: true });
     expect(selectedLines(el)).toEqual(['0', '1', '2']);
 
-    click(visibleCards[1]!, { shiftKey: true });
+    click(expectDefined(visibleCards[1]), { shiftKey: true });
 
     expect(selectedLines(el)).toEqual(['0', '1']);
   });
@@ -429,8 +469,12 @@ describe('CenterPanel multi-selection', () => {
     const tasks = [t1, t2, t3];
     const { el, panel } = makeCenter(tasks);
     const visibleCards = cards(el);
-    click(visibleCards.find((card) => card.dataset['line'] === '0')!, { ctrlKey: true });
-    click(visibleCards.find((card) => card.dataset['line'] === '1')!, { ctrlKey: true });
+    click(expectDefined(visibleCards.find((card) => card.dataset['line'] === '0')), {
+      ctrlKey: true,
+    });
+    click(expectDefined(visibleCards.find((card) => card.dataset['line'] === '1')), {
+      ctrlKey: true,
+    });
     expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('2 tasks selected');
 
     tasks.splice(
@@ -442,7 +486,9 @@ describe('CenterPanel multi-selection', () => {
     expect(selectedLines(el)).toEqual(['1']);
     expect(el.querySelector('.abyss-selection-badge')).toBeNull();
     expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('1 task selected');
-    expect(cards(el)[0]!.querySelector('.abyss-selected-state')?.textContent).toBe('Selected');
+    expect(expectDefined(cards(el)[0]).querySelector('.abyss-selected-state')?.textContent).toBe(
+      'Selected',
+    );
 
     tasks.splice(0);
     panel.refresh();
@@ -451,23 +497,27 @@ describe('CenterPanel multi-selection', () => {
 
   it('preserves a visible plain-click origin across rerender for the next Shift range', () => {
     const { el, panel } = makeCenter([t1, t2, t3]);
-    click(cards(el).find((card) => card.dataset['line'] === '0')!);
+    click(expectDefined(cards(el).find((card) => card.dataset['line'] === '0')));
 
     panel.refresh();
-    click(cards(el).find((card) => card.dataset['line'] === '2')!, { shiftKey: true });
+    click(expectDefined(cards(el).find((card) => card.dataset['line'] === '2')), {
+      shiftKey: true,
+    });
 
     expect(selectedLines(el)).toEqual(['0', '1', '2']);
   });
 
   it('preserves a visible Ctrl-toggle-off origin across rerender for the next Shift range', () => {
     const { el, panel } = makeCenter([t1, t2, t3]);
-    const origin = cards(el).find((card) => card.dataset['line'] === '0')!;
+    const origin = expectDefined(cards(el).find((card) => card.dataset['line'] === '0'));
     click(origin, { ctrlKey: true });
     click(origin, { ctrlKey: true });
     expect(selectedLines(el)).toEqual([]);
 
     panel.refresh();
-    click(cards(el).find((card) => card.dataset['line'] === '2')!, { shiftKey: true });
+    click(expectDefined(cards(el).find((card) => card.dataset['line'] === '2')), {
+      shiftKey: true,
+    });
 
     expect(selectedLines(el)).toEqual(['0', '1', '2']);
   });
@@ -478,18 +528,18 @@ describe('CenterPanel multi-selection', () => {
   ])('%s+Click resets the next range anchor even when toggling off', (_name, modifier) => {
     const { el } = makeCenter([t1, t2, t3]);
     const visibleCards = cards(el);
-    click(visibleCards[0]!, modifier);
-    click(visibleCards[2]!, modifier);
-    click(visibleCards[2]!, modifier);
+    click(expectDefined(visibleCards[0]), modifier);
+    click(expectDefined(visibleCards[2]), modifier);
+    click(expectDefined(visibleCards[2]), modifier);
 
-    click(visibleCards[1]!, { shiftKey: true });
+    click(expectDefined(visibleCards[1]), { shiftKey: true });
 
     expect(selectedLines(el)).toEqual(['1', '2']);
   });
 
   it('does not hijack Arrow keys from interactive or popover targets', () => {
     const { el, state } = makeCenter([t1, t2, t3]);
-    const host = cards(el)[0]!;
+    const host = expectDefined(cards(el)[0]);
     const targets = [
       host.createEl('input'),
       host.createEl('textarea'),

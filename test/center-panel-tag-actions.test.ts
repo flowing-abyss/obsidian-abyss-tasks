@@ -6,9 +6,12 @@ import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
 import { localDate, type TaskApplicationApi, type TaskSnapshot } from '../src/tasks';
 import {
+  expectDefined,
   flushMicrotasks,
   makeCenterPanelForTest,
   makeStubStore,
+  methodOf,
+  objectMatching,
   task,
   useRealMoment,
 } from './helpers';
@@ -18,17 +21,19 @@ useRealMoment();
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
-  activeDocument
-    .querySelectorAll('.abyss-date-picker-popover')
-    .forEach((element) => element.remove());
-  activeDocument
-    .querySelectorAll('.abyss-test-center-attached')
-    .forEach((element) => element.remove());
+  activeDocument.querySelectorAll('.abyss-date-picker-popover').forEach((element) => {
+    element.remove();
+  });
+  activeDocument.querySelectorAll('.abyss-test-center-attached').forEach((element) => {
+    element.remove();
+  });
   activeDocument
     .querySelectorAll(
       '.abyss-status-popover, .abyss-recurrence-popover, .abyss-recurrence-delete-confirm',
     )
-    .forEach((element) => element.remove());
+    .forEach((element) => {
+      element.remove();
+    });
 });
 
 interface CapturedMenuItem {
@@ -43,7 +48,7 @@ function captureMenu(): CapturedMenuItem[] {
   vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
     const item = {
       checked__: null as boolean | null,
-      dom: document.createElement('div'),
+      dom: createDiv(),
       icon__: '',
       onClick__: null as ((event: MouseEvent) => unknown) | null,
       title__: '',
@@ -105,16 +110,16 @@ async function withQueuedAnimationFrames(
 ): Promise<void> {
   const callbacks = new Map<number, FrameRequestCallback>();
   let nextFrame = 1;
-  const requestAnimationFrame = window.requestAnimationFrame;
-  const cancelAnimationFrame = window.cancelAnimationFrame;
-  window.requestAnimationFrame = ((callback: FrameRequestCallback): number => {
+  const requestAnimationFrame = methodOf(window, 'requestAnimationFrame');
+  const cancelAnimationFrame = methodOf(window, 'cancelAnimationFrame');
+  window.requestAnimationFrame = (callback: FrameRequestCallback): number => {
     const frame = nextFrame++;
     callbacks.set(frame, callback);
     return frame;
-  }) as typeof window.requestAnimationFrame;
-  window.cancelAnimationFrame = ((frame: number): void => {
+  };
+  window.cancelAnimationFrame = (frame: number): void => {
     callbacks.delete(frame);
-  }) as typeof window.cancelAnimationFrame;
+  };
 
   try {
     await run(() => {
@@ -123,13 +128,12 @@ async function withQueuedAnimationFrames(
       for (const callback of queued) callback(0);
     }, callbacks);
   } finally {
-    window.requestAnimationFrame = requestAnimationFrame;
-    window.cancelAnimationFrame = cancelAnimationFrame;
+    Object.assign(window, { requestAnimationFrame, cancelAnimationFrame });
   }
 }
 
 function installObsidianDomHelpers(ownerWindow: Window): void {
-  const ownerRealm = ownerWindow as unknown as typeof globalThis;
+  const ownerRealm = ownerWindow as unknown as typeof window;
   const prototypePairs: Array<[object, object]> = [
     [HTMLElement.prototype, ownerRealm.HTMLElement.prototype],
     [Element.prototype, ownerRealm.Element.prototype],
@@ -139,7 +143,7 @@ function installObsidianDomHelpers(ownerWindow: Window): void {
     for (const name of Object.getOwnPropertyNames(source)) {
       if (name === 'constructor' || name in target) continue;
       const descriptor = Object.getOwnPropertyDescriptor(source, name);
-      if (descriptor) Object.defineProperty(target, name, descriptor);
+      if (descriptor != null) Object.defineProperty(target, name, descriptor);
     }
   }
 
@@ -148,9 +152,10 @@ function installObsidianDomHelpers(ownerWindow: Window): void {
     tag: string,
     options: { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
   ): HTMLElement {
-    const child = this.ownerDocument.createElement(tag);
+    const createElement = methodOf(this.ownerDocument, 'createElement');
+    const child = createElement.call(this.ownerDocument, tag);
     const classes = Array.isArray(options.cls) ? options.cls : options.cls?.split(' ');
-    if (classes) child.classList.add(...classes.filter(Boolean));
+    if (classes != null) child.classList.add(...classes.filter(Boolean));
     if (options.text !== undefined) child.textContent = options.text;
     for (const [name, value] of Object.entries(options.attr ?? {})) {
       child.setAttribute(name, value);
@@ -162,22 +167,20 @@ function installObsidianDomHelpers(ownerWindow: Window): void {
     createEl: { configurable: true, value: createEl },
     createDiv: {
       configurable: true,
-      value: function (
+      value(
         this: HTMLElement,
         value:
-          | string
-          | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
+          string | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
       ) {
         return createEl.call(this, 'div', typeof value === 'string' ? { cls: value } : value);
       },
     },
     createSpan: {
       configurable: true,
-      value: function (
+      value(
         this: HTMLElement,
         value:
-          | string
-          | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
+          string | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
       ) {
         return createEl.call(this, 'span', typeof value === 'string' ? { cls: value } : value);
       },
@@ -213,7 +216,8 @@ function makeCenter(
     queries,
     execute,
   });
-  const el = ownerDocument.createElement('div');
+  const createElement = methodOf(ownerDocument, 'createElement');
+  const el = createElement.call(ownerDocument, 'div');
   panel.mount(el);
   return { el, state, tm, execute, panel };
 }
@@ -251,16 +255,16 @@ async function settleChangedCustomDate(
   items: readonly CapturedMenuItem[],
 ): Promise<HTMLElement> {
   const ownerWindow = el.ownerDocument.defaultView;
-  if (!ownerWindow) throw new Error('missing owner window');
+  if (ownerWindow == null) throw new Error('missing owner window');
   const card = el.querySelector<HTMLElement>('.abyss-task-card');
-  if (!card) throw new Error('missing task card');
+  if (card == null) throw new Error('missing task card');
   card.focus();
   openMenu(card);
   items
     .find((item) => item.title__ === 'Set date…')
     ?.onClick__?.(new ownerWindow.MouseEvent('click'));
   const input = el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]');
-  if (!input) throw new Error('missing custom date input');
+  if (input == null) throw new Error('missing custom date input');
   input.value = '2026-08-02';
   input.dispatchEvent(ownerEvent(ownerWindow, 'change', { bubbles: true }));
   await flushMicrotasks();
@@ -332,7 +336,7 @@ describe('CenterPanel tag→task drop target', () => {
       type: 'patch',
       target: {
         type: 'task',
-        ref: expect.objectContaining({ filePath: t.ref.filePath, line: t.ref.line }),
+        ref: objectMatching<TaskSnapshot['ref']>({ filePath: t.ref.filePath, line: t.ref.line }),
       },
       patch: { tags: { add: ['#task/next'], remove: ['#task/inbox'] } },
     });
@@ -378,7 +382,7 @@ describe('CenterPanel tag→task drop target', () => {
       type: 'patch',
       target: {
         type: 'task',
-        ref: expect.objectContaining({ filePath: t.ref.filePath, line: t.ref.line }),
+        ref: objectMatching<TaskSnapshot['ref']>({ filePath: t.ref.filePath, line: t.ref.line }),
       },
       patch: { tags: { add: ['#work'], remove: ['#task/inbox'] } },
     });
@@ -398,7 +402,7 @@ describe('CenterPanel pinned-tag context menu', () => {
     ) {
       const item = {
         checked__: null as boolean | null,
-        dom: document.createElement('div'),
+        dom: createDiv(),
         onClick__: null as ((event: MouseEvent) => unknown) | null,
         title__: '',
         onClick(value: (event: MouseEvent) => unknown) {
@@ -463,7 +467,7 @@ describe('CenterPanel pinned-tag context menu', () => {
       type: 'patch',
       target: {
         type: 'task',
-        ref: expect.objectContaining({ filePath: t.ref.filePath, line: t.ref.line }),
+        ref: objectMatching<TaskSnapshot['ref']>({ filePath: t.ref.filePath, line: t.ref.line }),
       },
       patch: { tags: { add: ['#work'], remove: [] } },
     });
@@ -495,17 +499,19 @@ describe('CenterPanel task date context menus', () => {
   });
 
   it('moves focus from the task card into the newly mounted native menu', () => {
-    const menu = activeDocument.createElement('div');
+    const menu = createFragment().createDiv();
     menu.className = 'menu';
     const firstItem = menu.createDiv({ cls: 'menu-item', text: 'Today' });
     captureMenu();
-    vi.mocked(Menu.prototype.showAtMouseEvent).mockImplementation(function (this: Menu) {
+    vi.mocked(methodOf(Menu.prototype, 'showAtMouseEvent')).mockImplementation(function (
+      this: Menu,
+    ) {
       activeDocument.body.append(menu);
       return this;
     });
     const { el, panel } = makeCenter([first]);
     activeDocument.body.append(el);
-    const card = el.querySelector<HTMLElement>('.abyss-task-card')!;
+    const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
 
     try {
       card.focus();
@@ -525,7 +531,7 @@ describe('CenterPanel task date context menus', () => {
     const items = captureMenu();
     const { el } = makeCenter([first]);
 
-    openMenu(el.querySelector<HTMLElement>('.abyss-task-card')!);
+    openMenu(expectDefined(el.querySelector<HTMLElement>('.abyss-task-card')));
 
     expect(relevantDateTitles(items)).toEqual(['Today', 'Tomorrow', 'Set date…', 'Set tag…']);
   });
@@ -534,7 +540,7 @@ describe('CenterPanel task date context menus', () => {
     const items = captureMenu();
     const { el } = makeCenter([first]);
 
-    openMenu(el.querySelector<HTMLElement>('.abyss-task-card')!);
+    openMenu(expectDefined(el.querySelector<HTMLElement>('.abyss-task-card')));
 
     const editRepeat = items.find((item) => item.title__ === 'Edit repeat…');
     expect(editRepeat).toBeDefined();
@@ -544,7 +550,7 @@ describe('CenterPanel task date context menus', () => {
   it('uses the center panel as the explicit boundary for custom-date placement', () => {
     const items = captureMenu();
     const { el } = makeCenter([first]);
-    const card = el.querySelector<HTMLElement>('.abyss-task-card')!;
+    const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
     Object.defineProperty(el, 'getBoundingClientRect', {
       configurable: true,
       value: () => rect(100, 50, 300, 200),
@@ -553,7 +559,7 @@ describe('CenterPanel task date context menus', () => {
       configurable: true,
       value: () => rect(390, 70, 20, 20),
     });
-    const real = HTMLElement.prototype.getBoundingClientRect;
+    const real = methodOf(HTMLElement.prototype, 'getBoundingClientRect');
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
       this: HTMLElement,
     ) {
@@ -564,7 +570,7 @@ describe('CenterPanel task date context menus', () => {
     openMenu(card);
     items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
 
-    const popover = el.querySelector<HTMLElement>('.abyss-date-picker-popover')!;
+    const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-date-picker-popover'));
     expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('172px');
     expect(popover.style.getPropertyValue('--abyss-pop-top')).toBe('44px');
   });
@@ -573,7 +579,7 @@ describe('CenterPanel task date context menus', () => {
     const items = captureMenu();
     const { el, execute, panel } = makeCenter([first]);
     activeDocument.body.append(el);
-    const originalCard = el.querySelector<HTMLElement>('.abyss-task-card')!;
+    const originalCard = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
 
     try {
       execute.mockImplementation(() => {
@@ -587,15 +593,15 @@ describe('CenterPanel task date context menus', () => {
       originalCard.focus();
       openMenu(originalCard);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
-      const input = el.querySelector<HTMLInputElement>(
-        '.abyss-date-picker-popover input[type="date"]',
-      )!;
+      const input = expectDefined(
+        el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+      );
       input.focus();
       input.value = '2026-08-02';
 
       input.dispatchEvent(new Event('change', { bubbles: true }));
 
-      const replacement = el.querySelector<HTMLElement>('.abyss-task-card')!;
+      const replacement = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
       expect(originalCard.isConnected).toBe(false);
       expect(replacement).not.toBe(originalCard);
       expect(replacement.dataset['filePath']).toBe('a.md');
@@ -611,23 +617,23 @@ describe('CenterPanel task date context menus', () => {
     const items = captureMenu();
     const { el, execute, panel } = makeCenter([first]);
     activeDocument.body.append(el);
-    const originalCard = el.querySelector<HTMLElement>('.abyss-task-card')!;
+    const originalCard = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
 
     try {
       execute.mockResolvedValue(changedTaskResult(first));
       originalCard.focus();
       openMenu(originalCard);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
-      const input = el.querySelector<HTMLInputElement>(
-        '.abyss-date-picker-popover input[type="date"]',
-      )!;
+      const input = expectDefined(
+        el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+      );
       input.value = '2026-08-02';
 
       input.dispatchEvent(new Event('change', { bubbles: true }));
       await flushMicrotasks();
       panel.refresh();
 
-      const replacement = el.querySelector<HTMLElement>('.abyss-task-card')!;
+      const replacement = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
       expect(execute).toHaveBeenCalledOnce();
       expect(originalCard.isConnected).toBe(false);
       expect(replacement).not.toBe(originalCard);
@@ -669,7 +675,7 @@ describe('CenterPanel task date context menus', () => {
       execute.mockResolvedValue(changedTaskResult(first));
       const original = await settleChangedCustomDate(el, items);
       const ownerWindow = el.ownerDocument.defaultView;
-      if (!ownerWindow) throw new Error('missing owner window');
+      if (ownerWindow == null) throw new Error('missing owner window');
 
       el.ownerDocument.body.dispatchEvent(
         ownerEvent(ownerWindow, 'pointerdown', { bubbles: true, cancelable: true }),
@@ -716,11 +722,11 @@ describe('CenterPanel task date context menus', () => {
   );
 
   it('uses the mounted document and window for task-date departure ownership and cleanup', async () => {
-    const iframe = activeDocument.createElement('iframe');
+    const iframe = createFragment().createEl('iframe');
     activeDocument.body.append(iframe);
     const ownerDocument = iframe.contentDocument;
     const ownerWindow = iframe.contentWindow;
-    if (!ownerDocument || !ownerWindow) throw new Error('missing iframe realm');
+    if (ownerDocument == null || ownerWindow == null) throw new Error('missing iframe realm');
     installObsidianDomHelpers(ownerWindow);
     const addDocumentListener = vi.spyOn(ownerDocument, 'addEventListener');
     const removeDocumentListener = vi.spyOn(ownerDocument, 'removeEventListener');
@@ -732,11 +738,13 @@ describe('CenterPanel task date context menus', () => {
     let destroyed = false;
 
     try {
-      const focusRegistration = addDocumentListener.mock.calls.find(([type]) => type === 'focusin');
-      const pointerRegistration = addDocumentListener.mock.calls.find(
-        ([type]) => type === 'pointerdown',
+      const focusRegistration = addDocumentListener.mock.calls.find(
+        (call) => call[0] === 'focusin',
       );
-      const blurRegistration = addWindowListener.mock.calls.find(([type]) => type === 'blur');
+      const pointerRegistration = addDocumentListener.mock.calls.find(
+        (call) => call[0] === 'pointerdown',
+      );
+      const blurRegistration = addWindowListener.mock.calls.find((call) => call[0] === 'blur');
       execute.mockResolvedValue(changedTaskResult(first));
       const original = await settleChangedCustomDate(el, items);
 
@@ -765,26 +773,26 @@ describe('CenterPanel task date context menus', () => {
       expect(blurRegistration).toBeDefined();
       expect(
         removeDocumentListener.mock.calls.some(
-          ([type, listener, options]) =>
-            type === 'focusin' &&
-            listener === focusRegistration?.[1] &&
-            options === focusRegistration?.[2],
+          (call) =>
+            call[0] === 'focusin' &&
+            call[1] === focusRegistration?.[1] &&
+            call[2] === focusRegistration[2],
         ),
       ).toBe(true);
       expect(
         removeDocumentListener.mock.calls.some(
-          ([type, listener, options]) =>
-            type === 'pointerdown' &&
-            listener === pointerRegistration?.[1] &&
-            options === pointerRegistration?.[2],
+          (call) =>
+            call[0] === 'pointerdown' &&
+            call[1] === pointerRegistration?.[1] &&
+            call[2] === pointerRegistration[2],
         ),
       ).toBe(true);
       expect(
         removeWindowListener.mock.calls.some(
-          ([type, listener, options]) =>
-            type === 'blur' &&
-            listener === blurRegistration?.[1] &&
-            options === blurRegistration?.[2],
+          (call) =>
+            call[0] === 'blur' &&
+            call[1] === blurRegistration?.[1] &&
+            call[2] === blurRegistration[2],
         ),
       ).toBe(true);
     } finally {
@@ -798,7 +806,7 @@ describe('CenterPanel task date context menus', () => {
     const { el, execute, panel } = makeCenter([first, second]);
     activeDocument.body.append(el);
     const cards = Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-card'));
-    const originalTrigger = cards.find((card) => card.dataset['line'] === '0')!;
+    const originalTrigger = expectDefined(cards.find((card) => card.dataset['line'] === '0'));
 
     try {
       for (const card of cards) {
@@ -810,22 +818,26 @@ describe('CenterPanel task date context menus', () => {
       originalTrigger.focus();
       openMenu(originalTrigger);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
-      const input = el.querySelector<HTMLInputElement>(
-        '.abyss-date-picker-popover input[type="date"]',
-      )!;
+      const input = expectDefined(
+        el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+      );
       input.value = '2026-08-02';
 
       input.dispatchEvent(new Event('change', { bubbles: true }));
       await flushMicrotasks();
       panel.refresh();
-      const firstReplacement = Array.from(
-        el.querySelectorAll<HTMLElement>('.abyss-task-card'),
-      ).find((card) => card.dataset['line'] === '0')!;
+      const firstReplacement = expectDefined(
+        Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-card')).find(
+          (card) => card.dataset['line'] === '0',
+        ),
+      );
       panel.refresh();
 
-      const finalReplacement = Array.from(
-        el.querySelectorAll<HTMLElement>('.abyss-task-card'),
-      ).find((card) => card.dataset['line'] === '0')!;
+      const finalReplacement = expectDefined(
+        Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-card')).find(
+          (card) => card.dataset['line'] === '0',
+        ),
+      );
       expect(execute).toHaveBeenCalledTimes(2);
       expect(originalTrigger.isConnected).toBe(false);
       expect(firstReplacement.isConnected).toBe(false);
@@ -845,12 +857,12 @@ describe('CenterPanel task date context menus', () => {
 
     try {
       execute.mockResolvedValue(changedTaskResult(first));
-      const card = el.querySelector<HTMLElement>('.abyss-task-card')!;
+      const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
       openMenu(card);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
-      const input = el.querySelector<HTMLInputElement>(
-        '.abyss-date-picker-popover input[type="date"]',
-      )!;
+      const input = expectDefined(
+        el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+      );
       input.value = '2026-08-02';
       input.dispatchEvent(new Event('change', { bubbles: true }));
       await flushMicrotasks();
@@ -875,12 +887,12 @@ describe('CenterPanel task date context menus', () => {
 
     try {
       execute.mockResolvedValue(changedTaskResult(first));
-      const card = el.querySelector<HTMLElement>('.abyss-task-card')!;
+      const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
       openMenu(card);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
-      const input = el.querySelector<HTMLInputElement>(
-        '.abyss-date-picker-popover input[type="date"]',
-      )!;
+      const input = expectDefined(
+        el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+      );
       input.value = '2026-08-02';
       input.dispatchEvent(new Event('change', { bubbles: true }));
       await flushMicrotasks();
@@ -924,13 +936,13 @@ describe('CenterPanel task date context menus', () => {
         await flushMicrotasks();
         state.set('searchQuery', 'focus needle');
         flush();
-        const originalCard = el.querySelector<HTMLElement>('.abyss-task-card')!;
+        const originalCard = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
         originalCard.focus();
         openMenu(originalCard);
         items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
-        const input = el.querySelector<HTMLInputElement>(
-          '.abyss-date-picker-popover input[type="date"]',
-        )!;
+        const input = expectDefined(
+          el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+        );
         input.value = '2026-08-02';
         input.dispatchEvent(new Event('change', { bubbles: true }));
         await flushMicrotasks();
@@ -940,14 +952,16 @@ describe('CenterPanel task date context menus', () => {
         panel.refresh();
         expect(callbacks).toHaveLength(1);
         flush();
-        const coalescedReplacement = el.querySelector<HTMLElement>('.abyss-task-card')!;
+        const coalescedReplacement = expectDefined(
+          el.querySelector<HTMLElement>('.abyss-task-card'),
+        );
         expect(originalCard.isConnected).toBe(false);
         expect(activeDocument.activeElement).toBe(coalescedReplacement);
 
         panel.refresh();
         expect(callbacks).toHaveLength(1);
         flush();
-        const laterReplacement = el.querySelector<HTMLElement>('.abyss-task-card')!;
+        const laterReplacement = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
         expect(coalescedReplacement.isConnected).toBe(false);
         expect(activeDocument.activeElement).toBe(laterReplacement);
 
@@ -968,7 +982,7 @@ describe('CenterPanel task date context menus', () => {
     const { el, execute, panel } = makeCenter([first, second]);
     activeDocument.body.append(el);
     const cards = Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-card'));
-    const originalTrigger = cards.find((card) => card.dataset['line'] === '0')!;
+    const originalTrigger = expectDefined(cards.find((card) => card.dataset['line'] === '0'));
     const replacements: HTMLElement[] = [];
 
     try {
@@ -979,18 +993,22 @@ describe('CenterPanel task date context menus', () => {
       execute.mockImplementation(() => {
         panel.refresh();
         replacements.push(
-          Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-card')).find(
-            (card) => card.dataset['line'] === '0',
-          )!,
+          expectDefined(
+            Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-card')).find(
+              (card) => card.dataset['line'] === '0',
+            ),
+          ),
         );
-        return Promise.resolve(changedTaskResult(changedTasks[replacements.length - 1]!));
+        return Promise.resolve(
+          changedTaskResult(expectDefined(changedTasks[replacements.length - 1])),
+        );
       });
       originalTrigger.focus();
       openMenu(originalTrigger);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
-      const input = el.querySelector<HTMLInputElement>(
-        '.abyss-date-picker-popover input[type="date"]',
-      )!;
+      const input = expectDefined(
+        el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+      );
       input.value = '2026-08-02';
 
       input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -999,8 +1017,8 @@ describe('CenterPanel task date context menus', () => {
       expect(execute).toHaveBeenCalledTimes(2);
       expect(replacements).toHaveLength(2);
       expect(originalTrigger.isConnected).toBe(false);
-      expect(replacements[0]!.isConnected).toBe(false);
-      expect(replacements[1]!.isConnected).toBe(true);
+      expect(expectDefined(replacements[0]).isConnected).toBe(false);
+      expect(expectDefined(replacements[1]).isConnected).toBe(true);
       expect(activeDocument.activeElement).toBe(replacements[1]);
     } finally {
       panel.destroy();
@@ -1018,12 +1036,12 @@ describe('CenterPanel task date context menus', () => {
 
     try {
       execute.mockResolvedValue(result);
-      const card = el.querySelector<HTMLElement>('.abyss-task-card')!;
+      const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
       openMenu(card);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
-      const input = el.querySelector<HTMLInputElement>(
-        '.abyss-date-picker-popover input[type="date"]',
-      )!;
+      const input = expectDefined(
+        el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+      );
       input.value = '2026-08-02';
       input.dispatchEvent(new Event('change', { bubbles: true }));
       await flushMicrotasks();
@@ -1044,13 +1062,13 @@ describe('CenterPanel task date context menus', () => {
     activeDocument.body.append(el);
 
     try {
-      const card = el.querySelector<HTMLElement>('.abyss-task-card')!;
+      const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
       openMenu(card);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
       vi.runOnlyPendingTimers();
-      const input = el.querySelector<HTMLInputElement>(
-        '.abyss-date-picker-popover input[type="date"]',
-      )!;
+      const input = expectDefined(
+        el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+      );
       input.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
       );
@@ -1068,7 +1086,7 @@ describe('CenterPanel task date context menus', () => {
     const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
     const items = captureMenu();
     const { el, execute } = makeCenter([first]);
-    openMenu(el.querySelector<HTMLElement>('.abyss-task-card')!);
+    openMenu(expectDefined(el.querySelector<HTMLElement>('.abyss-task-card')));
 
     items.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
     await flushMicrotasks();
@@ -1082,7 +1100,7 @@ describe('CenterPanel task date context menus', () => {
     const tomorrowTask = { ...first, planning: { due: tomorrow as never } };
     const clearItems = captureMenu();
     const clearCenter = makeCenter([tomorrowTask]);
-    openMenu(clearCenter.el.querySelector<HTMLElement>('.abyss-task-card')!);
+    openMenu(expectDefined(clearCenter.el.querySelector<HTMLElement>('.abyss-task-card')));
     clearItems.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
     await flushMicrotasks();
     expect(clearCenter.execute).toHaveBeenLastCalledWith({
@@ -1096,10 +1114,14 @@ describe('CenterPanel task date context menus', () => {
     const items = captureMenu();
     const { el } = makeCenter([first, second]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
-    cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    expectDefined(cards[1]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+    expectDefined(cards[0]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
 
-    openMenu(cards[0]!);
+    openMenu(expectDefined(cards[0]));
 
     expect(relevantDateTitles(items)).toEqual(['Today', 'Tomorrow', 'Set date…', 'Set tag…']);
   });
@@ -1113,9 +1135,9 @@ describe('CenterPanel task date context menus', () => {
     for (const card of mixedCards) {
       card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     }
-    const mixedFirstCard = mixedCards.find((card) => card.dataset['line'] === '0')!;
-    const mixedSecondCard = mixedCards.find((card) => card.dataset['line'] === '1')!;
-    mixedFirstCard.parentElement!.append(mixedFirstCard, mixedSecondCard);
+    const mixedFirstCard = expectDefined(mixedCards.find((card) => card.dataset['line'] === '0'));
+    const mixedSecondCard = expectDefined(mixedCards.find((card) => card.dataset['line'] === '1'));
+    expectDefined(mixedFirstCard.parentElement).append(mixedFirstCard, mixedSecondCard);
     openMenu(mixedFirstCard);
 
     items.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
@@ -1144,9 +1166,13 @@ describe('CenterPanel task date context menus', () => {
     for (const card of matchingCards) {
       card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     }
-    const matchingFirstCard = matchingCards.find((card) => card.dataset['line'] === '0')!;
-    const matchingSecondCard = matchingCards.find((card) => card.dataset['line'] === '1')!;
-    matchingFirstCard.parentElement!.append(matchingFirstCard, matchingSecondCard);
+    const matchingFirstCard = expectDefined(
+      matchingCards.find((card) => card.dataset['line'] === '0'),
+    );
+    const matchingSecondCard = expectDefined(
+      matchingCards.find((card) => card.dataset['line'] === '1'),
+    );
+    expectDefined(matchingFirstCard.parentElement).append(matchingFirstCard, matchingSecondCard);
     openMenu(matchingFirstCard);
 
     clearItems.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
@@ -1170,8 +1196,7 @@ describe('CenterPanel task date context menus', () => {
     const items = captureMenu();
     const { el, execute } = makeCenter([first, datedSecond]);
     let resolveFirst:
-      | ((result: Awaited<ReturnType<TaskApplicationApi['execute']>>) => void)
-      | undefined;
+      ((result: Awaited<ReturnType<TaskApplicationApi['execute']>>) => void) | undefined;
     execute.mockReset();
     execute
       .mockImplementationOnce(
@@ -1186,11 +1211,17 @@ describe('CenterPanel task date context menus', () => {
         contentState: 'unchanged',
       });
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
-    cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    const firstCard = Array.from(cards).find((card) => card.dataset['line'] === '0')!;
-    const secondCard = Array.from(cards).find((card) => card.dataset['line'] === '1')!;
-    firstCard.parentElement!.append(firstCard, secondCard);
+    expectDefined(cards[1]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+    expectDefined(cards[0]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+    const firstCard = expectDefined(Array.from(cards).find((card) => card.dataset['line'] === '0'));
+    const secondCard = expectDefined(
+      Array.from(cards).find((card) => card.dataset['line'] === '1'),
+    );
+    expectDefined(firstCard.parentElement).append(firstCard, secondCard);
     openMenu(firstCard);
 
     items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
@@ -1198,8 +1229,8 @@ describe('CenterPanel task date context menus', () => {
       '.abyss-date-picker-popover input[type="date"]',
     );
     expect(input?.value).toBe('');
-    input!.value = '2026-08-02';
-    input!.dispatchEvent(new Event('change', { bubbles: true }));
+    expectDefined(input).value = '2026-08-02';
+    expectDefined(input).dispatchEvent(new Event('change', { bubbles: true }));
 
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute).toHaveBeenNthCalledWith(1, {
@@ -1224,11 +1255,11 @@ describe('CenterPanel task date context menus', () => {
   it('rejects an invalid custom date before executing a command', () => {
     const items = captureMenu();
     const { el, execute } = makeCenter([first]);
-    openMenu(el.querySelector<HTMLElement>('.abyss-task-card')!);
+    openMenu(expectDefined(el.querySelector<HTMLElement>('.abyss-task-card')));
     items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
-    const input = el.querySelector<HTMLInputElement>(
-      '.abyss-date-picker-popover input[type="date"]',
-    )!;
+    const input = expectDefined(
+      el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+    );
 
     input.value = 'not-a-date';
     input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1245,7 +1276,7 @@ describe('CenterPanel task date context menus', () => {
       const ownerDocument = el.ownerDocument;
       const addListener = vi.spyOn(ownerDocument, 'addEventListener');
       const removeListener = vi.spyOn(ownerDocument, 'removeEventListener');
-      openMenu(el.querySelector<HTMLElement>('.abyss-task-card')!);
+      openMenu(expectDefined(el.querySelector<HTMLElement>('.abyss-task-card')));
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
       vi.runOnlyPendingTimers();
       const added = addListener.mock.calls as unknown as Array<
@@ -1285,14 +1316,18 @@ describe('CenterPanel task date context menus', () => {
     activeDocument.body.append(el);
     state.set('taskStack', [first]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
-    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    openMenu(cards[0]!);
+    expectDefined(cards[0]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+    expectDefined(cards[1]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+    openMenu(expectDefined(cards[0]));
     items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
     vi.runOnlyPendingTimers();
-    const input = el.querySelector<HTMLInputElement>(
-      '.abyss-date-picker-popover input[type="date"]',
-    )!;
+    const input = expectDefined(
+      el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+    );
     const event = new KeyboardEvent('keydown', {
       key: 'Escape',
       bubbles: true,
@@ -1341,7 +1376,7 @@ describe('CenterPanel tag chip replace on drop', () => {
       type: 'patch',
       target: {
         type: 'task',
-        ref: expect.objectContaining({ filePath: t.ref.filePath, line: t.ref.line }),
+        ref: objectMatching<TaskSnapshot['ref']>({ filePath: t.ref.filePath, line: t.ref.line }),
       },
       patch: { tags: { add: ['#task/next'], remove: ['#work'] } },
     });

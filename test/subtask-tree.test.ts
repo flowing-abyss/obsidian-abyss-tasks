@@ -4,7 +4,7 @@ import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import { sameTaskNodeRef, type TaskNodeRef } from '../src/tasks/domain/types';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
-import { createAppWithFiles } from './helpers';
+import { createAppWithFiles, expectDefined } from './helpers';
 
 describe('subtask snapshot tree', () => {
   it('retains a complete immediate-parent reference chain for duplicate nested text', async () => {
@@ -19,16 +19,16 @@ describe('subtask snapshot tree', () => {
       statusCatalog: new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses)),
       dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
     });
-    const root = index.snapshotsFromContent('tasks.md', source)[0]!;
-    const secondNested = root.subtasks[1]!.subtasks[0]!;
+    const root = expectDefined(index.snapshotsFromContent('tasks.md', source)[0]);
+    const secondNested = expectDefined(expectDefined(root.subtasks[1]).subtasks[0]);
 
     expect(secondNested.ref.relativeLine).toBe(1);
     expect(secondNested.ref.parent).toEqual({
       type: 'subtask',
-      ref: root.subtasks[1]!.ref,
+      ref: expectDefined(root.subtasks[1]).ref,
     });
-    expect(root.subtasks[1]!.ref.relativeLine).toBe(3);
-    expect(root.subtasks[1]!.ref.parent).toEqual({ type: 'task', ref: root.ref });
+    expect(expectDefined(root.subtasks[1]).ref.relativeLine).toBe(3);
+    expect(expectDefined(root.subtasks[1]).ref.parent).toEqual({ type: 'task', ref: root.ref });
   });
 
   it('compares complete root and ancestor evidence structurally', () => {

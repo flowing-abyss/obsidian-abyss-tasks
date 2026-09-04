@@ -1,6 +1,4 @@
-// eslint-disable-next-line no-restricted-imports, import/no-extraneous-dependencies
-import moment from 'moment';
-import { TFile, type App } from 'obsidian';
+import { moment, TFile, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
@@ -8,6 +6,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import type { CalendarSettings, TagGroup } from '../src/settings/types';
 import type {
+  LocalDate,
   SubtaskSnapshot,
   TaskApplicationApi,
   TaskCommandResult,
@@ -27,6 +26,7 @@ import { openInFile } from '../src/ui/taskNavigation';
 import { rootTaskRef, taskNodeLine } from '../src/ui/taskSelection';
 import {
   createAppWithFiles,
+  expectDefined,
   flushMicrotasks,
   freshContainer,
   seedTaskCache,
@@ -50,67 +50,75 @@ async function readMd(app: App, path: string): Promise<string> {
   return app.vault.cachedRead(f);
 }
 
-/** Bracket-access helper to call private methods (preserves `this` binding). */
-function call<T>(panel: RightPanel, method: string, ...args: unknown[]): T {
-  const candidate = args[0];
-  if (
-    (method === 'toggleSubTask' ||
-      method === 'updatePriority' ||
-      method === 'setStatus' ||
-      method === 'addTag' ||
-      method === 'removeTag' ||
-      method === 'updateTaskTitle' ||
-      method === 'appendToTitle' ||
-      method === 'updateDescription' ||
-      method === 'addSubTask' ||
-      method === 'addComment' ||
-      method === 'updateComment' ||
-      method === 'deleteComment' ||
-      method === 'deleteTask') &&
-    typeof candidate === 'object' &&
-    candidate !== null
-  ) {
-    const taskLike = candidate as TaskSnapshot | SubtaskSnapshot;
-    const roots = (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list();
-    let found: TaskSnapshot | SubtaskSnapshot | undefined;
-    let foundRoot: TaskSnapshot | undefined;
-    for (const root of roots) {
-      const queue: Array<TaskSnapshot | SubtaskSnapshot> = [root];
-      while (queue.length > 0) {
-        const current = queue.shift()!;
-        if (
-          root.source.filePath === rootTaskRef(taskLike).filePath &&
-          taskNodeLine(root, current) === absoluteFixtureLine(taskLike)
-        ) {
-          found = current;
-          foundRoot = root;
-          break;
-        }
-        queue.push(...current.subtasks);
+const WRITER_METHODS = new Set([
+  'toggleSubTask',
+  'updatePriority',
+  'setStatus',
+  'addTag',
+  'removeTag',
+  'updateTaskTitle',
+  'appendToTitle',
+  'updateDescription',
+  'addSubTask',
+  'addComment',
+  'updateComment',
+  'deleteComment',
+  'deleteTask',
+]);
+
+function currentNode(
+  panel: RightPanel,
+  taskLike: TaskSnapshot | SubtaskSnapshot,
+): TaskSnapshot | SubtaskSnapshot | undefined {
+  const roots = (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list();
+  for (const root of roots) {
+    const queue: Array<TaskSnapshot | SubtaskSnapshot> = [root];
+    while (queue.length > 0) {
+      const node = expectDefined(queue.shift());
+      const sameFile = root.source.filePath === rootTaskRef(taskLike).filePath;
+      if (sameFile && taskNodeLine(root, node) === absoluteFixtureLine(taskLike)) {
+        return node;
       }
-      if (found) break;
-    }
-    if (found && foundRoot) {
-      Object.assign(candidate, { ref: found.ref });
-      if ((method === 'updateComment' || method === 'deleteComment') && args[1]) {
-        const staleComment = args[1] as TaskCommentSnapshot;
-        const parentLine = taskNodeLine(foundRoot, found);
-        const currentComment = found.comments.find(
-          (comment) =>
-            parentLine + comment.ref.relativeLine === parentLine + staleComment.ref.relativeLine &&
-            comment.text === staleComment.text,
-        );
-        if (currentComment) Object.assign(staleComment, { ref: currentComment.ref });
-      }
+      queue.push(...node.subtasks);
     }
   }
-  const fn = (panel as unknown as Record<string, (...a: unknown[]) => T>)[method]!;
+  return undefined;
+}
+
+function rebaseComment(
+  method: string,
+  staleComment: unknown,
+  node: TaskSnapshot | SubtaskSnapshot,
+): void {
+  if (!['updateComment', 'deleteComment'].includes(method) || staleComment == null) return;
+  const comment = staleComment as TaskCommentSnapshot;
+  const current = node.comments.find(
+    (candidate) =>
+      candidate.ref.relativeLine === comment.ref.relativeLine && candidate.text === comment.text,
+  );
+  if (current != null) Object.assign(comment, { ref: current.ref });
+}
+
+function rebaseWriterArguments(panel: RightPanel, method: string, args: unknown[]): void {
+  const candidate = args[0];
+  if (!WRITER_METHODS.has(method) || typeof candidate !== 'object' || candidate === null) return;
+  const taskLike = candidate as TaskSnapshot | SubtaskSnapshot;
+  const current = currentNode(panel, taskLike);
+  if (current === undefined) return;
+  Object.assign(candidate, { ref: current.ref });
+  rebaseComment(method, args[1], current);
+}
+
+/** Bracket-access helper to call private methods (preserves `this` binding). */
+function call<T>(panel: RightPanel, method: string, ...args: unknown[]): T {
+  rebaseWriterArguments(panel, method, args);
+  const fn = expectDefined((panel as unknown as Record<string, (...a: unknown[]) => T>)[method]);
   return fn.call(panel, ...args);
 }
 
 function absoluteFixtureLine(taskLike: TaskSnapshot | SubtaskSnapshot): number {
   if ('source' in taskLike) return taskLike.source.line;
-  let line = rootTaskRef(taskLike).line;
+  const line = rootTaskRef(taskLike).line;
   let ref = taskLike.ref;
   const offsets: number[] = [];
   while ('parent' in ref) {
@@ -230,23 +238,29 @@ describe('RightPanel recurrence writer', () => {
     const { panel, state, app } = await makePanel({ 't.md': source }, DEFAULT_SETTINGS, [
       { path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] },
     ]);
-    const current = (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list({
-      filePath: 't.md',
-    })[0]!;
+    const current = expectDefined(
+      (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list({
+        filePath: 't.md',
+      })[0],
+    );
     const el = freshContainer();
     panel.mount(el);
     state.set('taskStack', [current]);
     const process = vi.spyOn(app.vault, 'process');
 
-    el.querySelector<HTMLButtonElement>('.abyss-repeat-chip')!.click();
-    const weekdays = Array.from(el.querySelectorAll<HTMLButtonElement>('button')).find(
-      (candidate) => candidate.textContent === 'Weekdays',
-    )!;
+    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-repeat-chip')).click();
+    const weekdays = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('button')).find(
+        (candidate) => candidate.textContent === 'Weekdays',
+      ),
+    );
     weekdays.click();
-    const completed = el.querySelector<HTMLSelectElement>('[aria-label="Completed task"]')!;
+    const completed = expectDefined(
+      el.querySelector<HTMLSelectElement>('[aria-label="Completed task"]'),
+    );
     completed.value = 'delete';
     completed.dispatchEvent(new Event('change', { bubbles: true }));
-    el.querySelector<HTMLButtonElement>('.abyss-recurrence-save')!.click();
+    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-recurrence-save')).click();
     await flushMicrotasks();
 
     expect(process).toHaveBeenCalledOnce();
@@ -257,17 +271,22 @@ describe('RightPanel recurrence writer', () => {
     {
       name: 'omits default Keep',
       source: '- [ ] Task 📅 2026-08-09\n',
-      prepare: (el: HTMLElement) =>
-        Array.from(el.querySelectorAll<HTMLButtonElement>('button'))
-          .find((candidate) => candidate.textContent === 'Weekdays')!
-          .click(),
+      prepare: (el: HTMLElement) => {
+        expectDefined(
+          Array.from(el.querySelectorAll<HTMLButtonElement>('button')).find(
+            (candidate) => candidate.textContent === 'Weekdays',
+          ),
+        ).click();
+      },
       expected: '- [ ] Task 🔁 every weekday 📅 2026-08-09\n',
     },
     {
       name: 'clears Delete when changed to Keep',
       source: '- [ ] Task 🔁 every day 🏁 delete 📅 2026-08-09\n',
       prepare: (el: HTMLElement) => {
-        const completed = el.querySelector<HTMLSelectElement>('[aria-label="Completed task"]')!;
+        const completed = expectDefined(
+          el.querySelector<HTMLSelectElement>('[aria-label="Completed task"]'),
+        );
         completed.value = 'keep';
         completed.dispatchEvent(new Event('change', { bubbles: true }));
       },
@@ -277,7 +296,9 @@ describe('RightPanel recurrence writer', () => {
       name: 'preserves authored Keep during a recurrence-only edit',
       source: '- [ ] Task 🔁 every day 🏁 keep 📅 2026-08-09\n',
       prepare: (el: HTMLElement) => {
-        const raw = el.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
+        const raw = expectDefined(
+          el.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]'),
+        );
         raw.value = 'every week';
         raw.dispatchEvent(new Event('input', { bubbles: true }));
       },
@@ -287,16 +308,18 @@ describe('RightPanel recurrence writer', () => {
     const { panel, state, app } = await makePanel({ 't.md': source }, DEFAULT_SETTINGS, [
       { path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] },
     ]);
-    const current = (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list({
-      filePath: 't.md',
-    })[0]!;
+    const current = expectDefined(
+      (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list({
+        filePath: 't.md',
+      })[0],
+    );
     const el = freshContainer();
     panel.mount(el);
     state.set('taskStack', [current]);
 
-    el.querySelector<HTMLButtonElement>('.abyss-repeat-chip')!.click();
+    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-repeat-chip')).click();
     prepare(el);
-    el.querySelector<HTMLButtonElement>('.abyss-recurrence-save')!.click();
+    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-recurrence-save')).click();
     await flushMicrotasks();
 
     expect(await readMd(app, 't.md')).toBe(expected);
@@ -379,7 +402,7 @@ describe('RightPanel planning API delegation', () => {
     );
     const current = Object.assign(
       task({
-        planning: { due: undefined, scheduled: '2026-07-20' },
+        planning: { scheduled: '2026-07-20' },
         source: { filePath: 't.md', line: 0 },
       }),
       { ref },
@@ -514,7 +537,7 @@ describe('RightPanel planning API delegation', () => {
           priority: 'D' as const,
           onCompletion: 'keep' as const,
           onCompletionExplicit: false,
-          planning: { due: '2026-07-20' as import('../src/tasks').LocalDate },
+          planning: { due: '2026-07-20' as LocalDate },
           tags: [],
           subtasks: [],
           comments: [],
@@ -637,8 +660,7 @@ describe('RightPanel planning API delegation', () => {
         priority: 'D',
         onCompletion: 'keep' as const,
         onCompletionExplicit: false,
-        planning:
-          selection === 'root' ? { due: '2026-07-20' as import('../src/tasks').LocalDate } : {},
+        planning: selection === 'root' ? { due: '2026-07-20' as LocalDate } : {},
         tags: [],
         subtasks:
           selection === 'child'
@@ -656,7 +678,7 @@ describe('RightPanel planning API delegation', () => {
                   priority: 'D',
                   onCompletion: 'keep' as const,
                   onCompletionExplicit: false,
-                  planning: { due: '2026-07-20' as import('../src/tasks').LocalDate },
+                  planning: { due: '2026-07-20' as LocalDate },
                   tags: [],
                   subtasks: [],
                   comments: [],
@@ -785,7 +807,9 @@ describe('RightPanel.updateTaskTitle', () => {
       await gate;
       return originalProcess(file, transform);
     });
-    const first = (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list()[0]!;
+    const first = expectDefined(
+      (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list()[0],
+    );
     const second = Object.assign(task({ source: { filePath: 'other.md', line: 0 } }), {
       ref: { filePath: 'other.md', line: 0, revision: 'second' },
     });
@@ -1098,7 +1122,7 @@ describe('RightPanel.toggleSubTask', () => {
 
   // FU-28 fix: toggling is now registry-driven (via statusSymbol -> typeForSymbol),
   // not the stale/caller-supplied `status` field, so an uppercase "[X]" (done, via
-  // the X->x alias) correctly toggles to the registry's default todo symbol.
+  // the X->x alias) correctly toggles to the registry's default open symbol.
   it('registry-driven: "- [X]" (done via X->x alias) toggles to open, ignoring stale status field', async () => {
     const { panel, app } = await makePanel({ 't.md': '  - [X] sub' });
     const sub = subtask({
@@ -1408,7 +1432,12 @@ describe('RightPanel.deleteComment', () => {
 });
 
 describe('RightPanel.updatePriority', () => {
-  it('A → appends 🔺 (highest)', async () => {
+  it.each([
+    ['A', '🔺'],
+    ['B', '⏫'],
+    ['E', '🔽'],
+    ['F', '⏬'],
+  ] as const)('%s appends %s', async (priority, marker) => {
     const { panel, app } = await makePanel({ 't.md': '- [ ] task' });
     const t = task({
       title: 'task',
@@ -1420,26 +1449,9 @@ describe('RightPanel.updatePriority', () => {
         originalBlock: '- [ ] task',
       },
     });
-    await call<Promise<void>>(panel, 'updatePriority', t, 'A');
+    await call<Promise<void>>(panel, 'updatePriority', t, priority);
     const after = await readMd(app, 't.md');
-    expect(after).toContain('🔺');
-  });
-
-  it('B → appends ⏫', async () => {
-    const { panel, app } = await makePanel({ 't.md': '- [ ] task' });
-    const t = task({
-      title: 'task',
-      priority: 'D',
-      source: {
-        filePath: 't.md',
-        line: 0,
-        originalMarkdown: '- [ ] task',
-        originalBlock: '- [ ] task',
-      },
-    });
-    await call<Promise<void>>(panel, 'updatePriority', t, 'B');
-    const after = await readMd(app, 't.md');
-    expect(after).toContain('⏫');
+    expect(after).toContain(marker);
   });
 
   it('C → sets Medium priority (🔼), replacing any existing emoji', async () => {
@@ -1482,40 +1494,6 @@ describe('RightPanel.updatePriority', () => {
     expect(after).not.toContain('🔽');
     expect(after).not.toContain('⏬');
     expect(after).toBe('- [ ] task');
-  });
-
-  it('E → appends 🔽', async () => {
-    const { panel, app } = await makePanel({ 't.md': '- [ ] task' });
-    const t = task({
-      title: 'task',
-      priority: 'D',
-      source: {
-        filePath: 't.md',
-        line: 0,
-        originalMarkdown: '- [ ] task',
-        originalBlock: '- [ ] task',
-      },
-    });
-    await call<Promise<void>>(panel, 'updatePriority', t, 'E');
-    const after = await readMd(app, 't.md');
-    expect(after).toContain('🔽');
-  });
-
-  it('F → appends ⏬', async () => {
-    const { panel, app } = await makePanel({ 't.md': '- [ ] task' });
-    const t = task({
-      title: 'task',
-      priority: 'D',
-      source: {
-        filePath: 't.md',
-        line: 0,
-        originalMarkdown: '- [ ] task',
-        originalBlock: '- [ ] task',
-      },
-    });
-    await call<Promise<void>>(panel, 'updatePriority', t, 'F');
-    const after = await readMd(app, 't.md');
-    expect(after).toContain('⏬');
   });
 
   it('replaces existing priority emoji with new one', async () => {
@@ -1871,7 +1849,7 @@ describe('RightPanel — blockquote write-path preserves "> " formatting', () =>
       filePath: 't.md',
     })[0];
     expect(indexed).toBeDefined();
-    Object.assign(t, { ref: indexed!.ref });
+    Object.assign(t, { ref: expectDefined(indexed).ref });
     await call<Promise<void>>(panel, 'updateTaskTitle', t, 'new');
     const after = await readMd(app, 't.md');
     expect(after).toBe('> - [ ] new 📅 2026-06-20');

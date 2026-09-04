@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import type { CalendarSettings } from '../src/settings/types';
-import { useRealMoment } from './helpers';
+import { expectDefined, methodOf, useRealMoment } from './helpers';
 
 useRealMoment();
 
@@ -37,37 +37,37 @@ interface CapturedText {
  */
 function patchAddText(captured: CapturedText[]): () => void {
   const proto = Setting.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
-  const orig = proto.addText!;
-  proto.addText = function (
+  const orig = expectDefined(proto['addText']);
+  proto['addText'] = function (
     this: {
       components: Array<{ inputEl: HTMLInputElement; _onChange?: (v: string) => unknown }>;
     },
     cb: unknown,
   ) {
     const result = orig.call(this, cb);
-    const comp = this.components[this.components.length - 1]!;
+    const comp = expectDefined(this.components[this.components.length - 1]);
     captured.push({ el: comp.inputEl, invokeChange: (v: string) => comp._onChange?.(v) });
     return result;
   };
   return () => {
-    proto.addText = orig;
+    proto['addText'] = orig;
   };
 }
 
 function patchAddButton(captured: CapturedButton[]): () => void {
   const proto = Setting.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
-  const orig = proto.addButton!;
-  proto.addButton = function (
+  const orig = expectDefined(proto['addButton']);
+  proto['addButton'] = function (
     this: { components: Array<{ buttonEl: HTMLButtonElement; clickHandler?: () => void }> },
     cb: unknown,
   ) {
     const result = orig.call(this, cb);
-    const comp = this.components[this.components.length - 1]!;
+    const comp = expectDefined(this.components[this.components.length - 1]);
     captured.push({ el: comp.buttonEl, click: () => comp.clickHandler?.() });
     return result;
   };
   return () => {
-    proto.addButton = orig;
+    proto['addButton'] = orig;
   };
 }
 
@@ -77,10 +77,12 @@ function makeTab(opts: { withCustomStatus?: boolean } = {}): {
   captured: CapturedButton[];
 } {
   const app = new App();
-  (app as unknown as Record<string, unknown>).plugins = { getPlugin: () => null };
-  (app as unknown as Record<string, unknown>).internalPlugins = { getPluginById: () => null };
+  (app as unknown as Record<string, unknown>)['plugins'] = { getPlugin: () => null };
+  (app as unknown as Record<string, unknown>)['internalPlugins'] = {
+    getPluginById: () => null,
+  };
   const settings = structuredClone(DEFAULT_SETTINGS);
-  if (opts.withCustomStatus) {
+  if (opts.withCustomStatus === true) {
     settings.taskStatuses.push({
       id: 'status-custom',
       symbol: '!',
@@ -104,8 +106,7 @@ function makeTab(opts: { withCustomStatus?: boolean } = {}): {
   );
   const expanded = (tab as unknown as { expandedCards: Set<string> }).expandedCards;
   for (const s of settings.taskStatuses) expanded.add(s.id);
-  // eslint-disable-next-line @typescript-eslint/no-deprecated
-  tab.display();
+  (tab as unknown as { display(): void }).display();
   restore();
   return { tab, plugin, captured };
 }
@@ -119,10 +120,12 @@ function openStatusesSection(tab: CalendarSettingsTab): HTMLElement {
     if (l.textContent === 'Custom statuses') idx = i;
   });
   expect(idx).toBeGreaterThanOrEqual(0);
-  headers[idx]!.click();
-  return tab.containerEl
-    .querySelectorAll<HTMLElement>('.abyss-settings-section')
-    [idx]!.querySelector('.abyss-settings-section-body')!;
+  expectDefined(headers[idx]).click();
+  return expectDefined(
+    expectDefined(
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section')[idx],
+    ).querySelector<HTMLElement>('.abyss-settings-section-body'),
+  );
 }
 
 describe('CalendarSettingsTab — custom statuses section', () => {
@@ -153,10 +156,10 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     for (const marker of markers) {
       expect(marker).not.toBeNull();
       const click = new MouseEvent('click', { bubbles: true, cancelable: true });
-      marker!.dispatchEvent(click);
-      expect(marker!.hasAttribute('role')).toBe(false);
-      expect(marker!.hasAttribute('tabindex')).toBe(false);
-      expect(marker!.classList.contains('abyss-status-marker--inert')).toBe(true);
+      expectDefined(marker).dispatchEvent(click);
+      expect(expectDefined(marker).hasAttribute('role')).toBe(false);
+      expect(expectDefined(marker).hasAttribute('tabindex')).toBe(false);
+      expect(expectDefined(marker).classList.contains('abyss-status-marker--inert')).toBe(true);
       expect(click.defaultPrevented).toBe(false);
     }
   });
@@ -171,29 +174,29 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     expect(deleteButtons).toHaveLength(0);
   });
 
-  it('"+ Add status" appends a new, non-core, deletable card', async () => {
+  it('"+ add status" appends a new, non-core, deletable card', async () => {
     const { tab, plugin, captured } = makeTab();
     const body = openStatusesSection(tab);
-    const addBtn = captured.find((b) => body.contains(b.el) && b.el.textContent === '+ Add status');
+    const addBtn = captured.find((b) => body.contains(b.el) && b.el.textContent === '+ add status');
     expect(addBtn).toBeDefined();
-    addBtn!.click();
+    expectDefined(addBtn).click();
     await Promise.resolve(); // flush the async onClick handler
 
     expect(plugin.settings.taskStatuses).toHaveLength(5);
-    const added = plugin.settings.taskStatuses[4]!;
+    const added = expectDefined(plugin.settings.taskStatuses[4]);
     expect(added.core).toBe(false);
     expect(added.name).toBe('New status');
     expect(added.type).toBe('todo');
-    expect(plugin.saveSettings).toHaveBeenCalled();
+    expect(methodOf(plugin, 'saveSettings')).toHaveBeenCalled();
     expect(plugin.rebuildTaskStatusSemantics).toHaveBeenCalled();
   });
 
   it('added status gets a symbol not already in use', async () => {
     const { tab, plugin, captured } = makeTab();
     const body = openStatusesSection(tab);
-    const addBtn = captured.find(
-      (b) => body.contains(b.el) && b.el.textContent === '+ Add status',
-    )!;
+    const addBtn = expectDefined(
+      captured.find((b) => body.contains(b.el) && b.el.textContent === '+ add status'),
+    );
     addBtn.click();
     await Promise.resolve();
     const symbols = plugin.settings.taskStatuses.map((s) => s.symbol);
@@ -212,12 +215,12 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     expect(deleteBtn).toBeDefined();
     const before = plugin.settings.taskStatuses.length;
 
-    deleteBtn!.click();
+    expectDefined(deleteBtn).click();
     await Promise.resolve();
     expect(plugin.settings.taskStatuses).toHaveLength(before); // armed, not yet deleted
-    expect(deleteBtn!.el.textContent).toBe('Click again to confirm');
+    expect(expectDefined(deleteBtn).el.textContent).toBe('Click again to confirm');
 
-    deleteBtn!.click();
+    expectDefined(deleteBtn).click();
     await Promise.resolve();
     expect(plugin.settings.taskStatuses).toHaveLength(before - 1);
   });
@@ -239,7 +242,7 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     cards.forEach((card) => {
       const lock = card.querySelector('.abyss-status-symbol-lock');
       const lockedInput = card.querySelector<HTMLInputElement>('.abyss-status-symbol-locked');
-      if (lock) {
+      if (lock != null) {
         expect(lockedInput).not.toBeNull();
         sawLockedCore = true;
       } else {
@@ -260,11 +263,11 @@ describe('CalendarSettingsTab — custom statuses section', () => {
       const iconLock = card.querySelector('.abyss-status-icon-lock');
       const lockedPreview = card.querySelector('.abyss-status-icon-locked-preview');
       const searchInput = card.querySelector('.abyss-status-icon-input-host');
-      if (iconLock) {
+      if (iconLock != null) {
         expect(lockedPreview).not.toBeNull();
         expect(searchInput).toBeNull(); // no Lucide search picker for locked core icons
         sawLockedCoreIcon = true;
-      } else if (searchInput) {
+      } else if (searchInput != null) {
         sawEditableNonCoreIcon = true;
       }
     });
@@ -290,7 +293,7 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     const { plugin } = makeTab();
     restore();
 
-    const coreStatus = plugin.settings.taskStatuses.find((s) => s.core)!;
+    const coreStatus = expectDefined(plugin.settings.taskStatuses.find((s) => s.core));
     expect(coreStatus).toBeDefined();
     const originalSymbol = coreStatus.symbol;
 
@@ -299,28 +302,32 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     );
     expect(coreSymbolInput).toBeDefined();
 
-    coreSymbolInput!.invokeChange('!');
+    expectDefined(coreSymbolInput).invokeChange('!');
     await Promise.resolve();
 
     expect(coreStatus.symbol).toBe(originalSymbol);
-    expect(plugin.saveSettings).not.toHaveBeenCalled();
+    expect(methodOf(plugin, 'saveSettings')).not.toHaveBeenCalled();
   });
 
   it('"No icon" cell clears a custom status icon and persists the empty state', async () => {
     const { tab, plugin } = makeTab({ withCustomStatus: true });
     const body = openStatusesSection(tab);
-    const status = plugin.settings.taskStatuses.find((s) => !s.core && s.icon !== '')!;
+    const status = expectDefined(
+      plugin.settings.taskStatuses.find((s) => !s.core && s.icon !== ''),
+    );
     expect(status).toBeDefined();
-    const card = Array.from(body.querySelectorAll('.abyss-settings-card')).find((c) =>
-      c.textContent?.includes(status.name),
-    )!;
+    const card = expectDefined(
+      Array.from(body.querySelectorAll('.abyss-settings-card')).find((c) =>
+        c.textContent.includes(status.name),
+      ),
+    );
     expect(card).toBeDefined();
     const clearCell = card.querySelector<HTMLElement>('.abyss-status-icon-clear');
     expect(clearCell).not.toBeNull();
-    clearCell!.click();
+    expectDefined(clearCell).click();
     await Promise.resolve();
     expect(status.icon).toBe('');
-    expect(plugin.saveSettings).toHaveBeenCalled();
+    expect(methodOf(plugin, 'saveSettings')).toHaveBeenCalled();
   });
 
   it('filters custom icon choices as native pressed buttons and keeps selection focus after rerender', async () => {
@@ -331,21 +338,25 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     restore();
     activeDocument.body.append(tab.containerEl);
     const body = openStatusesSection(tab);
-    const status = plugin.settings.taskStatuses.find((s) => !s.core)!;
-    const card = Array.from(body.querySelectorAll<HTMLElement>('.abyss-settings-card')).find(
-      (candidate) => candidate.textContent?.includes(status.name),
-    )!;
-    const search = captured.find(
-      (input) => card.contains(input.el) && input.el.placeholder === 'Search lucide icons…',
-    )!;
+    const status = expectDefined(plugin.settings.taskStatuses.find((s) => !s.core));
+    const card = expectDefined(
+      Array.from(body.querySelectorAll<HTMLElement>('.abyss-settings-card')).find((candidate) =>
+        candidate.textContent.includes(status.name),
+      ),
+    );
+    const search = expectDefined(
+      captured.find(
+        (input) => card.contains(input.el) && input.el.placeholder === 'Search lucide icons…',
+      ),
+    );
 
     search.invokeChange('alert-triangle');
 
     const results = Array.from(
       card.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result'),
     );
-    const clear = results.find((result) => result.title === 'No icon')!;
-    const selected = results.find((result) => result.title === 'alert-triangle')!;
+    const clear = expectDefined(results.find((result) => result.title === 'No icon'));
+    const selected = expectDefined(results.find((result) => result.title === 'alert-triangle'));
     expect(clear).toBeInstanceOf(HTMLButtonElement);
     expect(clear.tabIndex).toBe(0);
     expect(clear.getAttribute('aria-pressed')).toBe('false');
@@ -356,26 +367,32 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     clear.focus();
     clear.click();
 
-    const cleared = Array.from(
-      card.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result'),
-    ).find((result) => result.title === 'No icon')!;
+    const cleared = expectDefined(
+      Array.from(card.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result')).find(
+        (result) => result.title === 'No icon',
+      ),
+    );
     expect(status.icon).toBe('');
     expect(cleared.getAttribute('aria-pressed')).toBe('true');
     expect(activeDocument.activeElement).toBe(cleared);
 
-    const icon = Array.from(
-      card.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result'),
-    ).find((result) => result.title === 'alert-triangle')!;
+    const icon = expectDefined(
+      Array.from(card.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result')).find(
+        (result) => result.title === 'alert-triangle',
+      ),
+    );
     icon.focus();
     icon.click();
 
-    const reselected = Array.from(
-      card.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result'),
-    ).find((result) => result.title === 'alert-triangle')!;
+    const reselected = expectDefined(
+      Array.from(card.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result')).find(
+        (result) => result.title === 'alert-triangle',
+      ),
+    );
     expect(status.icon).toBe('alert-triangle');
     expect(reselected.getAttribute('aria-pressed')).toBe('true');
     expect(activeDocument.activeElement).toBe(reselected);
-    expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+    expect(methodOf(plugin, 'saveSettings')).toHaveBeenCalledTimes(2);
     tab.containerEl.remove();
   });
 
@@ -387,21 +404,27 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     restore();
     activeDocument.body.append(tab.containerEl);
     const body = openStatusesSection(tab);
-    const status = plugin.settings.taskStatuses.find((s) => !s.core)!;
-    const card = Array.from(body.querySelectorAll<HTMLElement>('.abyss-settings-card')).find(
-      (candidate) => candidate.textContent?.includes(status.name),
-    )!;
-    const search = captured.find(
-      (input) => card.contains(input.el) && input.el.placeholder === 'Search lucide icons…',
-    )!;
+    const status = expectDefined(plugin.settings.taskStatuses.find((s) => !s.core));
+    const card = expectDefined(
+      Array.from(body.querySelectorAll<HTMLElement>('.abyss-settings-card')).find((candidate) =>
+        candidate.textContent.includes(status.name),
+      ),
+    );
+    const search = expectDefined(
+      captured.find(
+        (input) => card.contains(input.el) && input.el.placeholder === 'Search lucide icons…',
+      ),
+    );
 
     search.invokeChange('no-matching-icon');
-    const clear = card.querySelector<HTMLButtonElement>('.abyss-status-icon-clear')!;
+    const clear = expectDefined(card.querySelector<HTMLButtonElement>('.abyss-status-icon-clear'));
     expect(card.querySelector('.abyss-status-icon-empty')).not.toBeNull();
     clear.focus();
     clear.click();
 
-    const replacement = card.querySelector<HTMLButtonElement>('.abyss-status-icon-clear')!;
+    const replacement = expectDefined(
+      card.querySelector<HTMLButtonElement>('.abyss-status-icon-clear'),
+    );
     expect(status.icon).toBe('');
     expect(activeDocument.activeElement).toBe(replacement);
     tab.containerEl.remove();

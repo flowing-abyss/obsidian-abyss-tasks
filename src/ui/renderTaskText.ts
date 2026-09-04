@@ -1,12 +1,13 @@
-import { Component, Keymap, MarkdownRenderer, Menu, MenuItem, type App } from 'obsidian';
+import { Keymap, MarkdownRenderer, Menu, type App, type Component, type MenuItem } from 'obsidian';
 import { pairAnchorsToTokens, parseLinks, type LinkToken } from '../parser/links';
 import { showMenuAtMouseEventWithFocus } from './nativeMenuFocus';
+import { runAsyncAction } from './runAsyncAction';
 
 export interface RenderTaskTextOptions {
   app: App;
   sourcePath: string;
   component: Component;
-  onEditLink?: (occurrenceIndex: number, token: LinkToken) => void;
+  onEditLink?: ((occurrenceIndex: number, token: LinkToken) => void) | undefined;
 }
 
 export function renderTaskText(
@@ -24,15 +25,18 @@ export function renderTaskText(
     return;
   }
   const holder = el.createSpan({ cls: 'abyss-md' });
-  void MarkdownRenderer.render(opts.app, markdownText, holder, opts.sourcePath, opts.component);
+  runAsyncAction(
+    MarkdownRenderer.render(opts.app, markdownText, holder, opts.sourcePath, opts.component),
+    'Could not render task text',
+  );
   // Unwrap the single wrapping <p> MarkdownRenderer emits so titles stay inline.
   window.setTimeout(() => {
     // The list may have re-rendered (filter keystroke, store update) and detached this
     // node before the macrotask ran — skip the wasted work in that case.
     if (!holder.isConnected) return;
     const p = holder.querySelector(':scope > p');
-    if (p && holder.childElementCount === 1) {
-      while (p.firstChild) holder.appendChild(p.firstChild);
+    if (p != null && holder.childElementCount === 1) {
+      while (p.firstChild != null) holder.appendChild(p.firstChild);
       p.remove();
     }
     wireLinks(holder, tokens, opts);
@@ -49,13 +53,18 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
       if (!a.hasClass('internal-link')) return; // external links keep their default nav
       e.preventDefault();
       const href = a.getAttribute('data-href') ?? a.getAttribute('href') ?? '';
-      if (href) void opts.app.workspace.openLinkText(href, opts.sourcePath, Keymap.isModEvent(e));
+      if (href.length > 0) {
+        runAsyncAction(
+          opts.app.workspace.openLinkText(href, opts.sourcePath, Keymap.isModEvent(e)),
+          'Could not open task link',
+        );
+      }
     });
     // Arm Obsidian's page-preview (hover) popover for internal links.
     a.addEventListener('mouseover', (e) => {
       if (!a.hasClass('internal-link')) return;
       const href = a.getAttribute('data-href') ?? '';
-      if (href) {
+      if (href.length > 0) {
         opts.app.workspace.trigger('hover-link', {
           event: e,
           source: 'abyss-tasks',
@@ -67,16 +76,17 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
       }
     });
   });
-  if (!opts.onEditLink) return;
+  if (opts.onEditLink == null) return;
   const descriptors = anchors.map((a) => ({
-    text: a.textContent ?? '',
+    text: a.textContent,
     href: a.getAttribute('data-href') ?? a.getAttribute('href') ?? '',
   }));
   const occurrences = pairAnchorsToTokens(descriptors, tokens);
   anchors.forEach((a, i) => {
-    const occurrenceIndex = occurrences[i]!;
-    if (occurrenceIndex < 0) return;
-    const token = tokens[occurrenceIndex]!;
+    const occurrenceIndex = occurrences[i];
+    if (occurrenceIndex === undefined || occurrenceIndex < 0) return;
+    const token = tokens[occurrenceIndex];
+    if (token === undefined) return;
     a.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -92,9 +102,13 @@ function buildEditLinkItem(
   token: LinkToken,
   opts: RenderTaskTextOptions,
 ): (item: MenuItem) => void {
+  const onEditLink = opts.onEditLink;
+  if (onEditLink === undefined) return (): void => {};
   return (item: MenuItem) =>
     item
       .setTitle('Edit link…')
       .setIcon('pencil')
-      .onClick(() => opts.onEditLink!(occurrenceIndex, token));
+      .onClick(() => {
+        onEditLink(occurrenceIndex, token);
+      });
 }

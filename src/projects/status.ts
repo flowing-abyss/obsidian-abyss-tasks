@@ -21,7 +21,7 @@ function matchesStatus(s: ProjectStatus, tags: string[], fm: Record<string, unkn
     const want = s.match.tag.replace(/^#/, '').toLowerCase();
     return tags.some((t) => {
       const ft = t.replace(/^#/, '').toLowerCase();
-      return ft === want || ft.startsWith(want + '/');
+      return ft === want || ft.startsWith(`${want}/`);
     });
   }
   const v = fm[s.match.property];
@@ -56,14 +56,14 @@ export function orderedGroups(statuses: ProjectStatus[], projects: Project[]): S
   const groups: StatusGroup[] = statuses.map((s) => ({
     key: `id:${s.id}`,
     label: s.label,
-    color: s.color,
+    ...(s.color !== undefined && { color: s.color }),
     statusId: s.id,
   }));
   const discovered = new Set<string>();
   let hasNone = false;
   for (const p of projects) {
-    if (p.statusId) continue;
-    if (p.rawStatus) discovered.add(p.rawStatus);
+    if (p.statusId !== null && p.statusId.length > 0) continue;
+    if (p.rawStatus !== null && p.rawStatus.length > 0) discovered.add(p.rawStatus);
     else hasNone = true;
   }
   for (const raw of Array.from(discovered).sort((a, b) => a.localeCompare(b))) {

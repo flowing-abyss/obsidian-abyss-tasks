@@ -3,6 +3,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import {
   configuredTaskApplication,
   createAppWithFiles,
+  expectDefined,
   seedTaskCache,
   useRealMoment,
 } from './helpers';
@@ -15,13 +16,15 @@ describe('TaskApplicationApi command edge cases', () => {
     seedTaskCache(app, 't.md', [{ task: ' ', parent: -1, line: 0 }]);
     const stack = configuredTaskApplication(app, DEFAULT_SETTINGS);
     await stack.index.initialize();
-    const task = stack.tasks.queries.list()[0]!;
+    const task = expectDefined(stack.tasks.queries.list()[0]);
     await stack.tasks.execute({
       type: 'set-status',
       target: { type: 'task', ref: task.ref },
       symbol: '/',
     });
-    expect(await app.vault.cachedRead(app.vault.getMarkdownFiles()[0]!)).toContain('- [/] task');
+    expect(await app.vault.cachedRead(expectDefined(app.vault.getMarkdownFiles()[0]))).toContain(
+      '- [/] task',
+    );
     stack.index.destroy();
   });
 
@@ -30,7 +33,7 @@ describe('TaskApplicationApi command edge cases', () => {
     seedTaskCache(app, 't.md', [{ task: ' ', parent: -1, line: 0 }]);
     const stack = configuredTaskApplication(app, DEFAULT_SETTINGS);
     await stack.index.initialize();
-    const target = stack.tasks.queries.list()[0]!;
+    const target = expectDefined(stack.tasks.queries.list()[0]);
     await stack.tasks.execute({
       type: 'patch',
       target: { type: 'task', ref: target.ref },
@@ -41,7 +44,9 @@ describe('TaskApplicationApi command edge cases', () => {
       target: { type: 'task', ref: target.ref },
       patch: { priority: { type: 'set', value: 'D' } },
     });
-    expect(await app.vault.cachedRead(app.vault.getMarkdownFiles()[0]!)).toBe('- [ ] task 🔺');
+    expect(await app.vault.cachedRead(expectDefined(app.vault.getMarkdownFiles()[0]))).toBe(
+      '- [ ] task 🔺',
+    );
     stack.index.destroy();
   });
 

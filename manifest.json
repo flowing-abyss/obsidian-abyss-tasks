@@ -3,7 +3,7 @@
   "name": "Abyss Tasks",
   "version": "1.2.0",
   "minAppVersion": "1.7.2",
-  "description": "A task management interface for Markdown tasks in Obsidian",
+  "description": "A task management interface for Markdown tasks.",
   "author": "flowing-abyss",
   "authorUrl": "https://github.com/flowing-abyss",
   "fundingUrl": "https://boosty.to/flowing-abyss/donate",

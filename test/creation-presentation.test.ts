@@ -1,7 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { Notice, type App } from 'obsidian';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Notice, Platform, type App } from 'obsidian';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -24,9 +22,16 @@ import {
 } from '../src/ui/taskPresentationIdentity';
 import type { CalendarOccurrence } from '../src/views/calendarOccurrences';
 import { applyOccurrenceDomState } from '../src/views/timegrid/renderTaskMeta';
-import { freshContainer, task, useRealMoment } from './helpers';
+import { expectDefined, freshContainer, methodOf, task, useRealMoment } from './helpers';
 
-const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+async function loadStylesFixture(): Promise<string> {
+  if (!Platform.isDesktop) throw new Error('CSS fixture requires the desktop test runtime');
+  const fileSystem = await import('node:fs');
+  const nodePath = await import('node:path');
+  return fileSystem.readFileSync(nodePath.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+}
+
+const css = await loadStylesFixture();
 useRealMoment();
 
 function exact(taskSnapshot: TaskSnapshot): TaskResolution {
@@ -96,11 +101,31 @@ function controllerHarness(
 }
 
 function renderIdentity(root: HTMLElement, ref: TaskRef): HTMLElement {
-  const element = root.ownerDocument.createElement('div');
+  const element = root.createDiv();
   element.getBoundingClientRect = () => rect(10, 20, 100, 40);
   applyTaskPresentationIdentity(element, ref);
-  root.appendChild(element);
   return element;
+}
+
+type ComputedStyleOverride = Readonly<Partial<Record<'display' | 'overflowY', string>>>;
+
+function mockComputedStyles(
+  root: HTMLElement,
+  overrides: ReadonlyMap<Element, ComputedStyleOverride>,
+): MockInstance<Window['getComputedStyle']> {
+  const ownerWindow = expectDefined(root.ownerDocument.defaultView);
+  const original = ownerWindow.getComputedStyle.bind(ownerWindow);
+  return vi.spyOn(ownerWindow, 'getComputedStyle').mockImplementation((element) => {
+    const style = original(element);
+    const override = overrides.get(element);
+    if (override?.display !== undefined) {
+      Object.defineProperty(style, 'display', { configurable: true, value: override.display });
+    }
+    if (override?.overflowY !== undefined) {
+      Object.defineProperty(style, 'overflowY', { configurable: true, value: override.overflowY });
+    }
+    return style;
+  });
 }
 
 function measurePresentationRoot(root: HTMLElement): void {
@@ -118,7 +143,7 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
     width,
     height,
     toJSON: () => ({}),
-  } as DOMRect;
+  };
 }
 
 describe('task presentation identity', () => {
@@ -233,6 +258,7 @@ describe('CreationPresentationController', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -366,8 +392,8 @@ describe('CreationPresentationController', () => {
     const snapshots = Array.from({ length: 21 }, (_, line) =>
       task({ source: { filePath: 'capture.md', line } }),
     );
-    const first = snapshots[0]!;
-    const last = snapshots[20]!;
+    const first = expectDefined(snapshots[0]);
+    const last = expectDefined(snapshots[20]);
     const resolutions = new Map<string, TaskResolution>();
     const queries: TaskQueryApi = {
       list: () => [],
@@ -486,13 +512,14 @@ describe('CreationPresentationController', () => {
     const harness = controllerHarness(exact(created));
     const hidden = renderIdentity(harness.root, created.ref);
     const visible = renderIdentity(harness.root, created.ref);
-    hidden.style.display = 'none';
+    const styleSpy = mockComputedStyles(harness.root, new Map([[hidden, { display: 'none' }]]));
     harness.controller.afterRender(harness.root);
 
     harness.controller.present(result, describeTaskCreationResult(result));
 
     expect(hidden.classList.contains('is-just-created')).toBe(false);
     expect(visible.classList.contains('is-just-created')).toBe(true);
+    styleSpy.mockRestore();
   });
 
   it('keeps the original deadline when rebinding feedback after a post-success render', () => {
@@ -525,25 +552,31 @@ describe('CreationPresentationController', () => {
     const harness = controllerHarness(exact(created));
     harness.root.getBoundingClientRect = () => rect(0, 0, 600, 700);
     const clippedScrollport = harness.root.createDiv();
-    clippedScrollport.style.overflowY = 'auto';
     clippedScrollport.getBoundingClientRect = () => rect(0, 100, 600, 400);
     const clipped = renderIdentity(clippedScrollport, created.ref);
     clipped.getBoundingClientRect = () => rect(10, 20, 100, 40);
     const visibleScrollport = harness.root.createDiv();
-    visibleScrollport.style.overflowY = 'auto';
     visibleScrollport.getBoundingClientRect = () => rect(0, 100, 600, 400);
     const visible = renderIdentity(visibleScrollport, created.ref);
     visible.getBoundingClientRect = () => rect(10, 120, 100, 40);
     clipped.scrollIntoView = vi.fn();
     visible.scrollIntoView = vi.fn();
+    const styleSpy = mockComputedStyles(
+      harness.root,
+      new Map([
+        [clippedScrollport, { overflowY: 'auto' }],
+        [visibleScrollport, { overflowY: 'auto' }],
+      ]),
+    );
     harness.controller.afterRender(harness.root);
 
     harness.controller.present(result, describeTaskCreationResult(result));
 
     expect(clipped.classList.contains('is-just-created')).toBe(false);
     expect(visible.classList.contains('is-just-created')).toBe(true);
-    expect(clipped.scrollIntoView).not.toHaveBeenCalled();
-    expect(visible.scrollIntoView).not.toHaveBeenCalled();
+    expect(methodOf(clipped, 'scrollIntoView')).not.toHaveBeenCalled();
+    expect(methodOf(visible, 'scrollIntoView')).not.toHaveBeenCalled();
+    styleSpy.mockRestore();
   });
 
   it('scrolls one canonical match clipped by a nested scrollport', () => {
@@ -552,12 +585,15 @@ describe('CreationPresentationController', () => {
     const harness = controllerHarness(exact(created));
     harness.root.getBoundingClientRect = () => rect(0, 0, 600, 700);
     const scrollport = harness.root.createDiv();
-    scrollport.style.overflowY = 'auto';
     scrollport.getBoundingClientRect = () => rect(0, 100, 600, 400);
     const clipped = renderIdentity(scrollport, created.ref);
     clipped.getBoundingClientRect = () => rect(10, 20, 100, 40);
     const scroll = vi.fn();
     clipped.scrollIntoView = scroll;
+    const styleSpy = mockComputedStyles(
+      harness.root,
+      new Map([[scrollport, { overflowY: 'auto' }]]),
+    );
     harness.controller.afterRender(harness.root);
 
     harness.controller.present(result, describeTaskCreationResult(result));
@@ -570,6 +606,7 @@ describe('CreationPresentationController', () => {
       block: 'nearest',
       inline: 'nearest',
     });
+    styleSpy.mockRestore();
   });
 
   it('scrolls the first offscreen match to the nearest edge and clears normal feedback at 1100 ms', () => {

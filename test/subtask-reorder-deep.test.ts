@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
+import { expectDefined } from './helpers';
 
 describe('TaskBlockEditor reorder losslessness', () => {
   it('preserves CRLF, final newline, quotes, and mixed indentation', () => {
@@ -9,7 +10,7 @@ describe('TaskBlockEditor reorder losslessness', () => {
       '>\t  - > description\r\n' +
       '>   - [ ] Space child\r\n';
     const editor = new TaskBlockEditor();
-    const block = editor.rootBlocks(content)[0]!;
+    const block = expectDefined(editor.rootBlocks(content)[0]);
     const result = editor.edit(
       content,
       block,
@@ -45,7 +46,7 @@ describe('TaskBlockEditor reorder losslessness', () => {
   it('rejects a range that is not an immediate child of the confirmed parent', () => {
     const content = '- [ ] Parent\n  - [ ] Branch\n    - [ ] Nested\n  - [ ] Sibling';
     const editor = new TaskBlockEditor();
-    const block = editor.rootBlocks(content)[0]!;
+    const block = expectDefined(editor.rootBlocks(content)[0]);
 
     expect(
       editor.edit(

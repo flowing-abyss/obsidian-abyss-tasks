@@ -61,80 +61,117 @@ export class CaptureTargetResolver {
 
   async resolve(context: CaptureContext): Promise<CaptureTarget> {
     const frozenContext = cloneContext(context);
-    const defaultPrefix = this.settings.taskPrefix.trim();
     if (frozenContext.type === 'project-dashboard') {
       return await this.projectTarget(frozenContext, frozenContext.path);
     }
     if (frozenContext.type === 'default') {
-      if (frozenContext.source === 'calendar') {
-        const today = this.today();
-        return {
-          label: 'Today · today',
-          context: frozenContext,
-          session: await this.application.planCreate({ type: 'configured-default' }),
-          markdownPrefix: defaultPrefix,
-          markdownSuffixes: [],
-          initial: { due: { type: 'set', value: today } },
-        };
-      }
+      return await this.defaultTarget(frozenContext);
+    }
+    return await this.listTarget(frozenContext);
+  }
+
+  private async defaultTarget(
+    context: Extract<CaptureContext, { type: 'default' }>,
+  ): Promise<CaptureTarget> {
+    const markdownPrefix = this.settings.taskPrefix.trim();
+    const calendarToday = context.source === 'calendar' ? this.today() : undefined;
+    const session = await this.application.planCreate({ type: 'configured-default' });
+    if (calendarToday === undefined) {
       return {
         label: 'Default destination',
-        context: frozenContext,
-        session: await this.application.planCreate({ type: 'configured-default' }),
-        markdownPrefix: defaultPrefix,
+        context,
+        session,
+        markdownPrefix,
         markdownSuffixes: [],
       };
     }
+    return {
+      label: 'Today · today',
+      context,
+      session,
+      markdownPrefix,
+      markdownSuffixes: [],
+      initial: { due: { type: 'set', value: calendarToday } },
+    };
+  }
 
-    const selection = frozenContext.selection;
+  private async listTarget(
+    context: Extract<CaptureContext, { type: 'list' }>,
+  ): Promise<CaptureTarget> {
+    const { selection } = context;
     if (selection === 'inbox') {
-      const tag =
-        this.settings.inbox.mode === 'untagged' ? '' : normalizedTag(this.settings.inbox.tag);
-      return {
-        label: tag ? `Inbox · ${tag}` : 'Inbox · untagged',
-        context: frozenContext,
-        session: await this.application.planCreate({ type: 'configured-default' }),
-        markdownPrefix: '',
-        markdownSuffixes: tag ? [tag] : [],
-      };
+      return await this.inboxTarget(context);
     }
     if (selection === 'today' || selection === 'upcoming') {
-      const today = this.today();
-      const upcoming = selection === 'upcoming';
-      const due = upcoming ? shiftLocalDate(today, 1)! : today;
-      return {
-        label: upcoming ? 'Upcoming · tomorrow' : 'Today · today',
-        context: frozenContext,
-        session: await this.application.planCreate({ type: 'configured-default' }),
-        markdownPrefix: defaultPrefix,
-        markdownSuffixes: [],
-        initial: { due: { type: 'set', value: due } },
-      };
+      return await this.datedListTarget(context, selection);
     }
     if (selection.type === 'tag') {
-      const tag = normalizedTag(selection.tag);
-      return {
-        label: tag,
-        context: frozenContext,
-        session: await this.application.planCreate({ type: 'configured-default' }),
-        markdownPrefix: '',
-        markdownSuffixes: tag ? [tag] : [],
-      };
+      return await this.tagTarget(context, normalizedTag(selection.tag));
     }
     if (selection.type === 'project') {
-      return await this.projectTarget(frozenContext, selection.path);
+      return await this.projectTarget(context, selection.path);
     }
+    return await this.tagGroupTarget(context, selection.groupId);
+  }
 
-    const group = this.settings.tagGroups.find((candidate) => candidate.id === selection.groupId);
+  private async inboxTarget(
+    context: Extract<CaptureContext, { type: 'list' }>,
+  ): Promise<CaptureTarget> {
+    const tag =
+      this.settings.inbox.mode === 'untagged' ? '' : normalizedTag(this.settings.inbox.tag);
+    return {
+      label: tag.length > 0 ? `Inbox · ${tag}` : 'Inbox · untagged',
+      context,
+      session: await this.application.planCreate({ type: 'configured-default' }),
+      markdownPrefix: '',
+      markdownSuffixes: tag.length > 0 ? [tag] : [],
+    };
+  }
+
+  private async datedListTarget(
+    context: Extract<CaptureContext, { type: 'list' }>,
+    selection: 'today' | 'upcoming',
+  ): Promise<CaptureTarget> {
+    const today = this.today();
+    const upcoming = selection === 'upcoming';
+    const due = upcoming ? (shiftLocalDate(today, 1) ?? today) : today;
+    return {
+      label: upcoming ? 'Upcoming · tomorrow' : 'Today · today',
+      context,
+      session: await this.application.planCreate({ type: 'configured-default' }),
+      markdownPrefix: this.settings.taskPrefix.trim(),
+      markdownSuffixes: [],
+      initial: { due: { type: 'set', value: due } },
+    };
+  }
+
+  private async tagTarget(
+    context: Extract<CaptureContext, { type: 'list' }>,
+    tag: string,
+  ): Promise<CaptureTarget> {
+    return {
+      label: tag,
+      context,
+      session: await this.application.planCreate({ type: 'configured-default' }),
+      markdownPrefix: '',
+      markdownSuffixes: tag.length > 0 ? [tag] : [],
+    };
+  }
+
+  private async tagGroupTarget(
+    context: Extract<CaptureContext, { type: 'list' }>,
+    groupId: string,
+  ): Promise<CaptureTarget> {
+    const group = this.settings.tagGroups.find((candidate) => candidate.id === groupId);
     const groupName = group?.name ?? 'Group';
     const tag =
       group?.mode === 'prefix'
         ? normalizedTag(group.prefix ?? '')
         : normalizedTag(group?.tags?.[0] ?? '');
-    if (!tag) {
+    if (tag.length === 0) {
       return {
         label: `${groupName} · unavailable`,
-        context: frozenContext,
+        context,
         session: unavailableSession(),
         markdownPrefix: '',
         markdownSuffixes: [],
@@ -142,7 +179,7 @@ export class CaptureTargetResolver {
     }
     return {
       label: `${groupName} · ${tag}`,
-      context: frozenContext,
+      context,
       session: await this.application.planCreate({ type: 'configured-default' }),
       markdownPrefix: '',
       markdownSuffixes: [tag],

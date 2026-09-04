@@ -6,7 +6,7 @@ import { TYPE_ORDER } from './statusConstants';
 
 export class StatusRegistry {
   private defs: TaskStatusDef[] = [];
-  private catalog: StatusCatalog;
+  private readonly catalog: StatusCatalog;
   private byIdMap = new Map<string, TaskStatusDef>();
   private orderByIdMap = new Map<string, number>();
 
@@ -28,7 +28,7 @@ export class StatusRegistry {
 
   bySymbol(char: string): TaskStatusDef | undefined {
     const rule = this.catalog.ruleForSymbol(char);
-    return rule ? this.byIdMap.get(rule.id) : undefined;
+    return rule != null ? this.byIdMap.get(rule.id) : undefined;
   }
 
   typeForSymbol(char: string): TaskStatus {
@@ -46,26 +46,34 @@ export class StatusRegistry {
   }
 
   defaultTodo(): TaskStatusDef {
-    return (this.defaultForType('todo') ?? this.defs[0])!;
+    return this.requiredDefault('todo');
   }
 
   defaultDone(): TaskStatusDef {
-    return (this.defaultForType('done') ?? this.defs[0])!;
+    return this.requiredDefault('done');
   }
 
   defaultForType(type: TaskStatusType): TaskStatusDef | undefined {
     const rule = this.catalog.defaultForType(type);
-    return rule ? this.byIdMap.get(rule.id) : undefined;
+    return rule != null ? this.byIdMap.get(rule.id) : undefined;
   }
 
   orderIndex(char: string): number {
     const rule = this.catalog.ruleForSymbol(char);
-    return rule
+    return rule != null
       ? (this.orderByIdMap.get(rule.id) ?? Number.MAX_SAFE_INTEGER)
       : Number.MAX_SAFE_INTEGER;
   }
 
   all(): TaskStatusDef[] {
     return this.defs;
+  }
+
+  private requiredDefault(type: TaskStatusType): TaskStatusDef {
+    const fallback = this.defaultForType(type) ?? this.defs[0];
+    if (fallback === undefined) {
+      throw new Error('Status registry requires at least one status');
+    }
+    return fallback;
   }
 }

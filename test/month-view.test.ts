@@ -6,7 +6,14 @@ import { StatusRegistry } from '../src/status/StatusRegistry';
 import type { TaskSnapshot as Task } from '../src/tasks';
 import { taskPresentationKey } from '../src/ui/taskPresentationIdentity';
 import { MonthView } from '../src/views/MonthView';
-import { dispatchDnD, freshContainer, resolvedConfig, task, useRealMoment } from './helpers';
+import {
+  dispatchDnD,
+  expectDefined,
+  freshContainer,
+  resolvedConfig,
+  task,
+  useRealMoment,
+} from './helpers';
 
 useRealMoment();
 
@@ -53,18 +60,15 @@ describe('MonthView', () => {
       expect(c.querySelectorAll('.wrappers')).toHaveLength(1);
     });
 
-    it('gridHeads has 1 empty corner + 7 weekday heads = 8 total', () => {
+    it.each([
+      ['.gridHeads .gridHead', 8],
+      ['.wrappers .wrapper', 6],
+      ['.wrappers .cell', 42],
+    ] as const)('renders %s with the expected count', (selector, expectedCount) => {
       const { view } = makeView();
       const c = freshContainer();
       view.render(c, [], resolvedConfig());
-      expect(c.querySelectorAll('.gridHeads .gridHead')).toHaveLength(8);
-    });
-
-    it('wrappers has 6 .wrapper rows (always 6 weeks)', () => {
-      const { view } = makeView();
-      const c = freshContainer();
-      view.render(c, [], resolvedConfig());
-      expect(c.querySelectorAll('.wrappers .wrapper')).toHaveLength(6);
+      expect(c.querySelectorAll(selector)).toHaveLength(expectedCount);
     });
 
     it('each wrapper has one .wrapperButton with data-week + data-year + W<n> text', () => {
@@ -77,15 +81,8 @@ describe('MonthView', () => {
         const el = b as HTMLElement;
         expect(el.getAttribute('data-week')).not.toBeNull();
         expect(el.getAttribute('data-year')).not.toBeNull();
-        expect(el.textContent ?? '').toMatch(/^W\d+$/);
+        expect(el.textContent).toMatch(/^W\d+$/);
       });
-    });
-
-    it('each wrapper has 7 .cell elements → 42 cells total', () => {
-      const { view } = makeView();
-      const c = freshContainer();
-      view.render(c, [], resolvedConfig());
-      expect(c.querySelectorAll('.wrappers .cell')).toHaveLength(42);
     });
 
     it('each cell has data-weekday attribute', () => {
@@ -113,35 +110,17 @@ describe('MonthView', () => {
       vi.useRealTimers();
     });
 
-    it('prev month days have prevMonth class', () => {
-      // June 2026 starts on Monday (firstDayOfWeek=1) → no prevMonth cells.
-      // Pin to May 2026 (starts Friday) so prevMonth cells exist.
+    it.each([
+      ['2026-05-15T12:00:00', '.cell.prevMonth'],
+      ['2026-06-15T12:00:00', '.cell.nextMonth'],
+      ['2026-06-15T12:00:00', '.cell.newMonth'],
+    ] as const)('renders %s cells for the pinned month', (systemTime, selector) => {
       vi.useFakeTimers();
-      vi.setSystemTime(new Date('2026-05-15T12:00:00'));
+      vi.setSystemTime(new Date(systemTime));
       const { view } = makeView();
       const c = freshContainer();
       view.render(c, [], resolvedConfig());
-      expect(c.querySelectorAll('.cell.prevMonth').length).toBeGreaterThan(0);
-      vi.useRealTimers();
-    });
-
-    it('next month days have nextMonth class', () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date('2026-06-15T12:00:00'));
-      const { view } = makeView();
-      const c = freshContainer();
-      view.render(c, [], resolvedConfig());
-      expect(c.querySelectorAll('.cell.nextMonth').length).toBeGreaterThan(0);
-      vi.useRealTimers();
-    });
-
-    it('first-of-month cells have newMonth class', () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date('2026-06-15T12:00:00'));
-      const { view } = makeView();
-      const c = freshContainer();
-      view.render(c, [], resolvedConfig());
-      expect(c.querySelectorAll('.cell.newMonth').length).toBeGreaterThan(0);
+      expect(c.querySelectorAll(selector).length).toBeGreaterThan(0);
       vi.useRealTimers();
     });
 
@@ -213,7 +192,7 @@ describe('MonthView', () => {
       const btn = c.querySelector('.wrapperButton') as HTMLElement;
       btn.click();
       expect(spies.onWeekClick).toHaveBeenCalledTimes(1);
-      const [w, y] = spies.onWeekClick.mock.calls[0]!;
+      const [w, y] = expectDefined(spies.onWeekClick.mock.calls[0]);
       expect(typeof w).toBe('string');
       expect(typeof y).toBe('string');
     });
@@ -313,8 +292,8 @@ describe('MonthView', () => {
       const cellContent = c.querySelector('.cell.today .cellContent') as HTMLElement;
       dispatchDnD(cellContent, 'drop', 'a.md:::5');
       expect(spies.onDrop).toHaveBeenCalledTimes(1);
-      expect(spies.onDrop.mock.calls[0]![0]).toBe('a.md:::5');
-      expect(typeof spies.onDrop.mock.calls[0]![1]).toBe('string');
+      expect(expectDefined(spies.onDrop.mock.calls[0])[0]).toBe('a.md:::5');
+      expect(typeof expectDefined(spies.onDrop.mock.calls[0])[1]).toBe('string');
       vi.useRealTimers();
     });
 
@@ -369,9 +348,13 @@ describe('MonthView', () => {
       const { view } = makeView();
       const c = freshContainer();
       view.render(c, [], resolvedConfig());
-      expect(() => view.destroy()).not.toThrow();
+      expect(() => {
+        view.destroy();
+      }).not.toThrow();
       // re-render after destroy should still work
-      expect(() => view.render(c, [], resolvedConfig())).not.toThrow();
+      expect(() => {
+        view.render(c, [], resolvedConfig());
+      }).not.toThrow();
     });
   });
 });

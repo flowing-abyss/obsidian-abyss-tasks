@@ -1,8 +1,13 @@
-// eslint-disable-next-line import/no-nodejs-modules -- this contract reads the shipped stylesheet.
-import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
-const css = readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8');
+function readStyles(): string {
+  const styles = ts.sys.readFile(ts.sys.resolvePath(`${import.meta.dirname}/../styles.css`));
+  if (styles === undefined) throw new Error('Expected styles.css to be readable');
+  return styles;
+}
+
+const css = readStyles();
 
 interface CssRule {
   selector: string;

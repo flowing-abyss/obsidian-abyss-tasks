@@ -50,7 +50,7 @@ export function renderRecurrenceBadge(
       title: tooltip,
       'aria-label': tooltip,
       'data-recurrence-validity': input.validity,
-      ...(input.forecast && { 'data-recurrence-forecast': 'true' }),
+      ...((input.forecast ?? false) && { 'data-recurrence-forecast': 'true' }),
     },
   });
   const icon = badge.createSpan({

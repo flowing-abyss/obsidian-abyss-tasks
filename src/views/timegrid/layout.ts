@@ -88,27 +88,38 @@ const MIN_BLOCK_GAP_MARGIN_PX = 2;
  * that column, in which case the CSS min-height is free to apply in full).
  */
 export function capMinHeightsPx(positioned: PositionedBlock[]): Map<PositionedBlock, number> {
+  const byColumn = blocksByColumn(positioned);
+  const caps = new Map<PositionedBlock, number>();
+  for (const columnBlocks of byColumn.values()) addColumnCaps(columnBlocks, caps);
+  return caps;
+}
+
+function blocksByColumn(positioned: readonly PositionedBlock[]): Map<number, PositionedBlock[]> {
   const byColumn = new Map<number, PositionedBlock[]>();
   for (const b of positioned) {
     const arr = byColumn.get(b.column);
-    if (arr) arr.push(b);
+    if (arr != null) arr.push(b);
     else byColumn.set(b.column, [b]);
   }
+  return byColumn;
+}
 
-  const caps = new Map<PositionedBlock, number>();
-  for (const columnBlocks of byColumn.values()) {
-    // `positioned` (and therefore each per-column subsequence) is already in ascending
-    // startMinutes order, since packOverlaps builds it by iterating its own time-sorted array.
-    for (let i = 0; i < columnBlocks.length; i++) {
-      const cur = columnBlocks[i]!;
-      const next = columnBlocks[i + 1];
-      const gapPx = next
-        ? minutesToPixels(next.startMinutes - cur.startMinutes) - MIN_BLOCK_GAP_MARGIN_PX
-        : Infinity;
-      caps.set(cur, gapPx);
-    }
+function addColumnCaps(
+  columnBlocks: readonly PositionedBlock[],
+  caps: Map<PositionedBlock, number>,
+): void {
+  // `positioned` (and therefore each per-column subsequence) is already in ascending
+  // startMinutes order, since packOverlaps builds it by iterating its own time-sorted array.
+  for (let i = 0; i < columnBlocks.length; i++) {
+    const current = columnBlocks[i];
+    if (current === undefined) continue;
+    const next = columnBlocks[i + 1];
+    const gapPx =
+      next == null
+        ? Infinity
+        : minutesToPixels(next.startMinutes - current.startMinutes) - MIN_BLOCK_GAP_MARGIN_PX;
+    caps.set(current, gapPx);
   }
-  return caps;
 }
 
 /**
@@ -118,18 +129,19 @@ export function capMinHeightsPx(positioned: PositionedBlock[]): Map<PositionedBl
  * within each maximal overlapping cluster.
  */
 export function packOverlaps(blocks: readonly TimedBlockInput[]): PositionedBlock[] {
-  const sorted = [...blocks].sort(
-    (a, b) =>
-      a.startMinutes - b.startMinutes ||
-      taskLayoutIdentity(a.task).localeCompare(taskLayoutIdentity(b.task)),
-  );
+  const sorted = [...blocks].sort((a, b) => {
+    const startOrder = a.startMinutes - b.startMinutes;
+    return startOrder !== 0
+      ? startOrder
+      : taskLayoutIdentity(a.task).localeCompare(taskLayoutIdentity(b.task));
+  });
   const positioned: PositionedBlock[] = [];
   let columnEnds: number[] = [];
   let cluster: PositionedBlock[] = [];
   let clusterEnd = -Infinity;
 
   const closeCluster = (): void => {
-    if (!cluster.length) return;
+    if (cluster.length === 0) return;
     const columnsUsed = Math.max(...cluster.map((b) => b.column)) + 1;
     for (const b of cluster) b.columns = columnsUsed;
     cluster = [];
