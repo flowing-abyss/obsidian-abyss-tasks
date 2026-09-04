@@ -217,12 +217,13 @@ references for its changed descendants. An unchanged batch preserves the existin
 The batch stages one authority transition with an explicit predecessor revision for each consumed
 root. `TaskIndex` passes those individual mappings into reconciliation, so either edited root can
 converge to its own successor through the normal index event. The legacy one-source authority
-staging path retains its recurrence fan-out semantics. A rejected processor aborts the batch and
-revokes any early-observed forward mappings. The repository rereads authoritative content and
-restores the original refs when the original bytes remain. If a processor reports an error after
-persisting the complete candidate, the repository preserves the actual bytes and returns the
-existing I/O error with unknown content state; it does not retain the failed operation's writable
-provenance or attempt a compensating file write.
+staging path retains its recurrence fan-out semantics. After processor rejection, the repository
+holds the file reservation until its authoritative read finishes, then synchronously aborts the
+batch, revokes early-observed forward mappings, and restores the original refs when the original
+bytes remain. A failed read still releases the reservation and revokes those mappings. If a
+processor reports an error after persisting the complete candidate, the repository preserves the
+actual bytes and returns the existing I/O error with unknown content state; it does not retain the
+failed operation's writable provenance or attempt a compensating file write.
 
 ### Creating a task
 

@@ -1467,12 +1467,16 @@ export class ObsidianTaskRepository implements TaskRepository {
     transaction: EditTransaction,
   ): Promise<void> {
     if (transaction.transitionToken === undefined) return;
-    this.options.refAuthority?.abort(transaction.transitionToken);
-    for (const { baseRoot } of request.edits) {
-      this.options.snapshotState?.discardAuthoritySuccessor?.(baseRoot.ref);
-    }
     try {
-      const content = await this.app.vault.read(file);
+      let content: string;
+      try {
+        content = await this.app.vault.read(file);
+      } finally {
+        this.options.refAuthority?.abort(transaction.transitionToken);
+        for (const { baseRoot } of request.edits) {
+          this.options.snapshotState?.discardAuthoritySuccessor?.(baseRoot.ref);
+        }
+      }
       this.restoreBatchReferences(request, content);
     } catch {
       // The I/O result records that final content state is unknown.

@@ -19,6 +19,7 @@ import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/
 import {
   canonicalStatusCatalog,
   createAppWithFiles,
+  deferred,
   expectDefined,
   flushMicrotasks,
 } from '../helpers';
@@ -382,6 +383,67 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
 }
 
 describe('Obsidian batch transaction', () => {
+  it.each([false, true])(
+    'keeps a competing edit after delayed rollback reading (read failure: %s)',
+    async (readFails) => {
+      const source = '\n- [ ] Blocker\n- [ ] Dependent\n- [ ] Later\n';
+      const expected = '\n- [ ] Blocker\n- [ ] Dependent\n- [ ] Later 🆔 later\n';
+      const h = await harness('obsidian', source);
+      const later = expectDefined(h.roots[2]);
+      const laterCommand = {
+        type: 'set-dependency-id' as const,
+        target: { type: 'task' as const, ref: later.ref },
+        id: 'later',
+      };
+      const rawRead = h.app.vault.read.bind(h.app.vault);
+      const readStarted = deferred<void>();
+      const finishRead = deferred<void>();
+      let candidate = '';
+      vi.spyOn(h.app.vault, 'process').mockImplementationOnce(async (file, transform) => {
+        candidate = transform(await rawRead(file));
+        h.index.installCommittedContent(path, candidate);
+        throw new Error('processor rejected after early observation');
+      });
+      vi.spyOn(h.app.vault, 'read').mockImplementationOnce(async (file) => {
+        const captured = await rawRead(file);
+        readStarted.resolve();
+        await finishRead.promise;
+        if (readFails) throw new Error('rollback read rejected');
+        return captured;
+      });
+
+      const rejectedBatch = h.repository.editBatch(pair(h.roots));
+      await readStarted.promise;
+      const competingAttempt = await h.repository.edit(laterCommand);
+      finishRead.resolve();
+      await expect(rejectedBatch).resolves.toMatchObject({
+        type: 'io-error',
+        contentState: 'unknown',
+      });
+      const competingCommit =
+        competingAttempt.type === 'committed'
+          ? competingAttempt
+          : await h.repository.edit(laterCommand);
+
+      expect(competingCommit).toMatchObject({ type: 'committed', changed: true });
+      if (competingCommit.type !== 'committed' || competingCommit.outcome.type !== 'task')
+        throw new Error('missing competing task outcome');
+      expect(await h.read()).toBe(expected);
+      const current = expectDefined(h.index.list({ filePath: path })[2]);
+      expect(current.dependencyId).toBe('later');
+      expect(current.ref).toEqual(competingCommit.outcome.task.ref);
+      expect(h.index.resolve(competingCommit.outcome.task.ref)).toMatchObject({
+        type: 'exact',
+        task: { ref: current.ref },
+      });
+      expect(competingAttempt).toMatchObject({ type: 'conflict' });
+      expect(h.authority.observe(path, candidate)).toEqual([]);
+      expect(h.authority.observe(path, expected)).toEqual([]);
+      for (const root of h.roots.slice(0, 2))
+        expect(h.index.authoritySuccessor(root.ref)).toBeUndefined();
+    },
+  );
+
   it('keeps authoritative bytes but revokes speculative provenance after a late processor rejection', async () => {
     const source = '\n- [ ] Blocker\n- [ ] Dependent\n';
     const candidate = '\n- [ ] Blocker 🆔 blocker\n- [ ] Dependent ⛔ blocker\n';
