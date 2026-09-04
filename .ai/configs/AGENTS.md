@@ -31,6 +31,11 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
   parallel mechanism.
 - Fix dependency-cruiser and architecture-test violations at their source; never weaken a rule or
   add a blanket exception.
+- Read `ARCHITECTURE.md` before planning or implementing a cross-cutting change. Use CodeGraph and
+  the source code to verify the current implementation.
+- Update `ARCHITECTURE.md` in the same commit when component ownership, a public boundary,
+  dependency direction, a critical data flow, or a persisted source of truth changes. Keep future
+  architecture in local specs until it is implemented.
 - When extending an existing workflow, preserve its interaction model and reuse its rendering,
   commands, menus, and state semantics. Do not create a parallel approximation merely because it
   is locally simpler.
