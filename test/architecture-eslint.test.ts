@@ -12,6 +12,7 @@ const ARCHITECTURE_RULES = new Set([
   'no-restricted-syntax',
   'no-restricted-globals',
 ]);
+const ESLINT_COLD_START_TIMEOUT_MS = 30_000;
 
 interface Diagnostic {
   readonly ruleId: string | null;
@@ -53,7 +54,7 @@ describe('task architecture ESLint boundaries', () => {
       expectParseSafe(items);
       expect(architectureDiagnostics(items)).toEqual([]);
     },
-    15_000,
+    ESLINT_COLD_START_TIMEOUT_MS,
   );
 
   it.each([

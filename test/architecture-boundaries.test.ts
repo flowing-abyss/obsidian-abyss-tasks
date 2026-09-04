@@ -6,8 +6,6 @@ const SRC_ROOT = ts.sys.resolvePath(`${ROOT}/src`);
 const TASK_PUBLIC_ENTRY = 'src/tasks';
 const RECURRENCE_ENGINE = 'src/tasks/domain/recurrence.ts';
 
-const PRESENTATION_PATH = /^src\/(?:code-block|panels|ui|views)\//u;
-const PRESENTATION_FILES = new Set(['src/settings/SettingsTab.ts']);
 const LEGACY_BRIDGE_FILES = [
   'src/mutation/TaskLocator.ts',
   'src/mutation/TaskMutationService.ts',
@@ -274,64 +272,37 @@ function importsFromSyntax(module: ts.SourceFile): ImportRecord[] {
   return result;
 }
 
-function domainDependencyViolation(path: string, record: ImportRecord): string | undefined {
-  if (!path.startsWith('src/tasks/domain/')) return undefined;
-  if (path === RECURRENCE_ENGINE && record.specifier === 'rrule') return undefined;
-  const target = resolvedImport(path, record.specifier);
-  const forbiddenTarget = target?.startsWith('src/tasks/domain/') !== true;
-  return forbiddenTarget ? `${path} -> ${record.specifier}` : undefined;
+function rruleImportViolationsFor(path: string, records: readonly ImportRecord[]): string[] {
+  return records
+    .filter(({ specifier }) => specifier === 'rrule' && path !== RECURRENCE_ENGINE)
+    .map(({ specifier }) => `${path} -> ${specifier}`);
 }
 
-function applicationDependencyViolation(path: string, record: ImportRecord): string | undefined {
-  if (!path.startsWith('src/tasks/application/')) return undefined;
-  const target = resolvedImport(path, record.specifier);
-  const allowed =
-    target?.startsWith('src/tasks/application/') === true ||
-    target?.startsWith('src/tasks/domain/') === true;
-  return allowed ? undefined : `${path} -> ${record.specifier}`;
-}
-
-function infrastructureDependencyViolations(path: string, record: ImportRecord): string[] {
+function infrastructureNoticeImportViolationsFor(
+  path: string,
+  records: readonly ImportRecord[],
+): string[] {
   if (!path.startsWith('src/tasks/infrastructure/')) return [];
-  const violations: string[] = [];
-  const target = resolvedImport(path, record.specifier);
-  if (target !== undefined && /^(?:src\/(?:panels|ui|views))(?:\/|$)/u.test(target)) {
-    violations.push(`${path} -> ${record.specifier}`);
-  }
-  if (
-    record.specifier === 'obsidian' &&
-    (record.names.includes('Notice') || record.names.includes('*'))
-  ) {
-    violations.push(`${path} -> obsidian:${record.names.join(',')}`);
-  }
-  return violations;
+  return records
+    .filter(
+      ({ specifier, names }) =>
+        specifier === 'obsidian' && (names.includes('Notice') || names.includes('*')),
+    )
+    .map(({ names }) => `${path} -> obsidian:${names.join(',')}`);
 }
 
-function presentationDependencyViolation(path: string, record: ImportRecord): string | undefined {
-  if (!PRESENTATION_PATH.test(path) && !PRESENTATION_FILES.has(path)) return undefined;
-  const target = resolvedImport(path, record.specifier);
-  return target?.startsWith('src/tasks/') === true && target !== TASK_PUBLIC_ENTRY
-    ? `${path} -> ${record.specifier}`
-    : undefined;
-}
-
-function dependencyViolationsFor(path: string, records: readonly ImportRecord[]): string[] {
-  return records.flatMap((record) => {
-    const single = [
-      domainDependencyViolation(path, record),
-      applicationDependencyViolation(path, record),
-      presentationDependencyViolation(path, record),
-    ].filter((value): value is string => value !== undefined);
-    return [...single, ...infrastructureDependencyViolations(path, record)];
-  });
-}
-
-function dependencyViolations(): string[] {
-  const violations = sourceFiles().flatMap((absolute) => {
+function rruleImportViolations(): string[] {
+  return sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/tasks/domain`)).flatMap((absolute) => {
     const path = repoPath(absolute);
-    return dependencyViolationsFor(path, imports(path));
+    return rruleImportViolationsFor(path, imports(path));
   });
-  return violations.sort((left, right) => left.localeCompare(right));
+}
+
+function infrastructureNoticeImportViolations(): string[] {
+  return sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/tasks/infrastructure`)).flatMap((absolute) => {
+    const path = repoPath(absolute);
+    return infrastructureNoticeImportViolationsFor(path, imports(path));
+  });
 }
 
 function constructedDateBoundarySite(path: string, node: ts.Node): string | undefined {
@@ -655,26 +626,43 @@ function propertyAccesses(path: string): ReadonlySet<string> {
 }
 
 describe('task architecture boundaries', () => {
-  it('enforces domain, application, infrastructure, and presentation dependency direction', () => {
-    expect(dependencyViolations()).toEqual([]);
+  it('keeps task domain and application free of ambient time and DOM access', () => {
     expect(ambientBoundarySites()).toEqual([]);
   });
 
   it('allows only the recurrence engine to import the deterministic rrule boundary', () => {
+    expect(rruleImportViolations()).toEqual([]);
     const rruleImport = importsFromSyntax(
       syntaxFromText('src/tasks/domain/recurrence.ts', "import { RRule } from 'rrule';"),
     );
-    expect(dependencyViolationsFor('src/tasks/domain/recurrence.ts', rruleImport)).toEqual([]);
-    expect(dependencyViolationsFor('src/tasks/domain/validation.ts', rruleImport)).toEqual([
+    expect(rruleImportViolationsFor('src/tasks/domain/recurrence.ts', rruleImport)).toEqual([]);
+    expect(rruleImportViolationsFor('src/tasks/domain/validation.ts', rruleImport)).toEqual([
       'src/tasks/domain/validation.ts -> rrule',
     ]);
+  });
 
-    const forbiddenImport = importsFromSyntax(
-      syntaxFromText('src/tasks/domain/recurrence.ts', "import { Notice } from 'obsidian';"),
+  it('keeps Obsidian Notice in presentation while allowing infrastructure types', () => {
+    expect(infrastructureNoticeImportViolations()).toEqual([]);
+    const namedNotice = importsFromSyntax(
+      syntaxFromText('src/tasks/infrastructure/probe.ts', "import { Notice } from 'obsidian';"),
     );
-    expect(dependencyViolationsFor('src/tasks/domain/recurrence.ts', forbiddenImport)).toEqual([
-      'src/tasks/domain/recurrence.ts -> obsidian',
-    ]);
+    expect(
+      infrastructureNoticeImportViolationsFor('src/tasks/infrastructure/probe.ts', namedNotice),
+    ).toEqual(['src/tasks/infrastructure/probe.ts -> obsidian:Notice']);
+
+    const namespace = importsFromSyntax(
+      syntaxFromText('src/tasks/infrastructure/probe.ts', "import * as Obsidian from 'obsidian';"),
+    );
+    expect(
+      infrastructureNoticeImportViolationsFor('src/tasks/infrastructure/probe.ts', namespace),
+    ).toEqual(['src/tasks/infrastructure/probe.ts -> obsidian:*']);
+
+    const namedType = importsFromSyntax(
+      syntaxFromText('src/tasks/infrastructure/probe.ts', "import type { TFile } from 'obsidian';"),
+    );
+    expect(
+      infrastructureNoticeImportViolationsFor('src/tasks/infrastructure/probe.ts', namedType),
+    ).toEqual([]);
   });
 
   it('allows only explicit Date construction in the recurrence engine', () => {
@@ -699,24 +687,6 @@ describe('task architecture boundaries', () => {
       'src/tasks/domain/recurrence.ts:Date.now',
       'src/tasks/domain/recurrence.ts:window',
       'src/tasks/domain/recurrence.ts:document',
-    ]);
-  });
-
-  it('recognizes one- and two-argument dynamic imports before checking their layer', () => {
-    const oneArgument = importsFromSyntax(
-      syntaxFromText('src/ui/probe.ts', "void import('../tasks/domain/types');"),
-    );
-    const twoArguments = importsFromSyntax(
-      syntaxFromText(
-        'src/ui/probe.ts',
-        "void import('../tasks/domain/types', { with: { type: 'json' } });",
-      ),
-    );
-
-    expect(oneArgument.map((record) => record.specifier)).toEqual(['../tasks/domain/types']);
-    expect(twoArguments.map((record) => record.specifier)).toEqual(['../tasks/domain/types']);
-    expect(dependencyViolationsFor('src/ui/probe.ts', twoArguments)).toEqual([
-      'src/ui/probe.ts -> ../tasks/domain/types',
     ]);
   });
 

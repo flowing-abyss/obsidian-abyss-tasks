@@ -25,6 +25,12 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
 - `pnpm release` runs the canonical verification gate, updates `manifest.json` + `versions.json`, commits, tags with **no `v` prefix**, and pushes. **Never tag manually.** `manifest.json` `id` must stay `abyss-tasks`.
 - Never disable, downgrade, bypass, or warn-only an applicable `eslint-plugin-obsidianmd` rule; fix the violation at its source. This includes runtime code, `manifest.json`, and `LICENSE`.
 - `docs/` is gitignored — local-only scratch space for plans/specs. **Never commit `docs/`.**
+- Presentation code imports task contracts from `src/tasks`; only `src/main.ts` wires concrete
+  Obsidian task adapters. The legacy parser may import canonical Markdown codec internals.
+- Reuse an existing application command, UI primitive, and `abyss-*` CSS family before creating a
+  parallel mechanism.
+- Fix dependency-cruiser and architecture-test violations at their source; never weaken a rule or
+  add a blanket exception.
 
 ## Obsidian CLI
 

@@ -328,7 +328,7 @@ export default defineConfig(
   },
   {
     // Node-only tooling scripts are not part of the browser-context plugin bundle.
-    files: ['*.cjs', 'release-check.mjs'],
+    files: ['*.cjs', 'release-check.mjs', 'test/dependency-rules.test.ts'],
     languageOptions: {
       globals: { ...globals.node },
     },
