@@ -27,10 +27,11 @@
     "deadcode": "knip",
     "arch": "depcruise src --config dependency-cruiser.config.cjs --output-type err-long",
     "audit:dependencies": "pnpm audit --audit-level moderate",
+    "release:artifacts": "node release-artifacts.mjs",
     "release:check": "node release-check.mjs",
     "verify:task": "pnpm lint && pnpm typecheck && pnpm test",
     "test:ai": "node --test \".ai/**/*.test.mjs\"",
-    "verify": "pnpm format:check && pnpm lint && pnpm lint:css && pnpm typecheck && pnpm arch && pnpm deadcode && pnpm test:ai && pnpm test:coverage && pnpm build && pnpm release:check && pnpm audit:dependencies",
+    "verify": "pnpm format:check && pnpm lint && pnpm lint:css && pnpm typecheck && pnpm arch && pnpm deadcode && pnpm test:ai && pnpm test:coverage && pnpm build && pnpm release:artifacts && pnpm release:check && pnpm audit:dependencies",
     "ci": "pnpm verify",
     "prepare": "husky && node .ai/setup.mjs"
   },
@@ -48,7 +49,8 @@
     ]
   },
   "release": {
-    "mainJsBudgetBytes": 696320
+    "mainJsBudgetBytes": 696320,
+    "stylesCssBudgetBytes": 122880
   },
   "keywords": [
     "obsidian",

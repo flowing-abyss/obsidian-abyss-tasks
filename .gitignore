@@ -24,6 +24,9 @@ data.json
 # Coverage
 coverage/
 
+# Generated release artifacts
+/dist/
+
 # Local-only planning and real-vault verification
 docs/
 dev-vault-tasks/

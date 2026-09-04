@@ -64,6 +64,7 @@ export default defineConfig(
             'dependency-cruiser.config.cjs',
             'stylelint.config.mjs',
             'release-check.mjs',
+            'release-artifacts.mjs',
           ],
         },
         tsconfigRootDir: import.meta.dirname,
@@ -328,7 +329,13 @@ export default defineConfig(
   },
   {
     // Node-only tooling scripts are not part of the browser-context plugin bundle.
-    files: ['*.cjs', 'release-check.mjs', 'test/dependency-rules.test.ts'],
+    files: [
+      '*.cjs',
+      'release-check.mjs',
+      'release-artifacts.mjs',
+      'test/dependency-rules.test.ts',
+      'test/release-artifacts.test.ts',
+    ],
     languageOptions: {
       globals: { ...globals.node },
     },

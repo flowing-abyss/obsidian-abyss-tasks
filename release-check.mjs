@@ -39,9 +39,17 @@ const configuredMainJsBudget = packageJson?.release?.mainJsBudgetBytes;
 if (!Number.isSafeInteger(configuredMainJsBudget) || configuredMainJsBudget <= 0) {
   errors.push('package.json "release.mainJsBudgetBytes" must be a positive safe integer.');
 }
+const configuredStylesCssBudget = packageJson?.release?.stylesCssBudgetBytes;
+if (!Number.isSafeInteger(configuredStylesCssBudget) || configuredStylesCssBudget <= 0) {
+  errors.push('package.json "release.stylesCssBudgetBytes" must be a positive safe integer.');
+}
 const MAIN_JS_BUDGET_BYTES =
   Number.isSafeInteger(configuredMainJsBudget) && configuredMainJsBudget > 0
     ? configuredMainJsBudget
+    : Infinity;
+const STYLES_CSS_BUDGET_BYTES =
+  Number.isSafeInteger(configuredStylesCssBudget) && configuredStylesCssBudget > 0
+    ? configuredStylesCssBudget
     : Infinity;
 
 const REQUIRED_MANIFEST_STRING_FIELDS = [
@@ -171,18 +179,27 @@ function checkNoDesktopOnlyRequires(mainJsContent) {
 }
 
 function checkStylesCss() {
-  if (!existsSync('styles.css')) {
+  const stylesPath = 'dist/styles.css';
+  if (!existsSync(stylesPath)) {
+    errors.push('dist/styles.css is missing — run `pnpm release:artifacts` first.');
     return;
   }
 
-  if (statSync('styles.css').size === 0) {
-    errors.push('styles.css exists but is empty — remove it or add real styles.');
+  const bytes = statSync(stylesPath).size;
+  if (bytes === 0) {
+    errors.push('dist/styles.css is empty.');
+    return;
+  }
+  if (bytes > STYLES_CSS_BUDGET_BYTES) {
+    errors.push(
+      `dist/styles.css is ${bytes} bytes, over the ${STYLES_CSS_BUDGET_BYTES}-byte budget.`,
+    );
   }
 }
 
 function checkRequiredRepoFiles() {
   // Not required by manifest.json itself, but by Obsidian's community-plugin
-  // submission requirements: https://docs.obsidian.md/Plugins/Releasing/Submission+requirements+for+plugins
+  // submission requirements: https://docs.obsidian.md/community-directory/submission-requirements-for-plugins
   for (const file of ['README.md', 'LICENSE']) {
     if (!existsSync(file)) {
       errors.push(`${file} is missing — required for community-plugin submission.`);

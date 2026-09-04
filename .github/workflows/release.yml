@@ -36,11 +36,6 @@ jobs:
           pnpm run ci
           node release-check.mjs --release-ready
 
-      - name: Check for optional styles
-        id: styles
-        run: |
-          [ -f styles.css ] && echo "exists=true" >> "$GITHUB_OUTPUT" || echo "exists=false" >> "$GITHUB_OUTPUT"
-
       - name: Attest build provenance
         if: ${{ !github.event.repository.private }}
         uses: actions/attest@v4
@@ -48,7 +43,7 @@ jobs:
           subject-path: |
             main.js
             manifest.json
-            ${{ steps.styles.outputs.exists == 'true' && 'styles.css' || '' }}
+            dist/styles.css
 
       - name: Build changelog from commits
         id: release_notes
@@ -83,4 +78,4 @@ jobs:
             --title="$tag" \
             --draft \
             --notes "$RELEASE_NOTES" \
-            main.js manifest.json ${{ steps.styles.outputs.exists == 'true' && 'styles.css' || '' }}
+            main.js manifest.json dist/styles.css
