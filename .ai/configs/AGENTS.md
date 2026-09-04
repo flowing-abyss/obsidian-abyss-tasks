@@ -31,6 +31,22 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
   parallel mechanism.
 - Fix dependency-cruiser and architecture-test violations at their source; never weaken a rule or
   add a blanket exception.
+- When extending an existing workflow, preserve its interaction model and reuse its rendering,
+  commands, menus, and state semantics. Do not create a parallel approximation merely because it
+  is locally simpler.
+- Do not add persisted task metadata solely to simplify presentation logic. Prefer existing task
+  syntax, source order, creation dates, and derived state. Any new persisted field requires an
+  explicit compatibility and migration design.
+- Prefer one complete, deeply integrated workflow over several partial views or abstractions. New
+  views must reuse existing task operations and reach production-quality interaction before
+  additional views are introduced.
+- UI work is incomplete until it is exercised in `dev-vault-tasks` with the Obsidian CLI, inspected
+  through screenshots and DOM evidence, and checked for captured runtime errors. Test desktop and
+  constrained widths when layout is affected.
+- Use `dev-vault-tasks` for automated UI interaction and writable smoke tests. Snapshot and restore
+  modified vault content. Never deploy to or mutate the production vault unless the user explicitly
+  requests it.
+- Do not bump the plugin version, tag, or publish a release unless explicitly requested.
 
 ## Obsidian CLI
 
