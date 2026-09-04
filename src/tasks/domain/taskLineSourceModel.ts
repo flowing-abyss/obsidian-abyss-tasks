@@ -97,6 +97,7 @@ const RECURRENCE_MARKER_RE = /🔁/gu;
 const ON_COMPLETION_RE = /🏁\s*(keep|delete)(?=\s|$)/giu;
 const BLOCK_ID_RE = /\^[A-Za-z0-9-]+(?=\s*$)/gu;
 const TASK_ID = '[A-Za-z0-9_-]+';
+const TASK_ID_VALUE_RE = new RegExp(`^${TASK_ID}$`, 'u');
 const TASK_ID_SEQUENCE = `${TASK_ID}( *, *${TASK_ID} *)*`;
 const TASK_ID_RE = new RegExp(`🆔\\uFE0F? *(${TASK_ID})(?=$|\\s)`, 'uy');
 const DEPENDS_ON_RE = new RegExp(`⛔\\uFE0F? *(${TASK_ID_SEQUENCE})(?=$|\\s)`, 'uy');
@@ -125,6 +126,10 @@ const PRIORITY_BY_MARKER: Readonly<Record<string, TaskPriority>> = {
 };
 const PRIORITY_PRECEDENCE: readonly TaskPriority[] = ['A', 'B', 'C', 'E', 'F'];
 const UNKNOWN_PICTOGRAPH_RE = /\p{Extended_Pictographic}/u;
+
+export function isTaskDependencyId(value: string): boolean {
+  return TASK_ID_VALUE_RE.test(value);
+}
 
 function isEscaped(source: string, at: number): boolean {
   let slashes = 0;

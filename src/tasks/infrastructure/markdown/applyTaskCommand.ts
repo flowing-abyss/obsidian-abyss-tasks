@@ -256,6 +256,22 @@ function basicPlan(command: TaskEditCommand): CommandPlan | undefined {
   };
 }
 
+function dependencyPlan(command: TaskEditCommand): CommandPlan | undefined {
+  if (command.type === 'set-dependency-id') {
+    return {
+      edits: [{ type: 'set-dependency-id', value: command.id.length === 0 ? null : command.id }],
+      requestedFields: [],
+    };
+  }
+  if (command.type === 'set-depends-on') {
+    return {
+      edits: [{ type: 'set-depends-on', values: command.ids }],
+      requestedFields: [],
+    };
+  }
+  return undefined;
+}
+
 function schedulingPlan(parsed: ParsedTaskLine, command: TaskEditCommand): CommandPlan | undefined {
   if (command.type === 'reschedule') {
     const field = anchorDateField(parsed);
@@ -347,6 +363,7 @@ function spanPlan(parsed: ParsedTaskLine, command: TaskEditCommand): CommandPlan
 function commandPlan(parsed: ParsedTaskLine, command: TaskEditCommand): CommandPlan {
   return (
     patchPlan(parsed, command) ??
+    dependencyPlan(command) ??
     basicPlan(command) ??
     schedulingPlan(parsed, command) ??
     spanPlan(parsed, command) ?? {

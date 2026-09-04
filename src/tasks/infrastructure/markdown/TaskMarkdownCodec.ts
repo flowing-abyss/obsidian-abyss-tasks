@@ -6,7 +6,7 @@ import {
   type RecurrenceTaskLineEdit,
   type RecurrenceTaskLineEditResult,
 } from '../../domain/recurrenceIteration';
-import { parseTaskLineSourceModel } from '../../domain/taskLineSourceModel';
+import { isTaskDependencyId, parseTaskLineSourceModel } from '../../domain/taskLineSourceModel';
 import type {
   OnCompletion,
   TaskPriority,
@@ -46,6 +46,8 @@ export type LineEdit =
   | { readonly type: 'set-duration'; readonly value: number | null }
   | { readonly type: 'set-recurrence'; readonly value: string | null }
   | { readonly type: 'set-on-completion'; readonly value: OnCompletion | null }
+  | { readonly type: 'set-dependency-id'; readonly value: string | null }
+  | { readonly type: 'set-depends-on'; readonly values: readonly string[] }
   | {
       readonly type: 'change-tags';
       readonly add: readonly string[];
@@ -68,6 +70,16 @@ type PreparedLineEdit =
 type TitleLineEdit = Extract<
   LineEdit,
   { readonly type: 'set-title' | 'append-title' | 'edit-link' }
+>;
+
+type DependencyLineEdit = Extract<
+  LineEdit,
+  { readonly type: 'set-dependency-id' | 'set-depends-on' }
+>;
+
+type PlanningLineEdit = Extract<
+  LineEdit,
+  { readonly type: 'set-date' | 'set-time' | 'set-duration' }
 >;
 
 type StatusStampKind = 'completion' | 'cancelled';
@@ -342,7 +354,20 @@ function fallbackInsertionPoint(parsed: ParsedTaskLine): number {
   );
 }
 
+function dependencyCarrierInsertionPoint(
+  parsed: ParsedTaskLine,
+  kind: 'task-id' | 'depends-on',
+): number {
+  const blockId = firstOccurrenceFrom(parsed, 'block-id');
+  const carrier =
+    kind === 'task-id' ? Math.min(firstOccurrenceFrom(parsed, 'depends-on'), blockId) : blockId;
+  return carrier === Infinity ? parsed.original.length - parsed.lineEnding.length : carrier;
+}
+
 function insertionPoint(parsed: ParsedTaskLine, kind: TaskSpanKind): number {
+  if (kind === 'task-id' || kind === 'depends-on') {
+    return dependencyCarrierInsertionPoint(parsed, kind);
+  }
   const rank = TOKEN_RANK[kind];
   if (rank === undefined) return fallbackInsertionPoint(parsed);
   const later = rankedInsertionSpan(parsed, rank);
@@ -473,6 +498,14 @@ function statusDateIsMissing(
 
 function isTitleLineEdit(edit: LineEdit): edit is TitleLineEdit {
   return edit.type === 'set-title' || edit.type === 'append-title' || edit.type === 'edit-link';
+}
+
+function isDependencyLineEdit(edit: LineEdit): edit is DependencyLineEdit {
+  return edit.type === 'set-dependency-id' || edit.type === 'set-depends-on';
+}
+
+function isPlanningLineEdit(edit: LineEdit): edit is PlanningLineEdit {
+  return edit.type === 'set-date' || edit.type === 'set-time' || edit.type === 'set-duration';
 }
 
 function invalidRecurrenceValue(
@@ -939,6 +972,60 @@ export class TaskMarkdownCodec {
     };
   }
 
+  private prepareDependencyIdEdit(
+    parsed: ParsedTaskLine,
+    edit: Extract<LineEdit, { readonly type: 'set-dependency-id' }>,
+  ): PreparedLineEdit {
+    if (edit.value !== null && !isTaskDependencyId(edit.value)) {
+      return invalid('invalid-target', 'dependency-id');
+    }
+    const issues = this.duplicateIssue(parsed, 'task-id', 'dependency-id');
+    if (issues.length > 0) return { type: 'invalid', issues };
+    if (hasMalformedKind(parsed, 'task-id')) return invalid('invalid-target', 'dependency-id');
+    if (
+      (edit.value === null && parsed.dependencyId === undefined) ||
+      (edit.value !== null && parsed.dependencyId === edit.value)
+    ) {
+      return { type: 'unchanged', content: parsed.original };
+    }
+    return {
+      type: 'prepared',
+      content: this.replaceOrInsertToken(
+        parsed,
+        'task-id',
+        edit.value === null ? null : `🆔 ${edit.value}`,
+      ),
+      fields: [],
+    };
+  }
+
+  private prepareDependsOnEdit(
+    parsed: ParsedTaskLine,
+    edit: Extract<LineEdit, { readonly type: 'set-depends-on' }>,
+  ): PreparedLineEdit {
+    if (!edit.values.every(isTaskDependencyId)) {
+      return invalid('invalid-target', 'depends-on');
+    }
+    const issues = this.duplicateIssue(parsed, 'depends-on', 'depends-on');
+    if (issues.length > 0) return { type: 'invalid', issues };
+    if (hasMalformedKind(parsed, 'depends-on')) return invalid('invalid-target', 'depends-on');
+    if (
+      parsed.dependsOn.length === edit.values.length &&
+      parsed.dependsOn.every((value, index) => value === edit.values[index])
+    ) {
+      return { type: 'unchanged', content: parsed.original };
+    }
+    return {
+      type: 'prepared',
+      content: this.replaceOrInsertToken(
+        parsed,
+        'depends-on',
+        edit.values.length === 0 ? null : `⛔ ${edit.values.join(', ')}`,
+      ),
+      fields: [],
+    };
+  }
+
   private prepareSetTitleEdit(
     parsed: ParsedTaskLine,
     edit: Extract<LineEdit, { readonly type: 'set-title' }>,
@@ -979,25 +1066,43 @@ export class TaskMarkdownCodec {
     }
   }
 
-  private prepareLineEdit(parsed: ParsedTaskLine, edit: LineEdit): PreparedLineEdit {
-    if (isTitleLineEdit(edit)) return this.prepareTitleLineEdit(parsed, edit);
+  private prepareDependencyLineEdit(
+    parsed: ParsedTaskLine,
+    edit: DependencyLineEdit,
+  ): PreparedLineEdit {
+    return edit.type === 'set-dependency-id'
+      ? this.prepareDependencyIdEdit(parsed, edit)
+      : this.prepareDependsOnEdit(parsed, edit);
+  }
+
+  private preparePlanningLineEdit(
+    parsed: ParsedTaskLine,
+    edit: PlanningLineEdit,
+  ): PreparedLineEdit {
     switch (edit.type) {
-      case 'set-status':
-        return this.prepareStatusEdit(parsed, edit);
-      case 'set-priority':
-        return this.preparePriorityEdit(parsed, edit);
       case 'set-date':
         return this.prepareDateEdit(parsed, edit);
       case 'set-time':
         return this.prepareTimeEdit(parsed, edit);
       case 'set-duration':
         return this.prepareDurationEdit(parsed, edit);
+    }
+  }
+
+  private prepareLineEdit(parsed: ParsedTaskLine, edit: LineEdit): PreparedLineEdit {
+    if (isTitleLineEdit(edit)) return this.prepareTitleLineEdit(parsed, edit);
+    if (isDependencyLineEdit(edit)) return this.prepareDependencyLineEdit(parsed, edit);
+    if (isPlanningLineEdit(edit)) return this.preparePlanningLineEdit(parsed, edit);
+    if (edit.type === 'change-tags') return this.prepareTagChange(parsed, edit.add, edit.remove);
+    switch (edit.type) {
+      case 'set-status':
+        return this.prepareStatusEdit(parsed, edit);
+      case 'set-priority':
+        return this.preparePriorityEdit(parsed, edit);
       case 'set-recurrence':
         return this.prepareRecurrenceEdit(parsed, edit);
       case 'set-on-completion':
         return this.prepareOnCompletionEdit(parsed, edit);
-      case 'change-tags':
-        return this.prepareTagChange(parsed, edit.add, edit.remove);
     }
   }
 

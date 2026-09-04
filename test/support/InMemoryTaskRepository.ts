@@ -1,14 +1,15 @@
 import { parseLinks } from '../../src/markdown/links';
-import type {
-  RecurrenceCompletionRequest,
-  RecurrenceCompletionRevisionRequest,
-  RevisionPrecondition,
-  TaskDraft,
-  TaskEditCommand,
-  TaskEditRequest,
-  TaskMoveRequest,
-  TaskRepository,
-  TaskRepositoryResult,
+import {
+  dependencyMetadataIssues,
+  type RecurrenceCompletionRequest,
+  type RecurrenceCompletionRevisionRequest,
+  type RevisionPrecondition,
+  type TaskDraft,
+  type TaskEditCommand,
+  type TaskEditRequest,
+  type TaskMoveRequest,
+  type TaskRepository,
+  type TaskRepositoryResult,
 } from '../../src/tasks/application/TaskRepository';
 import type {
   PlanningTarget,
@@ -115,7 +116,9 @@ function directNodeTarget(command: TaskEditCommand): PlanningTarget | undefined 
   if (
     command.type === 'patch' ||
     command.type === 'set-status' ||
-    command.type === 'append-title'
+    command.type === 'append-title' ||
+    command.type === 'set-dependency-id' ||
+    command.type === 'set-depends-on'
   ) {
     return command.target;
   }
@@ -1143,6 +1146,8 @@ export class InMemoryTaskRepository implements TaskRepository {
 
   async edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult> {
     const input = editRequestInput(request);
+    const metadataIssues = dependencyMetadataIssues(input.command);
+    if (metadataIssues.length > 0) return { type: 'invalid', issues: metadataIssues };
     const parentIssue = this.reorderParentIssue(input.command);
     if (parentIssue !== undefined) return parentIssue;
     const location = this.resolveEditLocation(input);

@@ -7,11 +7,13 @@ import type {
 } from '../domain/commands';
 import type { AtomDateTime } from '../domain/commentTimestamp';
 import type { RecurrencePolicy } from '../domain/recurrence';
+import { isTaskDependencyId } from '../domain/taskLineSourceModel';
 import type { RebaseEvidence, RootReconciliationBasis } from '../domain/taskReconciliation';
 import type {
   LocalDate,
   TaskDestination,
   TaskMutationTarget,
+  TaskNodeRef,
   TaskRef,
   TaskSnapshot,
 } from '../domain/types';
@@ -43,11 +45,29 @@ export type TaskEditCommand =
       readonly text: string;
       readonly stamp: AtomDateTime;
     }
+  | { readonly type: 'set-dependency-id'; readonly target: TaskNodeRef; readonly id: string }
+  | {
+      readonly type: 'set-depends-on';
+      readonly target: TaskNodeRef;
+      readonly ids: readonly string[];
+    }
   | ({
       readonly type: 'add-subtask';
       readonly parent: TaskStatusTarget;
       readonly text: string;
     } & AddSubtaskLifecycle);
+
+export function dependencyMetadataIssues(command: TaskEditCommand): readonly TaskIssue[] {
+  if (command.type === 'set-dependency-id') {
+    return command.id.length === 0 || isTaskDependencyId(command.id)
+      ? []
+      : [{ code: 'invalid-target', field: 'dependency-id' }];
+  }
+  if (command.type === 'set-depends-on' && !command.ids.every(isTaskDependencyId)) {
+    return [{ code: 'invalid-target', field: 'depends-on' }];
+  }
+  return [];
+}
 
 export interface TaskDraft {
   readonly markdownBody: string;

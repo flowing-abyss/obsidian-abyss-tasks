@@ -266,6 +266,39 @@ describe('ObsidianTaskRepository planning contract', () => {
     expect(await read(h.app, 'tasks.md')).toBe(source);
   });
 
+  it.each([
+    {
+      name: 'dependency id',
+      command: (ref: TaskRef): TaskEditCommand => ({
+        type: 'set-dependency-id',
+        target: { type: 'task', ref },
+        id: 'bad.id',
+      }),
+      field: 'dependency-id',
+    },
+    {
+      name: 'depends-on id',
+      command: (ref: TaskRef): TaskEditCommand => ({
+        type: 'set-depends-on',
+        target: { type: 'task', ref },
+        ids: ['valid', 'bad id'],
+      }),
+      field: 'depends-on',
+    },
+  ])('rejects an invalid $name before accessing the vault', async ({ command, field }) => {
+    const source = '- [ ] task custom ^block\r\n';
+    const h = await harness({ 'tasks.md': source });
+    const getFile = vi.spyOn(h.app.vault, 'getAbstractFileByPath');
+    const process = vi.spyOn(h.app.vault, 'process');
+
+    await expect(h.repository.edit(command(refFor(h, 'tasks.md', source)))).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target', field }],
+    });
+    expect(getFile).not.toHaveBeenCalled();
+    expect(process).not.toHaveBeenCalled();
+  });
+
   it('converts a timed task to all-day through exactly one vault process', async () => {
     const source = '- [/] task #keep 📅 2026-07-20 ⏰ 09:30 ⏱️ 45m\n';
     const h = await harness({ 'tasks.md': source });

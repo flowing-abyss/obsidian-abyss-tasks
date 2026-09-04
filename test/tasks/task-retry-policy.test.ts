@@ -54,7 +54,7 @@ function prepared(
 ): PreparedMutation {
   const base = snapshot();
   return {
-    publicCommand: command,
+    publicCommand: { type: 'delete', ref: base.ref },
     repositoryRequest: {
       command,
       baseRoot: base,
@@ -139,6 +139,103 @@ function retryAgainst(
 }
 
 describe('prepareRetry', () => {
+  it.each([
+    {
+      name: 'dependency id',
+      command: (base: TaskSnapshot): TaskEditRequest['command'] => ({
+        type: 'set-dependency-id',
+        target: { type: 'task', ref: base.ref },
+        id: 'next-id',
+      }),
+      unchanged: (root: TaskSnapshot): TaskSnapshot => ({ ...root, dependencyId: 'old-id' }),
+      changed: (root: TaskSnapshot): TaskSnapshot => ({ ...root, dependencyId: 'external-id' }),
+    },
+    {
+      name: 'depends-on ids',
+      command: (base: TaskSnapshot): TaskEditRequest['command'] => ({
+        type: 'set-depends-on',
+        target: { type: 'task', ref: base.ref },
+        ids: ['next'],
+      }),
+      unchanged: (root: TaskSnapshot): TaskSnapshot => ({ ...root, dependsOn: ['old', 'old'] }),
+      changed: (root: TaskSnapshot): TaskSnapshot => ({ ...root, dependsOn: ['external'] }),
+    },
+  ])(
+    'rebases $name edits only while the authored metadata is unchanged',
+    ({ command, unchanged, changed }) => {
+      const previous = unchanged(snapshot());
+      const currentBase = { ...snapshot('Renamed elsewhere', 'new'), source: previous.source };
+      const current = unchanged(currentBase);
+      const edit = command(previous);
+
+      expect(
+        retryAgainst(preparedFor(previous, edit, 'exact-target'), previous, current),
+      ).toMatchObject({
+        type: 'edit',
+        request: {
+          command: { type: edit.type, target: { type: 'task', ref: current.ref } },
+          baseRoot: current,
+        },
+      });
+      expect(
+        retryAgainst(preparedFor(previous, edit, 'exact-target'), previous, changed(currentBase)),
+      ).toEqual({ type: 'unsafe' });
+    },
+  );
+
+  it.each([
+    {
+      name: 'dependency id',
+      command: (target: { readonly type: 'subtask'; readonly ref: SubtaskRef }) => ({
+        type: 'set-dependency-id' as const,
+        target,
+        id: 'next-id',
+      }),
+      previousChild: { dependencyId: 'old-id' },
+      changedChild: { dependencyId: 'external-id' },
+    },
+    {
+      name: 'depends-on ids',
+      command: (target: { readonly type: 'subtask'; readonly ref: SubtaskRef }) => ({
+        type: 'set-depends-on' as const,
+        target,
+        ids: ['next'],
+      }),
+      previousChild: { dependsOn: ['old', 'old'] },
+      changedChild: { dependsOn: ['external'] },
+    },
+  ])(
+    'rebases nested $name edits against the exact subtask',
+    ({ command, previousChild, changedChild }) => {
+      const previousRoot = snapshot();
+      const previousSubtask = subtask(previousRoot, previousChild);
+      const previous = { ...previousRoot, subtasks: [previousSubtask] };
+      const currentRoot = snapshot('Renamed elsewhere', 'new');
+      const currentSubtask = subtask(currentRoot, {
+        ...previousChild,
+        ref: { ...previousSubtask.ref, parent: { type: 'task', ref: currentRoot.ref } },
+      });
+      const current = { ...currentRoot, subtasks: [currentSubtask] };
+      const target = { type: 'subtask' as const, ref: previousSubtask.ref };
+      const edit = command(target);
+      const mutation = preparedFor(previous, edit, 'exact-target', target);
+
+      expect(retryAgainst(mutation, previous, current)).toMatchObject({
+        type: 'edit',
+        request: {
+          command: { type: edit.type, target: { type: 'subtask', ref: currentSubtask.ref } },
+          baseTarget: { type: 'subtask', ref: currentSubtask.ref },
+        },
+      });
+      expect(
+        retryAgainst(mutation, previous, {
+          ...current,
+          subtasks: [{ ...currentSubtask, ...changedChild }],
+        }),
+      ).toEqual({ type: 'unsafe' });
+    },
+  );
+
   it('accepts a field race that already applied the requested value', () => {
     const base = snapshot();
     const command = {

@@ -72,6 +72,115 @@ function authoritativePartition(parsed: AuthoritativePartition): readonly unknow
 }
 
 describe('TaskMarkdownCodec', () => {
+  describe('dependency metadata edits', () => {
+    const target = { type: 'task' as const, ref };
+
+    it('inserts dependency carriers in canonical order before a terminal block id', () => {
+      const source = '- [ ] Task custom 🔁 every day 🏁 keep ^block\r\n';
+      const withId = applyTaskCommand(codec, source, {
+        type: 'set-dependency-id',
+        target,
+        id: 'task_01',
+      });
+
+      expect(withId).toEqual({
+        type: 'changed',
+        content: '- [ ] Task custom 🔁 every day 🏁 keep 🆔 task_01 ^block\r\n',
+      });
+      expect(
+        applyTaskCommand(
+          codec,
+          (withId as Extract<typeof withId, { readonly type: 'changed' }>).content,
+          {
+            type: 'set-depends-on',
+            target,
+            ids: ['first', 'second', 'first'],
+          },
+        ),
+      ).toEqual({
+        type: 'changed',
+        content:
+          '- [ ] Task custom 🔁 every day 🏁 keep 🆔 task_01 ⛔ first, second, first ^block\r\n',
+      });
+    });
+
+    it('replaces and removes carriers without reordering or deduplicating dependency ids', () => {
+      const source = '- [ ] Task custom 🆔 old ⛔ first, second, first ^block\r\n';
+
+      expect(
+        applyTaskCommand(codec, source, {
+          type: 'set-dependency-id',
+          target,
+          id: 'new-id',
+        }),
+      ).toEqual({
+        type: 'changed',
+        content: '- [ ] Task custom 🆔 new-id ⛔ first, second, first ^block\r\n',
+      });
+      expect(
+        applyTaskCommand(codec, source, {
+          type: 'set-depends-on',
+          target,
+          ids: ['second', 'second', 'third'],
+        }),
+      ).toEqual({
+        type: 'changed',
+        content: '- [ ] Task custom 🆔 old ⛔ second, second, third ^block\r\n',
+      });
+      expect(
+        applyTaskCommand(codec, '- [ ] Task 🆔 old\r\n', {
+          type: 'set-dependency-id',
+          target,
+          id: '',
+        }),
+      ).toEqual({ type: 'changed', content: '- [ ] Task\r\n' });
+      expect(
+        applyTaskCommand(codec, '- [ ] Task ⛔ first, first\r\n', {
+          type: 'set-depends-on',
+          target,
+          ids: [],
+        }),
+      ).toEqual({ type: 'changed', content: '- [ ] Task\r\n' });
+    });
+
+    it('preserves unsupported pictographic spans while editing dependency carriers', () => {
+      const source = '- [ ] Task 🧩 future 🆔 old ^block\r\n';
+      const result = applyTaskCommand(codec, source, {
+        type: 'set-depends-on',
+        target,
+        ids: ['old', 'old'],
+      });
+
+      expect(result).toEqual({
+        type: 'changed',
+        content: '- [ ] Task 🧩 future 🆔 old ⛔ old, old ^block\r\n',
+      });
+      const parsed = parse(
+        (result as Extract<typeof result, { readonly type: 'changed' }>).content,
+      );
+      expect(spanText(parsed, 'unknown')).toContain('🧩');
+      expect(parsed.markdownTitle).toBe('Task 🧩 future');
+    });
+
+    it.each([
+      [
+        'set-dependency-id',
+        { type: 'set-dependency-id' as const, target, id: 'bad.id' },
+        'dependency-id',
+      ],
+      [
+        'set-depends-on',
+        { type: 'set-depends-on' as const, target, ids: ['valid', 'bad id'] },
+        'depends-on',
+      ],
+    ])('rejects invalid ids for %s without changing source bytes', (_name, command, field) => {
+      expect(applyTaskCommand(codec, '- [ ] Task custom ^block\r\n', command)).toEqual({
+        type: 'invalid',
+        issues: [{ code: 'invalid-target', field }],
+      });
+    });
+  });
+
   it('guards and delegates recurrence-iteration line edits through the codec boundary', () => {
     const edit = {
       type: 'clean-owner' as const,

@@ -108,6 +108,8 @@ type DirectRebaseCommand = Extract<
       | 'append-title'
       | 'set-status'
       | 'set-description'
+      | 'set-dependency-id'
+      | 'set-depends-on'
       | 'add-subtask'
       | 'add-comment'
       | 'delete-subtask'
@@ -117,11 +119,18 @@ type DirectRebaseCommand = Extract<
 
 type RemainingRebaseCommand = Exclude<TaskEditCommand, DirectRebaseCommand>;
 
+type DependencyMetadataCommand = Extract<
+  TaskEditCommand,
+  { readonly type: 'set-dependency-id' | 'set-depends-on' }
+>;
+
 const DIRECT_REBASE_TYPES = new Set<TaskEditCommand['type']>([
   'patch',
   'append-title',
   'set-status',
   'set-description',
+  'set-dependency-id',
+  'set-depends-on',
   'add-subtask',
   'add-comment',
   'delete-subtask',
@@ -130,6 +139,12 @@ const DIRECT_REBASE_TYPES = new Set<TaskEditCommand['type']>([
 
 function isDirectRebaseCommand(command: TaskEditCommand): command is DirectRebaseCommand {
   return DIRECT_REBASE_TYPES.has(command.type);
+}
+
+function isDependencyMetadataCommand(
+  command: TaskEditCommand,
+): command is DependencyMetadataCommand {
+  return command.type === 'set-dependency-id' || command.type === 'set-depends-on';
 }
 
 function recurrenceOwnerUnchanged(
@@ -172,6 +187,9 @@ function rebaseEditCommand(command: TaskEditCommand, root: TaskRef): TaskEditCom
 }
 
 function rebaseDirectCommand(command: DirectRebaseCommand, root: TaskRef): TaskEditCommand {
+  if (isDependencyMetadataCommand(command)) {
+    return { ...command, target: rebaseStatusTarget(command.target, root) };
+  }
   switch (command.type) {
     case 'patch':
     case 'append-title':
@@ -222,6 +240,7 @@ function nodeForDirectCommand(
   root: TaskSnapshot,
   command: DirectRebaseCommand,
 ): TaskStatusSnapshot | undefined {
+  if (isDependencyMetadataCommand(command)) return snapshotForTarget(root, command.target);
   switch (command.type) {
     case 'patch':
     case 'append-title':
@@ -511,6 +530,8 @@ type ExactTargetCommand = Extract<
     readonly type:
       | 'append-title'
       | 'set-description'
+      | 'set-dependency-id'
+      | 'set-depends-on'
       | 'delete-subtask'
       | 'update-comment'
       | 'delete-comment'
@@ -521,9 +542,16 @@ type ExactTargetCommand = Extract<
   }
 >;
 
+type AdditiveExactTargetCommand = Extract<
+  ExactTargetCommand,
+  { readonly type: 'add-comment' | 'add-subtask' }
+>;
+
 const EXACT_TARGET_COMMAND_TYPES = new Set<TaskEditCommand['type']>([
   'append-title',
   'set-description',
+  'set-dependency-id',
+  'set-depends-on',
   'delete-subtask',
   'update-comment',
   'delete-comment',
@@ -537,11 +565,36 @@ function isExactTargetCommand(command: TaskEditCommand): command is ExactTargetC
   return EXACT_TARGET_COMMAND_TYPES.has(command.type);
 }
 
+const ADDITIVE_EXACT_TARGET_TYPES = new Set<TaskEditCommand['type']>([
+  'add-comment',
+  'add-subtask',
+]);
+
+function isAdditiveExactTargetCommand(
+  command: ExactTargetCommand,
+): command is AdditiveExactTargetCommand {
+  return ADDITIVE_EXACT_TARGET_TYPES.has(command.type);
+}
+
+function dependencyMetadataPreconditionHolds(
+  command: DependencyMetadataCommand,
+  previous: TaskStatusSnapshot,
+  current: TaskStatusSnapshot,
+): boolean {
+  return command.type === 'set-dependency-id'
+    ? previous.dependencyId === current.dependencyId
+    : sameIds(previous.dependsOn, current.dependsOn);
+}
+
 function exactCommandPreconditionHolds(
   command: ExactTargetCommand,
   previous: TaskStatusSnapshot,
   current: TaskStatusSnapshot,
 ): boolean {
+  if (isDependencyMetadataCommand(command)) {
+    return dependencyMetadataPreconditionHolds(command, previous, current);
+  }
+  if (isAdditiveExactTargetCommand(command)) return true;
   switch (command.type) {
     case 'append-title':
       return previous.markdownTitle === current.markdownTitle;
@@ -556,10 +609,13 @@ function exactCommandPreconditionHolds(
       return editLinkPreconditionHolds(command, previous, current);
     case 'reorder-subtask':
       return false;
-    case 'add-comment':
-    case 'add-subtask':
-      return true;
   }
+}
+
+function sameIds(previous: readonly string[], current: readonly string[]): boolean {
+  return (
+    previous.length === current.length && previous.every((value, index) => value === current[index])
+  );
 }
 
 function exactTargetPreconditionHolds(

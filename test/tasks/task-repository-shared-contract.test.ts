@@ -69,6 +69,198 @@ function rootRef(harness: ContractHarness, source: string): TaskRef {
 
 for (const adapter of ['in-memory', 'obsidian'] as const) {
   describe(`${adapter} TaskRepository shared contract`, () => {
+    it('inserts, replaces, and removes dependency metadata on roots and subtasks losslessly', async () => {
+      const source =
+        '- [ ] root 🧩 future ^root\r\n' +
+        '  - 2026-07-14: root comment\r\n' +
+        '  - [ ] child 🧲 future ^child\r\n' +
+        '    - 2026-07-14: child comment\r\n' +
+        '  - [ ] sibling\r\n' +
+        '- [ ] neighbor\r\n';
+      const h = await makeHarness(adapter, source);
+      let content = source;
+      let root = expectDefined(h.snapshots(content)[0]);
+
+      await expect(
+        h.repository.edit({
+          type: 'set-dependency-id',
+          target: { type: 'task', ref: root.ref },
+          id: 'root_id',
+        }),
+      ).resolves.toMatchObject({
+        type: 'committed',
+        changed: true,
+        outcome: { type: 'task', task: { dependencyId: 'root_id' } },
+      });
+
+      content = await h.read();
+      root = expectDefined(h.snapshots(content)[0]);
+      let child = expectDefined(root.subtasks[0]);
+      await expect(
+        h.repository.edit({
+          type: 'set-depends-on',
+          target: { type: 'subtask', ref: child.ref },
+          ids: ['root_id', 'root_id', 'external'],
+        }),
+      ).resolves.toMatchObject({
+        type: 'committed',
+        changed: true,
+        outcome: { type: 'task' },
+      });
+
+      content = await h.read();
+      root = expectDefined(h.snapshots(content)[0]);
+      child = expectDefined(root.subtasks[0]);
+      expect(child.dependsOn).toEqual(['root_id', 'root_id', 'external']);
+      await expect(
+        h.repository.edit({
+          type: 'set-depends-on',
+          target: { type: 'subtask', ref: child.ref },
+          ids: ['replacement', 'replacement'],
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+
+      content = await h.read();
+      root = expectDefined(h.snapshots(content)[0]);
+      child = expectDefined(root.subtasks[0]);
+      expect(child.dependsOn).toEqual(['replacement', 'replacement']);
+      await expect(
+        h.repository.edit({
+          type: 'set-dependency-id',
+          target: { type: 'task', ref: root.ref },
+          id: 'replacement-id',
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+
+      content = await h.read();
+      root = expectDefined(h.snapshots(content)[0]);
+      child = expectDefined(root.subtasks[0]);
+      await expect(
+        h.repository.edit({
+          type: 'set-depends-on',
+          target: { type: 'subtask', ref: child.ref },
+          ids: [],
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+
+      content = await h.read();
+      root = expectDefined(h.snapshots(content)[0]);
+      await expect(
+        h.repository.edit({
+          type: 'set-dependency-id',
+          target: { type: 'task', ref: root.ref },
+          id: '',
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+
+      expect(await h.read()).toBe(source);
+    });
+
+    it('supports the complementary dependency edit matrix on roots and subtasks', async () => {
+      const source = '- [ ] root 🧩 future ^root\r\n  - [ ] child 🧲 future ^child\r\n';
+      const h = await makeHarness(adapter, source);
+      const current = async (): Promise<TaskSnapshot> => {
+        const content = await h.read();
+        return expectDefined(h.snapshots(content)[0]);
+      };
+
+      let root = await current();
+      await expect(
+        h.repository.edit({
+          type: 'set-depends-on',
+          target: { type: 'task', ref: root.ref },
+          ids: ['first', 'first'],
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+      expect(await h.read()).toBe(
+        '- [ ] root 🧩 future ⛔ first, first ^root\r\n  - [ ] child 🧲 future ^child\r\n',
+      );
+      root = await current();
+      await expect(
+        h.repository.edit({
+          type: 'set-depends-on',
+          target: { type: 'task', ref: root.ref },
+          ids: ['replacement'],
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+      expect(await h.read()).toBe(
+        '- [ ] root 🧩 future ⛔ replacement ^root\r\n  - [ ] child 🧲 future ^child\r\n',
+      );
+      root = await current();
+      await expect(
+        h.repository.edit({
+          type: 'set-depends-on',
+          target: { type: 'task', ref: root.ref },
+          ids: [],
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+      expect(await h.read()).toBe(source);
+
+      root = await current();
+      await expect(
+        h.repository.edit({
+          type: 'set-dependency-id',
+          target: { type: 'subtask', ref: expectDefined(root.subtasks[0]).ref },
+          id: 'child_id',
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+      expect(await h.read()).toBe(
+        '- [ ] root 🧩 future ^root\r\n  - [ ] child 🧲 future 🆔 child_id ^child\r\n',
+      );
+      root = await current();
+      await expect(
+        h.repository.edit({
+          type: 'set-dependency-id',
+          target: { type: 'subtask', ref: expectDefined(root.subtasks[0]).ref },
+          id: 'replacement-id',
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+      expect(await h.read()).toBe(
+        '- [ ] root 🧩 future ^root\r\n  - [ ] child 🧲 future 🆔 replacement-id ^child\r\n',
+      );
+      root = await current();
+      await expect(
+        h.repository.edit({
+          type: 'set-dependency-id',
+          target: { type: 'subtask', ref: expectDefined(root.subtasks[0]).ref },
+          id: '',
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+
+      expect(await h.read()).toBe(source);
+    });
+
+    it.each([
+      {
+        name: 'dependency id',
+        command: (root: TaskSnapshot): TaskEditCommand => ({
+          type: 'set-dependency-id',
+          target: { type: 'task', ref: root.ref },
+          id: 'bad.id',
+        }),
+        field: 'dependency-id',
+      },
+      {
+        name: 'depends-on id',
+        command: (root: TaskSnapshot): TaskEditCommand => ({
+          type: 'set-depends-on',
+          target: { type: 'task', ref: root.ref },
+          ids: ['valid', 'bad id'],
+        }),
+        field: 'depends-on',
+      },
+    ])('rejects an invalid $name without changing bytes', async ({ command, field }) => {
+      const source = '- [ ] root custom ^root\r\n';
+      const h = await makeHarness(adapter, source);
+      const root = expectDefined(h.snapshots(source)[0]);
+
+      await expect(h.repository.edit(command(root))).resolves.toEqual({
+        type: 'invalid',
+        issues: [{ code: 'invalid-target', field }],
+      });
+      expect(await h.read()).toBe(source);
+    });
+
     it('edits descriptions and comments as one lossless revisioned block transaction', async () => {
       const source =
         '>\t- [ ] root #keep\r\n' +

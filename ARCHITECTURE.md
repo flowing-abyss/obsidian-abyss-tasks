@@ -197,6 +197,14 @@ index or subsequent projections. No dependency data is persisted outside Markdow
 The UI must not assume that its previous snapshot is still writable. Conflicts and ambiguous targets
 are normal command outcomes and belong at the application boundary.
 
+Dependency metadata writes use the repository's internal `set-dependency-id` and `set-depends-on`
+edit commands. `TaskMarkdownCodec` validates IDs against the same Tasks-compatible grammar used by
+the parser and serializes `🆔` and `⛔` carriers in canonical order without deduplicating authored
+dependency lists. The repository resolves the root or subtask target and delegates the single-line
+replacement to `TaskBlockEditor`, preserving the rest of the root aggregate and file bytes. These
+commands are storage primitives; public dependency orchestration remains an application-layer
+responsibility.
+
 ### Creating a task
 
 1. The interface chooses a capture context and asks `TaskCaptureApplicationApi` to plan a

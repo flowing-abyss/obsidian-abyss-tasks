@@ -1,15 +1,16 @@
 import { TFile, type App } from 'obsidian';
 import { parseLinks } from '../../../markdown/links';
-import type {
-  RecurrenceCompletionRequest,
-  RecurrenceCompletionRevisionRequest,
-  RevisionPrecondition,
-  TaskDraft,
-  TaskEditCommand,
-  TaskEditRequest,
-  TaskMoveRequest,
-  TaskRepository,
-  TaskRepositoryResult,
+import {
+  dependencyMetadataIssues,
+  type RecurrenceCompletionRequest,
+  type RecurrenceCompletionRevisionRequest,
+  type RevisionPrecondition,
+  type TaskDraft,
+  type TaskEditCommand,
+  type TaskEditRequest,
+  type TaskMoveRequest,
+  type TaskRepository,
+  type TaskRepositoryResult,
 } from '../../application/TaskRepository';
 import type {
   MoveRecovery,
@@ -149,6 +150,9 @@ function directNodeTargetOf(command: TaskEditCommand): PlanningTarget | undefine
   if (command.type === 'set-status') return command.target;
   if (command.type === 'append-title') return command.target;
   if (command.type === 'set-description') return command.target;
+  if (command.type === 'set-dependency-id' || command.type === 'set-depends-on') {
+    return command.target;
+  }
   return undefined;
 }
 
@@ -1369,6 +1373,8 @@ export class ObsidianTaskRepository implements TaskRepository {
   async edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult> {
     const prepared = 'command' in request ? request : undefined;
     const command: TaskEditCommand = 'command' in request ? request.command : request;
+    const metadataIssues = dependencyMetadataIssues(command);
+    if (metadataIssues.length > 0) return { type: 'invalid', issues: metadataIssues };
     const reorderIssue = this.reorderParentIssue(command);
     if (reorderIssue !== undefined) return reorderIssue;
     const rootRef = rootRefForCommand(command);

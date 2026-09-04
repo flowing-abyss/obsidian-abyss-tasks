@@ -1,10 +1,69 @@
 import { describe, expect, it } from 'vitest';
+import type { TaskEditCommand } from '../../src/tasks/application/TaskRepository';
 import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
+import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
-import { expectDefined } from './../helpers';
+import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { canonicalStatusCatalog, expectDefined } from './../helpers';
 
 describe('TaskBlockEditor', () => {
+  it('applies dependency metadata to root and subtask lines without touching surrounding bytes', () => {
+    const editor = new TaskBlockEditor();
+    const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
+    const source =
+      '- [ ] root 🧩 future ^root\r\n' +
+      '  - 2026-07-14T09:30:45+00:00: root comment\r\n' +
+      '  - [ ] child 🧲 future ^child\r\n' +
+      '    - 2026-07-14: child comment\r\n' +
+      '  - [ ] sibling\r\n' +
+      '- [ ] neighbor\r\n';
+    const rootTarget = {
+      type: 'task' as const,
+      ref: { filePath: 'tasks.md', line: 0, revision: 'root' },
+    };
+    const childTarget = {
+      type: 'subtask' as const,
+      ref: {
+        parent: rootTarget,
+        relativeLine: 2,
+        originalBlock: '  - [ ] child 🧲 future ^child\r\n    - 2026-07-14: child comment',
+      },
+    };
+    const apply = (content: string, relativeLine: number, command: TaskEditCommand): string => {
+      const block = expectDefined(editor.rootBlocks(content)[0]);
+      const line = expectDefined(content.split(/\r?\n/u)[block.line + relativeLine]);
+      const result = applyTaskCommand(codec, line, command);
+      expect(result.type).toBe('changed');
+      return editor.replaceLine(
+        content,
+        block,
+        relativeLine,
+        (result as Extract<typeof result, { readonly type: 'changed' }>).content,
+      ).content;
+    };
+
+    const withRootId = apply(source, 0, {
+      type: 'set-dependency-id',
+      target: rootTarget,
+      id: 'root_id',
+    });
+    const withChildDependencies = apply(withRootId, 2, {
+      type: 'set-depends-on',
+      target: childTarget,
+      ids: ['root_id', 'root_id', 'external'],
+    });
+
+    expect(withChildDependencies).toBe(
+      '- [ ] root 🧩 future 🆔 root_id ^root\r\n' +
+        '  - 2026-07-14T09:30:45+00:00: root comment\r\n' +
+        '  - [ ] child 🧲 future ⛔ root_id, root_id, external ^child\r\n' +
+        '    - 2026-07-14: child comment\r\n' +
+        '  - [ ] sibling\r\n' +
+        '- [ ] neighbor\r\n',
+    );
+  });
+
   it('rejects multiline roots and malformed aggregates without changing a destination', () => {
     const editor = new TaskBlockEditor();
 
