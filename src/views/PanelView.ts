@@ -91,6 +91,10 @@ function rootRefOfNode(target: TaskNodeRef): TaskRef {
 
 type TaskCommand = Parameters<TaskApplicationApi['execute']>[0];
 
+type RootlessCommand = Extract<
+  TaskCommand,
+  { readonly type: 'create' | 'add-dependency' | 'remove-dependency' | 'restore-dependency' }
+>;
 type DirectTargetCommand = Extract<
   TaskCommand,
   {
@@ -134,8 +138,17 @@ function isCommentReferenceCommand(command: TaskCommand): command is CommentRefe
   return COMMENT_REFERENCE_COMMAND_TYPES.has(command.type);
 }
 
+function isRootlessCommand(command: TaskCommand): command is RootlessCommand {
+  return (
+    command.type === 'create' ||
+    command.type === 'add-dependency' ||
+    command.type === 'remove-dependency' ||
+    command.type === 'restore-dependency'
+  );
+}
+
 function commandRootRef(command: TaskCommand): TaskRef | undefined {
-  if (command.type === 'create') return undefined;
+  if (isRootlessCommand(command)) return undefined;
   if (isDirectTargetCommand(command)) return rootRefOfNode(command.target);
   if (command.type === 'edit-link') {
     return rootRefOfNode(
@@ -926,7 +939,13 @@ export class PanelView extends ItemView {
         ? this.right.captureDraftStateForOwnedTransition(consumedOwnedRef, current.ref)
         : this.right.captureDraftState();
     this.ownedWriteRef = undefined;
-    this.state.set('taskStack', rebuildTaskSelection(current, stack));
+    this.state.set(
+      'taskStack',
+      rebuildTaskSelection(current, stack, {
+        preserveDependencyChanges:
+          resolution.type === 'rebased' && resolution.evidence === 'authority-transition',
+      }),
+    );
     this.right.restoreDraftState(draft, current);
   }
 

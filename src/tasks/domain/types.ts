@@ -118,7 +118,7 @@ interface TaskPresentationMetadata {
   readonly noteIcon?: string;
 }
 
-export interface TaskDependencyFields {
+interface TaskDependencyFields {
   readonly dependencyId?: string;
   readonly dependsOn: readonly string[];
 }

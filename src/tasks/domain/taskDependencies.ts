@@ -14,33 +14,30 @@ export interface TaskNodeSnapshot {
   readonly node: TaskSnapshot | SubtaskSnapshot;
 }
 
-export interface ResolvedTaskDependencyRelation {
+interface ResolvedTaskDependencyRelation {
   readonly type: 'resolved';
   readonly dependencyId: string;
   readonly task: TaskNodeSnapshot;
   readonly state: 'active' | 'satisfied';
 }
 
-export interface AmbiguousTaskDependencyRelation {
+interface AmbiguousTaskDependencyRelation {
   readonly type: 'ambiguous';
   readonly dependencyId: string;
   readonly candidates: readonly TaskNodeSnapshot[];
   readonly state: 'active' | 'satisfied';
 }
 
-export type ActiveTaskDependencyRelation = Omit<ResolvedTaskDependencyRelation, 'state'> & {
+type ActiveTaskDependencyRelation = Omit<ResolvedTaskDependencyRelation, 'state'> & {
   readonly state: 'active';
 };
-export type ActiveAmbiguousTaskDependencyRelation = Omit<
-  AmbiguousTaskDependencyRelation,
-  'state'
-> & {
+type ActiveAmbiguousTaskDependencyRelation = Omit<AmbiguousTaskDependencyRelation, 'state'> & {
   readonly state: 'active';
 };
 export type ActiveBlockingRelation =
   ActiveTaskDependencyRelation | ActiveAmbiguousTaskDependencyRelation;
 
-export type TaskDependencyRelation =
+type TaskDependencyRelation =
   | ResolvedTaskDependencyRelation
   | AmbiguousTaskDependencyRelation
   | {
@@ -55,8 +52,6 @@ export interface TaskDependencyProjection {
   readonly activeBlockedByCount: number;
   readonly activeBlocksCount: number;
 }
-
-export type DependencyDirection = 'blocked-by' | 'blocks';
 
 export type TaskDependencyEligibility =
   | { readonly type: 'allowed' }

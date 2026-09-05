@@ -1,5 +1,5 @@
 import type { Clock, ClockReading } from '../domain/clock';
-import { cloneTaskSnapshot } from '../domain/cloneTaskSnapshot';
+import { cloneTaskSnapshot, taskSnapshotWithStatuses } from '../domain/cloneTaskSnapshot';
 import type {
   TaskCommand,
   TaskCommandResult,
@@ -32,9 +32,15 @@ import type {
   TaskApplicationApi,
   TaskCaptureApplicationApi,
   TaskCreateSession,
+  TaskDependencyQueryApi,
   TaskQueryApi,
 } from './TaskApplicationApi';
 import type { TaskBehaviorSettings, TaskBehaviorSettingsProvider } from './TaskBehaviorSettings';
+import {
+  nextTaskDependencyId,
+  TaskDependencyService,
+  type TaskDiagnosticSink,
+} from './TaskDependencyService';
 import type {
   TaskDestinationPlan,
   TaskDestinationProvider,
@@ -159,7 +165,12 @@ const DEFAULT_BEHAVIOR_SETTINGS: TaskBehaviorSettings = {
   taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
   recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
 };
-type EditableTaskCommand = Exclude<TaskCommand, { readonly type: 'create' | 'move' }>;
+type DependencyCommand = Extract<
+  TaskCommand,
+  { readonly type: 'add-dependency' | 'remove-dependency' | 'restore-dependency' }
+>;
+type ExistingTaskCommand = Exclude<TaskCommand, DependencyCommand | { readonly type: 'create' }>;
+type EditableTaskCommand = Exclude<ExistingTaskCommand, { readonly type: 'move' }>;
 type PreparedTaskCommand =
   | { readonly command: TaskEditCommand }
   | { readonly recurrence: RecurrenceCompletionRequest }
@@ -343,7 +354,7 @@ function prepareBlockCommand(
   return { command: { ...command, text: text.trim().length > 0 ? text : null } };
 }
 
-function rootRefForCommand(command: Exclude<TaskCommand, { readonly type: 'create' }>): TaskRef {
+function rootRefForCommand(command: ExistingTaskCommand): TaskRef {
   if (isDirectTargetCommand(command)) return rootRefOf(command.target);
   if (isParentTargetCommand(command)) return rootRefOf(command.parent);
   if (isSubtaskReferenceCommand(command)) return rootRefOf(command.subtask.parent);
@@ -356,9 +367,7 @@ function rootRefForCommand(command: Exclude<TaskCommand, { readonly type: 'creat
   return command.ref;
 }
 
-function mutationTargetForCommand(
-  command: Exclude<TaskCommand, { readonly type: 'create' | 'move' }>,
-): TaskMutationTarget {
+function mutationTargetForCommand(command: EditableTaskCommand): TaskMutationTarget {
   if (isDirectTargetCommand(command)) return command.target;
   if (isParentTargetCommand(command)) return command.parent;
   if (isSubtaskReferenceCommand(command)) return { type: 'subtask', ref: command.subtask };
@@ -369,11 +378,8 @@ function mutationTargetForCommand(
   return { type: 'task', ref: command.ref };
 }
 
-function rebaseCommandRoot<T extends Exclude<TaskCommand, { readonly type: 'create' | 'move' }>>(
-  command: T,
-  root: TaskRef,
-): T {
-  let rebased: Exclude<TaskCommand, { readonly type: 'create' | 'move' }>;
+function rebaseCommandRoot<T extends EditableTaskCommand>(command: T, root: TaskRef): T {
+  let rebased: EditableTaskCommand;
   if (isDirectTargetCommand(command)) {
     rebased = {
       ...command,
@@ -484,12 +490,14 @@ function destinationUnavailableResult(): TaskCommandResult {
 }
 
 type TaskApplicationServiceDependencies = [
-  queries: TaskQueryApi,
+  queries: TaskQueryApi & TaskDependencyQueryApi,
   repository: TaskRepository,
   statusCatalog: StatusCatalog,
   clock: Clock | LegacyClock,
   destinationProvider?: TaskDestinationProvider,
   behaviorSettings?: TaskBehaviorSettingsProvider,
+  dependencies?: TaskDependencyService,
+  diagnostics?: TaskDiagnosticSink,
 ];
 
 export class TaskApplicationService implements TaskApplicationApi, TaskCaptureApplicationApi {
@@ -497,7 +505,9 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   // service lifetime and is bounded so revision churn cannot retain an unbounded snapshot history.
   private readonly recentOutcomes = new Map<string, RecentOutcome>();
 
-  readonly queries: TaskQueryApi;
+  readonly queries: TaskQueryApi & TaskDependencyQueryApi;
+  private readonly dependencies: TaskDependencyService;
+  private readonly diagnostics: TaskDiagnosticSink;
   private readonly repository: TaskRepository;
   private readonly statusCatalog: StatusCatalog;
   private readonly clock: Clock | LegacyClock;
@@ -512,6 +522,8 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       clock,
       destinationProvider,
       behaviorSettings = () => DEFAULT_BEHAVIOR_SETTINGS,
+      dependencyService,
+      diagnostics = () => {},
     ] = dependencies;
     this.queries = queries;
     this.repository = repository;
@@ -519,6 +531,10 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     this.clock = clock;
     this.destinationProvider = destinationProvider;
     this.behaviorSettings = behaviorSettings;
+    this.dependencies =
+      dependencyService ??
+      new TaskDependencyService(queries, repository, nextTaskDependencyId, diagnostics);
+    this.diagnostics = diagnostics;
   }
 
   async planCreate(destination: CreateTaskCommandDestination): Promise<TaskCreateSession> {
@@ -537,6 +553,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     try {
       return await this.executeCommand(command);
     } catch {
+      this.diagnostics({ operation: command.type, phase: 'unexpected', cause: 'repository-error' });
       return {
         type: 'io-error',
         cause: 'repository-error',
@@ -547,6 +564,12 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   }
 
   private async executeCommand(command: TaskCommand): Promise<TaskCommandResult> {
+    if (
+      command.type === 'add-dependency' ||
+      command.type === 'remove-dependency' ||
+      command.type === 'restore-dependency'
+    )
+      return await this.dependencies.execute(command);
     const inputIssue = multilineInputIssue(command);
     if (inputIssue != null) return inputIssue;
     const settings = snapshotBehaviorSettings(this.behaviorSettings);
@@ -557,21 +580,27 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   }
 
   private async executeExistingCommand(
-    command: Exclude<TaskCommand, { readonly type: 'create' }>,
+    command: ExistingTaskCommand,
     settings: TaskBehaviorSettings,
     reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
   ): Promise<TaskCommandResult> {
     const rootRef = rootRefForCommand(command);
-    const recent = this.recentForCommand(command, rootRef);
-    const resolution: TaskResolution =
-      recent != null
-        ? { type: 'exact', task: recent, basis: { observed: recent } }
-        : this.queries.resolve(rootRef);
+    const resolution = this.resolveForCommand(command, rootRef);
     const unavailable = this.unavailableResult(command, resolution);
     if (unavailable != null) return unavailable;
     const proven = resolution as ProvenResolution;
     if (command.type === 'move') return await this.move(command, proven, settings, reading);
     return await this.executeEditableCommand(command, proven, settings, reading);
+  }
+
+  private resolveForCommand(command: ExistingTaskCommand, rootRef: TaskRef): TaskResolution {
+    const recent = this.recentForCommand(command, rootRef);
+    if (recent === undefined) return this.queries.resolve(rootRef);
+    if (isStatusCommand(command)) {
+      const indexed = this.queries.resolve(rootRef);
+      if (indexed.type === 'rebased') return indexed;
+    }
+    return { type: 'exact', task: recent, basis: { observed: recent } };
   }
 
   private async executeEditableCommand(
@@ -592,6 +621,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       targetBase,
       resolution,
     );
+    const validateCurrent = this.completionValidation(preparedCommand);
     const prepared: PreparedMutation = {
       publicCommand: command,
       repositoryRequest,
@@ -601,8 +631,39 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       settings,
       retry:
         'recurrence' in preparedCommand ? 'exact-target' : retryPolicy(preparedCommand.command),
+      ...(validateCurrent === undefined ? {} : { validateCurrent }),
     };
+    const invalidCurrent = this.validateCompletion(prepared, repositoryRequest);
+    if (invalidCurrent !== undefined) return invalidCurrent;
     return await this.finishPrepared(prepared, await this.dispatch(repositoryRequest));
+  }
+
+  private completionValidation(
+    prepared: Exclude<PreparedTaskCommand, { readonly result: TaskCommandResult }>,
+  ): PreparedMutation['validateCurrent'] {
+    let symbol: string | undefined;
+    if ('recurrence' in prepared) symbol = prepared.recurrence.doneSymbol;
+    else if (prepared.command.type === 'set-status') symbol = prepared.command.symbol;
+    if (symbol === undefined) return undefined;
+    const type = this.statusCatalog.statusForSymbol(symbol);
+    if (type !== 'done' && type !== 'cancelled') return undefined;
+    return (root, target) => {
+      const current = taskSnapshotWithStatuses(root, (status) =>
+        this.statusCatalog.statusForSymbol(status),
+      );
+      const blockers = this.dependencies.blockersForCompletion(current, target);
+      return blockers.length === 0 ? undefined : { type: 'blocked', target, blockers };
+    };
+  }
+
+  private validateCompletion(
+    prepared: PreparedMutation,
+    request: PreparedMutation['repositoryRequest'],
+  ): TaskCommandResult | undefined {
+    if (!('command' in request)) return undefined;
+    const command = request.command;
+    if (!('doneSymbol' in command) && command.type !== 'set-status') return undefined;
+    return prepared.validateCurrent?.(request.baseRoot, command.target);
   }
 
   private repositoryRequest(
@@ -962,7 +1023,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   }
 
   private unavailableResult(
-    command: Exclude<TaskCommand, { readonly type: 'create' }>,
+    command: ExistingTaskCommand,
     resolution: TaskResolution,
   ): TaskCommandResult | undefined {
     if (resolution.type === 'exact' || resolution.type === 'rebased') return undefined;
@@ -1056,6 +1117,8 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (first.type !== 'rebased') return this.terminalRepositoryResult(first);
     const retry = prepareRetry(prepared, first);
     if (retry.type === 'unsafe') return { type: 'conflict', current: first.current };
+    const invalidCurrent = this.validateCompletion(prepared, retry.request);
+    if (invalidCurrent !== undefined) return invalidCurrent;
     const second = await this.dispatch(retry.request);
     return second.type === 'committed'
       ? this.committedResult(prepared, second)
@@ -1085,10 +1148,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     }
   }
 
-  private recentForCommand(
-    command: Exclude<TaskCommand, { readonly type: 'create' }>,
-    ref: TaskRef,
-  ): TaskSnapshot | undefined {
+  private recentForCommand(command: ExistingTaskCommand, ref: TaskRef): TaskSnapshot | undefined {
     const outcome = this.recentOutcomes.get(refKey(ref));
     if (outcome == null) return undefined;
     if (outcome.permittedTarget == null) return outcome.task;

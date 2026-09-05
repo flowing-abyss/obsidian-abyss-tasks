@@ -9,11 +9,12 @@ import {
 import type {
   CalendarProjectionSources,
   CalendarTaskSource,
+  TaskDependencyQueryApi,
   TaskIndexEvent,
   TaskQuery,
   TaskQueryApi,
 } from '../application/TaskApplicationApi';
-import { cloneTaskSnapshot } from '../domain/cloneTaskSnapshot';
+import { cloneTaskSnapshot, taskSnapshotWithStatuses } from '../domain/cloneTaskSnapshot';
 import type { TaskResolutionCandidate } from '../domain/commands';
 import type { StatusCatalog } from '../domain/StatusCatalog';
 import {
@@ -906,7 +907,7 @@ function activeRecurringSources(
   );
 }
 
-export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
+export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnapshotState {
   private readonly taskMap = new Map<string, readonly TaskSnapshot[]>();
   private readonly calendarDateIndex = new TaskDateIndex<CalendarTaskSource>(
     (source) => calendarDatesForPlanning(source.node.planning),
@@ -978,7 +979,10 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   }
 
   listNodes(query?: TaskQuery): readonly TaskNodeSnapshot[] {
-    return enumerateTaskNodes(filterQueryTasks(initialQueryTasks(this.taskMap, query), query));
+    const roots = initialQueryTasks(this.taskMap, query).map((root) =>
+      taskSnapshotWithStatuses(root, (symbol) => this.statusCatalog.statusForSymbol(symbol)),
+    );
+    return enumerateTaskNodes(filterQueryTasks(roots, query));
   }
 
   dependencies(target: TaskNodeRef): TaskDependencyProjection {

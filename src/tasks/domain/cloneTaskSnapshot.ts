@@ -4,6 +4,7 @@ import type {
   TaskNodeRef,
   TaskRef,
   TaskSnapshot,
+  TaskStatus,
 } from './types';
 
 function cloneTaskRef(ref: TaskRef): TaskRef {
@@ -52,5 +53,23 @@ export function cloneTaskSnapshot(task: TaskSnapshot): TaskSnapshot {
     comments: task.comments.map(cloneComment),
     source: { ...task.source },
     presentation: { ...task.presentation },
+  };
+}
+
+/** Reclassify a detached aggregate without changing its persisted identity or source bytes. */
+export function taskSnapshotWithStatuses(
+  task: TaskSnapshot,
+  statusForSymbol: (symbol: string) => TaskStatus,
+): TaskSnapshot {
+  const child = (node: SubtaskSnapshot): SubtaskSnapshot => ({
+    ...node,
+    status: statusForSymbol(node.statusSymbol),
+    subtasks: node.subtasks.map(child),
+  });
+  const cloned = cloneTaskSnapshot(task);
+  return {
+    ...cloned,
+    status: statusForSymbol(cloned.statusSymbol),
+    subtasks: cloned.subtasks.map(child),
   };
 }

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { TaskQueryApi } from '../../src/tasks/application/TaskApplicationApi';
+import type {
+  TaskDependencyQueryApi,
+  TaskQueryApi,
+} from '../../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type {
   TaskEditRequest,
@@ -973,8 +976,18 @@ const statuses = new StatusCatalog([
   { id: 'done', symbol: 'x', type: 'done', defaultForType: true },
 ]);
 
-function query(resolution: ReturnType<TaskQueryApi['resolve']>): TaskQueryApi {
+function query(
+  resolution: ReturnType<TaskQueryApi['resolve']>,
+): TaskQueryApi & TaskDependencyQueryApi {
   return {
+    listNodes: () => [],
+    dependencies: () => ({
+      blockedBy: [],
+      blocks: [],
+      activeBlockedByCount: 0,
+      activeBlocksCount: 0,
+    }),
+    dependencyEligibility: () => ({ type: 'allowed' }),
     list: () => [],
     forCalendarProjection: () => ({ materialized: [], recurringSources: [] }),
     resolve: () => resolution,

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
-import type { TaskQueryApi } from '../src/tasks/application/TaskApplicationApi';
+import type {
+  TaskDependencyQueryApi,
+  TaskQueryApi,
+} from '../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
 import type { TaskRepository, TaskRepositoryResult } from '../src/tasks/application/TaskRepository';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
@@ -51,7 +54,7 @@ function service(move: TaskRepository['move']): TaskApplicationService {
       originalBlock: '- [ ] task',
     },
   };
-  const queries: TaskQueryApi = {
+  const queries: TaskQueryApi & TaskDependencyQueryApi = {
     ...taskQueryApi(),
     resolve: () => ({
       type: 'exact',

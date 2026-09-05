@@ -1,3 +1,4 @@
+import type { ActiveBlockingRelation } from './taskDependencies';
 import type {
   CommentRef,
   DurationMinutes,
@@ -72,6 +73,21 @@ export type TaskCommand =
   | { readonly type: 'append-title'; readonly target: TaskNodeRef; readonly markdown: string }
   | { readonly type: 'set-status'; readonly target: TaskStatusTarget; readonly symbol: string }
   | { readonly type: 'toggle-completion'; readonly target: TaskStatusTarget }
+  | {
+      readonly type: 'add-dependency';
+      readonly blocker: TaskNodeRef;
+      readonly dependent: TaskNodeRef;
+    }
+  | {
+      readonly type: 'remove-dependency';
+      readonly dependent: TaskNodeRef;
+      readonly dependencyId: string;
+    }
+  | {
+      readonly type: 'restore-dependency';
+      readonly dependent: TaskNodeRef;
+      readonly recovery: DependencyRemovalRecovery;
+    }
   | { readonly type: 'reschedule'; readonly ref: TaskRef; readonly date: LocalDate }
   | { readonly type: 'shift-schedule'; readonly ref: TaskRef; readonly days: number }
   | {
@@ -126,7 +142,23 @@ export interface TaskOccurrenceResult {
   readonly target: TaskNodeRef;
 }
 
+export interface DependencyRemovalRecovery {
+  readonly dependencyId: string;
+  readonly beforeIds: readonly string[];
+  readonly afterIds: readonly string[];
+}
+
+export interface DependencyCommandOutcome {
+  readonly type: 'dependency';
+  readonly change: 'added' | 'removed' | 'restored';
+  readonly dependencyId: string;
+  readonly dependent: TaskOccurrenceResult;
+  readonly blocker?: TaskOccurrenceResult;
+  readonly removalRecovery?: DependencyRemovalRecovery;
+}
+
 export type TaskCommandOutcome =
+  | DependencyCommandOutcome
   | { readonly type: 'task'; readonly task: TaskSnapshot }
   | { readonly type: 'deleted'; readonly ref: TaskRef }
   | {
@@ -149,6 +181,11 @@ export interface MoveRecovery {
 }
 
 export type TaskCommandResult =
+  | {
+      readonly type: 'blocked';
+      readonly target: TaskNodeRef;
+      readonly blockers: readonly ActiveBlockingRelation[];
+    }
   | { readonly type: 'ok'; readonly outcome: TaskCommandOutcome; readonly changed: boolean }
   | { readonly type: 'conflict'; readonly current: TaskSnapshot }
   | { readonly type: 'not-found'; readonly target: TaskMutationTarget }

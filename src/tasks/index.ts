@@ -5,6 +5,7 @@ export type {
   TaskApplicationApi,
   TaskCaptureApplicationApi,
   TaskCreateSession,
+  TaskDependencyQueryApi,
   TaskIndexEvent,
   TaskQueryApi,
 } from './application/TaskApplicationApi';

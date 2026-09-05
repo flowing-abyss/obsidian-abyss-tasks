@@ -3,6 +3,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type {
   TaskApplicationApi,
   TaskCommand,
+  TaskDependencyQueryApi,
   TaskIndexEvent,
   TaskQueryApi,
   TaskRef,
@@ -1012,7 +1013,7 @@ describe('TaskModal with real RightPanel', () => {
     });
     let listener: ((event: TaskIndexEvent) => void) | undefined;
     let resolution: TaskResolution = { type: 'exact', task: current, basis: { observed: current } };
-    const queries: TaskQueryApi = taskQueryApi({
+    const queries: TaskQueryApi & TaskDependencyQueryApi = taskQueryApi({
       list: () => [current],
       resolve: () => resolution,
       subscribe: (next) => {
@@ -1151,7 +1152,7 @@ describe('TaskModal with real RightPanel', () => {
         originalBlock: '- [ ] Modal repeat 📅 2026-08-09',
       },
     });
-    const queries: TaskQueryApi = taskQueryApi({
+    const queries: TaskQueryApi & TaskDependencyQueryApi = taskQueryApi({
       list: () => [current],
       resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
     });
@@ -1197,7 +1198,7 @@ describe('TaskModal with real RightPanel', () => {
         originalBlock: '- [ ] Modal status',
       },
     });
-    const queries: TaskQueryApi = taskQueryApi({
+    const queries: TaskQueryApi & TaskDependencyQueryApi = taskQueryApi({
       list: () => [current],
       resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
     });
@@ -1238,7 +1239,7 @@ describe('TaskModal with real RightPanel', () => {
         originalBlock: '- [ ] Modal priority ⏬',
       },
     });
-    const queries: TaskQueryApi = taskQueryApi({
+    const queries: TaskQueryApi & TaskDependencyQueryApi = taskQueryApi({
       list: () => [current],
       resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
     });

@@ -31,6 +31,7 @@ export type TaskEditCommand =
       | { readonly type: 'set-status' | 'toggle-completion' }
       | { readonly type: 'add-comment' }
       | { readonly type: 'add-subtask' }
+      | { readonly type: 'add-dependency' | 'remove-dependency' | 'restore-dependency' }
     >
   | {
       readonly type: 'set-status';

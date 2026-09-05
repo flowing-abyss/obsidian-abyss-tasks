@@ -13,9 +13,14 @@ import {
   localDate,
   type TaskApplicationApi,
   type TaskCaptureApplicationApi,
+  type TaskDependencyQueryApi,
   type TaskQueryApi,
 } from './tasks';
 import { TaskApplicationService } from './tasks/application/TaskApplicationService';
+import {
+  TaskDependencyService,
+  type TaskDiagnosticSink,
+} from './tasks/application/TaskDependencyService';
 import { systemClock } from './tasks/domain/clock';
 import type { CommentTimeContextProvider } from './tasks/domain/commentTimeLabel';
 import { StatusCatalog } from './tasks/domain/StatusCatalog';
@@ -33,7 +38,7 @@ import { PANEL_VIEW_TYPE, PanelView } from './views/PanelView';
 export default class TaskCalendarPlugin extends Plugin {
   override settings!: CalendarSettings;
   tagManager!: TagManager;
-  queries!: TaskQueryApi;
+  queries!: TaskQueryApi & TaskDependencyQueryApi;
   tasks!: TaskApplicationApi & TaskCaptureApplicationApi;
   private taskIndex!: TaskIndex;
   private statusCatalog!: StatusCatalog;
@@ -93,6 +98,9 @@ export default class TaskCalendarPlugin extends Plugin {
       }),
       () => dailyNotes.planDailyNoteDestination(),
     );
+    const diagnostics: TaskDiagnosticSink = (diagnostic, error) => {
+      console.error('[abyss-tasks] task dependency operation failed', diagnostic, error);
+    };
     this.tasks = new TaskApplicationService(
       this.taskIndex,
       repository,
@@ -107,6 +115,16 @@ export default class TaskCalendarPlugin extends Plugin {
         taskLifecycle: this.settings.taskLifecycle,
         recurrence: this.settings.recurrence,
       }),
+      new TaskDependencyService(
+        this.taskIndex,
+        repository,
+        () =>
+          Array.from(crypto.getRandomValues(new Uint8Array(8)), (value) =>
+            (value % 36).toString(36),
+          ).join(''),
+        diagnostics,
+      ),
+      diagnostics,
     );
     this.queries = this.tasks.queries;
     this.tagManager = new TagManager(this.app, this.settings, () => this.saveSettings());

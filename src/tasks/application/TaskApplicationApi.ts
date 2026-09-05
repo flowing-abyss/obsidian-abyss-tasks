@@ -1,4 +1,9 @@
 import type { TaskCommand, TaskCommandResult } from '../domain/commands';
+import type {
+  TaskDependencyEligibility,
+  TaskDependencyProjection,
+  TaskNodeSnapshot,
+} from '../domain/taskDependencies';
 import type { TaskResolution } from '../domain/taskReconciliation';
 import type {
   DateRange,
@@ -44,8 +49,14 @@ export interface TaskQueryApi {
 }
 
 export interface TaskApplicationApi {
-  readonly queries: TaskQueryApi;
+  readonly queries: TaskQueryApi & TaskDependencyQueryApi;
   execute(command: TaskCommand): Promise<TaskCommandResult>;
+}
+
+export interface TaskDependencyQueryApi {
+  listNodes(query?: TaskQuery): readonly TaskNodeSnapshot[];
+  dependencies(target: TaskNodeRef): TaskDependencyProjection;
+  dependencyEligibility(blocker: TaskNodeRef, dependent: TaskNodeRef): TaskDependencyEligibility;
 }
 
 export type CreateTaskCommand = Extract<TaskCommand, { readonly type: 'create' }>;

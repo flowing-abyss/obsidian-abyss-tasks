@@ -75,6 +75,18 @@ describe('task command result presentation', () => {
       ?.click();
   });
 
+  it('presents a blocked command once through the existing error boundary', () => {
+    presentTaskCommandResult({
+      type: 'blocked',
+      target: { type: 'task', ref: { filePath: 'tasks.md', line: 0, revision: 'blocked' } },
+      blockers: [],
+    });
+    expect(Notice).toHaveBeenCalledTimes(1);
+    expect(Notice).toHaveBeenCalledWith(
+      'Complete the prerequisites or remove the dependencies first.',
+    );
+  });
+
   it.each(['Cancel', 'Escape', 'backdrop'] as const)(
     'settles invalid Delete confirmation through %s without invoking the mutation',
     async (dismissal) => {

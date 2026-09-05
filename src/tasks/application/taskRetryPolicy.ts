@@ -1,5 +1,5 @@
 import type { ClockReading } from '../domain/clock';
-import type { TaskCommand, TaskStatusTarget } from '../domain/commands';
+import type { TaskCommand, TaskCommandResult, TaskStatusTarget } from '../domain/commands';
 import { shiftLocalDate } from '../domain/localDateMath';
 import type { RebaseEvidence } from '../domain/taskReconciliation';
 import type {
@@ -33,6 +33,10 @@ export interface PreparedMutation {
   readonly clock: ClockReading | { readonly localDate: ClockReading['localDate'] };
   readonly settings: TaskBehaviorSettings;
   readonly retry: RetryPolicy;
+  readonly validateCurrent?: (
+    currentRoot: TaskSnapshot,
+    rebasedTarget: TaskNodeRef,
+  ) => TaskCommandResult | undefined;
 }
 
 export type PreparedRetryRequest =

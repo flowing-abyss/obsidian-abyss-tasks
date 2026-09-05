@@ -113,6 +113,84 @@ function computedStyleWithFontSize(
   });
 }
 
+describe('PanelView dependency command convergence', () => {
+  it.each(['blocked-by', 'blocks', 'remove-raw', 'restore-raw'] as const)(
+    'preserves the selected structural chain for %s through the index event',
+    async (operation) => {
+      const app = await createAppWithFiles({
+        'dependencies.md':
+          '\n- [ ] Selected\n  - [ ] Parent\n    - [ ] Child ⛔ missing\n- [ ] Other\n',
+      });
+      const application = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
+      await application.index.initialize();
+      const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+      const view = new PanelView(
+        leaf,
+        DEFAULT_SETTINGS,
+        makeTagManager(app),
+        application.index,
+        application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        application.statusRegistry,
+      );
+      await view.onOpen();
+      try {
+        const selected = expectDefined(
+          application.index.listNodes().find(({ node }) => node.title === 'Child'),
+        );
+        const other = expectDefined(
+          application.index.listNodes().find(({ node }) => node.title === 'Other'),
+        );
+        const internals = view as unknown as {
+          state: AppState;
+          createSelectionTasks(): TaskApplicationApi;
+          convergeOwnCommand(initiatingRef: TaskRef, result: TaskCommandResult): void;
+        };
+        internals.state.set('taskStack', [selected.root, ...selected.path]);
+        const converge = vi.spyOn(internals, 'convergeOwnCommand');
+        const tasks = internals.createSelectionTasks();
+        let result: TaskCommandResult;
+        if (operation === 'remove-raw') {
+          result = await tasks.execute({
+            type: 'remove-dependency',
+            dependent: selected.target,
+            dependencyId: 'missing',
+          });
+        } else if (operation === 'restore-raw') {
+          result = await tasks.execute({
+            type: 'restore-dependency',
+            dependent: selected.target,
+            recovery: {
+              dependencyId: 'restored',
+              beforeIds: ['missing', 'restored'],
+              afterIds: ['missing'],
+            },
+          });
+        } else {
+          result = await tasks.execute({
+            type: 'add-dependency',
+            blocker: operation === 'blocked-by' ? other.target : selected.target,
+            dependent: operation === 'blocked-by' ? selected.target : other.target,
+          });
+        }
+        expect(result).toMatchObject({ type: 'ok', outcome: { type: 'dependency' } });
+        expect(converge).not.toHaveBeenCalled();
+        await flushMicrotasks();
+        const stack = internals.state.get('taskStack');
+        expect(stack.map((node) => node.title)).toEqual(['Selected', 'Parent', 'Child']);
+        const fresh = expectDefined(
+          application.index.listNodes().find(({ node }) => node.title === 'Child'),
+        );
+        expect(stack).toEqual([fresh.root, ...fresh.path]);
+        expect(view.contentEl.querySelector('.abyss-task-selection-message')).toBeNull();
+      } finally {
+        await view.onClose();
+        view.containerEl.remove();
+        application.index.destroy();
+      }
+    },
+  );
+});
+
 type TaskApplication = ReturnType<typeof configuredTaskApplication>;
 
 describe('PanelView', () => {

@@ -61,9 +61,11 @@ through their public interfaces instead of constructing alternate repositories o
 ### Public task boundary
 
 [`src/tasks/index.ts`](src/tasks/index.ts) is the public import boundary for task functionality.
-Presentation code works with three small capabilities:
+Presentation code works with four small capabilities:
 
 - `TaskQueryApi` lists and resolves task snapshots and publishes index events.
+- `TaskDependencyQueryApi` lists persisted root/subtask nodes, projects direct relations, and checks
+  proposed edge eligibility. `TaskApplicationApi.queries` supplies both query capabilities.
 - `TaskApplicationApi` executes `TaskCommand` values and returns `TaskCommandResult` values.
 - `TaskCaptureApplicationApi` plans creation against an explicit destination before the write.
 
@@ -87,6 +89,11 @@ and delegates persistence through repository and destination ports. It returns s
 such as success, conflict, invalid input, missing or ambiguous targets, partial moves, and I/O
 failure.
 
+`TaskDependencyService` coordinates public add/remove/restore dependency commands and derives the
+active blockers used by completion validation. It receives query/repository ports, an ID generator,
+and a diagnostic sink from the composition root. Dependencies use the same repository and source
+editor as ordinary task commands.
+
 The application layer may depend on its own ports and the domain. It must not depend on presentation
 or concrete infrastructure.
 
@@ -96,7 +103,7 @@ or concrete infrastructure.
 Markdown:
 
 - `TaskIndex` listens to vault and metadata events, parses files, maintains immutable snapshots, and
-  implements `TaskQueryApi`.
+  implements `TaskQueryApi` and `TaskDependencyQueryApi`.
 - `ObsidianTaskRepository` locates a task block and performs writes through Obsidian's vault APIs.
 - `TaskMarkdownCodec`, `TaskBlockEditor`, and `TaskLocator` own parsing, serialization, block edits,
   and target location.
@@ -169,8 +176,10 @@ the completed original occurrence retains its authored carriers.
 The pure `taskDependencies` domain module enumerates persisted roots and subtasks in canonical
 file/root/source order. Each node carries its root and the complete subtask path for rebuilding a
 structural inspector frame. Recurrence forecasts are not graph nodes. Concrete `TaskIndex` methods
-derive direct `Blocked by` rows in declared ID order and inverse `Blocks` rows in source order;
-these methods remain internal until an application consumer needs the capability.
+derive direct `Blocked by` rows in declared ID order and inverse `Blocks` rows in source order.
+The application consumes these methods through `TaskDependencyQueryApi`. `listNodes()` reclassifies
+the detached root, path, and node snapshots through the live status catalog while retaining their
+persisted refs and source bytes; it does not mutate the indexed snapshots.
 
 Dependency activity follows Tasks semantics: both the dependent and a matching prerequisite must
 be open or in progress under the live status catalog. Done and cancelled endpoints never contribute
@@ -202,8 +211,39 @@ edit commands. `TaskMarkdownCodec` validates IDs against the same Tasks-compatib
 the parser and serializes `🆔` and `⛔` carriers in canonical order without deduplicating authored
 dependency lists. The repository resolves the root or subtask target and delegates the single-line
 replacement to `TaskBlockEditor`, preserving the rest of the root aggregate and file bytes. These
-commands are storage primitives; public dependency orchestration remains an application-layer
-responsibility.
+commands are storage primitives; `TaskDependencyService` owns public dependency orchestration.
+
+`add-dependency` resolves both endpoints and checks self-links, duplicates, inverse edges, cycles,
+and ambiguous IDs. An ID is allocated lazily from eight lowercase base36 characters; existing IDs
+and declared dependency IDs are reserved. Same-file endpoints use `editBatch()` to confirm both
+roots and publish the ID and edge together. Across files, the blocker ID commits first; both
+endpoints are resolved again and eligibility is checked before the dependent edge write. A changed
+blocker ID rejects the attempt. Repository rebases repeat resolution and eligibility before retry.
+When the second cross-file write fails, the assigned ID remains, the exact structured error is
+returned, and one content-free diagnostic is emitted. There is no compensating ID deletion.
+
+Successful dependency commands return `DependencyCommandOutcome` with the fresh dependent
+occurrence and a blocker occurrence when uniquely resolved. Removing a raw ID deletes every
+declaration of that ID and returns its exact before/after sequences. `restore-dependency` requires
+the current sequence to equal the captured after-sequence before restoring the before-sequence;
+missing or ambiguous blocker IDs require no blocker lookup. Intervening changes return conflict.
+Unexpected application errors return the existing I/O error and emit one diagnostic containing
+only operation, phase, and a fixed cause. User feedback remains in the existing command-result
+presenter, which also handles the structured blocked result.
+
+Before root or subtask toggle/set-status commands dispatch a transition to configured done or
+cancelled status, the application checks every active resolved or ambiguous blocker. Missing IDs
+do not block, and already completed dependents remain non-blocking. The same validation runs before
+a reconciled retry, including recurrence completion. A newer proven index resolution takes
+precedence over the service's recent outcome cache. For an index that is still behind the
+repository, the reconciled root is reclassified through the current catalog and overlaid in the
+dependency graph so newly added edges or newly active same-root blockers cannot be missed.
+
+Dependency commands have no single initiating root in `PanelView` and do not use ordinary command
+outcome convergence. Normal index events refresh the current structural selection. After a proven
+authority transition, selection rebuilding may retain the same relative subtask path when every
+non-dependency field and child structure is unchanged. This fallback is unavailable for uncertain
+or visual matches; unrelated content or structure changes stop at the last proven ancestor.
 
 `TaskRepository.editBatch()` groups these two metadata edit commands within one file. It validates
 every revision precondition and complete root-to-subtask reference against the original content,

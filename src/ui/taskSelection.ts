@@ -37,6 +37,7 @@ export function taskNodeLine(root: TaskSnapshot, node: TaskSelectionNode): numbe
 export function rebuildTaskSelection(
   root: TaskSnapshot,
   staleStack: readonly TaskSelectionNode[],
+  options: { readonly preserveDependencyChanges?: boolean } = {},
 ): TaskSelectionNode[] {
   const stack: TaskSelectionNode[] = [root];
   for (let index = 1; index < staleStack.length; index++) {
@@ -47,11 +48,53 @@ export function rebuildTaskSelection(
     const matches = candidates.filter(
       (candidate) => candidate.ref.originalBlock === stale.ref.originalBlock,
     );
-    const child = matches.length === 1 ? matches[0] : undefined;
+    const child =
+      matches.length === 1
+        ? matches[0]
+        : dependencyChangedChild(
+            candidates,
+            stale,
+            matches.length,
+            options.preserveDependencyChanges === true,
+          );
     if (child == null) break;
     stack.push(child);
   }
   return stack;
+}
+
+function selectionContent(node: SubtaskSnapshot): unknown {
+  return {
+    ...node,
+    ref: { relativeLine: node.ref.relativeLine },
+    dependencyId: undefined,
+    dependsOn: undefined,
+    subtasks: node.subtasks.map(selectionContent),
+    comments: node.comments.map((comment) => ({
+      ...comment,
+      ref: {
+        relativeLine: comment.ref.relativeLine,
+        originalMarkdown: comment.ref.originalMarkdown,
+      },
+    })),
+  };
+}
+
+function dependencyChangedChild(
+  candidates: readonly SubtaskSnapshot[],
+  stale: SubtaskSnapshot,
+  exactMatches: number,
+  allowed: boolean,
+): SubtaskSnapshot | undefined {
+  if (!allowed || exactMatches !== 0) return undefined;
+  const positioned = candidates.filter(
+    (candidate) => candidate.ref.relativeLine === stale.ref.relativeLine,
+  );
+  const child = positioned.length === 1 ? positioned[0] : undefined;
+  return child !== undefined &&
+    JSON.stringify(selectionContent(child)) === JSON.stringify(selectionContent(stale))
+    ? child
+    : undefined;
 }
 
 export function renamedRootSelection(

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { TaskQueryApi } from '../../src/tasks/application/TaskApplicationApi';
+import type {
+  TaskDependencyQueryApi,
+  TaskQueryApi,
+} from '../../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type {
   TaskEditCommand,
@@ -46,11 +49,11 @@ function snapshot(): TaskSnapshot {
   };
 }
 
-function queries(): TaskQueryApi {
+function queries(): TaskQueryApi & TaskDependencyQueryApi {
   return { ...taskQueryApi(), resolve: () => exactResolution(snapshot()) };
 }
 
-function exactQueries(task: TaskSnapshot): TaskQueryApi {
+function exactQueries(task: TaskSnapshot): TaskQueryApi & TaskDependencyQueryApi {
   return { ...queries(), resolve: () => exactResolution(task) };
 }
 
@@ -80,7 +83,7 @@ function unwrapEdit(request: Parameters<TaskRepository['edit']>[0]): TaskEditCom
 function service(
   repository: Pick<TaskRepository, 'edit'> &
     Partial<Pick<TaskRepository, 'create' | 'completeRecurrence'>>,
-  taskQueries: TaskQueryApi = queries(),
+  taskQueries: TaskQueryApi & TaskDependencyQueryApi = queries(),
 ) {
   const originalEdit = repository.edit;
   const edit = vi.fn<TaskRepository['edit']>(async (request) => originalEdit(unwrapEdit(request)));
@@ -211,7 +214,7 @@ describe('TaskApplicationService planning commands', () => {
     ],
   )('rejects a non-exact move reference without a repository write: $type', async (result) => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue(result);
-    const nonExactQueries: TaskQueryApi = {
+    const nonExactQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: () => {
         if (result.type === 'not-found') return { type: 'not-found', ref };
@@ -749,7 +752,7 @@ describe('TaskApplicationService planning commands', () => {
       outcome: { type: 'task', task: snapshot() },
       changed: true,
     });
-    const exactQueries: TaskQueryApi = {
+    const exactQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: () => exactResolution(snapshot()),
     };
@@ -796,7 +799,7 @@ describe('TaskApplicationService planning commands', () => {
       outcome: { type: 'task', task: snapshot() },
       changed: true,
     });
-    const exactQueries: TaskQueryApi = {
+    const exactQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: () => exactResolution(done),
     };
@@ -822,7 +825,7 @@ describe('TaskApplicationService planning commands', () => {
       outcome: { type: 'task', task: uppercaseDone },
       changed: false,
     });
-    const exactQueries: TaskQueryApi = {
+    const exactQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: () => exactResolution(uppercaseDone),
     };
@@ -855,7 +858,7 @@ describe('TaskApplicationService planning commands', () => {
       outcome: { type: 'task', task: done },
       changed: true,
     });
-    const exactQueries: TaskQueryApi = {
+    const exactQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: () => exactResolution(done),
     };
@@ -888,7 +891,7 @@ describe('TaskApplicationService planning commands', () => {
       outcome: { type: 'task', task: cancelled },
       changed: true,
     });
-    const exactQueries: TaskQueryApi = {
+    const exactQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: () => exactResolution(cancelled),
     };
@@ -928,7 +931,7 @@ describe('TaskApplicationService planning commands', () => {
         outcome: { type: 'task', task: afterToggle },
         changed: true,
       });
-    const laggingQueries: TaskQueryApi = {
+    const laggingQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: (target) =>
         target.revision === ref.revision ? exactResolution(snapshot()) : uncertainResolution(),
@@ -1023,7 +1026,7 @@ describe('TaskApplicationService planning commands', () => {
         outcome: { type: 'task', task: doneRoot },
         changed: true,
       });
-    const laggingQueries: TaskQueryApi = {
+    const laggingQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: (target) =>
         target.revision === ref.revision
@@ -1068,7 +1071,7 @@ describe('TaskApplicationService planning commands', () => {
         changed: true,
       })
       .mockResolvedValueOnce({ type: 'conflict', current: external });
-    const exactQueries: TaskQueryApi = {
+    const exactQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: () => exactResolution(snapshot()),
     };
@@ -1100,7 +1103,7 @@ describe('TaskApplicationService planning commands', () => {
       changed: true,
     }));
     const current = { ...snapshot(), ref: { ...ref, revision: 'current-index-revision' } };
-    const laggingQueries: TaskQueryApi = {
+    const laggingQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: (target) =>
         target.revision.startsWith('input-')
@@ -1133,7 +1136,7 @@ describe('TaskApplicationService planning commands', () => {
   it('returns not-found after one Clock capture and before any repository write', async () => {
     const current = { ...snapshot(), ref: { ...ref, revision: 'new' } };
     const edit = vi.fn<TaskRepository['edit']>();
-    const staleQueries: TaskQueryApi = {
+    const staleQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: () => uncertainResolution(current),
     };
@@ -1152,7 +1155,7 @@ describe('TaskApplicationService planning commands', () => {
   it('rejects a visual-only stale selection before toggling and never writes its fresh candidate', async () => {
     const current = { ...snapshot(), ref: { ...ref, revision: 'visual-current' } };
     const edit = vi.fn<TaskRepository['edit']>();
-    const visualQueries: TaskQueryApi = {
+    const visualQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: () => ({
         type: 'visual',
@@ -1182,7 +1185,7 @@ describe('TaskApplicationService planning commands', () => {
       outcome: { type: 'task', task: unknown },
       changed: true,
     });
-    const exactQueries: TaskQueryApi = {
+    const exactQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: () => exactResolution(unknown),
     };
@@ -1219,7 +1222,7 @@ describe('TaskApplicationService planning commands', () => {
       ref: { ...ref, line: 4, revision: 'candidate' },
       source: { ...snapshot().source, line: 4 },
     };
-    const ambiguousQueries: TaskQueryApi = {
+    const ambiguousQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: () => ({
         type: 'ambiguous',
@@ -1435,7 +1438,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
       outcome: { type: 'task', task: inProgress },
       changed: true,
     });
-    const laggingQueries: TaskQueryApi = {
+    const laggingQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: (target) =>
         target.revision === ref.revision ? exactResolution(current) : uncertainResolution(current),
@@ -1546,7 +1549,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
       outcome: { type: 'task', task: activeRoot },
       changed: true,
     });
-    const laggingQueries: TaskQueryApi = {
+    const laggingQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: (target) =>
         target.revision === ref.revision ? exactResolution(current) : uncertainResolution(current),
@@ -1601,7 +1604,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
       changed: true,
     });
     let initialResolution = true;
-    const laggingQueries: TaskQueryApi = {
+    const laggingQueries: TaskQueryApi & TaskDependencyQueryApi = {
       ...queries(),
       resolve: (target) => {
         if (target.revision !== ref.revision) return exactResolution(active);

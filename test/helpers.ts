@@ -15,6 +15,7 @@ import type {
   SubtaskSnapshot,
   TaskApplicationApi,
   TaskCommentSnapshot,
+  TaskDependencyQueryApi,
   TaskIndexEvent,
   TaskNodeRef,
   TaskQueryApi,
@@ -139,7 +140,7 @@ export function cssDeclarationValue(declarations: string, property: string): str
 export function queryApiForTasks(
   getTasks: () => readonly TaskSnapshot[],
   onSubscribe?: (listener: (event: TaskIndexEvent) => void) => () => void,
-): TaskQueryApi {
+): TaskQueryApi & TaskDependencyQueryApi {
   return taskQueryApi({
     list: (query) =>
       getTasks()
@@ -197,8 +198,18 @@ function rootDailyNoteDate(task: TaskSnapshot): TaskSnapshot['presentation']['da
   return task.presentation.dailyNoteDate;
 }
 
-export function taskQueryApi(overrides: Partial<TaskQueryApi> = {}): TaskQueryApi {
+export function taskQueryApi(
+  overrides: Partial<TaskQueryApi & TaskDependencyQueryApi> = {},
+): TaskQueryApi & TaskDependencyQueryApi {
   return {
+    listNodes: () => [],
+    dependencies: () => ({
+      blockedBy: [],
+      blocks: [],
+      activeBlockedByCount: 0,
+      activeBlocksCount: 0,
+    }),
+    dependencyEligibility: () => ({ type: 'allowed' }),
     list: () => [],
     forCalendarProjection: () => ({ materialized: [], recurringSources: [] }),
     resolve: (ref) => ({ type: 'not-found', ref: { ...ref } }),

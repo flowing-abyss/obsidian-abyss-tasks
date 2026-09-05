@@ -190,6 +190,11 @@ function describeCommandError(
   result: Exclude<TaskCommandResult, { readonly type: 'ok' }>,
 ): CommandErrorDescription {
   switch (result.type) {
+    case 'blocked':
+      return {
+        message: 'Complete the prerequisites or remove the dependencies first.',
+        requiresRecovery: false,
+      };
     case 'conflict':
       return {
         message: 'This task changed before the update could be applied.',

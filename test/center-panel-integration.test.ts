@@ -77,7 +77,9 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function queryApiForSnapshots(getTasks: () => readonly TaskSnapshot[]): TaskQueryApi {
+function queryApiForSnapshots(
+  getTasks: () => readonly TaskSnapshot[],
+): TaskApplicationApi['queries'] {
   const list = (query?: TaskQuery): readonly TaskSnapshot[] =>
     getTasks()
       .filter((item) => query?.filePath === undefined || item.source.filePath === query.filePath)

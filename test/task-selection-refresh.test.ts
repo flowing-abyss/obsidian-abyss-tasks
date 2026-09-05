@@ -301,6 +301,43 @@ describe('revision-aware nested selection rebuild', () => {
     expect(rebuilt).toHaveLength(1);
   });
 
+  it.each(['title', 'priority', 'status', 'description', 'child-structure', 'ambiguous-position'])(
+    'does not retain a %s change as a dependency-only authority transition',
+    (change) => {
+      const staleRoot = withChild(snapshot('old', 'Root'), '  - [ ] Child');
+      const stale = expectDefined(staleRoot.subtasks[0]);
+      const candidate = {
+        ...stale,
+        dependsOn: ['new-id'],
+        ref: { ...stale.ref, originalBlock: '  - [ ] Child ⛔ new-id' },
+        ...(change === 'title' ? { title: 'Other', markdownTitle: 'Other' } : {}),
+        ...(change === 'priority' ? { priority: 'A' as const } : {}),
+        ...(change === 'status' ? { status: 'done' as const, statusSymbol: 'x' } : {}),
+        ...(change === 'description' ? { description: 'Changed description' } : {}),
+        ...(change === 'child-structure' ? { subtasks: [stale] } : {}),
+      };
+      const root = {
+        ...staleRoot,
+        subtasks: change === 'ambiguous-position' ? [candidate, candidate] : [candidate],
+      };
+      expect(
+        rebuildTaskSelection(root, [staleRoot, stale], { preserveDependencyChanges: true }),
+      ).toEqual([root]);
+    },
+  );
+
+  it('keeps dependency metadata fallback disabled for ordinary reloads', () => {
+    const staleRoot = withChild(snapshot('old', 'Root'), '  - [ ] Child');
+    const stale = expectDefined(staleRoot.subtasks[0]);
+    const changed = {
+      ...stale,
+      dependsOn: ['id'],
+      ref: { ...stale.ref, originalBlock: '  - [ ] Child ⛔ id' },
+    };
+    const root = { ...staleRoot, subtasks: [changed] };
+    expect(rebuildTaskSelection(root, [staleRoot, stale])).toEqual([root]);
+  });
+
   it('follows a uniquely matching child block after a sibling changes its relative line', () => {
     const staleRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
     const originalRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');

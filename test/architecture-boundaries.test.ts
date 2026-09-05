@@ -95,6 +95,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskPatch: ['src/panels/RightPanel.ts'],
   TaskPriority: ['src/panels/CenterPanel.ts'],
   TaskQueryApi: ['src/main.ts'],
+  TaskDependencyQueryApi: ['src/main.ts'],
   TaskRef: ['src/projects/ProjectManager.ts'],
   TaskResolution: ['src/views/PanelView.ts'],
   TaskSnapshot: ['src/ui/TaskCard.ts'],
@@ -118,6 +119,9 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {
   'TaskQueryApi.list': 'src/panels/CenterPanel.ts',
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
+  'TaskDependencyQueryApi.listNodes': 'src/tasks/application/TaskDependencyService.ts',
+  'TaskDependencyQueryApi.dependencies': 'src/tasks/application/TaskDependencyService.ts',
+  'TaskDependencyQueryApi.dependencyEligibility': 'src/tasks/application/TaskDependencyService.ts',
 };
 
 function source(path: string): string {
@@ -609,7 +613,11 @@ function publicInterfaceMembers(): string[] {
   const result: string[] = [];
   for (const statement of syntax('src/tasks/application/TaskApplicationApi.ts').statements) {
     if (!ts.isInterfaceDeclaration(statement)) continue;
-    if (statement.name.text !== 'TaskApplicationApi' && statement.name.text !== 'TaskQueryApi')
+    if (
+      statement.name.text !== 'TaskApplicationApi' &&
+      statement.name.text !== 'TaskQueryApi' &&
+      statement.name.text !== 'TaskDependencyQueryApi'
+    )
       continue;
     for (const member of statement.members) {
       if (member.name != null && ts.isIdentifier(member.name))
