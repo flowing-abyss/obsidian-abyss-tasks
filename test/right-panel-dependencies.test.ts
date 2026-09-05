@@ -143,7 +143,7 @@ describe('inspector dependency navigation', () => {
   const source =
     '- [ ] A\n  - [ ] A.1\n    - [ ] A.1.a 🆔 a ⛔ b\n- [ ] B\n  - [ ] B.2 🆔 b ⛔ c\n    - [ ] B.2.child\n- [ ] C 🆔 c\n';
 
-  it.each(['label', 'row', 'label child'])(
+  it.each(['label', 'row', 'label child', 'keyboard activation'])(
     'opens the full nested inspector from a resolved %s and restores two frames',
     async (target) => {
       const h = await harness(source, 'A.1.a');
@@ -152,13 +152,19 @@ describe('inspector dependency navigation', () => {
       const label = button(h.el, '.abyss-dependency-title');
       expect(label.tagName).toBe('BUTTON');
       expect(label.tabIndex).toBe(0);
+      label.focus();
+      expect(activeDocument.activeElement).toBe(label);
       if (target === 'row') row.click();
       else if (target === 'label child') label.createSpan({ text: 'B.2' }).click();
+      // Native buttons dispatch a detail-zero click after keyboard activation.
+      else if (target === 'keyboard activation')
+        label.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
       else label.click();
       expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
       const firstBack = button(h.el, '[aria-label="Back to previous task"]');
       expect(firstBack.title).toBe('Back to previous task');
       expect(firstBack.tabIndex).toBe(0);
+      expect(activeDocument.activeElement).toBe(firstBack);
       button(h.el, '[data-dependency-direction="blocked-by"] .abyss-dependency-title').click();
       expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['C']);
       button(h.el, '[aria-label="Back to previous task"]').click();
@@ -185,10 +191,14 @@ describe('inspector dependency navigation', () => {
     const h = await harness(source, 'A.1.a');
     h.state.openInspectorDependency(h.node('B.2'));
     const previous = h.state.get('inspectorBackStack');
+    const unrelatedFocus = button(h.el, '[aria-label="More actions"]');
+    unrelatedFocus.focus();
     button(h.el, '.abyss-dependency-row .abyss-status-marker').click();
     expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
+    expect(activeDocument.activeElement).toBe(unrelatedFocus);
     expect(await h.read()).toBe(source);
     button(h.el, '.abyss-dependency-remove').click();
+    expect(activeDocument.activeElement).toBe(unrelatedFocus);
     await flushMicrotasks(30);
     expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
     expect(h.state.get('inspectorBackStack')).toBe(previous);

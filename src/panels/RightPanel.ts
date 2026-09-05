@@ -1150,8 +1150,35 @@ export class RightPanel {
     const resolution = this.tasks.queries.resolve(rootTaskRef(root));
     if (resolution.type !== 'exact' && resolution.type !== 'rebased') return undefined;
     const current = resolution.type === 'exact' ? resolution.task : resolution.current;
-    const selected = rebuildTaskSelection(current, frame.taskStack);
+    const authorityRef =
+      resolution.type === 'rebased' &&
+      resolution.evidence === 'authority-transition' &&
+      sameTaskRef(rootTaskRef(root), resolution.previous.ref)
+        ? resolution.previous.ref
+        : undefined;
+    const selected = this.rebuildHistorySelection(current, frame, authorityRef);
     return selected.length === frame.taskStack.length ? selected : undefined;
+  }
+
+  private rebuildHistorySelection(
+    current: TaskSnapshot,
+    frame: InspectorHistoryFrame,
+    authorityRef: TaskRef | undefined,
+  ): TaskLike[] {
+    const submitted =
+      authorityRef === undefined
+        ? undefined
+        : [...this.submittedDrafts.values()].find(
+            (candidate) => !candidate.consumed && sameTaskRef(candidate.ref, authorityRef),
+          );
+    return (
+      (submitted?.command === undefined
+        ? undefined
+        : rebuildOwnedTaskSelection(current, frame.taskStack, submitted.command)) ??
+      rebuildTaskSelection(current, frame.taskStack, {
+        preserveDependencyChanges: authorityRef !== undefined,
+      })
+    );
   }
 
   private renderTaskHeader(task: TaskLike): void {
@@ -1356,7 +1383,10 @@ export class RightPanel {
       });
       row.addEventListener('click', (event) => {
         event.stopPropagation();
+        const previous = this.state.get('taskStack');
         this.state.openInspectorDependency(relation.task);
+        if (this.state.get('taskStack') !== previous)
+          this.el.querySelector<HTMLElement>('.abyss-inspector-back')?.focus();
       });
     }
     row.createEl(relation.type === 'resolved' ? 'button' : 'span', {

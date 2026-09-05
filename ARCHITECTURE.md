@@ -157,6 +157,12 @@ changed frames atomically with detached frozen snapshots, retaining unproven fra
 unchanged refreshes no-ops. Earlier frame objects remain immutable. Frames use the canonical task
 snapshot clone helper through `src/tasks`; they are transient. A modal owns its own AppState
 and history for its open lifetime, independently of the main panel.
+History path rebuilding shares the active selection's dependency-only tree proof only for a matching
+authority transition. For an inspector-owned content edit, each saved path may use the same bounded
+pending-command proof before draft ownership is consumed. Both shells mount `RightPanel`'s query
+subscriber before active-selection convergence; consumed submissions never authorize later history
+transitions. Successful resolved-row navigation focuses the destination's Back button, retaining a
+reachable keyboard position after the source row is removed.
 
 ### Projects
 

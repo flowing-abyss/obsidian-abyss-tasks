@@ -74,17 +74,6 @@ export class TaskModal {
       if (ref == null || !this.sameRef(ref, this.ownedWriteRef)) this.ownedWriteRef = undefined;
     });
 
-    // Mirror PanelView's index-refresh wiring: without it, the modal's own AppState is
-    // isolated from TaskIndex, so mutating Start/Plan (or any field) via RightPanel's
-    // Planning disclosure updates the file/index but leaves this modal showing the stale
-    // task object — RightPanel's Start/Plan chips then never
-    // appear until the modal is closed and reopened.
-    if (this.queries != null) {
-      this.queryUnsub = this.queries.subscribe((event) => {
-        this.onIndexEvent(event);
-      });
-    }
-
     const backdrop = this.ownerDoc.body.createDiv({ cls: 'abyss-modal-backdrop' });
     this.backdropEl = backdrop;
     // Marks the document so hover-preview popovers can stack above the modal (see styles.css).
@@ -114,6 +103,12 @@ export class TaskModal {
       this.interactionOwnership,
     );
     this.innerPanel.mount(panelEl);
+    // As in PanelView, RightPanel's synchronous history maintenance must run before
+    // active-selection convergence consumes the pending owned-command evidence.
+    this.queryUnsub =
+      this.queries?.subscribe((event) => {
+        this.onIndexEvent(event);
+      }) ?? null;
 
     // A mocked/legacy panel may not invoke the render hook. Preserve the direct fallback.
     this.renderCloseButton(
