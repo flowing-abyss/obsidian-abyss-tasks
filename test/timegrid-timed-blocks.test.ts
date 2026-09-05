@@ -3154,7 +3154,10 @@ describe('calendar surface style contract', () => {
     const dueHandle = declarationsForExactRule('.abyss-tg-span-edge--right');
     const proxyRail = declarationsFor('.abyss-tg-span-edge--proxy');
     const proxyRailPosition = declarationsForExactRule('.abyss-tg-span-edge--proxy::after');
-    const marker = declarationsFor('.abyss-tg-body > .abyss-status-marker');
+    const marker = declarationsForRuleContaining(
+      '.abyss-tg-body > .abyss-status-marker',
+      '.abyss-tg-body > .abyss-status-control > .abyss-status-marker',
+    );
 
     expect(literal).toMatch(/width\s*:\s*10px/u);
     expect(proxy).toMatch(/width\s*:\s*16px/u);

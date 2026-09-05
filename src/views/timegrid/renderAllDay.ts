@@ -10,6 +10,11 @@ import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
 import { statusTitleClass } from '../../ui/statusTitleClass';
 import {
+  dependencyCompletionBlocked,
+  renderDependencyIndicator,
+  type TaskDependencyLookup,
+} from '../../ui/taskDependencyPresentation';
+import {
   attachSpanInteractions,
   type InteractiveSpanBoundaryTarget,
   type SpanInteractionOwner,
@@ -29,6 +34,7 @@ import {
 } from './renderTaskMeta';
 
 export interface AllDayCallbacks extends ForecastInteractionCallbacks {
+  dependenciesFor?: TaskDependencyLookup | undefined;
   occurrenceFor: CalendarOccurrenceLookup;
   app: App;
   component: Component;
@@ -179,10 +185,12 @@ function renderAllDayStatusControl(
   task: TaskSnapshot,
   callbacks: AllDayCallbacks,
 ): void {
+  const projection = callbacks.dependenciesFor?.(task);
   renderStatusMarker(slot, {
     task,
     registry: callbacks.statusRegistry,
     interactive: true,
+    completionBlocked: dependencyCompletionBlocked(projection),
     onLeftClick: () => {
       callbacks.onToggle(task);
     },
@@ -204,6 +212,7 @@ function renderAllDayStatusControl(
       });
     },
   });
+  renderDependencyIndicator(slot, projection);
 }
 
 function applyAllDayTagFill(el: HTMLElement, task: TaskSnapshot, tagGroups: TagGroup[]): void {
@@ -692,10 +701,12 @@ function renderDeadlineStatusControl(
   task: TaskSnapshot,
   callbacks: AllDayCallbacks,
 ): void {
+  const projection = callbacks.dependenciesFor?.(task);
   renderStatusMarker(slot, {
     task,
     registry: callbacks.statusRegistry,
     interactive: true,
+    completionBlocked: dependencyCompletionBlocked(projection),
     onLeftClick: () => {
       callbacks.onToggle(task);
     },
@@ -717,6 +728,7 @@ function renderDeadlineStatusControl(
       });
     },
   });
+  renderDependencyIndicator(slot, projection);
 }
 
 function renderDeadlineTitle(

@@ -7,10 +7,16 @@ import { attachLongPress } from './MobileTouch';
 import { recurrenceBadgeInput, renderRecurrenceBadge } from './recurrence/renderRecurrenceBadge';
 import { renderTaskText } from './renderTaskText';
 import { renderStatusMarker } from './StatusMarker';
+import {
+  dependencyCompletionBlocked,
+  renderDependencyIndicator,
+  type TaskDependencyLookup,
+} from './taskDependencyPresentation';
 
 type TaskCardMode = 'default' | 'timeblock';
 
 export interface TaskCardOptions {
+  dependenciesFor?: TaskDependencyLookup | undefined;
   mode?: TaskCardMode | undefined;
   app: App;
   component: Component;
@@ -72,13 +78,16 @@ function renderCardStatus(
   options: TaskCardOptions,
 ): void {
   if (mode !== 'default' || options.statusRegistry == null) return;
+  const projection = isForecastCalendarTask(task) ? undefined : options.dependenciesFor?.(task);
   renderStatusMarker(parent, {
     task,
     registry: options.statusRegistry,
     interactive: !isForecastCalendarTask(task),
+    completionBlocked: dependencyCompletionBlocked(projection),
     onLeftClick: () => options.onToggle?.(task),
     onContextMenu: (event) => options.onContextMenu?.(event, task),
   });
+  renderDependencyIndicator(parent, projection);
 }
 
 function createCardIcon(task: TaskSnapshot, taskIcon: string): HTMLElement {

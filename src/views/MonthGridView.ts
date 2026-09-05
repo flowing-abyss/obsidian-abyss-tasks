@@ -9,6 +9,11 @@ import { renderTaskText } from '../ui/renderTaskText';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { showStatusMenuAt } from '../ui/statusMenu';
 import { statusTitleClass } from '../ui/statusTitleClass';
+import {
+  dependencyCompletionBlocked,
+  renderDependencyIndicator,
+  type TaskDependencyLookup,
+} from '../ui/taskDependencyPresentation';
 import { BaseView } from './BaseView';
 import {
   layoutVisibleMonth,
@@ -74,6 +79,7 @@ function configuredMonth(startPosition: string): MonthGridMoment {
 }
 
 export interface MonthGridViewCallbacks extends ForecastInteractionCallbacks {
+  dependenciesFor?: TaskDependencyLookup | undefined;
   app: App;
   onDayClick: (date: string) => void;
   onCreateAtDate: (date: string) => void;
@@ -363,6 +369,7 @@ export class MonthGridView extends BaseView {
         return { rows: layout.rows.map((row) => row.spanRow) };
       },
       onToggle: this.callbacks.onToggle,
+      dependenciesFor: this.callbacks.dependenciesFor,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
       ...(this.callbacks.forecastMenuOwner != null && {
@@ -456,10 +463,12 @@ export class MonthGridView extends BaseView {
   // own contextmenu handler stops propagation and opens the status/priority popover instead —
   // distinct from right-clicking the item's own contextmenu handler below (opens the task modal).
   private renderMarker(el: HTMLElement, t: TaskSnapshot): void {
+    const projection = this.callbacks.dependenciesFor?.(t);
     renderStatusMarker(el, {
       task: t,
       registry: this.callbacks.statusRegistry,
       interactive: true,
+      completionBlocked: dependencyCompletionBlocked(projection),
       onLeftClick: () => {
         this.callbacks.onToggle(t);
       },
@@ -481,6 +490,7 @@ export class MonthGridView extends BaseView {
         });
       },
     });
+    renderDependencyIndicator(el, projection);
   }
 
   // Native HTML5 drag source, mirroring renderAllDay.ts's renderDraggableBody pattern

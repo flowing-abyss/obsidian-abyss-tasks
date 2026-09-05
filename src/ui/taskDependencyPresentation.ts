@@ -1,8 +1,77 @@
+import { setIcon } from 'obsidian';
 import type {
   DependencyDirection,
   TaskDependencyProjection,
   TaskDependencyRelation,
+  TaskSnapshot,
 } from '../tasks';
+
+export type TaskDependencyLookup = (task: TaskSnapshot) => TaskDependencyProjection | undefined;
+
+export type DependencyIndicatorPresentation =
+  | { readonly type: 'none' }
+  | { readonly type: 'blocked-by'; readonly blockedBy: number; readonly ariaLabel: string }
+  | { readonly type: 'blocks'; readonly blocks: number; readonly ariaLabel: string }
+  | {
+      readonly type: 'both';
+      readonly blockedBy: number;
+      readonly blocks: number;
+      readonly ariaLabel: string;
+    };
+
+export function dependencyIndicatorPresentation(
+  projection: TaskDependencyProjection | undefined,
+): DependencyIndicatorPresentation {
+  if (projection === undefined) return { type: 'none' };
+  const { blockedBy, blocks, ariaLabel } = dependencyCountPresentation(projection);
+  if (blockedBy > 0 && blocks > 0) return { type: 'both', blockedBy, blocks, ariaLabel };
+  if (blockedBy > 0) return { type: 'blocked-by', blockedBy, ariaLabel };
+  if (blocks > 0) return { type: 'blocks', blocks, ariaLabel };
+  return { type: 'none' };
+}
+
+export function dependencyCompletionBlocked(
+  projection: TaskDependencyProjection | undefined,
+): boolean {
+  return (projection?.activeBlockedByCount ?? 0) > 0;
+}
+
+export function renderDependencyIndicator(
+  parent: HTMLElement,
+  projection: TaskDependencyProjection | undefined,
+): void {
+  const presentation = dependencyIndicatorPresentation(projection);
+  if (presentation.type === 'none') return;
+  const group = parent.createSpan({
+    cls: 'abyss-dependency-indicator',
+    attr: { role: 'img', 'aria-label': presentation.ariaLabel, title: presentation.ariaLabel },
+  });
+  const direction = presentation.type === 'blocks' ? 'blocks' : 'blocked-by';
+  setIcon(
+    group.createSpan({
+      cls: `abyss-dependency-lock abyss-dependency-count-${direction}`,
+      attr: { 'aria-hidden': 'true', 'data-dependency-direction': direction },
+    }),
+    'lock',
+  );
+  if ('blockedBy' in presentation)
+    renderIndicatorCount(group, 'blocked-by', presentation.blockedBy);
+  if (presentation.type === 'both')
+    group.createSpan({ cls: 'abyss-dependency-divider', attr: { 'aria-hidden': 'true' } });
+  if ('blocks' in presentation) renderIndicatorCount(group, 'blocks', presentation.blocks);
+}
+
+function renderIndicatorCount(
+  group: HTMLElement,
+  direction: DependencyDirection,
+  count: number,
+): void {
+  group.createSpan({
+    cls: `abyss-dependency-count-${direction}`,
+    text: String(count),
+    attr: { 'aria-hidden': 'true', 'data-dependency-count': direction },
+  });
+}
 
 export interface DependencyCountPresentation {
   readonly blockedBy: number;

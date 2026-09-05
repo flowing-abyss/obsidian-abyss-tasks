@@ -158,6 +158,17 @@ search across proven selection refreshes. Index events refresh counterpart statu
 rows. Add/remove actions use the existing task application and committed-result Undo presenter;
 failed actions leave the search available and use the established command-result Notice.
 
+`CenterPanel` and the standalone `CalendarRenderer` resolve persisted calendar/root/subtask targets
+through the same dependency query capability. Their read callbacks pass the projection through
+the existing list, month, all-day and timed status renderers. `taskDependencyPresentation` derives
+one compact active-only indicator, with no element for zero active relations; forecasts never query
+dependencies. `StatusMarker` owns the focusable blocked-checkbox wrapper and suppresses pointer,
+touch and synthesized click completion before dispatch. Its keyboard activation and status menus
+retain the public application guard and the single command-result Notice. The Notice identifies
+the first active declared blocker, or its raw duplicate ID when ambiguous, without picking a
+candidate. `RightPanel` updates its mounted header and subtask markers when counterpart dependencies
+change, preserving drafts and restoring enabled completion after index reconciliation.
+
 `AppState.taskStack` remains one structural root-to-subtask chain. Resolved relation rows call
 `openInspectorDependency()`, which stores a detached, deeply frozen complete chain in
 `inspectorBackStack` and selects the destination's complete path. The Back button in the existing

@@ -4,7 +4,7 @@ import type { LinkToken } from '../markdown/links';
 import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { LocalDate, TaskSnapshot } from '../tasks';
-import { createTaskCard } from '../ui/TaskCard';
+import { createTaskCard, type TaskCardOptions } from '../ui/TaskCard';
 import { BaseView } from './BaseView';
 import type { CalendarTaskSource } from './calendarOccurrences';
 import { getTasksForDate, renderTaskGroup } from './taskGrouping';
@@ -23,6 +23,7 @@ interface WeekDayRenderContext {
 }
 
 export interface WeekViewCallbacks {
+  dependenciesFor?: TaskCardOptions['dependenciesFor'];
   app: App;
   forecastMenuOwner?: ForecastContextMenuOwner;
   onToggle: (task: TaskSnapshot) => void;
@@ -111,6 +112,7 @@ export class WeekView extends BaseView {
         app: this.callbacks.app,
         component: this.md,
         onToggle: this.callbacks.onToggle,
+        dependenciesFor: this.callbacks.dependenciesFor,
         onOpenNote: this.callbacks.onOpenNote,
         onEditLink:
           onEditLink === undefined

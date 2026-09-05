@@ -43,6 +43,7 @@ import {
   presentTaskCreationResult,
   requestTaskCompletion,
 } from './taskCommandResult';
+import type { TaskDependencyLookup } from './taskDependencyPresentation';
 import { TaskModal } from './TaskModal';
 import { openInFile } from './taskNavigation';
 import { Toolbar, type ViewEntry } from './Toolbar';
@@ -274,6 +275,11 @@ export class CalendarRenderer {
     };
   }
 
+  private readonly dependenciesFor: TaskDependencyLookup = (task) => {
+    const target = calendarMutationTarget(task);
+    return target === undefined ? undefined : this.tasks.queries.dependencies(target);
+  };
+
   private openWeek(weekNumber: string, year: string): void {
     this.selectedDate = window
       .moment()
@@ -480,6 +486,7 @@ export class CalendarRenderer {
         this.activeView = new MonthView({
           app: this.app,
           onToggle: cb.onToggle,
+          dependenciesFor: this.dependenciesFor,
           onCellClick: cb.onCellClick,
           onWeekClick: cb.onWeekClick,
           onTaskClick: () => {},
@@ -502,6 +509,7 @@ export class CalendarRenderer {
         this.activeView = new WeekView({
           app: this.app,
           onToggle: cb.onToggle,
+          dependenciesFor: this.dependenciesFor,
           onCellClick: cb.onCellClick,
           onTaskClick: () => {},
           onDrop: () => {},
@@ -523,6 +531,7 @@ export class CalendarRenderer {
         this.activeView = new ListView({
           app: this.app,
           onToggle: cb.onToggle,
+          dependenciesFor: this.dependenciesFor,
           onDateClick: cb.onDateClick,
           statusRegistry: this.statusRegistry,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,

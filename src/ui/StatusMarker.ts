@@ -9,6 +9,7 @@ interface Opts {
   task: { statusSymbol: string; priority?: TaskPriority };
   registry: StatusRegistry;
   interactive?: boolean;
+  completionBlocked?: boolean;
   onLeftClick: () => void;
   onContextMenu: (ev: MouseEvent) => void;
 }
@@ -46,28 +47,85 @@ function renderMarkerIcon(
   if (raw.length > 0) marker.setText(raw);
 }
 
+const completionBlockUpdates = new WeakMap<HTMLElement, (blocked: boolean) => void>();
+
+export function setStatusMarkerCompletionBlocked(marker: HTMLElement, blocked: boolean): void {
+  completionBlockUpdates.get(marker)?.(blocked);
+}
+
 function makeMarkerInteractive(
   ...args: [HTMLElement, string, boolean, () => void, (event: MouseEvent) => void]
 ): void {
   const [marker, label, isDone, onLeftClick, onContextMenu] = args;
-  marker.setAttribute('role', 'checkbox');
-  marker.setAttribute('aria-checked', isDone ? 'true' : 'false');
-  marker.setAttribute('aria-label', `Task status: ${label}`);
-  marker.setAttribute('tabindex', '0');
-  marker.addEventListener('click', (event) => {
+  let blocked = false;
+  let wrapper: HTMLElement | undefined;
+  const semantics = (control: HTMLElement): void => {
+    control.setAttrs({
+      role: 'checkbox',
+      'aria-checked': String(isDone),
+      'aria-label': `Task status: ${label}`,
+      tabindex: '0',
+    });
+  };
+  const onClick = (event: MouseEvent): void => {
     event.preventDefault();
     event.stopPropagation();
-    onLeftClick();
-  });
-  marker.addEventListener('contextmenu', (event) => {
+    if (!blocked) onLeftClick();
+  };
+  const onContext = (event: MouseEvent): void => {
     event.preventDefault();
+    event.stopPropagation();
     onContextMenu(event);
-  });
-  marker.addEventListener('keydown', (event) => {
+  };
+  const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
     event.stopPropagation();
-    onLeftClick();
+    if (!event.repeat) onLeftClick();
+  };
+  const onPointer = (event: Event): void => {
+    if (!blocked) return;
+    event.preventDefault();
+    event.stopPropagation();
+    wrapper?.focus({ preventScroll: true });
+  };
+  const bind = (control: HTMLElement): void => {
+    control.addEventListener('click', onClick);
+    control.addEventListener('contextmenu', onContext);
+    control.addEventListener('keydown', onKeyDown);
+    control.addEventListener('pointerdown', onPointer);
+    control.addEventListener('touchstart', onPointer, { passive: false });
+  };
+  semantics(marker);
+  bind(marker);
+  completionBlockUpdates.set(marker, (next) => {
+    if (blocked === next) return;
+    blocked = next;
+    marker.classList.toggle('abyss-status-marker--blocked', blocked);
+    if (blocked) {
+      wrapper = marker.parentElement?.createSpan({ cls: 'abyss-status-control' });
+      if (wrapper === undefined) return;
+      marker.before(wrapper);
+      wrapper.append(marker);
+      semantics(wrapper);
+      wrapper.title = 'Complete prerequisite tasks or remove the dependency first.';
+      wrapper.setAttrs({
+        'aria-disabled': 'true',
+        'aria-label': `Task status: ${label}. ${wrapper.title}`,
+      });
+      bind(wrapper);
+      for (const attr of ['role', 'aria-checked', 'aria-label', 'tabindex'])
+        marker.removeAttribute(attr);
+      marker.setAttribute('aria-hidden', 'true');
+    } else if (wrapper !== undefined) {
+      const focused = marker.ownerDocument.activeElement === wrapper;
+      wrapper.before(marker);
+      wrapper.remove();
+      wrapper = undefined;
+      marker.removeAttribute('aria-hidden');
+      semantics(marker);
+      if (focused) marker.focus({ preventScroll: true });
+    }
   });
 }
 
@@ -110,6 +168,7 @@ export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement
 
   if (interactive) {
     makeMarkerInteractive(el, presentation.label, presentation.isDone, onLeftClick, onContextMenu);
+    setStatusMarkerCompletionBlocked(el, opts.completionBlocked === true);
   }
   return el;
 }

@@ -37,6 +37,7 @@ import type { TimedBoundaryTarget } from './timegrid/timedInteractions';
 import { createTimedInteractionOwner } from './timegrid/timedInteractions';
 
 export interface TimeGridCallbacks extends ForecastInteractionCallbacks {
+  dependenciesFor?: TimedBlockCallbacks['dependenciesFor'];
   app: App;
   onTaskClick: (task: TaskSnapshot) => void;
   onDrop: (dragData: string, targetDate: string) => void;
@@ -346,6 +347,7 @@ export class TodayView extends BaseView {
       onStartChange: this.callbacks.onStartChange,
       onDueChange: this.callbacks.onDueChange,
       onToggle: this.callbacks.onToggle,
+      dependenciesFor: this.callbacks.dependenciesFor,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
       ...(this.callbacks.forecastMenuOwner != null && {
@@ -384,6 +386,7 @@ export class TodayView extends BaseView {
       spanPreviewLayoutFor: (task, planning) =>
         layoutVisibleSpansWithReplacement(spanTasks, [date], task, planning),
       onToggle: this.callbacks.onToggle,
+      dependenciesFor: this.callbacks.dependenciesFor,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
       ...(this.callbacks.forecastMenuOwner != null && {

@@ -767,7 +767,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   overflow: hidden;
 }
 
-.tasksCalendar .task.abyss-calendar-item > .inner > .abyss-status-marker {
+.tasksCalendar .task.abyss-calendar-item > .inner > .abyss-status-marker,
+.tasksCalendar .task.abyss-calendar-item > .inner > .abyss-status-control > .abyss-status-marker {
   display: inline-grid;
   margin-inline-end: var(--abyss-calendar-slot-gap);
   vertical-align: middle;
@@ -2419,7 +2420,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 /* Status controls remain above ordinary content; exact boundary targets intentionally use z-index
    5 so the left edge is reachable without first focusing the task. */
-.abyss-tg-body > .abyss-status-marker {
+.abyss-tg-body > .abyss-status-marker,
+.abyss-tg-body > .abyss-status-control > .abyss-status-marker {
   position: relative;
   z-index: 4;
 }
@@ -3568,7 +3570,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   min-width: 0;
 }
 
-.abyss-task-card-main-row > .abyss-status-marker {
+.abyss-task-card-main-row > .abyss-status-marker,
+.abyss-task-card-main-row > .abyss-status-control > .abyss-status-marker {
   width: var(--abyss-task-card-marker-size);
   height: var(--abyss-task-card-marker-size);
   min-width: var(--abyss-task-card-marker-size);
@@ -3639,6 +3642,43 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-status-marker--inert {
   cursor: default;
+}
+
+.abyss-status-control {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  border-radius: 5px;
+  cursor: not-allowed;
+}
+
+.abyss-status-control:focus-visible {
+  outline: 2px solid var(--background-modifier-border-focus);
+  outline-offset: 2px;
+}
+
+.abyss-status-marker--blocked {
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.abyss-dependency-indicator {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+  font-size: 11px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.abyss-dependency-indicator .abyss-dependency-lock {
+  display: inline-flex;
+}
+
+.abyss-dependency-indicator svg {
+  width: 11px;
+  height: 11px;
 }
 
 /* Shape by status-group (type): in-progress is the only circular group. */
@@ -3937,7 +3977,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr) 24px;
   }
 
-  .abyss-task-card-main-row > .abyss-status-marker {
+  .abyss-task-card-main-row > .abyss-status-marker,
+  .abyss-task-card-main-row > .abyss-status-control {
     grid-column: 1;
     grid-row: 1;
   }
@@ -3956,6 +3997,31 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     grid-column: 2 / -1;
     grid-row: 2;
     width: 100%;
+  }
+
+  .abyss-task-card-main-row:has(> .abyss-dependency-indicator) {
+    grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr);
+  }
+
+  .abyss-task-card-main-row--has-delete:has(> .abyss-dependency-indicator) {
+    grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr) 24px;
+  }
+
+  .abyss-task-card-main-row > .abyss-dependency-indicator {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .abyss-task-card-main-row:has(> .abyss-dependency-indicator) > .abyss-task-body {
+    grid-column: 3;
+  }
+
+  .abyss-task-card-main-row:has(> .abyss-dependency-indicator) > .abyss-task-meta-right {
+    grid-column: 3 / -1;
+  }
+
+  .abyss-task-card-main-row:has(> .abyss-dependency-indicator) > .abyss-task-delete-btn {
+    grid-column: 4;
   }
 
   .abyss-task-source-note {
@@ -5610,6 +5676,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 /* Sub-tasks */
 .abyss-panel-view,
+.abyss-dependency-indicator,
 .abyss-dependency-badge,
 .abyss-dependency-section {
   --abyss-dependency-blocked-by: var(--text-error, var(--color-red));

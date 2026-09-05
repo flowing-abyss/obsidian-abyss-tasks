@@ -4,13 +4,18 @@ import { DEFAULT_VIEW_CONFIG } from '../settings/defaults';
 import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskSnapshot } from '../tasks';
-import { renderStatusMarker } from '../ui/StatusMarker';
 import {
   recurrenceBadgeInput,
   renderRecurrenceBadge,
 } from '../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderSourceNoteChip, shouldShowSourceNote } from '../ui/sourceNoteChip';
+import { renderStatusMarker } from '../ui/StatusMarker';
+import {
+  dependencyCompletionBlocked,
+  renderDependencyIndicator,
+  type TaskDependencyLookup,
+} from '../ui/taskDependencyPresentation';
 import { BaseView } from './BaseView';
 import { calendarOccurrenceForTask, isForecastCalendarTask } from './calendarOccurrences';
 import { getTasksForDate, sortTasks } from './taskGrouping';
@@ -56,6 +61,7 @@ function taskStatusClass(task: TaskSnapshot): string {
 }
 
 export interface ListViewCallbacks {
+  dependenciesFor?: TaskDependencyLookup | undefined;
   app: App;
   onToggle: (task: TaskSnapshot) => void;
   onDateClick: (date: string) => void;
@@ -154,11 +160,15 @@ export class ListView extends BaseView {
 
   private renderListTask(container: HTMLElement, task: TaskSnapshot): void {
     const row = container.createDiv({ cls: 'abyss-list-task' });
+    const projection = isForecastCalendarTask(task)
+      ? undefined
+      : this.callbacks.dependenciesFor?.(task);
 
     const marker = renderStatusMarker(row, {
       task,
       registry: this.callbacks.statusRegistry,
       interactive: !isForecastCalendarTask(task),
+      completionBlocked: dependencyCompletionBlocked(projection),
       onLeftClick: () => {
         this.callbacks.onToggle(task);
       },
@@ -167,6 +177,7 @@ export class ListView extends BaseView {
       },
     });
 
+    renderDependencyIndicator(row, projection);
     if (task.recurrence !== undefined && task.recurrence.length > 0) {
       renderRecurrenceBadge(
         row,

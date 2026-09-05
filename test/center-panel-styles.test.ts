@@ -101,6 +101,38 @@ describe('CenterPanel task metadata styles', () => {
     expect(declarationsFor('.abyss-task-card:hover .abyss-task-delete-btn')).toBe('');
   });
 
+  it('keeps active dependency indicators between the checkbox and title at constrained widths', () => {
+    const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');
+    const withIndicator = '.abyss-task-card-main-row:has(> .abyss-dependency-indicator)';
+    expect(declarationsForSource(compact, withIndicator)).toContain(
+      'grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr)',
+    );
+    expect(
+      declarationsForSource(
+        compact,
+        '.abyss-task-card-main-row--has-delete:has(> .abyss-dependency-indicator)',
+      ),
+    ).toContain('auto minmax(0, 1fr) 24px');
+    expect(
+      declarationsForSource(compact, '.abyss-task-card-main-row > .abyss-status-control'),
+    ).toContain('grid-column: 1');
+    const indicator = declarationsForSource(
+      compact,
+      '.abyss-task-card-main-row > .abyss-dependency-indicator',
+    );
+    expect(indicator).toContain('grid-column: 2');
+    expect(indicator).toContain('grid-row: 1');
+    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-body`)).toContain(
+      'grid-column: 3',
+    );
+    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-meta-right`)).toContain(
+      'grid-column: 3 / -1',
+    );
+    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-delete-btn`)).toContain(
+      'grid-column: 4',
+    );
+  });
+
   it('keeps hover and selection states paint-only so controls do not shift', () => {
     const paintBySelector = new Map([
       ['.abyss-task-card:hover', 'background:'],

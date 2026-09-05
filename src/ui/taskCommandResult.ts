@@ -186,13 +186,25 @@ interface CommandErrorDescription {
   readonly requiresRecovery: boolean;
 }
 
+function describeBlocked(result: Extract<TaskCommandResult, { readonly type: 'blocked' }>): string {
+  const first = result.blockers[0];
+  if (first === undefined) return 'Complete the prerequisites or remove the dependencies first.';
+  const action =
+    first.type === 'resolved'
+      ? `Complete “${first.task.node.title}”`
+      : `Resolve duplicate dependency ID “${first.dependencyId}”`;
+  const remaining = result.blockers.length - 1;
+  const suffix = remaining > 0 ? ` (+${remaining} more)` : '';
+  return `${action} or remove the dependency first${suffix}`;
+}
+
 function describeCommandError(
   result: Exclude<TaskCommandResult, { readonly type: 'ok' }>,
 ): CommandErrorDescription {
   switch (result.type) {
     case 'blocked':
       return {
-        message: 'Complete the prerequisites or remove the dependencies first.',
+        message: describeBlocked(result),
         requiresRecovery: false,
       };
     case 'conflict':

@@ -60,11 +60,12 @@ import {
 } from '../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../ui/renderTaskText';
 import { runAsyncAction } from '../ui/runAsyncAction';
-import { renderStatusMarker } from '../ui/StatusMarker';
+import { renderStatusMarker, setStatusMarkerCompletionBlocked } from '../ui/StatusMarker';
 import { showStatusMenuAt } from '../ui/statusMenu';
 import { showTagDropdown } from '../ui/tagDropdown';
 import { presentTaskCommandResult, requestTaskCompletion } from '../ui/taskCommandResult';
 import {
+  dependencyCompletionBlocked,
   dependencyCountPresentation,
   dependencyDirectionLabel,
   dependencyRelationPresentation,
@@ -372,6 +373,7 @@ export class RightPanel {
 
   destroy(): void {
     this.mounted = false;
+    this.dependencyStatusMarkers.clear();
     this.endTaskDrag?.();
     this.completionConfirmationAbortController.abort();
     this.off?.();
@@ -877,6 +879,7 @@ export class RightPanel {
   }
 
   private render(): void {
+    this.dependencyStatusMarkers.clear();
     const search = this.dependencySearch;
     const focused = this.el.ownerDocument.activeElement;
     const searchFocus =
@@ -1192,17 +1195,7 @@ export class RightPanel {
 
   private renderTaskHeader(task: TaskLike): void {
     const header = this.el.createDiv({ cls: 'abyss-right-header' });
-    renderStatusMarker(header, {
-      task,
-      registry: this.statusRegistry,
-      onLeftClick: () => {
-        runAsyncAction(this.toggleTaskLike(task), 'Could not complete UI action');
-      },
-      onContextMenu: (event) => {
-        event.stopPropagation();
-        this.openStatusMenu(event, task);
-      },
-    });
+    this.renderTaskStatusMarker(header, task);
     this.renderTitleBlock(header, task);
     const headerActions = header.createDiv({ cls: 'abyss-right-header-actions' });
     const menuBtn = headerActions.createEl('button', {
@@ -1220,6 +1213,31 @@ export class RightPanel {
       this.renderContextMenu(task, menuBtn);
     });
     this.onRenderHeaderActions?.(headerActions);
+  }
+
+  private readonly dependencyStatusMarkers = new Map<HTMLElement, TaskLike>();
+
+  private renderTaskStatusMarker(parent: HTMLElement, task: TaskLike): void {
+    const marker = renderStatusMarker(parent, {
+      task,
+      registry: this.statusRegistry,
+      completionBlocked: this.isDependencyBlocked(task),
+      onLeftClick: () => {
+        runAsyncAction(
+          'source' in task ? this.toggleTaskLike(task) : this.toggleSubTask(task),
+          'Could not complete UI action',
+        );
+      },
+      onContextMenu: (event) => {
+        event.stopPropagation();
+        this.openStatusMenu(event, task);
+      },
+    });
+    this.dependencyStatusMarkers.set(marker, task);
+  }
+
+  private isDependencyBlocked(task: TaskLike): boolean {
+    return dependencyCompletionBlocked(this.tasks?.queries.dependencies(taskNodeRef(task)));
   }
 
   private renderTaskMetadata(task: TaskLike, stack: readonly TaskLike[]): void {
@@ -1500,6 +1518,9 @@ export class RightPanel {
   }
 
   private refreshDependencies(): void {
+    for (const [marker, task] of this.dependencyStatusMarkers) {
+      setStatusMarkerCompletionBlocked(marker, this.isDependencyBlocked(task));
+    }
     this.updateDependencyBadge();
     this.el.querySelectorAll('.abyss-dependency-section').forEach((section) => {
       section.remove();
@@ -1835,17 +1856,7 @@ export class RightPanel {
   private renderSubTask(container: HTMLElement, sub: SubtaskSnapshot, parentTask: TaskLike): void {
     const row = container.createDiv({ cls: 'abyss-subtask-row', attr: { draggable: 'true' } });
     this.bindSubtaskDragAndDrop(row, container, sub, parentTask);
-    renderStatusMarker(row, {
-      task: sub,
-      registry: this.statusRegistry,
-      onLeftClick: () => {
-        runAsyncAction(this.toggleSubTask(sub), 'Could not complete UI action');
-      },
-      onContextMenu: (event) => {
-        event.stopPropagation();
-        this.openStatusMenu(event, sub);
-      },
-    });
+    this.renderTaskStatusMarker(row, sub);
     this.renderSubtaskContent(row, sub);
   }
 

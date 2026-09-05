@@ -120,7 +120,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   taskReconciliationKey: ['src/ui/taskPresentationIdentity.ts'],
 };
 
-const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {
+const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string[]> = {
   'TaskApplicationApi.execute': 'src/panels/CenterPanel.ts',
   'TaskApplicationApi.queries': 'src/ui/TaskMoveRecoveryModal.ts',
   'TaskQueryApi.forCalendarProjection': 'src/panels/CenterPanel.ts',
@@ -128,7 +128,11 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
   'TaskDependencyQueryApi.listNodes': 'src/panels/RightPanel.ts',
-  'TaskDependencyQueryApi.dependencies': 'src/panels/RightPanel.ts',
+  'TaskDependencyQueryApi.dependencies': [
+    'src/panels/RightPanel.ts',
+    'src/panels/CenterPanel.ts',
+    'src/ui/CalendarRenderer.ts',
+  ],
   'TaskDependencyQueryApi.dependencyEligibility': 'src/panels/RightPanel.ts',
 };
 
@@ -879,9 +883,11 @@ describe('task architecture boundaries', () => {
         left.localeCompare(right),
       ),
     );
-    for (const [member, path] of Object.entries(PUBLIC_INTERFACE_MEMBER_CONSUMERS)) {
+    for (const [member, consumers] of Object.entries(PUBLIC_INTERFACE_MEMBER_CONSUMERS)) {
       const name = member.slice(member.indexOf('.') + 1);
-      expect(propertyAccesses(path).has(name)).toBe(true);
+      for (const path of typeof consumers === 'string' ? [consumers] : consumers) {
+        expect(propertyAccesses(path).has(name), `${path} must consume ${member}`).toBe(true);
+      }
     }
   });
 

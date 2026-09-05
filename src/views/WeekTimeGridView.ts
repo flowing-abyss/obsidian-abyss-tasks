@@ -225,6 +225,7 @@ export class WeekTimeGridView extends BaseView {
       onStartChange: this.callbacks.onStartChange,
       onDueChange: this.callbacks.onDueChange,
       onToggle: this.callbacks.onToggle,
+      dependenciesFor: this.callbacks.dependenciesFor,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
       ...(this.callbacks.forecastMenuOwner != null && {
@@ -263,6 +264,7 @@ export class WeekTimeGridView extends BaseView {
       spanPreviewLayoutFor: (task, planning) =>
         layoutVisibleSpansWithReplacement(spanTasks, dates, task, planning),
       onToggle: this.callbacks.onToggle,
+      dependenciesFor: this.callbacks.dependenciesFor,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
       ...(this.callbacks.forecastMenuOwner != null && {

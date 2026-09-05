@@ -10,6 +10,11 @@ import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
 import { statusTitleClass } from '../../ui/statusTitleClass';
+import {
+  dependencyCompletionBlocked,
+  renderDependencyIndicator,
+  type TaskDependencyLookup,
+} from '../../ui/taskDependencyPresentation';
 import type { CalendarOccurrence } from '../calendarOccurrences';
 import { renderTimedContent } from './calendarPreview';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from './dragGeometry';
@@ -47,6 +52,7 @@ export type TimedBlockKeyboardIntent =
   | { readonly type: 'extend-due'; readonly days: 1 };
 
 export interface TimedBlockCallbacks extends ForecastInteractionCallbacks {
+  dependenciesFor?: TaskDependencyLookup | undefined;
   occurrenceFor: CalendarOccurrenceLookup;
   app: App;
   component: Component;
@@ -190,10 +196,12 @@ function renderTimedBlockControl(
   task: TaskSnapshot,
   callbacks: TimedBlockCallbacks,
 ): void {
+  const projection = callbacks.dependenciesFor?.(task);
   renderStatusMarker(row, {
     task,
     registry: callbacks.statusRegistry,
     interactive: true,
+    completionBlocked: dependencyCompletionBlocked(projection),
     onLeftClick: () => {
       callbacks.onToggle(task);
     },
@@ -215,6 +223,7 @@ function renderTimedBlockControl(
       });
     },
   });
+  renderDependencyIndicator(row, projection);
 }
 
 type TimedBlockTitleInput = {

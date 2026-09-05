@@ -69,6 +69,11 @@ import {
   requestTaskCompletion,
   type CreationResultDescription,
 } from '../ui/taskCommandResult';
+import {
+  dependencyCompletionBlocked,
+  renderDependencyIndicator,
+  type TaskDependencyLookup,
+} from '../ui/taskDependencyPresentation';
 import { openInFile } from '../ui/taskNavigation';
 import { startTaskNodeDrag } from '../ui/taskNodeDrag';
 import { applyTaskPresentationIdentity } from '../ui/taskPresentationIdentity';
@@ -599,7 +604,7 @@ export class CenterPanel {
     if (!isRealmHTMLElement(target)) return true;
     return (
       target.closest(
-        'input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), .abyss-status-marker, .abyss-popover',
+        'input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), .abyss-status-marker, .abyss-status-control, .abyss-popover',
       ) == null
     );
   }
@@ -1093,6 +1098,7 @@ export class CenterPanel {
       onExtendToSpan: handlers.onExtendToSpan,
       onKeyboardIntent: handlers.onKeyboardIntent,
       onToggle: handlers.onToggle,
+      dependenciesFor: this.dependenciesFor,
       onSetStatus: handlers.onSetStatus,
       onSetPriority: handlers.onSetPriority,
       interactionOwnership: this.interactionOwnership,
@@ -1130,6 +1136,7 @@ export class CenterPanel {
       onExtendToSpan: handlers.onExtendToSpan,
       onKeyboardIntent: handlers.onKeyboardIntent,
       onToggle: handlers.onToggle,
+      dependenciesFor: this.dependenciesFor,
       onSetStatus: handlers.onSetStatus,
       onSetPriority: handlers.onSetPriority,
       interactionOwnership: this.interactionOwnership,
@@ -1156,6 +1163,7 @@ export class CenterPanel {
       onSpanMove: handlers.onSpanMove,
       onSpanBoundary: handlers.onSpanBoundary,
       onToggle: handlers.onToggle,
+      dependenciesFor: this.dependenciesFor,
       onSetStatus: handlers.onSetStatus,
       onSetPriority: handlers.onSetPriority,
       onWeekClick: (week, year) => {
@@ -2007,6 +2015,8 @@ export class CenterPanel {
       cardEl.addEventListener(
         'click',
         (e) => {
+          const statusControl = cardEl.querySelector('.abyss-status-control, .abyss-status-marker');
+          if (statusControl?.contains(e.target as Node) === true) return;
           e.stopPropagation();
           const todayStr = localDate(window.moment().format('YYYY-MM-DD'));
           const d = task.planning.due ?? task.planning.scheduled;
@@ -2100,9 +2110,11 @@ export class CenterPanel {
   }
 
   private renderTaskStatus(mainRow: HTMLElement, task: TaskSnapshot): void {
+    const projection = this.dependenciesFor(task);
     renderStatusMarker(mainRow, {
       task,
       registry: this.statusRegistry,
+      completionBlocked: dependencyCompletionBlocked(projection),
       onLeftClick: () => {
         runAsyncAction(this.toggleTask(task), 'Could not complete UI action');
       },
@@ -2111,7 +2123,13 @@ export class CenterPanel {
         this.openStatusMenu(event, task);
       },
     });
+    renderDependencyIndicator(mainRow, projection);
   }
+
+  private readonly dependenciesFor: TaskDependencyLookup = (task) => {
+    const target = calendarMutationTarget(task);
+    return target === undefined ? undefined : this.tasks?.queries.dependencies(target);
+  };
 
   private renderTaskCardBody(mainRow: HTMLElement, card: HTMLElement, task: TaskSnapshot): void {
     const body = mainRow.createDiv({ cls: 'abyss-task-body' });
