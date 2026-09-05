@@ -24,6 +24,10 @@ import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
 import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
 import { TodayView } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
+import {
+  projectCalendarOccurrences,
+  taskSnapshotForCalendarOccurrence,
+} from '../src/views/calendarOccurrences';
 import { PanelNavigator } from '../src/views/panelNavigation';
 import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
 import {
@@ -2799,6 +2803,8 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     );
     const item = expectDefined(forecastBadge.parentElement);
     expect(item.getAttribute('draggable')).toBeNull();
+    item.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
+    expect(state.get('draggingTaskNode')).toBeNull();
     item
       .querySelector<HTMLElement>('.abyss-status-marker')
       ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -2820,6 +2826,35 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const spanBody = expectDefined(spanBadge.closest<HTMLElement>('.abyss-tg-body'));
     expect(spanBody.getAttribute('draggable')).toBeNull();
     expect(spanBody.querySelector('[data-resize-edge]')).toBeNull();
+    for (const source of [timedBlock, spanBody]) {
+      source.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
+      expect(state.get('draggingTaskNode')).toBeNull();
+    }
+    panel.destroy();
+  });
+
+  it('keeps a projected forecast non-draggable when rendered through the shared center card', () => {
+    const root = task({
+      title: 'Forecast',
+      recurrence: 'every day',
+      planning: { due: '2026-08-08' },
+    });
+    const source = { root, node: root, target: { type: 'task' as const, ref: root.ref } };
+    const projected = projectCalendarOccurrences(
+      { materialized: [], recurringSources: [source] },
+      { from: localDate('2026-08-09'), to: localDate('2026-08-09') },
+      { removeScheduledDate: false },
+    );
+    const forecast = taskSnapshotForCalendarOccurrence(expectDefined(projected.occurrences[0]));
+    const state = new AppState();
+    state.set('selectedList', { type: 'project', path: root.ref.filePath });
+    const panel = makeStaticPanel(state, [forecast]);
+    const el = freshContainer();
+    panel.mount(el);
+    const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+    expect(card.getAttribute('draggable')).toBeNull();
+    card.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
+    expect(state.get('draggingTaskNode')).toBeNull();
     panel.destroy();
   });
 

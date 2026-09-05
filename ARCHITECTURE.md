@@ -129,6 +129,26 @@ Panels may issue commands and query snapshots through the public task boundary. 
 navigation and transient interaction state through `AppState`. They must not edit task Markdown
 directly or import private task-layer modules.
 
+`AppState.draggingTaskNode` carries the canonical `TaskNodeDragPayload`: one detached, deeply
+frozen persisted `TaskNodeSnapshot` and its `center-card` or `inspector-subtask` source. Center
+cards publish root nodes; existing inspector subtask rows publish complete root-to-subtask paths.
+Recurrence forecasts never publish this payload. `taskNodeDrag` owns native drag cleanup for the
+source document: drop, dragend, Escape, source/panel detachment and owner destruction release the
+same transient payload. It does not store a second selection or drag model.
+
+Left-panel tag assignment and project moves accept only center-card roots. Inspector subtask rows
+retain their existing local before/after reorder placement; relation rows do not reorder. Whole
+dependency sections consume the shared payload to add the directed edge, using query eligibility
+for hover/drop and the existing application guard again for the write. Center-card drag disclosure
+refreshes only dependency sections and the badge; its temporary empty sections disappear when
+dragging ends. Inspector subtask drags use already-visible sections and never remount them or insert
+empty sections during native dragstart. The existing badge `+` exposes both directions before the
+first subtask drag; if only one persisted direction is visible, dependency search provides the other
+direction. Explicit add disclosure retains its separate lifetime through drag cancellation.
+Dependency drops use the existing Undo presenter and never navigate or move the source. Normal
+index reconciliation may refresh an affected saved history frame through its proven successor;
+unchanged frames retain their identities. Drag state is never persisted.
+
 `RightPanel` consumes dependency queries through `src/tasks` for the compact badge and direct
 relation sections. Shared dependency presentation owns counts and recovery labels; the dependency
 search model owns filtering, direction eligibility and stable same-file ranking. One search

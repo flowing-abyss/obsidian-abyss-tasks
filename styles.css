@@ -5621,6 +5621,26 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 0;
 }
 
+.abyss-dependency-section[data-dependency-direction='blocked-by'] {
+  --abyss-dependency-drop-color: var(--abyss-dependency-blocked-by);
+}
+
+.abyss-dependency-section[data-dependency-direction='blocks'] {
+  --abyss-dependency-drop-color: var(--abyss-dependency-blocks);
+}
+
+.abyss-dependency-section.is-drop-target {
+  background: color-mix(in srgb, var(--abyss-dependency-drop-color) 7%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--abyss-dependency-drop-color) 45%, transparent);
+}
+
+.abyss-dependency-section.is-drop-disabled {
+  background: var(--background-modifier-hover);
+  box-shadow: inset 0 0 0 1px var(--background-modifier-border);
+  cursor: no-drop;
+}
+
 .abyss-dependency-badge > button {
   display: inline-flex;
   align-items: center;

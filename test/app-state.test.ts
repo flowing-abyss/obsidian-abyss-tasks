@@ -427,18 +427,29 @@ describe('AppState', () => {
     expect(cb).toHaveBeenCalledTimes(1);
   });
 
-  it('draggingTask initialises as null', () => {
+  it('draggingTaskNode initialises as null', () => {
     const s = new AppState();
-    expect(s.get('draggingTask')).toBeNull();
+    expect(s.get('draggingTaskNode')).toBeNull();
   });
 
-  it('draggingTask can be set to a task and back to null', () => {
+  it('detaches a canonical drag payload and clears it without affecting selection or history', () => {
     const s = new AppState();
-    const t = task({ source: { filePath: 'a.md' } });
-    s.set('draggingTask', t);
-    expect(s.get('draggingTask')).toBe(t);
-    s.set('draggingTask', null);
-    expect(s.get('draggingTask')).toBeNull();
+    const location = inspectorLocation('A', ['A.1']);
+    s.set('taskStack', [location.root]);
+    s.openInspectorDependency(inspectorLocation('B'));
+    const selection = s.get('taskStack');
+    const history = s.get('inspectorBackStack');
+    s.set('draggingTaskNode', { source: 'inspector-subtask', task: location });
+    const payload = expectDefined(s.get('draggingTaskNode'));
+    Object.assign(location.root, { title: 'Changed' });
+    expect(payload.task.root.title).toBe('A');
+    expect(payload.task.node).toBe(payload.task.path[0]);
+    expect(Reflect.set(payload.task.target.ref, 'relativeLine', 999)).toBe(false);
+    expect(Reflect.set(payload, 'source', 'center-card')).toBe(false);
+    s.set('draggingTaskNode', null);
+    expect(s.get('draggingTaskNode')).toBeNull();
+    expect(s.get('taskStack')).toBe(selection);
+    expect(s.get('inspectorBackStack')).toBe(history);
   });
 
   it('draggingTag initialises as null', () => {

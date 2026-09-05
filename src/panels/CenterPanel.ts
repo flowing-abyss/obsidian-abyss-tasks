@@ -70,6 +70,7 @@ import {
   type CreationResultDescription,
 } from '../ui/taskCommandResult';
 import { openInFile } from '../ui/taskNavigation';
+import { startTaskNodeDrag } from '../ui/taskNodeDrag';
 import { applyTaskPresentationIdentity } from '../ui/taskPresentationIdentity';
 import { rootTaskRef, taskNodeLine } from '../ui/taskSelection';
 import { TimedBlockKeyboardQueue } from '../ui/timedBlockKeyboardQueue';
@@ -357,6 +358,7 @@ export class CenterPanel {
   private readonly projectStore: ProjectStore | null;
   private readonly projectManager: ProjectManager | null;
   private readonly tasks: TaskApplicationApi | undefined;
+  private endTaskDrag: (() => void) | undefined;
   private readonly commentTimeContext: CommentTimeContextProvider | undefined;
   private readonly onCreationResult: (
     result: TaskCommandResult,
@@ -734,6 +736,7 @@ export class CenterPanel {
   }
 
   destroy(): void {
+    this.endTaskDrag?.();
     this.completionConfirmationAbortController.abort();
     this.cancelActiveCapture();
     this.cancelKeyboardInteraction();
@@ -2335,14 +2338,23 @@ export class CenterPanel {
   }
 
   private mountTaskCardDrag(card: HTMLElement, task: TaskSnapshot): void {
+    if (isForecastCalendarTask(task)) return;
     card.setAttribute('draggable', 'true');
     card.addEventListener('dragstart', () => {
-      this.state.set('draggingTask', task);
+      this.endTaskDrag?.();
       card.classList.add('abyss-dragging');
+      this.endTaskDrag = startTaskNodeDrag(this.state, this.el, card, {
+        payload: {
+          source: 'center-card',
+          task: { root: task, path: [], node: task, target: { type: 'task', ref: task.ref } },
+        },
+        onEnd: () => {
+          card.classList.remove('abyss-dragging');
+        },
+      });
     });
     card.addEventListener('dragend', () => {
-      this.state.set('draggingTask', null);
-      card.classList.remove('abyss-dragging');
+      this.endTaskDrag?.();
     });
 
     card.addEventListener('dragover', (event) => {

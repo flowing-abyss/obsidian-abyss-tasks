@@ -285,7 +285,7 @@ describe('CenterPanel drag source', () => {
     expect(card.getAttribute('draggable')).toBe('true');
   });
 
-  it('dragstart sets state.draggingTask', () => {
+  it('dragstart sets state.draggingTaskNode', () => {
     const t = task({
       status: 'open',
       tags: ['#task/inbox'],
@@ -295,10 +295,13 @@ describe('CenterPanel drag source', () => {
     const card = el.querySelector('.abyss-task-card') as HTMLElement;
     const ev = new MouseEvent('dragstart', { bubbles: true });
     card.dispatchEvent(ev);
-    expect(state.get('draggingTask')).toBeTruthy();
+    expect(state.get('draggingTaskNode')).toEqual({
+      source: 'center-card',
+      task: { root: t, path: [], node: t, target: { type: 'task', ref: t.ref } },
+    });
   });
 
-  it('dragend clears state.draggingTask', () => {
+  it('dragend clears state.draggingTaskNode', () => {
     const t = task({
       status: 'open',
       tags: ['#task/inbox'],
@@ -310,7 +313,7 @@ describe('CenterPanel drag source', () => {
     card.dispatchEvent(startEv);
     const endEv = new MouseEvent('dragend', { bubbles: true });
     card.dispatchEvent(endEv);
-    expect(state.get('draggingTask')).toBeNull();
+    expect(state.get('draggingTaskNode')).toBeNull();
   });
 });
 

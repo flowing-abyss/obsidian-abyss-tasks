@@ -16,6 +16,7 @@ import {
   makeStubStore,
   methodOf,
   objectMatching,
+  subtask,
   task,
   useRealMoment,
 } from './helpers';
@@ -1210,20 +1211,51 @@ describe('LeftPanel inbox logic (new inbox object)', () => {
 });
 
 describe('LeftPanel drop zones', () => {
-  it('adds abyss-drop-target class on dragover when draggingTask is set', () => {
+  it.each(['inspector-root', 'inspector-subtask', 'center-subtask'] as const)(
+    'does not assign a parent tag for a %s drag',
+    (kind) => {
+      const root = task({ title: 'Root' });
+      const child = subtask({ title: 'Child', ref: { parent: { type: 'task', ref: root.ref } } });
+      Object.assign(root, { subtasks: [child] });
+      const { el, state, execute } = makePanel([root], {}, ['#task/next']);
+      const nested = kind !== 'inspector-root';
+      state.set('draggingTaskNode', {
+        source: kind === 'center-subtask' ? 'center-card' : 'inspector-subtask',
+        task: {
+          root,
+          path: nested ? [child] : [],
+          node: nested ? child : root,
+          target: nested ? { type: 'subtask', ref: child.ref } : { type: 'task', ref: root.ref },
+        },
+      });
+      const pinned = expectDefined(el.querySelector<HTMLElement>('.abyss-pinned-tag'));
+      for (const type of ['dragover', 'drop']) {
+        const event = new MouseEvent(type, { bubbles: true, cancelable: true });
+        pinned.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(pinned.classList.contains('abyss-drop-target')).toBe(false);
+      }
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it('adds abyss-drop-target class on dragover when a center root is dragged', () => {
     const t = task({
       status: 'open',
       source: { originalMarkdown: '- [ ] t', originalBlock: '- [ ] t' },
     });
     const { el, state } = makePanel([], {}, ['#task/next']);
-    state.set('draggingTask', t);
+    state.set('draggingTaskNode', {
+      source: 'center-card',
+      task: { root: t, path: [], node: t, target: { type: 'task', ref: t.ref } },
+    });
     const pinned = el.querySelector('.abyss-pinned-tag') as HTMLElement;
     const ev = new MouseEvent('dragover', { bubbles: true, cancelable: true });
     pinned.dispatchEvent(ev);
     expect(pinned.classList.contains('abyss-drop-target')).toBe(true);
   });
 
-  it('does not add abyss-drop-target when no draggingTask', () => {
+  it('does not add abyss-drop-target without a task-node drag', () => {
     const { el } = makePanel([], {}, ['#task/next']);
     const pinned = el.querySelector('.abyss-pinned-tag') as HTMLElement;
     const ev = new MouseEvent('dragover', { bubbles: true, cancelable: true });
@@ -1247,7 +1279,10 @@ describe('LeftPanel drop zones', () => {
       { inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: true } },
       ['#task/next'],
     );
-    state.set('draggingTask', t);
+    state.set('draggingTaskNode', {
+      source: 'center-card',
+      task: { root: t, path: [], node: t, target: { type: 'task', ref: t.ref } },
+    });
     const pinned = el.querySelector('.abyss-pinned-tag') as HTMLElement;
 
     pinned.dispatchEvent(new MouseEvent('drop', { bubbles: true, cancelable: true }));

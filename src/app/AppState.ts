@@ -24,6 +24,11 @@ export interface InspectorHistoryFrame {
   readonly taskStack: readonly TaskSelectionNode[];
 }
 
+export interface TaskNodeDragPayload {
+  readonly task: TaskNodeSnapshot;
+  readonly source: 'center-card' | 'inspector-subtask';
+}
+
 export interface AppStateData {
   mode: ViewMode;
   selectedList: ListSelection;
@@ -31,7 +36,7 @@ export interface AppStateData {
   readonly inspectorBackStack: readonly InspectorHistoryFrame[];
   centerFilter: string;
   searchQuery: string;
-  draggingTask: TaskSnapshot | null;
+  readonly draggingTaskNode: TaskNodeDragPayload | null;
   draggingTag: string | null;
   draggingProject: string | null;
   centerListViewState: ListViewState;
@@ -101,6 +106,26 @@ function sameInspectorFrame(left: InspectorHistoryFrame, right: InspectorHistory
   );
 }
 
+function detachedDragPayload(payload: TaskNodeDragPayload | null): TaskNodeDragPayload | null {
+  if (payload === null) return null;
+  const frame = inspectorFrame([payload.task.root, ...payload.task.path]);
+  const root = frame?.taskStack[0];
+  const node = frame?.taskStack[frame.taskStack.length - 1];
+  if (
+    frame === undefined ||
+    root === undefined ||
+    !('source' in root) ||
+    node === undefined ||
+    !sameTaskNodeRef(taskNodeRef(node), payload.task.target) ||
+    !sameTaskNodeRef(taskNodeRef(node), taskNodeRef(payload.task.node))
+  )
+    return null;
+  const path = frame.taskStack.filter(
+    (item): item is Exclude<TaskSelectionNode, TaskSnapshot> => !('source' in item),
+  );
+  return freeze({ source: payload.source, task: { root, path, node, target: taskNodeRef(node) } });
+}
+
 export class AppState {
   private data: AppStateData = {
     mode: 'tasks',
@@ -109,7 +134,7 @@ export class AppState {
     inspectorBackStack: Object.freeze([]),
     centerFilter: '',
     searchQuery: '',
-    draggingTask: null,
+    draggingTaskNode: null,
     draggingTag: null,
     draggingProject: null,
     centerListViewState: getListViewDefaults('today'),
@@ -127,6 +152,13 @@ export class AppState {
   }
 
   set<K extends keyof AppStateData>(key: K, value: AppStateData[K]): void {
+    if (key === 'draggingTaskNode') {
+      this.setValue(
+        'draggingTaskNode',
+        detachedDragPayload(value as AppStateData['draggingTaskNode']),
+      );
+      return;
+    }
     if (key === 'taskStack' && this.data.inspectorBackStack.length > 0) {
       this.batch(() => {
         this.setValue('inspectorBackStack', Object.freeze([]));

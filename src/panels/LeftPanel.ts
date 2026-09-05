@@ -928,7 +928,7 @@ export class LeftPanel {
    *  markdown block into the project note (membership == file location). */
   private attachProjectDropZone(el: HTMLElement, projectPath: string): void {
     el.addEventListener('dragover', (e) => {
-      const task = this.state.get('draggingTask');
+      const task = this.draggedCenterRoot();
       if (this.projectManager == null || task == null || task.source.filePath === projectPath)
         return;
       e.preventDefault();
@@ -939,7 +939,7 @@ export class LeftPanel {
     });
     el.addEventListener('drop', (e) => {
       el.classList.remove('abyss-drop-target');
-      const task = this.state.get('draggingTask');
+      const task = this.draggedCenterRoot();
       if (task == null || task.source.filePath === projectPath || this.projectManager == null)
         return;
       e.preventDefault();
@@ -973,7 +973,7 @@ export class LeftPanel {
 
   private attachDropZone(el: HTMLElement, tag: string): void {
     el.addEventListener('dragover', (e) => {
-      if (this.state.get('draggingTask') == null) return;
+      if (this.draggedCenterRoot() == null) return;
       e.preventDefault();
       el.classList.add('abyss-drop-target');
     });
@@ -981,12 +981,21 @@ export class LeftPanel {
       el.classList.remove('abyss-drop-target');
     });
     el.addEventListener('drop', (e) => {
-      e.preventDefault();
       el.classList.remove('abyss-drop-target');
-      const dragging = this.state.get('draggingTask');
+      const dragging = this.draggedCenterRoot();
       if (dragging == null) return;
+      e.preventDefault();
       runAsyncAction(this.assignTagFromInbox(dragging, tag), 'Could not complete UI action');
     });
+  }
+
+  private draggedCenterRoot(): TaskSnapshot | undefined {
+    const payload = this.state.get('draggingTaskNode');
+    return payload?.source === 'center-card' &&
+      payload.task.target.type === 'task' &&
+      payload.task.path.length === 0
+      ? payload.task.root
+      : undefined;
   }
 
   private async assignTagFromInbox(task: TaskSnapshot, tag: string): Promise<void> {

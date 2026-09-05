@@ -79,6 +79,7 @@ import {
   type RightPanelDraftState,
 } from '../ui/taskDraftContinuity';
 import { openInFile } from '../ui/taskNavigation';
+import { startTaskNodeDrag } from '../ui/taskNodeDrag';
 import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
 import { presentTaskMutationResult } from '../ui/taskUndoNotice';
 
@@ -275,6 +276,7 @@ export class RightPanel {
   private dependencySearchAnchor = '.abyss-dependency-badge-body';
   private dependencyAdding = false;
   private draggingSub: SubtaskSnapshot | null = null;
+  private endTaskDrag: (() => void) | undefined;
   private md = new Component();
   private readonly onSuccessfulMutation: ((ref?: TaskRef) => void) | undefined;
   private readonly submittedDrafts = new Map<object, SubmittedDraft>();
@@ -347,9 +349,15 @@ export class RightPanel {
       )
         this.render();
     });
+    const offDrag = this.state.on('draggingTaskNode', (next, previous) => {
+      if (next?.source === 'center-card' || previous?.source === 'center-card')
+        this.refreshDependencies();
+      else this.clearDependencyDropClasses();
+    });
     this.off = () => {
       offSelection();
       offHistory();
+      offDrag();
     };
     this.offDependencyQueries = this.tasks?.queries.subscribe(() => {
       this.refreshInspectorHistory();
@@ -364,6 +372,7 @@ export class RightPanel {
 
   destroy(): void {
     this.mounted = false;
+    this.endTaskDrag?.();
     this.completionConfirmationAbortController.abort();
     this.off?.();
     this.offDependencyQueries?.();
@@ -1300,7 +1309,9 @@ export class RightPanel {
   private updateDependencyBadgeAdd(badge: HTMLElement, projection: TaskDependencyProjection): void {
     const plus = badge.querySelector('.abyss-dependency-badge-add');
     const sectionsExist =
-      this.dependencyAdding || projection.blockedBy.length > 0 || projection.blocks.length > 0;
+      this.dependencySectionsDisclosed() ||
+      projection.blockedBy.length > 0 ||
+      projection.blocks.length > 0;
     if (sectionsExist) plus?.remove();
     else if (plus === null) {
       const add = badge.createEl('button', {
@@ -1323,9 +1334,13 @@ export class RightPanel {
     if (task === undefined || projection === undefined) return;
     for (const direction of ['blocked-by', 'blocks'] as const) {
       const relations = direction === 'blocked-by' ? projection.blockedBy : projection.blocks;
-      if (relations.length === 0 && !this.dependencyAdding) continue;
+      if (relations.length === 0 && !this.dependencySectionsDisclosed()) continue;
       this.renderDependencySection(direction, relations, taskNodeRef(task));
     }
+  }
+
+  private dependencySectionsDisclosed(): boolean {
+    return this.dependencyAdding || this.state.get('draggingTaskNode')?.source === 'center-card';
   }
 
   private renderDependencySection(
@@ -1337,6 +1352,7 @@ export class RightPanel {
       cls: 'abyss-right-section abyss-dependency-section',
       attr: { 'data-dependency-direction': direction },
     });
+    this.bindDependencyDrop(section, direction);
     section
       .createDiv({ cls: 'abyss-right-section-header' })
       .createSpan({ cls: 'abyss-right-section-label', text: dependencyDirectionLabel(direction) });
@@ -1357,6 +1373,58 @@ export class RightPanel {
     });
     const subtasks = this.el.querySelector('.abyss-subtask-section');
     if (subtasks !== null) this.el.insertBefore(section, subtasks);
+  }
+
+  private dependencyDropCommand(
+    direction: DependencyDirection,
+  ): Extract<TaskCommand, { type: 'add-dependency' }> | undefined {
+    const payload = this.state.get('draggingTaskNode');
+    const current = this.dependencyTask();
+    if (payload === null || current === undefined) return undefined;
+    return {
+      type: 'add-dependency',
+      blocker: direction === 'blocked-by' ? payload.task.target : taskNodeRef(current),
+      dependent: direction === 'blocked-by' ? taskNodeRef(current) : payload.task.target,
+    };
+  }
+
+  private clearDependencyDropClasses(): void {
+    this.el.querySelectorAll('.abyss-dependency-section').forEach((section) => {
+      section.removeClass('is-drop-target', 'is-drop-disabled');
+    });
+  }
+
+  private bindDependencyDrop(section: HTMLElement, direction: DependencyDirection): void {
+    const preview = (event: DragEvent): void => {
+      this.clearDependencyDropClasses();
+      const command = this.dependencyDropCommand(direction);
+      if (command === undefined || this.tasks === undefined) return;
+      const allowed =
+        this.tasks.queries.dependencyEligibility(command.blocker, command.dependent).type ===
+        'allowed';
+      section.addClass(allowed ? 'is-drop-target' : 'is-drop-disabled');
+      if (allowed) event.preventDefault();
+    };
+    section.addEventListener('dragenter', preview);
+    section.addEventListener('dragover', preview);
+    section.addEventListener('dragleave', (event) => {
+      if (!section.contains(event.relatedTarget as Node | null))
+        section.removeClass('is-drop-target', 'is-drop-disabled');
+    });
+    section.addEventListener('drop', (event) => {
+      const command = this.dependencyDropCommand(direction);
+      const allowed =
+        command !== undefined &&
+        this.tasks?.queries.dependencyEligibility(command.blocker, command.dependent).type ===
+          'allowed';
+      this.clearDependencyDropClasses();
+      if (allowed) {
+        event.preventDefault();
+        event.stopPropagation();
+        runAsyncAction(this.executeDependencyCommand(command), 'Could not add dependency');
+      }
+      if (this.state.get('draggingTaskNode') !== null) this.state.set('draggingTaskNode', null);
+    });
   }
 
   private renderDependencyRow(
@@ -1788,12 +1856,36 @@ export class RightPanel {
     parentTask: TaskLike,
   ): void {
     row.addEventListener('dragstart', (e) => {
+      this.endTaskDrag?.();
       this.draggingSub = sub;
       row.addClass('is-dragging');
       e.dataTransfer?.setData('text/plain', String(sub.ref.relativeLine));
+      const stack = this.state.get('taskStack');
+      const root = stack[0];
+      if (root !== undefined && 'source' in root) {
+        this.endTaskDrag = startTaskNodeDrag(this.state, this.el, row, {
+          payload: {
+            source: 'inspector-subtask',
+            task: {
+              root,
+              path: [...stack.filter((node): node is SubtaskSnapshot => !('source' in node)), sub],
+              node: sub,
+              target: taskNodeRef(sub),
+            },
+          },
+          onEnd: () => {
+            this.draggingSub = null;
+            row.removeClass('is-dragging');
+            container.querySelectorAll('.drop-above,.drop-below').forEach((element) => {
+              element.removeClass('drop-above', 'drop-below');
+            });
+          },
+        });
+      }
     });
 
     row.addEventListener('dragend', () => {
+      this.endTaskDrag?.();
       this.draggingSub = null;
       row.removeClass('is-dragging');
       // Clean up any lingering indicators across all rows
