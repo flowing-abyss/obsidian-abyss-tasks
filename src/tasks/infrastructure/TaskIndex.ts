@@ -1063,13 +1063,14 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       this.options.refAuthority,
     );
     if (directResolution !== undefined) return directResolution;
+    const fileTransition = this.reconciliationTransitions.get(ref.filePath);
+    const transition = fileTransition?.writable.get(taskReconciliationKey(ref));
+    if (transition?.evidence === 'authority-transition') return transitionResolution(transition);
     const authorityResolution = authorityAmbiguityResolution(
       this.options.refAuthority,
       sourceMatches,
     );
     if (authorityResolution !== undefined) return authorityResolution;
-    const fileTransition = this.reconciliationTransitions.get(ref.filePath);
-    const transition = fileTransition?.writable.get(taskReconciliationKey(ref));
     const rebaseResolution = writableRebaseResolution(
       this.options.refAuthority,
       ref,
@@ -1311,6 +1312,8 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
 
   /** Installs authoritative content after an atomic repository transition. */
   installCommittedContent(filePath: string, content: string): readonly TaskSnapshot[] {
+    const restored =
+      this.options.refAuthority?.observeTransition(filePath, content)?.restored === true;
     const cache = cacheWithContentFallback(content, null);
     const frontmatter = frontmatterFromContent(content);
     let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
@@ -1325,6 +1328,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       observedFile: this.fileGenerations.has(filePath),
     });
     if (this.replaceFile(filePath, tasks, authorityTransitions)) this.queueChanged(filePath);
+    if (restored) this.reconciliationTransitions.delete(filePath);
     return tasks.map(cloneTaskSnapshot);
   }
 

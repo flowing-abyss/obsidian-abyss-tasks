@@ -6,6 +6,111 @@ import {
 import { expectDefined } from './../helpers';
 
 describe('TaskRefAuthority', () => {
+  it('restores proven predecessor revisions without issuing writable forward or inverse transitions', () => {
+    const authority = new TaskRefAuthority('restore');
+    const source = '- [ ] Same';
+    const content = `${source}\n${source}\n`;
+    const roots = [0, 1].map((line) => ({
+      line,
+      source,
+      revision: authority.mintRevision(source),
+    }));
+    const staged = authority.stage(
+      {
+        filePath: 'tasks.md',
+        candidateFingerprint: taskRefContentFingerprint('candidate'),
+        candidateLength: 9,
+        expectedRevision: expectDefined(roots[0]).revision,
+        roots: [],
+      },
+      expectDefined(roots[0]).revision,
+    );
+    if (staged.type !== 'staged') throw new Error('missing transaction');
+    expect(authority.retainPredecessors(staged.token, content, roots)).toBe(true);
+    const restored = authority.stageRestoration(staged.token, content);
+    expect(restored.type).toBe('staged');
+    expect(authority.observeTransition('tasks.md', content)).toEqual({
+      roots,
+      transitions: [],
+      restored: true,
+    });
+    if (restored.type !== 'staged') throw new Error('missing restoration');
+    authority.abort(restored.token);
+    expect(authority.observe('tasks.md', content)).toEqual([]);
+    expect(authority.stageRestoration(staged.token, content)).toEqual({ type: 'conflict' });
+  });
+
+  it.each([
+    'foreign',
+    'aborted',
+    'committed',
+    'tampered',
+    'partial',
+    'reordered',
+    'wrong revision',
+  ] as const)('rejects %s restoration ownership or predecessor proof', (fault) => {
+    const authority = new TaskRefAuthority('restore');
+    const content = '- [ ] Same\n- [ ] Same\n- [ ] Other\n- [ ] Other\n';
+    const roots = [0, 1, 2, 3].map((line) => ({
+      line,
+      source: line < 2 ? '- [ ] Same' : '- [ ] Other',
+      revision: authority.mintRevision(line < 2 ? '- [ ] Same' : '- [ ] Other'),
+    }));
+    const revision = expectDefined(roots[0]).revision;
+    const staged = authority.stage(
+      {
+        filePath: 'tasks.md',
+        candidateFingerprint: taskRefContentFingerprint('candidate'),
+        candidateLength: 9,
+        expectedRevision: revision,
+        roots: [],
+      },
+      revision,
+    );
+    if (staged.type !== 'staged') throw new Error('missing transaction');
+    let claimed = roots;
+    if (fault === 'partial') claimed = roots.slice(1);
+    if (fault === 'reordered') claimed = [...roots].reverse();
+    if (fault === 'wrong revision') claimed = roots.map((root) => ({ ...root, revision }));
+    expect(authority.retainPredecessors(staged.token, content, claimed)).toBe(
+      !['partial', 'reordered', 'wrong revision'].includes(fault),
+    );
+    if (fault === 'aborted') authority.abort(staged.token);
+    if (fault === 'committed') authority.commit(staged.token);
+    expect(
+      authority.stageRestoration(
+        fault === 'foreign' ? {} : staged.token,
+        fault === 'tampered' ? `${content}text` : content,
+      ),
+    ).toEqual({ type: 'conflict' });
+    authority.abort(staged.token);
+    authority.acknowledge('tasks.md', 'candidate');
+    expect(authority.observe('tasks.md', content)).toEqual([]);
+    expect(authority.observe('tasks.md', 'candidate')).toEqual([]);
+  });
+
+  it('cannot release a later same-file owner by reusing an aborted token', () => {
+    const authority = new TaskRefAuthority('ownership');
+    const revision = authority.revision('- [ ] Same');
+    const transition = {
+      filePath: 'tasks.md',
+      candidateFingerprint: taskRefContentFingerprint('candidate'),
+      candidateLength: 9,
+      expectedRevision: revision,
+      roots: [{ line: 0, source: '- [ ] Same', revision }],
+    };
+    const first = authority.stage(transition, revision);
+    if (first.type !== 'staged') throw new Error('missing first');
+    authority.abort(first.token);
+    const second = authority.stage(transition, revision);
+    if (second.type !== 'staged') throw new Error('missing second');
+    authority.abort(first.token);
+    authority.commit(first.token);
+    expect(authority.stageRestoration(first.token, '- [ ] Same')).toEqual({ type: 'conflict' });
+    expect(authority.observe('tasks.md', 'candidate')).toEqual(transition.roots);
+    authority.abort(second.token);
+  });
+
   it('publishes distinct predecessors for a multi-root batch and removes them on abort', () => {
     const authority = new TaskRefAuthority('batch');
     const first = authority.revision('- [ ] First');

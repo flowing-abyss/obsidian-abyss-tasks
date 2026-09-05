@@ -338,13 +338,27 @@ the transaction's ordered occurrence lines equal the indexed source population. 
 insertion, deletion, or shifted population cannot use the line hint to retarget a write. Stale and
 legacy source-only references keep conservative ambiguity and relocation behavior.
 
+Prepared repository requests in both adapters share identity-first reconciliation. An exact keyed
+authority successor is checked before any source-only location; its complete current ref must
+match the located snapshot. Byte-identical relocation additionally retains the consumed revision,
+so a remaining identical sibling cannot authorize an application retry after the selected root
+changes. `TaskIndex.resolve()` likewise accepts only an exact keyed writable authority transition
+before unrelated source ambiguity; visual/source-only matches remain conservative.
+
 The batch stages one authority transition with an explicit predecessor revision for each consumed
 root. `TaskIndex` passes those individual mappings into reconciliation, so either edited root can
 converge to its own successor through the normal index event. The legacy one-source authority
-staging path retains its recurrence fan-out semantics. After processor rejection, the repository
-holds the file reservation until its authoritative read finishes, then synchronously aborts the
-batch, revokes early-observed forward mappings, and restores the original refs when the original
-bytes remain. A failed read still releases the reservation and revokes those mappings. If a
+staging path retains its recurrence fan-out semantics. Before publication, the repository attaches
+the original complete ordered line/source/revision population to the active authority token,
+after confirming it against the index and canonical original blocks. Single edits, deletions,
+recurrence edits and metadata batches share this rollback basis. After processor rejection, the
+repository holds the file reservation until its authoritative read finishes. The original active
+token can be consumed once to restore predecessor revisions only when the complete original
+bytes, fingerprint and length match. Restoration emits no writable authority transitions and
+clears stored writable/visual index reconciliation edges; the independent conservative same-line
+visual fallback is unchanged. Commit, abort, restoration and acknowledgement terminalize token
+ownership; an old or foreign token cannot affect a later same-file reservation. A failed read
+still releases the reservation and revokes forward mappings. If a
 processor reports an error after persisting the complete candidate, the repository preserves the
 actual bytes and returns the existing I/O error with unknown content state; it does not retain the
 failed operation's writable provenance or attempt a compensating file write.

@@ -30,7 +30,6 @@ import {
   prepareRecurrenceIteration,
   recurrenceMarkerCountInOwnedSubtree,
 } from '../../domain/recurrenceIteration';
-import type { ProvenRootRevisionOverride } from '../../domain/taskReconciliation';
 import type {
   CommentRef,
   LocalDate,
@@ -54,6 +53,7 @@ import type { TaskBlockEdit, TaskBlockTarget, TaskRootBlock } from '../markdown/
 import { type TaskBlockEditor } from '../markdown/TaskBlockEditor';
 import { type TaskLocator } from '../markdown/TaskLocator';
 import { type TaskMarkdownCodec } from '../markdown/TaskMarkdownCodec';
+import { preparedRevisionResult } from '../preparedRevisionResult';
 import { prepareTaskEditBatch, stageTaskEditBatch, taskEditBatchIssues } from '../TaskEditBatch';
 import {
   hasUnconfirmedCurrentRoot,
@@ -65,57 +65,6 @@ import {
 } from '../TaskRefAuthority';
 
 type LocateResult = ReturnType<TaskLocator['locate']>;
-
-interface PreparedRevisionContext {
-  readonly prepared: RevisionPrecondition | undefined;
-  readonly located: LocateResult;
-  readonly authorityCurrent: TaskRef | undefined;
-  readonly locateAuthorityCurrent: (ref: TaskRef) => LocateResult;
-  readonly snapshot: (block: TaskRootBlock) => TaskSnapshot | undefined;
-}
-
-function preparedRevisionResult(
-  context: PreparedRevisionContext,
-): TaskRepositoryResult | undefined {
-  const { prepared, located } = context;
-  if (prepared === undefined) return undefined;
-  if (located.type === 'conflict') return preparedConflictResult(context, prepared);
-  if (located.type !== 'exact' || located.block.line === prepared.baseRoot.ref.line)
-    return undefined;
-  const current = context.snapshot(located.block);
-  return current != null
-    ? {
-        type: 'rebased',
-        previous: prepared.baseRoot,
-        current,
-        evidence: 'byte-identical-relocation',
-      }
-    : { type: 'not-found', target: prepared.baseTarget };
-}
-
-function preparedConflictResult(
-  context: PreparedRevisionContext,
-  prepared: RevisionPrecondition,
-): TaskRepositoryResult {
-  const authorityCurrent = context.authorityCurrent;
-  if (
-    authorityCurrent === undefined ||
-    authorityCurrent.revision === prepared.baseRoot.ref.revision
-  ) {
-    return { type: 'uncertain', target: prepared.baseTarget };
-  }
-  const authoritative = context.locateAuthorityCurrent(authorityCurrent);
-  if (authoritative.type !== 'exact') return { type: 'uncertain', target: prepared.baseTarget };
-  const current = context.snapshot(authoritative.block);
-  return current === undefined
-    ? { type: 'uncertain', target: prepared.baseTarget }
-    : {
-        type: 'rebased',
-        previous: prepared.baseRoot,
-        current,
-        evidence: 'authority-transition',
-      };
-}
 
 function authorityRevisionChanged(
   hasAuthority: boolean,
@@ -646,6 +595,7 @@ interface RecurrenceTransaction {
   result: TaskRepositoryResult | undefined;
   transitionToken: object | undefined;
   committedContent: string | undefined;
+  rollbackBasis?: RollbackBasis | undefined;
 }
 
 type RecurrenceLocation =
@@ -691,6 +641,12 @@ interface EditTransaction {
   result: TaskRepositoryResult | undefined;
   transitionToken: object | undefined;
   committedContent: string | undefined;
+  rollbackBasis?: RollbackBasis | undefined;
+}
+
+interface RollbackBasis {
+  readonly content: string;
+  readonly roots: readonly RootRevisionOverride[];
 }
 
 type EditLocation =
@@ -1173,6 +1129,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       transaction.result = location.result;
       return content;
     }
+    transaction.rollbackBasis = this.captureRollbackBasis(input.rootRef.filePath, content);
     if (this.options.codec.statusForSymbol(location.owner.statusSymbol) === 'done') {
       transaction.result = this.unchangedMove(location.current);
       return content;
@@ -1338,6 +1295,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     });
     if (staged.type === 'staged') {
       transaction.transitionToken = staged.token;
+      this.retainRollbackBasis(transaction);
       return true;
     }
     transaction.result =
@@ -1470,6 +1428,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       changed: prepared.content !== content,
     };
     if (prepared.content === content) return content;
+    transaction.rollbackBasis = this.captureRollbackBasis(request.filePath, content);
     const staged = stageTaskEditBatch(
       request.filePath,
       prepared,
@@ -1482,6 +1441,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     }
     transaction.transitionToken = staged.token;
     transaction.committedContent = prepared.content;
+    this.retainRollbackBasis(transaction);
     return prepared.content;
   }
 
@@ -1492,54 +1452,14 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): Promise<void> {
     if (transaction.transitionToken === undefined) return;
     try {
-      let content: string;
-      try {
-        content = await this.app.vault.read(file);
-      } finally {
-        this.options.refAuthority?.abort(transaction.transitionToken);
-        for (const { baseRoot } of request.edits) {
-          this.options.snapshotState?.discardAuthoritySuccessor?.(baseRoot.ref);
-        }
-      }
-      this.restoreBatchReferences(request, content);
+      const content = await this.app.vault.read(file);
+      this.restoreOwnedTransition(request.filePath, content, transaction.transitionToken);
     } catch {
       // The I/O result records that final content state is unknown.
-    }
-  }
-
-  private restoreBatchReferences(request: TaskEditBatchRequest, content: string): void {
-    const authority = this.options.refAuthority;
-    const snapshotState = this.options.snapshotState;
-    const roots = new Map<number, ProvenRootRevisionOverride>();
-    for (const { baseRoot } of request.edits) {
-      const context = this.rejectedRollbackContext(request.filePath, content, baseRoot.ref);
-      if (context !== undefined)
-        roots.set(context.block.line, {
-          line: context.block.line,
-          source: context.block.source,
-          revision: baseRoot.ref.revision,
-          previousRevision: context.expectedRevision,
-        });
-    }
-    if (roots.size === 0 || authority === undefined) {
-      this.installContentSafely(snapshotState, request.filePath, content);
-      return;
-    }
-    const overrides = [...roots.values()];
-    const staged = authority.stageBatch(
-      {
-        filePath: request.filePath,
-        candidateFingerprint: taskRefContentFingerprint(content),
-        candidateLength: content.length,
-        roots: overrides,
-      },
-      overrides.map((root) => root.previousRevision),
-    );
-    if (staged.type !== 'staged') return;
-    try {
-      this.installContentSafely(snapshotState, request.filePath, content);
     } finally {
-      authority.abort(staged.token);
+      this.options.refAuthority?.abort(transaction.transitionToken);
+      for (const { baseRoot } of request.edits)
+        this.options.snapshotState?.discardAuthoritySuccessor?.(baseRoot.ref);
     }
   }
 
@@ -1559,6 +1479,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       transaction.result = location.result;
       return content;
     }
+    transaction.rollbackBasis = this.captureRollbackBasis(input.rootRef.filePath, content);
     const edit = this.applyLocatedEdit(input, content, location.block);
     transaction.result = edit.result;
     if (edit.result.type !== 'committed' || !edit.result.changed) return edit.content;
@@ -1718,8 +1639,9 @@ export class ObsidianTaskRepository implements TaskRepository {
 
   private stageEditTransition(input: EditStageInput, transaction: EditTransaction): string {
     const { process, location, edit, originalContent } = input;
-    if (edit.result.type !== 'committed' || edit.result.outcome.type !== 'task')
-      return edit.content;
+    if (edit.result.type !== 'committed') return edit.content;
+    if (edit.result.outcome.type === 'deleted') return this.stageDeletedEdit(input, transaction);
+    if (edit.result.outcome.type !== 'task') return edit.content;
     const authority = this.options.refAuthority;
     const snapshotState = this.options.snapshotState;
     if (authority == null || snapshotState == null) return edit.content;
@@ -1767,7 +1689,32 @@ export class ObsidianTaskRepository implements TaskRepository {
       return originalContent;
     }
     transaction.transitionToken = staged.token;
+    this.retainRollbackBasis(transaction);
     return edit.content;
+  }
+
+  private stageDeletedEdit(input: EditStageInput, transaction: EditTransaction): string {
+    const authority = this.options.refAuthority;
+    if (authority === undefined || this.options.snapshotState === undefined)
+      return input.edit.content;
+    const staged = authority.stage(
+      {
+        filePath: input.process.rootRef.filePath,
+        candidateFingerprint: taskRefContentFingerprint(input.edit.content),
+        candidateLength: input.edit.content.length,
+        expectedRevision: input.process.rootRef.revision,
+        roots: [],
+      },
+      input.location.indexedRevision,
+    );
+    if (staged.type !== 'staged') {
+      transaction.result = this.stagedEditConflict(input.process, input.originalContent);
+      transaction.committedContent = undefined;
+      return input.originalContent;
+    }
+    transaction.transitionToken = staged.token;
+    this.retainRollbackBasis(transaction);
+    return input.edit.content;
   }
 
   private stagedEditConflict(input: EditProcessInput, content: string): TaskRepositoryResult {
@@ -1782,7 +1729,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   private async rejectMutation(
     file: TFile,
     rootRef: TaskRef,
-    transaction: Pick<EditTransaction, 'transitionToken' | 'committedContent'>,
+    transaction: Pick<EditTransaction, 'transitionToken' | 'committedContent' | 'rollbackBasis'>,
   ): Promise<void> {
     if (transaction.transitionToken != null) {
       await this.abortAndReconcileTransition(
@@ -2304,11 +2251,15 @@ export class ObsidianTaskRepository implements TaskRepository {
       authoritative = await this.app.vault.read(file);
     } catch {
       authority.abort(token);
+      this.options.snapshotState.discardAuthoritySuccessor?.(consumed);
       return;
     }
-    authority.abort(token);
-
-    this.installRejectedContent(path, authoritative, consumed);
+    try {
+      this.restoreOwnedTransition(path, authoritative, token);
+    } finally {
+      authority.abort(token);
+      this.options.snapshotState.discardAuthoritySuccessor?.(consumed);
+    }
   }
 
   private async reconcileRejectedDeletion(
@@ -2384,6 +2335,53 @@ export class ObsidianTaskRepository implements TaskRepository {
       block: located.block,
       expectedRevision: current?.revision ?? consumed.revision,
     };
+  }
+
+  private captureRollbackBasis(path: string, content: string): RollbackBasis | undefined {
+    const authority = this.options.refAuthority;
+    const state = this.options.snapshotState;
+    if (authority === undefined || state === undefined) return undefined;
+    const blocks = this.options.editor.rootBlocks(content);
+    const roots: RootRevisionOverride[] = [];
+    for (const block of blocks) {
+      const population = blocks
+        .filter((candidate) => candidate.source === block.source)
+        .map(({ line }) => line);
+      const current = state.currentRoot(path, block.line, block.source, population);
+      if (
+        current?.line !== block.line ||
+        authority.evidence(current.revision)?.source !== block.source
+      )
+        return undefined;
+      roots.push({ line: block.line, source: block.source, revision: current.revision });
+    }
+    return { content, roots };
+  }
+
+  private retainRollbackBasis(
+    transaction: Pick<EditTransaction, 'transitionToken' | 'rollbackBasis'>,
+  ): void {
+    const { transitionToken, rollbackBasis } = transaction;
+    if (transitionToken !== undefined && rollbackBasis !== undefined)
+      this.options.refAuthority?.retainPredecessors(
+        transitionToken,
+        rollbackBasis.content,
+        rollbackBasis.roots,
+      );
+  }
+
+  private restoreOwnedTransition(path: string, content: string, token: object): void {
+    const authority = this.options.refAuthority;
+    const state = this.options.snapshotState;
+    if (authority === undefined || state === undefined) return;
+    // A late processor rejection may have persisted the candidate. Never compensate bytes or
+    // transfer predecessor identities into a changed population, even if old source is now unique.
+    const restoration = authority.stageRestoration(token, content);
+    try {
+      this.installContentSafely(state, path, content);
+    } finally {
+      if (restoration.type === 'staged') authority.abort(restoration.token);
+    }
   }
 
   private installContentSafely(

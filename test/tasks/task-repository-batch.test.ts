@@ -1,12 +1,16 @@
 import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type {
   TaskEditBatchRequest,
   TaskEditCommand,
   TaskEditRequest,
   TaskRepository,
 } from '../../src/tasks/application/TaskRepository';
+import { clockFrom } from '../../src/tasks/domain/clock';
+import type { TaskCommand } from '../../src/tasks/domain/commands';
 import type { TaskNodeRef, TaskSnapshot } from '../../src/tasks/domain/types';
+import { localDate } from '../../src/tasks/domain/validation';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import {
   TaskRefAuthority,
@@ -61,6 +65,9 @@ async function harness(adapter: Adapter, source: string, current = source) {
     app,
     index,
     authority,
+    statusCatalog,
+    locator: options.locator,
+    editor: options.editor,
     roots,
     repository,
     read: async () => (adapter === 'in-memory' ? memory.content(path) : app.vault.read(file)),
@@ -100,8 +107,216 @@ function pair(roots: readonly TaskSnapshot[]): TaskEditBatchRequest {
   };
 }
 
+function publicEdits(root: TaskSnapshot): Record<string, TaskCommand> {
+  const target = { type: 'task' as const, ref: root.ref };
+  const child = expectDefined(root.subtasks[0]);
+  const sibling = expectDefined(root.subtasks[1]);
+  const nested = { type: 'subtask' as const, ref: child.ref };
+  const comment = expectDefined(root.comments[0]).ref;
+  return {
+    patch: { type: 'patch', target, patch: { priority: { type: 'set', value: 'A' } } },
+    'nested patch': {
+      type: 'patch',
+      target: nested,
+      patch: { priority: { type: 'set', value: 'A' } },
+    },
+    'append-title': { type: 'append-title', target, markdown: ' more' },
+    'set-status': { type: 'set-status', target, symbol: 'x' },
+    'nested status': { type: 'set-status', target: nested, symbol: 'x' },
+    'toggle-completion': { type: 'toggle-completion', target },
+    'set-description': { type: 'set-description', target, text: 'Updated' },
+    'add-subtask': { type: 'add-subtask', parent: target, text: 'Added' },
+    'delete-subtask': { type: 'delete-subtask', subtask: child.ref },
+    'restore-subtask': {
+      type: 'restore-subtask',
+      parent: target,
+      markdown: '  - [ ] Restored',
+      placement: { relativeLine: sibling.ref.relativeLine + 1, before: sibling.ref },
+    },
+    'reorder-subtask': {
+      type: 'reorder-subtask',
+      subtask: child.ref,
+      target: sibling.ref,
+      placement: 'after',
+    },
+    'add-comment': { type: 'add-comment', parent: target, text: 'Added' },
+    'update-comment': { type: 'update-comment', comment, text: 'Updated' },
+    'delete-comment': { type: 'delete-comment', comment },
+    'edit-link': {
+      type: 'edit-link',
+      target: { type: 'title', target },
+      occurrence: 0,
+      replacement: '[[Changed]]',
+    },
+    reschedule: { type: 'reschedule', ref: root.ref, date: localDate('2026-09-06') },
+    'shift-schedule': { type: 'shift-schedule', ref: root.ref, days: 1 },
+    delete: { type: 'delete', ref: root.ref },
+  };
+}
+
+const publicEditKinds = [
+  'patch',
+  'nested patch',
+  'append-title',
+  'set-status',
+  'nested status',
+  'toggle-completion',
+  'set-description',
+  'add-subtask',
+  'delete-subtask',
+  'restore-subtask',
+  'reorder-subtask',
+  'add-comment',
+  'update-comment',
+  'delete-comment',
+  'edit-link',
+  'reschedule',
+  'shift-schedule',
+  'delete',
+];
+const observations = ['immediate', 'acknowledged', 'index-lag'] as const;
+
 for (const adapter of ['in-memory', 'obsidian'] as const) {
   describe(`${adapter} metadata batch contract`, () => {
+    it.each(
+      observations.flatMap((observation) => publicEditKinds.map((kind) => ({ observation, kind }))),
+    )(
+      'keeps the sibling untouched for public $kind ($observation)',
+      async ({ observation, kind }) => {
+        const block =
+          '- [ ] Same [[Note]] ⏳ 2026-09-05\n  - 2026-09-05: Note\n  - [ ] Child\n  - [ ] Sibling';
+        const h = await harness(adapter, `\n${block}\n${block}\n`);
+        const first = expectDefined(h.roots[0]);
+        const application = new TaskApplicationService(
+          h.index,
+          h.repository,
+          h.statusCatalog,
+          clockFrom(Date.UTC(2026, 8, 5), 0),
+        );
+        const execute = h.repository.edit.bind(h.repository);
+        let interleave = true;
+        const dispatch = vi.spyOn(h.repository, 'edit').mockImplementation(async (request) => {
+          if (interleave) {
+            interleave = false;
+            const install =
+              observation === 'index-lag'
+                ? vi
+                    .spyOn(h.index, 'installCommittedContent')
+                    .mockImplementation((filePath, content) =>
+                      h.index.previewContent(filePath, content),
+                    )
+                : undefined;
+            expect(
+              (
+                await execute({
+                  type: 'set-dependency-id',
+                  target: { type: 'task', ref: first.ref },
+                  id: 'first',
+                })
+              ).type,
+            ).toBe('committed');
+            install?.mockRestore();
+            if (observation === 'acknowledged') {
+              await flushMicrotasks();
+              h.index.installCommittedContent(path, expectDefined(await h.read()));
+              await flushMicrotasks();
+            }
+          }
+          return execute(request);
+        });
+        const result = await application.execute(expectDefined(publicEdits(first)[kind]));
+        expect(dispatch, JSON.stringify(result)).toHaveBeenCalled();
+        expect(expectDefined(await h.read()), JSON.stringify(result)).toContain(`\n${block}\n`);
+        expect(
+          h.editor.rootBlocks(expectDefined(await h.read())).slice(-1)[0]?.source,
+          JSON.stringify(result),
+        ).toBe(block);
+      },
+    );
+
+    it.each([0, 1, 2, 3])(
+      'resolves the exact authority successor of duplicate occurrence %s among four',
+      async (position) => {
+        const source = '\n- [ ] Same\n- [ ] Same\n- [ ] Same\n- [ ] Same\n';
+        const h = await harness(adapter, source);
+        const previous = expectDefined(h.roots[position]);
+        expect(
+          (
+            await h.repository.edit({
+              type: 'set-dependency-id',
+              target: { type: 'task', ref: previous.ref },
+              id: 'chosen',
+            })
+          ).type,
+        ).toBe('committed');
+        const successor = expectDefined(h.index.authoritySuccessor(previous.ref));
+        expect(successor.line).toBe(previous.ref.line);
+        expect(h.index.resolve(previous.ref)).toMatchObject({
+          type: 'rebased',
+          evidence: 'authority-transition',
+          current: { ref: successor },
+        });
+        h.index.installCommittedContent(path, expectDefined(await h.read()));
+        await flushMicrotasks();
+        expect(h.index.resolve(previous.ref)).toMatchObject({
+          type: 'rebased',
+          evidence: 'authority-transition',
+          current: { ref: successor },
+        });
+        expect(h.index.resolve({ ...previous.ref, line: 99 }).type).toBe('ambiguous');
+      },
+    );
+
+    it.each(['patch', 'delete'] as const)(
+      'never redirects a prepared public %s to the now-unique identical sibling',
+      async (kind) => {
+        const h = await harness(adapter, '\n- [ ] Same\n- [ ] Same\n');
+        const first = expectDefined(h.roots[0]);
+        const application = new TaskApplicationService(h.index, h.repository, h.statusCatalog, {
+          today: () => localDate('2026-09-05'),
+        });
+        const execute = h.repository.edit.bind(h.repository);
+        const trace: unknown[] = [];
+        let interleave = true;
+        vi.spyOn(h.repository, 'edit').mockImplementation(async (request) => {
+          if (interleave) {
+            interleave = false;
+            expect(
+              (
+                await execute({
+                  type: 'set-dependency-id',
+                  target: { type: 'task', ref: first.ref },
+                  id: 'first',
+                })
+              ).type,
+            ).toBe('committed');
+          }
+          const source = expectDefined(await h.read());
+          trace.push({
+            requested: 'command' in request ? request.baseRoot.ref : request,
+            authoritySuccessor: h.index.authoritySuccessor(first.ref),
+            sourceCandidate: h.index.currentRoot(path, first.ref.line, first.source.originalBlock),
+            sourceLocation: h.locator.locate(h.editor.rootBlocks(source), first.ref),
+          });
+          return execute(request);
+        });
+
+        const result = await application.execute(
+          kind === 'patch'
+            ? {
+                type: 'patch',
+                target: { type: 'task', ref: first.ref },
+                patch: { priority: { type: 'set', value: 'A' } },
+              }
+            : { type: 'delete', ref: first.ref },
+        );
+
+        expect(await h.read(), JSON.stringify({ result, trace }, null, 2)).toMatch(
+          /\n- \[ \] Same\n$/u,
+        );
+      },
+    );
+
     it('commits distinct byte-identical roots when both line and authority revision are current', async () => {
       const h = await harness(adapter, '\n- [ ] Same\n- [ ] Same\n');
 
@@ -415,11 +630,192 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
 }
 
 describe('Obsidian batch transaction', () => {
-  it.each([false, true])(
-    'keeps a competing edit after delayed rollback reading (read failure: %s)',
-    async (readFails) => {
-      const source = '\n- [ ] Blocker\n- [ ] Dependent\n- [ ] Later\n';
-      const expected = '\n- [ ] Blocker\n- [ ] Dependent\n- [ ] Later 🆔 later\n';
+  it.each(
+    (['single', 'batch', 'delete'] as const).flatMap((kind) =>
+      ['none', 'early', 'early-notified'].map((observation) => ({ kind, observation })),
+    ),
+  )(
+    'restores all duplicate groups repeatedly for $kind ($observation)',
+    async ({ kind, observation }) => {
+      const source = '\n- [ ] Same\n- [ ] Same\n- [ ] Other\n- [ ] Other\n';
+      const h = await harness('obsidian', source);
+      const first = expectDefined(h.roots[0]);
+      const originalRead = h.app.vault.read.bind(h.app.vault);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        let candidate = '';
+        let speculative: readonly TaskSnapshot[] = [];
+        vi.spyOn(h.app.vault, 'process').mockImplementationOnce(async (file, transform) => {
+          candidate = transform(await originalRead(file));
+          if (observation !== 'none')
+            speculative = h.index.installCommittedContent(path, candidate);
+          if (observation === 'early-notified') await flushMicrotasks();
+          throw new Error('rejected');
+        });
+        const command: TaskEditCommand =
+          kind === 'delete'
+            ? { type: 'delete', ref: first.ref }
+            : { type: 'set-dependency-id', target: { type: 'task', ref: first.ref }, id: 'first' };
+        const result =
+          kind === 'batch'
+            ? await h.repository.editBatch(pair(h.roots))
+            : await h.repository.edit(command);
+        expect(result).toMatchObject({ type: 'io-error', contentState: 'unknown' });
+        expect(await h.read()).toBe(source);
+        expect(h.index.list({ filePath: path })).toEqual(h.roots);
+        for (const root of h.roots) {
+          expect(h.index.resolve(root.ref)).toMatchObject({
+            type: 'exact',
+            task: { ref: root.ref },
+          });
+          expect(h.index.authoritySuccessor(root.ref)).toBeUndefined();
+        }
+        for (const root of speculative.filter(
+          (root) => !h.roots.some(({ ref }) => ref.revision === root.ref.revision),
+        )) {
+          expect(['rebased', 'exact']).not.toContain(h.index.resolve(root.ref).type);
+          expect(h.index.authoritySuccessor(root.ref)).toBeUndefined();
+        }
+        expect(h.authority.observeTransition(path, source)).toBeUndefined();
+        expect(h.authority.observeTransition(path, candidate)).toBeUndefined();
+        expect(h.index['reconciliationTransitions'].has(path)).toBe(false);
+        h.index.installCommittedContent(path, source);
+        await flushMicrotasks();
+        expect(h.index.list({ filePath: path })).toEqual(h.roots);
+      }
+    },
+  );
+
+  it.each(
+    (['single', 'batch'] as const).flatMap((kind) =>
+      [false, true].map((early) => ({ kind, early })),
+    ),
+  )(
+    'does not reassign predecessor identities after late $kind rejection (early: $early)',
+    async ({ kind, early }) => {
+      const source = '\n- [ ] Same\n- [ ] Same\n';
+      const h = await harness('obsidian', source);
+      const first = expectDefined(h.roots[0]);
+      let candidate = '';
+      vi.spyOn(h.app.vault, 'process').mockImplementationOnce(async (file, transform) => {
+        candidate = transform(await h.app.vault.read(file));
+        if (early) h.index.installCommittedContent(path, candidate);
+        await h.app.vault.modify(file, candidate);
+        throw new Error('rejected after persistence');
+      });
+      const result =
+        kind === 'batch'
+          ? await h.repository.editBatch(pair(h.roots))
+          : await h.repository.edit({
+              type: 'set-dependency-id',
+              target: { type: 'task', ref: first.ref },
+              id: 'first',
+            });
+      expect(result).toMatchObject({ type: 'io-error', contentState: 'unknown' });
+      expect(await h.read()).toBe(candidate);
+      for (const root of h.roots) {
+        expect(h.index.authoritySuccessor(root.ref)).toBeUndefined();
+        expect(['exact', 'rebased']).not.toContain(h.index.resolve(root.ref).type);
+      }
+      expect(h.authority.observeTransition(path, source)).toBeUndefined();
+      expect(h.authority.observeTransition(path, candidate)).toBeUndefined();
+    },
+  );
+
+  it.each(['single', 'batch'] as const)(
+    'releases ownership and forward mappings when rejected duplicate %s cannot be read',
+    async (kind) => {
+      const source = '\n- [ ] Same\n- [ ] Same\n';
+      const h = await harness('obsidian', source);
+      const first = expectDefined(h.roots[0]);
+      let candidate = '';
+      const originalRead = h.app.vault.read.bind(h.app.vault);
+      vi.spyOn(h.app.vault, 'process').mockImplementationOnce(async (file, transform) => {
+        candidate = transform(await originalRead(file));
+        h.index.installCommittedContent(path, candidate);
+        throw new Error('rejected');
+      });
+      vi.spyOn(h.app.vault, 'read').mockRejectedValueOnce(new Error('read rejected'));
+      const result =
+        kind === 'batch'
+          ? await h.repository.editBatch(pair(h.roots))
+          : await h.repository.edit({
+              type: 'set-dependency-id',
+              target: { type: 'task', ref: first.ref },
+              id: 'first',
+            });
+      expect(result).toMatchObject({ type: 'io-error', contentState: 'unknown' });
+      expect(await h.read()).toBe(source);
+      for (const root of h.roots) expect(h.index.authoritySuccessor(root.ref)).toBeUndefined();
+      expect(h.authority.observeTransition(path, source)).toBeUndefined();
+      expect(h.authority.observeTransition(path, candidate)).toBeUndefined();
+      h.index.installCommittedContent(path, source);
+      const current = expectDefined(h.index.list({ filePath: path })[0]);
+      expect(
+        (
+          await h.repository.edit({
+            type: 'set-dependency-id',
+            target: { type: 'task', ref: current.ref },
+            id: 'retry',
+          })
+        ).type,
+      ).toBe('committed');
+    },
+  );
+
+  it.each(['single', 'batch'] as const)(
+    'restores the exact original duplicate population after rejected %s with speculative observation',
+    async (kind) => {
+      const source = '\n- [ ] Same\n- [ ] Same\n';
+      const h = await harness('obsidian', source);
+      const first = expectDefined(h.roots[0]);
+      const trace: unknown[] = [];
+      let proposed = '';
+      vi.spyOn(h.app.vault, 'process').mockImplementationOnce(async (file, transform) => {
+        proposed = transform(await h.app.vault.read(file));
+        h.index.installCommittedContent(path, proposed);
+        trace.push({
+          speculative: h.index.list({ filePath: path }).map(({ ref }) => ref),
+          successor: h.index.authoritySuccessor(first.ref),
+        });
+        throw new Error('processor rejected');
+      });
+      const result =
+        kind === 'single'
+          ? await h.repository.edit({
+              type: 'set-dependency-id',
+              target: { type: 'task', ref: first.ref },
+              id: 'first',
+            })
+          : await h.repository.editBatch(pair(h.roots));
+      expect(result).toMatchObject({ type: 'io-error', contentState: 'unknown' });
+      expect(await h.read()).toBe(source);
+      trace.push({
+        restored: h.index.list({ filePath: path }).map(({ ref }) => ref),
+        successor: h.index.authoritySuccessor(first.ref),
+        locator: h.locator.locate(h.editor.rootBlocks(source), first.ref),
+      });
+      expect(h.index.list({ filePath: path }), JSON.stringify(trace, null, 2)).toEqual(h.roots);
+      for (const root of h.roots) {
+        expect(h.index.resolve(root.ref)).toMatchObject({ type: 'exact', task: { ref: root.ref } });
+        expect(h.index.authoritySuccessor(root.ref)).toBeUndefined();
+      }
+      expect(h.authority.observe(path, proposed)).toEqual([]);
+      expect(h.authority.observe(path, source)).toEqual([]);
+    },
+  );
+
+  it.each(
+    [false, true].flatMap((readFails) =>
+      [false, true].map((duplicates) => ({ readFails, duplicates })),
+    ),
+  )(
+    'keeps a competing edit after delayed rollback reading (read failure: $readFails; duplicates: $duplicates)',
+    async ({ readFails, duplicates }) => {
+      const prefix = duplicates
+        ? '\n- [ ] Same\n- [ ] Same\n'
+        : '\n- [ ] Blocker\n- [ ] Dependent\n';
+      const source = `${prefix}- [ ] Later\n`;
+      const expected = `${prefix}- [ ] Later 🆔 later\n`;
       const h = await harness('obsidian', source);
       const later = expectDefined(h.roots[2]);
       const laterCommand = {

@@ -127,6 +127,11 @@ function search(el: HTMLElement, query: string): HTMLInputElement {
   return input;
 }
 
+function modalRootPosition(location: string): number {
+  if (location.includes('middle')) return 1;
+  return location.includes('last') ? 2 : 0;
+}
+
 describe('TaskModal dependency selection', () => {
   it.each([
     ['nested', '- [ ] Parent\n  - [ ] Current\n  - [ ] Current\n- [ ] Candidate 🆔 candidate\n'],
@@ -134,6 +139,16 @@ describe('TaskModal dependency selection', () => {
       'deep',
       '- [ ] Parent\n  - [ ] Middle\n    - [ ] Current\n    - [ ] Current\n- [ ] Candidate 🆔 candidate\n',
     ],
+    ...['first', 'middle', 'last'].flatMap((position) => [
+      [
+        `three-root ${position} nested`,
+        `${'- [ ] Parent\n  - [ ] Current\n  - [ ] Current\n'.repeat(3)}- [ ] Candidate 🆔 candidate\n`,
+      ],
+      [
+        `three-root ${position} deep`,
+        `${'- [ ] Parent\n  - [ ] Middle\n    - [ ] Current\n    - [ ] Current\n'.repeat(3)}- [ ] Candidate 🆔 candidate\n`,
+      ],
+    ]),
   ])(
     'retains the exact %s duplicate through add, remove and restore dependency events',
     async (_location, source) => {
@@ -143,9 +158,10 @@ describe('TaskModal dependency selection', () => {
       cleanups.unshift(() => {
         modal.close();
       });
-      modal.open(h.node('Parent').root);
+      const rootPosition = modalRootPosition(_location);
+      modal.open(expectDefined(h.index.list({ filePath: 'tasks.md' })[rootPosition]));
       const el = expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal-body'));
-      if (_location === 'deep') button(el, '.abyss-subtask-label').click();
+      if (_location.endsWith('deep')) button(el, '.abyss-subtask-label').click();
       const duplicates = el.querySelectorAll<HTMLElement>('.abyss-subtask-label');
       expectDefined(duplicates[1]).click();
       expect(el.querySelector('.abyss-right-title')?.textContent).toBe('Current');
@@ -160,7 +176,9 @@ describe('TaskModal dependency selection', () => {
         'Dependencies: blocked by 1; blocks 0',
       );
       const current = expectDefined(
-        h.index.listNodes().filter(({ node }) => node.title === 'Current')[1],
+        h.index
+          .listNodes()
+          .find(({ node }) => node.title === 'Current' && node.dependsOn.includes('candidate')),
       );
       const removed = await h.api.execute({
         type: 'remove-dependency',
