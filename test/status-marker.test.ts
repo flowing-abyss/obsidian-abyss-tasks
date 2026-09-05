@@ -3,7 +3,8 @@ import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import { renderStatusMarker } from '../src/ui/StatusMarker';
+import { renderStatusMarker, setStatusMarkerCompletionBlocked } from '../src/ui/StatusMarker';
+import { expectDefined } from './helpers';
 
 const reg = new StatusRegistry(buildDefaultTaskStatuses());
 
@@ -15,6 +16,47 @@ function styles(): string {
 }
 
 describe('renderStatusMarker', () => {
+  it('preserves owner-document focus when a mounted marker becomes blocked', () => {
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = expectDefined(frame.contentDocument);
+    const parent = activeDocument.body.createDiv();
+    const left = vi.fn();
+    const marker = renderStatusMarker(parent, {
+      task: { statusSymbol: ' ' },
+      registry: reg,
+      onLeftClick: left,
+      onContextMenu: () => {},
+    });
+    ownerDocument.body.append(parent);
+    try {
+      marker.focus();
+      expect(ownerDocument.activeElement).toBe(marker);
+      setStatusMarkerCompletionBlocked(marker, true);
+      const wrapper = expectDefined(parent.querySelector<HTMLElement>('.abyss-status-control'));
+      expect(ownerDocument.activeElement).toBe(wrapper);
+      expect(wrapper.getAttribute('aria-disabled')).toBe('true');
+      expect(wrapper.getAttribute('role')).toBe('checkbox');
+      expect(marker.getAttribute('aria-hidden')).toBe('true');
+      marker.dispatchEvent(new Event('pointerdown', { bubbles: true, cancelable: true }));
+      for (const detail of [1, 0])
+        marker.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail }));
+      expect(left).not.toHaveBeenCalled();
+      wrapper.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      wrapper.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', repeat: true }));
+      expect(left).toHaveBeenCalledOnce();
+      setStatusMarkerCompletionBlocked(marker, false);
+      expect(ownerDocument.activeElement).toBe(marker);
+      const other = parent.createEl('button');
+      other.focus();
+      setStatusMarkerCompletionBlocked(marker, true);
+      expect(ownerDocument.activeElement).toBe(other);
+    } finally {
+      frame.remove();
+    }
+  });
+
   it('exposes checkbox semantics and completion state from the status definition', () => {
     for (const [symbol, checked, name] of [
       ['x', 'true', 'Done'],

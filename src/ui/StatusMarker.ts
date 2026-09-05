@@ -100,6 +100,7 @@ function makeMarkerInteractive(
   bind(marker);
   completionBlockUpdates.set(marker, (next) => {
     if (blocked === next) return;
+    const focused = marker.ownerDocument.activeElement === (wrapper ?? marker);
     blocked = next;
     marker.classList.toggle('abyss-status-marker--blocked', blocked);
     if (blocked) {
@@ -118,14 +119,13 @@ function makeMarkerInteractive(
         marker.removeAttribute(attr);
       marker.setAttribute('aria-hidden', 'true');
     } else if (wrapper !== undefined) {
-      const focused = marker.ownerDocument.activeElement === wrapper;
       wrapper.before(marker);
       wrapper.remove();
       wrapper = undefined;
       marker.removeAttribute('aria-hidden');
       semantics(marker);
-      if (focused) marker.focus({ preventScroll: true });
     }
+    if (focused) (wrapper ?? marker).focus({ preventScroll: true });
   });
 }
 

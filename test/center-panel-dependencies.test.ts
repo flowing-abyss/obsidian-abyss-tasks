@@ -554,6 +554,42 @@ describe('strict dependency checkbox surfaces', () => {
     expect(h.messages).toHaveLength(3);
   });
 
+  it('retains inspector checkbox focus when a reconciled counterpart becomes active', async () => {
+    const h = await harness('- [ ] Current ⛔ schema\n- [x] Write schema 🆔 schema\n');
+    mountInspector(h);
+    const marker = element(h.el, '.abyss-right-header [role="checkbox"]');
+    const title = element(h.el, '.abyss-right-title');
+    marker.focus();
+    expect(marker.ownerDocument.activeElement).toBe(marker);
+    await h.tasks.execute({
+      type: 'set-status',
+      target: h.node('Write schema').target,
+      symbol: ' ',
+    });
+    await flushMicrotasks();
+    const wrapper = element(h.el, '.abyss-right-header [role="checkbox"]');
+    expect(wrapper.getAttribute('aria-disabled')).toBe('true');
+    expect(marker.ownerDocument.activeElement).toBe(wrapper);
+    expect(wrapper.firstElementChild).toBe(marker);
+    expect(element(h.el, '.abyss-right-title')).toBe(title);
+    h.execute.mockClear();
+    physicalActivation(marker, 'pointer');
+    physicalActivation(wrapper, 'touch');
+    await flushMicrotasks();
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(h.messages).toEqual([]);
+    wrapper.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    wrapper.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', repeat: true }));
+    await flushMicrotasks();
+    expect(h.execute).toHaveBeenCalledExactlyOnceWith({
+      type: 'toggle-completion',
+      target: h.node('Current').target,
+    });
+    expect(h.messages).toEqual(['Complete “Write schema” or remove the dependency first']);
+  });
+
   it('refreshes the inspector checkbox when a counterpart is satisfied, retaining mounted title draft', async () => {
     const h = await harness(markdownFor('inspector'));
     mountInspector(h);
