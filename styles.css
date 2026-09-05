@@ -4583,6 +4583,28 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-faint);
 }
 
+.abyss-breadcrumb .abyss-inspector-back {
+  width: auto;
+  height: 24px;
+  gap: 4px;
+  margin-inline-end: 8px;
+  padding: 0 4px;
+  font-size: inherit;
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.abyss-inspector-back svg {
+  width: 14px;
+  height: 14px;
+}
+
+.abyss-inspector-back:focus-visible,
+.abyss-dependency-title:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
 /* Header */
 .abyss-right-header {
   display: flex;
@@ -5666,8 +5688,24 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   white-space: nowrap;
 }
 
-.abyss-dependency-row .abyss-dependency-title {
-  cursor: default;
+.abyss-dependency-row:not(.is-unavailable),
+.abyss-dependency-row:not(.is-unavailable) .abyss-dependency-title {
+  cursor: pointer;
+}
+
+.abyss-dependency-row button.abyss-dependency-title {
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  text-align: start;
+  justify-content: start;
 }
 
 .abyss-dependency-row .abyss-dependency-title:not(.is-done):hover {

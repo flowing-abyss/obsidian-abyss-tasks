@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AppState, type ListSelection } from '../src/app/AppState';
+import { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { CalendarSettings, ListViewState } from '../src/settings/types';
 import {
@@ -7,7 +8,15 @@ import {
   type CalViewType,
   type PanelNavigationCenterPort,
 } from '../src/views/panelNavigation';
-import { methodOf } from './helpers';
+import {
+  configuredTaskApplication,
+  createAppWithFiles,
+  expectDefined,
+  methodOf,
+  useRealMoment,
+} from './helpers';
+
+useRealMoment();
 
 function settings(overrides: Partial<CalendarSettings> = {}): CalendarSettings {
   return { ...structuredClone(DEFAULT_SETTINGS), ...overrides };
@@ -45,6 +54,50 @@ function harness(
   const navigator = new PanelNavigator(state, options.settings ?? settings(), center, save);
   return { state, center, navigator, save };
 }
+
+describe('center inspector selection', () => {
+  it.each(['A', 'B'])(
+    'clears dependency history when an ordinary center card selects %s',
+    async (title) => {
+      const app = await createAppWithFiles({
+        'tasks.md': '\n- [ ] A #task/inbox\n- [ ] B #task/inbox\n',
+      });
+      const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      await application.index.initialize();
+      const state = new AppState();
+      state.set('selectedList', 'inbox');
+      const center = new CenterPanel(
+        state,
+        app,
+        DEFAULT_SETTINGS,
+        application.index,
+        application.statusRegistry,
+      );
+      const container = activeDocument.body.createDiv();
+      center.mount(container);
+      try {
+        const nodes = application.index.listNodes();
+        const a = expectDefined(nodes.find(({ node }) => node.title === 'A'));
+        const b = expectDefined(nodes.find(({ node }) => node.title === 'B'));
+        state.set('taskStack', [a.root]);
+        state.openInspectorDependency(b);
+        const card = expectDefined(
+          container.querySelector<HTMLElement>(
+            `.abyss-task-card[data-line="${title === 'A' ? '1' : '2'}"]`,
+          ),
+        );
+        card.click();
+        expect(state.get('taskStack').map((node) => node.title)).toEqual([title]);
+        expect(state.get('inspectorBackStack')).toEqual([]);
+        expect(state.backInspectorDependency()).toBe(false);
+      } finally {
+        center.destroy();
+        container.remove();
+        application.index.destroy();
+      }
+    },
+  );
+});
 
 describe('PanelNavigator', () => {
   it('opens a list atomically after saving outgoing state and restoring incoming state', () => {

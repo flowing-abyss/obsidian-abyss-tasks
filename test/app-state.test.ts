@@ -1,6 +1,233 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AppState, type AppStateData } from '../src/app/AppState';
-import { expectDefined, task } from './helpers';
+import type { TaskNodeSnapshot } from '../src/tasks';
+import { expectDefined, subtask, task, taskComment } from './helpers';
+
+function inspectorLocation(title: string, children: readonly string[] = []): TaskNodeSnapshot {
+  const root = task({
+    title,
+    tags: ['#original'],
+    comments: [taskComment({ date: '2026-09-05' })],
+  });
+  const path = children.map((child) => subtask({ title: child }));
+  let parent: TaskNodeSnapshot['node'] = root;
+  let target: TaskNodeSnapshot['target'] = { type: 'task', ref: root.ref };
+  for (const child of path) {
+    Object.assign(child, { ref: { ...child.ref, parent: target } });
+    Object.assign(parent, { subtasks: [child] });
+    parent = child;
+    target = { type: 'subtask', ref: child.ref };
+  }
+  return { root, path, node: parent, target };
+}
+
+describe('AppState dependency history', () => {
+  it('restores whole structural frames across two dependency hops', () => {
+    const state = new AppState();
+    const a = inspectorLocation('A', ['A.1', 'A.1.a']);
+    const b = inspectorLocation('B', ['B.2']);
+    const c = inspectorLocation('C');
+    const original = [a.root, ...a.path];
+    state.set('taskStack', original);
+
+    state.openInspectorDependency(b);
+    expect(state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
+    state.openInspectorDependency(c);
+    expect(state.get('taskStack').map((node) => node.title)).toEqual(['C']);
+    expect(state.get('inspectorBackStack')).toHaveLength(2);
+    expect(state.backInspectorDependency()).toBe(true);
+    expect(state.get('taskStack')).toEqual([b.root, ...b.path]);
+    expect(state.backInspectorDependency()).toBe(true);
+    expect(state.get('taskStack')).toEqual(original);
+    expect(state.backInspectorDependency()).toBe(false);
+  });
+
+  it('detaches and deeply freezes saved frames and dependency destinations', () => {
+    const state = new AppState();
+    const a = inspectorLocation('A', ['A.1']);
+    const b = inspectorLocation('B', ['B.2']);
+    const original = [a.root, ...a.path];
+    state.set('taskStack', original);
+    state.openInspectorDependency(b);
+    const frames = state.get('inspectorBackStack');
+    const saved = expectDefined(frames[0]);
+    const savedRoot = expectDefined(saved.taskStack[0]);
+    const timestamp = expectDefined(savedRoot.comments[0]?.timestamp);
+    expect(Reflect.set(savedRoot, 'title', 'tampered')).toBe(false);
+    expect(Reflect.set(savedRoot.ref, 'revision', 'tampered')).toBe(false);
+    expect(Reflect.set(savedRoot.tags, '0', '#tampered')).toBe(false);
+    expect(Reflect.set(timestamp, 'raw', 'tampered')).toBe(false);
+    expect(Reflect.set(saved.taskStack, '0', b.root)).toBe(false);
+    expect(Reflect.set(saved, 'taskStack', [])).toBe(false);
+    expect(Reflect.set(frames, '0', { taskStack: [] })).toBe(false);
+    expect(Reflect.set(state.get('taskStack'), '0', a.root)).toBe(false);
+    expect(Reflect.set(expectDefined(state.get('taskStack')[1]), 'title', 'tampered')).toBe(false);
+
+    Object.assign(a.root, { title: 'changed source' });
+    Object.assign(expectDefined(a.path[0]), { title: 'changed child' });
+    Object.assign(expectDefined(a.root.comments[0]?.timestamp), { raw: 'changed timestamp' });
+    Object.assign(b.root, { title: 'changed destination' });
+    original.length = 0;
+    expect(state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
+    state.backInspectorDependency();
+    expect(state.get('taskStack').map((node) => node.title)).toEqual(['A', 'A.1']);
+    expect(state.get('taskStack')[0]?.comments[0]?.timestamp?.raw).toBe('2026-09-05');
+  });
+
+  it.each(['another', 'same', 'close'] as const)(
+    'resets history on an ordinary %s selection',
+    (kind) => {
+      const state = new AppState();
+      state.set('taskStack', [inspectorLocation('A').root]);
+      state.openInspectorDependency(inspectorLocation('B'));
+      let next = state.get('taskStack');
+      if (kind === 'close') next = [];
+      if (kind === 'another') next = [task({ title: 'D' })];
+      state.set('taskStack', next);
+      expect(state.get('inspectorBackStack')).toEqual([]);
+      expect(state.backInspectorDependency()).toBe(false);
+      expect(state.get('taskStack')).toBe(next);
+    },
+  );
+
+  it('preserves history for structural navigation and proven selection refresh', () => {
+    const state = new AppState();
+    state.set('taskStack', [inspectorLocation('A').root]);
+    const b = inspectorLocation('B', ['B.2']);
+    state.openInspectorDependency(b);
+    const saved = state.get('inspectorBackStack');
+    state.updateInspectorSelection([b.root]);
+    state.updateInspectorSelection([b.root, ...b.path]);
+    expect(state.get('inspectorBackStack')).toBe(saved);
+    expect(state.backInspectorDependency()).toBe(true);
+    expect(state.get('taskStack').map((node) => node.title)).toEqual(['A']);
+  });
+
+  it('publishes history and destination together once per navigation even inside a batch', () => {
+    const state = new AppState();
+    state.set('taskStack', [inspectorLocation('A').root]);
+    const observations: unknown[] = [];
+    state.on('taskStack', () =>
+      observations.push({
+        title: state.get('taskStack')[0]?.title,
+        frames: state.get('inspectorBackStack').map((frame) => frame.taskStack[0]?.title),
+      }),
+    );
+    const commits = vi.fn();
+    state.onCommit(commits);
+    state.batch(() => {
+      state.openInspectorDependency(inspectorLocation('B'));
+    });
+    state.backInspectorDependency();
+    expect(observations).toEqual([
+      { title: 'B', frames: ['A'] },
+      { title: 'A', frames: [] },
+    ]);
+    expect(commits).toHaveBeenCalledTimes(2);
+    for (const [changed] of commits.mock.calls) {
+      expect(changed).toEqual(new Set(['taskStack', 'inspectorBackStack']));
+    }
+  });
+
+  it('rejects reentrant dependency navigation without partially changing either stack', () => {
+    const state = new AppState();
+    state.set('taskStack', [inspectorLocation('A').root]);
+    state.on('mode', () => {
+      state.openInspectorDependency(inspectorLocation('B'));
+    });
+    expect(() => {
+      state.set('mode', 'calendar');
+    }).toThrow('during notification delivery');
+    expect(state.get('taskStack')[0]?.title).toBe('A');
+    expect(state.get('inspectorBackStack')).toEqual([]);
+  });
+
+  it('atomically restores a validated live frame and detaches its supplied snapshots', () => {
+    const state = new AppState();
+    const original = inspectorLocation('A', ['A.1']);
+    state.set('taskStack', [original.root, ...original.path]);
+    state.openInspectorDependency(inspectorLocation('B'));
+    const current = inspectorLocation('Live A', ['Live A.1']);
+    const commits = vi.fn(() => ({
+      stack: state.get('taskStack').map((node) => node.title),
+      history: state.get('inspectorBackStack').length,
+    }));
+    state.onCommit(commits);
+    expect(state.backInspectorDependency([current.root, ...current.path])).toBe(true);
+    expect(commits).toHaveReturnedWith({ stack: ['Live A', 'Live A.1'], history: 0 });
+    expect(commits).toHaveBeenCalledOnce();
+    Object.assign(current.root, { title: 'mutated caller' });
+    expect(state.get('taskStack')[0]?.title).toBe('Live A');
+    expect(Object.isFrozen(state.get('taskStack')[0]?.ref)).toBe(true);
+  });
+
+  it('keeps the current selection and history when a supplied live frame is invalid', () => {
+    const state = new AppState();
+    state.set('taskStack', [inspectorLocation('A').root]);
+    const b = inspectorLocation('B', ['B.2']);
+    state.openInspectorDependency(b);
+    const current = state.get('taskStack');
+    const history = state.get('inspectorBackStack');
+    expect(state.backInspectorDependency([...b.path])).toBe(false);
+    expect(state.get('taskStack')).toBe(current);
+    expect(state.get('inspectorBackStack')).toBe(history);
+  });
+
+  it('maintains live history immutably without changing the current frame or emitting no-ops', () => {
+    const state = new AppState();
+    const a = inspectorLocation('A', ['A.1']);
+    state.set('taskStack', [a.root, ...a.path]);
+    state.openInspectorDependency(inspectorLocation('B'));
+    const history = state.get('inspectorBackStack');
+    const current = state.get('taskStack');
+    const commits = vi.fn();
+    state.onCommit(commits);
+    state.updateInspectorHistoryFrames(history);
+    state.updateInspectorHistoryFrames([{ taskStack: [a.root, ...a.path] }]);
+    expect(commits).not.toHaveBeenCalled();
+    const live = inspectorLocation('Live A', ['Live A.1']);
+    state.updateInspectorHistoryFrames([{ taskStack: [live.root, ...live.path] }]);
+    expect(commits).toHaveBeenCalledOnce();
+    expect(commits).toHaveBeenCalledWith(new Set(['inspectorBackStack']));
+    expect(state.get('taskStack')).toBe(current);
+    expect(history[0]?.taskStack[0]?.title).toBe('A');
+    Object.assign(live.root, { title: 'caller mutation' });
+    expect(state.get('inspectorBackStack')[0]?.taskStack[0]?.title).toBe('Live A');
+    expect(Object.isFrozen(state.get('inspectorBackStack')[0]?.taskStack[0]?.ref)).toBe(true);
+    state.on('mode', () => {
+      state.updateInspectorHistoryFrames(history);
+    });
+    expect(() => {
+      state.set('mode', 'calendar');
+    }).toThrow('during notification delivery');
+    expect(state.get('inspectorBackStack')[0]?.taskStack[0]?.title).toBe('Live A');
+  });
+
+  it('opens from an empty selection and treats the already selected target as a no-op', () => {
+    const state = new AppState();
+    const b = inspectorLocation('B', ['B.2']);
+    state.openInspectorDependency(b);
+    expect(state.get('inspectorBackStack')).toEqual([]);
+    const selected = state.get('taskStack');
+    state.openInspectorDependency(b);
+    expect(state.get('taskStack')).toBe(selected);
+    expect(state.get('inspectorBackStack')).toEqual([]);
+  });
+
+  it('rejects invalid destination paths and discards invalid externally supplied frames', () => {
+    const state = new AppState();
+    const a = inspectorLocation('A');
+    const b = inspectorLocation('B', ['B.2']);
+    state.set('taskStack', [a.root]);
+    state.openInspectorDependency({ ...b, root: a.root });
+    expect(state.get('taskStack')).toEqual([a.root]);
+    const frames = [{ taskStack: [] }, { taskStack: [...b.path] }, { taskStack: [a.root] }];
+    state.set('inspectorBackStack', frames);
+    frames.length = 0;
+    expect(state.get('inspectorBackStack')).toEqual([{ taskStack: [a.root] }]);
+    expect(Object.isFrozen(state.get('inspectorBackStack')[0]?.taskStack[0]?.ref)).toBe(true);
+  });
+});
 
 describe('AppState', () => {
   it('returns initial values', () => {

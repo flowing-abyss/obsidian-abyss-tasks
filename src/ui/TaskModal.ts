@@ -189,7 +189,7 @@ export class TaskModal {
     if (renamed == null) return false;
     const draft = this.innerPanel?.captureDraftState();
     this.ownedWriteRef = undefined;
-    this.innerState?.set('taskStack', rebuildTaskSelection(renamed, stack));
+    this.innerState?.updateInspectorSelection(rebuildTaskSelection(renamed, stack));
     this.innerPanel?.restoreDraftState(draft, renamed);
     return true;
   }
@@ -210,7 +210,7 @@ export class TaskModal {
     const draft = this.innerPanel?.captureDraftState();
     this.ownedWriteRef = undefined;
     if (resolution.type === 'visual') {
-      this.innerState?.set('taskStack', [resolution.current]);
+      this.innerState?.updateInspectorSelection([resolution.current]);
       this.innerPanel?.detachDraftState(draft);
       return;
     }
@@ -225,17 +225,21 @@ export class TaskModal {
   ): void {
     const current = resolution.type === 'exact' ? resolution.task : resolution.current;
     const consumedOwnedRef = this.consumedOwnedRef(resolution);
+    const ownedSelection =
+      consumedOwnedRef === undefined
+        ? undefined
+        : this.ownedSelection(consumedOwnedRef, current, stack);
     const draft =
       consumedOwnedRef != null
         ? this.innerPanel?.captureDraftStateForOwnedTransition(consumedOwnedRef, current.ref)
         : this.innerPanel?.captureDraftState();
     this.ownedWriteRef = undefined;
-    this.innerState?.set(
-      'taskStack',
-      rebuildTaskSelection(current, stack, {
-        preserveDependencyChanges:
-          resolution.type === 'rebased' && resolution.evidence === 'authority-transition',
-      }),
+    this.innerState?.updateInspectorSelection(
+      ownedSelection ??
+        rebuildTaskSelection(current, stack, {
+          preserveDependencyChanges:
+            resolution.type === 'rebased' && resolution.evidence === 'authority-transition',
+        }),
     );
     this.innerPanel?.restoreDraftState(draft, current);
   }
@@ -250,6 +254,14 @@ export class TaskModal {
     return ownedWriteRef != null && this.sameRef(ownedWriteRef, resolution.previous.ref)
       ? ownedWriteRef
       : undefined;
+  }
+
+  private ownedSelection(
+    ref: TaskRef,
+    current: TaskSnapshot,
+    stack: TaskSelectionNode[],
+  ): TaskSelectionNode[] | undefined {
+    return this.innerPanel?.selectionForOwnedTransition(ref, current, stack);
   }
 
   private acknowledgeOwnWrite(taskOrRef?: TaskSelectionNode | TaskRef): void {

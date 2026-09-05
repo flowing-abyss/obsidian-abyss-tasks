@@ -138,6 +138,26 @@ search across proven selection refreshes. Index events refresh counterpart statu
 rows. Add/remove actions use the existing task application and committed-result Undo presenter;
 failed actions leave the search available and use the established command-result Notice.
 
+`AppState.taskStack` remains one structural root-to-subtask chain. Resolved relation rows call
+`openInspectorDependency()`, which stores a detached, deeply frozen complete chain in
+`inspectorBackStack` and selects the destination's complete path. The Back button in the existing
+breadcrumb area appears only while history exists and restores one whole frame; ancestor breadcrumbs
+and subtask clicks change only the current chain. Ordinary `set('taskStack', ...)` begins a new
+selection and clears history, including explicit reselection and inspector clear. Internal refresh,
+command convergence and structural navigation use `updateInspectorSelection()` to preserve history.
+Empty or invalid frames are never retained, invalid destinations are ignored, and opening the already
+selected exact target is a no-op. Before Back pops a frame, `RightPanel` resolves its root through the
+existing task query and conservatively reconstructs the complete structural path. Only an exact or
+proven rebased root and a complete path can be restored; the live snapshots and frame pop commit
+atomically. If the former task is unavailable or ambiguous, a Notice explains the failure and both
+the current selection and retryable history remain unchanged. On each query notification, `RightPanel`
+synchronously maintains proven complete frame successors before deferred DOM refresh, so successive
+index transitions do not lose relocation evidence. `updateInspectorHistoryFrames()` replaces only
+changed frames atomically with detached frozen snapshots, retaining unproven frames and making
+unchanged refreshes no-ops. Earlier frame objects remain immutable. Frames use the canonical task
+snapshot clone helper through `src/tasks`; they are transient. A modal owns its own AppState
+and history for its open lifetime, independently of the main panel.
+
 ### Projects
 
 [`src/projects/`](src/projects/) treats qualifying Markdown notes as projects. `ProjectStore`
@@ -319,6 +339,17 @@ normalizer. That positional proof precedes text matching so an unchanged identic
 steal selection. Text fallback also requires
 predecessor uniqueness. Positional fallback is unavailable for uncertain or visual matches;
 unrelated content or structure changes stop at the last proven ancestor.
+
+For an inspector's own pending title, description, scalar metadata or non-recurring status edit,
+`RightPanel` captures the submitted command and detached structural selection before dispatch.
+`PanelView` and `TaskModal` may retain that selection through an exact owned authority transition
+using the shared `ownedTaskSelection` proof. The selected and edited paths must still be unambiguous;
+task topology and sibling source order must match, unaffected subtrees must retain exact source bytes,
+and the edited node may differ only in the command's specified fields and their derived projections.
+The actual changed values must match the submitted command. Structural commands, ambiguous sibling
+paths, unrelated changes and transitions without pending ownership use the existing conservative
+selection rebuilding. This proof affects presentation continuity only; it grants no write authority
+and introduces no persisted identity.
 
 `TaskRepository.editBatch()` groups these two metadata edit commands within one file. It validates
 every revision precondition and complete root-to-subtask reference against the original content,

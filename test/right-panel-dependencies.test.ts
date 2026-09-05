@@ -3,7 +3,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { localDate, type TaskApplicationApi, type TaskCommandResult } from '../src/tasks';
+import {
+  localDate,
+  type SubtaskSnapshot,
+  type TaskApplicationApi,
+  type TaskCommandResult,
+  type TaskResolution,
+} from '../src/tasks';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
 import { TaskDependencyService } from '../src/tasks/application/TaskDependencyService';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
@@ -13,7 +19,7 @@ import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { TaskModal } from '../src/ui/TaskModal';
-import { rebuildTaskSelection } from '../src/ui/taskSelection';
+import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
 import {
   canonicalStatusCatalog,
   createAppWithFiles,
@@ -35,9 +41,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function harness(markdown: string, selected = 'Current') {
+async function harness(markdown: string, selected = 'Current', additionalFiles = {}) {
   // The mock metadata parser uses -0 for a root list beginning on line zero.
-  const app = await createAppWithFiles({ 'tasks.md': `\n${markdown}` });
+  const app = await createAppWithFiles({ 'tasks.md': `\n${markdown}`, ...additionalFiles });
   const statuses = canonicalStatusCatalog();
   const authority = new TaskRefAuthority('inspector-dependencies');
   const index = new TaskIndex(app, {
@@ -100,13 +106,14 @@ async function harness(markdown: string, selected = 'Current') {
   return { app, file, panel, el, state, index, node, api, read };
 }
 
-function notices(): Notice[] {
+function notices(messages?: string[]): Notice[] {
   const captured: Notice[] = [];
   const prototype = Notice.prototype as unknown as {
     constructor__(this: Notice, message: string | DocumentFragment): void;
   };
-  vi.spyOn(prototype, 'constructor__').mockImplementation(function (this: Notice) {
+  vi.spyOn(prototype, 'constructor__').mockImplementation(function (this: Notice, message) {
     captured.push(this);
+    messages?.push(typeof message === 'string' ? message : message.textContent);
     if (requireApiVersion('1.8.7')) activeDocument.body.append(this.containerEl);
   });
   return captured;
@@ -131,6 +138,369 @@ function modalRootPosition(location: string): number {
   if (location.includes('middle')) return 1;
   return location.includes('last') ? 2 : 0;
 }
+
+describe('inspector dependency navigation', () => {
+  const source =
+    '- [ ] A\n  - [ ] A.1\n    - [ ] A.1.a 🆔 a ⛔ b\n- [ ] B\n  - [ ] B.2 🆔 b ⛔ c\n    - [ ] B.2.child\n- [ ] C 🆔 c\n';
+
+  it.each(['label', 'row', 'label child'])(
+    'opens the full nested inspector from a resolved %s and restores two frames',
+    async (target) => {
+      const h = await harness(source, 'A.1.a');
+      const original = h.state.get('taskStack');
+      const row = button(h.el, '.abyss-dependency-row');
+      const label = button(h.el, '.abyss-dependency-title');
+      expect(label.tagName).toBe('BUTTON');
+      expect(label.tabIndex).toBe(0);
+      if (target === 'row') row.click();
+      else if (target === 'label child') label.createSpan({ text: 'B.2' }).click();
+      else label.click();
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
+      const firstBack = button(h.el, '[aria-label="Back to previous task"]');
+      expect(firstBack.title).toBe('Back to previous task');
+      expect(firstBack.tabIndex).toBe(0);
+      button(h.el, '[data-dependency-direction="blocked-by"] .abyss-dependency-title').click();
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['C']);
+      button(h.el, '[aria-label="Back to previous task"]').click();
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
+      button(h.el, '[aria-label="Back to previous task"]').click();
+      expect(h.state.get('taskStack')).toEqual(original);
+      expect(h.el.querySelector('[aria-label="Back to previous task"]')).toBeNull();
+    },
+  );
+
+  it('navigates inverse relations and keeps breadcrumb/subtask navigation inside the current frame', async () => {
+    const h = await harness(source, 'B.2');
+    button(h.el, '[data-dependency-direction="blocks"] .abyss-dependency-title').click();
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['A', 'A.1', 'A.1.a']);
+    button(h.el, '.abyss-breadcrumb-item').click();
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['A']);
+    button(h.el, '.abyss-subtask-label').click();
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['A', 'A.1']);
+    button(h.el, '[aria-label="Back to previous task"]').click();
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
+  });
+
+  it('keeps status/remove actions out of navigation and preserves history through removal', async () => {
+    const h = await harness(source, 'A.1.a');
+    h.state.openInspectorDependency(h.node('B.2'));
+    const previous = h.state.get('inspectorBackStack');
+    button(h.el, '.abyss-dependency-row .abyss-status-marker').click();
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
+    expect(await h.read()).toBe(source);
+    button(h.el, '.abyss-dependency-remove').click();
+    await flushMicrotasks(30);
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
+    expect(h.state.get('inspectorBackStack')).toBe(previous);
+    expect(await h.read()).toBe(source.replace('🆔 b ⛔ c', '🆔 b'));
+    expect(h.el.querySelector('[aria-label="Back to previous task"]')).not.toBeNull();
+  });
+
+  it('never makes unavailable or ambiguous rows navigation controls', async () => {
+    const h = await harness(
+      '- [ ] Current ⛔ missing, duplicate\n- [ ] One 🆔 duplicate\n- [ ] Two 🆔 duplicate\n',
+    );
+    for (const row of h.el.querySelectorAll<HTMLElement>('.abyss-dependency-row')) {
+      expect(row.querySelector('.abyss-dependency-title')?.tagName).toBe('SPAN');
+      expect(row.getAttribute('role')).toBeNull();
+      row.click();
+      expect(h.state.get('taskStack')[0]?.title).toBe('Current');
+      expect(h.state.get('inspectorBackStack')).toEqual([]);
+    }
+  });
+
+  it('removes Back when explicitly reselecting the same current stack or closing the inspector', async () => {
+    const h = await harness(source, 'A.1.a');
+    for (const close of [false, true]) {
+      h.state.openInspectorDependency(h.node(close ? 'B.2' : 'C'));
+      expect(h.el.querySelector('[aria-label="Back to previous task"]')).not.toBeNull();
+      h.state.set('taskStack', close ? [] : h.state.get('taskStack'));
+      expect(h.el.querySelector('[aria-label="Back to previous task"]')).toBeNull();
+    }
+  });
+
+  it.each(['ordinary', 'dependency'] as const)(
+    'retains %s modal selection through index refresh and destination editing',
+    async (mode) => {
+      const h = await harness(source, 'A.1.a');
+      const outer = h.state.get('taskStack');
+      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      cleanups.unshift(() => {
+        modal.close();
+      });
+      modal.open(h.node(mode === 'ordinary' ? 'B' : 'C').root);
+      const el = button(activeDocument.body, '.abyss-modal-body');
+      button(el, mode === 'ordinary' ? '.abyss-subtask-label' : '.abyss-dependency-title').click();
+      expect(el.querySelector('.abyss-right-title')?.textContent).toBe('B.2');
+      button(el, '.abyss-right-title-view').click();
+      const editor = expectDefined(
+        el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+      );
+      editor.value = 'Edited B.2';
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+      editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks(40);
+      expect(await h.read()).toBe(source.replace('B.2 🆔', 'Edited B.2 🆔'));
+      expect(el.querySelector('.abyss-right-title')?.textContent).toBe('Edited B.2');
+      if (mode === 'dependency') {
+        button(el, '[aria-label="Back to previous task"]').click();
+        expect(el.querySelector('.abyss-right-title')?.textContent).toBe('C');
+      }
+      expect(h.state.get('taskStack')).toBe(outer);
+      modal.close();
+      modal.open(h.node('C').root);
+      expect(
+        activeDocument.querySelector('.abyss-modal-body [aria-label="Back to previous task"]'),
+      ).toBeNull();
+    },
+  );
+});
+
+describe('owned dependency destination editing', () => {
+  const source = '- [ ] B\n  - [ ] B.2 🆔 b\n    - [ ] Deep\n- [ ] C ⛔ b\n';
+  it.each(['description', 'planning', 'status'] as const)(
+    'keeps a related nested selection and Back after %s editing',
+    async (kind) => {
+      const h = await harness(source, 'C');
+      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      cleanups.unshift(() => {
+        modal.close();
+      });
+      modal.open(h.node('C').root);
+      const el = button(activeDocument.body, '.abyss-modal-body');
+      button(el, '.abyss-dependency-title').click();
+      const local = modal as unknown as {
+        innerState: AppState;
+        innerPanel: {
+          updateDescription(task: SubtaskSnapshot, text: string): Promise<boolean>;
+          updatePriority(task: SubtaskSnapshot, priority: string): Promise<void>;
+          commitStatus(task: SubtaskSnapshot, symbol: string): Promise<void>;
+        };
+      };
+      const selected = expectDefined(h.node('B.2').path[0]);
+      const history = local.innerState.get('inspectorBackStack');
+      const originalHistory = JSON.stringify(history);
+      if (kind === 'description')
+        await local.innerPanel.updateDescription(selected, 'First line\nSecond line');
+      else if (kind === 'planning') await local.innerPanel.updatePriority(selected, 'A');
+      else await local.innerPanel.commitStatus(selected, '/');
+      await flushMicrotasks(30);
+      expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
+      expect(JSON.stringify(history)).toBe(originalHistory);
+      expect(local.innerState.get('inspectorBackStack')[0]?.taskStack[0]?.ref).toEqual(
+        h.node('C').root.ref,
+      );
+      const fresh = h.node('B.2');
+      if (kind === 'description') expect(fresh.node.description).toBe('First line\nSecond line');
+      else if (kind === 'planning') expect(fresh.node.priority).toBe('A');
+      else expect(fresh.node.statusSymbol).toBe('/');
+      button(el, '[aria-label="Back to previous task"]').click();
+      expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['C']);
+      expect(local.innerState.get('taskStack')[0]?.ref).toEqual(h.node('C').root.ref);
+      expect(button(el, '.abyss-dependency-title').textContent).toBe('B.2');
+    },
+  );
+
+  it('does not retain a child through a concurrent insertion while its title edit is pending', async () => {
+    const h = await harness(source, 'C');
+    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    cleanups.unshift(() => {
+      modal.close();
+    });
+    modal.open(h.node('C').root);
+    const el = button(activeDocument.body, '.abyss-modal-body');
+    button(el, '.abyss-dependency-title').click();
+    const original = h.api.execute.bind(h.api);
+    vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+      await original({ type: 'add-subtask', parent: h.node('B').target, text: 'Concurrent child' });
+      return original(command);
+    });
+    const local = modal as unknown as { innerState: AppState; innerPanel: RightPanel };
+    await local.innerPanel.updateTaskTitle(expectDefined(h.node('B.2').path[0]), 'Edited B.2');
+    await flushMicrotasks(30);
+    expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['B']);
+    expect(await h.read()).toContain('Concurrent child');
+    expect(await h.read()).toContain('Edited B.2');
+    expect(local.innerState.backInspectorDependency()).toBe(true);
+    expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['C']);
+  });
+});
+
+describe('live dependency history restoration', () => {
+  const source = '- [ ] B\n  - [ ] B.2 🆔 b\n- [ ] C ⛔ b\n';
+
+  it.each(['panel', 'modal'] as const)(
+    'keeps %s history current through sequential shifts and later dependency mutations',
+    async (surface) => {
+      const h = await harness(source.replace('🆔 b', '🆔 b ⛔ missing'), 'C');
+      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      cleanups.unshift(() => {
+        modal.close();
+      });
+      if (surface === 'modal') modal.open(h.node('C').root);
+      const local = modal as unknown as { innerState: AppState; innerPanel: RightPanel };
+      const state = surface === 'modal' ? local.innerState : h.state;
+      const el = surface === 'modal' ? button(activeDocument.body, '.abyss-modal-body') : h.el;
+      button(el, '.abyss-dependency-title').click();
+      const original = state.get('inspectorBackStack');
+      const originalJSON = JSON.stringify(original);
+      const edited = h.node('B.2').target;
+      if (edited.type !== 'subtask') throw new Error('Expected nested target');
+      await h.api.execute({
+        type: 'patch',
+        target: edited,
+        patch: { markdownTitle: { type: 'set', value: 'Edited B.2' } },
+      });
+      for (const text of [
+        'First\nSecond',
+        'First\nSecond\nThird',
+        'First\nSecond\nThird\nFourth',
+      ]) {
+        await h.api.execute({ type: 'set-description', target: h.node('Edited B.2').target, text });
+        expect(state.get('inspectorBackStack')[0]?.taskStack[0]?.ref).toEqual(h.node('C').root.ref);
+      }
+      await h.api.execute({
+        type: 'remove-dependency',
+        dependent: h.node('Edited B.2').target,
+        dependencyId: 'missing',
+      });
+      await flushMicrotasks(30);
+      expect(JSON.stringify(original)).toBe(originalJSON);
+      button(el, '[aria-label="Back to previous task"]').click();
+      expect(state.get('taskStack')[0]?.ref).toEqual(h.node('C').root.ref);
+      expect(button(el, '.abyss-dependency-title').textContent).toBe('Edited B.2');
+    },
+  );
+
+  it('captures successive synchronous relocation evidence before deferred query refresh', async () => {
+    const h = await harness(source, 'C');
+    button(h.el, '.abyss-dependency-title').click();
+    const initial = h.state.get('inspectorBackStack');
+    button(h.el, '.abyss-right-title-view').click();
+    const editor = expectDefined(
+      h.el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+    );
+    editor.value = 'Unsaved current draft';
+    for (const blankLines of ['\n', '\n\n', '\n\n\n']) {
+      const relocated = source.replace('- [ ] C', `${blankLines}- [ ] C`);
+      h.index.installCommittedContent('tasks.md', `\n${relocated}`);
+      // Deliver each installed query transition before RightPanel's queued DOM work.
+      (
+        h.index as unknown as { publish(event: { type: 'changed'; files: string[] }): void }
+      ).publish({
+        type: 'changed',
+        files: ['tasks.md'],
+      });
+      expect(h.state.get('inspectorBackStack')[0]?.taskStack[0]?.ref).toEqual(h.node('C').root.ref);
+      expect(editor.isConnected).toBe(true);
+      expect(editor.value).toBe('Unsaved current draft');
+    }
+    await flushMicrotasks(20);
+    expect(initial[0]?.taskStack[0]?.ref).not.toEqual(h.node('C').root.ref);
+    button(h.el, '[aria-label="Back to previous task"]').click();
+    expect(h.state.get('taskStack')[0]?.ref).toEqual(h.node('C').root.ref);
+  });
+
+  it.each(['same-file', 'cross-file'] as const)(
+    'restores a live editable prior task after a %s multiline destination edit',
+    async (location) => {
+      const h = await harness(
+        location === 'same-file' ? source : source.replace('- [ ] C ⛔ b\n', ''),
+        'C',
+        location === 'cross-file' ? { 'other.md': '\n- [ ] C ⛔ b\n' } : {},
+      );
+      const previous = h.state.get('taskStack');
+      button(h.el, '.abyss-dependency-title').click();
+      const result = await h.api.execute({
+        type: 'set-description',
+        target: h.node('B.2').target,
+        text: 'First line\nSecond line',
+      });
+      expect(result.type).toBe('ok');
+      const live = h.node('C').root;
+      if (location === 'same-file')
+        expect(live.ref.line).not.toBe(rootTaskRef(expectDefined(previous[0])).line);
+      button(h.el, '[aria-label="Back to previous task"]').click();
+      expect(h.state.get('taskStack')[0]?.ref).toEqual(live.ref);
+      expect(button(h.el, '.abyss-dependency-title').textContent).toBe('B.2');
+      expect(h.state.get('inspectorBackStack')).toEqual([]);
+      await h.panel.updateTaskTitle(expectDefined(h.state.get('taskStack')[0]), 'Edited C');
+      expect(h.node('Edited C').root.ref.filePath).toBe(live.ref.filePath);
+      expect(h.node('B.2').node.description).toBe('First line\nSecond line');
+    },
+  );
+
+  it.each(['not-found', 'uncertain', 'ambiguous', 'visual'] as const)(
+    'keeps a retryable history and current task for an unproven %s previous root',
+    async (kind) => {
+      const h = await harness(source, 'C');
+      const messages: string[] = [];
+      notices(messages);
+      const original = h.node('C').root;
+      button(h.el, '.abyss-dependency-title').click();
+      const selected = h.state.get('taskStack');
+      const history = h.state.get('inspectorBackStack');
+      const fallback = h.node('B').root;
+      let resolution: TaskResolution = { type: 'ambiguous', candidates: [] };
+      if (kind === 'visual')
+        resolution = {
+          type: 'visual',
+          stale: original.ref,
+          current: fallback,
+          evidence: 'same-line',
+        };
+      else if (kind !== 'ambiguous') resolution = { type: kind, ref: original.ref };
+      const resolve = vi.spyOn(h.index, 'resolve').mockReturnValue(resolution);
+      button(h.el, '[aria-label="Back to previous task"]').click();
+      expect(h.state.get('taskStack')).toBe(selected);
+      expect(h.state.get('inspectorBackStack')).toBe(history);
+      expect(messages[0]).toContain('previous task');
+      resolve.mockRestore();
+      button(h.el, '[aria-label="Back to previous task"]').click();
+      expect(h.state.get('taskStack')[0]?.title).toBe('C');
+    },
+  );
+
+  it('does not replace an ambiguous saved child with its root or a positional sibling', async () => {
+    const h = await harness('- [ ] C\n  - [ ] Same\n  - [ ] Same\n- [ ] B 🆔 b\n', 'C');
+    const before = h.node('C').root;
+    h.state.set('taskStack', [before, expectDefined(before.subtasks[1])]);
+    h.state.openInspectorDependency(h.node('B'));
+    const selected = h.state.get('taskStack');
+    const history = h.state.get('inspectorBackStack');
+    await h.api.execute({
+      type: 'set-description',
+      target: h.node('C').target,
+      text: 'Shift children',
+    });
+    button(h.el, '[aria-label="Back to previous task"]').click();
+    expect(h.state.get('taskStack')).toBe(selected);
+    expect(h.state.get('inspectorBackStack')).toBe(history);
+  });
+
+  it.each(['deleted', 'duplicated'] as const)(
+    'keeps the current task and saved frame when the actual prior root is %s',
+    async (change) => {
+      const h = await harness(source, 'C');
+      const messages: string[] = [];
+      notices(messages);
+      const original = h.node('C').root;
+      button(h.el, '.abyss-dependency-title').click();
+      const selected = h.state.get('taskStack');
+      const history = h.state.get('inspectorBackStack');
+      if (change === 'deleted') {
+        expect((await h.api.execute({ type: 'delete', ref: original.ref })).type).toBe('ok');
+      } else {
+        await h.app.vault.modify(h.file, `\n${source}- [ ] C ⛔ b\n`);
+        await flushMicrotasks(20);
+      }
+      button(h.el, '[aria-label="Back to previous task"]').click();
+      expect(h.state.get('taskStack')).toBe(selected);
+      expect(h.state.get('inspectorBackStack')).toBe(history);
+      expect(messages[0]).toContain('previous task');
+    },
+  );
+});
 
 describe('TaskModal dependency selection', () => {
   it.each([

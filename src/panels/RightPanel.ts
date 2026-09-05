@@ -1,6 +1,6 @@
 import type { App } from 'obsidian';
-import { Component, setIcon } from 'obsidian';
-import type { AppState } from '../app/AppState';
+import { Component, Notice, setIcon } from 'obsidian';
+import type { AppState, InspectorHistoryFrame } from '../app/AppState';
 import type { LinkToken } from '../markdown/links';
 import { formatDurationFromMinutes, parseDurationToMinutes } from '../parser/TaskParser';
 
@@ -8,6 +8,7 @@ import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import { colorForTag } from '../tags/tagColor';
 import {
+  cloneTaskSnapshot,
   durationMinutes,
   formatCommentTimeLabel,
   localDate,
@@ -48,6 +49,7 @@ import {
 } from '../ui/dependencySearch';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { LinkEditModal } from '../ui/LinkEditModal';
+import { rebuildOwnedTaskSelection } from '../ui/ownedTaskSelection';
 import {
   mountRecurrenceEditor,
   type RecurrenceEditorHandle,
@@ -145,6 +147,8 @@ interface SubmittedDraft {
   readonly rootAliases: TaskRef[];
   readonly draft?: RightPanelDraftState;
   readonly origin: RightPanelDraftBundle['origin'];
+  readonly command?: TaskCommand;
+  readonly selection: readonly TaskLike[];
   consumed: boolean;
 }
 
@@ -320,7 +324,7 @@ export class RightPanel {
   mount(container: HTMLElement): void {
     this.el = container;
     this.mounted = true;
-    this.off = this.state.on('taskStack', (next, previous) => {
+    const offSelection = this.state.on('taskStack', (next, previous) => {
       const prior = this.dependencyTask(previous);
       const selected = next[next.length - 1];
       if (
@@ -334,7 +338,21 @@ export class RightPanel {
       }
       this.render();
     });
+    const offHistory = this.state.onCommit((changed) => {
+      if (
+        changed.has('inspectorBackStack') &&
+        !changed.has('taskStack') &&
+        (this.el.querySelector('.abyss-inspector-back') !== null) !==
+          this.state.get('inspectorBackStack').length > 0
+      )
+        this.render();
+    });
+    this.off = () => {
+      offSelection();
+      offHistory();
+    };
     this.offDependencyQueries = this.tasks?.queries.subscribe(() => {
+      this.refreshInspectorHistory();
       queueMicrotask(() => {
         if (this.mounted) this.refreshDependencies();
       });
@@ -450,6 +468,27 @@ export class RightPanel {
     };
   }
 
+  selectionForOwnedTransition(
+    consumedRef: TaskRef | undefined,
+    current: TaskSnapshot,
+    stack: readonly TaskLike[],
+  ): TaskLike[] | undefined {
+    if (consumedRef === undefined) return undefined;
+    const submitted = [...this.submittedDrafts.values()].find(
+      (candidate) => !candidate.consumed && sameTaskRef(candidate.ref, consumedRef),
+    );
+    if (
+      submitted?.command === undefined ||
+      stack.length !== submitted.selection.length ||
+      !stack.every((node, index) => {
+        const previous = submitted.selection[index];
+        return previous !== undefined && sameTaskNodeRef(taskNodeRef(node), taskNodeRef(previous));
+      })
+    )
+      return undefined;
+    return rebuildOwnedTaskSelection(current, submitted.selection, submitted.command);
+  }
+
   captureDraftStateForOwnedTransition(
     consumedOwnedRef: TaskRef,
     successorRef: TaskRef,
@@ -524,6 +563,7 @@ export class RightPanel {
   private beginDraftSubmission(
     target: PlanningTarget,
     matchesDraft?: (draft: RightPanelDraftState) => boolean,
+    command?: TaskCommand,
   ): object | undefined {
     const ref = rootRefForPlanningTarget(target);
     if (
@@ -535,12 +575,19 @@ export class RightPanel {
     }
     const bundle = this.captureDraftState();
     const candidate = matchesDraft != null ? bundle?.entries.find(matchesDraft) : undefined;
+    const stack = this.state.get('taskStack');
+    const root = stack[0];
     const token = Object.freeze({});
     this.submittedDrafts.set(token, {
       ref: { ...ref },
       rootAliases: [{ ...ref }],
       ...(candidate != null && { draft: this.snapshotDraft(candidate) }),
       origin: bundle?.origin,
+      selection:
+        root !== undefined && 'source' in root
+          ? rebuildTaskSelection(cloneTaskSnapshot(root), stack)
+          : [],
+      ...(command === undefined ? {} : { command: structuredClone(command) }),
       consumed: false,
     });
     this.onMutationLifecycle?.({ phase: 'started', ref: { ...ref }, token });
@@ -1032,9 +1079,29 @@ export class RightPanel {
     this.renderCommentSection(task, commentTimeContext);
   }
 
-  private renderBreadcrumb(stack: readonly TaskLike[]): void {
-    if (stack.length <= 1) return;
+  private renderBreadcrumb(stack: InspectorHistoryFrame['taskStack']): void {
+    const hasHistory = this.state.get('inspectorBackStack').length > 0;
+    if (stack.length <= 1 && !hasHistory) return;
     const breadcrumb = this.el.createDiv({ cls: 'abyss-breadcrumb' });
+    if (hasHistory) {
+      const back = breadcrumb.createEl('button', {
+        cls: 'abyss-right-action-btn abyss-inspector-back',
+        attr: {
+          type: 'button',
+          'aria-label': 'Back to previous task',
+          title: 'Back to previous task',
+        },
+      });
+      setIcon(back, 'arrow-left');
+      back.createSpan({ text: 'Back' });
+      back.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.restoreDependencyFrame();
+        this.el
+          .querySelector<HTMLElement>('.abyss-inspector-back, .abyss-dependency-badge-body')
+          ?.focus();
+      });
+    }
     for (const [index, item] of stack.slice(0, -1).entries()) {
       if (index > 0) breadcrumb.createSpan({ cls: 'abyss-breadcrumb-sep', text: ' › ' });
       const crumb = breadcrumb.createSpan({ cls: 'abyss-breadcrumb-item' });
@@ -1047,9 +1114,44 @@ export class RightPanel {
         },
       });
       crumb.addEventListener('click', () => {
-        this.state.set('taskStack', stack.slice(0, index + 1));
+        this.state.updateInspectorSelection(stack.slice(0, index + 1));
       });
     }
+  }
+
+  private restoreDependencyFrame(): void {
+    const frames = this.state.get('inspectorBackStack');
+    const previous = frames[frames.length - 1];
+    if (previous === undefined) return;
+    const selected = this.liveHistorySelection(previous);
+    if (selected === undefined) {
+      new Notice(
+        'Could not return to the previous task: it is unavailable or no longer uniquely identifiable. History was kept.',
+      );
+      return;
+    }
+    this.state.backInspectorDependency(selected);
+  }
+
+  private refreshInspectorHistory(): void {
+    const frames = this.state.get('inspectorBackStack');
+    this.state.updateInspectorHistoryFrames(
+      frames.map((frame) => {
+        const taskStack = this.liveHistorySelection(frame);
+        return taskStack === undefined ? frame : { taskStack };
+      }),
+    );
+  }
+
+  private liveHistorySelection(frame: InspectorHistoryFrame): TaskLike[] | undefined {
+    const root = frame.taskStack[0];
+    if (root === undefined) return undefined;
+    if (this.tasks === undefined) return [...frame.taskStack];
+    const resolution = this.tasks.queries.resolve(rootTaskRef(root));
+    if (resolution.type !== 'exact' && resolution.type !== 'rebased') return undefined;
+    const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+    const selected = rebuildTaskSelection(current, frame.taskStack);
+    return selected.length === frame.taskStack.length ? selected : undefined;
   }
 
   private renderTaskHeader(task: TaskLike): void {
@@ -1241,18 +1343,29 @@ export class RightPanel {
       cls: `abyss-subtask-row abyss-dependency-row${presentation.unavailable ? ' is-unavailable' : ''}`,
       attr: { 'data-state': presentation.state },
     });
-    if (relation.type === 'resolved')
-      renderStatusMarker(row, {
+    if (relation.type === 'resolved') {
+      const marker = renderStatusMarker(row, {
         task: relation.task.node,
         registry: this.statusRegistry,
         interactive: false,
         onLeftClick: () => {},
         onContextMenu: () => {},
       });
-    row.createSpan({
+      marker.addEventListener('click', (event) => {
+        event.stopPropagation();
+      });
+      row.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.state.openInspectorDependency(relation.task);
+      });
+    }
+    row.createEl(relation.type === 'resolved' ? 'button' : 'span', {
       cls: `abyss-subtask-label abyss-dependency-title${presentation.done ? ' is-done' : ''}`,
       text: presentation.title,
-      attr: { title: presentation.title },
+      attr: {
+        title: presentation.title,
+        ...(relation.type === 'resolved' ? { type: 'button' } : {}),
+      },
     });
     if (presentation.unavailable)
       row.createSpan({
@@ -1271,7 +1384,8 @@ export class RightPanel {
     setIcon(remove, 'x');
     const dependent =
       direction === 'blocks' && relation.type === 'resolved' ? relation.task.target : current;
-    remove.addEventListener('click', () => {
+    remove.addEventListener('click', (event) => {
+      event.stopPropagation();
       if (remove.disabled) return;
       remove.disabled = true;
       runAsyncAction(
@@ -1709,7 +1823,7 @@ export class RightPanel {
     });
     label.addEventListener('click', () => {
       const stack = this.state.get('taskStack');
-      this.state.set('taskStack', [...stack, sub]);
+      this.state.updateInspectorSelection([...stack, sub]);
     });
 
     // Progress + comment count indicators
@@ -2409,6 +2523,7 @@ export class RightPanel {
     const submission = this.beginDraftSubmission(
       target,
       (draft) => draft.kind === 'title' && sameNodeRef(draft.target.target, target),
+      command,
     );
     if (submission == null) return false;
     let result: TaskCommandResult;
@@ -2464,8 +2579,7 @@ export class RightPanel {
   private async commitTaskToggle(task: TaskLike): Promise<void> {
     const target = this.planningTarget(task);
     if (target == null || this.tasks == null) return;
-    const result = await this.tasks.execute({ type: 'toggle-completion', target });
-    this.applyPlanningResult(result, target);
+    await this.executeOwnedStatus({ type: 'toggle-completion', target });
   }
 
   private async addComment(
@@ -2519,8 +2633,10 @@ export class RightPanel {
   ): Promise<boolean> {
     if (this.tasks == null) return false;
     const initiatingStack = this.state.get('taskStack');
-    const submission = this.beginDraftSubmission(target, (draft) =>
-      this.matchesBlockCommandDraft(draft, command),
+    const submission = this.beginDraftSubmission(
+      target,
+      (draft) => this.matchesBlockCommandDraft(draft, command),
+      command,
     );
     if (submission == null) return false;
     let result: TaskCommandResult;
@@ -2594,10 +2710,14 @@ export class RightPanel {
     if (target == null || this.tasks == null) {
       return { type: 'io-error', cause: 'application-unavailable', contentState: 'unchanged' };
     }
-    const submission = this.beginDraftSubmission(target, (draft) => {
-      if (patch.recurrence === undefined && patch.onCompletion === undefined) return false;
-      return draft.kind === 'recurrence-editor' && sameNodeRef(draft.target, target);
-    });
+    const submission = this.beginDraftSubmission(
+      target,
+      (draft) => {
+        if (patch.recurrence === undefined && patch.onCompletion === undefined) return false;
+        return draft.kind === 'recurrence-editor' && sameNodeRef(draft.target, target);
+      },
+      { type: 'patch', target, patch } as TaskCommand,
+    );
     if (submission == null) {
       return { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' };
     }
@@ -2664,7 +2784,7 @@ export class RightPanel {
       target.type === 'subtask'
         ? rebuildPlanningTargetStack(root, target)
         : rebuildTaskSelection(root, stack);
-    this.state.set('taskStack', selection);
+    this.state.updateInspectorSelection(selection);
     this.restoreDraftState(draft, root);
   }
 
@@ -2697,8 +2817,23 @@ export class RightPanel {
   private async commitStatus(task: TaskLike, symbol: string): Promise<void> {
     const target = this.planningTarget(task);
     if (target == null || this.tasks == null) return;
-    const result = await this.tasks.execute({ type: 'set-status', target, symbol });
-    this.applyPlanningResult(result, target);
+    await this.executeOwnedStatus({ type: 'set-status', target, symbol });
+  }
+
+  private async executeOwnedStatus(
+    command: Extract<TaskCommand, { type: 'set-status' | 'toggle-completion' }>,
+  ): Promise<void> {
+    if (this.tasks === undefined) return;
+    const submission = this.beginDraftSubmission(command.target, undefined, command);
+    if (submission === undefined) return;
+    let result: TaskCommandResult;
+    try {
+      result = await this.tasks.execute(command);
+    } catch {
+      result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+    }
+    this.applyPlanningResult(result, command.target, undefined, submission);
+    this.settleDraftSubmission(submission, result);
   }
 
   private async updatePriority(task: TaskLike, priority: string): Promise<void> {

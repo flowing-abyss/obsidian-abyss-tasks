@@ -192,7 +192,9 @@ describe('PanelView dependency command convergence', () => {
           createSelectionTasks(): TaskApplicationApi;
           convergeOwnCommand(initiatingRef: TaskRef, result: TaskCommandResult): void;
         };
-        internals.state.set('taskStack', [selected.root, ...selected.path]);
+        internals.state.set('taskStack', [other.root]);
+        internals.state.openInspectorDependency(selected);
+        const history = internals.state.get('inspectorBackStack');
         const converge = vi.spyOn(internals, 'convergeOwnCommand');
         const tasks = internals.createSelectionTasks();
         let result: TaskCommandResult;
@@ -228,6 +230,15 @@ describe('PanelView dependency command convergence', () => {
           application.index.listNodes().find(({ node }) => node.title === 'Child'),
         );
         expect(stack).toEqual([fresh.root, ...fresh.path]);
+        const liveOther = expectDefined(
+          application.index.listNodes().find(({ node }) => node.title === 'Other'),
+        );
+        expect(history).toEqual([{ taskStack: [other.root] }]);
+        expect(internals.state.get('inspectorBackStack')).toEqual([
+          { taskStack: [liveOther.root] },
+        ]);
+        expect(internals.state.backInspectorDependency()).toBe(true);
+        expect(internals.state.get('taskStack')).toEqual([liveOther.root]);
         expect(view.contentEl.querySelector('.abyss-task-selection-message')).toBeNull();
       } finally {
         await view.onClose();

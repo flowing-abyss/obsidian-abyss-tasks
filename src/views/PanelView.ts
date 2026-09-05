@@ -605,7 +605,7 @@ export class PanelView extends ItemView {
         if (renamed != null) {
           const draft = this.right.captureDraftState();
           this.ownedWriteRef = undefined;
-          this.state.set('taskStack', rebuildTaskSelection(renamed, stack));
+          this.state.updateInspectorSelection(rebuildTaskSelection(renamed, stack));
           this.right.restoreDraftState(draft, renamed);
           return;
         }
@@ -924,7 +924,7 @@ export class PanelView extends ItemView {
     const draft = this.right.captureDraftState();
     this.ownedWriteRef = undefined;
     if (resolution.type === 'visual') {
-      this.state.set('taskStack', [resolution.current]);
+      this.state.updateInspectorSelection([resolution.current]);
       this.right.detachDraftState(draft);
       return;
     }
@@ -938,17 +938,18 @@ export class PanelView extends ItemView {
   ): void {
     const current = resolution.type === 'exact' ? resolution.task : resolution.current;
     const consumedOwnedRef = this.consumedOwnedRef(resolution);
+    const ownedSelection = this.right.selectionForOwnedTransition(consumedOwnedRef, current, stack);
     const draft =
       consumedOwnedRef != null
         ? this.right.captureDraftStateForOwnedTransition(consumedOwnedRef, current.ref)
         : this.right.captureDraftState();
     this.ownedWriteRef = undefined;
-    this.state.set(
-      'taskStack',
-      rebuildTaskSelection(current, stack, {
-        preserveDependencyChanges:
-          resolution.type === 'rebased' && resolution.evidence === 'authority-transition',
-      }),
+    this.state.updateInspectorSelection(
+      ownedSelection ??
+        rebuildTaskSelection(current, stack, {
+          preserveDependencyChanges:
+            resolution.type === 'rebased' && resolution.evidence === 'authority-transition',
+        }),
     );
     this.right.restoreDraftState(draft, current);
   }
@@ -997,7 +998,7 @@ export class PanelView extends ItemView {
     if (selectedRef == null || !this.sameRef(selectedRef, initiatingRef)) return;
     const updated = result.outcome.task;
     const draft = this.right.captureDraftState();
-    this.state.set('taskStack', rebuildTaskSelection(updated, stack));
+    this.state.updateInspectorSelection(rebuildTaskSelection(updated, stack));
     this.right.restoreDraftState(draft, updated);
     this.ownedWriteRef = result.changed ? { ...updated.ref } : undefined;
   }

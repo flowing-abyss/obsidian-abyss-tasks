@@ -9,6 +9,7 @@ export type {
   TaskIndexEvent,
   TaskQueryApi,
 } from './application/TaskApplicationApi';
+export { cloneTaskSnapshot } from './domain/cloneTaskSnapshot';
 export type {
   MoveRecovery,
   PlanningTarget,

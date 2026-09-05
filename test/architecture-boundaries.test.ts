@@ -107,6 +107,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskStatusType: ['src/settings/SettingsTab.ts'],
   TaskTextTarget: ['src/panels/RightPanel.ts'],
   daysBetweenLocalDates: ['src/panels/CenterPanel.ts', 'src/views/timegrid/dragGeometry.ts'],
+  cloneTaskSnapshot: ['src/app/AppState.ts'],
   durationMinutes: ['src/panels/CenterPanel.ts'],
   expandRecurrenceReferences: ['src/views/calendarOccurrences.ts'],
   formatCommentTimeLabel: ['src/panels/RightPanel.ts'],
