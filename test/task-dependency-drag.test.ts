@@ -375,6 +375,84 @@ describe('dependency section drops', () => {
 });
 
 describe('dependency drop disclosure and eligibility', () => {
+  it.each([
+    ['center', 'blocked-by'],
+    ['center', 'blocks'],
+    ['subtask', 'blocked-by'],
+    ['subtask', 'blocks'],
+  ] as const)(
+    'closes explicit add disclosure only after a %s drop on %s commits',
+    async (kind, direction) => {
+      const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b\n  - [ ] Child 🆔 child\n');
+      expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-dep-badge-add')).click();
+      const sourceTitle = kind === 'center' ? 'A' : 'Child';
+      drag(kind === 'center' ? h.card(sourceTitle) : h.sub(sourceTitle), 'dragstart');
+      drag(h.section(direction), 'drop');
+      expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(2);
+
+      await flushMicrotasks(40);
+
+      const dependent = h.node(direction === 'blocked-by' ? 'B' : sourceTitle);
+      expect(dependent.node.dependsOn).toEqual([
+        direction === 'blocked-by' ? h.node(sourceTitle).node.dependencyId : 'b',
+      ]);
+      expect(h.execute).toHaveBeenCalledOnce();
+      expect(h.section(direction).querySelectorAll('.abyss-dep-row')).toHaveLength(1);
+      expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(1);
+      expect(h.state.get('draggingTaskNode')).toBeNull();
+    },
+  );
+
+  it.each(['center', 'subtask'] as const)(
+    'keeps explicit add disclosure when a %s drop fails to commit',
+    async (kind) => {
+      const markdown = '- [ ] A 🆔 a\n- [ ] B 🆔 b\n  - [ ] Child 🆔 child\n';
+      const h = await harness(markdown);
+      h.execute.mockResolvedValueOnce({
+        type: 'io-error',
+        cause: 'repository-error',
+        contentState: 'unknown',
+      });
+      expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-dep-badge-add')).click();
+      drag(kind === 'center' ? h.card('A') : h.sub('Child'), 'dragstart');
+      drag(h.section('blocked-by'), 'drop');
+
+      await flushMicrotasks(40);
+
+      expect(h.execute).toHaveBeenCalledOnce();
+      expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(2);
+      expect(h.el.querySelector('.abyss-dep-row')).toBeNull();
+      expect(h.el.querySelector('.abyss-dep-badge-add')).toBeNull();
+      expect(h.state.get('draggingTaskNode')).toBeNull();
+      expect(await h.read()).toBe(markdown);
+    },
+  );
+
+  it('does not close another task disclosure when an earlier drop finishes', async () => {
+    const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b\n- [ ] Other 🆔 other\n');
+    const execute = expectDefined(h.execute.getMockImplementation());
+    let commit: (() => void) | undefined;
+    const pending = new Promise<void>((resolve) => {
+      commit = resolve;
+    });
+    h.execute.mockImplementationOnce(async (command) => {
+      await pending;
+      return execute(command);
+    });
+    expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-dep-badge-add')).click();
+    drag(h.card('A'), 'dragstart');
+    drag(h.section('blocked-by'), 'drop');
+    h.state.openInspectorDependency(h.node('Other'));
+    expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-dep-badge-add')).click();
+
+    expectDefined(commit)();
+    await flushMicrotasks(40);
+
+    expect(h.node('B').node.dependsOn).toEqual(['a']);
+    expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(2);
+    expect(h.el.querySelector('.abyss-dep-row')).toBeNull();
+  });
+
   it('preserves visible relation section DOM during subtask start and cancellation', async () => {
     const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n  - [ ] Child 🆔 child\n');
     const section = h.section('blocked-by');

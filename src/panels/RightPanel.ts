@@ -1501,14 +1501,29 @@ export class RightPanel {
       if (allowed) {
         event.preventDefault();
         event.stopPropagation();
-        runAsyncAction(
-          this.executeDependencyCommand_abyssPrivate(command),
-          'Could not add dependency',
-        );
+        runAsyncAction(this.commitDependencyDrop_abyssPrivate(command), 'Could not add dependency');
       }
       if (this.state_abyssPrivate.get('draggingTaskNode') !== null)
         this.state_abyssPrivate.set('draggingTaskNode', null);
     });
+  }
+
+  private async commitDependencyDrop_abyssPrivate(
+    command: Extract<TaskCommand, { type: 'add-dependency' }>,
+  ): Promise<void> {
+    const selection = this.state_abyssPrivate.get('taskStack');
+    const committed = await this.executeDependencyCommand_abyssPrivate(command);
+    if (!committed || !this.mounted_abyssPrivate) return;
+    const submitted = this.dependencyTask_abyssPrivate(selection);
+    const current = this.dependencyTask_abyssPrivate();
+    if (
+      submitted === undefined ||
+      current === undefined ||
+      !sameTaskNodeRef(taskNodeRef(submitted), taskNodeRef(current))
+    )
+      return;
+    this.dependencyAdding_abyssPrivate = false;
+    this.refreshDependencies_abyssPrivate();
   }
 
   private renderDependencyRow_abyssPrivate(

@@ -22,10 +22,11 @@ afterEach(() => {
   rmSync(fixtureDirectory, { recursive: true, force: true });
 });
 
-function runScript(scriptPath: string): SpawnSyncReturns<string> {
+function runScript(scriptPath: string, env = process.env): SpawnSyncReturns<string> {
   return spawnSync(process.execPath, [scriptPath], {
     cwd: fixtureDirectory,
     encoding: 'utf8',
+    env,
   });
 }
 
@@ -68,6 +69,33 @@ function writeCheckerFixture(budget: number): void {
 }
 
 describe('release stylesheet producer', () => {
+  it.each(['environment', 'config-file discovery'])(
+    'ignores ambient Browserslist %s when producing release bytes',
+    (configuration) => {
+      writeProducerFixture(128, '.alpha { background: transparent; }');
+      const outputs: Buffer[] = [];
+      for (const [environment, query] of [
+        ['legacy', 'ie 11'],
+        ['modern', 'chrome 120'],
+      ]) {
+        const env = Object.fromEntries(
+          Object.entries(process.env).filter(([key]) => !key.startsWith('BROWSERSLIST')),
+        );
+        if (configuration === 'environment') env['BROWSERSLIST'] = query;
+        else {
+          const configPath = path.join(fixtureDirectory, '.browserslistrc');
+          writeFileSync(configPath, '[legacy]\nie 11\n[modern]\nchrome 120\n');
+          env['BROWSERSLIST_ENV'] = environment;
+          env['BROWSERSLIST_CONFIG'] = configPath;
+        }
+        const result = runScript(PRODUCER_PATH, env);
+        expect(result.status, result.stderr).toBe(0);
+        outputs.push(readFileSync(path.join(fixtureDirectory, 'dist/styles.css')));
+      }
+      expect(outputs[0]).toEqual(outputs[1]);
+    },
+  );
+
   it('preserves selector specificity and scope through release minification', () => {
     const source = `
       .scope :is(.active, .inactive) > button::before { color: var(--text-normal); }
@@ -100,11 +128,11 @@ describe('release stylesheet producer', () => {
       release: { stylesCssBudgetBytes: number };
     };
     writeProducerFixture(pkg.release.stylesCssBudgetBytes, source);
-    const first = runScript(PRODUCER_PATH);
+    const first = runScript(PRODUCER_PATH, { ...process.env, BROWSERSLIST: 'ie 11' });
     expect(first.status, first.stderr).toBe(0);
     const output = readFileSync(path.join(fixtureDirectory, 'dist/styles.css'));
     expect(output.length).toBeLessThanOrEqual(pkg.release.stylesCssBudgetBytes);
-    const second = runScript(PRODUCER_PATH);
+    const second = runScript(PRODUCER_PATH, { ...process.env, BROWSERSLIST: 'chrome 120' });
     expect(second.status, second.stderr).toBe(0);
     expect(readFileSync(path.join(fixtureDirectory, 'dist/styles.css'))).toEqual(output);
     expect(readFileSync(path.join(fixtureDirectory, 'styles.css'), 'utf8')).toBe(source);

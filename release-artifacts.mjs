@@ -19,7 +19,18 @@ if (warnings.length > 0) {
 let optimized;
 try {
   optimized = await postcss([
-    cssnano({ preset: ['default', { minifySelectors: false, svgo: false }] }),
+    cssnano({
+      preset: [
+        'default',
+        {
+          // Own the existing default targets; do not discover a caller's Browserslist config.
+          overrideBrowserslist: ['> 0.5%', 'last 2 versions', 'Firefox ESR', 'not dead'],
+          stats: {},
+          minifySelectors: false,
+          svgo: false,
+        },
+      ],
+    }),
   ]).process(compactCss, { from: undefined });
 } catch (cause) {
   throw new Error('Could not optimize styles.css for release', { cause });
