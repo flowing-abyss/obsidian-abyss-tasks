@@ -44,23 +44,33 @@ export function rebuildTaskSelection(
     const parent = stack[index - 1];
     const stale = staleStack[index];
     if (parent == null || stale == null || 'source' in stale) break;
-    const candidates = parent.subtasks;
-    const matches = candidates.filter(
-      (candidate) => candidate.ref.originalBlock === stale.ref.originalBlock,
+    const child = selectionChild(
+      parent.subtasks,
+      stale,
+      staleStack[index - 1],
+      options.preserveDependencyChanges === true,
     );
-    const child =
-      matches.length === 1
-        ? matches[0]
-        : dependencyChangedChild(
-            candidates,
-            stale,
-            matches.length,
-            options.preserveDependencyChanges === true,
-          );
     if (child == null) break;
     stack.push(child);
   }
   return stack;
+}
+
+function selectionChild(
+  candidates: readonly SubtaskSnapshot[],
+  stale: SubtaskSnapshot,
+  previousParent: TaskSelectionNode | undefined,
+  preserveDependencies: boolean,
+): SubtaskSnapshot | undefined {
+  const positioned = preserveDependencies ? dependencyChangedChild(candidates, stale) : undefined;
+  if (positioned !== undefined) return positioned;
+  const matches = candidates.filter(
+    (candidate) => candidate.ref.originalBlock === stale.ref.originalBlock,
+  );
+  const previousMatches = previousParent?.subtasks.filter(
+    (candidate) => candidate.ref.originalBlock === stale.ref.originalBlock,
+  );
+  return previousMatches?.length === 1 && matches.length === 1 ? matches[0] : undefined;
 }
 
 function selectionContent(node: SubtaskSnapshot): unknown {
@@ -83,10 +93,7 @@ function selectionContent(node: SubtaskSnapshot): unknown {
 function dependencyChangedChild(
   candidates: readonly SubtaskSnapshot[],
   stale: SubtaskSnapshot,
-  exactMatches: number,
-  allowed: boolean,
 ): SubtaskSnapshot | undefined {
-  if (!allowed || exactMatches !== 0) return undefined;
   const positioned = candidates.filter(
     (candidate) => candidate.ref.relativeLine === stale.ref.relativeLine,
   );

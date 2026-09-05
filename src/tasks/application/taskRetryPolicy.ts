@@ -1,7 +1,7 @@
 import type { ClockReading } from '../domain/clock';
 import type { TaskCommand, TaskCommandResult, TaskStatusTarget } from '../domain/commands';
 import { shiftLocalDate } from '../domain/localDateMath';
-import type { RebaseEvidence } from '../domain/taskReconciliation';
+import { reconcileTaskNodeRef, type RebaseEvidence } from '../domain/taskReconciliation';
 import type {
   CommentRef,
   LocalDate,
@@ -170,12 +170,14 @@ export function recurrenceCompletionPreconditionHolds(
   previousRoot: TaskSnapshot,
   currentRoot: TaskSnapshot,
   target: TaskStatusTarget,
+  evidence: RebaseEvidence,
 ): boolean {
-  const previousTarget = snapshotForTarget(
-    previousRoot,
-    rebaseStatusTarget(target, previousRoot.ref),
-  );
-  const currentTarget = snapshotForTarget(currentRoot, rebaseStatusTarget(target, currentRoot.ref));
+  const previousRef = reconcileTaskNodeRef(currentRoot, previousRoot, target, {
+    dependencyChanges: evidence === 'authority-transition',
+  });
+  if (previousRef === undefined) return false;
+  const previousTarget = snapshotForTarget(previousRoot, previousRef);
+  const currentTarget = snapshotForTarget(currentRoot, target);
   return Boolean(
     previousTarget != null &&
     currentTarget != null &&
@@ -663,13 +665,21 @@ function retryEdit(
     }
   })();
   if (!allowed) return { type: 'unsafe' };
-  const rebasedCommand = rebaseEditCommand(command, current.ref);
+  let rebasedCommand = rebaseEditCommand(command, current.ref);
+  if (command.type === 'set-status') {
+    const target = reconcileTaskNodeRef(previous, current, command.target);
+    if (target === undefined) return { type: 'unsafe' };
+    rebasedCommand = { ...command, target };
+  }
   return {
     type: 'edit',
     request: {
       command: rebasedCommand,
       baseRoot: current,
-      baseTarget: rebaseTarget(prepared.targetBase, current.ref),
+      baseTarget:
+        rebasedCommand.type === 'set-status'
+          ? rebasedCommand.target
+          : rebaseTarget(prepared.targetBase, current.ref),
       reconciliation: { observed: current },
     },
   };
@@ -683,7 +693,12 @@ export function prepareRetry(
   if ('baseOwnedDescendants' in prepared.repositoryRequest) {
     const request = prepared.repositoryRequest;
     const previousTarget = snapshotForTarget(authoritative.previous, request.command.target);
-    const currentTargetRef = rebaseStatusTarget(request.command.target, authoritative.current.ref);
+    const currentTargetRef = reconcileTaskNodeRef(
+      authoritative.previous,
+      authoritative.current,
+      request.command.target,
+    );
+    if (currentTargetRef === undefined) return { type: 'unsafe' };
     const currentTarget = snapshotForTarget(authoritative.current, currentTargetRef);
     if (
       previousTarget == null ||

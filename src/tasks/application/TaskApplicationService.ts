@@ -10,7 +10,7 @@ import { formatNewCommentTimestamp } from '../domain/commentTimestamp';
 import { shiftLocalDate } from '../domain/localDateMath';
 import { parseRecurrenceRule } from '../domain/recurrence';
 import { type StatusCatalog } from '../domain/StatusCatalog';
-import type { TaskResolution } from '../domain/taskReconciliation';
+import { reconcileTaskNodeRef, type TaskResolution } from '../domain/taskReconciliation';
 import type {
   LocalDate,
   SubtaskRef,
@@ -37,6 +37,7 @@ import type {
 } from './TaskApplicationApi';
 import type { TaskBehaviorSettings, TaskBehaviorSettingsProvider } from './TaskBehaviorSettings';
 import {
+  DependencyCompletionConflict,
   nextTaskDependencyId,
   TaskDependencyService,
   type TaskDiagnosticSink,
@@ -138,11 +139,19 @@ function resolvedStatusSelection(
   readonly current: TaskSnapshot | SubtaskSnapshot | undefined;
 } {
   if (resolution.type === 'rebased') {
-    const rebasedTarget = rebaseStatusTarget(target, resolution.current.ref);
+    const rebasedTarget = reconcileTaskNodeRef(
+      resolution.previous,
+      resolution.current,
+      rebaseStatusTarget(target, resolution.previous.ref),
+      { dependencyChanges: resolution.evidence === 'authority-transition' },
+    );
     return {
       root: resolution.current,
-      target: rebasedTarget,
-      current: snapshotForTarget(resolution.current, rebasedTarget),
+      target: rebasedTarget ?? target,
+      current:
+        rebasedTarget === undefined
+          ? undefined
+          : snapshotForTarget(resolution.current, rebasedTarget),
     };
   }
   return {
@@ -583,6 +592,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     command: ExistingTaskCommand,
     settings: TaskBehaviorSettings,
     reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+    serialized = false,
   ): Promise<TaskCommandResult> {
     const rootRef = rootRefForCommand(command);
     const resolution = this.resolveForCommand(command, rootRef);
@@ -590,7 +600,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (unavailable != null) return unavailable;
     const proven = resolution as ProvenResolution;
     if (command.type === 'move') return await this.move(command, proven, settings, reading);
-    return await this.executeEditableCommand(command, proven, settings, reading);
+    return await this.executeEditableCommand(command, proven, { settings, reading, serialized });
   }
 
   private resolveForCommand(command: ExistingTaskCommand, rootRef: TaskRef): TaskResolution {
@@ -606,9 +616,13 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   private async executeEditableCommand(
     command: EditableTaskCommand,
     resolution: ProvenResolution,
-    settings: TaskBehaviorSettings,
-    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+    context: {
+      settings: TaskBehaviorSettings;
+      reading: ClockReading | { readonly localDate: ClockReading['localDate'] };
+      serialized: boolean;
+    },
   ): Promise<TaskCommandResult> {
+    const { settings, reading, serialized } = context;
     const currentRoot = resolution.type === 'exact' ? resolution.task : resolution.current;
     const baseRoot = resolution.type === 'exact' ? resolution.task : resolution.previous;
     const currentCommand = rebaseCommandRoot(command, currentRoot.ref);
@@ -621,7 +635,11 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       targetBase,
       resolution,
     );
-    const validateCurrent = this.completionValidation(preparedCommand);
+    const validateCurrent = this.completionValidation(
+      preparedCommand,
+      targetBase,
+      resolution.basis.observed,
+    );
     const prepared: PreparedMutation = {
       publicCommand: command,
       repositoryRequest,
@@ -633,26 +651,49 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
         'recurrence' in preparedCommand ? 'exact-target' : retryPolicy(preparedCommand.command),
       ...(validateCurrent === undefined ? {} : { validateCurrent }),
     };
-    const invalidCurrent = this.validateCompletion(prepared, repositoryRequest);
+    if (validateCurrent !== undefined && !serialized) {
+      return await this.dependencies.serializeMutation((queued) =>
+        queued
+          ? this.executeExistingCommand(command, settings, reading, true)
+          : this.dispatchPrepared(prepared),
+      );
+    }
+    return await this.dispatchPrepared(prepared);
+  }
+
+  private async dispatchPrepared(prepared: PreparedMutation): Promise<TaskCommandResult> {
+    const invalidCurrent = this.validateCompletion(prepared, prepared.repositoryRequest);
     if (invalidCurrent !== undefined) return invalidCurrent;
-    return await this.finishPrepared(prepared, await this.dispatch(repositoryRequest));
+    return await this.finishPrepared(prepared, await this.dispatch(prepared.repositoryRequest));
   }
 
   private completionValidation(
     prepared: Exclude<PreparedTaskCommand, { readonly result: TaskCommandResult }>,
+    predecessor: TaskMutationTarget,
+    previous: TaskSnapshot,
   ): PreparedMutation['validateCurrent'] {
     let symbol: string | undefined;
     if ('recurrence' in prepared) symbol = prepared.recurrence.doneSymbol;
     else if (prepared.command.type === 'set-status') symbol = prepared.command.symbol;
-    if (symbol === undefined) return undefined;
+    if (symbol === undefined || predecessor.type === 'comment') return undefined;
     const type = this.statusCatalog.statusForSymbol(symbol);
     if (type !== 'done' && type !== 'cancelled') return undefined;
     return (root, target) => {
       const current = taskSnapshotWithStatuses(root, (status) =>
         this.statusCatalog.statusForSymbol(status),
       );
-      const blockers = this.dependencies.blockersForCompletion(current, target);
-      return blockers.length === 0 ? undefined : { type: 'blocked', target, blockers };
+      try {
+        const indexed = this.queries
+          .listNodes()
+          .some((node) => sameTaskNodeRef(node.target, target));
+        const blockers = this.dependencies.withCompletionBasis({ previous, current }, () =>
+          this.dependencies.blockersForCompletion(current, indexed ? target : predecessor),
+        );
+        return blockers.length === 0 ? undefined : { type: 'blocked', target, blockers };
+      } catch (error) {
+        if (error instanceof DependencyCompletionConflict) return { type: 'conflict', current };
+        throw error;
+      }
     };
   }
 
@@ -930,6 +971,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
         resolution.previous,
         resolution.current,
         recurrence.recurrence.target,
+        resolution.evidence,
       )
     ) {
       return { result: { type: 'conflict', current: resolution.current } };

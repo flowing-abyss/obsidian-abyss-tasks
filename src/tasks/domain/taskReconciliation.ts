@@ -1,5 +1,12 @@
 import type { TaskResolutionCandidate } from './commands';
-import type { SubtaskRef, SubtaskSnapshot, TaskRef, TaskSnapshot } from './types';
+import {
+  sameTaskNodeRef,
+  type SubtaskRef,
+  type SubtaskSnapshot,
+  type TaskNodeRef,
+  type TaskRef,
+  type TaskSnapshot,
+} from './types';
 export interface RootRevisionOverride {
   readonly line: number;
   readonly source: string;
@@ -394,4 +401,97 @@ export function reconcileNested(
     };
   }
   return { type: 'not-found', ref: observed.ref };
+}
+
+/** A stale nested ref must be unique in both its predecessor and current parent. */
+function provenChildPair(
+  previous: TaskSnapshot | SubtaskSnapshot,
+  current: TaskSnapshot | SubtaskSnapshot,
+  ref: SubtaskRef,
+  dependencyChanges: boolean,
+): { previous: SubtaskSnapshot; current: SubtaskSnapshot } | undefined {
+  const predecessors = previous.subtasks.filter(
+    (child) => child.ref.originalBlock === ref.originalBlock,
+  );
+  const observed = predecessors[0];
+  if (predecessors.length !== 1 || observed?.ref.relativeLine !== ref.relativeLine)
+    return undefined;
+  const metadataMatch = dependencyChanges ? dependencyChangedChild(observed, current) : undefined;
+  if (metadataMatch !== undefined) return { previous: observed, current: metadataMatch };
+  const resolved = reconcileNested(observed, current);
+  if (resolved.type !== 'exact' && resolved.type !== 'rebased') return undefined;
+  return {
+    previous: observed,
+    current: resolved.type === 'exact' ? resolved.task : resolved.current,
+  };
+}
+
+function dependencyIdentity(node: SubtaskSnapshot): unknown {
+  return {
+    ...node,
+    ref: { relativeLine: node.ref.relativeLine },
+    dependencyId: undefined,
+    dependsOn: undefined,
+    subtasks: node.subtasks.map(dependencyIdentity),
+    comments: node.comments.map((comment) => ({
+      ...comment,
+      ref: {
+        relativeLine: comment.ref.relativeLine,
+        originalMarkdown: comment.ref.originalMarkdown,
+      },
+    })),
+  };
+}
+
+function dependencyChangedChild(
+  previous: SubtaskSnapshot,
+  current: TaskSnapshot | SubtaskSnapshot,
+): SubtaskSnapshot | undefined {
+  const positioned = current.subtasks.filter(
+    (child) => child.ref.relativeLine === previous.ref.relativeLine,
+  );
+  const candidate = positioned[0];
+  return positioned.length === 1 &&
+    candidate !== undefined &&
+    JSON.stringify(dependencyIdentity(candidate)) === JSON.stringify(dependencyIdentity(previous))
+    ? candidate
+    : undefined;
+}
+
+function exactChildPair(
+  current: TaskSnapshot | SubtaskSnapshot,
+  ref: SubtaskRef,
+): { previous: SubtaskSnapshot; current: SubtaskSnapshot } | undefined {
+  const exact = current.subtasks.find((child) =>
+    sameTaskNodeRef({ type: 'subtask', ref: child.ref }, { type: 'subtask', ref }),
+  );
+  return exact === undefined ? undefined : { previous: exact, current: exact };
+}
+
+export function reconcileTaskNodeRef(
+  previous: TaskSnapshot,
+  current: TaskSnapshot,
+  target: TaskNodeRef,
+  options: { readonly dependencyChanges?: boolean } = {},
+): TaskNodeRef | undefined {
+  if (target.type === 'task') return { type: 'task', ref: current.ref };
+  const chain: SubtaskRef[] = [];
+  let root: TaskNodeRef = target;
+  while (root.type === 'subtask') {
+    chain.unshift(root.ref);
+    root = root.ref.parent;
+  }
+  const exactRoot = sameTaskNodeRef(root, { type: 'task', ref: current.ref });
+  if (!exactRoot && !sameTaskNodeRef(root, { type: 'task', ref: previous.ref })) return undefined;
+  let before: TaskSnapshot | SubtaskSnapshot = previous;
+  let after: TaskSnapshot | SubtaskSnapshot = current;
+  for (const ref of chain) {
+    const pair: { previous: SubtaskSnapshot; current: SubtaskSnapshot } | undefined = exactRoot
+      ? exactChildPair(after, ref)
+      : provenChildPair(before, after, ref, options.dependencyChanges === true);
+    if (pair === undefined) return undefined;
+    before = pair.previous;
+    after = pair.current;
+  }
+  return 'source' in after ? { type: 'task', ref: after.ref } : { type: 'subtask', ref: after.ref };
 }

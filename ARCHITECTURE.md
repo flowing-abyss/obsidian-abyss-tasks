@@ -222,6 +222,13 @@ blocker ID rejects the attempt. Repository rebases repeat resolution and eligibi
 When the second cross-file write fails, the assigned ID remains, the exact structured error is
 returned, and one content-free diagnostic is emitted. There is no compensating ID deletion.
 
+Dependency mutation validation and publication share a FIFO coordinator keyed by repository,
+including separate service instances. Add/remove/restore and completion-to-done/cancelled hold
+that coordinator through their final repository result and any retry. Queued completion resolves
+again after acquisition; an idle acquisition continues the already prepared synchronous read.
+Neither path reacquires during retry. Unrelated non-completion edits bypass the coordinator, and
+failure always releases the next waiter.
+
 Successful dependency commands return `DependencyCommandOutcome` with the fresh dependent
 occurrence and a blocker occurrence when uniquely resolved. Removing a raw ID deletes every
 declaration of that ID and returns its exact before/after sequences. `restore-dependency` requires
@@ -238,12 +245,27 @@ a reconciled retry, including recurrence completion. A newer proven index resolu
 precedence over the service's recent outcome cache. For an index that is still behind the
 repository, the reconciled root is reclassified through the current catalog and overlaid in the
 dependency graph so newly added edges or newly active same-root blockers cannot be missed.
+Overlays remove the proven predecessor by full revision identity, never by the new source line;
+unrelated roots remain even when their old addresses overlap the relocated root. Graph lookup
+includes revision identity for that temporary mixed-revision world. Standalone previews may use
+a unique whole-tree comparison excluding only refs/source, dependency fields, and status values.
+Missing or ambiguous predecessor/target proof fails closed as conflict. The application carries
+its repository/reconciliation-proven completion basis through a synchronous nested-safe scope,
+cleared in `finally`; this scope neither persists evidence nor implements the asynchronous lock.
+
+Nested command reconciliation first accepts an exact full current ref. A stale source match must
+be unique in both its predecessor and current sibling sets. Completion retries use the complete
+matched current subtask ref, including relocated relative lines, before validation or dispatch.
+For authority-proven queued status commands, dependency-only changes at the proven position may
+be matched when all other node fields and descendant structure remain unchanged.
 
 Dependency commands have no single initiating root in `PanelView` and do not use ordinary command
 outcome convergence. Normal index events refresh the current structural selection. After a proven
 authority transition, selection rebuilding may retain the same relative subtask path when every
-non-dependency field and child structure is unchanged. This fallback is unavailable for uncertain
-or visual matches; unrelated content or structure changes stop at the last proven ancestor.
+non-dependency field and child structure is unchanged. That positional proof precedes text
+matching so an unchanged identical sibling cannot steal selection. Text fallback also requires
+predecessor uniqueness. Positional fallback is unavailable for uncertain or visual matches;
+unrelated content or structure changes stop at the last proven ancestor.
 
 `TaskRepository.editBatch()` groups these two metadata edit commands within one file. It validates
 every revision precondition and complete root-to-subtask reference against the original content,

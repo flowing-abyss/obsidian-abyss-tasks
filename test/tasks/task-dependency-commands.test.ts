@@ -2,6 +2,7 @@ import { TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import {
+  DependencyCompletionConflict,
   TaskDependencyService,
   nextTaskDependencyId,
   type TaskDependencyIdGenerator,
@@ -16,7 +17,8 @@ import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlo
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
-import { canonicalStatusCatalog, createAppWithFiles, expectDefined } from '../helpers';
+import { rebuildTaskSelection } from '../../src/ui/taskSelection';
+import { canonicalStatusCatalog, createAppWithFiles, deferred, expectDefined } from '../helpers';
 
 const indexes: TaskIndex[] = [];
 afterEach(() => {
@@ -84,6 +86,422 @@ function dependencyOutcome(result: TaskCommandResult) {
     throw new Error('Expected dependency outcome');
   return result.outcome;
 }
+
+describe('external review regressions', () => {
+  it('serializes dependency changes across services sharing one repository', async () => {
+    const h = await harness({ 'a.md': '- [ ] A 🆔 a\n', 'b.md': '- [ ] B 🆔 b\n' });
+    const other = new TaskDependencyService(
+      h.index,
+      h.repository,
+      nextTaskDependencyId,
+      h.diagnostics,
+    );
+    const a = h.node('A').target;
+    const b = h.node('B').target;
+    const results = await Promise.all([
+      h.dependencyService.execute({ type: 'add-dependency', blocker: a, dependent: b }),
+      other.execute({ type: 'add-dependency', blocker: b, dependent: a }),
+    ]);
+    expect(results.map((result) => result.type)).toEqual(['ok', 'invalid']);
+    expect(h.node('A').node.dependsOn).toEqual([]);
+    expect(h.node('B').node.dependsOn).toEqual(['a']);
+  });
+
+  it.each(
+    ['add', 'remove', 'restore'].flatMap((operation) =>
+      ['root', 'subtask', 'recurring-subtask'].map((kind) => ({ operation, kind })),
+    ),
+  )(
+    'queues $kind completion behind $operation publication but not unrelated noncompletion changes',
+    async ({ operation, kind }) => {
+      const recurrence = kind === 'recurring-subtask' ? ' 🔁 every day 📅 2026-09-05' : '';
+      const dependentMarkdown = `- [ ] Dependent${recurrence}${operation === 'remove' ? ' ⛔ id' : ''}\n`;
+      const h = await harness({
+        'a.md': '- [ ] Blocker 🆔 id\n',
+        'b.md': kind === 'root' ? dependentMarkdown : `- [ ] Root\n  ${dependentMarkdown}`,
+        'c.md': '- [ ] Unrelated\n',
+      });
+      const entered = deferred<void>();
+      const release = deferred<void>();
+      const original = h.repository.edit.bind(h.repository);
+      const edit = vi.spyOn(h.repository, 'edit').mockImplementation(async (request) => {
+        const command = 'command' in request ? request.command : request;
+        if (command.type === 'set-depends-on') {
+          entered.resolve();
+          await release.promise;
+        }
+        return await original(request);
+      });
+      const dependent = h.node('Dependent').target;
+      let change: TaskCommand;
+      if (operation === 'add')
+        change = { type: 'add-dependency', blocker: h.node('Blocker').target, dependent };
+      else if (operation === 'remove')
+        change = { type: 'remove-dependency', dependent, dependencyId: 'id' };
+      else
+        change = {
+          type: 'restore-dependency',
+          dependent,
+          recovery: { dependencyId: 'id', beforeIds: ['id'], afterIds: [] },
+        };
+      const changing = h.application.execute(change);
+      await entered.promise;
+      const completing = h.application.execute({ type: 'toggle-completion', target: dependent });
+      try {
+        expect(
+          (
+            await h.application.execute({
+              type: 'set-status',
+              target: h.node('Unrelated').target,
+              symbol: '/',
+            })
+          ).type,
+        ).toBe('ok');
+        const doneWrites = edit.mock.calls.filter(([request]) => {
+          const command = 'command' in request ? request.command : request;
+          return command.type === 'set-status' && command.symbol === 'x';
+        });
+        expect(doneWrites).toHaveLength(0);
+      } finally {
+        release.resolve();
+      }
+      expect((await changing).type).toBe('ok');
+      if (operation === 'remove') {
+        const result = await completing;
+        expect(result.type).toBe('ok');
+        if (kind === 'recurring-subtask')
+          expect(result).toMatchObject({ outcome: { type: 'recurrence' } });
+        else expect(h.node('Dependent').node.status).toBe('done');
+        return;
+      }
+      expect(await completing).toMatchObject({
+        type: 'blocked',
+        target: h.node('Dependent').target,
+        blockers: [{ dependencyId: 'id' }],
+      });
+      expect(h.node('Dependent').node.status).toBe('open');
+    },
+  );
+
+  it('keeps edge validation behind an already-running completion and releases its queue', async () => {
+    const h = await harness({ 'a.md': '- [ ] Blocker 🆔 id\n', 'b.md': '- [ ] Dependent\n' });
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const original = h.repository.edit.bind(h.repository);
+    const edit = vi.spyOn(h.repository, 'edit').mockImplementation(async (request) => {
+      const command = 'command' in request ? request.command : request;
+      if (command.type === 'set-status') {
+        entered.resolve();
+        await release.promise;
+      }
+      return await original(request);
+    });
+    const target = h.node('Dependent').target;
+    const completing = h.application.execute({ type: 'toggle-completion', target });
+    await entered.promise;
+    const adding = h.application.execute({
+      type: 'add-dependency',
+      blocker: h.node('Blocker').target,
+      dependent: target,
+    });
+    await Promise.resolve();
+    try {
+      expect(edit).toHaveBeenCalledTimes(1);
+    } finally {
+      release.resolve();
+    }
+    expect((await completing).type).toBe('ok');
+    expect((await adding).type).toBe('ok');
+    expect(h.node('Dependent').node.status).toBe('done');
+    expect(h.node('Dependent').node.dependsOn).toEqual(['id']);
+  });
+
+  it('releases the shared FIFO after an unexpected error without swallowing later commands', async () => {
+    const generate = vi
+      .fn<TaskDependencyIdGenerator>()
+      .mockImplementationOnce(() => {
+        throw new Error('private');
+      })
+      .mockReturnValue('abcdefgh');
+    const h = await harness({ 'a.md': '- [ ] Blocker\n', 'b.md': '- [ ] Dependent\n' }, generate);
+    const command: TaskCommand = {
+      type: 'add-dependency',
+      blocker: h.node('Blocker').target,
+      dependent: h.node('Dependent').target,
+    };
+    const results = await Promise.all([
+      h.application.execute(command),
+      h.application.execute(command),
+    ]);
+    expect(results.map((result) => result.type)).toEqual(['io-error', 'ok']);
+    expect(h.node('Dependent').node.dependsOn).toEqual(['abcdefgh']);
+    expect(h.diagnostics).toHaveBeenCalledTimes(1);
+  });
+
+  it('overlays an explicit predecessor without dropping an unrelated same-address root', async () => {
+    const h = await harness({ 'tasks.md': '\n- [ ] Dependent\n- [ ] Blocker 🆔 id\n' });
+    const before = h.node('Dependent');
+    const current = expectDefined(
+      h.index.snapshotsFromContent('tasks.md', '\nIntro\n- [ ] Dependent ⛔ id\n')[0],
+    );
+    expect(h.dependencyService.blockersForCompletion(current, before.target)).toMatchObject([
+      { type: 'resolved', dependencyId: 'id' },
+    ]);
+  });
+
+  it('removes the explicit old root when its preview moves away from the indexed address', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Root ⛔ id\n  - [ ] Blocker 🆔 id\n' });
+    const before = h.node('Root');
+    const current = expectDefined(
+      h.index.snapshotsFromContent('tasks.md', '\n- [ ] Root ⛔ id\n  - [x] Blocker 🆔 id\n')[0],
+    );
+    expect(h.dependencyService.blockersForCompletion(current, before.target)).toEqual([]);
+  });
+
+  it.each(['missing', 'ambiguous'] as const)(
+    'fails closed for a %s preview predecessor instead of returning unblocked',
+    async (condition) => {
+      const h = await harness({
+        'tasks.md': condition === 'missing' ? '- [ ] Other\n' : '\n- [ ] Root\n- [ ] Root\n',
+      });
+      const current = expectDefined(
+        h.index.snapshotsFromContent('tasks.md', '\n\n\n- [ ] Root\n')[0],
+      );
+      expect(() =>
+        h.dependencyService.blockersForCompletion(current, { type: 'task', ref: current.ref }),
+      ).toThrow(DependencyCompletionConflict);
+    },
+  );
+
+  it('fails closed for a current root with an unresolved subtask ref', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Root\n  - [ ] Dependent\n' });
+    const dependent = h.node('Dependent');
+    const target = dependent.target;
+    if (target.type !== 'subtask') throw new Error('Expected subtask');
+    expect(() =>
+      h.dependencyService.blockersForCompletion(dependent.root, {
+        type: 'subtask',
+        ref: { ...target.ref, relativeLine: 99 },
+      }),
+    ).toThrow(DependencyCompletionConflict);
+  });
+
+  it('returns conflict without I/O when the completion read cannot prove its target', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Root\n' });
+    const current = h.node('Root').root;
+    vi.spyOn(h.dependencyService, 'blockersForCompletion').mockImplementation(() => {
+      throw new DependencyCompletionConflict();
+    });
+    const edit = vi.spyOn(h.repository, 'edit');
+    expect(
+      await h.application.execute({
+        type: 'set-status',
+        target: { type: 'task', ref: current.ref },
+        symbol: 'x',
+      }),
+    ).toMatchObject({ type: 'conflict', current });
+    expect(edit).not.toHaveBeenCalled();
+    expect(h.diagnostics).not.toHaveBeenCalled();
+  });
+
+  it('scopes proven completion evidence synchronously and restores nested scopes after throws', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Indexed\n' });
+    const outer = expectDefined(h.index.snapshotsFromContent('tasks.md', '\n- [ ] Outer\n')[0]);
+    const inner = expectDefined(h.index.snapshotsFromContent('tasks.md', '\n\n- [ ] Inner\n')[0]);
+    const read = (root: typeof outer) =>
+      h.dependencyService.blockersForCompletion(root, { type: 'task', ref: root.ref });
+    expect(() => read(outer)).toThrow(DependencyCompletionConflict);
+    expect(
+      h.dependencyService.withCompletionBasis({ previous: outer, current: outer }, () => {
+        expect(read(outer)).toEqual([]);
+        expect(
+          h.dependencyService.withCompletionBasis({ previous: inner, current: inner }, () =>
+            read(inner),
+          ),
+        ).toEqual([]);
+        expect(() =>
+          h.dependencyService.withCompletionBasis({ previous: inner, current: inner }, () => {
+            throw new Error('test failure');
+          }),
+        ).toThrow('test failure');
+        expect(() => read(inner)).toThrow(DependencyCompletionConflict);
+        return read(outer);
+      }),
+    ).toEqual([]);
+    expect(() => read(outer)).toThrow(DependencyCompletionConflict);
+    expect(() => read(inner)).toThrow(DependencyCompletionConflict);
+  });
+
+  it('rejects completion before redispatch when a real active prerequisite moves its subtask target', async () => {
+    const h = await harness({
+      'tasks.md': '\n- [ ] Root\n  - [ ] Parent\n  - [ ] Dependent ⛔ id\n',
+    });
+    const originalEdit = h.repository.edit.bind(h.repository);
+    let attempts = 0;
+    const edit = vi.spyOn(h.repository, 'edit').mockImplementation(async (request) => {
+      if (++attempts === 1) {
+        await originalEdit({
+          type: 'add-subtask',
+          parent: h.node('Parent').target,
+          text: 'Blocker 🆔 id',
+          today: localDate('2026-09-05'),
+          addCreatedDate: false,
+        });
+      }
+      return await originalEdit(request);
+    });
+    const result = await h.application.execute({
+      type: 'toggle-completion',
+      target: h.node('Dependent').target,
+    });
+    expect(h.index.listNodes().map(({ node }) => node.title)).toEqual([
+      'Root',
+      'Parent',
+      'Blocker',
+      'Dependent',
+    ]);
+    expect(h.node('Dependent').target).toMatchObject({ ref: { relativeLine: 3 } });
+    expect(result).toMatchObject({
+      type: 'blocked',
+      target: h.node('Dependent').target,
+      blockers: [{ dependencyId: 'id', state: 'active' }],
+    });
+    expect(edit).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not commit an inverse pair from concurrent cross-file commands', async () => {
+    const h = await harness({ 'a.md': '- [ ] A 🆔 a\n', 'b.md': '- [ ] B 🆔 b\n' });
+    const a = h.node('A').target;
+    const b = h.node('B').target;
+    const results = await Promise.all([
+      h.application.execute({ type: 'add-dependency', blocker: a, dependent: b }),
+      h.application.execute({ type: 'add-dependency', blocker: b, dependent: a }),
+    ]);
+    expect({
+      results: results.map((result) => result.type),
+      a: h.node('A').node.dependsOn,
+      b: h.node('B').node.dependsOn,
+    }).not.toEqual({ results: ['ok', 'ok'], a: ['b'], b: ['a'] });
+  });
+
+  it('does not retain a moved predecessor root as a second dependency graph node', async () => {
+    const h = await harness({
+      'tasks.md': '- [ ] Root\n  - [ ] Blocker 🆔 id\n  - [ ] Dependent\n',
+    });
+    const current = expectDefined(
+      h.index.snapshotsFromContent(
+        'tasks.md',
+        '\n- [ ] Root\n  - [x] Blocker 🆔 id\n  - [ ] Dependent ⛔ id\n',
+      )[0],
+    );
+    const currentDependent = expectDefined(
+      current.subtasks.find((child) => child.title === 'Dependent'),
+    );
+    const blockers = h.dependencyService.blockersForCompletion(current, {
+      type: 'subtask',
+      ref: currentDependent.ref,
+    });
+    expect(blockers.map((row) => ({ type: row.type, id: row.dependencyId }))).toEqual([]);
+  });
+
+  it('does not overwrite an unrelated prerequisite when the reconciled root moves onto its old address', async () => {
+    const h = await harness({ 'tasks.md': '\n- [ ] Dependent\n- [ ] Blocker 🆔 id\n' });
+    const current = expectDefined(
+      h.index.snapshotsFromContent(
+        'tasks.md',
+        '\nIntro\n- [ ] Dependent ⛔ id\n- [ ] Blocker 🆔 id\n',
+      )[0],
+    );
+    expect(current.title).toBe('Dependent');
+    expect(current.ref.line).toBe(h.node('Blocker').root.ref.line);
+    const blockers = h.dependencyService.blockersForCompletion(current, {
+      type: 'task',
+      ref: current.ref,
+    });
+    expect(blockers.map((row) => row.dependencyId)).toEqual(['id']);
+  });
+
+  it('preserves a selected child when an add changes one of two identical siblings', async () => {
+    const h = await harness({
+      'tasks.md': '\n- [ ] Root\n  - [ ] Same\n  - [ ] Same\n- [ ] Blocker 🆔 id\n',
+    });
+    const before = h.node('Root').root;
+    const selected = expectDefined(before.subtasks[0]);
+    const result = await h.application.execute({
+      type: 'add-dependency',
+      blocker: h.node('Blocker').target,
+      dependent: { type: 'subtask', ref: selected.ref },
+    });
+    expect(result.type).toBe('ok');
+    const current = h.node('Root').root;
+    expect(h.index.resolve(before.ref)).toMatchObject({
+      type: 'rebased',
+      evidence: 'authority-transition',
+    });
+    const stack = rebuildTaskSelection(current, [before, selected], {
+      preserveDependencyChanges: true,
+    });
+    expect(stack[1]?.ref).toEqual(current.subtasks[0]?.ref);
+  });
+
+  it('uses a fresh relocated subtask ref while task-like description text remains nonblocking', async () => {
+    const h = await harness({ 'tasks.md': '\n- [ ] Root\n  - [ ] Dependent ⛔ id\n' });
+    const originalEdit = h.repository.edit.bind(h.repository);
+    let attempts = 0;
+    const edit = vi.spyOn(h.repository, 'edit').mockImplementation(async (request) => {
+      if (++attempts === 1)
+        await originalEdit({
+          type: 'set-description',
+          target: h.node('Root').target,
+          text: '- [ ] Blocker 🆔 id',
+        });
+      return await originalEdit(request);
+    });
+    const result = await h.application.execute({
+      type: 'toggle-completion',
+      target: h.node('Dependent').target,
+    });
+    expect({ type: result.type, dispatches: edit.mock.calls.length }).toEqual({
+      type: 'ok',
+      dispatches: 2,
+    });
+    expect(h.index.listNodes().map(({ node }) => node.title)).toEqual(['Root', 'Dependent']);
+    expect(h.node('Root').root.description).toBe('- [ ] Blocker 🆔 id');
+    expect(h.node('Dependent').node.status).toBe('done');
+  });
+
+  it('does not apply a stale dependency command to the remaining identical sibling after the intended sibling changes', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Root\n  - [ ] Same ⛔ id\n  - [ ] Same ⛔ id\n' });
+    const before = h.node('Root').root;
+    const selected = expectDefined(before.subtasks[0]);
+    await h.application.execute({
+      type: 'patch',
+      target: { type: 'subtask', ref: selected.ref },
+      patch: { markdownTitle: { type: 'set', value: 'Renamed' } },
+    });
+    const result = await h.application.execute({
+      type: 'remove-dependency',
+      dependent: { type: 'subtask', ref: selected.ref },
+      dependencyId: 'id',
+    });
+    expect({
+      type: result.type,
+      children: h
+        .node('Root')
+        .root.subtasks.map((child) => ({ title: child.title, ids: child.dependsOn })),
+    }).toEqual({
+      type: 'conflict',
+      children: [
+        { title: 'Renamed', ids: ['id'] },
+        { title: 'Same', ids: ['id'] },
+      ],
+    });
+    const current = h.node('Root').root;
+    expect(
+      rebuildTaskSelection(current, [before, selected], { preserveDependencyChanges: true }),
+    ).toEqual([current]);
+  });
+});
 
 describe('public dependency commands', () => {
   it('accepts an exact structural ref among identical siblings', async () => {

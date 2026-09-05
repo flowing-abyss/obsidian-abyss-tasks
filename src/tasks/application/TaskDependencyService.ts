@@ -14,9 +14,10 @@ import {
   type TaskNodeSnapshot,
 } from '../domain/taskDependencies';
 import { isTaskDependencyId } from '../domain/taskLineSourceModel';
-import type { RootReconciliationBasis } from '../domain/taskReconciliation';
+import { reconcileTaskNodeRef, type RootReconciliationBasis } from '../domain/taskReconciliation';
 import {
   sameTaskNodeRef,
+  type SubtaskSnapshot,
   type TaskNodeRef,
   type TaskRef,
   type TaskSnapshot,
@@ -41,6 +42,7 @@ type MetadataCommand = Extract<
 >;
 interface ResolvedNode extends TaskNodeSnapshot {
   readonly basis: RootReconciliationBasis;
+  readonly predecessor: TaskRef;
 }
 type NodeResolution = { readonly node: ResolvedNode } | { readonly result: TaskCommandResult };
 type Rebase = Extract<TaskRepositoryResult, { readonly type: 'rebased' }>;
@@ -65,6 +67,65 @@ interface TaskCommandDiagnostic {
   readonly cause: string;
 }
 export type TaskDiagnosticSink = (diagnostic: TaskCommandDiagnostic, error?: unknown) => void;
+
+export class DependencyCompletionConflict extends Error {
+  constructor() {
+    super('Dependency completion target could not be proven');
+  }
+}
+
+function requireSynchronousCompletionRead(result: unknown): void {
+  if (!Array.isArray(result)) throw new DependencyCompletionConflict();
+}
+
+function rootKey(ref: TaskRef): string {
+  return JSON.stringify([ref.filePath, ref.line, ref.revision]);
+}
+
+function dependencyIdentityContent(node: TaskSnapshot | SubtaskSnapshot): unknown {
+  return {
+    ...node,
+    ref: undefined,
+    source: undefined,
+    dependencyId: undefined,
+    dependsOn: undefined,
+    status: undefined,
+    statusSymbol: undefined,
+    subtasks: node.subtasks.map(dependencyIdentityContent),
+    comments: node.comments.map((comment) => ({
+      ...comment,
+      ref: {
+        relativeLine: comment.ref.relativeLine,
+        originalMarkdown: comment.ref.originalMarkdown,
+      },
+    })),
+  };
+}
+
+const mutationQueues = new WeakMap<TaskRepository, { tail?: Promise<void> }>();
+
+function coordinateMutation<T>(
+  repository: TaskRepository,
+  operation: (queued: boolean) => Promise<T>,
+): Promise<T> {
+  const queue = mutationQueues.get(repository) ?? {};
+  mutationQueues.set(repository, queue);
+  const previous = queue.tail;
+  let release: () => void = () => {};
+  const tail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  queue.tail = tail;
+  const run = async (): Promise<T> => {
+    try {
+      return await operation(previous !== undefined);
+    } finally {
+      if (queue.tail === tail) delete queue.tail;
+      release();
+    }
+  };
+  return previous === undefined ? run() : previous.then(run);
+}
 
 function rootRef(target: TaskNodeRef): TaskRef {
   let current = target;
@@ -93,25 +154,13 @@ function atAddress(root: TaskSnapshot, target: TaskNodeRef): TaskNodeSnapshot | 
   );
 }
 
-function confirmedNode(root: TaskSnapshot, target: TaskNodeRef): TaskNodeSnapshot | undefined {
-  if (target.type === 'task') return atAddress(root, target);
-  const exact = atAddress(root, target);
-  if (exact !== undefined && sameTaskNodeRef(exact.target, target)) return exact;
-  const parent = confirmedNode(root, target.ref.parent);
-  if (parent === undefined) return undefined;
-  const matches = parent.node.subtasks.filter(
-    (child) => child.ref.originalBlock === target.ref.originalBlock,
-  );
-  if (matches.length !== 1) return undefined;
-  const match = matches[0];
-  return match === undefined
-    ? undefined
-    : {
-        root: parent.root,
-        path: [...parent.path, match],
-        target: { type: 'subtask', ref: match.ref },
-        node: match,
-      };
+function confirmedNode(
+  root: TaskSnapshot,
+  target: TaskNodeRef,
+  previous = root,
+): TaskNodeSnapshot | undefined {
+  const current = reconcileTaskNodeRef(previous, root, target);
+  return current === undefined ? undefined : atAddress(root, current);
 }
 
 function sameIds(left: readonly string[], right: readonly string[]): boolean {
@@ -188,6 +237,8 @@ export function nextTaskDependencyId(reserved: ReadonlySet<string>): string {
 }
 
 export class TaskDependencyService {
+  private readonly completionBases: Array<{ previous: TaskSnapshot; current: TaskSnapshot }> = [];
+
   constructor(
     private readonly queries: TaskQueryApi & TaskDependencyQueryApi,
     private readonly repository: TaskRepository,
@@ -196,6 +247,28 @@ export class TaskDependencyService {
   ) {}
 
   async execute(command: DependencyCommand): Promise<TaskCommandResult> {
+    return await this.serializeMutation(() => this.executeDependency(command));
+  }
+
+  serializeMutation<T>(operation: (queued: boolean) => Promise<T>): Promise<T> {
+    return coordinateMutation(this.repository, operation);
+  }
+
+  withCompletionBasis(
+    basis: { previous: TaskSnapshot; current: TaskSnapshot },
+    readSync: () => readonly ActiveBlockingRelation[],
+  ): readonly ActiveBlockingRelation[] {
+    this.completionBases.push(basis);
+    try {
+      const result = readSync();
+      requireSynchronousCompletionRead(result);
+      return result;
+    } finally {
+      this.completionBases.pop();
+    }
+  }
+
+  private async executeDependency(command: DependencyCommand): Promise<TaskCommandResult> {
     try {
       return command.type === 'add-dependency'
         ? await this.add(command)
@@ -211,21 +284,61 @@ export class TaskDependencyService {
     target: TaskNodeRef,
   ): readonly ActiveBlockingRelation[] {
     const indexed = this.queries.listNodes();
-    const exact = indexed.some((node) => sameTaskNodeRef(node.target, target));
+    const predecessor = this.completionPredecessor(currentRoot, target, indexed);
+    const currentTarget = reconcileTaskNodeRef(predecessor, currentRoot, target);
+    if (currentTarget === undefined) throw new DependencyCompletionConflict();
+    const exact = indexed.some((node) => sameTaskNodeRef(node.target, currentTarget));
     const projection = exact
-      ? this.queries.dependencies(target)
-      : this.graph([currentRoot]).dependencies(target);
+      ? this.queries.dependencies(currentTarget)
+      : this.graph([{ root: currentRoot, predecessor: predecessor.ref }]).dependencies(
+          currentTarget,
+        );
     return projection.blockedBy.filter(
       (relation): relation is ActiveBlockingRelation =>
         relation.type !== 'unavailable' && relation.state === 'active',
     );
   }
 
-  private graph(overlays: readonly TaskSnapshot[] = []): TaskDependencyGraph {
-    const roots = new Map(
-      this.queries.listNodes().map(({ root }) => [rootAddress(root.ref), root]),
+  private completionPredecessor(
+    current: TaskSnapshot,
+    target: TaskNodeRef,
+    indexed: readonly TaskNodeSnapshot[],
+  ): TaskSnapshot {
+    const ref = rootRef(target);
+    const basis = this.completionBases[this.completionBases.length - 1];
+    if (
+      basis !== undefined &&
+      rootKey(basis.current.ref) === rootKey(current.ref) &&
+      [basis.current.ref, basis.previous.ref].some(
+        (candidate) => rootKey(candidate) === rootKey(ref),
+      )
+    )
+      return basis.previous;
+    const exact = indexed.find(({ root }) => rootKey(root.ref) === rootKey(ref));
+    if (exact !== undefined) return exact.root;
+    const resolution = this.queries.resolve(ref);
+    if (resolution.type === 'rebased') return resolution.previous;
+    if (resolution.type === 'exact') return resolution.task;
+    const content = JSON.stringify(dependencyIdentityContent(current));
+    const roots = new Map(indexed.map(({ root }) => [rootKey(root.ref), root]));
+    const matches = [...roots.values()].filter(
+      (root) =>
+        root.ref.filePath === current.ref.filePath &&
+        JSON.stringify(dependencyIdentityContent(root)) === content,
     );
-    for (const root of overlays) roots.set(rootAddress(root.ref), root);
+    const match = matches[0];
+    if (matches.length === 1 && match !== undefined) return match;
+    throw new DependencyCompletionConflict();
+  }
+
+  private graph(
+    overlays: ReadonlyArray<{ root: TaskSnapshot; predecessor: TaskRef }> = [],
+  ): TaskDependencyGraph {
+    const roots = new Map(this.queries.listNodes().map(({ root }) => [rootKey(root.ref), root]));
+    for (const { root, predecessor } of overlays) {
+      roots.delete(rootKey(predecessor));
+      roots.set(rootKey(root.ref), root);
+    }
     const nodes = enumerateTaskNodes([...roots.values()]);
     const statuses = new Map(nodes.map(({ node }) => [node.statusSymbol, node.status]));
     return buildTaskDependencyGraph(nodes, (symbol) => statuses.get(symbol) ?? 'open');
@@ -240,25 +353,30 @@ export class TaskDependencyService {
       rebase === undefined
         ? this.queries.resolve(original)
         : {
-            type: 'exact' as const,
-            task: rebase.current,
+            type: 'rebased' as const,
+            previous: rebase.previous,
+            current: rebase.current,
             basis: { observed: rebase.current },
           };
     if (resolution.type === 'ambiguous') return { result: resolution };
     if (resolution.type !== 'exact' && resolution.type !== 'rebased')
       return { result: { type: 'not-found', target } };
     const root = resolution.type === 'exact' ? resolution.task : resolution.current;
-    const node = confirmedNode(root, target);
+    const node = confirmedNode(
+      root,
+      target,
+      resolution.type === 'exact' ? root : resolution.previous,
+    );
     return node === undefined
       ? { result: { type: 'conflict', current: root } }
-      : { node: { ...node, basis: resolution.basis } };
+      : { node: { ...node, basis: resolution.basis, predecessor: original } };
   }
 
   private eligibility(blocker: ResolvedNode, dependent: ResolvedNode): TaskDependencyEligibility {
     const preview = this.queries.dependencyEligibility(blocker.target, dependent.target);
     return preview.type === 'rejected' &&
       (preview.reason === 'stale' || preview.reason === 'unavailable')
-      ? this.graph([blocker.root, dependent.root]).eligibility(blocker.target, dependent.target)
+      ? this.graph([blocker, dependent]).eligibility(blocker.target, dependent.target)
       : preview;
   }
 
@@ -352,7 +470,7 @@ export class TaskDependencyService {
       if (assigned.type !== 'committed') return terminal(assigned);
       const fresh = this.committedNode(assigned, blocker.target);
       if (fresh?.node.dependencyId !== id) return ioError();
-      currentBlocker = { ...fresh, basis: { observed: fresh.root } };
+      currentBlocker = { ...fresh, basis: { observed: fresh.root }, predecessor: blocker.root.ref };
     }
     try {
       const result = await this.writeCrossFileEdge({ ...pair, blocker: currentBlocker });

@@ -110,6 +110,12 @@ function address(target: TaskNodeRef): string {
   return JSON.stringify([current.ref.filePath, current.ref.line, ...path]);
 }
 
+function revisionAddress(target: TaskNodeRef): string {
+  let root = target;
+  while (root.type === 'subtask') root = root.ref.parent;
+  return JSON.stringify([address(target), root.ref.revision]);
+}
+
 function reaches(
   start: TaskNodeSnapshot,
   target: TaskNodeSnapshot,
@@ -135,7 +141,8 @@ export function buildTaskDependencyGraph(
 }
 
 class DerivedTaskDependencyGraph implements TaskDependencyGraph {
-  private readonly byAddress: ReadonlyMap<string, TaskNodeSnapshot>;
+  private readonly byRevision: ReadonlyMap<string, TaskNodeSnapshot>;
+  private readonly addresses: ReadonlySet<string>;
   private readonly byId = new Map<string, TaskNodeSnapshot[]>();
   private readonly prerequisites = new Map<TaskNodeSnapshot, TaskNodeSnapshot[]>();
   private readonly dependents = new Map<TaskNodeSnapshot, TaskNodeSnapshot[]>();
@@ -144,14 +151,15 @@ class DerivedTaskDependencyGraph implements TaskDependencyGraph {
     input: readonly TaskNodeSnapshot[],
     private readonly statusForSymbol: (symbol: string) => TaskStatus,
   ) {
-    const requested = new Map(input.map((node) => [address(node.target), node.target]));
+    const requested = new Map(input.map((node) => [revisionAddress(node.target), node.target]));
     const nodes = enumerateTaskNodes([...new Set(input.map((node) => node.root))]).filter(
       (node) => {
-        const ref = requested.get(address(node.target));
+        const ref = requested.get(revisionAddress(node.target));
         return ref !== undefined && sameTaskNodeRef(ref, node.target);
       },
     );
-    this.byAddress = new Map(nodes.map((node) => [address(node.target), node]));
+    this.byRevision = new Map(nodes.map((node) => [revisionAddress(node.target), node]));
+    this.addresses = new Set(nodes.map((node) => address(node.target)));
     for (const node of nodes) {
       const id = node.node.dependencyId;
       if (id === undefined) continue;
@@ -178,7 +186,7 @@ class DerivedTaskDependencyGraph implements TaskDependencyGraph {
   }
 
   private exact(ref: TaskNodeRef): TaskNodeSnapshot | undefined {
-    const node = this.byAddress.get(address(ref));
+    const node = this.byRevision.get(revisionAddress(ref));
     return node !== undefined && sameTaskNodeRef(node.target, ref) ? node : undefined;
   }
 
@@ -227,7 +235,7 @@ class DerivedTaskDependencyGraph implements TaskDependencyGraph {
     const blocker = this.exact(blockerRef);
     const dependent = this.exact(dependentRef);
     if (blocker === undefined || dependent === undefined) {
-      const absent = [blockerRef, dependentRef].some((ref) => !this.byAddress.has(address(ref)));
+      const absent = [blockerRef, dependentRef].some((ref) => !this.addresses.has(address(ref)));
       return { type: 'rejected', reason: absent ? 'unavailable' : 'stale' };
     }
     if (blocker === dependent) return { type: 'rejected', reason: 'self' };
