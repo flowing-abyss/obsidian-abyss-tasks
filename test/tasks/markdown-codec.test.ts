@@ -75,6 +75,38 @@ describe('TaskMarkdownCodec', () => {
   describe('dependency metadata edits', () => {
     const target = { type: 'task' as const, ref };
 
+    it.each([
+      [
+        '- [ ] Task 🆔 first 🆔 second',
+        { type: 'set-dependency-id' as const, value: 'next' },
+        'duplicate-field',
+        'dependency-id',
+      ],
+      [
+        '- [ ] Task 🆔 bad.id',
+        { type: 'set-dependency-id' as const, value: 'next' },
+        'invalid-target',
+        'dependency-id',
+      ],
+      [
+        '- [ ] Task ⛔ first ⛔ second',
+        { type: 'set-depends-on' as const, values: ['next'] },
+        'duplicate-field',
+        'depends-on',
+      ],
+      [
+        '- [ ] Task ⛔ bad.id',
+        { type: 'set-depends-on' as const, values: ['next'] },
+        'invalid-target',
+        'depends-on',
+      ],
+    ])('rejects ambiguous or malformed dependency carriers: %s', (source, edit, code, field) => {
+      expect(codec.applyLineEdit(source, edit)).toEqual({
+        type: 'invalid',
+        issues: [{ code, field }],
+      });
+    });
+
     it('inserts dependency carriers in canonical order before a terminal block id', () => {
       const source = '- [ ] Task custom 🔁 every day 🏁 keep ^block\r\n';
       const withId = applyTaskCommand(codec, source, {

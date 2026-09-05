@@ -253,70 +253,89 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
 }
 
 class RecurrenceEditorController implements RecurrenceEditorHandle {
-  private readonly titleId = `abyss-recurrence-title-${++nextEditorInstance}`;
-  private readonly diagnosticId = `abyss-recurrence-diagnostic-${nextEditorInstance}`;
-  private readonly task: TaskSelectionNode | undefined;
-  private readonly reference: LocalDate | undefined;
-  private readonly previousFocus: Element | null;
-  private readonly state: EditorState;
-  private readonly ownerWindow: Window | null;
+  private readonly titleId_abyssPrivate = `abyss-recurrence-title-${++nextEditorInstance}`;
+  private readonly diagnosticId_abyssPrivate = `abyss-recurrence-diagnostic-${nextEditorInstance}`;
+  private readonly task_abyssPrivate: TaskSelectionNode | undefined;
+  private readonly reference_abyssPrivate: LocalDate | undefined;
+  private readonly previousFocus_abyssPrivate: Element | null;
+  private readonly state_abyssPrivate: EditorState;
+  private readonly ownerWindow_abyssPrivate: Window | null;
 
-  constructor(private readonly options: RecurrenceEditorOptions) {
-    this.task = selectedTask(options.source);
-    this.reference = referenceDate(options.source, options.policy);
-    this.previousFocus = options.container.ownerDocument.activeElement;
-    this.ownerWindow = options.container.ownerDocument.defaultView;
-    this.state = initialEditorState(this.task, this.reference);
+  constructor(private readonly options_abyssPrivate: RecurrenceEditorOptions) {
+    this.task_abyssPrivate = selectedTask(options_abyssPrivate.source);
+    this.reference_abyssPrivate = referenceDate(
+      options_abyssPrivate.source,
+      options_abyssPrivate.policy,
+    );
+    this.previousFocus_abyssPrivate = options_abyssPrivate.container.ownerDocument.activeElement;
+    this.ownerWindow_abyssPrivate = options_abyssPrivate.container.ownerDocument.defaultView;
+    this.state_abyssPrivate = initialEditorState(
+      this.task_abyssPrivate,
+      this.reference_abyssPrivate,
+    );
   }
 
   mount(): void {
-    this.ownerWindow?.addEventListener('keydown', this.submitShortcutHandler, true);
-    this.options.container.addEventListener('keydown', this.keyHandler);
-    this.render();
+    this.ownerWindow_abyssPrivate?.addEventListener(
+      'keydown',
+      this.submitShortcutHandler_abyssPrivate,
+      true,
+    );
+    this.options_abyssPrivate.container.addEventListener('keydown', this.keyHandler_abyssPrivate);
+    this.render_abyssPrivate();
   }
 
   destroy(): void {
-    this.ownerWindow?.removeEventListener('keydown', this.submitShortcutHandler, true);
-    this.options.container.removeEventListener('keydown', this.keyHandler);
-    this.options.container.empty();
+    this.ownerWindow_abyssPrivate?.removeEventListener(
+      'keydown',
+      this.submitShortcutHandler_abyssPrivate,
+      true,
+    );
+    this.options_abyssPrivate.container.removeEventListener(
+      'keydown',
+      this.keyHandler_abyssPrivate,
+    );
+    this.options_abyssPrivate.container.empty();
   }
 
   dismiss(): void {
-    this.options.onClose();
-    this.restoreFocus();
+    this.options_abyssPrivate.onClose();
+    this.restoreFocus_abyssPrivate();
   }
 
   focus(): void {
     const selector =
-      this.state.mode === 'custom'
+      this.state_abyssPrivate.mode === 'custom'
         ? '[aria-label="Recurrence rule"]'
         : '[aria-pressed="true"], [aria-label="Repeat interval"]';
-    this.options.container.querySelector<HTMLElement>(selector)?.focus();
+    this.options_abyssPrivate.container.querySelector<HTMLElement>(selector)?.focus();
   }
 
   captureDraftState(): RecurrenceEditorDraft {
-    const active = this.options.container.ownerDocument.activeElement;
-    const input = this.textInput(active);
-    const focusedControl = this.controlKey(active);
+    const active = this.options_abyssPrivate.container.ownerDocument.activeElement;
+    const input = this.textInput_abyssPrivate(active);
+    const focusedControl = this.controlKey_abyssPrivate(active);
     return {
-      mode: this.state.mode,
-      ...(this.state.preset !== undefined && { preset: this.state.preset }),
-      intervalText: this.state.intervalText,
-      unit: this.state.unit,
-      weekdays: [...this.state.weekdays],
-      monthly: this.state.monthly,
-      yearly: this.state.yearly,
-      whenDone: this.state.whenDone,
-      onCompletion: this.state.onCompletion,
-      customDraft: this.state.customDraft,
+      mode: this.state_abyssPrivate.mode,
+      ...(this.state_abyssPrivate.preset !== undefined && {
+        preset: this.state_abyssPrivate.preset,
+      }),
+      intervalText: this.state_abyssPrivate.intervalText,
+      unit: this.state_abyssPrivate.unit,
+      weekdays: [...this.state_abyssPrivate.weekdays],
+      monthly: this.state_abyssPrivate.monthly,
+      yearly: this.state_abyssPrivate.yearly,
+      whenDone: this.state_abyssPrivate.whenDone,
+      onCompletion: this.state_abyssPrivate.onCompletion,
+      customDraft: this.state_abyssPrivate.customDraft,
       ...(focusedControl !== undefined && { focusedControl }),
       ...selectionState(input),
-      dirty: this.state.dirty,
+      dirty: this.state_abyssPrivate.dirty,
     };
   }
 
   restoreDraftState(draft: RecurrenceEditorDraft): void {
-    Object.assign(this.state, {
+    Object.assign(this.state_abyssPrivate, {
       mode: draft.mode,
       preset: draft.preset,
       intervalText: draft.intervalText,
@@ -330,43 +349,51 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
       dirty: draft.dirty,
       submissionError: undefined,
     });
-    this.render();
-    this.restoreDraftFocus(draft);
+    this.render_abyssPrivate();
+    this.restoreDraftFocus_abyssPrivate(draft);
   }
 
-  private restoreFocus(): void {
-    if (this.options.dismissalFocus?.isConnected === true) {
-      this.options.dismissalFocus.focus();
+  private restoreFocus_abyssPrivate(): void {
+    if (this.options_abyssPrivate.dismissalFocus?.isConnected === true) {
+      this.options_abyssPrivate.dismissalFocus.focus();
       return;
     }
-    if (this.previousFocus instanceof HTMLElement && this.previousFocus.isConnected) {
-      this.previousFocus.focus();
+    if (
+      this.previousFocus_abyssPrivate instanceof HTMLElement &&
+      this.previousFocus_abyssPrivate.isConnected
+    ) {
+      this.previousFocus_abyssPrivate.focus();
     }
   }
 
-  private textInput(element: Element | null): HTMLInputElement | HTMLTextAreaElement | undefined {
+  private textInput_abyssPrivate(
+    element: Element | null,
+  ): HTMLInputElement | HTMLTextAreaElement | undefined {
     return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
       ? element
       : undefined;
   }
 
-  private controlKey(element: Element | null): string | undefined {
-    if (!(element instanceof HTMLElement) || !this.options.container.contains(element)) {
+  private controlKey_abyssPrivate(element: Element | null): string | undefined {
+    if (
+      !(element instanceof HTMLElement) ||
+      !this.options_abyssPrivate.container.contains(element)
+    ) {
       return undefined;
     }
     return element.dataset['recurrenceFocusKey'];
   }
 
-  private controlForKey(key: string | undefined): HTMLElement | undefined {
+  private controlForKey_abyssPrivate(key: string | undefined): HTMLElement | undefined {
     if (key === undefined || key.length === 0) return undefined;
-    const controls = this.options.container.querySelectorAll<HTMLElement>(
+    const controls = this.options_abyssPrivate.container.querySelectorAll<HTMLElement>(
       '[data-recurrence-focus-key]',
     );
-    return [...controls].find((control) => this.controlKey(control) === key);
+    return [...controls].find((control) => this.controlKey_abyssPrivate(control) === key);
   }
 
-  private restoreDraftFocus(draft: RecurrenceEditorDraft): void {
-    const control = this.controlForKey(draft.focusedControl);
+  private restoreDraftFocus_abyssPrivate(draft: RecurrenceEditorDraft): void {
+    const control = this.controlForKey_abyssPrivate(draft.focusedControl);
     control?.focus();
     if (
       control instanceof HTMLInputElement &&
@@ -377,73 +404,80 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
     }
   }
 
-  private parseState(): RecurrenceParseResult {
-    if (this.state.mode === 'custom') return parseRecurrenceRule(this.state.customDraft);
-    if (this.state.preset === 'weekdays') {
-      return parseRecurrenceRule(`every weekday${this.state.whenDone ? ' when done' : ''}`);
+  private parseState_abyssPrivate(): RecurrenceParseResult {
+    if (this.state_abyssPrivate.mode === 'custom')
+      return parseRecurrenceRule(this.state_abyssPrivate.customDraft);
+    if (this.state_abyssPrivate.preset === 'weekdays') {
+      return parseRecurrenceRule(
+        `every weekday${this.state_abyssPrivate.whenDone ? ' when done' : ''}`,
+      );
     }
     return buildRecurrenceRule({
-      interval: Number(this.state.intervalText),
-      unit: this.state.unit,
-      weekdays: this.state.weekdays,
-      monthly: this.state.monthly,
-      yearly: this.state.yearly,
-      whenDone: this.state.whenDone,
+      interval: Number(this.state_abyssPrivate.intervalText),
+      unit: this.state_abyssPrivate.unit,
+      weekdays: this.state_abyssPrivate.weekdays,
+      monthly: this.state_abyssPrivate.monthly,
+      yearly: this.state_abyssPrivate.yearly,
+      whenDone: this.state_abyssPrivate.whenDone,
     });
   }
 
-  private canonicalPreset(): Preset | undefined {
-    if (this.state.mode === 'custom') return undefined;
-    const parsed = this.parseState();
+  private canonicalPreset_abyssPrivate(): Preset | undefined {
+    if (this.state_abyssPrivate.mode === 'custom') return undefined;
+    const parsed = this.parseState_abyssPrivate();
     if (parsed.type === 'invalid') return undefined;
     const candidates: ReadonlyArray<readonly [Preset, string]> = [
       ['daily', 'every day'],
       ['weekdays', 'every weekday'],
-      ...(this.reference === undefined
+      ...(this.reference_abyssPrivate === undefined
         ? []
-        : ([['weekly', recurrencePresetRule('weekly', this.reference)]] as const)),
+        : ([['weekly', recurrencePresetRule('weekly', this.reference_abyssPrivate)]] as const)),
       ['monthly', 'every month'],
       ['yearly', 'every year'],
     ];
     return candidates.find(([, rule]) => parsed.canonical === rule)?.[0];
   }
 
-  private validationMessage(parsed: RecurrenceParseResult): string {
-    if (this.options.ownershipConflict) return 'Remove the nested repeat conflict first.';
-    if (this.reference == null) return 'Add a date before setting a repeat.';
-    if (this.hasInvalidInterval()) return 'Use a whole number greater than zero.';
-    if (this.state.submissionError !== undefined && this.state.submissionError.length > 0) {
-      return this.state.submissionError;
+  private validationMessage_abyssPrivate(parsed: RecurrenceParseResult): string {
+    if (this.options_abyssPrivate.ownershipConflict)
+      return 'Remove the nested repeat conflict first.';
+    if (this.reference_abyssPrivate == null) return 'Add a date before setting a repeat.';
+    if (this.hasInvalidInterval_abyssPrivate()) return 'Use a whole number greater than zero.';
+    if (
+      this.state_abyssPrivate.submissionError !== undefined &&
+      this.state_abyssPrivate.submissionError.length > 0
+    ) {
+      return this.state_abyssPrivate.submissionError;
     }
     return parsed.type === 'invalid' ? recurrenceIssueText(parsed.code) : '';
   }
 
-  private hasInvalidInterval(): boolean {
-    const interval = Number(this.state.intervalText);
+  private hasInvalidInterval_abyssPrivate(): boolean {
+    const interval = Number(this.state_abyssPrivate.intervalText);
     return (
-      this.state.mode === 'structured' &&
-      this.state.preset !== 'weekdays' &&
+      this.state_abyssPrivate.mode === 'structured' &&
+      this.state_abyssPrivate.preset !== 'weekdays' &&
       (!Number.isSafeInteger(interval) || interval < 1)
     );
   }
 
-  private refresh(): void {
-    const parsed = this.parseState();
-    if (this.state.mode === 'custom' && parsed.type === 'valid') {
-      this.state.whenDone = parsed.whenDone;
+  private refresh_abyssPrivate(): void {
+    const parsed = this.parseState_abyssPrivate();
+    if (this.state_abyssPrivate.mode === 'custom' && parsed.type === 'valid') {
+      this.state_abyssPrivate.whenDone = parsed.whenDone;
     }
-    const message = this.validationMessage(parsed);
-    this.refreshPreview(parsed);
-    this.refreshStatus(message);
-    this.refreshDeleteWarning();
-    this.refreshWhenDone(parsed);
-    this.refreshSaveButton(parsed, message);
-    this.refreshPresetButtons();
-    this.refreshValidity(parsed);
+    const message = this.validationMessage_abyssPrivate(parsed);
+    this.refreshPreview_abyssPrivate(parsed);
+    this.refreshStatus_abyssPrivate(message);
+    this.refreshDeleteWarning_abyssPrivate();
+    this.refreshWhenDone_abyssPrivate(parsed);
+    this.refreshSaveButton_abyssPrivate(parsed, message);
+    this.refreshPresetButtons_abyssPrivate();
+    this.refreshValidity_abyssPrivate(parsed);
   }
 
-  private refreshPreview(parsed: RecurrenceParseResult): void {
-    const preview = this.options.container.querySelector<HTMLElement>(
+  private refreshPreview_abyssPrivate(parsed: RecurrenceParseResult): void {
+    const preview = this.options_abyssPrivate.container.querySelector<HTMLElement>(
       '.abyss-recurrence-preview-rule',
     );
     if (preview === null) return;
@@ -451,150 +485,167 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
     preview.textContent = parsed.type === 'valid' ? `${parsed.canonical}${suffix}` : '—';
   }
 
-  private refreshStatus(message: string): void {
-    const status = this.options.container.querySelector<HTMLElement>('.abyss-recurrence-status');
+  private refreshStatus_abyssPrivate(message: string): void {
+    const status = this.options_abyssPrivate.container.querySelector<HTMLElement>(
+      '.abyss-recurrence-status',
+    );
     if (status === null) return;
     status.textContent = message;
     status.hidden = message.length === 0;
   }
 
-  private refreshDeleteWarning(): void {
-    const warning = this.options.container.querySelector<HTMLElement>(
+  private refreshDeleteWarning_abyssPrivate(): void {
+    const warning = this.options_abyssPrivate.container.querySelector<HTMLElement>(
       '.abyss-recurrence-delete-warning',
     );
     if (warning === null) return;
-    const deletes = this.state.onCompletion === 'delete';
+    const deletes = this.state_abyssPrivate.onCompletion === 'delete';
     warning.textContent = deletes
       ? 'Completing this repeat deletes the finished task and its owned sub-tasks.'
       : '';
     warning.hidden = !deletes;
   }
 
-  private refreshWhenDone(parsed: RecurrenceParseResult): void {
-    if (this.state.mode !== 'custom' || parsed.type !== 'valid') return;
-    const input = this.options.container.querySelector<HTMLInputElement>(
+  private refreshWhenDone_abyssPrivate(parsed: RecurrenceParseResult): void {
+    if (this.state_abyssPrivate.mode !== 'custom' || parsed.type !== 'valid') return;
+    const input = this.options_abyssPrivate.container.querySelector<HTMLInputElement>(
       '.abyss-recurrence-when-done',
     );
     if (input !== null) input.checked = parsed.whenDone;
   }
 
-  private refreshSaveButton(parsed: RecurrenceParseResult, message: string): void {
-    const save = this.options.container.querySelector<HTMLButtonElement>('.abyss-recurrence-save');
+  private refreshSaveButton_abyssPrivate(parsed: RecurrenceParseResult, message: string): void {
+    const save =
+      this.options_abyssPrivate.container.querySelector<HTMLButtonElement>(
+        '.abyss-recurrence-save',
+      );
     if (save !== null) {
-      save.disabled = this.state.submitting || message.length > 0 || parsed.type === 'invalid';
+      save.disabled =
+        this.state_abyssPrivate.submitting || message.length > 0 || parsed.type === 'invalid';
     }
   }
 
-  private refreshPresetButtons(): void {
-    const pressedPreset = this.canonicalPreset();
-    const buttons = this.options.container.querySelectorAll<HTMLButtonElement>(
+  private refreshPresetButtons_abyssPrivate(): void {
+    const pressedPreset = this.canonicalPreset_abyssPrivate();
+    const buttons = this.options_abyssPrivate.container.querySelectorAll<HTMLButtonElement>(
       '.abyss-recurrence-presets button',
     );
     for (const button of buttons) {
       const preset = button.dataset['recurrencePreset'] as Preset | undefined;
       const pressed =
         button.dataset['recurrenceMode'] === 'custom'
-          ? this.state.mode === 'custom'
+          ? this.state_abyssPrivate.mode === 'custom'
           : preset !== undefined && preset === pressedPreset;
       button.setAttribute('aria-pressed', String(pressed));
     }
   }
 
-  private refreshValidity(parsed: RecurrenceParseResult): void {
-    this.setInvalid('.abyss-recurrence-interval', this.hasInvalidInterval());
-    this.setInvalid('.abyss-recurrence-month-day', this.hasInvalidMonthlyDay());
-    this.setInvalid('.abyss-recurrence-yearly-day', this.hasInvalidYearlyDay());
-    this.setInvalid(
+  private refreshValidity_abyssPrivate(parsed: RecurrenceParseResult): void {
+    this.setInvalid_abyssPrivate(
+      '.abyss-recurrence-interval',
+      this.hasInvalidInterval_abyssPrivate(),
+    );
+    this.setInvalid_abyssPrivate(
+      '.abyss-recurrence-month-day',
+      this.hasInvalidMonthlyDay_abyssPrivate(),
+    );
+    this.setInvalid_abyssPrivate(
+      '.abyss-recurrence-yearly-day',
+      this.hasInvalidYearlyDay_abyssPrivate(),
+    );
+    this.setInvalid_abyssPrivate(
       '.abyss-recurrence-raw',
-      this.state.mode === 'custom' && parsed.type === 'invalid',
+      this.state_abyssPrivate.mode === 'custom' && parsed.type === 'invalid',
     );
   }
 
-  private hasInvalidMonthlyDay(): boolean {
-    const choice = this.state.monthly;
-    if (this.state.mode !== 'structured' || this.state.unit !== 'months') return false;
+  private hasInvalidMonthlyDay_abyssPrivate(): boolean {
+    const choice = this.state_abyssPrivate.monthly;
+    if (this.state_abyssPrivate.mode !== 'structured' || this.state_abyssPrivate.unit !== 'months')
+      return false;
     return (
       choice.type === 'day' &&
       (!Number.isSafeInteger(choice.day) || choice.day < 1 || choice.day > 31)
     );
   }
 
-  private hasInvalidYearlyDay(): boolean {
-    const choice = this.state.yearly;
-    if (this.state.mode !== 'structured' || this.state.unit !== 'years') return false;
+  private hasInvalidYearlyDay_abyssPrivate(): boolean {
+    const choice = this.state_abyssPrivate.yearly;
+    if (this.state_abyssPrivate.mode !== 'structured' || this.state_abyssPrivate.unit !== 'years')
+      return false;
     return (
       choice.type === 'date' &&
       (!Number.isSafeInteger(choice.day) || choice.day < 1 || choice.day > 31)
     );
   }
 
-  private setInvalid(selector: string, invalid: boolean): void {
-    this.options.container
+  private setInvalid_abyssPrivate(selector: string, invalid: boolean): void {
+    this.options_abyssPrivate.container
       .querySelector<HTMLElement>(selector)
       ?.setAttribute('aria-invalid', String(invalid));
   }
 
-  private async submit(): Promise<void> {
-    const parsed = this.parseState();
+  private async submit_abyssPrivate(): Promise<void> {
+    const parsed = this.parseState_abyssPrivate();
     if (
-      this.state.submitting ||
-      this.validationMessage(parsed).length > 0 ||
+      this.state_abyssPrivate.submitting ||
+      this.validationMessage_abyssPrivate(parsed).length > 0 ||
       parsed.type === 'invalid'
     ) {
       return;
     }
-    this.beginSubmission();
-    const succeeded = await this.performPatch({
+    this.beginSubmission_abyssPrivate();
+    const succeeded = await this.performPatch_abyssPrivate({
       recurrence: { type: 'set', value: parsed.raw },
-      ...this.onCompletionPatch(),
+      ...this.onCompletionPatch_abyssPrivate(),
     });
-    this.finishSubmission(succeeded, 'Could not save the repeat.');
+    this.finishSubmission_abyssPrivate(succeeded, 'Could not save the repeat.');
   }
 
-  private async clear(): Promise<void> {
-    if (this.state.submitting) return;
-    this.beginSubmission();
-    const succeeded = await this.performPatch({
+  private async clear_abyssPrivate(): Promise<void> {
+    if (this.state_abyssPrivate.submitting) return;
+    this.beginSubmission_abyssPrivate();
+    const succeeded = await this.performPatch_abyssPrivate({
       recurrence: { type: 'clear' },
       onCompletion: { type: 'clear' },
     });
-    this.finishSubmission(succeeded, 'Could not clear the repeat.');
+    this.finishSubmission_abyssPrivate(succeeded, 'Could not clear the repeat.');
   }
 
-  private beginSubmission(): void {
-    this.state.submitting = true;
-    this.state.submissionError = undefined;
-    this.refresh();
+  private beginSubmission_abyssPrivate(): void {
+    this.state_abyssPrivate.submitting = true;
+    this.state_abyssPrivate.submissionError = undefined;
+    this.refresh_abyssPrivate();
   }
 
-  private async performPatch(patch: TaskPatch): Promise<boolean> {
+  private async performPatch_abyssPrivate(patch: TaskPatch): Promise<boolean> {
     try {
-      return (await this.options.onSubmit(patch)).type === 'ok';
+      return (await this.options_abyssPrivate.onSubmit(patch)).type === 'ok';
     } catch {
       return false;
     }
   }
 
-  private finishSubmission(succeeded: boolean, failure: string): void {
+  private finishSubmission_abyssPrivate(succeeded: boolean, failure: string): void {
     if (succeeded) {
-      this.options.onClose();
+      this.options_abyssPrivate.onClose();
       return;
     }
-    this.state.submissionError = failure;
-    this.state.submitting = false;
-    this.refresh();
+    this.state_abyssPrivate.submissionError = failure;
+    this.state_abyssPrivate.submitting = false;
+    this.refresh_abyssPrivate();
   }
 
-  private onCompletionPatch(): Pick<TaskPatch, 'onCompletion'> {
-    const initial = this.task?.onCompletion ?? 'keep';
-    if (this.state.onCompletion === initial) return {};
-    return this.state.onCompletion === 'delete'
+  private onCompletionPatch_abyssPrivate(): Pick<TaskPatch, 'onCompletion'> {
+    const initial = this.task_abyssPrivate?.onCompletion ?? 'keep';
+    if (this.state_abyssPrivate.onCompletion === initial) return {};
+    return this.state_abyssPrivate.onCompletion === 'delete'
       ? { onCompletion: { type: 'set', value: 'delete' } }
       : { onCompletion: { type: 'clear' } };
   }
 
-  private setPreset(preset: Preset): void {
-    Object.assign(this.state, {
+  private setPreset_abyssPrivate(preset: Preset): void {
+    Object.assign(this.state_abyssPrivate, {
       mode: 'structured',
       preset,
       intervalText: '1',
@@ -603,87 +654,91 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
       submissionError: undefined,
       dirty: true,
     });
-    this.applyPresetCadence(preset);
-    this.render();
+    this.applyPresetCadence_abyssPrivate(preset);
+    this.render_abyssPrivate();
   }
 
-  private applyPresetCadence(preset: Preset): void {
-    if (preset === 'daily' || preset === 'weekdays') this.state.unit = 'days';
-    if (preset === 'monthly') this.state.unit = 'months';
-    if (preset === 'yearly') this.state.unit = 'years';
+  private applyPresetCadence_abyssPrivate(preset: Preset): void {
+    if (preset === 'daily' || preset === 'weekdays') this.state_abyssPrivate.unit = 'days';
+    if (preset === 'monthly') this.state_abyssPrivate.unit = 'months';
+    if (preset === 'yearly') this.state_abyssPrivate.unit = 'years';
     if (preset !== 'weekly') return;
-    this.state.unit = 'weeks';
-    this.state.weekdays =
-      this.reference != null ? [weekdayForReference(this.reference)] : ['Monday'];
+    this.state_abyssPrivate.unit = 'weeks';
+    this.state_abyssPrivate.weekdays =
+      this.reference_abyssPrivate != null
+        ? [weekdayForReference(this.reference_abyssPrivate)]
+        : ['Monday'];
   }
 
-  private renderAdaptiveControls(parent: HTMLElement): void {
-    if (this.state.preset === 'weekdays') return;
-    this.renderCadenceControls(parent);
-    if (this.state.unit === 'weeks') this.renderWeekdayControls(parent);
-    if (this.state.unit === 'months') this.renderMonthlyControls(parent);
-    if (this.state.unit === 'years') this.renderYearlyControls(parent);
+  private renderAdaptiveControls_abyssPrivate(parent: HTMLElement): void {
+    if (this.state_abyssPrivate.preset === 'weekdays') return;
+    this.renderCadenceControls_abyssPrivate(parent);
+    if (this.state_abyssPrivate.unit === 'weeks') this.renderWeekdayControls_abyssPrivate(parent);
+    if (this.state_abyssPrivate.unit === 'months') this.renderMonthlyControls_abyssPrivate(parent);
+    if (this.state_abyssPrivate.unit === 'years') this.renderYearlyControls_abyssPrivate(parent);
   }
 
-  private renderCadenceControls(parent: HTMLElement): void {
+  private renderCadenceControls_abyssPrivate(parent: HTMLElement): void {
     const cadence = parent.createDiv({ cls: 'abyss-recurrence-cadence' });
     cadence.createSpan({ cls: 'abyss-recurrence-inline-label', text: 'Every' });
-    const interval = this.createIntervalInput(cadence);
-    const unit = this.createUnitSelect(cadence);
+    const interval = this.createIntervalInput_abyssPrivate(cadence);
+    const unit = this.createUnitSelect_abyssPrivate(cadence);
     interval.addEventListener('input', () => {
-      this.state.intervalText = interval.value;
-      this.state.preset = undefined;
-      this.markDirty();
-      this.refresh();
+      this.state_abyssPrivate.intervalText = interval.value;
+      this.state_abyssPrivate.preset = undefined;
+      this.markDirty_abyssPrivate();
+      this.refresh_abyssPrivate();
     });
     unit.addEventListener('change', () => {
-      this.state.unit = unit.value as Unit;
-      this.state.preset = undefined;
-      this.state.monthly = { type: 'same-date' };
-      this.state.yearly = { type: 'same-date' };
-      this.state.weekdays =
-        this.reference != null ? [weekdayForReference(this.reference)] : ['Monday'];
-      this.markDirty();
-      this.render();
+      this.state_abyssPrivate.unit = unit.value as Unit;
+      this.state_abyssPrivate.preset = undefined;
+      this.state_abyssPrivate.monthly = { type: 'same-date' };
+      this.state_abyssPrivate.yearly = { type: 'same-date' };
+      this.state_abyssPrivate.weekdays =
+        this.reference_abyssPrivate != null
+          ? [weekdayForReference(this.reference_abyssPrivate)]
+          : ['Monday'];
+      this.markDirty_abyssPrivate();
+      this.render_abyssPrivate();
     });
   }
 
-  private createIntervalInput(parent: HTMLElement): HTMLInputElement {
+  private createIntervalInput_abyssPrivate(parent: HTMLElement): HTMLInputElement {
     return parent.createEl('input', {
       cls: 'abyss-recurrence-interval',
       attr: {
         type: 'text',
         inputmode: 'numeric',
         pattern: '[0-9]*',
-        value: this.state.intervalText,
+        value: this.state_abyssPrivate.intervalText,
         'aria-label': 'Repeat interval',
-        'aria-describedby': this.diagnosticId,
+        'aria-describedby': this.diagnosticId_abyssPrivate,
         'aria-invalid': 'false',
         'data-recurrence-focus-key': 'interval',
       },
     });
   }
 
-  private createUnitSelect(parent: HTMLElement): HTMLSelectElement {
+  private createUnitSelect_abyssPrivate(parent: HTMLElement): HTMLSelectElement {
     const unit = parent.createEl('select', {
       attr: { 'aria-label': 'Repeat unit', 'data-recurrence-focus-key': 'unit' },
     });
-    addOption(unit, 'days', 'Days', this.state.unit === 'days');
-    addOption(unit, 'weeks', 'Weeks', this.state.unit === 'weeks');
-    addOption(unit, 'months', 'Months', this.state.unit === 'months');
-    addOption(unit, 'years', 'Years', this.state.unit === 'years');
+    addOption(unit, 'days', 'Days', this.state_abyssPrivate.unit === 'days');
+    addOption(unit, 'weeks', 'Weeks', this.state_abyssPrivate.unit === 'weeks');
+    addOption(unit, 'months', 'Months', this.state_abyssPrivate.unit === 'months');
+    addOption(unit, 'years', 'Years', this.state_abyssPrivate.unit === 'years');
     return unit;
   }
 
-  private renderWeekdayControls(parent: HTMLElement): void {
+  private renderWeekdayControls_abyssPrivate(parent: HTMLElement): void {
     const days = parent.createDiv({
       cls: 'abyss-recurrence-weekdays',
       attr: { role: 'group', 'aria-label': 'Repeat weekdays' },
     });
-    for (const weekday of WEEKDAYS) this.renderWeekdayOption(days, weekday);
+    for (const weekday of WEEKDAYS) this.renderWeekdayOption_abyssPrivate(days, weekday);
   }
 
-  private renderWeekdayOption(parent: HTMLElement, weekday: Weekday): void {
+  private renderWeekdayOption_abyssPrivate(parent: HTMLElement, weekday: Weekday): void {
     const label = parent.createEl('label', { cls: 'abyss-recurrence-weekday' });
     const checkbox = label.createEl('input', {
       attr: {
@@ -693,25 +748,26 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
         'data-recurrence-focus-key': `weekday:${weekday}`,
       },
     });
-    checkbox.checked = this.state.weekdays.includes(weekday);
+    checkbox.checked = this.state_abyssPrivate.weekdays.includes(weekday);
     label.createSpan({ text: weekday.slice(0, 2) });
     checkbox.addEventListener('change', () => {
-      this.state.weekdays = checkbox.checked
-        ? [...this.state.weekdays, weekday]
-        : this.state.weekdays.filter((candidate) => candidate !== weekday);
-      this.markDirty();
-      this.refresh();
+      this.state_abyssPrivate.weekdays = checkbox.checked
+        ? [...this.state_abyssPrivate.weekdays, weekday]
+        : this.state_abyssPrivate.weekdays.filter((candidate) => candidate !== weekday);
+      this.markDirty_abyssPrivate();
+      this.refresh_abyssPrivate();
     });
   }
 
-  private renderMonthlyControls(parent: HTMLElement): void {
+  private renderMonthlyControls_abyssPrivate(parent: HTMLElement): void {
     const row = parent.createDiv({ cls: 'abyss-recurrence-detail-row' });
-    this.renderMonthlyPattern(row);
-    if (this.state.monthly.type === 'day') this.renderMonthlyDay(row);
-    if (this.state.monthly.type === 'weekday') this.renderMonthlyWeekday(row);
+    this.renderMonthlyPattern_abyssPrivate(row);
+    if (this.state_abyssPrivate.monthly.type === 'day') this.renderMonthlyDay_abyssPrivate(row);
+    if (this.state_abyssPrivate.monthly.type === 'weekday')
+      this.renderMonthlyWeekday_abyssPrivate(row);
   }
 
-  private renderMonthlyPattern(row: HTMLElement): void {
+  private renderMonthlyPattern_abyssPrivate(row: HTMLElement): void {
     const pattern = row.createEl('select', {
       attr: {
         'aria-label': 'Monthly pattern',
@@ -719,63 +775,68 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
       },
     });
     const value =
-      this.state.monthly.type === 'edge' ? this.state.monthly.edge : this.state.monthly.type;
+      this.state_abyssPrivate.monthly.type === 'edge'
+        ? this.state_abyssPrivate.monthly.edge
+        : this.state_abyssPrivate.monthly.type;
     addOption(pattern, 'same-date', 'Same date', value === 'same-date');
     addOption(pattern, 'day', 'Day of month', value === 'day');
     addOption(pattern, 'first', 'First day', value === 'first');
     addOption(pattern, 'last', 'Last day', value === 'last');
     addOption(pattern, 'weekday', 'Weekday pattern', value === 'weekday');
     pattern.addEventListener('change', () => {
-      this.state.monthly = monthlyChoiceFromValue(pattern.value);
-      this.markDirty();
-      this.render();
+      this.state_abyssPrivate.monthly = monthlyChoiceFromValue(pattern.value);
+      this.markDirty_abyssPrivate();
+      this.render_abyssPrivate();
     });
   }
 
-  private renderMonthlyDay(row: HTMLElement): void {
-    if (this.state.monthly.type !== 'day') return;
+  private renderMonthlyDay_abyssPrivate(row: HTMLElement): void {
+    if (this.state_abyssPrivate.monthly.type !== 'day') return;
     const day = row.createEl('input', {
       cls: 'abyss-recurrence-month-day',
       attr: {
         type: 'number',
         min: '1',
         max: '31',
-        value: String(this.state.monthly.day),
+        value: String(this.state_abyssPrivate.monthly.day),
         'aria-label': 'Month day',
-        'aria-describedby': this.diagnosticId,
+        'aria-describedby': this.diagnosticId_abyssPrivate,
         'aria-invalid': 'false',
         'data-recurrence-focus-key': 'monthly-day',
       },
     });
     day.addEventListener('input', () => {
-      this.state.monthly = { type: 'day', day: Number(day.value) };
-      this.markDirty(false);
-      this.refresh();
+      this.state_abyssPrivate.monthly = { type: 'day', day: Number(day.value) };
+      this.markDirty_abyssPrivate(false);
+      this.refresh_abyssPrivate();
     });
   }
 
-  private renderMonthlyWeekday(row: HTMLElement): void {
-    if (this.state.monthly.type !== 'weekday') return;
-    const ordinal = this.createOrdinalSelect(row);
-    const weekday = this.createMonthlyWeekdaySelect(row);
+  private renderMonthlyWeekday_abyssPrivate(row: HTMLElement): void {
+    if (this.state_abyssPrivate.monthly.type !== 'weekday') return;
+    const ordinal = this.createOrdinalSelect_abyssPrivate(row);
+    const weekday = this.createMonthlyWeekdaySelect_abyssPrivate(row);
     ordinal.addEventListener('change', () => {
-      if (this.state.monthly.type !== 'weekday') return;
-      this.state.monthly = {
-        ...this.state.monthly,
+      if (this.state_abyssPrivate.monthly.type !== 'weekday') return;
+      this.state_abyssPrivate.monthly = {
+        ...this.state_abyssPrivate.monthly,
         ordinal: Number(ordinal.value) as 1 | 2 | 3 | 4 | -1 | -2,
       };
-      this.markDirty(false);
-      this.refresh();
+      this.markDirty_abyssPrivate(false);
+      this.refresh_abyssPrivate();
     });
     weekday.addEventListener('change', () => {
-      if (this.state.monthly.type !== 'weekday') return;
-      this.state.monthly = { ...this.state.monthly, weekday: weekday.value as Weekday };
-      this.markDirty(false);
-      this.refresh();
+      if (this.state_abyssPrivate.monthly.type !== 'weekday') return;
+      this.state_abyssPrivate.monthly = {
+        ...this.state_abyssPrivate.monthly,
+        weekday: weekday.value as Weekday,
+      };
+      this.markDirty_abyssPrivate(false);
+      this.refresh_abyssPrivate();
     });
   }
 
-  private createOrdinalSelect(row: HTMLElement): HTMLSelectElement {
+  private createOrdinalSelect_abyssPrivate(row: HTMLElement): HTMLSelectElement {
     const ordinal = row.createEl('select', {
       attr: {
         'aria-label': 'Weekday ordinal',
@@ -784,13 +845,14 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
     });
     for (const [number, label] of MONTHLY_ORDINALS) {
       const selected =
-        this.state.monthly.type === 'weekday' && this.state.monthly.ordinal === number;
+        this.state_abyssPrivate.monthly.type === 'weekday' &&
+        this.state_abyssPrivate.monthly.ordinal === number;
       addOption(ordinal, String(number), label, selected);
     }
     return ordinal;
   }
 
-  private createMonthlyWeekdaySelect(row: HTMLElement): HTMLSelectElement {
+  private createMonthlyWeekdaySelect_abyssPrivate(row: HTMLElement): HTMLSelectElement {
     const select = row.createEl('select', {
       attr: {
         'aria-label': 'Monthly weekday',
@@ -799,39 +861,45 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
     });
     for (const value of WEEKDAYS) {
       const selected =
-        this.state.monthly.type === 'weekday' && this.state.monthly.weekday === value;
+        this.state_abyssPrivate.monthly.type === 'weekday' &&
+        this.state_abyssPrivate.monthly.weekday === value;
       addOption(select, value, value, selected);
     }
     return select;
   }
 
-  private renderYearlyControls(parent: HTMLElement): void {
+  private renderYearlyControls_abyssPrivate(parent: HTMLElement): void {
     const row = parent.createDiv({ cls: 'abyss-recurrence-detail-row' });
-    const pattern = this.createYearlyPatternSelect(row);
+    const pattern = this.createYearlyPatternSelect_abyssPrivate(row);
     pattern.addEventListener('change', () => {
-      this.state.yearly =
+      this.state_abyssPrivate.yearly =
         pattern.value === 'date' ? { type: 'date', month: 1, day: 1 } : { type: 'same-date' };
-      this.markDirty();
-      this.render();
+      this.markDirty_abyssPrivate();
+      this.render_abyssPrivate();
     });
-    if (this.state.yearly.type !== 'date') return;
-    this.renderYearlyDate(row);
+    if (this.state_abyssPrivate.yearly.type !== 'date') return;
+    this.renderYearlyDate_abyssPrivate(row);
   }
 
-  private createYearlyPatternSelect(row: HTMLElement): HTMLSelectElement {
+  private createYearlyPatternSelect_abyssPrivate(row: HTMLElement): HTMLSelectElement {
     const pattern = row.createEl('select', {
       attr: {
         'aria-label': 'Yearly pattern',
         'data-recurrence-focus-key': 'yearly-pattern',
       },
     });
-    addOption(pattern, 'same-date', 'Same date', this.state.yearly.type === 'same-date');
-    addOption(pattern, 'date', 'Calendar date', this.state.yearly.type === 'date');
+    addOption(
+      pattern,
+      'same-date',
+      'Same date',
+      this.state_abyssPrivate.yearly.type === 'same-date',
+    );
+    addOption(pattern, 'date', 'Calendar date', this.state_abyssPrivate.yearly.type === 'date');
     return pattern;
   }
 
-  private renderYearlyDate(row: HTMLElement): void {
-    if (this.state.yearly.type !== 'date') return;
+  private renderYearlyDate_abyssPrivate(row: HTMLElement): void {
+    if (this.state_abyssPrivate.yearly.type !== 'date') return;
     const month = row.createEl('select', {
       attr: {
         'aria-label': 'Yearly month',
@@ -839,26 +907,35 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
       },
     });
     MONTHS.forEach((label, index) => {
-      const selected = this.state.yearly.type === 'date' && this.state.yearly.month === index + 1;
+      const selected =
+        this.state_abyssPrivate.yearly.type === 'date' &&
+        this.state_abyssPrivate.yearly.month === index + 1;
       addOption(month, String(index + 1), label, selected);
     });
-    const day = this.createYearlyDayInput(row);
+    const day = this.createYearlyDayInput_abyssPrivate(row);
     month.addEventListener('change', () => {
-      if (this.state.yearly.type !== 'date') return;
-      this.state.yearly = { ...this.state.yearly, month: Number(month.value) as Month };
-      this.markDirty(false);
-      this.refresh();
+      if (this.state_abyssPrivate.yearly.type !== 'date') return;
+      this.state_abyssPrivate.yearly = {
+        ...this.state_abyssPrivate.yearly,
+        month: Number(month.value) as Month,
+      };
+      this.markDirty_abyssPrivate(false);
+      this.refresh_abyssPrivate();
     });
     day.addEventListener('input', () => {
-      if (this.state.yearly.type !== 'date') return;
-      this.state.yearly = { ...this.state.yearly, day: Number(day.value) };
-      this.markDirty(false);
-      this.refresh();
+      if (this.state_abyssPrivate.yearly.type !== 'date') return;
+      this.state_abyssPrivate.yearly = {
+        ...this.state_abyssPrivate.yearly,
+        day: Number(day.value),
+      };
+      this.markDirty_abyssPrivate(false);
+      this.refresh_abyssPrivate();
     });
   }
 
-  private createYearlyDayInput(row: HTMLElement): HTMLInputElement {
-    const day = this.state.yearly.type === 'date' ? this.state.yearly.day : 1;
+  private createYearlyDayInput_abyssPrivate(row: HTMLElement): HTMLInputElement {
+    const day =
+      this.state_abyssPrivate.yearly.type === 'date' ? this.state_abyssPrivate.yearly.day : 1;
     return row.createEl('input', {
       cls: 'abyss-recurrence-yearly-day',
       attr: {
@@ -867,70 +944,80 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
         max: '31',
         value: String(day),
         'aria-label': 'Yearly day',
-        'aria-describedby': this.diagnosticId,
+        'aria-describedby': this.diagnosticId_abyssPrivate,
         'aria-invalid': 'false',
         'data-recurrence-focus-key': 'yearly-day',
       },
     });
   }
 
-  private markDirty(clearError = true): void {
-    if (clearError) this.state.submissionError = undefined;
-    this.state.dirty = true;
+  private markDirty_abyssPrivate(clearError = true): void {
+    if (clearError) this.state_abyssPrivate.submissionError = undefined;
+    this.state_abyssPrivate.dirty = true;
   }
 
-  private render(): void {
-    const focused = this.controlKey(this.options.container.ownerDocument.activeElement);
-    this.options.container.empty();
-    const editor = this.createEditorRoot();
-    this.renderPresets(editor);
-    this.renderRuleControls(editor);
-    this.renderCompletionControls(editor);
-    this.renderDiagnostics(editor);
-    this.renderActions(editor);
-    this.refresh();
-    this.controlForKey(focused)?.focus();
+  private render_abyssPrivate(): void {
+    const focused = this.controlKey_abyssPrivate(
+      this.options_abyssPrivate.container.ownerDocument.activeElement,
+    );
+    this.options_abyssPrivate.container.empty();
+    const editor = this.createEditorRoot_abyssPrivate();
+    this.renderPresets_abyssPrivate(editor);
+    this.renderRuleControls_abyssPrivate(editor);
+    this.renderCompletionControls_abyssPrivate(editor);
+    this.renderDiagnostics_abyssPrivate(editor);
+    this.renderActions_abyssPrivate(editor);
+    this.refresh_abyssPrivate();
+    this.controlForKey_abyssPrivate(focused)?.focus();
   }
 
-  private createEditorRoot(): HTMLElement {
-    const editor = this.options.container.createDiv({
+  private createEditorRoot_abyssPrivate(): HTMLElement {
+    const editor = this.options_abyssPrivate.container.createDiv({
       cls: 'abyss-recurrence-editor',
-      attr: { role: 'region', 'aria-labelledby': this.titleId },
+      attr: { role: 'region', 'aria-labelledby': this.titleId_abyssPrivate },
     });
     const heading = editor.createDiv({ cls: 'abyss-recurrence-heading' });
     heading.createSpan({
       cls: 'abyss-recurrence-title',
       text: 'Repeat',
-      attr: { id: this.titleId },
+      attr: { id: this.titleId_abyssPrivate },
     });
     return editor;
   }
 
-  private renderPresets(editor: HTMLElement): void {
+  private renderPresets_abyssPrivate(editor: HTMLElement): void {
     const presets = editor.createDiv({
       cls: 'abyss-recurrence-presets',
       attr: { role: 'group', 'aria-label': 'Repeat pattern' },
     });
-    for (const [preset, label] of PRESET_LABELS) this.renderPresetButton(presets, preset, label);
+    for (const [preset, label] of PRESET_LABELS)
+      this.renderPresetButton_abyssPrivate(presets, preset, label);
     const custom = presets.createEl('button', {
       text: 'Custom',
       attr: {
         type: 'button',
         'data-recurrence-mode': 'custom',
         'data-recurrence-focus-key': 'custom-mode',
-        'aria-pressed': String(this.state.mode === 'custom'),
+        'aria-pressed': String(this.state_abyssPrivate.mode === 'custom'),
       },
     });
     custom.addEventListener('click', () => {
-      this.state.customDraft = withTerminalWhenDone(this.state.customDraft, this.state.whenDone);
-      this.state.mode = 'custom';
-      this.state.preset = undefined;
-      this.markDirty();
-      this.render();
+      this.state_abyssPrivate.customDraft = withTerminalWhenDone(
+        this.state_abyssPrivate.customDraft,
+        this.state_abyssPrivate.whenDone,
+      );
+      this.state_abyssPrivate.mode = 'custom';
+      this.state_abyssPrivate.preset = undefined;
+      this.markDirty_abyssPrivate();
+      this.render_abyssPrivate();
     });
   }
 
-  private renderPresetButton(parent: HTMLElement, preset: Preset, label: string): void {
+  private renderPresetButton_abyssPrivate(
+    parent: HTMLElement,
+    preset: Preset,
+    label: string,
+  ): void {
     const button = parent.createEl('button', {
       text: label,
       attr: {
@@ -938,42 +1025,43 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
         'data-recurrence-preset': preset,
         'data-recurrence-focus-key': `preset:${preset}`,
         'aria-pressed': String(
-          this.state.mode === 'structured' && this.canonicalPreset() === preset,
+          this.state_abyssPrivate.mode === 'structured' &&
+            this.canonicalPreset_abyssPrivate() === preset,
         ),
       },
     });
     button.addEventListener('click', () => {
-      this.setPreset(preset);
+      this.setPreset_abyssPrivate(preset);
     });
   }
 
-  private renderRuleControls(editor: HTMLElement): void {
+  private renderRuleControls_abyssPrivate(editor: HTMLElement): void {
     const controls = editor.createDiv({ cls: 'abyss-recurrence-controls' });
-    if (this.state.mode !== 'custom') {
-      this.renderAdaptiveControls(controls);
+    if (this.state_abyssPrivate.mode !== 'custom') {
+      this.renderAdaptiveControls_abyssPrivate(controls);
       return;
     }
     const raw = controls.createEl('input', {
       cls: 'abyss-recurrence-raw',
       attr: {
         type: 'text',
-        value: this.state.customDraft,
+        value: this.state_abyssPrivate.customDraft,
         'aria-label': 'Recurrence rule',
-        'aria-describedby': this.diagnosticId,
+        'aria-describedby': this.diagnosticId_abyssPrivate,
         'aria-invalid': 'false',
         spellcheck: 'false',
         'data-recurrence-focus-key': 'custom',
       },
     });
     raw.addEventListener('input', () => {
-      this.state.customDraft = raw.value;
-      this.markDirty();
-      this.refresh();
+      this.state_abyssPrivate.customDraft = raw.value;
+      this.markDirty_abyssPrivate();
+      this.refresh_abyssPrivate();
     });
   }
 
-  private renderCompletionControls(editor: HTMLElement): void {
-    this.renderWhenDoneControl(editor);
+  private renderCompletionControls_abyssPrivate(editor: HTMLElement): void {
+    this.renderWhenDoneControl_abyssPrivate(editor);
     const row = editor.createEl('label', { cls: 'abyss-recurrence-completed-row' });
     row.createSpan({ text: 'Completed task' });
     const completed = row.createEl('select', {
@@ -982,53 +1070,70 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
         'data-recurrence-focus-key': 'completed-task',
       },
     });
-    addOption(completed, 'keep', 'Keep completed task', this.state.onCompletion === 'keep');
-    addOption(completed, 'delete', 'Delete completed task', this.state.onCompletion === 'delete');
+    addOption(
+      completed,
+      'keep',
+      'Keep completed task',
+      this.state_abyssPrivate.onCompletion === 'keep',
+    );
+    addOption(
+      completed,
+      'delete',
+      'Delete completed task',
+      this.state_abyssPrivate.onCompletion === 'delete',
+    );
     completed.addEventListener('change', () => {
-      this.state.onCompletion = completed.value as 'keep' | 'delete';
-      this.markDirty(false);
-      this.refresh();
+      this.state_abyssPrivate.onCompletion = completed.value as 'keep' | 'delete';
+      this.markDirty_abyssPrivate(false);
+      this.refresh_abyssPrivate();
     });
   }
 
-  private renderWhenDoneControl(editor: HTMLElement): void {
+  private renderWhenDoneControl_abyssPrivate(editor: HTMLElement): void {
     const row = editor.createEl('label', { cls: 'abyss-recurrence-check-row' });
     const input = row.createEl('input', {
       cls: 'abyss-recurrence-when-done',
       attr: { type: 'checkbox', 'data-recurrence-focus-key': 'when-done' },
     });
-    input.checked = this.state.whenDone;
+    input.checked = this.state_abyssPrivate.whenDone;
     row.createSpan({ text: 'Repeat from completion date' });
     input.addEventListener('change', () => {
-      this.state.whenDone = input.checked;
-      this.syncCustomWhenDoneInput();
-      this.markDirty();
-      this.refresh();
+      this.state_abyssPrivate.whenDone = input.checked;
+      this.syncCustomWhenDoneInput_abyssPrivate();
+      this.markDirty_abyssPrivate();
+      this.refresh_abyssPrivate();
     });
   }
 
-  private syncCustomWhenDoneInput(): void {
-    if (this.state.mode !== 'custom') return;
-    this.state.customDraft = withTerminalWhenDone(this.state.customDraft, this.state.whenDone);
-    const raw = this.options.container.querySelector<HTMLInputElement>('.abyss-recurrence-raw');
-    if (raw !== null) raw.value = this.state.customDraft;
+  private syncCustomWhenDoneInput_abyssPrivate(): void {
+    if (this.state_abyssPrivate.mode !== 'custom') return;
+    this.state_abyssPrivate.customDraft = withTerminalWhenDone(
+      this.state_abyssPrivate.customDraft,
+      this.state_abyssPrivate.whenDone,
+    );
+    const raw =
+      this.options_abyssPrivate.container.querySelector<HTMLInputElement>('.abyss-recurrence-raw');
+    if (raw !== null) raw.value = this.state_abyssPrivate.customDraft;
   }
 
-  private renderDiagnostics(editor: HTMLElement): void {
+  private renderDiagnostics_abyssPrivate(editor: HTMLElement): void {
     editor.createDiv({ cls: 'abyss-recurrence-delete-warning', attr: { role: 'note' } });
     const preview = editor.createDiv({ cls: 'abyss-recurrence-preview' });
     preview.createSpan({ cls: 'abyss-recurrence-preview-label', text: 'Rule' });
     preview.createSpan({ cls: 'abyss-recurrence-preview-rule' });
     editor.createDiv({
       cls: 'abyss-recurrence-status',
-      attr: { id: this.diagnosticId, 'aria-live': 'polite', 'aria-atomic': 'true' },
+      attr: { id: this.diagnosticId_abyssPrivate, 'aria-live': 'polite', 'aria-atomic': 'true' },
     });
   }
 
-  private renderActions(editor: HTMLElement): void {
+  private renderActions_abyssPrivate(editor: HTMLElement): void {
     const actions = editor.createDiv({ cls: 'abyss-recurrence-actions' });
-    if (this.task?.recurrence !== undefined || (this.task?.onCompletionExplicit ?? false)) {
-      this.renderClearAction(actions);
+    if (
+      this.task_abyssPrivate?.recurrence !== undefined ||
+      (this.task_abyssPrivate?.onCompletionExplicit ?? false)
+    ) {
+      this.renderClearAction_abyssPrivate(actions);
     }
     const spacer = actions.createSpan({ cls: 'abyss-recurrence-actions-spacer' });
     spacer.setAttribute('aria-hidden', 'true');
@@ -1045,22 +1150,22 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
       attr: { type: 'button', 'data-recurrence-focus-key': 'save' },
     });
     save.addEventListener('click', () => {
-      runAsyncAction(this.submit(), 'Could not save recurrence');
+      runAsyncAction(this.submit_abyssPrivate(), 'Could not save recurrence');
     });
   }
 
-  private renderClearAction(actions: HTMLElement): void {
+  private renderClearAction_abyssPrivate(actions: HTMLElement): void {
     const clear = actions.createEl('button', {
       cls: 'abyss-recurrence-clear',
       text: 'Clear repeat',
       attr: { type: 'button', 'data-recurrence-focus-key': 'clear' },
     });
     clear.addEventListener('click', () => {
-      runAsyncAction(this.clear(), 'Could not clear recurrence');
+      runAsyncAction(this.clear_abyssPrivate(), 'Could not clear recurrence');
     });
   }
 
-  private readonly keyHandler = (event: KeyboardEvent): void => {
+  private readonly keyHandler_abyssPrivate = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
@@ -1076,22 +1181,22 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
       !event.altKey;
     if ((event.key === 'Enter' && (event.metaKey || event.ctrlKey)) || plainInputEnter) {
       event.preventDefault();
-      runAsyncAction(this.submit(), 'Could not save recurrence');
+      runAsyncAction(this.submit_abyssPrivate(), 'Could not save recurrence');
     }
   };
 
-  private readonly submitShortcutHandler = (event: KeyboardEvent): void => {
+  private readonly submitShortcutHandler_abyssPrivate = (event: KeyboardEvent): void => {
     if (
       event.key !== 'Enter' ||
       (!event.metaKey && !event.ctrlKey) ||
       event.target == null ||
-      !this.options.container.contains(event.target as Node)
+      !this.options_abyssPrivate.container.contains(event.target as Node)
     ) {
       return;
     }
     event.preventDefault();
     event.stopPropagation();
-    runAsyncAction(this.submit(), 'Could not save recurrence');
+    runAsyncAction(this.submit_abyssPrivate(), 'Could not save recurrence');
   };
 }
 
@@ -1104,133 +1209,150 @@ export function mountAnchoredRecurrenceEditor(
 }
 
 class AnchoredRecurrenceEditorController implements RecurrenceEditorHandle {
-  private readonly ownerDocument: Document;
-  private readonly ownerWindow: Window | null;
-  private readonly popover: HTMLElement;
-  private readonly ownershipToken: ReturnType<InteractionOwnershipPort['acquire']>;
-  private editor: RecurrenceEditorHandle | undefined;
-  private destroyed = false;
-  private outsideTimer: number | undefined;
-  private autofocusTimer: number | undefined;
+  private readonly ownerDocument_abyssPrivate: Document;
+  private readonly ownerWindow_abyssPrivate: Window | null;
+  private readonly popover_abyssPrivate: HTMLElement;
+  private readonly ownershipToken_abyssPrivate: ReturnType<InteractionOwnershipPort['acquire']>;
+  private editor_abyssPrivate: RecurrenceEditorHandle | undefined;
+  private destroyed_abyssPrivate = false;
+  private outsideTimer_abyssPrivate: number | undefined;
+  private autofocusTimer_abyssPrivate: number | undefined;
 
-  constructor(private readonly options: AnchoredRecurrenceEditorOptions) {
-    this.ownerDocument = options.anchor.ownerDocument;
-    this.ownerWindow = this.ownerDocument.defaultView;
-    this.ownershipToken = (options.interactionOwnership ?? noInteractionOwnership).acquire({
+  constructor(private readonly options_abyssPrivate: AnchoredRecurrenceEditorOptions) {
+    this.ownerDocument_abyssPrivate = options_abyssPrivate.anchor.ownerDocument;
+    this.ownerWindow_abyssPrivate = this.ownerDocument_abyssPrivate.defaultView;
+    this.ownershipToken_abyssPrivate = (
+      options_abyssPrivate.interactionOwnership ?? noInteractionOwnership
+    ).acquire({
       blocksShortcuts: true,
     });
-    this.popover = this.ownerDocument.body.createDiv({
+    this.popover_abyssPrivate = this.ownerDocument_abyssPrivate.body.createDiv({
       cls: 'abyss-popover abyss-recurrence-popover abyss-popover-anchored abyss-recurrence-popover-floating',
       attr: { role: 'dialog', 'aria-modal': 'false' },
     });
   }
 
   mount(): void {
-    this.editor = mountRecurrenceEditor({
-      ...this.options,
-      container: this.popover,
-      dismissalFocus: this.options.anchor,
+    this.editor_abyssPrivate = mountRecurrenceEditor({
+      ...this.options_abyssPrivate,
+      container: this.popover_abyssPrivate,
+      dismissalFocus: this.options_abyssPrivate.anchor,
       onClose: () => {
         this.destroy();
       },
     });
-    this.labelPopover();
-    this.position();
-    this.ownerDocument.addEventListener('scroll', this.position, true);
-    this.ownerWindow?.addEventListener('resize', this.position);
-    this.scheduleOutsideListener();
-    this.scheduleAutofocus();
+    this.labelPopover_abyssPrivate();
+    this.position_abyssPrivate();
+    this.ownerDocument_abyssPrivate.addEventListener('scroll', this.position_abyssPrivate, true);
+    this.ownerWindow_abyssPrivate?.addEventListener('resize', this.position_abyssPrivate);
+    this.scheduleOutsideListener_abyssPrivate();
+    this.scheduleAutofocus_abyssPrivate();
   }
 
   destroy(): void {
-    if (this.destroyed) return;
-    this.destroyed = true;
-    this.clearTimers();
-    this.ownerDocument.removeEventListener('mousedown', this.onOutside, true);
-    this.ownerDocument.removeEventListener('scroll', this.position, true);
-    this.ownerWindow?.removeEventListener('resize', this.position);
-    this.editor?.destroy();
-    this.popover.remove();
-    this.ownershipToken.release();
-    this.options.onClose?.();
+    if (this.destroyed_abyssPrivate) return;
+    this.destroyed_abyssPrivate = true;
+    this.clearTimers_abyssPrivate();
+    this.ownerDocument_abyssPrivate.removeEventListener(
+      'mousedown',
+      this.onOutside_abyssPrivate,
+      true,
+    );
+    this.ownerDocument_abyssPrivate.removeEventListener('scroll', this.position_abyssPrivate, true);
+    this.ownerWindow_abyssPrivate?.removeEventListener('resize', this.position_abyssPrivate);
+    this.editor_abyssPrivate?.destroy();
+    this.popover_abyssPrivate.remove();
+    this.ownershipToken_abyssPrivate.release();
+    this.options_abyssPrivate.onClose?.();
   }
 
   dismiss(): void {
-    this.requireEditor().dismiss();
+    this.requireEditor_abyssPrivate().dismiss();
   }
 
   focus(): void {
-    this.requireEditor().focus();
+    this.requireEditor_abyssPrivate().focus();
   }
 
   captureDraftState(): RecurrenceEditorDraft {
-    return this.requireEditor().captureDraftState();
+    return this.requireEditor_abyssPrivate().captureDraftState();
   }
 
   restoreDraftState(draft: RecurrenceEditorDraft): void {
-    if (this.autofocusTimer !== undefined) {
-      this.ownerWindow?.clearTimeout(this.autofocusTimer);
-      this.autofocusTimer = undefined;
+    if (this.autofocusTimer_abyssPrivate !== undefined) {
+      this.ownerWindow_abyssPrivate?.clearTimeout(this.autofocusTimer_abyssPrivate);
+      this.autofocusTimer_abyssPrivate = undefined;
     }
-    this.requireEditor().restoreDraftState(draft);
+    this.requireEditor_abyssPrivate().restoreDraftState(draft);
   }
 
-  private requireEditor(): RecurrenceEditorHandle {
-    if (this.editor === undefined) throw new Error('recurrence-editor-unavailable');
-    return this.editor;
+  private requireEditor_abyssPrivate(): RecurrenceEditorHandle {
+    if (this.editor_abyssPrivate === undefined) throw new Error('recurrence-editor-unavailable');
+    return this.editor_abyssPrivate;
   }
 
-  private labelPopover(): void {
-    const title = this.popover.querySelector<HTMLElement>('.abyss-recurrence-title');
+  private labelPopover_abyssPrivate(): void {
+    const title = this.popover_abyssPrivate.querySelector<HTMLElement>('.abyss-recurrence-title');
     if (title !== null && title.id.length > 0) {
-      this.popover.setAttribute('aria-labelledby', title.id);
+      this.popover_abyssPrivate.setAttribute('aria-labelledby', title.id);
     }
   }
 
-  private clearTimers(): void {
-    if (this.outsideTimer !== undefined) this.ownerWindow?.clearTimeout(this.outsideTimer);
-    if (this.autofocusTimer !== undefined) this.ownerWindow?.clearTimeout(this.autofocusTimer);
+  private clearTimers_abyssPrivate(): void {
+    if (this.outsideTimer_abyssPrivate !== undefined)
+      this.ownerWindow_abyssPrivate?.clearTimeout(this.outsideTimer_abyssPrivate);
+    if (this.autofocusTimer_abyssPrivate !== undefined)
+      this.ownerWindow_abyssPrivate?.clearTimeout(this.autofocusTimer_abyssPrivate);
   }
 
-  private scheduleOutsideListener(): void {
-    this.outsideTimer = this.ownerWindow?.setTimeout(() => {
-      this.outsideTimer = undefined;
-      if (!this.destroyed) {
-        this.ownerDocument.addEventListener('mousedown', this.onOutside, true);
+  private scheduleOutsideListener_abyssPrivate(): void {
+    this.outsideTimer_abyssPrivate = this.ownerWindow_abyssPrivate?.setTimeout(() => {
+      this.outsideTimer_abyssPrivate = undefined;
+      if (!this.destroyed_abyssPrivate) {
+        this.ownerDocument_abyssPrivate.addEventListener(
+          'mousedown',
+          this.onOutside_abyssPrivate,
+          true,
+        );
       }
     }, 0);
   }
 
-  private scheduleAutofocus(): void {
-    this.autofocusTimer = this.ownerWindow?.setTimeout(() => {
-      this.autofocusTimer = undefined;
-      this.editor?.focus();
+  private scheduleAutofocus_abyssPrivate(): void {
+    this.autofocusTimer_abyssPrivate = this.ownerWindow_abyssPrivate?.setTimeout(() => {
+      this.autofocusTimer_abyssPrivate = undefined;
+      this.editor_abyssPrivate?.focus();
     }, 0);
   }
 
-  private readonly position = (): void => {
-    const anchor = this.options.anchor.getBoundingClientRect();
-    const floating = this.popover.getBoundingClientRect();
-    const measuredWidth = floating.width !== 0 ? floating.width : this.popover.offsetWidth;
+  private readonly position_abyssPrivate = (): void => {
+    const anchor = this.options_abyssPrivate.anchor.getBoundingClientRect();
+    const floating = this.popover_abyssPrivate.getBoundingClientRect();
+    const measuredWidth =
+      floating.width !== 0 ? floating.width : this.popover_abyssPrivate.offsetWidth;
     const width = measuredWidth !== 0 ? measuredWidth : 352;
-    const height = floating.height !== 0 ? floating.height : this.popover.offsetHeight;
+    const height = floating.height !== 0 ? floating.height : this.popover_abyssPrivate.offsetHeight;
     const edge = 8;
-    const viewportWidth = this.ownerWindow?.innerWidth ?? width + edge * 2;
-    const viewportHeight = this.ownerWindow?.innerHeight ?? anchor.bottom + height + edge;
+    const viewportWidth = this.ownerWindow_abyssPrivate?.innerWidth ?? width + edge * 2;
+    const viewportHeight =
+      this.ownerWindow_abyssPrivate?.innerHeight ?? anchor.bottom + height + edge;
     const left = Math.min(
       Math.max(anchor.left, edge),
       Math.max(edge, viewportWidth - width - edge),
     );
     const below = anchor.bottom + 4;
     const top = below + height > viewportHeight - edge ? anchor.top - height - 4 : below;
-    this.popover.style.left = `${left}px`;
-    this.popover.style.top = `${Math.max(edge, top)}px`;
+    this.popover_abyssPrivate.style.left = `${left}px`;
+    this.popover_abyssPrivate.style.top = `${Math.max(edge, top)}px`;
   };
 
-  private readonly onOutside = (event: MouseEvent): void => {
+  private readonly onOutside_abyssPrivate = (event: MouseEvent): void => {
     const target = event.target as Node;
-    if (!this.popover.contains(target) && !this.options.anchor.contains(target)) {
-      this.editor?.dismiss();
+    if (
+      !this.popover_abyssPrivate.contains(target) &&
+      !this.options_abyssPrivate.anchor.contains(target)
+    ) {
+      this.editor_abyssPrivate?.dismiss();
     }
   };
 }

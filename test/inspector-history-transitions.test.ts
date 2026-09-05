@@ -44,9 +44,12 @@ async function harness(surface: 'panel' | 'modal', source: string, selected: str
     );
     activeDocument.body.append(view.containerEl);
     await view.onOpen();
-    const local = view as unknown as { state: AppState; right: RightPanel };
-    state = local.state;
-    panel = local.right;
+    const local = view as unknown as {
+      state_abyssPrivate: AppState;
+      right_abyssPrivate: RightPanel;
+    };
+    state = local.state_abyssPrivate;
+    panel = local.right_abyssPrivate;
     el = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-right'));
     cleanups.push(async () => {
       await view.onClose();
@@ -85,8 +88,8 @@ async function harness(surface: 'panel' | 'modal', source: string, selected: str
 }
 
 const back = '[aria-label="Back to previous task"]';
-const forward = '[data-dependency-direction="blocked-by"] .abyss-dependency-title';
-const inverse = '[data-dependency-direction="blocks"] .abyss-dependency-title';
+const forward = '[data-dependency-direction="blocked-by"] .abyss-dep-title';
+const inverse = '[data-dependency-direction="blocks"] .abyss-dep-title';
 
 describe.each(['panel', 'modal'] as const)('%s saved dependency frames', (surface) => {
   it.each([
@@ -103,7 +106,7 @@ describe.each(['panel', 'modal'] as const)('%s saved dependency frames', (surfac
       h.click(forward);
       const original = h.state.get('inspectorBackStack');
       const originalJSON = JSON.stringify(original);
-      h.click('[data-dependency-direction="blocks"] .abyss-dependency-remove');
+      h.click('[data-dependency-direction="blocks"] .abyss-dep-remove');
       await flushMicrotasks(40);
       const file = h.app.vault.getAbstractFileByPath('tasks.md');
       if (!(file instanceof TFile)) throw new Error('Missing fixture');

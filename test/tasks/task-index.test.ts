@@ -74,14 +74,14 @@ function reconciliationState(index: TaskIndex): {
   readonly transitions: readonly string[];
 } {
   const internal = index as unknown as {
-    fileGenerations: ReadonlyMap<string, number>;
-    reconciliationTransitions: ReadonlyMap<string, unknown>;
+    fileGenerations_abyssPrivate: ReadonlyMap<string, number>;
+    reconciliationTransitions_abyssPrivate: ReadonlyMap<string, unknown>;
   };
   return {
-    generations: [...internal.fileGenerations.keys()].sort((left, right) =>
+    generations: [...internal.fileGenerations_abyssPrivate.keys()].sort((left, right) =>
       left.localeCompare(right),
     ),
-    transitions: [...internal.reconciliationTransitions.keys()].sort((left, right) =>
+    transitions: [...internal.reconciliationTransitions_abyssPrivate.keys()].sort((left, right) =>
       left.localeCompare(right),
     ),
   };
@@ -739,9 +739,9 @@ describe('TaskIndex lifecycle and events', () => {
 
   it('holds file lifecycle generations by weak identity', async () => {
     const { index } = await setup({ 'task.md': '- [ ] task' });
-    expect((index as unknown as { fileLifecycles: unknown }).fileLifecycles).toBeInstanceOf(
-      WeakMap,
-    );
+    expect(
+      (index as unknown as { fileLifecycles_abyssPrivate: unknown }).fileLifecycles_abyssPrivate,
+    ).toBeInstanceOf(WeakMap);
     index.destroy();
   });
 
@@ -823,7 +823,9 @@ describe('TaskIndex lifecycle and events', () => {
       'z.md': '- [ ] z',
       'a.md': '- [ ] first\n- [ ] second',
     });
-    const app = (index as unknown as { app: Awaited<ReturnType<typeof createAppWithFiles>> }).app;
+    const app = (
+      index as unknown as { app_abyssPrivate: Awaited<ReturnType<typeof createAppWithFiles>> }
+    ).app_abyssPrivate;
     seedTaskCache(app, 'a.md', [
       { task: ' ', parent: -1, line: 0 },
       { task: ' ', parent: -1, line: 1 },

@@ -830,7 +830,7 @@ describe('CalendarRenderer', () => {
       const todayStr = window.moment().format('YYYY-MM-DD');
       store.setTasks([task({ title: 'Before patch', planning: { due: todayStr } })]);
       const remove = vi.spyOn(root.ownerDocument, 'removeEventListener');
-      const owned = r as unknown as { statusMenuCleanup: (() => void) | null };
+      const owned = r as unknown as { statusMenuCleanup_abyssPrivate: (() => void) | null };
       r.mount();
 
       try {
@@ -839,13 +839,13 @@ describe('CalendarRenderer', () => {
         );
         vi.runOnlyPendingTimers();
         expect(activeDocument.querySelector('.abyss-status-popover')).not.toBeNull();
-        expect(owned.statusMenuCleanup).not.toBeNull();
+        expect(owned.statusMenuCleanup_abyssPrivate).not.toBeNull();
 
         expectDefined(
           activeDocument.querySelector<HTMLButtonElement>('.abyss-status-popover-flag'),
         ).click();
         expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
-        expect(owned.statusMenuCleanup).toBeNull();
+        expect(owned.statusMenuCleanup_abyssPrivate).toBeNull();
 
         expectDefined(root.querySelector<HTMLElement>('.task .abyss-status-marker')).dispatchEvent(
           new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
@@ -900,7 +900,7 @@ describe('CalendarRenderer', () => {
       const store = new StubStore();
       const root = freshContainer();
       const r = makeRenderer(root, store, resolvedConfig({ defaultView: 'month' }), fakeApp());
-      const owned = r as unknown as { statusMenuCleanup: (() => void) | null };
+      const owned = r as unknown as { statusMenuCleanup_abyssPrivate: (() => void) | null };
       store.setTasks([
         task({
           title: 'Status lifecycle',
@@ -912,17 +912,17 @@ describe('CalendarRenderer', () => {
       try {
         const marker = expectDefined(root.querySelector<HTMLElement>('.task .abyss-status-marker'));
         marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-        expect(owned.statusMenuCleanup).not.toBeNull();
+        expect(owned.statusMenuCleanup_abyssPrivate).not.toBeNull();
 
         expectDefined(handles[0]).close();
-        expect(owned.statusMenuCleanup).toBeNull();
+        expect(owned.statusMenuCleanup_abyssPrivate).toBeNull();
 
         marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-        const successorCleanup = owned.statusMenuCleanup;
+        const successorCleanup = owned.statusMenuCleanup_abyssPrivate;
         expect(successorCleanup).not.toBeNull();
 
         expectDefined(closeNotifications[0])();
-        expect(owned.statusMenuCleanup).toBe(successorCleanup);
+        expect(owned.statusMenuCleanup_abyssPrivate).toBe(successorCleanup);
         expect(expectDefined(handles[1]).element.isConnected).toBe(true);
       } finally {
         r.destroy();

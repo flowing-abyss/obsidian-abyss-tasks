@@ -142,23 +142,23 @@ function describeShortcutIssues(
 
 export class CalendarSettingsTab extends PluginSettingTab {
   /** Ids of cards (statuses / tag groups) currently expanded — persists across re-renders. */
-  private readonly expandedCards = new Set<string>();
+  private readonly expandedCards_abyssPrivate = new Set<string>();
   /** Status id → its collapsed-card header preview chip host, so an icon edit can refresh it live. */
-  private readonly statusHeaderPreviewEls = new Map<string, HTMLElement>();
+  private readonly statusHeaderPreviewEls_abyssPrivate = new Map<string, HTMLElement>();
   /** A Hotkeys edit waits for the active write, then persists only the latest pending value. */
-  private shortcutSaveInFlight: Promise<void> | undefined = undefined;
-  private shortcutSaveQueued = false;
-  private shortcutSaveFailed = false;
-  private shortcutSaveStatusEl: HTMLElement | undefined;
-  private shortcutSaveRetryEl: HTMLButtonElement | undefined;
-  private readonly openSections = new Set<string>();
-  private readonly sectionScope = ++nextSettingsTabScope;
+  private shortcutSaveInFlight_abyssPrivate: Promise<void> | undefined = undefined;
+  private shortcutSaveQueued_abyssPrivate = false;
+  private shortcutSaveFailed_abyssPrivate = false;
+  private shortcutSaveStatusEl_abyssPrivate: HTMLElement | undefined;
+  private shortcutSaveRetryEl_abyssPrivate: HTMLButtonElement | undefined;
+  private readonly openSections_abyssPrivate = new Set<string>();
+  private readonly sectionScope_abyssPrivate = ++nextSettingsTabScope;
 
   constructor(
     app: App,
-    private readonly plugin: TaskCalendarPlugin,
+    private readonly plugin_abyssPrivate: TaskCalendarPlugin,
   ) {
-    super(app, plugin);
+    super(app, plugin_abyssPrivate);
   }
 
   override getSettingDefinitions(): SettingDefinitionItem[] {
@@ -170,20 +170,24 @@ export class CalendarSettingsTab extends PluginSettingTab {
    * (title only) so the whole set can be scanned at a glance; click to expand
    * and edit. Shared by statuses and tag groups for a consistent UI.
    */
-  private renderCardList<T>(containerEl: HTMLElement, items: T[], opts: CardListOptions<T>): void {
+  private renderCardList_abyssPrivate<T>(
+    containerEl: HTMLElement,
+    items: T[],
+    opts: CardListOptions<T>,
+  ): void {
     items.forEach((item, idx) => {
-      this.renderCard(containerEl, item, idx, opts);
+      this.renderCard_abyssPrivate(containerEl, item, idx, opts);
     });
   }
 
-  private renderCard<T>(
+  private renderCard_abyssPrivate<T>(
     containerEl: HTMLElement,
     item: T,
     idx: number,
     opts: CardListOptions<T>,
   ): void {
     const id = opts.id(item);
-    const expanded = this.expandedCards.has(id);
+    const expanded = this.expandedCards_abyssPrivate.has(id);
     const card = containerEl.createDiv({
       cls: `abyss-settings-card${expanded ? ' is-open' : ''}`,
     });
@@ -195,7 +199,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       card.removeClass('abyss-drag-over');
     });
     card.addEventListener('drop', (event) => {
-      this.handleCardDrop(event, card, idx, opts);
+      this.handleCardDrop_abyssPrivate(event, card, idx, opts);
     });
 
     const header = card.createDiv({
@@ -217,13 +221,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const grip = header.createSpan({ cls: 'abyss-settings-card-grip' });
     setIcon(grip, 'grip-vertical');
     opts.preview?.(header, item);
-    this.renderCardAccent(header, opts.accent?.(item));
+    this.renderCardAccent_abyssPrivate(header, opts.accent?.(item));
     header.createSpan({ cls: 'abyss-settings-card-title', text: opts.title(item) });
-    this.renderCardBadge(header, opts.badge?.(item));
+    this.renderCardBadge_abyssPrivate(header, opts.badge?.(item));
     const chevron = header.createSpan({ cls: 'abyss-settings-card-chevron' });
     setIcon(chevron, expanded ? 'chevron-down' : 'chevron-right');
     header.addEventListener('click', () => {
-      this.toggleCard(id, expanded);
+      this.toggleCard_abyssPrivate(id, expanded);
     });
 
     if (!expanded) return;
@@ -231,7 +235,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     opts.body(bodyEl, idx);
   }
 
-  private handleCardDrop<T>(
+  private handleCardDrop_abyssPrivate<T>(
     event: DragEvent,
     card: HTMLElement,
     targetIndex: number,
@@ -257,24 +261,24 @@ export class CalendarSettingsTab extends PluginSettingTab {
     }
   }
 
-  private renderCardAccent(header: HTMLElement, accent: string | undefined): void {
+  private renderCardAccent_abyssPrivate(header: HTMLElement, accent: string | undefined): void {
     if (accent === undefined || accent === '') return;
     const dot = header.createSpan({ cls: 'abyss-status-dot' });
     dot.style.background = accent;
   }
 
-  private renderCardBadge(header: HTMLElement, badge: string | undefined): void {
+  private renderCardBadge_abyssPrivate(header: HTMLElement, badge: string | undefined): void {
     if (badge === undefined || badge === '') return;
     header.createSpan({ cls: 'abyss-settings-card-badge', text: badge });
   }
 
-  private toggleCard(id: string, expanded: boolean): void {
-    if (expanded) this.expandedCards.delete(id);
-    else this.expandedCards.add(id);
-    this.render();
+  private toggleCard_abyssPrivate(id: string, expanded: boolean): void {
+    if (expanded) this.expandedCards_abyssPrivate.delete(id);
+    else this.expandedCards_abyssPrivate.add(id);
+    this.render_abyssPrivate();
   }
 
-  private moveItem<T>(arr: T[], from: number, to: number): void {
+  private moveItem_abyssPrivate<T>(arr: T[], from: number, to: number): void {
     const item = arr[from];
     if (item === undefined) return;
     arr.splice(from, 1);
@@ -282,51 +286,51 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   override display(): void {
-    this.render();
+    this.render_abyssPrivate();
   }
 
-  private render(): void {
+  private render_abyssPrivate(): void {
     const { containerEl } = this;
 
     containerEl.empty();
 
-    this.addSection(containerEl, 'General', 'sliders-horizontal', (body) => {
-      this.renderGeneralSettings(body);
+    this.addSection_abyssPrivate(containerEl, 'General', 'sliders-horizontal', (body) => {
+      this.renderGeneralSettings_abyssPrivate(body);
     });
-    this.addSection(containerEl, 'Desktop', 'monitor', (body) => {
-      this.renderViewConfigSettings(body, 'desktop');
+    this.addSection_abyssPrivate(containerEl, 'Desktop', 'monitor', (body) => {
+      this.renderViewConfigSettings_abyssPrivate(body, 'desktop');
     });
-    this.addSection(containerEl, 'Mobile', 'smartphone', (body) => {
-      this.renderViewConfigSettings(body, 'mobile');
+    this.addSection_abyssPrivate(containerEl, 'Mobile', 'smartphone', (body) => {
+      this.renderViewConfigSettings_abyssPrivate(body, 'mobile');
     });
-    this.addSection(containerEl, 'Inbox', 'inbox', (body) => {
-      this.renderInboxSettings(body);
+    this.addSection_abyssPrivate(containerEl, 'Inbox', 'inbox', (body) => {
+      this.renderInboxSettings_abyssPrivate(body);
     });
-    this.addSection(containerEl, 'Tag groups', 'tags', (body) => {
-      this.renderTagGroupSettings(body);
+    this.addSection_abyssPrivate(containerEl, 'Tag groups', 'tags', (body) => {
+      this.renderTagGroupSettings_abyssPrivate(body);
     });
-    this.addSection(containerEl, 'Projects', 'folder-kanban', (body) => {
-      this.renderProjectsSettings(body);
+    this.addSection_abyssPrivate(containerEl, 'Projects', 'folder-kanban', (body) => {
+      this.renderProjectsSettings_abyssPrivate(body);
     });
-    this.addSection(containerEl, 'Custom statuses', 'list-checks', (body) => {
-      this.renderTaskStatusesSettings(body);
+    this.addSection_abyssPrivate(containerEl, 'Custom statuses', 'list-checks', (body) => {
+      this.renderTaskStatusesSettings_abyssPrivate(body);
     });
-    this.addSection(containerEl, 'Hotkeys', 'keyboard', (body) => {
-      this.renderShortcutSettings(body);
+    this.addSection_abyssPrivate(containerEl, 'Hotkeys', 'keyboard', (body) => {
+      this.renderShortcutSettings_abyssPrivate(body);
     });
   }
 
-  private addSection(
+  private addSection_abyssPrivate(
     containerEl: HTMLElement,
     title: string,
     icon: string,
     renderFn: (bodyEl: HTMLElement) => void,
   ): void {
-    const isOpen = this.openSections.has(title);
+    const isOpen = this.openSections_abyssPrivate.has(title);
     const section = containerEl.createDiv({
       cls: `abyss-settings-section${isOpen ? ' is-open' : ''}`,
     });
-    const bodyId = `abyss-settings-section-${this.sectionScope}-${title
+    const bodyId = `abyss-settings-section-${this.sectionScope_abyssPrivate}-${title
       .toLowerCase()
       .replace(/[^a-z0-9]+/gu, '-')}`;
 
@@ -360,30 +364,31 @@ export class CalendarSettingsTab extends PluginSettingTab {
       section.classList.toggle('is-open', opening);
       header.setAttribute('aria-expanded', String(opening));
       body.hidden = !opening;
-      if (opening) this.openSections.add(title);
-      else this.openSections.delete(title);
+      if (opening) this.openSections_abyssPrivate.add(title);
+      else this.openSections_abyssPrivate.delete(title);
     });
   }
 
-  private renderGeneralSettings(containerEl: HTMLElement): void {
-    this.renderTaskCreationSettings(containerEl);
-    this.renderTaskLifecycleSettings(containerEl);
-    this.renderRecurrenceSettings(containerEl);
-    if (this.plugin.settings.addToToday) this.renderDailyNoteSettings(containerEl);
-    else this.renderCustomTaskFileSetting(containerEl);
+  private renderGeneralSettings_abyssPrivate(containerEl: HTMLElement): void {
+    this.renderTaskCreationSettings_abyssPrivate(containerEl);
+    this.renderTaskLifecycleSettings_abyssPrivate(containerEl);
+    this.renderRecurrenceSettings_abyssPrivate(containerEl);
+    if (this.plugin_abyssPrivate.settings.addToToday)
+      this.renderDailyNoteSettings_abyssPrivate(containerEl);
+    else this.renderCustomTaskFileSetting_abyssPrivate(containerEl);
   }
 
-  private renderTaskCreationSettings(containerEl: HTMLElement): void {
+  private renderTaskCreationSettings_abyssPrivate(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName('Task prefix')
       .setDesc('Prepended when adding a new task (e.g. #Task/one-off).')
       .addText((t) =>
         t
           .setPlaceholder('#Task/one-off')
-          .setValue(this.plugin.settings.taskPrefix)
+          .setValue(this.plugin_abyssPrivate.settings.taskPrefix)
           .onChange(async (v) => {
-            this.plugin.settings.taskPrefix = v;
-            await this.plugin.saveSettings();
+            this.plugin_abyssPrivate.settings.taskPrefix = v;
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
 
@@ -397,23 +402,24 @@ export class CalendarSettingsTab extends PluginSettingTab {
             'non-default': 'Non-default notes only',
             always: 'Always',
           })
-          .setValue(this.plugin.settings.sourceNoteDisplay)
+          .setValue(this.plugin_abyssPrivate.settings.sourceNoteDisplay)
           .onChange(async (v) => {
-            this.plugin.settings.sourceNoteDisplay = v as CalendarSettings['sourceNoteDisplay'];
-            await this.plugin.saveSettings();
+            this.plugin_abyssPrivate.settings.sourceNoteDisplay =
+              v as CalendarSettings['sourceNoteDisplay'];
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
   }
 
-  private renderTaskLifecycleSettings(containerEl: HTMLElement): void {
+  private renderTaskLifecycleSettings_abyssPrivate(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName("Add to today's note")
       .setDesc('New tasks are added to the daily note for today.')
       .addToggle((t) =>
-        t.setValue(this.plugin.settings.addToToday).onChange(async (v) => {
-          this.plugin.settings.addToToday = v;
-          await this.plugin.saveSettings();
-          this.render();
+        t.setValue(this.plugin_abyssPrivate.settings.addToToday).onChange(async (v) => {
+          this.plugin_abyssPrivate.settings.addToToday = v;
+          await this.plugin_abyssPrivate.saveSettings();
+          this.render_abyssPrivate();
         }),
       );
 
@@ -422,10 +428,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .setDesc('Add a created date to newly created tasks.')
       .addToggle((toggle) =>
         toggle
-          .setValue(this.plugin.settings.taskLifecycle.addCreatedDate)
+          .setValue(this.plugin_abyssPrivate.settings.taskLifecycle.addCreatedDate)
           .onChange(async (value) => {
-            this.plugin.settings.taskLifecycle.addCreatedDate = value;
-            await this.plugin.saveSettings();
+            this.plugin_abyssPrivate.settings.taskLifecycle.addCreatedDate = value;
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
 
@@ -434,25 +440,26 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .setDesc('Add a completion date when a task is completed.')
       .addToggle((toggle) =>
         toggle
-          .setValue(this.plugin.settings.taskLifecycle.addCompletionDate)
+          .setValue(this.plugin_abyssPrivate.settings.taskLifecycle.addCompletionDate)
           .onChange(async (value) => {
-            this.plugin.settings.taskLifecycle.addCompletionDate = value;
-            await this.plugin.saveSettings();
+            this.plugin_abyssPrivate.settings.taskLifecycle.addCompletionDate = value;
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
   }
 
-  private renderRecurrenceSettings(containerEl: HTMLElement): void {
+  private renderRecurrenceSettings_abyssPrivate(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName('New occurrence placement')
       .setDesc('Place recurring task occurrences before or after the completed task.')
       .addDropdown((dropdown) =>
         dropdown
           .addOptions({ before: 'Before completed task', after: 'After completed task' })
-          .setValue(this.plugin.settings.recurrence.newOccurrencePlacement)
+          .setValue(this.plugin_abyssPrivate.settings.recurrence.newOccurrencePlacement)
           .onChange(async (value) => {
-            this.plugin.settings.recurrence.newOccurrencePlacement = value as 'before' | 'after';
-            await this.plugin.saveSettings();
+            this.plugin_abyssPrivate.settings.recurrence.newOccurrencePlacement = value as
+              'before' | 'after';
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
 
@@ -461,15 +468,17 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .setDesc('Remove the scheduled date from a newly generated recurring task.')
       .addToggle((toggle) =>
         toggle
-          .setValue(this.plugin.settings.recurrence.removeScheduledDate)
+          .setValue(this.plugin_abyssPrivate.settings.recurrence.removeScheduledDate)
           .onChange(async (value) => {
-            this.plugin.settings.recurrence.removeScheduledDate = value;
-            await this.plugin.saveSettings();
+            this.plugin_abyssPrivate.settings.recurrence.removeScheduledDate = value;
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
   }
 
-  private dailyNoteProviderOptions(resolver: DailyNoteResolver): Record<string, string> {
+  private dailyNoteProviderOptions_abyssPrivate(
+    resolver: DailyNoteResolver,
+  ): Record<string, string> {
     const options: Record<string, string> = {};
     for (const provider of resolver.getAvailableProviders()) options[provider.id] = provider.label;
     options['periodic-notes'] ??= 'Periodic Notes';
@@ -479,10 +488,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
     return options;
   }
 
-  private dailyNoteProviderDescription(resolver: DailyNoteResolver): DocumentFragment {
+  private dailyNoteProviderDescription_abyssPrivate(resolver: DailyNoteResolver): DocumentFragment {
     const providerSettings = resolver
       .getActiveAdapter()
-      .getSettings(this.app, this.plugin.settings);
+      .getSettings(this.app, this.plugin_abyssPrivate.settings);
     const description = createFragment();
     description.appendText('Which plugin manages your daily notes.');
     try {
@@ -501,95 +510,95 @@ export class CalendarSettingsTab extends PluginSettingTab {
     return description;
   }
 
-  private renderDailyNoteSettings(containerEl: HTMLElement): void {
-    const resolver = new DailyNoteResolver(this.app, this.plugin.settings);
+  private renderDailyNoteSettings_abyssPrivate(containerEl: HTMLElement): void {
+    const resolver = new DailyNoteResolver(this.app, this.plugin_abyssPrivate.settings);
     new Setting(containerEl)
       .setName('Daily note provider')
-      .setDesc(this.dailyNoteProviderDescription(resolver))
+      .setDesc(this.dailyNoteProviderDescription_abyssPrivate(resolver))
       .addDropdown((dropdown) =>
         dropdown
-          .addOptions(this.dailyNoteProviderOptions(resolver))
-          .setValue(this.plugin.settings.dailyNoteProvider)
+          .addOptions(this.dailyNoteProviderOptions_abyssPrivate(resolver))
+          .setValue(this.plugin_abyssPrivate.settings.dailyNoteProvider)
           .onChange(async (value) => {
-            this.plugin.settings.dailyNoteProvider =
-              value as typeof this.plugin.settings.dailyNoteProvider;
-            await this.plugin.saveSettings();
-            this.render();
+            this.plugin_abyssPrivate.settings.dailyNoteProvider =
+              value as typeof this.plugin_abyssPrivate.settings.dailyNoteProvider;
+            await this.plugin_abyssPrivate.saveSettings();
+            this.render_abyssPrivate();
           }),
       );
 
-    if (this.plugin.settings.dailyNoteProvider === 'manual') {
-      this.renderManualDailyNotePathSetting(containerEl);
+    if (this.plugin_abyssPrivate.settings.dailyNoteProvider === 'manual') {
+      this.renderManualDailyNotePathSetting_abyssPrivate(containerEl);
     }
-    this.renderTaskInsertionSettings(containerEl);
+    this.renderTaskInsertionSettings_abyssPrivate(containerEl);
   }
 
-  private renderManualDailyNotePathSetting(containerEl: HTMLElement): void {
+  private renderManualDailyNotePathSetting_abyssPrivate(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName('Note path pattern')
       .setDesc('Folder + date format, e.g. Daily/yyyy-mm-dd or just yyyy-mm-dd.')
       .addText((text) =>
         text
           .setPlaceholder('Yyyy-mm-dd')
-          .setValue(this.plugin.settings.manualDailyNotePath)
+          .setValue(this.plugin_abyssPrivate.settings.manualDailyNotePath)
           .onChange(async (value) => {
-            this.plugin.settings.manualDailyNotePath = value;
-            await this.plugin.saveSettings();
-            this.render();
+            this.plugin_abyssPrivate.settings.manualDailyNotePath = value;
+            await this.plugin_abyssPrivate.saveSettings();
+            this.render_abyssPrivate();
           }),
       );
   }
 
-  private renderTaskInsertionSettings(containerEl: HTMLElement): void {
+  private renderTaskInsertionSettings_abyssPrivate(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName('Insert position')
       .setDesc('Where in the daily note to add new tasks.')
       .addDropdown((dropdown) =>
         dropdown
           .addOptions({ append: 'End of file', section: 'Under section heading' })
-          .setValue(this.plugin.settings.taskInsertionMode)
+          .setValue(this.plugin_abyssPrivate.settings.taskInsertionMode)
           .onChange(async (value) => {
-            this.plugin.settings.taskInsertionMode =
-              value as typeof this.plugin.settings.taskInsertionMode;
-            await this.plugin.saveSettings();
-            this.render();
+            this.plugin_abyssPrivate.settings.taskInsertionMode =
+              value as typeof this.plugin_abyssPrivate.settings.taskInsertionMode;
+            await this.plugin_abyssPrivate.saveSettings();
+            this.render_abyssPrivate();
           }),
       );
-    if (this.plugin.settings.taskInsertionMode !== 'section') return;
+    if (this.plugin_abyssPrivate.settings.taskInsertionMode !== 'section') return;
     new Setting(containerEl)
       .setName('Section heading')
       .setDesc('Tasks are inserted under this heading. Created if absent.')
       .addText((text) =>
         text
           .setPlaceholder('## Tasks')
-          .setValue(this.plugin.settings.taskInsertionSection)
+          .setValue(this.plugin_abyssPrivate.settings.taskInsertionSection)
           .onChange(async (value) => {
-            this.plugin.settings.taskInsertionSection = value;
-            await this.plugin.saveSettings();
+            this.plugin_abyssPrivate.settings.taskInsertionSection = value;
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
   }
 
-  private renderCustomTaskFileSetting(containerEl: HTMLElement): void {
+  private renderCustomTaskFileSetting_abyssPrivate(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName('Custom file path')
       .setDesc('Add new tasks to this file instead.')
       .addText((text) =>
         text
           .setPlaceholder('Tasks/inbox.md')
-          .setValue(this.plugin.settings.customFilePath)
+          .setValue(this.plugin_abyssPrivate.settings.customFilePath)
           .onChange(async (value) => {
-            this.plugin.settings.customFilePath = value;
-            await this.plugin.saveSettings();
+            this.plugin_abyssPrivate.settings.customFilePath = value;
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
   }
 
-  private shortcutPlatform(): ShortcutPlatform {
+  private shortcutPlatform_abyssPrivate(): ShortcutPlatform {
     return { mod: Platform.isMacOS ? 'meta' : 'ctrl' };
   }
 
-  private renderShortcutSettings(containerEl: HTMLElement): void {
+  private renderShortcutSettings_abyssPrivate(containerEl: HTMLElement): void {
     const inputEls = new Map<ShortcutActionId, HTMLInputElement>();
     const issueEls = new Map<ShortcutActionId, HTMLElement>();
     containerEl.createDiv({
@@ -601,19 +610,19 @@ export class CalendarSettingsTab extends PluginSettingTab {
       attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
     });
     const saveFeedback = containerEl.createDiv({ cls: 'abyss-shortcut-save-feedback' });
-    this.shortcutSaveStatusEl = saveFeedback.createSpan({
+    this.shortcutSaveStatusEl_abyssPrivate = saveFeedback.createSpan({
       cls: 'abyss-shortcut-save-status',
       attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
     });
-    this.shortcutSaveRetryEl = saveFeedback.createEl('button', {
+    this.shortcutSaveRetryEl_abyssPrivate = saveFeedback.createEl('button', {
       cls: 'abyss-shortcut-save-retry',
       attr: { type: 'button' },
       text: 'Retry',
     });
-    this.shortcutSaveRetryEl.addEventListener('click', () => {
-      this.queueShortcutSave();
+    this.shortcutSaveRetryEl_abyssPrivate.addEventListener('click', () => {
+      this.queueShortcutSave_abyssPrivate();
     });
-    this.updateShortcutSavePresentation();
+    this.updateShortcutSavePresentation_abyssPrivate();
     const list = containerEl.createDiv({ cls: 'abyss-shortcuts-list' });
 
     for (const actionId of SHORTCUT_ACTION_IDS) {
@@ -635,26 +644,26 @@ export class CalendarSettingsTab extends PluginSettingTab {
         },
       });
       label.htmlFor = input.id;
-      input.value = this.plugin.settings.shortcuts[action.id];
+      input.value = this.plugin_abyssPrivate.settings.shortcuts[action.id];
       const issue = row.createDiv({
         cls: 'abyss-shortcut-issue',
-        attr: { id: `abyss-shortcut-issue-${this.sectionScope}-${action.id}` },
+        attr: { id: `abyss-shortcut-issue-${this.sectionScope_abyssPrivate}-${action.id}` },
       });
       inputEls.set(action.id, input);
       issueEls.set(action.id, issue);
 
       input.addEventListener('input', () => {
-        this.plugin.settings.shortcuts[action.id] = input.value;
-        this.updateShortcutIssues({
+        this.plugin_abyssPrivate.settings.shortcuts[action.id] = input.value;
+        this.updateShortcutIssues_abyssPrivate({
           inputs: inputEls,
           messages: issueEls,
           announcementEl: validationStatus,
           announce: false,
         });
-        this.queueShortcutSave();
+        this.queueShortcutSave_abyssPrivate();
       });
       input.addEventListener('blur', () => {
-        this.updateShortcutIssues({
+        this.updateShortcutIssues_abyssPrivate({
           inputs: inputEls,
           messages: issueEls,
           announcementEl: validationStatus,
@@ -664,7 +673,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
     }
 
-    this.updateShortcutIssues({
+    this.updateShortcutIssues_abyssPrivate({
       inputs: inputEls,
       messages: issueEls,
       announcementEl: validationStatus,
@@ -672,42 +681,45 @@ export class CalendarSettingsTab extends PluginSettingTab {
     });
   }
 
-  private queueShortcutSave(): void {
-    this.shortcutSaveQueued = true;
-    if (this.shortcutSaveInFlight != null) return;
-    this.shortcutSaveInFlight = this.flushShortcutSaves();
+  private queueShortcutSave_abyssPrivate(): void {
+    this.shortcutSaveQueued_abyssPrivate = true;
+    if (this.shortcutSaveInFlight_abyssPrivate != null) return;
+    this.shortcutSaveInFlight_abyssPrivate = this.flushShortcutSaves_abyssPrivate();
   }
 
-  private async flushShortcutSaves(): Promise<void> {
+  private async flushShortcutSaves_abyssPrivate(): Promise<void> {
     let failed = false;
     try {
-      while (this.shortcutSaveQueued) {
-        this.shortcutSaveQueued = false;
+      while (this.shortcutSaveQueued_abyssPrivate) {
+        this.shortcutSaveQueued_abyssPrivate = false;
         try {
-          await this.plugin.saveSettings();
-          this.shortcutSaveFailed = false;
-          this.updateShortcutSavePresentation();
+          await this.plugin_abyssPrivate.saveSettings();
+          this.shortcutSaveFailed_abyssPrivate = false;
+          this.updateShortcutSavePresentation_abyssPrivate();
         } catch (error) {
           console.error('[abyss-tasks] Could not save shortcut settings', error);
-          this.shortcutSaveQueued = true;
-          this.shortcutSaveFailed = true;
-          this.updateShortcutSavePresentation();
+          this.shortcutSaveQueued_abyssPrivate = true;
+          this.shortcutSaveFailed_abyssPrivate = true;
+          this.updateShortcutSavePresentation_abyssPrivate();
           failed = true;
           break;
         }
       }
     } finally {
-      this.shortcutSaveInFlight = undefined;
-      if (this.shortcutSaveQueued && !failed) this.queueShortcutSave();
+      this.shortcutSaveInFlight_abyssPrivate = undefined;
+      if (this.shortcutSaveQueued_abyssPrivate && !failed) this.queueShortcutSave_abyssPrivate();
     }
   }
 
-  private updateShortcutIssues(update: ShortcutIssueUpdate): void {
-    const validation = validateShortcuts(this.plugin.settings.shortcuts, this.shortcutPlatform());
+  private updateShortcutIssues_abyssPrivate(update: ShortcutIssueUpdate): void {
+    const validation = validateShortcuts(
+      this.plugin_abyssPrivate.settings.shortcuts,
+      this.shortcutPlatform_abyssPrivate(),
+    );
     const messages = new Set<string>();
     if (!update.announce) update.announcementEl.empty();
     for (const action of SHORTCUT_ACTIONS) {
-      const message = this.shortcutIssueMessage(action.id, update, validation);
+      const message = this.shortcutIssueMessage_abyssPrivate(action.id, update, validation);
       const shouldAnnounce = update.announce && action.id === update.announcedAction;
       if (shouldAnnounce && message !== undefined) {
         messages.add(message);
@@ -716,7 +728,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     if (update.announce) update.announcementEl.setText([...messages].join(' '));
   }
 
-  private shortcutIssueMessage(
+  private shortcutIssueMessage_abyssPrivate(
     action: ShortcutActionId,
     update: ShortcutIssueUpdate,
     validation: ReturnType<typeof validateShortcuts>,
@@ -724,7 +736,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const input = update.inputs.get(action);
     const messageEl = update.messages.get(action);
     if (input == null || messageEl == null) return undefined;
-    return this.renderShortcutIssue({
+    return this.renderShortcutIssue_abyssPrivate({
       action,
       input,
       messageEl,
@@ -733,7 +745,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     });
   }
 
-  private renderShortcutIssue(view: ShortcutIssueRender): string | undefined {
+  private renderShortcutIssue_abyssPrivate(view: ShortcutIssueRender): string | undefined {
     if (view.issues.length === 0) {
       view.input.removeAttribute('aria-invalid');
       view.input.removeAttribute('aria-describedby');
@@ -751,17 +763,17 @@ export class CalendarSettingsTab extends PluginSettingTab {
     return message;
   }
 
-  private updateShortcutSavePresentation(): void {
-    if (this.shortcutSaveStatusEl != null) {
-      this.shortcutSaveStatusEl.setText(
-        this.shortcutSaveFailed ? 'Shortcut changes were not saved.' : '',
+  private updateShortcutSavePresentation_abyssPrivate(): void {
+    if (this.shortcutSaveStatusEl_abyssPrivate != null) {
+      this.shortcutSaveStatusEl_abyssPrivate.setText(
+        this.shortcutSaveFailed_abyssPrivate ? 'Shortcut changes were not saved.' : '',
       );
     }
-    if (this.shortcutSaveRetryEl != null)
-      this.shortcutSaveRetryEl.hidden = !this.shortcutSaveFailed;
+    if (this.shortcutSaveRetryEl_abyssPrivate != null)
+      this.shortcutSaveRetryEl_abyssPrivate.hidden = !this.shortcutSaveFailed_abyssPrivate;
   }
 
-  private renderInboxSettings(containerEl: HTMLElement): void {
+  private renderInboxSettings_abyssPrivate(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName('Inbox source')
       .setDesc('What appears in your inbox list.')
@@ -772,15 +784,15 @@ export class CalendarSettingsTab extends PluginSettingTab {
             untagged: 'Untagged tasks',
             both: 'Both',
           })
-          .setValue(this.plugin.settings.inbox.mode)
+          .setValue(this.plugin_abyssPrivate.settings.inbox.mode)
           .onChange(async (v) => {
-            this.plugin.settings.inbox.mode = v as 'tag' | 'untagged' | 'both';
-            await this.plugin.saveSettings();
-            this.render();
+            this.plugin_abyssPrivate.settings.inbox.mode = v as 'tag' | 'untagged' | 'both';
+            await this.plugin_abyssPrivate.saveSettings();
+            this.render_abyssPrivate();
           }),
       );
 
-    if (this.plugin.settings.inbox.mode !== 'untagged') {
+    if (this.plugin_abyssPrivate.settings.inbox.mode !== 'untagged') {
       new Setting(containerEl)
         .setName('Inbox tag')
 
@@ -788,10 +800,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .addText((t) =>
           t
             .setPlaceholder('#Task/inbox')
-            .setValue(this.plugin.settings.inbox.tag)
+            .setValue(this.plugin_abyssPrivate.settings.inbox.tag)
             .onChange(async (v) => {
-              this.plugin.settings.inbox.tag = v.trim();
-              await this.plugin.saveSettings();
+              this.plugin_abyssPrivate.settings.inbox.tag = v.trim();
+              await this.plugin_abyssPrivate.saveSettings();
             }),
         );
     }
@@ -800,38 +812,40 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .setName('Remove inbox tag when assigning another tag')
       .setDesc('When you drag a task to a tag, the inbox tag is removed automatically.')
       .addToggle((t) =>
-        t.setValue(this.plugin.settings.inbox.removeTagOnAssign).onChange(async (v) => {
-          this.plugin.settings.inbox.removeTagOnAssign = v;
-          await this.plugin.saveSettings();
-        }),
+        t
+          .setValue(this.plugin_abyssPrivate.settings.inbox.removeTagOnAssign)
+          .onChange(async (v) => {
+            this.plugin_abyssPrivate.settings.inbox.removeTagOnAssign = v;
+            await this.plugin_abyssPrivate.saveSettings();
+          }),
       );
   }
 
-  private renderTagGroupSettings(containerEl: HTMLElement): void {
-    const groups = this.plugin.settings.tagGroups;
-    this.renderCardList(containerEl, groups, {
+  private renderTagGroupSettings_abyssPrivate(containerEl: HTMLElement): void {
+    const groups = this.plugin_abyssPrivate.settings.tagGroups;
+    this.renderCardList_abyssPrivate(containerEl, groups, {
       id: (g) => g.id,
       title: (g) => g.name,
       accent: (g) => g.color,
       badge: (g) => (g.mode === 'prefix' ? 'prefix' : 'manual'),
       body: (bodyEl, idx) => {
-        this.renderTagGroupCard(bodyEl, idx);
+        this.renderTagGroupCard_abyssPrivate(bodyEl, idx);
       },
       onReorder: (from, to) => {
-        this.moveItem(groups, from, to);
-        runAsyncAction(this.plugin.saveSettings(), 'Could not complete UI action');
-        this.render();
+        this.moveItem_abyssPrivate(groups, from, to);
+        runAsyncAction(this.plugin_abyssPrivate.saveSettings(), 'Could not complete UI action');
+        this.render_abyssPrivate();
       },
     });
 
-    const archived = this.plugin.settings.archivedTags;
+    const archived = this.plugin_abyssPrivate.settings.archivedTags;
     if (archived.length > 0) {
       new Setting(containerEl).setName('Archived tags').setHeading();
       for (const tag of archived) {
         new Setting(containerEl).setName(tag).addButton((b) =>
           b.setButtonText('Unarchive').onClick(async () => {
-            await this.plugin.tagManager.unarchiveTag(tag);
-            this.render();
+            await this.plugin_abyssPrivate.tagManager.unarchiveTag(tag);
+            this.render_abyssPrivate();
           }),
         );
       }
@@ -843,28 +857,28 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .setCta()
         .onClick(async () => {
           const id = `group-${Date.now()}`;
-          this.plugin.settings.tagGroups.push({
+          this.plugin_abyssPrivate.settings.tagGroups.push({
             id,
             name: 'New group',
             mode: 'prefix',
             prefix: '',
           });
-          this.expandedCards.add(id);
-          await this.plugin.saveSettings();
-          this.render();
+          this.expandedCards_abyssPrivate.add(id);
+          await this.plugin_abyssPrivate.saveSettings();
+          this.render_abyssPrivate();
         }),
     );
   }
 
-  private renderTagGroupCard(card: HTMLElement, idx: number): void {
-    const groups = this.plugin.settings.tagGroups;
+  private renderTagGroupCard_abyssPrivate(card: HTMLElement, idx: number): void {
+    const groups = this.plugin_abyssPrivate.settings.tagGroups;
     const group = groups[idx];
     if (group == null) return;
 
     new Setting(card).setName('Group name').addText((t) =>
       t.setValue(group.name).onChange(async (v) => {
         group.name = v;
-        await this.plugin.saveSettings();
+        await this.plugin_abyssPrivate.saveSettings();
       }),
     );
 
@@ -874,15 +888,15 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .setValue(group.mode)
         .onChange(async (v) => {
           group.mode = v as 'prefix' | 'manual';
-          await this.plugin.saveSettings();
-          this.render();
+          await this.plugin_abyssPrivate.saveSettings();
+          this.render_abyssPrivate();
         }),
     );
 
     new Setting(card).setName('Color').addColorPicker((cp) =>
       cp.setValue(group.color ?? '#888888').onChange(async (v) => {
         group.color = v;
-        await this.plugin.saveSettings();
+        await this.plugin_abyssPrivate.saveSettings();
       }),
     );
 
@@ -896,7 +910,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
             .setValue(group.prefix ?? '')
             .onChange(async (v) => {
               group.prefix = v.trim();
-              await this.plugin.saveSettings();
+              await this.plugin_abyssPrivate.saveSettings();
             }),
         );
     } else {
@@ -912,7 +926,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
                 .split(',')
                 .map((s) => s.trim())
                 .filter(Boolean);
-              await this.plugin.saveSettings();
+              await this.plugin_abyssPrivate.saveSettings();
             }),
         );
     }
@@ -923,21 +937,21 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .setClass('mod-warning')
         .onClick(async () => {
           const removed = groups.splice(idx, 1)[0];
-          if (removed != null) this.expandedCards.delete(removed.id);
-          await this.plugin.saveSettings();
-          this.render();
+          if (removed != null) this.expandedCards_abyssPrivate.delete(removed.id);
+          await this.plugin_abyssPrivate.saveSettings();
+          this.render_abyssPrivate();
         }),
     );
   }
 
-  private renderProjectsSettings(containerEl: HTMLElement): void {
-    this.renderProjectDefinitionSettings(containerEl);
-    this.renderProjectTaskInsertionSettings(containerEl);
-    this.renderProjectStatusesSettings(containerEl);
+  private renderProjectsSettings_abyssPrivate(containerEl: HTMLElement): void {
+    this.renderProjectDefinitionSettings_abyssPrivate(containerEl);
+    this.renderProjectTaskInsertionSettings_abyssPrivate(containerEl);
+    this.renderProjectStatusesSettings_abyssPrivate(containerEl);
   }
 
-  private renderProjectDefinitionSettings(containerEl: HTMLElement): void {
-    const projects = this.plugin.settings.projects;
+  private renderProjectDefinitionSettings_abyssPrivate(containerEl: HTMLElement): void {
+    const projects = this.plugin_abyssPrivate.settings.projects;
     new Setting(containerEl)
       .setName('Membership query')
       .setDesc('What counts as a project. Syntax: folder/, #tag, key=value, and / or / not / ( ).')
@@ -947,7 +961,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .setValue(projects.membershipQuery)
           .onChange(async (value) => {
             projects.membershipQuery = value;
-            await this.plugin.saveSettings();
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
     new Setting(containerEl)
@@ -959,7 +973,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .setValue(projects.createFolder)
           .onChange(async (value) => {
             projects.createFolder = value;
-            await this.plugin.saveSettings();
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
     new Setting(containerEl)
@@ -971,13 +985,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .setValue(projects.templatePath)
           .onChange(async (value) => {
             projects.templatePath = value;
-            await this.plugin.saveSettings();
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
   }
 
-  private renderProjectTaskInsertionSettings(containerEl: HTMLElement): void {
-    const projects = this.plugin.settings.projects;
+  private renderProjectTaskInsertionSettings_abyssPrivate(containerEl: HTMLElement): void {
+    const projects = this.plugin_abyssPrivate.settings.projects;
     new Setting(containerEl)
       .setName('Task insert position')
       .setDesc('Where a task is placed in a project note when created there or moved in.')
@@ -987,8 +1001,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .setValue(projects.taskInsertionMode)
           .onChange(async (v) => {
             projects.taskInsertionMode = v as typeof projects.taskInsertionMode;
-            await this.plugin.saveSettings();
-            this.render();
+            await this.plugin_abyssPrivate.saveSettings();
+            this.render_abyssPrivate();
           }),
       );
 
@@ -1002,27 +1016,27 @@ export class CalendarSettingsTab extends PluginSettingTab {
             .setValue(projects.taskInsertionSection)
             .onChange(async (v) => {
               projects.taskInsertionSection = v;
-              await this.plugin.saveSettings();
+              await this.plugin_abyssPrivate.saveSettings();
             }),
         );
     }
   }
 
-  private renderProjectStatusesSettings(containerEl: HTMLElement): void {
-    const projects = this.plugin.settings.projects;
+  private renderProjectStatusesSettings_abyssPrivate(containerEl: HTMLElement): void {
+    const projects = this.plugin_abyssPrivate.settings.projects;
     new Setting(containerEl).setName('Statuses').setHeading();
-    this.renderCardList(containerEl, projects.statuses, {
+    this.renderCardList_abyssPrivate(containerEl, projects.statuses, {
       id: (s) => s.id,
       title: (s) => s.label,
       accent: (s) => s.color,
       badge: (s) => (s.match.kind === 'tag' ? 'tag' : 'property'),
       body: (bodyEl, idx) => {
-        this.renderStatusCard(bodyEl, idx);
+        this.renderStatusCard_abyssPrivate(bodyEl, idx);
       },
       onReorder: (from, to) => {
-        this.moveItem(projects.statuses, from, to);
-        runAsyncAction(this.plugin.saveSettings(), 'Could not complete UI action');
-        this.render();
+        this.moveItem_abyssPrivate(projects.statuses, from, to);
+        runAsyncAction(this.plugin_abyssPrivate.saveSettings(), 'Could not complete UI action');
+        this.render_abyssPrivate();
       },
     });
 
@@ -1042,21 +1056,22 @@ export class CalendarSettingsTab extends PluginSettingTab {
             onLeftPanel: false,
             match: { kind: 'property', property: 'status', value: '' },
           });
-          this.expandedCards.add(id); // open the new card for editing
-          await this.plugin.saveSettings();
-          this.render();
+          this.expandedCards_abyssPrivate.add(id); // open the new card for editing
+          await this.plugin_abyssPrivate.saveSettings();
+          this.render_abyssPrivate();
         }),
     );
 
     const firstStatus = projects.statuses[0];
-    if (firstStatus !== undefined) this.renderDefaultProjectStatusSetting(containerEl, firstStatus);
+    if (firstStatus !== undefined)
+      this.renderDefaultProjectStatusSetting_abyssPrivate(containerEl, firstStatus);
   }
 
-  private renderDefaultProjectStatusSetting(
+  private renderDefaultProjectStatusSetting_abyssPrivate(
     containerEl: HTMLElement,
     firstStatus: ProjectStatus,
   ): void {
-    const projects = this.plugin.settings.projects;
+    const projects = this.plugin_abyssPrivate.settings.projects;
     new Setting(containerEl)
       .setName('Default status')
       .setDesc('Applied to newly created projects.')
@@ -1066,13 +1081,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .setValue(projects.defaultStatusId === '' ? firstStatus.id : projects.defaultStatusId)
           .onChange(async (value) => {
             projects.defaultStatusId = value;
-            await this.plugin.saveSettings();
+            await this.plugin_abyssPrivate.saveSettings();
           });
       });
   }
 
-  private renderStatusCard(card: HTMLElement, idx: number): void {
-    const projects = this.plugin.settings.projects;
+  private renderStatusCard_abyssPrivate(card: HTMLElement, idx: number): void {
+    const projects = this.plugin_abyssPrivate.settings.projects;
     const statuses = projects.statuses;
     const status = statuses[idx];
     if (status == null) return;
@@ -1080,7 +1095,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     new Setting(card).setName('Label').addText((t) =>
       t.setValue(status.label).onChange(async (v) => {
         status.label = v;
-        await this.plugin.saveSettings();
+        await this.plugin_abyssPrivate.saveSettings();
       }),
     );
 
@@ -1093,31 +1108,34 @@ export class CalendarSettingsTab extends PluginSettingTab {
             v === 'tag'
               ? { kind: 'tag', tag: '' }
               : { kind: 'property', property: 'status', value: '' };
-          await this.plugin.saveSettings();
-          this.render();
+          await this.plugin_abyssPrivate.saveSettings();
+          this.render_abyssPrivate();
         }),
     );
 
-    this.renderProjectStatusMatchSettings(card, status);
+    this.renderProjectStatusMatchSettings_abyssPrivate(card, status);
 
     new Setting(card).setName('Color').addColorPicker((cp) =>
       cp.setValue(status.color ?? '#888888').onChange(async (v) => {
         status.color = v;
-        await this.plugin.saveSettings();
+        await this.plugin_abyssPrivate.saveSettings();
       }),
     );
 
     new Setting(card).setName('Show on left panel').addToggle((tg) =>
       tg.setValue(status.onLeftPanel).onChange(async (v) => {
         status.onLeftPanel = v;
-        await this.plugin.saveSettings();
+        await this.plugin_abyssPrivate.saveSettings();
       }),
     );
 
-    this.renderDeleteProjectStatusSetting(card, idx);
+    this.renderDeleteProjectStatusSetting_abyssPrivate(card, idx);
   }
 
-  private renderProjectStatusMatchSettings(card: HTMLElement, status: ProjectStatus): void {
+  private renderProjectStatusMatchSettings_abyssPrivate(
+    card: HTMLElement,
+    status: ProjectStatus,
+  ): void {
     if (status.match.kind === 'property') {
       const match = status.match;
       new Setting(card).setName('Property').addText((t) =>
@@ -1126,7 +1144,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .setValue(match.property)
           .onChange(async (v) => {
             match.property = v.trim();
-            await this.plugin.saveSettings();
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
       new Setting(card).setName('Value').addText((t) =>
@@ -1135,7 +1153,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .setValue(match.value)
           .onChange(async (v) => {
             match.value = v.trim();
-            await this.plugin.saveSettings();
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
     } else {
@@ -1146,14 +1164,14 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .setValue(match.tag)
           .onChange(async (v) => {
             match.tag = v.trim().replace(/^#/, '');
-            await this.plugin.saveSettings();
+            await this.plugin_abyssPrivate.saveSettings();
           }),
       );
     }
   }
 
-  private renderDeleteProjectStatusSetting(card: HTMLElement, idx: number): void {
-    const projects = this.plugin.settings.projects;
+  private renderDeleteProjectStatusSetting_abyssPrivate(card: HTMLElement, idx: number): void {
+    const projects = this.plugin_abyssPrivate.settings.projects;
     const statuses = projects.statuses;
     new Setting(card).addButton((b) =>
       b
@@ -1163,19 +1181,22 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .onClick(async () => {
           const removed = statuses.splice(idx, 1)[0];
           if (removed != null) {
-            this.expandedCards.delete(removed.id);
+            this.expandedCards_abyssPrivate.delete(removed.id);
             if (projects.defaultStatusId === removed.id) {
               projects.defaultStatusId = statuses[0]?.id ?? '';
             }
           }
-          await this.plugin.saveSettings();
-          this.render();
+          await this.plugin_abyssPrivate.saveSettings();
+          this.render_abyssPrivate();
         }),
     );
   }
 
-  private renderViewConfigSettings(container: HTMLElement, platform: 'desktop' | 'mobile'): void {
-    const cfg = this.plugin.settings[platform];
+  private renderViewConfigSettings_abyssPrivate(
+    container: HTMLElement,
+    platform: 'desktop' | 'mobile',
+  ): void {
+    const cfg = this.plugin_abyssPrivate.settings[platform];
 
     new Setting(container).setName('Default view').addDropdown((d) =>
       d
@@ -1183,7 +1204,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .setValue(cfg.defaultView)
         .onChange(async (v) => {
           cfg.defaultView = v as typeof cfg.defaultView;
-          await this.plugin.saveSettings();
+          await this.plugin_abyssPrivate.saveSettings();
         }),
     );
 
@@ -1193,15 +1214,18 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .setValue(String(cfg.firstDayOfWeek))
         .onChange(async (v) => {
           cfg.firstDayOfWeek = parseInt(v) as typeof cfg.firstDayOfWeek;
-          await this.plugin.saveSettings();
+          await this.plugin_abyssPrivate.saveSettings();
         }),
     );
 
-    if (this.plugin.settings.dailyNoteProvider === 'manual' || !this.plugin.settings.addToToday) {
+    if (
+      this.plugin_abyssPrivate.settings.dailyNoteProvider === 'manual' ||
+      !this.plugin_abyssPrivate.settings.addToToday
+    ) {
       new Setting(container).setName('Daily note folder').addText((t) =>
         t.setValue(cfg.dailyNoteFolder).onChange(async (v) => {
           cfg.dailyNoteFolder = v;
-          await this.plugin.saveSettings();
+          await this.plugin_abyssPrivate.saveSettings();
         }),
       );
 
@@ -1211,7 +1235,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .addText((t) =>
           t.setValue(cfg.dailyNoteFormat).onChange(async (v) => {
             cfg.dailyNoteFormat = v;
-            await this.plugin.saveSettings();
+            await this.plugin_abyssPrivate.saveSettings();
           }),
         );
     }
@@ -1222,7 +1246,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .addText((t) =>
         t.setValue(cfg.globalTaskFilter).onChange(async (v) => {
           cfg.globalTaskFilter = v;
-          await this.plugin.saveSettings();
+          await this.plugin_abyssPrivate.saveSettings();
         }),
       );
 
@@ -1234,35 +1258,39 @@ export class CalendarSettingsTab extends PluginSettingTab {
           const n = parseInt(value, 10);
           if (!isNaN(n) && n > 0) {
             cfg.upcomingDays = n;
-            await this.plugin.saveSettings();
+            await this.plugin_abyssPrivate.saveSettings();
           }
         }),
       );
   }
 
   /** Persists a taskStatuses mutation and rebuilds the store's registry so open panels update. */
-  private async persistStatuses(): Promise<void> {
-    await this.plugin.saveSettings();
-    this.plugin.rebuildTaskStatusSemantics();
+  private async persistStatuses_abyssPrivate(): Promise<void> {
+    await this.plugin_abyssPrivate.saveSettings();
+    this.plugin_abyssPrivate.rebuildTaskStatusSemantics();
   }
 
   /** Persists and fully re-renders — for structural changes (add/delete/type/group move). */
-  private async persistAndRerenderStatuses(): Promise<void> {
-    await this.persistStatuses();
-    this.render();
+  private async persistAndRerenderStatuses_abyssPrivate(): Promise<void> {
+    await this.persistStatuses_abyssPrivate();
+    this.render_abyssPrivate();
   }
 
-  private moveStatusToGroup(id: string, targetType: TaskStatusType): void {
-    const statuses = this.plugin.settings.taskStatuses;
+  private moveStatusToGroup_abyssPrivate(id: string, targetType: TaskStatusType): void {
+    const statuses = this.plugin_abyssPrivate.settings.taskStatuses;
     const def = statuses.find((s) => s.id === id);
     if (def == null || def.type === targetType) return;
     if (def.core) return; // core cards cannot leave their own type group
     def.type = targetType;
-    runAsyncAction(this.persistAndRerenderStatuses(), 'Could not complete UI action');
+    runAsyncAction(this.persistAndRerenderStatuses_abyssPrivate(), 'Could not complete UI action');
   }
 
-  private reorderStatusWithinType(type: TaskStatusType, from: number, to: number): void {
-    const statuses = this.plugin.settings.taskStatuses;
+  private reorderStatusWithinType_abyssPrivate(
+    type: TaskStatusType,
+    from: number,
+    to: number,
+  ): void {
+    const statuses = this.plugin_abyssPrivate.settings.taskStatuses;
     const groupIndices = statuses
       .map((s, i) => ({ s, i }))
       .filter((x) => x.s.type === type)
@@ -1270,12 +1298,12 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const fromAbs = groupIndices[from];
     const toAbs = groupIndices[to];
     if (fromAbs === undefined || toAbs === undefined) return;
-    this.moveItem(statuses, fromAbs, toAbs);
-    runAsyncAction(this.persistAndRerenderStatuses(), 'Could not complete UI action');
+    this.moveItem_abyssPrivate(statuses, fromAbs, toAbs);
+    runAsyncAction(this.persistAndRerenderStatuses_abyssPrivate(), 'Could not complete UI action');
   }
 
-  private renderTaskStatusesSettings(containerEl: HTMLElement): void {
-    const statuses = this.plugin.settings.taskStatuses;
+  private renderTaskStatusesSettings_abyssPrivate(containerEl: HTMLElement): void {
+    const statuses = this.plugin_abyssPrivate.settings.taskStatuses;
     const groupDefs: Array<{ type: TaskStatusType; label: string }> = TYPE_ORDER.map((type) => ({
       type,
       label: TYPE_LABELS[type],
@@ -1302,27 +1330,27 @@ export class CalendarSettingsTab extends PluginSettingTab {
           return;
         }
         if (payload.groupKey === type) return; // handled by a card's own drop listener
-        this.moveStatusToGroup(payload.id, type);
+        this.moveStatusToGroup_abyssPrivate(payload.id, type);
       });
 
-      this.renderCardList(groupEl, items, {
+      this.renderCardList_abyssPrivate(groupEl, items, {
         id: (s) => s.id,
         title: (s) => s.name,
         badge: (s) => s.symbol,
         preview: (headerEl, s) => {
           const previewEl = headerEl.createSpan({ cls: 'abyss-status-header-preview' });
-          this.statusHeaderPreviewEls.set(s.id, previewEl);
-          this.renderStatusHeaderPreview(s.id);
+          this.statusHeaderPreviewEls_abyssPrivate.set(s.id, previewEl);
+          this.renderStatusHeaderPreview_abyssPrivate(s.id);
         },
         groupKey: type,
         onCrossGroupDrop: (id, targetType) => {
-          this.moveStatusToGroup(id, targetType as TaskStatusType);
+          this.moveStatusToGroup_abyssPrivate(id, targetType as TaskStatusType);
         },
         body: (bodyEl, idx) => {
-          this.renderTaskStatusCardBody(bodyEl, items, idx);
+          this.renderTaskStatusCardBody_abyssPrivate(bodyEl, items, idx);
         },
         onReorder: (from, to) => {
-          this.reorderStatusWithinType(type, from, to);
+          this.reorderStatusWithinType_abyssPrivate(type, from, to);
         },
       });
     }
@@ -1347,17 +1375,17 @@ export class CalendarSettingsTab extends PluginSettingTab {
             icon: '',
             core: false,
           });
-          this.expandedCards.add(id);
-          await this.persistAndRerenderStatuses();
+          this.expandedCards_abyssPrivate.add(id);
+          await this.persistAndRerenderStatuses_abyssPrivate();
         }),
     );
   }
 
   /** Re-renders a status's collapsed-card header preview chip (e.g. after an icon edit). */
-  private renderStatusHeaderPreview(statusId: string): void {
-    const previewEl = this.statusHeaderPreviewEls.get(statusId);
+  private renderStatusHeaderPreview_abyssPrivate(statusId: string): void {
+    const previewEl = this.statusHeaderPreviewEls_abyssPrivate.get(statusId);
     if (previewEl == null) return;
-    const statuses = this.plugin.settings.taskStatuses;
+    const statuses = this.plugin_abyssPrivate.settings.taskStatuses;
     const def = statuses.find((s) => s.id === statusId);
     if (def == null) return;
     previewEl.empty();
@@ -1371,28 +1399,28 @@ export class CalendarSettingsTab extends PluginSettingTab {
     });
   }
 
-  private renderTaskStatusCardBody(
+  private renderTaskStatusCardBody_abyssPrivate(
     bodyEl: HTMLElement,
     groupItems: TaskStatusDef[],
     idx: number,
   ): void {
     const def = groupItems[idx];
     if (def == null) return;
-    const statuses = this.plugin.settings.taskStatuses;
+    const statuses = this.plugin_abyssPrivate.settings.taskStatuses;
     let updatePreview: () => void = () => {};
     const refreshPreview = (): void => {
       updatePreview();
     };
 
-    this.renderTaskStatusNameSetting(bodyEl, def, refreshPreview);
-    this.renderTaskStatusSymbolSetting(bodyEl, def, statuses, refreshPreview);
-    this.renderTaskStatusIconSetting(bodyEl, def, refreshPreview);
-    updatePreview = this.renderTaskStatusPreview(bodyEl, def, statuses);
+    this.renderTaskStatusNameSetting_abyssPrivate(bodyEl, def, refreshPreview);
+    this.renderTaskStatusSymbolSetting_abyssPrivate(bodyEl, def, statuses, refreshPreview);
+    this.renderTaskStatusIconSetting_abyssPrivate(bodyEl, def, refreshPreview);
+    updatePreview = this.renderTaskStatusPreview_abyssPrivate(bodyEl, def, statuses);
     updatePreview();
-    if (!def.core) this.renderDeleteTaskStatusSetting(bodyEl, def, statuses);
+    if (!def.core) this.renderDeleteTaskStatusSetting_abyssPrivate(bodyEl, def, statuses);
   }
 
-  private renderTaskStatusNameSetting(
+  private renderTaskStatusNameSetting_abyssPrivate(
     bodyEl: HTMLElement,
     def: TaskStatusDef,
     updatePreview: () => void,
@@ -1400,13 +1428,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
     new Setting(bodyEl).setName('Name').addText((t) =>
       t.setValue(def.name).onChange(async (v) => {
         def.name = v;
-        await this.persistStatuses();
+        await this.persistStatuses_abyssPrivate();
         updatePreview();
       }),
     );
   }
 
-  private renderTaskStatusSymbolSetting(
+  private renderTaskStatusSymbolSetting_abyssPrivate(
     bodyEl: HTMLElement,
     def: TaskStatusDef,
     statuses: TaskStatusDef[],
@@ -1435,23 +1463,23 @@ export class CalendarSettingsTab extends PluginSettingTab {
           symbolErrorEl = null;
         }
         def.symbol = v;
-        await this.persistStatuses();
+        await this.persistStatuses_abyssPrivate();
         updatePreview();
       });
       return t;
     });
   }
 
-  private renderTaskStatusIconSetting(
+  private renderTaskStatusIconSetting_abyssPrivate(
     bodyEl: HTMLElement,
     def: TaskStatusDef,
     updatePreview: () => void,
   ): void {
-    if (def.core) this.renderLockedTaskStatusIcon(bodyEl, def);
-    else this.renderEditableTaskStatusIcon(bodyEl, def, updatePreview);
+    if (def.core) this.renderLockedTaskStatusIcon_abyssPrivate(bodyEl, def);
+    else this.renderEditableTaskStatusIcon_abyssPrivate(bodyEl, def, updatePreview);
   }
 
-  private renderLockedTaskStatusIcon(bodyEl: HTMLElement, def: TaskStatusDef): void {
+  private renderLockedTaskStatusIcon_abyssPrivate(bodyEl: HTMLElement, def: TaskStatusDef): void {
     const iconSetting = new Setting(bodyEl).setName('Icon');
     const lockEl = iconSetting.nameEl.createSpan({ cls: 'abyss-status-icon-lock' });
     setIcon(lockEl, 'lock');
@@ -1463,7 +1491,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     else lockedPreview.createSpan({ cls: 'abyss-status-icon-result-icon', text: '—' });
   }
 
-  private availableStatusIconIds(): string[] {
+  private availableStatusIconIds_abyssPrivate(): string[] {
     const seen = new Set<string>();
     const iconIds: string[] = [];
     for (const raw of getIconIds()) {
@@ -1475,14 +1503,14 @@ export class CalendarSettingsTab extends PluginSettingTab {
     return iconIds;
   }
 
-  private renderEditableTaskStatusIcon(
+  private renderEditableTaskStatusIcon_abyssPrivate(
     bodyEl: HTMLElement,
     def: TaskStatusDef,
     updatePreview: () => void,
   ): void {
     const iconWrap = bodyEl.createDiv({ cls: 'abyss-status-icon-field' });
     const inputHost = iconWrap.createDiv({ cls: 'abyss-status-icon-input-host' });
-    const iconIds = this.availableStatusIconIds();
+    const iconIds = this.availableStatusIconIds_abyssPrivate();
     let renderResults: (query: string, focusIcon?: string) => void = () => {};
     new Setting(inputHost).setName('Search icons').addText((text) =>
       text
@@ -1496,12 +1524,12 @@ export class CalendarSettingsTab extends PluginSettingTab {
     renderResults = (query, focusIcon) => {
       const selectIcon = (iconId: string): void => {
         def.icon = iconId;
-        runAsyncAction(this.persistStatuses(), 'Could not complete UI action');
+        runAsyncAction(this.persistStatuses_abyssPrivate(), 'Could not complete UI action');
         renderResults(query, iconId);
         updatePreview();
-        this.renderStatusHeaderPreview(def.id);
+        this.renderStatusHeaderPreview_abyssPrivate(def.id);
       };
-      this.renderTaskStatusIconResults({
+      this.renderTaskStatusIconResults_abyssPrivate({
         host: resultsHost,
         def,
         iconIds,
@@ -1513,9 +1541,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
     renderResults('');
   }
 
-  private renderTaskStatusIconResults(results: TaskStatusIconResults): void {
+  private renderTaskStatusIconResults_abyssPrivate(results: TaskStatusIconResults): void {
     results.host.empty();
-    this.renderClearTaskStatusIcon(results);
+    this.renderClearTaskStatusIcon_abyssPrivate(results);
     const query = results.query.trim().toLowerCase();
     const matchingIds = results.iconIds
       .filter((iconId) => query === '' || iconId.toLowerCase().includes(query))
@@ -1523,12 +1551,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
     if (matchingIds.length === 0) {
       results.host.createDiv({ cls: 'abyss-status-icon-empty', text: 'No icons found' });
     } else {
-      for (const iconId of matchingIds) this.renderTaskStatusIconResult(results, iconId);
+      for (const iconId of matchingIds)
+        this.renderTaskStatusIconResult_abyssPrivate(results, iconId);
     }
-    this.focusTaskStatusIconResult(results);
+    this.focusTaskStatusIconResult_abyssPrivate(results);
   }
 
-  private renderClearTaskStatusIcon(results: TaskStatusIconResults): void {
+  private renderClearTaskStatusIcon_abyssPrivate(results: TaskStatusIconResults): void {
     const clearCell = results.host.createEl('button', {
       cls: `abyss-status-icon-result abyss-status-icon-clear${results.def.icon === '' ? ' is-selected' : ''}`,
       attr: {
@@ -1545,7 +1574,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
     });
   }
 
-  private renderTaskStatusIconResult(results: TaskStatusIconResults, iconId: string): void {
+  private renderTaskStatusIconResult_abyssPrivate(
+    results: TaskStatusIconResults,
+    iconId: string,
+  ): void {
     const cell = results.host.createEl('button', {
       cls: `abyss-status-icon-result${iconId === results.def.icon ? ' is-selected' : ''}`,
       attr: {
@@ -1563,7 +1595,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     });
   }
 
-  private focusTaskStatusIconResult(results: TaskStatusIconResults): void {
+  private focusTaskStatusIconResult_abyssPrivate(results: TaskStatusIconResults): void {
     if (results.focusIcon === undefined) return;
     const cell = Array.from(
       results.host.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result'),
@@ -1571,7 +1603,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     cell?.focus({ preventScroll: true });
   }
 
-  private renderTaskStatusPreview(
+  private renderTaskStatusPreview_abyssPrivate(
     bodyEl: HTMLElement,
     def: TaskStatusDef,
     statuses: TaskStatusDef[],
@@ -1595,7 +1627,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     };
   }
 
-  private renderDeleteTaskStatusSetting(
+  private renderDeleteTaskStatusSetting_abyssPrivate(
     bodyEl: HTMLElement,
     def: TaskStatusDef,
     statuses: TaskStatusDef[],
@@ -1618,8 +1650,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
           }
           const index = statuses.findIndex((status) => status.id === def.id);
           if (index >= 0) statuses.splice(index, 1);
-          this.expandedCards.delete(def.id);
-          await this.persistAndRerenderStatuses();
+          this.expandedCards_abyssPrivate.delete(def.id);
+          await this.persistAndRerenderStatuses_abyssPrivate();
         }),
     );
   }

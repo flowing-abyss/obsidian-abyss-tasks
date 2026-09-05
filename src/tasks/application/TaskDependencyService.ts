@@ -111,7 +111,7 @@ function coordinateMutation<T>(
   const queue = mutationQueues.get(repository) ?? {};
   mutationQueues.set(repository, queue);
   const previous = queue.tail;
-  let release: () => void = () => {};
+  let release: () => void;
   const tail = new Promise<void>((resolve) => {
     release = resolve;
   });

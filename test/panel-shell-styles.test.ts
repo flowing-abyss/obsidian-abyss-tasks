@@ -1,10 +1,11 @@
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { expandCompoundSelectorLists } from './support/expandedCss';
 
 function readStyles(): string {
   const styles = ts.sys.readFile(ts.sys.resolvePath(`${import.meta.dirname}/../styles.css`));
   if (styles === undefined) throw new Error('Expected styles.css to be readable');
-  return styles;
+  return expandCompoundSelectorLists(styles);
 }
 
 const css = readStyles();

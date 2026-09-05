@@ -231,15 +231,15 @@ describe('task presentation identity', () => {
 
     (
       panel as unknown as {
-        renderTaskCard(host: HTMLElement, taskSnapshot: TaskSnapshot): void;
+        renderTaskCard_abyssPrivate(host: HTMLElement, taskSnapshot: TaskSnapshot): void;
         renderProjectTasks(host: HTMLElement, path: string): void;
       }
-    ).renderTaskCard(listCards, snapshot);
+    ).renderTaskCard_abyssPrivate(listCards, snapshot);
     (
       panel as unknown as {
-        renderProjectTasks(host: HTMLElement, path: string): void;
+        renderProjectTasks_abyssPrivate(host: HTMLElement, path: string): void;
       }
-    ).renderProjectTasks(projectHost, 'capture.md');
+    ).renderProjectTasks_abyssPrivate(projectHost, 'capture.md');
 
     expect(
       listCards.querySelector<HTMLElement>('.abyss-task-card')?.dataset['abyssTaskRefKey'],

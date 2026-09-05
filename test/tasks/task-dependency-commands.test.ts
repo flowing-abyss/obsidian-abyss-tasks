@@ -89,6 +89,176 @@ function dependencyOutcome(result: TaskCommandResult) {
   return result.outcome;
 }
 
+describe('dependency boundary failure contracts', () => {
+  it('releases rejected mutations before queued work and starts the next queue cleanly', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Root\n' });
+    const barrier = deferred<void>();
+    const order: string[] = [];
+    const first = h.dependencyService.serializeMutation(async (queued) => {
+      order.push(`first:${String(queued)}`);
+      await barrier.promise;
+      throw new Error('rejected mutation');
+    });
+    const rejected = expect(first).rejects.toThrow('rejected mutation');
+    const second = h.dependencyService.serializeMutation(async (queued) => {
+      order.push(`second:${String(queued)}`);
+      return await Promise.resolve('continued');
+    });
+    expect(order).toEqual(['first:false']);
+    barrier.resolve();
+    await rejected;
+    expect(await second).toBe('continued');
+    expect(
+      await h.dependencyService.serializeMutation(async (queued) => Promise.resolve(queued)),
+    ).toBe(false);
+    expect(order).toEqual(['first:false', 'second:true']);
+  });
+
+  it('rejects asynchronous completion evidence and clears the temporary basis', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Indexed\n' });
+    const root = expectDefined(h.index.snapshotsFromContent('tasks.md', '\n- [ ] Preview\n')[0]);
+    const invalidRead = () =>
+      Promise.resolve([]) as unknown as ReturnType<TaskDependencyService['blockersForCompletion']>;
+    expect(() =>
+      h.dependencyService.withCompletionBasis({ previous: root, current: root }, invalidRead),
+    ).toThrow(DependencyCompletionConflict);
+    expect(() =>
+      h.dependencyService.blockersForCompletion(root, { type: 'task', ref: root.ref }),
+    ).toThrow(DependencyCompletionConflict);
+  });
+
+  it('does not identify a moved preview by title when its comment content differs', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Root\n  - 💬 Original\n' });
+    const root = expectDefined(
+      h.index.snapshotsFromContent('tasks.md', '\n\n- [ ] Root\n  - 💬 Changed\n')[0],
+    );
+    expect(root.comments).toHaveLength(1);
+    expect(() =>
+      h.dependencyService.blockersForCompletion(root, { type: 'task', ref: root.ref }),
+    ).toThrow(DependencyCompletionConflict);
+  });
+
+  it('can prove a completion predecessor through exact resolution outside the node projection', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Root\n' });
+    const root = h.node('Root').root;
+    vi.spyOn(h.index, 'listNodes').mockReturnValue([]);
+    expect(
+      h.dependencyService.blockersForCompletion(root, { type: 'task', ref: root.ref }),
+    ).toEqual([]);
+  });
+
+  it.each(['remove-id', 'restore-id', 'before-ids', 'after-ids'] as const)(
+    'rejects invalid %s without consulting the repository',
+    async (field) => {
+      const h = await harness({ 'tasks.md': '- [ ] Dependent ⛔ valid\n' });
+      const edit = vi.spyOn(h.repository, 'edit');
+      const command: TaskCommand =
+        field === 'remove-id'
+          ? {
+              type: 'remove-dependency',
+              dependent: h.node('Dependent').target,
+              dependencyId: 'bad.id',
+            }
+          : {
+              type: 'restore-dependency',
+              dependent: h.node('Dependent').target,
+              recovery: {
+                dependencyId: field === 'restore-id' ? 'bad.id' : 'valid',
+                beforeIds: [field === 'before-ids' ? 'bad.id' : 'valid'],
+                afterIds: [field === 'after-ids' ? 'bad.id' : 'valid'],
+              },
+            };
+      expect(await h.application.execute(command)).toMatchObject({ type: 'invalid' });
+      expect(edit).not.toHaveBeenCalled();
+      expect(await h.read()).toBe('- [ ] Dependent ⛔ valid\n');
+    },
+  );
+
+  it('bounds exhausted ID allocation and leaves both endpoints unchanged', async () => {
+    const generate = vi.fn<TaskDependencyIdGenerator>().mockReturnValue('invalid!');
+    const source = '\n- [ ] Blocker\n- [ ] Dependent\n';
+    const h = await harness({ 'tasks.md': source }, generate);
+    const batch = vi.spyOn(h.repository, 'editBatch');
+    expect(
+      await h.application.execute({
+        type: 'add-dependency',
+        blocker: h.node('Blocker').target,
+        dependent: h.node('Dependent').target,
+      }),
+    ).toMatchObject({ type: 'invalid', issues: [{ field: 'dependency-id' }] });
+    expect(generate).toHaveBeenCalledTimes(64);
+    expect(batch).not.toHaveBeenCalled();
+    expect(await h.read()).toBe(source);
+  });
+
+  it('returns not-found for an uncertain batch outcome instead of claiming a dependency', async () => {
+    const h = await harness({ 'tasks.md': '\n- [ ] Blocker\n- [ ] Dependent\n' });
+    const dependent = h.node('Dependent').target;
+    vi.spyOn(h.repository, 'editBatch').mockResolvedValue({ type: 'uncertain', target: dependent });
+    expect(
+      await h.application.execute({
+        type: 'add-dependency',
+        blocker: h.node('Blocker').target,
+        dependent,
+      }),
+    ).toEqual({ type: 'not-found', target: dependent });
+    expect(h.node('Dependent').node.dependsOn).toEqual([]);
+  });
+
+  it('stops after a second same-file rebase without an unbounded retry', async () => {
+    const h = await harness({ 'tasks.md': '\n- [ ] Blocker 🆔 id\n- [ ] Dependent\n' });
+    const root = h.node('Dependent').root;
+    const batch = vi.spyOn(h.repository, 'editBatch').mockResolvedValue({
+      type: 'rebased',
+      previous: root,
+      current: root,
+      evidence: 'authority-transition',
+    });
+    expect(
+      await h.application.execute({
+        type: 'add-dependency',
+        blocker: h.node('Blocker').target,
+        dependent: h.node('Dependent').target,
+      }),
+    ).toEqual({ type: 'conflict', current: root });
+    expect(batch).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a stale removal target before issuing a metadata edit', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Dependent ⛔ id\n' });
+    const target = {
+      type: 'task' as const,
+      ref: { ...h.node('Dependent').root.ref, revision: 'unknown' },
+    };
+    const edit = vi.spyOn(h.repository, 'edit');
+    expect(
+      await h.application.execute({
+        type: 'remove-dependency',
+        dependent: target,
+        dependencyId: 'id',
+      }),
+    ).toEqual({ type: 'not-found', target });
+    expect(edit).not.toHaveBeenCalled();
+  });
+
+  it('does not claim a metadata removal when a repository commit returns a deleted outcome', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Dependent ⛔ id\n' });
+    const dependent = h.node('Dependent');
+    vi.spyOn(h.repository, 'edit').mockResolvedValue({
+      type: 'committed',
+      changed: true,
+      outcome: { type: 'deleted', ref: dependent.root.ref },
+    });
+    expect(
+      await h.application.execute({
+        type: 'remove-dependency',
+        dependent: dependent.target,
+        dependencyId: 'id',
+      }),
+    ).toEqual({ type: 'io-error', cause: 'repository-error', contentState: 'unknown' });
+  });
+});
+
 describe('dependency-only structure proof regressions', () => {
   it('stops at the root when reordered retained source groups have ambiguous duplicate identities', async () => {
     const h = await harness({

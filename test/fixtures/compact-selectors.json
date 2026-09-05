@@ -1,0 +1,210 @@
+[
+  {
+    "from": "body:not(.is-mobile) .tasksCalendar button.listView:hover,\nbody:not(.is-mobile) .tasksCalendar button.weekView:hover,\nbody:not(.is-mobile) .tasksCalendar button.monthView:hover,\nbody:not(.is-mobile) .tasksCalendar button.previous:hover,\nbody:not(.is-mobile) .tasksCalendar button.next:hover,\nbody:not(.is-mobile) .tasksCalendar button.current:hover,\nbody:not(.is-mobile) .tasksCalendar button.filter:hover,\nbody:not(.is-mobile) .tasksCalendar button.statistic:hover",
+    "to": "body:not(.is-mobile) .tasksCalendar button:is(.listView, .weekView, .monthView, .previous, .next, .current, .filter, .statistic):hover"
+  },
+  {
+    "from": ".abyss-calendar-leading-row.abyss-tg-block-head,\n.abyss-calendar-leading-row.abyss-tg-body,\n.abyss-calendar-leading-row.abyss-tg-deadline-marker,\n.abyss-calendar-leading-row.abyss-mg-plain,\n.abyss-calendar-leading-row.abyss-mg-block-dot,\n.abyss-calendar-leading-row.abyss-mg-span-segment,\n.abyss-calendar-leading-row.abyss-mg-deadline-marker",
+    "to": ".abyss-calendar-leading-row:is(.abyss-tg-block-head, .abyss-tg-body, .abyss-tg-deadline-marker, .abyss-mg-plain, .abyss-mg-block-dot, .abyss-mg-span-segment, .abyss-mg-deadline-marker)"
+  },
+  {
+    "from": ".abyss-tg-block.abyss-calendar-item,\n.abyss-tg-block-continuation.abyss-calendar-item,\n.abyss-tg-body.abyss-calendar-item,\n.abyss-tg-deadline-marker.abyss-calendar-item,\n.abyss-mg-plain.abyss-calendar-item,\n.abyss-mg-block-dot.abyss-calendar-item,\n.abyss-mg-span-segment.abyss-calendar-item,\n.abyss-mg-deadline-marker.abyss-calendar-item",
+    "to": ":is(.abyss-tg-block, .abyss-tg-block-continuation, .abyss-tg-body, .abyss-tg-deadline-marker, .abyss-mg-plain, .abyss-mg-block-dot, .abyss-mg-span-segment, .abyss-mg-deadline-marker).abyss-calendar-item"
+  },
+  {
+    "from": ".abyss-tg-body .abyss-status-marker svg,\n.abyss-tg-deadline-marker .abyss-status-marker svg,\n.abyss-mg-block-dot .abyss-status-marker svg,\n.abyss-mg-span-segment .abyss-status-marker svg,\n.abyss-mg-plain .abyss-status-marker svg,\n.abyss-mg-deadline-marker .abyss-status-marker svg",
+    "to": ":is(.abyss-tg-body, .abyss-tg-deadline-marker, .abyss-mg-block-dot, .abyss-mg-span-segment, .abyss-mg-plain, .abyss-mg-deadline-marker) .abyss-status-marker svg"
+  },
+  {
+    "from": ".abyss-tg-body .abyss-status-marker,\n.abyss-tg-deadline-marker .abyss-status-marker,\n.abyss-mg-block-dot .abyss-status-marker,\n.abyss-mg-span-segment .abyss-status-marker,\n.abyss-mg-plain .abyss-status-marker,\n.abyss-mg-deadline-marker .abyss-status-marker",
+    "to": ":is(.abyss-tg-body, .abyss-tg-deadline-marker, .abyss-mg-block-dot, .abyss-mg-span-segment, .abyss-mg-plain, .abyss-mg-deadline-marker) .abyss-status-marker"
+  },
+  {
+    "from": ".abyss-dep-row:hover .abyss-dep-remove,\n.abyss-dep-row:focus-within .abyss-dep-remove,\n.abyss-dep-row.is-unavailable .abyss-dep-remove",
+    "to": ".abyss-dep-row:is(:hover, :focus-within, .is-unavailable) .abyss-dep-remove"
+  },
+  {
+    "from": ".abyss-tg-block-head .abyss-status-marker,\n.abyss-tg-body .abyss-status-marker,\n.abyss-mg-block-dot .abyss-status-marker,\n.abyss-mg-span-segment .abyss-status-marker,\n.abyss-mg-plain .abyss-status-marker",
+    "to": ":is(.abyss-tg-block-head, .abyss-tg-body, .abyss-mg-block-dot, .abyss-mg-span-segment, .abyss-mg-plain) .abyss-status-marker"
+  },
+  {
+    "from": ".tasksCalendar .task.dailyNote .description::before,\n.tasksCalendar .task.done .description::before,\n.tasksCalendar .task.cancelled .description::before",
+    "to": ".tasksCalendar .task:is(.dailyNote, .done, .cancelled) .description::before"
+  },
+  {
+    "from": ".tasksCalendar.mini .gridHead,\n.tasksCalendar.mini .cellName,\n.tasksCalendar.mini .task,\n.tasksCalendar.mini .wrapperButton",
+    "to": ".tasksCalendar.mini :is(.gridHead, .cellName, .task, .wrapperButton)"
+  },
+  {
+    "from": "body.is-mobile .tasksCalendar .gridHead,\nbody.is-mobile .tasksCalendar .cellName,\nbody.is-mobile .tasksCalendar .task",
+    "to": "body.is-mobile .tasksCalendar :is(.gridHead, .cellName, .task)"
+  },
+  {
+    "from": "body.is-mobile .tasksCalendar[view='week']:not(.style4) .cellName,\nbody.is-mobile .tasksCalendar[view='week']:not(.style4) .task",
+    "to": "body.is-mobile .tasksCalendar[view='week']:not(.style4) :is(.cellName, .task)"
+  },
+  {
+    "from": ".abyss-layout--tasks > .abyss-center-shell > .abyss-center > .abyss-center-header,\n.abyss-layout--search > .abyss-center-shell > .abyss-center > .abyss-center-header",
+    "to": ":is(.abyss-layout--tasks, .abyss-layout--search) > .abyss-center-shell > .abyss-center > .abyss-center-header"
+  },
+  {
+    "from": ".abyss-status-popover-row .abyss-status-marker[data-status-type='in-progress'],\n.menu-item-icon .abyss-status-marker[data-status-type='in-progress']",
+    "to": ":is(.abyss-status-popover-row, .menu-item-icon) .abyss-status-marker[data-status-type='in-progress']"
+  },
+  {
+    "from": ".abyss-tg-block:hover,\n.abyss-tg-span:hover,\n.abyss-tg-plain:hover,\n.abyss-tg-block-continuation:hover,\n.abyss-tg-span-continuation:hover,\n.abyss-mg-block-dot:hover,\n.abyss-mg-span-segment:hover,\n.abyss-mg-plain:hover,\n.abyss-mg-deadline-marker:hover",
+    "to": ":is(.abyss-tg-block, .abyss-tg-span, .abyss-tg-plain, .abyss-tg-block-continuation, .abyss-tg-span-continuation, .abyss-mg-block-dot, .abyss-mg-span-segment, .abyss-mg-plain, .abyss-mg-deadline-marker):hover"
+  },
+  {
+    "from": ".tasksCalendar .statisticPopup li[title]:hover::after,\n.tasksCalendar .statisticPopup li[title]:active::after",
+    "to": ".tasksCalendar .statisticPopup li[title]:is(:hover, :active)::after"
+  },
+  {
+    "from": ".abyss-tg-quick-add > .abyss-capture-surface,\n.abyss-tg-allday-quick-add > .abyss-capture-surface,\n.abyss-mg-quick-add > .abyss-capture-surface",
+    "to": ":is(.abyss-tg-quick-add, .abyss-tg-allday-quick-add, .abyss-mg-quick-add) > .abyss-capture-surface"
+  },
+  {
+    "from": ".tasksCalendar button:nth-child(2),\n.tasksCalendar button:nth-child(3),\n.tasksCalendar button:nth-child(6)",
+    "to": ".tasksCalendar button:is(:nth-child(2), :nth-child(3), :nth-child(6))"
+  },
+  {
+    "from": ".tasksCalendar button:nth-child(3),\n.tasksCalendar button:nth-child(4),\n.tasksCalendar button:nth-child(7)",
+    "to": ".tasksCalendar button:is(:nth-child(3), :nth-child(4), :nth-child(7))"
+  },
+  {
+    "from": ".abyss-tg-root--week .abyss-tg-cell-items > .abyss-tg-body,\n.abyss-tg-root--week .abyss-tg-cell-items > .abyss-tg-deadline-marker",
+    "to": ".abyss-tg-root--week .abyss-tg-cell-items > :is(.abyss-tg-body, .abyss-tg-deadline-marker)"
+  },
+  {
+    "from": ".abyss-mg-cell-items > .abyss-mg-plain,\n.abyss-mg-cell-items > .abyss-mg-block-dot,\n.abyss-mg-cell-items > .abyss-mg-deadline-marker",
+    "to": ".abyss-mg-cell-items > :is(.abyss-mg-plain, .abyss-mg-block-dot, .abyss-mg-deadline-marker)"
+  },
+  {
+    "from": ".abyss-tg-quick-add .abyss-capture-input,\n.abyss-tg-allday-quick-add .abyss-capture-input,\n.abyss-mg-quick-add .abyss-capture-input",
+    "to": ":is(.abyss-tg-quick-add, .abyss-tg-allday-quick-add, .abyss-mg-quick-add) .abyss-capture-input"
+  },
+  {
+    "from": ".tasksCalendar[view='list'] .list .task .note,\n.tasksCalendar[view='list'] .list .task .description",
+    "to": ".tasksCalendar[view='list'] .list .task :is(.note, .description)"
+  },
+  {
+    "from": ".abyss-tg-block.is-dragging,\n.abyss-tg-body.is-dragging,\n.abyss-mg-block-dot.is-dragging,\n.abyss-mg-plain.is-dragging",
+    "to": ":is(.abyss-tg-block, .abyss-tg-body, .abyss-mg-block-dot, .abyss-mg-plain).is-dragging"
+  },
+  {
+    "from": ".tasksCalendar .task.cancelled .description,\n.tasksCalendar .task.done .description",
+    "to": ".tasksCalendar .task:is(.cancelled, .done) .description"
+  },
+  {
+    "from": ".abyss-dep-search-option.is-active,\n.abyss-dep-search-option:hover",
+    "to": ".abyss-dep-search-option:is(.is-active, :hover)"
+  },
+  {
+    "from": ".abyss-recurrence-editor input[type='number'],\n.abyss-recurrence-editor input[type='text']",
+    "to": ".abyss-recurrence-editor input:is([type='number'], [type='text'])"
+  },
+  {
+    "from": ".tasksCalendar[view='month'] .prevMonth,\n.tasksCalendar[view='month'] .nextMonth",
+    "to": ".tasksCalendar[view='month'] :is(.prevMonth, .nextMonth)"
+  },
+  {
+    "from": ".tasksCalendar.mini .wrappers::before,\n.tasksCalendar.mini .grid::before",
+    "to": ".tasksCalendar.mini :is(.wrappers, .grid)::before"
+  },
+  {
+    "from": ".tasksCalendar.filter .task.done,\n.tasksCalendar.filter .task.cancelled",
+    "to": ".tasksCalendar.filter .task:is(.done, .cancelled)"
+  },
+  {
+    "from": ".tasksCalendar .task.cancelled .note,\n.tasksCalendar .task.done .note",
+    "to": ".tasksCalendar .task:is(.cancelled, .done) .note"
+  },
+  {
+    "from": ".abyss-tg-body-title.is-cancelled,\n.abyss-tg-deadline-title.is-cancelled,\n.abyss-mg-item-title.is-cancelled",
+    "to": ":is(.abyss-tg-body-title, .abyss-tg-deadline-title, .abyss-mg-item-title).is-cancelled"
+  },
+  {
+    "from": ".abyss-task-card-main-row > .abyss-status-marker,\n  .abyss-task-card-main-row > .abyss-status-control",
+    "to": ".abyss-task-card-main-row > :is(.abyss-status-marker, .abyss-status-control)"
+  },
+  {
+    "from": ".tasksCalendar .statisticPopup::before,\n.tasksCalendar .weekViewContext::before",
+    "to": ".tasksCalendar :is(.statisticPopup, .weekViewContext)::before"
+  },
+  {
+    "from": ".tasksCalendar.mini .statisticPopup li,\n.tasksCalendar.mini .weekViewContext li",
+    "to": ".tasksCalendar.mini :is(.statisticPopup, .weekViewContext) li"
+  },
+  {
+    "from": ".abyss-chip-scheduled:not(.abyss-chip-empty),\n.abyss-chip-start:not(.abyss-chip-empty)",
+    "to": ":is(.abyss-chip-scheduled, .abyss-chip-start):not(.abyss-chip-empty)"
+  },
+  {
+    "from": ".abyss-tag-dropdown-opt:hover,\n.abyss-tag-dropdown-opt.is-active",
+    "to": ".abyss-tag-dropdown-opt:is(:hover, .is-active)"
+  },
+  {
+    "from": ".tasksCalendar .statisticPopup.active,\n.tasksCalendar .weekViewContext.active",
+    "to": ".tasksCalendar :is(.statisticPopup, .weekViewContext).active"
+  },
+  {
+    "from": ".abyss-tag-group-header.abyss-reorder-target,\n.abyss-tag-leaf.abyss-reorder-target",
+    "to": ":is(.abyss-tag-group-header, .abyss-tag-leaf).abyss-reorder-target"
+  },
+  {
+    "from": ".tasksCalendar .task.cancelled,\n.tasksCalendar .task.done",
+    "to": ".tasksCalendar .task:is(.cancelled, .done)"
+  },
+  {
+    "from": ".abyss-tg-body-title.is-done,\n.abyss-tg-deadline-title.is-done,\n.abyss-mg-item-title.is-done",
+    "to": ":is(.abyss-tg-body-title, .abyss-tg-deadline-title, .abyss-mg-item-title).is-done"
+  },
+  {
+    "from": ".abyss-cal-body .grid,\n.abyss-cal-body .list",
+    "to": ".abyss-cal-body :is(.grid, .list)"
+  },
+  {
+    "from": ".tasksCalendar .statisticPopup,\n.tasksCalendar .weekViewContext",
+    "to": ".tasksCalendar :is(.statisticPopup, .weekViewContext)"
+  },
+  {
+    "from": ".abyss-inspector-back:focus-visible,\n.abyss-dep-title:focus-visible",
+    "to": ":is(.abyss-inspector-back, .abyss-dep-title):focus-visible"
+  },
+  {
+    "from": ".abyss-tg-block-title.is-cancelled,\n.abyss-tg-block-continuation-title.is-cancelled",
+    "to": ":is(.abyss-tg-block-title, .abyss-tg-block-continuation-title).is-cancelled"
+  },
+  {
+    "from": ".abyss-month-picker-btn.is-active,\n.abyss-year-picker-btn.is-active",
+    "to": ":is(.abyss-month-picker-btn, .abyss-year-picker-btn).is-active"
+  },
+  {
+    "from": ".abyss-tg-block-title.is-done,\n.abyss-tg-block-continuation-title.is-done",
+    "to": ":is(.abyss-tg-block-title, .abyss-tg-block-continuation-title).is-done"
+  },
+  {
+    "from": ".abyss-recurrence-delete-warning[hidden],\n.abyss-recurrence-status[hidden]",
+    "to": ":is(.abyss-recurrence-delete-warning, .abyss-recurrence-status)[hidden]"
+  },
+  {
+    "from": ".abyss-dep-lock svg,\n.abyss-dep-remove svg,\n.abyss-dep-search-field svg",
+    "to": ":is(.abyss-dep-lock, .abyss-dep-remove, .abyss-dep-search-field) svg"
+  },
+  {
+    "from": ".abyss-cal-nav-month:hover,\n.abyss-cal-nav-year:hover",
+    "to": ":is(.abyss-cal-nav-month, .abyss-cal-nav-year):hover"
+  },
+  {
+    "from": ".abyss-month-picker-btn:hover,\n.abyss-year-picker-btn:hover",
+    "to": ":is(.abyss-month-picker-btn, .abyss-year-picker-btn):hover"
+  },
+  {
+    "from": ".abyss-task-date-part:hover,\n.abyss-task-time-part:hover",
+    "to": ":is(.abyss-task-date-part, .abyss-task-time-part):hover"
+  },
+  {
+    "from": ".abyss-project-status-btn:hover,\n.abyss-project-open-btn:hover",
+    "to": ":is(.abyss-project-status-btn, .abyss-project-open-btn):hover"
+  }
+]

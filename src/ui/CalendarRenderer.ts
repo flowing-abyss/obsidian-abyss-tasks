@@ -70,32 +70,32 @@ interface CalendarCallbacks {
 }
 
 export class CalendarRenderer {
-  private readonly completionConfirmationAbortController = new AbortController();
-  private toolbar: Toolbar | null = null;
-  private activeView: BaseView | null = null;
-  private activeViewType: ActiveView;
-  private viewContainer: HTMLElement | null = null;
-  private selectedDate: ReturnType<typeof window.moment>;
-  private filterActive = false;
-  private overdueHighlightActive = false;
-  private projectionIssues: readonly CalendarProjectionIssue[] = [];
-  private activeStatGroup: string | null = null;
-  private unsubscribe: (() => void) | null = null;
-  private recurrenceEditorCleanup: (() => void) | null = null;
-  private statusMenuCleanup: (() => void) | null = null;
-  private readonly projectionDiagnosticOwner: CalendarProjectionDiagnosticOwner;
-  private readonly forecastMenuOwner: ForecastContextMenuOwner;
-  private readonly taskModal: TaskModal;
-  private taskInputModal: TaskInputModal | null = null;
-  private readonly rootEl: HTMLElement;
-  private config: ResolvedConfig;
-  private readonly app: App;
-  private readonly queries: TaskQueryApi;
-  private readonly tasks: TaskApplicationApi;
-  private readonly statusRegistry: StatusRegistry;
-  private readonly taskPrefix: string;
-  private readonly recurrencePolicy: RecurrencePolicy;
-  private readonly interactionOwnership: InteractionOwnershipPort;
+  private readonly completionConfirmationAbortController_abyssPrivate = new AbortController();
+  private toolbar_abyssPrivate: Toolbar | null = null;
+  private activeView_abyssPrivate: BaseView | null = null;
+  private activeViewType_abyssPrivate: ActiveView;
+  private viewContainer_abyssPrivate: HTMLElement | null = null;
+  private selectedDate_abyssPrivate: ReturnType<typeof window.moment>;
+  private filterActive_abyssPrivate = false;
+  private overdueHighlightActive_abyssPrivate = false;
+  private projectionIssues_abyssPrivate: readonly CalendarProjectionIssue[] = [];
+  private activeStatGroup_abyssPrivate: string | null = null;
+  private unsubscribe_abyssPrivate: (() => void) | null = null;
+  private recurrenceEditorCleanup_abyssPrivate: (() => void) | null = null;
+  private statusMenuCleanup_abyssPrivate: (() => void) | null = null;
+  private readonly projectionDiagnosticOwner_abyssPrivate: CalendarProjectionDiagnosticOwner;
+  private readonly forecastMenuOwner_abyssPrivate: ForecastContextMenuOwner;
+  private readonly taskModal_abyssPrivate: TaskModal;
+  private taskInputModal_abyssPrivate: TaskInputModal | null = null;
+  private readonly rootEl_abyssPrivate: HTMLElement;
+  private config_abyssPrivate: ResolvedConfig;
+  private readonly app_abyssPrivate: App;
+  private readonly queries_abyssPrivate: TaskQueryApi;
+  private readonly tasks_abyssPrivate: TaskApplicationApi;
+  private readonly statusRegistry_abyssPrivate: StatusRegistry;
+  private readonly taskPrefix_abyssPrivate: string;
+  private readonly recurrencePolicy_abyssPrivate: RecurrencePolicy;
+  private readonly interactionOwnership_abyssPrivate: InteractionOwnershipPort;
 
   constructor(
     ...args: [
@@ -123,21 +123,23 @@ export class CalendarRenderer {
       commentTimeContext,
       interactionOwnership = noInteractionOwnership,
     ] = args;
-    this.rootEl = rootEl;
-    this.config = config;
-    this.app = app;
-    this.queries = queries;
-    this.tasks = tasks;
-    this.statusRegistry = statusRegistry;
-    this.taskPrefix = taskPrefix;
-    this.recurrencePolicy = recurrencePolicy;
-    this.interactionOwnership = interactionOwnership;
-    this.projectionDiagnosticOwner = createCalendarProjectionDiagnosticOwner(rootEl.ownerDocument);
-    this.forecastMenuOwner = createForecastContextMenuOwner(
+    this.rootEl_abyssPrivate = rootEl;
+    this.config_abyssPrivate = config;
+    this.app_abyssPrivate = app;
+    this.queries_abyssPrivate = queries;
+    this.tasks_abyssPrivate = tasks;
+    this.statusRegistry_abyssPrivate = statusRegistry;
+    this.taskPrefix_abyssPrivate = taskPrefix;
+    this.recurrencePolicy_abyssPrivate = recurrencePolicy;
+    this.interactionOwnership_abyssPrivate = interactionOwnership;
+    this.projectionDiagnosticOwner_abyssPrivate = createCalendarProjectionDiagnosticOwner(
+      rootEl.ownerDocument,
+    );
+    this.forecastMenuOwner_abyssPrivate = createForecastContextMenuOwner(
       rootEl.ownerDocument,
       interactionOwnership,
     );
-    this.taskModal = new TaskModal(
+    this.taskModal_abyssPrivate = new TaskModal(
       app,
       statusRegistry,
       undefined,
@@ -146,15 +148,15 @@ export class CalendarRenderer {
       commentTimeContext,
       interactionOwnership,
     );
-    this.activeViewType = config.defaultView;
-    if (this.activeViewType === 'week') {
-      this.selectedDate = resolveWeekStartPosition(
+    this.activeViewType_abyssPrivate = config.defaultView;
+    if (this.activeViewType_abyssPrivate === 'week') {
+      this.selectedDate_abyssPrivate = resolveWeekStartPosition(
         config.startPosition,
         config.firstDayOfWeek,
         window.moment(),
       );
     } else {
-      this.selectedDate =
+      this.selectedDate_abyssPrivate =
         config.startPosition.length > 0
           ? window.moment(config.startPosition, 'YYYY-MM').date(1)
           : window.moment().date(1);
@@ -162,134 +164,144 @@ export class CalendarRenderer {
   }
 
   mount(): void {
-    this.rootEl.setAttribute('view', this.activeViewType);
-    if (this.config.style.length > 0) {
-      this.rootEl.addClass(this.config.style);
+    this.rootEl_abyssPrivate.setAttribute('view', this.activeViewType_abyssPrivate);
+    if (this.config_abyssPrivate.style.length > 0) {
+      this.rootEl_abyssPrivate.addClass(this.config_abyssPrivate.style);
     }
 
     // Wrap everything in a span (matches existing CSS selectors)
-    const span = this.rootEl.createSpan();
+    const span = this.rootEl_abyssPrivate.createSpan();
 
-    this.toolbar = new Toolbar(span, VIEWS, {
+    this.toolbar_abyssPrivate = new Toolbar(span, VIEWS, {
       onPrev: () => {
-        this.navigate(-1);
+        this.navigate_abyssPrivate(-1);
       },
       onNext: () => {
-        this.navigate(1);
+        this.navigate_abyssPrivate(1);
       },
       onToday: () => {
-        this.goToday();
+        this.goToday_abyssPrivate();
       },
       onViewSwitch: (id) => {
-        this.switchView(id as ActiveView);
+        this.switchView_abyssPrivate(id as ActiveView);
       },
       onFilterToggle: () => {
-        this.filterActive = !this.filterActive;
-        this.rootEl.classList.toggle('filter', this.filterActive);
-        this.updateToolbar();
+        this.filterActive_abyssPrivate = !this.filterActive_abyssPrivate;
+        this.rootEl_abyssPrivate.classList.toggle('filter', this.filterActive_abyssPrivate);
+        this.updateToolbar_abyssPrivate();
       },
       onOverdueHighlight: () => {
-        this.overdueHighlightActive = !this.overdueHighlightActive;
-        this.updateToolbar();
+        this.overdueHighlightActive_abyssPrivate = !this.overdueHighlightActive_abyssPrivate;
+        this.updateToolbar_abyssPrivate();
       },
       onStatFilter: (group) => {
-        this.activeStatGroup = group;
-        this.applyStatFilter(group);
+        this.activeStatGroup_abyssPrivate = group;
+        this.applyStatFilter_abyssPrivate(group);
       },
       onStyleChange: (style) => {
-        if (this.config.style.length > 0) {
-          this.rootEl.removeClass(this.config.style);
+        if (this.config_abyssPrivate.style.length > 0) {
+          this.rootEl_abyssPrivate.removeClass(this.config_abyssPrivate.style);
         }
-        this.config = { ...this.config, style };
-        this.rootEl.addClass(style);
-        this.updateToolbar();
+        this.config_abyssPrivate = { ...this.config_abyssPrivate, style };
+        this.rootEl_abyssPrivate.addClass(style);
+        this.updateToolbar_abyssPrivate();
       },
     });
 
-    this.viewContainer = span.createDiv();
-    this.renderView();
+    this.viewContainer_abyssPrivate = span.createDiv();
+    this.renderView_abyssPrivate();
 
-    this.unsubscribe = this.queries.subscribe(() => {
-      this.dismissStatusMenu();
-      this.forecastMenuOwner.dismiss();
-      this.dismissRecurrenceEditor();
-      const tasks = this.calendarTasks();
-      const viewContainer = this.viewContainer;
+    this.unsubscribe_abyssPrivate = this.queries_abyssPrivate.subscribe(() => {
+      this.dismissStatusMenu_abyssPrivate();
+      this.forecastMenuOwner_abyssPrivate.dismiss();
+      this.dismissRecurrenceEditor_abyssPrivate();
+      const tasks = this.calendarTasks_abyssPrivate();
+      const viewContainer = this.viewContainer_abyssPrivate;
       if (viewContainer === null) return;
-      this.activeView?.patch(viewContainer, tasks, this.buildConfig());
-      this.projectionDiagnosticOwner.update(viewContainer, this.projectionIssues);
-      this.updateToolbar();
+      this.activeView_abyssPrivate?.patch(viewContainer, tasks, this.buildConfig_abyssPrivate());
+      this.projectionDiagnosticOwner_abyssPrivate.update(
+        viewContainer,
+        this.projectionIssues_abyssPrivate,
+      );
+      this.updateToolbar_abyssPrivate();
     });
   }
 
-  private navigate(dir: -1 | 1): void {
-    if (this.activeViewType === 'month' || this.activeViewType === 'list') {
-      this.selectedDate = window.moment(this.selectedDate).add(dir, 'months');
+  private navigate_abyssPrivate(dir: -1 | 1): void {
+    if (
+      this.activeViewType_abyssPrivate === 'month' ||
+      this.activeViewType_abyssPrivate === 'list'
+    ) {
+      this.selectedDate_abyssPrivate = window
+        .moment(this.selectedDate_abyssPrivate)
+        .add(dir, 'months');
     } else {
-      this.selectedDate = window.moment(this.selectedDate).add(dir * 7, 'days');
+      this.selectedDate_abyssPrivate = window
+        .moment(this.selectedDate_abyssPrivate)
+        .add(dir * 7, 'days');
     }
-    this.renderView();
+    this.renderView_abyssPrivate();
   }
 
-  private goToday(): void {
-    if (this.activeViewType === 'week') {
-      this.selectedDate = window.moment();
+  private goToday_abyssPrivate(): void {
+    if (this.activeViewType_abyssPrivate === 'week') {
+      this.selectedDate_abyssPrivate = window.moment();
     } else {
-      this.selectedDate = window.moment().date(1);
+      this.selectedDate_abyssPrivate = window.moment().date(1);
     }
-    this.renderView();
+    this.renderView_abyssPrivate();
   }
 
-  private switchView(type: ActiveView): void {
-    if (this.activeViewType === type) return;
-    this.dismissStatusMenu();
-    this.dismissRecurrenceEditor();
-    this.activeViewType = type;
-    this.rootEl.setAttribute('view', type);
-    this.activeView?.destroy();
-    this.activeView = null;
-    this.renderView();
+  private switchView_abyssPrivate(type: ActiveView): void {
+    if (this.activeViewType_abyssPrivate === type) return;
+    this.dismissStatusMenu_abyssPrivate();
+    this.dismissRecurrenceEditor_abyssPrivate();
+    this.activeViewType_abyssPrivate = type;
+    this.rootEl_abyssPrivate.setAttribute('view', type);
+    this.activeView_abyssPrivate?.destroy();
+    this.activeView_abyssPrivate = null;
+    this.renderView_abyssPrivate();
   }
 
-  private buildCallbacks(): CalendarCallbacks {
+  private buildCallbacks_abyssPrivate(): CalendarCallbacks {
     return {
       onToggle: (task) => {
-        this.toggleCalendarTask(task);
+        this.toggleCalendarTask_abyssPrivate(task);
       },
       onCellClick: (date: string) => {
-        this.openAddTaskModal(date);
+        this.openAddTaskModal_abyssPrivate(date);
       },
       onWeekClick: (weekNr: string, year: string) => {
-        this.openWeek(weekNr, year);
+        this.openWeek_abyssPrivate(weekNr, year);
       },
       onDateClick: (date: string) => {
-        this.openAddTaskModal(date);
+        this.openAddTaskModal_abyssPrivate(date);
       },
       onTaskBodyContextMenu: (_event, task, anchor) => {
         if (isForecastCalendarTask(task)) return;
-        this.openRecurrenceEditor(anchor, task);
+        this.openRecurrenceEditor_abyssPrivate(anchor, task);
       },
       onContextMenu: (event, task) => {
-        this.openTaskStatusMenu(event, task);
+        this.openTaskStatusMenu_abyssPrivate(event, task);
       },
     };
   }
 
-  private readonly dependenciesFor: TaskDependencyLookup = (task) => {
+  private readonly dependenciesFor_abyssPrivate: TaskDependencyLookup = (task) => {
     const target = calendarMutationTarget(task);
-    return target === undefined ? undefined : this.tasks.queries.dependencies(target);
+    return target === undefined ? undefined : this.tasks_abyssPrivate.queries.dependencies(target);
   };
 
-  private openWeek(weekNumber: string, year: string): void {
-    this.selectedDate = window
+  private openWeek_abyssPrivate(weekNumber: string, year: string): void {
+    this.selectedDate_abyssPrivate = window
       .moment()
       .isoWeekYear(parseInt(year, 10))
       .isoWeek(parseInt(weekNumber, 10))
       .startOf('isoWeek');
-    this.switchView('week');
+    this.switchView_abyssPrivate('week');
   }
 
-  private toggleCalendarTask(task: TaskSnapshot): void {
+  private toggleCalendarTask_abyssPrivate(task: TaskSnapshot): void {
     if (isForecastCalendarTask(task)) return;
     const target = calendarMutationTarget(task);
     if (target == null) return;
@@ -297,47 +309,52 @@ export class CalendarRenderer {
       requestTaskCompletion(
         task,
         () =>
-          this.tasks.execute({ type: 'toggle-completion', target }).then(presentTaskCommandResult),
-        this.interactionOwnership,
-        this.completionConfirmationAbortController.signal,
+          this.tasks_abyssPrivate
+            .execute({ type: 'toggle-completion', target })
+            .then(presentTaskCommandResult),
+        this.interactionOwnership_abyssPrivate,
+        this.completionConfirmationAbortController_abyssPrivate.signal,
       ),
       'Could not update task completion',
     );
   }
 
-  private openTaskStatusMenu(event: MouseEvent, task: TaskSnapshot): void {
+  private openTaskStatusMenu_abyssPrivate(event: MouseEvent, task: TaskSnapshot): void {
     if (isForecastCalendarTask(task)) return;
     const target = calendarMutationTarget(task);
     if (target == null) return;
-    this.dismissStatusMenu();
+    this.dismissStatusMenu_abyssPrivate();
     const cleanup = (): void => {
       statusMenu.close();
     };
     const statusMenu = showStatusMenuAt(event, {
       task,
-      registry: this.statusRegistry,
+      registry: this.statusRegistry_abyssPrivate,
       onPickStatus: (symbol) => {
-        this.pickTaskStatus(task, target, symbol);
+        this.pickTaskStatus_abyssPrivate(task, target, symbol);
       },
       onPickPriority: (priority) => {
-        this.pickTaskPriority(task, priority);
+        this.pickTaskPriority_abyssPrivate(task, priority);
       },
       onClose: () => {
-        if (this.statusMenuCleanup === cleanup) this.statusMenuCleanup = null;
+        if (this.statusMenuCleanup_abyssPrivate === cleanup)
+          this.statusMenuCleanup_abyssPrivate = null;
       },
-      interactionOwnership: this.interactionOwnership,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
     });
-    this.statusMenuCleanup = cleanup;
+    this.statusMenuCleanup_abyssPrivate = cleanup;
   }
 
-  private pickTaskStatus(
+  private pickTaskStatus_abyssPrivate(
     task: TaskSnapshot,
     target: NonNullable<ReturnType<typeof calendarMutationTarget>>,
     symbol: string,
   ): void {
     const apply = (): Promise<void> =>
-      this.tasks.execute({ type: 'set-status', target, symbol }).then(presentTaskCommandResult);
-    if (this.statusRegistry.bySymbol(symbol)?.type !== 'done') {
+      this.tasks_abyssPrivate
+        .execute({ type: 'set-status', target, symbol })
+        .then(presentTaskCommandResult);
+    if (this.statusRegistry_abyssPrivate.bySymbol(symbol)?.type !== 'done') {
       runAsyncAction(apply(), 'Could not update task status');
       return;
     }
@@ -345,27 +362,30 @@ export class CalendarRenderer {
       requestTaskCompletion(
         task,
         apply,
-        this.interactionOwnership,
-        this.completionConfirmationAbortController.signal,
+        this.interactionOwnership_abyssPrivate,
+        this.completionConfirmationAbortController_abyssPrivate.signal,
       ),
       'Could not update task completion',
     );
   }
 
-  private pickTaskPriority(task: TaskSnapshot, priority: TaskSnapshot['priority']): void {
+  private pickTaskPriority_abyssPrivate(
+    task: TaskSnapshot,
+    priority: TaskSnapshot['priority'],
+  ): void {
     const command = calendarPatchCommand(task, {
       priority: { type: 'set', value: priority },
     });
     if (command == null) return;
     runAsyncAction(
-      this.tasks.execute(command).then(presentTaskCommandResult),
+      this.tasks_abyssPrivate.execute(command).then(presentTaskCommandResult),
       'Could not update task priority',
     );
   }
 
-  private openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void {
+  private openRecurrenceEditor_abyssPrivate(anchor: HTMLElement, task: TaskSnapshot): void {
     if (isForecastCalendarTask(task)) return;
-    this.dismissRecurrenceEditor();
+    this.dismissRecurrenceEditor_abyssPrivate();
     const occurrence = calendarOccurrenceForTask(task);
     const source = occurrence?.source ?? {
       root: task,
@@ -378,12 +398,12 @@ export class CalendarRenderer {
     const handle = mountAnchoredRecurrenceEditor({
       anchor,
       source,
-      policy: this.recurrencePolicy,
+      policy: this.recurrencePolicy_abyssPrivate,
       ownershipConflict: hasOtherCalendarRecurrenceOwner(source),
       onSubmit: (patch) => {
         const command = calendarPatchCommand(task, patch);
         return command != null
-          ? this.tasks.execute(command)
+          ? this.tasks_abyssPrivate.execute(command)
           : Promise.resolve({
               type: 'io-error',
               cause: 'unsupported-calendar-patch',
@@ -391,29 +411,29 @@ export class CalendarRenderer {
             });
       },
       onClose: () => {
-        if (this.recurrenceEditorCleanup === cleanup) {
-          this.recurrenceEditorCleanup = null;
+        if (this.recurrenceEditorCleanup_abyssPrivate === cleanup) {
+          this.recurrenceEditorCleanup_abyssPrivate = null;
         }
       },
-      interactionOwnership: this.interactionOwnership,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
     });
-    this.recurrenceEditorCleanup = cleanup;
+    this.recurrenceEditorCleanup_abyssPrivate = cleanup;
   }
 
-  private openForecastRecurrenceEditor(source: CalendarTaskSource): void {
-    this.dismissRecurrenceEditor();
+  private openForecastRecurrenceEditor_abyssPrivate(source: CalendarTaskSource): void {
+    this.dismissRecurrenceEditor_abyssPrivate();
     const cleanup = (): void => {
       handle.dismiss();
     };
     const handle = mountAnchoredRecurrenceEditor({
-      anchor: this.rootEl,
+      anchor: this.rootEl_abyssPrivate,
       source,
-      policy: this.recurrencePolicy,
+      policy: this.recurrencePolicy_abyssPrivate,
       ownershipConflict: hasOtherCalendarRecurrenceOwner(source),
       onSubmit: (patch) => {
         const command = calendarSourcePatchCommand(source, patch);
         return command != null
-          ? this.tasks.execute(command)
+          ? this.tasks_abyssPrivate.execute(command)
           : Promise.resolve({
               type: 'io-error',
               cause: 'unsupported-calendar-patch',
@@ -421,148 +441,163 @@ export class CalendarRenderer {
             });
       },
       onClose: () => {
-        if (this.recurrenceEditorCleanup === cleanup) {
-          this.recurrenceEditorCleanup = null;
+        if (this.recurrenceEditorCleanup_abyssPrivate === cleanup) {
+          this.recurrenceEditorCleanup_abyssPrivate = null;
         }
       },
-      interactionOwnership: this.interactionOwnership,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
     });
-    this.recurrenceEditorCleanup = cleanup;
+    this.recurrenceEditorCleanup_abyssPrivate = cleanup;
   }
 
-  private openForecastSource(source: CalendarTaskSource, referenceDate: LocalDate): void {
-    this.taskModal.open(source.root, `Forecast for ${referenceDate}`);
+  private openForecastSource_abyssPrivate(
+    source: CalendarTaskSource,
+    referenceDate: LocalDate,
+  ): void {
+    this.taskModal_abyssPrivate.open(source.root, `Forecast for ${referenceDate}`);
   }
 
-  private dismissRecurrenceEditor(): void {
-    const cleanup = this.recurrenceEditorCleanup;
-    this.recurrenceEditorCleanup = null;
+  private dismissRecurrenceEditor_abyssPrivate(): void {
+    const cleanup = this.recurrenceEditorCleanup_abyssPrivate;
+    this.recurrenceEditorCleanup_abyssPrivate = null;
     cleanup?.();
   }
 
-  private buildConfig(): ResolvedConfig {
+  private buildConfig_abyssPrivate(): ResolvedConfig {
     return {
-      ...this.config,
+      ...this.config_abyssPrivate,
       startPosition:
-        this.activeViewType === 'week'
-          ? firstVisibleWeekDate(this.selectedDate, this.config.firstDayOfWeek)
-          : this.selectedDate.format('YYYY-MM'),
+        this.activeViewType_abyssPrivate === 'week'
+          ? firstVisibleWeekDate(
+              this.selectedDate_abyssPrivate,
+              this.config_abyssPrivate.firstDayOfWeek,
+            )
+          : this.selectedDate_abyssPrivate.format('YYYY-MM'),
     };
   }
 
-  private calendarTasks(): TaskSnapshot[] {
-    if (this.activeViewType === 'list') {
-      this.projectionIssues = [];
-      return [...this.queries.list()];
+  private calendarTasks_abyssPrivate(): TaskSnapshot[] {
+    if (this.activeViewType_abyssPrivate === 'list') {
+      this.projectionIssues_abyssPrivate = [];
+      return [...this.queries_abyssPrivate.list()];
     }
-    const viewType = this.activeViewType === 'week' ? 'week' : 'month';
-    const dates = visibleCalendarDates(viewType, this.selectedDate, this.config.firstDayOfWeek);
+    const viewType = this.activeViewType_abyssPrivate === 'week' ? 'week' : 'month';
+    const dates = visibleCalendarDates(
+      viewType,
+      this.selectedDate_abyssPrivate,
+      this.config_abyssPrivate.firstDayOfWeek,
+    );
     const firstDate = dates[0];
     const lastDate = dates[dates.length - 1];
     if (firstDate === undefined || lastDate === undefined) return [];
-    const sources = this.queries.forCalendarProjection(dates.map(localDate));
+    const sources = this.queries_abyssPrivate.forCalendarProjection(dates.map(localDate));
     const projection = projectCalendarOccurrences(
       sources,
       { from: localDate(firstDate), to: localDate(lastDate) },
-      this.recurrencePolicy,
+      this.recurrencePolicy_abyssPrivate,
     );
-    this.projectionIssues = projection.issues;
+    this.projectionIssues_abyssPrivate = projection.issues;
     return projection.occurrences.map(taskSnapshotForCalendarOccurrence);
   }
 
-  private renderView(): void {
-    if (this.viewContainer == null) return;
-    this.dismissStatusMenu();
-    this.forecastMenuOwner.dismiss();
-    this.dismissRecurrenceEditor();
-    const tasks = this.calendarTasks();
-    const config = this.buildConfig();
-    const cb = this.buildCallbacks();
+  private renderView_abyssPrivate(): void {
+    if (this.viewContainer_abyssPrivate == null) return;
+    this.dismissStatusMenu_abyssPrivate();
+    this.forecastMenuOwner_abyssPrivate.dismiss();
+    this.dismissRecurrenceEditor_abyssPrivate();
+    const tasks = this.calendarTasks_abyssPrivate();
+    const config = this.buildConfig_abyssPrivate();
+    const cb = this.buildCallbacks_abyssPrivate();
 
     // Instantiate new view when type changes (callbacks are baked into constructor)
-    if (this.activeView == null || !this.isSameViewType()) {
-      this.activeView?.destroy();
-      if (this.activeViewType === 'month') {
-        this.activeView = new MonthView({
-          app: this.app,
+    if (this.activeView_abyssPrivate == null || !this.isSameViewType_abyssPrivate()) {
+      this.activeView_abyssPrivate?.destroy();
+      if (this.activeViewType_abyssPrivate === 'month') {
+        this.activeView_abyssPrivate = new MonthView({
+          app: this.app_abyssPrivate,
           onToggle: cb.onToggle,
-          dependenciesFor: this.dependenciesFor,
+          dependenciesFor: this.dependenciesFor_abyssPrivate,
           onCellClick: cb.onCellClick,
           onWeekClick: cb.onWeekClick,
           onTaskClick: () => {},
           onDrop: () => {},
           onOpenNote: (t) => {
-            runAsyncAction(openInFile(this.app, t), 'Could not open task note');
+            runAsyncAction(openInFile(this.app_abyssPrivate, t), 'Could not open task note');
           },
-          forecastMenuOwner: this.forecastMenuOwner,
+          forecastMenuOwner: this.forecastMenuOwner_abyssPrivate,
           onForecastClick: (source, referenceDate) => {
-            this.openForecastSource(source, referenceDate);
+            this.openForecastSource_abyssPrivate(source, referenceDate);
           },
           onForecastContextMenu: (source) => {
-            this.openForecastRecurrenceEditor(source);
+            this.openForecastRecurrenceEditor_abyssPrivate(source);
           },
-          statusRegistry: this.statusRegistry,
+          statusRegistry: this.statusRegistry_abyssPrivate,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
         });
-      } else if (this.activeViewType === 'week') {
-        this.activeView = new WeekView({
-          app: this.app,
+      } else if (this.activeViewType_abyssPrivate === 'week') {
+        this.activeView_abyssPrivate = new WeekView({
+          app: this.app_abyssPrivate,
           onToggle: cb.onToggle,
-          dependenciesFor: this.dependenciesFor,
+          dependenciesFor: this.dependenciesFor_abyssPrivate,
           onCellClick: cb.onCellClick,
           onTaskClick: () => {},
           onDrop: () => {},
           onOpenNote: (t) => {
-            runAsyncAction(openInFile(this.app, t), 'Could not open task note');
+            runAsyncAction(openInFile(this.app_abyssPrivate, t), 'Could not open task note');
           },
-          forecastMenuOwner: this.forecastMenuOwner,
+          forecastMenuOwner: this.forecastMenuOwner_abyssPrivate,
           onForecastClick: (source, referenceDate) => {
-            this.openForecastSource(source, referenceDate);
+            this.openForecastSource_abyssPrivate(source, referenceDate);
           },
           onForecastContextMenu: (source) => {
-            this.openForecastRecurrenceEditor(source);
+            this.openForecastRecurrenceEditor_abyssPrivate(source);
           },
-          statusRegistry: this.statusRegistry,
+          statusRegistry: this.statusRegistry_abyssPrivate,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
         });
       } else {
-        this.activeView = new ListView({
-          app: this.app,
+        this.activeView_abyssPrivate = new ListView({
+          app: this.app_abyssPrivate,
           onToggle: cb.onToggle,
-          dependenciesFor: this.dependenciesFor,
+          dependenciesFor: this.dependenciesFor_abyssPrivate,
           onDateClick: cb.onDateClick,
-          statusRegistry: this.statusRegistry,
+          statusRegistry: this.statusRegistry_abyssPrivate,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
         });
       }
     }
 
-    this.activeView.render(this.viewContainer, tasks, config);
-    this.projectionDiagnosticOwner.update(this.viewContainer, this.projectionIssues);
-    this.updateToolbar();
+    this.activeView_abyssPrivate.render(this.viewContainer_abyssPrivate, tasks, config);
+    this.projectionDiagnosticOwner_abyssPrivate.update(
+      this.viewContainer_abyssPrivate,
+      this.projectionIssues_abyssPrivate,
+    );
+    this.updateToolbar_abyssPrivate();
   }
 
-  private isSameViewType(): boolean {
-    if (this.activeView == null) return false;
-    if (this.activeViewType === 'month') return this.activeView instanceof MonthView;
-    if (this.activeViewType === 'week') return this.activeView instanceof WeekView;
-    return this.activeView instanceof ListView;
+  private isSameViewType_abyssPrivate(): boolean {
+    if (this.activeView_abyssPrivate == null) return false;
+    if (this.activeViewType_abyssPrivate === 'month')
+      return this.activeView_abyssPrivate instanceof MonthView;
+    if (this.activeViewType_abyssPrivate === 'week')
+      return this.activeView_abyssPrivate instanceof WeekView;
+    return this.activeView_abyssPrivate instanceof ListView;
   }
 
-  private updateToolbar(): void {
-    if (this.toolbar == null) return;
-    const tasks = this.queries.list();
+  private updateToolbar_abyssPrivate(): void {
+    if (this.toolbar_abyssPrivate == null) return;
+    const tasks = this.queries_abyssPrivate.list();
     const today = window.moment().format('YYYY-MM-DD');
-    this.toolbar.update({
-      currentView: this.activeViewType,
-      currentTitle: this.currentTitle(),
-      currentStyle: this.config.style,
-      filterActive: this.filterActive,
-      overdueHighlightActive: this.overdueHighlightActive,
-      activeStatGroup: this.activeStatGroup,
+    this.toolbar_abyssPrivate.update({
+      currentView: this.activeViewType_abyssPrivate,
+      currentTitle: this.currentTitle_abyssPrivate(),
+      currentStyle: this.config_abyssPrivate.style,
+      filterActive: this.filterActive_abyssPrivate,
+      overdueHighlightActive: this.overdueHighlightActive_abyssPrivate,
+      activeStatGroup: this.activeStatGroup_abyssPrivate,
       stats: {
         done: tasks.filter((t) => t.status === 'done').length,
         due: tasks.filter((t) => t.planning.due != null && t.status === 'open').length,
@@ -583,35 +618,37 @@ export class CalendarRenderer {
     });
   }
 
-  private currentTitle(): string {
-    if (this.activeViewType === 'week') {
-      return `Week ${this.selectedDate.format('w')} · ${this.selectedDate.format('YYYY')}`;
+  private currentTitle_abyssPrivate(): string {
+    if (this.activeViewType_abyssPrivate === 'week') {
+      return `Week ${this.selectedDate_abyssPrivate.format('w')} · ${this.selectedDate_abyssPrivate.format('YYYY')}`;
     }
-    return `${this.selectedDate.format('MMMM')} ${this.selectedDate.format('YYYY')}`;
+    return `${this.selectedDate_abyssPrivate.format('MMMM')} ${this.selectedDate_abyssPrivate.format('YYYY')}`;
   }
 
-  private applyStatFilter(group: string | null): void {
+  private applyStatFilter_abyssPrivate(group: string | null): void {
     // Remove all focus classes
-    Array.from(this.rootEl.classList)
+    Array.from(this.rootEl_abyssPrivate.classList)
       .filter((c) => c.startsWith('focus'))
       .forEach((c) => {
-        this.rootEl.classList.remove(c);
+        this.rootEl_abyssPrivate.classList.remove(c);
       });
     if (group !== null && group.length > 0) {
-      this.rootEl.classList.add(`focus${group.charAt(0).toUpperCase()}${group.slice(1)}`);
+      this.rootEl_abyssPrivate.classList.add(
+        `focus${group.charAt(0).toUpperCase()}${group.slice(1)}`,
+      );
     }
   }
 
-  private openAddTaskModal(date: string): void {
-    this.dismissTaskInputModal();
+  private openAddTaskModal_abyssPrivate(date: string): void {
+    this.dismissTaskInputModal_abyssPrivate();
     const modal = new TaskInputModal(
-      this.app,
+      this.app_abyssPrivate,
       async (text) => {
         const body = text.trim();
         if (body.length === 0) return;
-        const prefix = this.taskPrefix.trim();
+        const prefix = this.taskPrefix_abyssPrivate.trim();
         presentTaskCreationResult(
-          await this.tasks.execute({
+          await this.tasks_abyssPrivate.execute({
             type: 'create',
             destination: { type: 'configured-default' },
             markdownBody: prefix.length > 0 ? `${prefix} ${body}` : body,
@@ -619,37 +656,37 @@ export class CalendarRenderer {
           }),
         );
       },
-      this.interactionOwnership,
+      this.interactionOwnership_abyssPrivate,
       () => {
-        if (this.taskInputModal === modal) this.taskInputModal = null;
+        if (this.taskInputModal_abyssPrivate === modal) this.taskInputModal_abyssPrivate = null;
       },
     );
-    this.taskInputModal = modal;
+    this.taskInputModal_abyssPrivate = modal;
     modal.open();
   }
 
   destroy(): void {
-    this.completionConfirmationAbortController.abort();
-    this.projectionDiagnosticOwner.destroy();
-    this.forecastMenuOwner.dismiss();
-    this.dismissStatusMenu();
-    this.dismissRecurrenceEditor();
-    this.dismissTaskInputModal();
-    this.taskModal.close();
-    this.unsubscribe?.();
-    this.activeView?.destroy();
-    this.toolbar?.destroy();
-    this.rootEl.empty();
+    this.completionConfirmationAbortController_abyssPrivate.abort();
+    this.projectionDiagnosticOwner_abyssPrivate.destroy();
+    this.forecastMenuOwner_abyssPrivate.dismiss();
+    this.dismissStatusMenu_abyssPrivate();
+    this.dismissRecurrenceEditor_abyssPrivate();
+    this.dismissTaskInputModal_abyssPrivate();
+    this.taskModal_abyssPrivate.close();
+    this.unsubscribe_abyssPrivate?.();
+    this.activeView_abyssPrivate?.destroy();
+    this.toolbar_abyssPrivate?.destroy();
+    this.rootEl_abyssPrivate.empty();
   }
 
-  private dismissStatusMenu(): void {
-    this.statusMenuCleanup?.();
-    this.statusMenuCleanup = null;
+  private dismissStatusMenu_abyssPrivate(): void {
+    this.statusMenuCleanup_abyssPrivate?.();
+    this.statusMenuCleanup_abyssPrivate = null;
   }
 
-  private dismissTaskInputModal(): void {
-    const modal = this.taskInputModal;
-    this.taskInputModal = null;
+  private dismissTaskInputModal_abyssPrivate(): void {
+    const modal = this.taskInputModal_abyssPrivate;
+    this.taskInputModal_abyssPrivate = null;
     modal?.close();
   }
 }

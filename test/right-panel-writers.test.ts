@@ -70,7 +70,9 @@ function currentNode(
   panel: RightPanel,
   taskLike: TaskSnapshot | SubtaskSnapshot,
 ): TaskSnapshot | SubtaskSnapshot | undefined {
-  const roots = (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list();
+  const roots = (
+    panel as unknown as { tasks_abyssPrivate: TaskApplicationApi }
+  ).tasks_abyssPrivate.queries.list();
   for (const root of roots) {
     const queue: Array<TaskSnapshot | SubtaskSnapshot> = [root];
     while (queue.length > 0) {
@@ -112,7 +114,8 @@ function rebaseWriterArguments(panel: RightPanel, method: string, args: unknown[
 /** Bracket-access helper to call private methods (preserves `this` binding). */
 function call<T>(panel: RightPanel, method: string, ...args: unknown[]): T {
   rebaseWriterArguments(panel, method, args);
-  const fn = expectDefined((panel as unknown as Record<string, (...a: unknown[]) => T>)[method]);
+  const key = method === 'updateTaskTitle' ? method : `${method}_abyssPrivate`;
+  const fn = expectDefined((panel as unknown as Record<string, (...a: unknown[]) => T>)[key]);
   return fn.call(panel, ...args);
 }
 
@@ -239,7 +242,9 @@ describe('RightPanel recurrence writer', () => {
       { path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] },
     ]);
     const current = expectDefined(
-      (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list({
+      (
+        panel as unknown as { tasks_abyssPrivate: TaskApplicationApi }
+      ).tasks_abyssPrivate.queries.list({
         filePath: 't.md',
       })[0],
     );
@@ -309,7 +314,9 @@ describe('RightPanel recurrence writer', () => {
       { path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] },
     ]);
     const current = expectDefined(
-      (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list({
+      (
+        panel as unknown as { tasks_abyssPrivate: TaskApplicationApi }
+      ).tasks_abyssPrivate.queries.list({
         filePath: 't.md',
       })[0],
     );
@@ -812,7 +819,9 @@ describe('RightPanel.updateTaskTitle', () => {
       return originalProcess(file, transform);
     });
     const first = expectDefined(
-      (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list()[0],
+      (
+        panel as unknown as { tasks_abyssPrivate: TaskApplicationApi }
+      ).tasks_abyssPrivate.queries.list()[0],
     );
     const second = Object.assign(task({ source: { filePath: 'other.md', line: 0 } }), {
       ref: { filePath: 'other.md', line: 0, revision: 'second' },
@@ -1849,7 +1858,9 @@ describe('RightPanel — blockquote write-path preserves "> " formatting', () =>
         originalBlock: '> - [ ] old 📅 2026-06-20',
       },
     });
-    const indexed = (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list({
+    const indexed = (
+      panel as unknown as { tasks_abyssPrivate: TaskApplicationApi }
+    ).tasks_abyssPrivate.queries.list({
       filePath: 't.md',
     })[0];
     expect(indexed).toBeDefined();

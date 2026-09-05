@@ -103,14 +103,14 @@ describe('CenterPanel task metadata styles', () => {
 
   it('keeps active dependency indicators between the checkbox and title at constrained widths', () => {
     const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');
-    const withIndicator = '.abyss-task-card-main-row:has(> .abyss-dependency-indicator)';
+    const withIndicator = '.abyss-task-card-main-row:has(> .abyss-dep-indicator)';
     expect(declarationsForSource(compact, withIndicator)).toContain(
       'grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr)',
     );
     expect(
       declarationsForSource(
         compact,
-        '.abyss-task-card-main-row--has-delete:has(> .abyss-dependency-indicator)',
+        '.abyss-task-card-main-row--has-delete:has(> .abyss-dep-indicator)',
       ),
     ).toContain('auto minmax(0, 1fr) 24px');
     expect(
@@ -118,7 +118,7 @@ describe('CenterPanel task metadata styles', () => {
     ).toContain('grid-column: 1');
     const indicator = declarationsForSource(
       compact,
-      '.abyss-task-card-main-row > .abyss-dependency-indicator',
+      '.abyss-task-card-main-row > .abyss-dep-indicator',
     );
     expect(indicator).toContain('grid-column: 2');
     expect(indicator).toContain('grid-row: 1');

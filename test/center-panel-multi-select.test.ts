@@ -160,7 +160,9 @@ describe('CenterPanel multi-selection', () => {
     click(expectDefined(cards(el)[0]));
     expect(liveMutations()).toHaveLength(0);
 
-    (panel as unknown as { updateSelectionVisuals(): void }).updateSelectionVisuals();
+    (
+      panel as unknown as { updateSelectionVisuals_abyssPrivate(): void }
+    ).updateSelectionVisuals_abyssPrivate();
     expect(liveMutations()).toHaveLength(0);
 
     panel.refresh();
@@ -183,7 +185,9 @@ describe('CenterPanel multi-selection', () => {
 
     click(expectDefined(cards(el)[0]), { ctrlKey: true });
     expectAnnouncement('1 task selected');
-    (panel as unknown as { updateSelectionVisuals(): void }).updateSelectionVisuals();
+    (
+      panel as unknown as { updateSelectionVisuals_abyssPrivate(): void }
+    ).updateSelectionVisuals_abyssPrivate();
     expect(observer.takeRecords()).toHaveLength(0);
 
     click(expectDefined(cards(el)[1]), { ctrlKey: true });

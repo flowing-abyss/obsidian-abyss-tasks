@@ -796,12 +796,12 @@ describe('LeftPanel top-level tag group menus', () => {
       .mockResolvedValueOnce(undefined);
     const applyAppearance = (
       panel as unknown as {
-        applyTagGroupAppearance(
+        applyTagGroupAppearance_abyssPrivate(
           target: CalendarSettings['tagGroups'][number],
           result: { readonly name?: string; readonly color?: string | null },
         ): void;
       }
-    ).applyTagGroupAppearance.bind(panel);
+    ).applyTagGroupAppearance_abyssPrivate.bind(panel);
 
     applyAppearance(group, { name: 'First edit' });
     await firstStarted;

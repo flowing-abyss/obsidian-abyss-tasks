@@ -136,7 +136,7 @@ function api(execute: TaskApplicationApi['execute']): TaskApplicationApi {
 
 function call<T>(panel: RightPanel, method: string, ...args: unknown[]): T {
   const fn = expectDefined(
-    (panel as unknown as Record<string, (...values: unknown[]) => T>)[method],
+    (panel as unknown as Record<string, (...values: unknown[]) => T>)[`${method}_abyssPrivate`],
   );
   return fn.call(panel, ...args);
 }

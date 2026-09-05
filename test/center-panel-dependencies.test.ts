@@ -215,7 +215,7 @@ describe('center dependency indicator DOM', () => {
         (row) => row.querySelector('.abyss-task-title')?.textContent === 'Current',
       );
       const row = element(expectDefined(card), '.abyss-task-card-main-row');
-      const indicator = row.querySelector<HTMLElement>('.abyss-dependency-indicator');
+      const indicator = row.querySelector<HTMLElement>('.abyss-dep-indicator');
       if (type === 'none') {
         expect(indicator).toBeNull();
         expect(
@@ -226,9 +226,7 @@ describe('center dependency indicator DOM', () => {
         expect(group.previousElementSibling?.matches('[role="checkbox"]')).toBe(true);
         expect(group.nextElementSibling?.classList.contains('abyss-task-body')).toBe(true);
         expect(group.querySelectorAll('svg')).toHaveLength(1);
-        expect(group.querySelectorAll('.abyss-dependency-divider')).toHaveLength(
-          type === 'both' ? 1 : 0,
-        );
+        expect(group.querySelectorAll('.abyss-dep-divider')).toHaveLength(type === 'both' ? 1 : 0);
         expect(
           [...group.querySelectorAll('[data-dependency-count]')].map((count) => count.textContent),
         ).toEqual(counts);
@@ -381,7 +379,7 @@ describe('strict dependency checkbox surfaces', () => {
       const h = await harness(markdown);
       const row = mountSurface(h, surface);
       expect(row.querySelector('[aria-disabled="true"]')).toBeNull();
-      expect(row.querySelector('.abyss-dependency-indicator')).toBeNull();
+      expect(row.querySelector('.abyss-dep-indicator')).toBeNull();
       element(row, '[role="checkbox"]').click();
       await flushMicrotasks();
       expect(h.execute).toHaveBeenCalledTimes(1);
@@ -395,10 +393,10 @@ describe('strict dependency checkbox surfaces', () => {
     async (view) => {
       const h = await harness(markdownFor(view === 'month' ? 'center' : 'timed'));
       const panel = mountCenter(h);
-      panel['calDate'] = window.moment('2026-09-05');
-      panel['calViewType'] = view;
+      panel['calDate_abyssPrivate'] = window.moment('2026-09-05');
+      panel['calViewType_abyssPrivate'] = view;
       h.state.set('mode', 'calendar');
-      const indicator = element(h.el, '.abyss-dependency-indicator');
+      const indicator = element(h.el, '.abyss-dep-indicator');
       const control = expectDefined(indicator.previousElementSibling) as HTMLElement;
       expect(control.getAttribute('aria-disabled')).toBe('true');
       physicalActivation(control, 'touch');
@@ -410,7 +408,7 @@ describe('strict dependency checkbox surfaces', () => {
         dependencyId: 'schema',
       });
       await flushMicrotasks();
-      expect(h.el.querySelector('.abyss-dependency-indicator')).toBeNull();
+      expect(h.el.querySelector('.abyss-dep-indicator')).toBeNull();
       const enabled = element(h.el, '[role="checkbox"]');
       expect(enabled.getAttribute('aria-disabled')).not.toBe('true');
       h.execute.mockClear();
@@ -440,7 +438,7 @@ describe('strict dependency checkbox surfaces', () => {
       const query = vi.spyOn(h.callbacks, 'dependenciesFor');
       const row = mountCalendarSurface(h, surface, forecast);
       expect(calendarMutationTarget(forecast)).toBeUndefined();
-      expect(row.querySelector('.abyss-dependency-indicator')).toBeNull();
+      expect(row.querySelector('.abyss-dep-indicator')).toBeNull();
       expect(row.querySelector('[aria-disabled="true"]')).toBeNull();
       expect(row.querySelector('[role="checkbox"]')).toBeNull();
       expect(query).not.toHaveBeenCalled();
@@ -510,7 +508,7 @@ describe('strict dependency checkbox surfaces', () => {
       await flushMicrotasks();
       expect(h.execute).not.toHaveBeenCalled();
       if (!surface.startsWith('inspector')) {
-        const indicator = element(row, '.abyss-dependency-indicator');
+        const indicator = element(row, '.abyss-dep-indicator');
         expect(indicator.previousElementSibling).toBe(wrapper);
       }
     },
@@ -634,7 +632,7 @@ describe('strict dependency checkbox surfaces', () => {
       cleanups.push(() => {
         renderer.destroy();
       });
-      const indicator = element(h.el, '.abyss-dependency-indicator');
+      const indicator = element(h.el, '.abyss-dep-indicator');
       const control = expectDefined(indicator.previousElementSibling) as HTMLElement;
       expect(control.getAttribute('aria-disabled')).toBe('true');
       physicalActivation(control, 'touch');
@@ -646,7 +644,7 @@ describe('strict dependency checkbox surfaces', () => {
         symbol: 'x',
       });
       await flushMicrotasks();
-      expect(h.el.querySelector('.abyss-dependency-indicator')).toBeNull();
+      expect(h.el.querySelector('.abyss-dep-indicator')).toBeNull();
       const enabled = element(h.el, '[role="checkbox"]');
       expect(enabled.getAttribute('aria-disabled')).not.toBe('true');
       h.execute.mockClear();

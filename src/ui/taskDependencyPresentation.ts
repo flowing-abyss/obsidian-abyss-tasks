@@ -43,13 +43,13 @@ export function renderDependencyIndicator(
   const presentation = dependencyIndicatorPresentation(projection);
   if (presentation.type === 'none') return;
   const group = parent.createSpan({
-    cls: 'abyss-dependency-indicator',
+    cls: 'abyss-dep-indicator',
     attr: { role: 'img', 'aria-label': presentation.ariaLabel, title: presentation.ariaLabel },
   });
   const direction = presentation.type === 'blocks' ? 'blocks' : 'blocked-by';
   setIcon(
     group.createSpan({
-      cls: `abyss-dependency-lock abyss-dependency-count-${direction}`,
+      cls: `abyss-dep-lock abyss-dep-count-${direction}`,
       attr: { 'aria-hidden': 'true', 'data-dependency-direction': direction },
     }),
     'lock',
@@ -57,7 +57,7 @@ export function renderDependencyIndicator(
   if ('blockedBy' in presentation)
     renderIndicatorCount(group, 'blocked-by', presentation.blockedBy);
   if (presentation.type === 'both')
-    group.createSpan({ cls: 'abyss-dependency-divider', attr: { 'aria-hidden': 'true' } });
+    group.createSpan({ cls: 'abyss-dep-divider', attr: { 'aria-hidden': 'true' } });
   if ('blocks' in presentation) renderIndicatorCount(group, 'blocks', presentation.blocks);
 }
 
@@ -67,7 +67,7 @@ function renderIndicatorCount(
   count: number,
 ): void {
   group.createSpan({
-    cls: `abyss-dependency-count-${direction}`,
+    cls: `abyss-dep-count-${direction}`,
     text: String(count),
     attr: { 'aria-hidden': 'true', 'data-dependency-count': direction },
   });

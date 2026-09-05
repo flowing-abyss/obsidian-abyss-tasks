@@ -408,7 +408,9 @@ describe('status and priority consumer delegation', () => {
     };
     const invoke = async (method: string, ...args: unknown[]) => {
       const fn = expectDefined(
-        (panel as unknown as Record<string, (...values: unknown[]) => Promise<void>>)[method],
+        (panel as unknown as Record<string, (...values: unknown[]) => Promise<void>>)[
+          `${method}_abyssPrivate`
+        ],
       );
       await fn.call(panel, ...args);
     };

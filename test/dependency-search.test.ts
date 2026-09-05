@@ -218,7 +218,7 @@ describe('dependency search keyboard controller', () => {
     input.value = 'Local';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     expectDefined(
-      handle.element.querySelector<HTMLButtonElement>('.abyss-dependency-search-option'),
+      handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-option'),
     ).click();
     expect(activeDocument.activeElement?.getAttribute('data-direction')).toBe('blocked-by');
     available = false;
@@ -240,14 +240,14 @@ describe('dependency search keyboard controller', () => {
     input.value = 'Local';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     expectDefined(
-      handle.element.querySelector<HTMLButtonElement>('.abyss-dependency-search-option'),
+      handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-option'),
     ).click();
     expect(handle.element.querySelectorAll('[data-direction]')).toHaveLength(2);
     input.focus();
     input.value = 'Other';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     expect(handle.element.querySelectorAll('[data-direction]')).toHaveLength(0);
-    expect(handle.element.querySelector('.abyss-dependency-search-option')?.textContent).toContain(
+    expect(handle.element.querySelector('.abyss-dep-search-option')?.textContent).toContain(
       'Other candidate',
     );
     handle.destroy();

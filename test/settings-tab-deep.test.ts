@@ -96,7 +96,8 @@ function makeTab(
   // Cards (tag groups / statuses) are collapsed by default; expand them all so
   // their body Settings render and are captured for inspection.
   if (expandCards) {
-    const expanded = (tab as unknown as { expandedCards: Set<string> }).expandedCards;
+    const expanded = (tab as unknown as { expandedCards_abyssPrivate: Set<string> })
+      .expandedCards_abyssPrivate;
     for (const g of settings.tagGroups) expanded.add(g.id);
     for (const s of settings.projects.statuses) expanded.add(s.id);
   }

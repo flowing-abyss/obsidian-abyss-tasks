@@ -33,12 +33,15 @@ import { ObsidianTaskDestinationProvider } from '../src/tasks/infrastructure/obs
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
+import { expandCompoundSelectorLists } from './support/expandedCss';
 
 export async function loadPluginStyles(): Promise<string> {
   if (!Platform.isDesktop) return '';
   const { readFileSync } = await import('node:fs');
   const path = await import('node:path');
-  return readFileSync(path.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+  return expandCompoundSelectorLists(
+    readFileSync(path.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8'),
+  );
 }
 
 /**

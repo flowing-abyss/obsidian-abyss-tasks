@@ -293,84 +293,88 @@ function getSubmenu(item: MenuItem): Menu {
 }
 
 export class CenterPanel {
-  private readonly completionConfirmationAbortController = new AbortController();
+  private readonly completionConfirmationAbortController_abyssPrivate = new AbortController();
   private el!: HTMLElement;
-  private readonly offs: Array<() => void> = [];
-  private calViewType: CalViewType = 'month';
-  private calDate = window.moment().date(1);
-  private calViewInstance: TodayView | WeekTimeGridView | MonthGridView | null = null;
-  private calUnsubscribe: (() => void) | null = null;
-  private calendarPickerCleanup: ((restoreFocus?: boolean) => void) | null = null;
-  private taskDatePickerCleanup: (() => void) | null = null;
-  private taskCardRenderGeneration = 0;
-  private taskDateFocusContinuityKey: string | null = null;
-  private pendingTaskDateFocus: {
+  private readonly offs_abyssPrivate: Array<() => void> = [];
+  private calViewType_abyssPrivate: CalViewType = 'month';
+  private calDate_abyssPrivate = window.moment().date(1);
+  private calViewInstance_abyssPrivate: TodayView | WeekTimeGridView | MonthGridView | null = null;
+  private calUnsubscribe_abyssPrivate: (() => void) | null = null;
+  private calendarPickerCleanup_abyssPrivate: ((restoreFocus?: boolean) => void) | null = null;
+  private taskDatePickerCleanup_abyssPrivate: (() => void) | null = null;
+  private taskCardRenderGeneration_abyssPrivate = 0;
+  private taskDateFocusContinuityKey_abyssPrivate: string | null = null;
+  private pendingTaskDateFocus_abyssPrivate: {
     key: string;
     armedRenderGeneration: number;
     changed: boolean;
   } | null = null;
-  private recurrenceEditorCleanup: (() => void) | null = null;
-  private viewStatePopoverCleanup: ((restoreFocus?: boolean) => void) | null = null;
-  private forecastMenuOwner: ForecastContextMenuOwner | null = null;
-  private projectionDiagnosticOwner: CalendarProjectionDiagnosticOwner | null = null;
+  private recurrenceEditorCleanup_abyssPrivate: (() => void) | null = null;
+  private viewStatePopoverCleanup_abyssPrivate: ((restoreFocus?: boolean) => void) | null = null;
+  private forecastMenuOwner_abyssPrivate: ForecastContextMenuOwner | null = null;
+  private projectionDiagnosticOwner_abyssPrivate: CalendarProjectionDiagnosticOwner | null = null;
   // Full renders replace the view instance, so keep the last scroll-to-now key at panel scope.
   // Query notifications use the incremental patch path and never consult this state.
-  private lastScrolledCalKey: string | null = null;
+  private lastScrolledCalKey_abyssPrivate: string | null = null;
   // A deliberate full refresh empties the outer calendar before mountView can inspect its grid.
   // Carry scrollTop across that boundary; query patches retain the grid node and need no fallback.
-  private pendingCalScrollTop: number | undefined = undefined;
-  private readonly keyboardQueue: TimedBlockKeyboardQueue | null;
-  private pendingTimedBlockFocus: TimedBlockFocusLocator | undefined;
-  private readonly settledKeyboardSequences = new Set<number>();
-  private readonly restoredKeyboardSequences = new Set<number>();
-  private readonly committedKeyboardSequences = new Set<number>();
-  private readonly pendingTimedBlockRestorations = new Map<number, PendingTimedBlockRestoration>();
-  private nextTimedBlockRestoration = 0;
-  private nextTimedBlockFocusSequence = 0;
-  private calendarRenderGeneration = 0;
-  private taskModal: TaskModal | null = null;
-  private readonly selectedTaskKeys = new Set<string>();
-  private lastAnnouncedSelectionCount = 0;
-  private selectionAnchorKey: string | null = null;
-  private selectionFocusKey: string | null = null;
-  private filterDebounce = 0;
-  private refocusSearch = false;
+  private pendingCalScrollTop_abyssPrivate: number | undefined = undefined;
+  private readonly keyboardQueue_abyssPrivate: TimedBlockKeyboardQueue | null;
+  private pendingTimedBlockFocus_abyssPrivate: TimedBlockFocusLocator | undefined;
+  private readonly settledKeyboardSequences_abyssPrivate = new Set<number>();
+  private readonly restoredKeyboardSequences_abyssPrivate = new Set<number>();
+  private readonly committedKeyboardSequences_abyssPrivate = new Set<number>();
+  private readonly pendingTimedBlockRestorations_abyssPrivate = new Map<
+    number,
+    PendingTimedBlockRestoration
+  >();
+  private nextTimedBlockRestoration_abyssPrivate = 0;
+  private nextTimedBlockFocusSequence_abyssPrivate = 0;
+  private calendarRenderGeneration_abyssPrivate = 0;
+  private taskModal_abyssPrivate: TaskModal | null = null;
+  private readonly selectedTaskKeys_abyssPrivate = new Set<string>();
+  private lastAnnouncedSelectionCount_abyssPrivate = 0;
+  private selectionAnchorKey_abyssPrivate: string | null = null;
+  private selectionFocusKey_abyssPrivate: string | null = null;
+  private filterDebounce_abyssPrivate = 0;
+  private refocusSearch_abyssPrivate = false;
   // Set true while a status-group toggle click is in flight, so that the
   // full re-render triggered by updateViewState re-opens the popover with
   // the "Status group" row still expanded (multi-select shouldn't close on pick).
-  private reopenStatusGroupPopover = false;
-  private readonly onSaveSettings: () => Promise<void>;
-  private md = new Component();
-  private searchInputEl: HTMLInputElement | null = null;
-  private searchResultsEl: HTMLElement | null = null;
-  private searchResultsFrame: number | null = null;
+  private reopenStatusGroupPopover_abyssPrivate = false;
+  private readonly onSaveSettings_abyssPrivate: () => Promise<void>;
+  private md_abyssPrivate = new Component();
+  private searchInputEl_abyssPrivate: HTMLInputElement | null = null;
+  private searchResultsEl_abyssPrivate: HTMLElement | null = null;
+  private searchResultsFrame_abyssPrivate: number | null = null;
 
-  private projectsPanel: ProjectsPanel | null = null;
-  private readonly captureApplication: (TaskApplicationApi & TaskCaptureApplicationApi) | null;
-  private readonly captureTargets: CaptureTargetResolver | null;
-  private captureRequestId = 0;
-  private resolvingCapture: {
+  private projectsPanel_abyssPrivate: ProjectsPanel | null = null;
+  private readonly captureApplication_abyssPrivate:
+    (TaskApplicationApi & TaskCaptureApplicationApi) | null;
+  private readonly captureTargets_abyssPrivate: CaptureTargetResolver | null;
+  private captureRequestId_abyssPrivate = 0;
+  private resolvingCapture_abyssPrivate: {
     readonly requestId: number;
     readonly placement: PanelCapturePlacement;
   } | null = null;
-  private activeCapture: PanelCaptureSession | null = null;
-  private readonly navigation: PanelNavigationActions;
-  private readonly state: AppState;
-  private readonly app: App;
-  private readonly settings: CalendarSettings;
-  private readonly queries: TaskQueryApi;
-  private readonly statusRegistry: StatusRegistry;
-  private readonly projectStore: ProjectStore | null;
-  private readonly projectManager: ProjectManager | null;
-  private readonly tasks: TaskApplicationApi | undefined;
-  private endTaskDrag: (() => void) | undefined;
-  private readonly commentTimeContext: CommentTimeContextProvider | undefined;
-  private readonly onCreationResult: (
+  private activeCapture_abyssPrivate: PanelCaptureSession | null = null;
+  private readonly navigation_abyssPrivate: PanelNavigationActions;
+  private readonly state_abyssPrivate: AppState;
+  private readonly app_abyssPrivate: App;
+  private readonly settings_abyssPrivate: CalendarSettings;
+  private readonly queries_abyssPrivate: TaskQueryApi;
+  private readonly statusRegistry_abyssPrivate: StatusRegistry;
+  private readonly projectStore_abyssPrivate: ProjectStore | null;
+  private readonly projectManager_abyssPrivate: ProjectManager | null;
+  private readonly tasks_abyssPrivate: TaskApplicationApi | undefined;
+  private endTaskDrag_abyssPrivate: (() => void) | undefined;
+  private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
+  private readonly onCreationResult_abyssPrivate: (
     result: TaskCommandResult,
     description: CreationResultDescription,
   ) => void;
-  private readonly onRenderComplete: (root: HTMLElement) => void;
-  private readonly interactionOwnership: InteractionOwnershipPort;
+  private readonly onRenderComplete_abyssPrivate: (root: HTMLElement) => void;
+  private readonly interactionOwnership_abyssPrivate: InteractionOwnershipPort;
 
   constructor(...args: CenterPanelConstructorArgs) {
     const [
@@ -390,34 +394,36 @@ export class CenterPanel {
       interactionOwnership = noInteractionOwnership,
       navigation,
     ] = args;
-    this.state = state;
-    this.app = app;
-    this.settings = settings;
-    this.queries = queries;
-    this.statusRegistry = statusRegistry;
-    this.onSaveSettings = onSaveSettings;
-    this.projectStore = projectStore;
-    this.projectManager = projectManager;
-    this.tasks = tasks;
-    this.commentTimeContext = commentTimeContext;
-    this.onCreationResult = onCreationResult;
-    this.onRenderComplete = onRenderComplete;
-    this.interactionOwnership = interactionOwnership;
-    this.captureApplication = captureApplication ?? null;
-    this.captureTargets =
-      this.captureApplication != null
-        ? new CaptureTargetResolver(this.captureApplication, settings)
+    this.state_abyssPrivate = state;
+    this.app_abyssPrivate = app;
+    this.settings_abyssPrivate = settings;
+    this.queries_abyssPrivate = queries;
+    this.statusRegistry_abyssPrivate = statusRegistry;
+    this.onSaveSettings_abyssPrivate = onSaveSettings;
+    this.projectStore_abyssPrivate = projectStore;
+    this.projectManager_abyssPrivate = projectManager;
+    this.tasks_abyssPrivate = tasks;
+    this.commentTimeContext_abyssPrivate = commentTimeContext;
+    this.onCreationResult_abyssPrivate = onCreationResult;
+    this.onRenderComplete_abyssPrivate = onRenderComplete;
+    this.interactionOwnership_abyssPrivate = interactionOwnership;
+    this.captureApplication_abyssPrivate = captureApplication ?? null;
+    this.captureTargets_abyssPrivate =
+      this.captureApplication_abyssPrivate != null
+        ? new CaptureTargetResolver(this.captureApplication_abyssPrivate, settings)
         : null;
-    this.navigation = this.createNavigation(navigation);
-    this.keyboardQueue = this.createKeyboardQueue(tasks);
+    this.navigation_abyssPrivate = this.createNavigation_abyssPrivate(navigation);
+    this.keyboardQueue_abyssPrivate = this.createKeyboardQueue_abyssPrivate(tasks);
   }
 
-  private createNavigation(navigation: PanelNavigationActions | undefined): PanelNavigationActions {
+  private createNavigation_abyssPrivate(
+    navigation: PanelNavigationActions | undefined,
+  ): PanelNavigationActions {
     return (
       navigation ??
       new PanelNavigator(
-        this.state,
-        this.settings,
+        this.state_abyssPrivate,
+        this.settings_abyssPrivate,
         {
           calendarView: () => this.calendarView(),
           setCalendarView: (view) => {
@@ -425,115 +431,122 @@ export class CenterPanel {
           },
           openQuickCapture: () => undefined,
         },
-        this.onSaveSettings,
+        this.onSaveSettings_abyssPrivate,
       )
     );
   }
 
-  private createKeyboardQueue(
+  private createKeyboardQueue_abyssPrivate(
     tasks: TaskApplicationApi | undefined,
   ): TimedBlockKeyboardQueue | null {
     if (tasks == null) return null;
     return new TimedBlockKeyboardQueue(tasks, {
       onCommitted: (task, intent, sequence, changed) => {
-        this.handleKeyboardCommit(task, intent, sequence, changed);
+        this.handleKeyboardCommit_abyssPrivate(task, intent, sequence, changed);
       },
       onSettled: (_taskKey, sequence, summary) => {
-        this.handleKeyboardSettled(sequence, summary.anyChanged, summary.sourceChanged);
+        this.handleKeyboardSettled_abyssPrivate(
+          sequence,
+          summary.anyChanged,
+          summary.sourceChanged,
+        );
       },
       present: (result) => {
         presentTaskCommandResult(result);
         if (result.type !== 'ok' || result.outcome.type !== 'task') {
-          this.clearTimedBlockFocus();
+          this.clearTimedBlockFocus_abyssPrivate();
         }
       },
     });
   }
 
-  private handleKeyboardSettled(
+  private handleKeyboardSettled_abyssPrivate(
     sequence: number,
     anyChanged: boolean,
     sourceChanged: boolean,
   ): void {
-    if (this.pendingTimedBlockFocus?.queueSequence !== sequence) return;
-    if ((anyChanged || sourceChanged) && !this.committedKeyboardSequences.has(sequence)) {
-      this.committedKeyboardSequences.add(sequence);
-      this.deferTimedBlockFocus(this.el, this.calendarRenderGeneration);
+    if (this.pendingTimedBlockFocus_abyssPrivate?.queueSequence !== sequence) return;
+    if (
+      (anyChanged || sourceChanged) &&
+      !this.committedKeyboardSequences_abyssPrivate.has(sequence)
+    ) {
+      this.committedKeyboardSequences_abyssPrivate.add(sequence);
+      this.deferTimedBlockFocus_abyssPrivate(this.el, this.calendarRenderGeneration_abyssPrivate);
     }
-    const pendingRestoration = this.hasPendingTimedBlockRestoration(sequence);
+    const pendingRestoration = this.hasPendingTimedBlockRestoration_abyssPrivate(sequence);
     if (
       (!anyChanged && !sourceChanged && !pendingRestoration) ||
-      this.restoredKeyboardSequences.has(sequence)
+      this.restoredKeyboardSequences_abyssPrivate.has(sequence)
     ) {
-      this.clearTimedBlockFocus(sequence);
+      this.clearTimedBlockFocus_abyssPrivate(sequence);
       return;
     }
-    this.settledKeyboardSequences.add(sequence);
+    this.settledKeyboardSequences_abyssPrivate.add(sequence);
   }
 
   mount(container: HTMLElement): void {
     this.el = container;
-    this.initializeOwnedUi(container.ownerDocument);
-    this.initializeListViewState();
-    this.subscribeToState();
-    this.render();
+    this.initializeOwnedUi_abyssPrivate(container.ownerDocument);
+    this.initializeListViewState_abyssPrivate();
+    this.subscribeToState_abyssPrivate();
+    this.render_abyssPrivate();
     this.el.setAttribute('tabindex', '0');
-    this.mountKeyboardNavigation();
-    this.mountFocusContinuity();
+    this.mountKeyboardNavigation_abyssPrivate();
+    this.mountFocusContinuity_abyssPrivate();
   }
 
-  private initializeOwnedUi(ownerDocument: Document): void {
-    this.forecastMenuOwner = createForecastContextMenuOwner(
+  private initializeOwnedUi_abyssPrivate(ownerDocument: Document): void {
+    this.forecastMenuOwner_abyssPrivate = createForecastContextMenuOwner(
       ownerDocument,
-      this.interactionOwnership,
+      this.interactionOwnership_abyssPrivate,
     );
-    this.taskModal = new TaskModal(
-      this.app,
-      this.statusRegistry,
-      this.settings,
-      this.queries,
-      this.tasks,
-      this.commentTimeContext,
-      this.interactionOwnership,
-    );
-  }
-
-  private initializeListViewState(): void {
-    const key = listSelectionToKey(this.state.get('selectedList'));
-    const viewState = this.settings.listViewStates?.[key] ?? getListViewDefaults(key);
-    this.state.set('centerListViewState', viewState);
-  }
-
-  private subscribeToState(): void {
-    this.offs.push(
-      this.state.on('selectedList', () => {
-        this.handleSelectedListChanged();
-      }),
-      this.state.on('mode', () => {
-        this.cancelStaleListCapture();
-        this.cancelKeyboardInteraction();
-      }),
-      this.state.on('searchQuery', (query) => {
-        this.handleSearchQueryChanged(query);
-      }),
-      this.state.on('taskStack', () => {
-        this.updateTaskStackSelection();
-      }),
-      this.state.onCommit((changed) => {
-        this.handleStateCommit(changed);
-      }),
+    this.taskModal_abyssPrivate = new TaskModal(
+      this.app_abyssPrivate,
+      this.statusRegistry_abyssPrivate,
+      this.settings_abyssPrivate,
+      this.queries_abyssPrivate,
+      this.tasks_abyssPrivate,
+      this.commentTimeContext_abyssPrivate,
+      this.interactionOwnership_abyssPrivate,
     );
   }
 
-  private handleSelectedListChanged(): void {
-    this.cancelStaleListCapture();
-    this.selectedTaskKeys.clear();
-    this.selectionAnchorKey = null;
-    this.selectionFocusKey = null;
+  private initializeListViewState_abyssPrivate(): void {
+    const key = listSelectionToKey(this.state_abyssPrivate.get('selectedList'));
+    const viewState = this.settings_abyssPrivate.listViewStates?.[key] ?? getListViewDefaults(key);
+    this.state_abyssPrivate.set('centerListViewState', viewState);
   }
 
-  private updateTaskStackSelection(): void {
-    const stack = this.state.get('taskStack');
+  private subscribeToState_abyssPrivate(): void {
+    this.offs_abyssPrivate.push(
+      this.state_abyssPrivate.on('selectedList', () => {
+        this.handleSelectedListChanged_abyssPrivate();
+      }),
+      this.state_abyssPrivate.on('mode', () => {
+        this.cancelStaleListCapture_abyssPrivate();
+        this.cancelKeyboardInteraction_abyssPrivate();
+      }),
+      this.state_abyssPrivate.on('searchQuery', (query) => {
+        this.handleSearchQueryChanged_abyssPrivate(query);
+      }),
+      this.state_abyssPrivate.on('taskStack', () => {
+        this.updateTaskStackSelection_abyssPrivate();
+      }),
+      this.state_abyssPrivate.onCommit((changed) => {
+        this.handleStateCommit_abyssPrivate(changed);
+      }),
+    );
+  }
+
+  private handleSelectedListChanged_abyssPrivate(): void {
+    this.cancelStaleListCapture_abyssPrivate();
+    this.selectedTaskKeys_abyssPrivate.clear();
+    this.selectionAnchorKey_abyssPrivate = null;
+    this.selectionFocusKey_abyssPrivate = null;
+  }
+
+  private updateTaskStackSelection_abyssPrivate(): void {
+    const stack = this.state_abyssPrivate.get('taskStack');
     const root = stack[0];
     const current = stack[stack.length - 1];
     this.el.querySelectorAll<HTMLElement>('.abyss-task-card').forEach((card) => {
@@ -543,63 +556,64 @@ export class CenterPanel {
         card.dataset['filePath'] === rootTaskRef(root).filePath &&
         card.dataset['line'] === String(taskNodeLine(root as TaskSnapshot, current));
       card.classList.toggle('is-selected', isSelected);
-      this.syncTaskDeleteButton(
+      this.syncTaskDeleteButton_abyssPrivate(
         card,
-        isSelected && current === root && this.selectedTaskKeys.size === 0
+        isSelected && current === root && this.selectedTaskKeys_abyssPrivate.size === 0
           ? (root as TaskSnapshot)
           : undefined,
       );
     });
   }
 
-  private handleStateCommit(changed: ReadonlySet<string>): void {
-    if (changed.size === 0 && this.state.get('mode') === 'calendar') {
-      this.cancelKeyboardInteraction();
+  private handleStateCommit_abyssPrivate(changed: ReadonlySet<string>): void {
+    if (changed.size === 0 && this.state_abyssPrivate.get('mode') === 'calendar') {
+      this.cancelKeyboardInteraction_abyssPrivate();
     }
     const renderKeys = ['selectedList', 'centerListViewState', 'centerFilter', 'mode'];
-    if (changed.size === 0 || renderKeys.some((key) => changed.has(key))) this.render();
+    if (changed.size === 0 || renderKeys.some((key) => changed.has(key)))
+      this.render_abyssPrivate();
   }
 
-  private mountKeyboardNavigation(): void {
+  private mountKeyboardNavigation_abyssPrivate(): void {
     const onKeyDown = (event: KeyboardEvent): void => {
-      this.handlePanelKeyDown(event);
+      this.handlePanelKeyDown_abyssPrivate(event);
     };
     this.el.addEventListener('keydown', onKeyDown);
-    this.offs.push(() => {
+    this.offs_abyssPrivate.push(() => {
       this.el.removeEventListener('keydown', onKeyDown);
     });
   }
 
-  private handlePanelKeyDown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && this.hasTaskSelection()) {
-      this.clearTaskSelection();
+  private handlePanelKeyDown_abyssPrivate(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && this.hasTaskSelection_abyssPrivate()) {
+      this.clearTaskSelection_abyssPrivate();
       return;
     }
-    if (!this.isTaskNavigationEvent(event)) return;
-    const keys = this.visibleTaskKeys();
+    if (!this.isTaskNavigationEvent_abyssPrivate(event)) return;
+    const keys = this.visibleTaskKeys_abyssPrivate();
     if (keys.length === 0) return;
     event.preventDefault();
-    this.moveTaskSelection(event, keys);
+    this.moveTaskSelection_abyssPrivate(event, keys);
   }
 
-  private hasTaskSelection(): boolean {
+  private hasTaskSelection_abyssPrivate(): boolean {
     return (
-      this.selectedTaskKeys.size > 0 ||
-      this.selectionAnchorKey !== null ||
-      this.selectionFocusKey !== null
+      this.selectedTaskKeys_abyssPrivate.size > 0 ||
+      this.selectionAnchorKey_abyssPrivate !== null ||
+      this.selectionFocusKey_abyssPrivate !== null
     );
   }
 
-  private clearTaskSelection(): void {
-    this.selectedTaskKeys.clear();
-    this.selectionAnchorKey = null;
-    this.selectionFocusKey = null;
-    this.updateSelectionVisuals();
+  private clearTaskSelection_abyssPrivate(): void {
+    this.selectedTaskKeys_abyssPrivate.clear();
+    this.selectionAnchorKey_abyssPrivate = null;
+    this.selectionFocusKey_abyssPrivate = null;
+    this.updateSelectionVisuals_abyssPrivate();
   }
 
-  private isTaskNavigationEvent(event: KeyboardEvent): boolean {
+  private isTaskNavigationEvent_abyssPrivate(event: KeyboardEvent): boolean {
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return false;
-    if (this.state.get('mode') !== 'tasks') return false;
+    if (this.state_abyssPrivate.get('mode') !== 'tasks') return false;
     const target = event.target;
     if (!isRealmHTMLElement(target)) return true;
     return (
@@ -609,16 +623,16 @@ export class CenterPanel {
     );
   }
 
-  private moveTaskSelection(event: KeyboardEvent, keys: readonly string[]): void {
-    const currentKey = this.currentNavigationKey(event.target, keys);
-    const nextKey = this.nextNavigationKey(event.key, currentKey, keys);
+  private moveTaskSelection_abyssPrivate(event: KeyboardEvent, keys: readonly string[]): void {
+    const currentKey = this.currentNavigationKey_abyssPrivate(event.target, keys);
+    const nextKey = this.nextNavigationKey_abyssPrivate(event.key, currentKey, keys);
     if (nextKey === undefined || nextKey === '') return;
-    if (event.shiftKey) this.extendKeyboardSelection(currentKey, nextKey, keys);
-    else this.replaceKeyboardSelection(nextKey);
-    this.focusTaskKey(nextKey);
+    if (event.shiftKey) this.extendKeyboardSelection_abyssPrivate(currentKey, nextKey, keys);
+    else this.replaceKeyboardSelection_abyssPrivate(nextKey);
+    this.focusTaskKey_abyssPrivate(nextKey);
   }
 
-  private currentNavigationKey(
+  private currentNavigationKey_abyssPrivate(
     target: EventTarget | null,
     keys: readonly string[],
   ): string | undefined {
@@ -626,21 +640,23 @@ export class CenterPanel {
       ? target.closest<HTMLElement>('.abyss-task-card')
       : null;
     const targetKey =
-      targetCard != null && this.el.contains(targetCard) ? this.taskCardKey(targetCard) : null;
-    const detailCard = this.visibleTaskCards().find((card) =>
+      targetCard != null && this.el.contains(targetCard)
+        ? this.taskCardKey_abyssPrivate(targetCard)
+        : null;
+    const detailCard = this.visibleTaskCards_abyssPrivate().find((card) =>
       card.classList.contains('is-selected'),
     );
-    const detailKey = detailCard == null ? null : this.taskCardKey(detailCard);
-    return [this.selectionFocusKey, targetKey, detailKey].find(
+    const detailKey = detailCard == null ? null : this.taskCardKey_abyssPrivate(detailCard);
+    return [this.selectionFocusKey_abyssPrivate, targetKey, detailKey].find(
       (candidate): candidate is string => candidate !== null && keys.includes(candidate),
     );
   }
 
-  private taskCardKey(card: HTMLElement): string {
+  private taskCardKey_abyssPrivate(card: HTMLElement): string {
     return `${card.dataset['filePath'] ?? ''}:${card.dataset['line'] ?? ''}`;
   }
 
-  private nextNavigationKey(
+  private nextNavigationKey_abyssPrivate(
     key: string,
     currentKey: string | undefined,
     keys: readonly string[],
@@ -652,153 +668,159 @@ export class CenterPanel {
     return keys[Math.max(0, Math.min(keys.length - 1, currentIndex + delta))];
   }
 
-  private extendKeyboardSelection(
+  private extendKeyboardSelection_abyssPrivate(
     currentKey: string | undefined,
     nextKey: string,
     keys: readonly string[],
   ): void {
     const anchor =
-      this.selectionAnchorKey !== null && keys.includes(this.selectionAnchorKey)
-        ? this.selectionAnchorKey
+      this.selectionAnchorKey_abyssPrivate !== null &&
+      keys.includes(this.selectionAnchorKey_abyssPrivate)
+        ? this.selectionAnchorKey_abyssPrivate
         : currentKey;
-    this.selectionAnchorKey = anchor ?? nextKey;
-    this.selectionFocusKey = nextKey;
-    this.replaceRangeSelection(this.selectionAnchorKey, nextKey, keys);
+    this.selectionAnchorKey_abyssPrivate = anchor ?? nextKey;
+    this.selectionFocusKey_abyssPrivate = nextKey;
+    this.replaceRangeSelection_abyssPrivate(this.selectionAnchorKey_abyssPrivate, nextKey, keys);
   }
 
-  private replaceKeyboardSelection(nextKey: string): void {
-    this.selectedTaskKeys.clear();
-    this.selectionAnchorKey = nextKey;
-    this.selectionFocusKey = nextKey;
-    this.updateSelectionVisuals();
-    const task = this.taskForKey(nextKey);
-    if (task != null) this.state.set('taskStack', [task]);
+  private replaceKeyboardSelection_abyssPrivate(nextKey: string): void {
+    this.selectedTaskKeys_abyssPrivate.clear();
+    this.selectionAnchorKey_abyssPrivate = nextKey;
+    this.selectionFocusKey_abyssPrivate = nextKey;
+    this.updateSelectionVisuals_abyssPrivate();
+    const task = this.taskForKey_abyssPrivate(nextKey);
+    if (task != null) this.state_abyssPrivate.set('taskStack', [task]);
   }
 
-  private mountFocusContinuity(): void {
+  private mountFocusContinuity_abyssPrivate(): void {
     const onFocusIn = (event: FocusEvent): void => {
-      this.handlePanelFocusIn(event.target);
+      this.handlePanelFocusIn_abyssPrivate(event.target);
     };
     const ownerDocument = this.el.ownerDocument;
     ownerDocument.addEventListener('focusin', onFocusIn);
-    this.offs.push(() => {
+    this.offs_abyssPrivate.push(() => {
       ownerDocument.removeEventListener('focusin', onFocusIn);
     });
     const onPointerDown = (event: PointerEvent): void => {
-      this.revokeTaskDateFocusOutside(event.target);
+      this.revokeTaskDateFocusOutside_abyssPrivate(event.target);
     };
     ownerDocument.addEventListener('pointerdown', onPointerDown, true);
-    this.offs.push(() => {
+    this.offs_abyssPrivate.push(() => {
       ownerDocument.removeEventListener('pointerdown', onPointerDown, true);
     });
     const ownerWindow = ownerDocument.defaultView;
     const onOwnerWindowBlur = (): void => {
-      this.abandonTaskDateFocus();
-      if (this.pendingTimedBlockFocus != null) this.cancelKeyboardInteraction();
+      this.abandonTaskDateFocus_abyssPrivate();
+      if (this.pendingTimedBlockFocus_abyssPrivate != null)
+        this.cancelKeyboardInteraction_abyssPrivate();
     };
     ownerWindow?.addEventListener('blur', onOwnerWindowBlur);
-    this.offs.push(() => {
+    this.offs_abyssPrivate.push(() => {
       ownerWindow?.removeEventListener('blur', onOwnerWindowBlur);
     });
   }
 
-  private handlePanelFocusIn(target: EventTarget | null): void {
-    this.revokeTaskDateFocusOutside(target);
+  private handlePanelFocusIn_abyssPrivate(target: EventTarget | null): void {
+    this.revokeTaskDateFocusOutside_abyssPrivate(target);
     if (!isRealmHTMLElement(target)) return;
     const ownerDocument = this.el.ownerDocument;
     if (target === ownerDocument.body || target === ownerDocument.documentElement) return;
     const block = target.closest<HTMLElement>('.abyss-tg-block');
-    if (block != null && this.el.contains(block)) this.retainTimedBlockFocus(block);
-    else if (this.pendingTimedBlockFocus != null) this.cancelKeyboardInteraction();
+    if (block != null && this.el.contains(block)) this.retainTimedBlockFocus_abyssPrivate(block);
+    else if (this.pendingTimedBlockFocus_abyssPrivate != null)
+      this.cancelKeyboardInteraction_abyssPrivate();
   }
 
-  private revokeTaskDateFocusOutside(target: EventTarget | null): void {
-    const key = this.taskDateFocusContinuityKey;
-    if (key !== null && this.taskDateTriggerKey(target) !== key) this.abandonTaskDateFocus();
+  private revokeTaskDateFocusOutside_abyssPrivate(target: EventTarget | null): void {
+    const key = this.taskDateFocusContinuityKey_abyssPrivate;
+    if (key !== null && this.taskDateTriggerKey_abyssPrivate(target) !== key)
+      this.abandonTaskDateFocus_abyssPrivate();
   }
 
   refresh(): void {
     if (
-      this.state.get('mode') === 'search' &&
-      (this.searchInputEl?.isConnected ?? false) &&
-      (this.searchResultsEl?.isConnected ?? false)
+      this.state_abyssPrivate.get('mode') === 'search' &&
+      (this.searchInputEl_abyssPrivate?.isConnected ?? false) &&
+      (this.searchResultsEl_abyssPrivate?.isConnected ?? false)
     ) {
-      this.scheduleSearchResults(this.state.get('searchQuery'));
+      this.scheduleSearchResults_abyssPrivate(this.state_abyssPrivate.get('searchQuery'));
       return;
     }
-    this.render();
+    this.render_abyssPrivate();
   }
 
   calendarView(): CalViewType {
-    return this.calViewType;
+    return this.calViewType_abyssPrivate;
   }
 
   setCalendarView(view: CalViewType): void {
-    this.calViewType = view;
-    if (view === 'week') this.calDate = window.moment().startOf('isoWeek');
-    else if (view === 'today') this.calDate = window.moment();
-    else this.calDate = window.moment().date(1);
+    this.calViewType_abyssPrivate = view;
+    if (view === 'week') this.calDate_abyssPrivate = window.moment().startOf('isoWeek');
+    else if (view === 'today') this.calDate_abyssPrivate = window.moment();
+    else this.calDate_abyssPrivate = window.moment().date(1);
   }
 
   destroy(): void {
-    this.endTaskDrag?.();
-    this.completionConfirmationAbortController.abort();
-    this.cancelActiveCapture();
-    this.cancelKeyboardInteraction();
-    this.abandonTaskDateFocus();
-    this.clearSearchShell();
-    this.clearTaskDatePicker();
-    this.dismissRecurrenceEditor();
-    this.viewStatePopoverCleanup?.();
-    this.taskModal?.close();
-    window.clearTimeout(this.filterDebounce);
-    this.offs.forEach((f) => {
+    this.endTaskDrag_abyssPrivate?.();
+    this.completionConfirmationAbortController_abyssPrivate.abort();
+    this.cancelActiveCapture_abyssPrivate();
+    this.cancelKeyboardInteraction_abyssPrivate();
+    this.abandonTaskDateFocus_abyssPrivate();
+    this.clearSearchShell_abyssPrivate();
+    this.clearTaskDatePicker_abyssPrivate();
+    this.dismissRecurrenceEditor_abyssPrivate();
+    this.viewStatePopoverCleanup_abyssPrivate?.();
+    this.taskModal_abyssPrivate?.close();
+    window.clearTimeout(this.filterDebounce_abyssPrivate);
+    this.offs_abyssPrivate.forEach((f) => {
       f();
     });
-    this.destroyCalendarView();
-    this.destroyProjectsPanel();
-    this.md.unload();
+    this.destroyCalendarView_abyssPrivate();
+    this.destroyProjectsPanel_abyssPrivate();
+    this.md_abyssPrivate.unload();
     if ('el' in this) this.el.empty();
   }
 
-  private destroyProjectsPanel(): void {
-    this.projectsPanel?.destroy();
-    this.projectsPanel = null;
+  private destroyProjectsPanel_abyssPrivate(): void {
+    this.projectsPanel_abyssPrivate?.destroy();
+    this.projectsPanel_abyssPrivate = null;
   }
 
   /** Renders a project's tasks (reusing the card component) plus an add bar that writes into the note. */
-  private renderProjectTasks(host: HTMLElement, path: string): void {
-    const tasks = [...this.queries.list({ filePath: path })];
+  private renderProjectTasks_abyssPrivate(host: HTMLElement, path: string): void {
+    const tasks = [...this.queries_abyssPrivate.list({ filePath: path })];
     const scroll = host.createDiv({ cls: 'abyss-center-scroll abyss-project-tasks-scroll' });
     if (tasks.length === 0) {
       scroll.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
     } else {
-      for (const task of tasks) this.renderTaskCard(scroll, task);
+      for (const task of tasks) this.renderTaskCard_abyssPrivate(scroll, task);
     }
 
     const bar = host.createDiv({ cls: 'abyss-add-task-bar' });
-    this.renderCaptureHost(bar, { type: 'project', path });
-    this.completeTaskCardRender();
+    this.renderCaptureHost_abyssPrivate(bar, { type: 'project', path });
+    this.completeTaskCardRender_abyssPrivate();
   }
 
-  private destroyCalendarView(): void {
-    this.forecastMenuOwner?.dismiss();
-    this.projectionDiagnosticOwner?.destroy();
-    this.projectionDiagnosticOwner = null;
-    this.clearCalendarPicker();
-    this.calUnsubscribe?.();
-    this.calUnsubscribe = null;
-    this.calViewInstance?.destroy();
-    this.calViewInstance = null;
+  private destroyCalendarView_abyssPrivate(): void {
+    this.forecastMenuOwner_abyssPrivate?.dismiss();
+    this.projectionDiagnosticOwner_abyssPrivate?.destroy();
+    this.projectionDiagnosticOwner_abyssPrivate = null;
+    this.clearCalendarPicker_abyssPrivate();
+    this.calUnsubscribe_abyssPrivate?.();
+    this.calUnsubscribe_abyssPrivate = null;
+    this.calViewInstance_abyssPrivate?.destroy();
+    this.calViewInstance_abyssPrivate = null;
   }
 
-  private clearCalendarPicker(restoreFocus = false): void {
-    this.calendarPickerCleanup?.(restoreFocus);
+  private clearCalendarPicker_abyssPrivate(restoreFocus = false): void {
+    this.calendarPickerCleanup_abyssPrivate?.(restoreFocus);
   }
 
-  private armCalendarPicker(picker: HTMLElement, anchor: HTMLElement): void {
+  private armCalendarPicker_abyssPrivate(picker: HTMLElement, anchor: HTMLElement): void {
     const ownerDocument = this.el.ownerDocument;
-    const ownershipToken = this.interactionOwnership.acquire({ blocksShortcuts: true });
+    const ownershipToken = this.interactionOwnership_abyssPrivate.acquire({
+      blocksShortcuts: true,
+    });
     let registrationTimer: number | undefined;
     let listening = false;
     const dismiss = (event: MouseEvent): void => {
@@ -823,10 +845,11 @@ export class CenterPanel {
       picker.remove();
       anchor.setAttribute('aria-expanded', 'false');
       ownershipToken.release();
-      if (this.calendarPickerCleanup === cleanup) this.calendarPickerCleanup = null;
+      if (this.calendarPickerCleanup_abyssPrivate === cleanup)
+        this.calendarPickerCleanup_abyssPrivate = null;
       if (restoreFocus && anchor.isConnected) anchor.focus();
     };
-    this.calendarPickerCleanup = cleanup;
+    this.calendarPickerCleanup_abyssPrivate = cleanup;
     anchor.setAttribute('aria-expanded', 'true');
     picker.addEventListener('keydown', onKeyDown);
     const selectedOption = picker.querySelector<HTMLElement>('button.is-active');
@@ -834,140 +857,141 @@ export class CenterPanel {
     (selectedOption ?? firstOption)?.focus({ preventScroll: true });
     registrationTimer = window.setTimeout(() => {
       registrationTimer = undefined;
-      if (this.calendarPickerCleanup !== cleanup || !picker.isConnected) return;
+      if (this.calendarPickerCleanup_abyssPrivate !== cleanup || !picker.isConnected) return;
       ownerDocument.addEventListener('click', dismiss, true);
       listening = true;
     }, 0);
   }
 
-  private render(): void {
-    const mode = this.state.get('mode');
-    this.prepareRender(mode);
-    if (mode !== 'projects') this.destroyProjectsPanel();
+  private render_abyssPrivate(): void {
+    const mode = this.state_abyssPrivate.get('mode');
+    this.prepareRender_abyssPrivate(mode);
+    if (mode !== 'projects') this.destroyProjectsPanel_abyssPrivate();
     if (mode === 'calendar') {
-      this.renderCalendarRoot();
+      this.renderCalendarRoot_abyssPrivate();
       return;
     }
-    this.prepareNonCalendarRoot();
+    this.prepareNonCalendarRoot_abyssPrivate();
     if (mode === 'search') {
-      this.renderSearch();
+      this.renderSearch_abyssPrivate();
       return;
     }
     if (mode === 'projects') {
-      this.renderProjectsMode();
+      this.renderProjectsMode_abyssPrivate();
       return;
     }
-    this.renderTasksMode();
+    this.renderTasksMode_abyssPrivate();
   }
 
-  private prepareRender(mode: string): void {
-    this.unmountActiveCapture();
-    this.clearTaskDatePicker();
-    this.dismissRecurrenceEditor();
-    this.viewStatePopoverCleanup?.();
-    this.clearSearchShell();
+  private prepareRender_abyssPrivate(mode: string): void {
+    this.unmountActiveCapture_abyssPrivate();
+    this.clearTaskDatePicker_abyssPrivate();
+    this.dismissRecurrenceEditor_abyssPrivate();
+    this.viewStatePopoverCleanup_abyssPrivate?.();
+    this.clearSearchShell_abyssPrivate();
     if (mode === 'search') return;
-    this.md.unload();
-    this.md = new Component();
-    this.md.load();
+    this.md_abyssPrivate.unload();
+    this.md_abyssPrivate = new Component();
+    this.md_abyssPrivate.load();
   }
 
-  private renderCalendarRoot(): void {
-    this.captureActiveTimedBlockFocus();
-    this.pendingCalScrollTop = this.el.querySelector<HTMLElement>('.abyss-tg-grid-row')?.scrollTop;
+  private renderCalendarRoot_abyssPrivate(): void {
+    this.captureActiveTimedBlockFocus_abyssPrivate();
+    this.pendingCalScrollTop_abyssPrivate =
+      this.el.querySelector<HTMLElement>('.abyss-tg-grid-row')?.scrollTop;
     this.el.empty();
     this.el.addClass('abyss-center--calendar');
-    this.destroyCalendarView();
-    this.renderCalendarMode();
+    this.destroyCalendarView_abyssPrivate();
+    this.renderCalendarMode_abyssPrivate();
   }
 
-  private prepareNonCalendarRoot(): void {
+  private prepareNonCalendarRoot_abyssPrivate(): void {
     this.el.removeClass('abyss-center--calendar');
-    this.destroyCalendarView();
+    this.destroyCalendarView_abyssPrivate();
     this.el.empty();
   }
 
-  private renderProjectsMode(): void {
+  private renderProjectsMode_abyssPrivate(): void {
     this.el.addClass('abyss-center--projects');
-    if (this.projectStore == null || this.projectManager == null) {
+    if (this.projectStore_abyssPrivate == null || this.projectManager_abyssPrivate == null) {
       this.el.createDiv({ cls: 'abyss-center-empty', text: 'Projects unavailable' });
-      this.onRenderComplete(this.el);
+      this.onRenderComplete_abyssPrivate(this.el);
       return;
     }
-    this.destroyProjectsPanel();
-    this.projectsPanel = new ProjectsPanel(
-      this.state,
-      this.projectStore,
-      this.projectManager,
-      this.settings,
-      this.app,
+    this.destroyProjectsPanel_abyssPrivate();
+    this.projectsPanel_abyssPrivate = new ProjectsPanel(
+      this.state_abyssPrivate,
+      this.projectStore_abyssPrivate,
+      this.projectManager_abyssPrivate,
+      this.settings_abyssPrivate,
+      this.app_abyssPrivate,
       {
         renderTasks: (host, path) => {
-          this.renderProjectTasks(host, path);
+          this.renderProjectTasks_abyssPrivate(host, path);
         },
       },
     );
     const host = this.el.createDiv({ cls: 'abyss-projects-host' });
-    this.projectsPanel.mount(host);
-    this.onRenderComplete(this.el);
+    this.projectsPanel_abyssPrivate.mount(host);
+    this.onRenderComplete_abyssPrivate(this.el);
   }
 
-  private renderTasksMode(): void {
+  private renderTasksMode_abyssPrivate(): void {
     this.el.removeClass('abyss-center--projects');
     const header = this.el.createDiv({ cls: 'abyss-center-header' });
-    header.createEl('h2', { cls: 'abyss-center-title', text: this.getTitle() });
+    header.createEl('h2', { cls: 'abyss-center-title', text: this.getTitle_abyssPrivate() });
     const controls = header.createDiv({ cls: 'abyss-center-controls' });
-    this.renderPropertyChips(controls);
-    this.renderViewStateButton(controls);
-    this.renderTaskFilterInput(controls);
-    const tasks = this.getFilteredTasks();
+    this.renderPropertyChips_abyssPrivate(controls);
+    this.renderViewStateButton_abyssPrivate(controls);
+    this.renderTaskFilterInput_abyssPrivate(controls);
+    const tasks = this.getFilteredTasks_abyssPrivate();
     const scroll = this.el.createDiv({ cls: 'abyss-center-scroll' });
     if (tasks.length === 0) scroll.createDiv({ cls: 'abyss-center-empty', text: 'No tasks' });
-    else this.renderWithGrouping(scroll, tasks);
-    this.renderAddTaskBar();
-    this.reconcileTaskSelection(this.visibleTaskKeys());
-    this.updateSelectionVisuals();
-    this.completeTaskCardRender();
+    else this.renderWithGrouping_abyssPrivate(scroll, tasks);
+    this.renderAddTaskBar_abyssPrivate();
+    this.reconcileTaskSelection_abyssPrivate(this.visibleTaskKeys_abyssPrivate());
+    this.updateSelectionVisuals_abyssPrivate();
+    this.completeTaskCardRender_abyssPrivate();
   }
 
-  private renderTaskFilterInput(controls: HTMLElement): void {
+  private renderTaskFilterInput_abyssPrivate(controls: HTMLElement): void {
     const searchInput = controls.createEl('input', {
       cls: 'abyss-center-search',
       attr: { type: 'text', placeholder: 'Filter…', 'aria-label': 'Filter tasks' },
     });
-    searchInput.value = this.state.get('centerFilter');
-    if (this.refocusSearch) {
-      this.refocusSearch = false;
+    searchInput.value = this.state_abyssPrivate.get('centerFilter');
+    if (this.refocusSearch_abyssPrivate) {
+      this.refocusSearch_abyssPrivate = false;
       window.setTimeout(() => {
         searchInput.focus();
         searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
       }, 0);
     }
     searchInput.addEventListener('input', () => {
-      window.clearTimeout(this.filterDebounce);
-      this.filterDebounce = window.setTimeout(() => {
-        this.refocusSearch = true;
-        this.state.set('centerFilter', searchInput.value);
+      window.clearTimeout(this.filterDebounce_abyssPrivate);
+      this.filterDebounce_abyssPrivate = window.setTimeout(() => {
+        this.refocusSearch_abyssPrivate = true;
+        this.state_abyssPrivate.set('centerFilter', searchInput.value);
       }, 150);
     });
   }
 
-  private renderCalendarMode(): void {
+  private renderCalendarMode_abyssPrivate(): void {
     const forecastMenuOwner =
-      this.forecastMenuOwner ??
-      createForecastContextMenuOwner(this.el.ownerDocument, this.interactionOwnership);
-    this.forecastMenuOwner = forecastMenuOwner;
+      this.forecastMenuOwner_abyssPrivate ??
+      createForecastContextMenuOwner(this.el.ownerDocument, this.interactionOwnership_abyssPrivate);
+    this.forecastMenuOwner_abyssPrivate = forecastMenuOwner;
     const projectionDiagnosticOwner = createCalendarProjectionDiagnosticOwner(
       this.el.ownerDocument,
     );
-    this.projectionDiagnosticOwner = projectionDiagnosticOwner;
-    const navigation = this.createCalendarNavigation();
+    this.projectionDiagnosticOwner_abyssPrivate = projectionDiagnosticOwner;
+    const navigation = this.createCalendarNavigation_abyssPrivate();
     const viewContainer = this.el.createDiv({ cls: 'abyss-cal-body' });
     const updateTitle = (): void => {
-      this.updateCalendarTitle(navigation);
+      this.updateCalendarTitle_abyssPrivate(navigation);
     };
     updateTitle();
-    const handlers = this.createCalendarHandlers(viewContainer);
+    const handlers = this.createCalendarHandlers_abyssPrivate(viewContainer);
     const context: CalendarRenderContext = {
       viewContainer,
       forecastMenuOwner,
@@ -975,20 +999,20 @@ export class CenterPanel {
       handlers,
     };
     const mountView = (): void => {
-      this.mountCalendarView(context);
+      this.mountCalendarView_abyssPrivate(context);
     };
     const patchView = (): void => {
-      this.patchCalendarView(context, mountView);
+      this.patchCalendarView_abyssPrivate(context, mountView);
     };
     mountView();
 
-    this.bindCalendarNavigation(navigation, updateTitle, mountView);
-    this.calUnsubscribe = this.queries.subscribe(() => {
+    this.bindCalendarNavigation_abyssPrivate(navigation, updateTitle, mountView);
+    this.calUnsubscribe_abyssPrivate = this.queries_abyssPrivate.subscribe(() => {
       patchView();
     });
   }
 
-  private createCalendarNavigation(): CalendarNavigationElements {
+  private createCalendarNavigation_abyssPrivate(): CalendarNavigationElements {
     const nav = this.el.createDiv({ cls: 'abyss-cal-nav' });
     const left = nav.createDiv({ cls: 'abyss-cal-nav-left' });
     const prevButton = left.createEl('button', {
@@ -1012,15 +1036,15 @@ export class CenterPanel {
     setIcon(nextButton, 'chevron-right');
     const right = nav.createDiv({ cls: 'abyss-cal-nav-right' });
     const todayButton = right.createEl('button', { cls: 'abyss-cal-nav-today', text: 'Today' });
-    this.renderCalendarViewSwitcher(right);
+    this.renderCalendarViewSwitcher_abyssPrivate(right);
     return { prevButton, monthButton, yearButton, nextButton, todayButton };
   }
 
-  private currentCalendarContent(): CalendarContent {
-    const config = this.calendarConfig();
+  private currentCalendarContent_abyssPrivate(): CalendarContent {
+    const config = this.calendarConfig_abyssPrivate();
     const visibleDates = visibleCalendarDates(
-      this.calViewType,
-      this.calDate,
+      this.calViewType_abyssPrivate,
+      this.calDate_abyssPrivate,
       config.firstDayOfWeek,
     );
     const firstVisibleDate = visibleDates[0];
@@ -1028,13 +1052,13 @@ export class CenterPanel {
     if (firstVisibleDate === undefined || lastVisibleDate === undefined) {
       return { config, issues: [], tasks: [] };
     }
-    const projection = this.queries.forCalendarProjection(
+    const projection = this.queries_abyssPrivate.forCalendarProjection(
       visibleDates as unknown as readonly LocalDate[],
     );
     const occurrences = projectCalendarOccurrences(
       projection,
       { from: localDate(firstVisibleDate), to: localDate(lastVisibleDate) },
-      { removeScheduledDate: this.settings.recurrence.removeScheduledDate },
+      { removeScheduledDate: this.settings_abyssPrivate.recurrence.removeScheduledDate },
     );
     return {
       config,
@@ -1043,41 +1067,43 @@ export class CenterPanel {
     };
   }
 
-  private calendarConfig(): ResolvedConfig {
-    const firstDayOfWeek = this.settings.desktop.firstDayOfWeek;
+  private calendarConfig_abyssPrivate(): ResolvedConfig {
+    const firstDayOfWeek = this.settings_abyssPrivate.desktop.firstDayOfWeek;
     return {
       ...DEFAULT_VIEW_CONFIG,
-      ...this.settings.desktop,
+      ...this.settings_abyssPrivate.desktop,
       isMobile: false,
-      sourceNoteDisplay: this.settings.sourceNoteDisplay,
-      customFilePath: this.settings.customFilePath,
-      startPosition: this.calendarStartPosition(firstDayOfWeek),
+      sourceNoteDisplay: this.settings_abyssPrivate.sourceNoteDisplay,
+      customFilePath: this.settings_abyssPrivate.customFilePath,
+      startPosition: this.calendarStartPosition_abyssPrivate(firstDayOfWeek),
     };
   }
 
-  private calendarStartPosition(firstDayOfWeek: number): string {
-    if (this.calViewType === 'week') return firstVisibleWeekDate(this.calDate, firstDayOfWeek);
-    if (this.calViewType === 'today') return this.calDate.format('YYYY-MM-DD');
-    return this.calDate.format('YYYY-MM');
+  private calendarStartPosition_abyssPrivate(firstDayOfWeek: number): string {
+    if (this.calViewType_abyssPrivate === 'week')
+      return firstVisibleWeekDate(this.calDate_abyssPrivate, firstDayOfWeek);
+    if (this.calViewType_abyssPrivate === 'today')
+      return this.calDate_abyssPrivate.format('YYYY-MM-DD');
+    return this.calDate_abyssPrivate.format('YYYY-MM');
   }
 
-  private createCalendarView(
+  private createCalendarView_abyssPrivate(
     forecastMenuOwner: ForecastContextMenuOwner,
     handlers: CalendarHandlers,
   ): TodayView | WeekTimeGridView | MonthGridView {
-    if (this.calViewType === 'today')
-      return this.createTodayCalendarView(forecastMenuOwner, handlers);
-    if (this.calViewType === 'week')
-      return this.createWeekCalendarView(forecastMenuOwner, handlers);
-    return this.createMonthCalendarView(forecastMenuOwner, handlers);
+    if (this.calViewType_abyssPrivate === 'today')
+      return this.createTodayCalendarView_abyssPrivate(forecastMenuOwner, handlers);
+    if (this.calViewType_abyssPrivate === 'week')
+      return this.createWeekCalendarView_abyssPrivate(forecastMenuOwner, handlers);
+    return this.createMonthCalendarView_abyssPrivate(forecastMenuOwner, handlers);
   }
 
-  private createTodayCalendarView(
+  private createTodayCalendarView_abyssPrivate(
     forecastMenuOwner: ForecastContextMenuOwner,
     handlers: CalendarHandlers,
   ): TodayView {
     return new TodayView({
-      app: this.app,
+      app: this.app_abyssPrivate,
       forecastMenuOwner,
       onTaskClick: handlers.onTaskClick,
       onForecastClick: handlers.onForecastClick,
@@ -1098,21 +1124,21 @@ export class CenterPanel {
       onExtendToSpan: handlers.onExtendToSpan,
       onKeyboardIntent: handlers.onKeyboardIntent,
       onToggle: handlers.onToggle,
-      dependenciesFor: this.dependenciesFor,
+      dependenciesFor: this.dependenciesFor_abyssPrivate,
       onSetStatus: handlers.onSetStatus,
       onSetPriority: handlers.onSetPriority,
-      interactionOwnership: this.interactionOwnership,
-      statusRegistry: this.statusRegistry,
-      tagGroups: this.settings.tagGroups,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
+      statusRegistry: this.statusRegistry_abyssPrivate,
+      tagGroups: this.settings_abyssPrivate.tagGroups,
     });
   }
 
-  private createWeekCalendarView(
+  private createWeekCalendarView_abyssPrivate(
     forecastMenuOwner: ForecastContextMenuOwner,
     handlers: CalendarHandlers,
   ): WeekTimeGridView {
     return new WeekTimeGridView({
-      app: this.app,
+      app: this.app_abyssPrivate,
       forecastMenuOwner,
       onTaskClick: handlers.onTaskClick,
       onForecastClick: handlers.onForecastClick,
@@ -1122,7 +1148,7 @@ export class CenterPanel {
       onCreateAtTime: handlers.onCreateAtTime,
       onCreateAtDate: handlers.onCreateAtDateAllDay,
       onDayHeaderClick: (date) => {
-        this.openCalendarDay(date);
+        this.openCalendarDay_abyssPrivate(date);
       },
       onTimeChange: handlers.onTimeChange,
       onDurationChange: handlers.onDurationChange,
@@ -1136,24 +1162,24 @@ export class CenterPanel {
       onExtendToSpan: handlers.onExtendToSpan,
       onKeyboardIntent: handlers.onKeyboardIntent,
       onToggle: handlers.onToggle,
-      dependenciesFor: this.dependenciesFor,
+      dependenciesFor: this.dependenciesFor_abyssPrivate,
       onSetStatus: handlers.onSetStatus,
       onSetPriority: handlers.onSetPriority,
-      interactionOwnership: this.interactionOwnership,
-      statusRegistry: this.statusRegistry,
-      tagGroups: this.settings.tagGroups,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
+      statusRegistry: this.statusRegistry_abyssPrivate,
+      tagGroups: this.settings_abyssPrivate.tagGroups,
     });
   }
 
-  private createMonthCalendarView(
+  private createMonthCalendarView_abyssPrivate(
     forecastMenuOwner: ForecastContextMenuOwner,
     handlers: CalendarHandlers,
   ): MonthGridView {
     return new MonthGridView({
-      app: this.app,
+      app: this.app_abyssPrivate,
       forecastMenuOwner,
       onDayClick: (date) => {
-        this.openCalendarDay(date);
+        this.openCalendarDay_abyssPrivate(date);
       },
       onCreateAtDate: handlers.onCreateAtDate,
       onTaskClick: handlers.onTaskClick,
@@ -1163,153 +1189,162 @@ export class CenterPanel {
       onSpanMove: handlers.onSpanMove,
       onSpanBoundary: handlers.onSpanBoundary,
       onToggle: handlers.onToggle,
-      dependenciesFor: this.dependenciesFor,
+      dependenciesFor: this.dependenciesFor_abyssPrivate,
       onSetStatus: handlers.onSetStatus,
       onSetPriority: handlers.onSetPriority,
       onWeekClick: (week, year) => {
-        this.openCalendarWeek(week, year);
+        this.openCalendarWeek_abyssPrivate(week, year);
       },
-      interactionOwnership: this.interactionOwnership,
-      statusRegistry: this.statusRegistry,
-      tagGroups: this.settings.tagGroups,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
+      statusRegistry: this.statusRegistry_abyssPrivate,
+      tagGroups: this.settings_abyssPrivate.tagGroups,
     });
   }
 
-  private openCalendarDay(date: string): void {
-    this.cancelKeyboardInteraction();
-    this.calViewType = 'today';
-    this.calDate = window.moment(date);
-    this.render();
+  private openCalendarDay_abyssPrivate(date: string): void {
+    this.cancelKeyboardInteraction_abyssPrivate();
+    this.calViewType_abyssPrivate = 'today';
+    this.calDate_abyssPrivate = window.moment(date);
+    this.render_abyssPrivate();
   }
 
-  private openCalendarWeek(week: string, year: string): void {
-    this.cancelKeyboardInteraction();
-    this.calViewType = 'week';
-    this.calDate = window
+  private openCalendarWeek_abyssPrivate(week: string, year: string): void {
+    this.cancelKeyboardInteraction_abyssPrivate();
+    this.calViewType_abyssPrivate = 'week';
+    this.calDate_abyssPrivate = window
       .moment()
       .isoWeekYear(Number.parseInt(year, 10))
       .isoWeek(Number.parseInt(week, 10))
       .startOf('isoWeek');
-    this.render();
+    this.render_abyssPrivate();
   }
 
-  private renderCalendarViewSwitcher(host: HTMLElement): void {
+  private renderCalendarViewSwitcher_abyssPrivate(host: HTMLElement): void {
     const switcher = host.createDiv({ cls: 'abyss-cal-view-switcher' });
     for (const view of ['today', 'week', 'month'] as const) {
       const button = switcher.createEl('button', {
-        cls: `abyss-cal-view-btn${this.calViewType === view ? ' is-active' : ''}`,
-        text: view === 'today' ? 'Day' : this.capitalize(view),
+        cls: `abyss-cal-view-btn${this.calViewType_abyssPrivate === view ? ' is-active' : ''}`,
+        text: view === 'today' ? 'Day' : this.capitalize_abyssPrivate(view),
       });
       button.addEventListener('click', () => {
-        this.navigation.openCalendarView(view);
+        this.navigation_abyssPrivate.openCalendarView(view);
       });
     }
   }
 
-  private updateCalendarTitle(navigation: CalendarNavigationElements): void {
-    if (this.calViewType === 'week') {
-      navigation.monthButton.textContent = `Week ${this.calDate.format('w')}`;
-    } else if (this.calViewType === 'today') {
-      navigation.monthButton.textContent = this.calDate.format('MMMM D');
+  private updateCalendarTitle_abyssPrivate(navigation: CalendarNavigationElements): void {
+    if (this.calViewType_abyssPrivate === 'week') {
+      navigation.monthButton.textContent = `Week ${this.calDate_abyssPrivate.format('w')}`;
+    } else if (this.calViewType_abyssPrivate === 'today') {
+      navigation.monthButton.textContent = this.calDate_abyssPrivate.format('MMMM D');
     } else {
-      navigation.monthButton.textContent = this.calDate.format('MMMM');
+      navigation.monthButton.textContent = this.calDate_abyssPrivate.format('MMMM');
     }
-    navigation.yearButton.textContent = this.calDate.format('YYYY');
+    navigation.yearButton.textContent = this.calDate_abyssPrivate.format('YYYY');
   }
 
-  private mountCalendarView(context: CalendarRenderContext): void {
-    this.prepareCalendarViewUpdate(context.forecastMenuOwner);
-    this.unmountActiveCapture();
-    const renderGeneration = ++this.calendarRenderGeneration;
+  private mountCalendarView_abyssPrivate(context: CalendarRenderContext): void {
+    this.prepareCalendarViewUpdate_abyssPrivate(context.forecastMenuOwner);
+    this.unmountActiveCapture_abyssPrivate();
+    const renderGeneration = ++this.calendarRenderGeneration_abyssPrivate;
     const grid = context.viewContainer.querySelector<HTMLElement>('.abyss-tg-grid-row');
-    const preservedScrollTop = grid?.scrollTop ?? this.pendingCalScrollTop;
-    this.pendingCalScrollTop = undefined;
-    this.calViewInstance?.destroy();
+    const preservedScrollTop = grid?.scrollTop ?? this.pendingCalScrollTop_abyssPrivate;
+    this.pendingCalScrollTop_abyssPrivate = undefined;
+    this.calViewInstance_abyssPrivate?.destroy();
     context.viewContainer.empty();
-    const { config, issues, tasks } = this.currentCalendarContent();
-    const shouldScrollToNow = this.shouldScrollCalendarToNow();
-    this.calViewInstance = this.createCalendarView(context.forecastMenuOwner, context.handlers);
-    this.calViewInstance.render(
+    const { config, issues, tasks } = this.currentCalendarContent_abyssPrivate();
+    const shouldScrollToNow = this.shouldScrollCalendarToNow_abyssPrivate();
+    this.calViewInstance_abyssPrivate = this.createCalendarView_abyssPrivate(
+      context.forecastMenuOwner,
+      context.handlers,
+    );
+    this.calViewInstance_abyssPrivate.render(
       context.viewContainer,
       tasks,
       config,
       shouldScrollToNow,
       preservedScrollTop,
     );
-    this.finishCalendarViewUpdate(context, issues, renderGeneration);
+    this.finishCalendarViewUpdate_abyssPrivate(context, issues, renderGeneration);
   }
 
-  private patchCalendarView(context: CalendarRenderContext, mountView: () => void): void {
-    if (this.calViewInstance == null) {
+  private patchCalendarView_abyssPrivate(
+    context: CalendarRenderContext,
+    mountView: () => void,
+  ): void {
+    if (this.calViewInstance_abyssPrivate == null) {
       mountView();
       return;
     }
-    this.prepareCalendarViewUpdate(context.forecastMenuOwner);
-    const renderGeneration = ++this.calendarRenderGeneration;
-    const { config, issues, tasks } = this.currentCalendarContent();
-    this.unmountActiveCapture();
-    this.calViewInstance.patch(context.viewContainer, tasks, config);
-    this.finishCalendarViewUpdate(context, issues, renderGeneration);
+    this.prepareCalendarViewUpdate_abyssPrivate(context.forecastMenuOwner);
+    const renderGeneration = ++this.calendarRenderGeneration_abyssPrivate;
+    const { config, issues, tasks } = this.currentCalendarContent_abyssPrivate();
+    this.unmountActiveCapture_abyssPrivate();
+    this.calViewInstance_abyssPrivate.patch(context.viewContainer, tasks, config);
+    this.finishCalendarViewUpdate_abyssPrivate(context, issues, renderGeneration);
   }
 
-  private prepareCalendarViewUpdate(forecastMenuOwner: ForecastContextMenuOwner): void {
-    this.dismissRecurrenceEditor();
+  private prepareCalendarViewUpdate_abyssPrivate(
+    forecastMenuOwner: ForecastContextMenuOwner,
+  ): void {
+    this.dismissRecurrenceEditor_abyssPrivate();
     forecastMenuOwner.dismiss();
-    this.captureActiveTimedBlockFocus();
-    const queueSequence = this.pendingTimedBlockFocus?.queueSequence;
-    if (queueSequence !== undefined) this.restoredKeyboardSequences.delete(queueSequence);
+    this.captureActiveTimedBlockFocus_abyssPrivate();
+    const queueSequence = this.pendingTimedBlockFocus_abyssPrivate?.queueSequence;
+    if (queueSequence !== undefined)
+      this.restoredKeyboardSequences_abyssPrivate.delete(queueSequence);
   }
 
-  private finishCalendarViewUpdate(
+  private finishCalendarViewUpdate_abyssPrivate(
     context: CalendarRenderContext,
     issues: readonly CalendarProjectionIssue[],
     renderGeneration: number,
   ): void {
     context.projectionDiagnosticOwner.update(context.viewContainer, issues);
-    this.remountActiveCapture();
-    this.onRenderComplete(context.viewContainer);
-    this.deferTimedBlockFocus(context.viewContainer, renderGeneration);
+    this.remountActiveCapture_abyssPrivate();
+    this.onRenderComplete_abyssPrivate(context.viewContainer);
+    this.deferTimedBlockFocus_abyssPrivate(context.viewContainer, renderGeneration);
   }
 
-  private shouldScrollCalendarToNow(): boolean {
-    const key = `${this.calViewType}:${this.calDate.format('YYYY-MM-DD')}`;
-    const shouldScroll = key !== this.lastScrolledCalKey;
-    this.lastScrolledCalKey = key;
+  private shouldScrollCalendarToNow_abyssPrivate(): boolean {
+    const key = `${this.calViewType_abyssPrivate}:${this.calDate_abyssPrivate.format('YYYY-MM-DD')}`;
+    const shouldScroll = key !== this.lastScrolledCalKey_abyssPrivate;
+    this.lastScrolledCalKey_abyssPrivate = key;
     return shouldScroll;
   }
 
-  private bindCalendarNavigation(
+  private bindCalendarNavigation_abyssPrivate(
     navigation: CalendarNavigationElements,
     updateTitle: () => void,
     mountView: () => void,
   ): void {
     navigation.monthButton.addEventListener('click', () => {
-      this.toggleMonthPicker(navigation.monthButton, updateTitle, mountView);
+      this.toggleMonthPicker_abyssPrivate(navigation.monthButton, updateTitle, mountView);
     });
     navigation.yearButton.addEventListener('click', () => {
-      this.toggleYearPicker(navigation.yearButton, updateTitle, mountView);
+      this.toggleYearPicker_abyssPrivate(navigation.yearButton, updateTitle, mountView);
     });
     navigation.prevButton.addEventListener('click', () => {
-      this.navigateCalendar(-1, updateTitle, mountView);
+      this.navigateCalendar_abyssPrivate(-1, updateTitle, mountView);
     });
     navigation.nextButton.addEventListener('click', () => {
-      this.navigateCalendar(1, updateTitle, mountView);
+      this.navigateCalendar_abyssPrivate(1, updateTitle, mountView);
     });
     navigation.todayButton.addEventListener('click', () => {
-      this.navigateCalendarToday(updateTitle, mountView);
+      this.navigateCalendarToday_abyssPrivate(updateTitle, mountView);
     });
   }
 
-  private toggleMonthPicker(
+  private toggleMonthPicker_abyssPrivate(
     anchor: HTMLElement,
     updateTitle: () => void,
     mountView: () => void,
   ): void {
     if (this.el.querySelector('.abyss-month-picker') != null) {
-      this.clearCalendarPicker();
+      this.clearCalendarPicker_abyssPrivate();
       return;
     }
-    this.clearCalendarPicker();
+    this.clearCalendarPicker_abyssPrivate();
     const picker = this.el.createDiv({
       cls: 'abyss-month-picker abyss-popover',
       attr: { role: 'dialog', 'aria-modal': 'false', 'aria-label': 'Select month' },
@@ -1329,7 +1364,7 @@ export class CenterPanel {
       'Dec',
     ];
     names.forEach((name, month) => {
-      const selected = month === this.calDate.month();
+      const selected = month === this.calDate_abyssPrivate.month();
       const button = picker.createEl('button', {
         cls: 'abyss-month-picker-btn',
         text: name,
@@ -1337,44 +1372,48 @@ export class CenterPanel {
       });
       if (selected) button.addClass('is-active');
       button.addEventListener('click', () => {
-        this.selectCalendarMonth(month, updateTitle, mountView);
+        this.selectCalendarMonth_abyssPrivate(month, updateTitle, mountView);
       });
     });
     anchor.after(picker);
-    this.armCalendarPicker(picker, anchor);
+    this.armCalendarPicker_abyssPrivate(picker, anchor);
   }
 
-  private selectCalendarMonth(month: number, updateTitle: () => void, mountView: () => void): void {
-    this.cancelKeyboardInteraction();
-    this.clearCalendarPicker(true);
-    this.calDate = this.calDate.clone().month(month).date(1);
+  private selectCalendarMonth_abyssPrivate(
+    month: number,
+    updateTitle: () => void,
+    mountView: () => void,
+  ): void {
+    this.cancelKeyboardInteraction_abyssPrivate();
+    this.clearCalendarPicker_abyssPrivate(true);
+    this.calDate_abyssPrivate = this.calDate_abyssPrivate.clone().month(month).date(1);
     updateTitle();
     mountView();
   }
 
-  private toggleYearPicker(
+  private toggleYearPicker_abyssPrivate(
     anchor: HTMLElement,
     updateTitle: () => void,
     mountView: () => void,
   ): void {
     if (this.el.querySelector('.abyss-year-picker') != null) {
-      this.clearCalendarPicker();
+      this.clearCalendarPicker_abyssPrivate();
       return;
     }
-    this.clearCalendarPicker();
+    this.clearCalendarPicker_abyssPrivate();
     const picker = this.el.createDiv({
       cls: 'abyss-year-picker abyss-popover',
       attr: { role: 'dialog', 'aria-modal': 'false', 'aria-label': 'Select year' },
     });
-    const currentYear = this.calDate.year();
+    const currentYear = this.calDate_abyssPrivate.year();
     for (let year = currentYear - 5; year <= currentYear + 5; year++) {
-      this.renderYearPickerOption(picker, year, currentYear, [updateTitle, mountView]);
+      this.renderYearPickerOption_abyssPrivate(picker, year, currentYear, [updateTitle, mountView]);
     }
     anchor.after(picker);
-    this.armCalendarPicker(picker, anchor);
+    this.armCalendarPicker_abyssPrivate(picker, anchor);
   }
 
-  private renderYearPickerOption(
+  private renderYearPickerOption_abyssPrivate(
     picker: HTMLElement,
     year: number,
     currentYear: number,
@@ -1388,117 +1427,171 @@ export class CenterPanel {
     });
     if (selected) button.addClass('is-active');
     button.addEventListener('click', () => {
-      this.cancelKeyboardInteraction();
-      this.clearCalendarPicker(true);
-      this.calDate = this.calDate.clone().year(year).date(1);
+      this.cancelKeyboardInteraction_abyssPrivate();
+      this.clearCalendarPicker_abyssPrivate(true);
+      this.calDate_abyssPrivate = this.calDate_abyssPrivate.clone().year(year).date(1);
       callbacks[0]();
       callbacks[1]();
     });
   }
 
-  private navigateCalendar(
+  private navigateCalendar_abyssPrivate(
     direction: -1 | 1,
     updateTitle: () => void,
     mountView: () => void,
   ): void {
-    this.cancelKeyboardInteraction();
+    this.cancelKeyboardInteraction_abyssPrivate();
     const operation = direction === 1 ? 'add' : 'subtract';
-    if (this.calViewType === 'week') {
-      this.calDate = this.calDate.clone()[operation](7, 'days').startOf('isoWeek');
-    } else if (this.calViewType === 'today') {
-      this.calDate = this.calDate.clone()[operation](1, 'day');
+    if (this.calViewType_abyssPrivate === 'week') {
+      this.calDate_abyssPrivate = this.calDate_abyssPrivate
+        .clone()
+        [operation](7, 'days')
+        .startOf('isoWeek');
+    } else if (this.calViewType_abyssPrivate === 'today') {
+      this.calDate_abyssPrivate = this.calDate_abyssPrivate.clone()[operation](1, 'day');
     } else {
-      this.calDate = this.calDate.clone()[operation](1, 'months').date(1);
+      this.calDate_abyssPrivate = this.calDate_abyssPrivate.clone()[operation](1, 'months').date(1);
     }
     updateTitle();
     mountView();
   }
 
-  private navigateCalendarToday(updateTitle: () => void, mountView: () => void): void {
-    this.cancelKeyboardInteraction();
-    if (this.calViewType === 'week') this.calDate = window.moment().startOf('isoWeek');
-    else if (this.calViewType === 'today') this.calDate = window.moment();
-    else this.calDate = window.moment().date(1);
+  private navigateCalendarToday_abyssPrivate(updateTitle: () => void, mountView: () => void): void {
+    this.cancelKeyboardInteraction_abyssPrivate();
+    if (this.calViewType_abyssPrivate === 'week')
+      this.calDate_abyssPrivate = window.moment().startOf('isoWeek');
+    else if (this.calViewType_abyssPrivate === 'today') this.calDate_abyssPrivate = window.moment();
+    else this.calDate_abyssPrivate = window.moment().date(1);
     updateTitle();
     mountView();
   }
 
-  private createCalendarHandlers(viewContainer: HTMLElement): CalendarHandlers {
+  private createCalendarNavigationHandlers_abyssPrivate(
+    viewContainer: HTMLElement,
+  ): Pick<
+    CalendarHandlers,
+    | 'onTaskClick'
+    | 'onForecastClick'
+    | 'onForecastContextMenu'
+    | 'onDrop'
+    | 'onDropTime'
+    | 'onCreateAtTime'
+    | 'onCreateAtDate'
+    | 'onCreateAtDateAllDay'
+  > {
     return {
       onTaskClick: (task) => {
-        if (calendarRootTaskRef(task) !== undefined) this.taskModal?.open(task);
+        if (calendarRootTaskRef(task) !== undefined) this.taskModal_abyssPrivate?.open(task);
       },
       onForecastClick: (source, referenceDate) => {
-        this.openForecastTask(source, referenceDate);
+        this.openForecastTask_abyssPrivate(source, referenceDate);
       },
       onForecastContextMenu: (source) => {
-        this.openForecastRecurrenceEditor(viewContainer, source);
+        this.openForecastRecurrenceEditor_abyssPrivate(viewContainer, source);
       },
       onDrop: (dragData, targetDate) => {
-        runAsyncAction(this.rescheduleTask(dragData, targetDate), 'Could not complete UI action');
+        runAsyncAction(
+          this.rescheduleTask_abyssPrivate(dragData, targetDate),
+          'Could not complete UI action',
+        );
       },
       onDropTime: (dragData, date, time) => {
         runAsyncAction(
-          this.setTaskTimeFromDrop(dragData, date, time),
+          this.setTaskTimeFromDrop_abyssPrivate(dragData, date, time),
           'Could not complete UI action',
         );
       },
       onCreateAtTime: (date, time) => {
-        this.createCalendarTaskAtTime(viewContainer, date, time);
+        this.createCalendarTaskAtTime_abyssPrivate(viewContainer, date, time);
       },
       onCreateAtDate: (date) => {
-        this.createCalendarTaskAtDate(viewContainer, date, false);
+        this.createCalendarTaskAtDate_abyssPrivate(viewContainer, date, false);
       },
       onCreateAtDateAllDay: (date) => {
-        this.createCalendarTaskAtDate(viewContainer, date, true);
-      },
-      onTimeChange: (task, minutes) => {
-        this.runCalendarTaskAction(task, () => this.updateTaskTime(task, minutes));
-      },
-      onDurationChange: (task, minutes) => {
-        this.runCalendarTaskAction(task, () => this.updateTaskDuration(task, minutes));
-      },
-      onTimedMove: (task, target) => {
-        this.runCalendarTaskAction(task, () => this.commitTimedMove(task, target));
-      },
-      onTimedDuration: (task, target) => {
-        this.runCalendarTaskAction(task, () => this.commitTimedDuration(task, target));
-      },
-      onTimedBoundary: (task, target) => {
-        this.runCalendarTaskAction(task, () => this.commitTimedBoundary(task, target));
-      },
-      onSpanMove: (task, target) => {
-        this.runCalendarTaskAction(task, () => this.commitSpanMove(task, target));
-      },
-      onSpanBoundary: (task, target) => {
-        this.runCalendarTaskAction(task, () => this.commitTimedBoundary(task, target));
-      },
-      onStartChange: (task, start) => {
-        this.runCalendarTaskAction(task, () => this.updateTaskStart(task, start));
-      },
-      onDueChange: (task, due) => {
-        this.runCalendarTaskAction(task, () => this.rescheduleTaskDue(task, due));
-      },
-      onExtendToSpan: (task, due) => {
-        this.runCalendarTaskAction(task, () => this.extendTaskToSpan(task, due));
-      },
-      onKeyboardIntent: (task, intent) => {
-        this.handleCalendarKeyboardIntent(task, intent);
-      },
-      onToggle: (task) => {
-        runAsyncAction(this.toggleTask(task), 'Could not complete UI action');
-      },
-      onSetStatus: (task, status) => {
-        runAsyncAction(this.setTaskStatus(task, status), 'Could not complete UI action');
-      },
-      onSetPriority: (task, priority) => {
-        runAsyncAction(this.setPriority(task, priority), 'Could not complete UI action');
+        this.createCalendarTaskAtDate_abyssPrivate(viewContainer, date, true);
       },
     };
   }
 
-  private openForecastTask(source: CalendarTaskSource, referenceDate: LocalDate): void {
-    this.taskModal?.open(source.root);
+  private createCalendarHandlers_abyssPrivate(viewContainer: HTMLElement): CalendarHandlers {
+    return {
+      ...this.createCalendarNavigationHandlers_abyssPrivate(viewContainer),
+      onTimeChange: (task, minutes) => {
+        this.runCalendarTaskAction_abyssPrivate(task, () =>
+          this.updateTaskTime_abyssPrivate(task, minutes),
+        );
+      },
+      onDurationChange: (task, minutes) => {
+        this.runCalendarTaskAction_abyssPrivate(task, () =>
+          this.updateTaskDuration_abyssPrivate(task, minutes),
+        );
+      },
+      onTimedMove: (task, target) => {
+        this.runCalendarTaskAction_abyssPrivate(task, () =>
+          this.commitTimedMove_abyssPrivate(task, target),
+        );
+      },
+      onTimedDuration: (task, target) => {
+        this.runCalendarTaskAction_abyssPrivate(task, () =>
+          this.commitTimedDuration_abyssPrivate(task, target),
+        );
+      },
+      onTimedBoundary: (task, target) => {
+        this.runCalendarTaskAction_abyssPrivate(task, () =>
+          this.commitTimedBoundary_abyssPrivate(task, target),
+        );
+      },
+      onSpanMove: (task, target) => {
+        this.runCalendarTaskAction_abyssPrivate(task, () =>
+          this.commitSpanMove_abyssPrivate(task, target),
+        );
+      },
+      onSpanBoundary: (task, target) => {
+        this.runCalendarTaskAction_abyssPrivate(task, () =>
+          this.commitTimedBoundary_abyssPrivate(task, target),
+        );
+      },
+      onStartChange: (task, start) => {
+        this.runCalendarTaskAction_abyssPrivate(task, () =>
+          this.updateTaskStart_abyssPrivate(task, start),
+        );
+      },
+      onDueChange: (task, due) => {
+        this.runCalendarTaskAction_abyssPrivate(task, () =>
+          this.rescheduleTaskDue_abyssPrivate(task, due),
+        );
+      },
+      onExtendToSpan: (task, due) => {
+        this.runCalendarTaskAction_abyssPrivate(task, () =>
+          this.extendTaskToSpan_abyssPrivate(task, due),
+        );
+      },
+      onKeyboardIntent: (task, intent) => {
+        this.handleCalendarKeyboardIntent_abyssPrivate(task, intent);
+      },
+      onToggle: (task) => {
+        runAsyncAction(this.toggleTask_abyssPrivate(task), 'Could not complete UI action');
+      },
+      onSetStatus: (task, status) => {
+        runAsyncAction(
+          this.setTaskStatus_abyssPrivate(task, status),
+          'Could not complete UI action',
+        );
+      },
+      onSetPriority: (task, priority) => {
+        runAsyncAction(
+          this.setPriority_abyssPrivate(task, priority),
+          'Could not complete UI action',
+        );
+      },
+    };
+  }
+
+  private openForecastTask_abyssPrivate(
+    source: CalendarTaskSource,
+    referenceDate: LocalDate,
+  ): void {
+    this.taskModal_abyssPrivate?.open(source.root);
     const modal = activeDocument.querySelector<HTMLElement>('.abyss-modal');
     if (modal == null) return;
     const context = modal.createDiv({
@@ -1508,50 +1601,67 @@ export class CenterPanel {
     modal.prepend(context);
   }
 
-  private runCalendarTaskAction(task: TaskSnapshot, action: () => Promise<void>): void {
+  private runCalendarTaskAction_abyssPrivate(
+    task: TaskSnapshot,
+    action: () => Promise<void>,
+  ): void {
     if (isForecastCalendarTask(task)) return;
     runAsyncAction(action(), 'Could not complete UI action');
   }
 
-  private createCalendarTaskAtTime(container: HTMLElement, date: string, time: string): void {
+  private createCalendarTaskAtTime_abyssPrivate(
+    container: HTMLElement,
+    date: string,
+    time: string,
+  ): void {
     const day = container.querySelector<HTMLElement>(
       `.abyss-tg-day-column[data-tg-date="${date}"]`,
     );
     const hourColumn = day?.querySelector<HTMLElement>('.abyss-tg-hour-column');
-    if (hourColumn != null) this.showTimeGridQuickAdd(hourColumn, date, time);
+    if (hourColumn != null) this.showTimeGridQuickAdd_abyssPrivate(hourColumn, date, time);
   }
 
-  private createCalendarTaskAtDate(container: HTMLElement, date: string, allDay: boolean): void {
+  private createCalendarTaskAtDate_abyssPrivate(
+    container: HTMLElement,
+    date: string,
+    allDay: boolean,
+  ): void {
     const selector = allDay
       ? `.abyss-tg-allday-cell[data-tg-date="${date}"]`
       : `[data-mg-date="${date}"]`;
     const cell = container.querySelector<HTMLElement>(selector);
     if (cell == null) return;
-    this.showFillCellQuickAdd(
+    this.showFillCellQuickAdd_abyssPrivate(
       cell,
       date,
       allDay ? 'abyss-tg-allday-quick-add' : 'abyss-mg-quick-add',
     );
   }
 
-  private handleCalendarKeyboardIntent(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): void {
-    if (calendarRootTaskRef(task) === undefined || this.keyboardQueue == null) return;
+  private handleCalendarKeyboardIntent_abyssPrivate(
+    task: TaskSnapshot,
+    intent: TimedBlockKeyboardIntent,
+  ): void {
+    if (calendarRootTaskRef(task) === undefined || this.keyboardQueue_abyssPrivate == null) return;
     const active = this.el.ownerDocument.activeElement;
     const originElement = isRealmHTMLElement(active)
       ? (active.closest<HTMLElement>('.abyss-tg-block') ?? undefined)
       : undefined;
-    const previousQueueSequence = this.pendingTimedBlockFocus?.queueSequence;
-    const provisionalFocus = this.provisionalTimedBlockFocus(task, originElement);
-    this.pendingTimedBlockFocus = provisionalFocus;
-    const queueSequence = this.keyboardQueue.enqueue(task, intent);
+    const previousQueueSequence = this.pendingTimedBlockFocus_abyssPrivate?.queueSequence;
+    const provisionalFocus = this.provisionalTimedBlockFocus_abyssPrivate(task, originElement);
+    this.pendingTimedBlockFocus_abyssPrivate = provisionalFocus;
+    const queueSequence = this.keyboardQueue_abyssPrivate.enqueue(task, intent);
     if (queueSequence === undefined) {
-      this.handleRejectedKeyboardIntent(provisionalFocus.sequence, previousQueueSequence);
+      this.handleRejectedKeyboardIntent_abyssPrivate(
+        provisionalFocus.sequence,
+        previousQueueSequence,
+      );
       return;
     }
-    this.acceptKeyboardIntent(provisionalFocus, queueSequence, previousQueueSequence);
+    this.acceptKeyboardIntent_abyssPrivate(provisionalFocus, queueSequence, previousQueueSequence);
   }
 
-  private provisionalTimedBlockFocus(
+  private provisionalTimedBlockFocus_abyssPrivate(
     task: TaskSnapshot,
     originElement: HTMLElement | undefined,
   ): TimedBlockFocusLocator {
@@ -1560,56 +1670,58 @@ export class CenterPanel {
       filePath: task.source.filePath,
       line: task.source.line,
       ...(segmentDate !== undefined && { segmentDate }),
-      sequence: ++this.nextTimedBlockFocusSequence,
+      sequence: ++this.nextTimedBlockFocusSequence_abyssPrivate,
       ...(originElement !== undefined && { originElement }),
     };
   }
 
-  private handleRejectedKeyboardIntent(
+  private handleRejectedKeyboardIntent_abyssPrivate(
     focusSequence: number,
     previousQueueSequence: number | undefined,
   ): void {
-    if (this.pendingTimedBlockFocus?.sequence === focusSequence) this.clearTimedBlockFocus();
-    if (previousQueueSequence !== undefined) this.clearKeyboardSequenceState(previousQueueSequence);
+    if (this.pendingTimedBlockFocus_abyssPrivate?.sequence === focusSequence)
+      this.clearTimedBlockFocus_abyssPrivate();
+    if (previousQueueSequence !== undefined)
+      this.clearKeyboardSequenceState_abyssPrivate(previousQueueSequence);
   }
 
-  private acceptKeyboardIntent(
+  private acceptKeyboardIntent_abyssPrivate(
     provisionalFocus: TimedBlockFocusLocator,
     queueSequence: number,
     previousQueueSequence: number | undefined,
   ): void {
-    if (this.pendingTimedBlockFocus?.sequence !== provisionalFocus.sequence) return;
+    if (this.pendingTimedBlockFocus_abyssPrivate?.sequence !== provisionalFocus.sequence) return;
     if (previousQueueSequence !== undefined && previousQueueSequence !== queueSequence) {
-      this.clearKeyboardSequenceState(previousQueueSequence);
+      this.clearKeyboardSequenceState_abyssPrivate(previousQueueSequence);
     }
-    this.settledKeyboardSequences.delete(queueSequence);
+    this.settledKeyboardSequences_abyssPrivate.delete(queueSequence);
     if (previousQueueSequence !== queueSequence) {
-      this.restoredKeyboardSequences.delete(queueSequence);
-      this.committedKeyboardSequences.delete(queueSequence);
+      this.restoredKeyboardSequences_abyssPrivate.delete(queueSequence);
+      this.committedKeyboardSequences_abyssPrivate.delete(queueSequence);
     }
-    this.pendingTimedBlockFocus = { ...provisionalFocus, queueSequence };
+    this.pendingTimedBlockFocus_abyssPrivate = { ...provisionalFocus, queueSequence };
   }
 
-  private cancelKeyboardInteraction(): void {
-    this.keyboardQueue?.cancel();
-    this.pendingTimedBlockFocus = undefined;
-    this.settledKeyboardSequences.clear();
-    this.restoredKeyboardSequences.clear();
-    this.committedKeyboardSequences.clear();
-    this.pendingTimedBlockRestorations.clear();
-    this.calendarRenderGeneration += 1;
+  private cancelKeyboardInteraction_abyssPrivate(): void {
+    this.keyboardQueue_abyssPrivate?.cancel();
+    this.pendingTimedBlockFocus_abyssPrivate = undefined;
+    this.settledKeyboardSequences_abyssPrivate.clear();
+    this.restoredKeyboardSequences_abyssPrivate.clear();
+    this.committedKeyboardSequences_abyssPrivate.clear();
+    this.pendingTimedBlockRestorations_abyssPrivate.clear();
+    this.calendarRenderGeneration_abyssPrivate += 1;
   }
 
-  private captureActiveTimedBlockFocus(): void {
-    if (this.pendingTimedBlockFocus?.queueSequence !== undefined) return;
+  private captureActiveTimedBlockFocus_abyssPrivate(): void {
+    if (this.pendingTimedBlockFocus_abyssPrivate?.queueSequence !== undefined) return;
     const active = this.el.ownerDocument.activeElement;
     if (!isRealmHTMLElement(active) || !this.el.contains(active)) return;
     const block = active.closest<HTMLElement>('.abyss-tg-block');
     if (block == null) return;
-    this.retainTimedBlockFocus(block);
+    this.retainTimedBlockFocus_abyssPrivate(block);
   }
 
-  private retainTimedBlockFocus(block: HTMLElement): void {
+  private retainTimedBlockFocus_abyssPrivate(block: HTMLElement): void {
     const filePath = block.dataset['abyssTaskFile'];
     const lineText = block.dataset['abyssTaskLine'];
     if (filePath === undefined || lineText === undefined) return;
@@ -1617,43 +1729,48 @@ export class CenterPanel {
     if (!Number.isInteger(line)) return;
     const segmentDate = block.dataset['tgSegmentDate'];
 
-    const pending = this.pendingTimedBlockFocus;
-    if (this.isDifferentPreCommitOrigin(block, pending)) {
-      this.replacePreCommitFocus(block, pending.queueSequence, {
+    const pending = this.pendingTimedBlockFocus_abyssPrivate;
+    if (this.isDifferentPreCommitOrigin_abyssPrivate(block, pending)) {
+      this.replacePreCommitFocus_abyssPrivate(block, pending.queueSequence, {
         filePath,
         line,
         ...(segmentDate !== undefined && { segmentDate }),
       });
       return;
     }
-    if (this.sameTimedBlockFocus(pending, filePath, line, segmentDate)) return;
+    if (this.sameTimedBlockFocus_abyssPrivate(pending, filePath, line, segmentDate)) return;
     if (pending?.queueSequence !== undefined) {
-      this.keyboardQueue?.cancel();
-      this.clearKeyboardSequenceState(pending.queueSequence);
+      this.keyboardQueue_abyssPrivate?.cancel();
+      this.clearKeyboardSequenceState_abyssPrivate(pending.queueSequence);
     }
-    this.pendingTimedBlockFocus = this.createTimedBlockFocus(block, filePath, line, segmentDate);
+    this.pendingTimedBlockFocus_abyssPrivate = this.createTimedBlockFocus_abyssPrivate(
+      block,
+      filePath,
+      line,
+      segmentDate,
+    );
   }
 
-  private isDifferentPreCommitOrigin(
+  private isDifferentPreCommitOrigin_abyssPrivate(
     block: HTMLElement,
     pending: TimedBlockFocusLocator | undefined,
   ): pending is TimedBlockFocusLocator & { readonly queueSequence: number } {
     return (
       pending?.queueSequence !== undefined &&
-      !this.committedKeyboardSequences.has(pending.queueSequence) &&
+      !this.committedKeyboardSequences_abyssPrivate.has(pending.queueSequence) &&
       pending.originElement !== undefined &&
       block !== pending.originElement
     );
   }
 
-  private replacePreCommitFocus(
+  private replacePreCommitFocus_abyssPrivate(
     block: HTMLElement,
     queueSequence: number,
     locator: Pick<TimedBlockFocusLocator, 'filePath' | 'line' | 'segmentDate'>,
   ): void {
-    this.keyboardQueue?.cancel();
-    this.clearTimedBlockFocus(queueSequence);
-    this.pendingTimedBlockFocus = this.createTimedBlockFocus(
+    this.keyboardQueue_abyssPrivate?.cancel();
+    this.clearTimedBlockFocus_abyssPrivate(queueSequence);
+    this.pendingTimedBlockFocus_abyssPrivate = this.createTimedBlockFocus_abyssPrivate(
       block,
       locator.filePath,
       locator.line,
@@ -1661,7 +1778,7 @@ export class CenterPanel {
     );
   }
 
-  private sameTimedBlockFocus(
+  private sameTimedBlockFocus_abyssPrivate(
     pending: TimedBlockFocusLocator | undefined,
     filePath: string,
     line: number,
@@ -1672,7 +1789,7 @@ export class CenterPanel {
     );
   }
 
-  private createTimedBlockFocus(
+  private createTimedBlockFocus_abyssPrivate(
     block: HTMLElement,
     filePath: string,
     line: number,
@@ -1682,28 +1799,35 @@ export class CenterPanel {
       filePath,
       line,
       ...(segmentDate !== undefined && { segmentDate }),
-      sequence: ++this.nextTimedBlockFocusSequence,
+      sequence: ++this.nextTimedBlockFocusSequence_abyssPrivate,
       originElement: block,
     };
   }
 
-  private deferTimedBlockFocus(container: HTMLElement, renderGeneration: number): void {
-    const scheduled = this.pendingTimedBlockFocus;
+  private deferTimedBlockFocus_abyssPrivate(
+    container: HTMLElement,
+    renderGeneration: number,
+  ): void {
+    const scheduled = this.pendingTimedBlockFocus_abyssPrivate;
     if (scheduled == null) return;
     const focusSequence = scheduled.sequence;
     const queueSequence = scheduled.queueSequence;
-    if (queueSequence !== undefined && !this.committedKeyboardSequences.has(queueSequence)) return;
+    if (
+      queueSequence !== undefined &&
+      !this.committedKeyboardSequences_abyssPrivate.has(queueSequence)
+    )
+      return;
 
-    const scheduledCandidate = this.findTimedBlock(container, scheduled);
+    const scheduledCandidate = this.findTimedBlock_abyssPrivate(container, scheduled);
     if (queueSequence !== undefined && scheduledCandidate === scheduled.originElement) return;
-    const restorationId = this.reserveTimedBlockRestoration(
+    const restorationId = this.reserveTimedBlockRestoration_abyssPrivate(
       scheduledCandidate,
       scheduled,
       renderGeneration,
     );
 
     window.setTimeout(() => {
-      this.restoreDeferredTimedBlockFocus(container, {
+      this.restoreDeferredTimedBlockFocus_abyssPrivate(container, {
         focusSequence,
         renderGeneration,
         ...(restorationId !== undefined && { restorationId }),
@@ -1711,7 +1835,7 @@ export class CenterPanel {
     }, 0);
   }
 
-  private reserveTimedBlockRestoration(
+  private reserveTimedBlockRestoration_abyssPrivate(
     candidate: HTMLElement | undefined,
     scheduled: TimedBlockFocusLocator,
     renderGeneration: number,
@@ -1724,8 +1848,8 @@ export class CenterPanel {
     ) {
       return undefined;
     }
-    const restorationId = ++this.nextTimedBlockRestoration;
-    this.pendingTimedBlockRestorations.set(restorationId, {
+    const restorationId = ++this.nextTimedBlockRestoration_abyssPrivate;
+    this.pendingTimedBlockRestorations_abyssPrivate.set(restorationId, {
       queueSequence,
       focusSequence: scheduled.sequence,
       renderGeneration,
@@ -1733,7 +1857,7 @@ export class CenterPanel {
     return restorationId;
   }
 
-  private findTimedBlock(
+  private findTimedBlock_abyssPrivate(
     container: HTMLElement,
     locator: Pick<TimedBlockFocusLocator, 'filePath' | 'line' | 'segmentDate'>,
   ): HTMLElement | undefined {
@@ -1746,7 +1870,7 @@ export class CenterPanel {
     );
   }
 
-  private restoreDeferredTimedBlockFocus(
+  private restoreDeferredTimedBlockFocus_abyssPrivate(
     container: HTMLElement,
     options: {
       readonly focusSequence: number;
@@ -1754,42 +1878,45 @@ export class CenterPanel {
       readonly restorationId?: number;
     },
   ): void {
-    if (!this.canRunTimedBlockRestoration(options)) return;
-    const pending = this.pendingTimedBlockFocus;
-    if (!this.isPendingTimedBlockRestorable(pending, options.focusSequence)) return;
-    const candidate = this.findTimedBlock(container, pending);
-    if (!this.isRestorableTimedBlock(candidate)) return;
+    if (!this.canRunTimedBlockRestoration_abyssPrivate(options)) return;
+    const pending = this.pendingTimedBlockFocus_abyssPrivate;
+    if (!this.isPendingTimedBlockRestorable_abyssPrivate(pending, options.focusSequence)) return;
+    const candidate = this.findTimedBlock_abyssPrivate(container, pending);
+    if (!this.isRestorableTimedBlock_abyssPrivate(candidate)) return;
     candidate.focus();
     candidate.classList.add('is-selected');
-    if (!this.didRestoreTimedBlock(candidate, pending.sequence)) return;
-    this.finishTimedBlockRestoration(pending.queueSequence);
+    if (!this.didRestoreTimedBlock_abyssPrivate(candidate, pending.sequence)) return;
+    this.finishTimedBlockRestoration_abyssPrivate(pending.queueSequence);
   }
 
-  private canRunTimedBlockRestoration(options: {
+  private canRunTimedBlockRestoration_abyssPrivate(options: {
     readonly renderGeneration: number;
     readonly restorationId?: number;
   }): boolean {
     if (
       options.restorationId !== undefined &&
-      !this.pendingTimedBlockRestorations.delete(options.restorationId)
+      !this.pendingTimedBlockRestorations_abyssPrivate.delete(options.restorationId)
     ) {
       return false;
     }
-    return options.renderGeneration === this.calendarRenderGeneration;
+    return options.renderGeneration === this.calendarRenderGeneration_abyssPrivate;
   }
 
-  private isPendingTimedBlockRestorable(
+  private isPendingTimedBlockRestorable_abyssPrivate(
     pending: TimedBlockFocusLocator | undefined,
     focusSequence: number,
   ): pending is TimedBlockFocusLocator {
-    if (pending?.sequence !== focusSequence || this.state.get('mode') !== 'calendar') return false;
+    if (pending?.sequence !== focusSequence || this.state_abyssPrivate.get('mode') !== 'calendar')
+      return false;
     return (
       pending.queueSequence === undefined ||
-      this.committedKeyboardSequences.has(pending.queueSequence)
+      this.committedKeyboardSequences_abyssPrivate.has(pending.queueSequence)
     );
   }
 
-  private isRestorableTimedBlock(candidate: HTMLElement | undefined): candidate is HTMLElement {
+  private isRestorableTimedBlock_abyssPrivate(
+    candidate: HTMLElement | undefined,
+  ): candidate is HTMLElement {
     return (
       candidate !== undefined &&
       candidate.isConnected &&
@@ -1798,93 +1925,97 @@ export class CenterPanel {
     );
   }
 
-  private didRestoreTimedBlock(candidate: HTMLElement, sequence: number): boolean {
+  private didRestoreTimedBlock_abyssPrivate(candidate: HTMLElement, sequence: number): boolean {
     return (
       candidate.ownerDocument.activeElement === candidate &&
-      this.pendingTimedBlockFocus?.sequence === sequence
+      this.pendingTimedBlockFocus_abyssPrivate?.sequence === sequence
     );
   }
 
-  private finishTimedBlockRestoration(queueSequence: number | undefined): void {
+  private finishTimedBlockRestoration_abyssPrivate(queueSequence: number | undefined): void {
     if (queueSequence === undefined) {
-      this.clearTimedBlockFocus();
+      this.clearTimedBlockFocus_abyssPrivate();
       return;
     }
-    this.restoredKeyboardSequences.add(queueSequence);
-    if (this.settledKeyboardSequences.has(queueSequence)) this.clearTimedBlockFocus(queueSequence);
+    this.restoredKeyboardSequences_abyssPrivate.add(queueSequence);
+    if (this.settledKeyboardSequences_abyssPrivate.has(queueSequence))
+      this.clearTimedBlockFocus_abyssPrivate(queueSequence);
   }
 
-  private clearTimedBlockFocus(queueSequence?: number): void {
-    const pending = this.pendingTimedBlockFocus;
+  private clearTimedBlockFocus_abyssPrivate(queueSequence?: number): void {
+    const pending = this.pendingTimedBlockFocus_abyssPrivate;
     if (queueSequence !== undefined && pending?.queueSequence !== queueSequence) return;
     const ownedSequence = pending?.queueSequence ?? queueSequence;
     if (ownedSequence !== undefined) {
-      this.clearKeyboardSequenceState(ownedSequence);
+      this.clearKeyboardSequenceState_abyssPrivate(ownedSequence);
     }
-    this.pendingTimedBlockFocus = undefined;
+    this.pendingTimedBlockFocus_abyssPrivate = undefined;
   }
 
-  private hasPendingTimedBlockRestoration(queueSequence: number): boolean {
-    const pending = this.pendingTimedBlockFocus;
+  private hasPendingTimedBlockRestoration_abyssPrivate(queueSequence: number): boolean {
+    const pending = this.pendingTimedBlockFocus_abyssPrivate;
     if (pending?.queueSequence !== queueSequence) return false;
-    return Array.from(this.pendingTimedBlockRestorations.values()).some(
+    return Array.from(this.pendingTimedBlockRestorations_abyssPrivate.values()).some(
       (restoration) =>
         restoration.queueSequence === queueSequence &&
         restoration.focusSequence === pending.sequence &&
-        restoration.renderGeneration === this.calendarRenderGeneration,
+        restoration.renderGeneration === this.calendarRenderGeneration_abyssPrivate,
     );
   }
 
-  private clearKeyboardSequenceState(queueSequence: number): void {
-    this.settledKeyboardSequences.delete(queueSequence);
-    this.restoredKeyboardSequences.delete(queueSequence);
-    this.committedKeyboardSequences.delete(queueSequence);
-    for (const [id, restoration] of this.pendingTimedBlockRestorations) {
+  private clearKeyboardSequenceState_abyssPrivate(queueSequence: number): void {
+    this.settledKeyboardSequences_abyssPrivate.delete(queueSequence);
+    this.restoredKeyboardSequences_abyssPrivate.delete(queueSequence);
+    this.committedKeyboardSequences_abyssPrivate.delete(queueSequence);
+    for (const [id, restoration] of this.pendingTimedBlockRestorations_abyssPrivate) {
       if (restoration.queueSequence === queueSequence) {
-        this.pendingTimedBlockRestorations.delete(id);
+        this.pendingTimedBlockRestorations_abyssPrivate.delete(id);
       }
     }
   }
 
-  private handleKeyboardCommit(
+  private handleKeyboardCommit_abyssPrivate(
     updated: TaskSnapshot,
     intent: TimedBlockKeyboardIntent,
     queueSequence: number,
     changed: boolean,
   ): void {
-    const pending = this.pendingTimedBlockFocus;
-    if (!this.acceptsKeyboardCommit(pending, queueSequence)) return;
-    this.committedKeyboardSequences.add(queueSequence);
+    const pending = this.pendingTimedBlockFocus_abyssPrivate;
+    if (!this.acceptsKeyboardCommit_abyssPrivate(pending, queueSequence)) return;
+    this.committedKeyboardSequences_abyssPrivate.add(queueSequence);
     const sourceChanged =
       pending.filePath !== updated.source.filePath || pending.line !== updated.source.line;
-    const nextSegmentDate = this.shiftFocusedSegmentDate(pending, intent, changed);
+    const nextSegmentDate = this.shiftFocusedSegmentDate_abyssPrivate(pending, intent, changed);
     const segmentChanged = nextSegmentDate !== pending.segmentDate;
     const identityChanged = [sourceChanged, segmentChanged].includes(true);
     const presentationChanged = [changed, identityChanged].includes(true);
-    if (presentationChanged) this.restoredKeyboardSequences.delete(queueSequence);
+    if (presentationChanged) this.restoredKeyboardSequences_abyssPrivate.delete(queueSequence);
     if (identityChanged) {
-      this.pendingTimedBlockFocus = {
+      this.pendingTimedBlockFocus_abyssPrivate = {
         ...pending,
         filePath: updated.source.filePath,
         line: updated.source.line,
         ...(nextSegmentDate !== undefined && { segmentDate: nextSegmentDate }),
-        sequence: ++this.nextTimedBlockFocusSequence,
+        sequence: ++this.nextTimedBlockFocusSequence_abyssPrivate,
       };
     }
-    if (presentationChanged || !this.restoredKeyboardSequences.has(queueSequence)) {
-      this.deferTimedBlockFocus(this.el, this.calendarRenderGeneration);
+    if (presentationChanged || !this.restoredKeyboardSequences_abyssPrivate.has(queueSequence)) {
+      this.deferTimedBlockFocus_abyssPrivate(this.el, this.calendarRenderGeneration_abyssPrivate);
     }
-    if (intent.type === 'shift-schedule') this.followShiftedTask(updated, nextSegmentDate);
+    if (intent.type === 'shift-schedule')
+      this.followShiftedTask_abyssPrivate(updated, nextSegmentDate);
   }
 
-  private acceptsKeyboardCommit(
+  private acceptsKeyboardCommit_abyssPrivate(
     pending: TimedBlockFocusLocator | undefined,
     queueSequence: number,
   ): pending is TimedBlockFocusLocator {
-    return pending?.queueSequence === queueSequence && this.state.get('mode') === 'calendar';
+    return (
+      pending?.queueSequence === queueSequence && this.state_abyssPrivate.get('mode') === 'calendar'
+    );
   }
 
-  private shiftFocusedSegmentDate(
+  private shiftFocusedSegmentDate_abyssPrivate(
     pending: TimedBlockFocusLocator,
     intent: TimedBlockKeyboardIntent,
     changed: boolean,
@@ -1899,32 +2030,41 @@ export class CenterPanel {
     }
   }
 
-  private followShiftedTask(updated: TaskSnapshot, nextSegmentDate: string | undefined): void {
+  private followShiftedTask_abyssPrivate(
+    updated: TaskSnapshot,
+    nextSegmentDate: string | undefined,
+  ): void {
     const anchor =
       updated.planning.start != null && updated.planning.due != null
         ? updated.planning.due
         : (updated.planning.scheduled ?? updated.planning.due);
     const followDate = nextSegmentDate ?? anchor;
     if (followDate === undefined || followDate === '') return;
-    const firstDayOfWeek = this.settings.desktop.firstDayOfWeek;
-    const outsideWeek = !visibleCalendarDates('week', this.calDate, firstDayOfWeek).includes(
-      followDate,
-    );
-    if (this.calViewType !== 'today' && (this.calViewType !== 'week' || !outsideWeek)) return;
-    this.calDate = window.moment(followDate);
-    this.render();
+    const firstDayOfWeek = this.settings_abyssPrivate.desktop.firstDayOfWeek;
+    const outsideWeek = !visibleCalendarDates(
+      'week',
+      this.calDate_abyssPrivate,
+      firstDayOfWeek,
+    ).includes(followDate);
+    if (
+      this.calViewType_abyssPrivate !== 'today' &&
+      (this.calViewType_abyssPrivate !== 'week' || !outsideWeek)
+    )
+      return;
+    this.calDate_abyssPrivate = window.moment(followDate);
+    this.render_abyssPrivate();
   }
 
-  private renderSearch(): void {
+  private renderSearch_abyssPrivate(): void {
     const header = this.el.createDiv({ cls: 'abyss-center-header' });
     header.createEl('h2', { cls: 'abyss-center-title', text: 'Search' });
     const input = header.createEl('input', {
       cls: 'abyss-center-search abyss-search-global',
       attr: { type: 'text', placeholder: 'Search all tasks…', 'aria-label': 'Search all tasks' },
     });
-    input.value = this.state.get('searchQuery');
+    input.value = this.state_abyssPrivate.get('searchQuery');
     input.addEventListener('input', () => {
-      this.state.set('searchQuery', input.value);
+      this.state_abyssPrivate.set('searchQuery', input.value);
     });
     input.addEventListener('keydown', (event) => {
       if (isImeOwnedEvent(event) || event.key !== 'Escape') return;
@@ -1932,22 +2072,22 @@ export class CenterPanel {
       event.stopPropagation();
       if (this.el.isConnected) this.el.focus({ preventScroll: true });
     });
-    this.searchInputEl = input;
+    this.searchInputEl_abyssPrivate = input;
 
     const results = this.el.createDiv({ cls: 'abyss-center-scroll' });
-    this.searchResultsEl = results;
-    this.renderSearchResults(results, input.value);
+    this.searchResultsEl_abyssPrivate = results;
+    this.renderSearchResults_abyssPrivate(results, input.value);
 
     window.setTimeout(() => {
-      if (this.searchInputEl === input && input.isConnected) input.focus();
+      if (this.searchInputEl_abyssPrivate === input && input.isConnected) input.focus();
     }, 0);
   }
 
-  private handleSearchQueryChanged(query: string): void {
-    const input = this.searchInputEl;
-    const results = this.searchResultsEl;
+  private handleSearchQueryChanged_abyssPrivate(query: string): void {
+    const input = this.searchInputEl_abyssPrivate;
+    const results = this.searchResultsEl_abyssPrivate;
     if (
-      this.state.get('mode') !== 'search' ||
+      this.state_abyssPrivate.get('mode') !== 'search' ||
       input === null ||
       !input.isConnected ||
       results?.isConnected !== true
@@ -1955,58 +2095,58 @@ export class CenterPanel {
       return;
     }
     if (input.value !== query) input.value = query;
-    this.scheduleSearchResults(query);
+    this.scheduleSearchResults_abyssPrivate(query);
   }
 
-  private scheduleSearchResults(query: string): void {
-    if (this.searchResultsFrame !== null) {
-      window.cancelAnimationFrame(this.searchResultsFrame);
+  private scheduleSearchResults_abyssPrivate(query: string): void {
+    if (this.searchResultsFrame_abyssPrivate !== null) {
+      window.cancelAnimationFrame(this.searchResultsFrame_abyssPrivate);
     }
-    this.searchResultsFrame = window.requestAnimationFrame(() => {
-      this.searchResultsFrame = null;
-      const input = this.searchInputEl;
-      const results = this.searchResultsEl;
+    this.searchResultsFrame_abyssPrivate = window.requestAnimationFrame(() => {
+      this.searchResultsFrame_abyssPrivate = null;
+      const input = this.searchInputEl_abyssPrivate;
+      const results = this.searchResultsEl_abyssPrivate;
       if (
-        this.state.get('mode') !== 'search' ||
+        this.state_abyssPrivate.get('mode') !== 'search' ||
         input === null ||
         !input.isConnected ||
         results?.isConnected !== true
       ) {
         return;
       }
-      this.renderSearchResults(results, query);
+      this.renderSearchResults_abyssPrivate(results, query);
     });
   }
 
-  private clearSearchShell(): void {
-    if (this.searchResultsFrame !== null) {
-      window.cancelAnimationFrame(this.searchResultsFrame);
-      this.searchResultsFrame = null;
+  private clearSearchShell_abyssPrivate(): void {
+    if (this.searchResultsFrame_abyssPrivate !== null) {
+      window.cancelAnimationFrame(this.searchResultsFrame_abyssPrivate);
+      this.searchResultsFrame_abyssPrivate = null;
     }
-    this.searchInputEl = null;
-    this.searchResultsEl = null;
+    this.searchInputEl_abyssPrivate = null;
+    this.searchResultsEl_abyssPrivate = null;
   }
 
-  private renderSearchResults(host: HTMLElement, query: string): void {
-    this.md.unload();
-    this.md = new Component();
-    this.md.load();
+  private renderSearchResults_abyssPrivate(host: HTMLElement, query: string): void {
+    this.md_abyssPrivate.unload();
+    this.md_abyssPrivate = new Component();
+    this.md_abyssPrivate.load();
     host.empty();
     host.toggleClass('abyss-search-empty', query.length === 0);
 
     if (query.length === 0) {
       host.createEl('p', { cls: 'abyss-empty-state', text: 'Type to search tasks…' });
-      this.completeTaskCardRender();
+      this.completeTaskCardRender_abyssPrivate();
       return;
     }
 
-    const matchingTasks = [...searchTaskList(this.queries.list(), query)];
+    const matchingTasks = [...searchTaskList(this.queries_abyssPrivate.list(), query)];
     if (matchingTasks.length === 0) {
       host.createDiv({ cls: 'abyss-center-empty', text: 'No results' });
-      this.completeTaskCardRender();
+      this.completeTaskCardRender_abyssPrivate();
       return;
     }
-    this.renderFlat(host, matchingTasks);
+    this.renderFlat_abyssPrivate(host, matchingTasks);
 
     // Navigate to task in tasks mode when clicking a search result
     host.querySelectorAll<HTMLElement>('.abyss-task-card').forEach((cardEl, idx) => {
@@ -2026,26 +2166,26 @@ export class CenterPanel {
           } else if (d != null && d > todayStr) {
             list = 'upcoming';
           }
-          this.navigation.openList(list);
-          this.state.set('taskStack', [task]);
+          this.navigation_abyssPrivate.openList(list);
+          this.state_abyssPrivate.set('taskStack', [task]);
         },
         { capture: true },
       );
     });
-    this.completeTaskCardRender();
+    this.completeTaskCardRender_abyssPrivate();
   }
 
-  private renderWithGrouping(container: HTMLElement, tasks: TaskSnapshot[]): void {
-    const vs = this.state.get('centerListViewState');
+  private renderWithGrouping_abyssPrivate(container: HTMLElement, tasks: TaskSnapshot[]): void {
+    const vs = this.state_abyssPrivate.get('centerListViewState');
     const today = localDate(window.moment().format('YYYY-MM-DD'));
     const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
 
     if (vs.groupBy === 'none') {
-      this.renderFlat(container, tasks);
+      this.renderFlat_abyssPrivate(container, tasks);
       return;
     }
 
-    const groups = this.groupTasks(tasks, vs.groupBy, today, tomorrow);
+    const groups = this.groupTasks_abyssPrivate(tasks, vs.groupBy, today, tomorrow);
 
     let firstGroup = true;
     for (const group of groups) {
@@ -2055,11 +2195,11 @@ export class CenterPanel {
         : 'abyss-group-header';
       container.createDiv({ cls, text: `${group.label}  ${group.tasks.length}` });
       firstGroup = false;
-      for (const task of group.tasks) this.renderTaskCard(container, task);
+      for (const task of group.tasks) this.renderTaskCard_abyssPrivate(container, task);
     }
   }
 
-  private groupTasks(
+  private groupTasks_abyssPrivate(
     tasks: TaskSnapshot[],
     groupBy: ListViewState['groupBy'],
     today: LocalDate,
@@ -2067,16 +2207,16 @@ export class CenterPanel {
   ): Array<{ label: string; tasks: TaskSnapshot[] }> {
     if (groupBy === 'date') return groupTasksByDate(tasks, today, tomorrow);
     if (groupBy === 'priority') return groupTasksByPriority(tasks);
-    if (groupBy === 'status') return groupTasksByStatus(tasks, this.statusRegistry);
+    if (groupBy === 'status') return groupTasksByStatus(tasks, this.statusRegistry_abyssPrivate);
     return groupTasksByTag(tasks);
   }
 
-  private renderFlat(container: HTMLElement, tasks: TaskSnapshot[]): void {
-    for (const task of tasks) this.renderTaskCard(container, task);
+  private renderFlat_abyssPrivate(container: HTMLElement, tasks: TaskSnapshot[]): void {
+    for (const task of tasks) this.renderTaskCard_abyssPrivate(container, task);
   }
 
-  private renderTaskCard(container: HTMLElement, task: TaskSnapshot): void {
-    const isSelected = this.isTaskCardSelected(task);
+  private renderTaskCard_abyssPrivate(container: HTMLElement, task: TaskSnapshot): void {
+    const isSelected = this.isTaskCardSelected_abyssPrivate(task);
     const card = container.createDiv({
       cls: `abyss-task-card${isSelected ? ' is-selected' : ''}`,
       attr: { tabindex: '-1' },
@@ -2086,18 +2226,18 @@ export class CenterPanel {
     card.dataset['line'] = String(task.source.line);
 
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
-    this.renderTaskStatus(mainRow, task);
-    this.renderTaskCardBody(mainRow, card, task);
-    this.renderTaskCardMetadata(mainRow, task);
-    this.mountTaskCardInteractions(card, task);
-    this.syncTaskDeleteButton(
+    this.renderTaskStatus_abyssPrivate(mainRow, task);
+    this.renderTaskCardBody_abyssPrivate(mainRow, card, task);
+    this.renderTaskCardMetadata_abyssPrivate(mainRow, task);
+    this.mountTaskCardInteractions_abyssPrivate(card, task);
+    this.syncTaskDeleteButton_abyssPrivate(
       card,
-      isSelected && this.selectedTaskKeys.size === 0 ? task : undefined,
+      isSelected && this.selectedTaskKeys_abyssPrivate.size === 0 ? task : undefined,
     );
   }
 
-  private isTaskCardSelected(task: TaskSnapshot): boolean {
-    const stack = this.state.get('taskStack');
+  private isTaskCardSelected_abyssPrivate(task: TaskSnapshot): boolean {
+    const stack = this.state_abyssPrivate.get('taskStack');
     const root = stack[0];
     const current = stack[stack.length - 1];
     return (
@@ -2109,89 +2249,105 @@ export class CenterPanel {
     );
   }
 
-  private renderTaskStatus(mainRow: HTMLElement, task: TaskSnapshot): void {
-    const projection = this.dependenciesFor(task);
+  private renderTaskStatus_abyssPrivate(mainRow: HTMLElement, task: TaskSnapshot): void {
+    const projection = this.dependenciesFor_abyssPrivate(task);
     renderStatusMarker(mainRow, {
       task,
-      registry: this.statusRegistry,
+      registry: this.statusRegistry_abyssPrivate,
       completionBlocked: dependencyCompletionBlocked(projection),
       onLeftClick: () => {
-        runAsyncAction(this.toggleTask(task), 'Could not complete UI action');
+        runAsyncAction(this.toggleTask_abyssPrivate(task), 'Could not complete UI action');
       },
       onContextMenu: (event) => {
         event.stopPropagation();
-        this.openStatusMenu(event, task);
+        this.openStatusMenu_abyssPrivate(event, task);
       },
     });
     renderDependencyIndicator(mainRow, projection);
   }
 
-  private readonly dependenciesFor: TaskDependencyLookup = (task) => {
+  private readonly dependenciesFor_abyssPrivate: TaskDependencyLookup = (task) => {
     const target = calendarMutationTarget(task);
-    return target === undefined ? undefined : this.tasks?.queries.dependencies(target);
+    return target === undefined ? undefined : this.tasks_abyssPrivate?.queries.dependencies(target);
   };
 
-  private renderTaskCardBody(mainRow: HTMLElement, card: HTMLElement, task: TaskSnapshot): void {
+  private renderTaskCardBody_abyssPrivate(
+    mainRow: HTMLElement,
+    card: HTMLElement,
+    task: TaskSnapshot,
+  ): void {
     const body = mainRow.createDiv({ cls: 'abyss-task-body' });
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
     const recurrence = task.recurrence;
     if (recurrence !== undefined && recurrence !== '') {
       renderRecurrenceBadge(titleRow, recurrenceBadgeInput(recurrence));
     }
-    this.renderTaskCountBadges(titleRow, task);
+    this.renderTaskCountBadges_abyssPrivate(titleRow, task);
     const titleEl = titleRow.createSpan({ cls: 'abyss-task-title' });
     renderTaskText(titleEl, task.markdownTitle, {
-      app: this.app,
+      app: this.app_abyssPrivate,
       sourcePath: task.source.filePath,
-      component: this.md,
+      component: this.md_abyssPrivate,
       onEditLink: (occurrence, token) => {
-        this.editTaskLink(task, occurrence, token);
+        this.editTaskLink_abyssPrivate(task, occurrence, token);
       },
     });
-    this.renderTaskDescription(card, task);
+    this.renderTaskDescription_abyssPrivate(card, task);
   }
 
-  private renderTaskCountBadges(titleRow: HTMLElement, task: TaskSnapshot): void {
+  private renderTaskCountBadges_abyssPrivate(titleRow: HTMLElement, task: TaskSnapshot): void {
     const subtaskCount = task.subtasks.length;
     if (subtaskCount > 0) {
       const doneCount = task.subtasks.filter((subtask) => subtask.status === 'done').length;
-      this.renderTaskCountBadge(titleRow, 'check-square', `${doneCount}/${subtaskCount}`);
+      this.renderTaskCountBadge_abyssPrivate(
+        titleRow,
+        'check-square',
+        `${doneCount}/${subtaskCount}`,
+      );
     }
     if (task.comments.length > 0) {
-      this.renderTaskCountBadge(titleRow, 'message-square', String(task.comments.length));
+      this.renderTaskCountBadge_abyssPrivate(
+        titleRow,
+        'message-square',
+        String(task.comments.length),
+      );
     }
     if (task.presentation.linkCount > 0) {
-      this.renderTaskCountBadge(titleRow, 'paperclip', String(task.presentation.linkCount));
+      this.renderTaskCountBadge_abyssPrivate(
+        titleRow,
+        'paperclip',
+        String(task.presentation.linkCount),
+      );
     }
   }
 
-  private renderTaskCountBadge(host: HTMLElement, icon: string, text: string): void {
+  private renderTaskCountBadge_abyssPrivate(host: HTMLElement, icon: string, text: string): void {
     const badge = host.createSpan({ cls: 'abyss-task-count-badge' });
     setIcon(badge, icon);
     badge.createSpan({ text });
   }
 
-  private renderTaskDescription(card: HTMLElement, task: TaskSnapshot): void {
+  private renderTaskDescription_abyssPrivate(card: HTMLElement, task: TaskSnapshot): void {
     const description = task.description;
     if (description === undefined || description === '') return;
     const descriptionElement = card.createDiv({ cls: 'abyss-task-desc' });
     renderTaskText(descriptionElement, description.split('\n')[0] ?? '', {
-      app: this.app,
+      app: this.app_abyssPrivate,
       sourcePath: task.source.filePath,
-      component: this.md,
+      component: this.md_abyssPrivate,
     });
   }
 
-  private renderTaskCardMetadata(mainRow: HTMLElement, task: TaskSnapshot): void {
+  private renderTaskCardMetadata_abyssPrivate(mainRow: HTMLElement, task: TaskSnapshot): void {
     const today = localDate(window.moment().format('YYYY-MM-DD'));
-    const sel = this.state.get('selectedList');
+    const sel = this.state_abyssPrivate.get('selectedList');
     const d = task.planning.due ?? task.planning.scheduled;
     const tags = task.tags;
     const suppressToday = sel === 'today' && d === today;
     const showSourceNote = shouldShowSourceNote(
       task,
-      this.settings.sourceNoteDisplay,
-      this.settings.customFilePath,
+      this.settings_abyssPrivate.sourceNoteDisplay,
+      this.settings_abyssPrivate.customFilePath,
     );
     const hasRightMeta =
       showSourceNote ||
@@ -2200,16 +2356,17 @@ export class CenterPanel {
       tags.length > 0;
     if (!hasRightMeta) return;
     const metaRight = mainRow.createDiv({ cls: 'abyss-task-meta-right' });
-    this.renderTaskDateMetadata(metaRight, task, d, suppressToday);
+    this.renderTaskDateMetadata_abyssPrivate(metaRight, task, d, suppressToday);
     if (showSourceNote) {
       renderSourceNoteChip(metaRight, task, (filePath) => {
-        this.addPropertyFilter({ type: 'file', filePath });
+        this.addPropertyFilter_abyssPrivate({ type: 'file', filePath });
       });
     }
-    for (const tag of tags.slice(0, 2)) this.renderTaskTagMetadata(metaRight, task, tag);
+    for (const tag of tags.slice(0, 2))
+      this.renderTaskTagMetadata_abyssPrivate(metaRight, task, tag);
   }
 
-  private renderTaskDateMetadata(
+  private renderTaskDateMetadata_abyssPrivate(
     host: HTMLElement,
     task: TaskSnapshot,
     date: LocalDate | undefined,
@@ -2218,50 +2375,60 @@ export class CenterPanel {
     const time = task.planning.time;
     if (date != null && !suppressToday) {
       const dateElement = host.createSpan({
-        cls: `abyss-task-date ${this.getDateClass(date)}`.trim(),
+        cls: `abyss-task-date ${this.getDateClass_abyssPrivate(date)}`.trim(),
       });
-      this.renderDateFilterPart(dateElement, date);
-      if (time != null) this.renderTimeFilterPart(dateElement, time, 'abyss-task-time-part');
+      this.renderDateFilterPart_abyssPrivate(dateElement, date);
+      if (time != null)
+        this.renderTimeFilterPart_abyssPrivate(dateElement, time, 'abyss-task-time-part');
       return;
     }
-    if (date == null && time != null) this.renderTimeFilterPart(host, time, 'abyss-task-date');
+    if (date == null && time != null)
+      this.renderTimeFilterPart_abyssPrivate(host, time, 'abyss-task-date');
   }
 
-  private renderDateFilterPart(host: HTMLElement, date: LocalDate): void {
+  private renderDateFilterPart_abyssPrivate(host: HTMLElement, date: LocalDate): void {
     const part = host.createSpan({ cls: 'abyss-task-date-part abyss-cursor-pointer' });
     const icon = part.createSpan({ cls: 'abyss-date-icon' });
     setIcon(icon, 'calendar');
-    part.createSpan({ text: this.formatDate(date) });
+    part.createSpan({ text: this.formatDate_abyssPrivate(date) });
     part.addEventListener('click', (event) => {
       event.stopPropagation();
-      this.addPropertyFilter({ type: 'date', value: date });
+      this.addPropertyFilter_abyssPrivate({ type: 'date', value: date });
     });
   }
 
-  private renderTimeFilterPart(host: HTMLElement, time: string, className: string): void {
+  private renderTimeFilterPart_abyssPrivate(
+    host: HTMLElement,
+    time: string,
+    className: string,
+  ): void {
     const part = host.createSpan({ cls: `${className} abyss-cursor-pointer` });
     const icon = part.createSpan({ cls: 'abyss-date-icon' });
     setIcon(icon, 'clock');
     part.createSpan({ text: time });
     part.addEventListener('click', (event) => {
       event.stopPropagation();
-      this.addPropertyFilter({ type: 'time', value: time });
+      this.addPropertyFilter_abyssPrivate({ type: 'time', value: time });
     });
   }
 
-  private renderTaskTagMetadata(host: HTMLElement, task: TaskSnapshot, tag: string): void {
+  private renderTaskTagMetadata_abyssPrivate(
+    host: HTMLElement,
+    task: TaskSnapshot,
+    tag: string,
+  ): void {
     const element = host.createSpan({ cls: 'abyss-task-tag abyss-cursor-pointer', text: tag });
-    const color = this.getTagColor(tag);
+    const color = this.getTagColor_abyssPrivate(tag);
     if (color !== undefined && color !== '') {
       element.setCssProps({ '--abyss-tag-color': color });
       element.addClass('abyss-task-tag--colored');
     }
     element.addEventListener('click', (event) => {
       event.stopPropagation();
-      this.addPropertyFilter({ type: 'tag', value: tag });
+      this.addPropertyFilter_abyssPrivate({ type: 'tag', value: tag });
     });
     element.addEventListener('dragover', (event) => {
-      const dragging = this.state.get('draggingTag');
+      const dragging = this.state_abyssPrivate.get('draggingTag');
       if (dragging === null || dragging === '' || dragging === tag) return;
       event.preventDefault();
       event.stopPropagation();
@@ -2271,11 +2438,11 @@ export class CenterPanel {
       element.classList.remove('abyss-drop-target');
     });
     element.addEventListener('drop', (event) => {
-      this.handleTaskTagDrop(event, element, task, tag);
+      this.handleTaskTagDrop_abyssPrivate(event, element, task, tag);
     });
   }
 
-  private handleTaskTagDrop(
+  private handleTaskTagDrop_abyssPrivate(
     event: DragEvent,
     element: HTMLElement,
     task: TaskSnapshot,
@@ -2284,25 +2451,28 @@ export class CenterPanel {
     event.preventDefault();
     event.stopPropagation();
     element.classList.remove('abyss-drop-target');
-    const dragging = this.state.get('draggingTag');
+    const dragging = this.state_abyssPrivate.get('draggingTag');
     if (dragging === null || dragging === '' || dragging === replacedTag) return;
     runAsyncAction(
-      this.patchTaskTags(task, [dragging], [replacedTag]),
+      this.patchTaskTags_abyssPrivate(task, [dragging], [replacedTag]),
       'Could not complete UI action',
     );
   }
 
-  private mountTaskCardInteractions(card: HTMLElement, task: TaskSnapshot): void {
+  private mountTaskCardInteractions_abyssPrivate(card: HTMLElement, task: TaskSnapshot): void {
     card.addEventListener('click', (event) => {
-      this.handleTaskCardClick(event, task);
+      this.handleTaskCardClick_abyssPrivate(event, task);
     });
-    this.mountTaskCardDrag(card, task);
+    this.mountTaskCardDrag_abyssPrivate(card, task);
     card.addEventListener('contextmenu', (event) => {
-      this.handleTaskContextMenu(event, card, task);
+      this.handleTaskContextMenu_abyssPrivate(event, card, task);
     });
   }
 
-  private syncTaskDeleteButton(card: HTMLElement, task: TaskSnapshot | undefined): void {
+  private syncTaskDeleteButton_abyssPrivate(
+    card: HTMLElement,
+    task: TaskSnapshot | undefined,
+  ): void {
     const mainRow = card.querySelector<HTMLElement>('.abyss-task-card-main-row');
     if (mainRow == null) return;
     const existing = mainRow.querySelector<HTMLButtonElement>('.abyss-task-delete-btn');
@@ -2320,48 +2490,50 @@ export class CenterPanel {
     setIcon(deleteButton, 'x');
     deleteButton.addEventListener('click', (event) => {
       event.stopPropagation();
-      runAsyncAction(this.deleteTask(task), 'Could not complete UI action');
+      runAsyncAction(this.deleteTask_abyssPrivate(task), 'Could not complete UI action');
     });
   }
 
-  private handleTaskCardClick(event: MouseEvent, task: TaskSnapshot): void {
-    const key = this.taskKey(task);
+  private handleTaskCardClick_abyssPrivate(event: MouseEvent, task: TaskSnapshot): void {
+    const key = this.taskKey_abyssPrivate(task);
     if (event.ctrlKey || event.metaKey) {
-      if (this.selectedTaskKeys.has(key)) this.selectedTaskKeys.delete(key);
-      else this.selectedTaskKeys.add(key);
-      this.selectionAnchorKey = key;
-      this.selectionFocusKey = key;
-      this.updateSelectionVisuals();
-      this.focusTaskKey(key);
+      if (this.selectedTaskKeys_abyssPrivate.has(key))
+        this.selectedTaskKeys_abyssPrivate.delete(key);
+      else this.selectedTaskKeys_abyssPrivate.add(key);
+      this.selectionAnchorKey_abyssPrivate = key;
+      this.selectionFocusKey_abyssPrivate = key;
+      this.updateSelectionVisuals_abyssPrivate();
+      this.focusTaskKey_abyssPrivate(key);
       return;
     }
     if (event.shiftKey) {
-      const keys = this.visibleTaskKeys();
+      const keys = this.visibleTaskKeys_abyssPrivate();
       const anchor =
-        this.selectionAnchorKey !== null && keys.includes(this.selectionAnchorKey)
-          ? this.selectionAnchorKey
+        this.selectionAnchorKey_abyssPrivate !== null &&
+        keys.includes(this.selectionAnchorKey_abyssPrivate)
+          ? this.selectionAnchorKey_abyssPrivate
           : key;
-      this.selectionAnchorKey = anchor;
-      this.selectionFocusKey = key;
-      this.replaceRangeSelection(anchor, key, keys);
-      this.focusTaskKey(key);
+      this.selectionAnchorKey_abyssPrivate = anchor;
+      this.selectionFocusKey_abyssPrivate = key;
+      this.replaceRangeSelection_abyssPrivate(anchor, key, keys);
+      this.focusTaskKey_abyssPrivate(key);
       return;
     }
-    this.selectedTaskKeys.clear();
-    this.selectionAnchorKey = key;
-    this.selectionFocusKey = key;
-    this.updateSelectionVisuals();
-    this.focusTaskKey(key);
-    this.state.set('taskStack', [task]);
+    this.selectedTaskKeys_abyssPrivate.clear();
+    this.selectionAnchorKey_abyssPrivate = key;
+    this.selectionFocusKey_abyssPrivate = key;
+    this.updateSelectionVisuals_abyssPrivate();
+    this.focusTaskKey_abyssPrivate(key);
+    this.state_abyssPrivate.set('taskStack', [task]);
   }
 
-  private mountTaskCardDrag(card: HTMLElement, task: TaskSnapshot): void {
+  private mountTaskCardDrag_abyssPrivate(card: HTMLElement, task: TaskSnapshot): void {
     if (isForecastCalendarTask(task)) return;
     card.setAttribute('draggable', 'true');
     card.addEventListener('dragstart', () => {
-      this.endTaskDrag?.();
+      this.endTaskDrag_abyssPrivate?.();
       card.classList.add('abyss-dragging');
-      this.endTaskDrag = startTaskNodeDrag(this.state, this.el, card, {
+      this.endTaskDrag_abyssPrivate = startTaskNodeDrag(this.state_abyssPrivate, this.el, card, {
         payload: {
           source: 'center-card',
           task: { root: task, path: [], node: task, target: { type: 'task', ref: task.ref } },
@@ -2372,12 +2544,16 @@ export class CenterPanel {
       });
     });
     card.addEventListener('dragend', () => {
-      this.endTaskDrag?.();
+      this.endTaskDrag_abyssPrivate?.();
     });
 
     card.addEventListener('dragover', (event) => {
-      const draggingTag = this.state.get('draggingTag');
-      if ((draggingTag === null || draggingTag === '') && !this.canDropProjectOnTask(task)) return;
+      const draggingTag = this.state_abyssPrivate.get('draggingTag');
+      if (
+        (draggingTag === null || draggingTag === '') &&
+        !this.canDropProjectOnTask_abyssPrivate(task)
+      )
+        return;
       event.preventDefault();
       card.classList.add('abyss-drop-target');
     });
@@ -2385,68 +2561,85 @@ export class CenterPanel {
       card.classList.remove('abyss-drop-target');
     });
     card.addEventListener('drop', (event) => {
-      this.handleTaskCardDrop(event, card, task);
+      this.handleTaskCardDrop_abyssPrivate(event, card, task);
     });
   }
 
-  private canDropProjectOnTask(task: TaskSnapshot): boolean {
-    const project = this.state.get('draggingProject');
+  private canDropProjectOnTask_abyssPrivate(task: TaskSnapshot): boolean {
+    const project = this.state_abyssPrivate.get('draggingProject');
     return (
       project !== null &&
       project !== '' &&
       project !== task.source.filePath &&
-      this.projectManager != null &&
-      this.tasks != null
+      this.projectManager_abyssPrivate != null &&
+      this.tasks_abyssPrivate != null
     );
   }
 
-  private handleTaskCardDrop(event: DragEvent, card: HTMLElement, task: TaskSnapshot): void {
+  private handleTaskCardDrop_abyssPrivate(
+    event: DragEvent,
+    card: HTMLElement,
+    task: TaskSnapshot,
+  ): void {
     card.classList.remove('abyss-drop-target');
-    const tag = this.state.get('draggingTag');
+    const tag = this.state_abyssPrivate.get('draggingTag');
     if (tag !== null && tag !== '') {
       event.preventDefault();
-      runAsyncAction(this.assignTagFromInbox(task, tag), 'Could not complete UI action');
+      runAsyncAction(
+        this.assignTagFromInbox_abyssPrivate(task, tag),
+        'Could not complete UI action',
+      );
       return;
     }
-    const project = this.state.get('draggingProject');
+    const project = this.state_abyssPrivate.get('draggingProject');
     if (
-      !this.canDropProjectOnTask(task) ||
+      !this.canDropProjectOnTask_abyssPrivate(task) ||
       project === null ||
-      this.tasks == null ||
-      this.projectManager == null
+      this.tasks_abyssPrivate == null ||
+      this.projectManager_abyssPrivate == null
     )
       return;
     event.preventDefault();
     runAsyncAction(
-      moveTaskToProjectWithRecovery(this.app, this.tasks, this.projectManager, task.ref, project),
+      moveTaskToProjectWithRecovery(
+        this.app_abyssPrivate,
+        this.tasks_abyssPrivate,
+        this.projectManager_abyssPrivate,
+        task.ref,
+        project,
+      ),
       'Could not complete UI action',
     );
   }
 
-  private handleTaskContextMenu(event: MouseEvent, card: HTMLElement, task: TaskSnapshot): void {
+  private handleTaskContextMenu_abyssPrivate(
+    event: MouseEvent,
+    card: HTMLElement,
+    task: TaskSnapshot,
+  ): void {
     event.preventDefault();
-    const key = this.taskKey(task);
-    if (this.selectedTaskKeys.size > 0 && !this.selectedTaskKeys.has(key))
-      this.clearTaskSelection();
-    if (this.selectedTaskKeys.size >= 2) {
-      this.showBulkContextMenu(event, card);
+    const key = this.taskKey_abyssPrivate(task);
+    if (this.selectedTaskKeys_abyssPrivate.size > 0 && !this.selectedTaskKeys_abyssPrivate.has(key))
+      this.clearTaskSelection_abyssPrivate();
+    if (this.selectedTaskKeys_abyssPrivate.size >= 2) {
+      this.showBulkContextMenu_abyssPrivate(event, card);
       return;
     }
-    const menu = this.createTaskContextMenu(card, task);
+    const menu = this.createTaskContextMenu_abyssPrivate(card, task);
     showMenuAtMouseEventWithFocus(menu, event);
   }
 
-  private createTaskContextMenu(card: HTMLElement, task: TaskSnapshot): Menu {
+  private createTaskContextMenu_abyssPrivate(card: HTMLElement, task: TaskSnapshot): Menu {
     const today = localDate(window.moment().format('YYYY-MM-DD'));
     const menu = new Menu();
-    this.addTaskDateMenuItems(menu, card, task, today);
-    this.addTaskTagMenuItems(menu, task);
-    this.addTaskPropertyMenuItems(menu, task);
-    this.addTaskActionMenuItems(menu, card, task);
+    this.addTaskDateMenuItems_abyssPrivate(menu, card, task, today);
+    this.addTaskTagMenuItems_abyssPrivate(menu, task);
+    this.addTaskPropertyMenuItems_abyssPrivate(menu, task);
+    this.addTaskActionMenuItems_abyssPrivate(menu, card, task);
     return menu;
   }
 
-  private addTaskDateMenuItems(
+  private addTaskDateMenuItems_abyssPrivate(
     menu: Menu,
     card: HTMLElement,
     task: TaskSnapshot,
@@ -2460,7 +2653,10 @@ export class CenterPanel {
         .setSection('today')
         .setChecked(task.planning.due === today)
         .onClick(() => {
-          runAsyncAction(this.toggleTaskDuePreset(task, today), 'Could not complete UI action');
+          runAsyncAction(
+            this.toggleTaskDuePreset_abyssPrivate(task, today),
+            'Could not complete UI action',
+          );
         }),
     );
 
@@ -2473,7 +2669,7 @@ export class CenterPanel {
           .setChecked(task.planning.due === tomorrow)
           .onClick(() => {
             runAsyncAction(
-              this.toggleTaskDuePreset(task, tomorrow),
+              this.toggleTaskDuePreset_abyssPrivate(task, tomorrow),
               'Could not complete UI action',
             );
           }),
@@ -2485,14 +2681,14 @@ export class CenterPanel {
         .setIcon('calendar-cog')
         .setSection('actions')
         .onClick(() => {
-          this.openTaskDatePicker(card, [task]);
+          this.openTaskDatePicker_abyssPrivate(card, [task]);
         }),
     );
   }
 
-  private addTaskTagMenuItems(menu: Menu, task: TaskSnapshot): void {
-    for (const pinnedTag of this.settings.pinnedTags) {
-      const hasTag = this.getTaskTags(task).has(pinnedTag);
+  private addTaskTagMenuItems_abyssPrivate(menu: Menu, task: TaskSnapshot): void {
+    for (const pinnedTag of this.settings_abyssPrivate.pinnedTags) {
+      const hasTag = this.getTaskTags_abyssPrivate(task).has(pinnedTag);
       menu.addItem((item) =>
         item
           .setTitle(pinnedTag)
@@ -2501,7 +2697,11 @@ export class CenterPanel {
           .setChecked(hasTag)
           .onClick(() => {
             runAsyncAction(
-              this.patchTaskTags(task, hasTag ? [] : [pinnedTag], hasTag ? [pinnedTag] : []),
+              this.patchTaskTags_abyssPrivate(
+                task,
+                hasTag ? [] : [pinnedTag],
+                hasTag ? [pinnedTag] : [],
+              ),
               'Could not complete UI action',
             );
           }),
@@ -2509,19 +2709,19 @@ export class CenterPanel {
     }
   }
 
-  private addTaskPropertyMenuItems(menu: Menu, task: TaskSnapshot): void {
+  private addTaskPropertyMenuItems_abyssPrivate(menu: Menu, task: TaskSnapshot): void {
     menu.addItem((item) => {
       item.setTitle('Priority').setIcon('arrow-up-narrow-wide').setSection('priority');
       const sub = getSubmenu(item);
-      this.buildPrioritySubmenu(sub, task);
+      this.buildPrioritySubmenu_abyssPrivate(sub, task);
     });
 
     // ── Status (submenu) ──────────────────────────────────
     menu.addItem((item) => {
       item.setTitle('Status').setIcon('check-square').setSection('priority');
       const sub = getSubmenu(item);
-      buildStatusSubmenu(sub, task, this.statusRegistry, (c) => {
-        runAsyncAction(this.setTaskStatus(task, c), 'Could not complete UI action');
+      buildStatusSubmenu(sub, task, this.statusRegistry_abyssPrivate, (c) => {
+        runAsyncAction(this.setTaskStatus_abyssPrivate(task, c), 'Could not complete UI action');
       });
     });
 
@@ -2531,7 +2731,7 @@ export class CenterPanel {
         .setIcon('filter')
         .setSection('priority')
         .onClick(() => {
-          this.addPropertyFilter({ type: 'priority', value: task.priority });
+          this.addPropertyFilter_abyssPrivate({ type: 'priority', value: task.priority });
         }),
     );
 
@@ -2541,19 +2741,23 @@ export class CenterPanel {
         .setIcon('filter')
         .setSection('priority')
         .onClick(() => {
-          this.addPropertyFilter({ type: 'status', value: task.statusSymbol });
+          this.addPropertyFilter_abyssPrivate({ type: 'status', value: task.statusSymbol });
         }),
     );
   }
 
-  private addTaskActionMenuItems(menu: Menu, card: HTMLElement, task: TaskSnapshot): void {
+  private addTaskActionMenuItems_abyssPrivate(
+    menu: Menu,
+    card: HTMLElement,
+    task: TaskSnapshot,
+  ): void {
     menu.addItem((item) =>
       item
         .setTitle('Set tag…')
         .setIcon('hash')
         .setSection('actions')
         .onClick(() => {
-          this.openTagPicker(task);
+          this.openTagPicker_abyssPrivate(task);
         }),
     );
 
@@ -2563,7 +2767,7 @@ export class CenterPanel {
         .setIcon('repeat-2')
         .setSection('actions')
         .onClick(() => {
-          this.openRecurrenceEditor(card, task);
+          this.openRecurrenceEditor_abyssPrivate(card, task);
         });
     });
 
@@ -2573,7 +2777,7 @@ export class CenterPanel {
         .setIcon('file-text')
         .setSection('actions')
         .onClick(() => {
-          runAsyncAction(openInFile(this.app, task), 'Could not complete UI action');
+          runAsyncAction(openInFile(this.app_abyssPrivate, task), 'Could not complete UI action');
         }),
     );
 
@@ -2583,42 +2787,56 @@ export class CenterPanel {
         .setIcon('trash-2')
         .setSection('danger')
         .onClick(() => {
-          runAsyncAction(this.deleteTask(task), 'Could not complete UI action');
+          runAsyncAction(this.deleteTask_abyssPrivate(task), 'Could not complete UI action');
         }),
     );
   }
 
-  private bulkTagIndicator(count: number, total: number): string {
+  private bulkTagIndicator_abyssPrivate(count: number, total: number): string {
     if (count === total) return '✓ ';
     if (count > 0) return '~ ';
     return '';
   }
 
-  private makeBulkTagRemoveHandler(selectedTasks: TaskSnapshot[], pinnedTag: string): () => void {
+  private makeBulkTagRemoveHandler_abyssPrivate(
+    selectedTasks: TaskSnapshot[],
+    pinnedTag: string,
+  ): () => void {
     return () => {
       runAsyncAction(
-        Promise.all(selectedTasks.map((task) => this.patchTaskTags(task, [], [pinnedTag]))),
+        Promise.all(
+          selectedTasks.map((task) => this.patchTaskTags_abyssPrivate(task, [], [pinnedTag])),
+        ),
         'Could not complete UI action',
       );
     };
   }
 
-  private makeBulkTagAddHandler(selectedTasks: TaskSnapshot[], pinnedTag: string): () => void {
+  private makeBulkTagAddHandler_abyssPrivate(
+    selectedTasks: TaskSnapshot[],
+    pinnedTag: string,
+  ): () => void {
     return () => {
       runAsyncAction(
-        Promise.all(selectedTasks.map((task) => this.patchTaskTags(task, [pinnedTag], []))),
+        Promise.all(
+          selectedTasks.map((task) => this.patchTaskTags_abyssPrivate(task, [pinnedTag], [])),
+        ),
         'Could not complete UI action',
       );
     };
   }
 
-  private addBulkTagItem(menu: Menu, pinnedTag: string, selectedTasks: TaskSnapshot[]): void {
+  private addBulkTagItem_abyssPrivate(
+    menu: Menu,
+    pinnedTag: string,
+    selectedTasks: TaskSnapshot[],
+  ): void {
     const count = selectedTasks.filter((task) => task.tags.includes(pinnedTag)).length;
     const allHave = count === selectedTasks.length;
-    const indicator = this.bulkTagIndicator(count, selectedTasks.length);
+    const indicator = this.bulkTagIndicator_abyssPrivate(count, selectedTasks.length);
     const clickHandler = allHave
-      ? this.makeBulkTagRemoveHandler(selectedTasks, pinnedTag)
-      : this.makeBulkTagAddHandler(selectedTasks, pinnedTag);
+      ? this.makeBulkTagRemoveHandler_abyssPrivate(selectedTasks, pinnedTag)
+      : this.makeBulkTagAddHandler_abyssPrivate(selectedTasks, pinnedTag);
     menu.addItem((item) =>
       item
         .setTitle(`${indicator}${pinnedTag}  (${count}/${selectedTasks.length})`)
@@ -2628,37 +2846,24 @@ export class CenterPanel {
     );
   }
 
-  private async deleteBulkTasks(selectedTasks: TaskSnapshot[]): Promise<void> {
+  private async deleteBulkTasks_abyssPrivate(selectedTasks: TaskSnapshot[]): Promise<void> {
     const sorted = [...selectedTasks].sort((a, b) => b.source.line - a.source.line);
-    for (const t of sorted) await this.deleteTask(t);
-    this.selectedTaskKeys.clear();
-    this.selectionAnchorKey = null;
-    this.selectionFocusKey = null;
-    this.updateSelectionVisuals();
+    for (const t of sorted) await this.deleteTask_abyssPrivate(t);
+    this.selectedTaskKeys_abyssPrivate.clear();
+    this.selectionAnchorKey_abyssPrivate = null;
+    this.selectionFocusKey_abyssPrivate = null;
+    this.updateSelectionVisuals_abyssPrivate();
   }
 
-  private buildPrioritySubmenu(sub: Menu, task: TaskSnapshot): void {
+  private buildPrioritySubmenu_abyssPrivate(sub: Menu, task: TaskSnapshot): void {
     for (const level of PRIORITY_LEVELS) {
       sub.addItem((si) => {
         si.setTitle(level.label)
           .setIcon('flag')
           .setChecked(task.priority === level.value)
           .onClick(() => {
-            runAsyncAction(this.setPriority(task, level.value), 'Could not complete UI action');
-          });
-        applyPriorityFlagColor(si, level.value);
-      });
-    }
-  }
-
-  private buildBulkPrioritySubmenu(sub: Menu, selectedTasks: TaskSnapshot[]): void {
-    for (const level of PRIORITY_LEVELS) {
-      sub.addItem((si) => {
-        si.setTitle(level.label)
-          .setIcon('flag')
-          .onClick(() => {
             runAsyncAction(
-              Promise.all(selectedTasks.map((t) => this.setPriority(t, level.value))),
+              this.setPriority_abyssPrivate(task, level.value),
               'Could not complete UI action',
             );
           });
@@ -2667,19 +2872,35 @@ export class CenterPanel {
     }
   }
 
-  private getTaskTags(task: TaskSnapshot): Set<string> {
+  private buildBulkPrioritySubmenu_abyssPrivate(sub: Menu, selectedTasks: TaskSnapshot[]): void {
+    for (const level of PRIORITY_LEVELS) {
+      sub.addItem((si) => {
+        si.setTitle(level.label)
+          .setIcon('flag')
+          .onClick(() => {
+            runAsyncAction(
+              Promise.all(selectedTasks.map((t) => this.setPriority_abyssPrivate(t, level.value))),
+              'Could not complete UI action',
+            );
+          });
+        applyPriorityFlagColor(si, level.value);
+      });
+    }
+  }
+
+  private getTaskTags_abyssPrivate(task: TaskSnapshot): Set<string> {
     return new Set(task.tags);
   }
 
-  private async patchTaskTags(
+  private async patchTaskTags_abyssPrivate(
     task: TaskSnapshot,
     add: readonly string[],
     remove: readonly string[],
   ): Promise<void> {
     const ref = task.ref;
-    if (this.tasks == null) return;
+    if (this.tasks_abyssPrivate == null) return;
     presentTaskCommandResult(
-      await this.tasks.execute({
+      await this.tasks_abyssPrivate.execute({
         type: 'patch',
         target: { type: 'task', ref },
         patch: { tags: { add, remove } },
@@ -2687,54 +2908,60 @@ export class CenterPanel {
     );
   }
 
-  private async assignTagFromInbox(task: TaskSnapshot, tag: string): Promise<void> {
-    const inboxTag = this.settings.inbox.tag;
+  private async assignTagFromInbox_abyssPrivate(task: TaskSnapshot, tag: string): Promise<void> {
+    const inboxTag = this.settings_abyssPrivate.inbox.tag;
     const remove =
-      this.settings.inbox.removeTagOnAssign && this.getTaskTags(task).has(inboxTag)
+      this.settings_abyssPrivate.inbox.removeTagOnAssign &&
+      this.getTaskTags_abyssPrivate(task).has(inboxTag)
         ? [inboxTag]
         : [];
-    await this.patchTaskTags(task, [tag], remove);
+    await this.patchTaskTags_abyssPrivate(task, [tag], remove);
   }
 
-  private openTagPicker(task: TaskSnapshot): void {
-    const currentTags = this.getTaskTags(task);
+  private openTagPicker_abyssPrivate(task: TaskSnapshot): void {
+    const currentTags = this.getTaskTags_abyssPrivate(task);
     const handleCommit = (toAdd: string[], toRemove: string[]): void => {
-      runAsyncAction(this.patchTaskTags(task, toAdd, toRemove), 'Could not complete UI action');
+      runAsyncAction(
+        this.patchTaskTags_abyssPrivate(task, toAdd, toRemove),
+        'Could not complete UI action',
+      );
     };
     new TagPickerModal(
-      this.app,
-      (tag) => this.getTagColor(tag),
+      this.app_abyssPrivate,
+      (tag) => this.getTagColor_abyssPrivate(tag),
       currentTags,
       new Set(),
       handleCommit,
-      this.interactionOwnership,
+      this.interactionOwnership_abyssPrivate,
     ).open();
   }
 
-  private openBulkTagPicker(selectedTasks: TaskSnapshot[]): void {
-    const tagSets = selectedTasks.map((t) => this.getTaskTags(t));
+  private openBulkTagPicker_abyssPrivate(selectedTasks: TaskSnapshot[]): void {
+    const tagSets = selectedTasks.map((t) => this.getTaskTags_abyssPrivate(t));
     const allTags = new Set(tagSets.flatMap((s) => [...s]));
     const hasAll = (tag: string): boolean => tagSets.every((s) => s.has(tag));
     const currentTags = new Set([...allTags].filter(hasAll));
     const partialTags = new Set([...allTags].filter((tag) => !hasAll(tag)));
     const handleBulkCommit = (toAdd: string[], toRemove: string[]): void => {
       runAsyncAction(
-        Promise.all(selectedTasks.map((task) => this.patchTaskTags(task, toAdd, toRemove))),
+        Promise.all(
+          selectedTasks.map((task) => this.patchTaskTags_abyssPrivate(task, toAdd, toRemove)),
+        ),
         'Could not complete UI action',
       );
     };
     new TagPickerModal(
-      this.app,
-      (tag) => this.getTagColor(tag),
+      this.app_abyssPrivate,
+      (tag) => this.getTagColor_abyssPrivate(tag),
       currentTags,
       partialTags,
       handleBulkCommit,
-      this.interactionOwnership,
+      this.interactionOwnership_abyssPrivate,
     ).open();
   }
 
-  private showBulkContextMenu(event: MouseEvent, card: HTMLElement): void {
-    const selectedTasks = this.selectedTasksInVisualOrder();
+  private showBulkContextMenu_abyssPrivate(event: MouseEvent, card: HTMLElement): void {
+    const selectedTasks = this.selectedTasksInVisualOrder_abyssPrivate();
     const firstSelectedTask = selectedTasks[0];
     if (firstSelectedTask === undefined) return;
     const menu = new Menu();
@@ -2744,18 +2971,20 @@ export class CenterPanel {
         .setSection('header')
         .setDisabled(true),
     );
-    this.addBulkDateMenuItems(menu, selectedTasks, card);
-    for (const pinnedTag of this.settings.pinnedTags) {
-      this.addBulkTagItem(menu, pinnedTag, selectedTasks);
+    this.addBulkDateMenuItems_abyssPrivate(menu, selectedTasks, card);
+    for (const pinnedTag of this.settings_abyssPrivate.pinnedTags) {
+      this.addBulkTagItem_abyssPrivate(menu, pinnedTag, selectedTasks);
     }
-    this.addBulkPropertyMenuItems(menu, selectedTasks, firstSelectedTask);
-    this.addBulkActionMenuItems(menu, selectedTasks);
+    this.addBulkPropertyMenuItems_abyssPrivate(menu, selectedTasks, firstSelectedTask);
+    this.addBulkActionMenuItems_abyssPrivate(menu, selectedTasks);
     showMenuAtMouseEventWithFocus(menu, event);
   }
 
-  private selectedTasksInVisualOrder(): TaskSnapshot[] {
-    const selectedKeys = this.visibleTaskKeys().filter((key) => this.selectedTaskKeys.has(key));
-    const allTasks = [...this.queries.list()];
+  private selectedTasksInVisualOrder_abyssPrivate(): TaskSnapshot[] {
+    const selectedKeys = this.visibleTaskKeys_abyssPrivate().filter((key) =>
+      this.selectedTaskKeys_abyssPrivate.has(key),
+    );
+    const allTasks = [...this.queries_abyssPrivate.list()];
     return selectedKeys
       .map((k) => {
         const lastColon = k.lastIndexOf(':');
@@ -2766,7 +2995,11 @@ export class CenterPanel {
       .filter((t) => t !== undefined);
   }
 
-  private addBulkDateMenuItems(menu: Menu, selectedTasks: TaskSnapshot[], card: HTMLElement): void {
+  private addBulkDateMenuItems_abyssPrivate(
+    menu: Menu,
+    selectedTasks: TaskSnapshot[],
+    card: HTMLElement,
+  ): void {
     const today = localDate(window.moment().format('YYYY-MM-DD'));
     const tomorrow = shiftLocalDate(today, 1);
     const allHaveToday = selectedTasks.every((t) => t.planning.due === today);
@@ -2778,7 +3011,7 @@ export class CenterPanel {
         .setChecked(allHaveToday)
         .onClick(() => {
           runAsyncAction(
-            this.applyBulkDuePreset(selectedTasks, today),
+            this.applyBulkDuePreset_abyssPrivate(selectedTasks, today),
             'Could not complete UI action',
           );
         }),
@@ -2794,7 +3027,7 @@ export class CenterPanel {
           .setChecked(allHaveTomorrow)
           .onClick(() => {
             runAsyncAction(
-              this.applyBulkDuePreset(selectedTasks, tomorrow),
+              this.applyBulkDuePreset_abyssPrivate(selectedTasks, tomorrow),
               'Could not complete UI action',
             );
           }),
@@ -2806,12 +3039,12 @@ export class CenterPanel {
         .setIcon('calendar-cog')
         .setSection('actions')
         .onClick(() => {
-          this.openTaskDatePicker(card, selectedTasks);
+          this.openTaskDatePicker_abyssPrivate(card, selectedTasks);
         }),
     );
   }
 
-  private addBulkPropertyMenuItems(
+  private addBulkPropertyMenuItems_abyssPrivate(
     menu: Menu,
     selectedTasks: TaskSnapshot[],
     firstSelectedTask: TaskSnapshot,
@@ -2819,29 +3052,29 @@ export class CenterPanel {
     menu.addItem((item) => {
       item.setTitle('Priority').setIcon('arrow-up-narrow-wide').setSection('priority');
       const sub = getSubmenu(item);
-      this.buildBulkPrioritySubmenu(sub, selectedTasks);
+      this.buildBulkPrioritySubmenu_abyssPrivate(sub, selectedTasks);
     });
 
     menu.addItem((item) => {
       item.setTitle('Status').setIcon('check-square').setSection('priority');
       const sub = getSubmenu(item);
-      buildStatusSubmenu(sub, firstSelectedTask, this.statusRegistry, (c) => {
+      buildStatusSubmenu(sub, firstSelectedTask, this.statusRegistry_abyssPrivate, (c) => {
         runAsyncAction(
-          Promise.all(selectedTasks.map((t) => this.setTaskStatus(t, c))),
+          Promise.all(selectedTasks.map((t) => this.setTaskStatus_abyssPrivate(t, c))),
           'Could not complete UI action',
         );
       });
     });
   }
 
-  private addBulkActionMenuItems(menu: Menu, selectedTasks: TaskSnapshot[]): void {
+  private addBulkActionMenuItems_abyssPrivate(menu: Menu, selectedTasks: TaskSnapshot[]): void {
     menu.addItem((item) =>
       item
         .setTitle('Set tag…')
         .setIcon('hash')
         .setSection('actions')
         .onClick(() => {
-          this.openBulkTagPicker(selectedTasks);
+          this.openBulkTagPicker_abyssPrivate(selectedTasks);
         }),
     );
 
@@ -2851,31 +3084,34 @@ export class CenterPanel {
         .setIcon('trash-2')
         .setSection('danger')
         .onClick(() => {
-          runAsyncAction(this.deleteBulkTasks(selectedTasks), 'Could not complete UI action');
+          runAsyncAction(
+            this.deleteBulkTasks_abyssPrivate(selectedTasks),
+            'Could not complete UI action',
+          );
         }),
     );
   }
 
-  private renderPropertyChips(container: HTMLElement): void {
-    const vs = this.state.get('centerListViewState');
+  private renderPropertyChips_abyssPrivate(container: HTMLElement): void {
+    const vs = this.state_abyssPrivate.get('centerListViewState');
     for (const [i, f] of vs.filters.entries()) {
-      const label = this.filterChipLabel(f);
+      const label = this.filterChipLabel_abyssPrivate(f);
       const chip = container.createSpan({ cls: 'abyss-filter-chip' });
       chip.createSpan({ cls: 'abyss-filter-chip-label', text: label });
       const x = chip.createEl('button', { cls: 'abyss-filter-chip-x', text: '×' });
       const idx = i;
       x.addEventListener('click', (e) => {
         e.stopPropagation();
-        this.removePropertyFilter(idx);
+        this.removePropertyFilter_abyssPrivate(idx);
       });
     }
   }
 
-  private filterChipLabel(f: PropertyFilter): string {
+  private filterChipLabel_abyssPrivate(f: PropertyFilter): string {
     if (f.type === 'file') {
       return `📄 ${f.filePath.split('/').pop()?.replace(/\.md$/, '') ?? ''}`;
     }
-    if (f.type !== 'priority') return this.nonPriorityFilterLabel(f);
+    if (f.type !== 'priority') return this.nonPriorityFilterLabel_abyssPrivate(f);
     const level = PRIORITY_LEVELS.find((l) => l.value === f.value);
     if (level == null) return f.value;
     // D/None has no emoji and reads as "Normal" here (distinct from the
@@ -2883,52 +3119,54 @@ export class CenterPanel {
     return level.emoji.length > 0 ? `${level.emoji} ${level.label}` : 'Normal';
   }
 
-  private nonPriorityFilterLabel(
+  private nonPriorityFilterLabel_abyssPrivate(
     filter: Exclude<PropertyFilter, { readonly type: 'file' } | { readonly type: 'priority' }>,
   ): string {
     if (filter.type === 'tag') return filter.value;
     if (filter.type === 'time') return `⏰ ${filter.value}`;
     if (filter.type === 'status') {
-      return this.statusRegistry.bySymbol(filter.value)?.name ?? filter.value;
+      return this.statusRegistry_abyssPrivate.bySymbol(filter.value)?.name ?? filter.value;
     }
-    return `📅 ${this.formatDate(filter.value)}`;
+    return `📅 ${this.formatDate_abyssPrivate(filter.value)}`;
   }
 
-  private addPropertyFilter(filter: PropertyFilter): void {
-    const vs = this.state.get('centerListViewState');
-    const key = this.propertyFilterKey(filter);
-    const already = vs.filters.some((existing) => this.propertyFilterKey(existing) === key);
+  private addPropertyFilter_abyssPrivate(filter: PropertyFilter): void {
+    const vs = this.state_abyssPrivate.get('centerListViewState');
+    const key = this.propertyFilterKey_abyssPrivate(filter);
+    const already = vs.filters.some(
+      (existing) => this.propertyFilterKey_abyssPrivate(existing) === key,
+    );
     if (already) return;
     const next: ListViewState = { ...vs, filters: [...vs.filters, filter] };
-    this.updateViewState(next);
+    this.updateViewState_abyssPrivate(next);
   }
 
-  private propertyFilterKey(filter: PropertyFilter): string {
+  private propertyFilterKey_abyssPrivate(filter: PropertyFilter): string {
     return filter.type === 'file'
       ? `${filter.type}:${filter.filePath}`
       : `${filter.type}:${filter.value}`;
   }
 
-  private removePropertyFilter(idx: number): void {
-    const vs = this.state.get('centerListViewState');
+  private removePropertyFilter_abyssPrivate(idx: number): void {
+    const vs = this.state_abyssPrivate.get('centerListViewState');
     const next: ListViewState = { ...vs, filters: vs.filters.filter((_, i) => i !== idx) };
-    this.updateViewState(next);
+    this.updateViewState_abyssPrivate(next);
   }
 
-  private updateViewState(next: ListViewState): void {
-    this.settings.listViewStates ??= {};
-    this.settings.listViewStates[this.activeListKey()] = next;
-    runAsyncAction(this.onSaveSettings(), 'Could not complete UI action');
-    this.state.set('centerListViewState', next);
+  private updateViewState_abyssPrivate(next: ListViewState): void {
+    this.settings_abyssPrivate.listViewStates ??= {};
+    this.settings_abyssPrivate.listViewStates[this.activeListKey_abyssPrivate()] = next;
+    runAsyncAction(this.onSaveSettings_abyssPrivate(), 'Could not complete UI action');
+    this.state_abyssPrivate.set('centerListViewState', next);
   }
 
-  private activeListKey(): string {
-    return listSelectionToKey(this.state.get('selectedList'));
+  private activeListKey_abyssPrivate(): string {
+    return listSelectionToKey(this.state_abyssPrivate.get('selectedList'));
   }
 
-  private renderViewStateButton(container: HTMLElement): void {
-    const vs = this.state.get('centerListViewState');
-    const defaults = getListViewDefaults(this.activeListKey());
+  private renderViewStateButton_abyssPrivate(container: HTMLElement): void {
+    const vs = this.state_abyssPrivate.get('centerListViewState');
+    const defaults = getListViewDefaults(this.activeListKey_abyssPrivate());
     const isNonDefault =
       vs.groupBy !== defaults.groupBy ||
       vs.sortBy.field !== defaults.sortBy.field ||
@@ -2941,28 +3179,33 @@ export class CenterPanel {
     });
     setIcon(btn, 'arrow-up-down');
     btn.addEventListener('click', () => {
-      this.showViewStatePopover(btn);
+      this.showViewStatePopover_abyssPrivate(btn);
     });
 
-    if (this.reopenStatusGroupPopover) {
-      this.reopenStatusGroupPopover = false;
-      this.showViewStatePopover(btn, true);
+    if (this.reopenStatusGroupPopover_abyssPrivate) {
+      this.reopenStatusGroupPopover_abyssPrivate = false;
+      this.showViewStatePopover_abyssPrivate(btn, true);
     }
   }
 
-  private showViewStatePopover(anchor: HTMLElement, autoOpenStatusGroupRow = false): void {
-    if (this.viewStatePopoverCleanup != null) {
-      this.viewStatePopoverCleanup(true);
+  private showViewStatePopover_abyssPrivate(
+    anchor: HTMLElement,
+    autoOpenStatusGroupRow = false,
+  ): void {
+    if (this.viewStatePopoverCleanup_abyssPrivate != null) {
+      this.viewStatePopoverCleanup_abyssPrivate(true);
       return;
     }
 
-    const vs = this.state.get('centerListViewState');
+    const vs = this.state_abyssPrivate.get('centerListViewState');
     const popover = this.el.createDiv({
       cls: 'abyss-view-state-popover abyss-popover',
       attr: { role: 'dialog', 'aria-label': 'Sort and group options' },
     });
     const ownerDocument = popover.ownerDocument;
-    const ownershipToken = this.interactionOwnership.acquire({ blocksShortcuts: true });
+    const ownershipToken = this.interactionOwnership_abyssPrivate.acquire({
+      blocksShortcuts: true,
+    });
 
     let dismissListening = false;
     let dismissTimer: number | undefined;
@@ -2979,11 +3222,12 @@ export class CenterPanel {
         dismissListening = false;
       }
       popover.remove();
-      if (this.viewStatePopoverCleanup === close) this.viewStatePopoverCleanup = null;
+      if (this.viewStatePopoverCleanup_abyssPrivate === close)
+        this.viewStatePopoverCleanup_abyssPrivate = null;
       ownershipToken.release();
       if (restoreFocus && anchor.isConnected) anchor.focus();
     };
-    this.viewStatePopoverCleanup = close;
+    this.viewStatePopoverCleanup_abyssPrivate = close;
     const dismiss = (e: MouseEvent): void => {
       if (!popover.contains(e.target as Node) && e.target !== anchor) {
         close(false);
@@ -2996,7 +3240,7 @@ export class CenterPanel {
       close(true);
     });
 
-    this.renderViewStatePopoverRows({ popover, close }, vs, autoOpenStatusGroupRow);
+    this.renderViewStatePopoverRows_abyssPrivate({ popover, close }, vs, autoOpenStatusGroupRow);
 
     anchor.after(popover);
     popover.querySelector<HTMLElement>('.abyss-view-state-row-main')?.focus();
@@ -3008,22 +3252,31 @@ export class CenterPanel {
     }, 0);
   }
 
-  private renderViewStatePopoverRows(
+  private renderViewStatePopoverRows_abyssPrivate(
     session: ViewStatePopoverSession,
     viewState: ListViewState,
     autoOpenStatusGroupRow: boolean,
   ): void {
-    const defaults = getListViewDefaults(this.activeListKey());
-    this.renderViewStateRow(session, this.groupByRowSpec(viewState, defaults));
-    this.renderViewStateRow(session, this.sortByRowSpec(viewState, defaults));
-    this.renderViewStateMultiRow(
+    const defaults = getListViewDefaults(this.activeListKey_abyssPrivate());
+    this.renderViewStateRow_abyssPrivate(
       session,
-      this.statusGroupsRowSpec(session, viewState, autoOpenStatusGroupRow),
+      this.groupByRowSpec_abyssPrivate(viewState, defaults),
     );
-    this.renderViewStateReset(session, viewState);
+    this.renderViewStateRow_abyssPrivate(
+      session,
+      this.sortByRowSpec_abyssPrivate(viewState, defaults),
+    );
+    this.renderViewStateMultiRow_abyssPrivate(
+      session,
+      this.statusGroupsRowSpec_abyssPrivate(session, viewState, autoOpenStatusGroupRow),
+    );
+    this.renderViewStateReset_abyssPrivate(session, viewState);
   }
 
-  private groupByRowSpec(viewState: ListViewState, defaults: ListViewState): ViewStateRowSpec {
+  private groupByRowSpec_abyssPrivate(
+    viewState: ListViewState,
+    defaults: ListViewState,
+  ): ViewStateRowSpec {
     const labels: Record<string, string> = {
       none: 'None',
       date: 'Date',
@@ -3039,12 +3292,18 @@ export class CenterPanel {
       defaultValue: defaults.groupBy,
       options: Object.entries(labels).map(([value, label]) => ({ label, value })),
       onSelect: (value) => {
-        this.updateViewState({ ...viewState, groupBy: value as ListViewState['groupBy'] });
+        this.updateViewState_abyssPrivate({
+          ...viewState,
+          groupBy: value as ListViewState['groupBy'],
+        });
       },
     };
   }
 
-  private sortByRowSpec(viewState: ListViewState, defaults: ListViewState): ViewStateRowSpec {
+  private sortByRowSpec_abyssPrivate(
+    viewState: ListViewState,
+    defaults: ListViewState,
+  ): ViewStateRowSpec {
     const arrow = viewState.sortBy.dir === 'asc' ? '↑' : '↓';
     const fields: Array<ListViewState['sortBy']['field']> = [
       'date',
@@ -3056,38 +3315,39 @@ export class CenterPanel {
     return {
       icon: 'arrow-up-down',
       label: 'Sort by',
-      displayValue: `${this.capitalize(viewState.sortBy.field)} ${arrow}`,
+      displayValue: `${this.capitalize_abyssPrivate(viewState.sortBy.field)} ${arrow}`,
       activeValue: viewState.sortBy.field,
       defaultValue: defaults.sortBy.field,
       options: fields.map((field) => ({
-        label: `${this.capitalize(field)} ${viewState.sortBy.field === field ? arrow : ''}`.trim(),
+        label:
+          `${this.capitalize_abyssPrivate(field)} ${viewState.sortBy.field === field ? arrow : ''}`.trim(),
         value: field,
       })),
       onSelect: (value) => {
         const field = value as ListViewState['sortBy']['field'];
         const dir =
           viewState.sortBy.field === field && viewState.sortBy.dir === 'asc' ? 'desc' : 'asc';
-        this.updateViewState({ ...viewState, sortBy: { field, dir } });
+        this.updateViewState_abyssPrivate({ ...viewState, sortBy: { field, dir } });
       },
     };
   }
 
-  private capitalize(value: string): string {
+  private capitalize_abyssPrivate(value: string): string {
     return value.charAt(0).toUpperCase() + value.slice(1);
   }
 
-  private statusGroupsRowSpec(
+  private statusGroupsRowSpec_abyssPrivate(
     session: ViewStatePopoverSession,
     viewState: ListViewState,
     initiallyOpen: boolean,
   ): ViewStateMultiRowSpec {
     const apply = (groups: TaskStatusType[] | undefined): void => {
-      this.applyStatusGroupsChange(session, viewState, groups);
+      this.applyStatusGroupsChange_abyssPrivate(session, viewState, groups);
     };
     return {
       icon: 'eye',
       label: 'Show',
-      displayValue: this.statusGroupsLabel(viewState.statusGroups),
+      displayValue: this.statusGroupsLabel_abyssPrivate(viewState.statusGroups),
       selected: viewState.statusGroups ?? ALL_STATUS_GROUPS,
       options: ALL_STATUS_GROUPS.map((value) => ({ label: TYPE_LABELS[value], value })),
       onToggle: (rawValue) => {
@@ -3118,33 +3378,40 @@ export class CenterPanel {
     };
   }
 
-  private statusGroupsLabel(selected: TaskStatusType[] | undefined): string {
+  private statusGroupsLabel_abyssPrivate(selected: TaskStatusType[] | undefined): string {
     const effective = normalizeStatusGroups(selected) ?? ALL_STATUS_GROUPS;
     if (effective.length >= 4) return 'All';
     if (statusGroupsEqual(effective, ACTIVE_STATUS_GROUPS)) return 'Active';
     return `${effective.length} selected`;
   }
 
-  private applyStatusGroupsChange(
+  private applyStatusGroupsChange_abyssPrivate(
     session: ViewStatePopoverSession,
     viewState: ListViewState,
     groups: TaskStatusType[] | undefined,
   ): void {
-    this.reopenStatusGroupPopover = true;
+    this.reopenStatusGroupPopover_abyssPrivate = true;
     session.close();
     const withoutStatusGroups = { ...viewState };
     delete withoutStatusGroups.statusGroups;
-    this.updateViewState(
+    this.updateViewState_abyssPrivate(
       groups === undefined ? withoutStatusGroups : { ...viewState, statusGroups: groups },
     );
   }
 
-  private renderViewStateRow(session: ViewStatePopoverSession, spec: ViewStateRowSpec): void {
-    const { rowMain, subList } = this.createViewStateRowShell(session.popover, spec, false);
-    this.bindExpandableViewStateRow(session.popover, rowMain, subList);
+  private renderViewStateRow_abyssPrivate(
+    session: ViewStatePopoverSession,
+    spec: ViewStateRowSpec,
+  ): void {
+    const { rowMain, subList } = this.createViewStateRowShell_abyssPrivate(
+      session.popover,
+      spec,
+      false,
+    );
+    this.bindExpandableViewStateRow_abyssPrivate(session.popover, rowMain, subList);
     for (const option of spec.options) {
       const isActive = option.value === spec.activeValue;
-      const element = this.createViewStateOption(subList, option.label, isActive);
+      const element = this.createViewStateOption_abyssPrivate(subList, option.label, isActive);
       if (option.value === spec.defaultValue) {
         element.createSpan({ cls: 'abyss-view-state-option-default', text: 'Default' });
       }
@@ -3155,23 +3422,27 @@ export class CenterPanel {
     }
   }
 
-  private renderViewStateMultiRow(
+  private renderViewStateMultiRow_abyssPrivate(
     session: ViewStatePopoverSession,
     spec: ViewStateMultiRowSpec,
   ): void {
-    const { rowMain, subList } = this.createViewStateRowShell(
+    const { rowMain, subList } = this.createViewStateRowShell_abyssPrivate(
       session.popover,
       spec,
       spec.initiallyOpen,
     );
-    this.bindExpandableViewStateRow(session.popover, rowMain, subList);
+    this.bindExpandableViewStateRow_abyssPrivate(session.popover, rowMain, subList);
     for (const preset of spec.presets) {
-      const element = this.createViewStateOption(subList, preset.label, preset.isActive === true);
+      const element = this.createViewStateOption_abyssPrivate(
+        subList,
+        preset.label,
+        preset.isActive === true,
+      );
       element.addEventListener('click', preset.onClick);
     }
     if (spec.presets.length > 0) subList.createDiv({ cls: 'abyss-view-state-sublist-divider' });
     for (const option of spec.options) {
-      const element = this.createViewStateOption(
+      const element = this.createViewStateOption_abyssPrivate(
         subList,
         option.label,
         spec.selected.includes(option.value),
@@ -3182,7 +3453,7 @@ export class CenterPanel {
     }
   }
 
-  private createViewStateRowShell(
+  private createViewStateRowShell_abyssPrivate(
     popover: HTMLElement,
     spec: Pick<ViewStateRowSpec, 'icon' | 'label' | 'displayValue'>,
     initiallyOpen: boolean,
@@ -3206,7 +3477,7 @@ export class CenterPanel {
     return { rowMain, subList };
   }
 
-  private createViewStateOption(
+  private createViewStateOption_abyssPrivate(
     host: HTMLElement,
     label: string,
     active: boolean,
@@ -3221,14 +3492,14 @@ export class CenterPanel {
     return element;
   }
 
-  private bindExpandableViewStateRow(
+  private bindExpandableViewStateRow_abyssPrivate(
     popover: HTMLElement,
     rowMain: HTMLElement,
     subList: HTMLElement,
   ): void {
     const toggle = (): void => {
       const shouldOpen = subList.hasClass('abyss-hidden');
-      this.closeViewStateSublists(popover);
+      this.closeViewStateSublists_abyssPrivate(popover);
       if (!shouldOpen) return;
       subList.removeClass('abyss-hidden');
       rowMain.addClass('is-open');
@@ -3242,7 +3513,7 @@ export class CenterPanel {
     });
   }
 
-  private closeViewStateSublists(popover: HTMLElement): void {
+  private closeViewStateSublists_abyssPrivate(popover: HTMLElement): void {
     popover.querySelectorAll<HTMLElement>('.abyss-view-state-sublist').forEach((element) => {
       element.addClass('abyss-hidden');
     });
@@ -3252,8 +3523,11 @@ export class CenterPanel {
     });
   }
 
-  private renderViewStateReset(session: ViewStatePopoverSession, viewState: ListViewState): void {
-    if (!isListViewCustomized(viewState, this.activeListKey())) return;
+  private renderViewStateReset_abyssPrivate(
+    session: ViewStatePopoverSession,
+    viewState: ListViewState,
+  ): void {
+    if (!isListViewCustomized(viewState, this.activeListKey_abyssPrivate())) return;
     const row = session.popover.createDiv({ cls: 'abyss-view-state-reset' });
     const button = row.createEl('button', {
       cls: 'abyss-view-state-reset-btn',
@@ -3261,36 +3535,44 @@ export class CenterPanel {
     });
     button.addEventListener('click', () => {
       session.close();
-      this.updateViewState(getListViewDefaults(this.activeListKey()));
+      this.updateViewState_abyssPrivate(getListViewDefaults(this.activeListKey_abyssPrivate()));
     });
   }
 
   /** Keep the positioned calendar wrapper while delegating capture state and submission. */
-  private showTimeGridQuickAdd(_hourColumnEl: HTMLElement, date: string, time: string): void {
-    this.openCapture(
+  private showTimeGridQuickAdd_abyssPrivate(
+    _hourColumnEl: HTMLElement,
+    date: string,
+    time: string,
+  ): void {
+    this.openCapture_abyssPrivate(
       { type: 'calendar-timed', date, time },
       { type: 'default', source: 'calendar' },
     );
   }
 
   /** Month and all-day cells share capture behavior but retain their existing geometry wrappers. */
-  private showFillCellQuickAdd(_cell: HTMLElement, date: string, popCls: string): void {
+  private showFillCellQuickAdd_abyssPrivate(
+    _cell: HTMLElement,
+    date: string,
+    popCls: string,
+  ): void {
     const placement: CalendarCapturePlacement =
       popCls === 'abyss-mg-quick-add'
         ? { type: 'calendar-month', date }
         : { type: 'calendar-all-day', date };
-    this.openCapture(placement, { type: 'default', source: 'calendar' });
+    this.openCapture_abyssPrivate(placement, { type: 'default', source: 'calendar' });
   }
 
-  private renderAddTaskBar(): void {
+  private renderAddTaskBar_abyssPrivate(): void {
     const bar = this.el.createDiv({ cls: 'abyss-add-task-bar' });
-    this.renderCaptureHost(bar, {
+    this.renderCaptureHost_abyssPrivate(bar, {
       type: 'list',
-      selectionKey: listSelectionToKey(this.state.get('selectedList')),
+      selectionKey: listSelectionToKey(this.state_abyssPrivate.get('selectedList')),
     });
   }
 
-  private renderCaptureHost(host: HTMLElement, placement: BarCapturePlacement): void {
+  private renderCaptureHost_abyssPrivate(host: HTMLElement, placement: BarCapturePlacement): void {
     host.dataset['abyssCaptureHost'] = placement.type;
     if (placement.type === 'project') host.dataset['abyssCapturePath'] = placement.path;
     if (placement.type === 'list') {
@@ -3306,43 +3588,43 @@ export class CenterPanel {
       const context: CaptureContext =
         placement.type === 'project'
           ? { type: 'project-dashboard', path: placement.path }
-          : { type: 'list', selection: this.state.get('selectedList') };
-      this.openCapture(placement, context, trigger);
+          : { type: 'list', selection: this.state_abyssPrivate.get('selectedList') };
+      this.openCapture_abyssPrivate(placement, context, trigger);
     });
-    const active = this.activeCapture;
-    if (active != null && this.sameCapturePlacement(active.placement, placement)) {
+    const active = this.activeCapture_abyssPrivate;
+    if (active != null && this.sameCapturePlacement_abyssPrivate(active.placement, placement)) {
       trigger.hidden = true;
       active.returnFocus = trigger;
-      this.mountCaptureSurface(active, host);
+      this.mountCaptureSurface_abyssPrivate(active, host);
     }
   }
 
-  private openCapture(
+  private openCapture_abyssPrivate(
     placement: PanelCapturePlacement,
     context: CaptureContext,
-    returnFocus = this.currentCaptureFocusOrigin(),
+    returnFocus = this.currentCaptureFocusOrigin_abyssPrivate(),
   ): void {
-    if (this.captureTargets == null) return;
-    this.cancelActiveCapture();
-    const requestId = ++this.captureRequestId;
-    this.resolvingCapture = { requestId, placement };
+    if (this.captureTargets_abyssPrivate == null) return;
+    this.cancelActiveCapture_abyssPrivate();
+    const requestId = ++this.captureRequestId_abyssPrivate;
+    this.resolvingCapture_abyssPrivate = { requestId, placement };
     runAsyncAction(
-      this.captureTargets.resolve(context).then((resolvedTarget) => {
-        if (requestId !== this.captureRequestId) return;
-        this.resolvingCapture = null;
-        const target = this.targetForCapturePlacement(resolvedTarget, placement);
+      this.captureTargets_abyssPrivate.resolve(context).then((resolvedTarget) => {
+        if (requestId !== this.captureRequestId_abyssPrivate) return;
+        this.resolvingCapture_abyssPrivate = null;
+        const target = this.targetForCapturePlacement_abyssPrivate(resolvedTarget, placement);
         const controller = new TaskCaptureController({
           target,
           describe: describeTaskCreationResult,
           onResult: (result, description) => {
-            const current = this.activeCapture;
+            const current = this.activeCapture_abyssPrivate;
             if (current?.requestId === requestId && description.kind !== 'success') {
               current.restoreFocusOnClose = false;
             }
-            this.onCreationResult(result, description);
+            this.onCreationResult_abyssPrivate(result, description);
           },
           onRequestClose: () => {
-            this.closeCaptureByRequestId(requestId);
+            this.closeCaptureByRequestId_abyssPrivate(requestId);
           },
         });
         const session: PanelCaptureSession = {
@@ -3353,20 +3635,20 @@ export class CenterPanel {
           restoreFocusOnClose: false,
           focusOnMount: true,
         };
-        this.activeCapture = session;
-        this.remountActiveCapture();
+        this.activeCapture_abyssPrivate = session;
+        this.remountActiveCapture_abyssPrivate();
       }),
       'Could not complete UI action',
     );
   }
 
-  private remountActiveCapture(): void {
-    const active = this.activeCapture;
+  private remountActiveCapture_abyssPrivate(): void {
+    const active = this.activeCapture_abyssPrivate;
     if (active == null) return;
     const placement = active.placement;
-    if (this.isCalendarCapturePlacement(placement)) {
-      const host = this.calendarCaptureHost(placement);
-      if (host != null) this.mountCaptureSurface(active, host);
+    if (this.isCalendarCapturePlacement_abyssPrivate(placement)) {
+      const host = this.calendarCaptureHost_abyssPrivate(placement);
+      if (host != null) this.mountCaptureSurface_abyssPrivate(active, host);
       return;
     }
     const host = [...this.el.querySelectorAll<HTMLElement>('[data-abyss-capture-host]')].find(
@@ -3377,14 +3659,14 @@ export class CenterPanel {
           : candidate.dataset['abyssCaptureHost'] === 'list' &&
             candidate.dataset['abyssCaptureSelection'] === placement.selectionKey,
     );
-    if (host != null) this.mountCaptureSurface(active, host);
+    if (host != null) this.mountCaptureSurface_abyssPrivate(active, host);
   }
 
-  private targetForCapturePlacement(
+  private targetForCapturePlacement_abyssPrivate(
     target: CaptureTarget,
     placement: PanelCapturePlacement,
   ): CaptureTarget {
-    if (!this.isCalendarCapturePlacement(placement)) return target;
+    if (!this.isCalendarCapturePlacement_abyssPrivate(placement)) return target;
     const label =
       placement.type === 'calendar-timed'
         ? `${placement.date} · ${placement.time}`
@@ -3399,14 +3681,16 @@ export class CenterPanel {
     return { ...target, label, initial };
   }
 
-  private calendarCaptureHost(placement: CalendarCapturePlacement): HTMLElement | null {
+  private calendarCaptureHost_abyssPrivate(
+    placement: CalendarCapturePlacement,
+  ): HTMLElement | null {
     if (placement.type === 'calendar-timed') {
       const day = [...this.el.querySelectorAll<HTMLElement>('.abyss-tg-day-column')].find(
         (candidate) => candidate.dataset['tgDate'] === placement.date,
       );
       const hourColumn = day?.querySelector<HTMLElement>('.abyss-tg-hour-column');
       if (hourColumn == null) return null;
-      const host = this.captureWrapper(hourColumn, 'abyss-tg-quick-add');
+      const host = this.captureWrapper_abyssPrivate(hourColumn, 'abyss-tg-quick-add');
       host.style.top = `${minutesToPixels(timeStringToMinutes(placement.time))}px`;
       host.dataset['abyssCaptureHost'] = placement.type;
       host.dataset['abyssCaptureDate'] = placement.date;
@@ -3423,13 +3707,13 @@ export class CenterPanel {
     if (cell == null) return null;
     const wrapperClass =
       placement.type === 'calendar-month' ? 'abyss-mg-quick-add' : 'abyss-tg-allday-quick-add';
-    const host = this.captureWrapper(cell, wrapperClass);
+    const host = this.captureWrapper_abyssPrivate(cell, wrapperClass);
     host.dataset['abyssCaptureHost'] = placement.type;
     host.dataset['abyssCaptureDate'] = placement.date;
     return host;
   }
 
-  private captureWrapper(parent: HTMLElement, className: string): HTMLElement {
+  private captureWrapper_abyssPrivate(parent: HTMLElement, className: string): HTMLElement {
     const ownerWindow = parent.ownerDocument.defaultView;
     const current = [...parent.children].find(
       (candidate): candidate is HTMLElement =>
@@ -3440,11 +3724,11 @@ export class CenterPanel {
     return current ?? parent.createDiv({ cls: className });
   }
 
-  private mountCaptureSurface(active: PanelCaptureSession, host: HTMLElement): void {
-    if (this.activeCapture !== active) return;
-    if (this.isCaptureSurfaceMounted(active, host)) return;
-    this.unmountActiveCapture();
-    const feedbackHost = this.prepareCaptureHost(active, host);
+  private mountCaptureSurface_abyssPrivate(active: PanelCaptureSession, host: HTMLElement): void {
+    if (this.activeCapture_abyssPrivate !== active) return;
+    if (this.isCaptureSurfaceMounted_abyssPrivate(active, host)) return;
+    this.unmountActiveCapture_abyssPrivate();
+    const feedbackHost = this.prepareCaptureHost_abyssPrivate(active, host);
     const onEscape = (): void => {
       active.restoreFocusOnClose = true;
     };
@@ -3460,32 +3744,41 @@ export class CenterPanel {
         ? 'inline'
         : 'default';
     const surface = new CaptureSurface(host, active.controller, { ...options, presentation });
-    this.applyCaptureInputClass(surface, active.placement);
+    this.applyCaptureInputClass_abyssPrivate(surface, active.placement);
     active.surface = surface;
     active.host = host;
-    this.focusNewCaptureSurface(active, surface);
+    this.focusNewCaptureSurface_abyssPrivate(active, surface);
   }
 
-  private isCaptureSurfaceMounted(active: PanelCaptureSession, host: HTMLElement): boolean {
+  private isCaptureSurfaceMounted_abyssPrivate(
+    active: PanelCaptureSession,
+    host: HTMLElement,
+  ): boolean {
     return active.surface?.element.isConnected === true && active.host === host;
   }
 
-  private applyCaptureInputClass(surface: CaptureSurface, placement: PanelCapturePlacement): void {
-    const className = this.calendarCaptureInputClass(placement);
+  private applyCaptureInputClass_abyssPrivate(
+    surface: CaptureSurface,
+    placement: PanelCapturePlacement,
+  ): void {
+    const className = this.calendarCaptureInputClass_abyssPrivate(placement);
     if (className !== undefined && className !== '') surface.input.addClass(className);
   }
 
-  private focusNewCaptureSurface(active: PanelCaptureSession, surface: CaptureSurface): void {
+  private focusNewCaptureSurface_abyssPrivate(
+    active: PanelCaptureSession,
+    surface: CaptureSurface,
+  ): void {
     if (!active.focusOnMount) return;
     active.focusOnMount = false;
     surface.focus();
   }
 
-  private prepareCaptureHost(
+  private prepareCaptureHost_abyssPrivate(
     active: PanelCaptureSession,
     host: HTMLElement,
   ): HTMLElement | undefined {
-    if (this.isCalendarCapturePlacement(active.placement)) {
+    if (this.isCalendarCapturePlacement_abyssPrivate(active.placement)) {
       host.empty();
       const feedbackHost = this.el.createDiv({ cls: 'abyss-calendar-capture-feedback' });
       active.feedbackHost = feedbackHost;
@@ -3499,8 +3792,8 @@ export class CenterPanel {
     return undefined;
   }
 
-  private unmountActiveCapture(): void {
-    const active = this.activeCapture;
+  private unmountActiveCapture_abyssPrivate(): void {
+    const active = this.activeCapture_abyssPrivate;
     const surface = active?.surface;
     if (active == null || surface == null) return;
     active.focusOnMount =
@@ -3512,8 +3805,8 @@ export class CenterPanel {
     active.feedbackHost = undefined;
   }
 
-  private closeCapture(active: PanelCaptureSession): void {
-    if (this.activeCapture !== active) return;
+  private closeCapture_abyssPrivate(active: PanelCaptureSession): void {
+    if (this.activeCapture_abyssPrivate !== active) return;
     const host = active.host;
     const placement = active.placement;
     const returnFocus = active.returnFocus;
@@ -3521,55 +3814,60 @@ export class CenterPanel {
     const captureOwnedFocus =
       active.surface !== undefined &&
       active.surface.input.ownerDocument.activeElement === active.surface.input;
-    this.unmountActiveCapture();
+    this.unmountActiveCapture_abyssPrivate();
     active.controller.destroy();
-    this.activeCapture = null;
-    this.restoreCaptureHost(host, placement);
+    this.activeCapture_abyssPrivate = null;
+    this.restoreCaptureHost_abyssPrivate(host, placement);
     if (
       restoreFocus &&
       captureOwnedFocus &&
       returnFocus != null &&
-      this.canRestoreCaptureFocus(returnFocus)
+      this.canRestoreCaptureFocus_abyssPrivate(returnFocus)
     ) {
       returnFocus.focus({ preventScroll: true });
     }
   }
 
-  private closeCaptureByRequestId(requestId: number): void {
-    const active = this.activeCapture;
-    if (active?.requestId === requestId) this.closeCapture(active);
+  private closeCaptureByRequestId_abyssPrivate(requestId: number): void {
+    const active = this.activeCapture_abyssPrivate;
+    if (active?.requestId === requestId) this.closeCapture_abyssPrivate(active);
   }
 
-  private cancelActiveCapture(): void {
-    this.captureRequestId++;
-    this.resolvingCapture = null;
-    const active = this.activeCapture;
+  private cancelActiveCapture_abyssPrivate(): void {
+    this.captureRequestId_abyssPrivate++;
+    this.resolvingCapture_abyssPrivate = null;
+    const active = this.activeCapture_abyssPrivate;
     if (active == null) return;
     const host = active.host;
     const placement = active.placement;
-    this.unmountActiveCapture();
+    this.unmountActiveCapture_abyssPrivate();
     active.controller.destroy();
-    this.activeCapture = null;
-    this.restoreCaptureHost(host, placement);
+    this.activeCapture_abyssPrivate = null;
+    this.restoreCaptureHost_abyssPrivate(host, placement);
   }
 
-  private restoreCaptureHost(
+  private restoreCaptureHost_abyssPrivate(
     host: HTMLElement | undefined,
     placement: PanelCapturePlacement,
   ): void {
     if (host?.isConnected !== true) return;
-    if (this.isCalendarCapturePlacement(placement)) {
+    if (this.isCalendarCapturePlacement_abyssPrivate(placement)) {
       host.remove();
       return;
     }
     host.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')?.removeAttribute('hidden');
   }
 
-  private sameCapturePlacement(left: PanelCapturePlacement, right: PanelCapturePlacement): boolean {
-    return this.capturePlacementKey(left) === this.capturePlacementKey(right);
+  private sameCapturePlacement_abyssPrivate(
+    left: PanelCapturePlacement,
+    right: PanelCapturePlacement,
+  ): boolean {
+    return (
+      this.capturePlacementKey_abyssPrivate(left) === this.capturePlacementKey_abyssPrivate(right)
+    );
   }
 
-  private capturePlacementKey(placement: PanelCapturePlacement): string {
+  private capturePlacementKey_abyssPrivate(placement: PanelCapturePlacement): string {
     switch (placement.type) {
       case 'project':
         return `project:${placement.path}`;
@@ -3584,34 +3882,40 @@ export class CenterPanel {
     }
   }
 
-  private cancelStaleListCapture(): void {
-    const placement = this.activeCapture?.placement ?? this.resolvingCapture?.placement;
+  private cancelStaleListCapture_abyssPrivate(): void {
+    const placement =
+      this.activeCapture_abyssPrivate?.placement ?? this.resolvingCapture_abyssPrivate?.placement;
     if (placement?.type !== 'list') return;
-    const currentSelectionKey = listSelectionToKey(this.state.get('selectedList'));
-    if (this.state.get('mode') !== 'tasks' || placement.selectionKey !== currentSelectionKey) {
-      this.cancelActiveCapture();
+    const currentSelectionKey = listSelectionToKey(this.state_abyssPrivate.get('selectedList'));
+    if (
+      this.state_abyssPrivate.get('mode') !== 'tasks' ||
+      placement.selectionKey !== currentSelectionKey
+    ) {
+      this.cancelActiveCapture_abyssPrivate();
     }
   }
 
-  private isCalendarCapturePlacement(
+  private isCalendarCapturePlacement_abyssPrivate(
     placement: PanelCapturePlacement,
   ): placement is CalendarCapturePlacement {
     return placement.type.startsWith('calendar-');
   }
 
-  private calendarCaptureInputClass(placement: PanelCapturePlacement): string | undefined {
+  private calendarCaptureInputClass_abyssPrivate(
+    placement: PanelCapturePlacement,
+  ): string | undefined {
     if (placement.type === 'calendar-timed') return 'abyss-tg-quick-add-input';
     if (placement.type === 'calendar-all-day') return 'abyss-tg-allday-quick-add-input';
     if (placement.type === 'calendar-month') return 'abyss-mg-quick-add-input';
     return undefined;
   }
 
-  private currentCaptureFocusOrigin(): HTMLElement | null {
+  private currentCaptureFocusOrigin_abyssPrivate(): HTMLElement | null {
     const active = this.el.ownerDocument.activeElement;
     return isRealmHTMLElement(active) ? active : null;
   }
 
-  private canRestoreCaptureFocus(element: HTMLElement): boolean {
+  private canRestoreCaptureFocus_abyssPrivate(element: HTMLElement): boolean {
     if (!element.isConnected) return false;
     const ownerWindow = element.ownerDocument.defaultView;
     if (ownerWindow == null) return false;
@@ -3621,20 +3925,20 @@ export class CenterPanel {
     );
   }
 
-  private async deleteTask(task: TaskSnapshot): Promise<void> {
+  private async deleteTask_abyssPrivate(task: TaskSnapshot): Promise<void> {
     const ref = task.ref;
-    if (this.tasks == null) return;
-    const result = await this.tasks.execute({ type: 'delete', ref });
+    if (this.tasks_abyssPrivate == null) return;
+    const result = await this.tasks_abyssPrivate.execute({ type: 'delete', ref });
     presentTaskCommandResult(result);
     if (result.type !== 'ok' || result.outcome.type !== 'deleted') return;
-    const stack = this.state.get('taskStack');
+    const stack = this.state_abyssPrivate.get('taskStack');
     const current = stack[0] != null ? rootTaskRef(stack[0]) : undefined;
-    if (current != null && this.sameTaskRef(current, ref)) {
-      this.state.set('taskStack', []);
+    if (current != null && this.sameTaskRef_abyssPrivate(current, ref)) {
+      this.state_abyssPrivate.set('taskStack', []);
     }
   }
 
-  private sameTaskRef(left: TaskRef, right: TaskRef): boolean {
+  private sameTaskRef_abyssPrivate(left: TaskRef, right: TaskRef): boolean {
     return (
       left.filePath === right.filePath &&
       left.line === right.line &&
@@ -3642,21 +3946,21 @@ export class CenterPanel {
     );
   }
 
-  private getFilteredTasks(): TaskSnapshot[] {
+  private getFilteredTasks_abyssPrivate(): TaskSnapshot[] {
     return [
       ...selectTaskList({
-        tasks: this.queries.list(),
-        selection: this.state.get('selectedList'),
-        viewState: this.state.get('centerListViewState'),
-        settings: this.settings,
+        tasks: this.queries_abyssPrivate.list(),
+        selection: this.state_abyssPrivate.get('selectedList'),
+        viewState: this.state_abyssPrivate.get('centerListViewState'),
+        settings: this.settings_abyssPrivate,
         today: window.moment().format('YYYY-MM-DD') as LocalDate,
-        textQuery: this.state.get('centerFilter'),
+        textQuery: this.state_abyssPrivate.get('centerFilter'),
       }),
     ];
   }
 
-  private getTitle(): string {
-    const sel: unknown = this.state.get('selectedList');
+  private getTitle_abyssPrivate(): string {
+    const sel: unknown = this.state_abyssPrivate.get('selectedList');
     if (typeof sel === 'string') {
       const titles: Record<string, string> = {
         inbox: 'Inbox',
@@ -3672,10 +3976,10 @@ export class CenterPanel {
       readonly path?: string;
       readonly groupId?: string;
     };
-    return this.structuredSelectionTitle(selection);
+    return this.structuredSelectionTitle_abyssPrivate(selection);
   }
 
-  private structuredSelectionTitle(selection: {
+  private structuredSelectionTitle_abyssPrivate(selection: {
     readonly type?: string;
     readonly tag?: string;
     readonly path?: string;
@@ -3687,7 +3991,7 @@ export class CenterPanel {
       case 'project':
         return selection.path === undefined ? 'Tasks' : projectNameFromPath(selection.path);
       case 'group': {
-        const group = this.settings.tagGroups.find(
+        const group = this.settings_abyssPrivate.tagGroups.find(
           (candidate) => candidate.id === selection.groupId,
         );
         return group?.name ?? 'Group';
@@ -3698,7 +4002,7 @@ export class CenterPanel {
     }
   }
 
-  private formatDate(d: string): string {
+  private formatDate_abyssPrivate(d: string): string {
     const today = window.moment().format('YYYY-MM-DD');
     const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
     if (d === today) return 'Today';
@@ -3709,7 +4013,7 @@ export class CenterPanel {
     return m.format('D MMM');
   }
 
-  private getDateClass(d: string): string {
+  private getDateClass_abyssPrivate(d: string): string {
     const today = window.moment().format('YYYY-MM-DD');
     if (d < today) return 'is-overdue';
     if (d === today) return 'is-today';
@@ -3720,15 +4024,15 @@ export class CenterPanel {
     return '';
   }
 
-  private getTagColor(tag: string): string | undefined {
+  private getTagColor_abyssPrivate(tag: string): string | undefined {
     const noHash = tag.replace(/^#/, '');
-    for (const group of this.settings.tagGroups) {
-      if (this.tagMatchesGroup(tag, noHash, group)) return group.color;
+    for (const group of this.settings_abyssPrivate.tagGroups) {
+      if (this.tagMatchesGroup_abyssPrivate(tag, noHash, group)) return group.color;
     }
     return undefined;
   }
 
-  private tagMatchesGroup(
+  private tagMatchesGroup_abyssPrivate(
     tag: string,
     noHash: string,
     group: CalendarSettings['tagGroups'][number],
@@ -3743,42 +4047,50 @@ export class CenterPanel {
     );
   }
 
-  private async rescheduleTask(dragData: string, targetDate: string): Promise<void> {
-    const task = this.taskFromDragData(dragData);
-    if (this.tasks == null) return;
+  private async rescheduleTask_abyssPrivate(dragData: string, targetDate: string): Promise<void> {
+    const task = this.taskFromDragData_abyssPrivate(dragData);
+    if (this.tasks_abyssPrivate == null) return;
     if (task == null) return;
     try {
       const date = localDate(targetDate);
-      const command = this.rescheduleCommand(task, date);
-      presentTaskCommandResult(await this.tasks.execute(command));
+      const command = this.rescheduleCommand_abyssPrivate(task, date);
+      presentTaskCommandResult(await this.tasks_abyssPrivate.execute(command));
     } catch {
       // Calendar controls supply the date; malformed gesture input remains a no-op.
     }
   }
 
-  private async setTaskTimeFromDrop(dragData: string, date: string, time: string): Promise<void> {
-    const task = this.taskFromDragData(dragData);
-    if (this.tasks == null) return;
+  private async setTaskTimeFromDrop_abyssPrivate(
+    dragData: string,
+    date: string,
+    time: string,
+  ): Promise<void> {
+    const task = this.taskFromDragData_abyssPrivate(dragData);
+    if (this.tasks_abyssPrivate == null) return;
     if (task == null) return;
     try {
       const targetDate = localDate(date);
       const targetTime = localTime(time);
       presentTaskCommandResult(
-        await this.tasks.execute(this.timeDropCommand(task, targetDate, targetTime)),
+        await this.tasks_abyssPrivate.execute(
+          this.timeDropCommand_abyssPrivate(task, targetDate, targetTime),
+        ),
       );
     } catch {
       // A malformed drag payload is ignored without touching the task.
     }
   }
 
-  private taskFromDragData(dragData: string): TaskSnapshot | undefined {
+  private taskFromDragData_abyssPrivate(dragData: string): TaskSnapshot | undefined {
     const [filePath, lineText] = dragData.split(':::');
     const line = Number.parseInt(lineText ?? '', 10);
     if (filePath === undefined || filePath === '' || !Number.isInteger(line)) return undefined;
-    return [...this.queries.list({ filePath })].find((task) => task.source.line === line);
+    return [...this.queries_abyssPrivate.list({ filePath })].find(
+      (task) => task.source.line === line,
+    );
   }
 
-  private rescheduleCommand(
+  private rescheduleCommand_abyssPrivate(
     task: TaskSnapshot,
     date: LocalDate,
   ): Parameters<TaskApplicationApi['execute']>[0] {
@@ -3795,7 +4107,7 @@ export class CenterPanel {
     };
   }
 
-  private timeDropCommand(
+  private timeDropCommand_abyssPrivate(
     task: TaskSnapshot,
     date: LocalDate,
     time: ReturnType<typeof localTime>,
@@ -3811,9 +4123,12 @@ export class CenterPanel {
     return { type: 'set-time-slot', ref: task.ref, date, time };
   }
 
-  private async commitTimedMove(task: TaskSnapshot, target: TimedDragTarget): Promise<void> {
+  private async commitTimedMove_abyssPrivate(
+    task: TaskSnapshot,
+    target: TimedDragTarget,
+  ): Promise<void> {
     const ref = calendarRootTaskRef(task);
-    if (this.tasks == null || ref == null) return;
+    if (this.tasks_abyssPrivate == null || ref == null) return;
     try {
       const command: Parameters<TaskApplicationApi['execute']>[0] =
         target.destination === 'all-day'
@@ -3824,17 +4139,17 @@ export class CenterPanel {
               days: target.dayDelta,
               time: localTime(minutesToTimeString(target.startMinutes)),
             };
-      presentTaskCommandResult(await this.tasks.execute(command));
+      presentTaskCommandResult(await this.tasks_abyssPrivate.execute(command));
     } catch {
       // Geometry and command validation share the same target; malformed values remain no-ops.
     }
   }
 
-  private async commitTimedDuration(
+  private async commitTimedDuration_abyssPrivate(
     task: TaskSnapshot,
     target: TimedVerticalResizeTarget,
   ): Promise<void> {
-    if (this.tasks == null) return;
+    if (this.tasks_abyssPrivate == null) return;
     try {
       const command = calendarPatchCommand(task, {
         time: {
@@ -3844,30 +4159,33 @@ export class CenterPanel {
         duration: { type: 'set', value: durationMinutes(target.durationMinutes) },
       });
       if (command == null) return;
-      presentTaskCommandResult(await this.tasks.execute(command));
+      presentTaskCommandResult(await this.tasks_abyssPrivate.execute(command));
     } catch {
       // Keep the previous duration if a forged target fails validation.
     }
   }
 
-  private async commitSpanMove(task: TaskSnapshot, target: SpanMoveTarget): Promise<void> {
+  private async commitSpanMove_abyssPrivate(
+    task: TaskSnapshot,
+    target: SpanMoveTarget,
+  ): Promise<void> {
     const ref = calendarRootTaskRef(task);
-    if (this.tasks == null || ref == null || target.days === 0) return;
+    if (this.tasks_abyssPrivate == null || ref == null || target.days === 0) return;
     try {
       presentTaskCommandResult(
-        await this.tasks.execute({ type: 'shift-schedule', ref, days: target.days }),
+        await this.tasks_abyssPrivate.execute({ type: 'shift-schedule', ref, days: target.days }),
       );
     } catch {
       // The shared resolver validates the exact frozen delta again at the command boundary.
     }
   }
 
-  private async commitTimedBoundary(
+  private async commitTimedBoundary_abyssPrivate(
     task: TaskSnapshot,
     target: TimedBoundaryTarget,
   ): Promise<void> {
     const ref = calendarRootTaskRef(task);
-    if (this.tasks == null || ref == null) return;
+    if (this.tasks_abyssPrivate == null || ref == null) return;
     try {
       const command: Parameters<TaskApplicationApi['execute']>[0] =
         target.boundary === 'create-span'
@@ -3878,44 +4196,50 @@ export class CenterPanel {
               boundary: target.boundary,
               date: localDate(target.date),
             };
-      presentTaskCommandResult(await this.tasks.execute(command));
+      presentTaskCommandResult(await this.tasks_abyssPrivate.execute(command));
     } catch {
       // Boundary geometry is validated again by the application command.
     }
   }
 
-  private async updateTaskTime(task: TaskSnapshot, newStartMinutes: number): Promise<void> {
-    if (this.tasks == null) return;
+  private async updateTaskTime_abyssPrivate(
+    task: TaskSnapshot,
+    newStartMinutes: number,
+  ): Promise<void> {
+    if (this.tasks_abyssPrivate == null) return;
     try {
       const command = calendarPatchCommand(task, {
         time: { type: 'set', value: localTime(minutesToTimeString(newStartMinutes)) },
       });
       if (command == null) return;
-      presentTaskCommandResult(await this.tasks.execute(command));
+      presentTaskCommandResult(await this.tasks_abyssPrivate.execute(command));
     } catch {
       // Keep the previous valid time when gesture arithmetic is out of range.
     }
   }
 
-  private async updateTaskDuration(task: TaskSnapshot, newDurationMinutes: number): Promise<void> {
-    if (this.tasks == null) return;
+  private async updateTaskDuration_abyssPrivate(
+    task: TaskSnapshot,
+    newDurationMinutes: number,
+  ): Promise<void> {
+    if (this.tasks_abyssPrivate == null) return;
     try {
       const command = calendarPatchCommand(task, {
         duration: { type: 'set', value: durationMinutes(newDurationMinutes) },
       });
       if (command == null) return;
-      presentTaskCommandResult(await this.tasks.execute(command));
+      presentTaskCommandResult(await this.tasks_abyssPrivate.execute(command));
     } catch {
       // Keep the previous valid duration when gesture arithmetic is invalid.
     }
   }
 
-  private async updateTaskStart(task: TaskSnapshot, newStart: string): Promise<void> {
+  private async updateTaskStart_abyssPrivate(task: TaskSnapshot, newStart: string): Promise<void> {
     const ref = calendarRootTaskRef(task);
-    if (ref == null || this.tasks == null) return;
+    if (ref == null || this.tasks_abyssPrivate == null) return;
     try {
       presentTaskCommandResult(
-        await this.tasks.execute({
+        await this.tasks_abyssPrivate.execute({
           type: 'set-span-boundary',
           ref,
           boundary: 'start',
@@ -3927,12 +4251,12 @@ export class CenterPanel {
     }
   }
 
-  private async rescheduleTaskDue(task: TaskSnapshot, newDue: string): Promise<void> {
+  private async rescheduleTaskDue_abyssPrivate(task: TaskSnapshot, newDue: string): Promise<void> {
     const ref = calendarRootTaskRef(task);
-    if (ref == null || this.tasks == null) return;
+    if (ref == null || this.tasks_abyssPrivate == null) return;
     try {
       presentTaskCommandResult(
-        await this.tasks.execute({
+        await this.tasks_abyssPrivate.execute({
           type: 'set-span-boundary',
           ref,
           boundary: 'due',
@@ -3946,25 +4270,25 @@ export class CenterPanel {
 
   // The semantic command freezes the effective scheduled/due anchor when start is absent and
   // validates the final span atomically; presentation supplies only the dragged-to edge.
-  private async extendTaskToSpan(task: TaskSnapshot, newDue: string): Promise<void> {
+  private async extendTaskToSpan_abyssPrivate(task: TaskSnapshot, newDue: string): Promise<void> {
     if ((task.planning.start ?? task.planning.scheduled ?? task.planning.due) == null) return;
     const ref = calendarRootTaskRef(task);
-    if (ref == null || this.tasks == null) return;
+    if (ref == null || this.tasks_abyssPrivate == null) return;
     try {
       presentTaskCommandResult(
-        await this.tasks.execute({ type: 'extend-span', ref, due: localDate(newDue) }),
+        await this.tasks_abyssPrivate.execute({ type: 'extend-span', ref, due: localDate(newDue) }),
       );
     } catch {
       // Calendar controls supply the boundary; malformed input remains a no-op.
     }
   }
 
-  private editTaskLink(task: TaskSnapshot, occ: number, token: LinkToken): void {
+  private editTaskLink_abyssPrivate(task: TaskSnapshot, occ: number, token: LinkToken): void {
     const target = calendarMutationTarget(task);
-    const tasks = this.tasks;
+    const tasks = this.tasks_abyssPrivate;
     if (target == null || tasks == null) return;
     new LinkEditModal(
-      this.app,
+      this.app_abyssPrivate,
       token,
       (newRaw) => {
         runAsyncAction(
@@ -3980,57 +4304,66 @@ export class CenterPanel {
         );
       },
       task.source.filePath,
-      this.interactionOwnership,
+      this.interactionOwnership_abyssPrivate,
     ).open();
   }
 
   /** @internal Retained as a focused command seam for date-preset interactions and tests. */
   async toggleDueToday(task: TaskSnapshot): Promise<void> {
     const today = localDate(window.moment().format('YYYY-MM-DD'));
-    await this.toggleTaskDuePreset(task, today);
+    await this.toggleTaskDuePreset_abyssPrivate(task, today);
   }
 
-  private async toggleTaskDuePreset(task: TaskSnapshot, value: LocalDate): Promise<void> {
-    await this.setTaskDue(task, task.planning.due === value ? null : value);
+  private async toggleTaskDuePreset_abyssPrivate(
+    task: TaskSnapshot,
+    value: LocalDate,
+  ): Promise<void> {
+    await this.setTaskDue_abyssPrivate(task, task.planning.due === value ? null : value);
   }
 
-  private async setTaskDue(task: TaskSnapshot, value: LocalDate | null): Promise<boolean> {
+  private async setTaskDue_abyssPrivate(
+    task: TaskSnapshot,
+    value: LocalDate | null,
+  ): Promise<boolean> {
     const command = calendarPatchCommand(task, {
       due: value === null ? { type: 'clear' } : { type: 'set', value },
     });
-    if (command == null || this.tasks == null) return false;
-    const result = await this.tasks.execute(command);
+    if (command == null || this.tasks_abyssPrivate == null) return false;
+    const result = await this.tasks_abyssPrivate.execute(command);
     presentTaskCommandResult(result);
     return result.type === 'ok' && result.changed;
   }
 
-  private async applyDueInOrder(
+  private async applyDueInOrder_abyssPrivate(
     tasks: readonly TaskSnapshot[],
     value: LocalDate,
   ): Promise<boolean> {
     let changed = false;
     for (const task of tasks) {
-      const taskChanged = await this.setTaskDue(task, value);
+      const taskChanged = await this.setTaskDue_abyssPrivate(task, value);
       changed = taskChanged || changed;
     }
     return changed;
   }
 
-  private async applyBulkDuePreset(
+  private async applyBulkDuePreset_abyssPrivate(
     tasks: readonly TaskSnapshot[],
     value: LocalDate,
   ): Promise<void> {
     const shouldClear = tasks.every((task) => task.planning.due === value);
     if (!shouldClear) {
-      await this.applyDueInOrder(tasks, value);
+      await this.applyDueInOrder_abyssPrivate(tasks, value);
       return;
     }
-    for (const task of tasks) await this.setTaskDue(task, null);
+    for (const task of tasks) await this.setTaskDue_abyssPrivate(task, null);
   }
 
-  private openTaskDatePicker(anchor: HTMLElement, tasks: readonly TaskSnapshot[]): void {
-    this.clearTaskDatePicker();
-    const focusKey = this.taskDateTriggerKey(anchor);
+  private openTaskDatePicker_abyssPrivate(
+    anchor: HTMLElement,
+    tasks: readonly TaskSnapshot[],
+  ): void {
+    this.clearTaskDatePicker_abyssPrivate();
+    const focusKey = this.taskDateTriggerKey_abyssPrivate(anchor);
     const firstDue = tasks[0]?.planning.due;
     const initialValue =
       firstDue != null && tasks.every((task) => task.planning.due === firstDue)
@@ -4040,7 +4373,7 @@ export class CenterPanel {
       owner: this.el,
       anchor,
       boundary: this.el,
-      interactionOwnership: this.interactionOwnership,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
       ...(initialValue !== undefined && { initialValue }),
       onPick: (inputValue) => {
         try {
@@ -4049,29 +4382,29 @@ export class CenterPanel {
             focusKey !== undefined && focusKey !== ''
               ? {
                   key: focusKey,
-                  armedRenderGeneration: this.taskCardRenderGeneration,
+                  armedRenderGeneration: this.taskCardRenderGeneration_abyssPrivate,
                   changed: false,
                 }
               : undefined;
           if (pendingFocus != null) {
-            this.pendingTaskDateFocus = pendingFocus;
-            this.taskDateFocusContinuityKey = pendingFocus.key;
+            this.pendingTaskDateFocus_abyssPrivate = pendingFocus;
+            this.taskDateFocusContinuityKey_abyssPrivate = pendingFocus.key;
           }
           const firstTask = tasks[0];
           if (firstTask === undefined) return;
           const update =
             tasks.length === 1
-              ? this.setTaskDue(firstTask, value)
-              : this.applyDueInOrder(tasks, value);
+              ? this.setTaskDue_abyssPrivate(firstTask, value)
+              : this.applyDueInOrder_abyssPrivate(tasks, value);
           if (pendingFocus != null) {
             const settleFocus = (changed: boolean): void => {
-              if (this.pendingTaskDateFocus !== pendingFocus) return;
+              if (this.pendingTaskDateFocus_abyssPrivate !== pendingFocus) return;
               if (!changed) {
-                this.clearTaskDateFocusContinuity(pendingFocus.key);
+                this.clearTaskDateFocusContinuity_abyssPrivate(pendingFocus.key);
                 return;
               }
               pendingFocus.changed = true;
-              this.releaseSettledTaskDateFocus(pendingFocus);
+              this.releaseSettledTaskDateFocus_abyssPrivate(pendingFocus);
             };
             const abandonFocus = (): void => {
               settleFocus(false);
@@ -4083,21 +4416,21 @@ export class CenterPanel {
         }
       },
       onClose: () => {
-        this.taskDatePickerCleanup = null;
+        this.taskDatePickerCleanup_abyssPrivate = null;
       },
       ...(focusKey !== undefined && {
-        restoreFocus: () => this.focusTaskDateTrigger(focusKey),
+        restoreFocus: () => this.focusTaskDateTrigger_abyssPrivate(focusKey),
       }),
     });
-    this.taskDatePickerCleanup = cleanup;
+    this.taskDatePickerCleanup_abyssPrivate = cleanup;
   }
 
-  private clearTaskDatePicker(): void {
-    this.taskDatePickerCleanup?.();
+  private clearTaskDatePicker_abyssPrivate(): void {
+    this.taskDatePickerCleanup_abyssPrivate?.();
   }
 
-  private taskDateTriggerKey(target: EventTarget | null): string | undefined {
-    if (!this.isElementFromPanelRealm(target)) return undefined;
+  private taskDateTriggerKey_abyssPrivate(target: EventTarget | null): string | undefined {
+    if (!this.isElementFromPanelRealm_abyssPrivate(target)) return undefined;
     const card = target.closest<HTMLElement>('.abyss-task-card');
     if (card == null || !this.el.contains(card)) return undefined;
     const filePath = card.dataset['filePath'];
@@ -4105,72 +4438,74 @@ export class CenterPanel {
     return filePath === undefined || line === undefined ? undefined : `${filePath}:${line}`;
   }
 
-  private isElementFromPanelRealm(target: EventTarget | null): target is Element {
+  private isElementFromPanelRealm_abyssPrivate(target: EventTarget | null): target is Element {
     if (target == null || !('ownerDocument' in target)) return false;
     const ownerDocument = (target as { readonly ownerDocument?: Document }).ownerDocument;
     const ownerWindow = ownerDocument?.defaultView;
     return ownerWindow != null && target instanceof ownerWindow.Element;
   }
 
-  private focusTaskDateTrigger(key: string): boolean {
+  private focusTaskDateTrigger_abyssPrivate(key: string): boolean {
     const card = Array.from(this.el.querySelectorAll<HTMLElement>('.abyss-task-card')).find(
       (candidate) =>
         `${candidate.dataset['filePath'] ?? ''}:${candidate.dataset['line'] ?? ''}` === key,
     );
     if (card?.isConnected !== true) return false;
     card.focus({ preventScroll: true });
-    this.scrollTaskCardIntoView(card);
+    this.scrollTaskCardIntoView_abyssPrivate(card);
     return true;
   }
 
-  private completeTaskCardRender(): void {
-    this.taskCardRenderGeneration += 1;
-    this.onRenderComplete(this.el);
-    const continuityKey = this.taskDateFocusContinuityKey;
-    const restored = continuityKey !== null && this.focusTaskDateTrigger(continuityKey);
+  private completeTaskCardRender_abyssPrivate(): void {
+    this.taskCardRenderGeneration_abyssPrivate += 1;
+    this.onRenderComplete_abyssPrivate(this.el);
+    const continuityKey = this.taskDateFocusContinuityKey_abyssPrivate;
+    const restored =
+      continuityKey !== null && this.focusTaskDateTrigger_abyssPrivate(continuityKey);
     if (continuityKey !== null && !restored) {
-      this.clearTaskDateFocusContinuity(continuityKey);
+      this.clearTaskDateFocusContinuity_abyssPrivate(continuityKey);
       return;
     }
-    const pending = this.pendingTaskDateFocus;
-    if (pending?.changed === true) this.releaseSettledTaskDateFocus(pending, restored);
+    const pending = this.pendingTaskDateFocus_abyssPrivate;
+    if (pending?.changed === true) this.releaseSettledTaskDateFocus_abyssPrivate(pending, restored);
   }
 
-  private releaseSettledTaskDateFocus(
-    pending: NonNullable<CenterPanel['pendingTaskDateFocus']>,
-    restored = this.focusTaskDateTrigger(pending.key),
+  private releaseSettledTaskDateFocus_abyssPrivate(
+    pending: NonNullable<CenterPanel['pendingTaskDateFocus_abyssPrivate']>,
+    restored = this.focusTaskDateTrigger_abyssPrivate(pending.key),
   ): void {
     if (
-      this.pendingTaskDateFocus !== pending ||
+      this.pendingTaskDateFocus_abyssPrivate !== pending ||
       !pending.changed ||
-      this.taskCardRenderGeneration <= pending.armedRenderGeneration
+      this.taskCardRenderGeneration_abyssPrivate <= pending.armedRenderGeneration
     ) {
       return;
     }
-    this.pendingTaskDateFocus = null;
-    if (!restored && this.taskDateFocusContinuityKey === pending.key) {
-      this.taskDateFocusContinuityKey = null;
+    this.pendingTaskDateFocus_abyssPrivate = null;
+    if (!restored && this.taskDateFocusContinuityKey_abyssPrivate === pending.key) {
+      this.taskDateFocusContinuityKey_abyssPrivate = null;
     }
   }
 
-  private clearTaskDateFocusContinuity(key: string): void {
-    if (this.pendingTaskDateFocus?.key === key) {
-      this.pendingTaskDateFocus = null;
+  private clearTaskDateFocusContinuity_abyssPrivate(key: string): void {
+    if (this.pendingTaskDateFocus_abyssPrivate?.key === key) {
+      this.pendingTaskDateFocus_abyssPrivate = null;
     }
-    if (this.taskDateFocusContinuityKey === key) this.taskDateFocusContinuityKey = null;
+    if (this.taskDateFocusContinuityKey_abyssPrivate === key)
+      this.taskDateFocusContinuityKey_abyssPrivate = null;
   }
 
-  private abandonTaskDateFocus(): void {
-    this.pendingTaskDateFocus = null;
-    this.taskDateFocusContinuityKey = null;
+  private abandonTaskDateFocus_abyssPrivate(): void {
+    this.pendingTaskDateFocus_abyssPrivate = null;
+    this.taskDateFocusContinuityKey_abyssPrivate = null;
   }
 
-  private taskKey(task: TaskSnapshot): string {
+  private taskKey_abyssPrivate(task: TaskSnapshot): string {
     return `${task.source.filePath}:${task.source.line}`;
   }
 
-  private visibleTaskCards(): HTMLElement[] {
-    if (this.state.get('mode') !== 'tasks') return [];
+  private visibleTaskCards_abyssPrivate(): HTMLElement[] {
+    if (this.state_abyssPrivate.get('mode') !== 'tasks') return [];
     const scroll = Array.from(this.el.children).find((child) =>
       child.classList.contains('abyss-center-scroll'),
     );
@@ -4179,74 +4514,78 @@ export class CenterPanel {
       : [];
   }
 
-  private visibleTaskKeys(): string[] {
-    return this.visibleTaskCards().map(
+  private visibleTaskKeys_abyssPrivate(): string[] {
+    return this.visibleTaskCards_abyssPrivate().map(
       (card) => `${card.dataset['filePath'] ?? ''}:${card.dataset['line'] ?? ''}`,
     );
   }
 
-  private replaceRangeSelection(anchor: string, focus: string, keys: readonly string[]): void {
+  private replaceRangeSelection_abyssPrivate(
+    anchor: string,
+    focus: string,
+    keys: readonly string[],
+  ): void {
     const anchorIndex = keys.indexOf(anchor);
     const focusIndex = keys.indexOf(focus);
-    this.selectedTaskKeys.clear();
+    this.selectedTaskKeys_abyssPrivate.clear();
     if (anchorIndex !== -1 && focusIndex !== -1) {
       const from = Math.min(anchorIndex, focusIndex);
       const to = Math.max(anchorIndex, focusIndex);
-      for (const key of keys.slice(from, to + 1)) this.selectedTaskKeys.add(key);
+      for (const key of keys.slice(from, to + 1)) this.selectedTaskKeys_abyssPrivate.add(key);
     }
-    this.updateSelectionVisuals();
+    this.updateSelectionVisuals_abyssPrivate();
   }
 
-  private reconcileTaskSelection(keys: readonly string[]): void {
+  private reconcileTaskSelection_abyssPrivate(keys: readonly string[]): void {
     const visible = new Set(keys);
-    for (const key of this.selectedTaskKeys) {
-      if (!visible.has(key)) this.selectedTaskKeys.delete(key);
+    for (const key of this.selectedTaskKeys_abyssPrivate) {
+      if (!visible.has(key)) this.selectedTaskKeys_abyssPrivate.delete(key);
     }
-    const firstSelected = keys.find((key) => this.selectedTaskKeys.has(key)) ?? null;
+    const firstSelected = keys.find((key) => this.selectedTaskKeys_abyssPrivate.has(key)) ?? null;
     if (
-      this.selectionAnchorKey === null ||
-      this.selectionAnchorKey === '' ||
-      !visible.has(this.selectionAnchorKey)
+      this.selectionAnchorKey_abyssPrivate === null ||
+      this.selectionAnchorKey_abyssPrivate === '' ||
+      !visible.has(this.selectionAnchorKey_abyssPrivate)
     ) {
-      this.selectionAnchorKey = firstSelected;
+      this.selectionAnchorKey_abyssPrivate = firstSelected;
     }
     if (
-      this.selectionFocusKey === null ||
-      this.selectionFocusKey === '' ||
-      !visible.has(this.selectionFocusKey)
+      this.selectionFocusKey_abyssPrivate === null ||
+      this.selectionFocusKey_abyssPrivate === '' ||
+      !visible.has(this.selectionFocusKey_abyssPrivate)
     ) {
-      this.selectionFocusKey = firstSelected;
+      this.selectionFocusKey_abyssPrivate = firstSelected;
     }
   }
 
-  private focusTaskKey(key: string): void {
-    const index = this.visibleTaskKeys().indexOf(key);
-    const card = index === -1 ? undefined : this.visibleTaskCards()[index];
+  private focusTaskKey_abyssPrivate(key: string): void {
+    const index = this.visibleTaskKeys_abyssPrivate().indexOf(key);
+    const card = index === -1 ? undefined : this.visibleTaskCards_abyssPrivate()[index];
     if (card == null) return;
     card.focus({ preventScroll: true });
-    this.scrollTaskCardIntoView(card);
+    this.scrollTaskCardIntoView_abyssPrivate(card);
   }
 
-  private scrollTaskCardIntoView(card: HTMLElement): void {
+  private scrollTaskCardIntoView_abyssPrivate(card: HTMLElement): void {
     const scrollHost = card as Partial<Pick<HTMLElement, 'scrollIntoView'>>;
     scrollHost.scrollIntoView?.({ block: 'nearest' });
   }
 
-  private taskForKey(key: string): TaskSnapshot | undefined {
+  private taskForKey_abyssPrivate(key: string): TaskSnapshot | undefined {
     const separator = key.lastIndexOf(':');
     if (separator === -1) return undefined;
     const filePath = key.slice(0, separator);
     const line = Number(key.slice(separator + 1));
     if (!Number.isInteger(line)) return undefined;
-    return this.queries
+    return this.queries_abyssPrivate
       .list()
       .find((task) => task.source.filePath === filePath && task.source.line === line);
   }
 
-  private updateSelectionVisuals(): void {
+  private updateSelectionVisuals_abyssPrivate(): void {
     this.el.querySelectorAll<HTMLElement>('.abyss-task-card').forEach((card) => {
       const key = `${card.dataset['filePath'] ?? ''}:${card.dataset['line'] ?? ''}`;
-      const isSelected = this.selectedTaskKeys.has(key);
+      const isSelected = this.selectedTaskKeys_abyssPrivate.has(key);
       const selectedStateId = `abyss-selected-state-${encodeURIComponent(key)}`;
       const selectedState = card.querySelector<HTMLElement>('.abyss-selected-state');
       card.classList.toggle('abyss-multi-selected', isSelected);
@@ -4276,7 +4615,7 @@ export class CenterPanel {
         }
       }
     });
-    this.updateTaskStackSelection();
+    this.updateTaskStackSelection_abyssPrivate();
 
     const live =
       this.el.querySelector<HTMLElement>('.abyss-selection-live') ??
@@ -4284,14 +4623,14 @@ export class CenterPanel {
         cls: 'abyss-selection-live abyss-sr-only',
         attr: { 'aria-live': 'polite', 'aria-atomic': 'true' },
       });
-    const count = this.selectedTaskKeys.size;
-    if (count !== this.lastAnnouncedSelectionCount) {
-      this.lastAnnouncedSelectionCount = count;
+    const count = this.selectedTaskKeys_abyssPrivate.size;
+    if (count !== this.lastAnnouncedSelectionCount_abyssPrivate) {
+      this.lastAnnouncedSelectionCount_abyssPrivate = count;
       live.textContent = `${count} ${count === 1 ? 'task' : 'tasks'} selected`;
     }
   }
 
-  private async setPriority(
+  private async setPriority_abyssPrivate(
     task: TaskSnapshot,
     priority: 'A' | 'B' | 'C' | 'D' | 'E' | 'F',
   ): Promise<void> {
@@ -4299,67 +4638,73 @@ export class CenterPanel {
     const command = calendarPatchCommand(task, {
       priority: { type: 'set', value: priority },
     });
-    if (command == null || this.tasks == null) return;
-    presentTaskCommandResult(await this.tasks.execute(command));
+    if (command == null || this.tasks_abyssPrivate == null) return;
+    presentTaskCommandResult(await this.tasks_abyssPrivate.execute(command));
   }
 
-  private openStatusMenu(event: MouseEvent, task: TaskSnapshot): void {
-    this.clearTaskDatePicker();
-    this.dismissRecurrenceEditor();
-    this.viewStatePopoverCleanup?.();
+  private openStatusMenu_abyssPrivate(event: MouseEvent, task: TaskSnapshot): void {
+    this.clearTaskDatePicker_abyssPrivate();
+    this.dismissRecurrenceEditor_abyssPrivate();
+    this.viewStatePopoverCleanup_abyssPrivate?.();
     showStatusMenuAt(event, {
       task,
-      registry: this.statusRegistry,
-      owner: this.md,
+      registry: this.statusRegistry_abyssPrivate,
+      owner: this.md_abyssPrivate,
       onPickStatus: (symbol) => {
-        runAsyncAction(this.setTaskStatus(task, symbol), 'Could not complete UI action');
+        runAsyncAction(
+          this.setTaskStatus_abyssPrivate(task, symbol),
+          'Could not complete UI action',
+        );
       },
       onPickPriority: (priority) => {
-        runAsyncAction(this.setPriority(task, priority), 'Could not complete UI action');
+        runAsyncAction(
+          this.setPriority_abyssPrivate(task, priority),
+          'Could not complete UI action',
+        );
       },
-      interactionOwnership: this.interactionOwnership,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
     });
   }
 
-  private toggleTask(task: TaskSnapshot): Promise<void> {
+  private toggleTask_abyssPrivate(task: TaskSnapshot): Promise<void> {
     if (isForecastCalendarTask(task)) return Promise.resolve();
     return requestTaskCompletion(
       task,
-      () => this.commitTaskToggle(task),
-      this.interactionOwnership,
-      this.completionConfirmationAbortController.signal,
+      () => this.commitTaskToggle_abyssPrivate(task),
+      this.interactionOwnership_abyssPrivate,
+      this.completionConfirmationAbortController_abyssPrivate.signal,
     );
   }
 
-  private async commitTaskToggle(task: TaskSnapshot): Promise<void> {
+  private async commitTaskToggle_abyssPrivate(task: TaskSnapshot): Promise<void> {
     const target = calendarMutationTarget(task);
-    if (target == null || this.tasks == null) return;
+    if (target == null || this.tasks_abyssPrivate == null) return;
     presentTaskCommandResult(
-      await this.tasks.execute({
+      await this.tasks_abyssPrivate.execute({
         type: 'toggle-completion',
         target,
       }),
     );
   }
 
-  private setTaskStatus(task: TaskSnapshot, symbol: string): Promise<void> {
+  private setTaskStatus_abyssPrivate(task: TaskSnapshot, symbol: string): Promise<void> {
     if (isForecastCalendarTask(task)) return Promise.resolve();
-    if (this.statusRegistry.bySymbol(symbol)?.type === 'done') {
+    if (this.statusRegistry_abyssPrivate.bySymbol(symbol)?.type === 'done') {
       return requestTaskCompletion(
         task,
-        () => this.commitTaskStatus(task, symbol),
-        this.interactionOwnership,
-        this.completionConfirmationAbortController.signal,
+        () => this.commitTaskStatus_abyssPrivate(task, symbol),
+        this.interactionOwnership_abyssPrivate,
+        this.completionConfirmationAbortController_abyssPrivate.signal,
       );
     }
-    return this.commitTaskStatus(task, symbol);
+    return this.commitTaskStatus_abyssPrivate(task, symbol);
   }
 
-  private async commitTaskStatus(task: TaskSnapshot, symbol: string): Promise<void> {
+  private async commitTaskStatus_abyssPrivate(task: TaskSnapshot, symbol: string): Promise<void> {
     const target = calendarMutationTarget(task);
-    if (target == null || this.tasks == null) return;
+    if (target == null || this.tasks_abyssPrivate == null) return;
     presentTaskCommandResult(
-      await this.tasks.execute({
+      await this.tasks_abyssPrivate.execute({
         type: 'set-status',
         target,
         symbol,
@@ -4367,9 +4712,9 @@ export class CenterPanel {
     );
   }
 
-  private openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void {
+  private openRecurrenceEditor_abyssPrivate(anchor: HTMLElement, task: TaskSnapshot): void {
     if (isForecastCalendarTask(task)) return;
-    this.dismissRecurrenceEditor();
+    this.dismissRecurrenceEditor_abyssPrivate();
     const occurrence = calendarOccurrenceForTask(task);
     const source = occurrence?.source ?? {
       root: task,
@@ -4383,32 +4728,35 @@ export class CenterPanel {
     const handle = mountAnchoredRecurrenceEditor({
       anchor,
       source,
-      policy: { removeScheduledDate: this.settings.recurrence.removeScheduledDate },
+      policy: { removeScheduledDate: this.settings_abyssPrivate.recurrence.removeScheduledDate },
       ownershipConflict: hasOtherCalendarRecurrenceOwner(source),
       onSubmit: (patch) => {
         const command = calendarPatchCommand(task, patch);
-        if (this.tasks == null || command == null) {
+        if (this.tasks_abyssPrivate == null || command == null) {
           return Promise.resolve({
             type: 'io-error' as const,
             cause: 'application-unavailable',
             contentState: 'unchanged' as const,
           });
         }
-        return this.tasks.execute(command);
+        return this.tasks_abyssPrivate.execute(command);
       },
       onClose: () => {
-        if (this.recurrenceEditorCleanup === cleanup) {
-          this.recurrenceEditorCleanup = null;
+        if (this.recurrenceEditorCleanup_abyssPrivate === cleanup) {
+          this.recurrenceEditorCleanup_abyssPrivate = null;
         }
       },
-      interactionOwnership: this.interactionOwnership,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
     });
     lifecycle.handle = handle;
-    this.recurrenceEditorCleanup = cleanup;
+    this.recurrenceEditorCleanup_abyssPrivate = cleanup;
   }
 
-  private openForecastRecurrenceEditor(anchor: HTMLElement, source: CalendarTaskSource): void {
-    this.dismissRecurrenceEditor();
+  private openForecastRecurrenceEditor_abyssPrivate(
+    anchor: HTMLElement,
+    source: CalendarTaskSource,
+  ): void {
+    this.dismissRecurrenceEditor_abyssPrivate();
     const lifecycle: { handle?: ReturnType<typeof mountAnchoredRecurrenceEditor> } = {};
     const cleanup = (): void => {
       lifecycle.handle?.dismiss();
@@ -4416,10 +4764,10 @@ export class CenterPanel {
     const handle = mountAnchoredRecurrenceEditor({
       anchor,
       source,
-      policy: { removeScheduledDate: this.settings.recurrence.removeScheduledDate },
+      policy: { removeScheduledDate: this.settings_abyssPrivate.recurrence.removeScheduledDate },
       ownershipConflict: hasOtherCalendarRecurrenceOwner(source),
       onSubmit: (patch) => {
-        if (this.tasks == null) {
+        if (this.tasks_abyssPrivate == null) {
           return Promise.resolve({
             type: 'io-error' as const,
             cause: 'application-unavailable',
@@ -4434,22 +4782,22 @@ export class CenterPanel {
             contentState: 'unchanged' as const,
           });
         }
-        return this.tasks.execute(command);
+        return this.tasks_abyssPrivate.execute(command);
       },
       onClose: () => {
-        if (this.recurrenceEditorCleanup === cleanup) {
-          this.recurrenceEditorCleanup = null;
+        if (this.recurrenceEditorCleanup_abyssPrivate === cleanup) {
+          this.recurrenceEditorCleanup_abyssPrivate = null;
         }
       },
-      interactionOwnership: this.interactionOwnership,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
     });
     lifecycle.handle = handle;
-    this.recurrenceEditorCleanup = cleanup;
+    this.recurrenceEditorCleanup_abyssPrivate = cleanup;
   }
 
-  private dismissRecurrenceEditor(): void {
-    const cleanup = this.recurrenceEditorCleanup;
-    this.recurrenceEditorCleanup = null;
+  private dismissRecurrenceEditor_abyssPrivate(): void {
+    const cleanup = this.recurrenceEditorCleanup_abyssPrivate;
+    this.recurrenceEditorCleanup_abyssPrivate = null;
     cleanup?.();
   }
 }

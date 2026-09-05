@@ -152,10 +152,10 @@ class DependencySearchController implements DependencySearchHandle {
       blocksShortcuts: true,
     });
     this.element = container.createDiv({
-      cls: 'abyss-popover abyss-popover-anchored abyss-dependency-search',
+      cls: 'abyss-popover abyss-popover-anchored abyss-dep-search',
       attr: { role: 'dialog', 'aria-label': 'Add dependency' },
     });
-    const search = this.element.createDiv({ cls: 'abyss-dependency-search-field' });
+    const search = this.element.createDiv({ cls: 'abyss-dep-search-field' });
     setIcon(search.createSpan({ attr: { 'aria-hidden': 'true' } }), 'search');
     const id = `abyss-dependency-options-${nextSearchId++}`;
     this.input = search.createEl('input', {
@@ -170,11 +170,11 @@ class DependencySearchController implements DependencySearchHandle {
       },
     });
     this.list = this.element.createDiv({
-      cls: 'abyss-dependency-search-results',
+      cls: 'abyss-dep-search-results',
       attr: { id, role: 'listbox', 'aria-label': 'Tasks' },
     });
     this.actions = this.element.createDiv({
-      cls: 'abyss-dependency-search-directions',
+      cls: 'abyss-dep-search-directions',
       attr: { role: 'group', 'aria-label': 'Dependency direction', hidden: '' },
     });
     this.input.addEventListener('input', () => {
@@ -216,7 +216,7 @@ class DependencySearchController implements DependencySearchHandle {
     });
     if (this.options.length === 0)
       this.list.createDiv({
-        cls: 'abyss-dependency-search-empty',
+        cls: 'abyss-dep-search-empty',
         text: 'No matching tasks',
         attr: { role: 'status' },
       });
@@ -226,7 +226,7 @@ class DependencySearchController implements DependencySearchHandle {
 
   private renderOption(option: DependencySearchOption, index: number): void {
     const button = this.list.createEl('button', {
-      cls: 'abyss-dependency-search-option',
+      cls: 'abyss-dep-search-option',
       attr: {
         type: 'button',
         role: 'option',
@@ -237,10 +237,10 @@ class DependencySearchController implements DependencySearchHandle {
       },
     });
     button.disabled = this.busy || option.directions.length === 0;
-    button.createSpan({ cls: 'abyss-dependency-search-title', text: option.title });
-    button.createSpan({ cls: 'abyss-dependency-search-context', text: option.context });
+    button.createSpan({ cls: 'abyss-dep-search-title', text: option.title });
+    button.createSpan({ cls: 'abyss-dep-search-context', text: option.context });
     if (option.disabledReason !== undefined)
-      button.createSpan({ cls: 'abyss-dependency-search-reason', text: option.disabledReason });
+      button.createSpan({ cls: 'abyss-dep-search-reason', text: option.disabledReason });
     button.addEventListener('click', () => {
       this.activeIndex = index;
       this.updateActive();

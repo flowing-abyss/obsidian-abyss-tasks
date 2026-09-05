@@ -59,7 +59,7 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
       mutation: 'destination provisioning',
       reason: 'Provisions the configured destination without inserting task Markdown.',
     },
-  'src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts#ObsidianTaskRepository.processFile#process#1':
+  'src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts#ObsidianTaskRepository.processFile_abyssPrivate#process#1':
     {
       mutation: 'single-task transaction',
       reason: 'The sole revision-confirming transaction boundary for task commands.',
@@ -551,10 +551,10 @@ function recurrenceSubmitRoutesFor(path: string, module: ts.SourceFile): string[
           if (ts.isPropertyAccessExpression(callTarget)) {
             if (
               callTarget.name.text === 'execute' &&
-              /(?:^|\.)tasks!?$/u.test(callTarget.expression.getText(module))
+              /(?:^|\.)tasks_abyssPrivate!?$/u.test(callTarget.expression.getText(module))
             ) {
               route = 'TaskApplicationApi.execute';
-            } else if (callTarget.name.text === 'executePlanningPatch') {
+            } else if (callTarget.name.text === 'executePlanningPatch_abyssPrivate') {
               route = 'executePlanningPatch';
             }
           }
@@ -584,7 +584,7 @@ function memberApplicationExecuteCount(module: ts.SourceFile, member: string): n
           if (
             ts.isPropertyAccessExpression(target) &&
             target.name.text === 'execute' &&
-            /(?:^|\.)tasks!?$/u.test(target.expression.getText(module))
+            /(?:^|\.)tasks_abyssPrivate!?$/u.test(target.expression.getText(module))
           ) {
             count++;
           }
@@ -804,7 +804,7 @@ describe('task architecture boundaries', () => {
         .filter(([, entry]) => entry.mutation === 'single-task transaction')
         .map(([site]) => site),
     ).toEqual([
-      'src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts#ObsidianTaskRepository.processFile#process#1',
+      'src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts#ObsidianTaskRepository.processFile_abyssPrivate#process#1',
     ]);
   });
 
@@ -861,7 +861,10 @@ describe('task architecture boundaries', () => {
       'src/ui/CalendarRenderer.ts:TaskApplicationApi.execute',
     ]);
     expect(
-      memberApplicationExecuteCount(syntax('src/panels/RightPanel.ts'), 'executePlanningPatch'),
+      memberApplicationExecuteCount(
+        syntax('src/panels/RightPanel.ts'),
+        'executePlanningPatch_abyssPrivate',
+      ),
     ).toBe(2);
   });
 

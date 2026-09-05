@@ -938,51 +938,57 @@ function activeRecurringSources(
 }
 
 export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnapshotState {
-  private readonly taskMap = new Map<string, readonly TaskSnapshot[]>();
-  private readonly calendarDateIndex = new TaskDateIndex<CalendarTaskSource>(
+  private readonly taskMap_abyssPrivate = new Map<string, readonly TaskSnapshot[]>();
+  private readonly calendarDateIndex_abyssPrivate = new TaskDateIndex<CalendarTaskSource>(
     (source) => calendarDatesForPlanning(source.node.planning),
     (source) => calendarRangeForPlanning(source.node.planning),
   );
-  private readonly recurringSourcesByFile = new Map<string, readonly CalendarTaskSource[]>();
-  private readonly fileGenerations = new Map<string, number>();
-  private readonly reconciliationTransitions = new Map<string, FileReconciliationTransition>();
-  private listeners: Listener[] = [];
-  private readonly pendingFiles = new Set<string>();
-  private fileLifecycles = new WeakMap<TFile, FileLifecycle>();
-  private readonly pendingReads = new Set<Promise<void>>();
-  private flushScheduled = false;
-  private metadataCacheRefs: EventRef[] = [];
-  private vaultRefs: EventRef[] = [];
-  private initialization: Promise<void> | undefined;
-  private initialized = false;
-  private destroyed = false;
-  private statusCatalog: StatusCatalog;
-  private dependencyGraph: TaskDependencyGraph | undefined;
-  private readonly blockEditor = new TaskBlockEditor();
-  private readonly locator: TaskLocator;
+  private readonly recurringSourcesByFile_abyssPrivate = new Map<
+    string,
+    readonly CalendarTaskSource[]
+  >();
+  private readonly fileGenerations_abyssPrivate = new Map<string, number>();
+  private readonly reconciliationTransitions_abyssPrivate = new Map<
+    string,
+    FileReconciliationTransition
+  >();
+  private listeners_abyssPrivate: Listener[] = [];
+  private readonly pendingFiles_abyssPrivate = new Set<string>();
+  private fileLifecycles_abyssPrivate = new WeakMap<TFile, FileLifecycle>();
+  private readonly pendingReads_abyssPrivate = new Set<Promise<void>>();
+  private flushScheduled_abyssPrivate = false;
+  private metadataCacheRefs_abyssPrivate: EventRef[] = [];
+  private vaultRefs_abyssPrivate: EventRef[] = [];
+  private initialization_abyssPrivate: Promise<void> | undefined;
+  private initialized_abyssPrivate = false;
+  private destroyed_abyssPrivate = false;
+  private statusCatalog_abyssPrivate: StatusCatalog;
+  private dependencyGraph_abyssPrivate: TaskDependencyGraph | undefined;
+  private readonly blockEditor_abyssPrivate = new TaskBlockEditor();
+  private readonly locator_abyssPrivate: TaskLocator;
 
   constructor(
-    private readonly app: App,
-    private readonly options: TaskIndexOptions,
+    private readonly app_abyssPrivate: App,
+    private readonly options_abyssPrivate: TaskIndexOptions,
   ) {
-    this.statusCatalog = options.statusCatalog;
-    this.locator = new TaskLocator(options.refAuthority);
+    this.statusCatalog_abyssPrivate = options_abyssPrivate.statusCatalog;
+    this.locator_abyssPrivate = new TaskLocator(options_abyssPrivate.refAuthority);
   }
 
   setStatusCatalog(statusCatalog: StatusCatalog): void {
-    this.statusCatalog = statusCatalog;
-    this.dependencyGraph = undefined;
+    this.statusCatalog_abyssPrivate = statusCatalog;
+    this.dependencyGraph_abyssPrivate = undefined;
   }
 
   async initialize(): Promise<void> {
-    if (this.initialized || this.destroyed) return;
-    this.initialization ??= this.performInitialization();
-    await this.initialization;
+    if (this.initialized_abyssPrivate || this.destroyed_abyssPrivate) return;
+    this.initialization_abyssPrivate ??= this.performInitialization_abyssPrivate();
+    await this.initialization_abyssPrivate;
   }
 
-  private async performInitialization(): Promise<void> {
-    this.registerEvents();
-    const files = [...this.app.vault.getMarkdownFiles()]
+  private async performInitialization_abyssPrivate(): Promise<void> {
+    this.registerEvents_abyssPrivate();
+    const files = [...this.app_abyssPrivate.vault.getMarkdownFiles()]
       .map((file) => ({ file, path: file.path }))
       .sort((left, right) => left.path.localeCompare(right.path));
     const chunkSize = 50;
@@ -990,57 +996,59 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       await Promise.all(
         files
           .slice(index, index + chunkSize)
-          .map(({ file, path }) => this.loadFile(file, path, false)),
+          .map(({ file, path }) => this.loadFile_abyssPrivate(file, path, false)),
       );
       if (index + chunkSize < files.length) {
         await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
       }
     }
-    await this.drainPendingReads();
-    if (this.destroyed) return;
-    this.initialized = true;
-    this.publish({ type: 'initialized' });
+    await this.drainPendingReads_abyssPrivate();
+    if (this.destroyed_abyssPrivate) return;
+    this.initialized_abyssPrivate = true;
+    this.publish_abyssPrivate({ type: 'initialized' });
   }
 
   list(query?: TaskQuery): readonly TaskSnapshot[] {
-    const tasks = initialQueryTasks(this.taskMap, query);
+    const tasks = initialQueryTasks(this.taskMap_abyssPrivate, query);
     const filtered = filterQueryTasks(tasks, query);
     return [...filtered].sort(stableTaskOrder).map(cloneTaskSnapshot);
   }
 
   listNodes(query?: TaskQuery): readonly TaskNodeSnapshot[] {
-    const roots = initialQueryTasks(this.taskMap, query).map((root) =>
-      taskSnapshotWithStatuses(root, (symbol) => this.statusCatalog.statusForSymbol(symbol)),
+    const roots = initialQueryTasks(this.taskMap_abyssPrivate, query).map((root) =>
+      taskSnapshotWithStatuses(root, (symbol) =>
+        this.statusCatalog_abyssPrivate.statusForSymbol(symbol),
+      ),
     );
     return enumerateTaskNodes(filterQueryTasks(roots, query));
   }
 
   dependencies(target: TaskNodeRef): TaskDependencyProjection {
-    return this.currentDependencyGraph().dependencies(target);
+    return this.currentDependencyGraph_abyssPrivate().dependencies(target);
   }
 
   dependencyEligibility(blocker: TaskNodeRef, dependent: TaskNodeRef): TaskDependencyEligibility {
-    return this.currentDependencyGraph().eligibility(blocker, dependent);
+    return this.currentDependencyGraph_abyssPrivate().eligibility(blocker, dependent);
   }
 
-  private currentDependencyGraph(): TaskDependencyGraph {
-    this.dependencyGraph ??= buildTaskDependencyGraph(this.listNodes(), (symbol) =>
-      this.statusCatalog.statusForSymbol(symbol),
+  private currentDependencyGraph_abyssPrivate(): TaskDependencyGraph {
+    this.dependencyGraph_abyssPrivate ??= buildTaskDependencyGraph(this.listNodes(), (symbol) =>
+      this.statusCatalog_abyssPrivate.statusForSymbol(symbol),
     );
-    return this.dependencyGraph;
+    return this.dependencyGraph_abyssPrivate;
   }
 
   forCalendarProjection(dates: readonly LocalDate[]): CalendarProjectionSources {
     const seen = new Set<CalendarTaskSource>();
     for (const date of dates) {
-      for (const source of this.calendarDateIndex.get(date)) seen.add(source);
+      for (const source of this.calendarDateIndex_abyssPrivate.get(date)) seen.add(source);
     }
     const clonedRoots = new Map<TaskSnapshot, ClonedCalendarRoot>();
     const cloneSource = (source: CalendarTaskSource): CalendarTaskSource =>
       cloneCalendarTaskSource(source, clonedRoots);
     return {
       materialized: [...seen].sort(stableCalendarSourceOrder).map(cloneSource),
-      recurringSources: [...this.recurringSourcesByFile.values()]
+      recurringSources: [...this.recurringSourcesByFile_abyssPrivate.values()]
         .flat()
         .sort(stableCalendarSourceOrder)
         .map(cloneSource),
@@ -1048,9 +1056,9 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
   }
 
   resolve(ref: TaskRef): TaskResolution {
-    const tasks = this.taskMap.get(ref.filePath) ?? [];
+    const tasks = this.taskMap_abyssPrivate.get(ref.filePath) ?? [];
     const current = tasks.find((task) => task.source.line === ref.line);
-    const expectedSource = this.locator.exactSource(ref.revision);
+    const expectedSource = this.locator_abyssPrivate.exactSource(ref.revision);
     const sourceMatches =
       expectedSource === undefined
         ? []
@@ -1060,19 +1068,19 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       ref,
       current,
       matches,
-      this.options.refAuthority,
+      this.options_abyssPrivate.refAuthority,
     );
     if (directResolution !== undefined) return directResolution;
-    const fileTransition = this.reconciliationTransitions.get(ref.filePath);
+    const fileTransition = this.reconciliationTransitions_abyssPrivate.get(ref.filePath);
     const transition = fileTransition?.writable.get(taskReconciliationKey(ref));
     if (transition?.evidence === 'authority-transition') return transitionResolution(transition);
     const authorityResolution = authorityAmbiguityResolution(
-      this.options.refAuthority,
+      this.options_abyssPrivate.refAuthority,
       sourceMatches,
     );
     if (authorityResolution !== undefined) return authorityResolution;
     const rebaseResolution = writableRebaseResolution(
-      this.options.refAuthority,
+      this.options_abyssPrivate.refAuthority,
       ref,
       matches,
       transition,
@@ -1083,108 +1091,113 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
   }
 
   subscribe(listener: Listener): () => void {
-    this.listeners.push(listener);
+    this.listeners_abyssPrivate.push(listener);
     return () => {
-      this.listeners = this.listeners.filter((candidate) => candidate !== listener);
+      this.listeners_abyssPrivate = this.listeners_abyssPrivate.filter(
+        (candidate) => candidate !== listener,
+      );
     };
   }
 
   destroy(): void {
-    if (this.destroyed) return;
-    this.destroyed = true;
-    for (const ref of this.metadataCacheRefs) this.app.metadataCache.offref(ref);
-    for (const ref of this.vaultRefs) this.app.vault.offref(ref);
-    this.metadataCacheRefs = [];
-    this.vaultRefs = [];
-    this.listeners = [];
-    this.pendingFiles.clear();
-    this.fileLifecycles = new WeakMap();
-    this.pendingReads.clear();
-    this.taskMap.clear();
-    this.dependencyGraph = undefined;
-    this.fileGenerations.clear();
-    this.reconciliationTransitions.clear();
-    this.options.refAuthority?.clear();
-    this.calendarDateIndex.clear();
-    this.recurringSourcesByFile.clear();
+    if (this.destroyed_abyssPrivate) return;
+    this.destroyed_abyssPrivate = true;
+    for (const ref of this.metadataCacheRefs_abyssPrivate)
+      this.app_abyssPrivate.metadataCache.offref(ref);
+    for (const ref of this.vaultRefs_abyssPrivate) this.app_abyssPrivate.vault.offref(ref);
+    this.metadataCacheRefs_abyssPrivate = [];
+    this.vaultRefs_abyssPrivate = [];
+    this.listeners_abyssPrivate = [];
+    this.pendingFiles_abyssPrivate.clear();
+    this.fileLifecycles_abyssPrivate = new WeakMap();
+    this.pendingReads_abyssPrivate.clear();
+    this.taskMap_abyssPrivate.clear();
+    this.dependencyGraph_abyssPrivate = undefined;
+    this.fileGenerations_abyssPrivate.clear();
+    this.reconciliationTransitions_abyssPrivate.clear();
+    this.options_abyssPrivate.refAuthority?.clear();
+    this.calendarDateIndex_abyssPrivate.clear();
+    this.recurringSourcesByFile_abyssPrivate.clear();
   }
 
-  private async loadFile(
+  private async loadFile_abyssPrivate(
     file: TFile,
     path: string,
     forceContentFallback: boolean,
     observedFile = false,
   ): Promise<boolean> {
-    const observation = this.observe(file, path);
+    const observation = this.observe_abyssPrivate(file, path);
     if (observation == null) return false;
-    const cache = this.app.metadataCache.getFileCache(file);
+    const cache = this.app_abyssPrivate.metadataCache.getFileCache(file);
     const hasCachedTasks = cache?.listItems?.some((item) => item.task !== undefined) ?? false;
     if (!forceContentFallback && !hasCachedTasks) {
-      return this.loadEmptyFile(observation);
+      return this.loadEmptyFile_abyssPrivate(observation);
     }
-    return this.loadParsedFile(observation, cache, forceContentFallback, observedFile);
+    return this.loadParsedFile_abyssPrivate(observation, cache, forceContentFallback, observedFile);
   }
 
-  private async loadEmptyFile(observation: FileObservation): Promise<boolean> {
+  private async loadEmptyFile_abyssPrivate(observation: FileObservation): Promise<boolean> {
     try {
-      const authority = this.options.refAuthority;
+      const authority = this.options_abyssPrivate.refAuthority;
       if (authority != null) {
-        const content = await this.app.vault.cachedRead(observation.file);
-        if (!this.isCurrent(observation)) return false;
+        const content = await this.app_abyssPrivate.vault.cachedRead(observation.file);
+        if (!this.isCurrent_abyssPrivate(observation)) return false;
         authority.observe(observation.path, content);
       }
     } catch {
       // The empty replacement still wins for the observed lifecycle generation.
     }
-    return this.commitEmptyObservation(observation);
+    return this.commitEmptyObservation_abyssPrivate(observation);
   }
 
-  private commitEmptyObservation(observation: FileObservation): boolean {
-    if (!this.isCurrent(observation)) return false;
-    this.replaceFile(observation.path, [], [], true);
+  private commitEmptyObservation_abyssPrivate(observation: FileObservation): boolean {
+    if (!this.isCurrent_abyssPrivate(observation)) return false;
+    this.replaceFile_abyssPrivate(observation.path, [], [], true);
     return true;
   }
 
-  private async loadParsedFile(
+  private async loadParsedFile_abyssPrivate(
     observation: FileObservation,
     cache: CachedMetadata | null,
     forceContentFallback: boolean,
     observedFile: boolean,
   ): Promise<boolean> {
     try {
-      const content = await this.app.vault.cachedRead(observation.file);
-      if (!this.isCurrent(observation)) return false;
+      const content = await this.app_abyssPrivate.vault.cachedRead(observation.file);
+      if (!this.isCurrent_abyssPrivate(observation)) return false;
       const selectedCache = forceContentFallback ? cacheWithContentFallback(content, cache) : cache;
       if (selectedCache == null) return false;
-      const tasks = this.parseFile({
+      const tasks = this.parseFile_abyssPrivate({
         filePath: observation.path,
         content,
         cache: selectedCache,
         allocateSuccessor: true,
         observedFile,
       });
-      this.replaceFile(observation.path, tasks, [], true);
+      this.replaceFile_abyssPrivate(observation.path, tasks, [], true);
       return true;
     } catch {
-      return this.commitEmptyObservation(observation);
+      return this.commitEmptyObservation_abyssPrivate(observation);
     }
   }
 
-  private parseFile(input: ParseFileInput): readonly TaskSnapshot[] {
+  private parseFile_abyssPrivate(input: ParseFileInput): readonly TaskSnapshot[] {
     const { cache } = input;
-    const overrides = this.observeAuthorityTransition(input);
+    const overrides = this.observeAuthorityTransition_abyssPrivate(input);
     if (cache.listItems == null) return [];
-    const context = this.createParseContext(input, overrides);
+    const context = this.createParseContext_abyssPrivate(input, overrides);
     const snapshots: TaskSnapshot[] = [];
     for (const item of cache.listItems) {
-      const snapshot = this.parseRootItem(item, context);
+      const snapshot = this.parseRootItem_abyssPrivate(item, context);
       if (snapshot != null) snapshots.push(snapshot);
     }
     return snapshots.sort(stableTaskOrder);
   }
 
-  private observeAuthorityTransition(input: ParseFileInput): readonly RootRevisionOverride[] {
-    const authorityObservation = this.options.refAuthority?.observeTransition(
+  private observeAuthorityTransition_abyssPrivate(
+    input: ParseFileInput,
+  ): readonly RootRevisionOverride[] {
+    const authorityObservation = this.options_abyssPrivate.refAuthority?.observeTransition(
       input.filePath,
       input.content,
     );
@@ -1195,7 +1208,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     return overrides;
   }
 
-  private createParseContext(
+  private createParseContext_abyssPrivate(
     input: ParseFileInput,
     overrides: readonly RootRevisionOverride[],
   ): FileParseContext {
@@ -1204,17 +1217,23 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     // consumers while TaskBlockEditor independently owns exact block revision bytes.
     const lines = content.split('\n');
     const blockByLine = new Map(
-      this.blockEditor.rootBlocks(content).map((block) => [block.line, block] as const),
+      this.blockEditor_abyssPrivate
+        .rootBlocks(content)
+        .map((block) => [block.line, block] as const),
     );
     const sourceCounts = countBlockSources(blockByLine.values());
-    const priorTasks = this.taskMap.get(filePath) ?? [];
+    const priorTasks = this.taskMap_abyssPrivate.get(filePath) ?? [];
     return {
       filePath,
       lines,
       blockByLine,
       sourceCounts,
-      codec: new TaskMarkdownCodec(this.statusCatalog),
-      presentation: taskPresentation(filePath, this.options.dailyNoteFormat, cache.frontmatter),
+      codec: new TaskMarkdownCodec(this.statusCatalog_abyssPrivate),
+      presentation: taskPresentation(
+        filePath,
+        this.options_abyssPrivate.dailyNoteFormat,
+        cache.frontmatter,
+      ),
       itemByLine: metadataItemsByLine(cache.listItems ?? []),
       revision: {
         overrides: new Map(overrides.map((override) => [override.line, override] as const)),
@@ -1228,7 +1247,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     };
   }
 
-  private parseRootItem(
+  private parseRootItem_abyssPrivate(
     item: MetadataListItem,
     context: FileParseContext,
   ): TaskSnapshot | undefined {
@@ -1242,7 +1261,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     const ref: TaskRef = {
       filePath: context.filePath,
       line,
-      revision: this.reconciledRevision({
+      revision: this.reconciledRevision_abyssPrivate({
         ...context.revision,
         line,
         source: exactBlock,
@@ -1251,7 +1270,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     };
     return projectTaskSnapshot({
       codec: context.codec,
-      statusCatalog: this.statusCatalog,
+      statusCatalog: this.statusCatalog_abyssPrivate,
       filePath: context.filePath,
       lines: context.lines,
       line,
@@ -1272,7 +1291,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     source: string,
     sourceLines?: readonly number[],
   ): TaskRef | undefined {
-    const tasks = this.taskMap.get(filePath) ?? [];
+    const tasks = this.taskMap_abyssPrivate.get(filePath) ?? [];
     const sourceMatches = tasks.filter((task) => task.source.originalBlock === source);
     if (mismatchedDuplicatePopulation(sourceMatches, sourceLines)) return undefined;
     const hinted = tasks.find((task) => task.source.line === line);
@@ -1283,7 +1302,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
   }
 
   authoritySuccessor(consumed: TaskRef): TaskRef | undefined {
-    const transition = this.reconciliationTransitions
+    const transition = this.reconciliationTransitions_abyssPrivate
       .get(consumed.filePath)
       ?.writable.get(taskReconciliationKey(consumed));
     return transition?.evidence === 'authority-transition'
@@ -1292,18 +1311,21 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
   }
 
   discardAuthoritySuccessor(consumed: TaskRef): void {
-    const transitions = this.reconciliationTransitions.get(consumed.filePath);
+    const transitions = this.reconciliationTransitions_abyssPrivate.get(consumed.filePath);
     const key = taskReconciliationKey(consumed);
     if (transitions?.writable.get(key)?.evidence !== 'authority-transition') return;
     const writable = new Map(transitions.writable);
     writable.delete(key);
-    this.reconciliationTransitions.set(consumed.filePath, { ...transitions, writable });
+    this.reconciliationTransitions_abyssPrivate.set(consumed.filePath, {
+      ...transitions,
+      writable,
+    });
   }
 
   previewContent(filePath: string, content: string): readonly TaskSnapshot[] {
     const cache = cacheWithContentFallback(content, null);
     const frontmatter = frontmatterFromContent(content);
-    return this.parseFile({
+    return this.parseFile_abyssPrivate({
       filePath,
       content,
       cache: { ...cache, ...(frontmatter != null && { frontmatter }) },
@@ -1313,11 +1335,12 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
   /** Installs authoritative content after an atomic repository transition. */
   installCommittedContent(filePath: string, content: string): readonly TaskSnapshot[] {
     const restored =
-      this.options.refAuthority?.observeTransition(filePath, content)?.restored === true;
+      this.options_abyssPrivate.refAuthority?.observeTransition(filePath, content)?.restored ===
+      true;
     const cache = cacheWithContentFallback(content, null);
     const frontmatter = frontmatterFromContent(content);
     let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
-    const tasks = this.parseFile({
+    const tasks = this.parseFile_abyssPrivate({
       filePath,
       content,
       cache: { ...cache, ...(frontmatter != null && { frontmatter }) },
@@ -1325,64 +1348,72 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       captureAuthorityTransitions: (transitions) => {
         authorityTransitions = transitions;
       },
-      observedFile: this.fileGenerations.has(filePath),
+      observedFile: this.fileGenerations_abyssPrivate.has(filePath),
     });
-    if (this.replaceFile(filePath, tasks, authorityTransitions)) this.queueChanged(filePath);
-    if (restored) this.reconciliationTransitions.delete(filePath);
+    if (this.replaceFile_abyssPrivate(filePath, tasks, authorityTransitions))
+      this.queueChanged_abyssPrivate(filePath);
+    if (restored) this.reconciliationTransitions_abyssPrivate.delete(filePath);
     return tasks.map(cloneTaskSnapshot);
   }
 
-  private reconciledRevision(input: ReconciledRevisionInput): string {
+  private reconciledRevision_abyssPrivate(input: ReconciledRevisionInput): string {
     const override = input.overrides.get(input.line);
     if (override?.source === input.source) return override.revision;
-    const authority = this.options.refAuthority;
-    if (authority == null) return this.locator.revision(input.source);
+    const authority = this.options_abyssPrivate.refAuthority;
+    if (authority == null) return this.locator_abyssPrivate.revision(input.source);
     const reusableRevision = reusablePriorRevision(input);
     if (reusableRevision !== undefined) return reusableRevision;
     const hinted = input.priorByLine.get(input.line);
     if (shouldAllocateSuccessor(input, hinted)) {
       return (
         authority.successor(hinted.ref.revision, input.source) ??
-        this.locator.revision(input.source)
+        this.locator_abyssPrivate.revision(input.source)
       );
     }
     if (shouldMintAuthorityRevision(input)) return authority.mintRevision(input.source);
-    return this.locator.revision(input.source);
+    return this.locator_abyssPrivate.revision(input.source);
   }
 
-  private replaceFile(
+  private replaceFile_abyssPrivate(
     filePath: string,
     tasks: readonly TaskSnapshot[],
     authorityTransitions: readonly ProvenRootRevisionOverride[] = [],
     advanceGenerationOnUnchanged = false,
   ): boolean {
-    const current = this.taskMap.get(filePath) ?? [];
+    const current = this.taskMap_abyssPrivate.get(filePath) ?? [];
     const changed = JSON.stringify(current) !== JSON.stringify(tasks);
     if (!changed && !advanceGenerationOnUnchanged) return false;
     // A repository install and Obsidian's matching metadata event can arrive in either order
     // before the already-queued notification is delivered. Keep that batch's proven transition
     // visible to subscribers instead of replacing it with an unchanged self-transition.
-    const queuedTransition = this.reconciliationTransitions.get(filePath);
-    if (hasQueuedAuthorityTransition(filePath, changed, this.pendingFiles, queuedTransition)) {
+    const queuedTransition = this.reconciliationTransitions_abyssPrivate.get(filePath);
+    if (
+      hasQueuedAuthorityTransition(
+        filePath,
+        changed,
+        this.pendingFiles_abyssPrivate,
+        queuedTransition,
+      )
+    ) {
       return false;
     }
-    this.recordReconciliation(filePath, current, tasks, authorityTransitions);
+    this.recordReconciliation_abyssPrivate(filePath, current, tasks, authorityTransitions);
     if (!changed) return false;
-    this.installFileTasks(filePath, tasks);
+    this.installFileTasks_abyssPrivate(filePath, tasks);
     return true;
   }
 
-  private recordReconciliation(
+  private recordReconciliation_abyssPrivate(
     filePath: string,
     current: readonly TaskSnapshot[],
     tasks: readonly TaskSnapshot[],
     authorityTransitions: readonly ProvenRootRevisionOverride[],
   ): void {
-    const fromGeneration = this.fileGenerations.get(filePath) ?? 0;
+    const fromGeneration = this.fileGenerations_abyssPrivate.get(filePath) ?? 0;
     const toGeneration = fromGeneration + 1;
-    this.fileGenerations.set(filePath, toGeneration);
+    this.fileGenerations_abyssPrivate.set(filePath, toGeneration);
     const transitions = reconcileRootTransitions(current, tasks, authorityTransitions);
-    this.reconciliationTransitions.set(filePath, {
+    this.reconciliationTransitions_abyssPrivate.set(filePath, {
       fromGeneration,
       toGeneration,
       writable: transitions.writable,
@@ -1390,49 +1421,57 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     });
   }
 
-  private installFileTasks(filePath: string, tasks: readonly TaskSnapshot[]): void {
-    this.dependencyGraph = undefined;
-    if (tasks.length > 0) this.taskMap.set(filePath, tasks);
-    else this.taskMap.delete(filePath);
+  private installFileTasks_abyssPrivate(filePath: string, tasks: readonly TaskSnapshot[]): void {
+    this.dependencyGraph_abyssPrivate = undefined;
+    if (tasks.length > 0) this.taskMap_abyssPrivate.set(filePath, tasks);
+    else this.taskMap_abyssPrivate.delete(filePath);
     const sources = calendarSources(tasks);
-    this.calendarDateIndex.updateFile(filePath, sources);
+    this.calendarDateIndex_abyssPrivate.updateFile(filePath, sources);
     const recurringSources = activeRecurringSources(sources);
-    if (recurringSources.length > 0) this.recurringSourcesByFile.set(filePath, recurringSources);
-    else this.recurringSourcesByFile.delete(filePath);
+    if (recurringSources.length > 0)
+      this.recurringSourcesByFile_abyssPrivate.set(filePath, recurringSources);
+    else this.recurringSourcesByFile_abyssPrivate.delete(filePath);
   }
 
-  private registerEvents(): void {
-    const metadataChanged = this.app.metadataCache.on(
+  private registerEvents_abyssPrivate(): void {
+    const metadataChanged = this.app_abyssPrivate.metadataCache.on(
       'changed',
       (file: TFile, data: string, cache: CachedMetadata) => {
-        this.handleMetadataChanged(file, data, cache);
+        this.handleMetadataChanged_abyssPrivate(file, data, cache);
       },
     );
-    this.metadataCacheRefs.push(metadataChanged);
-    const created = this.app.vault.on('create', (file: TAbstractFile) => {
-      this.handleVaultCreate(file);
+    this.metadataCacheRefs_abyssPrivate.push(metadataChanged);
+    const created = this.app_abyssPrivate.vault.on('create', (file: TAbstractFile) => {
+      this.handleVaultCreate_abyssPrivate(file);
     });
-    const renamed = this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
-      this.handleVaultRename(file, oldPath);
+    const renamed = this.app_abyssPrivate.vault.on(
+      'rename',
+      (file: TAbstractFile, oldPath: string) => {
+        this.handleVaultRename_abyssPrivate(file, oldPath);
+      },
+    );
+    const deleted = this.app_abyssPrivate.vault.on('delete', (file: TAbstractFile) => {
+      this.handleVaultDelete_abyssPrivate(file);
     });
-    const deleted = this.app.vault.on('delete', (file: TAbstractFile) => {
-      this.handleVaultDelete(file);
-    });
-    this.vaultRefs.push(created, renamed, deleted);
+    this.vaultRefs_abyssPrivate.push(created, renamed, deleted);
   }
 
-  private handleMetadataChanged(file: TFile, data: string, cache: CachedMetadata): void {
+  private handleMetadataChanged_abyssPrivate(
+    file: TFile,
+    data: string,
+    cache: CachedMetadata,
+  ): void {
     const path = file.path;
     if (
       file.extension !== 'md' ||
-      this.destroyed ||
-      this.app.vault.getAbstractFileByPath(path) !== file
+      this.destroyed_abyssPrivate ||
+      this.app_abyssPrivate.vault.getAbstractFileByPath(path) !== file
     ) {
       return;
     }
-    this.advance(file, path);
+    this.advance_abyssPrivate(file, path);
     let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
-    const tasks = this.parseFile({
+    const tasks = this.parseFile_abyssPrivate({
       filePath: path,
       content: data,
       cache: cacheWithContentFallback(data, cache),
@@ -1440,38 +1479,38 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       captureAuthorityTransitions: (transitions) => {
         authorityTransitions = transitions;
       },
-      observedFile: this.fileGenerations.has(path),
+      observedFile: this.fileGenerations_abyssPrivate.has(path),
     });
-    const changed = this.replaceFile(path, tasks, authorityTransitions, true);
-    if (changed) this.queueChanged(path);
+    const changed = this.replaceFile_abyssPrivate(path, tasks, authorityTransitions, true);
+    if (changed) this.queueChanged_abyssPrivate(path);
   }
 
-  private handleVaultCreate(file: TAbstractFile): void {
-    if (!(file instanceof TFile) || file.extension !== 'md' || this.destroyed) return;
+  private handleVaultCreate_abyssPrivate(file: TAbstractFile): void {
+    if (!(file instanceof TFile) || file.extension !== 'md' || this.destroyed_abyssPrivate) return;
     const path = file.path;
-    if (this.app.vault.getAbstractFileByPath(path) !== file) return;
-    this.advance(file, path);
-    const read = this.loadFile(file, path, true, true).then((committed) => {
-      if (committed) this.queueChanged(path);
+    if (this.app_abyssPrivate.vault.getAbstractFileByPath(path) !== file) return;
+    this.advance_abyssPrivate(file, path);
+    const read = this.loadFile_abyssPrivate(file, path, true, true).then((committed) => {
+      if (committed) this.queueChanged_abyssPrivate(path);
     });
-    this.trackRead(read);
+    this.trackRead_abyssPrivate(read);
   }
 
-  private handleVaultRename(file: TAbstractFile, oldPath: string): void {
-    if (!(file instanceof TFile) || this.destroyed) return;
+  private handleVaultRename_abyssPrivate(file: TAbstractFile, oldPath: string): void {
+    if (!(file instanceof TFile) || this.destroyed_abyssPrivate) return;
     const newPath = file.path;
     const wasMarkdown = extensionOf(oldPath) === 'md';
     const isMarkdown = file.extension === 'md';
     if (!wasMarkdown && !isMarkdown) return;
-    if (this.app.vault.getAbstractFileByPath(newPath) !== file) return;
-    const tasks = this.taskMap.get(oldPath) ?? [];
-    this.advance(file, isMarkdown ? newPath : undefined);
-    this.removeFile(oldPath);
-    if (newPath !== oldPath) this.removeFile(newPath);
-    this.finishVaultRename({ file, oldPath, newPath, tasks, wasMarkdown, isMarkdown });
+    if (this.app_abyssPrivate.vault.getAbstractFileByPath(newPath) !== file) return;
+    const tasks = this.taskMap_abyssPrivate.get(oldPath) ?? [];
+    this.advance_abyssPrivate(file, isMarkdown ? newPath : undefined);
+    this.removeFile_abyssPrivate(oldPath);
+    if (newPath !== oldPath) this.removeFile_abyssPrivate(newPath);
+    this.finishVaultRename_abyssPrivate({ file, oldPath, newPath, tasks, wasMarkdown, isMarkdown });
   }
 
-  private finishVaultRename(input: {
+  private finishVaultRename_abyssPrivate(input: {
     readonly file: TFile;
     readonly oldPath: string;
     readonly newPath: string;
@@ -1480,143 +1519,159 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     readonly isMarkdown: boolean;
   }): void {
     if (input.wasMarkdown && input.isMarkdown) {
-      this.handleMarkdownRename(input.file, input.oldPath, input.newPath, input.tasks);
+      this.handleMarkdownRename_abyssPrivate(input.file, input.oldPath, input.newPath, input.tasks);
       return;
     }
     if (input.wasMarkdown) {
-      this.publish({ type: 'renamed', oldPath: input.oldPath, newPath: input.newPath });
+      this.publish_abyssPrivate({
+        type: 'renamed',
+        oldPath: input.oldPath,
+        newPath: input.newPath,
+      });
       return;
     }
-    this.scheduleRenameLoad(input.file, input.oldPath, input.newPath);
+    this.scheduleRenameLoad_abyssPrivate(input.file, input.oldPath, input.newPath);
   }
 
-  private handleMarkdownRename(
+  private handleMarkdownRename_abyssPrivate(
     file: TFile,
     oldPath: string,
     newPath: string,
     tasks: readonly TaskSnapshot[],
   ): void {
     if (tasks.length === 0) {
-      this.scheduleRenameLoad(file, oldPath, newPath);
+      this.scheduleRenameLoad_abyssPrivate(file, oldPath, newPath);
       return;
     }
-    const dailyNoteDate = dailyNoteDateForPath(newPath, this.options.dailyNoteFormat);
-    this.replaceFile(
+    const dailyNoteDate = dailyNoteDateForPath(newPath, this.options_abyssPrivate.dailyNoteFormat);
+    this.replaceFile_abyssPrivate(
       newPath,
-      tasks.map((task) => this.relocateRenamedTask(task, newPath, dailyNoteDate)),
+      tasks.map((task) => this.relocateRenamedTask_abyssPrivate(task, newPath, dailyNoteDate)),
     );
-    this.publish({ type: 'renamed', oldPath, newPath });
+    this.publish_abyssPrivate({ type: 'renamed', oldPath, newPath });
   }
 
-  private relocateRenamedTask(
+  private relocateRenamedTask_abyssPrivate(
     task: TaskSnapshot,
     newPath: string,
     dailyNoteDate: LocalDate | undefined,
   ): TaskSnapshot {
     const relocated = relocateSnapshot(task, newPath, dailyNoteDate);
-    const revision = this.options.refAuthority?.mintRevision(relocated.source.originalBlock);
+    const revision = this.options_abyssPrivate.refAuthority?.mintRevision(
+      relocated.source.originalBlock,
+    );
     if (!nonEmpty(revision)) return relocated;
     const revised = { ...relocated, ref: { ...relocated.ref, revision } };
     return relocateSnapshot(revised, newPath, dailyNoteDate);
   }
 
-  private scheduleRenameLoad(file: TFile, oldPath: string, newPath: string): void {
-    const read = this.loadFile(file, newPath, true).then((committed) => {
-      if (committed || this.isFileAt(file, newPath)) {
-        this.publish({ type: 'renamed', oldPath, newPath });
+  private scheduleRenameLoad_abyssPrivate(file: TFile, oldPath: string, newPath: string): void {
+    const read = this.loadFile_abyssPrivate(file, newPath, true).then((committed) => {
+      if (committed || this.isFileAt_abyssPrivate(file, newPath)) {
+        this.publish_abyssPrivate({ type: 'renamed', oldPath, newPath });
       }
     });
-    this.trackRead(read);
+    this.trackRead_abyssPrivate(read);
   }
 
-  private handleVaultDelete(file: TAbstractFile): void {
-    if (!(file instanceof TFile) || file.extension !== 'md' || this.destroyed) return;
+  private handleVaultDelete_abyssPrivate(file: TAbstractFile): void {
+    if (!(file instanceof TFile) || file.extension !== 'md' || this.destroyed_abyssPrivate) return;
     const path = file.path;
-    const existed = this.taskMap.has(path);
-    this.advance(file, undefined);
-    this.removeFile(path);
-    if (existed) this.publish({ type: 'deleted', path });
+    const existed = this.taskMap_abyssPrivate.has(path);
+    this.advance_abyssPrivate(file, undefined);
+    this.removeFile_abyssPrivate(path);
+    if (existed) this.publish_abyssPrivate({ type: 'deleted', path });
   }
 
-  private removeFile(filePath: string): void {
-    this.dependencyGraph = undefined;
-    this.taskMap.delete(filePath);
-    this.calendarDateIndex.updateFile(filePath, []);
-    this.recurringSourcesByFile.delete(filePath);
-    this.fileGenerations.delete(filePath);
-    this.reconciliationTransitions.delete(filePath);
-    this.pendingFiles.delete(filePath);
-    this.options.refAuthority?.discard(filePath);
+  private removeFile_abyssPrivate(filePath: string): void {
+    this.dependencyGraph_abyssPrivate = undefined;
+    this.taskMap_abyssPrivate.delete(filePath);
+    this.calendarDateIndex_abyssPrivate.updateFile(filePath, []);
+    this.recurringSourcesByFile_abyssPrivate.delete(filePath);
+    this.fileGenerations_abyssPrivate.delete(filePath);
+    this.reconciliationTransitions_abyssPrivate.delete(filePath);
+    this.pendingFiles_abyssPrivate.delete(filePath);
+    this.options_abyssPrivate.refAuthority?.discard(filePath);
   }
 
-  private observe(file: TFile, path: string): FileObservation | undefined {
-    if (this.destroyed || this.app.vault.getAbstractFileByPath(path) !== file) return undefined;
-    const existing = this.fileLifecycles.get(file);
+  private observe_abyssPrivate(file: TFile, path: string): FileObservation | undefined {
+    if (
+      this.destroyed_abyssPrivate ||
+      this.app_abyssPrivate.vault.getAbstractFileByPath(path) !== file
+    )
+      return undefined;
+    const existing = this.fileLifecycles_abyssPrivate.get(file);
     if (existing != null && existing.path !== path) return undefined;
     const lifecycle = existing ?? { path, generation: 0 };
-    if (existing == null) this.fileLifecycles.set(file, lifecycle);
+    if (existing == null) this.fileLifecycles_abyssPrivate.set(file, lifecycle);
     return { file, path, generation: lifecycle.generation };
   }
 
-  private advance(file: TFile, path: string | undefined): void {
-    const lifecycle = this.fileLifecycles.get(file);
-    this.fileLifecycles.set(file, {
+  private advance_abyssPrivate(file: TFile, path: string | undefined): void {
+    const lifecycle = this.fileLifecycles_abyssPrivate.get(file);
+    this.fileLifecycles_abyssPrivate.set(file, {
       path,
       generation: (lifecycle?.generation ?? 0) + 1,
     });
   }
 
-  private isCurrent(observation: FileObservation): boolean {
-    const lifecycle = this.fileLifecycles.get(observation.file);
+  private isCurrent_abyssPrivate(observation: FileObservation): boolean {
+    const lifecycle = this.fileLifecycles_abyssPrivate.get(observation.file);
     return (
-      !this.destroyed &&
+      !this.destroyed_abyssPrivate &&
       lifecycle?.path === observation.path &&
       lifecycle.generation === observation.generation &&
       observation.file.extension === 'md' &&
-      this.app.vault.getAbstractFileByPath(observation.path) === observation.file
+      this.app_abyssPrivate.vault.getAbstractFileByPath(observation.path) === observation.file
     );
   }
 
-  private isFileAt(file: TFile, path: string): boolean {
-    const lifecycle = this.fileLifecycles.get(file);
+  private isFileAt_abyssPrivate(file: TFile, path: string): boolean {
+    const lifecycle = this.fileLifecycles_abyssPrivate.get(file);
     return (
-      !this.destroyed &&
+      !this.destroyed_abyssPrivate &&
       lifecycle?.path === path &&
       file.extension === 'md' &&
-      this.app.vault.getAbstractFileByPath(path) === file
+      this.app_abyssPrivate.vault.getAbstractFileByPath(path) === file
     );
   }
 
-  private trackRead(read: Promise<void>): void {
-    this.pendingReads.add(read);
-    read.finally(() => this.pendingReads.delete(read)).catch(() => undefined);
+  private trackRead_abyssPrivate(read: Promise<void>): void {
+    this.pendingReads_abyssPrivate.add(read);
+    read.finally(() => this.pendingReads_abyssPrivate.delete(read)).catch(() => undefined);
   }
 
-  private async drainPendingReads(): Promise<void> {
-    while (!this.destroyed && this.pendingReads.size > 0) {
-      await Promise.all([...this.pendingReads]);
+  private async drainPendingReads_abyssPrivate(): Promise<void> {
+    while (!this.destroyed_abyssPrivate && this.pendingReads_abyssPrivate.size > 0) {
+      await Promise.all([...this.pendingReads_abyssPrivate]);
     }
   }
 
-  private queueChanged(filePath: string): void {
-    if (this.destroyed || !this.initialized) return;
-    this.pendingFiles.add(filePath);
-    if (this.flushScheduled) return;
-    this.flushScheduled = true;
+  private queueChanged_abyssPrivate(filePath: string): void {
+    if (this.destroyed_abyssPrivate || !this.initialized_abyssPrivate) return;
+    this.pendingFiles_abyssPrivate.add(filePath);
+    if (this.flushScheduled_abyssPrivate) return;
+    this.flushScheduled_abyssPrivate = true;
     Promise.resolve()
       .then(() => {
-        this.flushScheduled = false;
-        if (this.destroyed || this.pendingFiles.size === 0) return;
-        const files = [...this.pendingFiles].sort((left, right) => left.localeCompare(right));
-        this.pendingFiles.clear();
-        this.publish({ type: 'changed', files });
+        this.flushScheduled_abyssPrivate = false;
+        if (this.destroyed_abyssPrivate || this.pendingFiles_abyssPrivate.size === 0) return;
+        const files = [...this.pendingFiles_abyssPrivate].sort((left, right) =>
+          left.localeCompare(right),
+        );
+        this.pendingFiles_abyssPrivate.clear();
+        this.publish_abyssPrivate({ type: 'changed', files });
       })
       .catch(() => undefined);
   }
 
-  private publish(event: TaskIndexEvent): void {
-    if (this.destroyed || (!this.initialized && event.type !== 'initialized')) return;
+  private publish_abyssPrivate(event: TaskIndexEvent): void {
+    if (
+      this.destroyed_abyssPrivate ||
+      (!this.initialized_abyssPrivate && event.type !== 'initialized')
+    )
+      return;
     const detached = immutableEvent(event);
-    for (const listener of [...this.listeners]) listener(detached);
+    for (const listener of [...this.listeners_abyssPrivate]) listener(detached);
   }
 }

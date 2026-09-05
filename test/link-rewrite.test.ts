@@ -19,7 +19,8 @@ import {
 useRealMoment();
 
 function call<T>(owner: object, method: string, ...args: unknown[]): T {
-  const fn = expectDefined((owner as Record<string, (...values: unknown[]) => T>)[method]);
+  const name = method === 'updateTaskTitle' ? method : `${method}_abyssPrivate`;
+  const fn = expectDefined((owner as Record<string, (...values: unknown[]) => T>)[name]);
   return fn.call(owner, ...args);
 }
 

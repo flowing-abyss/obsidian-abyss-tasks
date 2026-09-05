@@ -104,7 +104,8 @@ function makeTab(opts: { withCustomStatus?: boolean } = {}): {
     app,
     plugin as unknown as ConstructorParameters<typeof CalendarSettingsTab>[1],
   );
-  const expanded = (tab as unknown as { expandedCards: Set<string> }).expandedCards;
+  const expanded = (tab as unknown as { expandedCards_abyssPrivate: Set<string> })
+    .expandedCards_abyssPrivate;
   for (const s of settings.taskStatuses) expanded.add(s.id);
   (tab as unknown as { display(): void }).display();
   restore();

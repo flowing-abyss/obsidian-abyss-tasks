@@ -677,7 +677,7 @@ describe('Obsidian batch transaction', () => {
         }
         expect(h.authority.observeTransition(path, source)).toBeUndefined();
         expect(h.authority.observeTransition(path, candidate)).toBeUndefined();
-        expect(h.index['reconciliationTransitions'].has(path)).toBe(false);
+        expect(h.index['reconciliationTransitions_abyssPrivate'].has(path)).toBe(false);
         h.index.installCommittedContent(path, source);
         await flushMicrotasks();
         expect(h.index.list({ filePath: path })).toEqual(h.roots);

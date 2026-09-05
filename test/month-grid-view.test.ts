@@ -21,6 +21,7 @@ import {
   taskFromCodecLine,
   useRealMoment,
 } from './helpers';
+import { expandCompoundSelectorLists } from './support/expandedCss';
 
 useRealMoment();
 const fakeApp = {} as App;
@@ -31,7 +32,9 @@ async function loadStyles(): Promise<string> {
   if (!Platform.isDesktop) return '';
   const { readFileSync } = await import('node:fs');
   const path = await import('node:path');
-  return readFileSync(path.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+  return expandCompoundSelectorLists(
+    readFileSync(path.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8'),
+  );
 }
 
 function declarationsFor(selector: string): string {

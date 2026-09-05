@@ -37,7 +37,9 @@ function makePanel(
 
 /** Bracket-access helper to call private methods (preserves `this` binding). */
 function call<T>(panel: CenterPanel, method: string, ...args: unknown[]): T {
-  const fn = expectDefined((panel as unknown as Record<string, (...a: unknown[]) => T>)[method]);
+  const fn = expectDefined(
+    (panel as unknown as Record<string, (...a: unknown[]) => T>)[`${method}_abyssPrivate`],
+  );
   return fn.call(panel, ...args);
 }
 

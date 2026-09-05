@@ -94,9 +94,9 @@ function setGeometry(
 
 function emitQueryEvent(queries: TaskQueryApi, event: TaskIndexEvent): void {
   const source = queries as unknown as {
-    listeners: Array<(published: TaskIndexEvent) => void>;
+    listeners_abyssPrivate: Array<(published: TaskIndexEvent) => void>;
   };
-  for (const listener of [...source.listeners]) listener(event);
+  for (const listener of [...source.listeners_abyssPrivate]) listener(event);
 }
 
 function setTaskStack(state: AppState, stack: TaskSelectionNode[]): void {
@@ -132,13 +132,13 @@ describe('PanelView dependency command convergence', () => {
     await view.onOpen();
     try {
       const internals = view as unknown as {
-        state: AppState;
-        createSelectionTasks(): TaskApplicationApi;
-        convergeOwnCommand(initiatingRef: TaskRef, result: TaskCommandResult): void;
+        state_abyssPrivate: AppState;
+        createSelectionTasks_abyssPrivate(): TaskApplicationApi;
+        convergeOwnCommand_abyssPrivate(initiatingRef: TaskRef, result: TaskCommandResult): void;
       };
       const root = expectDefined(application.index.list()[0]);
-      internals.state.set('taskStack', [root]);
-      const tasks = internals.createSelectionTasks();
+      internals.state_abyssPrivate.set('taskStack', [root]);
+      const tasks = internals.createSelectionTasks_abyssPrivate();
       const deleted = await tasks.execute({
         type: 'delete-subtask',
         subtask: expectDefined(root.subtasks[0]).ref,
@@ -146,14 +146,13 @@ describe('PanelView dependency command convergence', () => {
       if (deleted.type !== 'ok' || deleted.outcome.type !== 'task')
         throw new Error('delete failed');
       const recovery = expectDefined(deleted.outcome.subtaskRemovalRecovery);
-      const converge = vi.spyOn(internals, 'convergeOwnCommand');
+      const converge = vi.spyOn(internals, 'convergeOwnCommand_abyssPrivate');
       const restored = await tasks.execute({ type: 'restore-subtask', ...recovery });
       expect(restored.type).toBe('ok');
       expect(converge).toHaveBeenCalledExactlyOnceWith(deleted.outcome.task.ref, restored);
-      expect(internals.state.get('taskStack')[0]?.subtasks.map((child) => child.title)).toEqual([
-        'Removed',
-        'Next',
-      ]);
+      expect(
+        internals.state_abyssPrivate.get('taskStack')[0]?.subtasks.map((child) => child.title),
+      ).toEqual(['Removed', 'Next']);
     } finally {
       await view.onClose();
       view.containerEl.remove();
@@ -188,15 +187,15 @@ describe('PanelView dependency command convergence', () => {
           application.index.listNodes().find(({ node }) => node.title === 'Other'),
         );
         const internals = view as unknown as {
-          state: AppState;
-          createSelectionTasks(): TaskApplicationApi;
-          convergeOwnCommand(initiatingRef: TaskRef, result: TaskCommandResult): void;
+          state_abyssPrivate: AppState;
+          createSelectionTasks_abyssPrivate(): TaskApplicationApi;
+          convergeOwnCommand_abyssPrivate(initiatingRef: TaskRef, result: TaskCommandResult): void;
         };
-        internals.state.set('taskStack', [other.root]);
-        internals.state.openInspectorDependency(selected);
-        const history = internals.state.get('inspectorBackStack');
-        const converge = vi.spyOn(internals, 'convergeOwnCommand');
-        const tasks = internals.createSelectionTasks();
+        internals.state_abyssPrivate.set('taskStack', [other.root]);
+        internals.state_abyssPrivate.openInspectorDependency(selected);
+        const history = internals.state_abyssPrivate.get('inspectorBackStack');
+        const converge = vi.spyOn(internals, 'convergeOwnCommand_abyssPrivate');
+        const tasks = internals.createSelectionTasks_abyssPrivate();
         let result: TaskCommandResult;
         if (operation === 'remove-raw') {
           result = await tasks.execute({
@@ -224,7 +223,7 @@ describe('PanelView dependency command convergence', () => {
         expect(result).toMatchObject({ type: 'ok', outcome: { type: 'dependency' } });
         expect(converge).not.toHaveBeenCalled();
         await flushMicrotasks();
-        const stack = internals.state.get('taskStack');
+        const stack = internals.state_abyssPrivate.get('taskStack');
         expect(stack.map((node) => node.title)).toEqual(['Selected', 'Parent', 'Child']);
         const fresh = expectDefined(
           application.index.listNodes().find(({ node }) => node.title === 'Child'),
@@ -234,11 +233,11 @@ describe('PanelView dependency command convergence', () => {
           application.index.listNodes().find(({ node }) => node.title === 'Other'),
         );
         expect(history).toEqual([{ taskStack: [other.root] }]);
-        expect(internals.state.get('inspectorBackStack')).toEqual([
+        expect(internals.state_abyssPrivate.get('inspectorBackStack')).toEqual([
           { taskStack: [liveOther.root] },
         ]);
-        expect(internals.state.backInspectorDependency()).toBe(true);
-        expect(internals.state.get('taskStack')).toEqual([liveOther.root]);
+        expect(internals.state_abyssPrivate.backInspectorDependency()).toBe(true);
+        expect(internals.state_abyssPrivate.get('taskStack')).toEqual([liveOther.root]);
         expect(view.contentEl.querySelector('.abyss-task-selection-message')).toBeNull();
       } finally {
         await view.onClose();
@@ -330,11 +329,11 @@ describe('PanelView', () => {
       expect(host?.closest('.abyss-center-shell')).toBe(shell);
       expect(host?.closest('.abyss-rail, .abyss-left, .abyss-right')).toBeNull();
 
-      const internals = view as unknown as { panelNavigation: PanelNavigator };
-      internals.panelNavigation.openCalendar();
-      internals.panelNavigation.openSearch();
-      internals.panelNavigation.openProjects();
-      internals.panelNavigation.openTasks();
+      const internals = view as unknown as { panelNavigation_abyssPrivate: PanelNavigator };
+      internals.panelNavigation_abyssPrivate.openCalendar();
+      internals.panelNavigation_abyssPrivate.openSearch();
+      internals.panelNavigation_abyssPrivate.openProjects();
+      internals.panelNavigation_abyssPrivate.openTasks();
 
       expect(layout.querySelector('.abyss-quick-capture-host')).toBe(host);
       expect(layout.querySelector('.abyss-center-shell')).toBe(shell);
@@ -344,7 +343,10 @@ describe('PanelView', () => {
 
     it('keeps collapsed Tasks panes reachable through keyboard-native compact controls', () => {
       activeDocument.body.appendChild(view.containerEl);
-      const internals = view as unknown as { state: AppState; panelNavigation: PanelNavigator };
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        panelNavigation_abyssPrivate: PanelNavigator;
+      };
       const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
       const left = expectDefined(layout.querySelector<HTMLElement>('.abyss-left'));
       const right = expectDefined(layout.querySelector<HTMLElement>('.abyss-right'));
@@ -365,7 +367,7 @@ describe('PanelView', () => {
       setGeometry(layout, rect(0, 0, 1200, 480));
       window.dispatchEvent(new Event('resize'));
       details.focus();
-      internals.state.set('taskStack', [task()]);
+      internals.state_abyssPrivate.set('taskStack', [task()]);
       const desktopEscape = new KeyboardEvent('keydown', {
         key: 'Escape',
         bubbles: true,
@@ -376,7 +378,7 @@ describe('PanelView', () => {
       expect(right.classList.contains('is-compact-open')).toBe(false);
       expect(activeDocument.activeElement).toBe(details);
 
-      internals.state.set('taskStack', []);
+      internals.state_abyssPrivate.set('taskStack', []);
       setGeometry(layout, rect(0, 0, 390, 480));
       window.dispatchEvent(new Event('resize'));
 
@@ -439,18 +441,18 @@ describe('PanelView', () => {
       expect(details.getAttribute('aria-label')).toBe('Show task details');
       expect(activeDocument.activeElement).toBe(details);
 
-      internals.state.set('taskStack', [task()]);
+      internals.state_abyssPrivate.set('taskStack', [task()]);
       expect(right.classList.contains('is-compact-open')).toBe(true);
       expect(details.getAttribute('aria-expanded')).toBe('true');
 
-      internals.panelNavigation.openCalendar();
+      internals.panelNavigation_abyssPrivate.openCalendar();
       expect(left.classList.contains('is-compact-open')).toBe(false);
       expect(right.classList.contains('is-compact-open')).toBe(false);
       expect(lists.getAttribute('aria-expanded')).toBe('false');
       expect(details.getAttribute('aria-expanded')).toBe('false');
 
-      setTaskStack(internals.state, []);
-      setTaskStack(internals.state, [task()]);
+      setTaskStack(internals.state_abyssPrivate, []);
+      setTaskStack(internals.state_abyssPrivate, [task()]);
       const calendarEscape = new KeyboardEvent('keydown', {
         key: 'Escape',
         bubbles: true,
@@ -464,7 +466,7 @@ describe('PanelView', () => {
     it.each(['resolving', 'open'] as const)(
       'does not destroy a %s Quick Capture generation when a compact pane is requested',
       (phase) => {
-        const internals = view as unknown as { quickCapture: QuickCaptureCoordinator };
+        const internals = view as unknown as { quickCapture_abyssPrivate: QuickCaptureCoordinator };
         const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
         const right = expectDefined(layout.querySelector<HTMLElement>('.abyss-right'));
         const details = expectDefined(
@@ -472,8 +474,8 @@ describe('PanelView', () => {
         );
         setGeometry(layout, rect(0, 0, 390, 480));
         window.dispatchEvent(new Event('resize'));
-        const close = vi.spyOn(internals.quickCapture, 'close');
-        vi.spyOn(internals.quickCapture, 'phase', 'get').mockReturnValue(phase);
+        const close = vi.spyOn(internals.quickCapture_abyssPrivate, 'close');
+        vi.spyOn(internals.quickCapture_abyssPrivate, 'phase', 'get').mockReturnValue(phase);
 
         details.click();
 
@@ -575,10 +577,10 @@ describe('PanelView', () => {
       async (trigger) => {
         activeDocument.body.appendChild(view.containerEl);
         const internals = view as unknown as {
-          state: AppState;
-          quickCapture: QuickCaptureCoordinator;
-          creationPresentation: CreationPresentationController;
-          interactionRegistry: InteractionRegistry<string>;
+          state_abyssPrivate: AppState;
+          quickCapture_abyssPrivate: QuickCaptureCoordinator;
+          creationPresentation_abyssPrivate: CreationPresentationController;
+          interactionRegistry_abyssPrivate: InteractionRegistry<string>;
         };
         const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
         const left = expectDefined(layout.querySelector<HTMLElement>('.abyss-left'));
@@ -595,16 +597,16 @@ describe('PanelView', () => {
         const pending = deferred<TaskCommandResult>();
         const execute = vi.fn(() => pending.promise);
         const options = (
-          internals.quickCapture as unknown as {
+          internals.quickCapture_abyssPrivate as unknown as {
             options: { resolveTarget: () => Promise<CaptureTarget> };
           }
         ).options;
         options.resolveTarget = async () => panelCaptureTarget(execute);
         const present = vi
-          .spyOn(internals.creationPresentation, 'present')
+          .spyOn(internals.creationPresentation_abyssPrivate, 'present')
           .mockImplementation(() => undefined);
 
-        internals.quickCapture.openOrFocus();
+        internals.quickCapture_abyssPrivate.openOrFocus();
         await flushMicrotasks(0);
         const input = expectDefined(
           layout.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
@@ -617,11 +619,11 @@ describe('PanelView', () => {
         conflictTarget.dispatchEvent(
           new Event('pointerdown', { bubbles: true, cancelable: true, composed: true }),
         );
-        if (trigger === 'task selection') internals.state.set('taskStack', [task()]);
+        if (trigger === 'task selection') internals.state_abyssPrivate.set('taskStack', [task()]);
         else conflictTarget.click();
 
         expect(execute).toHaveBeenCalledOnce();
-        expect(internals.quickCapture.phase).toBe('open');
+        expect(internals.quickCapture_abyssPrivate.phase).toBe('open');
         expect(input.readOnly).toBe(true);
         expect(left.classList.contains('is-compact-open')).toBe(false);
         expect(right.classList.contains('is-compact-open')).toBe(false);
@@ -633,7 +635,7 @@ describe('PanelView', () => {
         pending.resolve(failure);
         await flushMicrotasks(0);
 
-        expect(internals.quickCapture.phase).toBe('open');
+        expect(internals.quickCapture_abyssPrivate.phase).toBe('open');
         expect(input.value).toBe('  exact failed draft  ');
         expect(input.getAttribute('aria-invalid')).toBe('true');
         expect(layout.querySelector('.abyss-capture-error')?.textContent).toBe(
@@ -641,7 +643,7 @@ describe('PanelView', () => {
         );
         expect(present).toHaveBeenCalledOnce();
         expect(present).toHaveBeenCalledWith(failure, expect.objectContaining({ kind: 'error' }));
-        expect(internals.interactionRegistry.allows('openCalendar')).toBe(false);
+        expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(false);
 
         input.dispatchEvent(
           new KeyboardEvent('keydown', {
@@ -650,17 +652,17 @@ describe('PanelView', () => {
             cancelable: true,
           }),
         );
-        expect(internals.quickCapture.phase).toBe('closed');
-        expect(internals.interactionRegistry.allows('openCalendar')).toBe(true);
+        expect(internals.quickCapture_abyssPrivate.phase).toBe('closed');
+        expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(true);
       },
     );
 
     it('delivers a pending-blur success before allowing the requested compact pane', async () => {
       activeDocument.body.appendChild(view.containerEl);
       const internals = view as unknown as {
-        quickCapture: QuickCaptureCoordinator;
-        creationPresentation: CreationPresentationController;
-        interactionRegistry: InteractionRegistry<string>;
+        quickCapture_abyssPrivate: QuickCaptureCoordinator;
+        creationPresentation_abyssPrivate: CreationPresentationController;
+        interactionRegistry_abyssPrivate: InteractionRegistry<string>;
       };
       const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
       const right = expectDefined(layout.querySelector<HTMLElement>('.abyss-right'));
@@ -673,16 +675,16 @@ describe('PanelView', () => {
       const pending = deferred<TaskCommandResult>();
       const execute = vi.fn(() => pending.promise);
       const options = (
-        internals.quickCapture as unknown as {
+        internals.quickCapture_abyssPrivate as unknown as {
           options: { resolveTarget: () => Promise<CaptureTarget> };
         }
       ).options;
       options.resolveTarget = async () => panelCaptureTarget(execute);
       const present = vi
-        .spyOn(internals.creationPresentation, 'present')
+        .spyOn(internals.creationPresentation_abyssPrivate, 'present')
         .mockImplementation(() => undefined);
 
-      internals.quickCapture.openOrFocus();
+      internals.quickCapture_abyssPrivate.openOrFocus();
       await flushMicrotasks(0);
       const input = expectDefined(
         layout.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
@@ -700,18 +702,18 @@ describe('PanelView', () => {
       pending.resolve(result);
       await flushMicrotasks(0);
 
-      expect(internals.quickCapture.phase).toBe('closed');
+      expect(internals.quickCapture_abyssPrivate.phase).toBe('closed');
       expect(layout.querySelector('.abyss-quick-capture-input')).toBeNull();
       expect(present).toHaveBeenCalledOnce();
       expect(present).toHaveBeenCalledWith(result, expect.objectContaining({ kind: 'success' }));
-      expect(internals.interactionRegistry.allows('openCalendar')).toBe(true);
+      expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(true);
       expect(right.classList.contains('is-compact-open')).toBe(true);
     });
 
     it('routes shortcuts only for its connected visible active leaf and detaches on close', async () => {
-      const internals = view as unknown as { panelNavigation: PanelNavigator };
+      const internals = view as unknown as { panelNavigation_abyssPrivate: PanelNavigator };
       const openQuickCapture = vi
-        .spyOn(internals.panelNavigation, 'openQuickCapture')
+        .spyOn(internals.panelNavigation_abyssPrivate, 'openQuickCapture')
         .mockImplementation(() => undefined);
       workspaceState(app).activeLeaf = leaf;
 
@@ -778,19 +780,19 @@ describe('PanelView', () => {
       document.body.tabIndex = -1;
       document.body.focus();
       const internals = view as unknown as {
-        state: AppState;
-        interactionRegistry: InteractionRegistry<string>;
+        state_abyssPrivate: AppState;
+        interactionRegistry_abyssPrivate: InteractionRegistry<string>;
       };
       const before = {
-        mode: internals.state.get('mode'),
-        selectedList: internals.state.get('selectedList'),
-        taskStack: internals.state.get('taskStack'),
-        searchQuery: internals.state.get('searchQuery'),
+        mode: internals.state_abyssPrivate.get('mode'),
+        selectedList: internals.state_abyssPrivate.get('selectedList'),
+        taskStack: internals.state_abyssPrivate.get('taskStack'),
+        searchQuery: internals.state_abyssPrivate.get('searchQuery'),
       };
       const completion = requestTaskCompletion(
         { status: 'open', recurrence: 'tomorrow', onCompletion: 'delete' },
         vi.fn(),
-        internals.interactionRegistry,
+        internals.interactionRegistry_abyssPrivate,
       );
       const surface = expectDefined(
         activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
@@ -830,10 +832,10 @@ describe('PanelView', () => {
         expect(event.defaultPrevented).toBe(false);
       });
       expect({
-        mode: internals.state.get('mode'),
-        selectedList: internals.state.get('selectedList'),
-        taskStack: internals.state.get('taskStack'),
-        searchQuery: internals.state.get('searchQuery'),
+        mode: internals.state_abyssPrivate.get('mode'),
+        selectedList: internals.state_abyssPrivate.get('selectedList'),
+        taskStack: internals.state_abyssPrivate.get('taskStack'),
+        searchQuery: internals.state_abyssPrivate.get('searchQuery'),
       }).toEqual(before);
       expect(activeDocument.querySelector('.abyss-recurrence-delete-confirm')).toBe(surface);
       expect(view.contentEl.querySelector('.abyss-capture-surface')).toBeNull();
@@ -848,7 +850,7 @@ describe('PanelView', () => {
       });
       document.body.dispatchEvent(afterDismissal);
       expect(afterDismissal.defaultPrevented).toBe(true);
-      expect(internals.state.get('mode')).toBe('calendar');
+      expect(internals.state_abyssPrivate.get('mode')).toBe('calendar');
     });
 
     it.each(['CenterPanel', 'RightPanel'] as const)(
@@ -856,15 +858,19 @@ describe('PanelView', () => {
       async (path) => {
         const invalidDelete = task({ recurrence: 'tomorrow', onCompletion: 'delete' });
         const internals = view as unknown as {
-          center: { toggleTask(task: typeof invalidDelete): Promise<void> };
-          right: { toggleTaskLike(task: typeof invalidDelete): Promise<void> };
-          interactionRegistry: InteractionRegistry<string>;
+          center_abyssPrivate: {
+            toggleTask_abyssPrivate(task: typeof invalidDelete): Promise<void>;
+          };
+          right_abyssPrivate: {
+            toggleTaskLike_abyssPrivate(task: typeof invalidDelete): Promise<void>;
+          };
+          interactionRegistry_abyssPrivate: InteractionRegistry<string>;
         };
         const completion =
           path === 'CenterPanel'
-            ? internals.center.toggleTask(invalidDelete)
-            : internals.right.toggleTaskLike(invalidDelete);
-        const registry = internals.interactionRegistry;
+            ? internals.center_abyssPrivate.toggleTask_abyssPrivate(invalidDelete)
+            : internals.right_abyssPrivate.toggleTaskLike_abyssPrivate(invalidDelete);
+        const registry = internals.interactionRegistry_abyssPrivate;
         const surface = expectDefined(
           activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
         );
@@ -881,53 +887,53 @@ describe('PanelView', () => {
     it('keeps TaskModal ownership layered after its RightPanel recurrence dialog closes', async () => {
       const invalidDelete = task({ recurrence: 'tomorrow', onCompletion: 'delete' });
       const internals = view as unknown as {
-        center: {
-          taskModal: {
+        center_abyssPrivate: {
+          taskModal_abyssPrivate: {
             open(task: typeof invalidDelete): void;
             close(): void;
-            innerPanel: { toggleTaskLike(task: typeof invalidDelete): Promise<void> };
+            innerPanel: { toggleTaskLike_abyssPrivate(task: typeof invalidDelete): Promise<void> };
           };
         };
-        interactionRegistry: InteractionRegistry<string>;
+        interactionRegistry_abyssPrivate: InteractionRegistry<string>;
       };
-      const modal = internals.center.taskModal;
+      const modal = internals.center_abyssPrivate.taskModal_abyssPrivate;
       modal.open(invalidDelete);
-      const completion = modal.innerPanel.toggleTaskLike(invalidDelete);
+      const completion = modal.innerPanel.toggleTaskLike_abyssPrivate(invalidDelete);
       const surface = expectDefined(
         activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
       );
 
-      expect(internals.interactionRegistry.allows('openCalendar')).toBe(false);
+      expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(false);
       surface.querySelector<HTMLButtonElement>('button')?.click();
       await completion;
-      expect(internals.interactionRegistry.allows('openCalendar')).toBe(false);
+      expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(false);
 
       modal.close();
-      expect(internals.interactionRegistry.allows('openCalendar')).toBe(true);
+      expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(true);
     });
 
     it('settles a live recurrence dialog and releases both owners when TaskModal closes', async () => {
       const invalidDelete = task({ recurrence: 'tomorrow', onCompletion: 'delete' });
       const internals = view as unknown as {
-        center: {
-          taskModal: {
+        center_abyssPrivate: {
+          taskModal_abyssPrivate: {
             open(task: typeof invalidDelete): void;
             close(): void;
-            innerPanel: { toggleTaskLike(task: typeof invalidDelete): Promise<void> };
+            innerPanel: { toggleTaskLike_abyssPrivate(task: typeof invalidDelete): Promise<void> };
           };
         };
-        interactionRegistry: InteractionRegistry<string>;
+        interactionRegistry_abyssPrivate: InteractionRegistry<string>;
       };
-      const modal = internals.center.taskModal;
+      const modal = internals.center_abyssPrivate.taskModal_abyssPrivate;
       const releaseModal = vi.fn();
       const releaseDialog = vi.fn();
       const acquire = vi
-        .spyOn(internals.interactionRegistry, 'acquire')
+        .spyOn(internals.interactionRegistry_abyssPrivate, 'acquire')
         .mockReturnValueOnce({ release: releaseModal })
         .mockReturnValueOnce({ release: releaseDialog });
 
       modal.open(invalidDelete);
-      const completion = modal.innerPanel.toggleTaskLike(invalidDelete);
+      const completion = modal.innerPanel.toggleTaskLike_abyssPrivate(invalidDelete);
       const surface = expectDefined(
         activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
       );
@@ -985,8 +991,8 @@ describe('PanelView', () => {
     it('applies shortcut settings edits immediately without recreating the PanelView', () => {
       document.body.appendChild(view.containerEl);
       workspaceState(app).activeLeaf = leaf;
-      const internals = view as unknown as { panelNavigation: PanelNavigator };
-      const openSearch = vi.spyOn(internals.panelNavigation, 'openSearch');
+      const internals = view as unknown as { panelNavigation_abyssPrivate: PanelNavigator };
+      const openSearch = vi.spyOn(internals.panelNavigation_abyssPrivate, 'openSearch');
 
       view.contentEl.dispatchEvent(
         new KeyboardEvent('keydown', {
@@ -1034,8 +1040,11 @@ describe('PanelView', () => {
         destination: { filePath: 'capture.md', insertion: { type: 'append' } },
         execute,
       });
-      const internals = view as unknown as { state: AppState; panelNavigation: PanelNavigator };
-      internals.panelNavigation.openSearch();
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        panelNavigation_abyssPrivate: PanelNavigator;
+      };
+      internals.panelNavigation_abyssPrivate.openSearch();
       await flushMicrotasks(0);
       const chrome = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-rail'));
       chrome.tabIndex = 0;
@@ -1056,7 +1065,7 @@ describe('PanelView', () => {
       );
 
       expect(openEvent.defaultPrevented).toBe(true);
-      expect(internals.state.get('mode')).toBe('search');
+      expect(internals.state_abyssPrivate.get('mode')).toBe('search');
       expect(document.activeElement).toBe(input);
       const navigation = new KeyboardEvent('keydown', {
         key: 'c',
@@ -1066,7 +1075,7 @@ describe('PanelView', () => {
       });
       chrome.dispatchEvent(navigation);
       expect(navigation.defaultPrevented).toBe(false);
-      expect(internals.state.get('mode')).toBe('search');
+      expect(internals.state_abyssPrivate.get('mode')).toBe('search');
 
       chrome.focus();
       chrome.dispatchEvent(
@@ -1096,27 +1105,27 @@ describe('PanelView', () => {
 
     it('reports complete list, project, search, calendar mount, and calendar patch boundaries', () => {
       const internals = view as unknown as {
-        state: AppState;
-        center: { refresh(): void };
-        creationPresentation: CreationPresentationController;
+        state_abyssPrivate: AppState;
+        center_abyssPrivate: { refresh(): void };
+        creationPresentation_abyssPrivate: CreationPresentationController;
       };
-      const afterRender = vi.spyOn(internals.creationPresentation, 'afterRender');
+      const afterRender = vi.spyOn(internals.creationPresentation_abyssPrivate, 'afterRender');
 
-      internals.center.refresh();
+      internals.center_abyssPrivate.refresh();
       expect(afterRender).toHaveBeenCalledWith(
         view.contentEl.querySelector<HTMLElement>('.abyss-center'),
       );
 
       afterRender.mockClear();
-      internals.state.set('mode', 'projects');
+      internals.state_abyssPrivate.set('mode', 'projects');
       expect(afterRender).toHaveBeenCalled();
 
       afterRender.mockClear();
-      internals.state.set('mode', 'search');
+      internals.state_abyssPrivate.set('mode', 'search');
       expect(afterRender).toHaveBeenCalled();
 
       afterRender.mockClear();
-      internals.state.set('mode', 'calendar');
+      internals.state_abyssPrivate.set('mode', 'calendar');
       expect(afterRender).toHaveBeenCalledWith(
         view.contentEl.querySelector<HTMLElement>('.abyss-cal-body'),
       );
@@ -1171,8 +1180,8 @@ describe('PanelView', () => {
 
     it('destroys creation presentation ownership on close', async () => {
       const controller = (
-        view as unknown as { creationPresentation: CreationPresentationController }
-      ).creationPresentation;
+        view as unknown as { creationPresentation_abyssPrivate: CreationPresentationController }
+      ).creationPresentation_abyssPrivate;
       const destroy = vi.spyOn(controller, 'destroy');
 
       await view.onClose();
@@ -1182,15 +1191,15 @@ describe('PanelView', () => {
 
     it('supplies one live interaction registry to both panels and destroys it after panel teardown', async () => {
       const internals = view as unknown as {
-        interactionRegistry: InteractionRegistry<string>;
-        center: { interactionOwnership: unknown };
-        right: { interactionOwnership: unknown };
+        interactionRegistry_abyssPrivate: InteractionRegistry<string>;
+        center_abyssPrivate: { interactionOwnership_abyssPrivate: unknown };
+        right_abyssPrivate: { interactionOwnership_abyssPrivate: unknown };
       };
-      const registry = internals.interactionRegistry;
+      const registry = internals.interactionRegistry_abyssPrivate;
 
       expect(registry).toBeDefined();
-      expect(internals.center.interactionOwnership).toBe(registry);
-      expect(internals.right.interactionOwnership).toBe(registry);
+      expect(internals.center_abyssPrivate.interactionOwnership_abyssPrivate).toBe(registry);
+      expect(internals.right_abyssPrivate.interactionOwnership_abyssPrivate).toBe(registry);
       registry.acquire({ blocksShortcuts: true });
       expect(registry.allows('navigate')).toBe(false);
 
@@ -1206,14 +1215,15 @@ describe('PanelView', () => {
       const planCreate = vi.spyOn(application, 'planCreate');
       const center = (
         view as unknown as {
-          center: {
-            captureApplication: (TaskApplicationApi & TaskCaptureApplicationApi) | null;
+          center_abyssPrivate: {
+            captureApplication_abyssPrivate:
+              (TaskApplicationApi & TaskCaptureApplicationApi) | null;
           };
         }
-      ).center;
+      ).center_abyssPrivate;
 
-      expect(center.captureApplication).not.toBeNull();
-      await center.captureApplication?.planCreate({
+      expect(center.captureApplication_abyssPrivate).not.toBeNull();
+      await center.captureApplication_abyssPrivate?.planCreate({
         type: 'explicit',
         destination: { filePath: 'planned.md', insertion: { type: 'append' } },
       });
@@ -1239,10 +1249,16 @@ describe('PanelView', () => {
     });
 
     it('shares semantic navigation across Rail, Left, and tag identity bridges', async () => {
-      const internals = view as unknown as { state: AppState; panelNavigation: PanelNavigator };
-      const openCalendar = vi.spyOn(internals.panelNavigation, 'openCalendar');
-      const openList = vi.spyOn(internals.panelNavigation, 'openList');
-      const rebaseListIdentity = vi.spyOn(internals.panelNavigation, 'rebaseListIdentity');
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        panelNavigation_abyssPrivate: PanelNavigator;
+      };
+      const openCalendar = vi.spyOn(internals.panelNavigation_abyssPrivate, 'openCalendar');
+      const openList = vi.spyOn(internals.panelNavigation_abyssPrivate, 'openList');
+      const rebaseListIdentity = vi.spyOn(
+        internals.panelNavigation_abyssPrivate,
+        'rebaseListIdentity',
+      );
 
       expectDefined(
         view.contentEl.querySelector<HTMLButtonElement>('.abyss-rail [aria-label="Calendar"]'),
@@ -1252,14 +1268,14 @@ describe('PanelView', () => {
       expect(openCalendar).toHaveBeenCalledOnce();
       expect(openList).toHaveBeenCalledWith('inbox');
 
-      internals.state.set('selectedList', { type: 'tag', tag: '#work' });
+      internals.state_abyssPrivate.set('selectedList', { type: 'tag', tag: '#work' });
       await tagManager.renameTagExact('#work', '#focus');
 
       expect(rebaseListIdentity).toHaveBeenCalledWith({ type: 'tag', tag: '#focus' });
     });
 
     it('mode change to calendar updates layout class', () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const layout = view.contentEl.querySelector('.abyss-layout') as HTMLElement;
       const before = layout.className;
       state.set('mode', 'calendar');
@@ -1281,7 +1297,7 @@ describe('PanelView', () => {
     ] as const)(
       'rebases the active $scope tag list after a vault identity rename',
       async ({ scope, selected, expected }) => {
-        const state = (view as unknown as { state: AppState }).state;
+        const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
         state.set('selectedList', { type: 'tag', tag: selected });
 
         if (scope === 'exact') {
@@ -1308,26 +1324,26 @@ describe('PanelView', () => {
       'keeps %s active during background %s identity maintenance',
       async (mode, event) => {
         const internals = view as unknown as {
-          state: AppState;
-          panelNavigation: PanelNavigator;
+          state_abyssPrivate: AppState;
+          panelNavigation_abyssPrivate: PanelNavigator;
         };
-        const rebase = vi.spyOn(internals.panelNavigation, 'rebaseListIdentity');
+        const rebase = vi.spyOn(internals.panelNavigation_abyssPrivate, 'rebaseListIdentity');
         let expected: ListSelection;
 
         if (event === 'tag rename') {
-          internals.panelNavigation.openList({ type: 'tag', tag: '#work' });
-          if (mode === 'calendar') internals.panelNavigation.openCalendar();
-          else if (mode === 'search') internals.panelNavigation.openSearch();
-          else internals.panelNavigation.openProjects();
+          internals.panelNavigation_abyssPrivate.openList({ type: 'tag', tag: '#work' });
+          if (mode === 'calendar') internals.panelNavigation_abyssPrivate.openCalendar();
+          else if (mode === 'search') internals.panelNavigation_abyssPrivate.openSearch();
+          else internals.panelNavigation_abyssPrivate.openProjects();
           rebase.mockClear();
           await tagManager.renameTagExact('#work', '#focus');
           expected = { type: 'tag', tag: '#focus' };
         } else {
           const file = await app.vault.create('Project.md', '');
-          internals.panelNavigation.openList({ type: 'project', path: file.path });
-          if (mode === 'calendar') internals.panelNavigation.openCalendar();
-          else if (mode === 'search') internals.panelNavigation.openSearch();
-          else internals.panelNavigation.openProjects();
+          internals.panelNavigation_abyssPrivate.openList({ type: 'project', path: file.path });
+          if (mode === 'calendar') internals.panelNavigation_abyssPrivate.openCalendar();
+          else if (mode === 'search') internals.panelNavigation_abyssPrivate.openSearch();
+          else internals.panelNavigation_abyssPrivate.openProjects();
           rebase.mockClear();
           if (event === 'project rename') {
             await app.vault.rename(file, 'Renamed.md');
@@ -1339,13 +1355,13 @@ describe('PanelView', () => {
         }
 
         expect(rebase).toHaveBeenCalledWith(expected);
-        expect(internals.state.get('mode')).toBe(mode);
-        expect(internals.state.get('selectedList')).toEqual(expected);
+        expect(internals.state_abyssPrivate.get('mode')).toBe(mode);
+        expect(internals.state_abyssPrivate.get('selectedList')).toEqual(expected);
       },
     );
 
     it('does not change an active group selection during a prefix rename', async () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const selection = { type: 'group', groupId: 'work-group' } as const;
       state.set('selectedList', selection);
 
@@ -1355,7 +1371,7 @@ describe('PanelView', () => {
     });
 
     it('detaches the selected-list rename boundary when the panel closes', async () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       await view.onClose();
       state.set('selectedList', { type: 'tag', tag: '#work/deep' });
 
@@ -1365,7 +1381,7 @@ describe('PanelView', () => {
     });
 
     it('query update with empty taskStack → no error', () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       state.set('taskStack', []);
       expect(() => {
         emitQueryEvent(taskApplication.index, { type: 'changed', files: ['x.md'] });
@@ -1373,21 +1389,21 @@ describe('PanelView', () => {
     });
 
     it('recomputes rendered tag contrast when Obsidian emits css-change', () => {
-      const panels = view as unknown as { center: { refresh(): void } };
-      const refresh = vi.spyOn(panels.center, 'refresh');
+      const panels = view as unknown as { center_abyssPrivate: { refresh(): void } };
+      const refresh = vi.spyOn(panels.center_abyssPrivate, 'refresh');
       app.workspace.trigger('css-change');
       expect(refresh).toHaveBeenCalledOnce();
     });
 
     it('lets CenterPanel own the sole calendar patch while PanelView refreshes only LeftPanel', () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const panels = view as unknown as {
-        left: { refresh(): void };
-        center: { refresh(): void };
+        left_abyssPrivate: { refresh(): void };
+        center_abyssPrivate: { refresh(): void };
       };
       state.set('mode', 'calendar');
-      const leftRefresh = vi.spyOn(panels.left, 'refresh');
-      const centerRefresh = vi.spyOn(panels.center, 'refresh');
+      const leftRefresh = vi.spyOn(panels.left_abyssPrivate, 'refresh');
+      const centerRefresh = vi.spyOn(panels.center_abyssPrivate, 'refresh');
       const calendarPatch = vi.spyOn(MonthGridView.prototype, 'patch');
 
       emitQueryEvent(taskApplication.index, { type: 'changed', files: ['x.md'] });
@@ -1400,14 +1416,14 @@ describe('PanelView', () => {
     it.each(['tasks', 'search', 'projects'] as const)(
       'keeps PanelView center.refresh ownership in %s mode',
       (mode) => {
-        const state = (view as unknown as { state: AppState }).state;
+        const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
         const panels = view as unknown as {
-          left: { refresh(): void };
-          center: { refresh(): void };
+          left_abyssPrivate: { refresh(): void };
+          center_abyssPrivate: { refresh(): void };
         };
         state.set('mode', mode);
-        const leftRefresh = vi.spyOn(panels.left, 'refresh');
-        const centerRefresh = vi.spyOn(panels.center, 'refresh');
+        const leftRefresh = vi.spyOn(panels.left_abyssPrivate, 'refresh');
+        const centerRefresh = vi.spyOn(panels.center_abyssPrivate, 'refresh');
 
         emitQueryEvent(taskApplication.index, { type: 'changed', files: ['x.md'] });
 
@@ -1422,7 +1438,7 @@ describe('PanelView', () => {
     });
 
     it('onClose unsubs mode listener (different mode value does not mutate layout)', async () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const layout = view.contentEl.querySelector('.abyss-layout') as HTMLElement;
       const before = layout.className;
       await view.onClose();
@@ -1475,7 +1491,7 @@ describe('PanelView', () => {
     });
 
     it('query update matching root task path → taskStack replaced with fresh task', () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const tasks = taskApplication.index.list();
       const root = expectDefined(tasks[0]);
       state.set('taskStack', [root]);
@@ -1491,7 +1507,7 @@ describe('PanelView', () => {
     });
 
     it('query update with non-matching changedFile → taskStack unchanged', () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const root = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [root]);
       const before = state.get('taskStack');
@@ -1500,7 +1516,7 @@ describe('PanelView', () => {
     });
 
     it('query update when root task deleted → taskStack reset to []', async () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const root = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [root]);
       const file = app.vault.getAbstractFileByPath(root.source.filePath);
@@ -1511,7 +1527,7 @@ describe('PanelView', () => {
     });
 
     it('keeps the selected task and dirty draft on the fresh ref across a vault rename', async () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const root = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [root]);
       const comment = expectDefined(
@@ -1538,7 +1554,7 @@ describe('PanelView', () => {
     });
 
     it('consumes an actual submitted comment across the service/index early event', async () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const root = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [root]);
       const observedResolutions: unknown[] = [];
@@ -1577,7 +1593,7 @@ describe('PanelView', () => {
     });
 
     it('restores one escrow after an observed repository candidate rolls back on process failure', async () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const root = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [root]);
       const original = await app.vault.read(expectDefined(app.vault.getMarkdownFiles()[0]));
@@ -1611,12 +1627,12 @@ describe('PanelView', () => {
     });
 
     it('clears owned-write acknowledgement when deletion/switch changes the selected root', () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const root = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [root]);
-      (view as unknown as { acknowledgeOwnWrite(task: typeof root): void }).acknowledgeOwnWrite(
-        root,
-      );
+      (
+        view as unknown as { acknowledgeOwnWrite_abyssPrivate(task: typeof root): void }
+      ).acknowledgeOwnWrite_abyssPrivate(root);
       state.set('taskStack', []);
       const otherRoot = {
         ...root,
@@ -1626,15 +1642,15 @@ describe('PanelView', () => {
       state.set('taskStack', [otherRoot]);
       (
         view as unknown as {
-          applyResolution(result: { type: 'uncertain'; ref: TaskRef }): void;
+          applyResolution_abyssPrivate(result: { type: 'uncertain'; ref: TaskRef }): void;
         }
-      ).applyResolution({ type: 'uncertain', ref: otherRoot.ref });
+      ).applyResolution_abyssPrivate({ type: 'uncertain', ref: otherRoot.ref });
       expect(state.get('taskStack')).toEqual([]);
       expect(view.contentEl.querySelector('.abyss-task-selection-message')).toBeNull();
     });
 
     it('rejects a late write acknowledgement after selection switched away from its root', () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const first = expectDefined(taskApplication.index.list()[0]);
       const firstView = first;
       const secondView = {
@@ -1644,21 +1660,21 @@ describe('PanelView', () => {
       };
       setTaskStack(state, [firstView]);
       setTaskStack(state, [secondView]);
-      (view as unknown as { acknowledgeOwnWrite(ref: typeof first.ref): void }).acknowledgeOwnWrite(
-        first.ref,
-      );
+      (
+        view as unknown as { acknowledgeOwnWrite_abyssPrivate(ref: typeof first.ref): void }
+      ).acknowledgeOwnWrite_abyssPrivate(first.ref);
       state.set('taskStack', [firstView]);
       (
         view as unknown as {
-          applyResolution(result: { type: 'uncertain'; ref: TaskRef }): void;
+          applyResolution_abyssPrivate(result: { type: 'uncertain'; ref: TaskRef }): void;
         }
-      ).applyResolution({ type: 'uncertain', ref: first.ref });
+      ).applyResolution_abyssPrivate({ type: 'uncertain', ref: first.ref });
       expect(state.get('taskStack')).toEqual([]);
       expect(view.contentEl.querySelector('.abyss-task-selection-message')).toBeNull();
     });
 
     it('converges a selected Center or Left command immediately and accepts the next index event', () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const observed = expectDefined(taskApplication.index.list()[0]);
       const updated = {
         ...observed,
@@ -1675,21 +1691,21 @@ describe('PanelView', () => {
 
       (
         view as unknown as {
-          convergeOwnCommand(initiatingRef: TaskRef, result: TaskCommandResult): void;
+          convergeOwnCommand_abyssPrivate(initiatingRef: TaskRef, result: TaskCommandResult): void;
         }
-      ).convergeOwnCommand(observed.ref, result);
+      ).convergeOwnCommand_abyssPrivate(observed.ref, result);
 
       expect(state.get('taskStack')[0]).toMatchObject({ title: 'Owned update', ref: updated.ref });
       (
         view as unknown as {
-          applyResolution(resolution: { type: 'exact'; task: typeof updated }): void;
+          applyResolution_abyssPrivate(resolution: { type: 'exact'; task: typeof updated }): void;
         }
-      ).applyResolution({ type: 'exact', task: updated });
+      ).applyResolution_abyssPrivate({ type: 'exact', task: updated });
       expect(view.contentEl.querySelector('.abyss-task-selection-stale')).toBeNull();
     });
 
     it('preserves the full RightPanel DOM draft bundle while a no-op Center command converges', async () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const observed = expectDefined(taskApplication.index.list()[0]);
       state.set('taskStack', [observed]);
       activeDocument.body.append(view.contentEl);
@@ -1710,9 +1726,9 @@ describe('PanelView', () => {
 
       (
         view as unknown as {
-          convergeOwnCommand(initiatingRef: TaskRef, result: TaskCommandResult): void;
+          convergeOwnCommand_abyssPrivate(initiatingRef: TaskRef, result: TaskCommandResult): void;
         }
-      ).convergeOwnCommand(observed.ref, {
+      ).convergeOwnCommand_abyssPrivate(observed.ref, {
         type: 'ok',
         outcome: { type: 'task', task: observed },
         changed: false,
@@ -1736,7 +1752,7 @@ describe('PanelView', () => {
     });
 
     it('keeps uncertainty silent when the matching command result wins the race', () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const observed = expectDefined(taskApplication.index.list()[0]);
       const updated = {
         ...observed,
@@ -1746,16 +1762,16 @@ describe('PanelView', () => {
       state.set('taskStack', [observed]);
       (
         view as unknown as {
-          applyResolution(resolution: { type: 'uncertain'; ref: TaskRef }): void;
+          applyResolution_abyssPrivate(resolution: { type: 'uncertain'; ref: TaskRef }): void;
         }
-      ).applyResolution({ type: 'uncertain', ref: observed.ref });
+      ).applyResolution_abyssPrivate({ type: 'uncertain', ref: observed.ref });
       expect(view.contentEl.querySelector('.abyss-task-selection-message')).toBeNull();
 
       (
         view as unknown as {
-          convergeOwnCommand(initiatingRef: TaskRef, result: TaskCommandResult): void;
+          convergeOwnCommand_abyssPrivate(initiatingRef: TaskRef, result: TaskCommandResult): void;
         }
-      ).convergeOwnCommand(observed.ref, {
+      ).convergeOwnCommand_abyssPrivate(observed.ref, {
         type: 'ok',
         outcome: { type: 'task', task: updated },
         changed: true,
@@ -1766,7 +1782,7 @@ describe('PanelView', () => {
     });
 
     it('renders a fresh visual candidate and detaches the stale draft without a message', () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const observed = expectDefined(taskApplication.index.list()[0]);
       const current = {
         ...observed,
@@ -1782,14 +1798,14 @@ describe('PanelView', () => {
 
       (
         view as unknown as {
-          applyResolution(resolution: {
+          applyResolution_abyssPrivate(resolution: {
             type: 'visual';
             stale: TaskRef;
             current: typeof current;
             evidence: 'same-line';
           }): void;
         }
-      ).applyResolution({
+      ).applyResolution_abyssPrivate({
         type: 'visual',
         stale: observed.ref,
         current,
@@ -1807,7 +1823,7 @@ describe('PanelView', () => {
     });
 
     it('does not let a late Center or Left result replace a different selection', () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const first = expectDefined(taskApplication.index.list()[0]);
       const second = {
         ...first,
@@ -1824,9 +1840,9 @@ describe('PanelView', () => {
 
       (
         view as unknown as {
-          convergeOwnCommand(initiatingRef: TaskRef, result: TaskCommandResult): void;
+          convergeOwnCommand_abyssPrivate(initiatingRef: TaskRef, result: TaskCommandResult): void;
         }
-      ).convergeOwnCommand(first.ref, {
+      ).convergeOwnCommand_abyssPrivate(first.ref, {
         type: 'ok',
         outcome: { type: 'task', task: updated },
         changed: true,
@@ -1889,7 +1905,7 @@ describe('PanelView', () => {
     });
 
     it('exact resolution rebuilds a deep stack with the fresh subtask', () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const tasks = taskApplication.index.list();
       const root = expectDefined(tasks[0]);
       const sub = root.subtasks[0];
@@ -1901,9 +1917,9 @@ describe('PanelView', () => {
       );
       (
         view as unknown as {
-          applyResolution(result: { type: 'exact'; task: typeof snapshot }): void;
+          applyResolution_abyssPrivate(result: { type: 'exact'; task: typeof snapshot }): void;
         }
-      ).applyResolution({ type: 'exact', task: snapshot });
+      ).applyResolution_abyssPrivate({ type: 'exact', task: snapshot });
       const stack = state.get('taskStack');
       // Stack should still have 2 elements (root + fresh subtask found by line match)
       expect(stack).toHaveLength(2);
@@ -1916,7 +1932,7 @@ describe('PanelView', () => {
     });
 
     it('exact resolution truncates a deep stack when the subtask identity is stale', () => {
-      const state = (view as unknown as { state: AppState }).state;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const tasks = taskApplication.index.list();
       const root = expectDefined(tasks[0]);
       // Create a fake subtask with a line number that doesn't exist in fresh data
@@ -1935,9 +1951,9 @@ describe('PanelView', () => {
       );
       (
         view as unknown as {
-          applyResolution(result: { type: 'exact'; task: typeof snapshot }): void;
+          applyResolution_abyssPrivate(result: { type: 'exact'; task: typeof snapshot }): void;
         }
-      ).applyResolution({ type: 'exact', task: snapshot });
+      ).applyResolution_abyssPrivate({ type: 'exact', task: snapshot });
       const stack = state.get('taskStack');
       // Fresh subtask not found at line 999 → break → stack truncated to [freshRoot]
       expect(stack).toHaveLength(1);

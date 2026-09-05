@@ -30,6 +30,7 @@ import {
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
+import { expandCompoundSelectorLists } from './support/expandedCss';
 
 useRealMoment();
 const cleanups: Array<() => void> = [];
@@ -128,7 +129,7 @@ function button(el: HTMLElement, selector: string): HTMLButtonElement {
   return expectDefined(el.querySelector<HTMLButtonElement>(selector));
 }
 function search(el: HTMLElement, query: string): HTMLInputElement {
-  const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-dependency-search input'));
+  const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-dep-search input'));
   input.value = query;
   input.dispatchEvent(new Event('input', { bubbles: true }));
   return input;
@@ -148,8 +149,8 @@ describe('inspector dependency navigation', () => {
     async (target) => {
       const h = await harness(source, 'A.1.a');
       const original = h.state.get('taskStack');
-      const row = button(h.el, '.abyss-dependency-row');
-      const label = button(h.el, '.abyss-dependency-title');
+      const row = button(h.el, '.abyss-dep-row');
+      const label = button(h.el, '.abyss-dep-title');
       expect(label.tagName).toBe('BUTTON');
       expect(label.tabIndex).toBe(0);
       label.focus();
@@ -165,7 +166,7 @@ describe('inspector dependency navigation', () => {
       expect(firstBack.title).toBe('Back to previous task');
       expect(firstBack.tabIndex).toBe(0);
       expect(activeDocument.activeElement).toBe(firstBack);
-      button(h.el, '[data-dependency-direction="blocked-by"] .abyss-dependency-title').click();
+      button(h.el, '[data-dependency-direction="blocked-by"] .abyss-dep-title').click();
       expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['C']);
       button(h.el, '[aria-label="Back to previous task"]').click();
       expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
@@ -177,7 +178,7 @@ describe('inspector dependency navigation', () => {
 
   it('navigates inverse relations and keeps breadcrumb/subtask navigation inside the current frame', async () => {
     const h = await harness(source, 'B.2');
-    button(h.el, '[data-dependency-direction="blocks"] .abyss-dependency-title').click();
+    button(h.el, '[data-dependency-direction="blocks"] .abyss-dep-title').click();
     expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['A', 'A.1', 'A.1.a']);
     button(h.el, '.abyss-breadcrumb-item').click();
     expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['A']);
@@ -193,11 +194,11 @@ describe('inspector dependency navigation', () => {
     const previous = h.state.get('inspectorBackStack');
     const unrelatedFocus = button(h.el, '[aria-label="More actions"]');
     unrelatedFocus.focus();
-    button(h.el, '.abyss-dependency-row .abyss-status-marker').click();
+    button(h.el, '.abyss-dep-row .abyss-status-marker').click();
     expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
     expect(activeDocument.activeElement).toBe(unrelatedFocus);
     expect(await h.read()).toBe(source);
-    button(h.el, '.abyss-dependency-remove').click();
+    button(h.el, '.abyss-dep-remove').click();
     expect(activeDocument.activeElement).toBe(unrelatedFocus);
     await flushMicrotasks(30);
     expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
@@ -210,8 +211,8 @@ describe('inspector dependency navigation', () => {
     const h = await harness(
       '- [ ] Current ⛔ missing, duplicate\n- [ ] One 🆔 duplicate\n- [ ] Two 🆔 duplicate\n',
     );
-    for (const row of h.el.querySelectorAll<HTMLElement>('.abyss-dependency-row')) {
-      expect(row.querySelector('.abyss-dependency-title')?.tagName).toBe('SPAN');
+    for (const row of h.el.querySelectorAll<HTMLElement>('.abyss-dep-row')) {
+      expect(row.querySelector('.abyss-dep-title')?.tagName).toBe('SPAN');
       expect(row.getAttribute('role')).toBeNull();
       row.click();
       expect(h.state.get('taskStack')[0]?.title).toBe('Current');
@@ -240,7 +241,7 @@ describe('inspector dependency navigation', () => {
       });
       modal.open(h.node(mode === 'ordinary' ? 'B' : 'C').root);
       const el = button(activeDocument.body, '.abyss-modal-body');
-      button(el, mode === 'ordinary' ? '.abyss-subtask-label' : '.abyss-dependency-title').click();
+      button(el, mode === 'ordinary' ? '.abyss-subtask-label' : '.abyss-dep-title').click();
       expect(el.querySelector('.abyss-right-title')?.textContent).toBe('B.2');
       button(el, '.abyss-right-title-view').click();
       const editor = expectDefined(
@@ -278,22 +279,23 @@ describe('owned dependency destination editing', () => {
       });
       modal.open(h.node('C').root);
       const el = button(activeDocument.body, '.abyss-modal-body');
-      button(el, '.abyss-dependency-title').click();
+      button(el, '.abyss-dep-title').click();
       const local = modal as unknown as {
         innerState: AppState;
         innerPanel: {
-          updateDescription(task: SubtaskSnapshot, text: string): Promise<boolean>;
-          updatePriority(task: SubtaskSnapshot, priority: string): Promise<void>;
-          commitStatus(task: SubtaskSnapshot, symbol: string): Promise<void>;
+          updateDescription_abyssPrivate(task: SubtaskSnapshot, text: string): Promise<boolean>;
+          updatePriority_abyssPrivate(task: SubtaskSnapshot, priority: string): Promise<void>;
+          commitStatus_abyssPrivate(task: SubtaskSnapshot, symbol: string): Promise<void>;
         };
       };
       const selected = expectDefined(h.node('B.2').path[0]);
       const history = local.innerState.get('inspectorBackStack');
       const originalHistory = JSON.stringify(history);
       if (kind === 'description')
-        await local.innerPanel.updateDescription(selected, 'First line\nSecond line');
-      else if (kind === 'planning') await local.innerPanel.updatePriority(selected, 'A');
-      else await local.innerPanel.commitStatus(selected, '/');
+        await local.innerPanel.updateDescription_abyssPrivate(selected, 'First line\nSecond line');
+      else if (kind === 'planning')
+        await local.innerPanel.updatePriority_abyssPrivate(selected, 'A');
+      else await local.innerPanel.commitStatus_abyssPrivate(selected, '/');
       await flushMicrotasks(30);
       expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
       expect(JSON.stringify(history)).toBe(originalHistory);
@@ -307,7 +309,7 @@ describe('owned dependency destination editing', () => {
       button(el, '[aria-label="Back to previous task"]').click();
       expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['C']);
       expect(local.innerState.get('taskStack')[0]?.ref).toEqual(h.node('C').root.ref);
-      expect(button(el, '.abyss-dependency-title').textContent).toBe('B.2');
+      expect(button(el, '.abyss-dep-title').textContent).toBe('B.2');
     },
   );
 
@@ -319,7 +321,7 @@ describe('owned dependency destination editing', () => {
     });
     modal.open(h.node('C').root);
     const el = button(activeDocument.body, '.abyss-modal-body');
-    button(el, '.abyss-dependency-title').click();
+    button(el, '.abyss-dep-title').click();
     const original = h.api.execute.bind(h.api);
     vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
       await original({ type: 'add-subtask', parent: h.node('B').target, text: 'Concurrent child' });
@@ -351,7 +353,7 @@ describe('live dependency history restoration', () => {
       const local = modal as unknown as { innerState: AppState; innerPanel: RightPanel };
       const state = surface === 'modal' ? local.innerState : h.state;
       const el = surface === 'modal' ? button(activeDocument.body, '.abyss-modal-body') : h.el;
-      button(el, '.abyss-dependency-title').click();
+      button(el, '.abyss-dep-title').click();
       const original = state.get('inspectorBackStack');
       const originalJSON = JSON.stringify(original);
       const edited = h.node('B.2').target;
@@ -378,13 +380,13 @@ describe('live dependency history restoration', () => {
       expect(JSON.stringify(original)).toBe(originalJSON);
       button(el, '[aria-label="Back to previous task"]').click();
       expect(state.get('taskStack')[0]?.ref).toEqual(h.node('C').root.ref);
-      expect(button(el, '.abyss-dependency-title').textContent).toBe('Edited B.2');
+      expect(button(el, '.abyss-dep-title').textContent).toBe('Edited B.2');
     },
   );
 
   it('captures successive synchronous relocation evidence before deferred query refresh', async () => {
     const h = await harness(source, 'C');
-    button(h.el, '.abyss-dependency-title').click();
+    button(h.el, '.abyss-dep-title').click();
     const initial = h.state.get('inspectorBackStack');
     button(h.el, '.abyss-right-title-view').click();
     const editor = expectDefined(
@@ -396,8 +398,10 @@ describe('live dependency history restoration', () => {
       h.index.installCommittedContent('tasks.md', `\n${relocated}`);
       // Deliver each installed query transition before RightPanel's queued DOM work.
       (
-        h.index as unknown as { publish(event: { type: 'changed'; files: string[] }): void }
-      ).publish({
+        h.index as unknown as {
+          publish_abyssPrivate(event: { type: 'changed'; files: string[] }): void;
+        }
+      ).publish_abyssPrivate({
         type: 'changed',
         files: ['tasks.md'],
       });
@@ -420,7 +424,7 @@ describe('live dependency history restoration', () => {
         location === 'cross-file' ? { 'other.md': '\n- [ ] C ⛔ b\n' } : {},
       );
       const previous = h.state.get('taskStack');
-      button(h.el, '.abyss-dependency-title').click();
+      button(h.el, '.abyss-dep-title').click();
       const result = await h.api.execute({
         type: 'set-description',
         target: h.node('B.2').target,
@@ -432,7 +436,7 @@ describe('live dependency history restoration', () => {
         expect(live.ref.line).not.toBe(rootTaskRef(expectDefined(previous[0])).line);
       button(h.el, '[aria-label="Back to previous task"]').click();
       expect(h.state.get('taskStack')[0]?.ref).toEqual(live.ref);
-      expect(button(h.el, '.abyss-dependency-title').textContent).toBe('B.2');
+      expect(button(h.el, '.abyss-dep-title').textContent).toBe('B.2');
       expect(h.state.get('inspectorBackStack')).toEqual([]);
       await h.panel.updateTaskTitle(expectDefined(h.state.get('taskStack')[0]), 'Edited C');
       expect(h.node('Edited C').root.ref.filePath).toBe(live.ref.filePath);
@@ -447,7 +451,7 @@ describe('live dependency history restoration', () => {
       const messages: string[] = [];
       notices(messages);
       const original = h.node('C').root;
-      button(h.el, '.abyss-dependency-title').click();
+      button(h.el, '.abyss-dep-title').click();
       const selected = h.state.get('taskStack');
       const history = h.state.get('inspectorBackStack');
       const fallback = h.node('B').root;
@@ -495,7 +499,7 @@ describe('live dependency history restoration', () => {
       const messages: string[] = [];
       notices(messages);
       const original = h.node('C').root;
-      button(h.el, '.abyss-dependency-title').click();
+      button(h.el, '.abyss-dep-title').click();
       const selected = h.state.get('taskStack');
       const history = h.state.get('inspectorBackStack');
       if (change === 'deleted') {
@@ -545,14 +549,14 @@ describe('TaskModal dependency selection', () => {
       const duplicates = el.querySelectorAll<HTMLElement>('.abyss-subtask-label');
       expectDefined(duplicates[1]).click();
       expect(el.querySelector('.abyss-right-title')?.textContent).toBe('Current');
-      button(el, '.abyss-dependency-badge-add').click();
+      button(el, '.abyss-dep-badge-add').click();
       button(el, '[aria-label="Add dependency: Blocked by"]').click();
       search(el, 'Candidate').dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
       );
       await flushMicrotasks(30);
       expect(el.querySelector('.abyss-right-title')?.textContent).toBe('Current');
-      expect(button(el, '.abyss-dependency-badge-body').getAttribute('aria-label')).toBe(
+      expect(button(el, '.abyss-dep-badge-body').getAttribute('aria-label')).toBe(
         'Dependencies: blocked by 1; blocks 0',
       );
       const current = expectDefined(
@@ -584,7 +588,7 @@ describe('TaskModal dependency selection', () => {
       ).toBe('ok');
       await flushMicrotasks(30);
       expect(el.querySelector('.abyss-right-title')?.textContent).toBe('Current');
-      expect(button(el, '.abyss-dependency-badge-body').getAttribute('aria-label')).toBe(
+      expect(button(el, '.abyss-dep-badge-body').getAttribute('aria-label')).toBe(
         'Dependencies: blocked by 1; blocks 0',
       );
     },
@@ -642,7 +646,7 @@ describe('RightPanel dependency inspector', () => {
       expect(rebuildTaskSelection(selected.root, stack)).toEqual(stack);
       h.state.set('taskStack', stack);
       const execute = vi.spyOn(h.api, 'execute');
-      button(h.el, '.abyss-dependency-badge-add').click();
+      button(h.el, '.abyss-dep-badge-add').click();
       button(h.el, '[aria-label="Add dependency: Blocked by"]').click();
       search(h.el, 'Candidate').dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
@@ -650,7 +654,7 @@ describe('RightPanel dependency inspector', () => {
       await flushMicrotasks(50);
       expect(await execute.mock.results[0]?.value).toMatchObject({ type: 'ok' });
       expect(await h.read()).toBe(wanted);
-      expect(button(h.el, '.abyss-dependency-badge-body').getAttribute('aria-label')).toBe(
+      expect(button(h.el, '.abyss-dep-badge-body').getAttribute('aria-label')).toBe(
         'Dependencies: blocked by 1; blocks 0',
       );
     },
@@ -662,11 +666,9 @@ describe('RightPanel dependency inspector', () => {
       '\n- [ ] Parent\n  - [ ] Current\n  - [ ] Current\n- [ ] Candidate 🆔 candidate\n';
     await h.app.vault.modify(h.file, changed);
     await flushMicrotasks(20);
-    const oldBadge = h.el.querySelector<HTMLButtonElement>('.abyss-dependency-badge-body');
+    const oldBadge = h.el.querySelector<HTMLButtonElement>('.abyss-dep-badge-body');
     oldBadge?.click();
-    expect(h.el.querySelectorAll('.abyss-dependency-search-option:not([disabled])')).toHaveLength(
-      0,
-    );
+    expect(h.el.querySelectorAll('.abyss-dep-search-option:not([disabled])')).toHaveLength(0);
     expect(await h.read()).toBe(changed.slice(1));
   });
 
@@ -676,19 +678,19 @@ describe('RightPanel dependency inspector', () => {
       const h = await harness('- [ ] Current\n- [ ] Candidate\n');
       const add = vi.spyOn(h.el.ownerDocument, 'addEventListener');
       const remove = vi.spyOn(h.el.ownerDocument, 'removeEventListener');
-      button(h.el, '.abyss-dependency-badge-body').click();
+      button(h.el, '.abyss-dep-badge-body').click();
       const input = search(h.el, 'Candidate');
       if (mode === 'focus') activeDocument.body.createEl('button').focus();
       if (mode === 'destroy') h.panel.destroy();
       if (mode === 'selection') h.state.set('taskStack', [h.node('Candidate').root]);
       if (mode === 'success') {
-        button(h.el, '.abyss-dependency-search-option').click();
+        button(h.el, '.abyss-dep-search-option').click();
         button(h.el, '[data-direction="blocks"]').click();
         await flushMicrotasks(50);
       }
       if (mode === 'refresh') {
         h.state.set('taskStack', [h.node('Current').root]);
-        expect(h.el.querySelector('.abyss-dependency-search input')).toBe(input);
+        expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       }
       const owned = add.mock.calls.filter(([type]) =>
@@ -710,7 +712,7 @@ describe('RightPanel dependency inspector', () => {
     const add = vi.spyOn(h.el.ownerDocument, 'addEventListener');
     const remove = vi.spyOn(h.el.ownerDocument, 'removeEventListener');
     for (let count = 0; count < 2; count++) {
-      button(h.el, '.abyss-dependency-badge-body').click();
+      button(h.el, '.abyss-dep-badge-body').click();
       search(h.el, '').dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
       );
@@ -728,35 +730,33 @@ describe('RightPanel dependency inspector', () => {
   it('keeps remove actions in the row flow with hover, focus and coarse-pointer access', async () => {
     if (!Platform.isDesktop) throw new Error('CSS fixture needs desktop runtime');
     const fs = await import('node:fs');
-    const css = fs.readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8');
+    const css = expandCompoundSelectorLists(
+      fs.readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8'),
+    );
     const value = (selector: string, property: string) =>
       cssDeclarationValue(cssDeclarationsFor(css, selector), property);
-    expect(value('.abyss-dependency-remove', 'opacity')).toBe('0');
-    expect(value('.abyss-dependency-remove', 'position')).not.toBe('absolute');
-    expect(value('.abyss-dependency-row:hover .abyss-dependency-remove', 'opacity')).toBe('1');
-    expect(value('.abyss-dependency-row:focus-within .abyss-dependency-remove', 'opacity')).toBe(
-      '1',
-    );
-    expect(value('.abyss-dependency-row.is-unavailable .abyss-dependency-remove', 'opacity')).toBe(
-      '1',
-    );
-    expect(value('.abyss-dependency-title', 'text-overflow')).toBe('ellipsis');
+    expect(value('.abyss-dep-remove', 'opacity')).toBe('0');
+    expect(value('.abyss-dep-remove', 'position')).not.toBe('absolute');
+    expect(value('.abyss-dep-row:hover .abyss-dep-remove', 'opacity')).toBe('1');
+    expect(value('.abyss-dep-row:focus-within .abyss-dep-remove', 'opacity')).toBe('1');
+    expect(value('.abyss-dep-row.is-unavailable .abyss-dep-remove', 'opacity')).toBe('1');
+    expect(value('.abyss-dep-title', 'text-overflow')).toBe('ellipsis');
     for (const selector of [
-      '.abyss-dependency-row .abyss-dependency-remove',
-      '.abyss-dependency-section .abyss-dependency-add',
-      '.abyss-dependency-search .abyss-dependency-search-option',
+      '.abyss-dep-row .abyss-dep-remove',
+      '.abyss-dep-section .abyss-dep-add',
+      '.abyss-dep-search .abyss-dep-search-option',
     ])
       expect(value(selector, 'background')).toBe('transparent');
     expect(css).toMatch(
-      /@media\s*\(pointer: coarse\)\s*\{\s*\.abyss-dependency-remove\s*\{\s*opacity: 1;/u,
+      /@media\s*\(pointer: coarse\)\s*\{\s*\.abyss-dep-remove\s*\{\s*opacity: 1;/u,
     );
   });
 
   it('keeps a search draft through a proven selection refresh and drops it on another task', async () => {
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
-    button(h.el, '.abyss-dependency-badge-body').click();
+    button(h.el, '.abyss-dep-badge-body').click();
     const input = search(h.el, 'Candidate');
-    button(h.el, '.abyss-dependency-search-option').click();
+    button(h.el, '.abyss-dep-search-option').click();
     expect(activeDocument.activeElement?.getAttribute('data-direction')).toBe('blocked-by');
     h.state.set('taskStack', [h.node('Current').root]);
     expect(h.el.querySelectorAll('[data-direction]')).toHaveLength(0);
@@ -767,29 +767,27 @@ describe('RightPanel dependency inspector', () => {
       patch: { priority: { type: 'set', value: 'A' } },
     });
     h.state.set('taskStack', [h.node('Current').root]);
-    expect(h.el.querySelector('.abyss-dependency-search input')).toBe(input);
+    expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
     expect(input.value).toBe('Candidate');
     expect(activeDocument.activeElement).toBe(input);
     h.state.set('taskStack', [h.node('Candidate').root]);
-    expect(h.el.querySelector('.abyss-dependency-search')).toBeNull();
+    expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
   });
 
   it('reconciles counterpart completion and missing IDs through normal index events without discarding an editing draft', async () => {
     const h = await harness('- [ ] Current ⛔ blocker\n- [ ] Blocker 🆔 blocker\n');
-    button(h.el, '.abyss-dependency-badge-body').click();
+    button(h.el, '.abyss-dep-badge-body').click();
     const input = search(h.el, 'Keep this query');
     await h.api.execute({ type: 'toggle-completion', target: h.node('Blocker').target });
     await flushMicrotasks();
-    expect(button(h.el, '.abyss-dependency-badge-body').getAttribute('aria-label')).toBe(
+    expect(button(h.el, '.abyss-dep-badge-body').getAttribute('aria-label')).toBe(
       'Dependencies: blocked by 0; blocks 0',
     );
-    expect(h.el.querySelector('.abyss-dependency-row .is-done')).not.toBeNull();
+    expect(h.el.querySelector('.abyss-dep-row .is-done')).not.toBeNull();
     expect(input.value).toBe('Keep this query');
     await h.app.vault.modify(h.file, '\n- [ ] Current ⛔ blocker\n');
     await flushMicrotasks(20);
-    expect(h.el.querySelector('.abyss-dependency-row')?.textContent).toBe(
-      'Task unavailableblocker',
-    );
+    expect(h.el.querySelector('.abyss-dep-row')?.textContent).toBe('Task unavailableblocker');
   });
 
   it('renders compact direct relations in order with done and raw-ID recovery rows', async () => {
@@ -799,11 +797,11 @@ describe('RightPanel dependency inspector', () => {
     expect(h.node('Active').node.description).toBe('Hidden prerequisite description');
     expect(h.el.textContent).toContain('Own description');
     expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
-    expect(button(h.el, '.abyss-dependency-badge-body').getAttribute('aria-label')).toBe(
+    expect(button(h.el, '.abyss-dep-badge-body').getAttribute('aria-label')).toBe(
       'Dependencies: blocked by 2; blocks 1',
     );
-    expect(h.el.querySelector('.abyss-dependency-badge-add')).toBeNull();
-    const rows = [...h.el.querySelectorAll('.abyss-dependency-row')];
+    expect(h.el.querySelector('.abyss-dep-badge-add')).toBeNull();
+    const rows = [...h.el.querySelectorAll('.abyss-dep-row')];
     expect(rows.map((row) => row.textContent)).toEqual([
       'Active',
       'Done',
@@ -818,29 +816,29 @@ describe('RightPanel dependency inspector', () => {
     expect(rows[2]?.querySelector('[aria-label="Remove unavailable dependency"]')).not.toBeNull();
     expect(rows[3]?.querySelector('[aria-label="Remove ambiguous dependency"]')).not.toBeNull();
     expect(h.el.textContent).not.toContain('Hidden prerequisite description');
-    for (const section of h.el.querySelectorAll('.abyss-dependency-section'))
+    for (const section of h.el.querySelectorAll('.abyss-dep-section'))
       expect(section.lastElementChild?.textContent).toBe('+Add dependency');
   });
 
   it('separates badge search from temporary add disclosure and dismisses empty sections with focus return', async () => {
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
     expect(labels(h.el)).toEqual(['Description', 'Sub-tasks', 'Comments']);
-    const badge = button(h.el, '.abyss-dependency-badge-body');
-    const plus = button(h.el, '.abyss-dependency-badge-add');
+    const badge = button(h.el, '.abyss-dep-badge-body');
+    const plus = button(h.el, '.abyss-dep-badge-add');
     expect([badge.tabIndex, plus.tabIndex]).toEqual([0, 0]);
     badge.click();
-    expect(h.el.querySelector('.abyss-dependency-search')).not.toBeNull();
+    expect(h.el.querySelector('.abyss-dep-search')).not.toBeNull();
     expect(labels(h.el)).toEqual(['Description', 'Sub-tasks', 'Comments']);
     search(h.el, '').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(activeDocument.activeElement).toBe(badge);
     plus.click();
     expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
-    expect(h.el.querySelector('.abyss-dependency-search')).toBeNull();
-    expect(h.el.querySelector('.abyss-dependency-badge-add')).toBeNull();
+    expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
+    expect(h.el.querySelector('.abyss-dep-badge-add')).toBeNull();
     h.el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(labels(h.el)).toEqual(['Description', 'Sub-tasks', 'Comments']);
-    expect(activeDocument.activeElement).toBe(h.el.querySelector('.abyss-dependency-badge-add'));
-    button(h.el, '.abyss-dependency-badge-add').click();
+    expect(activeDocument.activeElement).toBe(h.el.querySelector('.abyss-dep-badge-add'));
+    button(h.el, '.abyss-dep-badge-add').click();
     const outside = activeDocument.body.createEl('button');
     outside.focus();
     await flushMicrotasks();
@@ -853,8 +851,8 @@ describe('RightPanel dependency inspector', () => {
     async (direction) => {
       const captured = notices();
       const h = await harness('- [ ] Current\n- [ ] Candidate\n');
-      button(h.el, '.abyss-dependency-badge-add').click();
-      button(h.el, `[data-dependency-direction="${direction}"] .abyss-dependency-add`).click();
+      button(h.el, '.abyss-dep-badge-add').click();
+      button(h.el, `[data-dependency-direction="${direction}"] .abyss-dep-add`).click();
       const input = search(h.el, 'Candidate');
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -862,15 +860,15 @@ describe('RightPanel dependency inspector', () => {
       expect(await h.read()).toContain(
         direction === 'blocked-by' ? 'Current ⛔ generate' : 'Candidate ⛔ generate',
       );
-      expect(h.el.querySelector('.abyss-dependency-search')).toBeNull();
-      expect(h.el.querySelectorAll('.abyss-dependency-section')).toHaveLength(1);
-      expect(h.el.querySelector('.abyss-dependency-row')?.textContent).toBe('Candidate');
+      expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
+      expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(1);
+      expect(h.el.querySelector('.abyss-dep-row')?.textContent).toBe('Candidate');
       expect(captured).toHaveLength(1);
       button(activeDocument.body, '.mod-cta').click();
       await flushMicrotasks(50);
       expect(await h.read()).not.toContain('⛔');
       expect(await h.read()).toContain('🆔 generate');
-      expect(h.el.querySelectorAll('.abyss-dependency-section')).toHaveLength(0);
+      expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(0);
     },
   );
 
@@ -884,7 +882,7 @@ describe('RightPanel dependency inspector', () => {
         '- [ ] Current ⛔ prerequisite, prerequisite\n- [ ] Prerequisite 🆔 prerequisite\n';
       const captured = notices();
       const h = await harness(markdown, selected);
-      button(h.el, '.abyss-dependency-remove').click();
+      button(h.el, '.abyss-dep-remove').click();
       await flushMicrotasks(50);
       expect(await h.read()).toBe('- [ ] Current\n- [ ] Prerequisite 🆔 prerequisite\n');
       expect(captured).toHaveLength(1);
@@ -930,16 +928,13 @@ describe('RightPanel dependency inspector', () => {
         'io-error': { type: 'io-error', cause: 'repository-error', contentState: 'unknown' },
       };
       vi.spyOn(h.api, 'execute').mockResolvedValue(results[type]);
-      button(h.el, '.abyss-dependency-badge-body').click();
+      button(h.el, '.abyss-dep-badge-body').click();
       search(h.el, 'Candidate');
-      button(h.el, '.abyss-dependency-search-option').click();
+      button(h.el, '.abyss-dep-search-option').click();
       button(h.el, '[data-direction="blocks"]').click();
       await flushMicrotasks(20);
-      expect(h.el.querySelector('.abyss-dependency-search input')).toHaveProperty(
-        'value',
-        'Candidate',
-      );
-      expect(h.el.querySelectorAll('.abyss-dependency-row')).toHaveLength(0);
+      expect(h.el.querySelector('.abyss-dep-search input')).toHaveProperty('value', 'Candidate');
+      expect(h.el.querySelectorAll('.abyss-dep-row')).toHaveLength(0);
       expect(captured).toHaveLength(1);
       expect(await h.read()).toBe('- [ ] Current\n- [ ] Candidate\n');
     },
@@ -950,18 +945,15 @@ describe('RightPanel dependency inspector', () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
     vi.spyOn(h.api, 'execute').mockRejectedValue(new Error('Unexpected'));
-    button(h.el, '.abyss-dependency-badge-body').click();
+    button(h.el, '.abyss-dep-badge-body').click();
     search(h.el, 'Candidate');
-    button(h.el, '.abyss-dependency-search-option').click();
+    button(h.el, '.abyss-dep-search-option').click();
     button(h.el, '[data-direction="blocks"]').click();
     await flushMicrotasks(20);
     expect(log).toHaveBeenCalledOnce();
     expect(log.mock.calls[0]?.[0]).toContain('[abyss-tasks]');
     expect(captured).toHaveLength(1);
-    expect(h.el.querySelector('.abyss-dependency-search input')).toHaveProperty(
-      'value',
-      'Candidate',
-    );
-    expect(h.el.querySelectorAll('.abyss-dependency-row')).toHaveLength(0);
+    expect(h.el.querySelector('.abyss-dep-search input')).toHaveProperty('value', 'Candidate');
+    expect(h.el.querySelectorAll('.abyss-dep-row')).toHaveLength(0);
   });
 });

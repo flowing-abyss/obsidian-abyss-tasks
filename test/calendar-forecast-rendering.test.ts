@@ -45,6 +45,7 @@ import {
   useRealMoment,
   type TaskFixtureInput,
 } from './helpers';
+import { expandCompoundSelectorLists } from './support/expandedCss';
 
 useRealMoment();
 
@@ -57,7 +58,9 @@ async function loadStyles(): Promise<string> {
   if (!Platform.isDesktop) return '';
   const { readFileSync } = await import('node:fs');
   const path = await import('node:path');
-  return readFileSync(path.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+  return expandCompoundSelectorLists(
+    readFileSync(path.resolve(import.meta.dirname, '..', 'styles.css'), 'utf8'),
+  );
 }
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
@@ -1095,7 +1098,8 @@ describe('forecast visual system', () => {
     );
     const root = freshContainer();
     panel.mount(root);
-    (panel as unknown as { calDate: moment.Moment }).calDate = moment('1400-08-01');
+    (panel as unknown as { calDate_abyssPrivate: moment.Moment }).calDate_abyssPrivate =
+      moment('1400-08-01');
     state.set('mode', 'calendar');
 
     const diagnostics = root.querySelectorAll<HTMLElement>('.abyss-calendar-projection-diagnostic');
@@ -1138,7 +1142,8 @@ describe('forecast visual system', () => {
     );
     const root = freshContainer();
     panel.mount(root);
-    (panel as unknown as { calDate: moment.Moment }).calDate = moment('1400-08-01');
+    (panel as unknown as { calDate_abyssPrivate: moment.Moment }).calDate_abyssPrivate =
+      moment('1400-08-01');
     state.set('mode', 'calendar');
     const diagnostic = expectDefined(
       root.querySelector<HTMLElement>('.abyss-calendar-projection-diagnostic'),
@@ -1738,7 +1743,8 @@ describe('forecast interaction contract', () => {
     );
     const root = freshContainer();
     panel.mount(root);
-    (panel as unknown as { calDate: moment.Moment }).calDate = moment('2026-08-09');
+    (panel as unknown as { calDate_abyssPrivate: moment.Moment }).calDate_abyssPrivate =
+      moment('2026-08-09');
     state.set('mode', 'calendar');
     const openMenu = (): void => {
       expectDefined(
@@ -1842,10 +1848,12 @@ describe('forecast interaction contract', () => {
     const root = freshContainer();
     panel.mount(root);
     const openModal = vi.spyOn(
-      (panel as unknown as { taskModal: { open(task: TaskSnapshot): void } }).taskModal,
+      (panel as unknown as { taskModal_abyssPrivate: { open(task: TaskSnapshot): void } })
+        .taskModal_abyssPrivate,
       'open',
     );
-    (panel as unknown as { calDate: moment.Moment }).calDate = moment('2026-08-09');
+    (panel as unknown as { calDate_abyssPrivate: moment.Moment }).calDate_abyssPrivate =
+      moment('2026-08-09');
     state.set('mode', 'calendar');
     const forecast = expectDefined(
       root.querySelector<HTMLElement>(

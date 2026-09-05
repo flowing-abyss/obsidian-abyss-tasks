@@ -39,7 +39,8 @@ async function readMd(app: App, path: string): Promise<string> {
 }
 
 function callPrivate<T>(panel: CenterPanel, method: string, ...args: unknown[]): T {
-  const fn = expectDefined((panel as unknown as Record<string, (...a: unknown[]) => T>)[method]);
+  const key = method === 'toggleDueToday' ? method : `${method}_abyssPrivate`;
+  const fn = expectDefined((panel as unknown as Record<string, (...a: unknown[]) => T>)[key]);
   return fn.call(panel, ...args);
 }
 

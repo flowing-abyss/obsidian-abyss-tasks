@@ -1,7 +1,10 @@
+import { selectorSpecificity } from '@csstools/selector-specificity';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import postcss from 'postcss';
+import selectorParser from 'postcss-selector-parser';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -65,6 +68,48 @@ function writeCheckerFixture(budget: number): void {
 }
 
 describe('release stylesheet producer', () => {
+  it('preserves selector specificity and scope through release minification', () => {
+    const source = `
+      .scope :is(.active, .inactive) > button::before { color: var(--text-normal); }
+      .scope .row:hover, .scope .row:focus-within { opacity: 1; }
+      .scope #strong, .scope .weak { padding: 0 1px; }
+    `;
+    writeProducerFixture(1024, source);
+    const result = runScript(PRODUCER_PATH);
+    expect(result.status, result.stderr).toBe(0);
+    function inventory(css: string): string[] {
+      const selectors: string[] = [];
+      postcss.parse(css).walkRules((rule) => {
+        for (const selector of selectorParser().astSync(rule.selector, { lossless: false }).nodes) {
+          selector.walkPseudos((pseudo) => {
+            if (pseudo.value === '::before') pseudo.value = ':before';
+          });
+          selectors.push(JSON.stringify([selector.toString(), selectorSpecificity(selector)]));
+        }
+      });
+      return selectors.sort((left, right) => left.localeCompare(right));
+    }
+    const output = readFileSync(path.join(fixtureDirectory, 'dist/styles.css'), 'utf8');
+    expect(inventory(output)).toEqual(inventory(source));
+    expect(output).toContain('var(--text-normal)');
+  });
+
+  it('ships the real stylesheet under budget with deterministic output and untouched source', () => {
+    const source = readFileSync(path.join(REPOSITORY_ROOT, 'styles.css'), 'utf8');
+    const pkg = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, 'package.json'), 'utf8')) as {
+      release: { stylesCssBudgetBytes: number };
+    };
+    writeProducerFixture(pkg.release.stylesCssBudgetBytes, source);
+    const first = runScript(PRODUCER_PATH);
+    expect(first.status, first.stderr).toBe(0);
+    const output = readFileSync(path.join(fixtureDirectory, 'dist/styles.css'));
+    expect(output.length).toBeLessThanOrEqual(pkg.release.stylesCssBudgetBytes);
+    const second = runScript(PRODUCER_PATH);
+    expect(second.status, second.stderr).toBe(0);
+    expect(readFileSync(path.join(fixtureDirectory, 'dist/styles.css'))).toEqual(output);
+    expect(readFileSync(path.join(fixtureDirectory, 'styles.css'), 'utf8')).toBe(source);
+  });
+
   it('replaces stale output with minified CSS under budget', () => {
     writeProducerFixture(128, '.alpha { color: red; }');
 

@@ -332,7 +332,9 @@ function absoluteFixtureLine(taskLike: TaskSnapshot | SubtaskSnapshot): number {
 }
 
 function attachCurrentRef(panel: RightPanel, taskLike: TaskSnapshot | SubtaskSnapshot): void {
-  const roots = (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list();
+  const roots = (
+    panel as unknown as { tasks_abyssPrivate: TaskApplicationApi }
+  ).tasks_abyssPrivate.queries.list();
   for (const root of roots) {
     const queue: Array<TaskSnapshot | SubtaskSnapshot> = [root];
     while (queue.length > 0) {

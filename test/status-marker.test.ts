@@ -5,6 +5,7 @@ import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { renderStatusMarker, setStatusMarkerCompletionBlocked } from '../src/ui/StatusMarker';
 import { expectDefined } from './helpers';
+import { expandCompoundSelectorLists } from './support/expandedCss';
 
 const reg = new StatusRegistry(buildDefaultTaskStatuses());
 
@@ -12,7 +13,7 @@ function styles(): string {
   const path = ts.sys.resolvePath(`${import.meta.dirname}/../styles.css`);
   const content = ts.sys.readFile(path);
   if (content === undefined) throw new Error(`Unable to read ${path}`);
-  return content;
+  return expandCompoundSelectorLists(content);
 }
 
 describe('renderStatusMarker', () => {

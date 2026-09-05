@@ -65,6 +65,10 @@ const context = await esbuild.context({
   treeShaking: true,
   outfile: 'main.js',
   minify: prod,
+  // Opt in only audited TypeScript private members; public, Obsidian and persisted keys
+  // never carry this suffix. Quoted/indirect property names must remain unmangled.
+  mangleProps: prod ? /_abyssPrivate$/ : undefined,
+  mangleQuoted: false,
   metafile: prod || analyze,
   plugins: [nosourcemapPlugin],
 });

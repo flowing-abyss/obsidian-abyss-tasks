@@ -233,7 +233,7 @@ describe('canonical task-node drag sources', () => {
     expect(payload.task).toEqual(h.node('A'));
     expect(payload.task.path.map((node) => node.title)).toEqual(['B', 'A']);
     expect(payload.task.node).toBe(payload.task.path[1]);
-    expect(h.el.querySelector('.abyss-dependency-section')).toBeNull();
+    expect(h.el.querySelector('.abyss-dep-section')).toBeNull();
     expect(h.sub('A')).toBe(row);
     expect(row.isConnected).toBe(true);
     expect(row.innerHTML).toBe(before);
@@ -249,9 +249,7 @@ describe('canonical task-node drag sources', () => {
       for (const kind of ['center', 'subtask'] as const) {
         const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b\n  - [ ] Child 🆔 child\n');
         if (kind === 'subtask')
-          expectDefined(
-            h.el.querySelector<HTMLButtonElement>('.abyss-dependency-badge-add'),
-          ).click();
+          expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-dep-badge-add')).click();
         const source = kind === 'center' ? h.card('A') : h.sub('Child');
         drag(source, 'dragstart');
         drag(h.section('blocked-by'), 'dragover');
@@ -261,8 +259,8 @@ describe('canonical task-node drag sources', () => {
         expect(h.state.get('draggingTaskNode')).toBeNull();
         expect(h.el.querySelector('.is-drop-target, .is-drop-disabled')).toBeNull();
         if (kind === 'center' || ending === 'destroy')
-          expect(h.el.querySelector('.abyss-dependency-section')).toBeNull();
-        else expect(h.el.querySelectorAll('.abyss-dependency-section')).toHaveLength(2);
+          expect(h.el.querySelector('.abyss-dep-section')).toBeNull();
+        else expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(2);
         expect(h.execute).not.toHaveBeenCalled();
       }
     },
@@ -297,7 +295,7 @@ describe('dependency section drops', () => {
       const order = h.index.listNodes().map(({ node }) => node.title);
       const source = kind === 'center' ? h.card('A') : h.sub('A');
       if (kind === 'subtask')
-        expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-dependency-badge-add')).click();
+        expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-dep-badge-add')).click();
       const centerOrder = h.centerEl.textContent;
       drag(source, 'dragstart');
       const target = h.section(direction);
@@ -394,17 +392,17 @@ describe('dependency drop disclosure and eligibility', () => {
 
   it('uses the whole existing section grammar and restores the integrated plus when the drag ends', async () => {
     const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b\n');
-    expect(h.el.querySelector('.abyss-dependency-section')).toBeNull();
-    expect(h.el.querySelector('.abyss-dependency-badge-add')).not.toBeNull();
+    expect(h.el.querySelector('.abyss-dep-section')).toBeNull();
+    expect(h.el.querySelector('.abyss-dep-badge-add')).not.toBeNull();
     const card = h.card('A');
     drag(card, 'dragstart');
     expect(
-      [...h.el.querySelectorAll('.abyss-dependency-section')].map((section) => section.textContent),
+      [...h.el.querySelectorAll('.abyss-dep-section')].map((section) => section.textContent),
     ).toEqual(['Blocked by+Add dependency', 'Blocks+Add dependency']);
-    expect(h.el.querySelector('.abyss-dependency-badge-add')).toBeNull();
+    expect(h.el.querySelector('.abyss-dep-badge-add')).toBeNull();
     const section = h.section('blocks');
     const markup = section.innerHTML;
-    drag(section.querySelector<HTMLElement>('.abyss-dependency-add') ?? section, 'dragenter');
+    drag(section.querySelector<HTMLElement>('.abyss-dep-add') ?? section, 'dragenter');
     expect(section.classList.contains('is-drop-target')).toBe(true);
     expect(h.section('blocked-by').classList.contains('is-drop-target')).toBe(false);
     expect(section.innerHTML).toBe(markup);
@@ -413,21 +411,21 @@ describe('dependency drop disclosure and eligibility', () => {
     drag(section, 'dragleave', { relatedTarget: h.el });
     expect(section.classList.contains('is-drop-target')).toBe(false);
     drag(card, 'dragend');
-    expect(h.el.querySelector('.abyss-dependency-section')).toBeNull();
-    expect(h.el.querySelector('.abyss-dependency-badge-add')).not.toBeNull();
+    expect(h.el.querySelector('.abyss-dep-section')).toBeNull();
+    expect(h.el.querySelector('.abyss-dep-badge-add')).not.toBeNull();
   });
 
   it.each(['center', 'subtask'] as const)(
     'preserves explicit add disclosure when a %s drag is cancelled and the badge body still opens search',
     async (kind) => {
       const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b\n  - [ ] Child\n');
-      expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-dependency-badge-add')).click();
+      expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-dep-badge-add')).click();
       drag(kind === 'center' ? h.card('A') : h.sub('Child'), 'dragstart');
       activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       expect(h.state.get('draggingTaskNode')).toBeNull();
-      expect(h.el.querySelectorAll('.abyss-dependency-section')).toHaveLength(2);
-      expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-dependency-badge-body')).click();
-      expect(h.el.querySelector('.abyss-dependency-search input')).not.toBeNull();
+      expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(2);
+      expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-dep-badge-body')).click();
+      expect(h.el.querySelector('.abyss-dep-search input')).not.toBeNull();
     },
   );
 
@@ -499,9 +497,7 @@ describe('dependency drop disclosure and eligibility', () => {
     expect(drag(section, 'dragover').event.defaultPrevented).toBe(false);
     expect(drag(section, 'drop').event.defaultPrevented).toBe(false);
     drag(h.sub('Child'), 'dragstart');
-    const row = expectDefined(
-      h.section('blocked-by').querySelector<HTMLElement>('.abyss-dependency-row'),
-    );
+    const row = expectDefined(h.section('blocked-by').querySelector<HTMLElement>('.abyss-dep-row'));
     expect(row.getAttribute('draggable')).toBeNull();
     drag(row, 'dragover');
     expect(row.classList.contains('drop-above')).toBe(false);
