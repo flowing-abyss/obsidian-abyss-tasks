@@ -123,6 +123,8 @@
 }
 
 .abyss-layout {
+  --abyss-compact-controls-height: 44px;
+
   position: relative;
   display: flex;
   height: 100%;
@@ -240,14 +242,14 @@
   .abyss-layout--tasks > .abyss-right.is-compact-open {
     position: absolute;
     z-index: calc(var(--layer-popover, 30) - 1);
-    inset-block: 0;
+    inset-block: var(--abyss-compact-controls-height) 0;
     inset-inline-end: 0;
     inline-size: min(20rem, calc(100cqi - 48px));
     box-shadow: var(--shadow-l);
   }
 
   .abyss-layout--tasks > .abyss-center-shell {
-    --abyss-shell-top-inset: 44px;
+    --abyss-shell-top-inset: var(--abyss-compact-controls-height);
   }
 
   .abyss-layout--tasks .abyss-compact-pane-controls {
@@ -318,7 +320,7 @@
   position: relative;
   z-index: var(--layer-popover, 30);
   display: none;
-  flex: 0 0 44px;
+  flex: 0 0 var(--abyss-compact-controls-height);
   align-items: center;
   padding-inline: var(--size-4-2, 0.5rem);
   border-block-end: 1px solid var(--background-modifier-border);
@@ -396,7 +398,7 @@
 }
 
 /* --- */
-.tasksCalendar span {
+.tasksCalendar span:where(:not([class*='abyss-'])) {
   display: contents;
 }
 
@@ -5671,6 +5673,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   height: 13px;
 }
 
+.abyss-subtask-remove svg {
+  width: 13px;
+  height: 13px;
+}
+
 .abyss-dep-count-blocked-by {
   color: var(--abyss-dependency-blocked-by);
 }
@@ -5685,6 +5692,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   background: var(--background-modifier-border);
 }
 
+.abyss-subtask-row .abyss-subtask-remove,
 .abyss-dep-row .abyss-dep-remove,
 .abyss-dep-section .abyss-dep-add,
 .abyss-dep-search .abyss-dep-search-option {
@@ -5743,6 +5751,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-muted);
 }
 
+.abyss-subtask-remove,
 .abyss-dep-remove {
   display: inline-flex;
   align-items: center;
@@ -5761,16 +5770,25 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   opacity: 1;
 }
 
+.abyss-subtask-row:is(:hover, :focus-within) .abyss-subtask-remove {
+  opacity: 1;
+}
+
 .abyss-dep-row.is-unavailable .abyss-dep-remove {
   color: var(--text-warning, var(--color-orange));
 }
 
+.abyss-subtask-remove:hover,
 .abyss-dep-remove:hover {
   background: var(--background-modifier-hover);
 }
 
 @media (pointer: coarse) {
   .abyss-dep-remove {
+    opacity: 1;
+  }
+
+  .abyss-subtask-remove {
     opacity: 1;
   }
 }
@@ -5785,6 +5803,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-dep-badge > button:focus-visible,
+.abyss-subtask-remove:focus-visible,
 .abyss-dep-remove:focus-visible,
 .abyss-dep-add:focus-visible,
 .abyss-dep-search button:focus-visible {
@@ -5921,6 +5940,17 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-subtask-content {
   flex: 1;
   min-width: 0;
+}
+
+.abyss-subtask-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.abyss-subtask-title-row .abyss-subtask-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .abyss-subtask-progress {

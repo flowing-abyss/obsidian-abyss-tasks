@@ -331,16 +331,17 @@ export class RightPanel {
     const offSelection = this.state_abyssPrivate.on('taskStack', (next, previous) => {
       const prior = this.dependencyTask_abyssPrivate(previous);
       const selected = next[next.length - 1];
-      if (
-        prior === undefined ||
-        selected === undefined ||
-        !sameTaskNodeRef(taskNodeRef(prior), taskNodeRef(selected))
-      ) {
+      const sameSelection =
+        prior !== undefined &&
+        selected !== undefined &&
+        sameTaskNodeRef(taskNodeRef(prior), taskNodeRef(selected));
+      const statusFocus = sameSelection ? this.statusFocusTarget_abyssPrivate(previous) : undefined;
+      if (!sameSelection) {
         this.dependencySearch_abyssPrivate?.destroy();
         this.dependencySearch_abyssPrivate = undefined;
         this.dependencyAdding_abyssPrivate = false;
       }
-      this.render_abyssPrivate();
+      this.render_abyssPrivate(statusFocus);
     });
     const offHistory = this.state_abyssPrivate.onCommit((changed) => {
       if (
@@ -916,7 +917,7 @@ export class RightPanel {
     this.el_abyssPrivate.prepend(tray);
   }
 
-  private render_abyssPrivate(): void {
+  private render_abyssPrivate(statusFocus?: TaskNodeRef): void {
     this.dependencyStatusMarkers_abyssPrivate.clear();
     const search = this.dependencySearch_abyssPrivate;
     const focused = this.el_abyssPrivate.ownerDocument.activeElement;
@@ -949,6 +950,7 @@ export class RightPanel {
       this.positionDependencySearch_abyssPrivate();
       searchFocus?.focus({ preventScroll: true });
     }
+    this.restoreStatusFocus_abyssPrivate(statusFocus);
   }
 
   /** Wire clipboard paste-to-attach onto an editable textarea, inserting links at the caret. */
@@ -1265,6 +1267,30 @@ export class RightPanel {
   }
 
   private readonly dependencyStatusMarkers_abyssPrivate = new Map<HTMLElement, TaskLike>();
+
+  private statusFocusTarget_abyssPrivate(stack: readonly TaskLike[]): TaskNodeRef | undefined {
+    const focused = this.el_abyssPrivate.ownerDocument.activeElement;
+    if (focused === null) return undefined;
+    for (const [marker, task] of this.dependencyStatusMarkers_abyssPrivate) {
+      if (marker !== focused && marker.closest('.abyss-status-control') !== focused) continue;
+      const current = this.dependencyTask_abyssPrivate(
+        task === stack[stack.length - 1] ? stack : [...stack, task],
+      );
+      return current === undefined ? undefined : taskNodeRef(current);
+    }
+    return undefined;
+  }
+
+  private restoreStatusFocus_abyssPrivate(target: TaskNodeRef | undefined): void {
+    if (target === undefined) return;
+    for (const [marker, task] of this.dependencyStatusMarkers_abyssPrivate) {
+      if (!sameTaskNodeRef(taskNodeRef(task), target)) continue;
+      (marker.closest<HTMLElement>('.abyss-status-control') ?? marker).focus({
+        preventScroll: true,
+      });
+      return;
+    }
+  }
 
   private renderTaskStatusMarker_abyssPrivate(parent: HTMLElement, task: TaskLike): void {
     const marker = renderStatusMarker(parent, {
@@ -1703,7 +1729,12 @@ export class RightPanel {
     if (!this.dependencyAdding_abyssPrivate || this.dependencySearch_abyssPrivate !== undefined)
       return;
     const target = event.target as HTMLElement;
-    if (target.closest('.abyss-dep-section, .abyss-dep-badge, .abyss-dep-search') !== null) return;
+    if (
+      target.closest(
+        '.abyss-dep-section, .abyss-dep-badge, .abyss-dep-search, .abyss-subtask-row[draggable="true"]',
+      ) !== null
+    )
+      return;
     this.dependencyAdding_abyssPrivate = false;
     this.refreshDependencies_abyssPrivate();
   };
@@ -1951,10 +1982,32 @@ export class RightPanel {
     sub: SubtaskSnapshot,
     parentTask: TaskLike,
   ): void {
-    const row = container.createDiv({ cls: 'abyss-subtask-row', attr: { draggable: 'true' } });
+    const row = container.createDiv({
+      cls: 'abyss-subtask-row',
+      attr: { draggable: 'true', tabindex: '-1' },
+    });
     this.bindSubtaskDragAndDrop_abyssPrivate(row, container, sub, parentTask);
     this.renderTaskStatusMarker_abyssPrivate(row, sub);
     this.renderSubtaskContent_abyssPrivate(row, sub);
+  }
+
+  private renderSubtaskRemove_abyssPrivate(container: HTMLElement, sub: SubtaskSnapshot): void {
+    const remove = container.createEl('button', {
+      cls: 'abyss-subtask-remove',
+      attr: { type: 'button', 'aria-label': 'Delete sub-task' },
+    });
+    setIcon(remove, 'x');
+    remove.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (remove.disabled) return;
+      remove.disabled = true;
+      runAsyncAction(
+        this.deleteTask_abyssPrivate(sub).finally(() => {
+          remove.disabled = false;
+        }),
+        'Could not delete sub-task',
+      );
+    });
   }
 
   private bindSubtaskDragAndDrop_abyssPrivate(
@@ -2057,7 +2110,8 @@ export class RightPanel {
 
   private renderSubtaskContent_abyssPrivate(row: HTMLElement, sub: SubtaskSnapshot): void {
     const content = row.createDiv({ cls: 'abyss-subtask-content' });
-    const label = content.createSpan({
+    const titleRow = content.createDiv({ cls: 'abyss-subtask-title-row' });
+    const label = titleRow.createSpan({
       cls: `abyss-subtask-label${sub.status === 'done' ? ' is-done' : ''}`,
     });
     renderTaskText(label, sub.markdownTitle, {
@@ -2072,6 +2126,7 @@ export class RightPanel {
       const stack = this.state_abyssPrivate.get('taskStack');
       this.state_abyssPrivate.updateInspectorSelection([...stack, sub]);
     });
+    this.renderSubtaskRemove_abyssPrivate(titleRow, sub);
 
     // Progress + comment count indicators
     const subCount = sub.subtasks.length;

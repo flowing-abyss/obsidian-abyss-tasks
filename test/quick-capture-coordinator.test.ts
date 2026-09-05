@@ -139,6 +139,22 @@ function phase(h: Harness): QuickCapturePhase {
 }
 
 describe('QuickCaptureCoordinator', () => {
+  it('keeps the compact inspector header below its existing pane-controls strip', () => {
+    expect(declarationsFor('.abyss-layout')).toContain('--abyss-compact-controls-height: 44px');
+    expect(declarationsFor('.abyss-compact-pane-controls')).toContain(
+      'flex: 0 0 var(--abyss-compact-controls-height)',
+    );
+    expect(declarationsFor('.abyss-layout--tasks > .abyss-right.is-compact-open')).toContain(
+      'inset-block: var(--abyss-compact-controls-height) 0',
+    );
+    expect(declarationsFor('.abyss-layout--tasks > .abyss-center-shell')).toContain(
+      '--abyss-shell-top-inset: var(--abyss-compact-controls-height)',
+    );
+    expect(declarationsFor('.abyss-layout--tasks > .abyss-left.is-compact-open')).toContain(
+      'inset-block: 0',
+    );
+  });
+
   it('keeps the stable host out of flow and width-clamped with theme-token styling', () => {
     const layoutRules = declarationsFor('.abyss-layout');
     const shellRules = declarationsFor('.abyss-center-shell');

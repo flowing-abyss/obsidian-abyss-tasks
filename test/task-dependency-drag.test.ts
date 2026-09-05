@@ -375,6 +375,25 @@ describe('dependency section drops', () => {
 });
 
 describe('dependency drop disclosure and eligibility', () => {
+  it('preserves plus-first section geometry when native pointer focus reaches a subtask before dragstart', async () => {
+    const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b\n  - [ ] Child\n');
+    expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-dep-badge-add')).click();
+    const sections = [...h.el.querySelectorAll('.abyss-dep-section')];
+    const source = h.sub('Child');
+    expect(source.getAttribute('tabindex')).toBe('-1');
+    source.focus();
+    expect(activeDocument.activeElement).toBe(source);
+    expect([...h.el.querySelectorAll('.abyss-dep-section')]).toEqual(sections);
+    drag(source, 'dragstart');
+    expect(h.state.get('draggingTaskNode')?.source).toBe('inspector-subtask');
+    expect([...h.el.querySelectorAll('.abyss-dep-section')]).toEqual(sections);
+    drag(source, 'dragend');
+    expect([...h.el.querySelectorAll('.abyss-dep-section')]).toEqual(sections);
+    const comment = expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input'));
+    comment.focus();
+    expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(0);
+  });
+
   it.each([
     ['center', 'blocked-by'],
     ['center', 'blocks'],

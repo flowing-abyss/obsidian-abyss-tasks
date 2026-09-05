@@ -1,10 +1,12 @@
+import { selectorSpecificity } from '@csstools/selector-specificity';
 import { addIcon } from 'obsidian';
+import selectorParser from 'postcss-selector-parser';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { renderStatusMarker, setStatusMarkerCompletionBlocked } from '../src/ui/StatusMarker';
-import { expectDefined } from './helpers';
+import { cssDeclarationsFor, cssDeclarationValue, expectDefined } from './helpers';
 import { expandCompoundSelectorLists } from './support/expandedCss';
 
 const reg = new StatusRegistry(buildDefaultTaskStatuses());
@@ -16,7 +18,46 @@ function styles(): string {
   return expandCompoundSelectorLists(content);
 }
 
+function legacySpanResetSelector(css: string): string {
+  return expectDefined(
+    /(\.tasksCalendar span[^{}]*)\{\s*display: contents;/u.exec(css)?.[1],
+  ).trim();
+}
+
 describe('renderStatusMarker', () => {
+  it('keeps modern control and indicator geometry outside the legacy codeblock span reset', () => {
+    const css = styles();
+    const selector = legacySpanResetSelector(css);
+    expect(cssDeclarationValue(cssDeclarationsFor(css, selector), 'display')).toBe('contents');
+    expect(
+      cssDeclarationValue(cssDeclarationsFor(css, '.tasksCalendar span'), 'display'),
+    ).toBeUndefined();
+    const calendar = createDiv({ cls: 'tasksCalendar' });
+    expect(calendar.createSpan({ cls: 'inner' }).matches(selector)).toBe(true);
+    for (const cls of [
+      'abyss-status-marker',
+      'abyss-status-control',
+      'abyss-dep-indicator',
+      'abyss-dep-divider',
+      'abyss-dep-count-blocked-by',
+      'abyss-recurrence-badge-icon',
+    ]) {
+      expect(calendar.createSpan({ cls }).matches(selector), cls).toBe(false);
+    }
+  });
+
+  it('keeps the legacy span reset below the toolbar count display rule in the cascade', () => {
+    const css = styles();
+    const reset = selectorParser().astSync(legacySpanResetSelector(css)).first;
+    const count = selectorParser().astSync('.tasksCalendar .stat-count').first;
+
+    expect(selectorSpecificity(reset)).toEqual({ a: 0, b: 1, c: 1 });
+    expect(selectorSpecificity(count)).toEqual({ a: 0, b: 2, c: 0 });
+    expect(
+      cssDeclarationValue(cssDeclarationsFor(css, '.tasksCalendar .stat-count'), 'display'),
+    ).toBe('inline-block');
+  });
+
   it('preserves owner-document focus when a mounted marker becomes blocked', () => {
     const frame = activeDocument.body.createEl('iframe');
     const ownerDocument = expectDefined(frame.contentDocument);

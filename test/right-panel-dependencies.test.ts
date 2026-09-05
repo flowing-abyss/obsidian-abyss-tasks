@@ -140,6 +140,85 @@ function modalRootPosition(location: string): number {
   return location.includes('last') ? 2 : 0;
 }
 
+describe('inspector subtask row removal', () => {
+  it('keeps row removal in normal flow and exposes it to hover, focus and touch', async () => {
+    if (!Platform.isDesktop) throw new Error('CSS contract requires desktop filesystem access');
+    const fs = await import('node:fs');
+    const css = expandCompoundSelectorLists(
+      fs.readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8'),
+    );
+    const value = (selector: string, property: string) =>
+      cssDeclarationValue(cssDeclarationsFor(css, selector), property);
+    expect(value('.abyss-subtask-remove', 'opacity')).toBe('0');
+    expect(value('.abyss-subtask-remove', 'position')).not.toBe('absolute');
+    expect(value('.abyss-subtask-row:hover .abyss-subtask-remove', 'opacity')).toBe('1');
+    expect(value('.abyss-subtask-row:focus-within .abyss-subtask-remove', 'opacity')).toBe('1');
+    expect(value('.abyss-subtask-remove:focus-visible', 'outline')).toBe(
+      '2px solid var(--interactive-accent)',
+    );
+    expect(value('.abyss-subtask-title-row', 'display')).toBe('flex');
+    expect(value('.abyss-subtask-title-row', 'align-items')).toBe('center');
+    expect(css).toMatch(
+      /@media\s*\(pointer: coarse\)\s*\{[^}]*\}[^}]*\.abyss-subtask-remove\s*\{\s*opacity: 1;/u,
+    );
+  });
+
+  it('deletes a nested subtree from its row and Undo restores exact bytes without navigation', async () => {
+    const markdown =
+      '- [ ] Source\n- [ ] Current\n  - [ ] Branch\n    - [ ] Remove me 🆔 child ⛔ missing\n      - > Keep **description**\n      - [ ] Grandchild\n      - 2026-09-05: Keep comment\n    - [ ] Keep sibling\n';
+    const captured = notices();
+    const h = await harness(markdown, 'Source');
+    h.state.openInspectorDependency(h.node('Branch'));
+    const row = button(h.el, '.abyss-subtask-section .abyss-subtask-row');
+    const remove = button(row, '.abyss-subtask-remove');
+    expect(remove.type).toBe('button');
+    expect(remove.tabIndex).toBe(0);
+    expect(remove.getAttribute('aria-label')).toBe('Delete sub-task');
+    expect(row.draggable).toBe(true);
+    expect(remove.parentElement?.className).toBe('abyss-subtask-title-row');
+    expect(remove.parentElement?.querySelector('.abyss-subtask-label')?.textContent).toBe(
+      'Remove me',
+    );
+    expect(remove.parentElement?.querySelector('.abyss-subtask-meta')).toBeNull();
+    remove.focus();
+    remove.click();
+    expect(remove.disabled).toBe(true);
+    remove.click();
+    await flushMicrotasks(50);
+    expect(await h.read()).toBe(
+      '- [ ] Source\n- [ ] Current\n  - [ ] Branch\n    - [ ] Keep sibling\n',
+    );
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Current', 'Branch']);
+    expect(h.state.get('inspectorBackStack').map((frame) => frame.taskStack[0]?.title)).toEqual([
+      'Source',
+    ]);
+    expect(captured).toHaveLength(1);
+    button(activeDocument.body, '.mod-cta').click();
+    await flushMicrotasks(50);
+    expect(await h.read()).toBe(markdown);
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Current', 'Branch']);
+  });
+
+  it('keeps a failed row deletion available for retry with one Notice and no write', async () => {
+    const markdown = '- [ ] Current\n  - [ ] Child\n';
+    const captured = notices();
+    const h = await harness(markdown);
+    vi.spyOn(h.api, 'execute').mockResolvedValue({
+      type: 'io-error',
+      cause: 'repository-error',
+      contentState: 'unknown',
+    });
+    const remove = button(h.el, '.abyss-subtask-remove');
+    remove.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+    await flushMicrotasks(30);
+    expect(await h.read()).toBe(markdown);
+    expect(captured).toHaveLength(1);
+    expect(remove.isConnected).toBe(true);
+    expect(remove.disabled).toBe(false);
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Current']);
+  });
+});
+
 describe('inspector dependency navigation', () => {
   const source =
     '- [ ] A\n  - [ ] A.1\n    - [ ] A.1.a 🆔 a ⛔ b\n- [ ] B\n  - [ ] B.2 🆔 b ⛔ c\n    - [ ] B.2.child\n- [ ] C 🆔 c\n';
@@ -772,6 +851,73 @@ describe('RightPanel dependency inspector', () => {
     expect(activeDocument.activeElement).toBe(input);
     h.state.set('taskStack', [h.node('Candidate').root]);
     expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
+  });
+
+  it.each([
+    { location: 'task header', selected: 'Current', selector: '.abyss-right-header' },
+    { location: 'nested header', selected: 'Child', selector: '.abyss-right-header' },
+    { location: 'subtask row', selected: 'Current', selector: '.abyss-subtask-row' },
+  ])(
+    'retains $location status focus through prerequisite selection reconciliation',
+    async ({ selected, selector }) => {
+      const h = await harness(
+        '- [ ] Current ⛔ blocker\n  - [ ] Child ⛔ blocker\n- [ ] Blocker 🆔 blocker\n',
+        selected,
+      );
+      cleanups.unshift(
+        h.index.subscribe(() => {
+          const current = h.node(selected);
+          h.state.updateInspectorSelection([current.root, ...current.path]);
+        }),
+      );
+      const status = () => button(h.el, `${selector} [role="checkbox"]`);
+      let control = status();
+      control.focus();
+      expect(h.el.ownerDocument.activeElement).toBe(control);
+      expect(control.getAttribute('aria-disabled')).toBe('true');
+
+      for (const blocked of [false, true]) {
+        expect(
+          await h.api.execute({ type: 'toggle-completion', target: h.node('Blocker').target }),
+        ).toMatchObject({ type: 'ok' });
+        await flushMicrotasks();
+        expect(control.isConnected).toBe(false);
+        control = status();
+        expect(h.el.ownerDocument.activeElement).toBe(control);
+        expect(control.classList.contains('abyss-status-control')).toBe(blocked);
+        expect(control.getAttribute('aria-disabled')).toBe(blocked ? 'true' : null);
+        expect(h.el.querySelectorAll(`${selector} [role="checkbox"][tabindex="0"]`)).toHaveLength(
+          1,
+        );
+      }
+    },
+  );
+
+  it.each(['Child', 'Blocker', undefined])(
+    'does not transfer status focus when navigating to %s',
+    async (selected) => {
+      const h = await harness(
+        '- [ ] Current ⛔ blocker\n  - [ ] Child\n- [ ] Blocker 🆔 blocker\n',
+      );
+      button(h.el, '.abyss-right-header [role="checkbox"]').focus();
+      const destination = selected === undefined ? undefined : h.node(selected);
+
+      h.state.updateInspectorSelection(
+        destination === undefined ? [] : [destination.root, ...destination.path],
+      );
+
+      expect(h.el.ownerDocument.activeElement).toBe(h.el.ownerDocument.body);
+    },
+  );
+
+  it('leaves outside focus in place when refreshing the selected task', async () => {
+    const h = await harness('- [ ] Current ⛔ blocker\n- [ ] Blocker 🆔 blocker\n');
+    const outside = h.el.ownerDocument.body.createEl('button');
+    outside.focus();
+
+    h.state.updateInspectorSelection([h.node('Current').root]);
+
+    expect(h.el.ownerDocument.activeElement).toBe(outside);
   });
 
   it('reconciles counterpart completion and missing IDs through normal index events without discarding an editing draft', async () => {
