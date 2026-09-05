@@ -254,6 +254,11 @@ consume the preceding separator; an optional ephemeral `placement.lineEnding` pr
 otherwise-lost LF/CRLF evidence. It is validated before repository I/O and used only without an
 anchor supplying context. Older recovery payloads must have unambiguous current separator evidence
 or restoration conflicts. This adds no persisted task metadata and preserves existing deletion bytes.
+The editor and projector share the blank/quote-only line predicate. A fresh exact-base recovery may
+cross preserved, quote-compatible separator lines beyond the shortened parent's projected block,
+including its implicit empty EOF line; it never crosses intervening content or synthesizes an
+uncaptured gap. Such out-of-block placement cannot be rebased even with an otherwise valid anchor.
+Appending the captured subtree preserves its original final-newline state.
 
 `taskUndoNotice` owns the success/Undo surface for recoverable mutations. It constructs inverses
 from committed dependency outcomes or exact subtask recovery, so Undo never reuses pre-write refs.

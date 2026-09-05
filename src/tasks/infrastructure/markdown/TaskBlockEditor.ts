@@ -5,6 +5,7 @@ import {
   type RecurrenceOwnedSubtree,
 } from '../../domain/recurrenceIteration';
 import type { TaskInsertionPolicy } from '../../domain/types';
+import { isTaskBlockBlankLine } from './taskBlockSyntax';
 
 const TASK_RE = /^[\s>]*- \[(.)\]/u;
 const PREFIX_RE = /^([\s>]*)/u;
@@ -229,6 +230,13 @@ interface BlockEditContext {
   readonly hadFinalEnding: boolean;
 }
 
+function compatibleBlankLine(line: string, parent: string): boolean {
+  return (
+    isTaskBlockBlankLine(line) &&
+    (quoteDepth(line) === 0 || quoteDepth(line) === quoteDepth(parent))
+  );
+}
+
 function validRestoredSubtree(lines: readonly SourceLine[], parent: string): boolean {
   const first = lines[0]?.text;
   if (first === undefined || !TASK_RE.test(first)) return false;
@@ -240,7 +248,7 @@ function validRestoredSubtree(lines: readonly SourceLine[], parent: string): boo
       .slice(1)
       .every(
         (line) =>
-          line.text.trim().length === 0 ||
+          compatibleBlankLine(line.text, parent) ||
           (indentation(line.text) > depth && quoteDepth(line.text) === quoteDepth(first)),
       )
   );
@@ -253,16 +261,12 @@ function restoredSubtaskLine(
   placement: RestorePlacement,
 ): number | undefined {
   const { relativeLine } = placement;
-  if (
-    !Number.isSafeInteger(relativeLine) ||
-    relativeLine <= 0 ||
-    relativeLine > context.target.lineCount
-  )
-    return undefined;
+  if (!Number.isSafeInteger(relativeLine) || relativeLine <= 0) return undefined;
   const anchors = restorationAnchors(context, placement);
   if (anchors === undefined) return undefined;
   const { before: beforeRange, after: afterRange } = anchors;
   const insertion = anchoredRestorationLine(context, placement, anchors);
+  if (!safeRestorationGap(context, insertion)) return undefined;
   if (
     (beforeRange !== undefined && insertion > beforeRange.from) ||
     (afterRange !== undefined && insertion <= afterRange.to)
@@ -275,6 +279,16 @@ function restoredSubtaskLine(
   )
     return undefined;
   return insertion;
+}
+
+function safeRestorationGap(context: BlockEditContext, insertion: number): boolean {
+  if (insertion > context.lines.length) return false;
+  for (let line = context.parentLine + context.target.lineCount; line < insertion; line++) {
+    const source = context.lines[line];
+    if (source === undefined || !compatibleBlankLine(source.text, context.parent.text))
+      return false;
+  }
+  return true;
 }
 
 interface RestorationAnchors {
@@ -341,7 +355,7 @@ function rootBlockAt(
   while (cursor < lines.length) {
     const line = lines[cursor];
     if (line == null) break;
-    if (/^[\s>]*$/u.test(line.text)) {
+    if (isTaskBlockBlankLine(line.text)) {
       cursor++;
       continue;
     }
@@ -609,12 +623,26 @@ export class TaskBlockEditor {
     edit: Extract<TaskBlockEdit, { readonly type: 'restore-subtask' }>,
   ): TaskBlockEditResult | undefined {
     const additions = sourceLines(edit.markdown);
-    const first = additions[0];
-    if (first === undefined || !validRestoredSubtree(additions, context.parent.text)) {
+    if (!validRestoredSubtree(additions, context.parent.text)) {
       return { type: 'invalid', field: 'subtask' };
+    }
+    // Deleting a no-final-newline subtree can leave an empty EOF line omitted by sourceLines.
+    if (
+      context.hadFinalEnding &&
+      !edit.markdown.endsWith('\n') &&
+      context.parentLine + edit.placement.relativeLine === context.lines.length + 1
+    ) {
+      context.lines.push({
+        text: '',
+        ending: '',
+        from: context.content.length,
+        to: context.content.length,
+      });
     }
     const insertion = restoredSubtaskLine(context, edit.placement);
     if (insertion === undefined) return { type: 'conflict' };
+    const hadFinalEnding =
+      insertion === context.lines.length ? edit.markdown.endsWith('\n') : context.hadFinalEnding;
     const previous = context.lines[insertion - 1];
     if (previous?.ending === '') {
       const ending = restoreSeparator(context, edit.placement);
@@ -622,7 +650,7 @@ export class TaskBlockEditor {
       previous.ending = ending;
     }
     context.lines.splice(insertion, 0, ...additions);
-    return undefined;
+    return this.editedResult({ ...context, hadFinalEnding });
   }
 
   private reorderSubtask(

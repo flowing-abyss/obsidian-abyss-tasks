@@ -16,6 +16,7 @@ import type {
   TaskSnapshot,
 } from '../../domain/types';
 import { durationMinutes, localDate, localTime } from '../../domain/validation';
+import { isTaskBlockBlankLine } from './taskBlockSyntax';
 import type { TaskMarkdownCodec } from './TaskMarkdownCodec';
 
 const PREFIX_RE = /^([\s>]*)/u;
@@ -219,7 +220,7 @@ function projectChildren(
   while (line < context.lines.length) {
     const source = context.lines[line];
     if (source === undefined) break;
-    if (/^[\s>]*$/u.test(source)) {
+    if (isTaskBlockBlankLine(source)) {
       line++;
       continue;
     }

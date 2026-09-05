@@ -2,6 +2,7 @@ import { TFile, type App } from 'obsidian';
 import { parseLinks } from '../../../markdown/links';
 import {
   dependencyMetadataIssues,
+  subtaskRestorationGapIsCurrent,
   subtaskRestorationIssues,
   type RecurrenceCompletionRequest,
   type RecurrenceCompletionRevisionRequest,
@@ -1854,6 +1855,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     command: StructuralTaskEditCommand,
     node: TaskSnapshot | SubtaskSnapshot,
   ): boolean {
+    if (command.type === 'restore-subtask') return !subtaskRestorationGapIsCurrent(command, node);
     if (command.type === 'update-comment' || command.type === 'delete-comment') {
       return !ownsComment(node, command.comment);
     }

@@ -20,6 +20,7 @@ import type {
   TaskEditRequest,
   TaskMoveRequest,
 } from './TaskRepository';
+import { subtaskRestorationGapIsCurrent } from './TaskRepository';
 
 export type RetryPolicy =
   'commutative' | 'field-compare' | 'exact-target' | 'relocation-only' | 'never';
@@ -130,7 +131,12 @@ export function reconcileSubtaskRestoration(
   if (parent === undefined) return undefined;
   const beforeNode = exactRestorationNode(previous, command.parent);
   const afterNode = exactRestorationNode(current, parent);
-  if (!restorationParentUnchanged(beforeNode, afterNode)) return undefined;
+  if (
+    afterNode === undefined ||
+    !restorationParentUnchanged(beforeNode, afterNode) ||
+    !subtaskRestorationGapIsCurrent(command, afterNode)
+  )
+    return undefined;
   const { before, after } = command.placement;
   if (before === undefined && after === undefined && previous.ref.revision !== current.ref.revision)
     return undefined;
@@ -150,10 +156,11 @@ function restorationParentUnchanged(
   current: TaskStatusSnapshot | undefined,
 ): boolean {
   if (previous === undefined || current === undefined) return false;
-  const original =
-    'source' in previous ? previous.source.originalBlock : previous.ref.originalBlock;
-  const actual = 'source' in current ? current.source.originalBlock : current.ref.originalBlock;
-  return original === actual;
+  return restorationSource(previous) === restorationSource(current);
+}
+
+function restorationSource(node: TaskStatusSnapshot): string {
+  return 'source' in node ? node.source.originalBlock : node.ref.originalBlock;
 }
 
 type DirectRebaseCommand = Extract<

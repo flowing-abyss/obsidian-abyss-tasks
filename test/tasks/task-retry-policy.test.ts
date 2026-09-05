@@ -185,6 +185,35 @@ describe('prepareRetry', () => {
     );
   });
 
+  it.each(['revision', 'relocation'] as const)(
+    'does not rebase an anchored restoration gap after %s',
+    (change) => {
+      const previousBase = snapshot();
+      const previous = {
+        ...previousBase,
+        subtasks: [subtask(previousBase)],
+        source: {
+          ...previousBase.source,
+          originalBlock: `${previousBase.source.originalMarkdown}\n  - [ ] child`,
+        },
+      };
+      const currentBase =
+        change === 'revision'
+          ? snapshot('Task', 'current')
+          : { ...previousBase, ref: { ...previousBase.ref, line: 2 } };
+      const current = { ...currentBase, subtasks: [subtask(currentBase)], source: previous.source };
+      const command: TaskEditRequest['command'] = {
+        type: 'restore-subtask',
+        parent: { type: 'task', ref: previous.ref },
+        markdown: '  - [ ] restored\n',
+        placement: { relativeLine: 3, after: subtask(previous).ref },
+      };
+      expect(
+        retryAgainst(preparedFor(previous, command, 'exact-target'), previous, current),
+      ).toEqual({ type: 'unsafe' });
+    },
+  );
+
   it('does not restore into a changed parent even if its neighboring child still matches', () => {
     const previousBase = snapshot();
     const previous = {

@@ -11,6 +11,7 @@ import { isTaskDependencyId } from '../domain/taskLineSourceModel';
 import type { RebaseEvidence, RootReconciliationBasis } from '../domain/taskReconciliation';
 import type {
   LocalDate,
+  SubtaskSnapshot,
   TaskDestination,
   TaskMutationTarget,
   TaskNodeRef,
@@ -82,6 +83,21 @@ export function subtaskRestorationIssues(
     !validRestorationEnding(lineEnding) ||
     !restorationAnchorsOwned(command);
   return invalid ? [{ code: 'invalid-target', field: 'subtask' }] : [];
+}
+
+export function subtaskRestorationGapIsCurrent(
+  command: Extract<TaskCommand, { readonly type: 'restore-subtask' }>,
+  current: TaskSnapshot | SubtaskSnapshot,
+): boolean {
+  const source = 'source' in current ? current.source.originalBlock : current.ref.originalBlock;
+  const parent: TaskNodeRef =
+    'source' in current
+      ? { type: 'task', ref: current.ref }
+      : { type: 'subtask', ref: current.ref };
+  return (
+    command.placement.relativeLine <= source.split(/\r?\n/u).length ||
+    sameTaskNodeRef(command.parent, parent)
+  );
 }
 
 function validRestorationEnding(value: unknown): boolean {

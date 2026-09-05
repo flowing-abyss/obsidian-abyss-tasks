@@ -1,6 +1,7 @@
 import { parseLinks } from '../../src/markdown/links';
 import {
   dependencyMetadataIssues,
+  subtaskRestorationGapIsCurrent,
   subtaskRestorationIssues,
   type RecurrenceCompletionRequest,
   type RecurrenceCompletionRevisionRequest,
@@ -1387,6 +1388,7 @@ export class InMemoryTaskRepository implements TaskRepository {
     command: StructuralTaskEditCommand,
     target: TaskSnapshot | SubtaskSnapshot,
   ): boolean {
+    if (command.type === 'restore-subtask') return !subtaskRestorationGapIsCurrent(command, target);
     if (command.type === 'update-comment' || command.type === 'delete-comment') {
       return !ownsComment(target, command.comment);
     }
