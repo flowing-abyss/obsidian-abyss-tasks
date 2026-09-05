@@ -271,6 +271,15 @@ describe('revision-aware nested selection rebuild', () => {
     });
   });
 
+  it('keeps an exact duplicate child before trying unique source fallback', () => {
+    const root = withChild(snapshot('live', 'Root'), '  - [ ] Child');
+    const child = expectDefined(root.subtasks[0]);
+    const selected = { ...child, ref: { ...child.ref, relativeLine: 2 } };
+    const current = { ...root, subtasks: [child, selected] };
+
+    expect(rebuildTaskSelection(current, [current, selected])).toEqual([current, selected]);
+  });
+
   it('keeps a selected child by retained relative ref when an exact root moves', () => {
     const staleRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
     const movedRoot = withChild(
@@ -374,9 +383,11 @@ describe('revision-aware nested selection rebuild', () => {
   it('does not let a duplicate child at the stale line capture the selection', () => {
     const staleRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
     const child = expectDefined(staleRoot.subtasks[0]);
+    const freshRoot = withChild(snapshot('fresh', 'Root'), '  - [ ] Child');
+    const freshChild = expectDefined(freshRoot.subtasks[0]);
     const candidateRoot = {
-      ...staleRoot,
-      subtasks: [child, { ...child, ref: { ...child.ref, relativeLine: 3 } }],
+      ...freshRoot,
+      subtasks: [freshChild, { ...freshChild, ref: { ...freshChild.ref, relativeLine: 3 } }],
     };
 
     expect(rebuildTaskSelection(candidateRoot, [staleRoot, child])).toHaveLength(1);

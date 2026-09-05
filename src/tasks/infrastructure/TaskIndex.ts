@@ -530,6 +530,7 @@ interface ReconciledRevisionContext {
   readonly priorByLine: ReadonlyMap<number, TaskSnapshot>;
   readonly priorBySource: ReadonlyMap<string, readonly TaskSnapshot[]>;
   readonly currentSourceCounts: ReadonlyMap<string, number>;
+  readonly currentByLine: ReadonlyMap<number, { readonly source: string }>;
   readonly allocateSuccessor: boolean;
   readonly observedFile: boolean;
 }
@@ -554,6 +555,8 @@ interface FileParseContext {
 function reusablePriorRevision(input: ReconciledRevisionInput): string | undefined {
   const hinted = input.priorByLine.get(input.line);
   const prior = input.priorBySource.get(input.source) ?? [];
+  const duplicateRevision = unchangedDuplicateRevision(input, hinted, prior);
+  if (duplicateRevision !== undefined) return duplicateRevision;
   const uniqueCurrentSource = input.sourceCount === 1;
   const uniquePriorSource = prior.length === 1;
   if (hinted?.source.originalBlock === input.source && uniqueCurrentSource && uniquePriorSource) {
@@ -561,6 +564,19 @@ function reusablePriorRevision(input: ReconciledRevisionInput): string | undefin
   }
   const priorTask = prior[0];
   return uniqueCurrentSource && uniquePriorSource ? priorTask?.ref.revision : undefined;
+}
+
+function unchangedDuplicateRevision(
+  input: ReconciledRevisionInput,
+  hinted: TaskSnapshot | undefined,
+  prior: readonly TaskSnapshot[],
+): string | undefined {
+  if (hinted === undefined || input.sourceCount < 2) return undefined;
+  return prior.length === input.sourceCount &&
+    hinted.source.originalBlock === input.source &&
+    prior.every((task) => input.currentByLine.get(task.ref.line)?.source === input.source)
+    ? hinted.ref.revision
+    : undefined;
 }
 
 function hintedSourceWasRelocated(input: ReconciledRevisionInput, hinted: TaskSnapshot): boolean {
@@ -580,7 +596,19 @@ function shouldAllocateSuccessor(
 }
 
 function shouldMintAuthorityRevision(input: ReconciledRevisionInput): boolean {
-  return input.observedFile && input.allocateSuccessor;
+  return (input.observedFile || input.sourceCount > 1) && input.allocateSuccessor;
+}
+
+function mismatchedDuplicatePopulation(
+  sourceMatches: readonly TaskSnapshot[],
+  sourceLines: readonly number[] | undefined,
+): boolean {
+  if (sourceLines === undefined || Math.max(sourceMatches.length, sourceLines.length) < 2)
+    return false;
+  return (
+    sourceMatches.length !== sourceLines.length ||
+    sourceMatches.some((task, index) => task.ref.line !== sourceLines[index])
+  );
 }
 
 function countBlockSources(
@@ -848,8 +876,10 @@ function directRevisionResolution(
   ref: TaskRef,
   current: TaskSnapshot | undefined,
   matches: readonly TaskSnapshot[],
+  authority: TaskRefAuthority | undefined,
 ): TaskResolution | undefined {
-  if (matches.length > 1) return ambiguousResolution(matches);
+  if (matches.length > 1 && (authority === undefined || current?.ref.revision !== ref.revision))
+    return ambiguousResolution(matches);
   if (current?.ref.revision !== ref.revision) return undefined;
   const task = cloneTaskSnapshot(current);
   return { type: 'exact', task, basis: { observed: cloneTaskSnapshot(task) } };
@@ -1025,14 +1055,19 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       expectedSource === undefined
         ? []
         : tasks.filter((task) => task.source.originalBlock === expectedSource);
+    const matches = tasks.filter((task) => task.ref.revision === ref.revision);
+    const directResolution = directRevisionResolution(
+      ref,
+      current,
+      matches,
+      this.options.refAuthority,
+    );
+    if (directResolution !== undefined) return directResolution;
     const authorityResolution = authorityAmbiguityResolution(
       this.options.refAuthority,
       sourceMatches,
     );
     if (authorityResolution !== undefined) return authorityResolution;
-    const matches = tasks.filter((task) => task.ref.revision === ref.revision);
-    const directResolution = directRevisionResolution(ref, current, matches);
-    if (directResolution !== undefined) return directResolution;
     const fileTransition = this.reconciliationTransitions.get(ref.filePath);
     const transition = fileTransition?.writable.get(taskReconciliationKey(ref));
     const rebaseResolution = writableRebaseResolution(
@@ -1185,6 +1220,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
         priorByLine: new Map(priorTasks.map((task) => [task.source.line, task] as const)),
         priorBySource: priorTasksBySource(priorTasks),
         currentSourceCounts: sourceCounts,
+        currentByLine: blockByLine,
         allocateSuccessor: input.allocateSuccessor ?? false,
         observedFile: input.observedFile ?? false,
       },
@@ -1229,12 +1265,19 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     return this.previewContent(filePath, content);
   }
 
-  currentRoot(filePath: string, line: number, source: string): TaskRef | undefined {
+  currentRoot(
+    filePath: string,
+    line: number,
+    source: string,
+    sourceLines?: readonly number[],
+  ): TaskRef | undefined {
     const tasks = this.taskMap.get(filePath) ?? [];
     const sourceMatches = tasks.filter((task) => task.source.originalBlock === source);
-    if (sourceMatches.length > 1) return undefined;
+    if (mismatchedDuplicatePopulation(sourceMatches, sourceLines)) return undefined;
     const hinted = tasks.find((task) => task.source.line === line);
-    const current = hinted?.source.originalBlock === source ? hinted : (sourceMatches[0] ?? hinted);
+    if (hinted?.source.originalBlock === source) return { ...hinted.ref };
+    if (sourceMatches.length > 1) return undefined;
+    const current = sourceMatches[0] ?? hinted;
     return current != null ? { ...current.ref } : undefined;
   }
 

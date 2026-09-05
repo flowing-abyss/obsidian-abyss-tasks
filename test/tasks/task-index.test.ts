@@ -137,6 +137,80 @@ function captureCreateCallback(
 }
 
 describe('TaskIndex lifecycle and events', () => {
+  it('mints detached initial duplicate refs and preserves them on an unchanged metadata refresh', async () => {
+    const authority = new TaskRefAuthority('initial-duplicates');
+    const source = '\n- [ ] Same\n- [ ] Same\n- [ ] Unique\n';
+    const { app, index, fireChanged } = await setup({ 'tasks.md': source }, authority);
+    seedTaskCache(
+      app,
+      'tasks.md',
+      [1, 2, 3].map((line) => ({ task: ' ', parent: -1, line })),
+    );
+    await index.initialize();
+    const roots = index.list({ filePath: 'tasks.md' });
+
+    expect(roots).toHaveLength(3);
+    expect(expectDefined(roots[0]).ref.revision).not.toBe(expectDefined(roots[1]).ref.revision);
+    expect(expectDefined(roots[2]).ref.revision).toBe(authority.revision('- [ ] Unique'));
+    fireChanged(mdFile(app, 'tasks.md'), source, rootsCache([1, 2, 3]));
+    await flushMicrotasks(20);
+    expect(index.list({ filePath: 'tasks.md' })).toEqual(roots);
+    Object.assign(expectDefined(roots[0]).ref, { line: 99 });
+    expect(index.list({ filePath: 'tasks.md' })[0]?.ref.line).toBe(1);
+    index.destroy();
+  });
+
+  it.each([
+    '\n- [ ] Same\n- [ ] Same\ntext\n- [ ] Same\n',
+    '\n- [ ] Same\ntext\n- [ ] Same\n- [ ] Same\n',
+    '\ntext\n- [ ] Same\n',
+    '\n- [ ] Same\ntext\n',
+    '\ntext\n- [ ] Same\n- [ ] Same\n',
+  ])(
+    'does not rebind stale duplicate refs after an observed population change (%#)',
+    async (current) => {
+      const authority = new TaskRefAuthority('changed-duplicates');
+      const source = '\n- [ ] Same\ntext\n- [ ] Same\n';
+      const { app, index } = await setup({ 'tasks.md': source }, authority);
+      seedTaskCache(
+        app,
+        'tasks.md',
+        [1, 3].map((line) => ({ task: ' ', parent: -1, line })),
+      );
+      await index.initialize();
+      const previous = index.list({ filePath: 'tasks.md' });
+      index.installCommittedContent('tasks.md', current);
+      for (const root of previous)
+        expect(['exact', 'rebased']).not.toContain(index.resolve(root.ref).type);
+      index.destroy();
+    },
+  );
+
+  it('resolves each live byte-identical root by exact line and authority revision', async () => {
+    const authority = new TaskRefAuthority('live-duplicates');
+    const { index } = await setup({ 'tasks.md': '\n- [ ] Same\n- [ ] Same\n' }, authority);
+    await index.initialize();
+    const roots = index.installCommittedContent('tasks.md', '\n- [ ] Same\n- [ ] Same\n');
+
+    expect(roots).toHaveLength(2);
+    for (const task of roots) {
+      expect(index.resolve(task.ref)).toMatchObject({ type: 'exact', task });
+      expect(index.currentRoot('tasks.md', task.ref.line, task.source.originalBlock)).toEqual(
+        task.ref,
+      );
+      expect(
+        index.currentRoot('tasks.md', task.ref.line, task.source.originalBlock, [1, 2]),
+      ).toEqual(task.ref);
+      for (const changed of [[1], [2], [1, 2, 3], [2, 3]]) {
+        expect(
+          index.currentRoot('tasks.md', task.ref.line, task.source.originalBlock, changed),
+        ).toBeUndefined();
+      }
+    }
+    expect(index.resolve({ ...expectDefined(roots[0]).ref, line: 99 }).type).toBe('ambiguous');
+    index.destroy();
+  });
+
   it('refreshes dependency projections after catalog changes, edits, rename and deletion', async () => {
     const { app, index, fireChanged } = await setup({
       'a.md': '- [?] blocker 🆔 a',

@@ -102,6 +102,38 @@ function pair(roots: readonly TaskSnapshot[]): TaskEditBatchRequest {
 
 for (const adapter of ['in-memory', 'obsidian'] as const) {
   describe(`${adapter} metadata batch contract`, () => {
+    it('commits distinct byte-identical roots when both line and authority revision are current', async () => {
+      const h = await harness(adapter, '\n- [ ] Same\n- [ ] Same\n');
+
+      await expect(h.repository.editBatch(pair(h.roots))).resolves.toMatchObject({
+        type: 'committed',
+        changed: true,
+      });
+      expect(await h.read()).toBe('\n- [ ] Same 🆔 blocker\n- [ ] Same ⛔ blocker\n');
+    });
+
+    it.each([
+      ['inserted before', '\n- [ ] Same\n- [ ] Same\ntext\n- [ ] Same\n'],
+      ['inserted after', '\n- [ ] Same\ntext\n- [ ] Same\n- [ ] Same\n'],
+      ['deleted before', '\ntext\n- [ ] Same\n'],
+      ['deleted after', '\n- [ ] Same\ntext\n'],
+      ['reordered around retained text', '\ntext\n- [ ] Same\n- [ ] Same\n'],
+    ])('rejects an unobserved duplicate population change (%s)', async (_name, current) => {
+      const h = await harness(adapter, '\n- [ ] Same\ntext\n- [ ] Same\n', current);
+      expect(h.index.list({ filePath: path })).toEqual(h.roots);
+
+      const result = await h.repository.editBatch(pair(h.roots));
+
+      expect(result.type).not.toBe('committed');
+      expect(result.type).not.toBe('rebased');
+      expect(await h.read()).toBe(current);
+      expect(
+        h.index
+          .list({ filePath: path })
+          .every((task) => task.dependencyId === undefined && task.dependsOn.length === 0),
+      ).toBe(true);
+    });
+
     it('returns the unchanged current root when another transaction already owns the file', async () => {
       const source = '\n- [ ] Blocker\n- [ ] Dependent\n';
       const h = await harness(adapter, source);

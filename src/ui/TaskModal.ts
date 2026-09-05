@@ -230,7 +230,13 @@ export class TaskModal {
         ? this.innerPanel?.captureDraftStateForOwnedTransition(consumedOwnedRef, current.ref)
         : this.innerPanel?.captureDraftState();
     this.ownedWriteRef = undefined;
-    this.innerState?.set('taskStack', rebuildTaskSelection(current, stack));
+    this.innerState?.set(
+      'taskStack',
+      rebuildTaskSelection(current, stack, {
+        preserveDependencyChanges:
+          resolution.type === 'rebased' && resolution.evidence === 'authority-transition',
+      }),
+    );
     this.innerPanel?.restoreDraftState(draft, current);
   }
 

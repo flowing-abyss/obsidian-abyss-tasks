@@ -56,6 +56,7 @@ import { type TaskLocator } from '../markdown/TaskLocator';
 import { type TaskMarkdownCodec } from '../markdown/TaskMarkdownCodec';
 import { prepareTaskEditBatch, stageTaskEditBatch, taskEditBatchIssues } from '../TaskEditBatch';
 import {
+  hasUnconfirmedCurrentRoot,
   taskRefContentFingerprint,
   type RootRevisionOverride,
   type TaskRefAuthority,
@@ -1570,13 +1571,20 @@ export class ObsidianTaskRepository implements TaskRepository {
 
   private resolveEditLocation(input: EditProcessInput, content: string): EditLocation {
     const { rootRef } = input;
+    const blocks = this.options.editor.rootBlocks(content);
     const evidence = this.options.refAuthority?.evidence(rootRef.revision);
     const indexedRef =
       evidence === undefined
         ? undefined
-        : this.options.snapshotState?.currentRoot(rootRef.filePath, rootRef.line, evidence.source);
-    const blocks = this.options.editor.rootBlocks(content);
-    const located = this.options.locator.locate(blocks, rootRef);
+        : this.options.snapshotState?.currentRoot(
+            rootRef.filePath,
+            rootRef.line,
+            evidence.source,
+            blocks.filter((block) => block.source === evidence.source).map((block) => block.line),
+          );
+    const located = this.options.locator.locate(blocks, rootRef, indexedRef);
+    if (hasUnconfirmedCurrentRoot(this.options.snapshotState, rootRef, evidence, indexedRef))
+      return { type: 'result', result: this.editResolution(input, located, content) };
     const revision = preparedRevisionResult({
       prepared: input.prepared,
       located,

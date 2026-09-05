@@ -811,6 +811,32 @@ describe('external review regressions', () => {
 });
 
 describe('public dependency commands', () => {
+  it('links distinct byte-identical roots using live exact references', async () => {
+    const h = await harness({ 'tasks.md': '\n- [ ] Same\n- [ ] Same\n' }, () => 'exact123');
+    const [blocker, dependent] = h.index.listNodes();
+    h.index.installCommittedContent('tasks.md', await h.read());
+    expect(h.index.listNodes()).toEqual([blocker, dependent]);
+
+    const result = await h.application.execute({
+      type: 'add-dependency',
+      blocker: expectDefined(blocker).target,
+      dependent: expectDefined(dependent).target,
+    });
+
+    expect(result).toMatchObject({ type: 'ok', outcome: { type: 'dependency' } });
+    expect(await h.read()).toBe('\n- [ ] Same 🆔 exact123\n- [ ] Same ⛔ exact123\n');
+    for (const [position, previous] of [
+      expectDefined(blocker),
+      expectDefined(dependent),
+    ].entries()) {
+      expect(h.index.resolve(previous.root.ref)).toMatchObject({
+        type: 'rebased',
+        evidence: 'authority-transition',
+        current: { ref: expectDefined(h.index.listNodes()[position]).root.ref },
+      });
+    }
+  });
+
   it('accepts an exact structural ref among identical siblings', async () => {
     const h = await harness({
       'tasks.md': '\n- [ ] Root\n  - [ ] Same\n  - [ ] Same\n- [ ] Dependent\n',

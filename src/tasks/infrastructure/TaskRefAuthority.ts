@@ -2,7 +2,7 @@ import type {
   ProvenRootRevisionOverride,
   RootRevisionOverride,
 } from '../domain/taskReconciliation';
-import type { TaskRef, TaskSnapshot } from '../domain/types';
+import { sameTaskNodeRef, type TaskRef, type TaskSnapshot } from '../domain/types';
 
 export type { RootRevisionOverride } from '../domain/taskReconciliation';
 
@@ -36,11 +36,31 @@ export type TaskRefStageResult =
   { readonly type: 'staged'; readonly token: object } | { readonly type: 'conflict' };
 
 export interface TaskSnapshotState {
-  currentRoot(filePath: string, line: number, source: string): TaskRef | undefined;
+  /** For duplicate sources, supplied transaction occurrence lines must match the indexed population. */
+  currentRoot(
+    filePath: string,
+    line: number,
+    source: string,
+    sourceLines?: readonly number[],
+  ): TaskRef | undefined;
   authoritySuccessor?(consumed: TaskRef): TaskRef | undefined;
   discardAuthoritySuccessor?(consumed: TaskRef): void;
   previewContent(filePath: string, content: string): readonly TaskSnapshot[];
   installCommittedContent(filePath: string, content: string): readonly TaskSnapshot[];
+}
+
+/** Failed duplicate-population proof must precede any unique-source relocation retry. */
+export function hasUnconfirmedCurrentRoot(
+  state: TaskSnapshotState | undefined,
+  ref: TaskRef,
+  evidence: TaskRefEvidence | undefined,
+  confirmed: TaskRef | undefined,
+): boolean {
+  if (confirmed !== undefined || state === undefined || evidence === undefined) return false;
+  const current = state.currentRoot(ref.filePath, ref.line, evidence.source);
+  return (
+    current !== undefined && sameTaskNodeRef({ type: 'task', ref: current }, { type: 'task', ref })
+  );
 }
 
 const REVISION_PREFIX = 'task-ref:1:';

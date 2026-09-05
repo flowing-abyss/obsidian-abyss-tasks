@@ -1304,6 +1304,7 @@ export class RightPanel {
         ? '.abyss-dependency-badge-body'
         : `[data-dependency-direction="${direction}"] .abyss-dependency-add`;
     this.dependencySearch = mountDependencySearch(this.el, {
+      scope: direction ?? 'general',
       options: (query) => {
         const current = this.dependencyTask();
         const tasks = this.tasks;

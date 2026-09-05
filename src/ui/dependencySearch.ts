@@ -107,6 +107,7 @@ function rejectionLabel(
 }
 
 interface DependencySearchOptions {
+  readonly scope: 'general' | DependencyDirection;
   readonly options: (query: string) => readonly DependencySearchOption[];
   readonly select: (
     option: DependencySearchOption,
@@ -292,9 +293,9 @@ class DependencySearchController implements DependencySearchHandle {
   private choose(option: DependencySearchOption): void {
     if (this.busy || option.directions.length === 0) return;
     this.actions.empty();
-    const first = option.directions[0];
-    if (option.directions.length === 1 && first !== undefined) {
-      this.submit(option, first);
+    const scope = this.callbacks.scope;
+    if (scope !== 'general' && option.directions.includes(scope)) {
+      this.submit(option, scope);
       return;
     }
     this.actions.hidden = false;

@@ -5,6 +5,7 @@ import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyT
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthority';
 import { canonicalStatusCatalog, expectDefined } from './../helpers';
 
 describe('TaskBlockEditor', () => {
@@ -453,6 +454,22 @@ describe('TaskBlockEditor', () => {
 });
 
 describe('TaskLocator', () => {
+  it('disambiguates identical blocks only with a matching current authority ref', () => {
+    const authority = new TaskRefAuthority('duplicate-locator');
+    const locator = new TaskLocator(authority);
+    const blocks = new TaskBlockEditor().rootBlocks('- [ ] Same\n- [ ] Same\n');
+    const ref = { filePath: 'tasks.md', line: 1, revision: authority.revision('- [ ] Same') };
+
+    expect(locator.locate(blocks, ref)).toMatchObject({ type: 'ambiguous' });
+    expect(locator.locate(blocks, ref, ref)).toMatchObject({ type: 'exact', block: { line: 1 } });
+    for (const current of [
+      { ...ref, line: 0 },
+      { ...ref, filePath: 'other.md' },
+      { ...ref, revision: authority.mintRevision('- [ ] Same') },
+    ])
+      expect(locator.locate(blocks, ref, current)).toMatchObject({ type: 'ambiguous' });
+  });
+
   it('decodes legacy separator-free revisions and rejects non-string JSON payloads', () => {
     const locator = new TaskLocator();
 

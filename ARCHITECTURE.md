@@ -309,7 +309,9 @@ duplicate source groups are never paired into invented identities. Ordinary uniq
 relocation remains available when the dependency-only proof fails.
 
 Dependency commands have no single initiating root in `PanelView` and do not use ordinary command
-outcome convergence. Normal index events refresh the current structural selection. After a proven
+outcome convergence. Normal index events refresh the current structural selection in both the panel
+and `TaskModal`. Selection rebuilding first accepts a complete exact root-to-child ref, including
+duplicate siblings; uncertain source matching still requires uniqueness. After a proven
 authority transition, selection rebuilding may retain the same relative subtask path when every
 non-dependency field and child structure is unchanged across the complete root tree. Presentation
 imports that same proof through the task public barrel rather than maintaining a separate
@@ -326,6 +328,15 @@ entire operation in one synchronous `Vault.process()` callback. Unsupported comm
 cross-file requests, inconsistent preconditions, and unavailable outcome targets cannot publish a
 partial edit. The result contains the freshly indexed root owning `outcomeTarget`, including fresh
 references for its changed descendants. An unchanged batch preserves the existing revisions.
+
+Live authority-backed root refs distinguish byte-identical roots by exact line and revision.
+Initial duplicate occurrences receive distinct ephemeral authority revisions; unchanged source
+populations at the same lines retain those revisions on refresh. Unique sources retain their
+generation-zero initialization, and no identity is written to Markdown for this purpose.
+Before a repository edit permits that duplicate-source match, `TaskIndex.currentRoot()` confirms
+the transaction's ordered occurrence lines equal the indexed source population. An unobserved
+insertion, deletion, or shifted population cannot use the line hint to retarget a write. Stale and
+legacy source-only references keep conservative ambiguity and relocation behavior.
 
 The batch stages one authority transition with an explicit predecessor revision for each consumed
 root. `TaskIndex` passes those individual mappings into reconciliation, so either edited root can

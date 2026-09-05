@@ -1,4 +1,5 @@
 import {
+  sameTaskNodeRef,
   sameTaskTreeExceptDependencies,
   type SubtaskRef,
   type SubtaskSnapshot,
@@ -69,6 +70,10 @@ function selectionChild(
   previousParent: TaskSelectionNode | undefined,
   preserveDependencies: boolean,
 ): SubtaskSnapshot | undefined {
+  const exact = candidates.filter((candidate) =>
+    sameTaskNodeRef(taskNodeRef(candidate), taskNodeRef(stale)),
+  );
+  if (exact.length === 1) return exact[0];
   const positioned = preserveDependencies ? dependencyChangedChild(candidates, stale) : undefined;
   if (positioned !== undefined) return positioned;
   const matches = candidates.filter(

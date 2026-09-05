@@ -102,10 +102,97 @@ describe('dependency search options', () => {
 });
 
 describe('dependency search keyboard controller', () => {
+  it.each([
+    ['zero', 'Local', []],
+    ['one', 'Distant', ['blocked-by']],
+    ['two', 'Local', ['blocked-by', 'blocks']],
+  ] as const)(
+    'requires an explicit general direction with %s eligible directions',
+    async (count, query, wanted) => {
+      const writes: string[] = [];
+      const handle = mountDependencySearch(activeDocument.body, {
+        scope: 'general',
+        options: (value) =>
+          dependencySearchOptions({
+            ...fixture(),
+            query: value,
+            ...(count === 'zero'
+              ? { eligibility: () => ({ type: 'rejected' as const, reason: 'cycle' as const }) }
+              : {}),
+          }),
+        select: async (_option, direction) => {
+          writes.push(direction);
+          return true;
+        },
+        onClose: () => {},
+      });
+      const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
+      input.value = query;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks();
+      expect(writes).toEqual([]);
+      expect(
+        [...handle.element.querySelectorAll<HTMLElement>('[data-direction]')].map(
+          (element) => element.dataset['direction'],
+        ),
+      ).toEqual(wanted);
+      if (wanted.length > 0) {
+        expect(activeDocument.activeElement?.getAttribute('data-direction')).toBe('blocked-by');
+        (activeDocument.activeElement as HTMLElement).dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+        );
+        await flushMicrotasks();
+        expect(writes).toEqual(['blocked-by']);
+      }
+      handle.destroy();
+    },
+  );
+
+  it('commits scoped selection but never auto-executes a refreshed general choice', async () => {
+    const writes: string[] = [];
+    let query = 'Local';
+    const general = mountDependencySearch(activeDocument.body, {
+      scope: 'general',
+      options: () => dependencySearchOptions({ ...fixture(), query }),
+      select: async (_option, direction) => {
+        writes.push(direction);
+        return true;
+      },
+      onClose: () => {},
+    });
+    const input = expectDefined(general.element.querySelector<HTMLInputElement>('input'));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    query = 'Distant';
+    general.refresh();
+    await flushMicrotasks();
+    expect(writes).toEqual([]);
+    expect(general.element.querySelectorAll('[data-direction]')).toHaveLength(0);
+    expect(activeDocument.activeElement).toBe(input);
+    general.destroy();
+    const scoped = mountDependencySearch(activeDocument.body, {
+      scope: 'blocked-by',
+      options: () =>
+        dependencySearchOptions({ ...fixture(), query: 'Local', direction: 'blocked-by' }),
+      select: async (_option, direction) => {
+        writes.push(direction);
+        return true;
+      },
+      onClose: () => {},
+    });
+    expectDefined(scoped.element.querySelector('input')).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
+    await flushMicrotasks();
+    expect(writes).toEqual(['blocked-by']);
+    expect(scoped.element.isConnected).toBe(false);
+  });
+
   it('releases controller ownership and document listeners only once when destroyed repeatedly', () => {
     const release = vi.fn();
     const remove = vi.spyOn(activeDocument, 'removeEventListener');
     const handle = mountDependencySearch(activeDocument.body, {
+      scope: 'general',
       options: () => [],
       select: async () => false,
       onClose: () => {},
@@ -122,6 +209,7 @@ describe('dependency search keyboard controller', () => {
   it('drops a stale direction choice on query refresh and returns focus to the preserved query', () => {
     let available = true;
     const handle = mountDependencySearch(activeDocument.body, {
+      scope: 'general',
       options: (query) => (available ? dependencySearchOptions({ ...fixture(), query }) : []),
       select: async () => false,
       onClose: () => {},
@@ -143,6 +231,7 @@ describe('dependency search keyboard controller', () => {
 
   it('clears an old direction choice when the user changes the search query', () => {
     const handle = mountDependencySearch(activeDocument.body, {
+      scope: 'general',
       options: (query) => dependencySearchOptions({ ...fixture(), query }),
       select: async () => false,
       onClose: () => {},
@@ -169,6 +258,7 @@ describe('dependency search keyboard controller', () => {
     const calls: string[] = [];
     const results = [false, true];
     const handle = mountDependencySearch(activeDocument.body, {
+      scope: 'general',
       options: (query) => dependencySearchOptions({ ...fixture(), query }),
       select: async (option, direction) => {
         calls.push(`${option.title}:${direction}`);
@@ -205,6 +295,7 @@ describe('dependency search keyboard controller', () => {
   it('uses ArrowUp and Escape in the same controller for a scoped entry point', () => {
     const anchor = activeDocument.body.createEl('button');
     const handle = mountDependencySearch(activeDocument.body, {
+      scope: 'blocked-by',
       options: (query) => dependencySearchOptions({ ...fixture(), direction: 'blocked-by', query }),
       select: async () => false,
       onClose: () => {

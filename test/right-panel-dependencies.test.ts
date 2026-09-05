@@ -12,6 +12,8 @@ import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockE
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import { TaskModal } from '../src/ui/TaskModal';
+import { rebuildTaskSelection } from '../src/ui/taskSelection';
 import {
   canonicalStatusCatalog,
   createAppWithFiles,
@@ -125,7 +127,151 @@ function search(el: HTMLElement, query: string): HTMLInputElement {
   return input;
 }
 
+describe('TaskModal dependency selection', () => {
+  it.each([
+    ['nested', '- [ ] Parent\n  - [ ] Current\n  - [ ] Current\n- [ ] Candidate 🆔 candidate\n'],
+    [
+      'deep',
+      '- [ ] Parent\n  - [ ] Middle\n    - [ ] Current\n    - [ ] Current\n- [ ] Candidate 🆔 candidate\n',
+    ],
+  ])(
+    'retains the exact %s duplicate through add, remove and restore dependency events',
+    async (_location, source) => {
+      const h = await harness(source, 'Parent');
+      h.panel.destroy();
+      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      cleanups.unshift(() => {
+        modal.close();
+      });
+      modal.open(h.node('Parent').root);
+      const el = expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal-body'));
+      if (_location === 'deep') button(el, '.abyss-subtask-label').click();
+      const duplicates = el.querySelectorAll<HTMLElement>('.abyss-subtask-label');
+      expectDefined(duplicates[1]).click();
+      expect(el.querySelector('.abyss-right-title')?.textContent).toBe('Current');
+      button(el, '.abyss-dependency-badge-add').click();
+      button(el, '[aria-label="Add dependency: Blocked by"]').click();
+      search(el, 'Candidate').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      );
+      await flushMicrotasks(30);
+      expect(el.querySelector('.abyss-right-title')?.textContent).toBe('Current');
+      expect(button(el, '.abyss-dependency-badge-body').getAttribute('aria-label')).toBe(
+        'Dependencies: blocked by 1; blocks 0',
+      );
+      const current = expectDefined(
+        h.index.listNodes().filter(({ node }) => node.title === 'Current')[1],
+      );
+      const removed = await h.api.execute({
+        type: 'remove-dependency',
+        dependent: current.target,
+        dependencyId: 'candidate',
+      });
+      if (
+        removed.type !== 'ok' ||
+        removed.outcome.type !== 'dependency' ||
+        removed.outcome.removalRecovery === undefined
+      )
+        throw new Error('Expected dependency removal');
+      await flushMicrotasks(30);
+      expect(el.querySelector('.abyss-right-title')?.textContent).toBe('Current');
+      expect(
+        (
+          await h.api.execute({
+            type: 'restore-dependency',
+            dependent: removed.outcome.dependent.target,
+            recovery: removed.outcome.removalRecovery,
+          })
+        ).type,
+      ).toBe('ok');
+      await flushMicrotasks(30);
+      expect(el.querySelector('.abyss-right-title')?.textContent).toBe('Current');
+      expect(button(el, '.abyss-dependency-badge-body').getAttribute('aria-label')).toBe(
+        'Dependencies: blocked by 1; blocks 0',
+      );
+    },
+  );
+
+  it('does not preserve duplicate selection through an unrelated structural authority transition', async () => {
+    const h = await harness('- [ ] Parent\n  - [ ] Current\n  - [ ] Current\n', 'Parent');
+    h.panel.destroy();
+    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    cleanups.unshift(() => {
+      modal.close();
+    });
+    modal.open(h.node('Parent').root);
+    const el = expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal-body'));
+    expectDefined(el.querySelectorAll<HTMLElement>('.abyss-subtask-label')[1]).click();
+    const first = h.node('Current').target;
+    if (first.type !== 'subtask') throw new Error('Expected nested task');
+
+    expect((await h.api.execute({ type: 'delete-subtask', subtask: first.ref })).type).toBe('ok');
+    await flushMicrotasks(30);
+
+    expect(el.querySelector('.abyss-right-title')?.textContent).toBe('Parent');
+    expect(await h.read()).toBe('- [ ] Parent\n  - [ ] Current\n');
+  });
+});
+
 describe('RightPanel dependency inspector', () => {
+  it.each([
+    {
+      location: 'root',
+      source: '- [ ] Current\n- [ ] Current\n- [ ] Candidate 🆔 candidate\n',
+      wanted: '- [ ] Current\n- [ ] Current ⛔ candidate\n- [ ] Candidate 🆔 candidate\n',
+    },
+    {
+      location: 'nested',
+      source: '- [ ] Parent\n  - [ ] Current\n  - [ ] Current\n- [ ] Candidate 🆔 candidate\n',
+      wanted:
+        '- [ ] Parent\n  - [ ] Current\n  - [ ] Current ⛔ candidate\n- [ ] Candidate 🆔 candidate\n',
+    },
+    {
+      location: 'deep',
+      source:
+        '- [ ] Parent\n  - [ ] Middle\n    - [ ] Current\n    - [ ] Current\n- [ ] Candidate 🆔 candidate\n',
+      wanted:
+        '- [ ] Parent\n  - [ ] Middle\n    - [ ] Current\n    - [ ] Current ⛔ candidate\n- [ ] Candidate 🆔 candidate\n',
+    },
+  ])(
+    'keeps exact $location duplicate identity in shared selection and inspector actions',
+    async ({ source, wanted }) => {
+      const h = await harness(source);
+      const selected = expectDefined(
+        h.index.listNodes().filter(({ node }) => node.title === 'Current')[1],
+      );
+      const stack = [selected.root, ...selected.path];
+      expect(rebuildTaskSelection(selected.root, stack)).toEqual(stack);
+      h.state.set('taskStack', stack);
+      const execute = vi.spyOn(h.api, 'execute');
+      button(h.el, '.abyss-dependency-badge-add').click();
+      button(h.el, '[aria-label="Add dependency: Blocked by"]').click();
+      search(h.el, 'Candidate').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      );
+      await flushMicrotasks(50);
+      expect(await execute.mock.results[0]?.value).toMatchObject({ type: 'ok' });
+      expect(await h.read()).toBe(wanted);
+      expect(button(h.el, '.abyss-dependency-badge-body').getAttribute('aria-label')).toBe(
+        'Dependencies: blocked by 1; blocks 0',
+      );
+    },
+  );
+
+  it('does not rebind a stale nested selection to either newly ambiguous sibling', async () => {
+    const h = await harness('- [ ] Parent\n  - [ ] Current\n- [ ] Candidate 🆔 candidate\n');
+    const changed =
+      '\n- [ ] Parent\n  - [ ] Current\n  - [ ] Current\n- [ ] Candidate 🆔 candidate\n';
+    await h.app.vault.modify(h.file, changed);
+    await flushMicrotasks(20);
+    const oldBadge = h.el.querySelector<HTMLButtonElement>('.abyss-dependency-badge-body');
+    oldBadge?.click();
+    expect(h.el.querySelectorAll('.abyss-dependency-search-option:not([disabled])')).toHaveLength(
+      0,
+    );
+    expect(await h.read()).toBe(changed.slice(1));
+  });
+
   it.each(['focus', 'success', 'destroy', 'selection', 'refresh'] as const)(
     'releases search document listeners after %s',
     async (mode) => {

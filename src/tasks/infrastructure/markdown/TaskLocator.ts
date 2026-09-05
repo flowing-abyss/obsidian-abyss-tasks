@@ -1,4 +1,4 @@
-import type { TaskRef } from '../../domain/types';
+import { sameTaskNodeRef, type TaskRef } from '../../domain/types';
 import { TaskRefAuthority } from '../TaskRefAuthority';
 import type { TaskRootBlock } from './TaskBlockEditor';
 
@@ -47,10 +47,13 @@ export class TaskLocator {
     }
   }
 
-  locate(blocks: readonly TaskRootBlock[], ref: TaskRef): LocateResult {
+  /** A current ref may disambiguate only after the repository confirms the source population. */
+  locate(blocks: readonly TaskRootBlock[], ref: TaskRef, currentRef?: TaskRef): LocateResult {
     const expected = this.exactSource(ref.revision);
     const hinted = blocks.find((block) => block.line === ref.line);
     const exact = expected === undefined ? [] : blocks.filter((block) => block.source === expected);
+    const current = this.currentAuthorityBlock(hinted, ref, currentRef);
+    if (current !== undefined) return { type: 'exact', block: current };
     if (exact.length > 1) return { type: 'ambiguous', blocks: exact };
     if (expected !== undefined && hinted?.source === expected)
       return { type: 'exact', block: hinted };
@@ -58,5 +61,16 @@ export class TaskLocator {
     if (exact.length === 1 && exactBlock !== undefined) return { type: 'exact', block: exactBlock };
     if (hinted != null) return { type: 'conflict', block: hinted };
     return { type: 'not-found' };
+  }
+
+  private currentAuthorityBlock(
+    hinted: TaskRootBlock | undefined,
+    ref: TaskRef,
+    currentRef: TaskRef | undefined,
+  ): TaskRootBlock | undefined {
+    if (this.authority === undefined || currentRef === undefined) return undefined;
+    if (!sameTaskNodeRef({ type: 'task', ref }, { type: 'task', ref: currentRef }))
+      return undefined;
+    return hinted?.source === this.exactSource(ref.revision) ? hinted : undefined;
   }
 }

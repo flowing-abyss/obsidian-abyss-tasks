@@ -56,6 +56,7 @@ import {
   taskEditBatchIssues,
 } from '../../src/tasks/infrastructure/TaskEditBatch';
 import {
+  hasUnconfirmedCurrentRoot,
   taskRefContentFingerprint,
   type RootRevisionOverride,
   type TaskRefAuthority,
@@ -1228,6 +1229,7 @@ export class InMemoryTaskRepository implements TaskRepository {
     if (content === undefined) {
       return { type: 'result', result: { type: 'not-found', target: targetOf(input.command) } };
     }
+    const blocks = this.editor.rootBlocks(content);
     const evidence = this.options.refAuthority?.evidence(input.ref.revision);
     const indexedRef =
       evidence === undefined
@@ -1236,9 +1238,11 @@ export class InMemoryTaskRepository implements TaskRepository {
             input.ref.filePath,
             input.ref.line,
             evidence.source,
+            blocks.filter((block) => block.source === evidence.source).map((block) => block.line),
           );
-    const blocks = this.editor.rootBlocks(content);
-    const located = this.locator.locate(blocks, input.ref);
+    const located = this.locator.locate(blocks, input.ref, indexedRef);
+    if (hasUnconfirmedCurrentRoot(this.options.snapshotState, input.ref, evidence, indexedRef))
+      return { type: 'result', result: this.editResolution(input, content, located) };
     const revision = preparedRevisionResult(
       input.prepared,
       located,
