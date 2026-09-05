@@ -108,6 +108,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   localDate: ['src/main.ts'],
   localTime: ['src/panels/CenterPanel.ts'],
   parseRecurrenceRule: ['src/ui/recurrence/RecurrenceEditor.ts'],
+  sameTaskTreeExceptDependencies: ['src/ui/taskSelection.ts'],
   shiftLocalDate: ['src/ui/timedBlockKeyboardQueue.ts'],
   taskReconciliationKey: ['src/ui/taskPresentationIdentity.ts'],
 };

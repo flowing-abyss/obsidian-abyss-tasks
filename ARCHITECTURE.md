@@ -257,13 +257,21 @@ Nested command reconciliation first accepts an exact full current ref. A stale s
 be unique in both its predecessor and current sibling sets. Completion retries use the complete
 matched current subtask ref, including relocated relative lines, before validation or dispatch.
 For authority-proven queued status commands, dependency-only changes at the proven position may
-be matched when all other node fields and descendant structure remain unchanged.
+be matched only when the shared pure `sameTaskTreeExceptDependencies` proof confirms the complete
+root tree is unchanged apart from dependency metadata and expected revision/source carriers.
+It retains source addresses, ordered child structure, and all other parsed fields, including root
+and ancestor status, planning, descriptions, and comments. Retained source-position groups at
+every sibling level also reject reorders hidden by otherwise identical dependency-stripped nodes;
+duplicate source groups are never paired into invented identities. Ordinary unique source
+relocation remains available when the dependency-only proof fails.
 
 Dependency commands have no single initiating root in `PanelView` and do not use ordinary command
 outcome convergence. Normal index events refresh the current structural selection. After a proven
 authority transition, selection rebuilding may retain the same relative subtask path when every
-non-dependency field and child structure is unchanged. That positional proof precedes text
-matching so an unchanged identical sibling cannot steal selection. Text fallback also requires
+non-dependency field and child structure is unchanged across the complete root tree. Presentation
+imports that same proof through the task public barrel rather than maintaining a separate
+normalizer. That positional proof precedes text matching so an unchanged identical sibling cannot
+steal selection. Text fallback also requires
 predecessor uniqueness. Positional fallback is unavailable for uncertain or visual matches;
 unrelated content or structure changes stop at the last proven ancestor.
 

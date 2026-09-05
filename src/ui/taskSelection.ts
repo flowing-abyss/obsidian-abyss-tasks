@@ -1,11 +1,12 @@
-import type {
-  SubtaskRef,
-  SubtaskSnapshot,
-  TaskIndexEvent,
-  TaskNodeRef,
-  TaskQueryApi,
-  TaskRef,
-  TaskSnapshot,
+import {
+  sameTaskTreeExceptDependencies,
+  type SubtaskRef,
+  type SubtaskSnapshot,
+  type TaskIndexEvent,
+  type TaskNodeRef,
+  type TaskQueryApi,
+  type TaskRef,
+  type TaskSnapshot,
 } from '../tasks';
 
 export type TaskSelectionNode = TaskSnapshot | SubtaskSnapshot;
@@ -40,6 +41,12 @@ export function rebuildTaskSelection(
   options: { readonly preserveDependencyChanges?: boolean } = {},
 ): TaskSelectionNode[] {
   const stack: TaskSelectionNode[] = [root];
+  const previousRoot = staleStack[0];
+  const preserveDependencies =
+    options.preserveDependencyChanges === true &&
+    previousRoot !== undefined &&
+    'source' in previousRoot &&
+    sameTaskTreeExceptDependencies(previousRoot, root);
   for (let index = 1; index < staleStack.length; index++) {
     const parent = stack[index - 1];
     const stale = staleStack[index];
@@ -48,7 +55,7 @@ export function rebuildTaskSelection(
       parent.subtasks,
       stale,
       staleStack[index - 1],
-      options.preserveDependencyChanges === true,
+      preserveDependencies,
     );
     if (child == null) break;
     stack.push(child);
@@ -73,23 +80,6 @@ function selectionChild(
   return previousMatches?.length === 1 && matches.length === 1 ? matches[0] : undefined;
 }
 
-function selectionContent(node: SubtaskSnapshot): unknown {
-  return {
-    ...node,
-    ref: { relativeLine: node.ref.relativeLine },
-    dependencyId: undefined,
-    dependsOn: undefined,
-    subtasks: node.subtasks.map(selectionContent),
-    comments: node.comments.map((comment) => ({
-      ...comment,
-      ref: {
-        relativeLine: comment.ref.relativeLine,
-        originalMarkdown: comment.ref.originalMarkdown,
-      },
-    })),
-  };
-}
-
 function dependencyChangedChild(
   candidates: readonly SubtaskSnapshot[],
   stale: SubtaskSnapshot,
@@ -97,11 +87,7 @@ function dependencyChangedChild(
   const positioned = candidates.filter(
     (candidate) => candidate.ref.relativeLine === stale.ref.relativeLine,
   );
-  const child = positioned.length === 1 ? positioned[0] : undefined;
-  return child !== undefined &&
-    JSON.stringify(selectionContent(child)) === JSON.stringify(selectionContent(stale))
-    ? child
-    : undefined;
+  return positioned.length === 1 ? positioned[0] : undefined;
 }
 
 export function renamedRootSelection(

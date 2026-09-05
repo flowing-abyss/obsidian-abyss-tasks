@@ -8,8 +8,10 @@ import {
   type TaskDependencyIdGenerator,
   type TaskDiagnosticSink,
 } from '../../src/tasks/application/TaskDependencyService';
+import { recurrenceCompletionPreconditionHolds } from '../../src/tasks/application/taskRetryPolicy';
 import type { TaskCommand, TaskCommandResult } from '../../src/tasks/domain/commands';
 import type { TaskNodeSnapshot } from '../../src/tasks/domain/taskDependencies';
+import { reconcileTaskNodeRef } from '../../src/tasks/domain/taskReconciliation';
 import { localDate } from '../../src/tasks/domain/validation';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthority';
@@ -86,6 +88,311 @@ function dependencyOutcome(result: TaskCommandResult) {
     throw new Error('Expected dependency outcome');
   return result.outcome;
 }
+
+describe('dependency-only structure proof regressions', () => {
+  it('stops at the root when reordered retained source groups have ambiguous duplicate identities', async () => {
+    const h = await harness({
+      'tasks.md':
+        '- [ ] Root\n  - [ ] Same ⛔ first\n  - [ ] Same ⛔ first\n  - [ ] Same ⛔ second\n',
+    });
+    const previous = h.node('Root').root;
+    const selected = expectDefined(previous.subtasks[0]);
+    const moved = expectDefined(previous.subtasks[2]);
+    expect(
+      (
+        await h.application.execute({
+          type: 'reorder-subtask',
+          subtask: moved.ref,
+          target: selected.ref,
+          placement: 'before',
+        })
+      ).type,
+    ).toBe('ok');
+    const current = h.node('Root').root;
+    expect(
+      rebuildTaskSelection(current, [previous, selected], { preserveDependencyChanges: true }),
+    ).toEqual([current]);
+    expect(
+      reconcileTaskNodeRef(
+        previous,
+        current,
+        { type: 'subtask', ref: selected.ref },
+        { dependencyChanges: true },
+      ),
+    ).toBeUndefined();
+    const edit = vi.spyOn(h.repository, 'edit');
+    expect(
+      (
+        await h.application.execute({
+          type: 'toggle-completion',
+          target: { type: 'subtask', ref: selected.ref },
+        })
+      ).type,
+    ).toBe('conflict');
+    expect(edit).not.toHaveBeenCalled();
+  });
+
+  it('follows original source identity when differently-linked identical siblings are reordered', async () => {
+    const h = await harness({
+      'tasks.md': '- [ ] Root\n  - [ ] Same ⛔ first\n  - [ ] Same ⛔ second\n',
+    });
+    const previous = h.node('Root').root;
+    const selected = expectDefined(previous.subtasks[0]);
+    const sibling = expectDefined(previous.subtasks[1]);
+    expect(
+      (
+        await h.application.execute({
+          type: 'reorder-subtask',
+          subtask: selected.ref,
+          target: sibling.ref,
+          placement: 'after',
+        })
+      ).type,
+    ).toBe('ok');
+    const current = h.node('Root').root;
+    const relocated = expectDefined(current.subtasks[1]);
+    expect(relocated.dependsOn).toEqual(['first']);
+    expect(
+      reconcileTaskNodeRef(
+        previous,
+        current,
+        { type: 'subtask', ref: selected.ref },
+        { dependencyChanges: true },
+      ),
+    ).toEqual({ type: 'subtask', ref: relocated.ref });
+    expect(
+      rebuildTaskSelection(current, [previous, selected], { preserveDependencyChanges: true }),
+    ).toEqual([current, relocated]);
+    expect(
+      (
+        await h.application.execute({
+          type: 'toggle-completion',
+          target: { type: 'subtask', ref: selected.ref },
+        })
+      ).type,
+    ).toBe('ok');
+    expect(
+      h.node('Root').root.subtasks.map(({ status, dependsOn }) => ({ status, dependsOn })),
+    ).toEqual([
+      { status: 'open', dependsOn: ['second'] },
+      { status: 'done', dependsOn: ['first'] },
+    ]);
+  });
+
+  it.each([
+    [
+      'insert',
+      '- [ ] Root\n  - [ ] Parent\n    - [ ] Selected ⛔ after\n    - [ ] Peer\n    - [ ] Inserted\n  - [ ] Sibling\n',
+    ],
+    [
+      'reorder',
+      '- [ ] Root\n  - [ ] Parent\n    - [ ] Peer\n    - [ ] Selected ⛔ after\n  - [ ] Sibling\n',
+    ],
+    [
+      'move',
+      '- [ ] Root\n  - [ ] Parent\n    - [ ] Peer\n  - [ ] Sibling\n    - [ ] Selected ⛔ after\n',
+    ],
+    [
+      'root rename',
+      '- [ ] Renamed\n  - [ ] Parent\n    - [ ] Selected ⛔ after\n    - [ ] Peer\n  - [ ] Sibling\n',
+    ],
+    [
+      'root status',
+      '- [/] Root\n  - [ ] Parent\n    - [ ] Selected ⛔ after\n    - [ ] Peer\n  - [ ] Sibling\n',
+    ],
+    [
+      'root planning',
+      '- [ ] Root 📅 2026-09-06\n  - [ ] Parent\n    - [ ] Selected ⛔ after\n    - [ ] Peer\n  - [ ] Sibling\n',
+    ],
+    [
+      'root description',
+      '- [ ] Root\n  - > Description\n  - [ ] Parent\n    - [ ] Selected ⛔ after\n    - [ ] Peer\n  - [ ] Sibling\n',
+    ],
+    [
+      'root comment',
+      '- [ ] Root\n  - [ ] Parent\n    - [ ] Selected ⛔ after\n    - [ ] Peer\n  - [ ] Sibling\n  - 💬 Comment\n',
+    ],
+    [
+      'ancestor rename',
+      '- [ ] Root\n  - [ ] Renamed\n    - [ ] Selected ⛔ after\n    - [ ] Peer\n  - [ ] Sibling\n',
+    ],
+    [
+      'ancestor status',
+      '- [ ] Root\n  - [/] Parent\n    - [ ] Selected ⛔ after\n    - [ ] Peer\n  - [ ] Sibling\n',
+    ],
+    [
+      'ancestor planning',
+      '- [ ] Root\n  - [ ] Parent 📅 2026-09-06\n    - [ ] Selected ⛔ after\n    - [ ] Peer\n  - [ ] Sibling\n',
+    ],
+    [
+      'ancestor description',
+      '- [ ] Root\n  - [ ] Parent\n    - > Description\n    - [ ] Selected ⛔ after\n    - [ ] Peer\n  - [ ] Sibling\n',
+    ],
+    [
+      'ancestor comment',
+      '- [ ] Root\n  - [ ] Parent\n    - [ ] Selected ⛔ after\n    - [ ] Peer\n    - 💬 Comment\n  - [ ] Sibling\n',
+    ],
+    [
+      'sibling rename',
+      '- [ ] Root\n  - [ ] Parent\n    - [ ] Selected ⛔ after\n    - [ ] Peer\n  - [ ] Renamed\n',
+    ],
+  ])('rejects dependency-only positional proof after %s', async (_change, content) => {
+    const h = await harness({
+      'tasks.md':
+        '- [ ] Root\n  - [ ] Parent\n    - [ ] Selected ⛔ before\n    - [ ] Peer\n  - [ ] Sibling\n',
+    });
+    const previous = h.node('Root').root;
+    const parent = h.node('Parent').node;
+    const selected = h.node('Selected');
+    const current = expectDefined(h.index.snapshotsFromContent('tasks.md', content)[0]);
+    const currentParent = expectDefined(current.subtasks.find((node) => node.subtasks.length > 0));
+    const currentSelected = expectDefined(
+      currentParent.subtasks.find((node) => node.title === 'Selected') ??
+        current.subtasks.flatMap((node) => node.subtasks).find((node) => node.title === 'Selected'),
+    );
+    expect(
+      reconcileTaskNodeRef(previous, current, selected.target, { dependencyChanges: true }),
+    ).toBeUndefined();
+    expect(
+      recurrenceCompletionPreconditionHolds(
+        previous,
+        current,
+        { type: 'subtask', ref: currentSelected.ref },
+        'authority-transition',
+      ),
+    ).toBe(false);
+    expect(
+      rebuildTaskSelection(current, [previous, parent, selected.node], {
+        preserveDependencyChanges: true,
+      }),
+    ).toEqual([current]);
+  });
+
+  it.each(['add', 'remove', 'restore'] as const)(
+    'preserves proven nested dependency-only %s for selection and recurring completion',
+    async (operation) => {
+      const dependency = operation === 'remove' ? ' ⛔ id' : '';
+      const h = await harness({
+        'tasks.md': `\n- [ ] Root\n  - [ ] Parent\n    - [ ] Selected 🔁 every day 📅 2026-09-05${dependency}\n      - [ ] Child\n- [x] Blocker 🆔 id\n`,
+      });
+      const previous = h.node('Root').root;
+      const parent = h.node('Parent').node;
+      const selected = h.node('Selected');
+      let command: TaskCommand;
+      if (operation === 'add')
+        command = {
+          type: 'add-dependency',
+          blocker: h.node('Blocker').target,
+          dependent: selected.target,
+        };
+      else if (operation === 'remove')
+        command = { type: 'remove-dependency', dependent: selected.target, dependencyId: 'id' };
+      else
+        command = {
+          type: 'restore-dependency',
+          dependent: selected.target,
+          recovery: { dependencyId: 'id', beforeIds: ['id'], afterIds: [] },
+        };
+      expect((await h.application.execute(command)).type).toBe('ok');
+      const current = h.node('Root').root;
+      const currentSelected = h.node('Selected');
+      expect(
+        reconcileTaskNodeRef(previous, current, selected.target, { dependencyChanges: true }),
+      ).toEqual(currentSelected.target);
+      expect(
+        rebuildTaskSelection(current, [previous, parent, selected.node], {
+          preserveDependencyChanges: true,
+        }),
+      ).toEqual([current, h.node('Parent').node, currentSelected.node]);
+      expect(
+        recurrenceCompletionPreconditionHolds(
+          previous,
+          current,
+          currentSelected.target,
+          'authority-transition',
+        ),
+      ).toBe(true);
+      expect(
+        await h.application.execute({ type: 'toggle-completion', target: selected.target }),
+      ).toMatchObject({ type: 'ok', outcome: { type: 'recurrence' } });
+    },
+  );
+
+  it.each(['', ' ⛔ same'] as const)(
+    'does not complete the survivor of identical %s sibling deletion',
+    async (dependency) => {
+      const h = await harness({
+        'tasks.md': `- [ ] Root\n  - [ ] Same${dependency}\n  - [ ] Same${dependency}\n`,
+      });
+      const selected = expectDefined(h.node('Root').root.subtasks[0]);
+      expect(
+        (await h.application.execute({ type: 'delete-subtask', subtask: selected.ref })).type,
+      ).toBe('ok');
+      const edit = vi.spyOn(h.repository, 'edit');
+      expect(
+        await h.application.execute({
+          type: 'toggle-completion',
+          target: { type: 'subtask', ref: selected.ref },
+        }),
+      ).toMatchObject({ type: 'conflict' });
+      expect(edit).not.toHaveBeenCalled();
+      expect(h.node('Same').node.status).toBe('open');
+    },
+  );
+
+  it('does not switch to an identical sibling after selected child deletion', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Root\n  - [ ] Same\n  - [ ] Same\n' });
+    const before = h.node('Root').root;
+    const selected = expectDefined(before.subtasks[0]);
+    const result = await h.application.execute({ type: 'delete-subtask', subtask: selected.ref });
+    expect(result.type).toBe('ok');
+    const current = h.node('Root').root;
+    expect(h.index.resolve(before.ref)).toMatchObject({
+      type: 'rebased',
+      evidence: 'authority-transition',
+    });
+    expect(
+      rebuildTaskSelection(current, [before, selected], { preserveDependencyChanges: true }),
+    ).toEqual([current]);
+  });
+
+  it('does not switch to a differently-linked sibling after selected child deletion', async () => {
+    const h = await harness({
+      'tasks.md': '- [ ] Root\n  - [ ] Same ⛔ first\n  - [ ] Same ⛔ second\n',
+    });
+    const before = h.node('Root').root;
+    const selected = expectDefined(before.subtasks[0]);
+    expect(
+      (await h.application.execute({ type: 'delete-subtask', subtask: selected.ref })).type,
+    ).toBe('ok');
+    const current = h.node('Root').root;
+    expect(
+      rebuildTaskSelection(current, [before, selected], { preserveDependencyChanges: true }),
+    ).toEqual([current]);
+  });
+
+  it('does not complete a different sibling after the intended child was deleted', async () => {
+    const h = await harness({
+      'tasks.md': '- [ ] Root\n  - [ ] Same ⛔ first\n  - [ ] Same ⛔ second\n',
+    });
+    const before = h.node('Root').root;
+    const selected = expectDefined(before.subtasks[0]);
+    expect(
+      (await h.application.execute({ type: 'delete-subtask', subtask: selected.ref })).type,
+    ).toBe('ok');
+    const edit = vi.spyOn(h.repository, 'edit');
+    const result = await h.application.execute({
+      type: 'toggle-completion',
+      target: { type: 'subtask', ref: selected.ref },
+    });
+    expect({
+      type: result.type,
+      writes: edit.mock.calls.length,
+      status: h.node('Same').node.status,
+      ids: h.node('Same').node.dependsOn,
+    }).toEqual({ type: 'conflict', writes: 0, status: 'open', ids: ['second'] });
+  });
+});
 
 describe('external review regressions', () => {
   it('serializes dependency changes across services sharing one repository', async () => {

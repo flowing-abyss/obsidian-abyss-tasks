@@ -30,7 +30,11 @@ export {
   type RecurrenceParseResult,
   type RecurrencePolicy,
 } from './domain/recurrence';
-export { taskReconciliationKey, type TaskResolution } from './domain/taskReconciliation';
+export {
+  sameTaskTreeExceptDependencies,
+  taskReconciliationKey,
+  type TaskResolution,
+} from './domain/taskReconciliation';
 export type {
   CommentRef,
   DateRange,

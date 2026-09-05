@@ -426,10 +426,15 @@ function provenChildPair(
   };
 }
 
-function dependencyIdentity(node: SubtaskSnapshot): unknown {
+function dependencyIdentity(node: TaskSnapshot | SubtaskSnapshot): unknown {
   return {
     ...node,
-    ref: { relativeLine: node.ref.relativeLine },
+    ref:
+      'source' in node
+        ? { filePath: node.ref.filePath, line: node.ref.line }
+        : { relativeLine: node.ref.relativeLine },
+    source:
+      'source' in node ? { filePath: node.source.filePath, line: node.source.line } : undefined,
     dependencyId: undefined,
     dependsOn: undefined,
     subtasks: node.subtasks.map(dependencyIdentity),
@@ -443,6 +448,52 @@ function dependencyIdentity(node: SubtaskSnapshot): unknown {
   };
 }
 
+/** Positional dependency matching requires the complete aggregate to be otherwise unchanged. */
+export function sameTaskTreeExceptDependencies(
+  previous: TaskSnapshot,
+  current: TaskSnapshot,
+): boolean {
+  return (
+    JSON.stringify(dependencyIdentity(previous)) === JSON.stringify(dependencyIdentity(current)) &&
+    retainedSourcesStayPositioned(previous, current)
+  );
+}
+
+function childSourcePositions(children: readonly SubtaskSnapshot[]): Map<string, Set<number>> {
+  const positions = new Map<string, Set<number>>();
+  children.forEach((child, index) => {
+    const source = child.ref.originalBlock;
+    const group = positions.get(source) ?? new Set<number>();
+    group.add(index);
+    positions.set(source, group);
+  });
+  return positions;
+}
+
+function retainedSourcesStayPositioned(
+  previous: TaskSnapshot | SubtaskSnapshot,
+  current: TaskSnapshot | SubtaskSnapshot,
+): boolean {
+  const before = childSourcePositions(previous.subtasks);
+  const after = childSourcePositions(current.subtasks);
+  const sourceOrder = [...before].every(([source, positions]) => {
+    const next = after.get(source);
+    // A metadata edit may grow/shrink a duplicate group; do not pair its ambiguous members.
+    return (
+      next === undefined ||
+      [...positions].every((position) => next.has(position)) ||
+      [...next].every((position) => positions.has(position))
+    );
+  });
+  return (
+    sourceOrder &&
+    previous.subtasks.every((child, index) => {
+      const next = current.subtasks[index];
+      return next !== undefined && retainedSourcesStayPositioned(child, next);
+    })
+  );
+}
+
 function dependencyChangedChild(
   previous: SubtaskSnapshot,
   current: TaskSnapshot | SubtaskSnapshot,
@@ -450,12 +501,7 @@ function dependencyChangedChild(
   const positioned = current.subtasks.filter(
     (child) => child.ref.relativeLine === previous.ref.relativeLine,
   );
-  const candidate = positioned[0];
-  return positioned.length === 1 &&
-    candidate !== undefined &&
-    JSON.stringify(dependencyIdentity(candidate)) === JSON.stringify(dependencyIdentity(previous))
-    ? candidate
-    : undefined;
+  return positioned.length === 1 ? positioned[0] : undefined;
 }
 
 function exactChildPair(
@@ -468,6 +514,16 @@ function exactChildPair(
   return exact === undefined ? undefined : { previous: exact, current: exact };
 }
 
+function nodeRefPath(target: TaskNodeRef): { root: TaskNodeRef; chain: readonly SubtaskRef[] } {
+  const chain: SubtaskRef[] = [];
+  let root: TaskNodeRef = target;
+  while (root.type === 'subtask') {
+    chain.unshift(root.ref);
+    root = root.ref.parent;
+  }
+  return { root, chain };
+}
+
 export function reconcileTaskNodeRef(
   previous: TaskSnapshot,
   current: TaskSnapshot,
@@ -475,20 +531,17 @@ export function reconcileTaskNodeRef(
   options: { readonly dependencyChanges?: boolean } = {},
 ): TaskNodeRef | undefined {
   if (target.type === 'task') return { type: 'task', ref: current.ref };
-  const chain: SubtaskRef[] = [];
-  let root: TaskNodeRef = target;
-  while (root.type === 'subtask') {
-    chain.unshift(root.ref);
-    root = root.ref.parent;
-  }
+  const { root, chain } = nodeRefPath(target);
   const exactRoot = sameTaskNodeRef(root, { type: 'task', ref: current.ref });
   if (!exactRoot && !sameTaskNodeRef(root, { type: 'task', ref: previous.ref })) return undefined;
+  const dependencyChanges =
+    options.dependencyChanges === true && sameTaskTreeExceptDependencies(previous, current);
   let before: TaskSnapshot | SubtaskSnapshot = previous;
   let after: TaskSnapshot | SubtaskSnapshot = current;
   for (const ref of chain) {
     const pair: { previous: SubtaskSnapshot; current: SubtaskSnapshot } | undefined = exactRoot
       ? exactChildPair(after, ref)
-      : provenChildPair(before, after, ref, options.dependencyChanges === true);
+      : provenChildPair(before, after, ref, dependencyChanges);
     if (pair === undefined) return undefined;
     before = pair.previous;
     after = pair.current;
