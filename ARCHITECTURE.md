@@ -129,6 +129,15 @@ Panels may issue commands and query snapshots through the public task boundary. 
 navigation and transient interaction state through `AppState`. They must not edit task Markdown
 directly or import private task-layer modules.
 
+`RightPanel` consumes dependency queries through `src/tasks` for the compact badge and direct
+relation sections. Shared dependency presentation owns counts and recovery labels; the dependency
+search model owns filtering, direction eligibility and stable same-file ranking. One search
+controller handles general and scoped entry points, keyboard selection and focus dismissal.
+The inspector keeps disclosure and search drafts only for its mounted lifetime, preserving the
+search across proven selection refreshes. Index events refresh counterpart status and relation
+rows. Add/remove actions use the existing task application and committed-result Undo presenter;
+failed actions leave the search available and use the established command-result Notice.
+
 ### Projects
 
 [`src/projects/`](src/projects/) treats qualifying Markdown notes as projects. `ProjectStore`

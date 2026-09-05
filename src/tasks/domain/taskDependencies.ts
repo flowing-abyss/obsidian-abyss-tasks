@@ -14,6 +14,8 @@ export interface TaskNodeSnapshot {
   readonly node: TaskSnapshot | SubtaskSnapshot;
 }
 
+export type DependencyDirection = 'blocked-by' | 'blocks';
+
 interface ResolvedTaskDependencyRelation {
   readonly type: 'resolved';
   readonly dependencyId: string;
@@ -37,7 +39,7 @@ type ActiveAmbiguousTaskDependencyRelation = Omit<AmbiguousTaskDependencyRelatio
 export type ActiveBlockingRelation =
   ActiveTaskDependencyRelation | ActiveAmbiguousTaskDependencyRelation;
 
-type TaskDependencyRelation =
+export type TaskDependencyRelation =
   | ResolvedTaskDependencyRelation
   | AmbiguousTaskDependencyRelation
   | {

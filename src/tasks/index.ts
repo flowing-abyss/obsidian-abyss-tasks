@@ -30,11 +30,19 @@ export {
   type RecurrenceParseResult,
   type RecurrencePolicy,
 } from './domain/recurrence';
+export type {
+  DependencyDirection,
+  TaskDependencyEligibility,
+  TaskDependencyProjection,
+  TaskDependencyRelation,
+  TaskNodeSnapshot,
+} from './domain/taskDependencies';
 export {
   sameTaskTreeExceptDependencies,
   taskReconciliationKey,
   type TaskResolution,
 } from './domain/taskReconciliation';
+export { sameTaskNodeRef } from './domain/types';
 export type {
   CommentRef,
   DateRange,

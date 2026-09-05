@@ -25,6 +25,24 @@ import {
 
 useRealMoment();
 
+function queryEvents(): {
+  subscribe: TaskQueryApi['subscribe'];
+  publish: (event: TaskIndexEvent) => void;
+} {
+  const listeners = new Set<(event: TaskIndexEvent) => void>();
+  return {
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    publish: (event) => {
+      for (const listener of [...listeners]) listener(event);
+    },
+  };
+}
+
 function click(element: HTMLElement): void {
   element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 }
@@ -89,16 +107,11 @@ describe('TaskModal with real RightPanel', () => {
         originalBlock: '- [ ] external',
       },
     });
-    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    const events = queryEvents();
     let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
     const queries = taskQueryApi({
       resolve: () => resolution,
-      subscribe: (next) => {
-        listener = next;
-        return () => {
-          listener = undefined;
-        };
-      },
+      subscribe: events.subscribe,
     });
     const execute = vi.fn<TaskApplicationApi['execute']>();
     modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
@@ -125,7 +138,7 @@ describe('TaskModal with real RightPanel', () => {
       basis: { observed },
     };
 
-    listener?.({ type: 'changed', files: ['f.md'] });
+    events.publish({ type: 'changed', files: ['f.md'] });
 
     const restored = expectDefined(
       activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-right-title-edit'),
@@ -160,7 +173,7 @@ describe('TaskModal with real RightPanel', () => {
         originalBlock: '- [ ] observed\n  - submitted once',
       },
     });
-    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    const events = queryEvents();
     let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
     let release!: () => void;
     const blocked = new Promise<void>((resolvePromise) => {
@@ -168,12 +181,7 @@ describe('TaskModal with real RightPanel', () => {
     });
     const queries = taskQueryApi({
       resolve: () => resolution,
-      subscribe: (next) => {
-        listener = next;
-        return () => {
-          listener = undefined;
-        };
-      },
+      subscribe: events.subscribe,
     });
     const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async () => {
       resolution = {
@@ -183,7 +191,7 @@ describe('TaskModal with real RightPanel', () => {
         evidence: 'authority-transition',
         basis: { observed },
       };
-      listener?.({ type: 'changed', files: ['f.md'] });
+      events.publish({ type: 'changed', files: ['f.md'] });
       await blocked;
       return { type: 'ok', changed: true, outcome: { type: 'task', task: current } };
     });
@@ -232,7 +240,7 @@ describe('TaskModal with real RightPanel', () => {
       comments: [taskComment({ text: 'submitted first' })],
       source: { ...observed.source, originalBlock: '- [ ] observed\n  - submitted first' },
     });
-    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    const events = queryEvents();
     let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
     let finish!: (result: Awaited<ReturnType<TaskApplicationApi['execute']>>) => void;
     const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(
@@ -243,12 +251,7 @@ describe('TaskModal with real RightPanel', () => {
     );
     const queries = taskQueryApi({
       resolve: () => resolution,
-      subscribe: (next) => {
-        listener = next;
-        return () => {
-          listener = undefined;
-        };
-      },
+      subscribe: events.subscribe,
     });
     modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
       queries,
@@ -273,7 +276,7 @@ describe('TaskModal with real RightPanel', () => {
       basis: { observed },
     };
 
-    listener?.({ type: 'changed', files: ['f.md'] });
+    events.publish({ type: 'changed', files: ['f.md'] });
 
     const restored = expectDefined(
       activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
@@ -306,17 +309,12 @@ describe('TaskModal with real RightPanel', () => {
       comments: [taskComment({ text: 'submitted' })],
       source: { ...observed.source, originalBlock: '- [ ] observed\n  - submitted' },
     });
-    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    const events = queryEvents();
     let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
     let finish!: (result: Awaited<ReturnType<TaskApplicationApi['execute']>>) => void;
     const queries = taskQueryApi({
       resolve: () => resolution,
-      subscribe: (next) => {
-        listener = next;
-        return () => {
-          listener = undefined;
-        };
-      },
+      subscribe: events.subscribe,
     });
     const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(
       () =>
@@ -346,7 +344,7 @@ describe('TaskModal with real RightPanel', () => {
       basis: { observed },
     };
 
-    listener?.({ type: 'changed', files: ['f.md'] });
+    events.publish({ type: 'changed', files: ['f.md'] });
     finish({ type: 'ok', changed: true, outcome: { type: 'task', task: current } });
     await flushMicrotasks();
 
@@ -401,7 +399,7 @@ describe('TaskModal with real RightPanel', () => {
         originalBlock: '- [ ] observed\n  - first submitted\n  - second comment',
       },
     });
-    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    const events = queryEvents();
     let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
     let release!: () => void;
     const blocked = new Promise<void>((resolvePromise) => {
@@ -409,12 +407,7 @@ describe('TaskModal with real RightPanel', () => {
     });
     const queries = taskQueryApi({
       resolve: () => resolution,
-      subscribe: (next) => {
-        listener = next;
-        return () => {
-          listener = undefined;
-        };
-      },
+      subscribe: events.subscribe,
     });
     const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async (command) => {
       expect(command).toMatchObject({
@@ -429,7 +422,7 @@ describe('TaskModal with real RightPanel', () => {
         evidence: 'authority-transition',
         basis: { observed },
       };
-      listener?.({ type: 'changed', files: ['f.md'] });
+      events.publish({ type: 'changed', files: ['f.md'] });
       await blocked;
       return { type: 'ok', changed: true, outcome: { type: 'task', task: current } };
     });
@@ -494,7 +487,7 @@ describe('TaskModal with real RightPanel', () => {
       comments: [taskComment({ text: 'rollback me' })],
       source: { ...observed.source, originalBlock: '- [ ] observed\n  - rollback me' },
     });
-    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    const events = queryEvents();
     let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
     let finish!: (result: Awaited<ReturnType<TaskApplicationApi['execute']>>) => void;
     const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(
@@ -505,12 +498,7 @@ describe('TaskModal with real RightPanel', () => {
     );
     const queries = taskQueryApi({
       resolve: () => resolution,
-      subscribe: (next) => {
-        listener = next;
-        return () => {
-          listener = undefined;
-        };
-      },
+      subscribe: events.subscribe,
     });
     modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
       queries,
@@ -531,7 +519,7 @@ describe('TaskModal with real RightPanel', () => {
       evidence: 'authority-transition',
       basis: { observed },
     };
-    listener?.({ type: 'changed', files: ['f.md'] });
+    events.publish({ type: 'changed', files: ['f.md'] });
 
     finish({ type: 'conflict', current: observed });
     await flushMicrotasks();
@@ -563,7 +551,7 @@ describe('TaskModal with real RightPanel', () => {
       comments: [taskComment({ text: 'first submission' })],
       source: { ...observed.source, originalBlock: '- [ ] observed\n  - first submission' },
     });
-    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    const events = queryEvents();
     let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
     const finishes: Array<(result: Awaited<ReturnType<TaskApplicationApi['execute']>>) => void> =
       [];
@@ -575,12 +563,7 @@ describe('TaskModal with real RightPanel', () => {
     );
     const queries = taskQueryApi({
       resolve: () => resolution,
-      subscribe: (next) => {
-        listener = next;
-        return () => {
-          listener = undefined;
-        };
-      },
+      subscribe: events.subscribe,
     });
     modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
       queries,
@@ -601,7 +584,7 @@ describe('TaskModal with real RightPanel', () => {
       evidence: 'authority-transition',
       basis: { observed },
     };
-    listener?.({ type: 'changed', files: ['f.md'] });
+    events.publish({ type: 'changed', files: ['f.md'] });
     const successorInput = expectDefined(
       activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
     );
@@ -776,7 +759,7 @@ describe('TaskModal with real RightPanel', () => {
         ref: { filePath: 'f.md', line: 0, revision: 'new' },
         source: { ...observed.source, originalBlock: '- [ ] current' },
       });
-      let listener: ((event: TaskIndexEvent) => void) | undefined;
+      const events = queryEvents();
       let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
       let release!: () => void;
       const blocked = new Promise<void>((resolvePromise) => {
@@ -784,12 +767,7 @@ describe('TaskModal with real RightPanel', () => {
       });
       const queries = taskQueryApi({
         resolve: () => resolution,
-        subscribe: (next) => {
-          listener = next;
-          return () => {
-            listener = undefined;
-          };
-        },
+        subscribe: events.subscribe,
       });
       const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async () => {
         resolution = {
@@ -799,7 +777,7 @@ describe('TaskModal with real RightPanel', () => {
           evidence: 'authority-transition',
           basis: { observed },
         };
-        listener?.({ type: 'changed', files: ['f.md'] });
+        events.publish({ type: 'changed', files: ['f.md'] });
         await blocked;
         return { type: 'ok', changed: true, outcome: { type: 'task', task: current } };
       });
@@ -839,16 +817,11 @@ describe('TaskModal with real RightPanel', () => {
       ref: { filePath: 'renamed.md', line: 0, revision: 'fresh' },
       source: { ...observed.source, filePath: 'renamed.md' },
     });
-    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    const events = queryEvents();
     const queries = taskQueryApi({
       list: (query) => (query?.filePath === 'renamed.md' ? [renamed] : []),
       resolve: () => ({ type: 'not-found', ref: observed.ref }),
-      subscribe: (next) => {
-        listener = next;
-        return () => {
-          listener = undefined;
-        };
-      },
+      subscribe: events.subscribe,
     });
     modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
       queries,
@@ -861,7 +834,7 @@ describe('TaskModal with real RightPanel', () => {
     comment.value = 'rename-safe draft';
     comment.focus();
 
-    listener?.({ type: 'renamed', oldPath: 'old.md', newPath: 'renamed.md' });
+    events.publish({ type: 'renamed', oldPath: 'old.md', newPath: 'renamed.md' });
 
     const title = activeDocument.querySelector('.abyss-modal .abyss-right-title');
     expect(title).not.toBeNull();
@@ -899,7 +872,7 @@ describe('TaskModal with real RightPanel', () => {
         originalBlock: '- [ ] visual current',
       },
     });
-    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    const events = queryEvents();
     const queries = taskQueryApi({
       resolve: () => ({
         type: 'visual',
@@ -907,12 +880,7 @@ describe('TaskModal with real RightPanel', () => {
         current,
         evidence: 'same-line',
       }),
-      subscribe: (next) => {
-        listener = next;
-        return () => {
-          listener = undefined;
-        };
-      },
+      subscribe: events.subscribe,
     });
     const execute = vi.fn<TaskApplicationApi['execute']>();
     modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
@@ -925,7 +893,7 @@ describe('TaskModal with real RightPanel', () => {
     );
     comment.value = 'stale modal draft';
 
-    listener?.({ type: 'changed', files: ['f.md'] });
+    events.publish({ type: 'changed', files: ['f.md'] });
 
     expect(activeDocument.querySelector('.abyss-modal .abyss-right-title')?.textContent).toContain(
       'visual current',
@@ -950,16 +918,11 @@ describe('TaskModal with real RightPanel', () => {
         originalBlock: '- [ ] observed',
       },
     });
-    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    const events = queryEvents();
     let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
     const queries = taskQueryApi({
       resolve: () => resolution,
-      subscribe: (next) => {
-        listener = next;
-        return () => {
-          listener = undefined;
-        };
-      },
+      subscribe: events.subscribe,
     });
     const execute = vi.fn<TaskApplicationApi['execute']>();
     modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
@@ -974,7 +937,7 @@ describe('TaskModal with real RightPanel', () => {
     comment.focus();
     resolution = { type: 'not-found', ref: observed.ref };
 
-    listener?.({ type: 'changed', files: ['f.md'] });
+    events.publish({ type: 'changed', files: ['f.md'] });
 
     expect(activeDocument.querySelector('.abyss-modal-backdrop')).not.toBeNull();
     expect(
@@ -1011,17 +974,12 @@ describe('TaskModal with real RightPanel', () => {
         originalBlock: '- [w] Modal task',
       },
     });
-    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    const events = queryEvents();
     let resolution: TaskResolution = { type: 'exact', task: current, basis: { observed: current } };
     const queries: TaskQueryApi & TaskDependencyQueryApi = taskQueryApi({
       list: () => [current],
       resolve: () => resolution,
-      subscribe: (next) => {
-        listener = next;
-        return () => {
-          listener = undefined;
-        };
-      },
+      subscribe: events.subscribe,
     });
     let revision = 0;
     const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async (command) => {
@@ -1126,7 +1084,7 @@ describe('TaskModal with real RightPanel', () => {
       evidence: 'authority-transition',
       basis: { observed: current },
     };
-    listener?.({ type: 'changed', files: ['f.md'] });
+    events.publish({ type: 'changed', files: ['f.md'] });
 
     const refreshedMarker = activeDocument.querySelector<HTMLElement>(
       '.abyss-modal .abyss-right-header > .abyss-status-marker',

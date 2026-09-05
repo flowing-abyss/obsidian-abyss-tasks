@@ -74,6 +74,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   CommentTimeContextProvider: ['src/views/PanelView.ts'],
   CreateTaskCommandInitial: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   DateRange: ['src/views/calendarOccurrences.ts'],
+  DependencyDirection: ['src/panels/RightPanel.ts'],
   LocalDate: ['src/panels/CenterPanel.ts'],
   MoveRecovery: ['src/ui/TaskMoveRecoveryModal.ts'],
   PlanningTarget: ['src/panels/RightPanel.ts'],
@@ -96,6 +97,10 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskPriority: ['src/panels/CenterPanel.ts'],
   TaskQueryApi: ['src/main.ts'],
   TaskDependencyQueryApi: ['src/main.ts'],
+  TaskDependencyEligibility: ['src/ui/dependencySearch.ts'],
+  TaskDependencyProjection: ['src/panels/RightPanel.ts'],
+  TaskDependencyRelation: ['src/panels/RightPanel.ts'],
+  TaskNodeSnapshot: ['src/ui/dependencySearch.ts'],
   TaskRef: ['src/projects/ProjectManager.ts'],
   TaskResolution: ['src/views/PanelView.ts'],
   TaskSnapshot: ['src/ui/TaskCard.ts'],
@@ -109,6 +114,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   localTime: ['src/panels/CenterPanel.ts'],
   parseRecurrenceRule: ['src/ui/recurrence/RecurrenceEditor.ts'],
   sameTaskTreeExceptDependencies: ['src/ui/taskSelection.ts'],
+  sameTaskNodeRef: ['src/panels/RightPanel.ts'],
   shiftLocalDate: ['src/ui/timedBlockKeyboardQueue.ts'],
   taskReconciliationKey: ['src/ui/taskPresentationIdentity.ts'],
 };
@@ -120,9 +126,9 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {
   'TaskQueryApi.list': 'src/panels/CenterPanel.ts',
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
-  'TaskDependencyQueryApi.listNodes': 'src/tasks/application/TaskDependencyService.ts',
-  'TaskDependencyQueryApi.dependencies': 'src/tasks/application/TaskDependencyService.ts',
-  'TaskDependencyQueryApi.dependencyEligibility': 'src/tasks/application/TaskDependencyService.ts',
+  'TaskDependencyQueryApi.listNodes': 'src/panels/RightPanel.ts',
+  'TaskDependencyQueryApi.dependencies': 'src/panels/RightPanel.ts',
+  'TaskDependencyQueryApi.dependencyEligibility': 'src/panels/RightPanel.ts',
 };
 
 function source(path: string): string {
