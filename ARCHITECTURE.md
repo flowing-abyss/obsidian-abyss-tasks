@@ -238,6 +238,35 @@ Unexpected application errors return the existing I/O error and emit one diagnos
 only operation, phase, and a fixed cause. User feedback remains in the existing command-result
 presenter, which also handles the structured blocked result.
 
+Successful `delete-subtask` outcomes retain the ordinary updated-root shape and additionally carry
+`subtaskRemovalRecovery`: the exact removed source bytes, the committed parent, the original
+relative position, and committed before/after sibling references. Recovery and its owning outcome
+are deeply detached and frozen. Both repository adapters capture bytes in `TaskBlockEditor` and
+share recovery construction; the Obsidian adapter refreshes recovery references after installing
+the authoritative commit. No subtree is reconstructed from parsed presentation fields.
+
+`restore-subtask` follows the ordinary application, repository, editor, retry, and selection paths.
+It validates task syntax and ownership under the resolved parent, checks captured sibling anchors,
+and rejects changed or ambiguous parents and anchors without writing. Reconciliation requires the
+parent's complete source block to remain unchanged. A relative-only placement is usable only while
+the captured base revision still matches. Deleting a final subtree without a trailing newline can
+consume the preceding separator; an optional ephemeral `placement.lineEnding` preserves that
+otherwise-lost LF/CRLF evidence. It is validated before repository I/O and used only without an
+anchor supplying context. Older recovery payloads must have unambiguous current separator evidence
+or restoration conflicts. This adds no persisted task metadata and preserves existing deletion bytes.
+
+`taskUndoNotice` owns the success/Undo surface for recoverable mutations. It constructs inverses
+from committed dependency outcomes or exact subtask recovery, so Undo never reuses pre-write refs.
+Dependency-add Undo leaves a lazily allocated ID intact; removal Undo restores the captured ordered
+ID sequence, including unavailable, ambiguous, and repeated declarations. One native button runs
+at most once, disables while pending, hides its Notice after execution, and returns focus to the
+invoking inspector row when it remains connected. Failed Undo hides the success Notice and passes
+one structured result to `presentTaskCommandResult`; unexpected throws produce one local diagnostic
+and the same error boundary. The existing inspector subtask delete flow uses this presenter and
+its normal selection convergence. On Obsidian 1.8.7+, a version guard enables public `containerEl`;
+older supported versions retain the button passed in the fragment and use the longstanding `hide()`
+API. The deprecated `noticeEl` is never used.
+
 Before root or subtask toggle/set-status commands dispatch a transition to configured done or
 cancelled status, the application checks every active resolved or ambiguous blocker. Missing IDs
 do not block, and already completed dependents remain non-blocking. The same validation runs before

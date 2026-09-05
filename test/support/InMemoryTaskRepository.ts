@@ -1,6 +1,7 @@
 import { parseLinks } from '../../src/markdown/links';
 import {
   dependencyMetadataIssues,
+  subtaskRestorationIssues,
   type RecurrenceCompletionRequest,
   type RecurrenceCompletionRevisionRequest,
   type RevisionPrecondition,
@@ -41,6 +42,7 @@ import { sameTaskNodeRef } from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
 import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
 import { createTaskBlock } from '../../src/tasks/infrastructure/markdown/createTaskBlock';
+import { recoverSubtaskRemoval } from '../../src/tasks/infrastructure/markdown/subtaskRemovalRecovery';
 import {
   TaskBlockEditor,
   type TaskBlockEdit,
@@ -132,7 +134,7 @@ function directNodeTarget(command: TaskEditCommand): PlanningTarget | undefined 
 }
 
 function childNodeTarget(command: TaskEditCommand): PlanningTarget | undefined {
-  if (command.type === 'add-subtask') return command.parent;
+  if (command.type === 'add-subtask' || command.type === 'restore-subtask') return command.parent;
   if (command.type === 'delete-subtask' || command.type === 'reorder-subtask') {
     return command.subtask.parent;
   }
@@ -198,7 +200,7 @@ function directMutationTarget(command: TaskEditCommand): TaskMutationTarget | un
 }
 
 function childMutationTarget(command: TaskEditCommand): TaskMutationTarget | undefined {
-  if (command.type === 'add-subtask') return command.parent;
+  if (command.type === 'add-subtask' || command.type === 'restore-subtask') return command.parent;
   if (command.type === 'delete-subtask' || command.type === 'reorder-subtask') {
     return { type: 'subtask', ref: command.subtask };
   }
@@ -269,6 +271,7 @@ function isStructuralCommand(command: TaskEditCommand): command is Extract<
     readonly type:
       | 'set-description'
       | 'add-subtask'
+      | 'restore-subtask'
       | 'delete-subtask'
       | 'reorder-subtask'
       | 'add-comment'
@@ -279,6 +282,7 @@ function isStructuralCommand(command: TaskEditCommand): command is Extract<
   return (
     command.type === 'set-description' ||
     command.type === 'add-subtask' ||
+    command.type === 'restore-subtask' ||
     command.type === 'delete-subtask' ||
     command.type === 'reorder-subtask' ||
     command.type === 'add-comment' ||
@@ -310,6 +314,7 @@ function structuralEdit(
       readonly type:
         | 'set-description'
         | 'add-subtask'
+        | 'restore-subtask'
         | 'delete-subtask'
         | 'reorder-subtask'
         | 'add-comment'
@@ -323,6 +328,8 @@ function structuralEdit(
       return { type: command.type, text: command.text };
     case 'add-subtask':
       return { type: command.type, text: command.text };
+    case 'restore-subtask':
+      return { type: command.type, markdown: command.markdown, placement: command.placement };
     case 'delete-subtask':
       return {
         type: command.type,
@@ -544,6 +551,7 @@ type StructuralTaskEditCommand = Extract<
     readonly type:
       | 'set-description'
       | 'add-subtask'
+      | 'restore-subtask'
       | 'delete-subtask'
       | 'reorder-subtask'
       | 'add-comment'
@@ -1152,7 +1160,10 @@ export class InMemoryTaskRepository implements TaskRepository {
 
   async edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult> {
     const input = editRequestInput(request);
-    const metadataIssues = dependencyMetadataIssues(input.command);
+    const metadataIssues = [
+      ...dependencyMetadataIssues(input.command),
+      ...subtaskRestorationIssues(input.command),
+    ];
     if (metadataIssues.length > 0) return { type: 'invalid', issues: metadataIssues };
     const parentIssue = this.reorderParentIssue(input.command);
     if (parentIssue !== undefined) return parentIssue;
@@ -1368,7 +1379,8 @@ export class InMemoryTaskRepository implements TaskRepository {
       blockTarget(targetSnapshot, blockLength, input.relativeLine),
       structuralEdit(prepared),
     );
-    return this.structuralEditOutcome(input, current, edited);
+    const result = this.structuralEditOutcome(input, current, edited);
+    return recoverSubtaskRemoval(command, edited, result);
   }
 
   private structuralOwnershipConflict(

@@ -1,3 +1,4 @@
+import { Notice, requireApiVersion } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
@@ -160,6 +161,60 @@ async function panelWith(
 }
 
 describe('RightPanel block editing', () => {
+  it('offers Undo after subtask deletion and restores the inspector through its committed parent', async () => {
+    const initial = snapshotWithChildren('old', ['selected', 'sibling']);
+    const afterDelete = snapshotWithChildren('deleted', ['sibling']);
+    const restored = snapshotWithChildren('restored', ['selected', 'sibling']);
+    const parent = { type: 'task' as const, ref: afterDelete.ref };
+    const recovery = {
+      parent,
+      markdown: '  - [ ] selected\n',
+      placement: { relativeLine: 1, before: expectDefined(afterDelete.subtasks[0]).ref },
+    };
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockResolvedValueOnce({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: afterDelete, subtaskRemovalRecovery: recovery },
+      })
+      .mockResolvedValueOnce({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: restored },
+      });
+    const notices: Notice[] = [];
+    const prototype = Notice.prototype as unknown as {
+      constructor__(this: Notice, message: string | DocumentFragment, duration?: number): void;
+    };
+    const constructor = vi.spyOn(prototype, 'constructor__').mockImplementation(function (
+      this: Notice,
+    ) {
+      notices.push(this);
+      if (requireApiVersion('1.8.7')) activeDocument.body.append(this.containerEl);
+    });
+    const { panel, state } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      await call<Promise<void>>(panel, 'deleteTask', expectDefined(initial.subtasks[0]));
+      expect(state.get('taskStack')[0]?.subtasks.map((child) => child.title)).toEqual(['sibling']);
+      expect(notices).toHaveLength(1);
+      expectDefined(activeDocument.querySelector<HTMLButtonElement>('.mod-cta')).click();
+      await flushMicrotasks(20);
+      expect(execute).toHaveBeenLastCalledWith({ type: 'restore-subtask', ...recovery });
+      expect(state.get('taskStack')[0]).toEqual(restored);
+      expect(constructor).toHaveBeenCalledOnce();
+    } finally {
+      panel.destroy();
+      container.remove();
+      notices.forEach((notice) => {
+        if (requireApiVersion('1.8.7')) notice.containerEl.remove();
+      });
+    }
+  });
+
   it('preserves the full DOM draft bundle when an add-comment command is a no-op', async () => {
     const initial = snapshot('old');
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({

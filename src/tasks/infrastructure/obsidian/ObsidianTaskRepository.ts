@@ -2,6 +2,7 @@ import { TFile, type App } from 'obsidian';
 import { parseLinks } from '../../../markdown/links';
 import {
   dependencyMetadataIssues,
+  subtaskRestorationIssues,
   type RecurrenceCompletionRequest,
   type RecurrenceCompletionRevisionRequest,
   type RevisionPrecondition,
@@ -44,6 +45,10 @@ import { sameTaskNodeRef } from '../../domain/types';
 import { localDate } from '../../domain/validation';
 import { applyTaskCommand } from '../markdown/applyTaskCommand';
 import { createTaskBlock } from '../markdown/createTaskBlock';
+import {
+  recoverSubtaskRemoval,
+  withSubtaskRemovalRecovery,
+} from '../markdown/subtaskRemovalRecovery';
 import type { TaskBlockEdit, TaskBlockTarget, TaskRootBlock } from '../markdown/TaskBlockEditor';
 import { type TaskBlockEditor } from '../markdown/TaskBlockEditor';
 import { type TaskLocator } from '../markdown/TaskLocator';
@@ -134,6 +139,7 @@ type StructuralTaskEditCommand = Extract<
     readonly type:
       | 'set-description'
       | 'add-subtask'
+      | 'restore-subtask'
       | 'delete-subtask'
       | 'reorder-subtask'
       | 'add-comment'
@@ -160,7 +166,12 @@ function directNodeTargetOf(command: TaskEditCommand): PlanningTarget | undefine
 }
 
 function relatedNodeTargetOf(command: TaskEditCommand): PlanningTarget | undefined {
-  if (command.type === 'add-subtask' || command.type === 'add-comment') return command.parent;
+  if (
+    command.type === 'add-subtask' ||
+    command.type === 'restore-subtask' ||
+    command.type === 'add-comment'
+  )
+    return command.parent;
   if (command.type === 'delete-subtask' || command.type === 'reorder-subtask') {
     return command.subtask.parent;
   }
@@ -264,7 +275,12 @@ function rebaseSnapshot(task: TaskSnapshot, root: TaskRef): TaskSnapshot {
 }
 
 function structuralMutationTarget(command: TaskEditCommand): TaskMutationTarget | undefined {
-  if (command.type === 'add-subtask' || command.type === 'add-comment') return command.parent;
+  if (
+    command.type === 'add-subtask' ||
+    command.type === 'restore-subtask' ||
+    command.type === 'add-comment'
+  )
+    return command.parent;
   if (command.type === 'delete-subtask' || command.type === 'reorder-subtask') {
     return { type: 'subtask', ref: command.subtask };
   }
@@ -513,6 +529,7 @@ function isStructuralCommand(command: TaskEditCommand): command is StructuralTas
   return (
     command.type === 'set-description' ||
     command.type === 'add-subtask' ||
+    command.type === 'restore-subtask' ||
     command.type === 'delete-subtask' ||
     command.type === 'reorder-subtask' ||
     command.type === 'add-comment' ||
@@ -543,6 +560,8 @@ function structuralEdit(command: StructuralTaskEditCommand): TaskBlockEdit {
       return { type: command.type, text: command.text };
     case 'add-subtask':
       return { type: command.type, text: command.text };
+    case 'restore-subtask':
+      return { type: command.type, markdown: command.markdown, placement: command.placement };
     case 'delete-subtask':
       return {
         type: command.type,
@@ -1376,7 +1395,10 @@ export class ObsidianTaskRepository implements TaskRepository {
   async edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult> {
     const prepared = 'command' in request ? request : undefined;
     const command: TaskEditCommand = 'command' in request ? request.command : request;
-    const metadataIssues = dependencyMetadataIssues(command);
+    const metadataIssues = [
+      ...dependencyMetadataIssues(command),
+      ...subtaskRestorationIssues(command),
+    ];
     if (metadataIssues.length > 0) return { type: 'invalid', issues: metadataIssues };
     const reorderIssue = this.reorderParentIssue(command);
     if (reorderIssue !== undefined) return reorderIssue;
@@ -1783,7 +1805,15 @@ export class ObsidianTaskRepository implements TaskRepository {
     if (result.outcome.type !== 'task' || installed == null) return result;
     const line = result.outcome.task.source.line;
     const rebased = installed.find((candidate) => candidate.source.line === line);
-    return rebased == null ? result : { ...result, outcome: { type: 'task', task: rebased } };
+    if (rebased == null) return result;
+    const recovery = result.outcome.subtaskRemovalRecovery;
+    return {
+      ...result,
+      outcome:
+        recovery === undefined
+          ? { type: 'task', task: rebased }
+          : withSubtaskRemovalRecovery(rebased, recovery),
+    };
   }
 
   private editStructural(input: LocatedEditInput, command: StructuralTaskEditCommand): EditOutcome {
@@ -1811,7 +1841,13 @@ export class ObsidianTaskRepository implements TaskRepository {
       blockTarget(node, block, relativeLine),
       structuralEdit(prepared),
     );
-    return this.structuralEditOutcome(input.process.rootRef.filePath, content, current, edited);
+    const outcome = this.structuralEditOutcome(
+      input.process.rootRef.filePath,
+      content,
+      current,
+      edited,
+    );
+    return { ...outcome, result: recoverSubtaskRemoval(command, edited, outcome.result) };
   }
 
   private structuralOwnershipConflict(

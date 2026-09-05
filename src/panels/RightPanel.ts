@@ -64,6 +64,7 @@ import {
 } from '../ui/taskDraftContinuity';
 import { openInFile } from '../ui/taskNavigation';
 import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
+import { presentTaskMutationResult } from '../ui/taskUndoNotice';
 
 type TaskLike = TaskSnapshot | SubtaskSnapshot;
 
@@ -2185,7 +2186,27 @@ export class RightPanel {
     }
     this.applyPlanningResult(result, target, initiatingStack, submission);
     this.settleDraftSubmission(submission, result);
+    if (result.type === 'ok') this.presentBlockUndo(result);
     return result.type === 'ok';
+  }
+
+  private presentBlockUndo(result: Extract<TaskCommandResult, { readonly type: 'ok' }>): void {
+    const tasks = this.tasks;
+    if (tasks === undefined) return;
+    presentTaskMutationResult(
+      {
+        queries: tasks.queries,
+        execute: async (command) => {
+          const initiatingStack = this.state.get('taskStack');
+          const restored = await tasks.execute(command);
+          if (restored.type === 'ok' && command.type === 'restore-subtask') {
+            this.applyPlanningResult(restored, command.parent, initiatingStack);
+          }
+          return restored;
+        },
+      },
+      result,
+    );
   }
 
   private async updateDue(task: TaskLike, date: string): Promise<void> {

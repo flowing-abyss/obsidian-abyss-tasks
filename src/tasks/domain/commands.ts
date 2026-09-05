@@ -115,6 +115,7 @@ export type TaskCommand =
   | { readonly type: 'set-description'; readonly target: TaskNodeRef; readonly text: string | null }
   | { readonly type: 'add-subtask'; readonly parent: TaskNodeRef; readonly text: string }
   | { readonly type: 'delete-subtask'; readonly subtask: SubtaskRef }
+  | ({ readonly type: 'restore-subtask' } & SubtaskRemovalRecovery)
   | {
       readonly type: 'reorder-subtask';
       readonly subtask: SubtaskRef;
@@ -157,9 +158,25 @@ export interface DependencyCommandOutcome {
   readonly removalRecovery?: DependencyRemovalRecovery;
 }
 
+export interface SubtaskRemovalRecovery {
+  readonly parent: TaskNodeRef;
+  readonly markdown: string;
+  readonly placement: {
+    readonly relativeLine: number;
+    readonly before?: SubtaskRef;
+    readonly after?: SubtaskRef;
+    /** Separator consumed when deleting a final subtree without a trailing newline. */
+    readonly lineEnding?: '\n' | '\r\n';
+  };
+}
+
 export type TaskCommandOutcome =
   | DependencyCommandOutcome
-  | { readonly type: 'task'; readonly task: TaskSnapshot }
+  | {
+      readonly type: 'task';
+      readonly task: TaskSnapshot;
+      readonly subtaskRemovalRecovery?: SubtaskRemovalRecovery;
+    }
   | { readonly type: 'deleted'; readonly ref: TaskRef }
   | {
       readonly type: 'recurrence';

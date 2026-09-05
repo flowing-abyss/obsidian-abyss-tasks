@@ -17,6 +17,7 @@ import type {
   TaskRef,
   TaskSnapshot,
 } from '../domain/types';
+import { sameTaskNodeRef } from '../domain/types';
 import type { TaskIssue } from '../domain/validation';
 
 type AddSubtaskLifecycle =
@@ -68,6 +69,31 @@ export function dependencyMetadataIssues(command: TaskEditCommand): readonly Tas
     return [{ code: 'invalid-target', field: 'depends-on' }];
   }
   return [];
+}
+
+export function subtaskRestorationIssues(
+  command: TaskCommand | TaskEditCommand,
+): readonly TaskIssue[] {
+  if (command.type !== 'restore-subtask') return [];
+  const { relativeLine, lineEnding } = command.placement;
+  const invalid =
+    !Number.isSafeInteger(relativeLine) ||
+    relativeLine <= 0 ||
+    !validRestorationEnding(lineEnding) ||
+    !restorationAnchorsOwned(command);
+  return invalid ? [{ code: 'invalid-target', field: 'subtask' }] : [];
+}
+
+function validRestorationEnding(value: unknown): boolean {
+  return value === undefined || value === '\n' || value === '\r\n';
+}
+
+function restorationAnchorsOwned(
+  command: Extract<TaskCommand, { readonly type: 'restore-subtask' }>,
+): boolean {
+  return [command.placement.before, command.placement.after].every(
+    (anchor) => anchor === undefined || sameTaskNodeRef(anchor.parent, command.parent),
+  );
 }
 
 export interface TaskDraft {

@@ -142,6 +142,79 @@ function retryAgainst(
 }
 
 describe('prepareRetry', () => {
+  it('rebases anchored subtree restoration with the complete current parent and anchor references', () => {
+    const previousBase = snapshot();
+    const previous = {
+      ...previousBase,
+      subtasks: [subtask(previousBase)],
+      source: {
+        ...previousBase.source,
+        originalBlock: `${previousBase.source.originalMarkdown}\n  - [ ] child`,
+      },
+    };
+    const currentBase = snapshot('Task', 'current');
+    const current = { ...currentBase, subtasks: [subtask(currentBase)], source: previous.source };
+    const command: TaskEditRequest['command'] = {
+      type: 'restore-subtask',
+      parent: { type: 'task', ref: previous.ref },
+      markdown: '  - [ ] restored\n',
+      placement: { relativeLine: 1, before: subtask(previous).ref },
+    };
+    const retry = retryAgainst(preparedFor(previous, command, 'exact-target'), previous, current);
+    expect(retry.type).toBe('edit');
+    if (retry.type !== 'edit') return;
+    expect(retry.request.command).toEqual({
+      ...command,
+      parent: { type: 'task', ref: current.ref },
+      placement: { relativeLine: 1, before: subtask(current).ref },
+    });
+    expect(retry.request.baseTarget).toEqual({ type: 'task', ref: current.ref });
+  });
+
+  it('does not reuse a relative-only restoration position after the base revision changes', () => {
+    const previous = snapshot();
+    const current = snapshot('Task', 'current');
+    const command: TaskEditRequest['command'] = {
+      type: 'restore-subtask',
+      parent: { type: 'task', ref: previous.ref },
+      markdown: '  - [ ] restored',
+      placement: { relativeLine: 1, lineEnding: '\n' },
+    };
+    expect(retryAgainst(preparedFor(previous, command, 'exact-target'), previous, current)).toEqual(
+      { type: 'unsafe' },
+    );
+  });
+
+  it('does not restore into a changed parent even if its neighboring child still matches', () => {
+    const previousBase = snapshot();
+    const previous = {
+      ...previousBase,
+      subtasks: [subtask(previousBase)],
+      source: {
+        ...previousBase.source,
+        originalBlock: `${previousBase.source.originalMarkdown}\n  - [ ] child`,
+      },
+    };
+    const currentBase = snapshot('Renamed', 'current');
+    const current = {
+      ...currentBase,
+      subtasks: [subtask(currentBase)],
+      source: {
+        ...currentBase.source,
+        originalBlock: `${currentBase.source.originalMarkdown}\n  - [ ] child`,
+      },
+    };
+    const command: TaskEditRequest['command'] = {
+      type: 'restore-subtask',
+      parent: { type: 'task', ref: previous.ref },
+      markdown: '  - [ ] restored\n',
+      placement: { relativeLine: 1, before: subtask(previous).ref },
+    };
+    expect(retryAgainst(preparedFor(previous, command, 'exact-target'), previous, current)).toEqual(
+      { type: 'unsafe' },
+    );
+  });
+
   it.each([
     {
       name: 'dependency id',

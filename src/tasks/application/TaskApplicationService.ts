@@ -56,8 +56,10 @@ import type {
   TaskRepository,
   TaskRepositoryResult,
 } from './TaskRepository';
+import { subtaskRestorationIssues } from './TaskRepository';
 import {
   prepareRetry,
+  reconcileSubtaskRestoration,
   recurrenceCompletionPreconditionHolds,
   type PreparedMutation,
   type RetryPolicy,
@@ -202,7 +204,10 @@ type DirectTargetCommand = Extract<
       'patch' | 'append-title' | 'set-status' | 'toggle-completion' | 'set-description';
   }
 >;
-type ParentTargetCommand = Extract<TaskCommand, { readonly type: 'add-subtask' | 'add-comment' }>;
+type ParentTargetCommand = Extract<
+  TaskCommand,
+  { readonly type: 'add-subtask' | 'restore-subtask' | 'add-comment' }
+>;
 type SubtaskReferenceCommand = Extract<
   TaskCommand,
   { readonly type: 'delete-subtask' | 'reorder-subtask' }
@@ -220,7 +225,11 @@ const DIRECT_TARGET_TYPES = new Set<TaskCommand['type']>([
   'toggle-completion',
   'set-description',
 ]);
-const PARENT_TARGET_TYPES = new Set<TaskCommand['type']>(['add-subtask', 'add-comment']);
+const PARENT_TARGET_TYPES = new Set<TaskCommand['type']>([
+  'add-subtask',
+  'restore-subtask',
+  'add-comment',
+]);
 const SUBTASK_REFERENCE_TYPES = new Set<TaskCommand['type']>(['delete-subtask', 'reorder-subtask']);
 const COMMENT_REFERENCE_TYPES = new Set<TaskCommand['type']>(['update-comment', 'delete-comment']);
 const COMMUTATIVE_COMMAND_TYPES = new Set<TaskEditCommand['type']>(['add-comment', 'add-subtask']);
@@ -435,6 +444,7 @@ function rebaseLinkTarget(
 }
 
 function retryPolicy(command: TaskEditCommand): RetryPolicy {
+  if (command.type === 'restore-subtask') return 'exact-target';
   if (command.type === 'delete') return 'relocation-only';
   if (command.type === 'reorder-subtask') return 'never';
   const tagOnlyPatch =
@@ -573,6 +583,8 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   }
 
   private async executeCommand(command: TaskCommand): Promise<TaskCommandResult> {
+    const restorationIssues = subtaskRestorationIssues(command);
+    if (restorationIssues.length > 0) return { type: 'invalid', issues: restorationIssues };
     if (
       command.type === 'add-dependency' ||
       command.type === 'remove-dependency' ||
@@ -625,7 +637,11 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     const { settings, reading, serialized } = context;
     const currentRoot = resolution.type === 'exact' ? resolution.task : resolution.current;
     const baseRoot = resolution.type === 'exact' ? resolution.task : resolution.previous;
-    const currentCommand = rebaseCommandRoot(command, currentRoot.ref);
+    const currentCommand =
+      command.type === 'restore-subtask'
+        ? reconcileSubtaskRestoration(command, baseRoot, currentRoot)
+        : rebaseCommandRoot(command, currentRoot.ref);
+    if (currentCommand === undefined) return { type: 'conflict', current: currentRoot };
     const preparedCommand = this.prepare(currentCommand, settings, reading, resolution);
     if ('result' in preparedCommand) return preparedCommand.result;
     const targetBase = mutationTargetForCommand(command);

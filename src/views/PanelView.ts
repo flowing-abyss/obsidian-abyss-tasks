@@ -155,7 +155,11 @@ function commandRootRef(command: TaskCommand): TaskRef | undefined {
       command.target.type === 'comment' ? command.target.ref.parent : command.target.target,
     );
   }
-  if (command.type === 'add-subtask' || command.type === 'add-comment') {
+  if (
+    command.type === 'add-subtask' ||
+    command.type === 'restore-subtask' ||
+    command.type === 'add-comment'
+  ) {
     return rootRefOfNode(command.parent);
   }
   if (isSubtaskReferenceCommand(command)) {

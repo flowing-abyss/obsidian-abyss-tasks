@@ -55,6 +55,16 @@ export type TaskBlockEdit =
   | { readonly type: 'set-description'; readonly text: string | null }
   | { readonly type: 'add-subtask'; readonly text: string }
   | {
+      readonly type: 'restore-subtask';
+      readonly markdown: string;
+      readonly placement: {
+        readonly relativeLine: number;
+        readonly before?: { readonly relativeLine: number; readonly originalBlock: string };
+        readonly after?: { readonly relativeLine: number; readonly originalBlock: string };
+        readonly lineEnding?: '\n' | '\r\n';
+      };
+    }
+  | {
       readonly type: 'delete-subtask';
       readonly relativeLine: number;
       readonly originalBlock: string;
@@ -79,7 +89,12 @@ export type TaskBlockEdit =
     };
 
 export type TaskBlockEditResult =
-  | { readonly type: 'changed'; readonly content: string; readonly block: TaskRootBlock }
+  | {
+      readonly type: 'changed';
+      readonly content: string;
+      readonly block: TaskRootBlock;
+      readonly removedSubtask?: { readonly markdown: string; readonly lineEnding?: '\n' | '\r\n' };
+    }
   | { readonly type: 'unchanged'; readonly content: string; readonly block: TaskRootBlock }
   | { readonly type: 'conflict' }
   | { readonly type: 'invalid'; readonly field: 'description' | 'comment' | 'subtask' };
@@ -212,6 +227,104 @@ interface BlockEditContext {
   readonly parentLine: number;
   readonly ending: '\n' | '\r\n';
   readonly hadFinalEnding: boolean;
+}
+
+function validRestoredSubtree(lines: readonly SourceLine[], parent: string): boolean {
+  const first = lines[0]?.text;
+  if (first === undefined || !TASK_RE.test(first)) return false;
+  const depth = indentation(first);
+  return (
+    depth > indentation(parent) &&
+    quoteDepth(first) === quoteDepth(parent) &&
+    lines
+      .slice(1)
+      .every(
+        (line) =>
+          line.text.trim().length === 0 ||
+          (indentation(line.text) > depth && quoteDepth(line.text) === quoteDepth(first)),
+      )
+  );
+}
+
+type RestorePlacement = Extract<TaskBlockEdit, { readonly type: 'restore-subtask' }>['placement'];
+
+function restoredSubtaskLine(
+  context: BlockEditContext,
+  placement: RestorePlacement,
+): number | undefined {
+  const { relativeLine } = placement;
+  if (
+    !Number.isSafeInteger(relativeLine) ||
+    relativeLine <= 0 ||
+    relativeLine > context.target.lineCount
+  )
+    return undefined;
+  const anchors = restorationAnchors(context, placement);
+  if (anchors === undefined) return undefined;
+  const { before: beforeRange, after: afterRange } = anchors;
+  const insertion = anchoredRestorationLine(context, placement, anchors);
+  if (
+    (beforeRange !== undefined && insertion > beforeRange.from) ||
+    (afterRange !== undefined && insertion <= afterRange.to)
+  )
+    return undefined;
+  if (
+    context.target.childRanges.some(
+      (range) => relativeLine > range.from && relativeLine <= range.to,
+    )
+  )
+    return undefined;
+  return insertion;
+}
+
+interface RestorationAnchors {
+  readonly before: ConfirmedChildRange | undefined;
+  readonly after: ConfirmedChildRange | undefined;
+}
+
+function restorationAnchors(
+  context: BlockEditContext,
+  placement: RestorePlacement,
+): RestorationAnchors | undefined {
+  const ranges = [placement.before, placement.after].map((anchor) =>
+    anchor === undefined
+      ? undefined
+      : confirmedChildRange(context.lines, context.parentLine, context.target, anchor),
+  );
+  if (
+    (placement.before !== undefined && ranges[0] === undefined) ||
+    (placement.after !== undefined && ranges[1] === undefined)
+  )
+    return undefined;
+  return { before: ranges[0], after: ranges[1] };
+}
+
+function anchoredRestorationLine(
+  context: BlockEditContext,
+  placement: RestorePlacement,
+  anchors: RestorationAnchors,
+): number {
+  if (placement.before !== undefined && anchors.before !== undefined)
+    return anchors.before.from + placement.relativeLine - placement.before.relativeLine;
+  if (placement.after !== undefined && anchors.after !== undefined)
+    return anchors.after.from + placement.relativeLine - placement.after.relativeLine;
+  return context.parentLine + placement.relativeLine;
+}
+
+function restoreSeparator(
+  context: BlockEditContext,
+  placement: RestorePlacement,
+): '\n' | '\r\n' | undefined {
+  if (
+    placement.before === undefined &&
+    placement.after === undefined &&
+    placement.lineEnding !== undefined
+  )
+    return placement.lineEnding;
+  const endings = new Set(
+    context.lines.map((line) => line.ending).filter((ending) => ending !== ''),
+  );
+  return endings.size === 1 ? [...endings][0] : undefined;
 }
 
 function rootBlockAt(
@@ -440,11 +553,12 @@ export class TaskBlockEditor {
     context: BlockEditContext,
     edit: Extract<
       TaskBlockEdit,
-      { readonly type: 'add-subtask' | 'delete-subtask' | 'reorder-subtask' }
+      { readonly type: 'add-subtask' | 'delete-subtask' | 'restore-subtask' | 'reorder-subtask' }
     >,
   ): TaskBlockEditResult | undefined {
     if (edit.type === 'add-subtask') return this.addSubtask(context, edit);
     if (edit.type === 'delete-subtask') return this.deleteSubtask(context, edit);
+    if (edit.type === 'restore-subtask') return this.restoreSubtask(context, edit);
     return this.reorderSubtask(context, edit);
   }
 
@@ -471,7 +585,43 @@ export class TaskBlockEditor {
   ): TaskBlockEditResult | undefined {
     const range = confirmedChildRange(context.lines, context.parentLine, context.target, edit);
     if (range == null) return { type: 'conflict' };
+    const first = context.lines[range.from];
+    const last = context.lines[range.to];
+    if (first === undefined || last === undefined) return { type: 'conflict' };
+    const previousEnding = context.lines[range.from - 1]?.ending;
+    const lineEnding = last.ending === '' ? previousEnding : undefined;
+    const markdown = context.content.slice(first.from, last.to);
     context.lines.splice(range.from, range.to - range.from + 1);
+    const result = this.editedResult(context);
+    return result.type === 'changed'
+      ? {
+          ...result,
+          removedSubtask: {
+            markdown,
+            ...(lineEnding === '\n' || lineEnding === '\r\n' ? { lineEnding } : {}),
+          },
+        }
+      : result;
+  }
+
+  private restoreSubtask(
+    context: BlockEditContext,
+    edit: Extract<TaskBlockEdit, { readonly type: 'restore-subtask' }>,
+  ): TaskBlockEditResult | undefined {
+    const additions = sourceLines(edit.markdown);
+    const first = additions[0];
+    if (first === undefined || !validRestoredSubtree(additions, context.parent.text)) {
+      return { type: 'invalid', field: 'subtask' };
+    }
+    const insertion = restoredSubtaskLine(context, edit.placement);
+    if (insertion === undefined) return { type: 'conflict' };
+    const previous = context.lines[insertion - 1];
+    if (previous?.ending === '') {
+      const ending = restoreSeparator(context, edit.placement);
+      if (ending === undefined) return { type: 'conflict' };
+      previous.ending = ending;
+    }
+    context.lines.splice(insertion, 0, ...additions);
     return undefined;
   }
 
@@ -551,6 +701,7 @@ export class TaskBlockEditor {
         return this.editDescription(context, edit);
       case 'add-subtask':
       case 'delete-subtask':
+      case 'restore-subtask':
       case 'reorder-subtask':
         return this.editSubtaskStructure(context, edit);
       case 'add-comment':

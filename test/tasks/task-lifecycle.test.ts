@@ -27,9 +27,15 @@ import {
 } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { presentTaskCreationResult } from '../../src/ui/taskCommandResult';
-import { createAppWithFiles, methodOf, taskQueryApi, useRealMoment } from '../helpers';
+import {
+  configuredTaskApplication,
+  createAppWithFiles,
+  expectDefined,
+  methodOf,
+  taskQueryApi,
+  useRealMoment,
+} from '../helpers';
 import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
-import { expectDefined } from './../helpers';
 
 vi.mock('obsidian', async () => {
   const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
@@ -140,6 +146,200 @@ function rootRef(harness: Harness, content: string, line = 0): TaskRef {
   const task = harness.snapshots(content).find((candidate) => candidate.source.line === line);
   if (task == null) throw new Error(`missing task at line ${line}`);
   return task.ref;
+}
+
+for (const adapter of ['in-memory', 'obsidian'] as const) {
+  describe(`${adapter} subtask removal recovery`, () => {
+    const removed =
+      '    - [ ] Removed [[Link]] 🧩 unknown 🆔 child ⛔ absent\r\n' +
+      '      - > Description with [link](https://example.com)\r\n' +
+      '      - 2026-09-05T09:00:00+00:00: Comment\r\n' +
+      '      - [ ] Nested 🧲 unknown\r\n';
+    const prefix = '# Tasks\r\n- [ ] Root\r\n  - [ ] Parent\r\n    - [ ] Previous\r\n';
+    const suffix = '    - [ ] Next\r\n  - [ ] Other\r\n- [ ] Neighbor\r\n';
+    const source = prefix + removed + suffix;
+
+    it('returns exact subtree bytes and committed neighboring references for restoration', async () => {
+      const harness = await makeHarness(adapter, source);
+      const root = expectDefined(harness.snapshots(source)[0]);
+      const parent = expectDefined(root.subtasks[0]);
+      const deleted = await harness.repository.edit({
+        type: 'delete-subtask',
+        subtask: expectDefined(parent.subtasks[1]).ref,
+      });
+      expect(await harness.read()).toBe(prefix + suffix);
+      expect(deleted.type).toBe('committed');
+      if (deleted.type !== 'committed' || deleted.outcome.type !== 'task') return;
+      const freshParent = expectDefined(deleted.outcome.task.subtasks[0]);
+      const recovery = deleted.outcome.subtaskRemovalRecovery;
+      expect(recovery).toEqual({
+        parent: { type: 'subtask', ref: freshParent.ref },
+        markdown: removed,
+        placement: {
+          relativeLine: 2,
+          after: freshParent.subtasks[0]?.ref,
+          before: freshParent.subtasks[1]?.ref,
+        },
+      });
+      if (recovery === undefined) return;
+      expect(Object.isFrozen(deleted.outcome)).toBe(true);
+      expect(Object.isFrozen(deleted.outcome.task)).toBe(true);
+      expect(Object.isFrozen(recovery)).toBe(true);
+      expect(Object.isFrozen(recovery.placement)).toBe(true);
+      expect(Object.isFrozen(recovery.parent.ref)).toBe(true);
+      expect(recovery.parent.ref).not.toBe(freshParent.ref);
+      expect(recovery.placement.before).not.toBe(freshParent.subtasks[1]?.ref);
+      expect(() => Object.assign(recovery.placement, { relativeLine: 99 })).toThrow(TypeError);
+      expect(() => Object.assign(recovery.parent.ref, { originalBlock: 'changed' })).toThrow(
+        TypeError,
+      );
+      const restored = await harness.repository.edit({ type: 'restore-subtask', ...recovery });
+      expect(restored.type).toBe('committed');
+      expect(await harness.read()).toBe(source);
+    });
+
+    it.each(['first', 'last', 'only'] as const)(
+      'restores a %s child without a final newline',
+      async (position) => {
+        const children = position === 'only' ? ['Removed'] : ['First', 'Last'];
+        const childMarkdown = children.map((title) => `  - [ ] ${title}`).join('\r\n');
+        const original = `- [ ] Root\r\n${childMarkdown}`;
+        const harness = await makeHarness(adapter, original);
+        const root = expectDefined(harness.snapshots(original)[0]);
+        const child = expectDefined(root.subtasks[position === 'last' ? 1 : 0]);
+        const deleted = await harness.repository.edit({
+          type: 'delete-subtask',
+          subtask: child.ref,
+        });
+        if (deleted.type !== 'committed' || deleted.outcome.type !== 'task')
+          throw new Error('delete failed');
+        expect(deleted.outcome.subtaskRemovalRecovery).toBeDefined();
+        const recovery = deleted.outcome.subtaskRemovalRecovery;
+        if (recovery === undefined) return;
+        expect((await harness.repository.edit({ type: 'restore-subtask', ...recovery })).type).toBe(
+          'committed',
+        );
+        expect(await harness.read()).toBe(original);
+      },
+    );
+
+    it.each([
+      'not a task\n',
+      '- [ ] Root-level injection\n',
+      '  - [ ] Child\n- [ ] Escaped root\n',
+      '  - [ ] Child\n  - [ ] Second subtree\n',
+      '>   - [ ] Different quote depth\n',
+    ])('rejects malformed or foreign subtree Markdown %j without a write', async (markdown) => {
+      const original = '- [ ] Root\n';
+      const harness = await makeHarness(adapter, original);
+      const root = expectDefined(harness.snapshots(original)[0]);
+      const result = await harness.repository.edit({
+        type: 'restore-subtask',
+        parent: { type: 'task', ref: root.ref },
+        markdown,
+        placement: { relativeLine: 1 },
+      });
+      expect(result.type).toBe('invalid');
+      expect(await harness.read()).toBe(original);
+    });
+
+    it('rejects changed anchor bytes even when the caller has a fresh parent reference', async () => {
+      const original = '- [ ] Root\n  - [ ] Changed\n';
+      const harness = await makeHarness(adapter, original);
+      const root = expectDefined(harness.snapshots(original)[0]);
+      const result = await harness.repository.edit({
+        type: 'restore-subtask',
+        parent: { type: 'task', ref: root.ref },
+        markdown: '  - [ ] Removed\n',
+        placement: {
+          relativeLine: 1,
+          before: { ...expectDefined(root.subtasks[0]).ref, originalBlock: '  - [ ] Original' },
+        },
+      });
+      expect(result.type).toBe('conflict');
+      expect(await harness.read()).toBe(original);
+    });
+
+    it.each(['\n', '\r\n'] as const)(
+      'restores the only EOF child using its consumed %j separator',
+      async (ending) => {
+        const original = `- [ ] Root${ending}  - [ ] Removed`;
+        const harness = await makeHarness(adapter, original);
+        const root = expectDefined(harness.snapshots(original)[0]);
+        const deleted = await harness.repository.edit({
+          type: 'delete-subtask',
+          subtask: expectDefined(root.subtasks[0]).ref,
+        });
+        if (deleted.type !== 'committed' || deleted.outcome.type !== 'task')
+          throw new Error('delete failed');
+        expect(await harness.read()).toBe('- [ ] Root');
+        const recovery = expectDefined(deleted.outcome.subtaskRemovalRecovery);
+        expect(recovery.placement.lineEnding).toBe(ending);
+        expect((await harness.repository.edit({ type: 'restore-subtask', ...recovery })).type).toBe(
+          'committed',
+        );
+        expect(await harness.read()).toBe(original);
+      },
+    );
+
+    it.each(['before', 'after'] as const)(
+      'ignores the consumed separator when the %s anchor supplies insertion context',
+      async (anchor) => {
+        const original =
+          anchor === 'before' ? '- [ ] Root\r\n  - [ ] Next\r\n' : '- [ ] Root\r\n  - [ ] Previous';
+        const harness = await makeHarness(adapter, original);
+        const root = expectDefined(harness.snapshots(original)[0]);
+        const result = await harness.repository.edit({
+          type: 'restore-subtask',
+          parent: { type: 'task', ref: root.ref },
+          markdown: anchor === 'before' ? '  - [ ] Removed\r\n' : '  - [ ] Removed',
+          placement: {
+            relativeLine: anchor === 'before' ? 1 : 2,
+            ...(anchor === 'before'
+              ? { before: expectDefined(root.subtasks[0]).ref }
+              : { after: expectDefined(root.subtasks[0]).ref }),
+            lineEnding: '\n',
+          },
+        });
+        expect(result.type).toBe('committed');
+        expect(await harness.read()).toBe(
+          anchor === 'before'
+            ? '- [ ] Root\r\n  - [ ] Removed\r\n  - [ ] Next\r\n'
+            : '- [ ] Root\r\n  - [ ] Previous\r\n  - [ ] Removed',
+        );
+      },
+    );
+
+    it('rejects a malformed separator without writing', async () => {
+      const original = '- [ ] Root';
+      const harness = await makeHarness(adapter, original);
+      const root = expectDefined(harness.snapshots(original)[0]);
+      const result = await harness.repository.edit({
+        type: 'restore-subtask',
+        parent: { type: 'task', ref: root.ref },
+        markdown: '  - [ ] Removed',
+        placement: { relativeLine: 1, lineEnding: 'garbage' as '\n' },
+      });
+      expect(result.type).toBe('invalid');
+      expect(await harness.read()).toBe(original);
+    });
+
+    it.each(['- [ ] Root', '# LF\n# CRLF\r\n- [ ] Root'])(
+      'conflicts without a captured separator when the current bytes do not prove one ending: %j',
+      async (original) => {
+        const harness = await makeHarness(adapter, original);
+        const root = expectDefined(harness.snapshots(original)[0]);
+        const result = await harness.repository.edit({
+          type: 'restore-subtask',
+          parent: { type: 'task', ref: root.ref },
+          markdown: '  - [ ] Removed',
+          placement: { relativeLine: 1 },
+        });
+        expect(result.type).toBe('conflict');
+        expect(await harness.read()).toBe(original);
+      },
+    );
+  });
 }
 
 for (const adapter of ['in-memory', 'obsidian'] as const) {
@@ -637,6 +837,118 @@ describe('TaskApplicationService lifecycle routing', () => {
     });
     expect(destinationProvider.planConfiguredDefault).toHaveBeenCalledOnce();
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe('TaskApplicationService subtask recovery', () => {
+  it('does not select one of identical parents when the captured reference becomes obsolete', async () => {
+    const source =
+      '\n- [ ] Root\n  - [ ] Parent\n    - [ ] Removed\n    - [ ] Next\n  - [ ] Parent\n    - [ ] Next\n';
+    const app = await createAppWithFiles({ [path]: source });
+    const h = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
+    await h.index.initialize();
+    try {
+      const root = expectDefined(h.index.list()[0]);
+      const deleted = await h.tasks.execute({
+        type: 'delete-subtask',
+        subtask: expectDefined(root.subtasks[0]?.subtasks[0]).ref,
+      });
+      if (deleted.type !== 'ok' || deleted.outcome.type !== 'task')
+        throw new Error('delete failed');
+      const recovery = expectDefined(deleted.outcome.subtaskRemovalRecovery);
+      const changed = await h.tasks.execute({
+        type: 'set-description',
+        target: { type: 'task', ref: deleted.outcome.task.ref },
+        text: 'External change',
+      });
+      expect(changed.type).toBe('ok');
+      const current = await app.vault.read(fileAt(app, path));
+      expect((await h.tasks.execute({ type: 'restore-subtask', ...recovery })).type).toBe(
+        'conflict',
+      );
+      expect(await app.vault.read(fileAt(app, path))).toBe(current);
+    } finally {
+      h.index.destroy();
+    }
+  });
+
+  it('validates the recovery separator before query resolution or repository I/O', async () => {
+    const app = await createAppWithFiles({ [path]: '- [ ] Root' });
+    const h = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
+    await h.index.initialize();
+    try {
+      const root = expectDefined(h.index.list()[0]);
+      const resolve = vi.spyOn(h.index, 'resolve');
+      const read = vi.spyOn(app.vault, 'read');
+      const write = vi.spyOn(app.vault, 'process');
+      const result = await h.tasks.execute({
+        type: 'restore-subtask',
+        parent: { type: 'task', ref: root.ref },
+        markdown: '  - [ ] Removed',
+        placement: { relativeLine: 1, lineEnding: '\r' as '\n' },
+      });
+      expect(result.type).toBe('invalid');
+      expect(resolve).not.toHaveBeenCalled();
+      expect(read).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+    } finally {
+      h.index.destroy();
+    }
+  });
+
+  it('restores through committed authority references and preserves neighboring roots', async () => {
+    const source =
+      '\n- [ ] Root\r\n  - [ ] Parent\r\n    - [ ] Removed\r\n    - [ ] Next\r\n- [ ] Neighbor\r\n';
+    const app = await createAppWithFiles({ [path]: source });
+    const h = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
+    await h.index.initialize();
+    try {
+      const root = expectDefined(h.index.list()[0]);
+      const deleted = await h.tasks.execute({
+        type: 'delete-subtask',
+        subtask: expectDefined(root.subtasks[0]?.subtasks[0]).ref,
+      });
+      expect(deleted.type).toBe('ok');
+      if (deleted.type !== 'ok' || deleted.outcome.type !== 'task') return;
+      const recovery = expectDefined(deleted.outcome.subtaskRemovalRecovery);
+      expect(recovery.parent).toEqual({
+        type: 'subtask',
+        ref: deleted.outcome.task.subtasks[0]?.ref,
+      });
+      expect(h.index.resolve(deleted.outcome.task.ref).type).toBe('exact');
+      const restored = await h.tasks.execute({ type: 'restore-subtask', ...recovery });
+      expect(restored.type).toBe('ok');
+      expect(await app.vault.read(fileAt(app, path))).toBe(source);
+    } finally {
+      h.index.destroy();
+    }
+  });
+
+  it('conflicts after the parent changes without overwriting its current content', async () => {
+    const app = await createAppWithFiles({ [path]: '- [ ] Root\n  - [ ] Removed\n  - [ ] Next\n' });
+    const h = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
+    await h.index.initialize();
+    try {
+      const root = expectDefined(h.index.list()[0]);
+      const deleted = await h.tasks.execute({
+        type: 'delete-subtask',
+        subtask: expectDefined(root.subtasks[0]).ref,
+      });
+      if (deleted.type !== 'ok' || deleted.outcome.type !== 'task')
+        throw new Error('delete failed');
+      const recovery = expectDefined(deleted.outcome.subtaskRemovalRecovery);
+      await h.tasks.execute({
+        type: 'patch',
+        target: { type: 'task', ref: deleted.outcome.task.ref },
+        patch: { markdownTitle: { type: 'set', value: 'Renamed' } },
+      });
+      const current = await app.vault.read(fileAt(app, path));
+      const result = await h.tasks.execute({ type: 'restore-subtask', ...recovery });
+      expect(result.type).toBe('conflict');
+      expect(await app.vault.read(fileAt(app, path))).toBe(current);
+    } finally {
+      h.index.destroy();
+    }
   });
 });
 

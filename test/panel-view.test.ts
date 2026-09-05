@@ -114,6 +114,53 @@ function computedStyleWithFontSize(
 }
 
 describe('PanelView dependency command convergence', () => {
+  it('converges a restored subtree through the committed parent root', async () => {
+    const app = await createAppWithFiles({
+      'tasks.md': '- [ ] Root\n  - [ ] Removed\n  - [ ] Next\n',
+    });
+    const application = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
+    await application.index.initialize();
+    const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+    const view = new PanelView(
+      leaf,
+      DEFAULT_SETTINGS,
+      makeTagManager(app),
+      application.index,
+      application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      application.statusRegistry,
+    );
+    await view.onOpen();
+    try {
+      const internals = view as unknown as {
+        state: AppState;
+        createSelectionTasks(): TaskApplicationApi;
+        convergeOwnCommand(initiatingRef: TaskRef, result: TaskCommandResult): void;
+      };
+      const root = expectDefined(application.index.list()[0]);
+      internals.state.set('taskStack', [root]);
+      const tasks = internals.createSelectionTasks();
+      const deleted = await tasks.execute({
+        type: 'delete-subtask',
+        subtask: expectDefined(root.subtasks[0]).ref,
+      });
+      if (deleted.type !== 'ok' || deleted.outcome.type !== 'task')
+        throw new Error('delete failed');
+      const recovery = expectDefined(deleted.outcome.subtaskRemovalRecovery);
+      const converge = vi.spyOn(internals, 'convergeOwnCommand');
+      const restored = await tasks.execute({ type: 'restore-subtask', ...recovery });
+      expect(restored.type).toBe('ok');
+      expect(converge).toHaveBeenCalledExactlyOnceWith(deleted.outcome.task.ref, restored);
+      expect(internals.state.get('taskStack')[0]?.subtasks.map((child) => child.title)).toEqual([
+        'Removed',
+        'Next',
+      ]);
+    } finally {
+      await view.onClose();
+      view.containerEl.remove();
+      application.index.destroy();
+    }
+  });
+
   it.each(['blocked-by', 'blocks', 'remove-raw', 'restore-raw'] as const)(
     'preserves the selected structural chain for %s through the index event',
     async (operation) => {

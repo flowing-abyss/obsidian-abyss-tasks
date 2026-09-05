@@ -104,6 +104,58 @@ function ownedDescendants(task: TaskSnapshot | SubtaskSnapshot): string {
   return newline < 0 ? '' : block.slice(newline);
 }
 
+function exactRestorationNode(
+  root: TaskSnapshot,
+  target: TaskNodeRef,
+): TaskStatusSnapshot | undefined {
+  let node: TaskStatusSnapshot = root;
+  for (const ref of childChain(target)) {
+    const child: SubtaskSnapshot | undefined = node.subtasks.find(
+      (candidate) =>
+        candidate.ref.relativeLine === ref.relativeLine &&
+        candidate.ref.originalBlock === ref.originalBlock,
+    );
+    if (child === undefined) return undefined;
+    node = child;
+  }
+  return node;
+}
+
+export function reconcileSubtaskRestoration(
+  command: Extract<TaskCommand, { readonly type: 'restore-subtask' }>,
+  previous: TaskSnapshot,
+  current: TaskSnapshot,
+): Extract<TaskCommand, { readonly type: 'restore-subtask' }> | undefined {
+  const parent = reconcileTaskNodeRef(previous, current, command.parent);
+  if (parent === undefined) return undefined;
+  const beforeNode = exactRestorationNode(previous, command.parent);
+  const afterNode = exactRestorationNode(current, parent);
+  if (!restorationParentUnchanged(beforeNode, afterNode)) return undefined;
+  const { before, after } = command.placement;
+  if (before === undefined && after === undefined && previous.ref.revision !== current.ref.revision)
+    return undefined;
+  return {
+    ...command,
+    parent,
+    placement: {
+      ...command.placement,
+      ...(before === undefined ? {} : { before: { ...before, parent } }),
+      ...(after === undefined ? {} : { after: { ...after, parent } }),
+    },
+  };
+}
+
+function restorationParentUnchanged(
+  previous: TaskStatusSnapshot | undefined,
+  current: TaskStatusSnapshot | undefined,
+): boolean {
+  if (previous === undefined || current === undefined) return false;
+  const original =
+    'source' in previous ? previous.source.originalBlock : previous.ref.originalBlock;
+  const actual = 'source' in current ? current.source.originalBlock : current.ref.originalBlock;
+  return original === actual;
+}
+
 type DirectRebaseCommand = Extract<
   TaskEditCommand,
   {
@@ -115,6 +167,7 @@ type DirectRebaseCommand = Extract<
       | 'set-dependency-id'
       | 'set-depends-on'
       | 'add-subtask'
+      | 'restore-subtask'
       | 'add-comment'
       | 'delete-subtask'
       | 'reorder-subtask';
@@ -136,6 +189,7 @@ const DIRECT_REBASE_TYPES = new Set<TaskEditCommand['type']>([
   'set-dependency-id',
   'set-depends-on',
   'add-subtask',
+  'restore-subtask',
   'add-comment',
   'delete-subtask',
   'reorder-subtask',
@@ -193,6 +247,8 @@ function rebaseEditCommand(command: TaskEditCommand, root: TaskRef): TaskEditCom
 }
 
 function rebaseDirectCommand(command: DirectRebaseCommand, root: TaskRef): TaskEditCommand {
+  if (isParentRebaseCommand(command))
+    return { ...command, parent: rebaseStatusTarget(command.parent, root) };
   if (isDependencyMetadataCommand(command)) {
     return { ...command, target: rebaseStatusTarget(command.target, root) };
   }
@@ -203,9 +259,6 @@ function rebaseDirectCommand(command: DirectRebaseCommand, root: TaskRef): TaskE
       return { ...command, target: rebaseStatusTarget(command.target, root) } as TaskEditCommand;
     case 'set-description':
       return { ...command, target: rebaseStatusTarget(command.target, root) };
-    case 'add-subtask':
-    case 'add-comment':
-      return { ...command, parent: rebaseStatusTarget(command.parent, root) };
     case 'delete-subtask':
       return { ...command, subtask: rebaseSubtask(command.subtask, root) };
     case 'reorder-subtask':
@@ -215,6 +268,19 @@ function rebaseDirectCommand(command: DirectRebaseCommand, root: TaskRef): TaskE
         target: rebaseSubtask(command.target, root),
       };
   }
+}
+
+function isParentRebaseCommand(
+  command: DirectRebaseCommand,
+): command is Extract<
+  DirectRebaseCommand,
+  { readonly type: 'add-subtask' | 'restore-subtask' | 'add-comment' }
+> {
+  return (
+    command.type === 'add-subtask' ||
+    command.type === 'restore-subtask' ||
+    command.type === 'add-comment'
+  );
 }
 
 function rebaseRemainingCommand(command: RemainingRebaseCommand, root: TaskRef): TaskEditCommand {
@@ -246,6 +312,7 @@ function nodeForDirectCommand(
   root: TaskSnapshot,
   command: DirectRebaseCommand,
 ): TaskStatusSnapshot | undefined {
+  if (isParentRebaseCommand(command)) return snapshotForTarget(root, command.parent);
   if (isDependencyMetadataCommand(command)) return snapshotForTarget(root, command.target);
   switch (command.type) {
     case 'patch':
@@ -253,9 +320,6 @@ function nodeForDirectCommand(
     case 'set-status':
     case 'set-description':
       return snapshotForTarget(root, command.target);
-    case 'add-comment':
-    case 'add-subtask':
-      return snapshotForTarget(root, command.parent);
     case 'delete-subtask':
     case 'reorder-subtask':
       return snapshotForTarget(root, { type: 'subtask', ref: command.subtask });
@@ -647,6 +711,20 @@ function retryEdit(
   if (!('command' in prepared.repositoryRequest)) return { type: 'unsafe' };
   if ('baseOwnedDescendants' in prepared.repositoryRequest) return { type: 'unsafe' };
   const command = prepared.repositoryRequest.command;
+  if (command.type === 'restore-subtask') {
+    const restored = reconcileSubtaskRestoration(command, previous, current);
+    return restored === undefined
+      ? { type: 'unsafe' }
+      : {
+          type: 'edit',
+          request: {
+            command: restored,
+            baseRoot: current,
+            baseTarget: restored.parent,
+            reconciliation: { observed: current },
+          },
+        };
+  }
   const allowed = (() => {
     switch (prepared.retry) {
       case 'commutative':
