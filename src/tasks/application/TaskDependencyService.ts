@@ -167,6 +167,12 @@ function sameIds(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((id, index) => id === right[index]);
 }
 
+function taskLine(node: TaskSnapshot | SubtaskSnapshot): string {
+  return 'source' in node
+    ? node.source.originalMarkdown
+    : (node.ref.originalBlock.split(/\r?\n/u, 1)[0] ?? '');
+}
+
 function invalid(field = 'dependency'): TaskCommandResult {
   return { type: 'invalid', issues: [{ code: 'invalid-target', field }] };
 }
@@ -184,6 +190,21 @@ function terminal(result: TaskRepositoryResult): TaskCommandResult {
 
 function request(node: ResolvedNode, command: MetadataCommand): TaskEditRequest {
   return { command, baseRoot: node.root, baseTarget: node.target, reconciliation: node.basis };
+}
+
+function declaredIdsRequest(
+  dependent: ResolvedNode,
+  change: DeclaredIdsChange,
+  command: ChangeCommand,
+): TaskEditRequest {
+  const restoreSource =
+    command.type === 'restore-dependency' ? command.recovery.source?.before : undefined;
+  return request(dependent, {
+    type: 'set-depends-on',
+    target: dependent.target,
+    ids: change.ids,
+    ...(restoreSource === undefined ? {} : { restoreSource }),
+  });
 }
 
 function occurrence(node: TaskNodeSnapshot): TaskOccurrenceResult {
@@ -208,7 +229,11 @@ function prepareDeclaredIds(
 ): { readonly change: DeclaredIdsChange } | { readonly result: TaskCommandResult } {
   const beforeIds = [...dependent.node.dependsOn];
   if (command.type === 'restore-dependency') {
-    if (!sameIds(beforeIds, command.recovery.afterIds))
+    if (
+      !sameIds(beforeIds, command.recovery.afterIds) ||
+      (command.recovery.source !== undefined &&
+        taskLine(dependent.node) !== command.recovery.source.after)
+    )
       return { result: { type: 'conflict', current: dependent.root } };
     return {
       change: {
@@ -596,22 +621,24 @@ export class TaskDependencyService {
     const prepared = prepareDeclaredIds(command, dependent);
     if ('result' in prepared) return prepared.result;
     const { change } = prepared;
+    const beforeSource = taskLine(dependent.node);
     if (sameIds(dependent.node.dependsOn, change.ids))
-      return this.changedIdsResult(dependent, change, false);
-    const result = await this.edit(
-      request(dependent, { type: 'set-depends-on', target: dependent.target, ids: change.ids }),
-    );
+      return this.changedIdsResult(dependent, change, false, beforeSource);
+    const result = await this.edit(declaredIdsRequest(dependent, change, command));
     if (result.type === 'rebased' && rebases.length === 0)
       return await this.changeDeclaredIds(command, [result]);
     if (result.type !== 'committed') return terminal(result);
     const fresh = this.committedNode(result, dependent.target);
-    return fresh === undefined ? ioError() : this.changedIdsResult(fresh, change, result.changed);
+    return fresh === undefined
+      ? ioError()
+      : this.changedIdsResult(fresh, change, result.changed, beforeSource);
   }
 
   private changedIdsResult(
     dependent: TaskNodeSnapshot,
     change: DeclaredIdsChange,
     changed: boolean,
+    beforeSource: string,
   ): TaskCommandResult {
     const { dependencyId: id, removalRecovery: recovery } = change;
     const matches = this.queries.listNodes().filter(({ node }) => node.dependencyId === id);
@@ -622,7 +649,14 @@ export class TaskDependencyService {
       dependencyId: id,
       dependent: occurrence(dependent),
       ...(blocker === undefined ? {} : { blocker: occurrence(blocker) }),
-      ...(recovery === undefined ? {} : { removalRecovery: recovery }),
+      ...(recovery === undefined
+        ? {}
+        : {
+            removalRecovery: {
+              ...recovery,
+              source: { before: beforeSource, after: taskLine(dependent.node) },
+            },
+          }),
     };
     return { type: 'ok', changed, outcome };
   }

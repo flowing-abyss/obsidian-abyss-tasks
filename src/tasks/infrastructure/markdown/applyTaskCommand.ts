@@ -1,7 +1,7 @@
 import type { TaskEditCommand } from '../../application/TaskRepository';
 import type { FieldUpdate, TaskPatch } from '../../domain/commands';
 import { shiftLocalDate } from '../../domain/localDateMath';
-import { localDate, type TaskValidationField } from '../../domain/validation';
+import { isSingleLineText, localDate, type TaskValidationField } from '../../domain/validation';
 import {
   type LineEdit,
   type LineEditResult,
@@ -272,6 +272,30 @@ function dependencyPlan(command: TaskEditCommand): CommandPlan | undefined {
   return undefined;
 }
 
+function restoreDependencySource(
+  codec: TaskMarkdownCodec,
+  current: ParsedTaskLine,
+  source: string,
+  ids: readonly string[],
+): LineEditResult {
+  const before = isSingleLineText(source)
+    ? codec.parseLine(source, { filePath: '', line: 0 })
+    : null;
+  if (
+    before?.dependsOn.length !== ids.length ||
+    !before.dependsOn.every((id, index) => id === ids[index])
+  )
+    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'depends-on' }] };
+  const removed = codec.applyLineEdit(source, {
+    type: 'set-depends-on',
+    values: current.dependsOn,
+  });
+  // Replaying the original metadata edit must account for every restored byte.
+  if (removed.type === 'invalid' || removed.content !== current.original)
+    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'depends-on' }] };
+  return { type: source === current.original ? 'unchanged' : 'changed', content: source };
+}
+
 function schedulingPlan(parsed: ParsedTaskLine, command: TaskEditCommand): CommandPlan | undefined {
   if (command.type === 'reschedule') {
     const field = anchorDateField(parsed);
@@ -381,6 +405,8 @@ export function applyTaskCommand(
 ): LineEditResult {
   const parsed = codec.parseLine(sourceLine, { filePath: '', line: 0 });
   if (parsed == null) return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+  if (command.type === 'set-depends-on' && command.restoreSource !== undefined)
+    return restoreDependencySource(codec, parsed, command.restoreSource, command.ids);
   const plan = commandPlan(parsed, command);
   return 'type' in plan ? plan : codec.applyLineEdits(sourceLine, plan.edits, plan.requestedFields);
 }

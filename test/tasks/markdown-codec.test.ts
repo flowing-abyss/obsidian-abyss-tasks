@@ -195,6 +195,42 @@ describe('TaskMarkdownCodec', () => {
     });
 
     it.each([
+      ['multiline source', '- [ ] Task ⛔ id 📅 2026-09-06\n- [ ] Injected'],
+      ['invalid syntax', 'Task ⛔ id 📅 2026-09-06'],
+      ['wrong ID count', '- [ ] Task ⛔ id, extra 📅 2026-09-06'],
+      ['wrong ID', '- [ ] Task ⛔ other 📅 2026-09-06'],
+      ['changed title', '- [ ] Changed ⛔ id 📅 2026-09-06'],
+      ['changed metadata', '- [ ] Task ⛔ id 📅 2026-09-07'],
+      ['ambiguous carrier', '- [ ] Task ⛔ id ⛔ other 📅 2026-09-06'],
+    ])('rejects dependency recovery with %s', (_kind, restoreSource) => {
+      expect(
+        applyTaskCommand(codec, '- [ ] Task 📅 2026-09-06', {
+          type: 'set-depends-on',
+          target,
+          ids: ['id'],
+          restoreSource,
+        }),
+      ).toEqual({
+        type: 'invalid',
+        issues: [{ code: 'invalid-target', field: 'depends-on' }],
+      });
+    });
+
+    it('restores exact dependency source only when the codec proves every changed byte', () => {
+      expect(
+        applyTaskCommand(codec, '- [ ] Task 🧩 future  📅 2026-09-06 ^block', {
+          type: 'set-depends-on',
+          target,
+          ids: ['id'],
+          restoreSource: '- [ ] Task 🧩 future  ⛔️  id 📅 2026-09-06 ^block',
+        }),
+      ).toEqual({
+        type: 'changed',
+        content: '- [ ] Task 🧩 future  ⛔️  id 📅 2026-09-06 ^block',
+      });
+    });
+
+    it.each([
       [
         'set-dependency-id',
         { type: 'set-dependency-id' as const, target, id: 'bad.id' },

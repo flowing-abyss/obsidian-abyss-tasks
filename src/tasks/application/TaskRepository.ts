@@ -53,6 +53,8 @@ export type TaskEditCommand =
       readonly type: 'set-depends-on';
       readonly target: TaskNodeRef;
       readonly ids: readonly string[];
+      /** Restore only a source line whose dependency edit reproduces the current line. */
+      readonly restoreSource?: string;
     }
   | ({
       readonly type: 'add-subtask';

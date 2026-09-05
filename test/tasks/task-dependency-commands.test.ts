@@ -1448,6 +1448,10 @@ describe('public dependency commands', () => {
       dependencyId: 'missing',
       beforeIds: ['missing', 'first', 'missing', 'last'],
       afterIds: ['first', 'last'],
+      source: {
+        before: '- [ ] Dependent ⛔ missing, first, missing, last',
+        after: '- [ ] Dependent ⛔ first, last',
+      },
     });
     expect(await h.read()).toBe('- [ ] Dependent ⛔ first, last\n');
     const restored = await h.application.execute({
@@ -1457,6 +1461,148 @@ describe('public dependency commands', () => {
     });
     expect(restored).toMatchObject({ type: 'ok', changed: true, outcome: { change: 'restored' } });
     expect(await h.read()).toBe('- [ ] Dependent ⛔ missing, first, missing, last\n');
+  });
+
+  it('restores the exact token position after removing the sole inverse cross-file edge', async () => {
+    const source = '- [ ] T10 Downstream ⛔ t10-both 📅 2026-09-06\n';
+    const h = await harness({
+      'blocker.md': '- [ ] Blocker 🆔 t10-both\n',
+      'tasks.md': source,
+    });
+    const relation = expectDefined(h.index.dependencies(h.node('Blocker').target).blocks[0]);
+    const removed = dependencyOutcome(
+      await h.application.execute({
+        type: 'remove-dependency',
+        dependent: relation.task.target,
+        dependencyId: relation.dependencyId,
+      }),
+    );
+    expect(await h.read()).toBe('- [ ] T10 Downstream 📅 2026-09-06\n');
+    const restored = await h.application.execute({
+      type: 'restore-dependency',
+      dependent: removed.dependent.target,
+      recovery: expectDefined(removed.removalRecovery),
+    });
+    expect(restored).toMatchObject({ type: 'ok', changed: true });
+    expect(await h.read()).toBe(source);
+    expect(await h.read('blocker.md')).toBe('- [ ] Blocker 🆔 t10-both\n');
+  });
+
+  it.each(['missing', 'ambiguous'] as const)(
+    'restores exact nested source bytes after removing the %s dependency',
+    async (kind) => {
+      const source =
+        '# Tasks\r\n- [ ] Root\r\n' +
+        '  - [ ] Dependent  ⛔️  recovery ,  first,recovery , last   📅 2026-09-06 🆔 child ^child\r\n' +
+        '    - > Description with [[Note]]\r\n' +
+        '    - 💬 Keep this comment\r\n' +
+        '    - [ ] Child 📅 2026-09-07\r\n' +
+        '  - [ ] Sibling';
+      const h = await harness({
+        'tasks.md': source,
+        ...(kind === 'ambiguous'
+          ? { 'blocker.md': '\n- [ ] One 🆔 recovery\n- [ ] Two 🆔 recovery\n' }
+          : {}),
+      });
+      const removed = dependencyOutcome(
+        await h.application.execute({
+          type: 'remove-dependency',
+          dependent: h.node('Dependent').target,
+          dependencyId: 'recovery',
+        }),
+      );
+      expect(removed.blocker).toBeUndefined();
+      expect(h.node('Dependent').node.dependsOn).toEqual(['first', 'last']);
+      const restored = await h.application.execute({
+        type: 'restore-dependency',
+        dependent: removed.dependent.target,
+        recovery: expectDefined(removed.removalRecovery),
+      });
+      expect(restored).toMatchObject({ type: 'ok', changed: true });
+      expect(await h.read()).toBe(source);
+    },
+  );
+
+  it('refuses exact-source recovery after a metadata edit even when the remaining IDs match', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Dependent ⛔ removed 📅 2026-09-06\n' });
+    const removed = dependencyOutcome(
+      await h.application.execute({
+        type: 'remove-dependency',
+        dependent: h.node('Dependent').target,
+        dependencyId: 'removed',
+      }),
+    );
+    const target = removed.dependent.target;
+    if (target.type !== 'task') throw new Error('Expected root task');
+    expect(
+      await h.application.execute({
+        type: 'patch',
+        target,
+        patch: { due: { type: 'set', value: localDate('2026-09-07') } },
+      }),
+    ).toMatchObject({ type: 'ok' });
+    const current = await h.read();
+    expect(
+      await h.application.execute({
+        type: 'restore-dependency',
+        dependent: h.node('Dependent').target,
+        recovery: expectDefined(removed.removalRecovery),
+      }),
+    ).toMatchObject({ type: 'conflict' });
+    expect(await h.read()).toBe(current);
+  });
+
+  it('rechecks exact-source recovery after the repository rebases the task line', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] Dependent ⛔ removed 📅 2026-09-06\n' });
+    const removed = dependencyOutcome(
+      await h.application.execute({
+        type: 'remove-dependency',
+        dependent: h.node('Dependent').target,
+        dependencyId: 'removed',
+      }),
+    );
+    const previous = h.node('Dependent').root;
+    const current = expectDefined(
+      h.index.snapshotsFromContent('tasks.md', '- [ ] Dependent 📅 2026-09-07\n')[0],
+    );
+    const edit = vi.spyOn(h.repository, 'edit').mockResolvedValueOnce({
+      type: 'rebased',
+      previous,
+      current,
+      evidence: 'authority-transition',
+    });
+    expect(
+      await h.application.execute({
+        type: 'restore-dependency',
+        dependent: removed.dependent.target,
+        recovery: expectDefined(removed.removalRecovery),
+      }),
+    ).toEqual({ type: 'conflict', current });
+    expect(edit).toHaveBeenCalledTimes(1);
+    expect(await h.read()).toBe('- [ ] Dependent 📅 2026-09-06\n');
+  });
+
+  it('restores exact source through a proven relocation using the committed Undo target', async () => {
+    const source = '- [ ] Dependent ⛔ removed 📅 2026-09-06\n';
+    const h = await harness({ 'tasks.md': source });
+    const removed = dependencyOutcome(
+      await h.application.execute({
+        type: 'remove-dependency',
+        dependent: h.node('Dependent').target,
+        dependencyId: 'removed',
+      }),
+    );
+    const file = h.app.vault.getAbstractFileByPath('tasks.md');
+    if (!(file instanceof TFile)) throw new Error('Missing fixture file');
+    await h.app.vault.process(file, (content) => `# Heading\n\n${content}`);
+    expect(
+      await h.application.execute({
+        type: 'restore-dependency',
+        dependent: removed.dependent.target,
+        recovery: expectDefined(removed.removalRecovery),
+      }),
+    ).toMatchObject({ type: 'ok', changed: true });
+    expect(await h.read()).toBe(`# Heading\n\n${source}`);
   });
 
   it('returns a no-op recovery when the raw ID is absent', async () => {

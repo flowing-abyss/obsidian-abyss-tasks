@@ -147,6 +147,11 @@ export interface DependencyRemovalRecovery {
   readonly dependencyId: string;
   readonly beforeIds: readonly string[];
   readonly afterIds: readonly string[];
+  /** Exact task-line bytes around the committed removal; transient Undo evidence only. */
+  readonly source?: {
+    readonly before: string;
+    readonly after: string;
+  };
 }
 
 export interface DependencyCommandOutcome {

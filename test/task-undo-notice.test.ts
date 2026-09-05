@@ -291,6 +291,10 @@ describe('committed mutation inverses', () => {
             dependencyId: 'raw',
             beforeIds: ['first', 'raw', 'raw', 'last'],
             afterIds: ['first', 'last'],
+            source: {
+              before: '- [ ] Dependent ⛔ first, raw, raw, last',
+              after: '- [ ] Dependent ⛔ first, last',
+            },
           },
         });
         const file = app.vault.getAbstractFileByPath('tasks.md');

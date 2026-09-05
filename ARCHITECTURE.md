@@ -297,9 +297,14 @@ failure always releases the next waiter.
 
 Successful dependency commands return `DependencyCommandOutcome` with the fresh dependent
 occurrence and a blocker occurrence when uniquely resolved. Removing a raw ID deletes every
-declaration of that ID and returns its exact before/after sequences. `restore-dependency` requires
-the current sequence to equal the captured after-sequence before restoring the before-sequence;
-missing or ambiguous blocker IDs require no blocker lookup. Intervening changes return conflict.
+declaration of that ID and returns its exact before/after sequences plus transient before/after
+task-line bytes. `restore-dependency` requires the current sequence and task line to equal the
+captured removal result. Its existing `set-depends-on` edit restores the original source only when
+replaying the codec's dependency edit reproduces the entire current line, preserving token position,
+spacing, and variation selectors without authorizing unrelated text changes. Older recovery values
+without source evidence retain their sequence-only restoration; no Markdown or settings migration
+is needed. Missing or ambiguous blocker IDs require no blocker lookup. Intervening line changes
+return conflict, including after a repository rebase.
 Unexpected application errors return the existing I/O error and emit one diagnostic containing
 only operation, phase, and a fixed cause. User feedback remains in the existing command-result
 presenter, which also handles the structured blocked result.
@@ -329,7 +334,8 @@ Appending the captured subtree preserves its original final-newline state.
 `taskUndoNotice` owns the success/Undo surface for recoverable mutations. It constructs inverses
 from committed dependency outcomes or exact subtask recovery, so Undo never reuses pre-write refs.
 Dependency-add Undo leaves a lazily allocated ID intact; removal Undo restores the captured ordered
-ID sequence, including unavailable, ambiguous, and repeated declarations. One native button runs
+ID sequence and original task-line bytes, including unavailable, ambiguous, and repeated declarations.
+One native button runs
 at most once, disables while pending, hides its Notice after execution, and returns focus to the
 invoking inspector row when it remains connected. Failed Undo hides the success Notice and passes
 one structured result to `presentTaskCommandResult`; unexpected throws produce one local diagnostic
