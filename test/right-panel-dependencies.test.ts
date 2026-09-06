@@ -183,6 +183,65 @@ describe('inspector subtask row removal', () => {
     },
   );
 
+  it.each([false, true])(
+    'revokes delayed modal deletion Undo after navigating away and back (selected child: %s)',
+    async (selectedChild) => {
+      const h = await harness('- [ ] Current\n  - [ ] Child\n  - [ ] Sibling\n');
+      const pending = deferred<void>();
+      const execute = h.api.execute.bind(h.api);
+      vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+        const result = await execute(command);
+        await pending.promise;
+        return result;
+      });
+      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      cleanups.unshift(() => {
+        modal.close();
+      });
+      modal.open(h.node('Current').root);
+      const el = button(activeDocument.body, '.abyss-modal-body');
+      if (selectedChild) {
+        button(el, '.abyss-subtask-label').click();
+        button(el, '[aria-label="More actions"]').click();
+        button(el, '.abyss-context-danger').click();
+      } else button(el, '.abyss-subtask-remove').click();
+      await flushMicrotasks(40);
+      expect(await h.read()).toBe('- [ ] Current\n  - [ ] Sibling\n');
+      button(el, '.abyss-subtask-label').click();
+      button(el, '.abyss-breadcrumb-item').click();
+      pending.resolve();
+      await flushMicrotasks(40);
+      expect(el.querySelector('.abyss-undo-row')).toBeNull();
+      expect(button(el, '.abyss-subtask-label').textContent).toBe('Sibling');
+      expect(await h.read()).toBe('- [ ] Current\n  - [ ] Sibling\n');
+    },
+  );
+
+  it('does not mistake navigation to the parent before deletion commits for owned convergence', async () => {
+    const h = await harness('- [ ] Current\n  - [ ] Child\n  - [ ] Sibling\n');
+    const pending = deferred<void>();
+    const execute = h.api.execute.bind(h.api);
+    vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+      await pending.promise;
+      return execute(command);
+    });
+    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    cleanups.unshift(() => {
+      modal.close();
+    });
+    modal.open(h.node('Current').root);
+    const el = button(activeDocument.body, '.abyss-modal-body');
+    button(el, '.abyss-subtask-label').click();
+    button(el, '[aria-label="More actions"]').click();
+    button(el, '.abyss-context-danger').click();
+    button(el, '.abyss-breadcrumb-item').click();
+    pending.resolve();
+    await flushMicrotasks(40);
+    expect(await h.read()).toBe('- [ ] Current\n  - [ ] Sibling\n');
+    expect(el.querySelector('.abyss-undo-row')).toBeNull();
+    expect(button(el, '.abyss-subtask-label').textContent).toBe('Sibling');
+  });
+
   it('replaces a prior removal and preserves the latest position and focus across refresh', async () => {
     const h = await harness('- [ ] Current ⛔ first, second, third\n  - [ ] Child\n');
     notices();

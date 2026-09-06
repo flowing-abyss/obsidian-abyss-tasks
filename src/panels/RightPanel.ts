@@ -159,6 +159,7 @@ interface SubmittedDraft {
   readonly origin: RightPanelDraftBundle['origin'];
   readonly command?: TaskCommand;
   readonly selection: readonly TaskLike[];
+  epoch: number;
   consumed: boolean;
 }
 
@@ -174,24 +175,11 @@ function sameTaskRef(left: TaskRef, right: TaskRef): boolean {
   );
 }
 
-function sameNodeRef(left: TaskNodeRef, right: TaskNodeRef): boolean {
-  if (left.type !== right.type) return false;
-  if (left.type === 'task' && right.type === 'task') return sameTaskRef(left.ref, right.ref);
-  if (left.type === 'subtask' && right.type === 'subtask') {
-    return (
-      left.ref.relativeLine === right.ref.relativeLine &&
-      left.ref.originalBlock === right.ref.originalBlock &&
-      sameNodeRef(left.ref.parent, right.ref.parent)
-    );
-  }
-  return false;
-}
-
 function sameCommentRef(left: CommentRef, right: CommentRef): boolean {
   return (
     left.relativeLine === right.relativeLine &&
     left.originalMarkdown === right.originalMarkdown &&
-    sameNodeRef(left.parent, right.parent)
+    sameTaskNodeRef(left.parent, right.parent)
   );
 }
 
@@ -299,6 +287,7 @@ function subtaskUndoPosition(
 export class RightPanel {
   private readonly undo_abyssPrivate = createInlineTaskUndo();
   private selectionEpoch_abyssPrivate = 0;
+  private undoConvergence_abyssPrivate: SubmittedDraft | undefined;
   private readonly completionConfirmationAbortController_abyssPrivate = new AbortController();
   private el_abyssPrivate!: HTMLElement;
   private mounted_abyssPrivate = false;
@@ -387,6 +376,10 @@ export class RightPanel {
         this.dependencySearch_abyssPrivate?.destroy();
         this.dependencySearch_abyssPrivate = undefined;
       }
+      if (this.undoConvergence_abyssPrivate !== undefined) {
+        this.undoConvergence_abyssPrivate.epoch = this.selectionEpoch_abyssPrivate;
+        this.undoConvergence_abyssPrivate = undefined;
+      }
       this.render_abyssPrivate(statusFocus);
     });
     const offHistory = this.state_abyssPrivate.onCommit((changed) => {
@@ -419,6 +412,7 @@ export class RightPanel {
 
   destroy(): void {
     this.undo_abyssPrivate.clear();
+    this.undoConvergence_abyssPrivate = undefined;
     this.mounted_abyssPrivate = false;
     this.dependencyStatusMarkers_abyssPrivate.clear();
     this.endTaskDrag_abyssPrivate?.();
@@ -582,6 +576,7 @@ export class RightPanel {
       submitted.rootAliases.push({ ...successorRef });
     }
     submitted.consumed = true;
+    this.captureUndoConvergence_abyssPrivate(submitted);
     const submittedDraft = submitted.draft;
     if (submittedDraft == null || bundle == null) return bundle;
     const entries = bundle.entries.filter(
@@ -590,6 +585,19 @@ export class RightPanel {
         !this.sameDraftPayload_abyssPrivate(candidate, submittedDraft),
     );
     return entries.length > 0 ? { ...bundle, entries } : undefined;
+  }
+
+  private captureUndoConvergence_abyssPrivate(submitted: SubmittedDraft): void {
+    // Only the immediately following owned selection update may advance the deletion's epoch.
+    if (
+      submitted.epoch === this.selectionEpoch_abyssPrivate &&
+      submitted.command?.type === 'delete-subtask'
+    ) {
+      this.undoConvergence_abyssPrivate = submitted;
+      queueMicrotask(() => {
+        this.undoConvergence_abyssPrivate = undefined;
+      });
+    }
   }
 
   private snapshotDraft_abyssPrivate(draft: RightPanelDraftState): RightPanelDraftState {
@@ -660,6 +668,7 @@ export class RightPanel {
           : [],
       ...(command === undefined ? {} : { command: structuredClone(command) }),
       consumed: false,
+      epoch: this.selectionEpoch_abyssPrivate,
     });
     this.onMutationLifecycle_abyssPrivate?.({ phase: 'started', ref: { ...ref }, token });
     return token;
@@ -670,13 +679,13 @@ export class RightPanel {
     command: TaskCommand,
   ): boolean {
     if (command.type === 'set-description') {
-      return draft.kind === 'description' && sameNodeRef(draft.target.target, command.target);
+      return draft.kind === 'description' && sameTaskNodeRef(draft.target.target, command.target);
     }
     if (command.type === 'add-subtask') {
-      return draft.kind === 'new-subtask' && sameNodeRef(draft.parent, command.parent);
+      return draft.kind === 'new-subtask' && sameTaskNodeRef(draft.parent, command.parent);
     }
     if (command.type === 'add-comment') {
-      return draft.kind === 'new-comment' && sameNodeRef(draft.parent, command.parent);
+      return draft.kind === 'new-comment' && sameTaskNodeRef(draft.parent, command.parent);
     }
     if (command.type === 'update-comment') {
       return draft.kind === 'existing-comment' && sameCommentRef(draft.target.ref, command.comment);
@@ -2964,7 +2973,7 @@ export class RightPanel {
     const command = { type: 'patch', target, patch } as TaskCommand;
     const submission = this.beginDraftSubmission_abyssPrivate(
       target,
-      (draft) => draft.kind === 'title' && sameNodeRef(draft.target.target, target),
+      (draft) => draft.kind === 'title' && sameTaskNodeRef(draft.target.target, target),
       command,
     );
     if (submission == null) return false;
@@ -3084,9 +3093,10 @@ export class RightPanel {
       command,
     );
     if (submission == null) return false;
+    const owner = this.submittedDrafts_abyssPrivate.get(submission);
     const result = await executeTaskCommand(this.tasks_abyssPrivate, command);
     this.applyPlanningResult_abyssPrivate(result, target, initiatingStack, submission);
-    if (command.type === 'delete-subtask')
+    if (command.type === 'delete-subtask' && owner?.epoch === this.selectionEpoch_abyssPrivate)
       this.presentRemovalUndo_abyssPrivate(
         result,
         subtaskUndoPosition(initiatingStack, command.subtask),
@@ -3168,7 +3178,7 @@ export class RightPanel {
       target,
       (draft) => {
         if (patch.recurrence === undefined && patch.onCompletion === undefined) return false;
-        return draft.kind === 'recurrence-editor' && sameNodeRef(draft.target, target);
+        return draft.kind === 'recurrence-editor' && sameTaskNodeRef(draft.target, target);
       },
       command,
     );
