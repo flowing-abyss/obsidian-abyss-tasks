@@ -57,7 +57,13 @@ export interface TaskApplicationApi {
 export interface TaskDependencyQueryApi {
   listNodes(query?: TaskQuery): readonly TaskNodeSnapshot[];
   dependencies(target: TaskNodeRef): TaskDependencyProjection;
-  dependencyEligibility(blocker: TaskNodeRef, dependent: TaskNodeRef): TaskDependencyEligibility;
+  dependencyEligibility(
+    blocker: TaskNodeRef,
+    dependent: TaskNodeRef,
+    options?: {
+      readonly without: Omit<Extract<TaskCommand, { type: 'reverse-dependency' }>, 'type'>;
+    },
+  ): TaskDependencyEligibility;
 }
 
 export type CreateTaskCommand = Extract<TaskCommand, { readonly type: 'create' }>;

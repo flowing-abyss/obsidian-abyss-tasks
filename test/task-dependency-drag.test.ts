@@ -592,10 +592,230 @@ describe('dependency drop disclosure and eligibility', () => {
     expect(drag(section, 'drop').event.defaultPrevented).toBe(false);
     drag(h.sub('Child'), 'dragstart');
     const row = expectDefined(h.section('blocked-by').querySelector<HTMLElement>('.abyss-dep-row'));
-    expect(row.getAttribute('draggable')).toBeNull();
+    expect(row.getAttribute('draggable')).toBe('true');
     drag(row, 'dragover');
     expect(row.classList.contains('drop-above')).toBe(false);
     expect(row.classList.contains('drop-below')).toBe(false);
     expect(h.execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolved dependency relation drag', () => {
+  it('ignores an earlier source dragend after a relation replaces it', async () => {
+    const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n  - [ ] Child\n');
+    const child = h.sub('Child');
+    drag(child, 'dragstart');
+    const row = expectDefined(h.section('blocked-by').querySelector<HTMLElement>('.abyss-dep-row'));
+    drag(row, 'dragstart');
+    const payload = expectDefined(h.state.get('draggingTaskNode'));
+    drag(child, 'dragend');
+    expect(h.state.get('draggingTaskNode')).toBe(payload);
+    expect(drag(child, 'dragover').event.defaultPrevented).toBe(false);
+    expect(drag(child, 'drop').event.defaultPrevented).toBe(false);
+    expect(h.execute).not.toHaveBeenCalled();
+    expect(child.classList.contains('drop-above')).toBe(false);
+    expect(child.classList.contains('drop-below')).toBe(false);
+    expect(h.state.get('draggingTaskNode')).toBeNull();
+  });
+
+  it.each([
+    ['duplicate', '- [ ] A 🆔 a ⛔ b\n- [ ] B 🆔 b ⛔ a\n'],
+    ['ambiguous', '- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n- [ ] Other 🆔 b\n'],
+  ] as const)(
+    'rejects a %s inverse edge before accepting a relation drop',
+    async (_reason, markdown) => {
+      const h = await harness(markdown);
+      drag(
+        expectDefined(h.section('blocked-by').querySelector<HTMLElement>('.abyss-dep-row')),
+        'dragstart',
+      );
+      const target = h.section('blocks');
+      expect(drag(target, 'dragover').event.defaultPrevented).toBe(false);
+      expect(target.classList.contains('is-drop-disabled')).toBe(true);
+      drag(target, 'drop');
+      expect(h.execute).not.toHaveBeenCalled();
+      expect(await h.read()).toBe(markdown);
+    },
+  );
+
+  it.each(['stale', 'unavailable'] as const)(
+    'rejects a %s captured relation when drop happens before DOM reconciliation',
+    async (reason) => {
+      const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n');
+      const row = expectDefined(
+        h.section('blocked-by').querySelector<HTMLElement>('.abyss-dep-row'),
+      );
+      drag(row, 'dragstart');
+      const target = h.section('blocks');
+      expect(drag(target, 'dragover').event.defaultPrevented).toBe(true);
+      const changed =
+        reason === 'stale' ? '- [ ] A changed 🆔 a\n- [ ] B 🆔 b ⛔ a\n' : '- [ ] B 🆔 b ⛔ a\n';
+      // Install the real source synchronously, before the inspector subscriber's microtask.
+      h.index.installCommittedContent('tasks.md', `\n${changed}`);
+      expect(drag(target, 'drop').event.defaultPrevented).toBe(false);
+      expect(h.execute).not.toHaveBeenCalled();
+      await flushMicrotasks();
+      expect(h.state.get('draggingTaskNode')).toBeNull();
+    },
+  );
+  it('caches preview for one source and revalidates on drop', async () => {
+    const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n');
+    const row = expectDefined(h.section('blocked-by').querySelector<HTMLElement>('.abyss-dep-row'));
+    drag(row, 'dragstart');
+    const query = vi.spyOn(h.index, 'dependencyEligibility');
+    const target = h.section('blocks');
+    drag(target, 'dragenter');
+    drag(target, 'dragover');
+    drag(target, 'dragover');
+    expect(query).toHaveBeenCalledTimes(1);
+    drag(target, 'drop');
+    expect(query).toHaveBeenCalledTimes(2);
+    await flushMicrotasks(40);
+    expect(await h.read()).toBe('- [ ] A 🆔 a ⛔ b\n- [ ] B 🆔 b\n');
+  });
+  it('proves the original edge before previewing reversal on one captured graph', async () => {
+    const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n');
+    const first = h.node('A').target;
+    const second = h.node('B').target;
+    const original = { blocker: first, dependent: second, dependencyId: 'a' };
+    expect(h.index.dependencyEligibility(second, first, { without: original })).toEqual({
+      type: 'allowed',
+    });
+    expect(
+      h.index.dependencyEligibility(second, first, {
+        without: { ...original, dependencyId: 'wrong' },
+      }).type,
+    ).toBe('rejected');
+    expect(h.index.dependencyEligibility(first, second, { without: original }).type).toBe(
+      'rejected',
+    );
+    await h.app.vault.modify(h.file, '\n- [ ] A changed 🆔 a\n- [ ] B 🆔 b ⛔ a\n');
+    await flushMicrotasks(20);
+    expect(h.index.dependencyEligibility(second, first, { without: original }).type).toBe(
+      'rejected',
+    );
+    await h.app.vault.modify(
+      h.file,
+      '\n- [ ] A changed 🆔 a\n- [ ] Duplicate 🆔 a\n- [ ] B 🆔 b ⛔ a\n',
+    );
+    await flushMicrotasks(20);
+    const ambiguous = {
+      blocker: h.node('A changed').target,
+      dependent: h.node('B').target,
+      dependencyId: 'a',
+    };
+    expect(
+      h.index.dependencyEligibility(ambiguous.dependent, ambiguous.blocker, { without: ambiguous })
+        .type,
+    ).toBe('rejected');
+  });
+  it.each(['blocked-by', 'blocks'] as const)(
+    'reverses %s atomically and preserves the row while saving',
+    async (direction) => {
+      const h = await harness(
+        '- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n',
+        direction === 'blocked-by' ? 'B' : 'A',
+      );
+      const selection = h.state.get('taskStack');
+      const history = h.state.get('inspectorBackStack');
+      const row = expectDefined(h.section(direction).querySelector<HTMLElement>('.abyss-dep-row'));
+      const opposite = direction === 'blocked-by' ? 'blocks' : 'blocked-by';
+      const execute = expectDefined(h.execute.getMockImplementation());
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      h.execute.mockImplementationOnce(async (command) => {
+        await pending;
+        return execute(command);
+      });
+      const { data } = drag(row, 'dragstart');
+      const payload = expectDefined(h.state.get('draggingTaskNode'));
+      expect(payload).toMatchObject({
+        source: 'inspector-relation',
+        relation: {
+          blocker: h.node('A').target,
+          dependent: h.node('B').target,
+          dependencyId: 'a',
+          direction,
+        },
+      });
+      expect(Reflect.set(payload, 'source', 'center-card')).toBe(false);
+      expect(data.size).toBe(0);
+      expect(drag(h.section(opposite), 'dragover').event.defaultPrevented).toBe(true);
+      drag(h.section(opposite), 'drop');
+      expect(row.isConnected).toBe(true);
+      expect(h.section(direction).querySelector('.abyss-dep-row')).toBe(row);
+      expect(h.execute.mock.calls.map(([command]) => command.type)).toEqual(['reverse-dependency']);
+      release();
+      await flushMicrotasks(50);
+      expect(await h.read()).toBe('- [ ] A 🆔 a ⛔ b\n- [ ] B 🆔 b\n');
+      expect(h.section(opposite).querySelectorAll('.abyss-dep-row')).toHaveLength(1);
+      expect(h.section(direction).querySelectorAll('.abyss-dep-row')).toHaveLength(0);
+      expect(h.state.get('taskStack')).toBe(selection);
+      expect(h.state.get('inspectorBackStack')).toBe(history);
+      expect(h.state.get('draggingTaskNode')).toBeNull();
+    },
+  );
+
+  it.each(['same', 'cycle', 'failed'] as const)(
+    'keeps the original edge on a %s reversal',
+    async (reason) => {
+      const markdown = `- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a${
+        reason === 'cycle' ? ', c\n- [ ] C 🆔 c ⛔ a\n' : '\n'
+      }`;
+      const h = await harness(markdown);
+      if (reason === 'failed')
+        h.execute.mockResolvedValueOnce({
+          type: 'io-error',
+          cause: 'repository-error',
+          contentState: 'unchanged',
+        });
+      const row = expectDefined(
+        h.section('blocked-by').querySelector<HTMLElement>('.abyss-dep-row'),
+      );
+      drag(row, 'dragstart');
+      const target = h.section(reason === 'same' ? 'blocked-by' : 'blocks');
+      const preview = drag(target, 'dragover');
+      expect(preview.event.defaultPrevented).toBe(reason === 'failed');
+      if (reason === 'cycle') expect(target.classList.contains('is-drop-disabled')).toBe(true);
+      drag(target, 'drop');
+      await flushMicrotasks(40);
+      expect(h.execute).toHaveBeenCalledTimes(reason === 'failed' ? 1 : 0);
+      expect(await h.read()).toBe(markdown);
+      expect(h.section('blocked-by').querySelector('.abyss-dep-row')).toBe(row);
+      expect(h.state.get('draggingTaskNode')).toBeNull();
+    },
+  );
+
+  it.each(['dragend', 'escape', 'detach', 'detach-panel', 'destroy', 'selection', 'drop'] as const)(
+    'clears relation drag on %s',
+    async (ending) => {
+      const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n');
+      const row = expectDefined(
+        h.section('blocked-by').querySelector<HTMLElement>('.abyss-dep-row'),
+      );
+      drag(row, 'dragstart');
+      expect(h.state.get('draggingTaskNode')).not.toBeNull();
+      drag(h.section('blocks'), 'dragover');
+      if (ending === 'selection') h.state.set('taskStack', [h.node('A').root]);
+      else if (ending === 'drop') drag(activeDocument.body, 'drop');
+      else finishDrag(h, row, 'subtask', ending);
+      await flushMicrotasks();
+      expect(h.state.get('draggingTaskNode')).toBeNull();
+      expect(h.el.querySelector('.is-drop-target, .is-drop-disabled')).toBeNull();
+      expect(h.execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it('clears an external center source when inspector selection changes', async () => {
+    const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b\n- [ ] C 🆔 c\n');
+    drag(h.card('A'), 'dragstart');
+    h.state.set('taskStack', [h.node('C').root]);
+    const section = h.el.querySelector<HTMLElement>('[data-dependency-direction="blocked-by"]');
+    if (section !== null) drag(section, 'drop');
+    expect(h.execute).not.toHaveBeenCalled();
+    await flushMicrotasks();
+    expect(h.state.get('draggingTaskNode')).toBeNull();
   });
 });

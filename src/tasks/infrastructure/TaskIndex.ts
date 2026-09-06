@@ -34,12 +34,13 @@ import {
   type TaskResolution,
   type VisualEvidence,
 } from '../domain/taskReconciliation';
-import type {
-  LocalDate,
-  SubtaskSnapshot,
-  TaskNodeRef,
-  TaskRef,
-  TaskSnapshot,
+import {
+  sameTaskNodeRef,
+  type LocalDate,
+  type SubtaskSnapshot,
+  type TaskNodeRef,
+  type TaskRef,
+  type TaskSnapshot,
 } from '../domain/types';
 import { localDate } from '../domain/validation';
 import { TaskBlockEditor } from './markdown/TaskBlockEditor';
@@ -1027,8 +1028,28 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     return this.currentDependencyGraph_abyssPrivate().dependencies(target);
   }
 
-  dependencyEligibility(blocker: TaskNodeRef, dependent: TaskNodeRef): TaskDependencyEligibility {
-    return this.currentDependencyGraph_abyssPrivate().eligibility(blocker, dependent);
+  dependencyEligibility(
+    blocker: TaskNodeRef,
+    dependent: TaskNodeRef,
+    options?: Parameters<TaskDependencyQueryApi['dependencyEligibility']>[2],
+  ): TaskDependencyEligibility {
+    if (options === undefined)
+      return this.currentDependencyGraph_abyssPrivate().eligibility(blocker, dependent);
+    const nodes = this.listNodes();
+    const status = (symbol: string): ReturnType<StatusCatalog['statusForSymbol']> =>
+      this.statusCatalog_abyssPrivate.statusForSymbol(symbol);
+    const original = options.without;
+    const relation = buildTaskDependencyGraph(nodes, status)
+      .dependencies(original.dependent)
+      .blockedBy.find((row) => row.dependencyId === original.dependencyId);
+    if (
+      relation?.type !== 'resolved' ||
+      !sameTaskNodeRef(relation.task.target, original.blocker) ||
+      !sameTaskNodeRef(blocker, original.dependent) ||
+      !sameTaskNodeRef(dependent, original.blocker)
+    )
+      return { type: 'rejected', reason: 'unavailable' };
+    return buildTaskDependencyGraph(nodes, status, original).eligibility(blocker, dependent);
   }
 
   private currentDependencyGraph_abyssPrivate(): TaskDependencyGraph {

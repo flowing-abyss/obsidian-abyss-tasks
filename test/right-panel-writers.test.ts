@@ -357,12 +357,12 @@ describe('RightPanel planning API delegation', () => {
     const current = Object.assign(task({ source: { filePath: 't.md', line: 0 } }), { ref });
     const process = vi.spyOn(app.vault, 'process');
 
-    await call(panel, 'updateDue', current, '2026-07-20');
+    await call(panel, 'updateDate', current, 'due', '2026-07-20');
     await call(panel, 'clearDate', current);
-    await call(panel, 'updateScheduled', current, '2026-07-21');
-    await call(panel, 'clearScheduled', current);
-    await call(panel, 'updateStart', current, '2026-07-19');
-    await call(panel, 'clearStart', current);
+    await call(panel, 'updateDate', current, 'scheduled', '2026-07-21');
+    await call(panel, 'clearPlanningDate', current, 'scheduled');
+    await call(panel, 'updateDate', current, 'start', '2026-07-19');
+    await call(panel, 'clearPlanningDate', current, 'start');
 
     expect(execute.mock.calls.map(([command]) => command)).toEqual([
       {
@@ -592,7 +592,7 @@ describe('RightPanel planning API delegation', () => {
     );
     state.set('taskStack', [legacyRoot, legacyChild]);
 
-    await call(panel, 'updateDue', legacyChild, '2026-07-20');
+    await call(panel, 'updateDate', legacyChild, 'due', '2026-07-20');
 
     expect(state.get('taskStack')).toHaveLength(2);
     expect(state.get('taskStack')[1]).toMatchObject({
@@ -650,8 +650,9 @@ describe('RightPanel planning API delegation', () => {
       state.set('taskStack', selection === 'child' ? [legacyRoot, legacyChild] : [legacyRoot]);
       const pending = call<Promise<void>>(
         panel,
-        'updateDue',
+        'updateDate',
         selection === 'child' ? legacyChild : legacyRoot,
+        'due',
         '2026-07-20',
       );
 

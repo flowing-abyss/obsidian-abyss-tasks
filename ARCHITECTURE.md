@@ -131,21 +131,29 @@ navigation and transient interaction state through `AppState`. They must not edi
 directly or import private task-layer modules.
 
 `AppState.draggingTaskNode` carries the canonical `TaskNodeDragPayload`: one detached, deeply
-frozen persisted `TaskNodeSnapshot` and its `center-card` or `inspector-subtask` source. Center
+frozen persisted `TaskNodeSnapshot` and its `center-card`, `inspector-subtask` or
+`inspector-relation` source. Resolved relation sources additionally carry detached original
+blocker/dependent references, dependency ID and direction. Center
 cards publish root nodes; existing inspector subtask rows publish complete root-to-subtask paths.
 Recurrence forecasts never publish this payload. `taskNodeDrag` owns native drag cleanup for the
 source document: drop, dragend, Escape, source/panel detachment and owner destruction release the
-same transient payload. It does not store a second selection or drag model.
+same transient payload. AppState clears the payload atomically with selection changes, before
+listeners can accept a drop against the newly selected task. It does not store a second selection
+or drag model.
 
 Left-panel tag assignment and project moves accept only center-card roots. Inspector subtask rows
 retain their existing local before/after reorder placement; relation rows do not reorder. Whole
-dependency sections consume the shared payload to add the directed edge, using query eligibility
-for hover/drop and the existing application guard again for the write. Center-card drag disclosure
+dependency sections consume task sources to add the directed edge and opposite-direction relation
+sources to dispatch atomic `reverse-dependency`. Dropping a relation in its own section is a no-op.
+Query eligibility protects hover/drop and the application guard validates again for the write.
+Each section caches preview eligibility for one published payload; query notifications rebuild
+sections and invalidate that cache, and drops always check eligibility again. Reversal preserves
+the original row until the committed query projection refreshes it. Center-card drag disclosure
 refreshes only dependency sections and the badge; its temporary empty sections disappear when
 dragging ends. Inspector subtask drags use already-visible sections and never remount them or insert
 empty sections during native dragstart. The existing badge `+` exposes both directions before the
-first subtask drag; if only one persisted direction is visible, dependency search provides the other
-direction. Explicit add disclosure retains its separate lifetime through drag cancellation.
+first subtask drag. Persisted relations disclose both directions. Explicit add disclosure retains
+its separate lifetime through drag cancellation.
 Dependency drops complete without success Notices and never navigate or move the source. Normal
 index reconciliation may refresh an affected saved history frame through its proven successor;
 unchanged frames retain their identities. Drag state is never persisted.
@@ -266,6 +274,11 @@ active counts. Missing IDs remain visible but non-blocking. Duplicate IDs produc
 prerequisite row, active if any matching task is active; each matching task's inverse relation uses
 its own status. Authored duplicate declarations collapse in the projection, and authored cycles stay
 visible as direct relations. Eligibility separately rejects edges that would introduce cycles.
+The public `dependencyEligibility` query accepts an optional `{ without }` original edge for
+reversal previews. It verifies the exact current resolved edge, including its ID and both endpoint
+references, then evaluates only its inverse with that edge excluded. Both proofs use one captured
+node population. Ordinary two-argument add eligibility remains unchanged; execution independently
+revalidates the reversal through the application boundary.
 
 `TaskIndex` owns the derived graph cache and invalidates it when indexed file content changes,
 files are renamed or deleted, or `setStatusCatalog()` replaces the catalog. Relation activity is

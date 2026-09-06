@@ -2528,10 +2528,6 @@ export class CenterPanel {
         },
       });
     });
-    card.addEventListener('dragend', () => {
-      this.endTaskDrag_abyssPrivate?.();
-    });
-
     card.addEventListener('dragover', (event) => {
       const draggingTag = this.state_abyssPrivate.get('draggingTag');
       if (

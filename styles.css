@@ -5628,7 +5628,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   background: transparent;
 }
 
-.abyss-dep-section[data-dependency-direction='blocked-by'] {
+.abyss-dep-section {
   --abyss-dependency-drop-color: var(--abyss-dependency-blocked-by);
 }
 
@@ -5644,7 +5644,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-dep-section.is-drop-disabled {
   background: var(--background-modifier-hover);
-  box-shadow: inset 0 0 0 1px var(--background-modifier-border);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--abyss-dependency-drop-color) 20%, transparent);
   cursor: no-drop;
 }
 
@@ -5671,12 +5672,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-muted);
 }
 
-:is(.abyss-dep-lock, .abyss-dep-remove, .abyss-dep-search-field) svg {
-  width: 13px;
-  height: 13px;
-}
-
-.abyss-subtask-remove svg {
+:is(.abyss-dep-lock, .abyss-dep-remove, .abyss-dep-search-field, .abyss-subtask-remove) svg {
   width: 13px;
   height: 13px;
 }

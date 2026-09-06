@@ -28,7 +28,7 @@ export function startTaskNodeDrag(
     ended = true;
     observer.disconnect();
     off();
-    document.removeEventListener('dragend', finish);
+    source.removeEventListener('dragend', finish);
     document.removeEventListener('drop', finish);
     document.removeEventListener('keydown', cancel, true);
     onEnd();
@@ -49,7 +49,7 @@ export function startTaskNodeDrag(
   });
   observer.observe(document, { childList: true, subtree: true });
   if (!container.isConnected) observer.observe(container, { childList: true, subtree: true });
-  document.addEventListener('dragend', finish);
+  source.addEventListener('dragend', finish);
   document.addEventListener('drop', finish);
   document.addEventListener('keydown', cancel, true);
   return finish;

@@ -1211,7 +1211,7 @@ describe('LeftPanel inbox logic (new inbox object)', () => {
 });
 
 describe('LeftPanel drop zones', () => {
-  it.each(['inspector-root', 'inspector-subtask', 'center-subtask'] as const)(
+  it.each(['inspector-root', 'inspector-subtask', 'center-subtask', 'inspector-relation'] as const)(
     'does not assign a parent tag for a %s drag',
     (kind) => {
       const root = task({ title: 'Root' });
@@ -1220,7 +1220,17 @@ describe('LeftPanel drop zones', () => {
       const { el, state, execute } = makePanel([root], {}, ['#task/next']);
       const nested = kind !== 'inspector-root';
       state.set('draggingTaskNode', {
-        source: kind === 'center-subtask' ? 'center-card' : 'inspector-subtask',
+        ...(kind === 'inspector-relation'
+          ? ({
+              source: 'inspector-relation',
+              relation: {
+                blocker: { type: 'task', ref: root.ref },
+                dependent: { type: 'subtask', ref: child.ref },
+                dependencyId: 'root',
+                direction: 'blocks',
+              },
+            } as const)
+          : { source: kind === 'center-subtask' ? 'center-card' : 'inspector-subtask' }),
         task: {
           root,
           path: nested ? [child] : [],

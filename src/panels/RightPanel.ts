@@ -1,6 +1,6 @@
 import type { App } from 'obsidian';
 import { Component, Notice, setIcon } from 'obsidian';
-import type { AppState, InspectorHistoryFrame } from '../app/AppState';
+import type { AppState, InspectorHistoryFrame, TaskNodeDragPayload } from '../app/AppState';
 import type { LinkToken } from '../markdown/links';
 import { formatDurationFromMinutes, parseDurationToMinutes } from '../parser/TaskParser';
 
@@ -1450,9 +1450,8 @@ export class RightPanel {
       attr: { type: 'button', 'aria-haspopup': 'dialog' },
     });
     setIcon(body.createSpan({ cls: 'abyss-dep-lock', attr: { 'aria-hidden': 'true' } }), 'lock');
-    body.createSpan({ cls: 'abyss-dep-count-blocked-by', attr: { 'aria-hidden': 'true' } });
-    body.createSpan({ cls: 'abyss-dep-divider', attr: { 'aria-hidden': 'true' } });
-    body.createSpan({ cls: 'abyss-dep-count-blocks', attr: { 'aria-hidden': 'true' } });
+    for (const name of ['count-blocked-by', 'divider', 'count-blocks'])
+      body.createSpan({ cls: `abyss-dep-${name}`, attr: { 'aria-hidden': 'true' } });
     body.addEventListener('click', () => {
       this.showDependencySearch_abyssPrivate();
     });
@@ -1539,15 +1538,48 @@ export class RightPanel {
 
   private dependencyDropCommand_abyssPrivate(
     direction: DependencyDirection,
-  ): Extract<TaskCommand, { type: 'add-dependency' }> | undefined {
+  ): Extract<TaskCommand, { type: 'add-dependency' | 'reverse-dependency' }> | undefined {
     const payload = this.state_abyssPrivate.get('draggingTaskNode');
     const current = this.dependencyTask_abyssPrivate();
     if (payload === null || current === undefined) return undefined;
+    if (payload.source === 'inspector-relation') {
+      const { relation } = payload;
+      if (
+        relation.direction === direction ||
+        !sameTaskNodeRef(
+          taskNodeRef(current),
+          relation.direction === 'blocked-by' ? relation.dependent : relation.blocker,
+        )
+      )
+        return undefined;
+      return {
+        type: 'reverse-dependency',
+        blocker: relation.blocker,
+        dependent: relation.dependent,
+        dependencyId: relation.dependencyId,
+      };
+    }
     return {
       type: 'add-dependency',
       blocker: direction === 'blocked-by' ? payload.task.target : taskNodeRef(current),
       dependent: direction === 'blocked-by' ? taskNodeRef(current) : payload.task.target,
     };
+  }
+
+  private dependencyDropAllowed_abyssPrivate(
+    command: ReturnType<RightPanel['dependencyDropCommand_abyssPrivate']>,
+  ): boolean {
+    if (command === undefined) return false;
+    return (
+      (command.type === 'reverse-dependency'
+        ? this.tasks_abyssPrivate?.queries.dependencyEligibility(
+            command.dependent,
+            command.blocker,
+            { without: command },
+          )
+        : this.tasks_abyssPrivate?.queries.dependencyEligibility(command.blocker, command.dependent)
+      )?.type === 'allowed'
+    );
   }
 
   private clearDependencyDropClasses_abyssPrivate(): void {
@@ -1560,13 +1592,17 @@ export class RightPanel {
     section: HTMLElement,
     direction: DependencyDirection,
   ): void {
+    let checked: TaskNodeDragPayload | null = null;
+    let allowed = false;
     const preview = (event: DragEvent): void => {
       this.clearDependencyDropClasses_abyssPrivate();
       const command = this.dependencyDropCommand_abyssPrivate(direction);
       if (command === undefined || this.tasks_abyssPrivate === undefined) return;
-      const allowed =
-        this.tasks_abyssPrivate.queries.dependencyEligibility(command.blocker, command.dependent)
-          .type === 'allowed';
+      const payload = this.state_abyssPrivate.get('draggingTaskNode');
+      if (checked !== payload) {
+        checked = payload;
+        allowed = this.dependencyDropAllowed_abyssPrivate(command);
+      }
       section.addClass(allowed ? 'is-drop-target' : 'is-drop-disabled');
       if (allowed) event.preventDefault();
     };
@@ -1578,15 +1614,14 @@ export class RightPanel {
     });
     section.addEventListener('drop', (event) => {
       const command = this.dependencyDropCommand_abyssPrivate(direction);
-      const allowed =
-        command !== undefined &&
-        this.tasks_abyssPrivate?.queries.dependencyEligibility(command.blocker, command.dependent)
-          .type === 'allowed';
       this.clearDependencyDropClasses_abyssPrivate();
-      if (allowed) {
+      if (command !== undefined && this.dependencyDropAllowed_abyssPrivate(command)) {
         event.preventDefault();
         event.stopPropagation();
-        runAsyncAction(this.commitDependencyDrop_abyssPrivate(command), 'Could not add dependency');
+        runAsyncAction(
+          this.commitDependencyDrop_abyssPrivate(command),
+          'Could not update dependency',
+        );
       }
       if (this.state_abyssPrivate.get('draggingTaskNode') !== null)
         this.state_abyssPrivate.set('draggingTaskNode', null);
@@ -1594,7 +1629,7 @@ export class RightPanel {
   }
 
   private async commitDependencyDrop_abyssPrivate(
-    command: Extract<TaskCommand, { type: 'add-dependency' }>,
+    command: Extract<TaskCommand, { type: 'add-dependency' | 'reverse-dependency' }>,
   ): Promise<void> {
     const selection = this.state_abyssPrivate.get('taskStack');
     const committed = await this.executeDependencyCommand_abyssPrivate(command);
@@ -1622,6 +1657,7 @@ export class RightPanel {
       attr: { 'data-state': presentation.state },
     });
     if (relation.type === 'resolved') {
+      this.bindRelationDrag_abyssPrivate(row, relation, direction, current);
       const marker = renderStatusMarker(row, {
         task: relation.task.node,
         registry: this.statusRegistry_abyssPrivate,
@@ -1654,22 +1690,17 @@ export class RightPanel {
         text: relation.dependencyId,
         attr: { title: relation.dependencyId },
       });
-    const remove = row.createEl('button', {
-      cls: 'abyss-dep-remove',
-      attr: {
-        type: 'button',
-        'aria-label': presentation.removeLabel,
-        title: presentation.removeLabel,
-      },
-    });
-    setIcon(remove, 'x');
     const dependent =
       direction === 'blocks' && relation.type === 'resolved' ? relation.task.target : current;
-    remove.addEventListener('click', (event) => {
-      event.stopPropagation();
-      if (remove.disabled) return;
-      remove.disabled = true;
-      runAsyncAction(
+    this.renderRowRemove_abyssPrivate(
+      row,
+      'abyss-dep-remove',
+      {
+        label: presentation.removeLabel,
+        title: presentation.removeLabel,
+        failure: 'Could not remove dependency',
+      },
+      () =>
         this.executeDependencyCommand_abyssPrivate(
           {
             type: 'remove-dependency',
@@ -1681,10 +1712,40 @@ export class RightPanel {
             index: [...container.querySelectorAll('.abyss-dep-row')].indexOf(row),
             title: relation.type === 'resolved' ? presentation.title : relation.dependencyId,
           },
-        ).finally(() => {
-          remove.disabled = false;
-        }),
-        'Could not remove dependency',
+        ),
+    );
+  }
+
+  private bindRelationDrag_abyssPrivate(
+    row: HTMLElement,
+    relation: Extract<TaskDependencyRelation, { type: 'resolved' }>,
+    direction: DependencyDirection,
+    current: TaskNodeRef,
+  ): void {
+    row.draggable = true;
+    row.addEventListener('dragstart', (event) => {
+      event.stopPropagation();
+      this.endTaskDrag_abyssPrivate?.();
+      row.addClass('is-dragging');
+      this.endTaskDrag_abyssPrivate = startTaskNodeDrag(
+        this.state_abyssPrivate,
+        this.el_abyssPrivate,
+        row,
+        {
+          payload: {
+            source: 'inspector-relation',
+            task: relation.task,
+            relation: {
+              direction,
+              dependencyId: relation.dependencyId,
+              blocker: direction === 'blocked-by' ? relation.task.target : current,
+              dependent: direction === 'blocked-by' ? current : relation.task.target,
+            },
+          },
+          onEnd: () => {
+            row.removeClass('is-dragging');
+          },
+        },
       );
     });
   }
@@ -1826,7 +1887,10 @@ export class RightPanel {
   }
 
   private async executeDependencyCommand_abyssPrivate(
-    command: Extract<TaskCommand, { type: 'add-dependency' | 'remove-dependency' }>,
+    command: Extract<
+      TaskCommand,
+      { type: 'add-dependency' | 'remove-dependency' | 'reverse-dependency' }
+    >,
     position?: InlineUndoPosition,
   ): Promise<boolean> {
     if (this.tasks_abyssPrivate === undefined) return false;
@@ -2090,10 +2154,15 @@ export class RightPanel {
     this.renderSubtaskContent_abyssPrivate(row, sub);
   }
 
-  private renderSubtaskRemove_abyssPrivate(container: HTMLElement, sub: SubtaskSnapshot): void {
+  private renderRowRemove_abyssPrivate(
+    container: HTMLElement,
+    cls: string,
+    { label, title, failure }: { label: string; title?: string; failure: string },
+    action: () => Promise<unknown>,
+  ): void {
     const remove = container.createEl('button', {
-      cls: 'abyss-subtask-remove',
-      attr: { type: 'button', 'aria-label': 'Delete sub-task' },
+      cls,
+      attr: { type: 'button', 'aria-label': label, ...(title === undefined ? {} : { title }) },
     });
     setIcon(remove, 'x');
     remove.addEventListener('click', (event) => {
@@ -2101,10 +2170,10 @@ export class RightPanel {
       if (remove.disabled) return;
       remove.disabled = true;
       runAsyncAction(
-        this.deleteTask_abyssPrivate(sub).finally(() => {
+        action().finally(() => {
           remove.disabled = false;
         }),
-        'Could not delete sub-task',
+        failure,
       );
     });
   }
@@ -2119,48 +2188,34 @@ export class RightPanel {
       this.startSubtaskDrag_abyssPrivate(row, container, sub, e);
     });
 
-    row.addEventListener('dragend', () => {
-      this.endTaskDrag_abyssPrivate?.();
-      this.draggingSub_abyssPrivate = null;
-      row.removeClass('is-dragging');
-      // Clean up any lingering indicators across all rows
-      container.querySelectorAll('.drop-above,.drop-below').forEach((el) => {
-        el.removeClass('drop-above');
-        el.removeClass('drop-below');
-      });
-    });
-
     row.addEventListener('dragover', (e) => {
-      e.preventDefault();
       if (
         this.draggingSub_abyssPrivate == null ||
         this.draggingSub_abyssPrivate.ref.relativeLine === sub.ref.relativeLine
       )
         return;
+      e.preventDefault();
       const rect = row.getBoundingClientRect();
       const isAbove = e.clientY < rect.top + rect.height / 2;
       // Clear indicators on all siblings first
       container.querySelectorAll('.drop-above,.drop-below').forEach((el) => {
-        el.removeClass('drop-above');
-        el.removeClass('drop-below');
+        el.removeClass('drop-above', 'drop-below');
       });
       row.addClass(isAbove ? 'drop-above' : 'drop-below');
     });
 
     row.addEventListener('dragleave', (e) => {
       if (!row.contains(e.relatedTarget as Node)) {
-        row.removeClass('drop-above');
-        row.removeClass('drop-below');
+        row.removeClass('drop-above', 'drop-below');
       }
     });
 
     row.addEventListener('drop', (e) => {
-      e.preventDefault();
       const dragged = this.draggingSub_abyssPrivate;
       if (dragged == null || dragged.ref.relativeLine === sub.ref.relativeLine) return;
+      e.preventDefault();
       const position = row.hasClass('drop-above') ? 'before' : 'after';
-      row.removeClass('drop-above');
-      row.removeClass('drop-below');
+      row.removeClass('drop-above', 'drop-below');
       runAsyncAction(this.reorderSubTask_abyssPrivate(parentTask, dragged, sub, position));
     });
   }
@@ -2222,7 +2277,12 @@ export class RightPanel {
       const stack = this.state_abyssPrivate.get('taskStack');
       this.state_abyssPrivate.updateInspectorSelection([...stack, sub]);
     });
-    this.renderSubtaskRemove_abyssPrivate(titleRow, sub);
+    this.renderRowRemove_abyssPrivate(
+      titleRow,
+      'abyss-subtask-remove',
+      { label: 'Delete sub-task', failure: 'Could not delete sub-task' },
+      () => this.deleteTask_abyssPrivate(sub),
+    );
 
     // Progress + comment count indicators
     const subCount = sub.subtasks.length;
@@ -2696,28 +2756,16 @@ export class RightPanel {
       attr: { type: 'date', value: currentValue ?? '' },
     });
     input.addEventListener('change', () => {
-      if (field === 'due') runAsyncAction(this.updateDue_abyssPrivate(task, input.value));
-      else if (field === 'scheduled')
-        runAsyncAction(this.updateScheduled_abyssPrivate(task, input.value));
-      else runAsyncAction(this.updateStart_abyssPrivate(task, input.value));
+      runAsyncAction(this.updateDate_abyssPrivate(task, field, input.value));
       this.removeAnchoredSurface_abyssPrivate(pop);
     });
     this.el_abyssPrivate.ownerDocument.defaultView?.setTimeout(() => {
       input.focus();
     }, 0);
 
-    const clearBtn = inputRow.createEl('button', {
-      cls: 'abyss-popover-clear-icon-btn',
-      attr: { title: 'Clear date', 'aria-label': 'Clear date' },
-    });
-    setIcon(clearBtn, 'x');
-    clearBtn.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-    });
-    clearBtn.addEventListener('click', () => {
+    this.renderPopoverClear_abyssPrivate(inputRow, 'Clear date', () => {
       if (field === 'due') runAsyncAction(this.clearDate_abyssPrivate(task));
-      else if (field === 'scheduled') runAsyncAction(this.clearScheduled_abyssPrivate(task));
-      else runAsyncAction(this.clearStart_abyssPrivate(task));
+      else runAsyncAction(this.clearPlanningDate_abyssPrivate(task, field));
       this.removeAnchoredSurface_abyssPrivate(pop);
     });
     this.positionAnchoredSurface_abyssPrivate(pop, anchor, 'below-start');
@@ -3092,9 +3140,13 @@ export class RightPanel {
     });
   }
 
-  private async updateDue_abyssPrivate(task: TaskLike, date: string): Promise<void> {
+  private async updateDate_abyssPrivate(
+    task: TaskLike,
+    field: 'due' | 'scheduled' | 'start',
+    date: string,
+  ): Promise<void> {
     await this.executePlanningPatch_abyssPrivate(task, {
-      due: { type: 'set', value: localDate(date) },
+      [field]: { type: 'set', value: localDate(date) },
     });
   }
 
@@ -3107,24 +3159,11 @@ export class RightPanel {
     );
   }
 
-  private async updateScheduled_abyssPrivate(task: TaskLike, date: string): Promise<void> {
-    await this.executePlanningPatch_abyssPrivate(task, {
-      scheduled: { type: 'set', value: localDate(date) },
-    });
-  }
-
-  private async clearScheduled_abyssPrivate(task: TaskLike): Promise<void> {
-    await this.executePlanningPatch_abyssPrivate(task, { scheduled: { type: 'clear' } });
-  }
-
-  private async updateStart_abyssPrivate(task: TaskLike, date: string): Promise<void> {
-    await this.executePlanningPatch_abyssPrivate(task, {
-      start: { type: 'set', value: localDate(date) },
-    });
-  }
-
-  private async clearStart_abyssPrivate(task: TaskLike): Promise<void> {
-    await this.executePlanningPatch_abyssPrivate(task, { start: { type: 'clear' } });
+  private async clearPlanningDate_abyssPrivate(
+    task: TaskLike,
+    field: 'scheduled' | 'start',
+  ): Promise<void> {
+    await this.executePlanningPatch_abyssPrivate(task, { [field]: { type: 'clear' } });
   }
 
   private async executePlanningPatch_abyssPrivate(
@@ -3287,27 +3326,11 @@ export class RightPanel {
       input.focus();
     }, 0);
     input.addEventListener('change', () => {
-      runAsyncAction(
-        this.updateTime_abyssPrivate(task, input.value).then(() => {
-          this.removeAnchoredSurface_abyssPrivate(pop);
-        }),
-      );
+      this.finishPopoverUpdate_abyssPrivate(pop, this.updateTime_abyssPrivate(task, input.value));
     });
 
-    const clearBtn = inputRow.createEl('button', {
-      cls: 'abyss-popover-clear-icon-btn',
-      attr: { title: 'Clear time', 'aria-label': 'Clear time' },
-    });
-    setIcon(clearBtn, 'x');
-    clearBtn.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-    });
-    clearBtn.addEventListener('click', () => {
-      runAsyncAction(
-        this.updateTime_abyssPrivate(task, '').then(() => {
-          this.removeAnchoredSurface_abyssPrivate(pop);
-        }),
-      );
+    this.renderPopoverClear_abyssPrivate(inputRow, 'Clear time', () => {
+      this.finishPopoverUpdate_abyssPrivate(pop, this.updateTime_abyssPrivate(task, ''));
     });
 
     if ('source' in task) this.renderDurationInputs_abyssPrivate(pop, task);
@@ -3333,27 +3356,35 @@ export class RightPanel {
         minutes === undefined || minutes === 0
           ? this.clearDuration_abyssPrivate(task)
           : this.updateDuration_abyssPrivate(task, minutes);
-      runAsyncAction(
-        update.then(() => {
-          this.removeAnchoredSurface_abyssPrivate(popover);
-        }),
-      );
+      this.finishPopoverUpdate_abyssPrivate(popover, update);
     });
-    const clearButton = row.createEl('button', {
+    this.renderPopoverClear_abyssPrivate(row, 'Clear duration', () => {
+      this.finishPopoverUpdate_abyssPrivate(popover, this.clearDuration_abyssPrivate(task));
+    });
+  }
+
+  private finishPopoverUpdate_abyssPrivate(popover: HTMLElement, update: Promise<void>): void {
+    runAsyncAction(
+      update.then(() => {
+        this.removeAnchoredSurface_abyssPrivate(popover);
+      }),
+    );
+  }
+
+  private renderPopoverClear_abyssPrivate(
+    row: HTMLElement,
+    label: string,
+    action: () => void,
+  ): void {
+    const button = row.createEl('button', {
       cls: 'abyss-popover-clear-icon-btn',
-      attr: { title: 'Clear duration', 'aria-label': 'Clear duration' },
+      attr: { title: label, 'aria-label': label },
     });
-    setIcon(clearButton, 'x');
-    clearButton.addEventListener('mousedown', (event) => {
+    setIcon(button, 'x');
+    button.addEventListener('mousedown', (event) => {
       event.preventDefault();
     });
-    clearButton.addEventListener('click', () => {
-      runAsyncAction(
-        this.clearDuration_abyssPrivate(task).then(() => {
-          this.removeAnchoredSurface_abyssPrivate(popover);
-        }),
-      );
-    });
+    button.addEventListener('click', action);
   }
 
   private async updateTime_abyssPrivate(task: TaskLike, time: string): Promise<void> {

@@ -3,6 +3,8 @@ import type { ListViewState } from '../settings/types';
 import {
   cloneTaskSnapshot,
   sameTaskNodeRef,
+  type DependencyDirection,
+  type TaskCommand,
   type TaskNodeSnapshot,
   type TaskSnapshot,
 } from '../tasks';
@@ -24,10 +26,15 @@ export interface InspectorHistoryFrame {
   readonly taskStack: readonly TaskSelectionNode[];
 }
 
-export interface TaskNodeDragPayload {
-  readonly task: TaskNodeSnapshot;
-  readonly source: 'center-card' | 'inspector-subtask';
-}
+export type TaskNodeDragPayload = { readonly task: TaskNodeSnapshot } & (
+  | { readonly source: 'center-card' | 'inspector-subtask' }
+  | {
+      readonly source: 'inspector-relation';
+      readonly relation: Omit<Extract<TaskCommand, { type: 'reverse-dependency' }>, 'type'> & {
+        readonly direction: DependencyDirection;
+      };
+    }
+);
 
 export interface AppStateData {
   mode: ViewMode;
@@ -123,7 +130,10 @@ function detachedDragPayload(payload: TaskNodeDragPayload | null): TaskNodeDragP
   const path = frame.taskStack.filter(
     (item): item is Exclude<TaskSelectionNode, TaskSnapshot> => !('source' in item),
   );
-  return freeze({ source: payload.source, task: { root, path, node, target: taskNodeRef(node) } });
+  return freeze({
+    ...structuredClone(payload),
+    task: { root, path, node, target: taskNodeRef(node) },
+  });
 }
 
 export class AppState {
@@ -232,6 +242,13 @@ export class AppState {
     const prev = this.data[key];
     if (prev === value) return;
     if (this.delivering) throw new AppStateReentrantMutationError(key);
+    if (key === 'taskStack' && this.data.draggingTaskNode !== null) {
+      this.batch(() => {
+        this.setValue('draggingTaskNode', null);
+        this.setValue(key, value);
+      });
+      return;
+    }
     this.data[key] = value;
     if (this.batchDepth > 0) {
       const pending = this.pendingChanges.get(key);

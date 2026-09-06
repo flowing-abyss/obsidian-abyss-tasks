@@ -452,6 +452,27 @@ describe('AppState', () => {
     expect(s.get('inspectorBackStack')).toBe(history);
   });
 
+  it('detaches and deeply freezes relation evidence with the canonical dragged node', () => {
+    const s = new AppState();
+    const task = inspectorLocation('A', ['A.1']);
+    const dependent = inspectorLocation('B').target;
+    const relation = {
+      blocker: task.target,
+      dependent,
+      dependencyId: 'first',
+      direction: 'blocked-by' as const,
+    };
+    s.set('draggingTaskNode', { source: 'inspector-relation', task, relation });
+    const payload = expectDefined(s.get('draggingTaskNode'));
+    if (payload.source !== 'inspector-relation') throw new Error('Missing relation');
+    Object.assign(relation, { dependencyId: 'changed' });
+    Object.assign(dependent.ref, { line: 100 });
+    expect(payload.relation.dependencyId).toBe('first');
+    expect(payload.relation.dependent.ref).not.toEqual(dependent.ref);
+    expect(Reflect.set(payload.relation.blocker.ref, 'relativeLine', 100)).toBe(false);
+    expect(payload.task.node).toBe(payload.task.path[0]);
+  });
+
   it('draggingTag initialises as null', () => {
     const s = new AppState();
     expect(s.get('draggingTag')).toBeNull();
