@@ -322,11 +322,11 @@ describe('dependency section drops', () => {
     },
   );
 
-  it('offers the existing Undo using the committed dependency refs', async () => {
+  it('adds a dependency by drop without a success Notice or local Undo', async () => {
     const prototype = Notice.prototype as unknown as {
       constructor__(this: Notice, message: string | DocumentFragment): void;
     };
-    vi.spyOn(prototype, 'constructor__').mockImplementation(function (this: Notice) {
+    const notice = vi.spyOn(prototype, 'constructor__').mockImplementation(function (this: Notice) {
       if (requireApiVersion('1.8.7')) activeDocument.body.append(this.containerEl);
     });
     const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b\n');
@@ -334,13 +334,8 @@ describe('dependency section drops', () => {
     drag(h.section('blocked-by'), 'drop');
     await flushMicrotasks(40);
     expect(await h.read()).toBe('- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n');
-    expectDefined(
-      [...activeDocument.querySelectorAll('button')].find(
-        (button) => button.textContent === 'Undo',
-      ),
-    ).click();
-    await flushMicrotasks(40);
-    expect(await h.read()).toBe('- [ ] A 🆔 a\n- [ ] B 🆔 b\n');
+    expect(notice).not.toHaveBeenCalled();
+    expect(h.el.querySelector('.abyss-undo-row')).toBeNull();
   });
 
   it('refreshes only an affected history frame through the existing authority transition', async () => {

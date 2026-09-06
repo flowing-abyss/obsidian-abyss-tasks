@@ -146,7 +146,7 @@ dragging ends. Inspector subtask drags use already-visible sections and never re
 empty sections during native dragstart. The existing badge `+` exposes both directions before the
 first subtask drag; if only one persisted direction is visible, dependency search provides the other
 direction. Explicit add disclosure retains its separate lifetime through drag cancellation.
-Dependency drops use the existing Undo presenter and never navigate or move the source. Normal
+Dependency drops complete without success Notices and never navigate or move the source. Normal
 index reconciliation may refresh an affected saved history frame through its proven successor;
 unchanged frames retain their identities. Drag state is never persisted.
 
@@ -156,7 +156,7 @@ search model owns filtering, direction eligibility and stable same-file ranking.
 controller handles general and scoped entry points, keyboard selection and focus dismissal.
 The inspector keeps disclosure and search drafts only for its mounted lifetime, preserving the
 search across proven selection refreshes. Index events refresh counterpart status and relation
-rows. Add/remove actions use the existing task application and committed-result Undo presenter;
+rows. Add/remove actions use the existing task application and inspector-local removal Undo;
 failed actions leave the search available and use the established command-result Notice.
 
 Both general and direction-scoped dependency pickers submit `create-dependency-subtask` through
@@ -344,18 +344,19 @@ including its implicit empty EOF line; it never crosses intervening content or s
 uncaptured gap. Such out-of-block placement cannot be rebased even with an otherwise valid anchor.
 Appending the captured subtree preserves its original final-newline state.
 
-`taskUndoNotice` owns the success/Undo surface for recoverable mutations. It constructs inverses
-from committed dependency outcomes or exact subtask recovery, so Undo never reuses pre-write refs.
-Dependency-add Undo leaves a lazily allocated ID intact; removal Undo restores the captured ordered
-ID sequence and original task-line bytes, including unavailable, ambiguous, and repeated declarations.
-One native button runs
-at most once, disables while pending, hides its Notice after execution, and returns focus to the
-invoking inspector row when it remains connected. Failed Undo hides the success Notice and passes
-one structured result to `presentTaskCommandResult`; unexpected throws produce one local diagnostic
-and the same error boundary. The existing inspector subtask delete flow uses this presenter and
-its normal selection convergence. On Obsidian 1.8.7+, a version guard enables public `containerEl`;
-older supported versions retain the button passed in the fragment and use the longstanding `hide()`
-API. The deprecated `noticeEl` is never used.
+`RightPanel` owns one ephemeral `createInlineTaskUndo` handle for its current selection. Dependency
+removal and subtask deletion place the native Undo button at the removed row's original position;
+a later removal revokes the earlier action. Additions and linked creation emit no success Notice
+or local Undo. `taskUndoNotice` now only derives removal inverses from committed dependency outcomes
+or exact subtask recovery, so Undo never reuses pre-write refs. Dependency recovery restores ordered
+IDs and original task-line bytes, including unavailable, ambiguous, and repeated declarations.
+The row and its focus survive same-selection rerenders. The established eight-second lifetime,
+selection identity changes, and inspector destruction revoke state, timer, and listeners. Pending
+Undo disables repeat activation and pauses expiry; failure leaves a retryable button with a fresh
+lifetime and passes exactly one result to `presentTaskCommandResult`. Unexpected throws add one
+local diagnostic at that same boundary. Successful subtask recovery uses ordinary selection
+convergence and focuses the restored row while the action still belongs to the inspector. No Undo
+state enters `AppState` or persisted metadata.
 
 Before root or subtask toggle/set-status commands dispatch a transition to configured done or
 cancelled status, the application checks every active resolved or ambiguous blocker. Missing IDs

@@ -49,6 +49,7 @@ import {
   type DependencyPickerCommitResult,
   type DependencySearchHandle,
 } from '../ui/dependencySearch';
+import { createInlineTaskUndo, type InlineUndoPosition } from '../ui/inlineTaskUndo';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { LinkEditModal } from '../ui/LinkEditModal';
 import { rebuildOwnedTaskSelection } from '../ui/ownedTaskSelection';
@@ -84,7 +85,7 @@ import {
 import { openInFile } from '../ui/taskNavigation';
 import { startTaskNodeDrag } from '../ui/taskNodeDrag';
 import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
-import { presentTaskMutationResult } from '../ui/taskUndoNotice';
+import { taskRemovalInverse } from '../ui/taskUndoNotice';
 
 type TaskLike = TaskSnapshot | SubtaskSnapshot;
 
@@ -265,7 +266,39 @@ function clearOptionalTimer(ownerWindow: Window | null, timer: number | undefine
   if (timer !== undefined) ownerWindow?.clearTimeout(timer);
 }
 
+async function executeTaskCommand(
+  tasks: TaskApplicationApi,
+  command: TaskCommand,
+): Promise<TaskCommandResult> {
+  try {
+    return await tasks.execute(command);
+  } catch {
+    return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+  }
+}
+
+function subtaskUndoPosition(
+  stack: readonly TaskLike[],
+  ref: SubtaskRef,
+): InlineUndoPosition | undefined {
+  const parent = stack.find((node) => sameTaskNodeRef(taskNodeRef(node), ref.parent));
+  if (parent === undefined) return undefined;
+  const index = parent.subtasks.findIndex((sub) =>
+    sameTaskNodeRef(taskNodeRef(sub), { type: 'subtask', ref }),
+  );
+  const sub = parent.subtasks[index];
+  return sub === undefined
+    ? undefined
+    : {
+        list: '.abyss-subtask-section .abyss-subtask-list',
+        index,
+        title: sub.title,
+      };
+}
+
 export class RightPanel {
+  private readonly undo_abyssPrivate = createInlineTaskUndo();
+  private selectionEpoch_abyssPrivate = 0;
   private readonly completionConfirmationAbortController_abyssPrivate = new AbortController();
   private el_abyssPrivate!: HTMLElement;
   private mounted_abyssPrivate = false;
@@ -349,6 +382,8 @@ export class RightPanel {
       this.updateDependencyDisclosureSelection_abyssPrivate(next, sameSelection);
       const statusFocus = sameSelection ? this.statusFocusTarget_abyssPrivate(previous) : undefined;
       if (!sameSelection) {
+        this.selectionEpoch_abyssPrivate++;
+        this.undo_abyssPrivate.clear();
         this.dependencySearch_abyssPrivate?.destroy();
         this.dependencySearch_abyssPrivate = undefined;
       }
@@ -383,6 +418,7 @@ export class RightPanel {
   }
 
   destroy(): void {
+    this.undo_abyssPrivate.clear();
     this.mounted_abyssPrivate = false;
     this.dependencyStatusMarkers_abyssPrivate.clear();
     this.endTaskDrag_abyssPrivate?.();
@@ -407,7 +443,7 @@ export class RightPanel {
     const candidates: RightPanelDraftState[] = [];
     const recurrence = this.captureRecurrenceDraft_abyssPrivate(active);
     if (recurrence != null) candidates.push(recurrence);
-    const target = task != null ? this.planningTarget_abyssPrivate(task) : undefined;
+    const target = task != null ? taskNodeRef(task) : undefined;
     if (task == null || target == null)
       return candidates.length > 0 ? { entries: candidates } : undefined;
     candidates.push(...this.captureTextDrafts_abyssPrivate(task, target, active));
@@ -920,6 +956,7 @@ export class RightPanel {
   }
 
   private render_abyssPrivate(statusFocus?: TaskNodeRef): void {
+    this.undo_abyssPrivate.detach();
     this.dependencyStatusMarkers_abyssPrivate.clear();
     const search = this.dependencySearch_abyssPrivate;
     const focused = this.el_abyssPrivate.ownerDocument.activeElement;
@@ -967,8 +1004,7 @@ export class RightPanel {
   }
 
   private editLink_abyssPrivate(task: TaskLike, occ: number, token: LinkToken): void {
-    const target = this.planningTarget_abyssPrivate(task);
-    if (target == null) return;
+    const target = taskNodeRef(task);
     new LinkEditModal(
       this.app_abyssPrivate,
       token,
@@ -1106,15 +1142,13 @@ export class RightPanel {
       sourcePath: rootTaskRef(task).filePath,
       component: this.md_abyssPrivate,
       onEditLink: (occurrence, token) => {
-        const target = this.planningTarget_abyssPrivate(task);
-        if (target != null) {
-          this.editLinkInString_abyssPrivate(
-            { type: 'description', target },
-            occurrence,
-            token,
-            rootTaskRef(task).filePath,
-          );
-        }
+        const target = taskNodeRef(task);
+        this.editLinkInString_abyssPrivate(
+          { type: 'description', target },
+          occurrence,
+          token,
+          rootTaskRef(task).filePath,
+        );
       },
     });
   }
@@ -1142,6 +1176,7 @@ export class RightPanel {
     this.renderDependencySections_abyssPrivate();
     this.renderSubtaskSection_abyssPrivate(task);
     this.renderCommentSection_abyssPrivate(task, commentTimeContext);
+    this.undo_abyssPrivate.render(this.el_abyssPrivate);
   }
 
   private renderBreadcrumb_abyssPrivate(stack: InspectorHistoryFrame['taskStack']): void {
@@ -1635,11 +1670,18 @@ export class RightPanel {
       if (remove.disabled) return;
       remove.disabled = true;
       runAsyncAction(
-        this.executeDependencyCommand_abyssPrivate({
-          type: 'remove-dependency',
-          dependent,
-          dependencyId: relation.dependencyId,
-        }).finally(() => {
+        this.executeDependencyCommand_abyssPrivate(
+          {
+            type: 'remove-dependency',
+            dependent,
+            dependencyId: relation.dependencyId,
+          },
+          {
+            list: `[data-dependency-direction="${direction}"] .abyss-subtask-list`,
+            index: [...container.querySelectorAll('.abyss-dep-row')].indexOf(row),
+            title: relation.type === 'resolved' ? presentation.title : relation.dependencyId,
+          },
+        ).finally(() => {
           remove.disabled = false;
         }),
         'Could not remove dependency',
@@ -1648,6 +1690,7 @@ export class RightPanel {
   }
 
   private refreshDependencies_abyssPrivate(): void {
+    this.undo_abyssPrivate.detach();
     for (const [marker, task] of this.dependencyStatusMarkers_abyssPrivate) {
       setStatusMarkerCompletionBlocked(marker, this.isDependencyBlocked_abyssPrivate(task));
     }
@@ -1657,6 +1700,7 @@ export class RightPanel {
     });
     this.renderDependencySections_abyssPrivate();
     this.dependencySearch_abyssPrivate?.refresh();
+    this.undo_abyssPrivate.render(this.el_abyssPrivate);
     this.positionDependencySearch_abyssPrivate();
   }
 
@@ -1783,8 +1827,10 @@ export class RightPanel {
 
   private async executeDependencyCommand_abyssPrivate(
     command: Extract<TaskCommand, { type: 'add-dependency' | 'remove-dependency' }>,
+    position?: InlineUndoPosition,
   ): Promise<boolean> {
     if (this.tasks_abyssPrivate === undefined) return false;
+    const epoch = this.selectionEpoch_abyssPrivate;
     let result: TaskCommandResult;
     try {
       result = await this.tasks_abyssPrivate.execute(command);
@@ -1792,7 +1838,9 @@ export class RightPanel {
       console.error('[abyss-tasks] Dependency action failed', error);
       result = { type: 'io-error', cause: 'dependency-error', contentState: 'unknown' };
     }
-    presentTaskMutationResult(this.tasks_abyssPrivate, result);
+    presentTaskCommandResult(result);
+    if (epoch === this.selectionEpoch_abyssPrivate)
+      this.presentRemovalUndo_abyssPrivate(result, position);
     return result.type === 'ok';
   }
 
@@ -2506,8 +2554,8 @@ export class RightPanel {
     if (existing != null) return;
     anchor.focus();
     const root = stack[0];
-    const target = this.planningTarget_abyssPrivate(task);
-    if (root == null || !('source' in root) || target == null) return;
+    const target = taskNodeRef(task);
+    if (root == null || !('source' in root)) return;
 
     const popover = this.el_abyssPrivate.createDiv({
       cls: 'abyss-popover abyss-recurrence-popover abyss-popover-anchored',
@@ -2910,8 +2958,8 @@ export class RightPanel {
   }
 
   private async saveTaskTitle_abyssPrivate(task: TaskLike, newText: string): Promise<boolean> {
-    const target = this.planningTarget_abyssPrivate(task);
-    if (target == null || this.tasks_abyssPrivate == null) return false;
+    const target = taskNodeRef(task);
+    if (this.tasks_abyssPrivate == null) return false;
     const patch = { markdownTitle: { type: 'set' as const, value: newText } };
     const command = { type: 'patch', target, patch } as TaskCommand;
     const submission = this.beginDraftSubmission_abyssPrivate(
@@ -2920,20 +2968,14 @@ export class RightPanel {
       command,
     );
     if (submission == null) return false;
-    let result: TaskCommandResult;
-    try {
-      result = await this.tasks_abyssPrivate.execute(command);
-    } catch {
-      result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
-    }
+    const result = await executeTaskCommand(this.tasks_abyssPrivate, command);
     this.applyPlanningResult_abyssPrivate(result, target, undefined, submission);
-    this.settleDraftSubmission_abyssPrivate(submission, result);
     return result.type === 'ok';
   }
 
   private async appendToTitle_abyssPrivate(task: TaskLike, text: string): Promise<void> {
-    const target = this.planningTarget_abyssPrivate(task);
-    if (target == null || this.tasks_abyssPrivate == null) return;
+    const target = taskNodeRef(task);
+    if (this.tasks_abyssPrivate == null) return;
     const result = await this.tasks_abyssPrivate.execute({
       type: 'append-title',
       target,
@@ -2942,9 +2984,8 @@ export class RightPanel {
     this.applyPlanningResult_abyssPrivate(result, target);
   }
 
-  private async updateDescription_abyssPrivate(task: TaskLike, newDesc: string): Promise<boolean> {
-    const target = this.planningTarget_abyssPrivate(task);
-    if (target == null) return false;
+  private updateDescription_abyssPrivate(task: TaskLike, newDesc: string): Promise<boolean> {
+    const target = taskNodeRef(task);
     return this.executeBlockCommand_abyssPrivate(
       {
         type: 'set-description',
@@ -2955,9 +2996,8 @@ export class RightPanel {
     );
   }
 
-  private async addSubTask_abyssPrivate(task: TaskLike, text: string): Promise<boolean> {
-    const parent = this.planningTarget_abyssPrivate(task);
-    if (parent == null) return false;
+  private addSubTask_abyssPrivate(task: TaskLike, text: string): Promise<boolean> {
+    const parent = taskNodeRef(task);
     return this.executeBlockCommand_abyssPrivate({ type: 'add-subtask', parent, text }, parent);
   }
 
@@ -2974,10 +3014,9 @@ export class RightPanel {
     );
   }
 
-  private async commitTaskToggle_abyssPrivate(task: TaskLike): Promise<void> {
-    const target = this.planningTarget_abyssPrivate(task);
-    if (target == null || this.tasks_abyssPrivate == null) return;
-    await this.executeOwnedStatus_abyssPrivate({ type: 'toggle-completion', target });
+  private commitTaskToggle_abyssPrivate(task: TaskLike): Promise<void> {
+    const target = taskNodeRef(task);
+    return this.executeOwnedStatus_abyssPrivate({ type: 'toggle-completion', target });
   }
 
   private async addComment_abyssPrivate(
@@ -2986,8 +3025,7 @@ export class RightPanel {
     _commentList: HTMLElement,
     inputEl: HTMLTextAreaElement,
   ): Promise<boolean> {
-    const parent = this.planningTarget_abyssPrivate(task);
-    if (parent == null) return false;
+    const parent = taskNodeRef(task);
     const committed = await this.executeBlockCommand_abyssPrivate(
       { type: 'add-comment', parent, text },
       parent,
@@ -2999,7 +3037,7 @@ export class RightPanel {
     return committed;
   }
 
-  private async updateComment_abyssPrivate(
+  private updateComment_abyssPrivate(
     _task: TaskLike,
     comment: TaskCommentSnapshot,
     newText: string,
@@ -3011,7 +3049,7 @@ export class RightPanel {
     );
   }
 
-  private async deleteComment_abyssPrivate(
+  private deleteComment_abyssPrivate(
     _task: TaskLike,
     comment: TaskCommentSnapshot,
   ): Promise<boolean> {
@@ -3046,37 +3084,40 @@ export class RightPanel {
       command,
     );
     if (submission == null) return false;
-    let result: TaskCommandResult;
-    try {
-      result = await this.tasks_abyssPrivate.execute(command);
-    } catch {
-      result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
-    }
+    const result = await executeTaskCommand(this.tasks_abyssPrivate, command);
     this.applyPlanningResult_abyssPrivate(result, target, initiatingStack, submission);
-    this.settleDraftSubmission_abyssPrivate(submission, result);
-    if (result.type === 'ok') this.presentBlockUndo_abyssPrivate(result);
+    if (command.type === 'delete-subtask')
+      this.presentRemovalUndo_abyssPrivate(
+        result,
+        subtaskUndoPosition(initiatingStack, command.subtask),
+      );
     return result.type === 'ok';
   }
 
-  private presentBlockUndo_abyssPrivate(
-    result: Extract<TaskCommandResult, { readonly type: 'ok' }>,
+  private presentRemovalUndo_abyssPrivate(
+    result: TaskCommandResult,
+    position: InlineUndoPosition | undefined,
   ): void {
     const tasks = this.tasks_abyssPrivate;
-    if (tasks === undefined) return;
-    presentTaskMutationResult(
-      {
-        queries: tasks.queries,
-        execute: async (command) => {
-          const initiatingStack = this.state_abyssPrivate.get('taskStack');
-          const restored = await tasks.execute(command);
-          if (restored.type === 'ok' && command.type === 'restore-subtask') {
-            this.applyPlanningResult_abyssPrivate(restored, command.parent, initiatingStack);
-          }
-          return restored;
-        },
-      },
-      result,
-    );
+    const command = taskRemovalInverse(result);
+    const current = this.dependencyTask_abyssPrivate();
+    if (
+      tasks === undefined ||
+      command === undefined ||
+      position === undefined ||
+      !this.mounted_abyssPrivate ||
+      current === undefined ||
+      (command.type === 'restore-subtask' && !sameTaskNodeRef(command.parent, taskNodeRef(current)))
+    )
+      return;
+    this.undo_abyssPrivate.show(this.el_abyssPrivate, position, async () => {
+      const initiatingStack = this.state_abyssPrivate.get('taskStack');
+      const restored = await tasks.execute(command);
+      if (restored.type === 'ok' && command.type === 'restore-subtask') {
+        this.applyPlanningResult_abyssPrivate(restored, command.parent, initiatingStack);
+      }
+      return restored;
+    });
   }
 
   private async updateDue_abyssPrivate(task: TaskLike, date: string): Promise<void> {
@@ -3114,50 +3155,38 @@ export class RightPanel {
     await this.executePlanningPatch_abyssPrivate(task, { start: { type: 'clear' } });
   }
 
-  private planningTarget_abyssPrivate(task: TaskLike): PlanningTarget | undefined {
-    return taskNodeRef(task);
-  }
-
   private async executePlanningPatch_abyssPrivate(
     task: TaskLike,
     patch: TaskPatch,
   ): Promise<TaskCommandResult> {
-    const target = this.planningTarget_abyssPrivate(task);
-    if (target == null || this.tasks_abyssPrivate == null) {
+    const target = taskNodeRef(task);
+    if (this.tasks_abyssPrivate == null) {
       return { type: 'io-error', cause: 'application-unavailable', contentState: 'unchanged' };
     }
+    const command = { type: 'patch', target, patch } as TaskCommand;
     const submission = this.beginDraftSubmission_abyssPrivate(
       target,
       (draft) => {
         if (patch.recurrence === undefined && patch.onCompletion === undefined) return false;
         return draft.kind === 'recurrence-editor' && sameNodeRef(draft.target, target);
       },
-      { type: 'patch', target, patch } as TaskCommand,
+      command,
     );
     if (submission == null) {
       return { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' };
     }
     let result: TaskCommandResult;
     try {
-      if (target.type === 'task') {
-        result = await this.tasks_abyssPrivate.execute({ type: 'patch', target, patch });
-      } else {
-        if (patch.duration !== undefined) {
-          result = { type: 'io-error', cause: 'unsupported-field', contentState: 'unchanged' };
-        } else {
-          const subtaskPatch: SubtaskPatch = patch;
-          result = await this.tasks_abyssPrivate.execute({
-            type: 'patch',
-            target,
-            patch: subtaskPatch,
-          });
-        }
-      }
+      if (target.type === 'task') result = await this.tasks_abyssPrivate.execute(command);
+      else
+        result =
+          patch.duration !== undefined
+            ? { type: 'io-error', cause: 'unsupported-field', contentState: 'unchanged' }
+            : await this.tasks_abyssPrivate.execute(command);
     } catch {
       result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
     }
     this.applyPlanningResult_abyssPrivate(result, target, undefined, submission);
-    this.settleDraftSubmission_abyssPrivate(submission, result);
     return result;
   }
 
@@ -3168,20 +3197,22 @@ export class RightPanel {
     submission?: object,
   ): void {
     presentTaskCommandResult(result);
-    if (result.type !== 'ok' || result.outcome.type !== 'task') return;
-    const stack = this.state_abyssPrivate.get('taskStack');
-    const initiatingRoot = rootRefForPlanningTarget(target);
-    if (this.isSelectedPlanningResult_abyssPrivate(stack, initiatingStack, initiatingRoot)) {
-      this.applySelectedPlanningResult_abyssPrivate({
-        root: result.outcome.task,
-        changed: result.changed,
-        target,
-        initiatingRoot,
-        stack,
-        submission,
-      });
+    if (result.type === 'ok' && result.outcome.type === 'task') {
+      const stack = this.state_abyssPrivate.get('taskStack');
+      const initiatingRoot = rootRefForPlanningTarget(target);
+      if (this.isSelectedPlanningResult_abyssPrivate(stack, initiatingStack, initiatingRoot)) {
+        this.applySelectedPlanningResult_abyssPrivate({
+          root: result.outcome.task,
+          changed: result.changed,
+          target,
+          initiatingRoot,
+          stack,
+          submission,
+        });
+      }
+      if (result.changed) this.onSuccessfulMutation_abyssPrivate?.(result.outcome.task.ref);
     }
-    if (result.changed) this.onSuccessfulMutation_abyssPrivate?.(result.outcome.task.ref);
+    if (submission !== undefined) this.settleDraftSubmission_abyssPrivate(submission, result);
   }
 
   private isSelectedPlanningResult_abyssPrivate(
@@ -3234,10 +3265,9 @@ export class RightPanel {
     return this.commitStatus_abyssPrivate(task, symbol);
   }
 
-  private async commitStatus_abyssPrivate(task: TaskLike, symbol: string): Promise<void> {
-    const target = this.planningTarget_abyssPrivate(task);
-    if (target == null || this.tasks_abyssPrivate == null) return;
-    await this.executeOwnedStatus_abyssPrivate({ type: 'set-status', target, symbol });
+  private commitStatus_abyssPrivate(task: TaskLike, symbol: string): Promise<void> {
+    const target = taskNodeRef(task);
+    return this.executeOwnedStatus_abyssPrivate({ type: 'set-status', target, symbol });
   }
 
   private async executeOwnedStatus_abyssPrivate(
@@ -3246,21 +3276,13 @@ export class RightPanel {
     if (this.tasks_abyssPrivate === undefined) return;
     const submission = this.beginDraftSubmission_abyssPrivate(command.target, undefined, command);
     if (submission === undefined) return;
-    let result: TaskCommandResult;
-    try {
-      result = await this.tasks_abyssPrivate.execute(command);
-    } catch {
-      result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
-    }
+    const result = await executeTaskCommand(this.tasks_abyssPrivate, command);
     this.applyPlanningResult_abyssPrivate(result, command.target, undefined, submission);
-    this.settleDraftSubmission_abyssPrivate(submission, result);
   }
 
   private async updatePriority_abyssPrivate(task: TaskLike, priority: string): Promise<void> {
     if (!['A', 'B', 'C', 'D', 'E', 'F'].includes(priority)) return;
-    const target = this.planningTarget_abyssPrivate(task);
-    if (target == null || this.tasks_abyssPrivate == null) return;
-    const patch: TaskPatch = {
+    const patch: SubtaskPatch = {
       priority: { type: 'set', value: priority as TaskPriority },
     };
     await this.executePlanningPatch_abyssPrivate(task, patch);
@@ -3409,9 +3431,7 @@ export class RightPanel {
     this.createContextMenuItem_abyssPrivate(
       menu,
       'abyss-context-item abyss-context-danger',
-      this.planningTarget_abyssPrivate(task)?.type === 'subtask'
-        ? 'Delete sub-task'
-        : 'Delete task',
+      taskNodeRef(task).type === 'subtask' ? 'Delete sub-task' : 'Delete task',
       () => {
         this.removeAnchoredSurface_abyssPrivate(menu);
         runAsyncAction(this.deleteTask_abyssPrivate(task), 'Could not complete UI action');
@@ -3435,8 +3455,8 @@ export class RightPanel {
 
   private recurrenceStackFor_abyssPrivate(task: TaskLike): readonly TaskLike[] {
     const root = this.state_abyssPrivate.get('taskStack')[0];
-    const target = this.planningTarget_abyssPrivate(task);
-    if (root == null || !('source' in root) || target == null) return [];
+    const target = taskNodeRef(task);
+    if (root == null || !('source' in root)) return [];
     return rebuildPlanningTargetStack(root, target);
   }
 
@@ -3511,8 +3531,7 @@ export class RightPanel {
   }
 
   private async deleteTask_abyssPrivate(task: TaskLike): Promise<void> {
-    const target = this.planningTarget_abyssPrivate(task);
-    if (target == null) return;
+    const target = taskNodeRef(task);
     if (target.type === 'subtask') {
       await this.executeBlockCommand_abyssPrivate(
         { type: 'delete-subtask', subtask: target.ref },
@@ -3526,12 +3545,7 @@ export class RightPanel {
   private async deleteRootTask_abyssPrivate(ref: TaskRef): Promise<void> {
     if (this.tasks_abyssPrivate == null) return;
     const initiatingStack = this.state_abyssPrivate.get('taskStack');
-    let result: TaskCommandResult;
-    try {
-      result = await this.tasks_abyssPrivate.execute({ type: 'delete', ref });
-    } catch {
-      result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
-    }
+    const result = await executeTaskCommand(this.tasks_abyssPrivate, { type: 'delete', ref });
     presentTaskCommandResult(result);
     const selectedRoot = this.state_abyssPrivate.get('taskStack')[0];
     const selectedRef = selectedRoot != null ? rootTaskRef(selectedRoot) : undefined;
@@ -3552,10 +3566,10 @@ export class RightPanel {
     target: SubtaskSnapshot,
     position: 'before' | 'after',
   ): Promise<void> {
-    const parent = this.planningTarget_abyssPrivate(parentTask);
-    const movedTarget = this.planningTarget_abyssPrivate(moved);
-    const targetNode = this.planningTarget_abyssPrivate(target);
-    if (parent == null || movedTarget?.type !== 'subtask' || targetNode?.type !== 'subtask') return;
+    const parent = taskNodeRef(parentTask);
+    const movedTarget = taskNodeRef(moved);
+    const targetNode = taskNodeRef(target);
+    if (movedTarget.type !== 'subtask' || targetNode.type !== 'subtask') return;
     await this.executeBlockCommand_abyssPrivate(
       {
         type: 'reorder-subtask',

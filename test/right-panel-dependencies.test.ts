@@ -28,6 +28,7 @@ import {
   createAppWithFiles,
   cssDeclarationsFor,
   cssDeclarationValue,
+  deferred,
   expectDefined,
   flushMicrotasks,
   testStatusRegistry,
@@ -141,6 +142,126 @@ function modalRootPosition(location: string): number {
 }
 
 describe('inspector subtask row removal', () => {
+  it('offers local recovery after deleting the selected subtask through the modal menu', async () => {
+    const markdown = '- [ ] Current\n  - [ ] Child\n  - [ ] Sibling\n';
+    const h = await harness(markdown);
+    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    cleanups.unshift(() => {
+      modal.close();
+    });
+    modal.open(h.node('Current').root);
+    const el = button(activeDocument.body, '.abyss-modal-body');
+    button(el, '.abyss-subtask-label').click();
+    button(el, '[aria-label="More actions"]').click();
+    button(el, '.abyss-context-danger').click();
+    await flushMicrotasks(40);
+    expect(await h.read()).toBe('- [ ] Current\n  - [ ] Sibling\n');
+    button(el, '.abyss-undo-row button').click();
+    await flushMicrotasks(40);
+    expect(await h.read()).toBe(markdown);
+    expect(activeDocument.activeElement?.textContent).toContain('Child');
+  });
+
+  it.each(['dependency', 'subtask'] as const)(
+    'does not publish a late %s tombstone into another selection',
+    async (kind) => {
+      const h = await harness('- [ ] Current ⛔ missing\n  - [ ] Child\n- [ ] Other\n');
+      const pending = deferred<void>();
+      const execute = h.api.execute.bind(h.api);
+      vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+        const result = await execute(command);
+        await pending.promise;
+        return result;
+      });
+      button(h.el, kind === 'dependency' ? '.abyss-dep-remove' : '.abyss-subtask-remove').click();
+      await flushMicrotasks(30);
+      h.state.set('taskStack', [h.node('Other').root]);
+      pending.resolve();
+      await flushMicrotasks(30);
+      expect(h.el.querySelector('.abyss-undo-row')).toBeNull();
+      expect(h.state.get('taskStack')[0]?.title).toBe('Other');
+    },
+  );
+
+  it('replaces a prior removal and preserves the latest position and focus across refresh', async () => {
+    const h = await harness('- [ ] Current ⛔ first, second, third\n  - [ ] Child\n');
+    notices();
+    button(h.el, '.abyss-dep-remove').click();
+    await flushMicrotasks(40);
+    const old = button(h.el, '.abyss-undo-row button');
+    button(h.el, '.abyss-subtask-remove').click();
+    await flushMicrotasks(40);
+    const undo = button(h.el, '.abyss-undo-row button');
+    expect(h.el.querySelectorAll('.abyss-undo-row')).toHaveLength(1);
+    expect(undo.closest('.abyss-subtask-section')).not.toBeNull();
+    old.click();
+    await flushMicrotasks(40);
+    expect(await h.read()).toBe('- [ ] Current ⛔ second, third\n');
+    h.state.updateInspectorSelection([...h.state.get('taskStack')]);
+    expect(button(h.el, '.abyss-undo-row button')).toBe(undo);
+    expect(activeDocument.activeElement).toBe(undo);
+    undo.click();
+    await flushMicrotasks(40);
+    expect(await h.read()).toBe('- [ ] Current ⛔ second, third\n  - [ ] Child\n');
+    expect(activeDocument.activeElement?.closest('.abyss-subtask-row')?.textContent).toContain(
+      'Child',
+    );
+  });
+
+  it('keeps a middle dependency tombstone at its original position across refresh', async () => {
+    const h = await harness('- [ ] Current ⛔ first, middle, last\n');
+    button(h.el, '.abyss-dep-row:nth-child(2) .abyss-dep-remove').click();
+    await flushMicrotasks(40);
+    const undo = button(h.el, '.abyss-undo-row button');
+    expect(undo.closest('.abyss-undo-row')?.previousElementSibling?.textContent).toContain('first');
+    expect(undo.closest('.abyss-undo-row')?.nextElementSibling?.textContent).toContain('last');
+    h.state.updateInspectorSelection([h.node('Current').root]);
+    expect(activeDocument.activeElement).toBe(undo);
+    undo.click();
+    await flushMicrotasks(40);
+    expect(activeDocument.activeElement?.textContent).toContain('middle');
+  });
+
+  it('keeps failed Undo actionable and reports exactly one error before a successful retry', async () => {
+    const h = await harness('- [ ] Current ⛔ missing\n');
+    const captured = notices();
+    button(h.el, '.abyss-dep-remove').click();
+    await flushMicrotasks(40);
+    vi.spyOn(h.api, 'execute').mockRejectedValueOnce(new Error('write unavailable'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const undo = button(h.el, '.abyss-undo-row button');
+    undo.click();
+    undo.click();
+    await flushMicrotasks(40);
+    expect(captured).toHaveLength(1);
+    expect(log).toHaveBeenCalledOnce();
+    expect(button(h.el, '.abyss-undo-row button').disabled).toBe(false);
+    button(h.el, '.abyss-undo-row button').click();
+    await flushMicrotasks(40);
+    expect(await h.read()).toBe('- [ ] Current ⛔ missing\n');
+    expect(h.el.querySelector('.abyss-undo-row')).toBeNull();
+  });
+
+  it.each(['timeout', 'selection', 'destroy'] as const)(
+    'revokes local Undo on %s',
+    async (reason) => {
+      const h = await harness('- [ ] Current ⛔ missing\n- [ ] Other\n');
+      notices();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      button(h.el, '.abyss-dep-remove').click();
+      await vi.advanceTimersByTimeAsync(100);
+      const undo = button(h.el, '.abyss-undo-row button');
+      if (reason === 'timeout') await vi.advanceTimersByTimeAsync(8000);
+      else if (reason === 'selection') h.state.set('taskStack', [h.node('Other').root]);
+      else h.panel.destroy();
+      expect(h.el.querySelector('.abyss-undo-row')).toBeNull();
+      undo.click();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await h.read()).toBe('- [ ] Current\n- [ ] Other\n');
+      vi.useRealTimers();
+    },
+  );
+
   it('keeps row removal in normal flow and exposes it to hover, focus and touch', async () => {
     if (!Platform.isDesktop) throw new Error('CSS contract requires desktop filesystem access');
     const fs = await import('node:fs');
@@ -158,6 +279,8 @@ describe('inspector subtask row removal', () => {
     );
     expect(value('.abyss-subtask-title-row', 'display')).toBe('flex');
     expect(value('.abyss-subtask-title-row', 'align-items')).toBe('center');
+    expect(value('.abyss-subtask-row.abyss-undo-row', 'cursor')).toBe('default');
+    expect(value('.abyss-undo-row button', 'height')).toBe('24px');
     expect(css).toMatch(
       /@media\s*\(pointer: coarse\)\s*\{[^}]*\}[^}]*\.abyss-subtask-remove\s*\{\s*opacity: 1;/u,
     );
@@ -192,8 +315,14 @@ describe('inspector subtask row removal', () => {
     expect(h.state.get('inspectorBackStack').map((frame) => frame.taskStack[0]?.title)).toEqual([
       'Source',
     ]);
-    expect(captured).toHaveLength(1);
-    button(activeDocument.body, '.mod-cta').click();
+    expect(captured).toHaveLength(0);
+    const undo = button(h.el, '.abyss-undo-row button');
+    expect(undo.getAttribute('aria-label')).toBe('Undo: Remove me');
+    expect(activeDocument.activeElement).toBe(undo);
+    expect(h.el.querySelector('.abyss-subtask-list .abyss-undo-row')?.textContent).toBe(
+      'Sub-task deleted · Undo',
+    );
+    undo.click();
     await flushMicrotasks(50);
     expect(await h.read()).toBe(markdown);
     expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Current', 'Branch']);
@@ -1214,7 +1343,7 @@ describe('RightPanel dependency inspector', () => {
   });
 
   it.each(['blocked-by', 'blocks'] as const)(
-    'adds from the %s section through the real command and offers Undo',
+    'adds from the %s section through the real command without success feedback',
     async (direction) => {
       const captured = notices();
       const h = await harness('- [ ] Current\n- [ ] Candidate\n');
@@ -1231,12 +1360,8 @@ describe('RightPanel dependency inspector', () => {
       expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
       expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(2);
       expect(h.el.querySelector('.abyss-dep-row')?.textContent).toBe('Candidate');
-      expect(captured).toHaveLength(1);
-      button(activeDocument.body, '.mod-cta').click();
-      await flushMicrotasks(50);
-      expect(await h.read()).not.toContain('⛔');
-      expect(await h.read()).toContain('🆔 generate');
-      expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(2);
+      expect(captured).toHaveLength(0);
+      expect(h.el.querySelector('.abyss-undo-row')).toBeNull();
     },
   );
 
@@ -1253,8 +1378,8 @@ describe('RightPanel dependency inspector', () => {
       button(h.el, '.abyss-dep-remove').click();
       await flushMicrotasks(50);
       expect(await h.read()).toBe('- [ ] Current\n- [ ] Prerequisite 🆔 prerequisite\n');
-      expect(captured).toHaveLength(1);
-      button(activeDocument.body, '.mod-cta').click();
+      expect(captured).toHaveLength(0);
+      button(h.el, '.abyss-undo-row button').click();
       await flushMicrotasks(50);
       expect(await h.read()).toBe(markdown);
     },
@@ -1276,7 +1401,7 @@ describe('RightPanel dependency inspector', () => {
       button(h.el, `[aria-label="${label}"]`).click();
       await flushMicrotasks(50);
       expect(await h.read()).toBe(`- [ ] Current\n${tail}`);
-      button(activeDocument.body, '.mod-cta').click();
+      button(h.el, '.abyss-undo-row button').click();
       await flushMicrotasks(50);
       expect(await h.read()).toBe(markdown);
     },

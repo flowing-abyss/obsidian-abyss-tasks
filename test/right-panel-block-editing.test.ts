@@ -200,12 +200,12 @@ describe('RightPanel block editing', () => {
     try {
       await call<Promise<void>>(panel, 'deleteTask', expectDefined(initial.subtasks[0]));
       expect(state.get('taskStack')[0]?.subtasks.map((child) => child.title)).toEqual(['sibling']);
-      expect(notices).toHaveLength(1);
-      expectDefined(activeDocument.querySelector<HTMLButtonElement>('.mod-cta')).click();
+      expect(notices).toHaveLength(0);
+      expectDefined(container.querySelector<HTMLButtonElement>('.abyss-undo-row button')).click();
       await flushMicrotasks(20);
       expect(execute).toHaveBeenLastCalledWith({ type: 'restore-subtask', ...recovery });
       expect(state.get('taskStack')[0]).toEqual(restored);
-      expect(constructor).toHaveBeenCalledOnce();
+      expect(constructor).not.toHaveBeenCalled();
     } finally {
       panel.destroy();
       container.remove();

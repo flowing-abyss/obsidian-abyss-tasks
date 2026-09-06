@@ -5812,6 +5812,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-dep-badge > button:focus-visible,
 .abyss-subtask-remove:focus-visible,
+.abyss-undo-row button:focus-visible,
 .abyss-dep-remove:focus-visible,
 .abyss-dep-add:focus-visible,
 .abyss-dep-search button:focus-visible {
@@ -5917,6 +5918,14 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-subtask-row:active {
   cursor: grabbing;
+}
+
+.abyss-subtask-row.abyss-undo-row {
+  cursor: default;
+}
+
+.abyss-undo-row button {
+  height: 24px;
 }
 
 .abyss-subtask-row.is-dragging {
