@@ -41,6 +41,7 @@ const privateOwners = new Set([
   'TaskIndex',
   'TaskApplicationService',
   'TaskModal',
+  'TaskMoveRecoveryModal',
   'DatePickerLifecycle',
   'LinkEditModal',
   'NoteSuggest',

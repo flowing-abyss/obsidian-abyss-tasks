@@ -2,6 +2,20 @@ import type { SubtaskSnapshot, TaskSnapshot } from './types';
 
 type Node = TaskSnapshot | SubtaskSnapshot;
 
+function taskLine(node: Node): string {
+  const source = 'source' in node ? node.source.originalMarkdown : node.ref.originalBlock;
+  return (source.split('\n', 1)[0] ?? '').replace(/\r$/u, '');
+}
+
+function changedRemovalParent(
+  before: Node,
+  after: Node,
+  path: readonly number[] | undefined,
+  remove: number | undefined,
+): boolean {
+  return path?.length === 0 && remove !== undefined && taskLine(before) !== taskLine(after);
+}
+
 function comparable(value: unknown, omitted: ReadonlySet<string>, path = ''): unknown {
   if (Array.isArray(value)) return value.map((item: unknown) => comparable(item, omitted, path));
   if (value === null || typeof value !== 'object') return value;
@@ -29,6 +43,7 @@ export function sameTaskTreeWithOwnedChanges(
   const children = comparisonChildren(before, path, change.remove);
   if (children.length + addedChildCount(path, change.append) !== after.subtasks.length)
     return false;
+  if (changedRemovalParent(before, after, path, change.remove)) return false;
   if (
     path === undefined &&
     !('source' in before) &&

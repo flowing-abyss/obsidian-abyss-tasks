@@ -27,6 +27,50 @@ const target = { type: 'subtask' as const, ref: expectDefined(before.subtasks[1]
 const selection = [before, expectDefined(before.subtasks[1])];
 
 describe('owned non-structural inspector selection', () => {
+  it('retains a parent that becomes byte-identical to its sibling after deleting its only child', () => {
+    const original = snapshot(
+      '- [ ] Root\n  - [ ] Parent\n    - [ ] Only\n  - [ ] Parent',
+      'before',
+    );
+    const parent = expectDefined(original.subtasks[0]);
+    const child = expectDefined(parent.subtasks[0]);
+    const current = snapshot('- [ ] Root\n  - [ ] Parent\n  - [ ] Parent', 'after');
+    const result = rebuildOwnedTaskSelection(current, [original, parent], {
+      type: 'delete-subtask',
+      subtask: child.ref,
+    });
+    expect(result?.map((node) => node.title)).toEqual(['Root', 'Parent']);
+    expect(result?.[1]?.ref).toEqual(current.subtasks[0]?.ref);
+  });
+
+  it.each(['delete-subtask', 'restore-subtask'] as const)(
+    'refuses a concurrent parent block-id replacement during %s proof',
+    (type) => {
+      const original = snapshot('- [ ] Root\n  - [ ] Parent ^original\n    - [ ] Only', 'before');
+      const parent = expectDefined(original.subtasks[0]);
+      const child = expectDefined(parent.subtasks[0]);
+      const removed = snapshot('- [ ] Root\n  - [ ] Parent ^original', 'removed');
+      const removedParent = expectDefined(removed.subtasks[0]);
+      const changedMarkdown =
+        type === 'delete-subtask'
+          ? '- [ ] Root\n  - [ ] Parent ^changed'
+          : '- [ ] Root\n  - [ ] Parent ^changed\n    - [ ] Only';
+      const changed = snapshot(changedMarkdown, 'after');
+      const prior = type === 'delete-subtask' ? [original, parent] : [removed, removedParent];
+      const restoredChild = changed.subtasks[0]?.subtasks[0];
+      const command: TaskCommand =
+        type === 'delete-subtask'
+          ? { type, subtask: child.ref }
+          : {
+              type,
+              parent: { type: 'subtask', ref: removedParent.ref },
+              markdown: `${expectDefined(restoredChild).ref.originalBlock}\n`,
+              placement: { relativeLine: expectDefined(restoredChild).ref.relativeLine },
+            };
+      expect(rebuildOwnedTaskSelection(changed, prior, command)).toBeUndefined();
+    },
+  );
+
   it.each([
     ['wrong removed child', source.replace('  - [ ] B.1\n', '')],
     ['extra deletion', source.replace('    - [ ] Deep\n', '').replace('  - [ ] B.1\n', '')],

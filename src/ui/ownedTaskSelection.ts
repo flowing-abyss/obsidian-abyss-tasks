@@ -208,7 +208,9 @@ function rebuildRemovalSelection(
   )
     return undefined;
   spliceSelectionPath(selectedPath, editedPath, index, restore);
-  return follow(current, selectedPath, true);
+  // The exact splice proof makes the positional path authoritative even when
+  // removing the last child makes its parent byte-identical to a sibling.
+  return follow(current, selectedPath, false);
 }
 
 function removalIndex(
