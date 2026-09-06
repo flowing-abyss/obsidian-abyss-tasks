@@ -86,6 +86,34 @@ function linkedOutcome(result: TaskRepositoryResult) {
 
 for (const adapter of ['in-memory', 'obsidian'] as const) {
   describe(`${adapter} atomic linked subtask`, () => {
+    it('returns an unknown-state I/O result and a content-free diagnostic when postcommit parsing throws', async () => {
+      const h = await harness(adapter, source, source, false);
+      const parse = h.index.snapshotsFromContent.bind(h.index);
+      let candidateParses = 0;
+      vi.spyOn(h.index, 'snapshotsFromContent').mockImplementation((filePath, content) => {
+        if (content.includes('🆔 child_id') && ++candidateParses === 2)
+          throw new Error('private note content must not enter diagnostics');
+        return parse(filePath, content);
+      });
+      const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await expect(h.repository.createDependencySubtask(h.request)).resolves.toMatchObject({
+        type: 'io-error',
+        cause: 'linked-subtask-postcondition',
+        path,
+        contentState: 'unknown',
+      });
+      expect(await h.read()).toContain('🆔 child_id');
+      expect(await h.read()).toContain('⛔ child_id');
+      expect(diagnostic).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] Linked subtask postcondition failed',
+        {
+          operation: 'create-dependency-subtask',
+          phase: 'postcommit',
+          cause: 'parser-error',
+        },
+      );
+    });
+
     it('reparses the committed candidate when no index installer is configured', async () => {
       const h = await harness(adapter, source, source, false);
       const parse = vi.spyOn(h.index, 'snapshotsFromContent');

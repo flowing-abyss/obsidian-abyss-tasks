@@ -106,7 +106,7 @@ function rejectionLabel(
   return labels[reason];
 }
 
-export type DependencyPickerCommitResult =
+type DependencyPickerCommitResult =
   | { readonly type: 'committed' }
   | { readonly type: 'validation-error'; readonly message: string }
   | { readonly type: 'failed' };

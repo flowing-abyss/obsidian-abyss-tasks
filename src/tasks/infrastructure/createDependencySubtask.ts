@@ -131,13 +131,12 @@ export function prepareDependencySubtask(
   };
 }
 
-export function finishDependencySubtask(
+function committedDependencySubtask(
   request: CreateDependencySubtaskRequest,
   prepared: PreparedDependencySubtask | undefined,
-  result: TaskRepositoryResult,
+  result: Extract<TaskRepositoryResult, { readonly type: 'committed' }>,
   reparse?: (path: string, content: string) => readonly TaskSnapshot[],
-): TaskRepositoryResult {
-  if (result.type !== 'committed') return result;
+): DependencySubtaskCreationOutcome | undefined {
   const root = result.outcome.type === 'task' ? result.outcome.task : undefined;
   const fresh =
     reparse !== undefined && prepared !== undefined
@@ -145,16 +144,32 @@ export function finishDependencySubtask(
           (candidate) => candidate.source.line === root?.source.line,
         )
       : root;
-  const outcome =
-    prepared !== undefined && fresh !== undefined
-      ? dependencySubtaskOutcome(request, fresh, prepared.currentLine, prepared.childLine)
-      : undefined;
-  return outcome === undefined
-    ? {
-        type: 'io-error',
-        cause: 'linked-subtask-postcondition',
-        path: request.baseRoot.ref.filePath,
-        contentState: 'unknown',
-      }
-    : { type: 'committed', changed: true, outcome };
+  return prepared !== undefined && fresh !== undefined
+    ? dependencySubtaskOutcome(request, fresh, prepared.currentLine, prepared.childLine)
+    : undefined;
+}
+
+export function finishDependencySubtask(
+  request: CreateDependencySubtaskRequest,
+  prepared: PreparedDependencySubtask | undefined,
+  result: TaskRepositoryResult,
+  reparse?: (path: string, content: string) => readonly TaskSnapshot[],
+): TaskRepositoryResult {
+  if (result.type !== 'committed') return result;
+  try {
+    const outcome = committedDependencySubtask(request, prepared, result, reparse);
+    if (outcome !== undefined) return { type: 'committed', changed: true, outcome };
+  } catch {
+    console.error('[abyss-tasks] Linked subtask postcondition failed', {
+      operation: 'create-dependency-subtask',
+      phase: 'postcommit',
+      cause: 'parser-error',
+    });
+  }
+  return {
+    type: 'io-error',
+    cause: 'linked-subtask-postcondition',
+    path: request.baseRoot.ref.filePath,
+    contentState: 'unknown',
+  };
 }

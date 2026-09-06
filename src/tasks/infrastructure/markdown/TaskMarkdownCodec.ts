@@ -517,6 +517,375 @@ function invalidRecurrenceValue(
   return recurrence.type === 'invalid' ? invalid(recurrence.code, 'recurrence') : null;
 }
 
+function malformedFields(parsed: ParsedTaskLine): ReadonlySet<TaskValidationField> {
+  const malformed = new Set<TaskValidationField>();
+  for (const [field, kind] of Object.entries(SPAN_KIND_BY_FIELD) as Array<
+    [TaskValidationField, TaskSpanKind]
+  >) {
+    if (hasMalformedKind(parsed, kind)) malformed.add(field);
+  }
+  if (hasUnparsedOccurrence(parsed, 'duration', parsed.planning.duration))
+    malformed.add('duration');
+  if (hasUnparsedOccurrence(parsed, 'recurrence', parsed.recurrence)) malformed.add('recurrence');
+  return malformed;
+}
+
+function duplicateIssue(parsed: ParsedTaskLine, kind: TaskSpanKind, field: string): TaskIssue[] {
+  return (parsed.occurrences.get(kind)?.length ?? 0) > 1
+    ? [{ code: 'duplicate-field', field }]
+    : [];
+}
+
+function malformedTargetIssue(parsed: ParsedTaskLine, field: TaskValidationField): TaskIssue[] {
+  if (!malformedFields(parsed).has(field)) return [];
+  if (field === 'time') return [{ code: 'invalid-time', field }];
+  if (field === 'duration') return [{ code: 'invalid-duration', field }];
+  if (field === 'on-completion') return [{ code: 'invalid-on-completion', field }];
+  if (field === 'recurrence') return [{ code: 'unparseable-rule', field }];
+  return [{ code: 'invalid-date', field }];
+}
+
+function replaceOrInsertToken(
+  parsed: ParsedTaskLine,
+  kind: TaskSpanKind,
+  token: string | null,
+): string {
+  const occurrence = parsed.occurrences.get(kind)?.[0];
+  if (occurrence != null) {
+    return token === null
+      ? removeSpan(parsed.original, occurrence)
+      : spliceSource(parsed.original, occurrence.from, occurrence.to, token);
+  }
+  return token === null ? parsed.original : insertToken(parsed, kind, token);
+}
+
+function editableTitleFragments(parsed: ParsedTaskLine): readonly SourceSpan[] {
+  const contentEnd = parsed.original.length - parsed.lineEnding.length;
+  return semanticTitleFragments(parsed.spans, contentEnd);
+}
+
+function replaceTitle(parsed: ParsedTaskLine, markdownTitle: string): string {
+  const fragments = editableTitleFragments(parsed);
+  return fragments.length > 0
+    ? replaceExistingTitle(parsed, fragments, markdownTitle)
+    : insertTitleBeforeMetadata(parsed, markdownTitle);
+}
+
+function appendTitle(parsed: ParsedTaskLine, markdown: string): string {
+  const fragments = editableTitleFragments(parsed);
+  const last = fragments[fragments.length - 1];
+  if (last == null) return replaceTitle(parsed, markdown);
+  return spliceSource(parsed.original, last.to, last.to, ` ${markdown}`);
+}
+
+function editTitleLink(
+  parsed: ParsedTaskLine,
+  occurrence: number,
+  replacement: string,
+): PreparedLineEdit {
+  if (!Number.isInteger(occurrence) || occurrence < 0) return invalid('invalid-target', 'link');
+  let remaining = occurrence;
+  for (const fragment of editableTitleFragments(parsed)) {
+    const source = parsed.original.slice(fragment.from, fragment.to);
+    const links = parseLinks(source);
+    if (remaining >= links.length) {
+      remaining -= links.length;
+      continue;
+    }
+    const link = links[remaining];
+    if (link == null) return invalid('invalid-target', 'link');
+    return {
+      type: 'prepared',
+      content: spliceSource(
+        parsed.original,
+        fragment.from + link.index,
+        fragment.from + link.index + link.raw.length,
+        replacement,
+      ),
+      fields: ['title'],
+    };
+  }
+  return invalid('invalid-target', 'link');
+}
+
+function statusTransitionIssues(parsed: ParsedTaskLine): readonly TaskIssue[] {
+  const issues: TaskIssue[] = [];
+  for (const field of ['completion', 'cancelled'] as const) {
+    issues.push(...duplicateIssue(parsed, field, field));
+    issues.push(...malformedTargetIssue(parsed, field));
+  }
+  return issues;
+}
+
+function preparePriorityEdit(
+  parsed: ParsedTaskLine,
+  edit: Extract<LineEdit, { readonly type: 'set-priority' }>,
+): PreparedLineEdit {
+  const issues = duplicateIssue(parsed, 'priority', 'priority');
+  if (issues.length > 0) return { type: 'invalid', issues };
+  const occurrences = parsed.occurrences.get('priority')?.length ?? 0;
+  if (parsed.priority === edit.priority && (edit.priority !== 'D' || occurrences === 0)) {
+    return { type: 'unchanged', content: parsed.original };
+  }
+  const priorityToken = TOKEN_BY_PRIORITY[edit.priority];
+  const content = replaceOrInsertToken(
+    parsed,
+    'priority',
+    priorityToken.length === 0 ? null : priorityToken,
+  );
+  return { type: 'prepared', content, fields: [] };
+}
+
+function prepareDateEdit(
+  parsed: ParsedTaskLine,
+  edit: Extract<LineEdit, { readonly type: 'set-date' }>,
+): PreparedLineEdit {
+  const issues = [
+    ...duplicateIssue(parsed, edit.field, edit.field),
+    ...malformedTargetIssue(parsed, edit.field),
+  ];
+  if (issues.length > 0) return { type: 'invalid', issues };
+  const current = parsed.planning[edit.field];
+  if (
+    (edit.value === null && current === undefined) ||
+    (edit.value !== null && current === edit.value)
+  ) {
+    return { type: 'unchanged', content: parsed.original };
+  }
+  const marker = MARKER_BY_FIELD[edit.field];
+  const token = edit.value === null ? null : `${marker} ${edit.value}`;
+  return {
+    type: 'prepared',
+    content: replaceOrInsertToken(parsed, edit.field, token),
+    fields: [edit.field],
+  };
+}
+
+function prepareTimeEdit(
+  parsed: ParsedTaskLine,
+  edit: Extract<LineEdit, { readonly type: 'set-time' }>,
+): PreparedLineEdit {
+  const issues = [
+    ...duplicateIssue(parsed, 'time', 'time'),
+    ...malformedTargetIssue(parsed, 'time'),
+  ];
+  if (issues.length > 0) return { type: 'invalid', issues };
+  const current = parsed.planning.time;
+  if (
+    (edit.value === null && current === undefined) ||
+    (edit.value !== null && current === edit.value)
+  ) {
+    return { type: 'unchanged', content: parsed.original };
+  }
+  return {
+    type: 'prepared',
+    content: replaceOrInsertToken(parsed, 'time', edit.value === null ? null : `⏰ ${edit.value}`),
+    fields: ['time'],
+  };
+}
+
+function prepareDurationEdit(
+  parsed: ParsedTaskLine,
+  edit: Extract<LineEdit, { readonly type: 'set-duration' }>,
+): PreparedLineEdit {
+  const issues = [
+    ...duplicateIssue(parsed, 'duration', 'duration'),
+    ...malformedTargetIssue(parsed, 'duration'),
+  ];
+  if (issues.length > 0) return { type: 'invalid', issues };
+  const current = parsed.planning.duration;
+  if (
+    (edit.value === null && current === undefined) ||
+    (edit.value !== null && current === edit.value)
+  ) {
+    return { type: 'unchanged', content: parsed.original };
+  }
+  let token: string | null = null;
+  if (edit.value !== null) {
+    try {
+      token = `⏱️ ${formatDurationMinutes(validatedDurationMinutes(edit.value))}`;
+    } catch {
+      return invalid('invalid-duration', 'duration');
+    }
+  }
+  return {
+    type: 'prepared',
+    content: replaceOrInsertToken(parsed, 'duration', token),
+    fields: ['duration'],
+  };
+}
+
+function prepareRecurrenceEdit(
+  parsed: ParsedTaskLine,
+  edit: Extract<LineEdit, { readonly type: 'set-recurrence' }>,
+): PreparedLineEdit {
+  const valueIssue = invalidRecurrenceValue(edit.value);
+  if (valueIssue !== null) return valueIssue;
+  const issues = [
+    ...duplicateIssue(parsed, 'recurrence', 'recurrence'),
+    ...malformedTargetIssue(parsed, 'recurrence'),
+  ];
+  if (issues.length > 0) return { type: 'invalid', issues };
+  if (
+    (edit.value === null && parsed.recurrence === undefined) ||
+    (edit.value !== null && parsed.recurrence === edit.value)
+  ) {
+    return { type: 'unchanged', content: parsed.original };
+  }
+  return {
+    type: 'prepared',
+    content: replaceOrInsertToken(
+      parsed,
+      'recurrence',
+      edit.value === null ? null : `🔁 ${edit.value}`,
+    ),
+    fields: ['recurrence'],
+  };
+}
+
+function prepareOnCompletionEdit(
+  parsed: ParsedTaskLine,
+  edit: Extract<LineEdit, { readonly type: 'set-on-completion' }>,
+): PreparedLineEdit {
+  if (edit.value !== null && !isSingleLineText(edit.value)) {
+    return invalid('invalid-target', 'on-completion');
+  }
+  const issues = [
+    ...duplicateIssue(parsed, 'on-completion', 'on-completion'),
+    ...malformedTargetIssue(parsed, 'on-completion'),
+  ];
+  if (issues.length > 0) return { type: 'invalid', issues };
+  if (
+    (edit.value === null && !parsed.onCompletionExplicit) ||
+    (edit.value !== null && parsed.onCompletionExplicit && parsed.onCompletion === edit.value)
+  ) {
+    return { type: 'unchanged', content: parsed.original };
+  }
+  return {
+    type: 'prepared',
+    content: replaceOrInsertToken(
+      parsed,
+      'on-completion',
+      edit.value === null ? null : `🏁 ${edit.value}`,
+    ),
+    fields: ['on-completion'],
+  };
+}
+
+function prepareDependencyIdEdit(
+  parsed: ParsedTaskLine,
+  edit: Extract<LineEdit, { readonly type: 'set-dependency-id' }>,
+): PreparedLineEdit {
+  if (edit.value !== null && !isTaskDependencyId(edit.value)) {
+    return invalid('invalid-target', 'dependency-id');
+  }
+  const issues = duplicateIssue(parsed, 'task-id', 'dependency-id');
+  if (issues.length > 0) return { type: 'invalid', issues };
+  if (hasMalformedKind(parsed, 'task-id')) return invalid('invalid-target', 'dependency-id');
+  if (
+    (edit.value === null && parsed.dependencyId === undefined) ||
+    (edit.value !== null && parsed.dependencyId === edit.value)
+  ) {
+    return { type: 'unchanged', content: parsed.original };
+  }
+  return {
+    type: 'prepared',
+    content: replaceOrInsertToken(
+      parsed,
+      'task-id',
+      edit.value === null ? null : `🆔 ${edit.value}`,
+    ),
+    fields: [],
+  };
+}
+
+function prepareDependsOnEdit(
+  parsed: ParsedTaskLine,
+  edit: Extract<LineEdit, { readonly type: 'set-depends-on' }>,
+): PreparedLineEdit {
+  if (!edit.values.every(isTaskDependencyId)) {
+    return invalid('invalid-target', 'depends-on');
+  }
+  const issues = duplicateIssue(parsed, 'depends-on', 'depends-on');
+  if (issues.length > 0) return { type: 'invalid', issues };
+  if (hasMalformedKind(parsed, 'depends-on')) return invalid('invalid-target', 'depends-on');
+  if (
+    parsed.dependsOn.length === edit.values.length &&
+    parsed.dependsOn.every((value, index) => value === edit.values[index])
+  ) {
+    return { type: 'unchanged', content: parsed.original };
+  }
+  return {
+    type: 'prepared',
+    content: replaceOrInsertToken(
+      parsed,
+      'depends-on',
+      edit.values.length === 0 ? null : `⛔ ${edit.values.join(', ')}`,
+    ),
+    fields: [],
+  };
+}
+
+function prepareSetTitleEdit(
+  parsed: ParsedTaskLine,
+  edit: Extract<LineEdit, { readonly type: 'set-title' }>,
+): PreparedLineEdit {
+  if (!isSingleLineText(edit.markdownTitle)) return invalid('invalid-target', 'title');
+  return parsed.markdownTitle === edit.markdownTitle
+    ? { type: 'unchanged', content: parsed.original }
+    : {
+        type: 'prepared',
+        content: replaceTitle(parsed, edit.markdownTitle),
+        fields: ['title'],
+      };
+}
+
+function prepareAppendTitleEdit(
+  parsed: ParsedTaskLine,
+  edit: Extract<LineEdit, { readonly type: 'append-title' }>,
+): PreparedLineEdit {
+  if (!isSingleLineText(edit.markdown)) return invalid('invalid-target', 'title');
+  return edit.markdown.length === 0
+    ? { type: 'unchanged', content: parsed.original }
+    : {
+        type: 'prepared',
+        content: appendTitle(parsed, edit.markdown),
+        fields: ['title'],
+      };
+}
+
+function prepareTitleLineEdit(parsed: ParsedTaskLine, edit: TitleLineEdit): PreparedLineEdit {
+  switch (edit.type) {
+    case 'set-title':
+      return prepareSetTitleEdit(parsed, edit);
+    case 'append-title':
+      return prepareAppendTitleEdit(parsed, edit);
+    case 'edit-link':
+      if (!isSingleLineText(edit.replacement)) return invalid('invalid-target', 'link');
+      return editTitleLink(parsed, edit.occurrence, edit.replacement);
+  }
+}
+
+function prepareDependencyLineEdit(
+  parsed: ParsedTaskLine,
+  edit: DependencyLineEdit,
+): PreparedLineEdit {
+  return edit.type === 'set-dependency-id'
+    ? prepareDependencyIdEdit(parsed, edit)
+    : prepareDependsOnEdit(parsed, edit);
+}
+
+function preparePlanningLineEdit(parsed: ParsedTaskLine, edit: PlanningLineEdit): PreparedLineEdit {
+  switch (edit.type) {
+    case 'set-date':
+      return prepareDateEdit(parsed, edit);
+    case 'set-time':
+      return prepareTimeEdit(parsed, edit);
+    case 'set-duration':
+      return prepareDurationEdit(parsed, edit);
+  }
+}
+
 export class TaskMarkdownCodec {
   constructor(private readonly statusCatalog: StatusCatalog) {}
 
@@ -545,19 +914,6 @@ export class TaskMarkdownCodec {
       : { type: 'changed', content };
   }
 
-  private malformedFields(parsed: ParsedTaskLine): ReadonlySet<TaskValidationField> {
-    const malformed = new Set<TaskValidationField>();
-    for (const [field, kind] of Object.entries(SPAN_KIND_BY_FIELD) as Array<
-      [TaskValidationField, TaskSpanKind]
-    >) {
-      if (hasMalformedKind(parsed, kind)) malformed.add(field);
-    }
-    if (hasUnparsedOccurrence(parsed, 'duration', parsed.planning.duration))
-      malformed.add('duration');
-    if (hasUnparsedOccurrence(parsed, 'recurrence', parsed.recurrence)) malformed.add('recurrence');
-    return malformed;
-  }
-
   private validationState(parsed: ParsedTaskLine): TaskValidationState {
     return {
       markdownTitle: parsed.markdownTitle,
@@ -566,7 +922,7 @@ export class TaskMarkdownCodec {
       planning: parsed.planning,
       ...(parsed.recurrence !== undefined && { recurrence: parsed.recurrence }),
       onCompletion: parsed.onCompletion,
-      malformedFields: [...this.malformedFields(parsed)],
+      malformedFields: [...malformedFields(parsed)],
     };
   }
 
@@ -588,89 +944,6 @@ export class TaskMarkdownCodec {
         'on-completion',
       ]),
     );
-  }
-
-  private duplicateIssue(parsed: ParsedTaskLine, kind: TaskSpanKind, field: string): TaskIssue[] {
-    return (parsed.occurrences.get(kind)?.length ?? 0) > 1
-      ? [{ code: 'duplicate-field', field }]
-      : [];
-  }
-
-  private malformedTargetIssue(parsed: ParsedTaskLine, field: TaskValidationField): TaskIssue[] {
-    if (!this.malformedFields(parsed).has(field)) return [];
-    if (field === 'time') return [{ code: 'invalid-time', field }];
-    if (field === 'duration') return [{ code: 'invalid-duration', field }];
-    if (field === 'on-completion') return [{ code: 'invalid-on-completion', field }];
-    if (field === 'recurrence') return [{ code: 'unparseable-rule', field }];
-    return [{ code: 'invalid-date', field }];
-  }
-
-  private replaceOrInsertToken(
-    parsed: ParsedTaskLine,
-    kind: TaskSpanKind,
-    token: string | null,
-  ): string {
-    const occurrence = parsed.occurrences.get(kind)?.[0];
-    if (occurrence != null) {
-      return token === null
-        ? removeSpan(parsed.original, occurrence)
-        : spliceSource(parsed.original, occurrence.from, occurrence.to, token);
-    }
-    return token === null ? parsed.original : insertToken(parsed, kind, token);
-  }
-
-  private editableTitleFragments(parsed: ParsedTaskLine): readonly SourceSpan[] {
-    const contentEnd = parsed.original.length - parsed.lineEnding.length;
-    return semanticTitleFragments(parsed.spans, contentEnd);
-  }
-
-  private linkTitleFragments(parsed: ParsedTaskLine): readonly SourceSpan[] {
-    const contentEnd = parsed.original.length - parsed.lineEnding.length;
-    return semanticTitleFragments(parsed.spans, contentEnd);
-  }
-
-  private replaceTitle(parsed: ParsedTaskLine, markdownTitle: string): string {
-    const fragments = this.editableTitleFragments(parsed);
-    return fragments.length > 0
-      ? replaceExistingTitle(parsed, fragments, markdownTitle)
-      : insertTitleBeforeMetadata(parsed, markdownTitle);
-  }
-
-  private appendTitle(parsed: ParsedTaskLine, markdown: string): string {
-    const fragments = this.editableTitleFragments(parsed);
-    const last = fragments[fragments.length - 1];
-    if (last == null) return this.replaceTitle(parsed, markdown);
-    return spliceSource(parsed.original, last.to, last.to, ` ${markdown}`);
-  }
-
-  private editTitleLink(
-    parsed: ParsedTaskLine,
-    occurrence: number,
-    replacement: string,
-  ): PreparedLineEdit {
-    if (!Number.isInteger(occurrence) || occurrence < 0) return invalid('invalid-target', 'link');
-    let remaining = occurrence;
-    for (const fragment of this.linkTitleFragments(parsed)) {
-      const source = parsed.original.slice(fragment.from, fragment.to);
-      const links = parseLinks(source);
-      if (remaining >= links.length) {
-        remaining -= links.length;
-        continue;
-      }
-      const link = links[remaining];
-      if (link == null) return invalid('invalid-target', 'link');
-      return {
-        type: 'prepared',
-        content: spliceSource(
-          parsed.original,
-          fragment.from + link.index,
-          fragment.from + link.index + link.raw.length,
-          replacement,
-        ),
-        fields: ['title'],
-      };
-    }
-    return invalid('invalid-target', 'link');
   }
 
   private introducedTitleIssues(
@@ -726,15 +999,6 @@ export class TaskMarkdownCodec {
     return insertTags(content, candidate, pending);
   }
 
-  private statusTransitionIssues(parsed: ParsedTaskLine): readonly TaskIssue[] {
-    const issues: TaskIssue[] = [];
-    for (const field of ['completion', 'cancelled'] as const) {
-      issues.push(...this.duplicateIssue(parsed, field, field));
-      issues.push(...this.malformedTargetIssue(parsed, field));
-    }
-    return issues;
-  }
-
   private clearStatusStamps(
     content: string,
     preserved: StatusStampKind | undefined,
@@ -744,7 +1008,7 @@ export class TaskMarkdownCodec {
       if (kind === preserved) continue;
       const parsed = this.parseLine(updated, { filePath: '', line: 0 });
       if (parsed === null) return invalid('invalid-task-syntax');
-      updated = this.replaceOrInsertToken(parsed, kind, null);
+      updated = replaceOrInsertToken(parsed, kind, null);
     }
     return { type: 'content', content: updated };
   }
@@ -765,7 +1029,7 @@ export class TaskMarkdownCodec {
     const marker = stampedKind === 'completion' ? '✅' : '❌';
     return {
       type: 'content',
-      content: this.replaceOrInsertToken(parsed, stampedKind, `${marker} ${edit.today}`),
+      content: replaceOrInsertToken(parsed, stampedKind, `${marker} ${edit.today}`),
     };
   }
 
@@ -778,7 +1042,7 @@ export class TaskMarkdownCodec {
     }
     const rule = this.statusCatalog.ruleForSymbol(edit.symbol);
     if (!validStatusTarget(edit.symbol, rule)) return invalid('invalid-status', 'status');
-    const issues = this.statusTransitionIssues(parsed);
+    const issues = statusTransitionIssues(parsed);
     if (issues.length > 0) return { type: 'invalid', issues };
 
     const stampedKind = statusStampKind(rule.type);
@@ -813,296 +1077,20 @@ export class TaskMarkdownCodec {
     };
   }
 
-  private preparePriorityEdit(
-    parsed: ParsedTaskLine,
-    edit: Extract<LineEdit, { readonly type: 'set-priority' }>,
-  ): PreparedLineEdit {
-    const issues = this.duplicateIssue(parsed, 'priority', 'priority');
-    if (issues.length > 0) return { type: 'invalid', issues };
-    const occurrences = parsed.occurrences.get('priority')?.length ?? 0;
-    if (parsed.priority === edit.priority && (edit.priority !== 'D' || occurrences === 0)) {
-      return { type: 'unchanged', content: parsed.original };
-    }
-    const priorityToken = TOKEN_BY_PRIORITY[edit.priority];
-    const content = this.replaceOrInsertToken(
-      parsed,
-      'priority',
-      priorityToken.length === 0 ? null : priorityToken,
-    );
-    return { type: 'prepared', content, fields: [] };
-  }
-
-  private prepareDateEdit(
-    parsed: ParsedTaskLine,
-    edit: Extract<LineEdit, { readonly type: 'set-date' }>,
-  ): PreparedLineEdit {
-    const issues = [
-      ...this.duplicateIssue(parsed, edit.field, edit.field),
-      ...this.malformedTargetIssue(parsed, edit.field),
-    ];
-    if (issues.length > 0) return { type: 'invalid', issues };
-    const current = parsed.planning[edit.field];
-    if (
-      (edit.value === null && current === undefined) ||
-      (edit.value !== null && current === edit.value)
-    ) {
-      return { type: 'unchanged', content: parsed.original };
-    }
-    const marker = MARKER_BY_FIELD[edit.field];
-    const token = edit.value === null ? null : `${marker} ${edit.value}`;
-    return {
-      type: 'prepared',
-      content: this.replaceOrInsertToken(parsed, edit.field, token),
-      fields: [edit.field],
-    };
-  }
-
-  private prepareTimeEdit(
-    parsed: ParsedTaskLine,
-    edit: Extract<LineEdit, { readonly type: 'set-time' }>,
-  ): PreparedLineEdit {
-    const issues = [
-      ...this.duplicateIssue(parsed, 'time', 'time'),
-      ...this.malformedTargetIssue(parsed, 'time'),
-    ];
-    if (issues.length > 0) return { type: 'invalid', issues };
-    const current = parsed.planning.time;
-    if (
-      (edit.value === null && current === undefined) ||
-      (edit.value !== null && current === edit.value)
-    ) {
-      return { type: 'unchanged', content: parsed.original };
-    }
-    return {
-      type: 'prepared',
-      content: this.replaceOrInsertToken(
-        parsed,
-        'time',
-        edit.value === null ? null : `⏰ ${edit.value}`,
-      ),
-      fields: ['time'],
-    };
-  }
-
-  private prepareDurationEdit(
-    parsed: ParsedTaskLine,
-    edit: Extract<LineEdit, { readonly type: 'set-duration' }>,
-  ): PreparedLineEdit {
-    const issues = [
-      ...this.duplicateIssue(parsed, 'duration', 'duration'),
-      ...this.malformedTargetIssue(parsed, 'duration'),
-    ];
-    if (issues.length > 0) return { type: 'invalid', issues };
-    const current = parsed.planning.duration;
-    if (
-      (edit.value === null && current === undefined) ||
-      (edit.value !== null && current === edit.value)
-    ) {
-      return { type: 'unchanged', content: parsed.original };
-    }
-    let token: string | null = null;
-    if (edit.value !== null) {
-      try {
-        token = `⏱️ ${formatDurationMinutes(validatedDurationMinutes(edit.value))}`;
-      } catch {
-        return invalid('invalid-duration', 'duration');
-      }
-    }
-    return {
-      type: 'prepared',
-      content: this.replaceOrInsertToken(parsed, 'duration', token),
-      fields: ['duration'],
-    };
-  }
-
-  private prepareRecurrenceEdit(
-    parsed: ParsedTaskLine,
-    edit: Extract<LineEdit, { readonly type: 'set-recurrence' }>,
-  ): PreparedLineEdit {
-    const valueIssue = invalidRecurrenceValue(edit.value);
-    if (valueIssue !== null) return valueIssue;
-    const issues = [
-      ...this.duplicateIssue(parsed, 'recurrence', 'recurrence'),
-      ...this.malformedTargetIssue(parsed, 'recurrence'),
-    ];
-    if (issues.length > 0) return { type: 'invalid', issues };
-    if (
-      (edit.value === null && parsed.recurrence === undefined) ||
-      (edit.value !== null && parsed.recurrence === edit.value)
-    ) {
-      return { type: 'unchanged', content: parsed.original };
-    }
-    return {
-      type: 'prepared',
-      content: this.replaceOrInsertToken(
-        parsed,
-        'recurrence',
-        edit.value === null ? null : `🔁 ${edit.value}`,
-      ),
-      fields: ['recurrence'],
-    };
-  }
-
-  private prepareOnCompletionEdit(
-    parsed: ParsedTaskLine,
-    edit: Extract<LineEdit, { readonly type: 'set-on-completion' }>,
-  ): PreparedLineEdit {
-    if (edit.value !== null && !isSingleLineText(edit.value)) {
-      return invalid('invalid-target', 'on-completion');
-    }
-    const issues = [
-      ...this.duplicateIssue(parsed, 'on-completion', 'on-completion'),
-      ...this.malformedTargetIssue(parsed, 'on-completion'),
-    ];
-    if (issues.length > 0) return { type: 'invalid', issues };
-    if (
-      (edit.value === null && !parsed.onCompletionExplicit) ||
-      (edit.value !== null && parsed.onCompletionExplicit && parsed.onCompletion === edit.value)
-    ) {
-      return { type: 'unchanged', content: parsed.original };
-    }
-    return {
-      type: 'prepared',
-      content: this.replaceOrInsertToken(
-        parsed,
-        'on-completion',
-        edit.value === null ? null : `🏁 ${edit.value}`,
-      ),
-      fields: ['on-completion'],
-    };
-  }
-
-  private prepareDependencyIdEdit(
-    parsed: ParsedTaskLine,
-    edit: Extract<LineEdit, { readonly type: 'set-dependency-id' }>,
-  ): PreparedLineEdit {
-    if (edit.value !== null && !isTaskDependencyId(edit.value)) {
-      return invalid('invalid-target', 'dependency-id');
-    }
-    const issues = this.duplicateIssue(parsed, 'task-id', 'dependency-id');
-    if (issues.length > 0) return { type: 'invalid', issues };
-    if (hasMalformedKind(parsed, 'task-id')) return invalid('invalid-target', 'dependency-id');
-    if (
-      (edit.value === null && parsed.dependencyId === undefined) ||
-      (edit.value !== null && parsed.dependencyId === edit.value)
-    ) {
-      return { type: 'unchanged', content: parsed.original };
-    }
-    return {
-      type: 'prepared',
-      content: this.replaceOrInsertToken(
-        parsed,
-        'task-id',
-        edit.value === null ? null : `🆔 ${edit.value}`,
-      ),
-      fields: [],
-    };
-  }
-
-  private prepareDependsOnEdit(
-    parsed: ParsedTaskLine,
-    edit: Extract<LineEdit, { readonly type: 'set-depends-on' }>,
-  ): PreparedLineEdit {
-    if (!edit.values.every(isTaskDependencyId)) {
-      return invalid('invalid-target', 'depends-on');
-    }
-    const issues = this.duplicateIssue(parsed, 'depends-on', 'depends-on');
-    if (issues.length > 0) return { type: 'invalid', issues };
-    if (hasMalformedKind(parsed, 'depends-on')) return invalid('invalid-target', 'depends-on');
-    if (
-      parsed.dependsOn.length === edit.values.length &&
-      parsed.dependsOn.every((value, index) => value === edit.values[index])
-    ) {
-      return { type: 'unchanged', content: parsed.original };
-    }
-    return {
-      type: 'prepared',
-      content: this.replaceOrInsertToken(
-        parsed,
-        'depends-on',
-        edit.values.length === 0 ? null : `⛔ ${edit.values.join(', ')}`,
-      ),
-      fields: [],
-    };
-  }
-
-  private prepareSetTitleEdit(
-    parsed: ParsedTaskLine,
-    edit: Extract<LineEdit, { readonly type: 'set-title' }>,
-  ): PreparedLineEdit {
-    if (!isSingleLineText(edit.markdownTitle)) return invalid('invalid-target', 'title');
-    return parsed.markdownTitle === edit.markdownTitle
-      ? { type: 'unchanged', content: parsed.original }
-      : {
-          type: 'prepared',
-          content: this.replaceTitle(parsed, edit.markdownTitle),
-          fields: ['title'],
-        };
-  }
-
-  private prepareAppendTitleEdit(
-    parsed: ParsedTaskLine,
-    edit: Extract<LineEdit, { readonly type: 'append-title' }>,
-  ): PreparedLineEdit {
-    if (!isSingleLineText(edit.markdown)) return invalid('invalid-target', 'title');
-    return edit.markdown.length === 0
-      ? { type: 'unchanged', content: parsed.original }
-      : {
-          type: 'prepared',
-          content: this.appendTitle(parsed, edit.markdown),
-          fields: ['title'],
-        };
-  }
-
-  private prepareTitleLineEdit(parsed: ParsedTaskLine, edit: TitleLineEdit): PreparedLineEdit {
-    switch (edit.type) {
-      case 'set-title':
-        return this.prepareSetTitleEdit(parsed, edit);
-      case 'append-title':
-        return this.prepareAppendTitleEdit(parsed, edit);
-      case 'edit-link':
-        if (!isSingleLineText(edit.replacement)) return invalid('invalid-target', 'link');
-        return this.editTitleLink(parsed, edit.occurrence, edit.replacement);
-    }
-  }
-
-  private prepareDependencyLineEdit(
-    parsed: ParsedTaskLine,
-    edit: DependencyLineEdit,
-  ): PreparedLineEdit {
-    return edit.type === 'set-dependency-id'
-      ? this.prepareDependencyIdEdit(parsed, edit)
-      : this.prepareDependsOnEdit(parsed, edit);
-  }
-
-  private preparePlanningLineEdit(
-    parsed: ParsedTaskLine,
-    edit: PlanningLineEdit,
-  ): PreparedLineEdit {
-    switch (edit.type) {
-      case 'set-date':
-        return this.prepareDateEdit(parsed, edit);
-      case 'set-time':
-        return this.prepareTimeEdit(parsed, edit);
-      case 'set-duration':
-        return this.prepareDurationEdit(parsed, edit);
-    }
-  }
-
   private prepareLineEdit(parsed: ParsedTaskLine, edit: LineEdit): PreparedLineEdit {
-    if (isTitleLineEdit(edit)) return this.prepareTitleLineEdit(parsed, edit);
-    if (isDependencyLineEdit(edit)) return this.prepareDependencyLineEdit(parsed, edit);
-    if (isPlanningLineEdit(edit)) return this.preparePlanningLineEdit(parsed, edit);
+    if (isTitleLineEdit(edit)) return prepareTitleLineEdit(parsed, edit);
+    if (isDependencyLineEdit(edit)) return prepareDependencyLineEdit(parsed, edit);
+    if (isPlanningLineEdit(edit)) return preparePlanningLineEdit(parsed, edit);
     if (edit.type === 'change-tags') return this.prepareTagChange(parsed, edit.add, edit.remove);
     switch (edit.type) {
       case 'set-status':
         return this.prepareStatusEdit(parsed, edit);
       case 'set-priority':
-        return this.preparePriorityEdit(parsed, edit);
+        return preparePriorityEdit(parsed, edit);
       case 'set-recurrence':
-        return this.prepareRecurrenceEdit(parsed, edit);
+        return prepareRecurrenceEdit(parsed, edit);
       case 'set-on-completion':
-        return this.prepareOnCompletionEdit(parsed, edit);
+        return prepareOnCompletionEdit(parsed, edit);
     }
   }
 

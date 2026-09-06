@@ -2,7 +2,7 @@ import type { TaskDraft } from '../../application/TaskRepository';
 import type { LocalDate, TaskRef } from '../../domain/types';
 import type { TaskIssue } from '../../domain/validation';
 import { applyTaskCommand } from './applyTaskCommand';
-import { createdDateIssues, stampCreatedDate } from './createTaskLine';
+import { creationLineIssues, stampCreatedDate } from './createTaskLine';
 import { TaskBlockEditor } from './TaskBlockEditor';
 import { type TaskMarkdownCodec } from './TaskMarkdownCodec';
 
@@ -53,10 +53,7 @@ function validateSourceLines(
   for (const sourceLine of sourceLines) {
     const parsed = codec.parseLine(sourceLine, { filePath: '', line: 0 });
     if (parsed == null) continue;
-    if (parsed.markdownTitle.trim().length === 0) {
-      return invalid([{ code: 'invalid-title', field: 'title' }]);
-    }
-    const issues = [...codec.validateLine(sourceLine), ...createdDateIssues(parsed)];
+    const issues = creationLineIssues(codec, parsed);
     if (issues.length > 0) return invalid(issues);
   }
   return undefined;

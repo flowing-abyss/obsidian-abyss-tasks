@@ -16,7 +16,7 @@ function isCalendarDate(value: string): boolean {
   );
 }
 
-export function createdDateIssues(parsed: ParsedTaskLine): readonly TaskIssue[] {
+function createdDateIssues(parsed: ParsedTaskLine): readonly TaskIssue[] {
   if ((parsed.occurrences.get('created')?.length ?? 0) > 1)
     return [{ code: 'duplicate-field', field: 'created' }];
   if (
@@ -26,6 +26,15 @@ export function createdDateIssues(parsed: ParsedTaskLine): readonly TaskIssue[] 
   )
     return [{ code: 'invalid-date', field: 'created' }];
   return [];
+}
+
+export function creationLineIssues(
+  codec: TaskMarkdownCodec,
+  parsed: ParsedTaskLine,
+): readonly TaskIssue[] {
+  return parsed.markdownTitle.trim().length === 0
+    ? [{ code: 'invalid-title', field: 'title' }]
+    : [...codec.validateLine(parsed.original), ...createdDateIssues(parsed)];
 }
 
 export function stampCreatedDate(parsed: ParsedTaskLine, today: LocalDate): string {
@@ -56,13 +65,7 @@ function createTaskLine(
   if (text.trim().length === 0 || /[\r\n]/u.test(text)) return undefined;
   const source = `- [ ] ${text}`;
   const parsed = codec.parseLine(source, { filePath: '', line: 0 });
-  if (
-    parsed == null ||
-    parsed.markdownTitle.trim().length === 0 ||
-    codec.validateLine(source).length > 0 ||
-    createdDateIssues(parsed).length > 0
-  )
-    return undefined;
+  if (parsed == null || creationLineIssues(codec, parsed).length > 0) return undefined;
   return createdDate === undefined ? source : stampCreatedDate(parsed, createdDate);
 }
 
