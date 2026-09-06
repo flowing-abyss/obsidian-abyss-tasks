@@ -86,6 +86,11 @@ import { presentTaskMutationResult } from '../ui/taskUndoNotice';
 
 type TaskLike = TaskSnapshot | SubtaskSnapshot;
 
+interface DependencyDisclosureState {
+  readonly selectionKey: string;
+  readonly latched: boolean;
+}
+
 type RightPanelDependencies = readonly [
   state: AppState,
   app: App,
@@ -276,7 +281,7 @@ export class RightPanel {
   private offDependencyQueries_abyssPrivate: (() => void) | undefined;
   private dependencySearch_abyssPrivate: DependencySearchHandle | undefined;
   private dependencySearchAnchor_abyssPrivate = '.abyss-dep-badge-body';
-  private dependencyAdding_abyssPrivate = false;
+  private dependencyDisclosure_abyssPrivate: DependencyDisclosureState | undefined;
   private draggingSub_abyssPrivate: SubtaskSnapshot | null = null;
   private endTaskDrag_abyssPrivate: (() => void) | undefined;
   private md_abyssPrivate = new Component();
@@ -328,6 +333,10 @@ export class RightPanel {
   mount(container: HTMLElement): void {
     this.el_abyssPrivate = container;
     this.mounted_abyssPrivate = true;
+    this.updateDependencyDisclosureSelection_abyssPrivate(
+      this.state_abyssPrivate.get('taskStack'),
+      false,
+    );
     const offSelection = this.state_abyssPrivate.on('taskStack', (next, previous) => {
       const prior = this.dependencyTask_abyssPrivate(previous);
       const selected = next[next.length - 1];
@@ -335,11 +344,11 @@ export class RightPanel {
         prior !== undefined &&
         selected !== undefined &&
         sameTaskNodeRef(taskNodeRef(prior), taskNodeRef(selected));
+      this.updateDependencyDisclosureSelection_abyssPrivate(next, sameSelection);
       const statusFocus = sameSelection ? this.statusFocusTarget_abyssPrivate(previous) : undefined;
       if (!sameSelection) {
         this.dependencySearch_abyssPrivate?.destroy();
         this.dependencySearch_abyssPrivate = undefined;
-        this.dependencyAdding_abyssPrivate = false;
       }
       this.render_abyssPrivate(statusFocus);
     });
@@ -368,11 +377,6 @@ export class RightPanel {
         if (this.mounted_abyssPrivate) this.refreshDependencies_abyssPrivate();
       });
     });
-    this.el_abyssPrivate.addEventListener('keydown', this.onDependencyEscape_abyssPrivate);
-    this.el_abyssPrivate.ownerDocument.addEventListener(
-      'focusin',
-      this.onDependencyFocus_abyssPrivate,
-    );
     this.render_abyssPrivate();
   }
 
@@ -385,11 +389,7 @@ export class RightPanel {
     this.offDependencyQueries_abyssPrivate?.();
     this.dependencySearch_abyssPrivate?.destroy();
     this.dependencySearch_abyssPrivate = undefined;
-    this.el_abyssPrivate.removeEventListener('keydown', this.onDependencyEscape_abyssPrivate);
-    this.el_abyssPrivate.ownerDocument.removeEventListener(
-      'focusin',
-      this.onDependencyFocus_abyssPrivate,
-    );
+    this.dependencyDisclosure_abyssPrivate = undefined;
     if (this.detachedFocusTimer_abyssPrivate !== undefined)
       window.clearTimeout(this.detachedFocusTimer_abyssPrivate);
     this.clearAnchoredSurfaces_abyssPrivate();
@@ -1328,6 +1328,10 @@ export class RightPanel {
     if (task.planning.scheduled != null) this.renderScheduledChip_abyssPrivate(chips, task);
     if (task.planning.start != null) this.renderStartChip_abyssPrivate(chips, task);
     this.renderAddDateMenu_abyssPrivate(chips, task);
+    if (this.tasks_abyssPrivate !== undefined) {
+      chips.createSpan({ cls: 'abyss-chip abyss-dep-badge' });
+      this.updateDependencyBadge_abyssPrivate();
+    }
     for (const tag of task.tags) this.renderTagChip_abyssPrivate(chips, task, tag);
     const addTagBtn = chips.createEl('button', {
       cls: 'abyss-chip abyss-chip-add',
@@ -1342,10 +1346,27 @@ export class RightPanel {
       event.stopPropagation();
       this.showTagInput_abyssPrivate(chips, task, addTagBtn);
     });
-    if (this.tasks_abyssPrivate !== undefined) {
-      chips.createSpan({ cls: 'abyss-chip abyss-dep-badge' });
-      this.updateDependencyBadge_abyssPrivate();
+  }
+
+  private updateDependencyDisclosureSelection_abyssPrivate(
+    stack: readonly TaskLike[],
+    preserveLatch: boolean,
+  ): void {
+    const selected = stack[stack.length - 1];
+    if (selected === undefined) {
+      this.dependencyDisclosure_abyssPrivate = undefined;
+      return;
     }
+    this.dependencyDisclosure_abyssPrivate = {
+      selectionKey: JSON.stringify(taskNodeRef(selected)),
+      latched: preserveLatch && this.dependencyDisclosure_abyssPrivate?.latched === true,
+    };
+  }
+
+  private latchDependencyDisclosure_abyssPrivate(): void {
+    const disclosure = this.dependencyDisclosure_abyssPrivate;
+    if (disclosure === undefined || disclosure.latched) return;
+    this.dependencyDisclosure_abyssPrivate = { ...disclosure, latched: true };
   }
 
   private dependencyTask_abyssPrivate(
@@ -1391,7 +1412,6 @@ export class RightPanel {
       cls: 'abyss-dep-badge-body',
       attr: { type: 'button', 'aria-haspopup': 'dialog' },
     });
-    body.createSpan({ text: 'Dependencies' });
     setIcon(body.createSpan({ cls: 'abyss-dep-lock', attr: { 'aria-hidden': 'true' } }), 'lock');
     body.createSpan({ cls: 'abyss-dep-count-blocked-by', attr: { 'aria-hidden': 'true' } });
     body.createSpan({ cls: 'abyss-dep-divider', attr: { 'aria-hidden': 'true' } });
@@ -1420,7 +1440,7 @@ export class RightPanel {
       });
       add.addEventListener('click', () => {
         this.dependencySearch_abyssPrivate?.close(false);
-        this.dependencyAdding_abyssPrivate = true;
+        this.latchDependencyDisclosure_abyssPrivate();
         this.refreshDependencies_abyssPrivate();
         this.el_abyssPrivate.querySelector<HTMLButtonElement>('.abyss-dep-add')?.focus();
       });
@@ -1431,6 +1451,8 @@ export class RightPanel {
     const task = this.dependencyTask_abyssPrivate();
     const projection = this.dependencyProjection_abyssPrivate();
     if (task === undefined || projection === undefined) return;
+    if (projection.blockedBy.length > 0 || projection.blocks.length > 0)
+      this.latchDependencyDisclosure_abyssPrivate();
     for (const direction of ['blocked-by', 'blocks'] as const) {
       const relations = direction === 'blocked-by' ? projection.blockedBy : projection.blocks;
       if (relations.length === 0 && !this.dependencySectionsDisclosed_abyssPrivate()) continue;
@@ -1440,7 +1462,7 @@ export class RightPanel {
 
   private dependencySectionsDisclosed_abyssPrivate(): boolean {
     return (
-      this.dependencyAdding_abyssPrivate ||
+      this.dependencyDisclosure_abyssPrivate?.latched === true ||
       this.state_abyssPrivate.get('draggingTaskNode')?.source === 'center-card'
     );
   }
@@ -1548,7 +1570,6 @@ export class RightPanel {
       !sameTaskNodeRef(taskNodeRef(submitted), taskNodeRef(current))
     )
       return;
-    this.dependencyAdding_abyssPrivate = false;
     this.refreshDependencies_abyssPrivate();
   }
 
@@ -1671,10 +1692,6 @@ export class RightPanel {
         const surface = this.dependencySearch_abyssPrivate?.element;
         if (surface !== undefined) this.anchoredSurfaceCleanups_abyssPrivate.get(surface)?.();
         this.dependencySearch_abyssPrivate = undefined;
-        if (this.dependencyAdding_abyssPrivate) {
-          this.dependencyAdding_abyssPrivate = false;
-          this.refreshDependencies_abyssPrivate();
-        }
         this.updateDependencyBadge_abyssPrivate();
         if (restoreFocus) this.dependencyAnchor_abyssPrivate()?.focus({ preventScroll: true });
       },
@@ -1715,29 +1732,6 @@ export class RightPanel {
     presentTaskMutationResult(this.tasks_abyssPrivate, result);
     return result.type === 'ok';
   }
-
-  private readonly onDependencyEscape_abyssPrivate = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape' || !this.dependencyAdding_abyssPrivate) return;
-    event.preventDefault();
-    event.stopPropagation();
-    this.dependencyAdding_abyssPrivate = false;
-    this.refreshDependencies_abyssPrivate();
-    this.el_abyssPrivate.querySelector<HTMLButtonElement>('.abyss-dep-badge-add')?.focus();
-  };
-
-  private readonly onDependencyFocus_abyssPrivate = (event: FocusEvent): void => {
-    if (!this.dependencyAdding_abyssPrivate || this.dependencySearch_abyssPrivate !== undefined)
-      return;
-    const target = event.target as HTMLElement;
-    if (
-      target.closest(
-        '.abyss-dep-section, .abyss-dep-badge, .abyss-dep-search, .abyss-subtask-row[draggable="true"]',
-      ) !== null
-    )
-      return;
-    this.dependencyAdding_abyssPrivate = false;
-    this.refreshDependencies_abyssPrivate();
-  };
 
   private renderTimeChip_abyssPrivate(container: HTMLElement, task: TaskLike): void {
     const duration = 'source' in task ? task.planning.duration : undefined;

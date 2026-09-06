@@ -1007,6 +1007,22 @@ describe('RightPanel.renderTask', () => {
     expect(tagChips[1]?.textContent).toContain('#home/kitchen');
   });
 
+  it('renders the dependency control before the first tag and add-tag control', async () => {
+    const selected = task({ title: 'Tagged', tags: ['#work'] });
+    const tasks: TaskApplicationApi = {
+      queries: queryApiForTasks(() => [selected]),
+      execute: vi.fn<TaskApplicationApi['execute']>(),
+    };
+    const { state, el } = await makePanel({}, tasks);
+    state.set('taskStack', [selected]);
+    const tag = expectDefined(el.querySelector<HTMLElement>('.abyss-chip-tag'));
+    const row = expectDefined(el.querySelector<HTMLElement>('.abyss-chips-row'));
+    const dependency = expectDefined(row.querySelector<HTMLElement>('.abyss-dep-badge'));
+    const addTag = expectDefined(row.querySelector<HTMLElement>('[aria-label="Add tag"]'));
+    expect(dependency.compareDocumentPosition(tag)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(dependency.compareDocumentPosition(addTag)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
   it('does not render a removable chip for a tag lookalike inside inline code', async () => {
     const { state, el } = await makePanel();
     const inlineOnly = Object.assign(

@@ -5621,8 +5621,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-dep-badge.abyss-chip {
+  height: 24px;
   padding: 0;
   gap: 0;
+  border: 0;
+  background: transparent;
 }
 
 .abyss-dep-section[data-dependency-direction='blocked-by'] {
@@ -5648,8 +5651,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-dep-badge > button {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: auto;
+  gap: 4px;
+  height: 24px;
   padding: 3px 6px;
   border: 0;
   border-radius: inherit;
@@ -5690,6 +5693,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   width: 1px;
   height: 0.8em;
   background: var(--background-modifier-border);
+}
+
+.abyss-dep-indicator-divider {
+  color: var(--text-muted);
 }
 
 .abyss-subtask-row .abyss-subtask-remove,

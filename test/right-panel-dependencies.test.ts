@@ -831,6 +831,58 @@ describe('RightPanel dependency inspector', () => {
     );
   });
 
+  it('renders a chrome-free compact dependency control with complete accessible names', async () => {
+    const h = await harness('- [ ] Current\n- [ ] Candidate\n');
+    const badge = expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-badge'));
+    const body = button(badge, '.abyss-dep-badge-body');
+    const plus = button(badge, '.abyss-dep-badge-add');
+
+    expect([...body.children].map((child) => child.className)).toEqual([
+      'abyss-dep-lock',
+      'abyss-dep-count-blocked-by',
+      'abyss-dep-divider',
+      'abyss-dep-count-blocks',
+    ]);
+    expect(body.textContent).toBe('00');
+    expect(body.querySelector('.abyss-dep-divider')?.textContent).toBe('');
+    expect(body.getAttribute('aria-label')).toBe('Dependencies: blocked by 0; blocks 0');
+    expect(body.title).toBe('Dependencies: blocked by 0; blocks 0');
+    expect(plus.parentElement).toBe(badge);
+    expect(body.contains(plus)).toBe(false);
+    expect(plus.getAttribute('aria-label')).toBe('Add dependency sections');
+    expect(plus.title).toBe('Add dependency');
+  });
+
+  it('keeps shared chip sizing and interaction rhythm without dependency pill chrome', async () => {
+    if (!Platform.isDesktop) throw new Error('CSS fixture needs desktop runtime');
+    const fs = await import('node:fs');
+    const css = expandCompoundSelectorLists(
+      fs.readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8'),
+    );
+    const value = (selector: string, property: string) =>
+      cssDeclarationValue(cssDeclarationsFor(css, selector), property);
+
+    expect(value('.abyss-chip', 'height')).toBe('24px');
+    expect(value('.abyss-chip', 'font-size')).toBe('var(--font-ui-smaller)');
+    expect(value('.abyss-dep-badge.abyss-chip', 'height')).toBe('24px');
+    expect(value('.abyss-dep-badge.abyss-chip', 'border')).toBe('0');
+    expect(value('.abyss-dep-badge.abyss-chip', 'background')).toBe('transparent');
+    expect(value('.abyss-dep-badge > button', 'height')).toBe('24px');
+    expect(value('.abyss-dep-badge > button', 'gap')).toBe('4px');
+    expect(value('.abyss-dep-badge > button', 'font')).toBe('inherit');
+    expect(value('.abyss-dep-lock', 'color')).toBe('var(--text-muted)');
+    expect(value('.abyss-dep-count-blocked-by', 'color')).toBe(
+      'var(--abyss-dependency-blocked-by)',
+    );
+    expect(value('.abyss-dep-count-blocks', 'color')).toBe('var(--abyss-dependency-blocks)');
+    expect(value('.abyss-dep-badge > button:hover', 'background')).toBe(
+      'var(--background-modifier-hover)',
+    );
+    expect(value('.abyss-dep-badge > button:focus-visible', 'outline')).toBe(
+      '2px solid var(--interactive-accent)',
+    );
+  });
+
   it('keeps a search draft through a proven selection refresh and drops it on another task', async () => {
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
     button(h.el, '.abyss-dep-badge-body').click();
@@ -966,7 +1018,7 @@ describe('RightPanel dependency inspector', () => {
       expect(section.lastElementChild?.textContent).toBe('+Add dependency');
   });
 
-  it('separates badge search from temporary add disclosure and dismisses empty sections with focus return', async () => {
+  it('latches top-plus disclosure through search, focus and drag changes until selection changes', async () => {
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
     expect(labels(h.el)).toEqual(['Description', 'Sub-tasks', 'Comments']);
     const badge = button(h.el, '.abyss-dep-badge-body');
@@ -981,15 +1033,50 @@ describe('RightPanel dependency inspector', () => {
     expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
     expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
     expect(h.el.querySelector('.abyss-dep-badge-add')).toBeNull();
-    h.el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    expect(labels(h.el)).toEqual(['Description', 'Sub-tasks', 'Comments']);
-    expect(activeDocument.activeElement).toBe(h.el.querySelector('.abyss-dep-badge-add'));
-    button(h.el, '.abyss-dep-badge-add').click();
+    button(h.el, '[aria-label="Add dependency: Blocked by"]').click();
+    search(h.el, '').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
     const outside = activeDocument.body.createEl('button');
     outside.focus();
     await flushMicrotasks();
-    expect(labels(h.el)).toEqual(['Description', 'Sub-tasks', 'Comments']);
+    expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
     expect(activeDocument.activeElement).toBe(outside);
+    h.state.set('draggingTaskNode', { source: 'center-card', task: h.node('Candidate') });
+    expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
+    h.state.set('draggingTaskNode', null);
+    expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
+
+    h.state.set('taskStack', [h.node('Candidate').root]);
+
+    expect(labels(h.el)).toEqual(['Description', 'Sub-tasks', 'Comments']);
+    expect(h.el.querySelector('.abyss-dep-badge-add')).not.toBeNull();
+  });
+
+  it('temporarily discloses both empty sections only for a center-card drag', async () => {
+    const h = await harness('- [ ] Current\n  - [ ] Child\n- [ ] Candidate\n');
+    expect(labels(h.el)).toEqual(['Description', 'Sub-tasks', 'Comments']);
+
+    h.state.set('draggingTaskNode', { source: 'center-card', task: h.node('Candidate') });
+    expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
+    h.state.set('draggingTaskNode', null);
+    expect(labels(h.el)).toEqual(['Description', 'Sub-tasks', 'Comments']);
+
+    h.state.set('draggingTaskNode', { source: 'inspector-subtask', task: h.node('Child') });
+    expect(labels(h.el)).toEqual(['Description', 'Sub-tasks', 'Comments']);
+    h.state.set('draggingTaskNode', null);
+  });
+
+  it('latches both directions after observing one relation and keeps them after final removal', async () => {
+    notices();
+    const h = await harness('- [ ] Current ⛔ blocker\n- [ ] Blocker 🆔 blocker\n');
+    expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
+
+    button(h.el, '.abyss-dep-remove').click();
+    await flushMicrotasks(50);
+
+    expect(h.el.querySelector('.abyss-dep-row')).toBeNull();
+    expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
+    expect(h.el.querySelector('.abyss-dep-badge-add')).toBeNull();
   });
 
   it.each(['blocked-by', 'blocks'] as const)(
@@ -1007,14 +1094,14 @@ describe('RightPanel dependency inspector', () => {
         direction === 'blocked-by' ? 'Current ⛔ generate' : 'Candidate ⛔ generate',
       );
       expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
-      expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(1);
+      expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(2);
       expect(h.el.querySelector('.abyss-dep-row')?.textContent).toBe('Candidate');
       expect(captured).toHaveLength(1);
       button(activeDocument.body, '.mod-cta').click();
       await flushMicrotasks(50);
       expect(await h.read()).not.toContain('⛔');
       expect(await h.read()).toContain('🆔 generate');
-      expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(0);
+      expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(2);
     },
   );
 

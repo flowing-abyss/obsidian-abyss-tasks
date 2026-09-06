@@ -57,7 +57,11 @@ export function renderDependencyIndicator(
   if ('blockedBy' in presentation)
     renderIndicatorCount(group, 'blocked-by', presentation.blockedBy);
   if (presentation.type === 'both')
-    group.createSpan({ cls: 'abyss-dep-divider', attr: { 'aria-hidden': 'true' } });
+    group.createSpan({
+      cls: 'abyss-dep-indicator-divider',
+      text: '/',
+      attr: { 'aria-hidden': 'true' },
+    });
   if ('blocks' in presentation) renderIndicatorCount(group, 'blocks', presentation.blocks);
 }
 

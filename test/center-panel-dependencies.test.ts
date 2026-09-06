@@ -226,7 +226,6 @@ describe('center dependency indicator DOM', () => {
         expect(group.previousElementSibling?.matches('[role="checkbox"]')).toBe(true);
         expect(group.nextElementSibling?.classList.contains('abyss-task-body')).toBe(true);
         expect(group.querySelectorAll('svg')).toHaveLength(1);
-        expect(group.querySelectorAll('.abyss-dep-divider')).toHaveLength(type === 'both' ? 1 : 0);
         expect(
           [...group.querySelectorAll('[data-dependency-count]')].map((count) => count.textContent),
         ).toEqual(counts);
@@ -246,6 +245,21 @@ describe('center dependency indicator DOM', () => {
       expect(expectDefined(card).querySelector('.abyss-task-desc')).toBeNull();
     },
   );
+
+  it('uses a slash between simultaneous center counts without reusing the inspector divider', async () => {
+    const h = await harness(
+      '- [ ] Current 🆔 current ⛔ a, b\n- [ ] Schema 🆔 a\n- [ ] Review 🆔 b\n- [ ] Dependent ⛔ current\n',
+    );
+    mountCenter(h);
+    const card = [...h.el.querySelectorAll<HTMLElement>('.abyss-task-card')].find(
+      (row) => row.querySelector('.abyss-task-title')?.textContent === 'Current',
+    );
+    const indicator = element(expectDefined(card), '.abyss-dep-indicator');
+
+    expect(indicator.querySelector('.abyss-dep-indicator-divider')?.textContent).toBe('/');
+    expect(indicator.querySelector('.abyss-dep-divider')).toBeNull();
+    expect([...indicator.children].map((child) => child.textContent)).toEqual(['', '2', '/', '1']);
+  });
 });
 
 const surfaceNames = [

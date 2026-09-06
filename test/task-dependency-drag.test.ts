@@ -391,7 +391,7 @@ describe('dependency drop disclosure and eligibility', () => {
     expect([...h.el.querySelectorAll('.abyss-dep-section')]).toEqual(sections);
     const comment = expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input'));
     comment.focus();
-    expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(0);
+    expect([...h.el.querySelectorAll('.abyss-dep-section')]).toEqual(sections);
   });
 
   it.each([
@@ -400,7 +400,7 @@ describe('dependency drop disclosure and eligibility', () => {
     ['subtask', 'blocked-by'],
     ['subtask', 'blocks'],
   ] as const)(
-    'closes explicit add disclosure only after a %s drop on %s commits',
+    'keeps explicit add disclosure after a %s drop on %s commits',
     async (kind, direction) => {
       const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b\n  - [ ] Child 🆔 child\n');
       expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-dep-badge-add')).click();
@@ -417,7 +417,7 @@ describe('dependency drop disclosure and eligibility', () => {
       ]);
       expect(h.execute).toHaveBeenCalledOnce();
       expect(h.section(direction).querySelectorAll('.abyss-dep-row')).toHaveLength(1);
-      expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(1);
+      expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(2);
       expect(h.state.get('draggingTaskNode')).toBeNull();
     },
   );
@@ -475,14 +475,16 @@ describe('dependency drop disclosure and eligibility', () => {
   it('preserves visible relation section DOM during subtask start and cancellation', async () => {
     const h = await harness('- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n  - [ ] Child 🆔 child\n');
     const section = h.section('blocked-by');
+    const otherSection = h.section('blocks');
     const child = h.sub('Child');
     drag(child, 'dragstart');
     expect(h.section('blocked-by')).toBe(section);
-    expect(h.el.querySelector('[data-dependency-direction="blocks"]')).toBeNull();
+    expect(h.section('blocks')).toBe(otherSection);
     drag(section, 'dragover');
     expect(section.classList.contains('is-drop-target')).toBe(true);
     drag(child, 'dragend');
     expect(h.section('blocked-by')).toBe(section);
+    expect(h.section('blocks')).toBe(otherSection);
     expect(section.classList.contains('is-drop-target')).toBe(false);
     expect(section.classList.contains('is-drop-disabled')).toBe(false);
   });
