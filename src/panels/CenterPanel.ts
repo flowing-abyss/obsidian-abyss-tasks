@@ -1490,16 +1490,10 @@ export class CenterPanel {
         this.openForecastRecurrenceEditor_abyssPrivate(viewContainer, source);
       },
       onDrop: (dragData, targetDate) => {
-        runAsyncAction(
-          this.rescheduleTask_abyssPrivate(dragData, targetDate),
-          'Could not complete UI action',
-        );
+        runAsyncAction(this.rescheduleTask_abyssPrivate(dragData, targetDate));
       },
       onDropTime: (dragData, date, time) => {
-        runAsyncAction(
-          this.setTaskTimeFromDrop_abyssPrivate(dragData, date, time),
-          'Could not complete UI action',
-        );
+        runAsyncAction(this.setTaskTimeFromDrop_abyssPrivate(dragData, date, time));
       },
       onCreateAtTime: (date, time) => {
         this.createCalendarTaskAtTime_abyssPrivate(viewContainer, date, time);
@@ -1570,19 +1564,13 @@ export class CenterPanel {
         this.handleCalendarKeyboardIntent_abyssPrivate(task, intent);
       },
       onToggle: (task) => {
-        runAsyncAction(this.toggleTask_abyssPrivate(task), 'Could not complete UI action');
+        runAsyncAction(this.toggleTask_abyssPrivate(task));
       },
       onSetStatus: (task, status) => {
-        runAsyncAction(
-          this.setTaskStatus_abyssPrivate(task, status),
-          'Could not complete UI action',
-        );
+        runAsyncAction(this.setTaskStatus_abyssPrivate(task, status));
       },
       onSetPriority: (task, priority) => {
-        runAsyncAction(
-          this.setPriority_abyssPrivate(task, priority),
-          'Could not complete UI action',
-        );
+        runAsyncAction(this.setPriority_abyssPrivate(task, priority));
       },
     };
   }
@@ -1606,7 +1594,7 @@ export class CenterPanel {
     action: () => Promise<void>,
   ): void {
     if (isForecastCalendarTask(task)) return;
-    runAsyncAction(action(), 'Could not complete UI action');
+    runAsyncAction(action());
   }
 
   private createCalendarTaskAtTime_abyssPrivate(
@@ -2256,7 +2244,7 @@ export class CenterPanel {
       registry: this.statusRegistry_abyssPrivate,
       completionBlocked: dependencyCompletionBlocked(projection),
       onLeftClick: () => {
-        runAsyncAction(this.toggleTask_abyssPrivate(task), 'Could not complete UI action');
+        runAsyncAction(this.toggleTask_abyssPrivate(task));
       },
       onContextMenu: (event) => {
         event.stopPropagation();
@@ -2453,10 +2441,7 @@ export class CenterPanel {
     element.classList.remove('abyss-drop-target');
     const dragging = this.state_abyssPrivate.get('draggingTag');
     if (dragging === null || dragging === '' || dragging === replacedTag) return;
-    runAsyncAction(
-      this.patchTaskTags_abyssPrivate(task, [dragging], [replacedTag]),
-      'Could not complete UI action',
-    );
+    runAsyncAction(this.patchTaskTags_abyssPrivate(task, [dragging], [replacedTag]));
   }
 
   private mountTaskCardInteractions_abyssPrivate(card: HTMLElement, task: TaskSnapshot): void {
@@ -2490,7 +2475,7 @@ export class CenterPanel {
     setIcon(deleteButton, 'x');
     deleteButton.addEventListener('click', (event) => {
       event.stopPropagation();
-      runAsyncAction(this.deleteTask_abyssPrivate(task), 'Could not complete UI action');
+      runAsyncAction(this.deleteTask_abyssPrivate(task));
     });
   }
 
@@ -2585,10 +2570,7 @@ export class CenterPanel {
     const tag = this.state_abyssPrivate.get('draggingTag');
     if (tag !== null && tag !== '') {
       event.preventDefault();
-      runAsyncAction(
-        this.assignTagFromInbox_abyssPrivate(task, tag),
-        'Could not complete UI action',
-      );
+      runAsyncAction(this.assignTagFromInbox_abyssPrivate(task, tag));
       return;
     }
     const project = this.state_abyssPrivate.get('draggingProject');
@@ -2608,7 +2590,6 @@ export class CenterPanel {
         task.ref,
         project,
       ),
-      'Could not complete UI action',
     );
   }
 
@@ -2653,10 +2634,7 @@ export class CenterPanel {
         .setSection('today')
         .setChecked(task.planning.due === today)
         .onClick(() => {
-          runAsyncAction(
-            this.toggleTaskDuePreset_abyssPrivate(task, today),
-            'Could not complete UI action',
-          );
+          runAsyncAction(this.toggleTaskDuePreset_abyssPrivate(task, today));
         }),
     );
 
@@ -2668,10 +2646,7 @@ export class CenterPanel {
           .setSection('today')
           .setChecked(task.planning.due === tomorrow)
           .onClick(() => {
-            runAsyncAction(
-              this.toggleTaskDuePreset_abyssPrivate(task, tomorrow),
-              'Could not complete UI action',
-            );
+            runAsyncAction(this.toggleTaskDuePreset_abyssPrivate(task, tomorrow));
           }),
       );
     }
@@ -2702,7 +2677,6 @@ export class CenterPanel {
                 hasTag ? [] : [pinnedTag],
                 hasTag ? [pinnedTag] : [],
               ),
-              'Could not complete UI action',
             );
           }),
       );
@@ -2721,7 +2695,7 @@ export class CenterPanel {
       item.setTitle('Status').setIcon('check-square').setSection('priority');
       const sub = getSubmenu(item);
       buildStatusSubmenu(sub, task, this.statusRegistry_abyssPrivate, (c) => {
-        runAsyncAction(this.setTaskStatus_abyssPrivate(task, c), 'Could not complete UI action');
+        runAsyncAction(this.setTaskStatus_abyssPrivate(task, c));
       });
     });
 
@@ -2777,7 +2751,7 @@ export class CenterPanel {
         .setIcon('file-text')
         .setSection('actions')
         .onClick(() => {
-          runAsyncAction(openInFile(this.app_abyssPrivate, task), 'Could not complete UI action');
+          runAsyncAction(openInFile(this.app_abyssPrivate, task));
         }),
     );
 
@@ -2787,7 +2761,7 @@ export class CenterPanel {
         .setIcon('trash-2')
         .setSection('danger')
         .onClick(() => {
-          runAsyncAction(this.deleteTask_abyssPrivate(task), 'Could not complete UI action');
+          runAsyncAction(this.deleteTask_abyssPrivate(task));
         }),
     );
   }
@@ -2807,7 +2781,6 @@ export class CenterPanel {
         Promise.all(
           selectedTasks.map((task) => this.patchTaskTags_abyssPrivate(task, [], [pinnedTag])),
         ),
-        'Could not complete UI action',
       );
     };
   }
@@ -2821,7 +2794,6 @@ export class CenterPanel {
         Promise.all(
           selectedTasks.map((task) => this.patchTaskTags_abyssPrivate(task, [pinnedTag], [])),
         ),
-        'Could not complete UI action',
       );
     };
   }
@@ -2862,10 +2834,7 @@ export class CenterPanel {
           .setIcon('flag')
           .setChecked(task.priority === level.value)
           .onClick(() => {
-            runAsyncAction(
-              this.setPriority_abyssPrivate(task, level.value),
-              'Could not complete UI action',
-            );
+            runAsyncAction(this.setPriority_abyssPrivate(task, level.value));
           });
         applyPriorityFlagColor(si, level.value);
       });
@@ -2880,7 +2849,6 @@ export class CenterPanel {
           .onClick(() => {
             runAsyncAction(
               Promise.all(selectedTasks.map((t) => this.setPriority_abyssPrivate(t, level.value))),
-              'Could not complete UI action',
             );
           });
         applyPriorityFlagColor(si, level.value);
@@ -2921,10 +2889,7 @@ export class CenterPanel {
   private openTagPicker_abyssPrivate(task: TaskSnapshot): void {
     const currentTags = this.getTaskTags_abyssPrivate(task);
     const handleCommit = (toAdd: string[], toRemove: string[]): void => {
-      runAsyncAction(
-        this.patchTaskTags_abyssPrivate(task, toAdd, toRemove),
-        'Could not complete UI action',
-      );
+      runAsyncAction(this.patchTaskTags_abyssPrivate(task, toAdd, toRemove));
     };
     new TagPickerModal(
       this.app_abyssPrivate,
@@ -2947,7 +2912,6 @@ export class CenterPanel {
         Promise.all(
           selectedTasks.map((task) => this.patchTaskTags_abyssPrivate(task, toAdd, toRemove)),
         ),
-        'Could not complete UI action',
       );
     };
     new TagPickerModal(
@@ -3010,10 +2974,7 @@ export class CenterPanel {
         .setSection('today')
         .setChecked(allHaveToday)
         .onClick(() => {
-          runAsyncAction(
-            this.applyBulkDuePreset_abyssPrivate(selectedTasks, today),
-            'Could not complete UI action',
-          );
+          runAsyncAction(this.applyBulkDuePreset_abyssPrivate(selectedTasks, today));
         }),
     );
 
@@ -3026,10 +2987,7 @@ export class CenterPanel {
           .setSection('today')
           .setChecked(allHaveTomorrow)
           .onClick(() => {
-            runAsyncAction(
-              this.applyBulkDuePreset_abyssPrivate(selectedTasks, tomorrow),
-              'Could not complete UI action',
-            );
+            runAsyncAction(this.applyBulkDuePreset_abyssPrivate(selectedTasks, tomorrow));
           }),
       );
     }
@@ -3061,7 +3019,6 @@ export class CenterPanel {
       buildStatusSubmenu(sub, firstSelectedTask, this.statusRegistry_abyssPrivate, (c) => {
         runAsyncAction(
           Promise.all(selectedTasks.map((t) => this.setTaskStatus_abyssPrivate(t, c))),
-          'Could not complete UI action',
         );
       });
     });
@@ -3084,10 +3041,7 @@ export class CenterPanel {
         .setIcon('trash-2')
         .setSection('danger')
         .onClick(() => {
-          runAsyncAction(
-            this.deleteBulkTasks_abyssPrivate(selectedTasks),
-            'Could not complete UI action',
-          );
+          runAsyncAction(this.deleteBulkTasks_abyssPrivate(selectedTasks));
         }),
     );
   }
@@ -3156,7 +3110,7 @@ export class CenterPanel {
   private updateViewState_abyssPrivate(next: ListViewState): void {
     this.settings_abyssPrivate.listViewStates ??= {};
     this.settings_abyssPrivate.listViewStates[this.activeListKey_abyssPrivate()] = next;
-    runAsyncAction(this.onSaveSettings_abyssPrivate(), 'Could not complete UI action');
+    runAsyncAction(this.onSaveSettings_abyssPrivate());
     this.state_abyssPrivate.set('centerListViewState', next);
   }
 
@@ -3638,7 +3592,6 @@ export class CenterPanel {
         this.activeCapture_abyssPrivate = session;
         this.remountActiveCapture_abyssPrivate();
       }),
-      'Could not complete UI action',
     );
   }
 
@@ -4300,7 +4253,6 @@ export class CenterPanel {
               replacement: newRaw,
             })
             .then(presentTaskCommandResult),
-          'Could not complete UI action',
         );
       },
       task.source.filePath,
@@ -4651,16 +4603,10 @@ export class CenterPanel {
       registry: this.statusRegistry_abyssPrivate,
       owner: this.md_abyssPrivate,
       onPickStatus: (symbol) => {
-        runAsyncAction(
-          this.setTaskStatus_abyssPrivate(task, symbol),
-          'Could not complete UI action',
-        );
+        runAsyncAction(this.setTaskStatus_abyssPrivate(task, symbol));
       },
       onPickPriority: (priority) => {
-        runAsyncAction(
-          this.setPriority_abyssPrivate(task, priority),
-          'Could not complete UI action',
-        );
+        runAsyncAction(this.setPriority_abyssPrivate(task, priority));
       },
       interactionOwnership: this.interactionOwnership_abyssPrivate,
     });

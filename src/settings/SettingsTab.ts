@@ -833,7 +833,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       },
       onReorder: (from, to) => {
         this.moveItem_abyssPrivate(groups, from, to);
-        runAsyncAction(this.plugin_abyssPrivate.saveSettings(), 'Could not complete UI action');
+        runAsyncAction(this.plugin_abyssPrivate.saveSettings());
         this.render_abyssPrivate();
       },
     });
@@ -1035,7 +1035,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       },
       onReorder: (from, to) => {
         this.moveItem_abyssPrivate(projects.statuses, from, to);
-        runAsyncAction(this.plugin_abyssPrivate.saveSettings(), 'Could not complete UI action');
+        runAsyncAction(this.plugin_abyssPrivate.saveSettings());
         this.render_abyssPrivate();
       },
     });
@@ -1282,7 +1282,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     if (def == null || def.type === targetType) return;
     if (def.core) return; // core cards cannot leave their own type group
     def.type = targetType;
-    runAsyncAction(this.persistAndRerenderStatuses_abyssPrivate(), 'Could not complete UI action');
+    runAsyncAction(this.persistAndRerenderStatuses_abyssPrivate());
   }
 
   private reorderStatusWithinType_abyssPrivate(
@@ -1299,7 +1299,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const toAbs = groupIndices[to];
     if (fromAbs === undefined || toAbs === undefined) return;
     this.moveItem_abyssPrivate(statuses, fromAbs, toAbs);
-    runAsyncAction(this.persistAndRerenderStatuses_abyssPrivate(), 'Could not complete UI action');
+    runAsyncAction(this.persistAndRerenderStatuses_abyssPrivate());
   }
 
   private renderTaskStatusesSettings_abyssPrivate(containerEl: HTMLElement): void {
@@ -1524,7 +1524,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     renderResults = (query, focusIcon) => {
       const selectIcon = (iconId: string): void => {
         def.icon = iconId;
-        runAsyncAction(this.persistStatuses_abyssPrivate(), 'Could not complete UI action');
+        runAsyncAction(this.persistStatuses_abyssPrivate());
         renderResults(query, iconId);
         updatePreview();
         this.renderStatusHeaderPreview_abyssPrivate(def.id);

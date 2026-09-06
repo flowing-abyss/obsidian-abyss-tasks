@@ -3,7 +3,10 @@
  * Event listeners cannot await their handlers, so this is the shared boundary
  * between synchronous DOM events and application promises.
  */
-export function runAsyncAction(action: Promise<unknown>, context: string): void {
+export function runAsyncAction(
+  action: Promise<unknown>,
+  context = 'Could not complete UI action',
+): void {
   action.catch((error: unknown) => {
     console.error(`[abyss-tasks] ${context}`, error);
   });

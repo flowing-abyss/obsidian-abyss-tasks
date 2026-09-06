@@ -6,6 +6,7 @@ import type {
 import type { DependencySubtaskCreationOutcome } from '../domain/commands';
 import { enumerateTaskNodes, type TaskNodeSnapshot } from '../domain/taskDependencies';
 import { sameTaskNodeRef, type TaskSnapshot } from '../domain/types';
+import { invalidTaskSyntax, invalidTaskTarget } from '../domain/validation';
 import type { TaskBlockEditor, TaskRootBlock } from './markdown/TaskBlockEditor';
 import type { TaskMarkdownCodec } from './markdown/TaskMarkdownCodec';
 import type { PreparedTaskEditBatch } from './TaskEditBatch';
@@ -109,8 +110,7 @@ export function prepareDependencySubtask(
     ...(request.addCreatedDate && { createdDate: request.today }),
   });
   if (edited.type === 'conflict') return { type: 'conflict', current: request.baseRoot };
-  if (edited.type === 'invalid')
-    return { type: 'invalid', issues: [{ code: 'invalid-target', field: edited.field }] };
+  if (edited.type === 'invalid') return invalidTaskTarget(edited.field);
   const outcomeRoot = options
     .snapshotsFromContent(request.baseRoot.ref.filePath, edited.content)
     .find((root) => root.source.line === block.line);
@@ -119,7 +119,7 @@ export function prepareDependencySubtask(
     dependencySubtaskOutcome(request, outcomeRoot, currentLine, edited.createdChildRelativeLine) ===
       undefined
   )
-    return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+    return invalidTaskSyntax();
   return {
     type: 'prepared',
     content: edited.content,

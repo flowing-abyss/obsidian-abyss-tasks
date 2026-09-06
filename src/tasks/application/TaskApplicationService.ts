@@ -31,7 +31,7 @@ import type {
   TaskStatusRule,
 } from '../domain/types';
 import { sameTaskNodeRef } from '../domain/types';
-import { isSingleLineText } from '../domain/validation';
+import { invalidTaskResult, invalidTaskTarget, isSingleLineText } from '../domain/validation';
 import type {
   CreateTaskCommand,
   CreateTaskCommandDestination,
@@ -185,10 +185,6 @@ function isStatusCommand(command: TaskCommand): command is StatusCommand {
   return command.type === 'set-status' || command.type === 'toggle-completion';
 }
 
-function invalidTarget(field: string): TaskCommandResult {
-  return { type: 'invalid', issues: [{ code: 'invalid-target', field }] };
-}
-
 function invalidStatusResult(): PreparedTaskCommand {
   return {
     result: { type: 'invalid', issues: [{ code: 'invalid-status', field: 'status' }] },
@@ -211,7 +207,7 @@ function scheduleInputIssue(command: TaskCommand): TaskCommandResult | undefined
     (!Number.isSafeInteger(command.days) ||
       (command.type === 'shift-schedule' && command.days === 0))
   ) {
-    return invalidTarget('days');
+    return invalidTaskTarget('days');
   }
   return undefined;
 }
@@ -222,13 +218,13 @@ function titleInputIssue(command: TaskCommand): TaskCommandResult | undefined {
     command.patch.markdownTitle?.type === 'set' &&
     !isSingleLineText(command.patch.markdownTitle.value)
   ) {
-    return invalidTarget('title');
+    return invalidTaskTarget('title');
   }
   if (command.type === 'append-title' && !isSingleLineText(command.markdown)) {
-    return invalidTarget('title');
+    return invalidTaskTarget('title');
   }
   if (command.type === 'edit-link' && !isSingleLineText(command.replacement)) {
-    return invalidTarget('link');
+    return invalidTaskTarget('link');
   }
   return undefined;
 }
@@ -238,7 +234,7 @@ function commentInputIssue(command: TaskCommand): TaskCommandResult | undefined 
     (command.type === 'add-comment' || command.type === 'update-comment') &&
     (!isSingleLineText(command.text) || command.text.trim().length === 0)
   ) {
-    return invalidTarget('comment');
+    return invalidTaskTarget('comment');
   }
   return undefined;
 }
@@ -248,7 +244,7 @@ function subtaskInputIssue(command: TaskCommand): TaskCommandResult | undefined 
     command.type === 'add-subtask' &&
     (!isSingleLineText(command.text) || command.text.trim().length === 0)
   ) {
-    return invalidTarget('subtask');
+    return invalidTaskTarget('subtask');
   }
   return undefined;
 }
@@ -258,7 +254,7 @@ function descriptionInputIssue(command: TaskCommand): TaskCommandResult | undefi
     command.type === 'set-description' &&
     (command.text?.replace(/\r\n/gu, '').includes('\r') ?? false)
   ) {
-    return invalidTarget('description');
+    return invalidTaskTarget('description');
   }
   return undefined;
 }
@@ -436,13 +432,13 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
 
   private async executeCommand_abyssPrivate(command: TaskCommand): Promise<TaskCommandResult> {
     const restorationIssues = subtaskRestorationIssues(command);
-    if (restorationIssues.length > 0) return { type: 'invalid', issues: restorationIssues };
+    if (restorationIssues.length > 0) return invalidTaskResult(restorationIssues);
     if ('dependent' in command) return await this.dependencies_abyssPrivate.execute(command);
     const inputIssue = multilineInputIssue(command);
     if (inputIssue != null) return inputIssue;
     const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
     const reading = captureClock(this.clock_abyssPrivate);
-    if (command.type === 'add-comment' && !('atom' in reading)) return invalidTarget('comment');
+    if (command.type === 'add-comment' && !('atom' in reading)) return invalidTaskTarget('comment');
     if (command.type === 'create-dependency-subtask')
       return this.createDependencySubtask_abyssPrivate(command, {
         today: reading.localDate,
@@ -707,7 +703,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     }
     const preparedInitial = prepareCreateInitial(request);
     if (preparedInitial.type === 'invalid') {
-      return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'tags' }] };
+      return invalidTaskTarget('tags');
     }
     const result = await this.repository_abyssPrivate.create(resolution.destination, {
       markdownBody: request.markdownBody,
@@ -829,7 +825,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     const sourceTags = command.patch.tags;
     if (sourceTags === undefined) return { command };
     const tags = normalizeTagChange(sourceTags);
-    if (tags === undefined) return { result: invalidTarget('tags') };
+    if (tags === undefined) return { result: invalidTaskTarget('tags') };
     return { command: { ...command, patch: { ...command.patch, tags } } };
   }
 

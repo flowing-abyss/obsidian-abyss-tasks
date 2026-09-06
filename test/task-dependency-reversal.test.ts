@@ -115,6 +115,64 @@ async function harness(files: Record<string, string>, writable = true) {
 }
 
 describe('public dependency reversal', () => {
+  it.each(['', 'invalid ID'])('rejects malformed dependency ID %j without writing', async (id) => {
+    const source = '- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n';
+    const h = await harness({ 'tasks.md': source });
+    const process = vi.spyOn(h.app.vault, 'process');
+    expect(await h.application.execute(h.command('A', 'B', id))).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target', field: 'dependency-id' }],
+    });
+    expect(process).not.toHaveBeenCalled();
+    expect(await h.contents()).toEqual({ 'tasks.md': source });
+  });
+
+  it('rejects a missing original blocker without touching its remaining dependent', async () => {
+    const h = await harness({ 'tasks.md': '- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n' });
+    const command = h.command();
+    const source = '- [ ] B 🆔 b ⛔ a\n';
+    await h.app.vault.modify(h.file('tasks.md'), source);
+    h.index.installCommittedContent('tasks.md', source);
+    const process = vi.spyOn(h.app.vault, 'process');
+    expect(await h.application.execute(command)).toEqual({
+      type: 'not-found',
+      target: command.blocker,
+    });
+    expect(process).not.toHaveBeenCalled();
+    expect(await h.contents()).toEqual({ 'tasks.md': source });
+  });
+
+  it('keeps exact source when the repository does not provide atomic reversal', async () => {
+    const source = '- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n';
+    const h = await harness({ 'tasks.md': source });
+    Object.defineProperty(h.repository, 'reverseDependency', { value: undefined });
+    const process = vi.spyOn(h.app.vault, 'process');
+    expect(await h.application.execute(h.command())).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target', field: 'dependency-write' }],
+    });
+    expect(process).not.toHaveBeenCalled();
+    expect(await h.contents()).toEqual({ 'tasks.md': source });
+  });
+
+  it('keeps the original edge when no valid new blocker ID can be allocated', async () => {
+    const source = '- [ ] A 🆔 a\n- [ ] B ⛔ a\n';
+    const h = await harness({ 'tasks.md': source });
+    const service = new TaskDependencyService(
+      h.index,
+      h.repository,
+      () => 'invalid!',
+      h.diagnostics,
+    );
+    const process = vi.spyOn(h.app.vault, 'process');
+    expect(await service.execute(h.command())).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target', field: 'dependency-id' }],
+    });
+    expect(process).not.toHaveBeenCalled();
+    expect(await h.contents()).toEqual({ 'tasks.md': source });
+  });
+
   it.each(['unavailable', 'stale', 'nonwritable'] as const)(
     'does not write %s endpoints',
     async (fault) => {

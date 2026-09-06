@@ -22,6 +22,23 @@ export interface TaskIssue {
   readonly field?: string;
 }
 
+interface InvalidTaskResult {
+  readonly type: 'invalid';
+  readonly issues: readonly TaskIssue[];
+}
+
+export function invalidTaskResult(issues: readonly TaskIssue[]): InvalidTaskResult {
+  return { type: 'invalid', issues };
+}
+
+export function invalidTaskTarget(field: string): InvalidTaskResult {
+  return { type: 'invalid', issues: [{ code: 'invalid-target', field }] };
+}
+
+export function invalidTaskSyntax(): InvalidTaskResult {
+  return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+}
+
 export type TaskValidationField =
   | 'title'
   | 'status'

@@ -946,7 +946,6 @@ export class RightPanel {
             }
             copy.focus();
           })(),
-          'Could not complete UI action',
         );
       });
       const discard = detached.createEl('button', {
@@ -1018,10 +1017,7 @@ export class RightPanel {
       this.app_abyssPrivate,
       token,
       (newRaw) => {
-        runAsyncAction(
-          this.executeLinkEdit_abyssPrivate({ type: 'title', target }, occ, newRaw),
-          'Could not complete UI action',
-        );
+        runAsyncAction(this.executeLinkEdit_abyssPrivate({ type: 'title', target }, occ, newRaw));
       },
       rootTaskRef(task).filePath,
       this.interactionOwnership_abyssPrivate,
@@ -1039,10 +1035,7 @@ export class RightPanel {
       this.app_abyssPrivate,
       token,
       (newRaw) => {
-        runAsyncAction(
-          this.executeLinkEdit_abyssPrivate(target, occ, newRaw),
-          'Could not complete UI action',
-        );
+        runAsyncAction(this.executeLinkEdit_abyssPrivate(target, occ, newRaw));
       },
       sourcePath,
       this.interactionOwnership_abyssPrivate,
@@ -1080,7 +1073,6 @@ export class RightPanel {
             task,
             current.trim().length > 0 ? `${current} ${links}` : links,
           ),
-          'Could not complete UI action',
         );
       },
     });
@@ -1128,12 +1120,12 @@ export class RightPanel {
       showView();
     };
     textarea.addEventListener('blur', () => {
-      runAsyncAction(finish(true), 'Could not complete UI action');
+      runAsyncAction(finish(true));
     });
     textarea.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
-      runAsyncAction(finish(false), 'Could not complete UI action');
+      runAsyncAction(finish(false));
     });
   }
 
@@ -1348,7 +1340,6 @@ export class RightPanel {
           'source' in task
             ? this.toggleTaskLike_abyssPrivate(task)
             : this.toggleSubTask_abyssPrivate(task),
-          'Could not complete UI action',
         );
       },
       onContextMenu: (event) => {
@@ -1941,7 +1932,7 @@ export class RightPanel {
       }
     };
     input.addEventListener('keydown', (event: KeyboardEvent) => {
-      if (event.key === 'Enter') runAsyncAction(commit(), 'Could not complete UI action');
+      if (event.key === 'Enter') runAsyncAction(commit());
       if (event.key === 'Escape') {
         event.preventDefault();
         close();
@@ -1949,7 +1940,7 @@ export class RightPanel {
     });
     input.addEventListener('blur', () => {
       window.setTimeout(() => {
-        runAsyncAction(commit(), 'Could not complete UI action');
+        runAsyncAction(commit());
       }, 150);
     });
     input.focus();
@@ -1991,10 +1982,7 @@ export class RightPanel {
         e.preventDefault();
         const text = commentInput.value.trim();
         if (text !== '') {
-          runAsyncAction(
-            this.addComment_abyssPrivate(task, text, commentList, commentInput),
-            'Could not complete UI action',
-          );
+          runAsyncAction(this.addComment_abyssPrivate(task, text, commentList, commentInput));
         }
       }
     });
@@ -2006,10 +1994,7 @@ export class RightPanel {
       app: this.app_abyssPrivate,
       sourcePath: rootTaskRef(task).filePath,
       onLinks: (links) => {
-        runAsyncAction(
-          this.appendToTitle_abyssPrivate(task, links),
-          'Could not complete UI action',
-        );
+        runAsyncAction(this.appendToTitle_abyssPrivate(task, links));
       },
     });
     const renderView = (): void => {
@@ -2077,16 +2062,16 @@ export class RightPanel {
       renderView();
     };
     ta.addEventListener('blur', () => {
-      runAsyncAction(finish(true), 'Could not complete UI action');
+      runAsyncAction(finish(true));
     });
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        runAsyncAction(finish(true), 'Could not complete UI action');
+        runAsyncAction(finish(true));
       }
       if (e.key === 'Escape') {
         e.preventDefault();
-        runAsyncAction(finish(false), 'Could not complete UI action');
+        runAsyncAction(finish(false));
       }
     });
   }
@@ -2176,10 +2161,7 @@ export class RightPanel {
       const position = row.hasClass('drop-above') ? 'before' : 'after';
       row.removeClass('drop-above');
       row.removeClass('drop-below');
-      runAsyncAction(
-        this.reorderSubTask_abyssPrivate(parentTask, dragged, sub, position),
-        'Could not complete UI action',
-      );
+      runAsyncAction(this.reorderSubTask_abyssPrivate(parentTask, dragged, sub, position));
     });
   }
 
@@ -2273,7 +2255,6 @@ export class RightPanel {
       onLinks: (links) => {
         runAsyncAction(
           this.updateComment_abyssPrivate(task, comment, `${comment.text} ${links}`.trim()),
-          'Could not complete UI action',
         );
       },
     });
@@ -2350,7 +2331,7 @@ export class RightPanel {
     };
     textarea.addEventListener('blur', () => {
       window.setTimeout(() => {
-        runAsyncAction(finish(), 'Could not complete UI action');
+        runAsyncAction(finish());
       }, 150);
     });
     textarea.addEventListener('keydown', (event: KeyboardEvent) => {
@@ -2634,7 +2615,7 @@ export class RightPanel {
     const x = chip.createEl('button', { cls: 'abyss-chip-remove', text: '×' });
     x.addEventListener('click', (e) => {
       e.stopPropagation();
-      runAsyncAction(this.removeTag_abyssPrivate(task, tag), 'Could not complete UI action');
+      runAsyncAction(this.removeTag_abyssPrivate(task, tag));
     });
   }
 
@@ -2674,13 +2655,10 @@ export class RightPanel {
       registry: this.statusRegistry_abyssPrivate,
       owner: this.md_abyssPrivate,
       onPickStatus: (symbol) => {
-        runAsyncAction(this.setStatus_abyssPrivate(task, symbol), 'Could not complete UI action');
+        runAsyncAction(this.setStatus_abyssPrivate(task, symbol));
       },
       onPickPriority: (priority) => {
-        runAsyncAction(
-          this.updatePriority_abyssPrivate(task, priority),
-          'Could not complete UI action',
-        );
+        runAsyncAction(this.updatePriority_abyssPrivate(task, priority));
       },
       interactionOwnership: this.interactionOwnership_abyssPrivate,
     });
@@ -2718,21 +2696,10 @@ export class RightPanel {
       attr: { type: 'date', value: currentValue ?? '' },
     });
     input.addEventListener('change', () => {
-      if (field === 'due')
-        runAsyncAction(
-          this.updateDue_abyssPrivate(task, input.value),
-          'Could not complete UI action',
-        );
+      if (field === 'due') runAsyncAction(this.updateDue_abyssPrivate(task, input.value));
       else if (field === 'scheduled')
-        runAsyncAction(
-          this.updateScheduled_abyssPrivate(task, input.value),
-          'Could not complete UI action',
-        );
-      else
-        runAsyncAction(
-          this.updateStart_abyssPrivate(task, input.value),
-          'Could not complete UI action',
-        );
+        runAsyncAction(this.updateScheduled_abyssPrivate(task, input.value));
+      else runAsyncAction(this.updateStart_abyssPrivate(task, input.value));
       this.removeAnchoredSurface_abyssPrivate(pop);
     });
     this.el_abyssPrivate.ownerDocument.defaultView?.setTimeout(() => {
@@ -2748,11 +2715,9 @@ export class RightPanel {
       e.preventDefault();
     });
     clearBtn.addEventListener('click', () => {
-      if (field === 'due')
-        runAsyncAction(this.clearDate_abyssPrivate(task), 'Could not complete UI action');
-      else if (field === 'scheduled')
-        runAsyncAction(this.clearScheduled_abyssPrivate(task), 'Could not complete UI action');
-      else runAsyncAction(this.clearStart_abyssPrivate(task), 'Could not complete UI action');
+      if (field === 'due') runAsyncAction(this.clearDate_abyssPrivate(task));
+      else if (field === 'scheduled') runAsyncAction(this.clearScheduled_abyssPrivate(task));
+      else runAsyncAction(this.clearStart_abyssPrivate(task));
       this.removeAnchoredSurface_abyssPrivate(pop);
     });
     this.positionAnchoredSurface_abyssPrivate(pop, anchor, 'below-start');
@@ -2817,10 +2782,7 @@ export class RightPanel {
         anchor.className = `abyss-chip abyss-priority-chip abyss-priority-chip--${opt.value}${opt.value === 'D' ? ' abyss-chip-empty' : ''}`;
         this.removeAnchoredSurface_abyssPrivate(pop);
         anchor.focus({ preventScroll: true });
-        runAsyncAction(
-          this.updatePriority_abyssPrivate(task, opt.value),
-          'Could not complete UI action',
-        );
+        runAsyncAction(this.updatePriority_abyssPrivate(task, opt.value));
       });
     }
     this.positionAnchoredSurface_abyssPrivate(pop, anchor, 'below-start');
@@ -2937,7 +2899,7 @@ export class RightPanel {
       this.app_abyssPrivate,
       (tag) => this.getTagColor_abyssPrivate(tag),
       (tag) => {
-        runAsyncAction(this.addTag_abyssPrivate(task, tag), 'Could not complete UI action');
+        runAsyncAction(this.addTag_abyssPrivate(task, tag));
       },
       () => {
         this.removeAnchoredSurface_abyssPrivate(surface);
@@ -3329,7 +3291,6 @@ export class RightPanel {
         this.updateTime_abyssPrivate(task, input.value).then(() => {
           this.removeAnchoredSurface_abyssPrivate(pop);
         }),
-        'Could not complete UI action',
       );
     });
 
@@ -3346,7 +3307,6 @@ export class RightPanel {
         this.updateTime_abyssPrivate(task, '').then(() => {
           this.removeAnchoredSurface_abyssPrivate(pop);
         }),
-        'Could not complete UI action',
       );
     });
 
@@ -3377,7 +3337,6 @@ export class RightPanel {
         update.then(() => {
           this.removeAnchoredSurface_abyssPrivate(popover);
         }),
-        'Could not complete UI action',
       );
     });
     const clearButton = row.createEl('button', {
@@ -3393,7 +3352,6 @@ export class RightPanel {
         this.clearDuration_abyssPrivate(task).then(() => {
           this.removeAnchoredSurface_abyssPrivate(popover);
         }),
-        'Could not complete UI action',
       );
     });
   }
@@ -3444,7 +3402,7 @@ export class RightPanel {
       taskNodeRef(task).type === 'subtask' ? 'Delete sub-task' : 'Delete task',
       () => {
         this.removeAnchoredSurface_abyssPrivate(menu);
-        runAsyncAction(this.deleteTask_abyssPrivate(task), 'Could not complete UI action');
+        runAsyncAction(this.deleteTask_abyssPrivate(task));
       },
     );
 
@@ -3452,10 +3410,7 @@ export class RightPanel {
       this.removeAnchoredSurface_abyssPrivate(menu);
       const root = this.state_abyssPrivate.get('taskStack')[0];
       if (root != null && 'source' in root)
-        runAsyncAction(
-          openInFile(this.app_abyssPrivate, root, taskNodeLine(root, task)),
-          'Could not complete UI action',
-        );
+        runAsyncAction(openInFile(this.app_abyssPrivate, root, taskNodeLine(root, task)));
     });
 
     this.positionAnchoredSurface_abyssPrivate(menu, anchor, 'below-end');

@@ -52,7 +52,12 @@ import type {
   TaskSnapshot,
 } from '../../domain/types';
 import { sameTaskNodeRef } from '../../domain/types';
-import { localDate } from '../../domain/validation';
+import {
+  invalidTaskResult,
+  invalidTaskSyntax,
+  invalidTaskTarget,
+  localDate,
+} from '../../domain/validation';
 import {
   dependencySubtaskResolutionRequest,
   finishDependencySubtask,
@@ -98,10 +103,6 @@ function conflict(
   current: TaskSnapshot,
 ): Extract<TaskRepositoryResult, { readonly type: 'conflict' }> {
   return { type: 'conflict', current };
-}
-
-function invalidSyntax(): TaskRepositoryResult {
-  return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
 }
 
 function committedTask(
@@ -697,7 +698,7 @@ export class ObsidianTaskRepository implements TaskRepository {
           destination.insertion,
         );
         if (inserted == null) {
-          result = invalidSyntax();
+          result = invalidTaskSyntax();
           return content;
         }
         const task = this.snapshotFor_abyssPrivate(
@@ -706,7 +707,7 @@ export class ObsidianTaskRepository implements TaskRepository {
           inserted.block,
         );
         if (task == null) {
-          result = invalidSyntax();
+          result = invalidTaskSyntax();
           return content;
         }
         result = committedTask(task, true);
@@ -763,7 +764,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     const ref = 'baseRoot' in request ? request.baseRoot.ref : request;
     const destination = 'destination' in request ? request.destination : legacyDestination;
     if (destination == null) {
-      return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'destination' }] };
+      return invalidTaskTarget('destination');
     }
     const sourceFile = this.app_abyssPrivate.vault.getAbstractFileByPath(ref.filePath);
     if (!(sourceFile instanceof TFile)) {
@@ -926,7 +927,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       input.destination.insertion,
     );
     if (inserted == null) {
-      transaction.result = invalidSyntax();
+      transaction.result = invalidTaskSyntax();
       return content;
     }
     if (
@@ -941,7 +942,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     );
     if (copied == null) {
       this.abortMoveTransition_abyssPrivate(transaction);
-      transaction.result = invalidSyntax();
+      transaction.result = invalidTaskSyntax();
       return content;
     }
     transaction.result = {
@@ -1352,7 +1353,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       ...dependencyMetadataIssues(command),
       ...subtaskRestorationIssues(command),
     ];
-    if (metadataIssues.length > 0) return { type: 'invalid', issues: metadataIssues };
+    if (metadataIssues.length > 0) return invalidTaskResult(metadataIssues);
     const reorderIssue = this.reorderParentIssue_abyssPrivate(command);
     if (reorderIssue !== undefined) return reorderIssue;
     const rootRef = rootRefForCommand(command);
@@ -1398,7 +1399,7 @@ export class ObsidianTaskRepository implements TaskRepository {
 
   async editBatch(request: TaskEditBatchRequest): Promise<TaskRepositoryResult> {
     const issues = taskEditBatchIssues(request);
-    if (issues.length > 0) return { type: 'invalid', issues };
+    if (issues.length > 0) return invalidTaskResult(issues);
     return this.processEditTarget_abyssPrivate(
       request.outcomeTarget,
       (transaction, content) => this.editBatchContent_abyssPrivate(request, transaction, content),
@@ -1421,8 +1422,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     request: CreateDependencySubtaskRequest,
   ): Promise<TaskRepositoryResult> {
     const resolution = dependencySubtaskResolutionRequest(request);
-    if (resolution === undefined)
-      return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'subtask' }] };
+    if (resolution === undefined) return invalidTaskTarget('subtask');
     const rootRef = request.baseRoot.ref;
     const input = { prepared: resolution, command: resolution.command, rootRef };
     let prepared: PreparedDependencySubtask | undefined;
@@ -1541,7 +1541,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): TaskRepositoryResult | undefined {
     if (command.type !== 'reorder-subtask') return undefined;
     if (sameTaskNodeRef(command.subtask.parent, command.target.parent)) return undefined;
-    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'subtask-parent' }] };
+    return invalidTaskTarget('subtask-parent');
   }
 
   private editContent_abyssPrivate(
@@ -1711,7 +1711,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       replaced.block,
     );
     return task == null
-      ? { result: invalidSyntax(), content }
+      ? { result: invalidTaskSyntax(), content }
       : {
           result: committedTask(task, true),
           content: replaced.content,
@@ -1756,7 +1756,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   }
 
   private invalidateStagedEdit_abyssPrivate(transaction: EditTransaction): void {
-    transaction.result = invalidSyntax();
+    transaction.result = invalidTaskSyntax();
     transaction.committedContent = undefined;
   }
 
@@ -1960,7 +1960,7 @@ export class ObsidianTaskRepository implements TaskRepository {
 
   private invalidSubtask_abyssPrivate(content: string): EditOutcome {
     return {
-      result: { type: 'invalid', issues: [{ code: 'invalid-target', field: 'subtask' }] },
+      result: invalidTaskTarget('subtask'),
       content,
     };
   }
@@ -1976,7 +1976,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     }
     if (edited.type === 'invalid') {
       return {
-        result: { type: 'invalid', issues: [{ code: 'invalid-target', field: edited.field }] },
+        result: invalidTaskTarget(edited.field),
         content,
       };
     }
@@ -1993,7 +1993,7 @@ export class ObsidianTaskRepository implements TaskRepository {
           content: edited.content,
         }
       : {
-          result: invalidSyntax(),
+          result: invalidTaskSyntax(),
           content,
         };
   }
@@ -2124,7 +2124,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     if (target.type === 'conflict') return { result: conflict(current), content };
     if (target.type === 'invalid') {
       return {
-        result: { type: 'invalid', issues: [{ code: 'invalid-target', field: 'link' }] },
+        result: invalidTaskTarget('link'),
         content,
       };
     }
@@ -2168,7 +2168,7 @@ export class ObsidianTaskRepository implements TaskRepository {
           content: replaced.content,
         }
       : {
-          result: invalidSyntax(),
+          result: invalidTaskSyntax(),
           content,
         };
   }

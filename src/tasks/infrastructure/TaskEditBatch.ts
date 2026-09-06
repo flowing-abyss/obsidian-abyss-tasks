@@ -5,6 +5,7 @@ import {
   type TaskEditRequest,
   type TaskRepositoryResult,
 } from '../application/TaskRepository';
+import { taskNodeChain } from '../domain/taskCommandTargets';
 import type { ProvenRootRevisionOverride } from '../domain/taskReconciliation';
 import {
   sameTaskNodeRef,
@@ -13,6 +14,7 @@ import {
   type TaskSnapshot,
 } from '../domain/types';
 import type { TaskIssue } from '../domain/validation';
+import { invalidTaskSyntax, invalidTaskTarget } from '../domain/validation';
 import { applyTaskCommand } from './markdown/applyTaskCommand';
 import type { TaskBlockEditor, TaskRootBlock } from './markdown/TaskBlockEditor';
 import type { TaskMarkdownCodec } from './markdown/TaskMarkdownCodec';
@@ -103,12 +105,7 @@ export function taskEditBatchIssues(request: TaskEditBatchRequest): readonly Tas
 }
 
 function confirmedLine(target: TaskNodeRef, block: TaskRootBlock): number | undefined {
-  const chain = [];
-  let node = target;
-  while (node.type === 'subtask') {
-    chain.unshift(node.ref);
-    node = node.ref.parent;
-  }
+  const chain = taskNodeChain(target);
   const lines = block.source.split(/\r?\n/u);
   let line = 0;
   for (const child of chain) {
@@ -128,8 +125,7 @@ function resolveEdits(
 ): readonly ResolvedBatchEdit[] | TaskRepositoryResult {
   const resolved: ResolvedBatchEdit[] = [];
   for (const edit of request.edits) {
-    if (!metadataCommand(edit.command))
-      return { type: 'invalid', issues: invalid('batch-command') };
+    if (!metadataCommand(edit.command)) return invalidTaskTarget('batch-command');
     const location = options.resolve(edit);
     if (location.type === 'result') return location.result;
     const relativeLine = confirmedLine(edit.command.target, location.block);
@@ -153,13 +149,13 @@ export function prepareTaskEditBatch(
       ref: edit.request.baseRoot.ref,
     }),
   );
-  if (outcome === undefined) return { type: 'invalid', issues: invalid('batch-outcome') };
+  if (outcome === undefined) return invalidTaskTarget('batch-outcome');
   if (confirmedLine(request.outcomeTarget, outcome.block) === undefined)
     return { type: 'conflict', current: outcome.request.baseRoot };
   let candidate = content;
   for (const edit of resolved) {
     const source = candidate.split(/\r?\n/u)[edit.block.line + edit.relativeLine];
-    if (source === undefined) return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+    if (source === undefined) return invalidTaskSyntax();
     const changed = applyTaskCommand(options.codec, source, edit.command);
     if (changed.type === 'invalid') return changed;
     if (changed.type === 'changed')
@@ -192,14 +188,14 @@ function preparedCandidate(
   const roots = new Map<number, BatchRoot>();
   for (const edit of edits) {
     const block = finalBlocks.get(edit.block.line);
-    if (block === undefined) return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+    if (block === undefined) return invalidTaskSyntax();
     roots.set(block.line, { before: edit.request.baseRoot, block });
   }
   const outcomeRoot = options
     .snapshotsFromContent(path, content)
     .find((root) => root.source.line === outcome.block.line);
   return outcomeRoot === undefined
-    ? { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] }
+    ? invalidTaskSyntax()
     : {
         type: 'prepared',
         content,

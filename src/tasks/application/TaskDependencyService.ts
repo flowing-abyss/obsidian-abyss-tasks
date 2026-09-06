@@ -9,7 +9,7 @@ import type {
   TaskOccurrenceResult,
 } from '../domain/commands';
 import { dependencySubtaskChild } from '../domain/dependencySubtaskProof';
-import { taskNodeRootRef as rootRef } from '../domain/taskCommandTargets';
+import { taskNodeRootRef as rootRef, taskNodeChain } from '../domain/taskCommandTargets';
 import {
   buildTaskDependencyGraph,
   enumerateTaskNodes,
@@ -32,6 +32,7 @@ import {
   type TaskRef,
   type TaskSnapshot,
 } from '../domain/types';
+import { invalidTaskTarget } from '../domain/validation';
 import type { TaskDependencyQueryApi, TaskQueryApi } from './TaskApplicationApi';
 import type {
   CreateDependencySubtaskRequest,
@@ -146,13 +147,7 @@ function rootAddress(ref: Pick<TaskRef, 'filePath' | 'line'>): string {
 }
 
 function pathLines(target: TaskNodeRef): readonly number[] {
-  const lines: number[] = [];
-  let current = target;
-  while (current.type === 'subtask') {
-    lines.unshift(current.ref.relativeLine);
-    current = current.ref.parent;
-  }
-  return lines;
+  return taskNodeChain(target).map((ref) => ref.relativeLine);
 }
 
 function atAddress(root: TaskSnapshot, target: TaskNodeRef): TaskNodeSnapshot | undefined {
@@ -179,10 +174,6 @@ function taskLine(node: TaskSnapshot | SubtaskSnapshot): string {
   return 'source' in node
     ? node.source.originalMarkdown
     : (node.ref.originalBlock.split(/\r?\n/u, 1)[0] ?? '');
-}
-
-function invalid(field = 'dependency'): TaskCommandResult {
-  return { type: 'invalid', issues: [{ code: 'invalid-target', field }] };
 }
 
 function ioError(): TaskCommandResult {
@@ -225,12 +216,12 @@ function occurrence(node: TaskNodeSnapshot): TaskOccurrenceResult {
 function declaredIdsInputIssue(command: ChangeCommand): TaskCommandResult | undefined {
   const id =
     command.type === 'remove-dependency' ? command.dependencyId : command.recovery.dependencyId;
-  if (!isTaskDependencyId(id)) return invalid('dependency-id');
+  if (!isTaskDependencyId(id)) return invalidTaskTarget('dependency-id');
   if (
     command.type === 'restore-dependency' &&
     ![...command.recovery.beforeIds, ...command.recovery.afterIds].every(isTaskDependencyId)
   )
-    return invalid('depends-on');
+    return invalidTaskTarget('depends-on');
   return undefined;
 }
 
@@ -347,9 +338,15 @@ function graph(
   context: DependencyContext,
   overlays: ReadonlyArray<{ root: TaskSnapshot; predecessor: TaskRef }> = [],
 ): TaskDependencyGraph {
-  const nodes = dependencyNodes(context, overlays);
+  return graphForNodes(dependencyNodes(context, overlays));
+}
+
+function graphForNodes(
+  nodes: readonly TaskNodeSnapshot[],
+  without?: Parameters<typeof buildTaskDependencyGraph>[2],
+): TaskDependencyGraph {
   const statuses = new Map(nodes.map(({ node }) => [node.statusSymbol, node.status]));
-  return buildTaskDependencyGraph(nodes, (symbol) => statuses.get(symbol) ?? 'open');
+  return buildTaskDependencyGraph(nodes, (symbol) => statuses.get(symbol) ?? 'open', without);
 }
 
 function resolve(
@@ -409,7 +406,7 @@ function eligibilityFailure(
         .filter(({ node }) => node.dependencyId === blocker.node.dependencyId)
         .map(occurrence),
     };
-  return invalid();
+  return invalidTaskTarget('dependency');
 }
 
 function allocateId(
@@ -469,7 +466,7 @@ function creationId(
       return { result: { type: 'ambiguous', candidates: candidates.map(occurrence) } };
   }
   const id = existing ?? allocateId(context, nodes);
-  return id === undefined ? { result: invalid('dependency-id') } : { id };
+  return id === undefined ? { result: invalidTaskTarget('dependency-id') } : { id };
 }
 
 function createdSubtaskResult(
@@ -556,7 +553,7 @@ async function add(
   if (eligibility.type === 'rejected')
     return eligibilityFailure(context, eligibility, blocker.node);
   const id = blocker.node.node.dependencyId ?? allocateId(context);
-  if (id === undefined) return invalid('dependency-id');
+  if (id === undefined) return invalidTaskTarget('dependency-id');
   const pair = { blocker: blocker.node, dependent: dependent.node, id };
   if (pair.blocker.root.ref.filePath !== pair.dependent.root.ref.filePath)
     return await addAcrossFiles(context, command, pair, rebases);
@@ -573,7 +570,8 @@ async function reverse(
   const prepared = prepareReversal(context, command);
   if ('result' in prepared) return prepared.result;
   const { blocker: original, dependent: next, id } = prepared.pair;
-  if (context.repository.reverseDependency === undefined) return invalid('dependency-write');
+  if (context.repository.reverseDependency === undefined)
+    return invalidTaskTarget('dependency-write');
   const edits = [
     request(next, { type: 'set-dependency-id', target: next.target, id }),
     request(next, {
@@ -613,7 +611,8 @@ function prepareReversal(
   context: DependencyContext,
   command: ReverseDependencyCommand,
 ): { readonly pair: DependencyPair } | { readonly result: TaskCommandResult } {
-  if (!isTaskDependencyId(command.dependencyId)) return { result: invalid('dependency-id') };
+  if (!isTaskDependencyId(command.dependencyId))
+    return { result: invalidTaskTarget('dependency-id') };
   const blocker = resolve(context, command.blocker);
   if ('result' in blocker) return blocker;
   const dependent = resolve(context, command.dependent);
@@ -625,7 +624,7 @@ function prepareReversal(
     original.node.dependencyId !== command.dependencyId ||
     !next.node.dependsOn.includes(command.dependencyId)
   )
-    return { result: invalid() };
+    return { result: invalidTaskTarget('dependency') };
   if (nodes.filter(({ node }) => node.dependencyId === command.dependencyId).length !== 1)
     return {
       result: {
@@ -635,7 +634,7 @@ function prepareReversal(
           .map(occurrence),
       },
     };
-  const eligibility = buildTaskDependencyGraph(nodes, () => 'open', {
+  const eligibility = graphForNodes(nodes, {
     blocker: original.target,
     dependent: next.target,
   }).eligibility(next.target, original.target);
@@ -643,7 +642,7 @@ function prepareReversal(
     return { result: eligibilityFailure(context, eligibility, next) };
   const id = next.node.dependencyId ?? allocateId(context, nodes);
   return id === undefined
-    ? { result: invalid('dependency-id') }
+    ? { result: invalidTaskTarget('dependency-id') }
     : { pair: { blocker: original, dependent: next, id } };
 }
 

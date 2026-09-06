@@ -1,6 +1,7 @@
 import type { TaskDraft } from '../../application/TaskRepository';
 import type { LocalDate, TaskRef } from '../../domain/types';
 import type { TaskIssue } from '../../domain/validation';
+import { invalidTaskResult, invalidTaskSyntax } from '../../domain/validation';
 import { applyTaskCommand } from './applyTaskCommand';
 import { creationLineIssues, stampCreatedDate } from './createTaskLine';
 import { TaskBlockEditor } from './TaskBlockEditor';
@@ -8,13 +9,6 @@ import { type TaskMarkdownCodec } from './TaskMarkdownCodec';
 
 const DRAFT_REF: TaskRef = { filePath: '', line: 0, revision: '' };
 const editor = new TaskBlockEditor();
-
-function invalid(issues: readonly TaskIssue[]): {
-  readonly type: 'invalid';
-  readonly issues: readonly TaskIssue[];
-} {
-  return { type: 'invalid' as const, issues };
-}
 
 type CreateTaskBlockResult =
   | { readonly type: 'created'; readonly content: string }
@@ -26,11 +20,11 @@ type DraftContentResult =
 
 function draftContent(markdownBody: string): DraftContentResult {
   if (markdownBody.replace(/\r\n/gu, '').includes('\r')) {
-    return invalid([{ code: 'invalid-title', field: 'title' }]);
+    return invalidTaskResult([{ code: 'invalid-title', field: 'title' }]);
   }
   const [owner, ...nested] = markdownBody.replace(/\r\n/gu, '\n').split('\n');
   if (owner === undefined || owner.trim().length === 0) {
-    return invalid([{ code: 'invalid-title', field: 'title' }]);
+    return invalidTaskResult([{ code: 'invalid-title', field: 'title' }]);
   }
   return { type: 'content', content: [`- [ ] ${owner}`, ...nested].join('\n') };
 }
@@ -54,7 +48,7 @@ function validateSourceLines(
     const parsed = codec.parseLine(sourceLine, { filePath: '', line: 0 });
     if (parsed == null) continue;
     const issues = creationLineIssues(codec, parsed);
-    if (issues.length > 0) return invalid(issues);
+    if (issues.length > 0) return invalidTaskResult(issues);
   }
   return undefined;
 }
@@ -66,7 +60,7 @@ function applyInitialPatch(
 ): CreateTaskBlockResult | undefined {
   if (initial === undefined || Object.keys(initial).length === 0) return undefined;
   const ownerLine = sourceLines[0];
-  if (ownerLine === undefined) return invalid([{ code: 'invalid-task-syntax' }]);
+  if (ownerLine === undefined) return invalidTaskSyntax();
   const result = applyTaskCommand(codec, ownerLine, {
     type: 'patch',
     target: { type: 'task', ref: DRAFT_REF },
@@ -97,7 +91,7 @@ export function createTaskBlock(
 ): CreateTaskBlockResult {
   const content = draftContent(draft.markdownBody);
   if (content.type === 'invalid') return content;
-  if (!validRootBlock(content.content)) return invalid([{ code: 'invalid-task-syntax' }]);
+  if (!validRootBlock(content.content)) return invalidTaskSyntax();
   const sourceLines = content.content.split('\n');
   const validation = validateSourceLines(codec, sourceLines);
   if (validation !== undefined) return validation;

@@ -1,7 +1,13 @@
 import type { TaskEditCommand } from '../../application/TaskRepository';
 import type { FieldUpdate, TaskPatch } from '../../domain/commands';
 import { shiftLocalDate } from '../../domain/localDateMath';
-import { isSingleLineText, localDate, type TaskValidationField } from '../../domain/validation';
+import {
+  invalidTaskSyntax,
+  invalidTaskTarget,
+  isSingleLineText,
+  localDate,
+  type TaskValidationField,
+} from '../../domain/validation';
 import {
   type LineEdit,
   type LineEditResult,
@@ -150,7 +156,7 @@ function shiftScheduleEditPlan(
   allowZero = false,
 ): SchedulingEditPlan | LineEditResult {
   if (!Number.isSafeInteger(days) || (!allowZero && days === 0)) {
-    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'days' }] };
+    return invalidTaskTarget('days');
   }
   const { start, due } = parsed.planning;
   if (start != null && start.length > 0 && due != null && due.length > 0)
@@ -192,7 +198,7 @@ function shiftedAnchorPlan(
       : 'due';
   const value = parsed.planning[field];
   if (value === undefined || value.length === 0) {
-    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'schedule' }] };
+    return invalidTaskTarget('schedule');
   }
   const date = parsedLocalDate(value);
   if (date == null) return invalidScheduleDate();
@@ -210,8 +216,7 @@ function patchPlan(parsed: ParsedTaskLine, command: TaskEditCommand): CommandPla
   if (command.type !== 'patch') return undefined;
   if (patchHasInvertedSpan(command.patch))
     return { type: 'invalid', issues: [{ code: 'inverted-span', field: 'start,due' }] };
-  if (subtaskPatchHasDuration(command))
-    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'duration' }] };
+  if (subtaskPatchHasDuration(command)) return invalidTaskTarget('duration');
   return { edits: orderedPatchEdits(parsed, command.patch), requestedFields: [] };
 }
 
@@ -231,8 +236,7 @@ function basicPlan(command: TaskEditCommand): CommandPlan | undefined {
   if (command.type === 'append-title')
     return { edits: [{ type: 'append-title', markdown: command.markdown }], requestedFields: [] };
   if (command.type === 'edit-link') {
-    if (command.target.type !== 'title')
-      return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'link' }] };
+    if (command.target.type !== 'title') return invalidTaskTarget('link');
     return {
       edits: [
         { type: 'edit-link', occurrence: command.occurrence, replacement: command.replacement },
@@ -285,14 +289,14 @@ function restoreDependencySource(
     before?.dependsOn.length !== ids.length ||
     !before.dependsOn.every((id, index) => id === ids[index])
   )
-    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'depends-on' }] };
+    return invalidTaskTarget('depends-on');
   const removed = codec.applyLineEdit(source, {
     type: 'set-depends-on',
     values: current.dependsOn,
   });
   // Replaying the original metadata edit must account for every restored byte.
   if (removed.type === 'invalid' || removed.content !== current.original)
-    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'depends-on' }] };
+    return invalidTaskTarget('depends-on');
   return { type: source === current.original ? 'unchanged' : 'changed', content: source };
 }
 
@@ -371,8 +375,7 @@ function spanPlan(parsed: ParsedTaskLine, command: TaskEditCommand): CommandPlan
     };
   if (command.type !== 'extend-span') return undefined;
   const anchor = parsed.planning.start ?? parsed.planning.scheduled ?? parsed.planning.due;
-  if (anchor == null || anchor.length === 0)
-    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'span-anchor' }] };
+  if (anchor == null || anchor.length === 0) return invalidTaskTarget('span-anchor');
   return {
     requestedFields: ['start', 'due'],
     edits: [
@@ -390,10 +393,8 @@ function commandPlan(parsed: ParsedTaskLine, command: TaskEditCommand): CommandP
     dependencyPlan(command) ??
     basicPlan(command) ??
     schedulingPlan(parsed, command) ??
-    spanPlan(parsed, command) ?? {
-      type: 'invalid',
-      issues: [{ code: 'invalid-target', field: 'block' }],
-    }
+    spanPlan(parsed, command) ??
+    invalidTaskTarget('block')
   );
 }
 
@@ -404,7 +405,7 @@ export function applyTaskCommand(
   command: TaskEditCommand,
 ): LineEditResult {
   const parsed = codec.parseLine(sourceLine, { filePath: '', line: 0 });
-  if (parsed == null) return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+  if (parsed == null) return invalidTaskSyntax();
   if (command.type === 'set-depends-on' && command.restoreSource !== undefined)
     return restoreDependencySource(codec, parsed, command.restoreSource, command.ids);
   const plan = commandPlan(parsed, command);

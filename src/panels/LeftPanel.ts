@@ -271,7 +271,7 @@ export class LeftPanel {
 
     header.addEventListener('click', () => {
       this.settings_abyssPrivate.sectionCollapse[key] = !collapsed;
-      runAsyncAction(this.onSaveSettings_abyssPrivate(), 'Could not complete UI action');
+      runAsyncAction(this.onSaveSettings_abyssPrivate());
       this.render_abyssPrivate();
     });
 
@@ -354,7 +354,7 @@ export class LeftPanel {
     // Ensure the section is expanded so the input is visible.
     if (this.settings_abyssPrivate.sectionCollapse[key]) {
       this.settings_abyssPrivate.sectionCollapse[key] = false;
-      runAsyncAction(this.onSaveSettings_abyssPrivate(), 'Could not complete UI action');
+      runAsyncAction(this.onSaveSettings_abyssPrivate());
       this.render_abyssPrivate();
     }
     const section = this.el_abyssPrivate.querySelector(`.abyss-left-section--${key}`);
@@ -384,7 +384,6 @@ export class LeftPanel {
           onCommit(value).then(() => {
             this.render_abyssPrivate();
           }),
-          'Could not complete UI action',
         );
       else this.render_abyssPrivate();
     };
@@ -450,17 +449,13 @@ export class LeftPanel {
         this.projectStore_abyssPrivate?.refresh();
         this.render_abyssPrivate();
       }),
-      'Could not complete UI action',
     );
   }
 
   private openProjectNote_abyssPrivate(path: string): void {
     const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
     if (file instanceof TFile)
-      runAsyncAction(
-        this.app_abyssPrivate.workspace.getLeaf(false).openFile(file),
-        'Could not complete UI action',
-      );
+      runAsyncAction(this.app_abyssPrivate.workspace.getLeaf(false).openFile(file));
   }
 
   private renderPinnedTag_abyssPrivate(
@@ -915,7 +910,6 @@ export class LeftPanel {
         op().then(() => {
           this.render_abyssPrivate();
         }),
-        'Could not complete UI action',
       );
     };
   }
@@ -951,10 +945,7 @@ export class LeftPanel {
       if (draggedId === undefined || draggedId === '' || draggedId === groupId) return;
       e.preventDefault();
       e.stopPropagation();
-      runAsyncAction(
-        this.reorderTagGroups_abyssPrivate(draggedId, groupId),
-        'Could not complete UI action',
-      );
+      runAsyncAction(this.reorderTagGroups_abyssPrivate(draggedId, groupId));
     });
   }
 
@@ -1017,7 +1008,6 @@ export class LeftPanel {
           task.ref,
           projectPath,
         ),
-        'Could not complete UI action',
       );
     });
   }
@@ -1051,10 +1041,7 @@ export class LeftPanel {
       const dragging = this.draggedCenterRoot_abyssPrivate();
       if (dragging == null) return;
       e.preventDefault();
-      runAsyncAction(
-        this.assignTagFromInbox_abyssPrivate(dragging, tag),
-        'Could not complete UI action',
-      );
+      runAsyncAction(this.assignTagFromInbox_abyssPrivate(dragging, tag));
     });
   }
 
