@@ -2,6 +2,8 @@ import { TFile, type App } from 'obsidian';
 import { parseLinks } from '../../../markdown/links';
 import {
   dependencyMetadataIssues,
+  taskEditMutationTarget as mutationTarget,
+  taskEditRootRef as rootRefForCommand,
   subtaskRestorationGapIsCurrent,
   subtaskRestorationIssues,
   type CreateDependencySubtaskRequest,
@@ -31,13 +33,17 @@ import {
   prepareRecurrenceIteration,
   recurrenceMarkerCountInOwnedSubtree,
 } from '../../domain/recurrenceIteration';
+import {
+  taskNodeChain as childChain,
+  taskNodeAtSourcePath as nodeSnapshot,
+  taskNodeRootRef as rootRefOf,
+} from '../../domain/taskCommandTargets';
 import type {
   CommentRef,
   LocalDate,
   SubtaskRef,
   SubtaskSnapshot,
   TaskDestination,
-  TaskMutationTarget,
   TaskNodeRef,
   TaskRef,
   TaskSnapshot,
@@ -111,61 +117,12 @@ type StructuralTaskEditCommand = Extract<
   }
 >;
 
-function rootRefOf(target: PlanningTarget): TaskRef {
-  let node: TaskNodeRef = target;
-  while (node.type === 'subtask') node = node.ref.parent;
-  return node.ref;
-}
-
-function directNodeTargetOf(command: TaskEditCommand): PlanningTarget | undefined {
-  if (command.type === 'patch') return command.target;
-  if (command.type === 'set-status') return command.target;
-  if (command.type === 'append-title') return command.target;
-  if (command.type === 'set-description') return command.target;
-  if (command.type === 'set-dependency-id' || command.type === 'set-depends-on') {
-    return command.target;
-  }
-  return undefined;
-}
-
-function relatedNodeTargetOf(command: TaskEditCommand): PlanningTarget | undefined {
-  if (
-    command.type === 'add-subtask' ||
-    command.type === 'restore-subtask' ||
-    command.type === 'add-comment'
-  )
-    return command.parent;
-  if (command.type === 'delete-subtask' || command.type === 'reorder-subtask') {
-    return command.subtask.parent;
-  }
-  if (command.type === 'update-comment' || command.type === 'delete-comment') {
-    return command.comment.parent;
-  }
-  return undefined;
-}
-
 function nodeTargetOf(command: TaskEditCommand): PlanningTarget | undefined {
-  if (command.type === 'edit-link') {
-    return command.target.type === 'comment' ? command.target.ref.parent : command.target.target;
-  }
-  return directNodeTargetOf(command) ?? relatedNodeTargetOf(command);
-}
-
-function rootRefForCommand(command: TaskEditCommand): TaskRef {
-  const target = nodeTargetOf(command);
-  if (target != null) return rootRefOf(target);
-  if ('ref' in command) return command.ref;
-  throw new Error('Task edit command has no root reference');
-}
-
-function childChain(target: PlanningTarget): readonly SubtaskRef[] {
-  const chain: SubtaskRef[] = [];
-  let node: TaskNodeRef = target;
-  while (node.type === 'subtask') {
-    chain.unshift(node.ref);
-    node = node.ref.parent;
-  }
-  return chain;
+  if ('ref' in command) return undefined;
+  if (command.type === 'delete-subtask' || command.type === 'reorder-subtask')
+    return command.subtask.parent;
+  const target = mutationTarget(command);
+  return target.type === 'comment' ? target.ref.parent : target;
 }
 
 function legacyLine(line: string): string {
@@ -235,50 +192,6 @@ function rebaseSnapshot(task: TaskSnapshot, root: TaskRef): TaskSnapshot {
     source: { ...task.source, filePath: root.filePath, line: root.line },
     presentation: { ...task.presentation },
   };
-}
-
-function structuralMutationTarget(command: TaskEditCommand): TaskMutationTarget | undefined {
-  if (
-    command.type === 'add-subtask' ||
-    command.type === 'restore-subtask' ||
-    command.type === 'add-comment'
-  )
-    return command.parent;
-  if (command.type === 'delete-subtask' || command.type === 'reorder-subtask') {
-    return { type: 'subtask', ref: command.subtask };
-  }
-  if (command.type === 'update-comment' || command.type === 'delete-comment') {
-    return { type: 'comment', ref: command.comment };
-  }
-  return undefined;
-}
-
-function mutationTarget(command: TaskEditCommand): TaskMutationTarget {
-  if (command.type === 'edit-link') {
-    return command.target.type === 'comment' ? command.target : command.target.target;
-  }
-  const node = directNodeTargetOf(command);
-  if (node !== undefined) return node;
-  const structural = structuralMutationTarget(command);
-  return structural ?? { type: 'task', ref: rootRefForCommand(command) };
-}
-
-function nodeSnapshot(
-  root: TaskSnapshot,
-  target: PlanningTarget,
-): TaskSnapshot | SubtaskSnapshot | undefined {
-  if (target.type === 'task') return root;
-  let current: TaskSnapshot | SubtaskSnapshot = root;
-  for (const child of childChain(target)) {
-    const next: SubtaskSnapshot | undefined = current.subtasks.find(
-      (candidate) =>
-        candidate.ref.relativeLine === child.relativeLine &&
-        candidate.ref.originalBlock === child.originalBlock,
-    );
-    if (next == null) return undefined;
-    current = next;
-  }
-  return current;
 }
 
 function optionalNodeSnapshot(

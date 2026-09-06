@@ -11,6 +11,7 @@ export type {
 } from './application/TaskApplicationApi';
 export { cloneTaskSnapshot } from './domain/cloneTaskSnapshot';
 export type {
+  CreateDependencySubtaskCommand,
   MoveRecovery,
   PlanningTarget,
   SubtaskPatch,
@@ -24,6 +25,7 @@ export {
   type CommentTimeContext,
   type CommentTimeContextProvider,
 } from './domain/commentTimeLabel';
+export { dependencySubtaskChild } from './domain/dependencySubtaskProof';
 export { daysBetweenLocalDates, shiftLocalDate } from './domain/localDateMath';
 export {
   expandRecurrenceReferences,
@@ -31,6 +33,7 @@ export {
   type RecurrenceParseResult,
   type RecurrencePolicy,
 } from './domain/recurrence';
+export { taskCommandRootRef } from './domain/taskCommandTargets';
 export type {
   DependencyDirection,
   TaskDependencyEligibility,
@@ -43,6 +46,7 @@ export {
   taskReconciliationKey,
   type TaskResolution,
 } from './domain/taskReconciliation';
+export { sameTaskTreeWithOwnedChanges } from './domain/taskTreeChangeProof';
 export { sameTaskNodeRef } from './domain/types';
 export type {
   CommentRef,

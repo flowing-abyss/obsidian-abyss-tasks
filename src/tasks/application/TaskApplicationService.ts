@@ -10,10 +10,17 @@ import { formatNewCommentTimestamp } from '../domain/commentTimestamp';
 import { shiftLocalDate } from '../domain/localDateMath';
 import { parseRecurrenceRule } from '../domain/recurrence';
 import { type StatusCatalog } from '../domain/StatusCatalog';
+import {
+  taskCommandMutationTarget as mutationTargetForCommand,
+  rebaseTaskCommand as rebaseCommandRoot,
+  rebaseTaskNode as rebaseStatusTarget,
+  taskCommandRootRef as rootRefForCommand,
+  taskNodeRootRef as rootRefOf,
+  taskNodeAtSourcePath as snapshotForTarget,
+} from '../domain/taskCommandTargets';
 import { reconcileTaskNodeRef, type TaskResolution } from '../domain/taskReconciliation';
 import type {
   LocalDate,
-  SubtaskRef,
   SubtaskSnapshot,
   TaskDestination,
   TaskMutationTarget,
@@ -86,52 +93,6 @@ function normalizeTagChange(tags: NonNullable<TaskPatch['tags']>): TaskPatch['ta
   };
 }
 
-function rootRefOf(target: TaskStatusTarget): TaskRef {
-  let node: TaskNodeRef = target;
-  while (node.type === 'subtask') node = node.ref.parent;
-  return node.ref;
-}
-
-function childChain(target: TaskStatusTarget): readonly SubtaskRef[] {
-  const chain: SubtaskRef[] = [];
-  let node: TaskNodeRef = target;
-  while (node.type === 'subtask') {
-    chain.push(node.ref);
-    node = node.ref.parent;
-  }
-  chain.reverse();
-  return chain;
-}
-
-function rebaseStatusTarget(target: TaskStatusTarget, root: TaskRef): TaskStatusTarget {
-  if (target.type === 'task') return { type: 'task', ref: root };
-  return {
-    type: 'subtask',
-    ref: {
-      ...target.ref,
-      parent: rebaseStatusTarget(target.ref.parent, root),
-    },
-  };
-}
-
-function snapshotForTarget(
-  root: TaskSnapshot,
-  target: TaskStatusTarget,
-): TaskSnapshot | SubtaskSnapshot | undefined {
-  if (target.type === 'task') return root;
-  let current: TaskSnapshot | SubtaskSnapshot = root;
-  for (const ref of childChain(target)) {
-    const next: SubtaskSnapshot | undefined = current.subtasks.find(
-      (candidate) =>
-        candidate.ref.relativeLine === ref.relativeLine &&
-        candidate.ref.originalBlock === ref.originalBlock,
-    );
-    if (next == null) return undefined;
-    current = next;
-  }
-  return current;
-}
-
 function resolvedStatusSelection(
   resolution: Extract<TaskResolution, { readonly type: 'exact' | 'rebased' }>,
   target: TaskStatusTarget,
@@ -178,7 +139,10 @@ const DEFAULT_BEHAVIOR_SETTINGS: TaskBehaviorSettings = {
 };
 type DependencyCommand = Extract<
   TaskCommand,
-  { readonly type: 'add-dependency' | 'remove-dependency' | 'restore-dependency' }
+  {
+    readonly type:
+      'add-dependency' | 'remove-dependency' | 'restore-dependency' | 'create-dependency-subtask';
+  }
 >;
 type ExistingTaskCommand = Exclude<TaskCommand, DependencyCommand | { readonly type: 'create' }>;
 type EditableTaskCommand = Exclude<ExistingTaskCommand, { readonly type: 'move' }>;
@@ -197,41 +161,8 @@ type MoveScheduleCommand = Extract<
   TaskCommand,
   { readonly type: 'move-time-slot' | 'move-to-all-day' }
 >;
-type DirectTargetCommand = Extract<
-  TaskCommand,
-  {
-    readonly type:
-      'patch' | 'append-title' | 'set-status' | 'toggle-completion' | 'set-description';
-  }
->;
-type ParentTargetCommand = Extract<
-  TaskCommand,
-  { readonly type: 'add-subtask' | 'restore-subtask' | 'add-comment' }
->;
-type SubtaskReferenceCommand = Extract<
-  TaskCommand,
-  { readonly type: 'delete-subtask' | 'reorder-subtask' }
->;
-type CommentReferenceCommand = Extract<
-  TaskCommand,
-  { readonly type: 'update-comment' | 'delete-comment' }
->;
 type StatusCommand = Extract<TaskCommand, { readonly type: 'set-status' | 'toggle-completion' }>;
 
-const DIRECT_TARGET_TYPES = new Set<TaskCommand['type']>([
-  'patch',
-  'append-title',
-  'set-status',
-  'toggle-completion',
-  'set-description',
-]);
-const PARENT_TARGET_TYPES = new Set<TaskCommand['type']>([
-  'add-subtask',
-  'restore-subtask',
-  'add-comment',
-]);
-const SUBTASK_REFERENCE_TYPES = new Set<TaskCommand['type']>(['delete-subtask', 'reorder-subtask']);
-const COMMENT_REFERENCE_TYPES = new Set<TaskCommand['type']>(['update-comment', 'delete-comment']);
 const COMMUTATIVE_COMMAND_TYPES = new Set<TaskEditCommand['type']>(['add-comment', 'add-subtask']);
 const FIELD_COMPARE_COMMAND_TYPES = new Set<TaskEditCommand['type']>([
   'patch',
@@ -245,22 +176,6 @@ const FIELD_COMPARE_COMMAND_TYPES = new Set<TaskEditCommand['type']>([
   'set-span-boundary',
   'extend-span',
 ]);
-
-function isDirectTargetCommand(command: TaskCommand): command is DirectTargetCommand {
-  return DIRECT_TARGET_TYPES.has(command.type);
-}
-
-function isParentTargetCommand(command: TaskCommand): command is ParentTargetCommand {
-  return PARENT_TARGET_TYPES.has(command.type);
-}
-
-function isSubtaskReferenceCommand(command: TaskCommand): command is SubtaskReferenceCommand {
-  return SUBTASK_REFERENCE_TYPES.has(command.type);
-}
-
-function isCommentReferenceCommand(command: TaskCommand): command is CommentReferenceCommand {
-  return COMMENT_REFERENCE_TYPES.has(command.type);
-}
 
 function isStatusCommand(command: TaskCommand): command is StatusCommand {
   return command.type === 'set-status' || command.type === 'toggle-completion';
@@ -370,77 +285,6 @@ function prepareBlockCommand(
   if (command.text === null) return { command };
   const text = command.text.replace(/\r\n/gu, '\n');
   return { command: { ...command, text: text.trim().length > 0 ? text : null } };
-}
-
-function rootRefForCommand(command: ExistingTaskCommand): TaskRef {
-  if (isDirectTargetCommand(command)) return rootRefOf(command.target);
-  if (isParentTargetCommand(command)) return rootRefOf(command.parent);
-  if (isSubtaskReferenceCommand(command)) return rootRefOf(command.subtask.parent);
-  if (isCommentReferenceCommand(command)) return rootRefOf(command.comment.parent);
-  if (command.type === 'edit-link') {
-    return rootRefOf(
-      command.target.type === 'comment' ? command.target.ref.parent : command.target.target,
-    );
-  }
-  return command.ref;
-}
-
-function mutationTargetForCommand(command: EditableTaskCommand): TaskMutationTarget {
-  if (isDirectTargetCommand(command)) return command.target;
-  if (isParentTargetCommand(command)) return command.parent;
-  if (isSubtaskReferenceCommand(command)) return { type: 'subtask', ref: command.subtask };
-  if (isCommentReferenceCommand(command)) return { type: 'comment', ref: command.comment };
-  if (command.type === 'edit-link') {
-    return command.target.type === 'comment' ? command.target : command.target.target;
-  }
-  return { type: 'task', ref: command.ref };
-}
-
-function rebaseCommandRoot<T extends EditableTaskCommand>(command: T, root: TaskRef): T {
-  let rebased: EditableTaskCommand;
-  if (isDirectTargetCommand(command)) {
-    rebased = {
-      ...command,
-      target: rebaseStatusTarget(command.target, root),
-    } as DirectTargetCommand;
-  } else if (isParentTargetCommand(command)) {
-    rebased = { ...command, parent: rebaseStatusTarget(command.parent, root) };
-  } else if (isSubtaskReferenceCommand(command)) {
-    const subtask = {
-      ...command.subtask,
-      parent: rebaseStatusTarget(command.subtask.parent, root),
-    };
-    rebased =
-      command.type === 'reorder-subtask'
-        ? {
-            ...command,
-            subtask,
-            target: { ...command.target, parent: rebaseStatusTarget(command.target.parent, root) },
-          }
-        : { ...command, subtask };
-  } else if (isCommentReferenceCommand(command)) {
-    rebased = {
-      ...command,
-      comment: { ...command.comment, parent: rebaseStatusTarget(command.comment.parent, root) },
-    };
-  } else if (command.type === 'edit-link') {
-    rebased = { ...command, target: rebaseLinkTarget(command.target, root) };
-  } else {
-    rebased = { ...command, ref: root };
-  }
-  return rebased as unknown as T;
-}
-
-function rebaseLinkTarget(
-  target: Extract<TaskCommand, { readonly type: 'edit-link' }>['target'],
-  root: TaskRef,
-): Extract<TaskCommand, { readonly type: 'edit-link' }>['target'] {
-  return target.type === 'comment'
-    ? {
-        type: 'comment',
-        ref: { ...target.ref, parent: rebaseStatusTarget(target.ref.parent, root) },
-      }
-    : { ...target, target: rebaseStatusTarget(target.target, root) };
 }
 
 function retryPolicy(command: TaskEditCommand): RetryPolicy {
@@ -600,9 +444,24 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
     const reading = captureClock(this.clock_abyssPrivate);
     if (command.type === 'add-comment' && !('atom' in reading)) return invalidTarget('comment');
+    if (command.type === 'create-dependency-subtask')
+      return this.createDependencySubtask_abyssPrivate(command, {
+        today: reading.localDate,
+        addCreatedDate: settings.taskLifecycle.addCreatedDate,
+      });
     if (command.type === 'create')
       return await this.create_abyssPrivate(command, settings, reading);
     return await this.executeExistingCommand_abyssPrivate(command, settings, reading);
+  }
+
+  private async createDependencySubtask_abyssPrivate(
+    command: Extract<TaskCommand, { type: 'create-dependency-subtask' }>,
+    lifecycle: Parameters<TaskDependencyService['createSubtask']>[1],
+  ): Promise<TaskCommandResult> {
+    const result = await this.dependencies_abyssPrivate.createSubtask(command, lifecycle);
+    if (result.type === 'ok' && result.outcome.type === 'dependency-subtask')
+      this.remember_abyssPrivate(result.outcome.current.root);
+    return result;
   }
 
   private async executeExistingCommand_abyssPrivate(

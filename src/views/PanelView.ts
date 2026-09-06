@@ -17,11 +17,11 @@ import type {
   TaskCaptureApplicationApi,
   TaskCommandResult,
   TaskIndexEvent,
-  TaskNodeRef,
   TaskQueryApi,
   TaskRef,
   TaskResolution,
 } from '../tasks';
+import { taskCommandRootRef } from '../tasks';
 import { CreationPresentationController } from '../ui/creation/CreationPresentationController';
 import { InteractionRegistry } from '../ui/interactionOwnership';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
@@ -82,94 +82,6 @@ type PanelViewDependencies = [
   onSaveSettings?: () => Promise<void>,
   commentTimeContext?: CommentTimeContextProvider,
 ];
-
-function rootRefOfNode(target: TaskNodeRef): TaskRef {
-  let current = target;
-  while (current.type === 'subtask') current = current.ref.parent;
-  return current.ref;
-}
-
-type TaskCommand = Parameters<TaskApplicationApi['execute']>[0];
-
-type RootlessCommand = Extract<
-  TaskCommand,
-  { readonly type: 'create' | 'add-dependency' | 'remove-dependency' | 'restore-dependency' }
->;
-type DirectTargetCommand = Extract<
-  TaskCommand,
-  {
-    type: 'patch' | 'append-title' | 'set-status' | 'toggle-completion' | 'set-description';
-  }
->;
-type SubtaskReferenceCommand = Extract<
-  TaskCommand,
-  { readonly type: 'delete-subtask' | 'reorder-subtask' }
->;
-type CommentReferenceCommand = Extract<
-  TaskCommand,
-  { readonly type: 'update-comment' | 'delete-comment' }
->;
-
-const DIRECT_TARGET_COMMAND_TYPES = new Set<TaskCommand['type']>([
-  'patch',
-  'append-title',
-  'set-status',
-  'toggle-completion',
-  'set-description',
-]);
-const SUBTASK_REFERENCE_COMMAND_TYPES = new Set<TaskCommand['type']>([
-  'delete-subtask',
-  'reorder-subtask',
-]);
-const COMMENT_REFERENCE_COMMAND_TYPES = new Set<TaskCommand['type']>([
-  'update-comment',
-  'delete-comment',
-]);
-
-function isDirectTargetCommand(command: TaskCommand): command is DirectTargetCommand {
-  return DIRECT_TARGET_COMMAND_TYPES.has(command.type);
-}
-
-function isSubtaskReferenceCommand(command: TaskCommand): command is SubtaskReferenceCommand {
-  return SUBTASK_REFERENCE_COMMAND_TYPES.has(command.type);
-}
-
-function isCommentReferenceCommand(command: TaskCommand): command is CommentReferenceCommand {
-  return COMMENT_REFERENCE_COMMAND_TYPES.has(command.type);
-}
-
-function isRootlessCommand(command: TaskCommand): command is RootlessCommand {
-  return (
-    command.type === 'create' ||
-    command.type === 'add-dependency' ||
-    command.type === 'remove-dependency' ||
-    command.type === 'restore-dependency'
-  );
-}
-
-function commandRootRef(command: TaskCommand): TaskRef | undefined {
-  if (isRootlessCommand(command)) return undefined;
-  if (isDirectTargetCommand(command)) return rootRefOfNode(command.target);
-  if (command.type === 'edit-link') {
-    return rootRefOfNode(
-      command.target.type === 'comment' ? command.target.ref.parent : command.target.target,
-    );
-  }
-  if (
-    command.type === 'add-subtask' ||
-    command.type === 'restore-subtask' ||
-    command.type === 'add-comment'
-  ) {
-    return rootRefOfNode(command.parent);
-  }
-  if (isSubtaskReferenceCommand(command)) {
-    return rootRefOfNode(command.subtask.parent);
-  }
-  if (isCommentReferenceCommand(command)) {
-    return rootRefOfNode(command.comment.parent);
-  }
-  return command.ref;
-}
 
 function hasFinitePositiveBounds(bounds: DOMRect): boolean {
   const coordinates = [bounds.left, bounds.top, bounds.width, bounds.height];
@@ -362,7 +274,7 @@ export class PanelView extends ItemView {
       queries: this.tasks_abyssPrivate.queries,
       planCreate: (destination) => this.tasks_abyssPrivate.planCreate(destination),
       execute: async (command) => {
-        const initiatingRef = commandRootRef(command);
+        const initiatingRef = taskCommandRootRef(command);
         const result = await this.tasks_abyssPrivate.execute(command);
         if (initiatingRef != null) this.convergeOwnCommand_abyssPrivate(initiatingRef, result);
         return result;

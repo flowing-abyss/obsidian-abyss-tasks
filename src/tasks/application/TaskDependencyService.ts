@@ -1,10 +1,13 @@
 import type {
+  CreateDependencySubtaskCommand,
   DependencyCommandOutcome,
   DependencyRemovalRecovery,
+  DependencySubtaskCreationOutcome,
   TaskCommand,
   TaskCommandResult,
   TaskOccurrenceResult,
 } from '../domain/commands';
+import { dependencySubtaskChild } from '../domain/dependencySubtaskProof';
 import {
   buildTaskDependencyGraph,
   enumerateTaskNodes,
@@ -15,6 +18,7 @@ import {
 } from '../domain/taskDependencies';
 import { isTaskDependencyId } from '../domain/taskLineSourceModel';
 import { reconcileTaskNodeRef, type RootReconciliationBasis } from '../domain/taskReconciliation';
+import { sameTaskTreeWithOwnedChanges } from '../domain/taskTreeChangeProof';
 import {
   sameTaskNodeRef,
   type SubtaskSnapshot,
@@ -24,6 +28,7 @@ import {
 } from '../domain/types';
 import type { TaskDependencyQueryApi, TaskQueryApi } from './TaskApplicationApi';
 import type {
+  CreateDependencySubtaskRequest,
   TaskEditCommand,
   TaskEditRequest,
   TaskRepository,
@@ -319,16 +324,23 @@ function completionPredecessor(
   throw new DependencyCompletionConflict();
 }
 
-function graph(
+function dependencyNodes(
   context: DependencyContext,
   overlays: ReadonlyArray<{ root: TaskSnapshot; predecessor: TaskRef }> = [],
-): TaskDependencyGraph {
+): readonly TaskNodeSnapshot[] {
   const roots = new Map(context.queries.listNodes().map(({ root }) => [rootKey(root.ref), root]));
   for (const { root, predecessor } of overlays) {
     roots.delete(rootKey(predecessor));
     roots.set(rootKey(root.ref), root);
   }
-  const nodes = enumerateTaskNodes([...roots.values()]);
+  return enumerateTaskNodes([...roots.values()]);
+}
+
+function graph(
+  context: DependencyContext,
+  overlays: ReadonlyArray<{ root: TaskSnapshot; predecessor: TaskRef }> = [],
+): TaskDependencyGraph {
+  const nodes = dependencyNodes(context, overlays);
   const statuses = new Map(nodes.map(({ node }) => [node.statusSymbol, node.status]));
   return buildTaskDependencyGraph(nodes, (symbol) => statuses.get(symbol) ?? 'open');
 }
@@ -393,20 +405,111 @@ function eligibilityFailure(
   return invalid();
 }
 
-function allocateId(context: DependencyContext): string | undefined {
+function allocateId(
+  context: DependencyContext,
+  nodes = context.queries.listNodes(),
+): string | undefined {
   const reserved = new Set(
-    context.queries
-      .listNodes()
-      .flatMap(({ node }) => [
-        ...(node.dependencyId === undefined ? [] : [node.dependencyId]),
-        ...node.dependsOn,
-      ]),
+    nodes.flatMap(({ node }) => [
+      ...(node.dependencyId === undefined ? [] : [node.dependencyId]),
+      ...node.dependsOn,
+    ]),
   );
   for (let attempt = 0; attempt < 64; attempt += 1) {
     const id = context.generateId(reserved);
     if (/^[a-z0-9]{8}$/u.test(id) && !reserved.has(id)) return id;
   }
   return undefined;
+}
+
+async function createSubtask(
+  context: DependencyContext,
+  command: CreateDependencySubtaskCommand,
+  lifecycle: Pick<CreateDependencySubtaskRequest, 'today' | 'addCreatedDate'>,
+  rebases: readonly Rebase[] = [],
+): Promise<TaskCommandResult> {
+  const resolved = resolve(context, command.current, rebases);
+  if ('result' in resolved) return resolved.result;
+  const current = resolved.node;
+  const allocation = creationId(context, current, command.direction);
+  if ('result' in allocation) return allocation.result;
+  const { id } = allocation;
+  const result = await context.repository.createDependencySubtask({
+    baseRoot: current.root,
+    baseTarget: current.target,
+    reconciliation: current.basis,
+    direction: command.direction,
+    text: command.text,
+    ...(command.direction === 'blocks' ? { currentId: id } : { childId: id }),
+    ...lifecycle,
+  });
+  if (result.type === 'rebased' && rebases.length === 0)
+    return await createSubtask(context, command, lifecycle, [result]);
+  if (result.type !== 'committed') return terminal(result);
+  return createdSubtaskResult(result, current, command, id);
+}
+
+function creationId(
+  context: DependencyContext,
+  current: ResolvedNode,
+  direction: CreateDependencySubtaskCommand['direction'],
+): { readonly id: string } | { readonly result: TaskCommandResult } {
+  const existing = direction === 'blocks' ? current.node.dependencyId : undefined;
+  const nodes = dependencyNodes(context, [current]);
+  if (existing !== undefined) {
+    const candidates = nodes.filter(({ node }) => node.dependencyId === existing);
+    if (candidates.length !== 1)
+      return { result: { type: 'ambiguous', candidates: candidates.map(occurrence) } };
+  }
+  const id = existing ?? allocateId(context, nodes);
+  return id === undefined ? { result: invalid('dependency-id') } : { id };
+}
+
+function createdSubtaskResult(
+  result: Extract<TaskRepositoryResult, { type: 'committed' }>,
+  current: ResolvedNode,
+  command: CreateDependencySubtaskCommand,
+  id: string,
+): TaskCommandResult {
+  const outcome = result.outcome;
+  if (
+    outcome.type !== 'dependency-subtask' ||
+    outcome.direction !== command.direction ||
+    outcome.dependencyId !== id ||
+    !provenCreatedSubtask(current, outcome, command)
+  )
+    return ioError();
+  return { type: 'ok', changed: result.changed, outcome };
+}
+
+function provenCreatedSubtask(
+  current: ResolvedNode,
+  outcome: DependencySubtaskCreationOutcome,
+  command: CreateDependencySubtaskCommand,
+): boolean {
+  const fresh = atAddress(outcome.current.root, current.target);
+  if (fresh === undefined) return false;
+  const child = dependencySubtaskChild(current.node, fresh.node, command);
+  if (child === undefined) return false;
+  const path = nodeIndices(current);
+  return (
+    sameTaskTreeWithOwnedChanges(current.root, fresh.root, path, {
+      fields: new Set(['dependencyId', 'dependsOn']),
+      append: true,
+    }) &&
+    sameTaskNodeRef(fresh.target, outcome.current.target) &&
+    sameTaskNodeRef({ type: 'subtask', ref: child.ref }, outcome.child.target) &&
+    rootKey(outcome.child.root.ref) === rootKey(fresh.root.ref) &&
+    (command.direction === 'blocks' ? fresh.node.dependencyId : child.dependencyId) ===
+      outcome.dependencyId
+  );
+}
+
+function nodeIndices(current: TaskNodeSnapshot): number[] {
+  return current.path.map(
+    (node, index) =>
+      (index === 0 ? current.root : current.path[index - 1])?.subtasks.indexOf(node) ?? -1,
+  );
 }
 
 function edit(context: DependencyContext, edit: TaskEditRequest): Promise<TaskRepositoryResult> {
@@ -664,6 +767,13 @@ export class TaskDependencyService {
 
   async execute(command: DependencyCommand): Promise<TaskCommandResult> {
     return await this.serializeMutation(() => executeDependency(this.context, command));
+  }
+
+  createSubtask(
+    command: CreateDependencySubtaskCommand,
+    lifecycle: Pick<CreateDependencySubtaskRequest, 'today' | 'addCreatedDate'>,
+  ): Promise<TaskCommandResult> {
+    return this.serializeMutation(() => createSubtask(this.context, command, lifecycle));
   }
 
   serializeMutation<T>(operation: (queued: boolean) => Promise<T>): Promise<T> {

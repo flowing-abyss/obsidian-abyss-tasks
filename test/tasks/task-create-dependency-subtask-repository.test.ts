@@ -86,6 +86,23 @@ function linkedOutcome(result: TaskRepositoryResult) {
 
 for (const adapter of ['in-memory', 'obsidian'] as const) {
   describe(`${adapter} atomic linked subtask`, () => {
+    it('rejects a comment owner before processing and preserves the current authority', async () => {
+      const original = '- [ ] Root\n  - Authored comment\n';
+      const h = await harness(adapter, original, original);
+      const comment = expectDefined(h.root.comments[0]);
+      const process = vi.spyOn(h.app.vault, 'process');
+      expect(
+        await h.repository.createDependencySubtask({
+          ...h.request,
+          baseTarget: { type: 'comment', ref: comment.ref },
+        }),
+      ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'subtask' }] });
+      expect(process).not.toHaveBeenCalled();
+      expect(await h.read()).toBe(original);
+      expect(h.index.list({ filePath: path })[0]).toEqual(h.root);
+      expect(h.index.authoritySuccessor(h.root.ref)).toBeUndefined();
+    });
+
     it('returns an unknown-state I/O result and a content-free diagnostic when postcommit parsing throws', async () => {
       const h = await harness(adapter, source, source, false);
       const parse = h.index.snapshotsFromContent.bind(h.index);

@@ -27,6 +27,84 @@ const target = { type: 'subtask' as const, ref: expectDefined(before.subtasks[1]
 const selection = [before, expectDefined(before.subtasks[1])];
 
 describe('owned non-structural inspector selection', () => {
+  it.each(['blocks', 'blocked-by'] as const)(
+    'retains the selected nested current after owned %s creation',
+    (direction) => {
+      const edge = direction === 'blocks' ? '🆔 new_id' : '⛔ new_id';
+      const child = direction === 'blocks' ? '⛔ new_id' : '🆔 new_id';
+      const current = snapshot(
+        source
+          .replace('B.2', `B.2 ${edge}`)
+          .replace('  - [ ] B.3', `    - [ ] Added ${child}\n  - [ ] B.3`),
+        'after',
+      );
+      const result = rebuildOwnedTaskSelection(current, selection, {
+        type: 'create-dependency-subtask',
+        current: target,
+        direction,
+        text: 'Added',
+      });
+      expect(result?.map((node) => node.title)).toEqual(['B', 'B.2']);
+      expect(result?.[1]?.ref).toEqual(current.subtasks[1]?.ref);
+    },
+  );
+
+  it('retains root selection after owned linked creation', () => {
+    const current = snapshot(
+      `${source.replace('[ ] B\n', '[ ] B ⛔ new_id\n')}\n  - [ ] Added 🆔 new_id`,
+      'after',
+    );
+    expect(
+      rebuildOwnedTaskSelection(current, [before], {
+        type: 'create-dependency-subtask',
+        current: { type: 'task', ref: before.ref },
+        direction: 'blocked-by',
+        text: 'Added',
+      }),
+    ).toEqual([current]);
+  });
+
+  it('preserves the exact duplicate current occurrence through its owned linked insertion', () => {
+    const original = snapshot('- [ ] Root\n  - [ ] Same\n  - [ ] Same', 'before');
+    const selected = expectDefined(original.subtasks[1]);
+    const current = snapshot(
+      '- [ ] Root\n  - [ ] Same\n  - [ ] Same ⛔ new_id\n    - [ ] Added 🆔 new_id',
+      'after',
+    );
+    expect(
+      rebuildOwnedTaskSelection(current, [original, selected], {
+        type: 'create-dependency-subtask',
+        current: { type: 'subtask', ref: selected.ref },
+        direction: 'blocked-by',
+        text: 'Added',
+      })?.[1]?.ref,
+    ).toEqual(current.subtasks[1]?.ref);
+  });
+
+  it.each([
+    ['wrong text', 'Added', 'Other'],
+    ['wrong child edge', '🆔 new_id', '🆔 other_id'],
+    ['unrelated title', '[ ] B.1', '[ ] Edited'],
+    ['unrelated source', '[ ] B.1', '[ ] B.1 ^changed'],
+    ['extra child', '    - [ ] Added', '    - [ ] Extra\n    - [ ] Added'],
+    ['removed child', '    - [ ] Deep\n', ''],
+  ])('refuses %s during owned linked creation', (_label, from, to) => {
+    const current = snapshot(
+      source
+        .replace('B.2', 'B.2 ⛔ new_id')
+        .replace('  - [ ] B.3', '    - [ ] Added 🆔 new_id\n  - [ ] B.3')
+        .replace(from, to),
+      'after',
+    );
+    expect(
+      rebuildOwnedTaskSelection(current, selection, {
+        type: 'create-dependency-subtask',
+        current: target,
+        direction: 'blocked-by',
+        text: 'Added',
+      }),
+    ).toBeUndefined();
+  });
   it.each([
     {
       label: 'title',

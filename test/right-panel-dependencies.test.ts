@@ -348,6 +348,56 @@ describe('inspector dependency navigation', () => {
 
 describe('owned dependency destination editing', () => {
   const source = '- [ ] B\n  - [ ] B.2 🆔 b\n    - [ ] Deep\n- [ ] C ⛔ b\n';
+  it('preserves nested current and both history frames through an owned linked child insertion', async () => {
+    const h = await harness(source, 'C');
+    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    cleanups.unshift(() => {
+      modal.close();
+    });
+    modal.open(h.node('C').root);
+    const el = button(activeDocument.body, '.abyss-modal-body');
+    button(el, '.abyss-dep-title').click();
+    button(el, '.abyss-dep-title').click();
+    button(el, '.abyss-dep-title').click();
+    const local = modal as unknown as { innerState: AppState; innerPanel: RightPanel };
+    const history = local.innerState.get('inspectorBackStack');
+    const original = JSON.stringify(history);
+    button(el, '.abyss-dep-badge-body').click();
+    const input = search(el, 'Created child');
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks(30);
+    expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
+    expect(local.innerState.get('taskStack')[1]?.ref).toEqual(h.node('B.2').node.ref);
+    expect(JSON.stringify(history)).toBe(original);
+    expect(local.innerState.get('inspectorBackStack')).toHaveLength(3);
+    button(el, '[aria-label="Back to previous task"]').click();
+    expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['C']);
+    button(el, '[aria-label="Back to previous task"]').click();
+    expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
+    expect(local.innerState.get('taskStack')[1]?.ref).toEqual(h.node('B.2').node.ref);
+    expect(h.node('B.2').node.subtasks.map((child) => child.title)).toEqual([
+      'Deep',
+      'Created child',
+    ]);
+  });
+
+  it('keeps the creation draft with one Notice and diagnostic after an unexpected API throw', async () => {
+    const h = await harness('- [ ] Current\n');
+    const captured = notices();
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(h.api, 'execute').mockRejectedValueOnce(new Error('private content'));
+    button(h.el, '.abyss-dep-badge-body').click();
+    const input = search(h.el, 'Draft child');
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    expect(captured).toHaveLength(1);
+    expect(diagnostic).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private content');
+    expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
+    expect(input.value).toBe('Draft child');
+    expect(input.disabled).toBe(false);
+    expect(await h.read()).toBe('- [ ] Current\n');
+  });
   it.each(['description', 'planning', 'status'] as const)(
     'keeps a related nested selection and Back after %s editing',
     async (kind) => {
@@ -867,24 +917,46 @@ describe('RightPanel dependency inspector', () => {
     expect(h.el.querySelector('[aria-label="Dependency direction"]')).toBeNull();
   });
 
-  it('keeps unavailable creation inline without running a task command or showing a Notice', async () => {
+  it('keeps invalid creation inline with its draft and no Notice', async () => {
     const captured = notices();
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
     const execute = vi.spyOn(h.api, 'execute');
     button(h.el, '.abyss-dep-badge-body').click();
-    const input = search(h.el, 'Brand new');
+    const input = search(h.el, 'Brand new 🆔 authored');
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks();
 
-    expect(h.el.querySelector('[role="status"]')?.textContent).toBe(
-      'Creating a new dependency is not available yet.',
-    );
-    expect(input.value).toBe('Brand new');
+    expect(h.el.querySelector('[role="status"]')?.textContent).toMatch(/invalid/i);
+    expect(input.value).toBe('Brand new 🆔 authored');
     expect(activeDocument.activeElement).toBe(input);
-    expect(execute).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledTimes(1);
     expect(captured).toHaveLength(0);
     expect(await h.read()).toBe('- [ ] Current\n- [ ] Candidate\n');
   });
+
+  it.each(['general', 'fixed'] as const)(
+    'creates a linked child from the %s picker without a success Notice',
+    async (context) => {
+      const captured = notices();
+      const h = await harness('- [ ] Current\n');
+      if (context === 'general') {
+        button(h.el, '.abyss-dep-badge-body').click();
+        button(h.el, '[data-direction="blocks"]').click();
+      } else {
+        button(h.el, '.abyss-dep-badge-add').click();
+        button(h.el, '[aria-label="Add dependency: Blocks"]').click();
+      }
+      const input = search(h.el, 'Brand new');
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks();
+      expect(await h.read()).toBe(
+        '- [ ] Current 🆔 generate\n  - [ ] Brand new ➕ 2026-09-05 ⛔ generate\n',
+      );
+      expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Current']);
+      expect(captured).toHaveLength(0);
+    },
+  );
 
   it('keeps shared chip sizing and interaction rhythm without dependency pill chrome', async () => {
     if (!Platform.isDesktop) throw new Error('CSS fixture needs desktop runtime');

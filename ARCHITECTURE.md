@@ -89,7 +89,8 @@ and delegates persistence through repository and destination ports. It returns s
 such as success, conflict, invalid input, missing or ambiguous targets, partial moves, and I/O
 failure.
 
-`TaskDependencyService` coordinates public add/remove/restore dependency commands and derives the
+`TaskDependencyService` coordinates public add/remove/restore dependency commands, atomic linked
+subtask creation, and derives the
 active blockers used by completion validation. It receives query/repository ports, an ID generator,
 and a diagnostic sink from the composition root. Dependencies use the same repository and source
 editor as ordinary task commands.
@@ -157,6 +158,18 @@ The inspector keeps disclosure and search drafts only for its mounted lifetime, 
 search across proven selection refreshes. Index events refresh counterpart status and relation
 rows. Add/remove actions use the existing task application and committed-result Undo presenter;
 failed actions leave the search available and use the established command-result Notice.
+
+Both general and direction-scoped dependency pickers submit `create-dependency-subtask` through
+the public application API. A new direct child and its requested edge are committed together.
+Expected invalid drafts, including authored dependency carriers, remain inline with the draft;
+unexpected failures use one established command-result presenter and diagnostic boundary. Creation
+does not emit an ordinary success Notice. The inspector registers the existing pending mutation
+ownership before dispatch and preserves the selected current node and saved history across the
+proven insertion. This extends the owned-selection proof only for this composite command: the
+submitted child, dependency changes, and otherwise unchanged tree must all match.
+Exact duplicate current occurrences retain their complete positional path only under this owned
+append proof; ordinary content commands and unowned structural transitions keep their existing
+conservative uniqueness requirements.
 
 `CenterPanel` and the standalone `CalendarRenderer` resolve persisted calendar/root/subtask targets
 through the same dependency query capability. Their read callbacks pass the projection through
@@ -414,6 +427,24 @@ Both adapters prove the fresh current, its direct child, and their edge before p
 rebuild the dedicated `dependency-subtask` outcome from the installed root afterward. This narrow
 method does not expand metadata-only `editBatch()`, add persisted syntax, or perform public
 dependency eligibility/ID allocation; application orchestration owns those checks.
+
+The public `create-dependency-subtask` command runs in `TaskDependencyService`'s existing repository
+mutation queue. It resolves one current root/node and allocates only the required blocker ID:
+`blocked-by` assigns the child an ID and adds it to the current node's dependencies; `blocks`
+reuses or allocates a unique current ID and declares it on the child. Allocation reserves both
+authored and referenced IDs, including a proven current root when the node projection lags.
+The repository performs one atomic same-root write. A bounded reconciled retry repeats resolution
+and ID checks; a stale nested node whose subtree changed remains a conflict. Serialization grants
+no new structural identity. The application proves the returned fresh current, appended child,
+submitted content, exact directed edge and otherwise unchanged tree, then remembers the new root
+through its existing recent-outcome lifecycle.
+
+Shared domain command-reference helpers distinguish a command's complete mutation target from its
+owning root and rebase references without granting retry authority. The application, retry policy,
+and panel consume these same helpers; the repository port maps its private metadata edits onto
+the same target contract. Structural repository edits still resolve the parent that owns a child
+or comment operation. Shared tree-change and child-creation proofs also serve the application
+postcondition and pending inspector selection; presentation imports them only through `src/tasks`.
 
 Live authority-backed root refs distinguish byte-identical roots by exact line and revision.
 Initial duplicate occurrences receive distinct ephemeral authority revisions; unchanged source

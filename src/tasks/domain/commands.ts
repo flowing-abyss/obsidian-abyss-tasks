@@ -53,7 +53,15 @@ export type PlanningTarget =
 
 export type TaskStatusTarget = TaskNodeRef;
 
+export interface CreateDependencySubtaskCommand {
+  readonly type: 'create-dependency-subtask';
+  readonly current: TaskNodeRef;
+  readonly direction: DependencyDirection;
+  readonly text: string;
+}
+
 export type TaskCommand =
+  | CreateDependencySubtaskCommand
   | {
       readonly type: 'create';
       readonly markdownBody: string;

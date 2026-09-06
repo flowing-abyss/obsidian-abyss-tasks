@@ -17,6 +17,7 @@ import {
   type CommentRef,
   type CommentTimeContext,
   type CommentTimeContextProvider,
+  type CreateDependencySubtaskCommand,
   type DependencyDirection,
   type PlanningTarget,
   type SubtaskPatch,
@@ -45,6 +46,7 @@ import {
 import {
   dependencySearchOptions,
   mountDependencySearch,
+  type DependencyPickerCommitResult,
   type DependencySearchHandle,
 } from '../ui/dependencySearch';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
@@ -1691,10 +1693,7 @@ export class RightPanel {
         });
         return { type: committed ? 'committed' : 'failed' };
       },
-      createNew: async () => ({
-        type: 'validation-error',
-        message: 'Creating a new dependency is not available yet.',
-      }),
+      createNew: (text, chosen) => this.createDependencySubtask_abyssPrivate(text, chosen),
       onClose: (restoreFocus) => {
         const surface = this.dependencySearch_abyssPrivate?.element;
         if (surface !== undefined) this.anchoredSurfaceCleanups_abyssPrivate.get(surface)?.();
@@ -1713,6 +1712,63 @@ export class RightPanel {
       this.el_abyssPrivate.querySelector<HTMLElement>(this.dependencySearchAnchor_abyssPrivate) ??
       this.el_abyssPrivate.querySelector<HTMLElement>('.abyss-dep-badge-body')
     );
+  }
+
+  private async createDependencySubtask_abyssPrivate(
+    text: string,
+    direction: DependencyDirection,
+  ): Promise<DependencyPickerCommitResult> {
+    const current = this.dependencyTask_abyssPrivate();
+    if (current === undefined || this.tasks_abyssPrivate === undefined)
+      return { type: 'validation-error', message: 'The current task is no longer available.' };
+    const command: CreateDependencySubtaskCommand = {
+      type: 'create-dependency-subtask',
+      current: taskNodeRef(current),
+      direction,
+      text,
+    };
+    const submission = this.beginDraftSubmission_abyssPrivate(command.current, undefined, command);
+    if (submission === undefined) return { type: 'failed' };
+    let result: TaskCommandResult;
+    try {
+      result = await this.tasks_abyssPrivate.execute(command);
+    } catch {
+      console.error('[abyss-tasks] Dependency action failed', {
+        operation: command.type,
+        cause: 'repository-error',
+      });
+      result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+    }
+    this.applyCreatedDependency_abyssPrivate(result, command.current, submission);
+    this.settleDraftSubmission_abyssPrivate(submission, result);
+    if (result.type === 'invalid')
+      return {
+        type: 'validation-error',
+        message: 'The new task is invalid. Check its text and omit dependency IDs.',
+      };
+    presentTaskCommandResult(result);
+    return { type: result.type === 'ok' ? 'committed' : 'failed' };
+  }
+
+  private applyCreatedDependency_abyssPrivate(
+    result: TaskCommandResult,
+    current: TaskNodeRef,
+    submission: object,
+  ): void {
+    if (result.type !== 'ok' || result.outcome.type !== 'dependency-subtask') return;
+    const root = result.outcome.current.root;
+    const ref = rootRefForPlanningTarget(current);
+    const selection = this.selectionForOwnedTransition(
+      ref,
+      root,
+      this.state_abyssPrivate.get('taskStack'),
+    );
+    if (selection !== undefined) {
+      const draft = this.captureDraftStateForOwnedTransition(ref, root.ref, submission);
+      this.state_abyssPrivate.updateInspectorSelection(selection);
+      this.restoreDraftState(draft, root);
+    }
+    if (result.changed) this.onSuccessfulMutation_abyssPrivate?.(root.ref);
   }
 
   private positionDependencySearch_abyssPrivate(): void {

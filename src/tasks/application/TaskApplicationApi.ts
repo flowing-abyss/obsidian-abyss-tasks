@@ -50,6 +50,7 @@ export interface TaskQueryApi {
 
 export interface TaskApplicationApi {
   readonly queries: TaskQueryApi & TaskDependencyQueryApi;
+  /** Includes atomic linked-child creation; presentation never sequences repository edits. */
   execute(command: TaskCommand): Promise<TaskCommandResult>;
 }
 

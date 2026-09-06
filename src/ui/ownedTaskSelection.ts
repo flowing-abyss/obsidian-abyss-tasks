@@ -1,5 +1,7 @@
 import {
+  dependencySubtaskChild,
   sameTaskNodeRef,
+  sameTaskTreeWithOwnedChanges,
   type SubtaskSnapshot,
   type TaskCommand,
   type TaskNodeRef,
@@ -13,7 +15,7 @@ type ContentCommand = Extract<
   { type: 'patch' | 'set-description' | 'set-status' | 'toggle-completion' }
 >;
 
-function childPath(root: TaskSnapshot, target: TaskNodeRef): number[] | undefined {
+function childPath(root: TaskSnapshot, target: TaskNodeRef, unique: boolean): number[] | undefined {
   const refs: TaskNodeRef[] = [];
   let reference = target;
   while (reference.type === 'subtask') {
@@ -28,7 +30,7 @@ function childPath(root: TaskSnapshot, target: TaskNodeRef): number[] | undefine
       sameTaskNodeRef(taskNodeRef(child), ref),
     );
     const child: SubtaskSnapshot | undefined = current.subtasks[index];
-    if (child === undefined || !uniqueSource(current, child)) return undefined;
+    if (child === undefined || (unique && !uniqueSource(current, child))) return undefined;
     indices.push(index);
     current = child;
   }
@@ -45,29 +47,20 @@ function uniqueSource(parent: TaskSelectionNode, child: TaskSelectionNode): bool
   );
 }
 
-function follow(root: TaskSnapshot, indices: readonly number[]): TaskSelectionNode[] | undefined {
+function follow(
+  root: TaskSnapshot,
+  indices: readonly number[],
+  unique: boolean,
+): TaskSelectionNode[] | undefined {
   const stack: TaskSelectionNode[] = [root];
   let parent: TaskSelectionNode = root;
   for (const index of indices) {
     const child: SubtaskSnapshot | undefined = parent.subtasks[index];
-    if (child === undefined || !uniqueSource(parent, child)) return undefined;
+    if (child === undefined || (unique && !uniqueSource(parent, child))) return undefined;
     stack.push(child);
     parent = child;
   }
   return stack;
-}
-
-function comparable(value: unknown, omitted: ReadonlySet<string>, path = ''): unknown {
-  if (Array.isArray(value)) return value.map((item: unknown) => comparable(item, omitted, path));
-  if (value === null || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .flatMap(([key, child]) => {
-        const next = path === '' ? key : `${path}.${key}`;
-        return key === 'ref' || omitted.has(next) ? [] : [[key, comparable(child, omitted, next)]];
-      }),
-  );
 }
 
 const PLANNING_FIELDS = new Set(['due', 'scheduled', 'start', 'time', 'duration']);
@@ -101,12 +94,24 @@ function patchFields(node: TaskSelectionNode, patch: TaskPatch): Set<string> | u
 function editedFields(
   before: TaskSelectionNode,
   after: TaskSelectionNode,
-  command: ContentCommand,
+  command: ContentCommand | Extract<TaskCommand, { type: 'create-dependency-subtask' }>,
 ): Set<string> | undefined {
+  if (command.type === 'create-dependency-subtask')
+    return dependencySubtaskChild(before, after, command) === undefined
+      ? undefined
+      : new Set(['dependencyId', 'dependsOn']);
   if (command.type === 'patch') return patchFields(after, command.patch);
   if (command.type === 'set-description') {
     return after.description === (command.text ?? undefined) ? new Set(['description']) : undefined;
   }
+  return statusFields(before, after, command);
+}
+
+function statusFields(
+  before: TaskSelectionNode,
+  after: TaskSelectionNode,
+  command: Extract<ContentCommand, { type: 'set-status' | 'toggle-completion' }>,
+): Set<string> | undefined {
   if (before.recurrence !== undefined || before.onCompletion === 'delete') return undefined;
   const matches =
     command.type === 'set-status'
@@ -117,49 +122,19 @@ function editedFields(
     : undefined;
 }
 
-function sameTree(
-  before: TaskSelectionNode,
-  after: TaskSelectionNode,
-  path: readonly number[] | undefined,
-  fields: ReadonlySet<string>,
-): boolean {
-  if (before.subtasks.length !== after.subtasks.length) return false;
-  if (
-    path === undefined &&
-    !('source' in before) &&
-    !('source' in after) &&
-    before.ref.originalBlock !== after.ref.originalBlock
-  )
-    return false;
-  const omitted = new Set([
-    'subtasks',
-    'source',
-    'presentation',
-    ...(path?.length === 0 ? fields : []),
-  ]);
-  if (JSON.stringify(comparable(before, omitted)) !== JSON.stringify(comparable(after, omitted)))
-    return false;
-  return before.subtasks.every((child, index) => {
-    const next = after.subtasks[index];
-    return (
-      next !== undefined &&
-      sameTree(child, next, path?.[0] === index ? path.slice(1) : undefined, fields)
-    );
-  });
-}
-
 function selectionPaths(
   current: TaskSnapshot,
   selection: readonly TaskSelectionNode[],
   target: TaskNodeRef,
+  unique: boolean,
 ): { before: TaskSnapshot; selectedPath: number[]; editedPath: number[] } | undefined {
   const before = selection[0];
   const selected = selection[selection.length - 1];
   if (before === undefined || selected === undefined || !('source' in before)) return undefined;
   if (before.ref.filePath !== current.ref.filePath || before.ref.line !== current.ref.line)
     return undefined;
-  const selectedPath = childPath(before, taskNodeRef(selected));
-  const editedPath = childPath(before, target);
+  const selectedPath = childPath(before, taskNodeRef(selected), unique);
+  const editedPath = childPath(before, target, unique);
   if (
     selectedPath === undefined ||
     editedPath === undefined ||
@@ -175,16 +150,30 @@ export function rebuildOwnedTaskSelection(
   selection: readonly TaskSelectionNode[],
   command: TaskCommand,
 ): TaskSelectionNode[] | undefined {
-  if (!['patch', 'set-description', 'set-status', 'toggle-completion'].includes(command.type))
+  if (
+    ![
+      'patch',
+      'set-description',
+      'set-status',
+      'toggle-completion',
+      'create-dependency-subtask',
+    ].includes(command.type)
+  )
     return undefined;
-  const edit = command as ContentCommand;
-  const paths = selectionPaths(current, selection, edit.target);
+  const edit = command as
+    ContentCommand | Extract<TaskCommand, { type: 'create-dependency-subtask' }>;
+  const append = edit.type === 'create-dependency-subtask';
+  const paths = selectionPaths(current, selection, append ? edit.current : edit.target, !append);
   if (paths === undefined) return undefined;
   const { before, selectedPath, editedPath } = paths;
-  const beforeEdit = follow(before, editedPath)?.[editedPath.length];
-  const afterEdit = follow(current, editedPath)?.[editedPath.length];
+  const beforeEdit = follow(before, editedPath, !append)?.[editedPath.length];
+  const afterEdit = follow(current, editedPath, !append)?.[editedPath.length];
   if (beforeEdit === undefined || afterEdit === undefined) return undefined;
   const fields = editedFields(beforeEdit, afterEdit, edit);
-  if (fields === undefined || !sameTree(before, current, editedPath, fields)) return undefined;
-  return follow(current, selectedPath);
+  if (
+    fields === undefined ||
+    !sameTaskTreeWithOwnedChanges(before, current, editedPath, { fields, append })
+  )
+    return undefined;
+  return follow(current, selectedPath, !append);
 }

@@ -7,6 +7,7 @@ import type {
 } from '../domain/commands';
 import type { AtomDateTime } from '../domain/commentTimestamp';
 import type { RecurrencePolicy } from '../domain/recurrence';
+import { taskCommandMutationTarget, taskNodeRootRef } from '../domain/taskCommandTargets';
 import type { DependencyDirection } from '../domain/taskDependencies';
 import { isTaskDependencyId } from '../domain/taskLineSourceModel';
 import type { RebaseEvidence, RootReconciliationBasis } from '../domain/taskReconciliation';
@@ -34,6 +35,7 @@ export type TaskEditCommand =
       | { readonly type: 'set-status' | 'toggle-completion' }
       | { readonly type: 'add-comment' }
       | { readonly type: 'add-subtask' }
+      | { readonly type: 'create-dependency-subtask' }
       | { readonly type: 'add-dependency' | 'remove-dependency' | 'restore-dependency' }
     >
   | {
@@ -73,6 +75,17 @@ export function dependencyMetadataIssues(command: TaskEditCommand): readonly Tas
     return [{ code: 'invalid-target', field: 'depends-on' }];
   }
   return [];
+}
+
+/** Storage metadata commands share the public command target contract without exposing edits. */
+export function taskEditMutationTarget(command: TaskEditCommand): TaskMutationTarget {
+  return command.type === 'set-dependency-id' || command.type === 'set-depends-on'
+    ? command.target
+    : taskCommandMutationTarget(command);
+}
+
+export function taskEditRootRef(command: TaskEditCommand): TaskRef {
+  return taskNodeRootRef(taskEditMutationTarget(command));
 }
 
 export function subtaskRestorationIssues(
