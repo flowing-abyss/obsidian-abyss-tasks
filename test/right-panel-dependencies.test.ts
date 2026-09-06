@@ -310,6 +310,10 @@ describe('dependency picker visible containment', () => {
     expect(value('.abyss-dep-search', 'display')).toBe('flex');
     expect(value('.abyss-dep-search', 'flex-direction')).toBe('column');
     expect(value('.abyss-dep-search > *', 'flex-shrink')).toBe('0');
+    // The 104px outer picker leaves 86px after its padding and borders: the
+    // two intrinsic button widths cannot share that row. Preserve their labels
+    // and let the direction group grow vertically, which its ResizeObserver owns.
+    expect(value('.abyss-dep-search-directions', 'flex-wrap')).toBe('wrap');
     expect(value('.abyss-dep-search-results', 'flex-shrink')).toBe('1');
     expect(value('.abyss-dep-search-results', 'overflow')).toBe('hidden auto');
     expect(value('.abyss-dep-search-results', 'min-height')).toBe('0');

@@ -5867,6 +5867,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-dep-search-directions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 6px;
 }
