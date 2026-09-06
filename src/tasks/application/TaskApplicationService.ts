@@ -141,7 +141,11 @@ type DependencyCommand = Extract<
   TaskCommand,
   {
     readonly type:
-      'add-dependency' | 'remove-dependency' | 'restore-dependency' | 'create-dependency-subtask';
+      | 'add-dependency'
+      | 'remove-dependency'
+      | 'restore-dependency'
+      | 'reverse-dependency'
+      | 'create-dependency-subtask';
   }
 >;
 type ExistingTaskCommand = Exclude<TaskCommand, DependencyCommand | { readonly type: 'create' }>;
@@ -433,12 +437,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   private async executeCommand_abyssPrivate(command: TaskCommand): Promise<TaskCommandResult> {
     const restorationIssues = subtaskRestorationIssues(command);
     if (restorationIssues.length > 0) return { type: 'invalid', issues: restorationIssues };
-    if (
-      command.type === 'add-dependency' ||
-      command.type === 'remove-dependency' ||
-      command.type === 'restore-dependency'
-    )
-      return await this.dependencies_abyssPrivate.execute(command);
+    if ('dependent' in command) return await this.dependencies_abyssPrivate.execute(command);
     const inputIssue = multilineInputIssue(command);
     if (inputIssue != null) return inputIssue;
     const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);

@@ -43,6 +43,10 @@ const cases = {
     command: { type: 'remove-dependency', dependent: child, dependencyId: 'id' },
     target: undefined,
   },
+  'reverse-dependency': {
+    command: { type: 'reverse-dependency', blocker: parent, dependent: child, dependencyId: 'id' },
+    target: undefined,
+  },
   'restore-dependency': {
     command: {
       type: 'restore-dependency',

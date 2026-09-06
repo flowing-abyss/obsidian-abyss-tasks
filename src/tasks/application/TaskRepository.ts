@@ -1,4 +1,5 @@
 import type {
+  DependencyCommandOutcome,
   MoveRecovery,
   TaskCommand,
   TaskCommandOutcome,
@@ -36,7 +37,10 @@ export type TaskEditCommand =
       | { readonly type: 'add-comment' }
       | { readonly type: 'add-subtask' }
       | { readonly type: 'create-dependency-subtask' }
-      | { readonly type: 'add-dependency' | 'remove-dependency' | 'restore-dependency' }
+      | {
+          readonly type:
+            'add-dependency' | 'remove-dependency' | 'restore-dependency' | 'reverse-dependency';
+        }
     >
   | {
       readonly type: 'set-status';
@@ -171,6 +175,22 @@ export interface TaskEditBatchRequest {
   readonly outcomeTarget: TaskNodeRef;
 }
 
+export type DependencyReversalPhase =
+  | 'reservation'
+  | 'first-write'
+  | 'second-write'
+  | 'postcondition'
+  | 'first-rollback'
+  | 'second-rollback'
+  | 'restoration-proof';
+
+export interface ReverseDependencyRequest {
+  readonly batches: readonly TaskEditBatchRequest[];
+  /** Must prove both endpoints and final graph before the transaction publishes success. */
+  readonly proveReversal: (roots: readonly TaskSnapshot[]) => DependencyCommandOutcome | undefined;
+  readonly diagnostic: (phase: DependencyReversalPhase, cause: string) => void;
+}
+
 export interface TaskMoveRequest extends RevisionPrecondition {
   readonly destination: TaskDestination;
 }
@@ -211,6 +231,8 @@ export interface TaskRepository {
   edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult>;
   /** Atomically edits dependency metadata and returns the outcome target's fresh root. */
   editBatch(request: TaskEditBatchRequest): Promise<TaskRepositoryResult>;
+  /** Owns same-file atomicity or two-file exact-source compensation through final proof. */
+  reverseDependency?(request: ReverseDependencyRequest): Promise<TaskRepositoryResult>;
   /** Creates a direct child and its dependency edge in one guarded root edit. */
   createDependencySubtask(request: CreateDependencySubtaskRequest): Promise<TaskRepositoryResult>;
   completeRecurrence(

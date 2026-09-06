@@ -34,6 +34,22 @@ export interface TaskRefBatchTransition {
   readonly roots: readonly ProvenRootRevisionOverride[];
 }
 
+export interface ExactSourceMutation {
+  readonly filePath: string;
+  readonly before: string;
+  readonly after: string;
+  readonly predecessors: readonly RootRevisionOverride[];
+  readonly roots: readonly ProvenRootRevisionOverride[];
+}
+
+export interface OwnedSourceMutation {
+  forward(path: string, current: string): string | undefined;
+  restore(path: string, current: string): string | undefined;
+  complete(contents: ReadonlyMap<string, string>): boolean;
+  completeRestoration(contents: ReadonlyMap<string, string>): boolean;
+  release(): void;
+}
+
 export type TaskRefStageResult =
   { readonly type: 'staged'; readonly token: object } | { readonly type: 'conflict' };
 
@@ -77,12 +93,23 @@ interface PendingTransition {
   phase: 'staged' | 'committed';
   observed: boolean;
   readonly restored: boolean;
+  exactSource?: {
+    readonly before: string;
+    readonly after: string;
+    forwarded: boolean;
+    invalid: boolean;
+  };
   restoration?: {
     readonly content: string;
     readonly fingerprint: string;
     readonly length: number;
     readonly roots: readonly RootRevisionOverride[];
   };
+}
+
+interface OwnedSource {
+  readonly source: ExactSourceMutation;
+  token: object;
 }
 
 function randomSession(): string {
@@ -110,6 +137,22 @@ function matches(transition: PendingTransition, content: string): boolean {
     transition.candidateLength === content.length &&
     transition.candidateFingerprint === taskRefContentFingerprint(content)
   );
+}
+
+function hasForwardOwnership(pending: PendingTransition | undefined): boolean {
+  return pending?.restored === false && pending.exactSource?.invalid !== true;
+}
+
+function hasRestorationOwnership(pending: PendingTransition | undefined): boolean {
+  return pending?.restored === true && pending.exactSource?.invalid === false;
+}
+
+function sourceLineage(
+  before: string,
+  after: string,
+  forwarded: boolean,
+): NonNullable<PendingTransition['exactSource']> {
+  return { before, after, forwarded, invalid: false };
 }
 
 export class TaskRefAuthority {
@@ -189,6 +232,103 @@ export class TaskRefAuthority {
     )
       return { type: 'conflict' };
     return this.stageTransition(transition);
+  }
+
+  /** All-or-none reservation; only this owner can publish its exact candidates or originals. */
+  reserveMutation(sources: readonly ExactSourceMutation[]): OwnedSourceMutation | undefined {
+    const owned = new Map<string, OwnedSource>();
+    const release = (): void => {
+      for (const { token } of owned.values()) this.abort(token);
+      owned.clear();
+    };
+    try {
+      for (const source of sources) {
+        const staged = this.stageBatch(
+          {
+            filePath: source.filePath,
+            candidateFingerprint: taskRefContentFingerprint(source.after),
+            candidateLength: source.after.length,
+            roots: source.roots,
+          },
+          source.roots.map(({ previousRevision }) => previousRevision),
+        );
+        if (staged.type !== 'staged') {
+          release();
+          return undefined;
+        }
+        owned.set(source.filePath, { source: { ...source }, token: staged.token });
+        if (!this.retainPredecessors(staged.token, source.before, source.predecessors)) {
+          release();
+          return undefined;
+        }
+        const pending = this.activeStaged(staged.token);
+        if (pending !== undefined)
+          pending.exactSource = sourceLineage(source.before, source.after, false);
+      }
+    } catch (error) {
+      release();
+      throw error;
+    }
+    const forwardOwned = (): boolean =>
+      owned.size > 0 &&
+      [...owned.values()].every(({ token }) => hasForwardOwnership(this.activeStaged(token)));
+    return {
+      forward: (path, current) => {
+        const entry = owned.get(path);
+        if (!forwardOwned() || entry?.source.before !== current) return undefined;
+        const evidence = this.activeStaged(entry.token)?.exactSource;
+        if (evidence === undefined) return undefined;
+        evidence.forwarded = true;
+        return entry.source.after;
+      },
+      restore: (path, current) => this.restoreMutationSource(owned.get(path), current),
+      complete: (contents) => {
+        if (
+          !forwardOwned() ||
+          [...owned.values()].some(({ source }) => contents.get(source.filePath) !== source.after)
+        )
+          return false;
+        for (const { source, token } of owned.values()) {
+          this.commit(token);
+          this.acknowledge(source.filePath, source.after);
+        }
+        owned.clear();
+        return true;
+      },
+      completeRestoration: (contents) => {
+        if (
+          owned.size === 0 ||
+          [...owned.values()].some(
+            ({ token, source }) =>
+              !hasRestorationOwnership(this.activeStaged(token)) ||
+              contents.get(source.filePath) !== source.before,
+          )
+        )
+          return false;
+        release();
+        return true;
+      },
+      release,
+    };
+  }
+
+  private restoreMutationSource(
+    entry: OwnedSource | undefined,
+    current: string,
+  ): string | undefined {
+    if (
+      entry === undefined ||
+      this.activeStaged(entry.token)?.exactSource?.invalid === true ||
+      (current !== entry.source.before && current !== entry.source.after)
+    )
+      return undefined;
+    const restored = this.stageRestoration(entry.token, entry.source.before);
+    if (restored.type !== 'staged') return undefined;
+    entry.token = restored.token;
+    const pending = this.activeStaged(entry.token);
+    if (pending === undefined) return undefined;
+    pending.exactSource = sourceLineage(entry.source.before, entry.source.before, true);
+    return entry.source.before;
   }
 
   /** Attach the repository's live, population-proven predecessors before publishing a candidate. */
@@ -302,6 +442,14 @@ export class TaskRefAuthority {
 
   observeTransition(filePath: string, content: string): TaskRefAuthorityObservation | undefined {
     const transition = this.transitions.get(filePath);
+    const exact = transition?.exactSource;
+    if (
+      exact !== undefined &&
+      (exact.invalid || (content !== exact.after && (exact.forwarded || content !== exact.before)))
+    ) {
+      exact.invalid = true;
+      return undefined;
+    }
     if (transition == null || !matches(transition, content)) return undefined;
     transition.observed = true;
     return {

@@ -89,7 +89,7 @@ and delegates persistence through repository and destination ports. It returns s
 such as success, conflict, invalid input, missing or ambiguous targets, partial moves, and I/O
 failure.
 
-`TaskDependencyService` coordinates public add/remove/restore dependency commands, atomic linked
+`TaskDependencyService` coordinates public add/remove/restore/reverse dependency commands, atomic linked
 subtask creation, and derives the
 active blockers used by completion validation. It receives query/repository ports, an ID generator,
 and a diagnostic sink from the composition root. Dependencies use the same repository and source
@@ -302,11 +302,50 @@ When the second cross-file write fails, the assigned ID remains, the exact struc
 returned, and one content-free diagnostic is emitted. There is no compensating ID deletion.
 
 Dependency mutation validation and publication share a FIFO coordinator keyed by repository,
-including separate service instances. Add/remove/restore and completion-to-done/cancelled hold
+including separate service instances. Add/remove/restore/reverse and completion-to-done/cancelled hold
 that coordinator through their final repository result and any retry. Queued completion resolves
 again after acquisition; an idle acquisition continues the already prepared synchronous read.
 Neither path reacquires during retry. Unrelated non-completion edits bypass the coordinator, and
 failure always releases the next waiter.
+
+`reverse-dependency` identifies the original blocker, dependent and declared ID. The service
+resolves both complete endpoints, proves the original ID is unique and declared on the dependent,
+then checks the reverse edge against a candidate graph with that original edge removed. Self,
+duplicate, inverse, cycle, unavailable, ambiguous and unproven targets still reject the command;
+completed endpoints may reverse relations. The new blocker receives an ID only when needed.
+All repeated declarations of the identified original edge are removed, preserving other ordered
+declarations. A successful dependency outcome uses `change: 'reversed'` and identifies the fresh
+blocker, dependent and ID in the new direction. This command introduces no persisted syntax.
+
+The narrow `TaskRepository.reverseDependency()` port accepts metadata batches and a pure reversal
+proof over repository-supplied roots. The proof captures the resolved endpoint snapshots, reads no
+mutable query state, and verifies their exact final dependency values and otherwise unchanged trees.
+Adapters without this capability fail closed. The Obsidian adapter shares metadata batch preparation,
+canonical parsing and complete predecessor-population capture with existing edits. Same-file endpoints
+publish both task lines in one guarded `Vault.process()` callback. Across files, a transaction reserves
+both exact before/after sources and their authority evidence, writes in file-path order, then reads,
+parses, installs and proves both complete final source populations before reporting success.
+
+`TaskRefAuthority.reserveMutation()` owns these reservations as one ephemeral scope. Acquisition is
+all-or-none, including cleanup after a thrown predecessor capture. Every forward callback requires
+the captured original bytes, a current complete predecessor population and all original live tokens.
+Once a forward write has been issued, observing contrary source bytes permanently invalidates that
+file's reservation; replaying captured candidate bytes cannot revive its ownership for success or
+restoration.
+Restored tokens retain the same contrary-observation guard until exact restoration completion;
+an external edit during restoration proof yields unknown state and a fresh actual-source read.
+No raw token or generic ownership bypass escapes to the application. On a later failure, reversal
+attempts restoration in reverse file order while the same dependency queue remains held. Restoration
+accepts only an owned exact original or candidate source; it never overwrites intervening content.
+The existing predecessor restoration primitive grants no writable inverse transition. Exact before
+bytes and all original root revisions must be proven again before returning an unchanged I/O error.
+If rollback, authoritative reads or reconciliation cannot prove restoration, the result is an I/O
+error with unknown content state. Recovery reconciles every actually readable source after releasing
+invalid forward evidence; it never installs captured bytes in place of newer external content.
+Every exit releases reservations without touching later owners.
+Forward, rollback and restoration-proof diagnostics contain only phase and fixed cause codes;
+a failing diagnostic sink cannot interrupt compensation. The established command-result presenter
+remains the sole user-facing error boundary. Existing cross-file add and move behavior is unchanged.
 
 Successful dependency commands return `DependencyCommandOutcome` with the fresh dependent
 occurrence and a blocker occurrence when uniquely resolved. Removing a raw ID deletes every

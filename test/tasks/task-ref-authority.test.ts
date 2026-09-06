@@ -1,9 +1,149 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   TaskRefAuthority,
   taskRefContentFingerprint,
 } from '../../src/tasks/infrastructure/TaskRefAuthority';
 import { expectDefined } from './../helpers';
+
+function sources(authority: TaskRefAuthority) {
+  return ['a.md', 'b.md'].map((filePath) => {
+    const before = '- [ ] Before\r\n';
+    const after = '- [ ] After\r\n';
+    const previousRevision = authority.mintRevision('- [ ] Before');
+    return {
+      filePath,
+      before,
+      after,
+      predecessors: [{ line: 0, source: '- [ ] Before', revision: previousRevision }],
+      roots: [
+        {
+          line: 0,
+          source: '- [ ] After',
+          previousRevision,
+          revision: expectDefined(authority.successor(previousRevision, '- [ ] After')),
+        },
+      ],
+    };
+  });
+}
+
+describe('owned exact-source transaction', () => {
+  it.each([false, true])(
+    'requires live restoration ownership before release (external mutation: %s)',
+    (changed) => {
+      const authority = new TaskRefAuthority('transaction');
+      const input = sources(authority);
+      const owner = expectDefined(authority.reserveMutation(input));
+      for (const source of input)
+        expect(owner.restore(source.filePath, source.after)).toBe('- [ ] Before\r\n');
+      if (changed) authority.observeTransition('a.md', '- [ ] External\r\n');
+      expect(
+        owner.completeRestoration(new Map(input.map(({ filePath, before }) => [filePath, before]))),
+      ).toBe(!changed);
+      if (changed) expect(authority.observeTransition('a.md', '- [ ] Before\r\n')).toBeUndefined();
+      owner.release();
+      expectDefined(authority.reserveMutation(input)).release();
+    },
+  );
+  it('revokes forward and restoration authority after contrary observed content', () => {
+    const authority = new TaskRefAuthority('transaction');
+    const input = sources(authority);
+    const owner = expectDefined(authority.reserveMutation(input));
+    expect(owner.forward('a.md', '- [ ] Before\r\n')).toBe('- [ ] After\r\n');
+    authority.observeTransition('a.md', '- [ ] External\r\n');
+    expect(authority.observeTransition('a.md', '- [ ] After\r\n')).toBeUndefined();
+    expect(owner.complete(new Map(input.map(({ filePath, after }) => [filePath, after])))).toBe(
+      false,
+    );
+    expect(owner.forward('b.md', '- [ ] Before\r\n')).toBeUndefined();
+    expect(owner.restore('a.md', '- [ ] After\r\n')).toBeUndefined();
+    expect(owner.restore('b.md', '- [ ] Before\r\n')).toBe('- [ ] Before\r\n');
+    owner.release();
+    expectDefined(authority.reserveMutation(input)).release();
+  });
+  it('releases every reservation if capturing predecessor evidence throws', () => {
+    const authority = new TaskRefAuthority('transaction');
+    const input = sources(authority);
+    const retain = authority.retainPredecessors.bind(authority);
+    let count = 0;
+    vi.spyOn(authority, 'retainPredecessors').mockImplementation((...args) => {
+      if (++count === 2) throw new Error('capture failed');
+      return retain(...args);
+    });
+    expect(() => authority.reserveMutation(input)).toThrow('capture failed');
+    expectDefined(authority.reserveMutation(input)).release();
+  });
+  it('reserves both files, rejects competing writers and terminalizes success', () => {
+    const authority = new TaskRefAuthority('transaction');
+    const input = sources(authority);
+    const owner = expectDefined(authority.reserveMutation(input));
+    expect(authority.reserveMutation(input)).toBeUndefined();
+    expect(owner.forward('a.md', '- [ ] Before\n')).toBeUndefined();
+    expect(owner.forward('a.md', '- [ ] Before\r\n')).toBe('- [ ] After\r\n');
+    expect(owner.forward('b.md', '- [ ] Before\r\n')).toBe('- [ ] After\r\n');
+    expect(owner.complete(new Map([['a.md', '- [ ] After\r\n']]))).toBe(false);
+    expect(owner.complete(new Map(input.map(({ filePath, after }) => [filePath, after])))).toBe(
+      true,
+    );
+    expect(owner.restore('a.md', '- [ ] After\r\n')).toBeUndefined();
+    expect(owner.forward('b.md', '- [ ] Before\r\n')).toBeUndefined();
+    const next = expectDefined(authority.reserveMutation(input));
+    owner.release();
+    expect(next.forward('a.md', '- [ ] Before\r\n')).toBe('- [ ] After\r\n');
+    next.release();
+  });
+
+  it('acquires all or none when a later file is owned or its predecessor proof fails', () => {
+    const authority = new TaskRefAuthority('transaction');
+    const input = sources(authority);
+    const blocker = expectDefined(authority.reserveMutation(input.slice(1)));
+    expect(authority.reserveMutation(input)).toBeUndefined();
+    const first = expectDefined(authority.reserveMutation(input.slice(0, 1)));
+    first.release();
+    blocker.release();
+    expect(
+      authority.reserveMutation(
+        input.map((source, i) => (i === 1 ? { ...source, predecessors: [] } : source)),
+      ),
+    ).toBeUndefined();
+    expectDefined(authority.reserveMutation(input)).release();
+  });
+
+  it('restores only owned exact bytes and never issues an inverse writable transition', () => {
+    const authority = new TaskRefAuthority('transaction');
+    const input = sources(authority);
+    const owner = expectDefined(authority.reserveMutation(input));
+    expect(owner.restore('a.md', '- [ ] External\r\n')).toBeUndefined();
+    expect(owner.restore('a.md', '- [ ] After\r\n')).toBe('- [ ] Before\r\n');
+    expect(authority.observeTransition('a.md', '- [ ] Before\r\n')).toMatchObject({
+      roots: input[0]?.predecessors,
+      transitions: [],
+      restored: true,
+    });
+    expect(owner.complete(new Map(input.map(({ filePath, after }) => [filePath, after])))).toBe(
+      false,
+    );
+    expect(owner.forward('b.md', '- [ ] Before\r\n')).toBeUndefined();
+    expect(owner.restore('b.md', '- [ ] Before\r\n')).toBe('- [ ] Before\r\n');
+    owner.release();
+    expect(authority.observeTransition('a.md', '- [ ] Before\r\n')).toBeUndefined();
+    expectDefined(authority.reserveMutation(input)).release();
+  });
+
+  it('losing either reservation blocks forward writes without taking a later owner', () => {
+    const authority = new TaskRefAuthority('transaction');
+    const input = sources(authority);
+    const owner = expectDefined(authority.reserveMutation(input));
+    authority.discard('b.md');
+    const later = expectDefined(authority.reserveMutation(input.slice(1)));
+    expect(owner.forward('a.md', '- [ ] Before\r\n')).toBeUndefined();
+    expect(owner.restore('b.md', '- [ ] After\r\n')).toBeUndefined();
+    expect(owner.restore('a.md', '- [ ] After\r\n')).toBe('- [ ] Before\r\n');
+    owner.release();
+    expect(later.forward('b.md', '- [ ] Before\r\n')).toBe('- [ ] After\r\n');
+    later.release();
+  });
+});
 
 describe('TaskRefAuthority', () => {
   it('restores proven predecessor revisions without issuing writable forward or inverse transitions', () => {

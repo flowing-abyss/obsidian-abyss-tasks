@@ -10,17 +10,19 @@ import type {
 
 type RootlessCommand = Extract<
   TaskCommand,
-  { type: 'create' | 'add-dependency' | 'remove-dependency' | 'restore-dependency' }
+  {
+    type:
+      | 'create'
+      | 'add-dependency'
+      | 'remove-dependency'
+      | 'restore-dependency'
+      | 'reverse-dependency';
+  }
 >;
 export type RootedTaskCommand = Exclude<TaskCommand, RootlessCommand>;
 
 function isRootless(command: TaskCommand): command is RootlessCommand {
-  return (
-    command.type === 'create' ||
-    command.type === 'add-dependency' ||
-    command.type === 'remove-dependency' ||
-    command.type === 'restore-dependency'
-  );
+  return command.type === 'create' || 'dependent' in command;
 }
 
 export function taskNodeRootRef(target: TaskMutationTarget): TaskRef {

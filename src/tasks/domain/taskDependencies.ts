@@ -187,7 +187,15 @@ function pairEligibility(
   return { type: 'allowed' };
 }
 
-function dependencyIndexes(input: readonly TaskNodeSnapshot[]): {
+interface DependencyEdge {
+  readonly blocker: TaskNodeRef;
+  readonly dependent: TaskNodeRef;
+}
+
+function dependencyIndexes(
+  input: readonly TaskNodeSnapshot[],
+  without?: DependencyEdge,
+): {
   byRevision: ReadonlyMap<string, TaskNodeSnapshot>;
   addresses: ReadonlySet<string>;
   byId: ReadonlyMap<string, readonly TaskNodeSnapshot[]>;
@@ -213,7 +221,14 @@ function dependencyIndexes(input: readonly TaskNodeSnapshot[]): {
     byId.set(id, matches);
   }
   for (const dependent of nodes) {
-    const blockers = [...new Set(dependent.node.dependsOn)].flatMap((id) => byId.get(id) ?? []);
+    const blockers = [...new Set(dependent.node.dependsOn)]
+      .flatMap((id) => byId.get(id) ?? [])
+      .filter(
+        (blocker) =>
+          without === undefined ||
+          !sameTaskNodeRef(dependent.target, without.dependent) ||
+          !sameTaskNodeRef(blocker.target, without.blocker),
+      );
     prerequisites.set(dependent, blockers);
     for (const blocker of blockers) {
       const matches = dependents.get(blocker) ?? [];
@@ -228,8 +243,12 @@ function dependencyIndexes(input: readonly TaskNodeSnapshot[]): {
 export function buildTaskDependencyGraph(
   input: readonly TaskNodeSnapshot[],
   statusForSymbol: (symbol: string) => TaskStatus,
+  without?: DependencyEdge,
 ): TaskDependencyGraph {
-  const { byRevision, addresses, byId, prerequisites, dependents } = dependencyIndexes(input);
+  const { byRevision, addresses, byId, prerequisites, dependents } = dependencyIndexes(
+    input,
+    without,
+  );
   return {
     dependencies(target: TaskNodeRef): TaskDependencyProjection {
       const node = exact(byRevision, target);

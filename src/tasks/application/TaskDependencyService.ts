@@ -3,6 +3,7 @@ import type {
   DependencyCommandOutcome,
   DependencyRemovalRecovery,
   DependencySubtaskCreationOutcome,
+  ReverseDependencyCommand,
   TaskCommand,
   TaskCommandResult,
   TaskOccurrenceResult,
@@ -18,7 +19,11 @@ import {
   type TaskNodeSnapshot,
 } from '../domain/taskDependencies';
 import { isTaskDependencyId } from '../domain/taskLineSourceModel';
-import { reconcileTaskNodeRef, type RootReconciliationBasis } from '../domain/taskReconciliation';
+import {
+  reconcileTaskNodeRef,
+  sameTaskTreeExceptDependencies,
+  type RootReconciliationBasis,
+} from '../domain/taskReconciliation';
 import { sameTaskTreeWithOwnedChanges } from '../domain/taskTreeChangeProof';
 import {
   sameTaskNodeRef,
@@ -30,6 +35,8 @@ import {
 import type { TaskDependencyQueryApi, TaskQueryApi } from './TaskApplicationApi';
 import type {
   CreateDependencySubtaskRequest,
+  DependencyReversalPhase,
+  TaskEditBatchRequest,
   TaskEditCommand,
   TaskEditRequest,
   TaskRepository,
@@ -39,7 +46,8 @@ import type {
 type DependencyCommand = Extract<
   TaskCommand,
   {
-    readonly type: 'add-dependency' | 'remove-dependency' | 'restore-dependency';
+    readonly type:
+      'add-dependency' | 'remove-dependency' | 'restore-dependency' | 'reverse-dependency';
   }
 >;
 type MetadataCommand = Extract<
@@ -53,7 +61,7 @@ interface ResolvedNode extends TaskNodeSnapshot {
 type NodeResolution = { readonly node: ResolvedNode } | { readonly result: TaskCommandResult };
 type Rebase = Extract<TaskRepositoryResult, { readonly type: 'rebased' }>;
 type AddCommand = Extract<DependencyCommand, { readonly type: 'add-dependency' }>;
-type ChangeCommand = Exclude<DependencyCommand, AddCommand>;
+type ChangeCommand = Exclude<DependencyCommand, AddCommand | ReverseDependencyCommand>;
 interface DeclaredIdsChange {
   readonly dependencyId: string;
   readonly change: 'removed' | 'restored';
@@ -69,7 +77,7 @@ interface DependencyPair {
 export type TaskDependencyIdGenerator = (reserved: ReadonlySet<string>) => string;
 interface TaskCommandDiagnostic {
   readonly operation: TaskCommand['type'];
-  readonly phase: 'unexpected' | 'cross-file-edge-write';
+  readonly phase: 'unexpected' | 'cross-file-edge-write' | `reversal-${DependencyReversalPhase}`;
   readonly cause: string;
 }
 export type TaskDiagnosticSink = (diagnostic: TaskCommandDiagnostic, error?: unknown) => void;
@@ -188,7 +196,10 @@ function terminal(result: TaskRepositoryResult): TaskCommandResult {
   return result;
 }
 
-function request(node: ResolvedNode, command: MetadataCommand): TaskEditRequest {
+function request(
+  node: ResolvedNode,
+  command: MetadataCommand,
+): TaskEditRequest & { readonly command: MetadataCommand } {
   return { command, baseRoot: node.root, baseTarget: node.target, reconciliation: node.basis };
 }
 
@@ -274,6 +285,7 @@ async function executeDependency(
   command: DependencyCommand,
 ): Promise<TaskCommandResult> {
   try {
+    if (command.type === 'reverse-dependency') return await reverse(context, command);
     return command.type === 'add-dependency'
       ? await add(context, command)
       : await changeDeclaredIds(context, command);
@@ -552,6 +564,123 @@ async function add(
   if (result.type === 'rebased' && rebases.length === 0)
     return await add(context, command, [result]);
   return addedResult(context, result, pair);
+}
+
+async function reverse(
+  context: DependencyContext,
+  command: ReverseDependencyCommand,
+): Promise<TaskCommandResult> {
+  const prepared = prepareReversal(context, command);
+  if ('result' in prepared) return prepared.result;
+  const { blocker: original, dependent: next, id } = prepared.pair;
+  if (context.repository.reverseDependency === undefined) return invalid('dependency-write');
+  const edits = [
+    request(next, { type: 'set-dependency-id', target: next.target, id }),
+    request(next, {
+      type: 'set-depends-on',
+      target: next.target,
+      ids: next.node.dependsOn.filter((value) => value !== command.dependencyId),
+    }),
+    request(original, {
+      type: 'set-depends-on',
+      target: original.target,
+      ids: [...original.node.dependsOn, id],
+    }),
+  ];
+  const batches = new Map<string, TaskEditBatchRequest>();
+  for (const edit of edits) {
+    const filePath = edit.baseRoot.ref.filePath;
+    const previous = batches.get(filePath);
+    batches.set(filePath, {
+      filePath,
+      edits: [...(previous?.edits ?? []), edit],
+      outcomeTarget: edit.command.target,
+    });
+  }
+  const result = await context.repository.reverseDependency({
+    batches: [...batches.values()],
+    proveReversal: (roots) => reversedOutcome(roots, original, next, id),
+    diagnostic: (phase, cause) => {
+      context.diagnostics({ operation: command.type, phase: `reversal-${phase}`, cause });
+    },
+  });
+  return result.type === 'committed'
+    ? { type: 'ok', changed: result.changed, outcome: result.outcome }
+    : terminal(result);
+}
+
+function prepareReversal(
+  context: DependencyContext,
+  command: ReverseDependencyCommand,
+): { readonly pair: DependencyPair } | { readonly result: TaskCommandResult } {
+  if (!isTaskDependencyId(command.dependencyId)) return { result: invalid('dependency-id') };
+  const blocker = resolve(context, command.blocker);
+  if ('result' in blocker) return blocker;
+  const dependent = resolve(context, command.dependent);
+  if ('result' in dependent) return dependent;
+  const original = blocker.node;
+  const next = dependent.node;
+  const nodes = dependencyNodes(context, [original, next]);
+  if (
+    original.node.dependencyId !== command.dependencyId ||
+    !next.node.dependsOn.includes(command.dependencyId)
+  )
+    return { result: invalid() };
+  if (nodes.filter(({ node }) => node.dependencyId === command.dependencyId).length !== 1)
+    return {
+      result: {
+        type: 'ambiguous',
+        candidates: nodes
+          .filter(({ node }) => node.dependencyId === command.dependencyId)
+          .map(occurrence),
+      },
+    };
+  const eligibility = buildTaskDependencyGraph(nodes, () => 'open', {
+    blocker: original.target,
+    dependent: next.target,
+  }).eligibility(next.target, original.target);
+  if (eligibility.type === 'rejected')
+    return { result: eligibilityFailure(context, eligibility, next) };
+  const id = next.node.dependencyId ?? allocateId(context, nodes);
+  return id === undefined
+    ? { result: invalid('dependency-id') }
+    : { pair: { blocker: original, dependent: next, id } };
+}
+
+function reversedOutcome(
+  roots: readonly TaskSnapshot[],
+  original: TaskNodeSnapshot,
+  next: TaskNodeSnapshot,
+  id: string,
+): DependencyCommandOutcome | undefined {
+  const fresh = [original, next].map((before) => {
+    const root = roots.find(
+      (candidate) => rootAddress(candidate.ref) === rootAddress(before.root.ref),
+    );
+    return root === undefined || !sameTaskTreeExceptDependencies(before.root, root)
+      ? undefined
+      : atAddress(root, before.target);
+  });
+  const [dependent, blocker] = fresh;
+  if (
+    dependent === undefined ||
+    blocker === undefined ||
+    dependent.node.dependencyId !== original.node.dependencyId ||
+    blocker.node.dependencyId !== id ||
+    !sameIds(dependent.node.dependsOn, [...original.node.dependsOn, id]) ||
+    !sameIds(
+      blocker.node.dependsOn,
+      next.node.dependsOn.filter((value) => value !== original.node.dependencyId),
+    )
+  )
+    return undefined;
+  return {
+    type: 'dependency',
+    change: 'reversed',
+    dependencyId: id,
+    dependent: occurrence(dependent),
+    blocker: occurrence(blocker),
+  };
 }
 
 function addWithinFile(

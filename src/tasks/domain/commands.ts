@@ -86,6 +86,7 @@ export type TaskCommand =
       readonly blocker: TaskNodeRef;
       readonly dependent: TaskNodeRef;
     }
+  | ReverseDependencyCommand
   | {
       readonly type: 'remove-dependency';
       readonly dependent: TaskNodeRef;
@@ -162,9 +163,16 @@ export interface DependencyRemovalRecovery {
   };
 }
 
+export interface ReverseDependencyCommand {
+  readonly type: 'reverse-dependency';
+  readonly blocker: TaskNodeRef;
+  readonly dependent: TaskNodeRef;
+  readonly dependencyId: string;
+}
+
 export interface DependencyCommandOutcome {
   readonly type: 'dependency';
-  readonly change: 'added' | 'removed' | 'restored';
+  readonly change: 'added' | 'removed' | 'restored' | 'reversed';
   readonly dependencyId: string;
   readonly dependent: TaskOccurrenceResult;
   readonly blocker?: TaskOccurrenceResult;

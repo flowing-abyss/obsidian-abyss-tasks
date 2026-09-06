@@ -9,6 +9,7 @@ import {
   type CreateDependencySubtaskRequest,
   type RecurrenceCompletionRequest,
   type RecurrenceCompletionRevisionRequest,
+  type ReverseDependencyRequest,
   type RevisionPrecondition,
   type TaskDraft,
   type TaskEditBatchRequest,
@@ -36,6 +37,7 @@ import {
 import {
   taskNodeChain as childChain,
   taskNodeAtSourcePath as nodeSnapshot,
+  rebaseTaskNode as rebaseNode,
   taskNodeRootRef as rootRefOf,
 } from '../../domain/taskCommandTargets';
 import type {
@@ -44,6 +46,7 @@ import type {
   SubtaskRef,
   SubtaskSnapshot,
   TaskDestination,
+  TaskMutationTarget,
   TaskNodeRef,
   TaskRef,
   TaskSnapshot,
@@ -81,6 +84,7 @@ import {
   type TaskRefStageResult,
   type TaskSnapshotState,
 } from '../TaskRefAuthority';
+import { reverseDependency } from './reverseDependency';
 
 type LocateResult = ReturnType<TaskLocator['locate']>;
 
@@ -148,14 +152,6 @@ function confirmedTargetRelativeLine(
     }
   }
   return line;
-}
-
-function rebaseNode(node: TaskNodeRef, root: TaskRef): TaskNodeRef {
-  if (node.type === 'task') return { type: 'task', ref: root };
-  return {
-    type: 'subtask',
-    ref: { ...node.ref, parent: rebaseNode(node.ref.parent, root) },
-  };
 }
 
 function rebaseSubtaskWithParent(
@@ -625,15 +621,29 @@ type TextEditTarget =
 export class ObsidianTaskRepository implements TaskRepository {
   readonly supportsRevisionPreconditions = true as const;
 
+  private readonly authority_abyssPrivate: TaskRefAuthority | undefined;
+  private readonly state_abyssPrivate: TaskSnapshotState | undefined;
+  private readonly codec_abyssPrivate: TaskMarkdownCodec;
+  private readonly editor_abyssPrivate: TaskBlockEditor;
+  private readonly locator_abyssPrivate: TaskLocator;
+  private readonly parse_abyssPrivate: RepositoryOptions['snapshotsFromContent'];
+
   constructor(
     private readonly app_abyssPrivate: App,
     private readonly options_abyssPrivate: RepositoryOptions,
-  ) {}
+  ) {
+    this.authority_abyssPrivate = options_abyssPrivate.refAuthority;
+    this.state_abyssPrivate = options_abyssPrivate.snapshotState;
+    this.codec_abyssPrivate = options_abyssPrivate.codec;
+    this.editor_abyssPrivate = options_abyssPrivate.editor;
+    this.locator_abyssPrivate = options_abyssPrivate.locator;
+    this.parse_abyssPrivate = options_abyssPrivate.snapshotsFromContent;
+  }
 
   async create(destination: TaskDestination, draft: TaskDraft): Promise<TaskRepositoryResult> {
     const file = this.app_abyssPrivate.vault.getAbstractFileByPath(destination.filePath);
     if (!(file instanceof TFile)) return this.destinationUnavailable_abyssPrivate();
-    const block = createTaskBlock(this.options_abyssPrivate.codec, {
+    const block = createTaskBlock(this.codec_abyssPrivate, {
       ...draft,
       today: draft.today ?? localDate('1970-01-01'),
       addCreatedDate: draft.addCreatedDate ?? false,
@@ -658,7 +668,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     let createdContent: string | undefined;
     try {
       await this.processFile_abyssPrivate(file, (content) => {
-        const inserted = this.options_abyssPrivate.editor.insertRootBlock(
+        const inserted = this.editor_abyssPrivate.insertRootBlock(
           content,
           blockContent,
           destination.insertion,
@@ -692,10 +702,10 @@ export class ObsidianTaskRepository implements TaskRepository {
     path: string,
     createdContent: string | undefined,
   ): Promise<void> {
-    if (createdContent === undefined || this.options_abyssPrivate.snapshotState == null) return;
+    if (createdContent === undefined || this.state_abyssPrivate == null) return;
     try {
       const authoritative = await this.app_abyssPrivate.vault.read(file);
-      this.options_abyssPrivate.snapshotState.installCommittedContent(path, authoritative);
+      this.state_abyssPrivate.installCommittedContent(path, authoritative);
     } catch {
       // The I/O result records that final content state is unknown.
     }
@@ -714,13 +724,8 @@ export class ObsidianTaskRepository implements TaskRepository {
     ) {
       return result ?? this.processError_abyssPrivate(path);
     }
-    const installed = this.options_abyssPrivate.snapshotState?.installCommittedContent(
-      path,
-      content,
-    );
-    const line = result.outcome.task.source.line;
-    const rebased = installed?.find((candidate) => candidate.source.line === line);
-    return rebased === undefined ? result : { ...result, outcome: { type: 'task', task: rebased } };
+    const installed = this.state_abyssPrivate?.installCommittedContent(path, content);
+    return this.rebaseEditResult_abyssPrivate(result, installed);
   }
 
   private processError_abyssPrivate(path: string): TaskRepositoryResult {
@@ -779,23 +784,19 @@ export class ObsidianTaskRepository implements TaskRepository {
     prepared: RevisionPrecondition | undefined,
     sourceContent: string,
   ): MoveSourceResolution {
-    const evidence = this.options_abyssPrivate.refAuthority?.evidence(ref.revision);
+    const evidence = this.authority_abyssPrivate?.evidence(ref.revision);
     const indexedRef =
       evidence === undefined
         ? undefined
-        : this.options_abyssPrivate.snapshotState?.currentRoot(
-            ref.filePath,
-            ref.line,
-            evidence.source,
-          );
-    const sourceBlocks = this.options_abyssPrivate.editor.rootBlocks(sourceContent);
-    const sourceLocated = this.options_abyssPrivate.locator.locate(sourceBlocks, ref);
+        : this.state_abyssPrivate?.currentRoot(ref.filePath, ref.line, evidence.source);
+    const sourceBlocks = this.editor_abyssPrivate.rootBlocks(sourceContent);
+    const sourceLocated = this.locator_abyssPrivate.locate(sourceBlocks, ref);
     const preparedResult = preparedRevisionResult({
       prepared,
       located: sourceLocated,
-      authorityCurrent: this.options_abyssPrivate.snapshotState?.authoritySuccessor?.(ref),
+      authorityCurrent: this.state_abyssPrivate?.authoritySuccessor?.(ref),
       locateAuthorityCurrent: (currentRef) =>
-        this.options_abyssPrivate.locator.locate(sourceBlocks, currentRef),
+        this.locator_abyssPrivate.locate(sourceBlocks, currentRef),
       snapshot: (block) => this.snapshotFor_abyssPrivate(ref.filePath, sourceContent, block),
     });
     if (preparedResult != null) return { type: 'result', result: preparedResult };
@@ -809,8 +810,8 @@ export class ObsidianTaskRepository implements TaskRepository {
     indexedRef: TaskRef | undefined,
   ): MoveSourceResolution {
     const stale = authorityRevisionChanged(
-      this.options_abyssPrivate.refAuthority !== undefined,
-      this.options_abyssPrivate.snapshotState !== undefined,
+      this.authority_abyssPrivate !== undefined,
+      this.state_abyssPrivate !== undefined,
       indexedRef,
       ref.revision,
     );
@@ -898,7 +899,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     transaction: MoveTargetTransaction,
     content: string,
   ): string {
-    const inserted = this.options_abyssPrivate.editor.insertRootBlock(
+    const inserted = this.editor_abyssPrivate.insertRootBlock(
       content,
       input.sourceBlock.source,
       input.destination.insertion,
@@ -937,8 +938,8 @@ export class ObsidianTaskRepository implements TaskRepository {
     candidate: string,
     block: TaskRootBlock,
   ): boolean {
-    const authority = this.options_abyssPrivate.refAuthority;
-    if (authority == null || this.options_abyssPrivate.snapshotState == null) return true;
+    const authority = this.authority_abyssPrivate;
+    if (authority == null || this.state_abyssPrivate == null) return true;
     const revision = authority.successor(input.sourceTask.ref.revision, block.source);
     if (revision === undefined || revision.length === 0) {
       transaction.result = { type: 'conflict', current: input.sourceTask };
@@ -963,8 +964,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   }
 
   private abortMoveTransition_abyssPrivate(transaction: MoveTargetTransaction): void {
-    if (transaction.transition != null)
-      this.options_abyssPrivate.refAuthority?.abort(transaction.transition);
+    if (transaction.transition != null) this.authority_abyssPrivate?.abort(transaction.transition);
     transaction.transition = undefined;
   }
 
@@ -987,30 +987,14 @@ export class ObsidianTaskRepository implements TaskRepository {
     if (token == null || content === undefined) {
       return transaction.result ?? this.processError_abyssPrivate(input.destination.filePath);
     }
-    this.options_abyssPrivate.refAuthority?.commit(token);
-    const installed = this.options_abyssPrivate.snapshotState?.installCommittedContent(
+    const installed = this.installTransition_abyssPrivate(
       input.destination.filePath,
       content,
+      token,
     );
-    this.options_abyssPrivate.refAuthority?.acknowledge(input.destination.filePath, content);
-    return this.rebaseMoveResult_abyssPrivate(
-      transaction.result,
-      installed,
-      input.destination.filePath,
-    );
-  }
-
-  private rebaseMoveResult_abyssPrivate(
-    result: TaskRepositoryResult | undefined,
-    installed: readonly TaskSnapshot[] | undefined,
-    path: string,
-  ): TaskRepositoryResult {
-    if (result?.type !== 'committed' || result.outcome.type !== 'task' || installed === undefined) {
-      return result ?? this.processError_abyssPrivate(path);
-    }
-    const line = result.outcome.task.source.line;
-    const task = installed.find((candidate) => candidate.source.line === line);
-    return task === undefined ? result : { ...result, outcome: { type: 'task', task } };
+    return transaction.result?.type === 'committed'
+      ? this.rebaseEditResult_abyssPrivate(transaction.result, installed)
+      : (transaction.result ?? this.processError_abyssPrivate(input.destination.filePath));
   }
 
   private async removeMoveSource_abyssPrivate(
@@ -1022,8 +1006,8 @@ export class ObsidianTaskRepository implements TaskRepository {
     let failure: MoveRecovery['cause'] | undefined;
     try {
       await this.processFile_abyssPrivate(file, (content) => {
-        const located = this.options_abyssPrivate.locator.locate(
-          this.options_abyssPrivate.editor.rootBlocks(content),
+        const located = this.locator_abyssPrivate.locate(
+          this.editor_abyssPrivate.rootBlocks(content),
           sourceTask.ref,
         );
         if (located.type !== 'exact') {
@@ -1038,7 +1022,7 @@ export class ObsidianTaskRepository implements TaskRepository {
         const next =
           current === undefined
             ? undefined
-            : this.options_abyssPrivate.editor.deleteRoot(content, located.block);
+            : this.editor_abyssPrivate.deleteRoot(content, located.block);
         if (current === undefined || next === undefined) {
           failure = 'not-found';
           return content;
@@ -1059,10 +1043,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     if (committedContent === undefined || (failure !== undefined && failure.length > 0)) {
       return failure ?? 'io-error';
     }
-    this.options_abyssPrivate.snapshotState?.installCommittedContent(
-      sourceTask.ref.filePath,
-      committedContent,
-    );
+    this.state_abyssPrivate?.installCommittedContent(sourceTask.ref.filePath, committedContent);
     return undefined;
   }
 
@@ -1106,12 +1087,12 @@ export class ObsidianTaskRepository implements TaskRepository {
       input.rootRef.filePath,
       content,
     );
-    if (this.options_abyssPrivate.codec.statusForSymbol(location.owner.statusSymbol) === 'done') {
+    if (this.codec_abyssPrivate.statusForSymbol(location.owner.statusSymbol) === 'done') {
       transaction.result = this.unchangedMove_abyssPrivate(location.current);
       return content;
     }
     const prepared = prepareRecurrenceCandidate({
-      editor: this.options_abyssPrivate.editor,
+      editor: this.editor_abyssPrivate,
       content,
       block: location.block,
       owner: location.owner,
@@ -1133,23 +1114,18 @@ export class ObsidianTaskRepository implements TaskRepository {
     content: string,
   ): RecurrenceLocation {
     const { rootRef } = input;
-    const evidence = this.options_abyssPrivate.refAuthority?.evidence(rootRef.revision);
+    const evidence = this.authority_abyssPrivate?.evidence(rootRef.revision);
     const indexedRef =
       evidence === undefined
         ? undefined
-        : this.options_abyssPrivate.snapshotState?.currentRoot(
-            rootRef.filePath,
-            rootRef.line,
-            evidence.source,
-          );
-    const blocks = this.options_abyssPrivate.editor.rootBlocks(content);
-    const located = this.options_abyssPrivate.locator.locate(blocks, rootRef);
+        : this.state_abyssPrivate?.currentRoot(rootRef.filePath, rootRef.line, evidence.source);
+    const blocks = this.editor_abyssPrivate.rootBlocks(content);
+    const located = this.locator_abyssPrivate.locate(blocks, rootRef);
     const revision = preparedRevisionResult({
       prepared: input.revisionRequest,
       located,
-      authorityCurrent: this.options_abyssPrivate.snapshotState?.authoritySuccessor?.(rootRef),
-      locateAuthorityCurrent: (currentRef) =>
-        this.options_abyssPrivate.locator.locate(blocks, currentRef),
+      authorityCurrent: this.state_abyssPrivate?.authoritySuccessor?.(rootRef),
+      locateAuthorityCurrent: (currentRef) => this.locator_abyssPrivate.locate(blocks, currentRef),
       snapshot: (block) => this.snapshotFor_abyssPrivate(rootRef.filePath, content, block),
     });
     if (revision != null) return { type: 'result', result: revision };
@@ -1164,8 +1140,8 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): RecurrenceLocation {
     const { rootRef, request } = input;
     const stale = authorityRevisionChanged(
-      this.options_abyssPrivate.refAuthority !== undefined,
-      this.options_abyssPrivate.snapshotState !== undefined,
+      this.authority_abyssPrivate !== undefined,
+      this.state_abyssPrivate !== undefined,
       indexedRef,
       rootRef.revision,
     );
@@ -1280,11 +1256,11 @@ export class ObsidianTaskRepository implements TaskRepository {
     transaction: RecurrenceTransaction,
   ): boolean {
     const { process, location, prepared, coordinates } = input;
-    const authority = this.options_abyssPrivate.refAuthority;
-    if (authority == null || this.options_abyssPrivate.snapshotState == null) return true;
+    const authority = this.authority_abyssPrivate;
+    if (authority == null || this.state_abyssPrivate == null) return true;
     const staged = stageRootTransition({
       authority,
-      editor: this.options_abyssPrivate.editor,
+      editor: this.editor_abyssPrivate,
       filePath: process.rootRef.filePath,
       candidate: prepared.candidate,
       expectedRevision: process.rootRef.revision,
@@ -1312,8 +1288,8 @@ export class ObsidianTaskRepository implements TaskRepository {
     coordinates: RecurrenceCoordinates,
   ): TaskRepositoryResult | undefined {
     const snapshots =
-      this.options_abyssPrivate.snapshotState?.previewContent(path, prepared.candidate) ??
-      this.options_abyssPrivate.snapshotsFromContent(path, prepared.candidate);
+      this.state_abyssPrivate?.previewContent(path, prepared.candidate) ??
+      this.parse_abyssPrivate(path, prepared.candidate);
     const active = occurrenceAt(
       snapshots,
       coordinates.active.rootLine,
@@ -1336,7 +1312,7 @@ export class ObsidianTaskRepository implements TaskRepository {
 
   private abortRecurrenceTransition_abyssPrivate(transaction: RecurrenceTransaction): void {
     if (transaction.transitionToken != null) {
-      this.options_abyssPrivate.refAuthority?.abort(transaction.transitionToken);
+      this.authority_abyssPrivate?.abort(transaction.transitionToken);
     }
     transaction.transitionToken = undefined;
   }
@@ -1348,12 +1324,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     const token = transaction.transitionToken;
     const content = transaction.committedContent;
     if (token === undefined || content === undefined || content.length === 0) return;
-    this.options_abyssPrivate.refAuthority?.commit(token);
-    this.options_abyssPrivate.snapshotState?.installCommittedContent(
-      input.rootRef.filePath,
-      content,
-    );
-    this.options_abyssPrivate.refAuthority?.acknowledge(input.rootRef.filePath, content);
+    this.installTransition_abyssPrivate(input.rootRef.filePath, content, token);
   }
 
   async edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult> {
@@ -1419,6 +1390,25 @@ export class ObsidianTaskRepository implements TaskRepository {
     return transaction.result ?? this.processError_abyssPrivate(request.filePath);
   }
 
+  reverseDependency(request: ReverseDependencyRequest): Promise<TaskRepositoryResult> {
+    return reverseDependency(this.app_abyssPrivate, request, {
+      authority: this.authority_abyssPrivate,
+      state: this.state_abyssPrivate,
+      parse: this.parse_abyssPrivate,
+      processFile: (file, transform) => this.processFile_abyssPrivate(file, transform),
+      capture: (path, content) => this.captureRollbackBasis_abyssPrivate(path, content),
+      prepare: (batch, content) =>
+        prepareTaskEditBatch(batch, content, {
+          ...this.options_abyssPrivate,
+          resolve: (edit) =>
+            this.resolveEditLocation_abyssPrivate(
+              { prepared: edit, command: edit.command, rootRef: edit.baseRoot.ref },
+              content,
+            ),
+        }),
+    });
+  }
+
   async createDependencySubtask(
     request: CreateDependencySubtaskRequest,
   ): Promise<TaskRepositoryResult> {
@@ -1456,9 +1446,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       request,
       prepared,
       result,
-      this.options_abyssPrivate.snapshotState === undefined
-        ? this.options_abyssPrivate.snapshotsFromContent
-        : undefined,
+      this.state_abyssPrivate === undefined ? this.parse_abyssPrivate : undefined,
     );
   }
 
@@ -1478,8 +1466,8 @@ export class ObsidianTaskRepository implements TaskRepository {
     const staged = stageTaskEditBatch(
       path,
       prepared,
-      this.options_abyssPrivate.refAuthority,
-      this.options_abyssPrivate.snapshotState,
+      this.authority_abyssPrivate,
+      this.state_abyssPrivate,
     );
     if (staged.type !== 'staged') {
       transaction.result = staged;
@@ -1527,9 +1515,9 @@ export class ObsidianTaskRepository implements TaskRepository {
     } catch {
       // The I/O result records that final content state is unknown.
     } finally {
-      this.options_abyssPrivate.refAuthority?.abort(transaction.transitionToken);
+      this.authority_abyssPrivate?.abort(transaction.transitionToken);
       for (const { baseRoot } of request.edits)
-        this.options_abyssPrivate.snapshotState?.discardAuthoritySuccessor?.(baseRoot.ref);
+        this.state_abyssPrivate?.discardAuthoritySuccessor?.(baseRoot.ref);
     }
   }
 
@@ -1567,33 +1555,25 @@ export class ObsidianTaskRepository implements TaskRepository {
 
   private resolveEditLocation_abyssPrivate(input: EditProcessInput, content: string): EditLocation {
     const { rootRef } = input;
-    const blocks = this.options_abyssPrivate.editor.rootBlocks(content);
-    const evidence = this.options_abyssPrivate.refAuthority?.evidence(rootRef.revision);
+    const blocks = this.editor_abyssPrivate.rootBlocks(content);
+    const evidence = this.authority_abyssPrivate?.evidence(rootRef.revision);
     const indexedRef =
       evidence === undefined
         ? undefined
-        : this.options_abyssPrivate.snapshotState?.currentRoot(
+        : this.state_abyssPrivate?.currentRoot(
             rootRef.filePath,
             rootRef.line,
             evidence.source,
             blocks.filter((block) => block.source === evidence.source).map((block) => block.line),
           );
-    const located = this.options_abyssPrivate.locator.locate(blocks, rootRef, indexedRef);
-    if (
-      hasUnconfirmedCurrentRoot(
-        this.options_abyssPrivate.snapshotState,
-        rootRef,
-        evidence,
-        indexedRef,
-      )
-    )
+    const located = this.locator_abyssPrivate.locate(blocks, rootRef, indexedRef);
+    if (hasUnconfirmedCurrentRoot(this.state_abyssPrivate, rootRef, evidence, indexedRef))
       return { type: 'result', result: this.editResolution_abyssPrivate(input, located, content) };
     const revision = preparedRevisionResult({
       prepared: input.prepared,
       located,
-      authorityCurrent: this.options_abyssPrivate.snapshotState?.authoritySuccessor?.(rootRef),
-      locateAuthorityCurrent: (currentRef) =>
-        this.options_abyssPrivate.locator.locate(blocks, currentRef),
+      authorityCurrent: this.state_abyssPrivate?.authoritySuccessor?.(rootRef),
+      locateAuthorityCurrent: (currentRef) => this.locator_abyssPrivate.locate(blocks, currentRef),
       snapshot: (block) => this.snapshotFor_abyssPrivate(rootRef.filePath, content, block),
     });
     if (revision != null) return { type: 'result', result: revision };
@@ -1607,8 +1587,8 @@ export class ObsidianTaskRepository implements TaskRepository {
     indexedRevision: string | undefined,
   ): EditLocation {
     const stale = authorityRevisionChanged(
-      this.options_abyssPrivate.refAuthority !== undefined,
-      this.options_abyssPrivate.snapshotState !== undefined,
+      this.authority_abyssPrivate !== undefined,
+      this.state_abyssPrivate !== undefined,
       indexedRevision === undefined ? undefined : { ...input.rootRef, revision: indexedRevision },
       input.rootRef.revision,
     );
@@ -1674,7 +1654,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     block: TaskRootBlock,
   ): EditOutcome {
     const current = this.snapshotFor_abyssPrivate(input.rootRef.filePath, content, block);
-    const next = this.options_abyssPrivate.editor.deleteRoot(content, block);
+    const next = this.editor_abyssPrivate.deleteRoot(content, block);
     if (current == null || next === undefined) {
       return { result: { type: 'not-found', target: mutationTarget(input.command) }, content };
     }
@@ -1702,14 +1682,14 @@ export class ObsidianTaskRepository implements TaskRepository {
     const sourceLine = content.split(/\r?\n/u)[block.line + relativeLine];
     if (
       sourceLine === undefined ||
-      this.options_abyssPrivate.codec.parseLine(sourceLine, { filePath: '', line: 0 }) == null
+      this.codec_abyssPrivate.parseLine(sourceLine, { filePath: '', line: 0 }) == null
     ) {
       return { result: { type: 'not-found', target: mutationTarget(process.command) }, content };
     }
-    const edit = applyTaskCommand(this.options_abyssPrivate.codec, sourceLine, process.command);
+    const edit = applyTaskCommand(this.codec_abyssPrivate, sourceLine, process.command);
     if (edit.type === 'invalid') return { result: edit, content };
     if (edit.type === 'unchanged') return this.unchangedLineEdit_abyssPrivate(input);
-    const replaced = this.options_abyssPrivate.editor.replaceLine(
+    const replaced = this.editor_abyssPrivate.replaceLine(
       content,
       block,
       relativeLine,
@@ -1750,11 +1730,11 @@ export class ObsidianTaskRepository implements TaskRepository {
     if (edit.result.outcome.type === 'deleted')
       return this.stageDeletedEdit_abyssPrivate(input, transaction);
     if (edit.result.outcome.type !== 'task') return edit.content;
-    const authority = this.options_abyssPrivate.refAuthority;
-    const snapshotState = this.options_abyssPrivate.snapshotState;
+    const authority = this.authority_abyssPrivate;
+    const snapshotState = this.state_abyssPrivate;
     if (authority == null || snapshotState == null) return edit.content;
     const taskLine = edit.result.outcome.task.source.line;
-    const surviving = this.options_abyssPrivate.editor
+    const surviving = this.editor_abyssPrivate
       .rootBlocks(edit.content)
       .find((root) => root.line === taskLine);
     if (surviving === undefined) {
@@ -1777,7 +1757,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     transaction: EditTransaction,
   ): string {
     const { process, indexedRevision, edit, originalContent, surviving } = input;
-    const authority = this.options_abyssPrivate.refAuthority;
+    const authority = this.authority_abyssPrivate;
     if (authority == null) return edit.content;
     const revision = authority.successor(process.rootRef.revision, surviving.source);
     if (revision === undefined || revision.length === 0) {
@@ -1808,9 +1788,8 @@ export class ObsidianTaskRepository implements TaskRepository {
     input: EditStageInput,
     transaction: EditTransaction,
   ): string {
-    const authority = this.options_abyssPrivate.refAuthority;
-    if (authority === undefined || this.options_abyssPrivate.snapshotState === undefined)
-      return input.edit.content;
+    const authority = this.authority_abyssPrivate;
+    if (authority === undefined || this.state_abyssPrivate === undefined) return input.edit.content;
     const staged = authority.stage(
       {
         filePath: input.process.rootRef.filePath,
@@ -1838,7 +1817,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     input: EditProcessInput,
     content: string,
   ): TaskRepositoryResult {
-    const current = this.options_abyssPrivate.snapshotState
+    const current = this.state_abyssPrivate
       ?.previewContent(input.rootRef.filePath, content)
       .find((task) => task.ref.revision === input.rootRef.revision);
     return current != null
@@ -1867,14 +1846,23 @@ export class ObsidianTaskRepository implements TaskRepository {
     const result = transaction.result;
     const content = transaction.committedContent;
     if (result?.type !== 'committed' || !result.changed || content === undefined) return;
-    const token = transaction.transitionToken;
-    if (token != null) this.options_abyssPrivate.refAuthority?.commit(token);
-    const installed = this.options_abyssPrivate.snapshotState?.installCommittedContent(
+    const installed = this.installTransition_abyssPrivate(
       path,
       content,
+      transaction.transitionToken,
     );
-    if (token != null) this.options_abyssPrivate.refAuthority?.acknowledge(path, content);
     transaction.result = this.rebaseEditResult_abyssPrivate(result, installed);
+  }
+
+  private installTransition_abyssPrivate(
+    path: string,
+    content: string,
+    token: object | undefined,
+  ): readonly TaskSnapshot[] | undefined {
+    if (token !== undefined) this.authority_abyssPrivate?.commit(token);
+    const installed = this.state_abyssPrivate?.installCommittedContent(path, content);
+    if (token !== undefined) this.authority_abyssPrivate?.acknowledge(path, content);
+    return installed;
   }
 
   private rebaseEditResult_abyssPrivate(
@@ -1917,7 +1905,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     }
     const prepared = this.prepareStructuralCommand_abyssPrivate(command, content);
     if ('result' in prepared) return prepared;
-    const edited = this.options_abyssPrivate.editor.edit(
+    const edited = this.editor_abyssPrivate.edit(
       content,
       block,
       blockTarget(node, block, relativeLine),
@@ -1957,7 +1945,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     }
     const today = (command as unknown as { readonly today?: LocalDate }).today;
     if (today === undefined) return this.invalidSubtask_abyssPrivate(content);
-    const created = createTaskBlock(this.options_abyssPrivate.codec, {
+    const created = createTaskBlock(this.codec_abyssPrivate, {
       markdownBody: command.text,
       today,
       addCreatedDate: command.addCreatedDate,
@@ -2021,7 +2009,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): boolean {
     return (
       command.stamp !== undefined &&
-      this.options_abyssPrivate.codec.statusForSymbol(command.symbol) === 'done'
+      this.codec_abyssPrivate.statusForSymbol(command.symbol) === 'done'
     );
   }
 
@@ -2060,7 +2048,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     const source = input.content.split(/\r?\n/u)[line];
     return source === undefined
       ? null
-      : this.options_abyssPrivate.codec.parseLine(source, { filePath: path, line });
+      : this.codec_abyssPrivate.parseLine(source, { filePath: path, line });
   }
 
   private deleteCompletedRoot_abyssPrivate(
@@ -2068,7 +2056,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     block: TaskRootBlock,
     current: TaskSnapshot,
   ): EditOutcome {
-    const next = this.options_abyssPrivate.editor.deleteRoot(content, block);
+    const next = this.editor_abyssPrivate.deleteRoot(content, block);
     return next === undefined
       ? { result: invalidRecurrence('invalid-task-syntax'), content }
       : {
@@ -2087,16 +2075,11 @@ export class ObsidianTaskRepository implements TaskRepository {
     block: TaskRootBlock,
     relativeLine: number,
   ): EditOutcome {
-    const next = this.options_abyssPrivate.editor.replaceOwnedTaskSubtree(
-      content,
-      block,
-      relativeLine,
-      [],
-    );
+    const next = this.editor_abyssPrivate.replaceOwnedTaskSubtree(content, block, relativeLine, []);
     if (next === undefined) {
       return { result: invalidRecurrence('invalid-task-syntax'), content };
     }
-    const updatedBlock = this.options_abyssPrivate.editor
+    const updatedBlock = this.editor_abyssPrivate
       .rootBlocks(next)
       .find((candidate) => candidate.line === block.line);
     const root =
@@ -2156,7 +2139,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): EditOutcome {
     const { content, block } = input;
     const source = content.split(/\r?\n/u)[block.line + target.relativeLine] ?? '';
-    const editResult = this.options_abyssPrivate.codec.editTextLink(
+    const editResult = this.codec_abyssPrivate.editTextLink(
       source,
       target.occurrence,
       command.replacement,
@@ -2168,7 +2151,7 @@ export class ObsidianTaskRepository implements TaskRepository {
         content,
       };
     }
-    const replaced = this.options_abyssPrivate.editor.replaceLine(
+    const replaced = this.editor_abyssPrivate.replaceLine(
       content,
       block,
       target.relativeLine,
@@ -2218,7 +2201,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     lines: readonly string[],
   ): Extract<TextEditTarget, { readonly type: 'ready' | 'invalid' }> {
     let occurrence = initialOccurrence;
-    const candidates = this.options_abyssPrivate.editor.descriptionLines(
+    const candidates = this.editor_abyssPrivate.descriptionLines(
       input.content,
       input.block,
       blockTarget(node, input.block, input.relativeLine),
@@ -2237,41 +2220,22 @@ export class ObsidianTaskRepository implements TaskRepository {
     block: TaskRootBlock,
   ): TaskSnapshot | undefined {
     const snapshot = (
-      this.options_abyssPrivate.snapshotState?.previewContent(path, content) ??
-      this.options_abyssPrivate.snapshotsFromContent(path, content)
+      this.state_abyssPrivate?.previewContent(path, content) ??
+      this.parse_abyssPrivate(path, content)
     ).find((candidate) => candidate.source.line === block.line);
     if (snapshot == null) return undefined;
-    if (this.options_abyssPrivate.snapshotState != null) return snapshot;
+    if (this.state_abyssPrivate != null) return snapshot;
     const ref: TaskRef = {
       filePath: path,
       line: block.line,
-      revision: this.options_abyssPrivate.locator.revision(block.source),
+      revision: this.locator_abyssPrivate.revision(block.source),
     };
     return rebaseSnapshot(snapshot, ref);
   }
 
-  private candidateFor_abyssPrivate(
-    block: TaskRootBlock,
-    command: TaskEditCommand,
-    path: string,
-    content: string,
-  ): TaskResolutionCandidate | undefined {
-    const root = this.snapshotFor_abyssPrivate(path, content, block);
-    if (root == null) return undefined;
-    const original = mutationTarget(command);
-    const target =
-      original.type === 'comment'
-        ? {
-            type: 'comment' as const,
-            ref: { ...original.ref, parent: rebaseNode(original.ref.parent, root.ref) },
-          }
-        : rebaseNode(original, root.ref);
-    return { root, target };
-  }
-
   private candidateForTarget_abyssPrivate(
     block: TaskRootBlock,
-    target: TaskNodeRef,
+    target: TaskMutationTarget,
     path: string,
     content: string,
   ): TaskResolutionCandidate | undefined {
@@ -2281,7 +2245,7 @@ export class ObsidianTaskRepository implements TaskRepository {
 
   private resolutionResultForTarget_abyssPrivate(
     located: Exclude<ReturnType<TaskLocator['locate']>, { readonly type: 'exact' }>,
-    target: TaskNodeRef,
+    target: TaskMutationTarget,
     path: string,
     content: string,
   ): TaskRepositoryResult {
@@ -2305,22 +2269,12 @@ export class ObsidianTaskRepository implements TaskRepository {
     path: string,
     content: string,
   ): TaskRepositoryResult {
-    if (located.type === 'not-found') {
-      return { type: 'not-found', target: mutationTarget(command) };
-    }
-    if (located.type === 'conflict') {
-      const current = this.snapshotFor_abyssPrivate(path, content, located.block);
-      return current != null
-        ? { type: 'conflict', current }
-        : { type: 'not-found', target: mutationTarget(command) };
-    }
-    const candidates = located.blocks.flatMap((block) => {
-      const candidate = this.candidateFor_abyssPrivate(block, command, path, content);
-      return candidate != null ? [candidate] : [];
-    });
-    return candidates.length > 0
-      ? { type: 'ambiguous', candidates }
-      : { type: 'not-found', target: mutationTarget(command) };
+    return this.resolutionResultForTarget_abyssPrivate(
+      located,
+      mutationTarget(command),
+      path,
+      content,
+    );
   }
 
   private resolutionResultForRef_abyssPrivate(
@@ -2366,10 +2320,10 @@ export class ObsidianTaskRepository implements TaskRepository {
   }
 
   private async reconcileAfterRejection_abyssPrivate(file: TFile, path: string): Promise<void> {
-    if (this.options_abyssPrivate.snapshotState == null) return;
+    if (this.state_abyssPrivate == null) return;
     try {
       const authoritative = await this.app_abyssPrivate.vault.read(file);
-      this.options_abyssPrivate.snapshotState.installCommittedContent(path, authoritative);
+      this.state_abyssPrivate.installCommittedContent(path, authoritative);
     } catch {
       // The caller's failure result records that the authoritative content is unknown.
     }
@@ -2381,8 +2335,8 @@ export class ObsidianTaskRepository implements TaskRepository {
     token: object,
     consumed: TaskRef,
   ): Promise<void> {
-    const authority = this.options_abyssPrivate.refAuthority;
-    if (authority == null || this.options_abyssPrivate.snapshotState == null) {
+    const authority = this.authority_abyssPrivate;
+    if (authority == null || this.state_abyssPrivate == null) {
       authority?.abort(token);
       await this.reconcileAfterRejection_abyssPrivate(file, path);
       return;
@@ -2393,14 +2347,14 @@ export class ObsidianTaskRepository implements TaskRepository {
       authoritative = await this.app_abyssPrivate.vault.read(file);
     } catch {
       authority.abort(token);
-      this.options_abyssPrivate.snapshotState.discardAuthoritySuccessor?.(consumed);
+      this.state_abyssPrivate.discardAuthoritySuccessor?.(consumed);
       return;
     }
     try {
       this.restoreOwnedTransition_abyssPrivate(path, authoritative, token);
     } finally {
       authority.abort(token);
-      this.options_abyssPrivate.snapshotState.discardAuthoritySuccessor?.(consumed);
+      this.state_abyssPrivate.discardAuthoritySuccessor?.(consumed);
     }
   }
 
@@ -2422,8 +2376,8 @@ export class ObsidianTaskRepository implements TaskRepository {
     authoritative: string,
     consumed: TaskRef,
   ): void {
-    const authority = this.options_abyssPrivate.refAuthority;
-    const snapshotState = this.options_abyssPrivate.snapshotState;
+    const authority = this.authority_abyssPrivate;
+    const snapshotState = this.state_abyssPrivate;
     if (authority == null || snapshotState == null) {
       snapshotState?.installCommittedContent(path, authoritative);
       return;
@@ -2467,15 +2421,15 @@ export class ObsidianTaskRepository implements TaskRepository {
     authoritative: string,
     consumed: TaskRef,
   ): RejectedRollbackContext | undefined {
-    const authority = this.options_abyssPrivate.refAuthority;
-    const snapshotState = this.options_abyssPrivate.snapshotState;
+    const authority = this.authority_abyssPrivate;
+    const snapshotState = this.state_abyssPrivate;
     if (authority == null || snapshotState == null) return undefined;
     const evidence = authority.evidence(consumed.revision);
     if (evidence === undefined) return undefined;
     const current = snapshotState.currentRoot(path, consumed.line, evidence.source);
     if (current?.revision === consumed.revision) return undefined;
-    const located = this.options_abyssPrivate.locator.locate(
-      this.options_abyssPrivate.editor.rootBlocks(authoritative),
+    const located = this.locator_abyssPrivate.locate(
+      this.editor_abyssPrivate.rootBlocks(authoritative),
       consumed,
     );
     if (located.type !== 'exact') return undefined;
@@ -2491,10 +2445,10 @@ export class ObsidianTaskRepository implements TaskRepository {
     path: string,
     content: string,
   ): RollbackBasis | undefined {
-    const authority = this.options_abyssPrivate.refAuthority;
-    const state = this.options_abyssPrivate.snapshotState;
+    const authority = this.authority_abyssPrivate;
+    const state = this.state_abyssPrivate;
     if (authority === undefined || state === undefined) return undefined;
-    const blocks = this.options_abyssPrivate.editor.rootBlocks(content);
+    const blocks = this.editor_abyssPrivate.rootBlocks(content);
     const roots: RootRevisionOverride[] = [];
     for (const block of blocks) {
       const population = blocks
@@ -2516,7 +2470,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): void {
     const { transitionToken, rollbackBasis } = transaction;
     if (transitionToken !== undefined && rollbackBasis !== undefined)
-      this.options_abyssPrivate.refAuthority?.retainPredecessors(
+      this.authority_abyssPrivate?.retainPredecessors(
         transitionToken,
         rollbackBasis.content,
         rollbackBasis.roots,
@@ -2524,8 +2478,8 @@ export class ObsidianTaskRepository implements TaskRepository {
   }
 
   private restoreOwnedTransition_abyssPrivate(path: string, content: string, token: object): void {
-    const authority = this.options_abyssPrivate.refAuthority;
-    const state = this.options_abyssPrivate.snapshotState;
+    const authority = this.authority_abyssPrivate;
+    const state = this.state_abyssPrivate;
     if (authority === undefined || state === undefined) return;
     // A late processor rejection may have persisted the candidate. Never compensate bytes or
     // transfer predecessor identities into a changed population, even if old source is now unique.
