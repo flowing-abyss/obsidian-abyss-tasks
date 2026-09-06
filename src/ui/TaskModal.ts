@@ -32,86 +32,89 @@ type TaskModalConstructorArgs = [
 ];
 
 export class TaskModal {
-  private readonly app: App;
-  private readonly statusRegistry: StatusRegistry;
-  private readonly settings: CalendarSettings | undefined;
-  private readonly queries: TaskQueryApi | undefined;
-  private readonly tasks: TaskApplicationApi | undefined;
-  private readonly commentTimeContext: CommentTimeContextProvider | undefined;
-  private readonly interactionOwnership: InteractionOwnershipPort;
-  private backdropEl: HTMLElement | null = null;
-  private modalEl: HTMLElement | null = null;
-  private innerState: AppState | null = null;
-  private innerPanel: RightPanel | null = null;
-  private keyHandler: ((e: KeyboardEvent) => void) | null = null;
-  private ownerDoc: Document | null = null;
-  private queryUnsub: (() => void) | null = null;
-  private selectionUnsub: (() => void) | null = null;
-  private ownedWriteRef: TaskRef | undefined = undefined;
-  private ownershipToken: { release(): void } | null = null;
+  private readonly app_abyssPrivate: App;
+  private readonly statusRegistry_abyssPrivate: StatusRegistry;
+  private readonly settings_abyssPrivate: CalendarSettings | undefined;
+  private readonly queries_abyssPrivate: TaskQueryApi | undefined;
+  private readonly tasks_abyssPrivate: TaskApplicationApi | undefined;
+  private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
+  private readonly interactionOwnership_abyssPrivate: InteractionOwnershipPort;
+  private backdropEl_abyssPrivate: HTMLElement | null = null;
+  private modalEl_abyssPrivate: HTMLElement | null = null;
+  private innerState_abyssPrivate: AppState | null = null;
+  private innerPanel_abyssPrivate: RightPanel | null = null;
+  private keyHandler_abyssPrivate: ((e: KeyboardEvent) => void) | null = null;
+  private ownerDoc_abyssPrivate: Document | null = null;
+  private queryUnsub_abyssPrivate: (() => void) | null = null;
+  private selectionUnsub_abyssPrivate: (() => void) | null = null;
+  private ownedWriteRef_abyssPrivate: TaskRef | undefined = undefined;
+  private ownershipToken_abyssPrivate: { release(): void } | null = null;
 
   constructor(...args: TaskModalConstructorArgs) {
     const [app, statusRegistry, settings, queries, tasks, commentTimeContext, ownership] = args;
-    this.app = app;
-    this.statusRegistry = statusRegistry;
-    this.settings = settings;
-    this.queries = queries;
-    this.tasks = tasks;
-    this.commentTimeContext = commentTimeContext;
-    this.interactionOwnership = ownership ?? noInteractionOwnership;
+    this.app_abyssPrivate = app;
+    this.statusRegistry_abyssPrivate = statusRegistry;
+    this.settings_abyssPrivate = settings;
+    this.queries_abyssPrivate = queries;
+    this.tasks_abyssPrivate = tasks;
+    this.commentTimeContext_abyssPrivate = commentTimeContext;
+    this.interactionOwnership_abyssPrivate = ownership ?? noInteractionOwnership;
   }
 
   open(task: TaskSnapshot, context?: string): void {
     this.close();
-    this.ownershipToken = this.interactionOwnership.acquire({ blocksShortcuts: true });
+    this.ownershipToken_abyssPrivate = this.interactionOwnership_abyssPrivate.acquire({
+      blocksShortcuts: true,
+    });
     // Capture the active document at open time so close() removes from the same document
-    this.ownerDoc = activeDocument;
-    this.innerState = new AppState();
-    this.innerState.set('taskStack', [task]);
-    this.selectionUnsub = this.innerState.on('taskStack', (stack) => {
-      if (this.ownedWriteRef == null) return;
+    this.ownerDoc_abyssPrivate = activeDocument;
+    this.innerState_abyssPrivate = new AppState();
+    this.innerState_abyssPrivate.set('taskStack', [task]);
+    this.selectionUnsub_abyssPrivate = this.innerState_abyssPrivate.on('taskStack', (stack) => {
+      if (this.ownedWriteRef_abyssPrivate == null) return;
       const ref = stack[0] != null ? rootTaskRef(stack[0]) : undefined;
-      if (ref == null || !this.sameRef(ref, this.ownedWriteRef)) this.ownedWriteRef = undefined;
+      if (ref == null || !this.sameRef_abyssPrivate(ref, this.ownedWriteRef_abyssPrivate))
+        this.ownedWriteRef_abyssPrivate = undefined;
     });
 
-    const backdrop = this.ownerDoc.body.createDiv({ cls: 'abyss-modal-backdrop' });
-    this.backdropEl = backdrop;
+    const backdrop = this.ownerDoc_abyssPrivate.body.createDiv({ cls: 'abyss-modal-backdrop' });
+    this.backdropEl_abyssPrivate = backdrop;
     // Marks the document so hover-preview popovers can stack above the modal (see styles.css).
-    this.ownerDoc.body.addClass('abyss-modal-open');
+    this.ownerDoc_abyssPrivate.body.addClass('abyss-modal-open');
 
     const modal = backdrop.createDiv({ cls: 'abyss-modal' });
-    this.modalEl = modal;
+    this.modalEl_abyssPrivate = modal;
     if (context !== undefined && context.length > 0) {
       modal.createDiv({ cls: 'abyss-forecast-source-context', text: context });
     }
 
     const panelEl = modal.createDiv({ cls: 'abyss-right abyss-modal-body' });
-    this.innerPanel = new RightPanel(
-      this.innerState,
-      this.app,
-      this.statusRegistry,
-      this.settings,
+    this.innerPanel_abyssPrivate = new RightPanel(
+      this.innerState_abyssPrivate,
+      this.app_abyssPrivate,
+      this.statusRegistry_abyssPrivate,
+      this.settings_abyssPrivate,
       undefined,
-      this.tasks,
+      this.tasks_abyssPrivate,
       (actions) => {
-        this.renderCloseButton(actions);
+        this.renderCloseButton_abyssPrivate(actions);
       },
       (event) => {
-        this.trackOwnWrite(event);
+        this.trackOwnWrite_abyssPrivate(event);
       },
-      this.commentTimeContext,
-      this.interactionOwnership,
+      this.commentTimeContext_abyssPrivate,
+      this.interactionOwnership_abyssPrivate,
     );
-    this.innerPanel.mount(panelEl);
+    this.innerPanel_abyssPrivate.mount(panelEl);
     // As in PanelView, RightPanel's synchronous history maintenance must run before
     // active-selection convergence consumes the pending owned-command evidence.
-    this.queryUnsub =
-      this.queries?.subscribe((event) => {
-        this.onIndexEvent(event);
+    this.queryUnsub_abyssPrivate =
+      this.queries_abyssPrivate?.subscribe((event) => {
+        this.onIndexEvent_abyssPrivate(event);
       }) ?? null;
 
     // A mocked/legacy panel may not invoke the render hook. Preserve the direct fallback.
-    this.renderCloseButton(
+    this.renderCloseButton_abyssPrivate(
       panelEl.querySelector<HTMLElement>('.abyss-right-header-actions') ?? panelEl,
     );
 
@@ -119,14 +122,15 @@ export class TaskModal {
       if (e.target === backdrop) this.close();
     });
 
-    this.keyHandler = (e: KeyboardEvent) => {
+    this.keyHandler_abyssPrivate = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !e.defaultPrevented) this.close();
     };
-    this.ownerDoc.addEventListener('keydown', this.keyHandler);
+    this.ownerDoc_abyssPrivate.addEventListener('keydown', this.keyHandler_abyssPrivate);
   }
 
-  private renderCloseButton(parent: HTMLElement): void {
-    const existing = this.modalEl?.querySelector<HTMLElement>('.abyss-modal-close-btn');
+  private renderCloseButton_abyssPrivate(parent: HTMLElement): void {
+    const existing =
+      this.modalEl_abyssPrivate?.querySelector<HTMLElement>('.abyss-modal-close-btn');
     if (existing != null) {
       if (existing.parentElement !== parent) parent.appendChild(existing);
       return;
@@ -142,149 +146,163 @@ export class TaskModal {
   }
 
   close(): void {
-    const ownershipToken = this.ownershipToken;
-    this.ownershipToken = null;
+    const ownershipToken = this.ownershipToken_abyssPrivate;
+    this.ownershipToken_abyssPrivate = null;
     ownershipToken?.release();
-    if (this.keyHandler != null && this.ownerDoc != null) {
-      this.ownerDoc.removeEventListener('keydown', this.keyHandler);
-      this.keyHandler = null;
+    if (this.keyHandler_abyssPrivate != null && this.ownerDoc_abyssPrivate != null) {
+      this.ownerDoc_abyssPrivate.removeEventListener('keydown', this.keyHandler_abyssPrivate);
+      this.keyHandler_abyssPrivate = null;
     }
-    this.queryUnsub?.();
-    this.queryUnsub = null;
-    this.selectionUnsub?.();
-    this.selectionUnsub = null;
-    this.ownerDoc?.body.removeClass('abyss-modal-open');
-    this.ownerDoc = null;
-    this.innerPanel?.destroy();
-    this.innerPanel = null;
-    this.innerState = null;
-    this.ownedWriteRef = undefined;
-    this.modalEl = null;
-    this.backdropEl?.remove();
-    this.backdropEl = null;
+    this.queryUnsub_abyssPrivate?.();
+    this.queryUnsub_abyssPrivate = null;
+    this.selectionUnsub_abyssPrivate?.();
+    this.selectionUnsub_abyssPrivate = null;
+    this.ownerDoc_abyssPrivate?.body.removeClass('abyss-modal-open');
+    this.ownerDoc_abyssPrivate = null;
+    this.innerPanel_abyssPrivate?.destroy();
+    this.innerPanel_abyssPrivate = null;
+    this.innerState_abyssPrivate = null;
+    this.ownedWriteRef_abyssPrivate = undefined;
+    this.modalEl_abyssPrivate = null;
+    this.backdropEl_abyssPrivate?.remove();
+    this.backdropEl_abyssPrivate = null;
   }
 
-  private onIndexEvent(event: TaskIndexEvent): void {
-    const stack = this.innerState?.get('taskStack');
+  private onIndexEvent_abyssPrivate(event: TaskIndexEvent): void {
+    const stack = this.innerState_abyssPrivate?.get('taskStack');
     const root = stack?.[0];
     if (stack == null || root == null) return;
     const ref = rootTaskRef(root);
-    if (this.queries == null || !this.affects(event, ref.filePath)) return;
-    if ('source' in root && this.applyRenamedRoot(event, root, stack)) return;
-    this.applyResolution(this.queries.resolve(ref), stack);
+    if (this.queries_abyssPrivate == null || !this.affects_abyssPrivate(event, ref.filePath))
+      return;
+    if ('source' in root && this.applyRenamedRoot_abyssPrivate(event, root, stack)) return;
+    this.applyResolution_abyssPrivate(this.queries_abyssPrivate.resolve(ref), stack);
   }
 
-  private applyRenamedRoot(
+  private applyRenamedRoot_abyssPrivate(
     event: TaskIndexEvent,
     root: TaskSnapshot,
     stack: TaskSelectionNode[],
   ): boolean {
-    if (this.queries == null) return false;
-    const renamed = renamedRootSelection(event, root, this.queries);
+    if (this.queries_abyssPrivate == null) return false;
+    const renamed = renamedRootSelection(event, root, this.queries_abyssPrivate);
     if (renamed == null) return false;
-    const draft = this.innerPanel?.captureDraftState();
-    this.ownedWriteRef = undefined;
-    this.innerState?.updateInspectorSelection(rebuildTaskSelection(renamed, stack));
-    this.innerPanel?.restoreDraftState(draft, renamed);
+    const draft = this.innerPanel_abyssPrivate?.captureDraftState();
+    this.ownedWriteRef_abyssPrivate = undefined;
+    this.innerState_abyssPrivate?.updateInspectorSelection(rebuildTaskSelection(renamed, stack));
+    this.innerPanel_abyssPrivate?.restoreDraftState(draft, renamed);
     return true;
   }
 
-  private affects(event: TaskIndexEvent, path: string): boolean {
+  private affects_abyssPrivate(event: TaskIndexEvent, path: string): boolean {
     if (event.type === 'initialized') return true;
     if (event.type === 'changed') return event.files.includes(path);
     if (event.type === 'renamed') return event.oldPath === path || event.newPath === path;
     return event.path === path;
   }
 
-  private applyResolution(resolution: TaskResolution, stack: TaskSelectionNode[]): void {
-    this.clearResolutionMessage();
+  private applyResolution_abyssPrivate(
+    resolution: TaskResolution,
+    stack: TaskSelectionNode[],
+  ): void {
+    this.clearResolutionMessage_abyssPrivate();
     if (resolution.type === 'exact' || resolution.type === 'rebased') {
-      this.applyResolvedTask(resolution, stack);
+      this.applyResolvedTask_abyssPrivate(resolution, stack);
       return;
     }
-    const draft = this.innerPanel?.captureDraftState();
-    this.ownedWriteRef = undefined;
+    const draft = this.innerPanel_abyssPrivate?.captureDraftState();
+    this.ownedWriteRef_abyssPrivate = undefined;
     if (resolution.type === 'visual') {
-      this.innerState?.updateInspectorSelection([resolution.current]);
-      this.innerPanel?.detachDraftState(draft);
+      this.innerState_abyssPrivate?.updateInspectorSelection([resolution.current]);
+      this.innerPanel_abyssPrivate?.detachDraftState(draft);
       return;
     }
-    this.innerState?.set('taskStack', []);
-    this.innerPanel?.detachDraftState(draft);
+    this.innerState_abyssPrivate?.set('taskStack', []);
+    this.innerPanel_abyssPrivate?.detachDraftState(draft);
     if (!isDirtyDraftBundle(draft)) this.close();
   }
 
-  private applyResolvedTask(
+  private applyResolvedTask_abyssPrivate(
     resolution: Extract<TaskResolution, { type: 'exact' | 'rebased' }>,
     stack: TaskSelectionNode[],
   ): void {
     const current = resolution.type === 'exact' ? resolution.task : resolution.current;
-    const consumedOwnedRef = this.consumedOwnedRef(resolution);
+    const consumedOwnedRef = this.consumedOwnedRef_abyssPrivate(resolution);
     const ownedSelection =
       consumedOwnedRef === undefined
         ? undefined
-        : this.ownedSelection(consumedOwnedRef, current, stack);
+        : this.ownedSelection_abyssPrivate(consumedOwnedRef, current, stack);
     const draft =
       consumedOwnedRef != null
-        ? this.innerPanel?.captureDraftStateForOwnedTransition(consumedOwnedRef, current.ref)
-        : this.innerPanel?.captureDraftState();
-    this.ownedWriteRef = undefined;
-    this.innerState?.updateInspectorSelection(
+        ? this.innerPanel_abyssPrivate?.captureDraftStateForOwnedTransition(
+            consumedOwnedRef,
+            current.ref,
+          )
+        : this.innerPanel_abyssPrivate?.captureDraftState();
+    this.ownedWriteRef_abyssPrivate = undefined;
+    this.innerState_abyssPrivate?.updateInspectorSelection(
       ownedSelection ??
         rebuildTaskSelection(current, stack, {
           preserveDependencyChanges:
             resolution.type === 'rebased' && resolution.evidence === 'authority-transition',
         }),
     );
-    this.innerPanel?.restoreDraftState(draft, current);
+    this.innerPanel_abyssPrivate?.restoreDraftState(draft, current);
   }
 
-  private consumedOwnedRef(
+  private consumedOwnedRef_abyssPrivate(
     resolution: Extract<TaskResolution, { type: 'exact' | 'rebased' }>,
   ): TaskRef | undefined {
     if (resolution.type !== 'rebased' || resolution.evidence !== 'authority-transition') {
       return undefined;
     }
-    const ownedWriteRef = this.ownedWriteRef;
-    return ownedWriteRef != null && this.sameRef(ownedWriteRef, resolution.previous.ref)
+    const ownedWriteRef = this.ownedWriteRef_abyssPrivate;
+    return ownedWriteRef != null &&
+      this.sameRef_abyssPrivate(ownedWriteRef, resolution.previous.ref)
       ? ownedWriteRef
       : undefined;
   }
 
-  private ownedSelection(
+  private ownedSelection_abyssPrivate(
     ref: TaskRef,
     current: TaskSnapshot,
     stack: TaskSelectionNode[],
   ): TaskSelectionNode[] | undefined {
-    return this.innerPanel?.selectionForOwnedTransition(ref, current, stack);
+    return this.innerPanel_abyssPrivate?.selectionForOwnedTransition(ref, current, stack);
   }
 
-  private acknowledgeOwnWrite(taskOrRef?: TaskSelectionNode | TaskRef): void {
-    const selected = this.innerState?.get('taskStack')[0];
+  private acknowledgeOwnWrite_abyssPrivate(taskOrRef?: TaskSelectionNode | TaskRef): void {
+    const selected = this.innerState_abyssPrivate?.get('taskStack')[0];
     const selectedRef = selected != null ? rootTaskRef(selected) : undefined;
     let suppliedRef: TaskRef | undefined;
     if (taskOrRef != null)
       suppliedRef = 'revision' in taskOrRef ? taskOrRef : rootTaskRef(taskOrRef);
-    if (suppliedRef != null && (selectedRef == null || !this.sameRef(suppliedRef, selectedRef)))
+    if (
+      suppliedRef != null &&
+      (selectedRef == null || !this.sameRef_abyssPrivate(suppliedRef, selectedRef))
+    )
       return;
     const acknowledged = suppliedRef ?? selectedRef;
-    this.ownedWriteRef = acknowledged != null ? { ...acknowledged } : undefined;
+    this.ownedWriteRef_abyssPrivate = acknowledged != null ? { ...acknowledged } : undefined;
   }
 
-  private trackOwnWrite(event: {
+  private trackOwnWrite_abyssPrivate(event: {
     readonly phase: 'started' | 'settled';
     readonly ref: TaskRef;
   }): void {
     if (event.phase === 'started') {
-      this.acknowledgeOwnWrite(event.ref);
+      this.acknowledgeOwnWrite_abyssPrivate(event.ref);
       return;
     }
-    if (this.ownedWriteRef != null && this.sameRef(this.ownedWriteRef, event.ref)) {
-      this.ownedWriteRef = undefined;
+    if (
+      this.ownedWriteRef_abyssPrivate != null &&
+      this.sameRef_abyssPrivate(this.ownedWriteRef_abyssPrivate, event.ref)
+    ) {
+      this.ownedWriteRef_abyssPrivate = undefined;
     }
   }
 
-  private sameRef(left: TaskRef, right: TaskRef): boolean {
+  private sameRef_abyssPrivate(left: TaskRef, right: TaskRef): boolean {
     return (
       left.filePath === right.filePath &&
       left.line === right.line &&
@@ -292,7 +310,7 @@ export class TaskModal {
     );
   }
 
-  private clearResolutionMessage(): void {
-    this.modalEl?.querySelector('.abyss-task-selection-message')?.remove();
+  private clearResolutionMessage_abyssPrivate(): void {
+    this.modalEl_abyssPrivate?.querySelector('.abyss-task-selection-message')?.remove();
   }
 }

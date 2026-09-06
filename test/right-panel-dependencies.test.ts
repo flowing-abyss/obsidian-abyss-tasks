@@ -31,6 +31,7 @@ import {
   deferred,
   expectDefined,
   flushMicrotasks,
+  methodOf,
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
@@ -140,6 +141,364 @@ function modalRootPosition(location: string): number {
   if (location.includes('middle')) return 1;
   return location.includes('last') ? 2 : 0;
 }
+
+describe('dependency picker visible containment', () => {
+  const cases = [
+    {
+      name: 'wide docked',
+      viewport: [1440, 900],
+      panel: [1000, 20, 360, 740],
+      anchor: [1320, 720],
+      limit: [344, 688],
+      position: [1048, 316],
+    },
+    {
+      name: '940px docked',
+      viewport: [940, 700],
+      panel: [660, 20, 320, 740],
+      anchor: [890, 640],
+      limit: [264, 608],
+      position: [668, 236],
+    },
+    {
+      name: '420px clipped docked',
+      viewport: [420, 300],
+      panel: [300, -40, 400, 800],
+      anchor: [390, 240],
+      limit: [104, 228],
+      position: [308, 8],
+    },
+    {
+      name: 'wide floating',
+      viewport: [1440, 900],
+      panel: [490, -200, 460, 1300],
+      overlay: [480, 220, 480, 440],
+      anchor: [880, 600],
+      limit: [444, 368],
+      position: [638, 228],
+    },
+    {
+      name: '940px floating',
+      viewport: [940, 700],
+      panel: [240, -200, 460, 1300],
+      overlay: [230, 100, 480, 440],
+      anchor: [630, 480],
+      limit: [444, 368],
+      position: [388, 108],
+    },
+    {
+      name: '420px short floating',
+      viewport: [420, 300],
+      panel: [-10, -80, 500, 700],
+      overlay: [20, 20, 380, 260],
+      anchor: [360, 240],
+      limit: [364, 208],
+      position: [88, 28],
+    },
+    {
+      name: '420px top-left floating',
+      viewport: [420, 300],
+      panel: [-10, -80, 500, 700],
+      overlay: [20, 20, 380, 260],
+      anchor: [22, 40],
+      limit: [364, 204],
+      position: [28, 68],
+    },
+  ];
+
+  it.each(
+    cases.flatMap((entry) =>
+      ['badge', 'blocked-by', 'blocks'].map((source) => ({ ...entry, source })),
+    ),
+  )(
+    'contains the $source picker in $name, using the actual containing block',
+    async ({ viewport, panel, overlay, anchor, limit, position, source }) => {
+      const h = await harness('- [ ] Current\n- [ ] Candidate\n');
+      const ownerWindow = expectDefined(h.el.ownerDocument.defaultView);
+      vi.spyOn(ownerWindow, 'innerWidth', 'get').mockReturnValue(expectDefined(viewport[0]));
+      vi.spyOn(ownerWindow, 'innerHeight', 'get').mockReturnValue(expectDefined(viewport[1]));
+      const block = h.el.ownerDocument.body.createDiv({
+        cls: overlay !== undefined ? 'abyss-modal' : '',
+      });
+      block.append(h.el);
+      Object.defineProperties(block, {
+        clientLeft: { value: 3 },
+        clientTop: { value: 5 },
+        scrollLeft: { value: 11 },
+        scrollTop: { value: 13 },
+      });
+      const containingBlock = overlay === undefined ? block : h.el;
+      if (overlay !== undefined)
+        Object.defineProperties(containingBlock, {
+          clientLeft: { value: 7 },
+          clientTop: { value: 9 },
+          scrollLeft: { value: 17 },
+          scrollTop: { value: 19 },
+        });
+      vi.spyOn(block, 'getBoundingClientRect').mockReturnValue(
+        new DOMRect(...(overlay ?? [30, 20, 1000, 800])),
+      );
+      vi.spyOn(h.el, 'getBoundingClientRect').mockReturnValue(new DOMRect(...panel));
+      if (source !== 'badge') button(h.el, '.abyss-dep-badge-add').click();
+      const selector =
+        source === 'badge'
+          ? '.abyss-dep-badge-body'
+          : `[data-dependency-direction="${source}"] .abyss-dep-add`;
+      const trigger = button(h.el, selector);
+      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue(
+        new DOMRect(anchor[0], anchor[1], 24, 24),
+      );
+      const real = methodOf(HTMLElement.prototype, 'getBoundingClientRect');
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        if (!this.matches('.abyss-dep-search')) return real.call(this);
+        return new DOMRect(
+          0,
+          0,
+          Math.min(304, parseFloat(this.style.getPropertyValue('--abyss-pop-width'))),
+          Math.min(400, parseFloat(this.style.getPropertyValue('--abyss-pop-height'))),
+        );
+      });
+      vi.spyOn(HTMLElement.prototype, 'offsetParent', 'get').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        return this.matches('.abyss-dep-search') ? containingBlock : null;
+      });
+      trigger.click();
+      const picker = expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search'));
+      expect(picker.style.getPropertyValue('--abyss-pop-width')).toBe(`${limit[0]}px`);
+      expect(picker.style.getPropertyValue('--abyss-pop-height')).toBe(`${limit[1]}px`);
+      const blockRect = containingBlock.getBoundingClientRect();
+      expect(
+        parseFloat(picker.style.getPropertyValue('--abyss-pop-left')) +
+          blockRect.left +
+          (overlay === undefined ? 3 - 11 : 7 - 17),
+      ).toBe(position[0]);
+      expect(
+        parseFloat(picker.style.getPropertyValue('--abyss-pop-top')) +
+          blockRect.top +
+          (overlay === undefined ? 5 - 13 : 9 - 19),
+      ).toBe(position[1]);
+      expect(picker.classList.contains('abyss-popover-anchored')).toBe(true);
+      expect(picker.querySelectorAll('.abyss-dep-search-direction')).toHaveLength(
+        source === 'badge' ? 2 : 0,
+      );
+      const input = search(h.el, 'New child');
+      expect(h.el.ownerDocument.activeElement).toBe(input);
+      expect(
+        expectDefined(picker.querySelector<HTMLElement>('.abyss-dep-search-create')).hidden,
+      ).toBe(false);
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(picker.isConnected).toBe(false);
+      expect(h.el.ownerDocument.activeElement).toBe(trigger);
+    },
+  );
+
+  it('keeps picker chrome fixed while only results yield to a short boundary', async () => {
+    if (!Platform.isDesktop) throw new Error('CSS fixture needs desktop runtime');
+    const fs = await import('node:fs');
+    const css = expandCompoundSelectorLists(
+      fs.readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8'),
+    );
+    const value = (selector: string, property: string) =>
+      cssDeclarationValue(cssDeclarationsFor(css, selector), property);
+    expect(value('.abyss-dep-search', 'max-width')).toBe(
+      'var(--abyss-pop-width, calc(100% - 16px))',
+    );
+    expect(value('.abyss-dep-search', 'max-height')).toBe('var(--abyss-pop-height)');
+    expect(value('.abyss-dep-search', 'display')).toBe('flex');
+    expect(value('.abyss-dep-search', 'flex-direction')).toBe('column');
+    expect(value('.abyss-dep-search > *', 'flex-shrink')).toBe('0');
+    expect(value('.abyss-dep-search-results', 'flex-shrink')).toBe('1');
+    expect(value('.abyss-dep-search-results', 'overflow')).toBe('hidden auto');
+    expect(value('.abyss-dep-search-results', 'min-height')).toBe('0');
+    expect(value('.abyss-dep-search-create:not([hidden])', 'text-overflow')).toBe('ellipsis');
+    expect(value('.abyss-modal', 'width')).toBe('min(480px, calc(100vw - 32px))');
+  });
+
+  it('positions before focusing, and never scrolls the inspector on search focus', async () => {
+    const h = await harness('- [ ] Current\n- [ ] Candidate\n');
+    const focus = methodOf(HTMLElement.prototype, 'focus');
+    const calls: Array<{ positioned: boolean; preventScroll: boolean | undefined }> = [];
+    vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (
+      this: HTMLElement,
+      options,
+    ) {
+      const picker = this.closest<HTMLElement>('.abyss-dep-search');
+      if (picker !== null)
+        calls.push({
+          positioned: picker.style.getPropertyValue('--abyss-pop-top') !== '',
+          preventScroll: options?.preventScroll,
+        });
+      focus.call(this, options);
+    });
+    button(h.el, '.abyss-dep-badge-body').click();
+    expect(calls).toEqual([{ positioned: true, preventScroll: true }]);
+    button(h.el, '[data-direction="blocks"]').click();
+    search(h.el, 'Invalid 🆔 authored').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
+    await flushMicrotasks(30);
+    expect(calls).toHaveLength(3);
+    expect(
+      calls.every(({ positioned, preventScroll }) => positioned && preventScroll === true),
+    ).toBe(true);
+  });
+
+  it('tracks content, anchor, boundary, window and captured scroll changes, then releases old owners', async () => {
+    const h = await harness('- [ ] Current\n- [ ] Candidate\n');
+    const doc = h.el.ownerDocument;
+    const win = expectDefined(doc.defaultView);
+    const observers: Array<{
+      resize: () => void;
+      targets: Element[];
+      disconnect: ReturnType<typeof vi.fn>;
+    }> = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        record;
+        constructor(callback: () => void) {
+          this.record = { resize: callback, targets: [] as Element[], disconnect: vi.fn() };
+          observers.push(this.record);
+        }
+        observe(target: Element) {
+          this.record.targets.push(target);
+        }
+        disconnect() {
+          this.record.disconnect();
+        }
+      },
+    );
+    cleanups.push(() => {
+      vi.unstubAllGlobals();
+    });
+    const modal = doc.body.createDiv({ cls: 'abyss-modal' });
+    const block = modal.createDiv();
+    block.append(h.el);
+    const blockRect = vi
+      .spyOn(block, 'getBoundingClientRect')
+      .mockReturnValue(new DOMRect(100, 100, 400, 900));
+    vi.spyOn(HTMLElement.prototype, 'offsetParent', 'get').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.matches('.abyss-dep-search') ? block : null;
+    });
+    const calendar = doc.body.createDiv();
+    vi.spyOn(modal, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 400, 500));
+    vi.spyOn(h.el, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 100, 400, 1000));
+    let anchorTop = 500;
+    let height = 100;
+    const real = methodOf(HTMLElement.prototype, 'getBoundingClientRect');
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.matches('.abyss-dep-badge-body')) return new DOMRect(300, anchorTop, 24, 24);
+      if (this.matches('.abyss-dep-search')) return new DOMRect(0, 0, 160, height);
+      return real.call(this);
+    });
+    const addWindow = vi.spyOn(win, 'addEventListener');
+    const removeWindow = vi.spyOn(win, 'removeEventListener');
+    const addDocument = vi.spyOn(doc, 'addEventListener');
+    const removeDocument = vi.spyOn(doc, 'removeEventListener');
+    button(h.el, '.abyss-dep-badge-body').click();
+    const picker = expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search'));
+    const first = expectDefined(observers[0]);
+    expect(first.targets).toEqual(
+      expect.arrayContaining([picker, modal, block, h.el, button(h.el, '.abyss-dep-badge-body')]),
+    );
+    expect(first.targets).toEqual(expect.arrayContaining([...picker.children]));
+    expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe('296px');
+    search(h.el, 'New child');
+    expect(picker.querySelectorAll('[role="option"]')).toHaveLength(0);
+    expect(picker.querySelector<HTMLElement>('.abyss-dep-search-create')?.hidden).toBe(false);
+    height = 200; // The DOM-only renderer does not measure the changed content.
+    first.resize();
+    expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe('196px');
+    for (const [target, type] of [
+      [h.el, 'scroll'],
+      [modal, 'scroll'],
+      [calendar, 'scroll'],
+      [doc, 'scroll'],
+      [win, 'scroll'],
+      [win, 'resize'],
+    ] as const) {
+      anchorTop -= 10;
+      target.dispatchEvent(new Event(type));
+      expect(parseFloat(picker.style.getPropertyValue('--abyss-pop-top'))).toBe(anchorTop - 304);
+    }
+    blockRect.mockReturnValue(new DOMRect(100, 120, 400, 900));
+    first.resize();
+    expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe('116px');
+    blockRect.mockReturnValue(new DOMRect(100, 100, 400, 900));
+    search(h.el, 'Invalid 🆔 authored').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
+    await flushMicrotasks(30);
+    expect(picker.querySelector<HTMLElement>('.abyss-dep-search-error')?.hidden).toBe(false);
+    height = 240;
+    first.resize();
+    expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe('96px');
+    search(h.el, 'Draft');
+    height = 200;
+    h.state.updateInspectorSelection([h.node('Current').root]);
+    expect(h.el.querySelector('.abyss-dep-search')).toBe(picker);
+    expect(picker.querySelector('input')?.value).toBe('Draft');
+    expect(first.disconnect).toHaveBeenCalledTimes(1);
+    expect(observers).toHaveLength(2);
+    h.panel.destroy();
+    expect(observers[1]?.disconnect).toHaveBeenCalledTimes(1);
+    const before = picker.style.cssText;
+    height = 10;
+    for (const observer of observers) observer.resize();
+    win.dispatchEvent(new Event('resize'));
+    doc.dispatchEvent(new Event('scroll'));
+    expect(picker.style.cssText).toBe(before);
+    for (const [add, remove] of [
+      [addWindow, removeWindow],
+      [addDocument, removeDocument],
+    ] as const) {
+      for (const [type, callback, options] of add.mock.calls.filter(
+        ([event]) => event === 'resize' || event === 'scroll',
+      )) {
+        expect(
+          remove.mock.calls.filter(
+            ([event, listener, config]) =>
+              event === type && listener === callback && config === options,
+          ),
+        ).toHaveLength(1);
+      }
+    }
+  });
+
+  it('owns viewport and scroll listeners in the invoking control document', async () => {
+    const h = await harness('- [ ] Current\n- [ ] Candidate\n');
+    const frame = activeDocument.body.createEl('iframe');
+    const doc = expectDefined(frame.contentDocument);
+    const win = expectDefined(doc.defaultView);
+    doc.body.append(h.el);
+    const panelRect = vi
+      .spyOn(h.el, 'getBoundingClientRect')
+      .mockReturnValue(new DOMRect(100, 100, 400, 500));
+    const trigger = button(h.el, '.abyss-dep-badge-body');
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue(new DOMRect(300, 300, 24, 24));
+    trigger.click();
+    const picker = expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search'));
+    const before = picker.style.getPropertyValue('--abyss-pop-top');
+    panelRect.mockReturnValue(new DOMRect(100, 120, 400, 500));
+    activeWindow.dispatchEvent(new Event('resize'));
+    expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe(before);
+    win.dispatchEvent(new Event('resize'));
+    expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe(`${parseFloat(before) - 20}px`);
+    panelRect.mockReturnValue(new DOMRect(100, 140, 400, 500));
+    doc.dispatchEvent(new Event('scroll'));
+    expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe(`${parseFloat(before) - 40}px`);
+    search(h.el, '').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(doc.activeElement).toBe(trigger);
+    expect(picker.isConnected).toBe(false);
+  });
+});
 
 describe('inspector subtask row removal', () => {
   it('offers local recovery after deleting the selected subtask through the modal menu', async () => {
@@ -547,22 +906,31 @@ describe('owned dependency destination editing', () => {
     button(el, '.abyss-dep-title').click();
     button(el, '.abyss-dep-title').click();
     button(el, '.abyss-dep-title').click();
-    const local = modal as unknown as { innerState: AppState; innerPanel: RightPanel };
-    const history = local.innerState.get('inspectorBackStack');
+    const local = modal as unknown as {
+      innerState_abyssPrivate: AppState;
+      innerPanel_abyssPrivate: RightPanel;
+    };
+    const history = local.innerState_abyssPrivate.get('inspectorBackStack');
     const original = JSON.stringify(history);
     button(el, '.abyss-dep-badge-body').click();
     const input = search(el, 'Created child');
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks(30);
-    expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
-    expect(local.innerState.get('taskStack')[1]?.ref).toEqual(h.node('B.2').node.ref);
+    expect(local.innerState_abyssPrivate.get('taskStack').map((node) => node.title)).toEqual([
+      'B',
+      'B.2',
+    ]);
+    expect(local.innerState_abyssPrivate.get('taskStack')[1]?.ref).toEqual(h.node('B.2').node.ref);
     expect(JSON.stringify(history)).toBe(original);
-    expect(local.innerState.get('inspectorBackStack')).toHaveLength(3);
+    expect(local.innerState_abyssPrivate.get('inspectorBackStack')).toHaveLength(3);
     button(el, '[aria-label="Back to previous task"]').click();
-    expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['C']);
+    expect(local.innerState_abyssPrivate.get('taskStack').map((node) => node.title)).toEqual(['C']);
     button(el, '[aria-label="Back to previous task"]').click();
-    expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
-    expect(local.innerState.get('taskStack')[1]?.ref).toEqual(h.node('B.2').node.ref);
+    expect(local.innerState_abyssPrivate.get('taskStack').map((node) => node.title)).toEqual([
+      'B',
+      'B.2',
+    ]);
+    expect(local.innerState_abyssPrivate.get('taskStack')[1]?.ref).toEqual(h.node('B.2').node.ref);
     expect(h.node('B.2').node.subtasks.map((child) => child.title)).toEqual([
       'Deep',
       'Created child',
@@ -626,25 +994,31 @@ describe('owned dependency destination editing', () => {
       const el = button(activeDocument.body, '.abyss-modal-body');
       button(el, '.abyss-dep-title').click();
       const local = modal as unknown as {
-        innerState: AppState;
-        innerPanel: {
+        innerState_abyssPrivate: AppState;
+        innerPanel_abyssPrivate: {
           updateDescription_abyssPrivate(task: SubtaskSnapshot, text: string): Promise<boolean>;
           updatePriority_abyssPrivate(task: SubtaskSnapshot, priority: string): Promise<void>;
           commitStatus_abyssPrivate(task: SubtaskSnapshot, symbol: string): Promise<void>;
         };
       };
       const selected = expectDefined(h.node('B.2').path[0]);
-      const history = local.innerState.get('inspectorBackStack');
+      const history = local.innerState_abyssPrivate.get('inspectorBackStack');
       const originalHistory = JSON.stringify(history);
       if (kind === 'description')
-        await local.innerPanel.updateDescription_abyssPrivate(selected, 'First line\nSecond line');
+        await local.innerPanel_abyssPrivate.updateDescription_abyssPrivate(
+          selected,
+          'First line\nSecond line',
+        );
       else if (kind === 'planning')
-        await local.innerPanel.updatePriority_abyssPrivate(selected, 'A');
-      else await local.innerPanel.commitStatus_abyssPrivate(selected, '/');
+        await local.innerPanel_abyssPrivate.updatePriority_abyssPrivate(selected, 'A');
+      else await local.innerPanel_abyssPrivate.commitStatus_abyssPrivate(selected, '/');
       await flushMicrotasks(30);
-      expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
+      expect(local.innerState_abyssPrivate.get('taskStack').map((node) => node.title)).toEqual([
+        'B',
+        'B.2',
+      ]);
       expect(JSON.stringify(history)).toBe(originalHistory);
-      expect(local.innerState.get('inspectorBackStack')[0]?.taskStack[0]?.ref).toEqual(
+      expect(local.innerState_abyssPrivate.get('inspectorBackStack')[0]?.taskStack[0]?.ref).toEqual(
         h.node('C').root.ref,
       );
       const fresh = h.node('B.2');
@@ -652,8 +1026,10 @@ describe('owned dependency destination editing', () => {
       else if (kind === 'planning') expect(fresh.node.priority).toBe('A');
       else expect(fresh.node.statusSymbol).toBe('/');
       button(el, '[aria-label="Back to previous task"]').click();
-      expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['C']);
-      expect(local.innerState.get('taskStack')[0]?.ref).toEqual(h.node('C').root.ref);
+      expect(local.innerState_abyssPrivate.get('taskStack').map((node) => node.title)).toEqual([
+        'C',
+      ]);
+      expect(local.innerState_abyssPrivate.get('taskStack')[0]?.ref).toEqual(h.node('C').root.ref);
       expect(button(el, '.abyss-dep-title').textContent).toBe('B.2');
     },
   );
@@ -672,14 +1048,20 @@ describe('owned dependency destination editing', () => {
       await original({ type: 'add-subtask', parent: h.node('B').target, text: 'Concurrent child' });
       return original(command);
     });
-    const local = modal as unknown as { innerState: AppState; innerPanel: RightPanel };
-    await local.innerPanel.updateTaskTitle(expectDefined(h.node('B.2').path[0]), 'Edited B.2');
+    const local = modal as unknown as {
+      innerState_abyssPrivate: AppState;
+      innerPanel_abyssPrivate: RightPanel;
+    };
+    await local.innerPanel_abyssPrivate.updateTaskTitle(
+      expectDefined(h.node('B.2').path[0]),
+      'Edited B.2',
+    );
     await flushMicrotasks(30);
-    expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['B']);
+    expect(local.innerState_abyssPrivate.get('taskStack').map((node) => node.title)).toEqual(['B']);
     expect(await h.read()).toContain('Concurrent child');
     expect(await h.read()).toContain('Edited B.2');
-    expect(local.innerState.backInspectorDependency()).toBe(true);
-    expect(local.innerState.get('taskStack').map((node) => node.title)).toEqual(['C']);
+    expect(local.innerState_abyssPrivate.backInspectorDependency()).toBe(true);
+    expect(local.innerState_abyssPrivate.get('taskStack').map((node) => node.title)).toEqual(['C']);
   });
 });
 
@@ -695,8 +1077,11 @@ describe('live dependency history restoration', () => {
         modal.close();
       });
       if (surface === 'modal') modal.open(h.node('C').root);
-      const local = modal as unknown as { innerState: AppState; innerPanel: RightPanel };
-      const state = surface === 'modal' ? local.innerState : h.state;
+      const local = modal as unknown as {
+        innerState_abyssPrivate: AppState;
+        innerPanel_abyssPrivate: RightPanel;
+      };
+      const state = surface === 'modal' ? local.innerState_abyssPrivate : h.state;
       const el = surface === 'modal' ? button(activeDocument.body, '.abyss-modal-body') : h.el;
       button(el, '.abyss-dep-title').click();
       const original = state.get('inspectorBackStack');

@@ -127,6 +127,7 @@ export interface DependencySearchOptions {
     direction: DependencyDirection,
   ) => Promise<DependencyPickerCommitResult>;
   readonly onClose: (restoreFocus: boolean) => void;
+  readonly position?: (element: HTMLElement) => void;
   readonly ownership?: InteractionOwnershipPort;
 }
 
@@ -258,7 +259,8 @@ function createDependencySearch(
   ownerDocument.addEventListener('focusin', outside);
   ownerDocument.addEventListener('pointerdown', outside);
   refreshSearch(state);
-  input.focus();
+  callbacks.position?.(element);
+  input.focus({ preventScroll: true });
   return {
     element,
     refresh: () => {
@@ -354,7 +356,7 @@ function initializeDirectionControls(state: SearchState): void {
       clearError(state.error);
       updateDirectionControls(state.directionControls, state.direction);
       refreshSearch(state);
-      state.input.focus();
+      state.input.focus({ preventScroll: true });
     });
   }
 }
@@ -472,7 +474,7 @@ async function commitSearch(
     state.busy = false;
     if (!state.closed) {
       setBusy(state.element, state.input, state.busy);
-      state.input.focus();
+      state.input.focus({ preventScroll: true });
     }
   }
 }

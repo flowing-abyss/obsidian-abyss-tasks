@@ -28,10 +28,15 @@ export function anchoredPlacement(input: AnchoredPlacementInput): AnchoredPlacem
 
   const belowTop = input.anchor.bottom + input.gap;
   const maxBottom = input.boundary.bottom - input.edgeGap;
-  const side = belowTop + input.floating.height > maxBottom ? 'above' : 'below';
+  const minTop = input.boundary.top + input.edgeGap;
+  const below = maxBottom - belowTop;
+  const above = input.anchor.top - input.gap - minTop;
+  const side =
+    input.floating.height <= below || (input.floating.height > above && below > above)
+      ? 'below'
+      : 'above';
   const preferredTop =
     side === 'below' ? belowTop : input.anchor.top - input.gap - input.floating.height;
-  const minTop = input.boundary.top + input.edgeGap;
   const maxTop = maxBottom - input.floating.height;
   const top = clamp(preferredTop, minTop, maxTop);
 

@@ -39,6 +39,7 @@ const privateOwners = new Set([
   'LeftPanel',
   'TaskIndex',
   'TaskApplicationService',
+  'TaskModal',
 ]);
 
 function privateOwner(node: ts.Node): string | undefined {

@@ -891,14 +891,16 @@ describe('PanelView', () => {
           taskModal_abyssPrivate: {
             open(task: typeof invalidDelete): void;
             close(): void;
-            innerPanel: { toggleTaskLike_abyssPrivate(task: typeof invalidDelete): Promise<void> };
+            innerPanel_abyssPrivate: {
+              toggleTaskLike_abyssPrivate(task: typeof invalidDelete): Promise<void>;
+            };
           };
         };
         interactionRegistry_abyssPrivate: InteractionRegistry<string>;
       };
       const modal = internals.center_abyssPrivate.taskModal_abyssPrivate;
       modal.open(invalidDelete);
-      const completion = modal.innerPanel.toggleTaskLike_abyssPrivate(invalidDelete);
+      const completion = modal.innerPanel_abyssPrivate.toggleTaskLike_abyssPrivate(invalidDelete);
       const surface = expectDefined(
         activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
       );
@@ -919,7 +921,9 @@ describe('PanelView', () => {
           taskModal_abyssPrivate: {
             open(task: typeof invalidDelete): void;
             close(): void;
-            innerPanel: { toggleTaskLike_abyssPrivate(task: typeof invalidDelete): Promise<void> };
+            innerPanel_abyssPrivate: {
+              toggleTaskLike_abyssPrivate(task: typeof invalidDelete): Promise<void>;
+            };
           };
         };
         interactionRegistry_abyssPrivate: InteractionRegistry<string>;
@@ -933,7 +937,7 @@ describe('PanelView', () => {
         .mockReturnValueOnce({ release: releaseDialog });
 
       modal.open(invalidDelete);
-      const completion = modal.innerPanel.toggleTaskLike_abyssPrivate(invalidDelete);
+      const completion = modal.innerPanel_abyssPrivate.toggleTaskLike_abyssPrivate(invalidDelete);
       const surface = expectDefined(
         activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm'),
       );

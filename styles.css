@@ -4776,7 +4776,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     color 0.1s;
 }
 
-.abyss-chip-remove:hover {
+.abyss-chip-remove:hover,
+.abyss-popover-clear-icon-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
@@ -4827,11 +4828,6 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.abyss-popover-clear-icon-btn:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
 }
 
 .abyss-popover-clear-icon-btn svg {
@@ -4950,9 +4946,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-repeat-chip:focus-visible,
-.abyss-recurrence-editor button:focus-visible,
-.abyss-recurrence-editor input:focus-visible,
-.abyss-recurrence-editor select:focus-visible {
+.abyss-recurrence-editor :is(button, input, select):focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
@@ -5038,8 +5032,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-muted);
 }
 
-.abyss-recurrence-editor input[type='number'],
-.abyss-recurrence-editor input[type='text'],
+.abyss-recurrence-editor input:is([type='number'], [type='text']),
 .abyss-recurrence-editor select {
   box-sizing: border-box;
   min-width: 0;
@@ -5698,8 +5691,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-subtask-row .abyss-subtask-remove,
 .abyss-dep-row .abyss-dep-remove,
 .abyss-dep-section .abyss-dep-add,
-.abyss-dep-search .abyss-dep-search-direction,
-.abyss-dep-search .abyss-dep-search-option {
+.abyss-dep-search :is(.abyss-dep-search-direction, .abyss-dep-search-option) {
   background: transparent;
 }
 
@@ -5712,7 +5704,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-dep-title,
 .abyss-dep-id,
 .abyss-dep-search-title,
-.abyss-dep-search-context {
+.abyss-dep-search-context,
+.abyss-dep-search-create:not([hidden]) {
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -5782,8 +5775,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-warning, var(--color-orange));
 }
 
-.abyss-subtask-remove:hover,
-.abyss-dep-remove:hover {
+:is(.abyss-subtask-remove, .abyss-dep-remove):hover {
   background: var(--background-modifier-hover);
 }
 
@@ -5797,32 +5789,41 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   }
 }
 
-.abyss-dep-add {
+.abyss-dep-add,
+.abyss-dep-search-option {
   width: 100%;
   height: auto;
-  justify-content: flex-start;
   border: 0;
   box-shadow: none;
   font: inherit;
 }
 
+.abyss-dep-add {
+  justify-content: flex-start;
+}
+
 .abyss-dep-badge > button:focus-visible,
-.abyss-subtask-remove:focus-visible,
+:is(.abyss-subtask-remove, .abyss-dep-remove, .abyss-dep-add):focus-visible,
 .abyss-undo-row button:focus-visible,
-.abyss-dep-remove:focus-visible,
-.abyss-dep-add:focus-visible,
 .abyss-dep-search button:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
 
 .abyss-dep-search {
+  display: flex;
+  flex-direction: column;
   width: 19rem;
   min-width: 0;
-  max-width: calc(100% - 16px);
+  max-width: var(--abyss-pop-width, calc(100% - 16px));
+  max-height: var(--abyss-pop-height);
   box-sizing: border-box;
   box-shadow: none;
   font-size: var(--font-ui-small);
+}
+
+.abyss-dep-search > * {
+  flex-shrink: 0;
 }
 
 .abyss-dep-search-field {
@@ -5839,20 +5840,17 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-dep-search-results {
+  flex-shrink: 1;
   margin-top: 6px;
+  min-height: 0;
   max-height: min(40vh, 16rem);
   overflow: hidden auto;
 }
 
 .abyss-dep-search-option {
   display: block;
-  width: 100%;
-  height: auto;
   padding: 5px 6px;
-  border: 0;
-  box-shadow: none;
   text-align: left;
-  font: inherit;
 }
 
 .abyss-dep-search-option:is(.is-active, :hover) {
@@ -6348,7 +6346,7 @@ body.abyss-modal-open .popover.hover-popover {
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-l, 8px);
-  width: 480px;
+  width: min(480px, calc(100vw - 32px));
   max-height: 80vh;
   overflow-y: auto;
   box-shadow: var(--shadow-l);

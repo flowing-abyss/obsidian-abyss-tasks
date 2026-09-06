@@ -36,7 +36,7 @@ import {
   type TaskSnapshot,
   type TaskTextTarget,
 } from '../tasks';
-import { anchoredPlacement } from '../ui/anchoredPlacement';
+import { anchoredPlacement, type AnchoredPlacementInput } from '../ui/anchoredPlacement';
 import {
   enableAttachmentDrop,
   enableAttachmentPaste,
@@ -241,13 +241,55 @@ function timeChipPresentation(
 }
 
 function dimensionOrFallback(primary: number, secondary: number, fallback: number): number {
-  if (Number.isFinite(primary) && primary !== 0) return primary;
-  if (Number.isFinite(secondary) && secondary !== 0) return secondary;
-  return fallback;
+  return finiteNonzeroOr(primary, finiteNonzeroOr(secondary, fallback));
 }
 
 function finiteNonzeroOr(value: number, fallback: number): number {
   return Number.isFinite(value) && value !== 0 ? value : fallback;
+}
+
+function visiblePickerBoundary(panel: DOMRect, overlay: DOMRect, window: Window | null): DOMRect {
+  const left = Math.max(0, panel.left, overlay.left);
+  const top = Math.max(0, panel.top, overlay.top);
+  const right = Math.min(window?.innerWidth ?? Infinity, panel.right, overlay.right);
+  const bottom = Math.min(window?.innerHeight ?? Infinity, panel.bottom, overlay.bottom);
+  return new DOMRect(left, top, Math.max(0, right - left), Math.max(0, bottom - top));
+}
+
+function setPopoverLength(popover: HTMLElement, property: string, value: number): void {
+  popover.style.setProperty(`--abyss-pop-${property}`, `${value}px`);
+}
+
+function constrainDependencyPicker(
+  popover: HTMLElement,
+  input: Pick<AnchoredPlacementInput, 'anchor' | 'boundary' | 'gap' | 'edgeGap'>,
+): DOMRect {
+  const { anchor, gap, edgeGap } = input;
+  const boundary = visiblePickerBoundary(
+    input.boundary,
+    popover.closest('.abyss-modal')?.getBoundingClientRect() ?? input.boundary,
+    popover.ownerDocument.defaultView,
+  );
+  setPopoverLength(popover, 'width', Math.max(0, boundary.width - 2 * edgeGap));
+  const chrome =
+    popover.scrollHeight -
+    (popover.querySelector<HTMLElement>('[role="listbox"]')?.offsetHeight ?? 0);
+  setPopoverLength(
+    popover,
+    'height',
+    Math.max(
+      0,
+      Math.min(
+        boundary.height - 2 * edgeGap,
+        Math.max(
+          chrome,
+          anchor.top - boundary.top - edgeGap - gap,
+          boundary.bottom - edgeGap - anchor.bottom - gap,
+        ),
+      ),
+    ),
+  );
+  return boundary;
 }
 
 function clearOptionalTimer(ownerWindow: Window | null, timer: number | undefined): void {
@@ -1807,8 +1849,10 @@ export class RightPanel {
         if (restoreFocus) this.dependencyAnchor_abyssPrivate()?.focus({ preventScroll: true });
       },
       ownership: this.interactionOwnership_abyssPrivate,
+      position: (element) => {
+        this.positionDependencySearch_abyssPrivate(element);
+      },
     });
-    this.positionDependencySearch_abyssPrivate();
     this.updateDependencyBadge_abyssPrivate();
   }
 
@@ -1876,14 +1920,12 @@ export class RightPanel {
     if (result.changed) this.onSuccessfulMutation_abyssPrivate?.(root.ref);
   }
 
-  private positionDependencySearch_abyssPrivate(): void {
+  private positionDependencySearch_abyssPrivate(
+    element = this.dependencySearch_abyssPrivate?.element,
+  ): void {
     const anchor = this.dependencyAnchor_abyssPrivate();
-    if (this.dependencySearch_abyssPrivate !== undefined && anchor !== null)
-      this.positionAnchoredSurface_abyssPrivate(
-        this.dependencySearch_abyssPrivate.element,
-        anchor,
-        'below-start',
-      );
+    if (element !== undefined && anchor !== null)
+      this.positionAnchoredSurface_abyssPrivate(element, anchor, 'below-start');
   }
 
   private async executeDependencyCommand_abyssPrivate(
@@ -2846,62 +2888,90 @@ export class RightPanel {
     this.anchoredSurfaceCleanups_abyssPrivate.get(popover)?.();
     const ownerDocument = this.el_abyssPrivate.ownerDocument;
     const ownerWindow = ownerDocument.defaultView;
+    const dependency = popover.matches('.abyss-dep-search');
+    const overlay = anchor.closest('.abyss-modal');
+    let disposed = false;
     const position = (): void => {
-      const boundary = this.el_abyssPrivate.getBoundingClientRect();
-      const floatingRect = popover.getBoundingClientRect();
-      const computed = ownerWindow?.getComputedStyle(popover);
-      const minWidth = parseFloat(computed?.minWidth ?? '');
-      const floatingWidth = dimensionOrFallback(
-        floatingRect.width,
-        popover.offsetWidth,
-        finiteNonzeroOr(minWidth, 160),
-      );
-      const floatingHeight = dimensionOrFallback(floatingRect.height, popover.offsetHeight, 0);
-      const edgeGap = this.cssLengthToPx_abyssPrivate(
-        computed?.getPropertyValue('--abyss-popover-edge-gap') ?? '',
-        popover,
-        8,
-      );
-      const anchorGap = this.cssLengthToPx_abyssPrivate(
-        computed?.getPropertyValue('--abyss-popover-anchor-gap') ?? '',
-        popover,
-        4,
-      );
-      const placement = anchoredPlacement({
-        anchor: anchor.getBoundingClientRect(),
-        floating: { width: floatingWidth, height: floatingHeight },
-        boundary,
-        gap: anchorGap,
-        edgeGap,
-        preferred,
-      });
-      // Placement is expressed in viewport coordinates, while the CSS custom
-      // properties are interpreted by the popover's actual containing block.
-      // The panel remains the clipping boundary above; it is not necessarily
-      // the element that establishes the popover's offset coordinates.
-      const containingBlock = popover.offsetParent ?? this.el_abyssPrivate;
-      const containingRect = containingBlock.getBoundingClientRect();
-      popover.style.setProperty(
-        '--abyss-pop-top',
-        `${placement.top - containingRect.top - containingBlock.clientTop + containingBlock.scrollTop}px`,
-      );
-      popover.style.setProperty(
-        '--abyss-pop-left',
-        `${placement.left - containingRect.left - containingBlock.clientLeft + containingBlock.scrollLeft}px`,
-      );
-      popover.dataset['side'] = placement.side;
+      if (!disposed) this.placeAnchoredSurface_abyssPrivate(popover, anchor, preferred);
     };
     position();
-    ownerWindow?.addEventListener('resize', position);
-    ownerDocument.addEventListener('scroll', position, true);
+    const listen = (method: 'addEventListener' | 'removeEventListener'): void => {
+      ownerWindow?.[method]('resize', position);
+      ownerWindow?.[method]('scroll', position);
+      ownerDocument[method]('scroll', position, true);
+    };
+    listen('addEventListener');
+    const ResizeObserver = ownerWindow?.ResizeObserver;
+    const observer =
+      dependency && typeof ResizeObserver === 'function' ? new ResizeObserver(position) : undefined;
+    for (const element of new Set([
+      popover,
+      anchor,
+      this.el_abyssPrivate,
+      overlay,
+      popover.offsetParent,
+      ...popover.children,
+    ])) {
+      if (element !== null) observer?.observe(element);
+    }
     const cleanup = (): void => {
-      ownerWindow?.removeEventListener('resize', position);
-      ownerDocument.removeEventListener('scroll', position, true);
+      if (disposed) return;
+      disposed = true;
+      observer?.disconnect();
+      listen('removeEventListener');
       if (this.anchoredSurfaceCleanups_abyssPrivate.get(popover) === cleanup) {
         this.anchoredSurfaceCleanups_abyssPrivate.delete(popover);
       }
     };
     this.anchoredSurfaceCleanups_abyssPrivate.set(popover, cleanup);
+  }
+
+  private placeAnchoredSurface_abyssPrivate(
+    popover: HTMLElement,
+    anchor: HTMLElement,
+    preferred: 'below-start' | 'below-end',
+  ): void {
+    const computed = popover.ownerDocument.defaultView?.getComputedStyle(popover);
+    const geometry = {
+      boundary: this.el_abyssPrivate.getBoundingClientRect(),
+      anchor: anchor.getBoundingClientRect(),
+      edgeGap: this.cssLengthToPx_abyssPrivate(
+        computed?.getPropertyValue('--abyss-popover-edge-gap') ?? '',
+        popover,
+        8,
+      ),
+      gap: this.cssLengthToPx_abyssPrivate(
+        computed?.getPropertyValue('--abyss-popover-anchor-gap') ?? '',
+        popover,
+        4,
+      ),
+    };
+    if (popover.matches('.abyss-dep-search'))
+      geometry.boundary = constrainDependencyPicker(popover, geometry);
+    const floating = popover.getBoundingClientRect();
+    const placement = anchoredPlacement({
+      ...geometry,
+      preferred,
+      floating: {
+        width: dimensionOrFallback(
+          floating.width,
+          popover.offsetWidth,
+          finiteNonzeroOr(parseFloat(computed?.minWidth ?? ''), 160),
+        ),
+        height: dimensionOrFallback(floating.height, popover.offsetHeight, 0),
+      },
+    });
+    // Convert viewport placement into the actual offset parent's padding box,
+    // independently of the visible panel/modal boundary used to contain it.
+    const block = popover.offsetParent ?? this.el_abyssPrivate;
+    const rect = block.getBoundingClientRect();
+    setPopoverLength(popover, 'top', placement.top - rect.top - block.clientTop + block.scrollTop);
+    setPopoverLength(
+      popover,
+      'left',
+      placement.left - rect.left - block.clientLeft + block.scrollLeft,
+    );
+    popover.dataset['side'] = placement.side;
   }
 
   private cssLengthToPx_abyssPrivate(
@@ -2912,18 +2982,11 @@ export class RightPanel {
     const trimmed = value.trim();
     if (trimmed === '') return fallback;
     if (trimmed.endsWith('px')) return parseFloat(trimmed);
-    if (trimmed.endsWith('rem')) {
-      const parsedRootFontSize = parseFloat(
-        relativeTo.ownerDocument.defaultView?.getComputedStyle(
-          relativeTo.ownerDocument.documentElement,
-        ).fontSize ?? '',
-      );
-      const rootFontSize = finiteNonzeroOr(parsedRootFontSize, 16);
-      return parseFloat(trimmed) * rootFontSize;
-    }
     if (trimmed.endsWith('em')) {
       const parsedFontSize = parseFloat(
-        relativeTo.ownerDocument.defaultView?.getComputedStyle(relativeTo).fontSize ?? '',
+        relativeTo.ownerDocument.defaultView?.getComputedStyle(
+          trimmed.endsWith('rem') ? relativeTo.ownerDocument.documentElement : relativeTo,
+        ).fontSize ?? '',
       );
       const fontSize = finiteNonzeroOr(parsedFontSize, 16);
       return parseFloat(trimmed) * fontSize;

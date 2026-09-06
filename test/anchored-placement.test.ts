@@ -71,7 +71,7 @@ describe('anchoredPlacement', () => {
     ).toEqual({ left: 50, top: 136, side: 'above' });
   });
 
-  it('clamps the flipped surface vertically when neither side has enough room', () => {
+  it('clamps the surface vertically when neither side has enough room', () => {
     expect(
       anchoredPlacement({
         anchor: rect(50, 50, 20, 10),
@@ -81,7 +81,20 @@ describe('anchoredPlacement', () => {
         edgeGap: 8,
         preferred: 'below-start',
       }),
-    ).toEqual({ left: 50, top: 28, side: 'above' });
+    ).toEqual({ left: 50, top: 28, side: 'below' });
+  });
+
+  it('prefers the larger lower space when an over-tall surface fits on neither side', () => {
+    expect(
+      anchoredPlacement({
+        anchor: rect(50, 30, 20, 20),
+        floating: { width: 80, height: 200 },
+        boundary: rect(0, 0, 200, 180),
+        gap: 4,
+        edgeGap: 8,
+        preferred: 'below-start',
+      }),
+    ).toEqual({ left: 50, top: 8, side: 'below' });
   });
 
   it.each(['below-start', 'below-end'] as const)(

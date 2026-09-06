@@ -64,9 +64,12 @@ async function harness(surface: 'panel' | 'modal', source: string, selected: str
       application.tasks,
     );
     modal.open(node(selected).root);
-    const local = modal as unknown as { innerState: AppState; innerPanel: RightPanel };
-    state = local.innerState;
-    panel = local.innerPanel;
+    const local = modal as unknown as {
+      innerState_abyssPrivate: AppState;
+      innerPanel_abyssPrivate: RightPanel;
+    };
+    state = local.innerState_abyssPrivate;
+    panel = local.innerPanel_abyssPrivate;
     el = expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal-body'));
     cleanups.push(() => {
       modal.close();
