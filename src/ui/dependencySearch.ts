@@ -1,4 +1,3 @@
-import { setIcon } from 'obsidian';
 import {
   sameTaskNodeRef,
   type DependencyDirection,
@@ -262,19 +261,12 @@ function createSearchElements(
     cls: 'abyss-popover abyss-popover-anchored abyss-dep-search',
     attr: { role: 'dialog', 'aria-label': dialogLabel },
   });
-  const directionControls = callbacks.canChangeDirection
-    ? element.createDiv({
-        cls: 'abyss-dep-search-directions',
-        attr: { role: 'group', 'aria-label': 'Dependency direction' },
-      })
-    : undefined;
   const search = element.createDiv({ cls: 'abyss-dep-search-field' });
-  setIcon(search.createSpan({ attr: { 'aria-hidden': 'true' } }), 'search');
   const id = `abyss-dependency-options-${nextSearchId++}`;
   const input = search.createEl('input', {
     attr: {
       type: 'search',
-      placeholder: 'Search tasks',
+      placeholder: 'Search tasks or add task',
       'aria-label': 'Search tasks for dependency',
       role: 'combobox',
       'aria-controls': id,
@@ -282,6 +274,16 @@ function createSearchElements(
       'aria-autocomplete': 'list',
     },
   });
+  const createAffordance = element.createEl('button', {
+    cls: 'abyss-dep-add abyss-dep-search-option abyss-dep-search-create',
+    attr: { type: 'button', hidden: '' },
+  });
+  const directionControls = callbacks.canChangeDirection
+    ? element.createDiv({
+        cls: 'abyss-dep-search-directions',
+        attr: { role: 'group', 'aria-label': 'Dependency direction' },
+      })
+    : undefined;
   const error = element.createDiv({
     cls: 'abyss-dep-search-error',
     attr: { role: 'status', hidden: '' },
@@ -289,10 +291,6 @@ function createSearchElements(
   const list = element.createDiv({
     cls: 'abyss-dep-search-results',
     attr: { id, role: 'listbox', 'aria-label': 'Tasks' },
-  });
-  const createAffordance = element.createEl('button', {
-    cls: 'abyss-dep-search-option abyss-dep-search-create',
-    attr: { type: 'button', hidden: '' },
   });
   return { element, input, list, directionControls, createAffordance, error };
 }

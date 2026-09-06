@@ -838,6 +838,18 @@ describe('inspector subtask row removal', () => {
     expect(value('.abyss-subtask-title-row', 'align-items')).toBe('center');
     expect(value('.abyss-subtask-row.abyss-undo-row', 'cursor')).toBe('default');
     expect(value('.abyss-undo-row button', 'height')).toBe('24px');
+    expect(value('.abyss-undo-row button', 'cursor')).toBe('pointer');
+    expect(value('.abyss-undo-row button', 'color')).toBe('var(--text-accent)');
+    expect(css).toContain(':is(.abyss-breadcrumb-item, .abyss-undo-row button):hover');
+    expect(value('.abyss-undo-row button:focus-visible', 'outline')).toBe(
+      '2px solid var(--interactive-accent)',
+    );
+    expect(value('.abyss-dep-badge:hover', 'background')).toBe('var(--background-modifier-hover)');
+    expect(value('.abyss-dep-badge > button', 'gap')).toBe('2px');
+    expect(value('.abyss-dep-divider', 'background')).toBe('var(--text-muted)');
+    expect(value('.abyss-dep-indicator', 'gap')).toBe('1px');
+    expect(value('.abyss-dep-indicator svg', 'width')).toBe('11px');
+    expect(value('.abyss-dep-indicator svg', 'height')).toBe('11px');
     expect(css).toMatch(
       /@media\s*\(pointer: coarse\)\s*\{[^}]*\}[^}]*\.abyss-subtask-remove\s*\{\s*opacity: 1;/u,
     );
@@ -1554,7 +1566,7 @@ describe('RightPanel dependency inspector', () => {
       if (mode === 'selection') h.state.set('taskStack', [h.node('Candidate').root]);
       if (mode === 'success') {
         button(h.el, '[data-direction="blocks"]').click();
-        button(h.el, '.abyss-dep-search-option').click();
+        button(h.el, '[role="option"]').click();
         await flushMicrotasks(50);
       }
       if (mode === 'refresh') {
@@ -1610,11 +1622,7 @@ describe('RightPanel dependency inspector', () => {
     expect(value('.abyss-dep-row:focus-within .abyss-dep-remove', 'opacity')).toBe('1');
     expect(value('.abyss-dep-row.is-unavailable .abyss-dep-remove', 'opacity')).toBe('1');
     expect(value('.abyss-dep-title', 'text-overflow')).toBe('ellipsis');
-    for (const selector of [
-      '.abyss-dep-row .abyss-dep-remove',
-      '.abyss-dep-section .abyss-dep-add',
-      '.abyss-dep-search .abyss-dep-search-option',
-    ])
+    for (const selector of ['.abyss-dep-row .abyss-dep-remove', '.abyss-dep-add'])
       expect(value(selector, 'background')).toBe('transparent');
     expect(css).toMatch(
       /@media\s*\(pointer: coarse\)\s*\{\s*\.abyss-dep-remove\s*\{\s*opacity: 1;/u,
@@ -1787,16 +1795,14 @@ describe('RightPanel dependency inspector', () => {
     expect(value('.abyss-dep-badge.abyss-chip', 'border')).toBe('0');
     expect(value('.abyss-dep-badge.abyss-chip', 'background')).toBe('transparent');
     expect(value('.abyss-dep-badge > button', 'height')).toBe('24px');
-    expect(value('.abyss-dep-badge > button', 'gap')).toBe('4px');
+    expect(value('.abyss-dep-badge > button', 'gap')).toBe('2px');
     expect(value('.abyss-dep-badge > button', 'font')).toBe('inherit');
     expect(value('.abyss-dep-lock', 'color')).toBe('var(--text-muted)');
     expect(value('.abyss-dep-count-blocked-by', 'color')).toBe(
       'var(--abyss-dependency-blocked-by)',
     );
     expect(value('.abyss-dep-count-blocks', 'color')).toBe('var(--abyss-dependency-blocks)');
-    expect(value('.abyss-dep-badge > button:hover', 'background')).toBe(
-      'var(--background-modifier-hover)',
-    );
+    expect(value('.abyss-dep-badge:hover', 'background')).toBe('var(--background-modifier-hover)');
     expect(value('.abyss-dep-badge > button:focus-visible', 'outline')).toBe(
       '2px solid var(--interactive-accent)',
     );
@@ -2196,7 +2202,7 @@ describe('RightPanel dependency inspector', () => {
       button(h.el, '.abyss-dep-badge-body').click();
       search(h.el, 'Candidate');
       button(h.el, '[data-direction="blocks"]').click();
-      button(h.el, '.abyss-dep-search-option').click();
+      button(h.el, '[role="option"]').click();
       await flushMicrotasks(20);
       expect(h.el.querySelector('.abyss-dep-search input')).toHaveProperty('value', 'Candidate');
       expect(h.el.querySelectorAll('.abyss-dep-row')).toHaveLength(0);
@@ -2213,7 +2219,7 @@ describe('RightPanel dependency inspector', () => {
     button(h.el, '.abyss-dep-badge-body').click();
     search(h.el, 'Candidate');
     button(h.el, '[data-direction="blocks"]').click();
-    button(h.el, '.abyss-dep-search-option').click();
+    button(h.el, '[role="option"]').click();
     await flushMicrotasks(20);
     expect(log).toHaveBeenCalledOnce();
     expect(log.mock.calls[0]?.[0]).toContain('[abyss-tasks]');

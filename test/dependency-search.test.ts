@@ -102,6 +102,55 @@ describe('dependency search options', () => {
 });
 
 describe('dependency search keyboard controller', () => {
+  it.each([
+    {
+      canChangeDirection: true,
+      expectedChildren: [
+        'abyss-dep-search-field',
+        'abyss-dep-add abyss-dep-search-option abyss-dep-search-create',
+        'abyss-dep-search-directions',
+        'abyss-dep-search-error',
+        'abyss-dep-search-results',
+      ],
+    },
+    {
+      canChangeDirection: false,
+      expectedChildren: [
+        'abyss-dep-search-field',
+        'abyss-dep-add abyss-dep-search-option abyss-dep-search-create',
+        'abyss-dep-search-error',
+        'abyss-dep-search-results',
+      ],
+    },
+  ])(
+    'places the $canChangeDirection picker controls after the search field',
+    ({ canChangeDirection, expectedChildren }) => {
+      const handle = mountDependencySearch(activeDocument.body, {
+        direction: 'blocked-by',
+        canChangeDirection,
+        options: () => [],
+        selectExisting: async () => ({ type: 'failed' }),
+        createNew: async () => ({ type: 'failed' }),
+        onClose: () => {},
+      });
+
+      const field = expectDefined(
+        handle.element.querySelector<HTMLElement>('.abyss-dep-search-field'),
+      );
+      expect(field.querySelector('svg')).toBeNull();
+      expect(field.querySelector('input')?.placeholder).toBe('Search tasks or add task');
+      expect([...handle.element.children].map((child) => child.className)).toEqual(
+        expectedChildren,
+      );
+      expect(
+        handle.element
+          .querySelector('[role="listbox"]')
+          ?.contains(handle.element.querySelector('.abyss-dep-search-create')),
+      ).toBe(false);
+      handle.destroy();
+    },
+  );
+
   it('shows the general direction before submission and recomputes options when it changes', () => {
     const seenDirections: string[] = [];
     const handle = mountDependencySearch(activeDocument.body, {

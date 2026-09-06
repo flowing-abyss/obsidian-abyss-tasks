@@ -3641,7 +3641,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: 2px;
+  gap: 1px;
   font-size: 11px;
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -3649,11 +3649,6 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-dep-indicator .abyss-dep-lock {
   display: inline-flex;
-}
-
-.abyss-dep-indicator svg {
-  width: 11px;
-  height: 11px;
 }
 
 /* Shape by status-group (type): in-progress is the only circular group. */
@@ -4570,12 +4565,13 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 0;
 }
 
-.abyss-breadcrumb-item {
+.abyss-breadcrumb-item,
+.abyss-undo-row button {
   cursor: pointer;
   color: var(--text-accent);
 }
 
-.abyss-breadcrumb-item:hover {
+:is(.abyss-breadcrumb-item, .abyss-undo-row button):hover {
   text-decoration: underline;
 }
 
@@ -5645,7 +5641,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-dep-badge > button {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   height: 24px;
   padding: 3px 6px;
   border: 0;
@@ -5656,7 +5652,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   box-shadow: none;
 }
 
-.abyss-dep-badge > button:hover {
+.abyss-dep-badge:hover {
   background: var(--background-modifier-hover);
 }
 
@@ -5670,6 +5666,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   height: 13px;
 }
 
+.abyss-dep-indicator svg {
+  width: 11px;
+  height: 11px;
+}
+
 .abyss-dep-count-blocked-by {
   color: var(--abyss-dependency-blocked-by);
 }
@@ -5681,16 +5682,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-dep-divider {
   width: 1px;
   height: 0.8em;
-  background: var(--background-modifier-border);
-}
-
-.abyss-dep-indicator-divider {
-  color: var(--text-muted);
+  background: var(--text-muted);
 }
 
 .abyss-subtask-row .abyss-subtask-remove,
 .abyss-dep-row .abyss-dep-remove,
-.abyss-dep-section .abyss-dep-add,
+.abyss-dep-add,
 .abyss-dep-search :is(.abyss-dep-search-direction, .abyss-dep-search-option) {
   background: transparent;
 }
