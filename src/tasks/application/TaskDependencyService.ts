@@ -8,6 +8,7 @@ import type {
   TaskOccurrenceResult,
 } from '../domain/commands';
 import { dependencySubtaskChild } from '../domain/dependencySubtaskProof';
+import { taskNodeRootRef as rootRef } from '../domain/taskCommandTargets';
 import {
   buildTaskDependencyGraph,
   enumerateTaskNodes,
@@ -132,13 +133,7 @@ function coordinateMutation<T>(
   return previous === undefined ? run() : previous.then(run);
 }
 
-function rootRef(target: TaskNodeRef): TaskRef {
-  let current = target;
-  while (current.type === 'subtask') current = current.ref.parent;
-  return current.ref;
-}
-
-function rootAddress(ref: TaskRef): string {
+function rootAddress(ref: Pick<TaskRef, 'filePath' | 'line'>): string {
   return JSON.stringify([ref.filePath, ref.line]);
 }
 
@@ -446,7 +441,7 @@ async function createSubtask(
   if (result.type === 'rebased' && rebases.length === 0)
     return await createSubtask(context, command, lifecycle, [result]);
   if (result.type !== 'committed') return terminal(result);
-  return createdSubtaskResult(result, current, command, id);
+  return createdSubtaskResult(context, result, current, { command, id });
 }
 
 function creationId(
@@ -466,27 +461,47 @@ function creationId(
 }
 
 function createdSubtaskResult(
+  context: DependencyContext,
   result: Extract<TaskRepositoryResult, { type: 'committed' }>,
   current: ResolvedNode,
-  command: CreateDependencySubtaskCommand,
-  id: string,
+  expected: { readonly command: CreateDependencySubtaskCommand; readonly id: string },
 ): TaskCommandResult {
+  const { command, id } = expected;
   const outcome = result.outcome;
   if (
     outcome.type !== 'dependency-subtask' ||
     outcome.direction !== command.direction ||
     outcome.dependencyId !== id ||
-    !provenCreatedSubtask(current, outcome, command)
+    !provenCreatedSubtask(context, current, outcome, command)
   )
-    return ioError();
+    throw new Error('Unproven dependency subtask creation');
   return { type: 'ok', changed: result.changed, outcome };
 }
 
+function provenCreationRoot(
+  context: DependencyContext,
+  current: TaskSnapshot,
+  outcome: DependencySubtaskCreationOutcome,
+): boolean {
+  const root = outcome.current.root;
+  const authority = context.queries.resolve(root.ref);
+  const snapshot = JSON.stringify(root);
+  return (
+    rootAddress(root.source) === rootAddress(current.source) &&
+    root.ref.revision !== current.ref.revision &&
+    authority.type === 'exact' &&
+    JSON.stringify(authority.task) === snapshot &&
+    JSON.stringify(outcome.child.root) === snapshot
+  );
+}
+
 function provenCreatedSubtask(
+  context: DependencyContext,
   current: ResolvedNode,
   outcome: DependencySubtaskCreationOutcome,
   command: CreateDependencySubtaskCommand,
 ): boolean {
+  if (!provenCreationRoot(context, current.root, outcome)) return false;
   const fresh = atAddress(outcome.current.root, current.target);
   if (fresh === undefined) return false;
   const child = dependencySubtaskChild(current.node, fresh.node, command);
@@ -499,7 +514,6 @@ function provenCreatedSubtask(
     }) &&
     sameTaskNodeRef(fresh.target, outcome.current.target) &&
     sameTaskNodeRef({ type: 'subtask', ref: child.ref }, outcome.child.target) &&
-    rootKey(outcome.child.root.ref) === rootKey(fresh.root.ref) &&
     (command.direction === 'blocks' ? fresh.node.dependencyId : child.dependencyId) ===
       outcome.dependencyId
   );

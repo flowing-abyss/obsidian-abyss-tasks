@@ -1,6 +1,6 @@
 import { TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { localDate, type TaskCommandResult } from '../src/tasks';
+import { localDate, type TaskCommandResult, type TaskSnapshot } from '../src/tasks';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
 import {
   TaskDependencyService,
@@ -90,6 +90,23 @@ function outcome(result: TaskCommandResult) {
   if (result.type !== 'ok' || result.outcome.type !== 'dependency-subtask')
     throw new Error(`Expected linked child, got ${result.type}`);
   return result.outcome;
+}
+
+function corruptRoot(
+  index: TaskIndex,
+  root: TaskSnapshot,
+  previousRevision: string,
+  corruption: string,
+): TaskSnapshot | undefined {
+  if (corruption === 'foreign-occurrences')
+    return expectDefined(
+      index.installCommittedContent('foreign.md', `\n${root.source.originalBlock}\n`)[0],
+    );
+  if (corruption !== 'stale-revision' && corruption !== 'unproven-revision') return undefined;
+  const revision = corruption === 'stale-revision' ? previousRevision : 'unproven';
+  return JSON.parse(
+    JSON.stringify(root).replaceAll(JSON.stringify(root.ref.revision), JSON.stringify(revision)),
+  ) as TaskSnapshot;
 }
 
 describe('public atomic dependency subtask creation', () => {
@@ -281,6 +298,10 @@ describe('public atomic dependency subtask creation', () => {
     'unrelated-change',
     'extra-edge',
     'wrong-bound-id',
+    'foreign-occurrences',
+    'stale-revision',
+    'unproven-revision',
+    'divergent-child-root',
   ] as const)('does not acknowledge a repository outcome with %s', async (corruption) => {
     const h = await harness('- [ ] Current\n  - [ ] Existing\n');
     const write = h.repository.createDependencySubtask.bind(h.repository);
@@ -296,6 +317,31 @@ describe('public atomic dependency subtask creation', () => {
         return { ...bad, outcome: { ...value, dependencyId: 'different' } };
       if (corruption === 'wrong-child')
         return { ...bad, outcome: { ...value, child: value.current } };
+      if (corruption === 'divergent-child-root')
+        return {
+          ...bad,
+          outcome: {
+            ...value,
+            child: { ...value.child, root: { ...value.child.root, title: 'Private corruption' } },
+          },
+        };
+      const corrupted = corruptRoot(
+        h.index,
+        value.current.root,
+        request.baseRoot.ref.revision,
+        corruption,
+      );
+      if (corrupted !== undefined) {
+        const child = expectDefined(corrupted.subtasks[1]);
+        return {
+          ...bad,
+          outcome: {
+            ...value,
+            current: { root: corrupted, target: { type: 'task', ref: corrupted.ref } },
+            child: { root: corrupted, target: { type: 'subtask', ref: child.ref } },
+          },
+        };
+      }
       if (corruption === 'wrong-root')
         return {
           ...bad,
@@ -307,13 +353,13 @@ describe('public atomic dependency subtask creation', () => {
             },
           },
         };
-      const replacements = {
+      const replacements: Partial<Record<typeof corruption, readonly [string, string]>> = {
         'wrong-text': ['Child', 'Replaced'],
         'unrelated-change': ['Existing', 'Replaced'],
         'extra-edge': ['⛔ 00000000', '⛔ 00000000, other_id'],
         'wrong-bound-id': ['00000000', '00000099'],
-      } as const;
-      const [from, to] = replacements[corruption];
+      };
+      const [from, to] = expectDefined(replacements[corruption]);
       const markdown = value.current.root.source.originalBlock.replaceAll(from, to);
       const root = expectDefined(h.index.snapshotsFromContent('tasks.md', `\n${markdown}\n`)[0]);
       const child = expectDefined(root.subtasks[1]);
@@ -327,5 +373,13 @@ describe('public atomic dependency subtask creation', () => {
       };
     });
     expect(await h.create()).toMatchObject({ type: 'io-error', contentState: 'unknown' });
+    expect(h.diagnostics).toHaveBeenCalledExactlyOnceWith({
+      operation: 'create-dependency-subtask',
+      phase: 'unexpected',
+      cause: 'repository-error',
+    });
+    expect(JSON.stringify(h.diagnostics.mock.calls)).not.toMatch(
+      /Current|Child|Private|tasks\.md/u,
+    );
   });
 });

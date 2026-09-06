@@ -11,7 +11,10 @@ import {
   type TaskResolution,
 } from '../src/tasks';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
-import { TaskDependencyService } from '../src/tasks/application/TaskDependencyService';
+import {
+  TaskDependencyService,
+  type TaskDiagnosticSink,
+} from '../src/tasks/application/TaskDependencyService';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
@@ -61,6 +64,7 @@ async function harness(markdown: string, selected = 'Current', additionalFiles =
     refAuthority: authority,
     snapshotState: index,
   });
+  const diagnostics = vi.fn<TaskDiagnosticSink>();
   const application = new TaskApplicationService(
     index,
     repository,
@@ -68,12 +72,8 @@ async function harness(markdown: string, selected = 'Current', additionalFiles =
     { today: () => localDate('2026-09-05') },
     undefined,
     undefined,
-    new TaskDependencyService(
-      index,
-      repository,
-      () => 'generate',
-      () => {},
-    ),
+    new TaskDependencyService(index, repository, () => 'generate', diagnostics),
+    diagnostics,
   );
   const api: TaskApplicationApi = {
     queries: index,
@@ -104,7 +104,7 @@ async function harness(markdown: string, selected = 'Current', additionalFiles =
     expect(content.startsWith('\n')).toBe(true);
     return content.slice(1);
   };
-  return { app, file, panel, el, state, index, node, api, read };
+  return { app, file, panel, el, state, index, node, api, read, repository, diagnostics };
 }
 
 function notices(messages?: string[]): Notice[] {
@@ -379,6 +379,34 @@ describe('owned dependency destination editing', () => {
       'Deep',
       'Created child',
     ]);
+  });
+
+  it('presents rejected committed evidence once without duplicating the application diagnostic', async () => {
+    const h = await harness('- [ ] Current\n');
+    const captured = notices();
+    const consoleDiagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const write = h.repository.createDependencySubtask.bind(h.repository);
+    vi.spyOn(h.repository, 'createDependencySubtask').mockImplementationOnce(async (request) => {
+      const result = await write(request);
+      if (result.type !== 'committed' || result.outcome.type !== 'dependency-subtask')
+        throw new Error('Expected real committed creation');
+      return { ...result, outcome: { ...result.outcome, dependencyId: 'unproven' } };
+    });
+    button(h.el, '.abyss-dep-badge-body').click();
+    const input = search(h.el, 'Private draft');
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    expect(captured).toHaveLength(1);
+    expect(h.diagnostics).toHaveBeenCalledExactlyOnceWith({
+      operation: 'create-dependency-subtask',
+      phase: 'unexpected',
+      cause: 'repository-error',
+    });
+    expect(consoleDiagnostic).not.toHaveBeenCalled();
+    expect(JSON.stringify(h.diagnostics.mock.calls)).not.toMatch(/Private|Current|tasks\.md/u);
+    expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
+    expect(input.value).toBe('Private draft');
+    expect(input.disabled).toBe(false);
   });
 
   it('keeps the creation draft with one Notice and diagnostic after an unexpected API throw', async () => {
