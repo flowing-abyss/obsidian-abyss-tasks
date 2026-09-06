@@ -115,6 +115,46 @@ async function harness(files: Record<string, string>, writable = true) {
 }
 
 describe('public dependency reversal', () => {
+  it.each(['missing', 'unrelated-change'] as const)(
+    'rejects %s candidate roots at the application proof before publishing',
+    async (fault) => {
+      const originals = { 'a.md': '- [ ] A 🆔 a\n', 'b.md': '- [ ] B 🆔 b ⛔ a\n' };
+      const h = await harness(originals);
+      await flushMicrotasks();
+      const notifications: unknown[] = [];
+      h.index.subscribe((event) => notifications.push(event));
+      const reverse = h.repository.reverseDependency.bind(h.repository);
+      vi.spyOn(h.repository, 'reverseDependency').mockImplementation((request) =>
+        reverse({
+          ...request,
+          proveReversal: (roots) =>
+            request.proveReversal(
+              fault === 'missing'
+                ? roots.filter((root) => root.title !== 'A')
+                : roots.map((root) =>
+                    root.title === 'B' ? { ...root, title: 'Externally changed' } : root,
+                  ),
+            ),
+        }),
+      );
+      expect(await h.application.execute(h.command())).toMatchObject({
+        type: 'io-error',
+        contentState: 'unchanged',
+      });
+      expect(await h.contents()).toEqual(originals);
+      await flushMicrotasks();
+      expect(h.node('A').node.dependsOn).toEqual([]);
+      expect(h.node('B').node.dependsOn).toEqual(['a']);
+      expect(notifications).toEqual([]);
+    },
+  );
+  it('does not write when the read model cannot publish the complete reversal together', async () => {
+    const h = await harness({ 'a.md': '- [ ] A 🆔 a\n', 'b.md': '- [ ] B 🆔 b ⛔ a\n' });
+    Object.defineProperty(h.index, 'installCommittedBatch', { value: undefined });
+    const process = vi.spyOn(h.app.vault, 'process');
+    expect(await h.application.execute(h.command())).toMatchObject({ type: 'invalid' });
+    expect(process).not.toHaveBeenCalled();
+  });
   it.each(['', 'invalid ID'])('rejects malformed dependency ID %j without writing', async (id) => {
     const source = '- [ ] A 🆔 a\n- [ ] B 🆔 b ⛔ a\n';
     const h = await harness({ 'tasks.md': source });
@@ -306,6 +346,166 @@ describe('public dependency reversal', () => {
 });
 
 describe('cross-file reversal compensation', () => {
+  it('keeps both original rows during compensation after final installation preparation fails', async () => {
+    const h = await harness({ 'a.md': '- [ ] A 🆔 a\n', 'b.md': '- [ ] B 🆔 b ⛔ a\n' });
+    await flushMicrotasks();
+    const projection = () => h.index.listNodes().map(({ node }) => [node.title, node.dependsOn]);
+    const notifications: Array<ReturnType<typeof projection>> = [];
+    h.index.subscribe(() => notifications.push(projection()));
+    const rollback = deferred<void>();
+    const release = deferred<void>();
+    const process = h.app.vault.process.bind(h.app.vault);
+    let writes = 0;
+    const parseLine = TaskMarkdownCodec.prototype.parseLine.bind(h.codec);
+    vi.spyOn(TaskMarkdownCodec.prototype, 'parseLine').mockImplementation(function (
+      this: TaskMarkdownCodec,
+      ...args
+    ) {
+      if (writes === 2 && args[1].filePath === 'b.md') throw new Error('second preparation failed');
+      return parseLine(...args);
+    });
+    vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, transform) => {
+      if (++writes === 3) {
+        rollback.resolve();
+        await release.promise;
+      }
+      return await process(file, transform);
+    });
+    const pending = h.application.execute(h.command());
+    await rollback.promise;
+    await flushMicrotasks();
+    expect(projection()).toEqual([
+      ['A', []],
+      ['B', ['a']],
+    ]);
+    expect(notifications).toEqual([]);
+    release.resolve();
+    expect(await pending).toMatchObject({ type: 'io-error', contentState: 'unchanged' });
+    await flushMicrotasks();
+    expect(notifications).toEqual([]);
+  });
+  it.each([
+    ['a.md', 'z.md', false],
+    ['z.md', 'a.md', false],
+    ['a.md', 'z.md', true],
+    ['z.md', 'a.md', true],
+  ] as const)(
+    'retains the original projection through pending metadata (%s blocker, %s dependent, rollback %s)',
+    async (blockerPath, dependentPath, fail) => {
+      const originals = {
+        [blockerPath]: '- [ ] A 🆔 a\n',
+        [dependentPath]: '- [ ] B 🆔 b ⛔ a\n',
+      };
+      const h = await harness(originals);
+      await flushMicrotasks();
+      const projection = () => ({
+        A: [...h.node('A').node.dependsOn],
+        B: [...h.node('B').node.dependsOn],
+      });
+      const notifications: Array<ReturnType<typeof projection>> = [];
+      const unsubscribe = h.index.subscribe(() => notifications.push(projection()));
+      const entered = deferred<void>();
+      const release = deferred<void>();
+      const process = h.app.vault.process.bind(h.app.vault);
+      let writes = 0;
+      vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, transform) => {
+        if (++writes === 2) {
+          entered.resolve();
+          await release.promise;
+          if (fail) throw new Error('second source unavailable');
+        }
+        const result = await process(file, transform);
+        h.app.metadataCache.trigger('changed', file, await h.app.vault.read(file), {});
+        return result;
+      });
+      const pending = h.application.execute(h.command());
+      await entered.promise;
+      await flushMicrotasks();
+      expect(projection()).toEqual({ A: [], B: ['a'] });
+      expect(notifications).toEqual([]);
+      release.resolve();
+      expect(await pending).toMatchObject(
+        fail ? { type: 'io-error', contentState: 'unchanged' } : { type: 'ok' },
+      );
+      await flushMicrotasks();
+      expect(projection()).toEqual(fail ? { A: [], B: ['a'] } : { A: ['b'], B: [] });
+      expect(notifications).toEqual(fail ? [] : [{ A: ['b'], B: [] }]);
+      const committed = await h.contents();
+      for (const [path, content] of Object.entries(committed))
+        h.app.metadataCache.trigger('changed', h.file(path), content, {});
+      await flushMicrotasks();
+      expect(projection()).toEqual(fail ? { A: [], B: ['a'] } : { A: ['b'], B: [] });
+      expect(notifications).toEqual(fail ? [] : [{ A: ['b'], B: [] }]);
+      unsubscribe();
+      await h.app.vault.modify(h.file(blockerPath), '- [ ] A edited 🆔 a\n');
+      h.app.metadataCache.trigger('changed', h.file(blockerPath), '- [ ] A edited 🆔 a\n', {});
+      await flushMicrotasks();
+      expect(h.index.list({ filePath: blockerPath }).map((root) => root.title)).toEqual([
+        'A edited',
+      ]);
+    },
+  );
+  it('publishes contrary external bytes during a pending reversal and never revives their ownership', async () => {
+    const originals = { 'a.md': '- [ ] A 🆔 a\n', 'b.md': '- [ ] B 🆔 b ⛔ a\n' };
+    const h = await harness(originals);
+    await flushMicrotasks();
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const process = h.app.vault.process.bind(h.app.vault);
+    let writes = 0;
+    vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, transform) => {
+      if (++writes === 2) {
+        entered.resolve();
+        await release.promise;
+      }
+      return await process(file, transform);
+    });
+    const snapshots: Array<readonly string[]> = [];
+    h.index.subscribe(() => snapshots.push(h.index.list().map((root) => root.title)));
+    const pending = h.application.execute(h.command());
+    await entered.promise;
+    h.app.metadataCache.trigger('changed', h.file('b.md'), originals['b.md'], {});
+    await flushMicrotasks();
+    expect(snapshots).toEqual([]);
+    await h.app.vault.modify(h.file('a.md'), '- [ ] External 🆔 a\n');
+    h.app.metadataCache.trigger('changed', h.file('a.md'), '- [ ] External 🆔 a\n', {});
+    await flushMicrotasks();
+    expect(snapshots).toEqual([['External', 'B']]);
+    const replay = '- [ ] A 🆔 a ⛔ b\n';
+    await h.app.vault.modify(h.file('a.md'), replay);
+    h.app.metadataCache.trigger('changed', h.file('a.md'), replay, {});
+    await flushMicrotasks();
+    expect(h.node('A').node.dependsOn).toEqual(['b']);
+    release.resolve();
+    expect(await pending).toMatchObject({ type: 'io-error', contentState: 'unknown' });
+    expect(await h.contents()).toEqual({ ...originals, 'a.md': replay });
+    expect(h.node('A').node.dependsOn).toEqual(['b']);
+    expect(h.node('B').node.dependsOn).toEqual(['a']);
+    expect(snapshots[snapshots.length - 1]).toEqual(['A', 'B']);
+  });
+  it('does not defer an externally written candidate before its owned forward callback runs', async () => {
+    const h = await harness({ 'a.md': '- [ ] A 🆔 a\n', 'b.md': '- [ ] B 🆔 b ⛔ a\n' });
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const process = h.app.vault.process.bind(h.app.vault);
+    let writes = 0;
+    vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, transform) => {
+      if (++writes === 2) {
+        entered.resolve();
+        await release.promise;
+      }
+      return await process(file, transform);
+    });
+    const pending = h.application.execute(h.command());
+    await entered.promise;
+    await h.app.vault.modify(h.file('b.md'), '- [ ] B 🆔 b\n');
+    h.app.metadataCache.trigger('changed', h.file('b.md'), '- [ ] B 🆔 b\n', {});
+    await flushMicrotasks();
+    expect(h.node('B').node.dependsOn).toEqual([]);
+    release.resolve();
+    expect(await pending).toMatchObject({ type: 'io-error', contentState: 'unknown' });
+    expect(await h.contents()).toEqual({ 'a.md': '- [ ] A 🆔 a\n', 'b.md': '- [ ] B 🆔 b\n' });
+  });
   it.each(['parse', 'install'] as const)(
     'reconciles readable siblings independently after a restoration %s failure',
     async (fault) => {
@@ -318,6 +518,10 @@ describe('cross-file reversal compensation', () => {
       let writes = 0;
       vi.spyOn(h.app.vault, 'process').mockImplementation(async (...args) => {
         writes++;
+        if (writes === 2) {
+          await h.app.vault.modify(args[0], '- [ ] External B 🆔 b\n');
+          throw new Error('second write failed');
+        }
         return await process(...args);
       });
       vi.spyOn(h.index, 'snapshotsFromContent').mockImplementation((path, content) => {
@@ -329,16 +533,14 @@ describe('cross-file reversal compensation', () => {
         if (writes === 4 && path === 'a.md' && fault === 'install')
           throw new Error('restoration install failed');
         const roots = install(path, content);
-        if (writes === 2 && path === 'b.md')
-          throw new Error('postcondition failed after installation');
         return roots;
       });
       expect(await h.application.execute(h.command())).toMatchObject({
         type: 'io-error',
         contentState: 'unknown',
       });
-      expect(await h.contents()).toEqual(originals);
-      expect(h.node('B').node.dependsOn).toEqual(['a']);
+      expect(await h.contents()).toEqual({ ...originals, 'b.md': '- [ ] External B 🆔 b\n' });
+      expect(h.node('External B').node.dependsOn).toEqual([]);
       expect(
         h.diagnostics.mock.calls.some(([entry]) => entry.phase === 'reversal-restoration-proof'),
       ).toBe(true);
@@ -470,13 +672,12 @@ describe('cross-file reversal compensation', () => {
     const source = { 'a.md': '- [ ] A 🆔 a\n', 'b.md': '- [ ] B 🆔 b ⛔ a\n' };
     const h = await harness(source);
     const before = h.node('A').root.ref;
-    const install = h.index.installCommittedContent.bind(h.index);
-    vi.spyOn(h.index, 'installCommittedContent').mockImplementation((path, content) => {
-      const roots = install(path, content);
-      return path === 'a.md' && content.includes('⛔ b')
-        ? roots.map((root) => ({ ...root, ref: before }))
-        : roots;
-    });
+    const install = h.index.installCommittedBatch.bind(h.index);
+    vi.spyOn(h.index, 'installCommittedBatch').mockImplementation((contents, prove) =>
+      install(contents, (roots) => {
+        prove(roots.map((root) => (root.title === 'A' ? { ...root, ref: before } : root)));
+      }),
+    );
     expect(await h.application.execute(h.command())).toMatchObject({
       type: 'io-error',
       contentState: 'unchanged',
@@ -530,7 +731,7 @@ describe('cross-file reversal compensation', () => {
   ] as const)('restores exact originals after %s failure', async (fault) => {
     const h = await harness(originals);
     const read = h.app.vault.read.bind(h.app.vault);
-    const parse = h.index.snapshotsFromContent.bind(h.index);
+    const install = h.index.installCommittedBatch.bind(h.index);
     let writes = 0;
     let failed = false;
     if (fault === 'source-read')
@@ -548,13 +749,15 @@ describe('cross-file reversal compensation', () => {
       if (fail) throw new Error('secret source');
       return candidate;
     });
-    vi.spyOn(h.index, 'snapshotsFromContent').mockImplementation((path, content) => {
+    vi.spyOn(h.index, 'installCommittedBatch').mockImplementation((contents, prove) => {
       if (writes === 2 && !failed && fault.startsWith('postcondition')) {
         failed = true;
         if (fault === 'postcondition-parse') throw new Error('secret source');
-        return [];
+        return install(contents, () => {
+          prove([]);
+        });
       }
-      return parse(path, content);
+      return install(contents, prove);
     });
     expect(await h.application.execute(h.command())).toMatchObject({
       type: 'io-error',
@@ -575,7 +778,7 @@ describe('cross-file reversal compensation', () => {
     async (fault) => {
       const h = await harness(originals);
       const read = h.app.vault.read.bind(h.app.vault);
-      const parse = h.index.snapshotsFromContent.bind(h.index);
+      const install = h.index.installCommittedBatch.bind(h.index);
       let writes = 0;
       let failed = false;
       vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, transform) => {
@@ -591,12 +794,12 @@ describe('cross-file reversal compensation', () => {
         await h.app.vault.modify(file, candidate);
         return candidate;
       });
-      vi.spyOn(h.index, 'snapshotsFromContent').mockImplementation((path, content) => {
+      vi.spyOn(h.index, 'installCommittedBatch').mockImplementation((contents, prove) => {
         if (writes === 2 && !failed) {
           failed = true;
           throw new Error('proof failed');
         }
-        return parse(path, content);
+        return install(contents, prove);
       });
       expect(await h.application.execute(h.command())).toMatchObject({
         type: 'io-error',

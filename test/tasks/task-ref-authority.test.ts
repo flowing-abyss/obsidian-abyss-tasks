@@ -5,6 +5,10 @@ import {
 } from '../../src/tasks/infrastructure/TaskRefAuthority';
 import { expectDefined } from './../helpers';
 
+function observedRoots(authority: TaskRefAuthority, filePath: string, content: string) {
+  return authority.observeTransition(filePath, content)?.roots ?? [];
+}
+
 function sources(authority: TaskRefAuthority) {
   return ['a.md', 'b.md'].map((filePath) => {
     const before = '- [ ] Before\r\n';
@@ -196,7 +200,7 @@ describe('TaskRefAuthority', () => {
     });
     if (restored.type !== 'staged') throw new Error('missing restoration');
     authority.abort(restored.token);
-    expect(authority.observe('tasks.md', content)).toEqual([]);
+    expect(observedRoots(authority, 'tasks.md', content)).toEqual([]);
     expect(authority.stageRestoration(staged.token, content)).toEqual({ type: 'conflict' });
   });
 
@@ -245,8 +249,8 @@ describe('TaskRefAuthority', () => {
     ).toEqual({ type: 'conflict' });
     authority.abort(staged.token);
     authority.acknowledge('tasks.md', 'candidate');
-    expect(authority.observe('tasks.md', content)).toEqual([]);
-    expect(authority.observe('tasks.md', 'candidate')).toEqual([]);
+    expect(observedRoots(authority, 'tasks.md', content)).toEqual([]);
+    expect(observedRoots(authority, 'tasks.md', 'candidate')).toEqual([]);
   });
 
   it('cannot release a later same-file owner by reusing an aborted token', () => {
@@ -267,7 +271,7 @@ describe('TaskRefAuthority', () => {
     authority.abort(first.token);
     authority.commit(first.token);
     expect(authority.stageRestoration(first.token, '- [ ] Same')).toEqual({ type: 'conflict' });
-    expect(authority.observe('tasks.md', 'candidate')).toEqual(transition.roots);
+    expect(observedRoots(authority, 'tasks.md', 'candidate')).toEqual(transition.roots);
     authority.abort(second.token);
   });
 
@@ -350,7 +354,7 @@ describe('TaskRefAuthority', () => {
     }
 
     expect(authority.evidence(revision)).toMatchObject({ source, session: 'session-a' });
-    expect(authority.observe('tasks.md', source)).toEqual([]);
+    expect(observedRoots(authority, 'tasks.md', source)).toEqual([]);
     expect(
       authority.successor(new TaskRefAuthority('session-b').revision(source), source),
     ).toBeUndefined();
@@ -390,18 +394,18 @@ describe('TaskRefAuthority', () => {
     const aborted = authority.stage(first, expectedRevision);
 
     expect(aborted.type).toBe('staged');
-    expect(authority.observe(first.filePath, '- [ ] first\n')).toEqual(first.roots);
-    expect(authority.observe(first.filePath, '- [ ] first\n')).toEqual(first.roots);
+    expect(observedRoots(authority, first.filePath, '- [ ] first\n')).toEqual(first.roots);
+    expect(observedRoots(authority, first.filePath, '- [ ] first\n')).toEqual(first.roots);
     if (aborted.type !== 'staged') throw new Error('missing aborted token');
     authority.abort(aborted.token);
-    expect(authority.observe(first.filePath, '- [ ] first\n')).toEqual([]);
+    expect(observedRoots(authority, first.filePath, '- [ ] first\n')).toEqual([]);
 
     const committed = authority.stage(first, expectedRevision);
     if (committed.type !== 'staged') throw new Error('missing committed token');
     authority.commit(committed.token);
-    expect(authority.observe(first.filePath, '- [ ] first\n')).toEqual(first.roots);
+    expect(observedRoots(authority, first.filePath, '- [ ] first\n')).toEqual(first.roots);
     authority.acknowledge(first.filePath, '- [ ] first\n');
-    expect(authority.observe(first.filePath, '- [ ] first\n')).toEqual([]);
+    expect(observedRoots(authority, first.filePath, '- [ ] first\n')).toEqual([]);
   });
 
   it('keeps early-observed staging through commit until acknowledgement and rejects concurrent CAS', () => {
@@ -421,12 +425,12 @@ describe('TaskRefAuthority', () => {
 
     expect(token.type).toBe('staged');
     expect(authority.stage(transition, expectedRevision)).toEqual({ type: 'conflict' });
-    expect(authority.observe('tasks.md', source)).toEqual(transition.roots);
+    expect(observedRoots(authority, 'tasks.md', source)).toEqual(transition.roots);
     if (token.type !== 'staged') throw new Error('missing token');
     authority.commit(token.token);
-    expect(authority.observe('tasks.md', source)).toEqual(transition.roots);
+    expect(observedRoots(authority, 'tasks.md', source)).toEqual(transition.roots);
     authority.acknowledge('tasks.md', source);
-    expect(authority.observe('tasks.md', source)).toEqual([]);
+    expect(observedRoots(authority, 'tasks.md', source)).toEqual([]);
   });
 
   it('keeps only the latest transition for a file across many commit and abort cycles', () => {
@@ -444,14 +448,14 @@ describe('TaskRefAuthority', () => {
       if (token.type !== 'staged') throw new Error(`missing token ${index}`);
       if (index % 2 === 0) {
         authority.commit(token.token);
-        authority.observe('tasks.md', source);
+        authority.observeTransition('tasks.md', source);
         authority.acknowledge('tasks.md', source);
       } else authority.abort(token.token);
     }
 
-    expect(authority.observe('tasks.md', '- [ ] task 0\n')).toEqual([]);
-    expect(authority.observe('tasks.md', '- [ ] task 9998\n')).toEqual([]);
-    expect(authority.observe('tasks.md', '- [ ] task 9999\n')).toEqual([]);
-    expect(authority.observe('unrelated.md', '- [ ] unrelated\n')).toEqual([]);
+    expect(observedRoots(authority, 'tasks.md', '- [ ] task 0\n')).toEqual([]);
+    expect(observedRoots(authority, 'tasks.md', '- [ ] task 9998\n')).toEqual([]);
+    expect(observedRoots(authority, 'tasks.md', '- [ ] task 9999\n')).toEqual([]);
+    expect(observedRoots(authority, 'unrelated.md', '- [ ] unrelated\n')).toEqual([]);
   });
 });

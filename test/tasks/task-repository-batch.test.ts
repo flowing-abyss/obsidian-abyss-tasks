@@ -374,7 +374,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       });
       expect(await h.read()).toBe(source);
       expect(h.index.list({ filePath: path })).toEqual(h.roots);
-      expect(h.authority.observe(path, reserved)).toHaveLength(1);
+      expect(h.authority.observeTransition(path, reserved)?.roots ?? []).toHaveLength(1);
       h.authority.abort(staged.token);
     });
 
@@ -552,7 +552,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       expect(access).not.toHaveBeenCalled();
       expect(await h.read()).toBe(source);
       expect(h.index.list({ filePath: path })).toEqual(h.roots);
-      expect(h.authority.observe(path, source)).toEqual([]);
+      expect(h.authority.observeTransition(path, source)?.roots ?? []).toEqual([]);
     });
 
     it('rejects a stale second subtask without publishing the valid first edit', async () => {
@@ -799,8 +799,8 @@ describe('Obsidian batch transaction', () => {
         expect(h.index.resolve(root.ref)).toMatchObject({ type: 'exact', task: { ref: root.ref } });
         expect(h.index.authoritySuccessor(root.ref)).toBeUndefined();
       }
-      expect(h.authority.observe(path, proposed)).toEqual([]);
-      expect(h.authority.observe(path, source)).toEqual([]);
+      expect(h.authority.observeTransition(path, proposed)?.roots ?? []).toEqual([]);
+      expect(h.authority.observeTransition(path, source)?.roots ?? []).toEqual([]);
     },
   );
 
@@ -865,8 +865,8 @@ describe('Obsidian batch transaction', () => {
         task: { ref: current.ref },
       });
       expect(competingAttempt).toMatchObject({ type: 'conflict' });
-      expect(h.authority.observe(path, candidate)).toEqual([]);
-      expect(h.authority.observe(path, expected)).toEqual([]);
+      expect(h.authority.observeTransition(path, candidate)?.roots ?? []).toEqual([]);
+      expect(h.authority.observeTransition(path, expected)?.roots ?? []).toEqual([]);
       for (const root of h.roots.slice(0, 2))
         expect(h.index.authoritySuccessor(root.ref)).toBeUndefined();
     },
@@ -895,7 +895,7 @@ describe('Obsidian batch transaction', () => {
       expect(h.index.authoritySuccessor(root.ref)).toBeUndefined();
       expect(h.index.resolve(root.ref).type).not.toBe('rebased');
     }
-    expect(h.authority.observe(path, candidate)).toEqual([]);
+    expect(h.authority.observeTransition(path, candidate)?.roots ?? []).toEqual([]);
   });
 
   it('uses one synchronous Vault.process callback for both edits', async () => {
@@ -935,8 +935,8 @@ describe('Obsidian batch transaction', () => {
         expect(h.index.resolve(root.ref)).toMatchObject({ type: 'exact', task: { ref: root.ref } });
         expect(h.index.authoritySuccessor(root.ref)).toBeUndefined();
       }
-      expect(h.authority.observe(path, candidate)).toEqual([]);
-      expect(h.authority.observe(path, source)).toEqual([]);
+      expect(h.authority.observeTransition(path, candidate)?.roots ?? []).toEqual([]);
+      expect(h.authority.observeTransition(path, source)?.roots ?? []).toEqual([]);
       process.mockRestore();
       await expect(h.repository.editBatch(pair(h.roots))).resolves.toMatchObject({
         type: 'committed',

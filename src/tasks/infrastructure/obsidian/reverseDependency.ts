@@ -45,12 +45,6 @@ function failure(contentState: 'unchanged' | 'unknown'): TaskRepositoryResult {
   return { type: 'io-error', cause: 'dependency-reversal-error', contentState };
 }
 
-function uncommittedFailure(error: unknown): TaskRepositoryResult {
-  return error instanceof ReversalFailure && error.result !== undefined
-    ? error.result
-    : failure('unchanged');
-}
-
 /** Only this operation owns the multi-file write/compensation lifecycle. */
 interface ReversalContext extends ReversalOptions {
   readonly app: App;
@@ -58,21 +52,6 @@ interface ReversalContext extends ReversalOptions {
   readonly sources: Source[];
   owner: OwnedSourceMutation | undefined;
   phase: DependencyReversalPhase;
-}
-
-async function runReversal(
-  app: App,
-  request: ReverseDependencyRequest,
-  options: ReversalOptions,
-): Promise<TaskRepositoryResult> {
-  return await run({
-    ...options,
-    app,
-    request,
-    sources: [],
-    owner: undefined,
-    phase: 'reservation',
-  });
 }
 
 function enterPhase(context: ReversalContext, phase: DependencyReversalPhase): void {
@@ -84,10 +63,7 @@ async function run(context: ReversalContext): Promise<TaskRepositoryResult> {
     await write(context);
     enterPhase(context, 'postcondition');
     const contents = await readExact(context, 'after');
-    const roots = install(context, contents);
-    if (!confirmRoots(context, roots, 'after')) throw new ReversalFailure();
-    const outcome = prove(context, roots);
-    if (context.owner?.complete(contents) !== true) throw new ReversalFailure();
+    const outcome = install(context, contents);
     return { type: 'committed', changed: true, outcome };
   } catch (error) {
     diagnose(
@@ -95,8 +71,9 @@ async function run(context: ReversalContext): Promise<TaskRepositoryResult> {
       context.phase,
       error instanceof ReversalFailure ? 'proof-rejected' : 'io-error',
     );
-    if (context.owner === undefined) return uncommittedFailure(error);
-    return failure((await restore(context)) ? 'unchanged' : 'unknown');
+    if (context.owner !== undefined)
+      return failure((await restore(context)) ? 'unchanged' : 'unknown');
+    return (error instanceof ReversalFailure ? error.result : undefined) ?? failure('unchanged');
   } finally {
     context.owner?.release();
   }
@@ -244,13 +221,17 @@ async function readExact(
 function install(
   context: ReversalContext,
   contents: ReadonlyMap<string, string>,
-): readonly TaskSnapshot[] {
+): DependencyCommandOutcome {
   const state = context.state;
-  if (state === undefined) throw new ReversalFailure();
-  // Parse all sources before publishing either file to the read model.
-  const parsed = [...contents].flatMap(([path, content]) => context.parse(path, content));
-  if (context.phase === 'postcondition') prove(context, parsed);
-  return [...contents].flatMap(([path, content]) => state.installCommittedContent(path, content));
+  if (state?.installCommittedBatch === undefined) throw new ReversalFailure();
+  let outcome: DependencyCommandOutcome | undefined;
+  state.installCommittedBatch(contents, (roots) => {
+    if (!confirmRoots(context, roots, 'after')) throw new ReversalFailure();
+    outcome = prove(context, roots);
+    if (context.owner?.complete(contents) !== true) throw new ReversalFailure();
+  });
+  if (outcome === undefined) throw new ReversalFailure();
+  return outcome;
 }
 
 async function restore(context: ReversalContext): Promise<boolean> {
@@ -371,6 +352,7 @@ export async function reverseDependency(
   const batches = request.batches;
   const issues = batches.flatMap(taskEditBatchIssues);
   if (
+    options.state?.installCommittedBatch === undefined ||
     batches.length < 1 ||
     batches.length > 2 ||
     new Set(batches.map(({ filePath }) => filePath)).size !== batches.length ||
@@ -381,5 +363,12 @@ export async function reverseDependency(
       issues:
         issues.length > 0 ? issues : [{ code: 'invalid-target', field: 'dependency-reversal' }],
     };
-  return await runReversal(app, request, options);
+  return await run({
+    ...options,
+    app,
+    request,
+    sources: [],
+    owner: undefined,
+    phase: 'reservation',
+  });
 }

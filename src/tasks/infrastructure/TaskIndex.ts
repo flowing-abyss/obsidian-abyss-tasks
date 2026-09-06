@@ -522,6 +522,7 @@ interface ParseFileInput {
   readonly allocateSuccessor?: boolean;
   readonly captureAuthorityTransitions?: (
     transitions: readonly ProvenRootRevisionOverride[],
+    restored?: true,
   ) => void;
   readonly observedFile?: boolean;
 }
@@ -1163,7 +1164,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       if (authority != null) {
         const content = await this.app_abyssPrivate.vault.cachedRead(observation.file);
         if (!this.isCurrent_abyssPrivate(observation)) return false;
-        authority.observe(observation.path, content);
+        if (authority.deferObservation(observation.path, content)) return false;
       }
     } catch {
       // The empty replacement still wins for the observed lifecycle generation.
@@ -1186,6 +1187,10 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     try {
       const content = await this.app_abyssPrivate.vault.cachedRead(observation.file);
       if (!this.isCurrent_abyssPrivate(observation)) return false;
+      if (
+        this.options_abyssPrivate.refAuthority?.deferObservation(observation.path, content) === true
+      )
+        return false;
       const selectedCache = forceContentFallback ? cacheWithContentFallback(content, cache) : cache;
       if (selectedCache == null) return false;
       const tasks = this.parseFile_abyssPrivate({
@@ -1224,7 +1229,10 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     );
     const overrides = authorityObservation?.roots ?? [];
     if (authorityObservation != null) {
-      input.captureAuthorityTransitions?.(authorityObservation.transitions);
+      input.captureAuthorityTransitions?.(
+        authorityObservation.transitions,
+        authorityObservation.restored,
+      );
     }
     return overrides;
   }
@@ -1355,26 +1363,40 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
 
   /** Installs authoritative content after an atomic repository transition. */
   installCommittedContent(filePath: string, content: string): readonly TaskSnapshot[] {
-    const restored =
-      this.options_abyssPrivate.refAuthority?.observeTransition(filePath, content)?.restored ===
-      true;
-    const cache = cacheWithContentFallback(content, null);
-    const frontmatter = frontmatterFromContent(content);
-    let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
-    const tasks = this.parseFile_abyssPrivate({
-      filePath,
-      content,
-      cache: { ...cache, ...(frontmatter != null && { frontmatter }) },
-      allocateSuccessor: true,
-      captureAuthorityTransitions: (transitions) => {
-        authorityTransitions = transitions;
-      },
-      observedFile: this.fileGenerations_abyssPrivate.has(filePath),
+    return this.installCommittedBatch(new Map([[filePath, content]]), () => undefined);
+  }
+
+  installCommittedBatch(
+    contents: ReadonlyMap<string, string>,
+    prove: (roots: readonly TaskSnapshot[]) => void,
+  ): readonly TaskSnapshot[] {
+    const roots: TaskSnapshot[] = [];
+    const prepared = [...contents].map(([filePath, content]) => {
+      let restored = false;
+      const cache = cacheWithContentFallback(content, null);
+      const frontmatter = frontmatterFromContent(content);
+      let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
+      const tasks = this.parseFile_abyssPrivate({
+        filePath,
+        content,
+        cache: { ...cache, ...(frontmatter != null && { frontmatter }) },
+        allocateSuccessor: true,
+        captureAuthorityTransitions: (transitions, restoration) => {
+          authorityTransitions = transitions;
+          restored = restoration === true;
+        },
+        observedFile: this.fileGenerations_abyssPrivate.has(filePath),
+      });
+      roots.push(...tasks);
+      return () => {
+        if (this.replaceFile_abyssPrivate(filePath, tasks, authorityTransitions))
+          this.queueChanged_abyssPrivate(filePath);
+        if (restored) this.reconciliationTransitions_abyssPrivate.delete(filePath);
+      };
     });
-    if (this.replaceFile_abyssPrivate(filePath, tasks, authorityTransitions))
-      this.queueChanged_abyssPrivate(filePath);
-    if (restored) this.reconciliationTransitions_abyssPrivate.delete(filePath);
-    return tasks.map(cloneTaskSnapshot);
+    prove(roots);
+    for (const publish of prepared) publish();
+    return roots.map(cloneTaskSnapshot);
   }
 
   private reconciledRevision_abyssPrivate(input: ReconciledRevisionInput): string {
@@ -1491,6 +1513,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       return;
     }
     this.advance_abyssPrivate(file, path);
+    if (this.options_abyssPrivate.refAuthority?.deferObservation(path, data) === true) return;
     let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
     const tasks = this.parseFile_abyssPrivate({
       filePath: path,

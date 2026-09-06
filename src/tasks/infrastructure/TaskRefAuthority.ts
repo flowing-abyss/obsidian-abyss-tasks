@@ -66,6 +66,11 @@ export interface TaskSnapshotState {
   discardAuthoritySuccessor?(consumed: TaskRef): void;
   previewContent(filePath: string, content: string): readonly TaskSnapshot[];
   installCommittedContent(filePath: string, content: string): readonly TaskSnapshot[];
+  /** Prepare and prove every file before publishing any of their snapshots. */
+  installCommittedBatch?(
+    contents: ReadonlyMap<string, string>,
+    prove: (roots: readonly TaskSnapshot[]) => void,
+  ): readonly TaskSnapshot[];
 }
 
 /** Failed duplicate-population proof must precede any unique-source relocation retry. */
@@ -463,8 +468,12 @@ export class TaskRefAuthority {
     return { type: 'staged', token };
   }
 
-  observe(filePath: string, content: string): readonly RootRevisionOverride[] {
-    return this.observeTransition(filePath, content)?.roots ?? [];
+  /** Watchers defer owned transaction bytes; contrary observations still revoke ownership. */
+  deferObservation(filePath: string, content: string): boolean {
+    const exact = this.transitions.get(filePath)?.exactSource;
+    if (exact !== undefined && !exact.forwarded && content !== exact.before) exact.invalid = true;
+    this.observeTransition(filePath, content);
+    return exact?.invalid === false;
   }
 
   observeTransition(filePath: string, content: string): TaskRefAuthorityObservation | undefined {

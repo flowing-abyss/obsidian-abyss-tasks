@@ -336,8 +336,14 @@ mutable query state, and verifies their exact final dependency values and otherw
 Adapters without this capability fail closed. The Obsidian adapter shares metadata batch preparation,
 canonical parsing and complete predecessor-population capture with existing edits. Same-file endpoints
 publish both task lines in one guarded `Vault.process()` callback. Across files, a transaction reserves
-both exact before/after sources and their authority evidence, writes in file-path order, then reads,
-parses, installs and proves both complete final source populations before reporting success.
+both exact before/after sources and their authority evidence and writes in file-path order.
+`TaskSnapshotState.installCommittedBatch()` prepares every authoritative final source before the
+repository proves the complete root revisions, reversed edge and live transaction ownership.
+Only after that synchronous proof succeeds does `TaskIndex` publish all prepared files together,
+retaining their captured authority transitions for one subscriber refresh. A preparation or proof
+failure cannot install a partial final graph. Ordinary single-file committed installation uses
+the same preparation path and retains its existing API. Adapters lacking batch publication reject
+reversal before writing.
 
 `TaskRefAuthority.reserveMutation()` owns these reservations as one ephemeral scope. Acquisition is
 all-or-none, including cleanup after a thrown predecessor capture. Every forward callback requires
@@ -358,6 +364,13 @@ error with unknown content state. Recovery reconciles every actually readable so
 invalid forward evidence; parsing and installation are isolated per readable source so one failure
 cannot prevent sibling reconciliation. It never installs captured bytes in place of newer external content.
 Every exit releases reservations without touching later owners.
+Metadata notifications and asynchronous index reads consult `TaskRefAuthority.deferObservation()`.
+Only exact bytes belonging to a still-owned mutation are deferred: the original before its forward
+callback, the issued candidate, or the owned restoration. A candidate observed before its forward
+callback is external, and contrary observations permanently revoke ownership and publish normally.
+Direct authoritative installation bypasses this watcher deferral. Thus pending writes and proven
+rollback retain the original graph, while unknown recovery still reconciles each readable actual
+source independently. Release ends deferral; delayed matching events preserve the committed result.
 Forward, rollback and restoration-proof diagnostics contain only phase and fixed cause codes;
 a failing diagnostic sink cannot interrupt compensation. The established command-result presenter
 remains the sole user-facing error boundary. Existing cross-file add and move behavior is unchanged.

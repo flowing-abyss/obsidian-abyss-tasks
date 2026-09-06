@@ -740,7 +740,7 @@ describe('Obsidian recurrence transaction boundary', () => {
 
     expect(await harness.read()).toBe(source);
     expect(harness.index.list()[0]?.ref).toEqual(original.ref);
-    expect(harness.authority.observe(path, source)).toEqual([]);
+    expect(harness.authority.observeTransition(path, source)?.roots ?? []).toEqual([]);
   });
 
   it('uses exactly one synchronous vault.process callback for one completion', async () => {
@@ -808,7 +808,7 @@ describe('Obsidian recurrence transaction boundary', () => {
     expect(harness.index.list()[0]?.source.originalBlock).toBe(source.trimEnd());
     if (original.type !== 'task') throw new Error('missing original root');
     expect(harness.index.list()[0]?.ref).toEqual(original.ref);
-    expect(harness.authority.observe(path, source)).toEqual([]);
+    expect(harness.authority.observeTransition(path, source)?.roots ?? []).toEqual([]);
   });
 
   it('reconciles an early full-delete event when process rejects without a successor token', async () => {

@@ -369,7 +369,7 @@ describe('TaskIndex lifecycle and events', () => {
     expect(installed[0]?.ref.revision).toBe(successor);
     expect(index.list()[0]?.ref.revision).toBe(successor);
     authority.acknowledge('task.md', source);
-    expect(authority.observe('task.md', source)).toEqual([]);
+    expect(authority.observeTransition('task.md', source)?.roots ?? []).toEqual([]);
 
     const drifted = `heading\n${source}`;
     fireChanged(mdFile(app, 'task.md'), drifted, taskCache(1));
@@ -709,7 +709,7 @@ describe('TaskIndex lifecycle and events', () => {
     authority.commit(staged.token);
     expect(index.installCommittedContent('task.md', candidate)[0]?.ref.revision).toBe(successor);
     authority.acknowledge('task.md', candidate);
-    expect(authority.observe('task.md', candidate)).toEqual([]);
+    expect(authority.observeTransition('task.md', candidate)?.roots ?? []).toEqual([]);
     index.destroy();
   });
 
