@@ -93,8 +93,85 @@ async function harness(surface: 'panel' | 'modal', source: string, selected: str
 const back = '[aria-label="Back to previous task"]';
 const forward = '[data-dependency-direction="blocked-by"] .abyss-dep-title';
 const inverse = '[data-dependency-direction="blocks"] .abyss-dep-title';
+const onlyChildSource = {
+  LF: '- [ ] Source\n- [ ] Root\n  - [ ] Parent\n    - [ ] Only\n',
+  CRLF: '- [ ] Source\r\n- [ ] Root\r\n  - [ ] Parent\r\n    - [ ] Only\r\n',
+  'no final newline': '- [ ] Source\n- [ ] Root\n  - [ ] Parent\n    - [ ] Only',
+} as const;
 
 describe.each(['panel', 'modal'] as const)('%s saved dependency frames', (surface) => {
+  it.each([
+    {
+      label: 'root',
+      source:
+        '- [ ] Source\n- [ ] Parent\n  - [ ] Before\n  - [ ] Remove\n    - > Exact **description**\n    - [ ] Leaf\n  - [ ] After\n',
+      removed: '- [ ] Source\n- [ ] Parent\n  - [ ] Before\n  - [ ] After\n',
+      titles: ['Parent'],
+    },
+    {
+      label: 'nested',
+      source:
+        '- [ ] Source\n- [ ] Root\n  - [ ] Parent\n    - [ ] Before\n    - [ ] Remove\n      - > Exact **description**\n      - [ ] Leaf\n    - [ ] After\n  - [ ] Root sibling\n',
+      removed:
+        '- [ ] Source\n- [ ] Root\n  - [ ] Parent\n    - [ ] Before\n    - [ ] After\n  - [ ] Root sibling\n',
+      titles: ['Root', 'Parent'],
+    },
+    {
+      label: 'deep',
+      source:
+        '- [ ] Source\n- [ ] Root\n  - [ ] Middle\n    - [ ] Parent\n      - [ ] Before\n      - [ ] Remove\n        - > Exact **description**\n        - [ ] Leaf\n      - [ ] After\n  - [ ] Root sibling\n',
+      removed:
+        '- [ ] Source\n- [ ] Root\n  - [ ] Middle\n    - [ ] Parent\n      - [ ] Before\n      - [ ] After\n  - [ ] Root sibling\n',
+      titles: ['Root', 'Middle', 'Parent'],
+    },
+  ])(
+    'keeps the $label parent and local Undo through indexed subtree deletion and restoration',
+    async ({ source, removed, titles }) => {
+      const h = await harness(surface, source, 'Source');
+      h.state.openInspectorDependency(h.node('Parent'));
+      h.state.openInspectorDependency(h.node('Source'));
+      h.state.openInspectorDependency(h.node('Parent'));
+      const history = h.state.get('inspectorBackStack');
+      const historyJSON = JSON.stringify(history);
+      const file = h.app.vault.getAbstractFileByPath('tasks.md');
+      if (!(file instanceof TFile)) throw new Error('Missing fixture');
+      h.click('.abyss-subtask-section .abyss-subtask-row:nth-child(2) .abyss-subtask-remove');
+      await flushMicrotasks(50);
+      expect(await h.app.vault.read(file)).toBe(`\n${removed}`);
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual(titles);
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+      expect(h.state.get('inspectorBackStack').map(({ taskStack }) => taskStack)).toEqual([
+        h.liveStack('Source'),
+        h.liveStack('Parent'),
+        h.liveStack('Source'),
+      ]);
+      const undo = expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-undo-row button'));
+      expect(undo.closest('.abyss-undo-row')?.textContent).toBe('Sub-task deleted · Undo');
+      expect(undo.closest('.abyss-undo-row')?.previousElementSibling?.textContent).toContain(
+        'Before',
+      );
+      expect(undo.closest('.abyss-undo-row')?.nextElementSibling?.textContent).toContain('After');
+      expect(activeDocument.activeElement).toBe(undo);
+      undo.click();
+      await flushMicrotasks(50);
+      expect(await h.app.vault.read(file)).toBe(`\n${source}`);
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+      expect(h.state.get('inspectorBackStack').map(({ taskStack }) => taskStack)).toEqual([
+        h.liveStack('Source'),
+        h.liveStack('Parent'),
+        h.liveStack('Source'),
+      ]);
+      expect(h.el.querySelector('.abyss-undo-row')).toBeNull();
+      expect(activeDocument.activeElement?.closest('.abyss-subtask-row')?.textContent).toContain(
+        'Remove',
+      );
+      expect(JSON.stringify(history)).toBe(historyJSON);
+      h.click(back);
+      h.click(back);
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+    },
+  );
+
   it.each([
     ['nested', '- [ ] A\n  - [ ] A.1 🆔 a ⛔ b\n- [ ] B 🆔 b\n', ['A', 'A.1']],
     [
@@ -123,6 +200,28 @@ describe.each(['panel', 'modal'] as const)('%s saved dependency frames', (surfac
       expect(h.state.get('taskStack').map((node) => node.title)).toEqual(titles);
       expect(h.state.get('taskStack')).toEqual(h.liveStack('A.1'));
       expect(h.state.get('inspectorBackStack')).toEqual([]);
+    },
+  );
+
+  it.each(['LF', 'CRLF', 'no final newline'] as const)(
+    'restores the only nested child with %s source layout',
+    async (layout) => {
+      const source = onlyChildSource[layout];
+      const h = await harness(surface, source, 'Source');
+      h.state.openInspectorDependency(h.node('Parent'));
+      const file = h.app.vault.getAbstractFileByPath('tasks.md');
+      if (!(file instanceof TFile)) throw new Error('Missing fixture');
+      h.click('.abyss-subtask-remove');
+      await flushMicrotasks(50);
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+      expect(h.node('Parent').node.subtasks).toEqual([]);
+      h.click('.abyss-undo-row button');
+      await flushMicrotasks(50);
+      expect(await h.app.vault.read(file)).toBe(`\n${source}`);
+      expect(h.state.get('taskStack')).toEqual(h.liveStack('Parent'));
+      expect(activeDocument.activeElement?.closest('.abyss-subtask-row')?.textContent).toContain(
+        'Only',
+      );
     },
   );
 

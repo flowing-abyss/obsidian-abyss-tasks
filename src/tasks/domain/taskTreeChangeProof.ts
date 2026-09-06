@@ -15,14 +15,19 @@ function comparable(value: unknown, omitted: ReadonlySet<string>, path = ''): un
   );
 }
 
-/** Only the specified node fields and, when requested, one appended child may differ. */
+/** Only the specified node fields and one explicitly identified child may differ. */
 export function sameTaskTreeWithOwnedChanges(
   before: Node,
   after: Node,
   path: readonly number[] | undefined,
-  change: { readonly fields: ReadonlySet<string>; readonly append?: boolean },
+  change: {
+    readonly fields: ReadonlySet<string>;
+    readonly append?: boolean;
+    readonly remove?: number;
+  },
 ): boolean {
-  if (before.subtasks.length + addedChildCount(path, change.append) !== after.subtasks.length)
+  const children = comparisonChildren(before, path, change.remove);
+  if (children.length + addedChildCount(path, change.append) !== after.subtasks.length)
     return false;
   if (
     path === undefined &&
@@ -39,7 +44,7 @@ export function sameTaskTreeWithOwnedChanges(
   ]);
   if (JSON.stringify(comparable(before, omitted)) !== JSON.stringify(comparable(after, omitted)))
     return false;
-  return before.subtasks.every((child, index) => {
+  return children.every((child, index) => {
     const next = after.subtasks[index];
     return (
       next !== undefined &&
@@ -51,6 +56,16 @@ export function sameTaskTreeWithOwnedChanges(
       )
     );
   });
+}
+
+function comparisonChildren(
+  node: Node,
+  path: readonly number[] | undefined,
+  remove: number | undefined,
+): readonly SubtaskSnapshot[] {
+  return path?.length === 0 && remove !== undefined
+    ? node.subtasks.filter((_, index) => index !== remove)
+    : node.subtasks;
 }
 
 function addedChildCount(path: readonly number[] | undefined, append: boolean | undefined): number {

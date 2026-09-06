@@ -24,19 +24,19 @@ function matcherForIgnoreFilter(filter: string): ((path: string) => boolean) | u
  */
 export class NoteSuggest extends AbstractInputSuggest<TFile> {
   // Compiled once per suggester (the modal lifetime) rather than per keystroke per file.
-  private readonly ignoreMatchers: Array<(path: string) => boolean>;
+  private readonly ignoreMatchers_abyssPrivate: Array<(path: string) => boolean>;
 
   constructor(
     app: App,
     inputElement: HTMLInputElement,
-    private readonly onPick: (file: TFile) => void,
+    private readonly onPick_abyssPrivate: (file: TFile) => void,
   ) {
     super(app, inputElement);
-    this.ignoreMatchers = this.buildIgnoreMatchers();
+    this.ignoreMatchers_abyssPrivate = this.buildIgnoreMatchers_abyssPrivate();
   }
 
   /** Mirrors Obsidian's Excluded-files matching: `/regex/` entries or folder-path prefixes. */
-  private buildIgnoreMatchers(): Array<(path: string) => boolean> {
+  private buildIgnoreMatchers_abyssPrivate(): Array<(path: string) => boolean> {
     const raw = (this.app.vault as unknown as VaultWithConfig).getConfig('userIgnoreFilters');
     const filters = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
     const matchers: Array<(path: string) => boolean> = [];
@@ -47,8 +47,8 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
     return matchers;
   }
 
-  private isIgnored(path: string): boolean {
-    return this.ignoreMatchers.some((match) => match(path));
+  private isIgnored_abyssPrivate(path: string): boolean {
+    return this.ignoreMatchers_abyssPrivate.some((match) => match(path));
   }
 
   getSuggestions(query: string): TFile[] {
@@ -57,7 +57,7 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
     // honouring Obsidian's excluded-files setting.
     return this.app.vault
       .getFiles()
-      .filter((file) => !this.isIgnored(file.path))
+      .filter((file) => !this.isIgnored_abyssPrivate(file.path))
       .filter(
         (file) =>
           q.length === 0 ||
@@ -81,7 +81,7 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
   }
 
   override selectSuggestion(file: TFile): void {
-    this.onPick(file);
+    this.onPick_abyssPrivate(file);
     this.close();
   }
 }

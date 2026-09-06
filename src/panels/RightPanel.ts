@@ -116,34 +116,25 @@ interface TextDraftSnapshot {
   readonly dirty: boolean;
 }
 
-interface SelectedPlanningResult {
-  readonly root: TaskSnapshot;
-  readonly changed: boolean;
-  readonly target: PlanningTarget;
-  readonly initiatingRoot: TaskRef;
-  readonly stack: readonly TaskLike[];
-  readonly submission: object | undefined;
-}
-
 class AsyncEditLifecycle {
-  private phase: 'idle' | 'saving' | 'closed' = 'idle';
+  private phase_abyssPrivate: 'idle' | 'saving' | 'closed' = 'idle';
 
   begin(): boolean {
-    if (this.phase !== 'idle') return false;
-    this.phase = 'saving';
+    if (this.phase_abyssPrivate !== 'idle') return false;
+    this.phase_abyssPrivate = 'saving';
     return true;
   }
 
   retry(): void {
-    if (this.phase === 'saving') this.phase = 'idle';
+    if (this.phase_abyssPrivate === 'saving') this.phase_abyssPrivate = 'idle';
   }
 
   close(): void {
-    this.phase = 'closed';
+    this.phase_abyssPrivate = 'closed';
   }
 
   isClosed(): boolean {
-    return this.phase === 'closed';
+    return this.phase_abyssPrivate === 'closed';
   }
 }
 
@@ -426,7 +417,8 @@ export class RightPanel {
       const statusFocus = sameSelection ? this.statusFocusTarget_abyssPrivate(previous) : undefined;
       if (!sameSelection) {
         this.selectionEpoch_abyssPrivate++;
-        this.undo_abyssPrivate.clear();
+        if (this.undoConvergence_abyssPrivate?.command?.type !== 'restore-subtask')
+          this.undo_abyssPrivate.clear();
         this.dependencySearch_abyssPrivate?.destroy();
         this.dependencySearch_abyssPrivate = undefined;
       }
@@ -645,7 +637,8 @@ export class RightPanel {
     // Only the immediately following owned selection update may advance the deletion's epoch.
     if (
       submitted.epoch === this.selectionEpoch_abyssPrivate &&
-      submitted.command?.type === 'delete-subtask'
+      (submitted.command?.type === 'delete-subtask' ||
+        submitted.command?.type === 'restore-subtask')
     ) {
       this.undoConvergence_abyssPrivate = submitted;
       queueMicrotask(() => {
@@ -3062,18 +3055,16 @@ export class RightPanel {
 
   private async saveTaskTitle_abyssPrivate(task: TaskLike, newText: string): Promise<boolean> {
     const target = taskNodeRef(task);
-    if (this.tasks_abyssPrivate == null) return false;
-    const patch = { markdownTitle: { type: 'set' as const, value: newText } };
-    const command = { type: 'patch', target, patch } as TaskCommand;
-    const submission = this.beginDraftSubmission_abyssPrivate(
+    const result = await this.executeOwnedCommand_abyssPrivate(
+      {
+        type: 'patch',
+        target,
+        patch: { markdownTitle: { type: 'set', value: newText } },
+      } as TaskCommand,
       target,
       (draft) => draft.kind === 'title' && sameTaskNodeRef(draft.target.target, target),
-      command,
     );
-    if (submission == null) return false;
-    const result = await executeTaskCommand(this.tasks_abyssPrivate, command);
-    this.applyPlanningResult_abyssPrivate(result, target, undefined, submission);
-    return result.type === 'ok';
+    return result?.type === 'ok';
   }
 
   private async appendToTitle_abyssPrivate(task: TaskLike, text: string): Promise<void> {
@@ -3179,23 +3170,37 @@ export class RightPanel {
     >,
     target: PlanningTarget,
   ): Promise<boolean> {
-    if (this.tasks_abyssPrivate == null) return false;
-    const initiatingStack = this.state_abyssPrivate.get('taskStack');
-    const submission = this.beginDraftSubmission_abyssPrivate(
+    const result = await this.executeOwnedCommand_abyssPrivate(
+      command,
       target,
       (draft) => this.matchesBlockCommandDraft_abyssPrivate(draft, command),
-      command,
+      this.state_abyssPrivate.get('taskStack'),
     );
-    if (submission == null) return false;
+    return result?.type === 'ok';
+  }
+
+  private async executeOwnedCommand_abyssPrivate(
+    command: TaskCommand,
+    target: PlanningTarget,
+    matchesDraft?: (draft: RightPanelDraftState) => boolean,
+    initiatingStack?: readonly TaskLike[],
+  ): Promise<TaskCommandResult | undefined> {
+    if (this.tasks_abyssPrivate === undefined) return undefined;
+    const submission = this.beginDraftSubmission_abyssPrivate(target, matchesDraft, command);
+    if (submission === undefined) return undefined;
     const owner = this.submittedDrafts_abyssPrivate.get(submission);
     const result = await executeTaskCommand(this.tasks_abyssPrivate, command);
     this.applyPlanningResult_abyssPrivate(result, target, initiatingStack, submission);
-    if (command.type === 'delete-subtask' && owner?.epoch === this.selectionEpoch_abyssPrivate)
+    if (
+      command.type === 'delete-subtask' &&
+      initiatingStack !== undefined &&
+      owner?.epoch === this.selectionEpoch_abyssPrivate
+    )
       this.presentRemovalUndo_abyssPrivate(
         result,
         subtaskUndoPosition(initiatingStack, command.subtask),
       );
-    return result.type === 'ok';
+    return result;
   }
 
   private presentRemovalUndo_abyssPrivate(
@@ -3218,11 +3223,24 @@ export class RightPanel {
       this.el_abyssPrivate,
       position,
       async () => {
+        if (command.type !== 'restore-subtask') return tasks.execute(command);
         const initiatingStack = this.state_abyssPrivate.get('taskStack');
-        const restored = await tasks.execute(command);
-        if (restored.type === 'ok' && command.type === 'restore-subtask') {
-          this.applyPlanningResult_abyssPrivate(restored, command.parent, initiatingStack);
-        }
+        const submission = this.beginDraftSubmission_abyssPrivate(
+          command.parent,
+          undefined,
+          command,
+        );
+        if (submission === undefined)
+          return { type: 'io-error', cause: 'pending-task-edit', contentState: 'unchanged' };
+        const restored = await executeTaskCommand(tasks, command);
+        if (restored.type === 'ok')
+          this.applyPlanningResult_abyssPrivate(
+            restored,
+            command.parent,
+            initiatingStack,
+            submission,
+          );
+        else this.settleDraftSubmission_abyssPrivate(submission, restored);
         return restored;
       },
       command.type === 'restore-dependency'
@@ -3316,18 +3334,38 @@ export class RightPanel {
       const stack = this.state_abyssPrivate.get('taskStack');
       const initiatingRoot = rootRefForPlanningTarget(target);
       if (this.isSelectedPlanningResult_abyssPrivate(stack, initiatingStack, initiatingRoot)) {
-        this.applySelectedPlanningResult_abyssPrivate({
-          root: result.outcome.task,
-          changed: result.changed,
+        this.applySelectedPlanningResult_abyssPrivate(
+          result.outcome.task,
           target,
-          initiatingRoot,
           stack,
-          submission,
-        });
+          result.changed ? submission : undefined,
+        );
       }
       if (result.changed) this.onSuccessfulMutation_abyssPrivate?.(result.outcome.task.ref);
     }
     if (submission !== undefined) this.settleDraftSubmission_abyssPrivate(submission, result);
+  }
+
+  private applySelectedPlanningResult_abyssPrivate(
+    root: TaskSnapshot,
+    target: PlanningTarget,
+    stack: readonly TaskLike[],
+    submission: object | undefined,
+  ): void {
+    const draft =
+      submission === undefined
+        ? this.captureDraftState()
+        : this.captureDraftStateForOwnedTransition(
+            rootRefForPlanningTarget(target),
+            root.ref,
+            submission,
+          );
+    this.state_abyssPrivate.updateInspectorSelection(
+      target.type === 'subtask'
+        ? rebuildPlanningTargetStack(root, target)
+        : rebuildTaskSelection(root, stack),
+    );
+    this.restoreDraftState(draft, root);
   }
 
   private isSelectedPlanningResult_abyssPrivate(
@@ -3338,20 +3376,6 @@ export class RightPanel {
     const selected = stack[0];
     if (selected == null || !sameTaskRef(rootTaskRef(selected), initiatingRoot)) return false;
     return initiatingStack === undefined || stack === initiatingStack;
-  }
-
-  private applySelectedPlanningResult_abyssPrivate(result: SelectedPlanningResult): void {
-    const { root, changed, target, initiatingRoot, stack, submission } = result;
-    const draft =
-      changed && submission != null
-        ? this.captureDraftStateForOwnedTransition(initiatingRoot, root.ref, submission)
-        : this.captureDraftState();
-    const selection =
-      target.type === 'subtask'
-        ? rebuildPlanningTargetStack(root, target)
-        : rebuildTaskSelection(root, stack);
-    this.state_abyssPrivate.updateInspectorSelection(selection);
-    this.restoreDraftState(draft, root);
   }
 
   private async updateDuration_abyssPrivate(task: TaskSnapshot, minutes: number): Promise<void> {
@@ -3388,11 +3412,7 @@ export class RightPanel {
   private async executeOwnedStatus_abyssPrivate(
     command: Extract<TaskCommand, { type: 'set-status' | 'toggle-completion' }>,
   ): Promise<void> {
-    if (this.tasks_abyssPrivate === undefined) return;
-    const submission = this.beginDraftSubmission_abyssPrivate(command.target, undefined, command);
-    if (submission === undefined) return;
-    const result = await executeTaskCommand(this.tasks_abyssPrivate, command);
-    this.applyPlanningResult_abyssPrivate(result, command.target, undefined, submission);
+    await this.executeOwnedCommand_abyssPrivate(command, command.target);
   }
 
   private async updatePriority_abyssPrivate(task: TaskLike, priority: string): Promise<void> {

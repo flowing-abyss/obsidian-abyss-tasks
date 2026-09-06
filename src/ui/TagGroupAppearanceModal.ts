@@ -15,18 +15,18 @@ type AppearanceField = 'name' | 'color';
 const COLOR_PICKER_FALLBACK = '#888888';
 
 export class TagGroupAppearanceModal extends Modal {
-  private name: string;
-  private color: string | null;
+  private name_abyssPrivate: string;
+  private color_abyssPrivate: string | null;
 
   constructor(
     app: App,
-    private readonly current: TagGroupAppearance,
-    private readonly onSubmit: (result: TagGroupAppearanceResult) => void,
-    private readonly initialField: AppearanceField = 'name',
+    private readonly current_abyssPrivate: TagGroupAppearance,
+    private readonly onSubmit_abyssPrivate: (result: TagGroupAppearanceResult) => void,
+    private readonly initialField_abyssPrivate: AppearanceField = 'name',
   ) {
     super(app);
-    this.name = current.name;
-    this.color = current.color ?? null;
+    this.name_abyssPrivate = current_abyssPrivate.name;
+    this.color_abyssPrivate = current_abyssPrivate.color ?? null;
   }
 
   override onOpen(): void {
@@ -38,24 +38,24 @@ export class TagGroupAppearanceModal extends Modal {
     new Setting(contentEl).setName('Display name').addText((text) => {
       nameInput = text.inputEl;
       nameInput.setAttribute('type', 'text');
-      text.setValue(this.name).onChange((value) => {
-        this.name = value;
+      text.setValue(this.name_abyssPrivate).onChange((value) => {
+        this.name_abyssPrivate = value;
       });
       nameInput.addEventListener('input', () => {
-        this.name = nameInput.value;
+        this.name_abyssPrivate = nameInput.value;
       });
     });
 
     let colorInput!: HTMLInputElement;
     new Setting(contentEl).setName('Color').addColorPicker((picker) => {
-      picker.setValue(this.color ?? COLOR_PICKER_FALLBACK).onChange((value) => {
-        this.color = value;
+      picker.setValue(this.color_abyssPrivate ?? COLOR_PICKER_FALLBACK).onChange((value) => {
+        this.color_abyssPrivate = value;
       });
       const renderedInput = contentEl.querySelector<HTMLInputElement>('input[type="color"]');
       if (renderedInput === null) throw new Error('Obsidian did not render the color input');
       colorInput = renderedInput;
       colorInput.addEventListener('input', () => {
-        this.color = colorInput.value;
+        this.color_abyssPrivate = colorInput.value;
       });
     });
 
@@ -64,7 +64,7 @@ export class TagGroupAppearanceModal extends Modal {
     const cancelButton = buttonRow.createEl('button', { text: 'Cancel' });
     const saveButton = buttonRow.createEl('button', { text: 'Save', cls: 'mod-cta' });
     resetButton.addEventListener('click', () => {
-      this.color = null;
+      this.color_abyssPrivate = null;
       colorInput.value = COLOR_PICKER_FALLBACK;
     });
     cancelButton.addEventListener('click', () => {
@@ -72,14 +72,15 @@ export class TagGroupAppearanceModal extends Modal {
     });
     saveButton.addEventListener('click', () => {
       const result: { name?: string; color?: string | null } = {};
-      const name = this.name.trim();
-      if (name !== this.current.name) result.name = name;
-      if (this.color !== (this.current.color ?? null)) result.color = this.color;
-      this.onSubmit(result);
+      const name = this.name_abyssPrivate.trim();
+      if (name !== this.current_abyssPrivate.name) result.name = name;
+      if (this.color_abyssPrivate !== (this.current_abyssPrivate.color ?? null))
+        result.color = this.color_abyssPrivate;
+      this.onSubmit_abyssPrivate(result);
       this.close();
     });
 
-    const target = this.initialField === 'color' ? colorInput : nameInput;
+    const target = this.initialField_abyssPrivate === 'color' ? colorInput : nameInput;
     contentEl.ownerDocument.defaultView?.setTimeout(() => {
       target.focus();
     }, 0);

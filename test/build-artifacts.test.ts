@@ -28,6 +28,7 @@ useRealMoment();
 const root = process.cwd();
 const suffix = '_abyssPrivate';
 const privateOwners = new Set([
+  'AsyncEditLifecycle',
   'CenterPanel',
   'RightPanel',
   'PanelView',
@@ -41,6 +42,10 @@ const privateOwners = new Set([
   'TaskApplicationService',
   'TaskModal',
   'DatePickerLifecycle',
+  'LinkEditModal',
+  'NoteSuggest',
+  'TagPickerModal',
+  'TagGroupAppearanceModal',
 ]);
 
 function privateOwner(node: ts.Node): string | undefined {

@@ -42,7 +42,9 @@ function saveImmediately(replacement: string) {
   return vi.spyOn(LinkEditModal.prototype, 'open').mockImplementation(function (
     this: LinkEditModal,
   ) {
-    (this as unknown as { onSave: (raw: string) => void }).onSave(replacement);
+    (this as unknown as { onSave_abyssPrivate: (raw: string) => void }).onSave_abyssPrivate(
+      replacement,
+    );
   });
 }
 

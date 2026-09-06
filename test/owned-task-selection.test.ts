@@ -27,6 +27,35 @@ const target = { type: 'subtask' as const, ref: expectDefined(before.subtasks[1]
 const selection = [before, expectDefined(before.subtasks[1])];
 
 describe('owned non-structural inspector selection', () => {
+  it.each([
+    ['wrong removed child', source.replace('  - [ ] B.1\n', '')],
+    ['extra deletion', source.replace('    - [ ] Deep\n', '').replace('  - [ ] B.1\n', '')],
+    ['parent title', source.replace('    - [ ] Deep\n', '').replace('B.2', 'Changed')],
+    ['sibling source', source.replace('    - [ ] Deep\n', '').replace('B.1', 'B.1 ^changed')],
+  ])('refuses a %s during owned subtree deletion', (_label, markdown) => {
+    const current = snapshot(markdown, 'after');
+    expect(
+      rebuildOwnedTaskSelection(current, selection, {
+        type: 'delete-subtask',
+        subtask: expectDefined(before.subtasks[1]?.subtasks[0]).ref,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('does not identify an unrelated insertion as the pending Undo subtree', () => {
+    const removed = snapshot(source.replace('    - [ ] Deep\n', ''), 'removed');
+    const parent = expectDefined(removed.subtasks[1]);
+    const current = snapshot(source.replace('Deep', 'Imposter'), 'restored');
+    expect(
+      rebuildOwnedTaskSelection(current, [removed, parent], {
+        type: 'restore-subtask',
+        parent: { type: 'subtask', ref: parent.ref },
+        markdown: '    - [ ] Deep\n',
+        placement: { relativeLine: 2 },
+      }),
+    ).toBeUndefined();
+  });
+
   it.each(['blocks', 'blocked-by'] as const)(
     'retains the selected nested current after owned %s creation',
     (direction) => {

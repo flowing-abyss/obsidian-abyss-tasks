@@ -37,13 +37,10 @@ function childPath(root: TaskSnapshot, target: TaskNodeRef, unique: boolean): nu
   return indices;
 }
 
-function uniqueSource(parent: TaskSelectionNode, child: TaskSelectionNode): boolean {
+function uniqueSource(parent: TaskSelectionNode, child: SubtaskSnapshot): boolean {
   return (
-    parent.subtasks.filter(
-      (candidate) =>
-        candidate.ref.originalBlock ===
-        ('source' in child ? child.source.originalBlock : child.ref.originalBlock),
-    ).length === 1
+    parent.subtasks.filter((candidate) => candidate.ref.originalBlock === child.ref.originalBlock)
+      .length === 1
   );
 }
 
@@ -150,6 +147,16 @@ export function rebuildOwnedTaskSelection(
   selection: readonly TaskSelectionNode[],
   command: TaskCommand,
 ): TaskSelectionNode[] | undefined {
+  if (command.type === 'delete-subtask' || command.type === 'restore-subtask')
+    return rebuildRemovalSelection(current, selection, command);
+  return rebuildContentSelection(current, selection, command);
+}
+
+function rebuildContentSelection(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+  command: TaskCommand,
+): TaskSelectionNode[] | undefined {
   if (
     ![
       'patch',
@@ -176,4 +183,57 @@ export function rebuildOwnedTaskSelection(
   )
     return undefined;
   return follow(current, selectedPath, !append);
+}
+
+function rebuildRemovalSelection(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+  command: Extract<TaskCommand, { type: 'delete-subtask' | 'restore-subtask' }>,
+): TaskSelectionNode[] | undefined {
+  const restore = command.type === 'restore-subtask';
+  const parent = restore ? command.parent : command.subtask.parent;
+  const paths = selectionPaths(current, selection, parent, true);
+  if (paths === undefined) return undefined;
+  const { before, selectedPath, editedPath } = paths;
+  const expanded = restore ? current : before;
+  const parentNode = follow(expanded, editedPath, true)?.[editedPath.length];
+  if (parentNode === undefined) return undefined;
+  const index = removalIndex(parentNode, command);
+  if (
+    index < 0 ||
+    !sameTaskTreeWithOwnedChanges(expanded, restore ? before : current, editedPath, {
+      fields: new Set(),
+      remove: index,
+    })
+  )
+    return undefined;
+  spliceSelectionPath(selectedPath, editedPath, index, restore);
+  return follow(current, selectedPath, true);
+}
+
+function removalIndex(
+  parent: TaskSelectionNode,
+  command: Extract<TaskCommand, { type: 'delete-subtask' | 'restore-subtask' }>,
+): number {
+  return parent.subtasks.findIndex((child) =>
+    command.type === 'restore-subtask'
+      ? child.ref.relativeLine === command.placement.relativeLine &&
+        child.ref.originalBlock === command.markdown.replace(/\n$/u, '')
+      : sameTaskNodeRef(taskNodeRef(child), { type: 'subtask', ref: command.subtask }),
+  );
+}
+
+function spliceSelectionPath(
+  selectedPath: number[],
+  editedPath: readonly number[],
+  index: number,
+  restore: boolean,
+): void {
+  // Paths below the edited parent move only by the proven single-child splice.
+  const depth = editedPath.length;
+  const selectedChild = selectedPath[depth];
+  if (selectedChild !== undefined && editedPath.every((part, i) => selectedPath[i] === part)) {
+    if (!restore && selectedChild === index) selectedPath.splice(depth);
+    else if (selectedChild >= index) selectedPath[depth] = selectedChild + (restore ? 1 : -1);
+  }
 }
