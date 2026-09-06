@@ -1665,29 +1665,36 @@ export class RightPanel {
         ? '.abyss-dep-badge-body'
         : `[data-dependency-direction="${direction}"] .abyss-dep-add`;
     this.dependencySearch_abyssPrivate = mountDependencySearch(this.el_abyssPrivate, {
-      scope: direction ?? 'general',
-      options: (query) => {
+      direction: direction ?? 'blocked-by',
+      canChangeDirection: direction === undefined,
+      options: (query, chosen) => {
         const current = this.dependencyTask_abyssPrivate();
         const tasks = this.tasks_abyssPrivate;
         if (tasks === undefined || current === undefined) return [];
         return dependencySearchOptions({
           current: taskNodeRef(current),
-          ...(direction !== undefined && { direction }),
+          direction: chosen,
           query,
           tasks: tasks.queries.listNodes(),
           eligibility: (blocker, dependent) =>
             tasks.queries.dependencyEligibility(blocker, dependent),
         });
       },
-      select: async (option, chosen) => {
+      selectExisting: async (option, chosen) => {
         const current = this.dependencyTask_abyssPrivate();
-        if (current === undefined) return false;
-        return this.executeDependencyCommand_abyssPrivate({
+        if (current === undefined)
+          return { type: 'validation-error', message: 'The current task is no longer available.' };
+        const committed = await this.executeDependencyCommand_abyssPrivate({
           type: 'add-dependency',
           blocker: chosen === 'blocked-by' ? option.task.target : taskNodeRef(current),
           dependent: chosen === 'blocked-by' ? taskNodeRef(current) : option.task.target,
         });
+        return { type: committed ? 'committed' : 'failed' };
       },
+      createNew: async () => ({
+        type: 'validation-error',
+        message: 'Creating a new dependency is not available yet.',
+      }),
       onClose: (restoreFocus) => {
         const surface = this.dependencySearch_abyssPrivate?.element;
         if (surface !== undefined) this.anchoredSurfaceCleanups_abyssPrivate.get(surface)?.();

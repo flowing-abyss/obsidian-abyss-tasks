@@ -5702,6 +5702,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-subtask-row .abyss-subtask-remove,
 .abyss-dep-row .abyss-dep-remove,
 .abyss-dep-section .abyss-dep-add,
+.abyss-dep-search .abyss-dep-search-direction,
 .abyss-dep-search .abyss-dep-search-option {
   background: transparent;
 }
@@ -5863,20 +5864,39 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-dep-search-context,
 .abyss-dep-search-reason,
-.abyss-dep-search-empty {
+.abyss-dep-search-empty,
+.abyss-dep-search-create {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
 }
 
 .abyss-dep-search-directions {
   display: flex;
-  flex-wrap: wrap;
   gap: 6px;
-  padding-top: 6px;
+  margin-bottom: 6px;
 }
 
-.abyss-dep-search-directions[hidden] {
-  display: none;
+.abyss-dep-search-direction {
+  flex: 1;
+  height: auto;
+  padding: 4px 6px;
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: none;
+  font: inherit;
+}
+
+.abyss-dep-search-direction[aria-pressed='true'] {
+  border-color: var(--interactive-accent);
+  color: var(--text-normal);
+}
+
+.abyss-dep-search-create,
+.abyss-dep-search-error {
+  padding: 6px;
+}
+
+.abyss-dep-search-error {
+  color: var(--text-error);
 }
 
 .abyss-subtask-list {

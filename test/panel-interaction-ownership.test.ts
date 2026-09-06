@@ -2,6 +2,7 @@ import { App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { localDate, type CalendarTaskSource, type TaskCommandResult } from '../src/tasks';
 import { showDatePickerPopover } from '../src/ui/DatePickerPopover';
+import { mountDependencySearch } from '../src/ui/dependencySearch';
 import { InteractionRegistry } from '../src/ui/interactionOwnership';
 import { LinkEditModal } from '../src/ui/LinkEditModal';
 import { mountAnchoredRecurrenceEditor } from '../src/ui/recurrence/RecurrenceEditor';
@@ -22,6 +23,26 @@ const categories: ReadonlyArray<{
   readonly category: string;
   open(registry: InteractionRegistry<'navigate'>): OwnedSurface;
 }> = [
+  {
+    category: 'dependency picker direction selector',
+    open: (registry) => {
+      const handle = mountDependencySearch(activeDocument.body, {
+        direction: 'blocked-by',
+        canChangeDirection: true,
+        options: () => [],
+        selectExisting: async () => ({ type: 'failed' }),
+        createNew: async () => ({ type: 'failed' }),
+        onClose: () => {},
+        ownership: registry,
+      });
+      return {
+        control: expectDefined(handle.element.querySelector<HTMLElement>('[data-direction]')),
+        close: () => {
+          handle.destroy();
+        },
+      };
+    },
+  },
   {
     category: 'recurrence-delete alertdialog',
     open: (registry) => {

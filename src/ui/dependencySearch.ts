@@ -106,13 +106,26 @@ function rejectionLabel(
   return labels[reason];
 }
 
-interface DependencySearchOptions {
-  readonly scope: 'general' | DependencyDirection;
-  readonly options: (query: string) => readonly DependencySearchOption[];
-  readonly select: (
+export type DependencyPickerCommitResult =
+  | { readonly type: 'committed' }
+  | { readonly type: 'validation-error'; readonly message: string }
+  | { readonly type: 'failed' };
+
+export interface DependencySearchOptions {
+  readonly direction: DependencyDirection;
+  readonly canChangeDirection: boolean;
+  readonly options: (
+    query: string,
+    direction: DependencyDirection,
+  ) => readonly DependencySearchOption[];
+  readonly selectExisting: (
     option: DependencySearchOption,
     direction: DependencyDirection,
-  ) => Promise<boolean>;
+  ) => Promise<DependencyPickerCommitResult>;
+  readonly createNew: (
+    text: string,
+    direction: DependencyDirection,
+  ) => Promise<DependencyPickerCommitResult>;
   readonly onClose: (restoreFocus: boolean) => void;
   readonly ownership?: InteractionOwnershipPort;
 }
@@ -137,9 +150,12 @@ class DependencySearchController implements DependencySearchHandle {
   readonly element: HTMLElement;
   private readonly input: HTMLInputElement;
   private readonly list: HTMLElement;
-  private readonly actions: HTMLElement;
+  private readonly directionControls: HTMLElement | undefined;
+  private readonly createAffordance: HTMLElement;
+  private readonly error: HTMLElement;
   private readonly ownership: { release(): void };
   private options: readonly DependencySearchOption[] = [];
+  private direction: DependencyDirection;
   private activeIndex = -1;
   private busy = false;
   private closed = false;
@@ -151,10 +167,17 @@ class DependencySearchController implements DependencySearchHandle {
     this.ownership = (callbacks.ownership ?? noInteractionOwnership).acquire({
       blocksShortcuts: true,
     });
+    const dialogLabel = callbacks.canChangeDirection
+      ? 'Add dependency'
+      : `Add dependency: ${dependencyDirectionLabel(callbacks.direction)}`;
     this.element = container.createDiv({
       cls: 'abyss-popover abyss-popover-anchored abyss-dep-search',
-      attr: { role: 'dialog', 'aria-label': 'Add dependency' },
+      attr: { role: 'dialog', 'aria-label': dialogLabel },
     });
+    this.direction = callbacks.direction;
+    this.directionControls = callbacks.canChangeDirection
+      ? this.createDirectionControls()
+      : undefined;
     const search = this.element.createDiv({ cls: 'abyss-dep-search-field' });
     setIcon(search.createSpan({ attr: { 'aria-hidden': 'true' } }), 'search');
     const id = `abyss-dependency-options-${nextSearchId++}`;
@@ -169,18 +192,21 @@ class DependencySearchController implements DependencySearchHandle {
         'aria-autocomplete': 'list',
       },
     });
+    this.error = this.element.createDiv({
+      cls: 'abyss-dep-search-error',
+      attr: { role: 'status', hidden: '' },
+    });
     this.list = this.element.createDiv({
       cls: 'abyss-dep-search-results',
       attr: { id, role: 'listbox', 'aria-label': 'Tasks' },
     });
-    this.actions = this.element.createDiv({
-      cls: 'abyss-dep-search-directions',
-      attr: { role: 'group', 'aria-label': 'Dependency direction', hidden: '' },
+    this.createAffordance = this.element.createDiv({
+      cls: 'abyss-dep-search-create',
+      attr: { hidden: '' },
     });
     this.input.addEventListener('input', () => {
       this.activeIndex = -1;
-      this.actions.empty();
-      this.actions.hidden = true;
+      this.clearError();
       this.refresh();
     });
     this.input.addEventListener('keydown', (event) => {
@@ -198,6 +224,42 @@ class DependencySearchController implements DependencySearchHandle {
     this.input.focus();
   }
 
+  private createDirectionControls(): HTMLElement {
+    const controls = this.element.createDiv({
+      cls: 'abyss-dep-search-directions',
+      attr: { role: 'group', 'aria-label': 'Dependency direction' },
+    });
+    for (const direction of ['blocked-by', 'blocks'] as const) {
+      const button = controls.createEl('button', {
+        cls: 'abyss-dep-search-direction',
+        text: dependencyDirectionLabel(direction),
+        attr: {
+          type: 'button',
+          'data-direction': direction,
+          'aria-pressed': String(direction === this.direction),
+        },
+      });
+      button.addEventListener('click', () => {
+        if (this.busy || direction === this.direction) return;
+        this.direction = direction;
+        this.activeIndex = -1;
+        this.clearError();
+        this.updateDirectionControls();
+        this.refresh();
+        this.input.focus();
+      });
+    }
+    return controls;
+  }
+
+  private updateDirectionControls(): void {
+    this.directionControls
+      ?.querySelectorAll<HTMLButtonElement>('[data-direction]')
+      .forEach((button) => {
+        button.setAttribute('aria-pressed', String(button.dataset['direction'] === this.direction));
+      });
+  }
+
   private readonly onOutsideFocus = (event: Event): void => {
     if (this.element.contains(event.target as Node)) return;
     this.close(false);
@@ -205,11 +267,8 @@ class DependencySearchController implements DependencySearchHandle {
 
   refresh(): void {
     if (this.closed) return;
-    const choosingDirection = this.actions.contains(this.element.ownerDocument.activeElement);
-    this.actions.empty();
-    this.actions.hidden = true;
-    this.options = this.callbacks.options(this.input.value);
-    this.activeIndex = Math.min(this.activeIndex, this.options.length - 1);
+    this.options = this.callbacks.options(this.input.value, this.direction);
+    this.activeIndex = -1;
     this.list.empty();
     this.options.forEach((option, index) => {
       this.renderOption(option, index);
@@ -220,8 +279,15 @@ class DependencySearchController implements DependencySearchHandle {
         text: 'No matching tasks',
         attr: { role: 'status' },
       });
+    this.updateCreateAffordance();
     this.updateActive();
-    if (choosingDirection) this.input.focus();
+    this.setBusy();
+  }
+
+  private updateCreateAffordance(): void {
+    const text = this.input.value.trim();
+    this.createAffordance.hidden = text.length === 0;
+    this.createAffordance.setText(text.length === 0 ? '' : `Create “${text}” as sub-task`);
   }
 
   private renderOption(option: DependencySearchOption, index: number): void {
@@ -232,11 +298,11 @@ class DependencySearchController implements DependencySearchHandle {
         role: 'option',
         id: `${this.list.id}-${index}`,
         'aria-selected': 'false',
-        'aria-disabled': String(option.directions.length === 0),
+        'aria-disabled': String(!this.isEligible(option)),
         tabindex: '-1',
       },
     });
-    button.disabled = this.busy || option.directions.length === 0;
+    button.disabled = this.busy || !this.isEligible(option);
     button.createSpan({ cls: 'abyss-dep-search-title', text: option.title });
     button.createSpan({ cls: 'abyss-dep-search-context', text: option.context });
     if (option.disabledReason !== undefined)
@@ -244,7 +310,7 @@ class DependencySearchController implements DependencySearchHandle {
     button.addEventListener('click', () => {
       this.activeIndex = index;
       this.updateActive();
-      this.choose(option);
+      this.submitExisting(option);
     });
   }
 
@@ -263,94 +329,85 @@ class DependencySearchController implements DependencySearchHandle {
   }
 
   private onInputKey(event: KeyboardEvent): void {
-    if (this.busy) return;
+    if (this.busy || event.isComposing) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       event.stopPropagation();
       this.moveSelection(event.key === 'ArrowDown' ? 1 : -1);
-    } else if (event.key === 'Enter') {
-      event.preventDefault();
-      event.stopPropagation();
-      const option =
-        this.options[this.activeIndex] ??
-        this.options.find((candidate) => candidate.directions.length > 0);
-      if (option !== undefined) this.choose(option);
+      return;
     }
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.submitInput();
+  }
+
+  private submitInput(): void {
+    const option = this.options[this.activeIndex];
+    if (this.isEligible(option)) {
+      this.submitExisting(option);
+      return;
+    }
+    const text = this.input.value.trim();
+    if (text.length > 0) this.submitCreate(text);
   }
 
   private moveSelection(delta: number): void {
-    let index = this.activeIndex + delta;
-    while (
-      index >= 0 &&
-      index < this.options.length &&
-      this.options[index]?.directions.length === 0
-    )
-      index += delta;
-    if (index >= 0 && index < this.options.length) this.activeIndex = index;
+    const eligible = this.options
+      .map((option, index) => ({ option, index }))
+      .filter(({ option }) => this.isEligible(option))
+      .map(({ index }) => index);
+    if (eligible.length === 0) return;
+    const current = eligible.indexOf(this.activeIndex);
+    let next = (current + delta + eligible.length) % eligible.length;
+    if (current === -1) next = delta > 0 ? 0 : eligible.length - 1;
+    this.activeIndex = eligible[next] ?? -1;
     this.updateActive();
   }
 
-  private choose(option: DependencySearchOption): void {
-    if (this.busy || option.directions.length === 0) return;
-    this.actions.empty();
-    const scope = this.callbacks.scope;
-    if (scope !== 'general' && option.directions.includes(scope)) {
-      this.submit(option, scope);
-      return;
-    }
-    this.actions.hidden = false;
-    for (const direction of option.directions) {
-      const button = this.actions.createEl('button', {
-        text: dependencyDirectionLabel(direction),
-        attr: {
-          type: 'button',
-          'data-direction': direction,
-          'aria-label': `${dependencyDirectionLabel(direction)} ${option.title}`,
-        },
-      });
-      button.addEventListener('click', () => {
-        this.submit(option, direction);
-      });
-      button.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          button.click();
-        }
-        if (event.key === 'ArrowDown') {
-          event.preventDefault();
-          (button.nextElementSibling as HTMLButtonElement | null)?.focus();
-        }
-        if (event.key === 'ArrowUp') {
-          event.preventDefault();
-          (button.previousElementSibling as HTMLButtonElement | null)?.focus();
-        }
-      });
-    }
-    this.actions.querySelector('button')?.focus();
+  private isEligible(option: DependencySearchOption | undefined): option is DependencySearchOption {
+    return option?.directions.includes(this.direction) === true;
   }
 
-  private submit(option: DependencySearchOption, direction: DependencyDirection): void {
+  private submitExisting(option: DependencySearchOption): void {
+    if (!this.isEligible(option)) return;
+    this.submit(() => this.callbacks.selectExisting(option, this.direction));
+  }
+
+  private submitCreate(text: string): void {
+    this.submit(() => this.callbacks.createNew(text, this.direction));
+  }
+
+  private submit(action: () => Promise<DependencyPickerCommitResult>): void {
     if (this.busy) return;
-    runAsyncAction(this.commit(option, direction), 'Could not add dependency');
-  }
-
-  private async commit(
-    option: DependencySearchOption,
-    direction: DependencyDirection,
-  ): Promise<void> {
-    const invoking = this.element.ownerDocument.activeElement as HTMLElement | null;
+    this.clearError();
     this.busy = true;
     this.setBusy();
+    runAsyncAction(this.commit(action), 'Could not add dependency');
+  }
+
+  private async commit(action: () => Promise<DependencyPickerCommitResult>): Promise<void> {
     try {
-      if (await this.callbacks.select(option, direction)) this.close();
+      const result = await action();
+      if (result.type === 'committed') this.close();
+      else if (result.type === 'validation-error') this.showError(result.message);
     } finally {
       this.busy = false;
       if (!this.closed) {
         this.setBusy();
-        if (invoking?.isConnected === true) invoking.focus();
-        else this.input.focus();
+        this.input.focus();
       }
     }
+  }
+
+  private showError(message: string): void {
+    this.error.setText(message);
+    this.error.hidden = false;
+  }
+
+  private clearError(): void {
+    this.error.empty();
+    this.error.hidden = true;
   }
 
   private setBusy(): void {
