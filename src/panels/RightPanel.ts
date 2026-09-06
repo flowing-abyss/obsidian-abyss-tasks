@@ -45,6 +45,7 @@ import {
 } from '../ui/attachmentDrop';
 import {
   dependencySearchOptions,
+  focusWithoutScroll,
   mountDependencySearch,
   type DependencyPickerCommitResult,
   type DependencySearchHandle,
@@ -1020,11 +1021,8 @@ export class RightPanel {
     this.undo_abyssPrivate.detach();
     this.dependencyStatusMarkers_abyssPrivate.clear();
     const search = this.dependencySearch_abyssPrivate;
-    const focused = this.el_abyssPrivate.ownerDocument.activeElement;
-    const searchFocus =
-      search?.element.contains(focused) === true
-        ? search.element.querySelector<HTMLInputElement>('input')
-        : undefined;
+    const focused = this.el_abyssPrivate.ownerDocument.activeElement as HTMLElement | null;
+    const searchFocus = search?.element.contains(focused) === true ? focused : null;
     if (search !== undefined) {
       this.anchoredSurfaceCleanups_abyssPrivate.get(search.element)?.();
       search.element.remove();
@@ -1035,20 +1033,18 @@ export class RightPanel {
     this.clearAnchoredSurfaces_abyssPrivate();
     this.el_abyssPrivate.empty();
     const stack = this.state_abyssPrivate.get('taskStack');
-    if (stack.length === 0) {
+    const task = stack[stack.length - 1];
+    if (task === undefined) {
       this.renderEmpty_abyssPrivate();
       this.renderDetachedDraftTray_abyssPrivate();
       return;
     }
-    const task = stack[stack.length - 1];
-    if (task == null) return;
     this.renderTask_abyssPrivate(task, stack, this.commentTimeContext_abyssPrivate?.());
     this.renderDetachedDraftTray_abyssPrivate();
     if (search !== undefined) {
       this.el_abyssPrivate.append(search.element);
       search.refresh();
-      this.positionDependencySearch_abyssPrivate();
-      searchFocus?.focus({ preventScroll: true });
+      this.positionDependencySearch_abyssPrivate(search.element, searchFocus);
     }
     this.restoreStatusFocus_abyssPrivate(statusFocus);
   }
@@ -1863,7 +1859,7 @@ export class RightPanel {
         if (surface !== undefined) this.anchoredSurfaceCleanups_abyssPrivate.get(surface)?.();
         this.dependencySearch_abyssPrivate = undefined;
         this.updateDependencyBadge_abyssPrivate();
-        if (restoreFocus) this.dependencyAnchor_abyssPrivate()?.focus({ preventScroll: true });
+        if (restoreFocus) focusWithoutScroll(this.dependencyAnchor_abyssPrivate());
       },
       ownership: this.interactionOwnership_abyssPrivate,
       position: (element) => {
@@ -1939,10 +1935,18 @@ export class RightPanel {
 
   private positionDependencySearch_abyssPrivate(
     element = this.dependencySearch_abyssPrivate?.element,
+    focused?: HTMLElement | null,
   ): void {
+    if (element === undefined) return;
     const anchor = this.dependencyAnchor_abyssPrivate();
-    if (element !== undefined && anchor !== null)
-      this.positionAnchoredSurface_abyssPrivate(element, anchor, 'below-start');
+    if (anchor !== null) this.positionAnchoredSurface_abyssPrivate(element, anchor, 'below-start');
+    if (focused != null) {
+      focusWithoutScroll(
+        element.contains(focused) && !focused.matches(':disabled,[hidden]')
+          ? focused
+          : element.querySelector<HTMLElement>('input'),
+      );
+    }
   }
 
   private async executeDependencyCommand_abyssPrivate(

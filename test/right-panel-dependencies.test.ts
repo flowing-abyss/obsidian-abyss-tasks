@@ -1825,6 +1825,121 @@ describe('RightPanel dependency inspector', () => {
     expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
   });
 
+  it.each(['main', 'invoking'] as const)(
+    'preserves native Create keyboard intent through a refresh in the %s document',
+    async (realm) => {
+      const h = await harness('- [ ] Current\n- [ ] Candidate\n');
+      if (realm === 'invoking') {
+        const frame = activeDocument.body.createEl('iframe');
+        expectDefined(frame.contentDocument).body.append(h.el);
+      }
+      const doc = h.el.ownerDocument;
+      const execute = vi.spyOn(h.api, 'execute');
+      button(h.el, '.abyss-dep-badge-body').click();
+      const input = search(h.el, 'Candidate');
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      const selected = input.getAttribute('aria-activedescendant');
+      const create = button(h.el, '.abyss-dep-search-create');
+      create.focus();
+      const focus = vi.spyOn(create, 'focus');
+
+      h.state.set('taskStack', [h.node('Current').root]);
+
+      expect(doc.activeElement).toBe(create);
+      expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
+      expect(input.getAttribute('aria-activedescendant')).toBe(selected);
+      expect(create.type).toBe('button');
+      const active = expectDefined(doc.activeElement);
+      const enter = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      });
+      // jsdom does not supply the browser's default Enter activation for native buttons.
+      if (active.dispatchEvent(enter) && active.tagName === 'BUTTON') {
+        (active as HTMLButtonElement).click();
+      }
+      await flushMicrotasks();
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'create-dependency-subtask',
+          direction: 'blocked-by',
+          text: 'Candidate',
+        }),
+      );
+    },
+  );
+
+  it('preserves a direction control through refresh without changing its action', async () => {
+    const h = await harness('- [ ] Current\n- [ ] Candidate\n');
+    button(h.el, '.abyss-dep-badge-body').click();
+    const input = search(h.el, 'Candidate');
+    const direction = button(h.el, '[data-direction="blocks"]');
+    direction.focus();
+    const focus = vi.spyOn(direction, 'focus');
+
+    h.state.set('taskStack', [h.node('Current').root]);
+
+    expect(h.el.ownerDocument.activeElement).toBe(direction);
+    expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
+    expect(direction.getAttribute('aria-pressed')).toBe('false');
+    direction.click();
+    expect(direction.getAttribute('aria-pressed')).toBe('true');
+    expect(h.el.ownerDocument.activeElement).toBe(input);
+  });
+
+  it('falls back to the input when the focused result is rebuilt without losing selection', async () => {
+    const h = await harness('- [ ] Current\n- [ ] Candidate\n');
+    button(h.el, '.abyss-dep-badge-body').click();
+    const input = search(h.el, 'Candidate');
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    const option = button(h.el, '[aria-selected="true"]');
+    option.focus();
+    const focus = vi.spyOn(input, 'focus');
+
+    h.state.set('taskStack', [h.node('Current').root]);
+
+    expect(option.isConnected).toBe(false);
+    expect(h.el.ownerDocument.activeElement).toBe(input);
+    expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
+    expect(button(h.el, '[aria-selected="true"]').id).toBe(
+      input.getAttribute('aria-activedescendant'),
+    );
+  });
+
+  it('falls back to the input if the retained Create control becomes hidden', async () => {
+    const h = await harness('- [ ] Current\n');
+    button(h.el, '.abyss-dep-badge-body').click();
+    const input = search(h.el, 'Candidate');
+    const create = button(h.el, '.abyss-dep-search-create');
+    create.focus();
+    input.value = '';
+
+    h.state.set('taskStack', [h.node('Current').root]);
+
+    expect(create.hidden).toBe(true);
+    expect(h.el.ownerDocument.activeElement).toBe(input);
+  });
+
+  it('falls back to the input while the retained Create control is pending and disabled', async () => {
+    const h = await harness('- [ ] Current\n');
+    const pending = deferred<TaskCommandResult>();
+    vi.spyOn(h.api, 'execute').mockReturnValue(pending.promise);
+    button(h.el, '.abyss-dep-badge-body').click();
+    const input = search(h.el, 'Candidate');
+    const create = button(h.el, '.abyss-dep-search-create');
+    create.focus();
+    create.click();
+
+    h.state.set('taskStack', [h.node('Current').root]);
+
+    expect(create.disabled).toBe(true);
+    expect(h.el.ownerDocument.activeElement).toBe(input);
+    pending.resolve({ type: 'not-found', target: h.node('Current').target });
+    await flushMicrotasks();
+  });
+
   it.each([
     { location: 'task header', selected: 'Current', selector: '.abyss-right-header' },
     { location: 'nested header', selected: 'Child', selector: '.abyss-right-header' },

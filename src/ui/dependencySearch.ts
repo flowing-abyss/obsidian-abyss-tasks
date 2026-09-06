@@ -140,6 +140,10 @@ export interface DependencySearchHandle {
 
 let nextSearchId = 0;
 
+export function focusWithoutScroll(element: HTMLElement | null | undefined): void {
+  element?.focus({ preventScroll: true });
+}
+
 function updateActive(list: HTMLElement, input: HTMLInputElement, activeIndex: number): void {
   list.querySelectorAll<HTMLElement>('[role="option"]').forEach((element, index) => {
     const active = index === activeIndex;
@@ -243,7 +247,7 @@ export function mountDependencySearch(
   ownerDocument.addEventListener('pointerdown', outside);
   actions.refresh();
   callbacks.position?.(element);
-  input.focus({ preventScroll: true });
+  focusWithoutScroll(input);
   return { element, refresh: actions.refresh, close, destroy };
 }
 
@@ -356,7 +360,7 @@ function createSearchActions(
       button.setAttribute('aria-pressed', String(button.dataset['direction'] === direction));
     });
     reset();
-    input.focus({ preventScroll: true });
+    focusWithoutScroll(input);
   };
   const key = (event: KeyboardEvent): void => {
     if (commit.busy() || event.isComposing) return;
@@ -403,7 +407,7 @@ function createSearchCommitter(
       busy = false;
       if (!isClosed()) {
         setBusy(element, input, false);
-        input.focus({ preventScroll: true });
+        focusWithoutScroll(input);
       }
     }
   };
