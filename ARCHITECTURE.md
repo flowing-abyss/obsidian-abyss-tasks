@@ -162,6 +162,10 @@ unchanged frames retain their identities. Drag state is never persisted.
 relation sections. Shared dependency presentation owns counts and recovery labels; the dependency
 search model owns filtering, direction eligibility and stable same-file ranking. One search
 controller handles general and scoped entry points, keyboard selection and focus dismissal.
+Explicit search selection retains the exact task-node reference across refreshes and reordered
+results. An unavailable or ineligible selected target leaves stale intent until the user edits,
+selects again or explicitly activates the native Create button; Enter never converts that intent
+into creation. The separate Create action shares the plain-Enter commit, validation and busy path.
 The inspector keeps disclosure and search drafts only for its mounted lifetime, preserving the
 search across proven selection refreshes. Index events refresh counterpart status and relation
 rows. Add/remove actions use the existing task application and inspector-local removal Undo;
@@ -424,6 +428,11 @@ lifetime and passes exactly one result to `presentTaskCommandResult`. Unexpected
 local diagnostic at that same boundary. Successful subtask recovery uses ordinary selection
 convergence and focuses the restored row while the action still belongs to the inspector. No Undo
 state enters `AppState` or persisted metadata.
+Dependency tombstones also use a view-owned validator: exactly one current node at the captured
+structural address must retain the committed task-line bytes, or ordered dependency IDs for legacy
+recovery. Rendering and activation revoke changed evidence. A disabled pending inverse keeps its
+row through its own publication; failed settlement revalidates before enabling retry, and deferred
+execution confirms the same tombstone still owns the action.
 
 Before root or subtask toggle/set-status commands dispatch a transition to configured done or
 cancelled status, the application checks every active resolved or ambiguous blocker. Missing IDs

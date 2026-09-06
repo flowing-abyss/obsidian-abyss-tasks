@@ -580,6 +580,63 @@ describe('inspector subtask row removal', () => {
     },
   );
 
+  it('keeps dependency Undo through a no-op mutation and failed validation', async () => {
+    const h = await harness('- [ ] Current ⛔ missing\n');
+    cleanups.unshift(
+      h.index.subscribe(() => {
+        h.state.updateInspectorSelection([h.node('Current').root]);
+      }),
+    );
+    button(h.el, '.abyss-dep-remove').click();
+    await flushMicrotasks(40);
+    const undo = button(h.el, '.abyss-undo-row button');
+    const target = { type: 'task' as const, ref: h.node('Current').root.ref };
+    expect(
+      await h.api.execute({
+        type: 'patch',
+        target,
+        patch: { markdownTitle: { type: 'set', value: 'Current' } },
+      }),
+    ).toMatchObject({ type: 'ok', changed: false });
+    expect(
+      await h.api.execute({ type: 'add-dependency', blocker: target, dependent: target }),
+    ).toMatchObject({ type: 'invalid' });
+    h.state.updateInspectorSelection([h.node('Current').root]);
+    expect(button(h.el, '.abyss-undo-row button')).toBe(undo);
+    undo.click();
+    await flushMicrotasks(40);
+    expect(await h.read()).toBe('- [ ] Current ⛔ missing\n');
+  });
+
+  it.each(['missing', 'ambiguous'] as const)(
+    'revokes dependency Undo if its structural address is %s',
+    async (kind) => {
+      const h = await harness('- [ ] Current ⛔ missing\n');
+      button(h.el, '.abyss-dep-remove').click();
+      await flushMicrotasks(40);
+      const node = h.node('Current');
+      vi.spyOn(h.index, 'listNodes').mockReturnValue(kind === 'missing' ? [] : [node, node]);
+      h.state.updateInspectorSelection([node.root]);
+      expect(h.el.querySelector('.abyss-undo-row')).toBeNull();
+    },
+  );
+
+  it('validates the dependent subtask rather than its unchanged parent or inspected blocker', async () => {
+    const h = await harness('- [ ] Current 🆔 current\n- [ ] Parent\n  - [ ] Child ⛔ current\n');
+    button(h.el, '.abyss-dep-remove').click();
+    await flushMicrotasks(40);
+    const undo = button(h.el, '.abyss-undo-row button');
+    await h.app.vault.modify(
+      h.file,
+      '\n- [ ] Current 🆔 current\n- [ ] Parent\n  - [ ] Child changed\n',
+    );
+    await flushMicrotasks(40);
+    expect(h.el.querySelector('.abyss-undo-row')).toBeNull();
+    undo.click();
+    await flushMicrotasks();
+    expect(await h.read()).toBe('- [ ] Current 🆔 current\n- [ ] Parent\n  - [ ] Child changed\n');
+  });
+
   it('does not mistake navigation to the parent before deletion commits for owned convergence', async () => {
     const h = await harness('- [ ] Current\n  - [ ] Child\n  - [ ] Sibling\n');
     const pending = deferred<void>();
@@ -643,6 +700,84 @@ describe('inspector subtask row removal', () => {
     await flushMicrotasks(40);
     expect(activeDocument.activeElement?.textContent).toContain('middle');
   });
+
+  it.each(['add', 'reverse', 'create', 'title', 'manual'] as const)(
+    'revokes dependency Undo after a same-line %s change',
+    async (change) => {
+      const h = await harness(
+        '- [ ] Current 🆔 current ⛔ missing, before\n- [ ] Before 🆔 before\n- [ ] Candidate 🆔 candidate\n',
+      );
+      button(h.el, '.abyss-dep-remove').click();
+      await flushMicrotasks(40);
+      const undo = button(h.el, '.abyss-undo-row button');
+      if (change === 'add')
+        await h.api.execute({
+          type: 'add-dependency',
+          blocker: h.node('Candidate').target,
+          dependent: h.node('Current').target,
+        });
+      if (change === 'reverse')
+        await h.api.execute({
+          type: 'reverse-dependency',
+          blocker: h.node('Before').target,
+          dependent: h.node('Current').target,
+          dependencyId: 'before',
+        });
+      if (change === 'create')
+        await h.api.execute({
+          type: 'create-dependency-subtask',
+          current: h.node('Current').target,
+          direction: 'blocked-by',
+          text: 'Created child',
+        });
+      if (change === 'title') await h.panel.updateTaskTitle(h.node('Current').node, 'Renamed');
+      if (change === 'manual')
+        await h.app.vault.modify(
+          h.file,
+          '\n- [ ] Current  🆔 current ⛔ before\n- [ ] Before 🆔 before\n- [ ] Candidate 🆔 candidate\n',
+        );
+      await flushMicrotasks(40);
+      const after = await h.read();
+      expect(h.el.querySelector('.abyss-undo-row')).toBeNull();
+      undo.click();
+      await flushMicrotasks(40);
+      expect(await h.read()).toBe(after);
+    },
+  );
+
+  it.each([false, true])(
+    'preserves dependency Undo on unrelated refresh and invalidates changed recovery evidence (legacy: %s)',
+    async (legacy) => {
+      const h = await harness('- [ ] Current ⛔ missing\n- [ ] Other\n');
+      const execute = h.api.execute.bind(h.api);
+      if (legacy)
+        vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+          const result = await execute(command);
+          if (
+            result.type !== 'ok' ||
+            result.outcome.type !== 'dependency' ||
+            result.outcome.removalRecovery === undefined
+          )
+            return result;
+          const { dependencyId, beforeIds, afterIds } = result.outcome.removalRecovery;
+          const recovery = { dependencyId, beforeIds, afterIds };
+          return { ...result, outcome: { ...result.outcome, removalRecovery: recovery } };
+        });
+      button(h.el, '.abyss-dep-remove').click();
+      await flushMicrotasks(40);
+      const undo = button(h.el, '.abyss-undo-row button');
+      await h.api.execute({
+        type: 'append-title',
+        target: h.node('Other').target,
+        markdown: 'changed',
+      });
+      await flushMicrotasks(40);
+      expect(button(h.el, '.abyss-undo-row button')).toBe(undo);
+      await h.app.vault.modify(h.file, '\n- [ ] Current ⛔ replacement\n- [ ] Other changed\n');
+      await flushMicrotasks(40);
+      expect(h.el.querySelector('.abyss-undo-row')).toBeNull();
+    },
+  );
 
   it('keeps failed Undo actionable and reports exactly one error before a successful retry', async () => {
     const h = await harness('- [ ] Current ⛔ missing\n');
@@ -1402,7 +1537,7 @@ describe('RightPanel dependency inspector', () => {
     await flushMicrotasks(20);
     const oldBadge = h.el.querySelector<HTMLButtonElement>('.abyss-dep-badge-body');
     oldBadge?.click();
-    expect(h.el.querySelectorAll('.abyss-dep-search-option:not([disabled])')).toHaveLength(0);
+    expect(h.el.querySelectorAll('[role="option"]:not([disabled])')).toHaveLength(0);
     expect(await h.read()).toBe(changed.slice(1));
   });
 
@@ -1506,6 +1641,80 @@ describe('RightPanel dependency inspector', () => {
     expect(body.contains(plus)).toBe(false);
     expect(plus.getAttribute('aria-label')).toBe('Add dependency sections');
     expect(plus.title).toBe('Add dependency');
+  });
+
+  it('keeps blank Create hidden without an author display override and exposes a focusable nonblank action', async () => {
+    if (!Platform.isDesktop) throw new Error('CSS contract requires desktop filesystem access');
+    const fs = await import('node:fs');
+    const { parse } = await import('postcss');
+    const sheet = parse(fs.readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8'));
+    const h = await harness('- [ ] Current\n');
+    button(h.el, '.abyss-dep-badge-body').click();
+    const create = button(h.el, '.abyss-dep-search-create');
+    const authorDisplays = () => {
+      const values: string[] = [];
+      sheet.walkRules((rule) => {
+        if (create.matches(rule.selector))
+          rule.walkDecls('display', (declaration) => {
+            values.push(declaration.value);
+          });
+      });
+      return values;
+    };
+    expect(create.hidden).toBe(true);
+    expect(authorDisplays()).toEqual([]);
+    expect(activeWindow.getComputedStyle(create).display).toBe('none');
+    search(h.el, 'New task');
+    expect(create.hidden).toBe(false);
+    expect(authorDisplays()).toContain('block');
+    expect(activeWindow.getComputedStyle(create).display).not.toBe('none');
+    expect(create.tabIndex).toBe(0);
+    create.focus();
+    expect(activeDocument.activeElement).toBe(create);
+    search(h.el, '  ');
+    expect(create.hidden).toBe(true);
+    expect(authorDisplays()).toEqual([]);
+    expect(activeWindow.getComputedStyle(create).display).toBe('none');
+  });
+
+  it('updates inspector lock color from active relations and retains completed rows', async () => {
+    const h = await harness('- [ ] Current 🆔 current\n- [ ] Before 🆔 before\n- [ ] After\n');
+    cleanups.unshift(
+      h.index.subscribe(() => {
+        h.state.updateInspectorSelection([h.node('Current').root]);
+      }),
+    );
+    const check = (color: string | undefined, counts: string) => {
+      const body = button(h.el, '.abyss-dep-badge-body');
+      const lock = expectDefined(body.querySelector('.abyss-dep-lock'));
+      expect(body.textContent).toBe(counts);
+      expect(lock.classList.contains('abyss-dep-count-blocked-by')).toBe(color === 'blocked-by');
+      expect(lock.classList.contains('abyss-dep-count-blocks')).toBe(color === 'blocks');
+      expect(lock.textContent).toBe('');
+    };
+    check(undefined, '00');
+    await h.api.execute({
+      type: 'add-dependency',
+      blocker: h.node('Current').target,
+      dependent: h.node('After').target,
+    });
+    await flushMicrotasks(30);
+    check('blocks', '01');
+    await h.api.execute({
+      type: 'add-dependency',
+      blocker: h.node('Before').target,
+      dependent: h.node('Current').target,
+    });
+    await flushMicrotasks(30);
+    check('blocked-by', '11');
+    await h.api.execute({ type: 'toggle-completion', target: h.node('Before').target });
+    await flushMicrotasks(30);
+    check('blocks', '01');
+    await h.api.execute({ type: 'toggle-completion', target: h.node('Current').target });
+    await flushMicrotasks(30);
+    check(undefined, '00');
+    expect(h.el.querySelectorAll('.abyss-dep-row')).toHaveLength(2);
+    expect(h.el.querySelector('[data-dependency-direction="blocked-by"] .is-done')).not.toBeNull();
   });
 
   it('opens the general picker blocked-by with a direction selector and fixes section pickers', async () => {

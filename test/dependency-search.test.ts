@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildTaskDependencyGraph, enumerateTaskNodes } from '../src/tasks/domain/taskDependencies';
 import { dependencySearchOptions, mountDependencySearch } from '../src/ui/dependencySearch';
-import { canonicalStatusCatalog, expectDefined, flushMicrotasks, task } from './helpers';
+import { canonicalStatusCatalog, deferred, expectDefined, flushMicrotasks, task } from './helpers';
 
 afterEach(() => {
   activeDocument.body.empty();
@@ -238,8 +238,192 @@ describe('dependency search keyboard controller', () => {
     expect(input.getAttribute('aria-activedescendant')).toBeNull();
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks();
-    expect(submissions).toEqual(['new:candidate']);
+    expect(submissions).toEqual([]);
+    expect(
+      handle.element.querySelector('.abyss-dep-search-error[role="status"]')?.textContent,
+    ).toMatch(/changed|select/iu);
+    handle.destroy();
   });
+
+  it.each(['unchanged', 'reordered', 'disabled'] as const)(
+    'retains existing-task intent when refreshed options are %s',
+    async (change) => {
+      const submissions: string[] = [];
+      let refreshed = false;
+      const handle = mountDependencySearch(activeDocument.body, {
+        direction: 'blocked-by',
+        canChangeDirection: true,
+        options: (query, direction) => {
+          const values = dependencySearchOptions({ ...fixture(), query, direction });
+          if (!refreshed || change === 'unchanged') return values;
+          if (change === 'reordered') return [...values].reverse();
+          return values.map((option) =>
+            option.title === 'Local candidate' ? { ...option, directions: [] } : option,
+          );
+        },
+        selectExisting: async (option) => {
+          submissions.push(option.title);
+          return { type: 'committed' };
+        },
+        createNew: async () => {
+          submissions.push('created');
+          return { type: 'committed' };
+        },
+        onClose: () => {},
+      });
+      const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
+      input.value = 'candidate';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      refreshed = true;
+      handle.refresh();
+      const activeId = input.getAttribute('aria-activedescendant');
+      if (change === 'disabled') expect(activeId).toBeNull();
+      else
+        expect(activeDocument.getElementById(expectDefined(activeId))?.textContent).toContain(
+          'Local candidate',
+        );
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks();
+      expect(submissions).toEqual(change === 'disabled' ? [] : ['Local candidate']);
+      handle.destroy();
+    },
+  );
+
+  it.each(['input', 'direction', 'arrow', 'create'] as const)(
+    '%s replaces stale existing-task intent explicitly',
+    async (intent) => {
+      const submissions: string[] = [];
+      let stale = false;
+      const handle = mountDependencySearch(activeDocument.body, {
+        direction: 'blocked-by',
+        canChangeDirection: true,
+        options: (query, direction) =>
+          dependencySearchOptions({ ...fixture(), query, direction }).filter(
+            (option) => !stale || option.title !== 'Local candidate',
+          ),
+        selectExisting: async (option) => {
+          submissions.push(option.title);
+          return { type: 'committed' };
+        },
+        createNew: async (text, direction) => {
+          submissions.push(`${text}:${direction}`);
+          return { type: 'committed' };
+        },
+        onClose: () => {},
+      });
+      const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
+      input.value = 'candidate';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      stale = true;
+      handle.refresh();
+      if (intent === 'input') input.dispatchEvent(new Event('input', { bubbles: true }));
+      if (intent === 'direction')
+        expectDefined(
+          handle.element.querySelector<HTMLButtonElement>('[data-direction="blocks"]'),
+        ).click();
+      if (intent === 'arrow')
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      if (intent === 'create')
+        expectDefined(
+          handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
+        ).click();
+      else input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks();
+      const created = `candidate:${intent === 'direction' ? 'blocks' : 'blocked-by'}`;
+      expect(submissions).toEqual([intent === 'arrow' ? 'Other candidate' : created]);
+      handle.destroy();
+    },
+  );
+
+  it.each([true, false])(
+    'offers a native Create action with the same busy and error path (general: %s)',
+    async (general) => {
+      const pending = deferred<{ type: 'validation-error'; message: string }>();
+      const submissions: string[] = [];
+      const handle = mountDependencySearch(activeDocument.body, {
+        direction: general ? 'blocked-by' : 'blocks',
+        canChangeDirection: general,
+        options: () => [],
+        selectExisting: async () => ({ type: 'failed' }),
+        createNew: (text, direction) => {
+          submissions.push(`${text}:${direction}`);
+          return pending.promise;
+        },
+        onClose: () => {},
+      });
+      const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
+      input.value = '  New linked task  ';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const create = expectDefined(
+        handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
+      );
+      expect(create.tagName).toBe('BUTTON');
+      expect(create.type).toBe('button');
+      expect(create.tabIndex).toBe(0);
+      expect(create.getAttribute('role')).not.toBe('option');
+      expect(create.textContent).toContain('New linked task');
+      expect(create.closest('[role="listbox"]')).toBeNull();
+      create.focus();
+      create.click();
+      create.click();
+      expect(submissions).toEqual([`New linked task:${general ? 'blocked-by' : 'blocks'}`]);
+      expect(create.disabled).toBe(true);
+      pending.resolve({ type: 'validation-error', message: 'Choose a valid task title' });
+      await flushMicrotasks();
+      expect(create.disabled).toBe(false);
+      expect(handle.element.querySelector('[role="status"]')?.textContent).toBe(
+        'Choose a valid task title',
+      );
+      expect(input.value).toBe('  New linked task  ');
+      expect(activeDocument.activeElement).toBe(input);
+      handle.destroy();
+    },
+  );
+
+  it.each([false, true])(
+    'retries explicit Create after validation without reviving prior selection (stale: %s)',
+    async (stale) => {
+      const submissions: string[] = [];
+      let refresh = false;
+      const handle = mountDependencySearch(activeDocument.body, {
+        direction: 'blocked-by',
+        canChangeDirection: true,
+        options: (query, direction) =>
+          dependencySearchOptions({ ...fixture(), query, direction }).filter(
+            (option) => !stale || !refresh || option.title !== 'Local candidate',
+          ),
+        selectExisting: async () => {
+          submissions.push('existing');
+          return { type: 'committed' };
+        },
+        createNew: async (text) => {
+          submissions.push(`new:${text}`);
+          return submissions.length === 1
+            ? { type: 'validation-error', message: 'Try another task title' }
+            : { type: 'committed' };
+        },
+        onClose: () => {},
+      });
+      const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
+      input.value = 'candidate';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      refresh = true;
+      handle.refresh();
+      expectDefined(
+        handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
+      ).click();
+      await flushMicrotasks();
+      expect(input.getAttribute('aria-activedescendant')).toBeNull();
+      expect(activeDocument.activeElement).toBe(input);
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks();
+      expect(submissions).toEqual(['new:candidate', 'new:candidate']);
+      handle.destroy();
+    },
+  );
 
   it.each([
     ['ArrowDown', 'Local candidate'],

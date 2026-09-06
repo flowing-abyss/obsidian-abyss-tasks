@@ -5847,7 +5847,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   overflow: hidden auto;
 }
 
-.abyss-dep-search-option {
+.abyss-dep-search-option:not([hidden]) {
   display: block;
   padding: 5px 6px;
   text-align: left;

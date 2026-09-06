@@ -40,6 +40,7 @@ const privateOwners = new Set([
   'TaskIndex',
   'TaskApplicationService',
   'TaskModal',
+  'DatePickerLifecycle',
 ]);
 
 function privateOwner(node: ts.Node): string | undefined {

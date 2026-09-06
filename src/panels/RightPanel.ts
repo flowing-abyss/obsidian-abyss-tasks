@@ -175,6 +175,17 @@ function sameTaskRef(left: TaskRef, right: TaskRef): boolean {
   );
 }
 
+function sameTaskNodeAddress(left: TaskNodeRef, right: TaskNodeRef): boolean {
+  if (left.type === 'task' && right.type === 'task')
+    return left.ref.filePath === right.ref.filePath && left.ref.line === right.ref.line;
+  return (
+    left.type === 'subtask' &&
+    right.type === 'subtask' &&
+    left.ref.relativeLine === right.ref.relativeLine &&
+    sameTaskNodeAddress(left.ref.parent, right.ref.parent)
+  );
+}
+
 function sameCommentRef(left: CommentRef, right: CommentRef): boolean {
   return (
     left.relativeLine === right.relativeLine &&
@@ -1481,8 +1492,14 @@ export class RightPanel {
     body.setAttribute('aria-label', counts.ariaLabel);
     body.title = counts.title;
     body.setAttribute('aria-expanded', String(this.dependencySearch_abyssPrivate !== undefined));
+    const lock = body.querySelector('.abyss-dep-lock');
+    lock?.setAttribute('class', 'abyss-dep-lock');
     body.querySelector('.abyss-dep-count-blocked-by')?.setText(String(counts.blockedBy));
     body.querySelector('.abyss-dep-count-blocks')?.setText(String(counts.blocks));
+    if (lock !== null) {
+      if (counts.blockedBy > 0) lock.addClass('abyss-dep-count-blocked-by');
+      else if (counts.blocks > 0) lock.addClass('abyss-dep-count-blocks');
+    }
     this.updateDependencyBadgeAdd_abyssPrivate(badge, projection);
   }
 
@@ -3193,14 +3210,34 @@ export class RightPanel {
       (command.type === 'restore-subtask' && !sameTaskNodeRef(command.parent, taskNodeRef(current)))
     )
       return;
-    this.undo_abyssPrivate.show(this.el_abyssPrivate, position, async () => {
-      const initiatingStack = this.state_abyssPrivate.get('taskStack');
-      const restored = await tasks.execute(command);
-      if (restored.type === 'ok' && command.type === 'restore-subtask') {
-        this.applyPlanningResult_abyssPrivate(restored, command.parent, initiatingStack);
-      }
-      return restored;
-    });
+    this.undo_abyssPrivate.show(
+      this.el_abyssPrivate,
+      position,
+      async () => {
+        const initiatingStack = this.state_abyssPrivate.get('taskStack');
+        const restored = await tasks.execute(command);
+        if (restored.type === 'ok' && command.type === 'restore-subtask') {
+          this.applyPlanningResult_abyssPrivate(restored, command.parent, initiatingStack);
+        }
+        return restored;
+      },
+      command.type === 'restore-dependency'
+        ? () => {
+            const matches = tasks.queries
+              .listNodes()
+              .filter(({ target }) => sameTaskNodeAddress(target, command.dependent));
+            const node = matches.length === 1 ? matches[0]?.node : undefined;
+            if (node === undefined) return false;
+            const source =
+              'source' in node
+                ? node.source.originalMarkdown
+                : node.ref.originalBlock.split(/\r?\n/u, 1)[0];
+            return command.recovery.source === undefined
+              ? JSON.stringify(node.dependsOn) === JSON.stringify(command.recovery.afterIds)
+              : source === command.recovery.source.after;
+          }
+        : undefined,
+    );
   }
 
   private async updateDate_abyssPrivate(

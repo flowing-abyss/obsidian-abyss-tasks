@@ -15,134 +15,153 @@ export interface DatePickerPopoverOptions {
 const ownerCleanups = new WeakMap<HTMLElement, () => void>();
 
 class DatePickerLifecycle {
-  private readonly ownerDocument: Document;
-  private readonly ownerWindow: NonNullable<Document['defaultView']> | null;
-  private readonly timerWindow: Window;
-  private readonly ownershipToken: { release(): void };
-  private registrationTimer: number | undefined;
-  private focusTimer: number | undefined;
-  private blurTimer: number | undefined;
-  private listening = false;
-  private closed = false;
+  private readonly ownerDocument_abyssPrivate: Document;
+  private readonly ownerWindow_abyssPrivate: NonNullable<Document['defaultView']> | null;
+  private readonly timerWindow_abyssPrivate: Window;
+  private readonly ownershipToken_abyssPrivate: { release(): void };
+  private registrationTimer_abyssPrivate: number | undefined;
+  private focusTimer_abyssPrivate: number | undefined;
+  private blurTimer_abyssPrivate: number | undefined;
+  private listening_abyssPrivate = false;
+  private closed_abyssPrivate = false;
 
   constructor(
-    private readonly options: DatePickerPopoverOptions,
-    private readonly popover: HTMLElement,
-    private readonly input: HTMLInputElement,
-    private readonly position: () => void,
+    private readonly options_abyssPrivate: DatePickerPopoverOptions,
+    private readonly popover_abyssPrivate: HTMLElement,
+    private readonly input_abyssPrivate: HTMLInputElement,
+    private readonly position_abyssPrivate: () => void,
   ) {
-    this.ownerDocument = options.owner.ownerDocument;
-    this.ownerWindow = this.ownerDocument.defaultView;
-    this.timerWindow = this.ownerWindow ?? activeWindow;
-    this.ownershipToken = (options.interactionOwnership ?? noInteractionOwnership).acquire({
+    this.ownerDocument_abyssPrivate = options_abyssPrivate.owner.ownerDocument;
+    this.ownerWindow_abyssPrivate = this.ownerDocument_abyssPrivate.defaultView;
+    this.timerWindow_abyssPrivate = this.ownerWindow_abyssPrivate ?? activeWindow;
+    this.ownershipToken_abyssPrivate = (
+      options_abyssPrivate.interactionOwnership ?? noInteractionOwnership
+    ).acquire({
       blocksShortcuts: true,
     });
   }
 
   mount(): () => void {
-    ownerCleanups.set(this.options.owner, this.cleanup);
-    this.ownerWindow?.addEventListener('resize', this.position);
-    this.ownerDocument.addEventListener('scroll', this.position, true);
-    this.input.addEventListener('change', this.onChange);
-    this.input.addEventListener('blur', this.onBlur);
-    this.registrationTimer = this.setTimer(this.beginListening, 0);
-    this.focusTimer = this.setTimer(this.focusInput, 0);
-    return this.cleanup;
+    ownerCleanups.set(this.options_abyssPrivate.owner, this.cleanup_abyssPrivate);
+    this.ownerWindow_abyssPrivate?.addEventListener('resize', this.position_abyssPrivate);
+    this.ownerDocument_abyssPrivate.addEventListener('scroll', this.position_abyssPrivate, true);
+    this.input_abyssPrivate.addEventListener('change', this.onChange_abyssPrivate);
+    this.input_abyssPrivate.addEventListener('blur', this.onBlur_abyssPrivate);
+    this.registrationTimer_abyssPrivate = this.setTimer_abyssPrivate(
+      this.beginListening_abyssPrivate,
+      0,
+    );
+    this.focusTimer_abyssPrivate = this.setTimer_abyssPrivate(this.focusInput_abyssPrivate, 0);
+    return this.cleanup_abyssPrivate;
   }
 
-  private readonly onOutside = (event: MouseEvent): void => {
+  private readonly onOutside_abyssPrivate = (event: MouseEvent): void => {
     const target = event.target;
     const isOwnerNode =
       target !== null &&
-      (this.ownerWindow != null
-        ? target instanceof this.ownerWindow.Node
+      (this.ownerWindow_abyssPrivate != null
+        ? target instanceof this.ownerWindow_abyssPrivate.Node
         : typeof (target as { nodeType?: unknown }).nodeType === 'number');
     if (
       isOwnerNode &&
-      (this.popover.contains(target as Node) || this.options.anchor.contains(target as Node))
+      (this.popover_abyssPrivate.contains(target as Node) ||
+        this.options_abyssPrivate.anchor.contains(target as Node))
     ) {
       return;
     }
-    this.cleanup();
+    this.cleanup_abyssPrivate();
   };
 
-  private readonly onKeyDown = (event: KeyboardEvent): void => {
+  private readonly onKeyDown_abyssPrivate = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopPropagation();
-    this.cleanup();
+    this.cleanup_abyssPrivate();
   };
 
-  private readonly onChange = (): void => {
+  private readonly onChange_abyssPrivate = (): void => {
     try {
-      this.options.onPick(this.input.value);
+      this.options_abyssPrivate.onPick(this.input_abyssPrivate.value);
     } finally {
-      this.cleanup();
+      this.cleanup_abyssPrivate();
     }
   };
 
-  private readonly onBlur = (): void => {
-    if (this.closed) return;
-    this.clearTimer(this.blurTimer);
-    this.blurTimer = this.setTimer(() => {
-      this.blurTimer = undefined;
-      this.cleanup(false);
+  private readonly onBlur_abyssPrivate = (): void => {
+    if (this.closed_abyssPrivate) return;
+    this.clearTimer_abyssPrivate(this.blurTimer_abyssPrivate);
+    this.blurTimer_abyssPrivate = this.setTimer_abyssPrivate(() => {
+      this.blurTimer_abyssPrivate = undefined;
+      this.cleanup_abyssPrivate(false);
     }, 200);
   };
 
-  private readonly beginListening = (): void => {
-    this.registrationTimer = undefined;
-    if (this.closed) return;
-    this.ownerDocument.addEventListener('mousedown', this.onOutside, true);
-    this.ownerDocument.addEventListener('keydown', this.onKeyDown, true);
-    this.listening = true;
+  private readonly beginListening_abyssPrivate = (): void => {
+    this.registrationTimer_abyssPrivate = undefined;
+    if (this.closed_abyssPrivate) return;
+    this.ownerDocument_abyssPrivate.addEventListener(
+      'mousedown',
+      this.onOutside_abyssPrivate,
+      true,
+    );
+    this.ownerDocument_abyssPrivate.addEventListener('keydown', this.onKeyDown_abyssPrivate, true);
+    this.listening_abyssPrivate = true;
   };
 
-  private readonly focusInput = (): void => {
-    this.focusTimer = undefined;
-    if (!this.closed) this.input.focus();
+  private readonly focusInput_abyssPrivate = (): void => {
+    this.focusTimer_abyssPrivate = undefined;
+    if (!this.closed_abyssPrivate) this.input_abyssPrivate.focus();
   };
 
-  private readonly cleanup = (restoreFocus = true): void => {
-    if (this.closed) return;
-    this.closed = true;
-    this.clearTimers();
-    this.removeListeners();
-    this.popover.remove();
-    if (ownerCleanups.get(this.options.owner) === this.cleanup) {
-      ownerCleanups.delete(this.options.owner);
+  private readonly cleanup_abyssPrivate = (restoreFocus = true): void => {
+    if (this.closed_abyssPrivate) return;
+    this.closed_abyssPrivate = true;
+    this.clearTimers_abyssPrivate();
+    this.removeListeners_abyssPrivate();
+    this.popover_abyssPrivate.remove();
+    if (ownerCleanups.get(this.options_abyssPrivate.owner) === this.cleanup_abyssPrivate) {
+      ownerCleanups.delete(this.options_abyssPrivate.owner);
     }
-    this.ownershipToken.release();
-    if (restoreFocus) this.restoreFocus();
-    this.options.onClose?.();
+    this.ownershipToken_abyssPrivate.release();
+    if (restoreFocus) this.restoreFocus_abyssPrivate();
+    this.options_abyssPrivate.onClose?.();
   };
 
-  private setTimer(callback: () => void, delay: number): number {
-    return this.timerWindow.setTimeout(callback, delay);
+  private setTimer_abyssPrivate(callback: () => void, delay: number): number {
+    return this.timerWindow_abyssPrivate.setTimeout(callback, delay);
   }
 
-  private clearTimer(timer: number | undefined): void {
-    if (timer !== undefined) this.timerWindow.clearTimeout(timer);
+  private clearTimer_abyssPrivate(timer: number | undefined): void {
+    if (timer !== undefined) this.timerWindow_abyssPrivate.clearTimeout(timer);
   }
 
-  private clearTimers(): void {
-    this.clearTimer(this.registrationTimer);
-    this.clearTimer(this.focusTimer);
-    this.clearTimer(this.blurTimer);
+  private clearTimers_abyssPrivate(): void {
+    this.clearTimer_abyssPrivate(this.registrationTimer_abyssPrivate);
+    this.clearTimer_abyssPrivate(this.focusTimer_abyssPrivate);
+    this.clearTimer_abyssPrivate(this.blurTimer_abyssPrivate);
   }
 
-  private removeListeners(): void {
-    if (this.listening) {
-      this.ownerDocument.removeEventListener('mousedown', this.onOutside, true);
-      this.ownerDocument.removeEventListener('keydown', this.onKeyDown, true);
+  private removeListeners_abyssPrivate(): void {
+    if (this.listening_abyssPrivate) {
+      this.ownerDocument_abyssPrivate.removeEventListener(
+        'mousedown',
+        this.onOutside_abyssPrivate,
+        true,
+      );
+      this.ownerDocument_abyssPrivate.removeEventListener(
+        'keydown',
+        this.onKeyDown_abyssPrivate,
+        true,
+      );
     }
-    this.ownerWindow?.removeEventListener('resize', this.position);
-    this.ownerDocument.removeEventListener('scroll', this.position, true);
+    this.ownerWindow_abyssPrivate?.removeEventListener('resize', this.position_abyssPrivate);
+    this.ownerDocument_abyssPrivate.removeEventListener('scroll', this.position_abyssPrivate, true);
   }
 
-  private restoreFocus(): void {
-    if (this.options.restoreFocus != null) this.options.restoreFocus();
-    else if (this.options.anchor.isConnected) this.options.anchor.focus({ preventScroll: true });
+  private restoreFocus_abyssPrivate(): void {
+    if (this.options_abyssPrivate.restoreFocus != null) this.options_abyssPrivate.restoreFocus();
+    else if (this.options_abyssPrivate.anchor.isConnected)
+      this.options_abyssPrivate.anchor.focus({ preventScroll: true });
   }
 }
 
