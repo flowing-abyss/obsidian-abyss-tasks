@@ -7,6 +7,7 @@ import type {
 } from '../domain/commands';
 import type { AtomDateTime } from '../domain/commentTimestamp';
 import type { RecurrencePolicy } from '../domain/recurrence';
+import type { DependencyDirection } from '../domain/taskDependencies';
 import { isTaskDependencyId } from '../domain/taskLineSourceModel';
 import type { RebaseEvidence, RootReconciliationBasis } from '../domain/taskReconciliation';
 import type {
@@ -142,6 +143,15 @@ export interface TaskEditRequest extends RevisionPrecondition {
   readonly command: TaskEditCommand;
 }
 
+export interface CreateDependencySubtaskRequest extends RevisionPrecondition {
+  readonly direction: DependencyDirection;
+  readonly text: string;
+  readonly currentId?: string;
+  readonly childId?: string;
+  readonly today: LocalDate;
+  readonly addCreatedDate: boolean;
+}
+
 export interface TaskEditBatchRequest {
   readonly filePath: string;
   readonly edits: readonly TaskEditRequest[];
@@ -188,6 +198,8 @@ export interface TaskRepository {
   edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult>;
   /** Atomically edits dependency metadata and returns the outcome target's fresh root. */
   editBatch(request: TaskEditBatchRequest): Promise<TaskRepositoryResult>;
+  /** Creates a direct child and its dependency edge in one guarded root edit. */
+  createDependencySubtask(request: CreateDependencySubtaskRequest): Promise<TaskRepositoryResult>;
   completeRecurrence(
     request: RecurrenceCompletionRevisionRequest | RecurrenceCompletionRequest,
   ): Promise<TaskRepositoryResult>;

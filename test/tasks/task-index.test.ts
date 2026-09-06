@@ -298,7 +298,14 @@ describe('TaskIndex lifecycle and events', () => {
     });
     const application = new TaskApplicationService(
       index,
-      { edit, editBatch: vi.fn(), completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
+      {
+        edit,
+        editBatch: vi.fn(),
+        createDependencySubtask: vi.fn(),
+        completeRecurrence: vi.fn(),
+        create: vi.fn(),
+        move: vi.fn(),
+      },
       canonicalStatusCatalog(),
       { today: () => localDate('2026-08-13') },
     );

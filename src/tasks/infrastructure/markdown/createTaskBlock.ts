@@ -2,8 +2,9 @@ import type { TaskDraft } from '../../application/TaskRepository';
 import type { LocalDate, TaskRef } from '../../domain/types';
 import type { TaskIssue } from '../../domain/validation';
 import { applyTaskCommand } from './applyTaskCommand';
+import { createdDateIssues, stampCreatedDate } from './createTaskLine';
 import { TaskBlockEditor } from './TaskBlockEditor';
-import { type ParsedTaskLine, type TaskMarkdownCodec } from './TaskMarkdownCodec';
+import { type TaskMarkdownCodec } from './TaskMarkdownCodec';
 
 const DRAFT_REF: TaskRef = { filePath: '', line: 0, revision: '' };
 const editor = new TaskBlockEditor();
@@ -13,55 +14,6 @@ function invalid(issues: readonly TaskIssue[]): {
   readonly issues: readonly TaskIssue[];
 } {
   return { type: 'invalid' as const, issues };
-}
-
-function isCalendarDate(value: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
-  if (match == null) return false;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-  );
-}
-
-function createdDateIssues(parsed: ParsedTaskLine): readonly TaskIssue[] {
-  if ((parsed.occurrences.get('created')?.length ?? 0) > 1) {
-    return [{ code: 'duplicate-field', field: 'created' }];
-  }
-  if (
-    (parsed.occurrences.get('created')?.length ?? 0) === 1 &&
-    (parsed.planning.created === undefined || !isCalendarDate(parsed.planning.created))
-  ) {
-    return [{ code: 'invalid-date', field: 'created' }];
-  }
-  if (
-    parsed.spans.some((span) => span.kind === 'malformed-known' && span.malformedKind === 'created')
-  ) {
-    return [{ code: 'invalid-date', field: 'created' }];
-  }
-  return [];
-}
-
-function stampCreatedDate(parsed: ParsedTaskLine, today: LocalDate): string {
-  if (parsed.planning.created !== undefined) return parsed.original;
-  const firstLater = parsed.spans.find(
-    (span) =>
-      span.kind === 'start' ||
-      span.kind === 'scheduled' ||
-      span.kind === 'due' ||
-      span.kind === 'cancelled' ||
-      span.kind === 'completion' ||
-      span.kind === 'task-id' ||
-      span.kind === 'depends-on' ||
-      span.kind === 'block-id',
-  );
-  if (firstLater == null) return `${parsed.original} ➕ ${today}`;
-  const before = parsed.original.slice(0, firstLater.from).trimEnd();
-  const after = parsed.original.slice(firstLater.from).trimStart();
-  return `${before} ➕ ${today} ${after}`;
 }
 
 type CreateTaskBlockResult =

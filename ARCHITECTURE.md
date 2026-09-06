@@ -403,6 +403,18 @@ cross-file requests, inconsistent preconditions, and unavailable outcome targets
 partial edit. The result contains the freshly indexed root owning `outcomeTarget`, including fresh
 references for its changed descendants. An unchanged batch preserves the existing revisions.
 
+`TaskRepository.createDependencySubtask()` is a separate structural storage primitive. It confirms
+one root revision and complete current-node ref, then creates a direct child after that node's
+complete subtree and adds the directed dependency in one candidate. `TaskBlockEditor` preserves
+the selected node's indentation, quote depth, and file newline layout; creation shares canonical
+task-line validation and created-date stamping with root capture and ordinary subtask creation.
+Submitted dependency carriers are rejected. The Obsidian adapter uses one guarded `Vault.process()`
+and the same authority staging, rollback, and committed-content installation as existing edits.
+Both adapters prove the fresh current, its direct child, and their edge before publication, and
+rebuild the dedicated `dependency-subtask` outcome from the installed root afterward. This narrow
+method does not expand metadata-only `editBatch()`, add persisted syntax, or perform public
+dependency eligibility/ID allocation; application orchestration owns those checks.
+
 Live authority-backed root refs distinguish byte-identical roots by exact line and revision.
 Initial duplicate occurrences receive distinct ephemeral authority revisions; unchanged source
 populations at the same lines retain those revisions on refresh. Unique sources retain their

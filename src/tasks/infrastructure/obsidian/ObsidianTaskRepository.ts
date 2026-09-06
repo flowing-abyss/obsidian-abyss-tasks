@@ -4,6 +4,7 @@ import {
   dependencyMetadataIssues,
   subtaskRestorationGapIsCurrent,
   subtaskRestorationIssues,
+  type CreateDependencySubtaskRequest,
   type RecurrenceCompletionRequest,
   type RecurrenceCompletionRevisionRequest,
   type RevisionPrecondition,
@@ -43,6 +44,12 @@ import type {
 } from '../../domain/types';
 import { sameTaskNodeRef } from '../../domain/types';
 import { localDate } from '../../domain/validation';
+import {
+  dependencySubtaskResolutionRequest,
+  finishDependencySubtask,
+  prepareDependencySubtask,
+  type PreparedDependencySubtask,
+} from '../createDependencySubtask';
 import { applyTaskCommand } from '../markdown/applyTaskCommand';
 import { createTaskBlock } from '../markdown/createTaskBlock';
 import {
@@ -54,7 +61,12 @@ import { type TaskBlockEditor } from '../markdown/TaskBlockEditor';
 import { type TaskLocator } from '../markdown/TaskLocator';
 import { type TaskMarkdownCodec } from '../markdown/TaskMarkdownCodec';
 import { preparedRevisionResult } from '../preparedRevisionResult';
-import { prepareTaskEditBatch, stageTaskEditBatch, taskEditBatchIssues } from '../TaskEditBatch';
+import {
+  prepareTaskEditBatch,
+  stageTaskEditBatch,
+  taskEditBatchIssues,
+  type PreparedTaskEditBatch,
+} from '../TaskEditBatch';
 import {
   hasUnconfirmedCurrentRoot,
   taskRefContentFingerprint,
@@ -1442,20 +1454,28 @@ export class ObsidianTaskRepository implements TaskRepository {
     const reorderIssue = this.reorderParentIssue_abyssPrivate(command);
     if (reorderIssue !== undefined) return reorderIssue;
     const rootRef = rootRefForCommand(command);
+    const input: EditProcessInput = { prepared, command, rootRef };
+    return this.processEdit_abyssPrivate(input, (transaction, content) =>
+      this.editContent_abyssPrivate(input, transaction, content),
+    );
+  }
+
+  private async processEdit_abyssPrivate(
+    input: EditProcessInput,
+    transform: (transaction: EditTransaction, content: string) => string,
+  ): Promise<TaskRepositoryResult> {
+    const { rootRef, command } = input;
     const file = this.app_abyssPrivate.vault.getAbstractFileByPath(rootRef.filePath);
     if (!(file instanceof TFile)) {
       return { type: 'not-found', target: mutationTarget(command) };
     }
-    const input: EditProcessInput = { prepared, command, rootRef };
     const transaction: EditTransaction = {
       result: undefined,
       transitionToken: undefined,
       committedContent: undefined,
     };
     try {
-      await this.processFile_abyssPrivate(file, (content) =>
-        this.editContent_abyssPrivate(input, transaction, content),
-      );
+      await this.processFile_abyssPrivate(file, (content) => transform(transaction, content));
     } catch {
       await this.rejectMutation_abyssPrivate(file, rootRef, transaction);
       return this.processError_abyssPrivate(rootRef.filePath);
@@ -1486,6 +1506,78 @@ export class ObsidianTaskRepository implements TaskRepository {
     return transaction.result ?? this.processError_abyssPrivate(request.filePath);
   }
 
+  async createDependencySubtask(
+    request: CreateDependencySubtaskRequest,
+  ): Promise<TaskRepositoryResult> {
+    const resolution = dependencySubtaskResolutionRequest(request);
+    if (resolution === undefined)
+      return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'subtask' }] };
+    const rootRef = request.baseRoot.ref;
+    const input = { prepared: resolution, command: resolution.command, rootRef };
+    let prepared: PreparedDependencySubtask | undefined;
+    const result = await this.processEdit_abyssPrivate(input, (transaction, content) => {
+      const location = this.resolveEditLocation_abyssPrivate(input, content);
+      if (location.type === 'result') {
+        transaction.result = location.result;
+        return content;
+      }
+      const candidate = prepareDependencySubtask(
+        request,
+        content,
+        location.block,
+        this.options_abyssPrivate,
+      );
+      if (candidate.type !== 'prepared') {
+        transaction.result = candidate;
+        return content;
+      }
+      prepared = candidate;
+      return this.stagePreparedRoots_abyssPrivate(
+        rootRef.filePath,
+        candidate,
+        transaction,
+        content,
+      );
+    });
+    return finishDependencySubtask(
+      request,
+      prepared,
+      result,
+      this.options_abyssPrivate.snapshotState === undefined
+        ? this.options_abyssPrivate.snapshotsFromContent
+        : undefined,
+    );
+  }
+
+  private stagePreparedRoots_abyssPrivate(
+    path: string,
+    prepared: PreparedTaskEditBatch,
+    transaction: EditTransaction,
+    content: string,
+  ): string {
+    transaction.result = {
+      type: 'committed',
+      outcome: { type: 'task', task: prepared.outcomeRoot },
+      changed: prepared.content !== content,
+    };
+    if (prepared.content === content) return content;
+    transaction.rollbackBasis = this.captureRollbackBasis_abyssPrivate(path, content);
+    const staged = stageTaskEditBatch(
+      path,
+      prepared,
+      this.options_abyssPrivate.refAuthority,
+      this.options_abyssPrivate.snapshotState,
+    );
+    if (staged.type !== 'staged') {
+      transaction.result = staged;
+      return content;
+    }
+    transaction.transitionToken = staged.token;
+    transaction.committedContent = prepared.content;
+    this.retainRollbackBasis_abyssPrivate(transaction);
+    return prepared.content;
+  }
+
   private editBatchContent_abyssPrivate(
     request: TaskEditBatchRequest,
     transaction: EditTransaction,
@@ -1503,27 +1595,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       transaction.result = prepared;
       return content;
     }
-    transaction.result = {
-      type: 'committed',
-      outcome: { type: 'task', task: prepared.outcomeRoot },
-      changed: prepared.content !== content,
-    };
-    if (prepared.content === content) return content;
-    transaction.rollbackBasis = this.captureRollbackBasis_abyssPrivate(request.filePath, content);
-    const staged = stageTaskEditBatch(
-      request.filePath,
-      prepared,
-      this.options_abyssPrivate.refAuthority,
-      this.options_abyssPrivate.snapshotState,
-    );
-    if (staged.type !== 'staged') {
-      transaction.result = staged;
-      return content;
-    }
-    transaction.transitionToken = staged.token;
-    transaction.committedContent = prepared.content;
-    this.retainRollbackBasis_abyssPrivate(transaction);
-    return prepared.content;
+    return this.stagePreparedRoots_abyssPrivate(request.filePath, prepared, transaction, content);
   }
 
   private async rejectBatch_abyssPrivate(

@@ -1,4 +1,4 @@
-import type { ActiveBlockingRelation } from './taskDependencies';
+import type { ActiveBlockingRelation, DependencyDirection } from './taskDependencies';
 import type {
   CommentRef,
   DurationMinutes,
@@ -163,6 +163,15 @@ export interface DependencyCommandOutcome {
   readonly removalRecovery?: DependencyRemovalRecovery;
 }
 
+export interface DependencySubtaskCreationOutcome {
+  readonly type: 'dependency-subtask';
+  readonly change: 'created';
+  readonly direction: DependencyDirection;
+  readonly dependencyId: string;
+  readonly current: TaskOccurrenceResult;
+  readonly child: TaskOccurrenceResult;
+}
+
 export interface SubtaskRemovalRecovery {
   readonly parent: TaskNodeRef;
   readonly markdown: string;
@@ -177,6 +186,7 @@ export interface SubtaskRemovalRecovery {
 
 export type TaskCommandOutcome =
   | DependencyCommandOutcome
+  | DependencySubtaskCreationOutcome
   | {
       readonly type: 'task';
       readonly task: TaskSnapshot;

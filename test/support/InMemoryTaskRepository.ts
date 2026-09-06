@@ -3,6 +3,7 @@ import {
   dependencyMetadataIssues,
   subtaskRestorationGapIsCurrent,
   subtaskRestorationIssues,
+  type CreateDependencySubtaskRequest,
   type RecurrenceCompletionRequest,
   type RecurrenceCompletionRevisionRequest,
   type TaskDraft,
@@ -40,6 +41,11 @@ import type {
 } from '../../src/tasks/domain/types';
 import { sameTaskNodeRef } from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
+import {
+  dependencySubtaskResolutionRequest,
+  finishDependencySubtask,
+  prepareDependencySubtask,
+} from '../../src/tasks/infrastructure/createDependencySubtask';
 import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
 import { createTaskBlock } from '../../src/tasks/infrastructure/markdown/createTaskBlock';
 import { recoverSubtaskRemoval } from '../../src/tasks/infrastructure/markdown/subtaskRemovalRecovery';
@@ -1175,6 +1181,45 @@ export class InMemoryTaskRepository implements TaskRepository {
         path: request.filePath,
         contentState: 'unknown',
       };
+    }
+  }
+
+  async createDependencySubtask(
+    request: CreateDependencySubtaskRequest,
+  ): Promise<TaskRepositoryResult> {
+    const resolution = dependencySubtaskResolutionRequest(request);
+    if (resolution === undefined)
+      return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'subtask' }] };
+    const path = request.baseRoot.ref.filePath;
+    const content = this.files.get(path);
+    if (content === undefined) return { type: 'not-found', target: request.baseTarget };
+    let token: object | undefined;
+    try {
+      const location = this.resolveEditLocation(editRequestInput(resolution));
+      if (location.type === 'result') return location.result;
+      const prepared = prepareDependencySubtask(request, content, location.block, {
+        ...this.options,
+        editor: this.editor,
+      });
+      if (prepared.type !== 'prepared') return prepared;
+      const staged = stageTaskEditBatch(
+        path,
+        prepared,
+        this.options.refAuthority,
+        this.options.snapshotState,
+      );
+      if (staged.type !== 'staged') return staged;
+      token = staged.token;
+      const result = this.installSurvivingRoot(path, prepared.content, prepared.outcomeRoot, token);
+      return finishDependencySubtask(
+        request,
+        prepared,
+        result,
+        this.options.snapshotState === undefined ? this.options.snapshotsFromContent : undefined,
+      );
+    } catch {
+      this.abortTransition(token);
+      return { type: 'io-error', cause: 'process-error', path, contentState: 'unknown' };
     }
   }
 

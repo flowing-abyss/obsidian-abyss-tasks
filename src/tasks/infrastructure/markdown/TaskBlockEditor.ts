@@ -4,8 +4,11 @@ import {
   stripRecurrenceTerminalBlockId,
   type RecurrenceOwnedSubtree,
 } from '../../domain/recurrenceIteration';
-import type { TaskInsertionPolicy } from '../../domain/types';
+import type { DependencyDirection } from '../../domain/taskDependencies';
+import type { LocalDate, TaskInsertionPolicy } from '../../domain/types';
+import { createLinkedTaskLines } from './createTaskLine';
 import { isTaskBlockBlankLine } from './taskBlockSyntax';
+import type { TaskMarkdownCodec } from './TaskMarkdownCodec';
 
 const TASK_RE = /^[\s>]*- \[(.)\]/u;
 const PREFIX_RE = /^([\s>]*)/u;
@@ -51,6 +54,22 @@ export interface TaskBlockTarget {
   readonly childRanges: ReadonlyArray<{ readonly from: number; readonly to: number }>;
   readonly description?: string;
 }
+
+export interface CreateDependencySubtaskEdit {
+  readonly type: 'create-dependency-subtask';
+  readonly current: TaskBlockTarget;
+  readonly direction: DependencyDirection;
+  readonly text: string;
+  readonly currentId?: string;
+  readonly childId?: string;
+  readonly createdDate?: LocalDate;
+}
+
+export type CreateDependencySubtaskEditResult =
+  | (Extract<TaskBlockEditResult, { readonly type: 'changed' }> & {
+      readonly createdChildRelativeLine: number;
+    })
+  | Extract<TaskBlockEditResult, { readonly type: 'invalid' | 'conflict' }>;
 
 export type TaskBlockEdit =
   | { readonly type: 'set-description'; readonly text: string | null }
@@ -778,5 +797,42 @@ export class TaskBlockEditor {
     };
     const earlyResult = this.applyEdit(context, edit);
     return earlyResult ?? this.editedResult(context);
+  }
+
+  createDependencySubtask(
+    codec: TaskMarkdownCodec,
+    content: string,
+    block: TaskRootBlock,
+    edit: CreateDependencySubtaskEdit,
+  ): CreateDependencySubtaskEditResult {
+    const lines = sourceLines(content);
+    const parentLine = block.line + edit.current.relativeLine;
+    const parent = lines[parentLine];
+    if (!isConfirmedTarget(parent, parentLine, block, edit.current)) return { type: 'conflict' };
+    const linked = createLinkedTaskLines(codec, parent.text, edit);
+    if (linked === undefined) return { type: 'invalid', field: 'subtask' };
+    const ending = preferredEnding(lines, parentLine);
+    const prefix = `${PREFIX_RE.exec(parent.text)?.[1] ?? ''}  `;
+    parent.text = linked.current;
+    const createdChildRelativeLine = edit.current.relativeLine + edit.current.lineCount;
+    insertAt(
+      lines,
+      block.line + createdChildRelativeLine,
+      insertedLines([`${prefix}${linked.child}`], ending),
+      ending,
+    );
+    const result = this.editedResult({
+      lines,
+      content,
+      block,
+      target: edit.current,
+      parent,
+      parentLine,
+      ending,
+      hadFinalEnding: content.endsWith('\n'),
+    });
+    return result.type === 'changed'
+      ? { ...result, createdChildRelativeLine }
+      : { type: 'conflict' };
   }
 }

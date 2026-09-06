@@ -161,7 +161,14 @@ async function liveCatalogHarness(mutableType: 'in-progress' | 'done' = 'in-prog
   });
   const application = new TaskApplicationService(
     index,
-    { edit, editBatch: vi.fn(), completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
+    {
+      edit,
+      editBatch: vi.fn(),
+      createDependencySubtask: vi.fn(),
+      completeRecurrence: vi.fn(),
+      create: vi.fn(),
+      move: vi.fn(),
+    },
     liveCatalog,
     clock,
   );

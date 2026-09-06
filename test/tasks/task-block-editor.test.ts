@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskEditCommand } from '../../src/tasks/application/TaskRepository';
 import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
+import { localDate } from '../../src/tasks/domain/validation';
 import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
@@ -9,6 +10,88 @@ import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthorit
 import { canonicalStatusCatalog, expectDefined } from './../helpers';
 
 describe('TaskBlockEditor', () => {
+  it.each(['blocked-by', 'blocks'] as const)(
+    'creates a canonical nested linked child (%s)',
+    (direction) => {
+      const editor = new TaskBlockEditor();
+      const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
+      const content =
+        '> - [ ] root\r\n>   - [ ] current\r\n>     - [ ] existing\r\n>       - [ ] grandchild\r\n>   - [ ] sibling';
+      const result = editor.createDependencySubtask(
+        codec,
+        content,
+        expectDefined(editor.rootBlocks(content)[0]),
+        {
+          type: 'create-dependency-subtask',
+          current: { relativeLine: 1, lineCount: 3, childRanges: [{ from: 1, to: 2 }] },
+          direction,
+          text: 'New #tag 📅 2026-09-10 ^child',
+          currentId: 'current_id',
+          childId: 'child_id',
+          createdDate: localDate('2026-09-06'),
+        },
+      );
+      expect(result.type).toBe('changed');
+      if (result.type !== 'changed') throw new Error('missing linked child');
+      expect(result.content).toBe(
+        direction === 'blocked-by'
+          ? '> - [ ] root\r\n>   - [ ] current ⛔ child_id\r\n>     - [ ] existing\r\n>       - [ ] grandchild\r\n>     - [ ] New #tag ➕ 2026-09-06 📅 2026-09-10 🆔 child_id ^child\r\n>   - [ ] sibling'
+          : '> - [ ] root\r\n>   - [ ] current 🆔 current_id\r\n>     - [ ] existing\r\n>       - [ ] grandchild\r\n>     - [ ] New #tag ➕ 2026-09-06 📅 2026-09-10 ⛔ current_id ^child\r\n>   - [ ] sibling',
+      );
+      expect(result.createdChildRelativeLine).toBe(4);
+    },
+  );
+
+  it.each(['\n', '\r\n'])('preserves root newline layout with %j', (ending) => {
+    for (const final of ['', ending]) {
+      const editor = new TaskBlockEditor();
+      const content = `- [ ] root${ending}  - [ ] existing${final}`;
+      const result = editor.createDependencySubtask(
+        new TaskMarkdownCodec(canonicalStatusCatalog()),
+        content,
+        expectDefined(editor.rootBlocks(content)[0]),
+        {
+          type: 'create-dependency-subtask',
+          current: { relativeLine: 0, lineCount: 2, childRanges: [{ from: 1, to: 1 }] },
+          direction: 'blocks',
+          text: 'New ➕ 2026-01-01',
+          currentId: 'root_id',
+          createdDate: localDate('2026-09-06'),
+        },
+      );
+      expect(result).toMatchObject({
+        type: 'changed',
+        content: `- [ ] root 🆔 root_id${ending}  - [ ] existing${ending}  - [ ] New ➕ 2026-01-01 ⛔ root_id${final}`,
+      });
+    }
+  });
+
+  it.each([
+    '',
+    'New\nother',
+    'New 🆔 authored',
+    'New ⛔ external',
+    'New 🆔',
+    'New ⛔',
+    'New ➕ 2026-99-99',
+  ])('rejects unsafe linked child input %j without mutation', (text) => {
+    const editor = new TaskBlockEditor();
+    const content = '- [ ] root\n';
+    const result = editor.createDependencySubtask(
+      new TaskMarkdownCodec(canonicalStatusCatalog()),
+      content,
+      expectDefined(editor.rootBlocks(content)[0]),
+      {
+        type: 'create-dependency-subtask',
+        current: { relativeLine: 0, lineCount: 1, childRanges: [] },
+        direction: 'blocked-by',
+        text,
+        childId: 'child_id',
+      },
+    );
+    expect(result.type).toBe('invalid');
+    expect(editor.rootBlocks(content)[0]?.source).toBe('- [ ] root');
+  });
   it('applies dependency metadata to root and subtask lines without touching surrounding bytes', () => {
     const editor = new TaskBlockEditor();
     const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
