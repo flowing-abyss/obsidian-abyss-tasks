@@ -47,6 +47,7 @@ export interface OwnedSourceMutation {
   restore(path: string, current: string): string | undefined;
   complete(contents: ReadonlyMap<string, string>): boolean;
   completeRestoration(contents: ReadonlyMap<string, string>): boolean;
+  rejectSource(path: string): void;
   release(): void;
 }
 
@@ -242,28 +243,9 @@ export class TaskRefAuthority {
       owned.clear();
     };
     try {
-      for (const source of sources) {
-        const staged = this.stageBatch(
-          {
-            filePath: source.filePath,
-            candidateFingerprint: taskRefContentFingerprint(source.after),
-            candidateLength: source.after.length,
-            roots: source.roots,
-          },
-          source.roots.map(({ previousRevision }) => previousRevision),
-        );
-        if (staged.type !== 'staged') {
-          release();
-          return undefined;
-        }
-        owned.set(source.filePath, { source: { ...source }, token: staged.token });
-        if (!this.retainPredecessors(staged.token, source.before, source.predecessors)) {
-          release();
-          return undefined;
-        }
-        const pending = this.activeStaged(staged.token);
-        if (pending !== undefined)
-          pending.exactSource = sourceLineage(source.before, source.after, false);
+      if (!this.stageMutationSources(sources, owned)) {
+        release();
+        return undefined;
       }
     } catch (error) {
       release();
@@ -275,7 +257,12 @@ export class TaskRefAuthority {
     return {
       forward: (path, current) => {
         const entry = owned.get(path);
-        if (!forwardOwned() || entry?.source.before !== current) return undefined;
+        if (
+          !this.confirmMutationSource(entry, current, false) ||
+          !forwardOwned() ||
+          entry === undefined
+        )
+          return undefined;
         const evidence = this.activeStaged(entry.token)?.exactSource;
         if (evidence === undefined) return undefined;
         evidence.forwarded = true;
@@ -308,8 +295,36 @@ export class TaskRefAuthority {
         release();
         return true;
       },
+      rejectSource: (path) => {
+        const entry = owned.get(path);
+        if (entry !== undefined) this.abort(entry.token);
+      },
       release,
     };
+  }
+
+  private stageMutationSources(
+    sources: readonly ExactSourceMutation[],
+    owned: Map<string, OwnedSource>,
+  ): boolean {
+    for (const source of sources) {
+      const staged = this.stageBatch(
+        {
+          filePath: source.filePath,
+          candidateFingerprint: taskRefContentFingerprint(source.after),
+          candidateLength: source.after.length,
+          roots: source.roots,
+        },
+        source.roots.map(({ previousRevision }) => previousRevision),
+      );
+      if (staged.type !== 'staged') return false;
+      owned.set(source.filePath, { source: { ...source }, token: staged.token });
+      if (!this.retainPredecessors(staged.token, source.before, source.predecessors)) return false;
+      const pending = this.activeStaged(staged.token);
+      if (pending === undefined) return false;
+      pending.exactSource = sourceLineage(source.before, source.after, false);
+    }
+    return true;
   }
 
   private restoreMutationSource(
@@ -318,8 +333,8 @@ export class TaskRefAuthority {
   ): string | undefined {
     if (
       entry === undefined ||
-      this.activeStaged(entry.token)?.exactSource?.invalid === true ||
-      (current !== entry.source.before && current !== entry.source.after)
+      !this.confirmMutationSource(entry, current, true) ||
+      this.activeStaged(entry.token)?.exactSource?.invalid === true
     )
       return undefined;
     const restored = this.stageRestoration(entry.token, entry.source.before);
@@ -329,6 +344,18 @@ export class TaskRefAuthority {
     if (pending === undefined) return undefined;
     pending.exactSource = sourceLineage(entry.source.before, entry.source.before, true);
     return entry.source.before;
+  }
+
+  private confirmMutationSource(
+    entry: OwnedSource | undefined,
+    current: string,
+    allowAfter: boolean,
+  ): boolean {
+    if (entry === undefined) return false;
+    if (current === entry.source.before || (allowAfter && current === entry.source.after))
+      return true;
+    this.abort(entry.token);
+    return false;
   }
 
   /** Attach the repository's live, population-proven predecessors before publishing a candidate. */

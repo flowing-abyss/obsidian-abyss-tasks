@@ -28,6 +28,28 @@ function sources(authority: TaskRefAuthority) {
 }
 
 describe('owned exact-source transaction', () => {
+  it.each([
+    ['forward', '- [ ] External\r\n'],
+    ['restore', '- [ ] External\r\n'],
+    ['forward', '- [ ] Before\n'],
+    ['restore', '- [ ] Before\n'],
+  ] as const)(
+    'revokes ownership after contrary %s callback bytes %j without an index observation',
+    (operation, contrary) => {
+      const authority = new TaskRefAuthority('transaction');
+      const input = sources(authority);
+      const owner = expectDefined(authority.reserveMutation(input));
+      expect(owner[operation]('a.md', contrary)).toBeUndefined();
+      expect(owner.forward('a.md', '- [ ] Before\r\n')).toBeUndefined();
+      expect(owner.restore('a.md', '- [ ] After\r\n')).toBeUndefined();
+      expect(owner.restore('b.md', '- [ ] Before\r\n')).toBe('- [ ] Before\r\n');
+      expect(owner.complete(new Map(input.map(({ filePath, after }) => [filePath, after])))).toBe(
+        false,
+      );
+      owner.release();
+      expectDefined(authority.reserveMutation(input)).release();
+    },
+  );
   it.each([false, true])(
     'requires live restoration ownership before release (external mutation: %s)',
     (changed) => {
@@ -78,7 +100,6 @@ describe('owned exact-source transaction', () => {
     const input = sources(authority);
     const owner = expectDefined(authority.reserveMutation(input));
     expect(authority.reserveMutation(input)).toBeUndefined();
-    expect(owner.forward('a.md', '- [ ] Before\n')).toBeUndefined();
     expect(owner.forward('a.md', '- [ ] Before\r\n')).toBe('- [ ] After\r\n');
     expect(owner.forward('b.md', '- [ ] Before\r\n')).toBe('- [ ] After\r\n');
     expect(owner.complete(new Map([['a.md', '- [ ] After\r\n']]))).toBe(false);
@@ -113,7 +134,6 @@ describe('owned exact-source transaction', () => {
     const authority = new TaskRefAuthority('transaction');
     const input = sources(authority);
     const owner = expectDefined(authority.reserveMutation(input));
-    expect(owner.restore('a.md', '- [ ] External\r\n')).toBeUndefined();
     expect(owner.restore('a.md', '- [ ] After\r\n')).toBe('- [ ] Before\r\n');
     expect(authority.observeTransition('a.md', '- [ ] Before\r\n')).toMatchObject({
       roots: input[0]?.predecessors,

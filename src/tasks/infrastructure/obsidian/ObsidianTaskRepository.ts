@@ -88,6 +88,29 @@ import { reverseDependency } from './reverseDependency';
 
 type LocateResult = ReturnType<TaskLocator['locate']>;
 
+function notFound(
+  target: TaskMutationTarget,
+): Extract<TaskRepositoryResult, { readonly type: 'not-found' }> {
+  return { type: 'not-found', target };
+}
+
+function conflict(
+  current: TaskSnapshot,
+): Extract<TaskRepositoryResult, { readonly type: 'conflict' }> {
+  return { type: 'conflict', current };
+}
+
+function invalidSyntax(): TaskRepositoryResult {
+  return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+}
+
+function committedTask(
+  task: TaskSnapshot,
+  changed: boolean,
+): Extract<TaskRepositoryResult, { readonly type: 'committed' }> {
+  return { type: 'committed', outcome: { type: 'task', task }, changed };
+}
+
 function authorityRevisionChanged(
   hasAuthority: boolean,
   hasSnapshotState: boolean,
@@ -674,7 +697,7 @@ export class ObsidianTaskRepository implements TaskRepository {
           destination.insertion,
         );
         if (inserted == null) {
-          result = { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+          result = invalidSyntax();
           return content;
         }
         const task = this.snapshotFor_abyssPrivate(
@@ -683,10 +706,10 @@ export class ObsidianTaskRepository implements TaskRepository {
           inserted.block,
         );
         if (task == null) {
-          result = { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+          result = invalidSyntax();
           return content;
         }
-        result = { type: 'committed', outcome: { type: 'task', task }, changed: true };
+        result = committedTask(task, true);
         createdContent = inserted.content;
         return inserted.content;
       });
@@ -744,7 +767,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     }
     const sourceFile = this.app_abyssPrivate.vault.getAbstractFileByPath(ref.filePath);
     if (!(sourceFile instanceof TFile)) {
-      return { type: 'not-found', target: { type: 'task', ref } };
+      return notFound({ type: 'task', ref });
     }
     const sourceContent = await this.readMoveSource_abyssPrivate(sourceFile, ref.filePath);
     if (typeof sourceContent !== 'string') return sourceContent;
@@ -835,7 +858,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     if (sourceTask == null) {
       return {
         type: 'result',
-        result: { type: 'not-found', target: { type: 'task', ref } },
+        result: notFound({ type: 'task', ref }),
       };
     }
     return {
@@ -852,13 +875,11 @@ export class ObsidianTaskRepository implements TaskRepository {
     block: TaskRootBlock,
   ): TaskRepositoryResult {
     const current = this.snapshotFor_abyssPrivate(ref.filePath, content, block);
-    return current != null
-      ? { type: 'conflict', current }
-      : { type: 'not-found', target: { type: 'task', ref } };
+    return current != null ? conflict(current) : notFound({ type: 'task', ref });
   }
 
   private unchangedMove_abyssPrivate(task: TaskSnapshot): TaskRepositoryResult {
-    return { type: 'committed', outcome: { type: 'task', task }, changed: false };
+    return committedTask(task, false);
   }
 
   private async finishMoveSource_abyssPrivate(
@@ -905,7 +926,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       input.destination.insertion,
     );
     if (inserted == null) {
-      transaction.result = { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+      transaction.result = invalidSyntax();
       return content;
     }
     if (
@@ -920,7 +941,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     );
     if (copied == null) {
       this.abortMoveTransition_abyssPrivate(transaction);
-      transaction.result = { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+      transaction.result = invalidSyntax();
       return content;
     }
     transaction.result = {
@@ -942,7 +963,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     if (authority == null || this.state_abyssPrivate == null) return true;
     const revision = authority.successor(input.sourceTask.ref.revision, block.source);
     if (revision === undefined || revision.length === 0) {
-      transaction.result = { type: 'conflict', current: input.sourceTask };
+      transaction.result = conflict(input.sourceTask);
       return false;
     }
     const staged = authority.stage(
@@ -956,7 +977,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       input.indexedRevision,
     );
     if (staged.type === 'conflict') {
-      transaction.result = { type: 'conflict', current: input.sourceTask };
+      transaction.result = conflict(input.sourceTask);
       return false;
     }
     transaction.transition = staged.token;
@@ -1054,7 +1075,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     const request = 'command' in requestOrCommand ? requestOrCommand.command : requestOrCommand;
     const rootRef = rootRefOf(request.target);
     const file = this.app_abyssPrivate.vault.getAbstractFileByPath(rootRef.filePath);
-    if (!(file instanceof TFile)) return { type: 'not-found', target: request.target };
+    if (!(file instanceof TFile)) return notFound(request.target);
     const input: RecurrenceProcessInput = { revisionRequest, request, rootRef };
     const transaction: RecurrenceTransaction = {
       result: undefined,
@@ -1174,7 +1195,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       return this.resolutionResultForTarget_abyssPrivate(located, target, path, content);
     }
     const current = this.snapshotFor_abyssPrivate(path, content, located.block);
-    return current != null ? { type: 'conflict', current } : { type: 'not-found', target };
+    return current != null ? conflict(current) : notFound(target);
   }
 
   private resolveExactRecurrence_abyssPrivate(
@@ -1190,10 +1211,7 @@ export class ObsidianTaskRepository implements TaskRepository {
         ? undefined
         : nodeSnapshot(current, input.request.target);
     if (relativeLine === undefined || current == null || owner == null) {
-      const result =
-        current != null
-          ? { type: 'conflict' as const, current }
-          : { type: 'not-found' as const, target: input.request.target };
+      const result = current != null ? conflict(current) : notFound(input.request.target);
       return { type: 'result', result };
     }
     return { type: 'ready', block, current, owner, relativeLine, indexedRevision };
@@ -1278,7 +1296,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     transaction.result =
       staged.type === 'invalid'
         ? invalidRecurrence('invalid-task-syntax')
-        : { type: 'conflict', current: location.current };
+        : conflict(location.current);
     return false;
   }
 
@@ -1344,15 +1362,25 @@ export class ObsidianTaskRepository implements TaskRepository {
     );
   }
 
-  private async processEdit_abyssPrivate(
+  private processEdit_abyssPrivate(
     input: EditProcessInput,
     transform: (transaction: EditTransaction, content: string) => string,
   ): Promise<TaskRepositoryResult> {
-    const { rootRef, command } = input;
-    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(rootRef.filePath);
-    if (!(file instanceof TFile)) {
-      return { type: 'not-found', target: mutationTarget(command) };
-    }
+    return this.processEditTarget_abyssPrivate(
+      mutationTarget(input.command),
+      transform,
+      (file, transaction) => this.rejectMutation_abyssPrivate(file, input.rootRef, transaction),
+    );
+  }
+
+  private async processEditTarget_abyssPrivate(
+    target: TaskMutationTarget,
+    transform: (transaction: EditTransaction, content: string) => string,
+    reject: (file: TFile, transaction: EditTransaction) => Promise<void>,
+  ): Promise<TaskRepositoryResult> {
+    const path = rootRefOf(target).filePath;
+    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return notFound(target);
     const transaction: EditTransaction = {
       result: undefined,
       transitionToken: undefined,
@@ -1361,33 +1389,21 @@ export class ObsidianTaskRepository implements TaskRepository {
     try {
       await this.processFile_abyssPrivate(file, (content) => transform(transaction, content));
     } catch {
-      await this.rejectMutation_abyssPrivate(file, rootRef, transaction);
-      return this.processError_abyssPrivate(rootRef.filePath);
+      await reject(file, transaction);
+      return this.processError_abyssPrivate(path);
     }
-    this.commitEdit_abyssPrivate(rootRef.filePath, transaction);
-    return transaction.result ?? this.processError_abyssPrivate(rootRef.filePath);
+    this.commitEdit_abyssPrivate(path, transaction);
+    return transaction.result ?? this.processError_abyssPrivate(path);
   }
 
   async editBatch(request: TaskEditBatchRequest): Promise<TaskRepositoryResult> {
     const issues = taskEditBatchIssues(request);
     if (issues.length > 0) return { type: 'invalid', issues };
-    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(request.filePath);
-    if (!(file instanceof TFile)) return { type: 'not-found', target: request.outcomeTarget };
-    const transaction: EditTransaction = {
-      result: undefined,
-      transitionToken: undefined,
-      committedContent: undefined,
-    };
-    try {
-      await this.processFile_abyssPrivate(file, (content) =>
-        this.editBatchContent_abyssPrivate(request, transaction, content),
-      );
-    } catch {
-      await this.rejectBatch_abyssPrivate(file, request, transaction);
-      return this.processError_abyssPrivate(request.filePath);
-    }
-    this.commitEdit_abyssPrivate(request.filePath, transaction);
-    return transaction.result ?? this.processError_abyssPrivate(request.filePath);
+    return this.processEditTarget_abyssPrivate(
+      request.outcomeTarget,
+      (transaction, content) => this.editBatchContent_abyssPrivate(request, transaction, content),
+      (file, transaction) => this.rejectBatch_abyssPrivate(file, request, transaction),
+    );
   }
 
   reverseDependency(request: ReverseDependencyRequest): Promise<TaskRepositoryResult> {
@@ -1397,15 +1413,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       parse: this.parse_abyssPrivate,
       processFile: (file, transform) => this.processFile_abyssPrivate(file, transform),
       capture: (path, content) => this.captureRollbackBasis_abyssPrivate(path, content),
-      prepare: (batch, content) =>
-        prepareTaskEditBatch(batch, content, {
-          ...this.options_abyssPrivate,
-          resolve: (edit) =>
-            this.resolveEditLocation_abyssPrivate(
-              { prepared: edit, command: edit.command, rootRef: edit.baseRoot.ref },
-              content,
-            ),
-        }),
+      prepare: (batch, content) => this.prepareBatch_abyssPrivate(batch, content),
     });
   }
 
@@ -1484,7 +1492,19 @@ export class ObsidianTaskRepository implements TaskRepository {
     transaction: EditTransaction,
     content: string,
   ): string {
-    const prepared = prepareTaskEditBatch(request, content, {
+    const prepared = this.prepareBatch_abyssPrivate(request, content);
+    if (prepared.type !== 'prepared') {
+      transaction.result = prepared;
+      return content;
+    }
+    return this.stagePreparedRoots_abyssPrivate(request.filePath, prepared, transaction, content);
+  }
+
+  private prepareBatch_abyssPrivate(
+    request: TaskEditBatchRequest,
+    content: string,
+  ): PreparedTaskEditBatch | TaskRepositoryResult {
+    return prepareTaskEditBatch(request, content, {
       ...this.options_abyssPrivate,
       resolve: (edit) =>
         this.resolveEditLocation_abyssPrivate(
@@ -1492,11 +1512,6 @@ export class ObsidianTaskRepository implements TaskRepository {
           content,
         ),
     });
-    if (prepared.type !== 'prepared') {
-      transaction.result = prepared;
-      return content;
-    }
-    return this.stagePreparedRoots_abyssPrivate(request.filePath, prepared, transaction, content);
   }
 
   private async rejectBatch_abyssPrivate(
@@ -1615,9 +1630,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       );
     }
     const current = this.snapshotFor_abyssPrivate(input.rootRef.filePath, content, located.block);
-    return current != null
-      ? { type: 'conflict', current }
-      : { type: 'not-found', target: mutationTarget(input.command) };
+    return current != null ? conflict(current) : notFound(mutationTarget(input.command));
   }
 
   private applyLocatedEdit_abyssPrivate(
@@ -1656,7 +1669,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     const current = this.snapshotFor_abyssPrivate(input.rootRef.filePath, content, block);
     const next = this.editor_abyssPrivate.deleteRoot(content, block);
     if (current == null || next === undefined) {
-      return { result: { type: 'not-found', target: mutationTarget(input.command) }, content };
+      return { result: notFound(mutationTarget(input.command)), content };
     }
     return {
       result: { type: 'committed', outcome: { type: 'deleted', ref: current.ref }, changed: true },
@@ -1670,10 +1683,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     block: TaskRootBlock,
   ): EditOutcome {
     const current = this.snapshotFor_abyssPrivate(input.rootRef.filePath, content, block);
-    const result =
-      current != null
-        ? { type: 'conflict' as const, current }
-        : { type: 'not-found' as const, target: mutationTarget(input.command) };
+    const result = current != null ? conflict(current) : notFound(mutationTarget(input.command));
     return { result, content };
   }
 
@@ -1684,7 +1694,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       sourceLine === undefined ||
       this.codec_abyssPrivate.parseLine(sourceLine, { filePath: '', line: 0 }) == null
     ) {
-      return { result: { type: 'not-found', target: mutationTarget(process.command) }, content };
+      return { result: notFound(mutationTarget(process.command)), content };
     }
     const edit = applyTaskCommand(this.codec_abyssPrivate, sourceLine, process.command);
     if (edit.type === 'invalid') return { result: edit, content };
@@ -1701,9 +1711,9 @@ export class ObsidianTaskRepository implements TaskRepository {
       replaced.block,
     );
     return task == null
-      ? { result: { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] }, content }
+      ? { result: invalidSyntax(), content }
       : {
-          result: { type: 'committed', outcome: { type: 'task', task }, changed: true },
+          result: committedTask(task, true),
           content: replaced.content,
         };
   }
@@ -1715,9 +1725,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       input.block,
     );
     const result =
-      task != null
-        ? { type: 'committed' as const, outcome: { type: 'task' as const, task }, changed: false }
-        : { type: 'not-found' as const, target: mutationTarget(input.process.command) };
+      task != null ? committedTask(task, false) : notFound(mutationTarget(input.process.command));
     return { result, content: input.content };
   }
 
@@ -1748,7 +1756,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   }
 
   private invalidateStagedEdit_abyssPrivate(transaction: EditTransaction): void {
-    transaction.result = { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+    transaction.result = invalidSyntax();
     transaction.committedContent = undefined;
   }
 
@@ -1820,9 +1828,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     const current = this.state_abyssPrivate
       ?.previewContent(input.rootRef.filePath, content)
       .find((task) => task.ref.revision === input.rootRef.revision);
-    return current != null
-      ? { type: 'conflict', current }
-      : { type: 'not-found', target: mutationTarget(input.command) };
+    return current != null ? conflict(current) : notFound(mutationTarget(input.command));
   }
 
   private async rejectMutation_abyssPrivate(
@@ -1893,15 +1899,12 @@ export class ObsidianTaskRepository implements TaskRepository {
       current != null && nodeTarget != null ? nodeSnapshot(current, nodeTarget) : undefined;
     if (current == null || node == null) {
       return {
-        result:
-          current != null
-            ? { type: 'conflict', current }
-            : { type: 'not-found', target: mutationTarget(command) },
+        result: current != null ? conflict(current) : notFound(mutationTarget(command)),
         content,
       };
     }
     if (this.structuralOwnershipConflict_abyssPrivate(command, node)) {
-      return { result: { type: 'conflict', current }, content };
+      return { result: conflict(current), content };
     }
     const prepared = this.prepareStructuralCommand_abyssPrivate(command, content);
     if ('result' in prepared) return prepared;
@@ -1969,7 +1972,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     edited: ReturnType<TaskBlockEditor['edit']>,
   ): EditOutcome {
     if (edited.type === 'conflict') {
-      return { result: { type: 'conflict', current }, content };
+      return { result: conflict(current), content };
     }
     if (edited.type === 'invalid') {
       return {
@@ -1979,18 +1982,18 @@ export class ObsidianTaskRepository implements TaskRepository {
     }
     if (edited.type === 'unchanged') {
       return {
-        result: { type: 'committed', outcome: { type: 'task', task: current }, changed: false },
+        result: committedTask(current, false),
         content,
       };
     }
     const task = this.snapshotFor_abyssPrivate(path, edited.content, edited.block);
     return task != null
       ? {
-          result: { type: 'committed', outcome: { type: 'task', task }, changed: true },
+          result: committedTask(task, true),
           content: edited.content,
         }
       : {
-          result: { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] },
+          result: invalidSyntax(),
           content,
         };
   }
@@ -2090,7 +2093,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       return { result: invalidRecurrence('invalid-task-syntax'), content };
     }
     return {
-      result: { type: 'committed', outcome: { type: 'task', task: root }, changed: true },
+      result: committedTask(root, true),
       content: next,
     };
   }
@@ -2112,16 +2115,13 @@ export class ObsidianTaskRepository implements TaskRepository {
     const targetNode = optionalNodeSnapshot(current, nodeTarget);
     if (current == null || targetNode == null) {
       return {
-        result:
-          current != null
-            ? { type: 'conflict', current }
-            : { type: 'not-found', target: mutationTarget(command) },
+        result: current != null ? conflict(current) : notFound(mutationTarget(command)),
         content,
       };
     }
     const lines = content.split(/\r?\n/u);
     const target = this.resolveTextEditTarget_abyssPrivate(input, command, targetNode, lines);
-    if (target.type === 'conflict') return { result: { type: 'conflict', current }, content };
+    if (target.type === 'conflict') return { result: conflict(current), content };
     if (target.type === 'invalid') {
       return {
         result: { type: 'invalid', issues: [{ code: 'invalid-target', field: 'link' }] },
@@ -2147,7 +2147,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     if (editResult.type === 'invalid') return { result: editResult, content };
     if (editResult.type === 'unchanged') {
       return {
-        result: { type: 'committed', outcome: { type: 'task', task: current }, changed: false },
+        result: committedTask(current, false),
         content,
       };
     }
@@ -2164,11 +2164,11 @@ export class ObsidianTaskRepository implements TaskRepository {
     );
     return task != null
       ? {
-          result: { type: 'committed', outcome: { type: 'task', task }, changed: true },
+          result: committedTask(task, true),
           content: replaced.content,
         }
       : {
-          result: { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] },
+          result: invalidSyntax(),
           content,
         };
   }
@@ -2249,18 +2249,16 @@ export class ObsidianTaskRepository implements TaskRepository {
     path: string,
     content: string,
   ): TaskRepositoryResult {
-    if (located.type === 'not-found') return { type: 'not-found', target };
+    if (located.type === 'not-found') return notFound(target);
     if (located.type === 'conflict') {
       const current = this.snapshotFor_abyssPrivate(path, content, located.block);
-      return current != null ? { type: 'conflict', current } : { type: 'not-found', target };
+      return current != null ? conflict(current) : notFound(target);
     }
     const candidates = located.blocks.flatMap((block) => {
       const candidate = this.candidateForTarget_abyssPrivate(block, target, path, content);
       return candidate != null ? [candidate] : [];
     });
-    return candidates.length > 0
-      ? { type: 'ambiguous', candidates }
-      : { type: 'not-found', target };
+    return candidates.length > 0 ? { type: 'ambiguous', candidates } : notFound(target);
   }
 
   private resolutionResult_abyssPrivate(
@@ -2283,13 +2281,11 @@ export class ObsidianTaskRepository implements TaskRepository {
     content: string,
   ): TaskRepositoryResult {
     if (located.type === 'not-found') {
-      return { type: 'not-found', target: { type: 'task', ref } };
+      return notFound({ type: 'task', ref });
     }
     if (located.type === 'conflict') {
       const current = this.snapshotFor_abyssPrivate(ref.filePath, content, located.block);
-      return current != null
-        ? { type: 'conflict', current }
-        : { type: 'not-found', target: { type: 'task', ref } };
+      return current != null ? conflict(current) : notFound({ type: 'task', ref });
     }
     return {
       type: 'ambiguous',

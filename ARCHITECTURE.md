@@ -330,7 +330,8 @@ parses, installs and proves both complete final source populations before report
 all-or-none, including cleanup after a thrown predecessor capture. Every forward callback requires
 the captured original bytes, a current complete predecessor population and all original live tokens.
 Once a forward write has been issued, observing contrary source bytes permanently invalidates that
-file's reservation; replaying captured candidate bytes cannot revive its ownership for success or
+file's reservation; contrary authoritative reads and process-callback bytes also revoke ownership
+without waiting for index notifications. Replaying captured candidate bytes cannot revive ownership for success or
 restoration.
 Restored tokens retain the same contrary-observation guard until exact restoration completion;
 an external edit during restoration proof yields unknown state and a fresh actual-source read.
@@ -341,7 +342,8 @@ The existing predecessor restoration primitive grants no writable inverse transi
 bytes and all original root revisions must be proven again before returning an unchanged I/O error.
 If rollback, authoritative reads or reconciliation cannot prove restoration, the result is an I/O
 error with unknown content state. Recovery reconciles every actually readable source after releasing
-invalid forward evidence; it never installs captured bytes in place of newer external content.
+invalid forward evidence; parsing and installation are isolated per readable source so one failure
+cannot prevent sibling reconciliation. It never installs captured bytes in place of newer external content.
 Every exit releases reservations without touching later owners.
 Forward, rollback and restoration-proof diagnostics contain only phase and fixed cause codes;
 a failing diagnostic sink cannot interrupt compensation. The established command-result presenter

@@ -52,14 +52,12 @@ function uncommittedFailure(error: unknown): TaskRepositoryResult {
 }
 
 /** Only this operation owns the multi-file write/compensation lifecycle. */
-interface ReversalContext {
+interface ReversalContext extends ReversalOptions {
   readonly app: App;
   readonly request: ReverseDependencyRequest;
-  readonly options: ReversalOptions;
   readonly sources: Source[];
   owner: OwnedSourceMutation | undefined;
-  readonly phase: () => DependencyReversalPhase;
-  readonly enterPhase: (next: DependencyReversalPhase) => void;
+  phase: DependencyReversalPhase;
 }
 
 async function runReversal(
@@ -67,24 +65,24 @@ async function runReversal(
   request: ReverseDependencyRequest,
   options: ReversalOptions,
 ): Promise<TaskRepositoryResult> {
-  let phase: DependencyReversalPhase = 'reservation';
   return await run({
+    ...options,
     app,
     request,
-    options,
     sources: [],
     owner: undefined,
-    phase: () => phase,
-    enterPhase: (next) => {
-      phase = next;
-    },
+    phase: 'reservation',
   });
+}
+
+function enterPhase(context: ReversalContext, phase: DependencyReversalPhase): void {
+  context.phase = phase;
 }
 
 async function run(context: ReversalContext): Promise<TaskRepositoryResult> {
   try {
     await write(context);
-    context.enterPhase('postcondition');
+    enterPhase(context, 'postcondition');
     const contents = await readExact(context, 'after');
     const roots = install(context, contents);
     if (!confirmRoots(context, roots, 'after')) throw new ReversalFailure();
@@ -94,7 +92,7 @@ async function run(context: ReversalContext): Promise<TaskRepositoryResult> {
   } catch (error) {
     diagnose(
       context,
-      context.phase(),
+      context.phase,
       error instanceof ReversalFailure ? 'proof-rejected' : 'io-error',
     );
     if (context.owner === undefined) return uncommittedFailure(error);
@@ -109,10 +107,10 @@ async function write(context: ReversalContext): Promise<void> {
   const first = batches[0];
   if (batches.length === 1 && first !== undefined) {
     const file = resolveFile(context, first.filePath);
-    await context.options.processFile(file, (content) => {
+    await context.processFile(file, (content) => {
       prepare(context, first, file, content);
       reserve(context);
-      context.enterPhase('first-write');
+      enterPhase(context, 'first-write');
       return forward(context, context.sources[0], content);
     });
     return;
@@ -123,9 +121,9 @@ async function write(context: ReversalContext): Promise<void> {
   }
   reserve(context);
   for (const [index, source] of context.sources.entries()) {
-    context.enterPhase(index === 0 ? 'first-write' : 'second-write');
+    enterPhase(context, index === 0 ? 'first-write' : 'second-write');
     resolveFile(context, source.filePath, source.file);
-    await context.options.processFile(source.file, (content) => forward(context, source, content));
+    await context.processFile(source.file, (content) => forward(context, source, content));
   }
 }
 
@@ -142,10 +140,10 @@ function prepare(
   file: TFile,
   before: string,
 ): void {
-  const prepared = context.options.prepare(batch, before);
+  const prepared = context.prepare(batch, before);
   if (prepared.type !== 'prepared') throw new ReversalFailure(prepared);
-  const basis = context.options.capture(batch.filePath, before);
-  const authority = context.options.authority;
+  const basis = context.capture(batch.filePath, before);
+  const authority = context.authority;
   if (basis === undefined || authority === undefined) throw new ReversalFailure();
   const roots = prepared.roots.map(({ before: root, block }) => {
     const revision = authority.successor(root.ref.revision, block.source);
@@ -170,11 +168,11 @@ function prepare(
 function reserve(context: ReversalContext): void {
   if (!context.sources.every((source) => predecessorsCurrent(context, source, source.before)))
     throw new ReversalFailure();
-  context.owner = context.options.authority?.reserveMutation(context.sources);
+  context.owner = context.authority?.reserveMutation(context.sources);
   if (context.owner === undefined) throw new ReversalFailure();
   prove(
     context,
-    context.sources.flatMap(({ filePath, after }) => context.options.parse(filePath, after)),
+    context.sources.flatMap(({ filePath, after }) => context.parse(filePath, after)),
   );
 }
 
@@ -187,14 +185,17 @@ function prove(context: ReversalContext, roots: readonly TaskSnapshot[]): Depend
 function forward(context: ReversalContext, source: Source | undefined, content: string): string {
   if (source === undefined) throw new ReversalFailure();
   resolveFile(context, source.filePath, source.file);
-  if (!predecessorsCurrent(context, source, content)) throw new ReversalFailure();
   const candidate = context.owner?.forward(source.filePath, content);
   if (candidate === undefined) throw new ReversalFailure();
+  if (!predecessorsCurrent(context, source, content)) {
+    context.owner?.rejectSource(source.filePath);
+    throw new ReversalFailure();
+  }
   return candidate;
 }
 
 function predecessorsCurrent(context: ReversalContext, source: Source, content: string): boolean {
-  const current = context.options.capture(source.filePath, content)?.roots;
+  const current = context.capture(source.filePath, content)?.roots;
   return (
     current?.length === source.predecessors.length &&
     current.every((root, index) => {
@@ -231,7 +232,10 @@ async function readExact(
   for (const source of context.sources) {
     resolveFile(context, source.filePath, source.file);
     const content = await context.app.vault.read(source.file);
-    if (content !== source[which]) throw new ReversalFailure();
+    if (content !== source[which]) {
+      context.owner?.rejectSource(source.filePath);
+      throw new ReversalFailure();
+    }
     contents.set(source.filePath, content);
   }
   return contents;
@@ -241,21 +245,21 @@ function install(
   context: ReversalContext,
   contents: ReadonlyMap<string, string>,
 ): readonly TaskSnapshot[] {
-  const state = context.options.state;
+  const state = context.state;
   if (state === undefined) throw new ReversalFailure();
   // Parse all sources before publishing either file to the read model.
-  const parsed = [...contents].flatMap(([path, content]) => context.options.parse(path, content));
-  if (context.phase() === 'postcondition') prove(context, parsed);
+  const parsed = [...contents].flatMap(([path, content]) => context.parse(path, content));
+  if (context.phase === 'postcondition') prove(context, parsed);
   return [...contents].flatMap(([path, content]) => state.installCommittedContent(path, content));
 }
 
 async function restore(context: ReversalContext): Promise<boolean> {
   const restored = new Set<string>();
   for (const [index, source] of [...context.sources].reverse().entries()) {
-    context.enterPhase(index === 0 ? 'first-rollback' : 'second-rollback');
+    enterPhase(context, index === 0 ? 'first-rollback' : 'second-rollback');
     try {
       resolveFile(context, source.filePath, source.file);
-      await context.options.processFile(source.file, (content) => {
+      await context.processFile(source.file, (content) => {
         resolveFile(context, source.filePath, source.file);
         const original = context.owner?.restore(source.filePath, content);
         if (original === undefined) throw new ReversalFailure();
@@ -263,20 +267,20 @@ async function restore(context: ReversalContext): Promise<boolean> {
         return original;
       });
     } catch {
-      diagnose(context, context.phase(), 'restoration-rejected');
+      diagnose(context, context.phase, 'restoration-rejected');
     }
   }
-  context.enterPhase('restoration-proof');
+  enterPhase(context, 'restoration-proof');
   try {
     if (!(await reconcileOriginals(context, restored))) throw new ReversalFailure();
     return true;
   } catch {
-    diagnose(context, context.phase(), 'restoration-unproven');
+    diagnose(context, context.phase, 'restoration-unproven');
     return false;
   } finally {
     for (const batch of context.request.batches)
       for (const { baseRoot } of batch.edits)
-        context.options.state?.discardAuthoritySuccessor?.(baseRoot.ref);
+        context.state?.discardAuthoritySuccessor?.(baseRoot.ref);
   }
 }
 
@@ -289,7 +293,7 @@ async function reconcileOriginals(
     (source) => restored.has(source.filePath) && contents.get(source.filePath) === source.before,
   );
   if (!exact) context.owner?.release();
-  const roots = install(context, contents);
+  const roots = reconcile(context, contents);
   if (
     exact &&
     confirmRoots(context, roots, 'before') &&
@@ -298,9 +302,27 @@ async function reconcileOriginals(
     return true;
   if (exact) {
     context.owner?.release();
-    install(context, await readCurrent(context));
+    reconcile(context, await readCurrent(context));
   }
   return false;
+}
+
+function reconcile(
+  context: ReversalContext,
+  contents: ReadonlyMap<string, string>,
+): readonly TaskSnapshot[] {
+  const roots: TaskSnapshot[] = [];
+  for (const [path, content] of contents) {
+    try {
+      context.parse(path, content);
+      const state = context.state;
+      if (state === undefined) throw new ReversalFailure();
+      roots.push(...state.installCommittedContent(path, content));
+    } catch {
+      diagnose(context, 'restoration-proof', 'reconciliation-error');
+    }
+  }
+  return roots;
 }
 
 async function readCurrent(context: ReversalContext): Promise<Map<string, string>> {

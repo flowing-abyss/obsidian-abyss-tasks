@@ -248,6 +248,91 @@ describe('public dependency reversal', () => {
 });
 
 describe('cross-file reversal compensation', () => {
+  it.each(['parse', 'install'] as const)(
+    'reconciles readable siblings independently after a restoration %s failure',
+    async (fault) => {
+      const originals = { 'a.md': '- [ ] A 🆔 a\n', 'b.md': '- [ ] B 🆔 b ⛔ a\n' };
+      const h = await harness(originals);
+      vi.spyOn(h.app.metadataCache, 'trigger').mockImplementation(() => undefined);
+      const process = h.app.vault.process.bind(h.app.vault);
+      const parse = h.index.snapshotsFromContent.bind(h.index);
+      const install = h.index.installCommittedContent.bind(h.index);
+      let writes = 0;
+      vi.spyOn(h.app.vault, 'process').mockImplementation(async (...args) => {
+        writes++;
+        return await process(...args);
+      });
+      vi.spyOn(h.index, 'snapshotsFromContent').mockImplementation((path, content) => {
+        if (writes === 4 && path === 'a.md' && fault === 'parse')
+          throw new Error('restoration parse failed');
+        return parse(path, content);
+      });
+      vi.spyOn(h.index, 'installCommittedContent').mockImplementation((path, content) => {
+        if (writes === 4 && path === 'a.md' && fault === 'install')
+          throw new Error('restoration install failed');
+        const roots = install(path, content);
+        if (writes === 2 && path === 'b.md')
+          throw new Error('postcondition failed after installation');
+        return roots;
+      });
+      expect(await h.application.execute(h.command())).toMatchObject({
+        type: 'io-error',
+        contentState: 'unknown',
+      });
+      expect(await h.contents()).toEqual(originals);
+      expect(h.node('B').node.dependsOn).toEqual(['a']);
+      expect(
+        h.diagnostics.mock.calls.some(([entry]) => entry.phase === 'reversal-restoration-proof'),
+      ).toBe(true);
+      expect(await h.dependencies.serializeMutation(async () => Promise.resolve('released'))).toBe(
+        'released',
+      );
+    },
+  );
+  it.each(['forward-callback', 'postcondition-read'] as const)(
+    'does not overwrite an external ABA replay after contrary %s bytes without index notification',
+    async (fault) => {
+      const originals = { 'a.md': '- [ ] A 🆔 a\n', 'b.md': '- [ ] B 🆔 b ⛔ a\n' };
+      const h = await harness(originals);
+      const observedSources = vi.spyOn(h.authority, 'observeTransition');
+      vi.spyOn(h.app.metadataCache, 'trigger').mockImplementation(() => undefined);
+      const read = h.app.vault.read.bind(h.app.vault);
+      const process = h.app.vault.process.bind(h.app.vault);
+      let writes = 0;
+      let observed = false;
+      const candidate = '- [ ] A 🆔 a ⛔ b\n';
+      vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, transform) => {
+        writes++;
+        if (writes === 1 && fault === 'forward-callback') {
+          await h.app.vault.modify(file, '- [ ] External\n');
+          try {
+            return await process(file, transform);
+          } finally {
+            await h.app.vault.modify(file, candidate);
+          }
+        }
+        if (writes === 3 && fault === 'postcondition-read')
+          await h.app.vault.modify(h.file('a.md'), candidate);
+        return await process(file, transform);
+      });
+      vi.spyOn(h.app.vault, 'read').mockImplementation(async (file) => {
+        if (fault === 'postcondition-read' && writes === 2 && file.path === 'a.md' && !observed) {
+          observed = true;
+          await h.app.vault.modify(file, '- [ ] External\n');
+        }
+        return await read(file);
+      });
+      expect(await h.application.execute(h.command())).toMatchObject({
+        type: 'io-error',
+        contentState: 'unknown',
+      });
+      expect(
+        observedSources.mock.calls.filter(([, content]) => content.includes('External')),
+      ).toEqual([]);
+      expect(await h.contents()).toEqual({ 'a.md': candidate, 'b.md': originals['b.md'] });
+      expect(h.node('A').node.dependsOn).toEqual(['b']);
+    },
+  );
   it.each(['postcondition', 'restoration'] as const)(
     'does not prove stale captured bytes during the second %s read',
     async (phase) => {
