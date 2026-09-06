@@ -6,7 +6,11 @@ import {
   type RecurrenceTaskLineEdit,
   type RecurrenceTaskLineEditResult,
 } from '../../domain/recurrenceIteration';
-import { isTaskDependencyId, parseTaskLineSourceModel } from '../../domain/taskLineSourceModel';
+import {
+  isTaskDependencyId,
+  parseTaskLineSourceModel,
+  type TaskLineSourceModel,
+} from '../../domain/taskLineSourceModel';
 import type {
   OnCompletion,
   TaskPriority,
@@ -625,7 +629,7 @@ function preparePriorityEdit(
   if (issues.length > 0) return { type: 'invalid', issues };
   const occurrences = parsed.occurrences.get('priority')?.length ?? 0;
   if (parsed.priority === edit.priority && (edit.priority !== 'D' || occurrences === 0)) {
-    return { type: 'unchanged', content: parsed.original };
+    return unchangedLine(parsed);
   }
   const priorityToken = TOKEN_BY_PRIORITY[edit.priority];
   const content = replaceOrInsertToken(
@@ -650,15 +654,11 @@ function prepareDateEdit(
     (edit.value === null && current === undefined) ||
     (edit.value !== null && current === edit.value)
   ) {
-    return { type: 'unchanged', content: parsed.original };
+    return unchangedLine(parsed);
   }
   const marker = MARKER_BY_FIELD[edit.field];
   const token = edit.value === null ? null : `${marker} ${edit.value}`;
-  return {
-    type: 'prepared',
-    content: replaceOrInsertToken(parsed, edit.field, token),
-    fields: [edit.field],
-  };
+  return preparedToken(parsed, edit.field, token, [edit.field]);
 }
 
 function prepareTimeEdit(
@@ -675,13 +675,9 @@ function prepareTimeEdit(
     (edit.value === null && current === undefined) ||
     (edit.value !== null && current === edit.value)
   ) {
-    return { type: 'unchanged', content: parsed.original };
+    return unchangedLine(parsed);
   }
-  return {
-    type: 'prepared',
-    content: replaceOrInsertToken(parsed, 'time', edit.value === null ? null : `⏰ ${edit.value}`),
-    fields: ['time'],
-  };
+  return preparedToken(parsed, 'time', edit.value === null ? null : `⏰ ${edit.value}`, ['time']);
 }
 
 function prepareDurationEdit(
@@ -698,7 +694,7 @@ function prepareDurationEdit(
     (edit.value === null && current === undefined) ||
     (edit.value !== null && current === edit.value)
   ) {
-    return { type: 'unchanged', content: parsed.original };
+    return unchangedLine(parsed);
   }
   let token: string | null = null;
   if (edit.value !== null) {
@@ -708,11 +704,20 @@ function prepareDurationEdit(
       return invalid('invalid-duration', 'duration');
     }
   }
-  return {
-    type: 'prepared',
-    content: replaceOrInsertToken(parsed, 'duration', token),
-    fields: ['duration'],
-  };
+  return preparedToken(parsed, 'duration', token, ['duration']);
+}
+
+function unchangedLine(parsed: ParsedTaskLine): Extract<PreparedLineEdit, { type: 'unchanged' }> {
+  return { type: 'unchanged', content: parsed.original };
+}
+
+function preparedToken(
+  parsed: ParsedTaskLine,
+  kind: TaskSpanKind,
+  token: string | null,
+  fields: readonly TaskValidationField[],
+): PreparedLineEdit {
+  return { type: 'prepared', content: replaceOrInsertToken(parsed, kind, token), fields };
 }
 
 function prepareRecurrenceEdit(
@@ -730,17 +735,11 @@ function prepareRecurrenceEdit(
     (edit.value === null && parsed.recurrence === undefined) ||
     (edit.value !== null && parsed.recurrence === edit.value)
   ) {
-    return { type: 'unchanged', content: parsed.original };
+    return unchangedLine(parsed);
   }
-  return {
-    type: 'prepared',
-    content: replaceOrInsertToken(
-      parsed,
-      'recurrence',
-      edit.value === null ? null : `🔁 ${edit.value}`,
-    ),
-    fields: ['recurrence'],
-  };
+  return preparedToken(parsed, 'recurrence', edit.value === null ? null : `🔁 ${edit.value}`, [
+    'recurrence',
+  ]);
 }
 
 function prepareOnCompletionEdit(
@@ -759,71 +758,57 @@ function prepareOnCompletionEdit(
     (edit.value === null && !parsed.onCompletionExplicit) ||
     (edit.value !== null && parsed.onCompletionExplicit && parsed.onCompletion === edit.value)
   ) {
-    return { type: 'unchanged', content: parsed.original };
+    return unchangedLine(parsed);
   }
-  return {
-    type: 'prepared',
-    content: replaceOrInsertToken(
-      parsed,
-      'on-completion',
-      edit.value === null ? null : `🏁 ${edit.value}`,
-    ),
-    fields: ['on-completion'],
-  };
+  return preparedToken(parsed, 'on-completion', edit.value === null ? null : `🏁 ${edit.value}`, [
+    'on-completion',
+  ]);
 }
 
-function prepareDependencyIdEdit(
+function dependencyEditValues(
   parsed: ParsedTaskLine,
-  edit: Extract<LineEdit, { readonly type: 'set-dependency-id' }>,
-): PreparedLineEdit {
-  if (edit.value !== null && !isTaskDependencyId(edit.value)) {
-    return invalid('invalid-target', 'dependency-id');
-  }
-  const issues = duplicateIssue(parsed, 'task-id', 'dependency-id');
-  if (issues.length > 0) return { type: 'invalid', issues };
-  if (hasMalformedKind(parsed, 'task-id')) return invalid('invalid-target', 'dependency-id');
-  if (
-    (edit.value === null && parsed.dependencyId === undefined) ||
-    (edit.value !== null && parsed.dependencyId === edit.value)
-  ) {
-    return { type: 'unchanged', content: parsed.original };
-  }
-  return {
-    type: 'prepared',
-    content: replaceOrInsertToken(
-      parsed,
-      'task-id',
-      edit.value === null ? null : `🆔 ${edit.value}`,
-    ),
-    fields: [],
-  };
+  edit: DependencyLineEdit,
+): {
+  readonly kind: 'task-id' | 'depends-on';
+  readonly field: 'dependency-id' | 'depends-on';
+  readonly marker: string;
+  readonly before: readonly string[];
+  readonly after: readonly string[];
+} {
+  return edit.type === 'set-dependency-id'
+    ? {
+        kind: 'task-id' as const,
+        field: 'dependency-id' as const,
+        marker: '🆔',
+        before: parsed.dependencyId === undefined ? [] : [parsed.dependencyId],
+        after: edit.value === null ? [] : [edit.value],
+      }
+    : {
+        kind: 'depends-on' as const,
+        field: 'depends-on' as const,
+        marker: '⛔',
+        before: parsed.dependsOn,
+        after: edit.values,
+      };
 }
 
-function prepareDependsOnEdit(
+function prepareDependencyLineEdit(
   parsed: ParsedTaskLine,
-  edit: Extract<LineEdit, { readonly type: 'set-depends-on' }>,
+  edit: DependencyLineEdit,
 ): PreparedLineEdit {
-  if (!edit.values.every(isTaskDependencyId)) {
-    return invalid('invalid-target', 'depends-on');
-  }
-  const issues = duplicateIssue(parsed, 'depends-on', 'depends-on');
+  const { kind, field, marker, before, after } = dependencyEditValues(parsed, edit);
+  if (!after.every(isTaskDependencyId)) return invalid('invalid-target', field);
+  const issues = duplicateIssue(parsed, kind, field);
   if (issues.length > 0) return { type: 'invalid', issues };
-  if (hasMalformedKind(parsed, 'depends-on')) return invalid('invalid-target', 'depends-on');
-  if (
-    parsed.dependsOn.length === edit.values.length &&
-    parsed.dependsOn.every((value, index) => value === edit.values[index])
-  ) {
-    return { type: 'unchanged', content: parsed.original };
-  }
-  return {
-    type: 'prepared',
-    content: replaceOrInsertToken(
-      parsed,
-      'depends-on',
-      edit.values.length === 0 ? null : `⛔ ${edit.values.join(', ')}`,
-    ),
-    fields: [],
-  };
+  if (hasMalformedKind(parsed, kind)) return invalid('invalid-target', field);
+  if (before.length === after.length && before.every((value, index) => value === after[index]))
+    return unchangedLine(parsed);
+  return preparedToken(
+    parsed,
+    kind,
+    after.length === 0 ? null : `${marker} ${after.join(', ')}`,
+    [],
+  );
 }
 
 function prepareSetTitleEdit(
@@ -832,7 +817,7 @@ function prepareSetTitleEdit(
 ): PreparedLineEdit {
   if (!isSingleLineText(edit.markdownTitle)) return invalid('invalid-target', 'title');
   return parsed.markdownTitle === edit.markdownTitle
-    ? { type: 'unchanged', content: parsed.original }
+    ? unchangedLine(parsed)
     : {
         type: 'prepared',
         content: replaceTitle(parsed, edit.markdownTitle),
@@ -846,7 +831,7 @@ function prepareAppendTitleEdit(
 ): PreparedLineEdit {
   if (!isSingleLineText(edit.markdown)) return invalid('invalid-target', 'title');
   return edit.markdown.length === 0
-    ? { type: 'unchanged', content: parsed.original }
+    ? unchangedLine(parsed)
     : {
         type: 'prepared',
         content: appendTitle(parsed, edit.markdown),
@@ -866,15 +851,6 @@ function prepareTitleLineEdit(parsed: ParsedTaskLine, edit: TitleLineEdit): Prep
   }
 }
 
-function prepareDependencyLineEdit(
-  parsed: ParsedTaskLine,
-  edit: DependencyLineEdit,
-): PreparedLineEdit {
-  return edit.type === 'set-dependency-id'
-    ? prepareDependencyIdEdit(parsed, edit)
-    : prepareDependsOnEdit(parsed, edit);
-}
-
 function preparePlanningLineEdit(parsed: ParsedTaskLine, edit: PlanningLineEdit): PreparedLineEdit {
   switch (edit.type) {
     case 'set-date':
@@ -884,6 +860,219 @@ function preparePlanningLineEdit(parsed: ParsedTaskLine, edit: PlanningLineEdit)
     case 'set-duration':
       return prepareDurationEdit(parsed, edit);
   }
+}
+
+function validationState(
+  statusCatalog: StatusCatalog,
+  parsed: ParsedTaskLine,
+): TaskValidationState {
+  return {
+    markdownTitle: parsed.markdownTitle,
+    statusSymbol: parsed.statusSymbol,
+    statusConfigured: statusCatalog.ruleForSymbol(parsed.statusSymbol) !== undefined,
+    planning: parsed.planning,
+    ...(parsed.recurrence !== undefined && { recurrence: parsed.recurrence }),
+    onCompletion: parsed.onCompletion,
+    malformedFields: [...malformedFields(parsed)],
+  };
+}
+
+function introducedTitleIssues(
+  statusCatalog: StatusCatalog,
+  before: ParsedTaskLine,
+  after: ParsedTaskLine,
+): readonly TaskIssue[] {
+  const introducedFields = new Set<TaskValidationField>();
+  const duplicateIssues: TaskIssue[] = [];
+  for (const [field, kind] of Object.entries(SPAN_KIND_BY_FIELD) as Array<
+    [TaskValidationField, TaskSpanKind]
+  >) {
+    const carrierCount = (parsed: ParsedTaskLine): number =>
+      (parsed.occurrences.get(kind)?.length ?? 0) +
+      parsed.spans.filter((span) => span.kind === 'malformed-known' && span.malformedKind === kind)
+        .length;
+    const beforeOccurrences = carrierCount(before);
+    const afterOccurrences = carrierCount(after);
+    if (afterOccurrences > beforeOccurrences) introducedFields.add(field);
+    if (afterOccurrences > beforeOccurrences && afterOccurrences > 1) {
+      duplicateIssues.push({ code: 'duplicate-field', field });
+    }
+  }
+  if (duplicateIssues.length > 0) return duplicateIssues;
+
+  const introducedSemanticSpan = [...TITLE_SEMANTIC_KINDS].some(
+    (kind) =>
+      (after.occurrences.get(kind)?.length ?? 0) > (before.occurrences.get(kind)?.length ?? 0),
+  );
+  if (introducedFields.size === 0 && !introducedSemanticSpan) {
+    return [];
+  }
+
+  const valueIssues = validateTaskChange(validationState(statusCatalog, after), introducedFields);
+  return valueIssues.length > 0 ? valueIssues : [{ code: 'invalid-target', field: 'title' }];
+}
+
+function prepareTagChange(
+  parsed: ParsedTaskLine,
+  add: readonly string[],
+  remove: readonly string[],
+): PreparedLineEdit {
+  const additions = normalizedTags(add);
+  const removals = new Set(normalizedTags(remove));
+  if (!tagsAreValid([...additions, ...removals])) return invalid('invalid-target', 'tags');
+
+  const content = contentWithoutTags(parsed, removals);
+  const candidate = parseTaskLine(content);
+  if (candidate === null) return invalid('invalid-task-syntax');
+  const present = new Set(candidate.tags);
+  const pending = additions.filter((tag) => !present.has(tag));
+  if (pending.length === 0) return { type: 'prepared', content, fields: [] };
+  return insertTags(content, candidate, pending);
+}
+
+function clearStatusStamps(
+  content: string,
+  preserved: StatusStampKind | undefined,
+): StatusContentResult {
+  let updated = content;
+  for (const kind of ['completion', 'cancelled'] as const) {
+    if (kind === preserved) continue;
+    const parsed = parseTaskLine(updated);
+    if (parsed === null) return invalid('invalid-task-syntax');
+    updated = replaceOrInsertToken(parsed, kind, null);
+  }
+  return { type: 'content', content: updated };
+}
+
+function writeStatusStamp(
+  content: string,
+  stampedKind: StatusStampKind | undefined,
+  edit: Extract<LineEdit, { readonly type: 'set-status' }>,
+): StatusContentResult {
+  if (stampedKind === undefined || edit.today === undefined) {
+    return { type: 'content', content };
+  }
+  if (stampedKind === 'completion' && edit.addCompletionDate === false) {
+    return { type: 'content', content };
+  }
+  const parsed = parseTaskLine(content);
+  if (parsed === null) return invalid('invalid-task-syntax');
+  const marker = stampedKind === 'completion' ? '✅' : '❌';
+  return {
+    type: 'content',
+    content: replaceOrInsertToken(parsed, stampedKind, `${marker} ${edit.today}`),
+  };
+}
+
+function prepareStatusTransition(
+  statusCatalog: StatusCatalog,
+  parsed: ParsedTaskLine,
+  edit: Extract<LineEdit, { readonly type: 'set-status' }>,
+): StatusTransitionPreparation {
+  if (parsed.statusSymbol === edit.symbol) {
+    return unchangedLine(parsed);
+  }
+  const rule = statusCatalog.ruleForSymbol(edit.symbol);
+  if (!validStatusTarget(edit.symbol, rule)) return invalid('invalid-status', 'status');
+  const issues = statusTransitionIssues(parsed);
+  if (issues.length > 0) return { type: 'invalid', issues };
+
+  const stampedKind = statusStampKind(rule.type);
+  const currentRule = statusCatalog.ruleForSymbol(parsed.statusSymbol);
+  const preservesStamp = stampedKind !== undefined && currentRule?.type === rule.type;
+  if (statusDateIsMissing(stampedKind, preservesStamp, edit.today)) {
+    return invalid('invalid-status', 'status');
+  }
+  return {
+    type: 'status-transition',
+    stampedKind,
+    preservedStamp: preservesStamp ? stampedKind : undefined,
+  };
+}
+
+function prepareStatusEdit(
+  statusCatalog: StatusCatalog,
+  parsed: ParsedTaskLine,
+  edit: Extract<LineEdit, { readonly type: 'set-status' }>,
+): PreparedLineEdit {
+  const transition = prepareStatusTransition(statusCatalog, parsed, edit);
+  if (transition.type !== 'status-transition') return transition;
+  const statusAt = (parsed.occurrences.get('prefix')?.[0]?.to ?? 0) - 2;
+  const statusContent = spliceSource(parsed.original, statusAt, statusAt + 1, edit.symbol);
+  const cleared = clearStatusStamps(statusContent, transition.preservedStamp);
+  if (cleared.type === 'invalid') return cleared;
+  const stamped = writeStatusStamp(cleared.content, transition.stampedKind, edit);
+  if (stamped.type === 'invalid') return stamped;
+  return {
+    type: 'prepared',
+    content: stamped.content,
+    fields: ['status', 'completion', 'cancelled'],
+  };
+}
+
+function prepareLineEdit(
+  statusCatalog: StatusCatalog,
+  parsed: ParsedTaskLine,
+  edit: LineEdit,
+): PreparedLineEdit {
+  if (isTitleLineEdit(edit)) return prepareTitleLineEdit(parsed, edit);
+  if (isDependencyLineEdit(edit)) return prepareDependencyLineEdit(parsed, edit);
+  if (isPlanningLineEdit(edit)) return preparePlanningLineEdit(parsed, edit);
+  if (edit.type === 'change-tags') return prepareTagChange(parsed, edit.add, edit.remove);
+  switch (edit.type) {
+    case 'set-status':
+      return prepareStatusEdit(statusCatalog, parsed, edit);
+    case 'set-priority':
+      return preparePriorityEdit(parsed, edit);
+    case 'set-recurrence':
+      return prepareRecurrenceEdit(parsed, edit);
+    case 'set-on-completion':
+      return prepareOnCompletionEdit(parsed, edit);
+  }
+}
+
+function applyPreparedLineEdit(
+  statusCatalog: StatusCatalog,
+  current: ParsedTaskLine,
+  edit: LineEdit,
+  prepared = prepareLineEdit(statusCatalog, current, edit),
+): AppliedLineEdit {
+  if (prepared.type !== 'prepared') return prepared;
+  const reparsed = parseTaskLine(prepared.content);
+  if (reparsed === null) return invalid('invalid-task-syntax');
+  if (isTitleLineEdit(edit)) {
+    const titleIssues = introducedTitleIssues(statusCatalog, current, reparsed);
+    if (titleIssues.length > 0) return { type: 'invalid', issues: titleIssues };
+  }
+  return {
+    type: 'applied',
+    content: prepared.content,
+    parsed: reparsed,
+    fields: prepared.fields,
+  };
+}
+
+/** Omit source-scanner coordinates/carriers from the codec's public line shape. */
+function taskLineFields({
+  contentEnd: _contentEnd,
+  statusAt: _statusAt,
+  carriers: _carriers,
+  ...fields
+}: TaskLineSourceModel): Omit<TaskLineSourceModel, 'contentEnd' | 'statusAt' | 'carriers'> {
+  return fields;
+}
+
+function parseTaskLine(
+  original: string,
+  source: ParseSource = { filePath: '', line: 0 },
+): ParsedTaskLine | null {
+  const model = parseTaskLineSourceModel(original);
+  if (model == null) return null;
+  return {
+    ...taskLineFields(model),
+    title: collapseLinks(model.markdownTitle),
+    source: { ...source, originalMarkdown: original },
+  };
 }
 
 export class TaskMarkdownCodec {
@@ -914,24 +1103,12 @@ export class TaskMarkdownCodec {
       : { type: 'changed', content };
   }
 
-  private validationState(parsed: ParsedTaskLine): TaskValidationState {
-    return {
-      markdownTitle: parsed.markdownTitle,
-      statusSymbol: parsed.statusSymbol,
-      statusConfigured: this.statusCatalog.ruleForSymbol(parsed.statusSymbol) !== undefined,
-      planning: parsed.planning,
-      ...(parsed.recurrence !== undefined && { recurrence: parsed.recurrence }),
-      onCompletion: parsed.onCompletion,
-      malformedFields: [...malformedFields(parsed)],
-    };
-  }
-
   /** Validates a complete candidate line before task creation writes it to the vault. */
   validateLine(original: string): readonly TaskIssue[] {
-    const parsed = this.parseLine(original, { filePath: '', line: 0 });
+    const parsed = parseTaskLine(original);
     if (parsed == null) return [{ code: 'invalid-task-syntax' }];
     return validateTaskChange(
-      this.validationState(parsed),
+      validationState(this.statusCatalog, parsed),
       new Set<TaskValidationField>([
         'due',
         'scheduled',
@@ -946,184 +1123,18 @@ export class TaskMarkdownCodec {
     );
   }
 
-  private introducedTitleIssues(
-    before: ParsedTaskLine,
-    after: ParsedTaskLine,
-  ): readonly TaskIssue[] {
-    const introducedFields = new Set<TaskValidationField>();
-    const duplicateIssues: TaskIssue[] = [];
-    for (const [field, kind] of Object.entries(SPAN_KIND_BY_FIELD) as Array<
-      [TaskValidationField, TaskSpanKind]
-    >) {
-      const carrierCount = (parsed: ParsedTaskLine): number =>
-        (parsed.occurrences.get(kind)?.length ?? 0) +
-        parsed.spans.filter(
-          (span) => span.kind === 'malformed-known' && span.malformedKind === kind,
-        ).length;
-      const beforeOccurrences = carrierCount(before);
-      const afterOccurrences = carrierCount(after);
-      if (afterOccurrences > beforeOccurrences) introducedFields.add(field);
-      if (afterOccurrences > beforeOccurrences && afterOccurrences > 1) {
-        duplicateIssues.push({ code: 'duplicate-field', field });
-      }
-    }
-    if (duplicateIssues.length > 0) return duplicateIssues;
-
-    const introducedSemanticSpan = [...TITLE_SEMANTIC_KINDS].some(
-      (kind) =>
-        (after.occurrences.get(kind)?.length ?? 0) > (before.occurrences.get(kind)?.length ?? 0),
-    );
-    if (introducedFields.size === 0 && !introducedSemanticSpan) {
-      return [];
-    }
-
-    const valueIssues = validateTaskChange(this.validationState(after), introducedFields);
-    return valueIssues.length > 0 ? valueIssues : [{ code: 'invalid-target', field: 'title' }];
-  }
-
-  private prepareTagChange(
-    parsed: ParsedTaskLine,
-    add: readonly string[],
-    remove: readonly string[],
-  ): PreparedLineEdit {
-    const additions = normalizedTags(add);
-    const removals = new Set(normalizedTags(remove));
-    if (!tagsAreValid([...additions, ...removals])) return invalid('invalid-target', 'tags');
-
-    const content = contentWithoutTags(parsed, removals);
-    const candidate = this.parseLine(content, { filePath: '', line: 0 });
-    if (candidate === null) return invalid('invalid-task-syntax');
-    const present = new Set(candidate.tags);
-    const pending = additions.filter((tag) => !present.has(tag));
-    if (pending.length === 0) return { type: 'prepared', content, fields: [] };
-    return insertTags(content, candidate, pending);
-  }
-
-  private clearStatusStamps(
-    content: string,
-    preserved: StatusStampKind | undefined,
-  ): StatusContentResult {
-    let updated = content;
-    for (const kind of ['completion', 'cancelled'] as const) {
-      if (kind === preserved) continue;
-      const parsed = this.parseLine(updated, { filePath: '', line: 0 });
-      if (parsed === null) return invalid('invalid-task-syntax');
-      updated = replaceOrInsertToken(parsed, kind, null);
-    }
-    return { type: 'content', content: updated };
-  }
-
-  private writeStatusStamp(
-    content: string,
-    stampedKind: StatusStampKind | undefined,
-    edit: Extract<LineEdit, { readonly type: 'set-status' }>,
-  ): StatusContentResult {
-    if (stampedKind === undefined || edit.today === undefined) {
-      return { type: 'content', content };
-    }
-    if (stampedKind === 'completion' && edit.addCompletionDate === false) {
-      return { type: 'content', content };
-    }
-    const parsed = this.parseLine(content, { filePath: '', line: 0 });
-    if (parsed === null) return invalid('invalid-task-syntax');
-    const marker = stampedKind === 'completion' ? '✅' : '❌';
-    return {
-      type: 'content',
-      content: replaceOrInsertToken(parsed, stampedKind, `${marker} ${edit.today}`),
-    };
-  }
-
-  private prepareStatusTransition(
-    parsed: ParsedTaskLine,
-    edit: Extract<LineEdit, { readonly type: 'set-status' }>,
-  ): StatusTransitionPreparation {
-    if (parsed.statusSymbol === edit.symbol) {
-      return { type: 'unchanged', content: parsed.original };
-    }
-    const rule = this.statusCatalog.ruleForSymbol(edit.symbol);
-    if (!validStatusTarget(edit.symbol, rule)) return invalid('invalid-status', 'status');
-    const issues = statusTransitionIssues(parsed);
-    if (issues.length > 0) return { type: 'invalid', issues };
-
-    const stampedKind = statusStampKind(rule.type);
-    const currentRule = this.statusCatalog.ruleForSymbol(parsed.statusSymbol);
-    const preservesStamp = stampedKind !== undefined && currentRule?.type === rule.type;
-    if (statusDateIsMissing(stampedKind, preservesStamp, edit.today)) {
-      return invalid('invalid-status', 'status');
-    }
-    return {
-      type: 'status-transition',
-      stampedKind,
-      preservedStamp: preservesStamp ? stampedKind : undefined,
-    };
-  }
-
-  private prepareStatusEdit(
-    parsed: ParsedTaskLine,
-    edit: Extract<LineEdit, { readonly type: 'set-status' }>,
-  ): PreparedLineEdit {
-    const transition = this.prepareStatusTransition(parsed, edit);
-    if (transition.type !== 'status-transition') return transition;
-    const statusAt = (parsed.occurrences.get('prefix')?.[0]?.to ?? 0) - 2;
-    const statusContent = spliceSource(parsed.original, statusAt, statusAt + 1, edit.symbol);
-    const cleared = this.clearStatusStamps(statusContent, transition.preservedStamp);
-    if (cleared.type === 'invalid') return cleared;
-    const stamped = this.writeStatusStamp(cleared.content, transition.stampedKind, edit);
-    if (stamped.type === 'invalid') return stamped;
-    return {
-      type: 'prepared',
-      content: stamped.content,
-      fields: ['status', 'completion', 'cancelled'],
-    };
-  }
-
-  private prepareLineEdit(parsed: ParsedTaskLine, edit: LineEdit): PreparedLineEdit {
-    if (isTitleLineEdit(edit)) return prepareTitleLineEdit(parsed, edit);
-    if (isDependencyLineEdit(edit)) return prepareDependencyLineEdit(parsed, edit);
-    if (isPlanningLineEdit(edit)) return preparePlanningLineEdit(parsed, edit);
-    if (edit.type === 'change-tags') return this.prepareTagChange(parsed, edit.add, edit.remove);
-    switch (edit.type) {
-      case 'set-status':
-        return this.prepareStatusEdit(parsed, edit);
-      case 'set-priority':
-        return preparePriorityEdit(parsed, edit);
-      case 'set-recurrence':
-        return prepareRecurrenceEdit(parsed, edit);
-      case 'set-on-completion':
-        return prepareOnCompletionEdit(parsed, edit);
-    }
-  }
-
-  private applyPreparedLineEdit(current: ParsedTaskLine, edit: LineEdit): AppliedLineEdit {
-    const prepared = this.prepareLineEdit(current, edit);
-    if (prepared.type !== 'prepared') return prepared;
-    const reparsed = this.parseLine(prepared.content, { filePath: '', line: 0 });
-    if (reparsed === null) return invalid('invalid-task-syntax');
-    if (isTitleLineEdit(edit)) {
-      const titleIssues = this.introducedTitleIssues(current, reparsed);
-      if (titleIssues.length > 0) return { type: 'invalid', issues: titleIssues };
-    }
-    return {
-      type: 'applied',
-      content: prepared.content,
-      parsed: reparsed,
-      fields: prepared.fields,
-    };
-  }
-
   applyLineEdit(original: string, edit: LineEdit): LineEditResult {
-    const parsed = this.parseLine(original, { filePath: '', line: 0 });
+    const parsed = parseTaskLine(original);
     if (parsed == null) return invalid('invalid-task-syntax');
-    const prepared = this.prepareLineEdit(parsed, edit);
+    const prepared = prepareLineEdit(this.statusCatalog, parsed, edit);
     if (prepared.type !== 'prepared') return prepared;
     if (prepared.content === original) return { type: 'unchanged', content: original };
-    const reparsed = this.parseLine(prepared.content, { filePath: '', line: 0 });
-    if (reparsed == null) return invalid('invalid-task-syntax');
-    if (isTitleLineEdit(edit)) {
-      const titleIssues = this.introducedTitleIssues(parsed, reparsed);
-      if (titleIssues.length > 0) return { type: 'invalid', issues: titleIssues };
-    }
-    const issues = validateTaskChange(this.validationState(reparsed), new Set(prepared.fields));
+    const applied = applyPreparedLineEdit(this.statusCatalog, parsed, edit, prepared);
+    if (applied.type !== 'applied') return applied;
+    const issues = validateTaskChange(
+      validationState(this.statusCatalog, applied.parsed),
+      new Set(prepared.fields),
+    );
     if (issues.length > 0) return { type: 'invalid', issues };
     return { type: 'changed', content: prepared.content };
   }
@@ -1134,47 +1145,27 @@ export class TaskMarkdownCodec {
     edits: readonly LineEdit[],
     requestedFields: readonly TaskValidationField[] = [],
   ): LineEditResult {
-    const before = this.parseLine(original, { filePath: '', line: 0 });
+    const before = parseTaskLine(original);
     if (before == null) return invalid('invalid-task-syntax');
 
     let current = before;
     let content = original;
     const changedFields = new Set<TaskValidationField>(requestedFields);
     for (const edit of edits) {
-      const applied = this.applyPreparedLineEdit(current, edit);
+      const applied = applyPreparedLineEdit(this.statusCatalog, current, edit);
       if (applied.type === 'invalid') return applied;
       if (applied.type === 'unchanged') continue;
       content = applied.content;
       for (const field of applied.fields) changedFields.add(field);
       current = applied.parsed;
     }
-    const issues = validateTaskChange(this.validationState(current), changedFields);
+    const issues = validateTaskChange(validationState(this.statusCatalog, current), changedFields);
     if (issues.length > 0) return { type: 'invalid', issues };
     return content === original
       ? { type: 'unchanged', content: original }
       : { type: 'changed', content };
   }
-
   parseLine(original: string, source: ParseSource): ParsedTaskLine | null {
-    const model = parseTaskLineSourceModel(original);
-    if (model == null) return null;
-    return {
-      original: model.original,
-      lineEnding: model.lineEnding,
-      statusSymbol: model.statusSymbol,
-      markdownTitle: model.markdownTitle,
-      title: collapseLinks(model.markdownTitle),
-      tags: model.tags,
-      ...(model.dependencyId !== undefined && { dependencyId: model.dependencyId }),
-      dependsOn: model.dependsOn,
-      spans: model.spans,
-      occurrences: model.occurrences,
-      planning: model.planning,
-      priority: model.priority,
-      ...(model.recurrence !== undefined && { recurrence: model.recurrence }),
-      onCompletion: model.onCompletion,
-      onCompletionExplicit: model.onCompletionExplicit,
-      source: { ...source, originalMarkdown: original },
-    };
+    return parseTaskLine(original, source);
   }
 }

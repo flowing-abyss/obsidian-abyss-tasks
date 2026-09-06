@@ -146,6 +146,60 @@ export function mountDependencySearch(
   return new DependencySearchController(container, options);
 }
 
+function updateDirectionControls(
+  directionControls: HTMLElement | undefined,
+  direction: DependencyDirection,
+): void {
+  directionControls?.querySelectorAll<HTMLButtonElement>('[data-direction]').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset['direction'] === direction));
+  });
+}
+
+function updateCreateAffordance(input: HTMLInputElement, createAffordance: HTMLElement): void {
+  const text = input.value.trim();
+  createAffordance.hidden = text.length === 0;
+  createAffordance.setText(text.length === 0 ? '' : `Create “${text}” as sub-task`);
+}
+
+function updateActive(list: HTMLElement, input: HTMLInputElement, activeIndex: number): void {
+  list.querySelectorAll<HTMLElement>('[role="option"]').forEach((element, index) => {
+    const active = index === activeIndex;
+    element.setAttribute('aria-selected', String(active));
+    element.toggleClass('is-active', active);
+  });
+  const active = list.querySelector<HTMLElement>('[aria-selected="true"]');
+  if (active === null) input.removeAttribute('aria-activedescendant');
+  else {
+    input.setAttribute('aria-activedescendant', active.id);
+    if (typeof active.scrollIntoView === 'function') active.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function isEligible(
+  direction: DependencyDirection,
+  option: DependencySearchOption | undefined,
+): option is DependencySearchOption {
+  return option?.directions.includes(direction) === true;
+}
+
+function showError(error: HTMLElement, message: string): void {
+  error.setText(message);
+  error.hidden = false;
+}
+
+function clearError(error: HTMLElement): void {
+  error.empty();
+  error.hidden = true;
+}
+
+function setBusy(element: HTMLElement, input: HTMLInputElement, busy: boolean): void {
+  element.setAttribute('aria-busy', String(busy));
+  input.readOnly = busy;
+  element.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
+    button.disabled = busy || button.getAttribute('aria-disabled') === 'true';
+  });
+}
+
 class DependencySearchController implements DependencySearchHandle {
   readonly element: HTMLElement;
   private readonly input: HTMLInputElement;
@@ -206,7 +260,7 @@ class DependencySearchController implements DependencySearchHandle {
     });
     this.input.addEventListener('input', () => {
       this.activeIndex = -1;
-      this.clearError();
+      clearError(this.error);
       this.refresh();
     });
     this.input.addEventListener('keydown', (event) => {
@@ -243,21 +297,13 @@ class DependencySearchController implements DependencySearchHandle {
         if (this.busy || direction === this.direction) return;
         this.direction = direction;
         this.activeIndex = -1;
-        this.clearError();
-        this.updateDirectionControls();
+        clearError(this.error);
+        updateDirectionControls(this.directionControls, this.direction);
         this.refresh();
         this.input.focus();
       });
     }
     return controls;
-  }
-
-  private updateDirectionControls(): void {
-    this.directionControls
-      ?.querySelectorAll<HTMLButtonElement>('[data-direction]')
-      .forEach((button) => {
-        button.setAttribute('aria-pressed', String(button.dataset['direction'] === this.direction));
-      });
   }
 
   private readonly onOutsideFocus = (event: Event): void => {
@@ -279,15 +325,9 @@ class DependencySearchController implements DependencySearchHandle {
         text: 'No matching tasks',
         attr: { role: 'status' },
       });
-    this.updateCreateAffordance();
-    this.updateActive();
-    this.setBusy();
-  }
-
-  private updateCreateAffordance(): void {
-    const text = this.input.value.trim();
-    this.createAffordance.hidden = text.length === 0;
-    this.createAffordance.setText(text.length === 0 ? '' : `Create “${text}” as sub-task`);
+    updateCreateAffordance(this.input, this.createAffordance);
+    updateActive(this.list, this.input, this.activeIndex);
+    setBusy(this.element, this.input, this.busy);
   }
 
   private renderOption(option: DependencySearchOption, index: number): void {
@@ -298,34 +338,20 @@ class DependencySearchController implements DependencySearchHandle {
         role: 'option',
         id: `${this.list.id}-${index}`,
         'aria-selected': 'false',
-        'aria-disabled': String(!this.isEligible(option)),
+        'aria-disabled': String(!isEligible(this.direction, option)),
         tabindex: '-1',
       },
     });
-    button.disabled = this.busy || !this.isEligible(option);
+    button.disabled = this.busy || !isEligible(this.direction, option);
     button.createSpan({ cls: 'abyss-dep-search-title', text: option.title });
     button.createSpan({ cls: 'abyss-dep-search-context', text: option.context });
     if (option.disabledReason !== undefined)
       button.createSpan({ cls: 'abyss-dep-search-reason', text: option.disabledReason });
     button.addEventListener('click', () => {
       this.activeIndex = index;
-      this.updateActive();
+      updateActive(this.list, this.input, this.activeIndex);
       this.submitExisting(option);
     });
-  }
-
-  private updateActive(): void {
-    this.list.querySelectorAll<HTMLElement>('[role="option"]').forEach((element, index) => {
-      const active = index === this.activeIndex;
-      element.setAttribute('aria-selected', String(active));
-      element.toggleClass('is-active', active);
-    });
-    const active = this.list.querySelector<HTMLElement>('[aria-selected="true"]');
-    if (active === null) this.input.removeAttribute('aria-activedescendant');
-    else {
-      this.input.setAttribute('aria-activedescendant', active.id);
-      if (typeof active.scrollIntoView === 'function') active.scrollIntoView({ block: 'nearest' });
-    }
   }
 
   private onInputKey(event: KeyboardEvent): void {
@@ -344,7 +370,7 @@ class DependencySearchController implements DependencySearchHandle {
 
   private submitInput(): void {
     const option = this.options[this.activeIndex];
-    if (this.isEligible(option)) {
+    if (isEligible(this.direction, option)) {
       this.submitExisting(option);
       return;
     }
@@ -355,22 +381,18 @@ class DependencySearchController implements DependencySearchHandle {
   private moveSelection(delta: number): void {
     const eligible = this.options
       .map((option, index) => ({ option, index }))
-      .filter(({ option }) => this.isEligible(option))
+      .filter(({ option }) => isEligible(this.direction, option))
       .map(({ index }) => index);
     if (eligible.length === 0) return;
     const current = eligible.indexOf(this.activeIndex);
     let next = (current + delta + eligible.length) % eligible.length;
     if (current === -1) next = delta > 0 ? 0 : eligible.length - 1;
     this.activeIndex = eligible[next] ?? -1;
-    this.updateActive();
-  }
-
-  private isEligible(option: DependencySearchOption | undefined): option is DependencySearchOption {
-    return option?.directions.includes(this.direction) === true;
+    updateActive(this.list, this.input, this.activeIndex);
   }
 
   private submitExisting(option: DependencySearchOption): void {
-    if (!this.isEligible(option)) return;
+    if (!isEligible(this.direction, option)) return;
     this.submit(() => this.callbacks.selectExisting(option, this.direction));
   }
 
@@ -380,9 +402,9 @@ class DependencySearchController implements DependencySearchHandle {
 
   private submit(action: () => Promise<DependencyPickerCommitResult>): void {
     if (this.busy) return;
-    this.clearError();
+    clearError(this.error);
     this.busy = true;
-    this.setBusy();
+    setBusy(this.element, this.input, this.busy);
     runAsyncAction(this.commit(action), 'Could not add dependency');
   }
 
@@ -390,32 +412,14 @@ class DependencySearchController implements DependencySearchHandle {
     try {
       const result = await action();
       if (result.type === 'committed') this.close();
-      else if (result.type === 'validation-error') this.showError(result.message);
+      else if (result.type === 'validation-error') showError(this.error, result.message);
     } finally {
       this.busy = false;
       if (!this.closed) {
-        this.setBusy();
+        setBusy(this.element, this.input, this.busy);
         this.input.focus();
       }
     }
-  }
-
-  private showError(message: string): void {
-    this.error.setText(message);
-    this.error.hidden = false;
-  }
-
-  private clearError(): void {
-    this.error.empty();
-    this.error.hidden = true;
-  }
-
-  private setBusy(): void {
-    this.element.setAttribute('aria-busy', String(this.busy));
-    this.input.readOnly = this.busy;
-    this.element.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
-      button.disabled = this.busy || button.getAttribute('aria-disabled') === 'true';
-    });
   }
 
   close(restoreFocus = true): void {

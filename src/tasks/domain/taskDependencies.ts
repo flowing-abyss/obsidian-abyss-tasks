@@ -135,128 +135,140 @@ function reaches(
   return false;
 }
 
+function isActive(
+  statusForSymbol: (symbol: string) => TaskStatus,
+  { node }: TaskNodeSnapshot,
+): boolean {
+  const status = statusForSymbol(node.statusSymbol);
+  return status === 'open' || status === 'in-progress';
+}
+
+function exact(
+  byRevision: ReadonlyMap<string, TaskNodeSnapshot>,
+  ref: TaskNodeRef,
+): TaskNodeSnapshot | undefined {
+  const node = byRevision.get(revisionAddress(ref));
+  return node !== undefined && sameTaskNodeRef(node.target, ref) ? node : undefined;
+}
+
+function blockedByRelation(
+  byId: ReadonlyMap<string, readonly TaskNodeSnapshot[]>,
+  statusForSymbol: (symbol: string) => TaskStatus,
+  dependent: TaskNodeSnapshot,
+  dependencyId: string,
+): TaskDependencyRelation {
+  const candidates = byId.get(dependencyId) ?? [];
+  const first = candidates[0];
+  if (first === undefined) return { type: 'unavailable', dependencyId, reason: 'missing' };
+  const state =
+    isActive(statusForSymbol, dependent) &&
+    candidates.some((candidate) => isActive(statusForSymbol, candidate))
+      ? 'active'
+      : 'satisfied';
+  return candidates.length === 1
+    ? { type: 'resolved', dependencyId, task: first, state }
+    : { type: 'ambiguous', dependencyId, candidates, state };
+}
+
+function pairEligibility(
+  byId: ReadonlyMap<string, readonly TaskNodeSnapshot[]>,
+  prerequisites: ReadonlyMap<TaskNodeSnapshot, readonly TaskNodeSnapshot[]>,
+  blocker: TaskNodeSnapshot,
+  dependent: TaskNodeSnapshot,
+): TaskDependencyEligibility {
+  const blockerId = blocker.node.dependencyId;
+  if (blockerId !== undefined && (byId.get(blockerId)?.length ?? 0) > 1)
+    return { type: 'rejected', reason: 'ambiguous' };
+  if (prerequisites.get(dependent)?.includes(blocker) === true)
+    return { type: 'rejected', reason: 'duplicate' };
+  if (prerequisites.get(blocker)?.includes(dependent) === true)
+    return { type: 'rejected', reason: 'inverse' };
+  if (reaches(blocker, dependent, prerequisites)) return { type: 'rejected', reason: 'cycle' };
+  return { type: 'allowed' };
+}
+
+function dependencyIndexes(input: readonly TaskNodeSnapshot[]): {
+  byRevision: ReadonlyMap<string, TaskNodeSnapshot>;
+  addresses: ReadonlySet<string>;
+  byId: ReadonlyMap<string, readonly TaskNodeSnapshot[]>;
+  prerequisites: ReadonlyMap<TaskNodeSnapshot, readonly TaskNodeSnapshot[]>;
+  dependents: ReadonlyMap<TaskNodeSnapshot, readonly TaskNodeSnapshot[]>;
+} {
+  const byId = new Map<string, TaskNodeSnapshot[]>();
+  const prerequisites = new Map<TaskNodeSnapshot, TaskNodeSnapshot[]>();
+  const dependents = new Map<TaskNodeSnapshot, TaskNodeSnapshot[]>();
+
+  const requested = new Map(input.map((node) => [revisionAddress(node.target), node.target]));
+  const nodes = enumerateTaskNodes([...new Set(input.map((node) => node.root))]).filter((node) => {
+    const ref = requested.get(revisionAddress(node.target));
+    return ref !== undefined && sameTaskNodeRef(ref, node.target);
+  });
+  const byRevision = new Map(nodes.map((node) => [revisionAddress(node.target), node]));
+  const addresses = new Set(nodes.map((node) => address(node.target)));
+  for (const node of nodes) {
+    const id = node.node.dependencyId;
+    if (id === undefined) continue;
+    const matches = byId.get(id) ?? [];
+    matches.push(node);
+    byId.set(id, matches);
+  }
+  for (const dependent of nodes) {
+    const blockers = [...new Set(dependent.node.dependsOn)].flatMap((id) => byId.get(id) ?? []);
+    prerequisites.set(dependent, blockers);
+    for (const blocker of blockers) {
+      const matches = dependents.get(blocker) ?? [];
+      matches.push(dependent);
+      dependents.set(blocker, matches);
+    }
+  }
+
+  return { byRevision, addresses, byId, prerequisites, dependents };
+}
+
 export function buildTaskDependencyGraph(
   input: readonly TaskNodeSnapshot[],
   statusForSymbol: (symbol: string) => TaskStatus,
 ): TaskDependencyGraph {
-  return new DerivedTaskDependencyGraph(input, statusForSymbol);
-}
-
-class DerivedTaskDependencyGraph implements TaskDependencyGraph {
-  private readonly byRevision: ReadonlyMap<string, TaskNodeSnapshot>;
-  private readonly addresses: ReadonlySet<string>;
-  private readonly byId = new Map<string, TaskNodeSnapshot[]>();
-  private readonly prerequisites = new Map<TaskNodeSnapshot, TaskNodeSnapshot[]>();
-  private readonly dependents = new Map<TaskNodeSnapshot, TaskNodeSnapshot[]>();
-
-  constructor(
-    input: readonly TaskNodeSnapshot[],
-    private readonly statusForSymbol: (symbol: string) => TaskStatus,
-  ) {
-    const requested = new Map(input.map((node) => [revisionAddress(node.target), node.target]));
-    const nodes = enumerateTaskNodes([...new Set(input.map((node) => node.root))]).filter(
-      (node) => {
-        const ref = requested.get(revisionAddress(node.target));
-        return ref !== undefined && sameTaskNodeRef(ref, node.target);
-      },
-    );
-    this.byRevision = new Map(nodes.map((node) => [revisionAddress(node.target), node]));
-    this.addresses = new Set(nodes.map((node) => address(node.target)));
-    for (const node of nodes) {
-      const id = node.node.dependencyId;
-      if (id === undefined) continue;
-      const matches = this.byId.get(id) ?? [];
-      matches.push(node);
-      this.byId.set(id, matches);
-    }
-    for (const dependent of nodes) {
-      const blockers = [...new Set(dependent.node.dependsOn)].flatMap(
-        (id) => this.byId.get(id) ?? [],
-      );
-      this.prerequisites.set(dependent, blockers);
-      for (const blocker of blockers) {
-        const matches = this.dependents.get(blocker) ?? [];
-        matches.push(dependent);
-        this.dependents.set(blocker, matches);
+  const { byRevision, addresses, byId, prerequisites, dependents } = dependencyIndexes(input);
+  return {
+    dependencies(target: TaskNodeRef): TaskDependencyProjection {
+      const node = exact(byRevision, target);
+      const blockedBy =
+        node === undefined
+          ? []
+          : [...new Set(node.node.dependsOn)].map((id) =>
+              blockedByRelation(byId, statusForSymbol, node, id),
+            );
+      const blocks: ResolvedTaskDependencyRelation[] =
+        node === undefined
+          ? []
+          : (dependents.get(node) ?? []).map((dependent) => ({
+              type: 'resolved',
+              dependencyId: node.node.dependencyId ?? '',
+              task: dependent,
+              state:
+                isActive(statusForSymbol, node) && isActive(statusForSymbol, dependent)
+                  ? 'active'
+                  : 'satisfied',
+            }));
+      return freeze({
+        blockedBy,
+        blocks,
+        activeBlockedByCount: blockedBy.filter(
+          (row) => row.type !== 'unavailable' && row.state === 'active',
+        ).length,
+        activeBlocksCount: blocks.filter((row) => row.state === 'active').length,
+      });
+    },
+    eligibility(blockerRef: TaskNodeRef, dependentRef: TaskNodeRef): TaskDependencyEligibility {
+      const blocker = exact(byRevision, blockerRef);
+      const dependent = exact(byRevision, dependentRef);
+      if (blocker === undefined || dependent === undefined) {
+        const absent = [blockerRef, dependentRef].some((ref) => !addresses.has(address(ref)));
+        return { type: 'rejected', reason: absent ? 'unavailable' : 'stale' };
       }
-    }
-  }
-
-  private isActive({ node }: TaskNodeSnapshot): boolean {
-    const status = this.statusForSymbol(node.statusSymbol);
-    return status === 'open' || status === 'in-progress';
-  }
-
-  private exact(ref: TaskNodeRef): TaskNodeSnapshot | undefined {
-    const node = this.byRevision.get(revisionAddress(ref));
-    return node !== undefined && sameTaskNodeRef(node.target, ref) ? node : undefined;
-  }
-
-  private blockedByRelation(
-    dependent: TaskNodeSnapshot,
-    dependencyId: string,
-  ): TaskDependencyRelation {
-    const candidates = this.byId.get(dependencyId) ?? [];
-    const first = candidates[0];
-    if (first === undefined) return { type: 'unavailable', dependencyId, reason: 'missing' };
-    const state =
-      this.isActive(dependent) && candidates.some((candidate) => this.isActive(candidate))
-        ? 'active'
-        : 'satisfied';
-    return candidates.length === 1
-      ? { type: 'resolved', dependencyId, task: first, state }
-      : { type: 'ambiguous', dependencyId, candidates, state };
-  }
-
-  dependencies(target: TaskNodeRef): TaskDependencyProjection {
-    const node = this.exact(target);
-    const blockedBy =
-      node === undefined
-        ? []
-        : [...new Set(node.node.dependsOn)].map((id) => this.blockedByRelation(node, id));
-    const blocks: ResolvedTaskDependencyRelation[] =
-      node === undefined
-        ? []
-        : (this.dependents.get(node) ?? []).map((dependent) => ({
-            type: 'resolved',
-            dependencyId: node.node.dependencyId ?? '',
-            task: dependent,
-            state: this.isActive(node) && this.isActive(dependent) ? 'active' : 'satisfied',
-          }));
-    return freeze({
-      blockedBy,
-      blocks,
-      activeBlockedByCount: blockedBy.filter(
-        (row) => row.type !== 'unavailable' && row.state === 'active',
-      ).length,
-      activeBlocksCount: blocks.filter((row) => row.state === 'active').length,
-    });
-  }
-
-  eligibility(blockerRef: TaskNodeRef, dependentRef: TaskNodeRef): TaskDependencyEligibility {
-    const blocker = this.exact(blockerRef);
-    const dependent = this.exact(dependentRef);
-    if (blocker === undefined || dependent === undefined) {
-      const absent = [blockerRef, dependentRef].some((ref) => !this.addresses.has(address(ref)));
-      return { type: 'rejected', reason: absent ? 'unavailable' : 'stale' };
-    }
-    if (blocker === dependent) return { type: 'rejected', reason: 'self' };
-    return this.pairEligibility(blocker, dependent);
-  }
-
-  private pairEligibility(
-    blocker: TaskNodeSnapshot,
-    dependent: TaskNodeSnapshot,
-  ): TaskDependencyEligibility {
-    const blockerId = blocker.node.dependencyId;
-    if (blockerId !== undefined && (this.byId.get(blockerId)?.length ?? 0) > 1)
-      return { type: 'rejected', reason: 'ambiguous' };
-    if (this.prerequisites.get(dependent)?.includes(blocker) === true)
-      return { type: 'rejected', reason: 'duplicate' };
-    if (this.prerequisites.get(blocker)?.includes(dependent) === true)
-      return { type: 'rejected', reason: 'inverse' };
-    if (reaches(blocker, dependent, this.prerequisites))
-      return { type: 'rejected', reason: 'cycle' };
-    return { type: 'allowed' };
-  }
+      if (blocker === dependent) return { type: 'rejected', reason: 'self' };
+      return pairEligibility(byId, prerequisites, blocker, dependent);
+    },
+  };
 }

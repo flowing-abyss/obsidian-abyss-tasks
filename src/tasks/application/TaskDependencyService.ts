@@ -261,46 +261,426 @@ export function nextTaskDependencyId(reserved: ReadonlySet<string>): string {
   return value.toString(36).padStart(8, '0');
 }
 
+interface DependencyContext {
+  readonly queries: TaskQueryApi & TaskDependencyQueryApi;
+  readonly repository: TaskRepository;
+  readonly generateId: TaskDependencyIdGenerator;
+  readonly diagnostics: TaskDiagnosticSink;
+  readonly completionBases: Array<{ previous: TaskSnapshot; current: TaskSnapshot }>;
+}
+
+async function executeDependency(
+  context: DependencyContext,
+  command: DependencyCommand,
+): Promise<TaskCommandResult> {
+  try {
+    return command.type === 'add-dependency'
+      ? await add(context, command)
+      : await changeDeclaredIds(context, command);
+  } catch {
+    context.diagnostics({
+      operation: command.type,
+      phase: 'unexpected',
+      cause: 'repository-error',
+    });
+    return ioError();
+  }
+}
+
+function completionPredecessor(
+  context: DependencyContext,
+  current: TaskSnapshot,
+  target: TaskNodeRef,
+  indexed: readonly TaskNodeSnapshot[],
+): TaskSnapshot {
+  const { completionBases } = context;
+  const ref = rootRef(target);
+  const basis = completionBases[completionBases.length - 1];
+  if (
+    basis !== undefined &&
+    rootKey(basis.current.ref) === rootKey(current.ref) &&
+    [basis.current.ref, basis.previous.ref].some((candidate) => rootKey(candidate) === rootKey(ref))
+  )
+    return basis.previous;
+  const exact = indexed.find(({ root }) => rootKey(root.ref) === rootKey(ref));
+  if (exact !== undefined) return exact.root;
+  const resolution = context.queries.resolve(ref);
+  if (resolution.type === 'rebased') return resolution.previous;
+  if (resolution.type === 'exact') return resolution.task;
+  const content = JSON.stringify(dependencyIdentityContent(current));
+  const roots = new Map(indexed.map(({ root }) => [rootKey(root.ref), root]));
+  const matches = [...roots.values()].filter(
+    (root) =>
+      root.ref.filePath === current.ref.filePath &&
+      JSON.stringify(dependencyIdentityContent(root)) === content,
+  );
+  const match = matches[0];
+  if (matches.length === 1 && match !== undefined) return match;
+  throw new DependencyCompletionConflict();
+}
+
+function graph(
+  context: DependencyContext,
+  overlays: ReadonlyArray<{ root: TaskSnapshot; predecessor: TaskRef }> = [],
+): TaskDependencyGraph {
+  const roots = new Map(context.queries.listNodes().map(({ root }) => [rootKey(root.ref), root]));
+  for (const { root, predecessor } of overlays) {
+    roots.delete(rootKey(predecessor));
+    roots.set(rootKey(root.ref), root);
+  }
+  const nodes = enumerateTaskNodes([...roots.values()]);
+  const statuses = new Map(nodes.map(({ node }) => [node.statusSymbol, node.status]));
+  return buildTaskDependencyGraph(nodes, (symbol) => statuses.get(symbol) ?? 'open');
+}
+
+function resolve(
+  context: DependencyContext,
+  target: TaskNodeRef,
+  rebases: readonly Rebase[] = [],
+): NodeResolution {
+  const original = rootRef(target);
+  const rebase = rebases.find((entry) =>
+    sameTaskNodeRef({ type: 'task', ref: entry.previous.ref }, { type: 'task', ref: original }),
+  );
+  const resolution =
+    rebase === undefined
+      ? context.queries.resolve(original)
+      : {
+          type: 'rebased' as const,
+          previous: rebase.previous,
+          current: rebase.current,
+          basis: { observed: rebase.current },
+        };
+  if (resolution.type === 'ambiguous') return { result: resolution };
+  if (resolution.type !== 'exact' && resolution.type !== 'rebased')
+    return { result: { type: 'not-found', target } };
+  const root = resolution.type === 'exact' ? resolution.task : resolution.current;
+  const node = confirmedNode(
+    root,
+    target,
+    resolution.type === 'exact' ? root : resolution.previous,
+  );
+  return node === undefined
+    ? { result: { type: 'conflict', current: root } }
+    : { node: { ...node, basis: resolution.basis, predecessor: original } };
+}
+
+function dependencyEligibility(
+  context: DependencyContext,
+  blocker: ResolvedNode,
+  dependent: ResolvedNode,
+): TaskDependencyEligibility {
+  const preview = context.queries.dependencyEligibility(blocker.target, dependent.target);
+  return preview.type === 'rejected' &&
+    (preview.reason === 'stale' || preview.reason === 'unavailable')
+    ? graph(context, [blocker, dependent]).eligibility(blocker.target, dependent.target)
+    : preview;
+}
+
+function eligibilityFailure(
+  context: DependencyContext,
+  eligibility: Extract<TaskDependencyEligibility, { readonly type: 'rejected' }>,
+  blocker: ResolvedNode,
+): TaskCommandResult {
+  if (eligibility.reason === 'ambiguous')
+    return {
+      type: 'ambiguous',
+      candidates: context.queries
+        .listNodes()
+        .filter(({ node }) => node.dependencyId === blocker.node.dependencyId)
+        .map(occurrence),
+    };
+  return invalid();
+}
+
+function allocateId(context: DependencyContext): string | undefined {
+  const reserved = new Set(
+    context.queries
+      .listNodes()
+      .flatMap(({ node }) => [
+        ...(node.dependencyId === undefined ? [] : [node.dependencyId]),
+        ...node.dependsOn,
+      ]),
+  );
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const id = context.generateId(reserved);
+    if (/^[a-z0-9]{8}$/u.test(id) && !reserved.has(id)) return id;
+  }
+  return undefined;
+}
+
+function edit(context: DependencyContext, edit: TaskEditRequest): Promise<TaskRepositoryResult> {
+  const { repository } = context;
+  return repository.edit(repository.supportsRevisionPreconditions === true ? edit : edit.command);
+}
+
+async function add(
+  context: DependencyContext,
+  command: AddCommand,
+  rebases: readonly Rebase[] = [],
+): Promise<TaskCommandResult> {
+  const blocker = resolve(context, command.blocker, rebases);
+  if ('result' in blocker) return blocker.result;
+  const dependent = resolve(context, command.dependent, rebases);
+  if ('result' in dependent) return dependent.result;
+  const eligibility = dependencyEligibility(context, blocker.node, dependent.node);
+  if (eligibility.type === 'rejected')
+    return eligibilityFailure(context, eligibility, blocker.node);
+  const id = blocker.node.node.dependencyId ?? allocateId(context);
+  if (id === undefined) return invalid('dependency-id');
+  const pair = { blocker: blocker.node, dependent: dependent.node, id };
+  if (pair.blocker.root.ref.filePath !== pair.dependent.root.ref.filePath)
+    return await addAcrossFiles(context, command, pair, rebases);
+  const result = await addWithinFile(context, pair);
+  if (result.type === 'rebased' && rebases.length === 0)
+    return await add(context, command, [result]);
+  return addedResult(context, result, pair);
+}
+
+function addWithinFile(
+  context: DependencyContext,
+  { blocker, dependent, id }: DependencyPair,
+): Promise<TaskRepositoryResult> {
+  // Confirm both endpoints in the atomic transition, even when the blocker already has its ID.
+  const edits = [
+    request(blocker, { type: 'set-dependency-id', target: blocker.target, id }),
+    request(dependent, {
+      type: 'set-depends-on',
+      target: dependent.target,
+      ids: [...dependent.node.dependsOn, id],
+    }),
+  ];
+  return context.repository.editBatch({
+    filePath: dependent.root.ref.filePath,
+    edits,
+    outcomeTarget: dependent.target,
+  });
+}
+
+async function addAcrossFiles(
+  context: DependencyContext,
+  command: AddCommand,
+  pair: DependencyPair,
+  rebases: readonly Rebase[],
+): Promise<TaskCommandResult> {
+  const { diagnostics } = context;
+  const { blocker, id } = pair;
+  let currentBlocker = blocker;
+  if (blocker.node.dependencyId === undefined) {
+    const assigned = await edit(
+      context,
+      request(blocker, { type: 'set-dependency-id', target: blocker.target, id }),
+    );
+    if (assigned.type === 'rebased' && rebases.length === 0)
+      return await add(context, command, [assigned]);
+    if (assigned.type !== 'committed') return terminal(assigned);
+    const fresh = committedNode(assigned, blocker.target);
+    if (fresh?.node.dependencyId !== id) return ioError();
+    currentBlocker = { ...fresh, basis: { observed: fresh.root }, predecessor: blocker.root.ref };
+  }
+  try {
+    const result = await writeCrossFileEdge(context, { ...pair, blocker: currentBlocker });
+    if (result.type !== 'ok')
+      diagnostics({
+        operation: command.type,
+        phase: 'cross-file-edge-write',
+        cause: result.type,
+      });
+    return result;
+  } catch {
+    diagnostics({
+      operation: command.type,
+      phase: 'cross-file-edge-write',
+      cause: 'repository-error',
+    });
+    return ioError();
+  }
+}
+
+async function writeCrossFileEdge(
+  context: DependencyContext,
+  pair: DependencyPair,
+): Promise<TaskCommandResult> {
+  const rebases: Rebase[] = [];
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const current = currentPair(context, pair, rebases);
+    if ('result' in current) return current.result;
+    const { dependent, id } = current.pair;
+    const result = await edit(
+      context,
+      request(dependent, {
+        type: 'set-depends-on',
+        target: dependent.target,
+        ids: [...dependent.node.dependsOn, id],
+      }),
+    );
+    if (result.type !== 'rebased' || attempt === 1)
+      return addedResult(context, result, current.pair);
+    rebases.push(result);
+  }
+  return ioError();
+}
+
+function currentPair(
+  context: DependencyContext,
+  pair: DependencyPair,
+  rebases: readonly Rebase[],
+): { readonly pair: DependencyPair } | { readonly result: TaskCommandResult } {
+  const blocker = resolve(context, pair.blocker.target, rebases);
+  if ('result' in blocker) return blocker;
+  if (blocker.node.node.dependencyId !== pair.id)
+    return { result: { type: 'conflict', current: blocker.node.root } };
+  const dependent = resolve(context, pair.dependent.target, rebases);
+  if ('result' in dependent) return dependent;
+  const allowed = dependencyEligibility(context, blocker.node, dependent.node);
+  return allowed.type === 'rejected'
+    ? { result: eligibilityFailure(context, allowed, blocker.node) }
+    : { pair: { blocker: blocker.node, dependent: dependent.node, id: pair.id } };
+}
+
+function committedNode(
+  result: Extract<TaskRepositoryResult, { readonly type: 'committed' }>,
+  target: TaskNodeRef,
+): TaskNodeSnapshot | undefined {
+  return result.outcome.type === 'task' ? atAddress(result.outcome.task, target) : undefined;
+}
+
+function addedResult(
+  context: DependencyContext,
+  result: TaskRepositoryResult,
+  { dependent, blocker, id }: DependencyPair,
+): TaskCommandResult {
+  if (result.type !== 'committed') return terminal(result);
+  const freshDependent = committedNode(result, dependent.target);
+  if (freshDependent?.node.dependsOn.includes(id) !== true) return ioError();
+  const sameRoot = rootAddress(dependent.root.ref) === rootAddress(blocker.root.ref);
+  const freshBlocker = projectedBlocker(
+    context,
+    blocker,
+    id,
+    sameRoot ? freshDependent.root : undefined,
+  );
+  return {
+    type: 'ok',
+    changed: result.changed,
+    outcome: {
+      type: 'dependency',
+      change: 'added',
+      dependencyId: id,
+      dependent: occurrence(freshDependent),
+      ...(freshBlocker === undefined ? {} : { blocker: occurrence(freshBlocker) }),
+    },
+  };
+}
+
+function projectedBlocker(
+  context: DependencyContext,
+  blocker: ResolvedNode,
+  id: string,
+  committedRoot?: TaskSnapshot,
+): TaskNodeSnapshot | undefined {
+  const { queries } = context;
+  const matches = queries.listNodes().filter(({ node }) => node.dependencyId === id);
+  if (matches.length !== 1) return undefined;
+  const candidate = matches[0];
+  const resolution =
+    committedRoot === undefined
+      ? queries.resolve(blocker.root.ref)
+      : { type: 'exact' as const, task: committedRoot };
+  if (resolution.type !== 'exact' && resolution.type !== 'rebased') return undefined;
+  const root = resolution.type === 'exact' ? resolution.task : resolution.current;
+  const intended = atAddress(root, blocker.target);
+  return candidate !== undefined &&
+    intended !== undefined &&
+    sameTaskNodeRef(candidate.target, intended.target)
+    ? candidate
+    : undefined;
+}
+
+async function changeDeclaredIds(
+  context: DependencyContext,
+  command: ChangeCommand,
+  rebases: readonly Rebase[] = [],
+): Promise<TaskCommandResult> {
+  const issue = declaredIdsInputIssue(command);
+  if (issue !== undefined) return issue;
+  const resolved = resolve(context, command.dependent, rebases);
+  if ('result' in resolved) return resolved.result;
+  const dependent = resolved.node;
+  const prepared = prepareDeclaredIds(command, dependent);
+  if ('result' in prepared) return prepared.result;
+  const { change } = prepared;
+  const beforeSource = taskLine(dependent.node);
+  if (sameIds(dependent.node.dependsOn, change.ids))
+    return changedIdsResult(context, dependent, change, { changed: false, beforeSource });
+  const result = await edit(context, declaredIdsRequest(dependent, change, command));
+  if (result.type === 'rebased' && rebases.length === 0)
+    return await changeDeclaredIds(context, command, [result]);
+  if (result.type !== 'committed') return terminal(result);
+  const fresh = committedNode(result, dependent.target);
+  return fresh === undefined
+    ? ioError()
+    : changedIdsResult(context, fresh, change, { changed: result.changed, beforeSource });
+}
+
+function changedIdsResult(
+  context: DependencyContext,
+  dependent: TaskNodeSnapshot,
+  change: DeclaredIdsChange,
+  { changed, beforeSource }: { changed: boolean; beforeSource: string },
+): TaskCommandResult {
+  const { dependencyId: id, removalRecovery: recovery } = change;
+  const matches = context.queries.listNodes().filter(({ node }) => node.dependencyId === id);
+  const blocker = matches.length === 1 ? matches[0] : undefined;
+  const outcome: DependencyCommandOutcome = {
+    type: 'dependency',
+    change: change.change,
+    dependencyId: id,
+    dependent: occurrence(dependent),
+    ...(blocker === undefined ? {} : { blocker: occurrence(blocker) }),
+    ...(recovery === undefined
+      ? {}
+      : {
+          removalRecovery: {
+            ...recovery,
+            source: { before: beforeSource, after: taskLine(dependent.node) },
+          },
+        }),
+  };
+  return { type: 'ok', changed, outcome };
+}
+
 export class TaskDependencyService {
-  private readonly completionBases: Array<{ previous: TaskSnapshot; current: TaskSnapshot }> = [];
+  private readonly context: DependencyContext;
 
   constructor(
-    private readonly queries: TaskQueryApi & TaskDependencyQueryApi,
-    private readonly repository: TaskRepository,
-    private readonly generateId: TaskDependencyIdGenerator,
-    private readonly diagnostics: TaskDiagnosticSink,
-  ) {}
+    queries: TaskQueryApi & TaskDependencyQueryApi,
+    repository: TaskRepository,
+    generateId: TaskDependencyIdGenerator,
+    diagnostics: TaskDiagnosticSink,
+  ) {
+    this.context = { queries, repository, generateId, diagnostics, completionBases: [] };
+  }
 
   async execute(command: DependencyCommand): Promise<TaskCommandResult> {
-    return await this.serializeMutation(() => this.executeDependency(command));
+    return await this.serializeMutation(() => executeDependency(this.context, command));
   }
 
   serializeMutation<T>(operation: (queued: boolean) => Promise<T>): Promise<T> {
-    return coordinateMutation(this.repository, operation);
+    return coordinateMutation(this.context.repository, operation);
   }
 
   withCompletionBasis(
     basis: { previous: TaskSnapshot; current: TaskSnapshot },
     readSync: () => readonly ActiveBlockingRelation[],
   ): readonly ActiveBlockingRelation[] {
-    this.completionBases.push(basis);
+    this.context.completionBases.push(basis);
     try {
       const result = readSync();
       requireSynchronousCompletionRead(result);
       return result;
     } finally {
-      this.completionBases.pop();
-    }
-  }
-
-  private async executeDependency(command: DependencyCommand): Promise<TaskCommandResult> {
-    try {
-      return command.type === 'add-dependency'
-        ? await this.add(command)
-        : await this.changeDeclaredIds(command);
-    } catch {
-      this.diagnostics({ operation: command.type, phase: 'unexpected', cause: 'repository-error' });
-      return ioError();
+      this.context.completionBases.pop();
     }
   }
 
@@ -308,356 +688,19 @@ export class TaskDependencyService {
     currentRoot: TaskSnapshot,
     target: TaskNodeRef,
   ): readonly ActiveBlockingRelation[] {
-    const indexed = this.queries.listNodes();
-    const predecessor = this.completionPredecessor(currentRoot, target, indexed);
+    const indexed = this.context.queries.listNodes();
+    const predecessor = completionPredecessor(this.context, currentRoot, target, indexed);
     const currentTarget = reconcileTaskNodeRef(predecessor, currentRoot, target);
     if (currentTarget === undefined) throw new DependencyCompletionConflict();
     const exact = indexed.some((node) => sameTaskNodeRef(node.target, currentTarget));
     const projection = exact
-      ? this.queries.dependencies(currentTarget)
-      : this.graph([{ root: currentRoot, predecessor: predecessor.ref }]).dependencies(
+      ? this.context.queries.dependencies(currentTarget)
+      : graph(this.context, [{ root: currentRoot, predecessor: predecessor.ref }]).dependencies(
           currentTarget,
         );
     return projection.blockedBy.filter(
       (relation): relation is ActiveBlockingRelation =>
         relation.type !== 'unavailable' && relation.state === 'active',
     );
-  }
-
-  private completionPredecessor(
-    current: TaskSnapshot,
-    target: TaskNodeRef,
-    indexed: readonly TaskNodeSnapshot[],
-  ): TaskSnapshot {
-    const ref = rootRef(target);
-    const basis = this.completionBases[this.completionBases.length - 1];
-    if (
-      basis !== undefined &&
-      rootKey(basis.current.ref) === rootKey(current.ref) &&
-      [basis.current.ref, basis.previous.ref].some(
-        (candidate) => rootKey(candidate) === rootKey(ref),
-      )
-    )
-      return basis.previous;
-    const exact = indexed.find(({ root }) => rootKey(root.ref) === rootKey(ref));
-    if (exact !== undefined) return exact.root;
-    const resolution = this.queries.resolve(ref);
-    if (resolution.type === 'rebased') return resolution.previous;
-    if (resolution.type === 'exact') return resolution.task;
-    const content = JSON.stringify(dependencyIdentityContent(current));
-    const roots = new Map(indexed.map(({ root }) => [rootKey(root.ref), root]));
-    const matches = [...roots.values()].filter(
-      (root) =>
-        root.ref.filePath === current.ref.filePath &&
-        JSON.stringify(dependencyIdentityContent(root)) === content,
-    );
-    const match = matches[0];
-    if (matches.length === 1 && match !== undefined) return match;
-    throw new DependencyCompletionConflict();
-  }
-
-  private graph(
-    overlays: ReadonlyArray<{ root: TaskSnapshot; predecessor: TaskRef }> = [],
-  ): TaskDependencyGraph {
-    const roots = new Map(this.queries.listNodes().map(({ root }) => [rootKey(root.ref), root]));
-    for (const { root, predecessor } of overlays) {
-      roots.delete(rootKey(predecessor));
-      roots.set(rootKey(root.ref), root);
-    }
-    const nodes = enumerateTaskNodes([...roots.values()]);
-    const statuses = new Map(nodes.map(({ node }) => [node.statusSymbol, node.status]));
-    return buildTaskDependencyGraph(nodes, (symbol) => statuses.get(symbol) ?? 'open');
-  }
-
-  private resolve(target: TaskNodeRef, rebases: readonly Rebase[] = []): NodeResolution {
-    const original = rootRef(target);
-    const rebase = rebases.find((entry) =>
-      sameTaskNodeRef({ type: 'task', ref: entry.previous.ref }, { type: 'task', ref: original }),
-    );
-    const resolution =
-      rebase === undefined
-        ? this.queries.resolve(original)
-        : {
-            type: 'rebased' as const,
-            previous: rebase.previous,
-            current: rebase.current,
-            basis: { observed: rebase.current },
-          };
-    if (resolution.type === 'ambiguous') return { result: resolution };
-    if (resolution.type !== 'exact' && resolution.type !== 'rebased')
-      return { result: { type: 'not-found', target } };
-    const root = resolution.type === 'exact' ? resolution.task : resolution.current;
-    const node = confirmedNode(
-      root,
-      target,
-      resolution.type === 'exact' ? root : resolution.previous,
-    );
-    return node === undefined
-      ? { result: { type: 'conflict', current: root } }
-      : { node: { ...node, basis: resolution.basis, predecessor: original } };
-  }
-
-  private eligibility(blocker: ResolvedNode, dependent: ResolvedNode): TaskDependencyEligibility {
-    const preview = this.queries.dependencyEligibility(blocker.target, dependent.target);
-    return preview.type === 'rejected' &&
-      (preview.reason === 'stale' || preview.reason === 'unavailable')
-      ? this.graph([blocker, dependent]).eligibility(blocker.target, dependent.target)
-      : preview;
-  }
-
-  private eligibilityFailure(
-    eligibility: Extract<TaskDependencyEligibility, { readonly type: 'rejected' }>,
-    blocker: ResolvedNode,
-  ): TaskCommandResult {
-    if (eligibility.reason === 'ambiguous')
-      return {
-        type: 'ambiguous',
-        candidates: this.queries
-          .listNodes()
-          .filter(({ node }) => node.dependencyId === blocker.node.dependencyId)
-          .map(occurrence),
-      };
-    return invalid();
-  }
-
-  private allocateId(): string | undefined {
-    const reserved = new Set(
-      this.queries
-        .listNodes()
-        .flatMap(({ node }) => [
-          ...(node.dependencyId === undefined ? [] : [node.dependencyId]),
-          ...node.dependsOn,
-        ]),
-    );
-    for (let attempt = 0; attempt < 64; attempt += 1) {
-      const id = this.generateId(reserved);
-      if (/^[a-z0-9]{8}$/u.test(id) && !reserved.has(id)) return id;
-    }
-    return undefined;
-  }
-
-  private edit(edit: TaskEditRequest): Promise<TaskRepositoryResult> {
-    return this.repository.edit(
-      this.repository.supportsRevisionPreconditions === true ? edit : edit.command,
-    );
-  }
-
-  private async add(
-    command: AddCommand,
-    rebases: readonly Rebase[] = [],
-  ): Promise<TaskCommandResult> {
-    const blocker = this.resolve(command.blocker, rebases);
-    if ('result' in blocker) return blocker.result;
-    const dependent = this.resolve(command.dependent, rebases);
-    if ('result' in dependent) return dependent.result;
-    const eligibility = this.eligibility(blocker.node, dependent.node);
-    if (eligibility.type === 'rejected') return this.eligibilityFailure(eligibility, blocker.node);
-    const id = blocker.node.node.dependencyId ?? this.allocateId();
-    if (id === undefined) return invalid('dependency-id');
-    const pair = { blocker: blocker.node, dependent: dependent.node, id };
-    if (pair.blocker.root.ref.filePath !== pair.dependent.root.ref.filePath)
-      return await this.addAcrossFiles(command, pair, rebases);
-    const result = await this.addWithinFile(pair);
-    if (result.type === 'rebased' && rebases.length === 0) return await this.add(command, [result]);
-    return this.addedResult(result, dependent.node, blocker.node, id);
-  }
-
-  private addWithinFile({ blocker, dependent, id }: DependencyPair): Promise<TaskRepositoryResult> {
-    // Confirm both endpoints in the atomic transition, even when the blocker already has its ID.
-    const edits = [
-      request(blocker, { type: 'set-dependency-id', target: blocker.target, id }),
-      request(dependent, {
-        type: 'set-depends-on',
-        target: dependent.target,
-        ids: [...dependent.node.dependsOn, id],
-      }),
-    ];
-    return this.repository.editBatch({
-      filePath: dependent.root.ref.filePath,
-      edits,
-      outcomeTarget: dependent.target,
-    });
-  }
-
-  private async addAcrossFiles(
-    command: AddCommand,
-    pair: DependencyPair,
-    rebases: readonly Rebase[],
-  ): Promise<TaskCommandResult> {
-    const { blocker, id } = pair;
-    let currentBlocker = blocker;
-    if (blocker.node.dependencyId === undefined) {
-      const assigned = await this.edit(
-        request(blocker, { type: 'set-dependency-id', target: blocker.target, id }),
-      );
-      if (assigned.type === 'rebased' && rebases.length === 0)
-        return await this.add(command, [assigned]);
-      if (assigned.type !== 'committed') return terminal(assigned);
-      const fresh = this.committedNode(assigned, blocker.target);
-      if (fresh?.node.dependencyId !== id) return ioError();
-      currentBlocker = { ...fresh, basis: { observed: fresh.root }, predecessor: blocker.root.ref };
-    }
-    try {
-      const result = await this.writeCrossFileEdge({ ...pair, blocker: currentBlocker });
-      if (result.type !== 'ok')
-        this.diagnostics({
-          operation: command.type,
-          phase: 'cross-file-edge-write',
-          cause: result.type,
-        });
-      return result;
-    } catch {
-      this.diagnostics({
-        operation: command.type,
-        phase: 'cross-file-edge-write',
-        cause: 'repository-error',
-      });
-      return ioError();
-    }
-  }
-
-  private async writeCrossFileEdge(pair: DependencyPair): Promise<TaskCommandResult> {
-    const rebases: Rebase[] = [];
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const current = this.currentPair(pair, rebases);
-      if ('result' in current) return current.result;
-      const { blocker, dependent, id } = current.pair;
-      const result = await this.edit(
-        request(dependent, {
-          type: 'set-depends-on',
-          target: dependent.target,
-          ids: [...dependent.node.dependsOn, id],
-        }),
-      );
-      if (result.type !== 'rebased' || attempt === 1)
-        return this.addedResult(result, dependent, blocker, id);
-      rebases.push(result);
-    }
-    return ioError();
-  }
-
-  private currentPair(
-    pair: DependencyPair,
-    rebases: readonly Rebase[],
-  ): { readonly pair: DependencyPair } | { readonly result: TaskCommandResult } {
-    const blocker = this.resolve(pair.blocker.target, rebases);
-    if ('result' in blocker) return blocker;
-    if (blocker.node.node.dependencyId !== pair.id)
-      return { result: { type: 'conflict', current: blocker.node.root } };
-    const dependent = this.resolve(pair.dependent.target, rebases);
-    if ('result' in dependent) return dependent;
-    const allowed = this.eligibility(blocker.node, dependent.node);
-    return allowed.type === 'rejected'
-      ? { result: this.eligibilityFailure(allowed, blocker.node) }
-      : { pair: { blocker: blocker.node, dependent: dependent.node, id: pair.id } };
-  }
-
-  private committedNode(
-    result: Extract<TaskRepositoryResult, { readonly type: 'committed' }>,
-    target: TaskNodeRef,
-  ): TaskNodeSnapshot | undefined {
-    return result.outcome.type === 'task' ? atAddress(result.outcome.task, target) : undefined;
-  }
-
-  private addedResult(
-    result: TaskRepositoryResult,
-    dependent: ResolvedNode,
-    blocker: ResolvedNode,
-    id: string,
-  ): TaskCommandResult {
-    if (result.type !== 'committed') return terminal(result);
-    const freshDependent = this.committedNode(result, dependent.target);
-    if (freshDependent?.node.dependsOn.includes(id) !== true) return ioError();
-    const sameRoot = rootAddress(dependent.root.ref) === rootAddress(blocker.root.ref);
-    const freshBlocker = this.projectedBlocker(
-      blocker,
-      id,
-      sameRoot ? freshDependent.root : undefined,
-    );
-    return {
-      type: 'ok',
-      changed: result.changed,
-      outcome: {
-        type: 'dependency',
-        change: 'added',
-        dependencyId: id,
-        dependent: occurrence(freshDependent),
-        ...(freshBlocker === undefined ? {} : { blocker: occurrence(freshBlocker) }),
-      },
-    };
-  }
-
-  private projectedBlocker(
-    blocker: ResolvedNode,
-    id: string,
-    committedRoot?: TaskSnapshot,
-  ): TaskNodeSnapshot | undefined {
-    const matches = this.queries.listNodes().filter(({ node }) => node.dependencyId === id);
-    if (matches.length !== 1) return undefined;
-    const candidate = matches[0];
-    const resolution =
-      committedRoot === undefined
-        ? this.queries.resolve(blocker.root.ref)
-        : { type: 'exact' as const, task: committedRoot };
-    if (resolution.type !== 'exact' && resolution.type !== 'rebased') return undefined;
-    const root = resolution.type === 'exact' ? resolution.task : resolution.current;
-    const intended = atAddress(root, blocker.target);
-    return candidate !== undefined &&
-      intended !== undefined &&
-      sameTaskNodeRef(candidate.target, intended.target)
-      ? candidate
-      : undefined;
-  }
-
-  private async changeDeclaredIds(
-    command: ChangeCommand,
-    rebases: readonly Rebase[] = [],
-  ): Promise<TaskCommandResult> {
-    const issue = declaredIdsInputIssue(command);
-    if (issue !== undefined) return issue;
-    const resolved = this.resolve(command.dependent, rebases);
-    if ('result' in resolved) return resolved.result;
-    const dependent = resolved.node;
-    const prepared = prepareDeclaredIds(command, dependent);
-    if ('result' in prepared) return prepared.result;
-    const { change } = prepared;
-    const beforeSource = taskLine(dependent.node);
-    if (sameIds(dependent.node.dependsOn, change.ids))
-      return this.changedIdsResult(dependent, change, false, beforeSource);
-    const result = await this.edit(declaredIdsRequest(dependent, change, command));
-    if (result.type === 'rebased' && rebases.length === 0)
-      return await this.changeDeclaredIds(command, [result]);
-    if (result.type !== 'committed') return terminal(result);
-    const fresh = this.committedNode(result, dependent.target);
-    return fresh === undefined
-      ? ioError()
-      : this.changedIdsResult(fresh, change, result.changed, beforeSource);
-  }
-
-  private changedIdsResult(
-    dependent: TaskNodeSnapshot,
-    change: DeclaredIdsChange,
-    changed: boolean,
-    beforeSource: string,
-  ): TaskCommandResult {
-    const { dependencyId: id, removalRecovery: recovery } = change;
-    const matches = this.queries.listNodes().filter(({ node }) => node.dependencyId === id);
-    const blocker = matches.length === 1 ? matches[0] : undefined;
-    const outcome: DependencyCommandOutcome = {
-      type: 'dependency',
-      change: change.change,
-      dependencyId: id,
-      dependent: occurrence(dependent),
-      ...(blocker === undefined ? {} : { blocker: occurrence(blocker) }),
-      ...(recovery === undefined
-        ? {}
-        : {
-            removalRecovery: {
-              ...recovery,
-              source: { before: beforeSource, after: taskLine(dependent.node) },
-            },
-          }),
-    };
-    return { type: 'ok', changed, outcome };
   }
 }
