@@ -43,6 +43,29 @@ describe('owned non-structural inspector selection', () => {
     expect(result?.[1]?.ref).toEqual(current.subtasks[0]?.ref);
   });
 
+  it('retains that exact duplicate parent again when Undo restores its deleted child', () => {
+    const original = snapshot(
+      '- [ ] Root\n  - [ ] Parent\n    - [ ] Only\n  - [ ] Parent',
+      'before',
+    );
+    const originalParent = expectDefined(original.subtasks[0]);
+    const child = expectDefined(originalParent.subtasks[0]);
+    const removed = snapshot('- [ ] Root\n  - [ ] Parent\n  - [ ] Parent', 'removed');
+    const removedParent = expectDefined(removed.subtasks[0]);
+    const restored = snapshot(
+      '- [ ] Root\n  - [ ] Parent\n    - [ ] Only\n  - [ ] Parent',
+      'restored',
+    );
+    const result = rebuildOwnedTaskSelection(restored, [removed, removedParent], {
+      type: 'restore-subtask',
+      parent: { type: 'subtask', ref: removedParent.ref },
+      markdown: `${child.ref.originalBlock}\n`,
+      placement: { relativeLine: child.ref.relativeLine },
+    });
+    expect(result?.map((node) => node.title)).toEqual(['Root', 'Parent']);
+    expect(result?.[1]?.ref).toEqual(restored.subtasks[0]?.ref);
+  });
+
   it.each(['delete-subtask', 'restore-subtask'] as const)(
     'refuses a concurrent parent block-id replacement during %s proof',
     (type) => {
@@ -55,6 +78,37 @@ describe('owned non-structural inspector selection', () => {
         type === 'delete-subtask'
           ? '- [ ] Root\n  - [ ] Parent ^changed'
           : '- [ ] Root\n  - [ ] Parent ^changed\n    - [ ] Only';
+      const changed = snapshot(changedMarkdown, 'after');
+      const prior = type === 'delete-subtask' ? [original, parent] : [removed, removedParent];
+      const restoredChild = changed.subtasks[0]?.subtasks[0];
+      const command: TaskCommand =
+        type === 'delete-subtask'
+          ? { type, subtask: child.ref }
+          : {
+              type,
+              parent: { type: 'subtask', ref: removedParent.ref },
+              markdown: `${expectDefined(restoredChild).ref.originalBlock}\n`,
+              placement: { relativeLine: expectDefined(restoredChild).ref.relativeLine },
+            };
+      expect(rebuildOwnedTaskSelection(changed, prior, command)).toBeUndefined();
+    },
+  );
+
+  it.each(['delete-subtask', 'restore-subtask'] as const)(
+    'refuses a concurrent parent description-byte replacement during %s proof',
+    (type) => {
+      const original = snapshot(
+        '- [ ] Root\n  - [ ] Parent\n    - > Keep\n    - [ ] Only',
+        'before',
+      );
+      const parent = expectDefined(original.subtasks[0]);
+      const child = expectDefined(parent.subtasks[0]);
+      const removed = snapshot('- [ ] Root\n  - [ ] Parent\n    - > Keep', 'removed');
+      const removedParent = expectDefined(removed.subtasks[0]);
+      const changedMarkdown =
+        type === 'delete-subtask'
+          ? '- [ ] Root\n  - [ ] Parent\n     - > Keep'
+          : '- [ ] Root\n  - [ ] Parent\n     - > Keep\n    - [ ] Only';
       const changed = snapshot(changedMarkdown, 'after');
       const prior = type === 'delete-subtask' ? [original, parent] : [removed, removedParent];
       const restoredChild = changed.subtasks[0]?.subtasks[0];

@@ -120,68 +120,80 @@ interface StatusPopoverLifecycleOptions {
 }
 
 class StatusPopoverLifecycle {
-  private readonly ownerDocument: Document;
-  private readonly ownerWindow: Window;
-  private dismissTimer: number | undefined;
-  private dismissListening = false;
-  private closed = false;
-  private ownerLifetime: Component | null = null;
-  private unregisterPopover = (): void => undefined;
+  private readonly ownerDocument_abyssPrivate: Document;
+  private readonly ownerWindow_abyssPrivate: Window;
+  private dismissTimer_abyssPrivate: number | undefined;
+  private dismissListening_abyssPrivate = false;
+  private closed_abyssPrivate = false;
+  private ownerLifetime_abyssPrivate: Component | null = null;
+  private unregisterPopover_abyssPrivate = (): void => undefined;
 
-  constructor(private readonly options: StatusPopoverLifecycleOptions) {
-    this.ownerDocument = options.popover.ownerDocument;
-    this.ownerWindow = this.ownerDocument.defaultView ?? window;
+  constructor(private readonly options_abyssPrivate: StatusPopoverLifecycleOptions) {
+    this.ownerDocument_abyssPrivate = options_abyssPrivate.popover.ownerDocument;
+    this.ownerWindow_abyssPrivate = this.ownerDocument_abyssPrivate.defaultView ?? window;
   }
 
   initialize(): void {
-    this.unregisterPopover = registerStatusPopoverClose(this.options.popover, this.close);
-    const { owner } = this.options;
+    this.unregisterPopover_abyssPrivate = registerStatusPopoverClose(
+      this.options_abyssPrivate.popover,
+      this.close,
+    );
+    const { owner } = this.options_abyssPrivate;
     if (owner == null) return;
     const lifetime = new Component();
     lifetime.register(() => {
-      if (this.ownerLifetime === lifetime) this.ownerLifetime = null;
+      if (this.ownerLifetime_abyssPrivate === lifetime) this.ownerLifetime_abyssPrivate = null;
       this.close();
     });
-    this.ownerLifetime = owner.addChild(lifetime);
+    this.ownerLifetime_abyssPrivate = owner.addChild(lifetime);
   }
 
   armDismissal(): void {
-    this.dismissTimer = this.ownerWindow.setTimeout(() => {
-      this.dismissTimer = undefined;
-      if (this.closed || !this.options.popover.isConnected) return;
-      this.ownerDocument.addEventListener('mousedown', this.onOutside, true);
-      this.ownerDocument.addEventListener('keydown', this.onKey, true);
-      this.dismissListening = true;
+    this.dismissTimer_abyssPrivate = this.ownerWindow_abyssPrivate.setTimeout(() => {
+      this.dismissTimer_abyssPrivate = undefined;
+      if (this.closed_abyssPrivate || !this.options_abyssPrivate.popover.isConnected) return;
+      this.ownerDocument_abyssPrivate.addEventListener(
+        'mousedown',
+        this.onOutside_abyssPrivate,
+        true,
+      );
+      this.ownerDocument_abyssPrivate.addEventListener('keydown', this.onKey_abyssPrivate, true);
+      this.dismissListening_abyssPrivate = true;
     }, 0);
   }
 
   readonly close = (restoreFocus = false): void => {
-    if (this.closed) return;
-    this.closed = true;
-    this.clearDismissal();
-    this.options.popover.remove();
-    this.unregisterPopover();
-    const lifetime = this.ownerLifetime;
-    this.ownerLifetime = null;
-    if (lifetime != null) this.options.owner?.removeChild(lifetime);
-    const { trigger } = this.options;
+    if (this.closed_abyssPrivate) return;
+    this.closed_abyssPrivate = true;
+    this.clearDismissal_abyssPrivate();
+    this.options_abyssPrivate.popover.remove();
+    this.unregisterPopover_abyssPrivate();
+    const lifetime = this.ownerLifetime_abyssPrivate;
+    this.ownerLifetime_abyssPrivate = null;
+    if (lifetime != null) this.options_abyssPrivate.owner?.removeChild(lifetime);
+    const { trigger } = this.options_abyssPrivate;
     if (restoreFocus && trigger?.isConnected === true) trigger.focus({ preventScroll: true });
-    this.options.ownershipToken.release();
-    this.options.onClose?.();
+    this.options_abyssPrivate.ownershipToken.release();
+    this.options_abyssPrivate.onClose?.();
   };
 
-  private clearDismissal(): void {
-    if (this.dismissTimer !== undefined) this.ownerWindow.clearTimeout(this.dismissTimer);
-    if (!this.dismissListening) return;
-    this.ownerDocument.removeEventListener('mousedown', this.onOutside, true);
-    this.ownerDocument.removeEventListener('keydown', this.onKey, true);
+  private clearDismissal_abyssPrivate(): void {
+    if (this.dismissTimer_abyssPrivate !== undefined)
+      this.ownerWindow_abyssPrivate.clearTimeout(this.dismissTimer_abyssPrivate);
+    if (!this.dismissListening_abyssPrivate) return;
+    this.ownerDocument_abyssPrivate.removeEventListener(
+      'mousedown',
+      this.onOutside_abyssPrivate,
+      true,
+    );
+    this.ownerDocument_abyssPrivate.removeEventListener('keydown', this.onKey_abyssPrivate, true);
   }
 
-  private readonly onOutside = (event: MouseEvent): void => {
-    if (!this.options.popover.contains(event.target as Node)) this.close();
+  private readonly onOutside_abyssPrivate = (event: MouseEvent): void => {
+    if (!this.options_abyssPrivate.popover.contains(event.target as Node)) this.close();
   };
 
-  private readonly onKey = (event: KeyboardEvent): void => {
+  private readonly onKey_abyssPrivate = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopPropagation();

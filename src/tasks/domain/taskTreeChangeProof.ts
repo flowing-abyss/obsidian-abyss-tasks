@@ -2,9 +2,21 @@ import type { SubtaskSnapshot, TaskSnapshot } from './types';
 
 type Node = TaskSnapshot | SubtaskSnapshot;
 
-function taskLine(node: Node): string {
-  const source = 'source' in node ? node.source.originalMarkdown : node.ref.originalBlock;
-  return (source.split('\n', 1)[0] ?? '').replace(/\r$/u, '');
+function sourceBlock(node: Node): string {
+  return 'source' in node ? node.source.originalBlock : node.ref.originalBlock;
+}
+
+function sourceWithoutChild(parent: Node, index: number): string | undefined {
+  const child = parent.subtasks[index];
+  if (child === undefined) return undefined;
+  const source = sourceBlock(parent);
+  const childSource = child.ref.originalBlock;
+  const prefix = `${source.split('\n', child.ref.relativeLine).join('\n')}\n`;
+  if (!source.startsWith(childSource, prefix.length)) return undefined;
+  const suffix = source.slice(prefix.length + childSource.length);
+  // Snapshot CR belongs to the exact preceding line, so only the separator LF
+  // is removed when the captured child is the final line.
+  return suffix.length === 0 ? prefix.replace(/\n$/u, '') : prefix + suffix.replace(/^\r?\n/u, '');
 }
 
 function changedRemovalParent(
@@ -13,7 +25,11 @@ function changedRemovalParent(
   path: readonly number[] | undefined,
   remove: number | undefined,
 ): boolean {
-  return path?.length === 0 && remove !== undefined && taskLine(before) !== taskLine(after);
+  return (
+    path?.length === 0 &&
+    remove !== undefined &&
+    sourceWithoutChild(before, remove) !== sourceBlock(after)
+  );
 }
 
 function comparable(value: unknown, omitted: ReadonlySet<string>, path = ''): unknown {

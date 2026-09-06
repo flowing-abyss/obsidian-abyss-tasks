@@ -192,7 +192,10 @@ function rebuildRemovalSelection(
 ): TaskSelectionNode[] | undefined {
   const restore = command.type === 'restore-subtask';
   const parent = restore ? command.parent : command.subtask.parent;
-  const paths = selectionPaths(current, selection, parent, true);
+  // Structural commands carry exact relative-line refs and are verified below by
+  // a single-child splice proof. Requiring source uniqueness before that proof
+  // would lose the selected occurrence after deleting its distinguishing child.
+  const paths = selectionPaths(current, selection, parent, false);
   if (paths === undefined) return undefined;
   const { before, selectedPath, editedPath } = paths;
   const expanded = restore ? current : before;
