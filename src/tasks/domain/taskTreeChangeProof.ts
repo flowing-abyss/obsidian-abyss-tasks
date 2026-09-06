@@ -6,17 +6,17 @@ function sourceBlock(node: Node): string {
   return 'source' in node ? node.source.originalBlock : node.ref.originalBlock;
 }
 
-function sourceWithoutChild(parent: Node, index: number): string | undefined {
-  const child = parent.subtasks[index];
-  if (child === undefined) return undefined;
-  const source = sourceBlock(parent);
+function removalSourceMatches(before: Node, after: Node, index: number): boolean {
+  const child = before.subtasks[index];
+  if (child === undefined) return false;
+  const source = sourceBlock(before);
+  const contracted = sourceBlock(after);
   const childSource = child.ref.originalBlock;
   const prefix = `${source.split('\n', child.ref.relativeLine).join('\n')}\n`;
-  if (!source.startsWith(childSource, prefix.length)) return undefined;
+  if (!source.startsWith(childSource, prefix.length)) return false;
   const suffix = source.slice(prefix.length + childSource.length);
-  // Snapshot CR belongs to the exact preceding line, so only the separator LF
-  // is removed when the captured child is the final line.
-  return suffix.length === 0 ? prefix.replace(/\n$/u, '') : prefix + suffix.replace(/^\r?\n/u, '');
+  if (suffix.length > 0) return prefix + suffix.replace(/^\r?\n/u, '') === contracted;
+  return source.startsWith(contracted) && /^(?:\r?\n)+$/u.test(prefix.slice(contracted.length));
 }
 
 function changedRemovalParent(
@@ -25,11 +25,7 @@ function changedRemovalParent(
   path: readonly number[] | undefined,
   remove: number | undefined,
 ): boolean {
-  return (
-    path?.length === 0 &&
-    remove !== undefined &&
-    sourceWithoutChild(before, remove) !== sourceBlock(after)
-  );
+  return path?.length === 0 && remove !== undefined && !removalSourceMatches(before, after, remove);
 }
 
 function comparable(value: unknown, omitted: ReadonlySet<string>, path = ''): unknown {

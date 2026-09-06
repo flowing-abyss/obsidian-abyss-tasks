@@ -94,9 +94,18 @@ const back = '[aria-label="Back to previous task"]';
 const forward = '[data-dependency-direction="blocked-by"] .abyss-dep-title';
 const inverse = '[data-dependency-direction="blocks"] .abyss-dep-title';
 const onlyChildSource = {
-  LF: '- [ ] Source\n- [ ] Root\n  - [ ] Parent\n    - [ ] Only\n',
-  CRLF: '- [ ] Source\r\n- [ ] Root\r\n  - [ ] Parent\r\n    - [ ] Only\r\n',
-  'no final newline': '- [ ] Source\n- [ ] Root\n  - [ ] Parent\n    - [ ] Only',
+  'LF, adjacent, final newline': '- [ ] Source\n- [ ] Root\n  - [ ] Parent\n    - [ ] Only\n',
+  'LF, adjacent, no final newline': '- [ ] Source\n- [ ] Root\n  - [ ] Parent\n    - [ ] Only',
+  'LF, gap, final newline': '- [ ] Source\n- [ ] Root\n  - [ ] Parent\n\n    - [ ] Only\n',
+  'LF, gap, no final newline': '- [ ] Source\n- [ ] Root\n  - [ ] Parent\n\n    - [ ] Only',
+  'CRLF, adjacent, final newline':
+    '- [ ] Source\r\n- [ ] Root\r\n  - [ ] Parent\r\n    - [ ] Only\r\n',
+  'CRLF, adjacent, no final newline':
+    '- [ ] Source\r\n- [ ] Root\r\n  - [ ] Parent\r\n    - [ ] Only',
+  'CRLF, gap, final newline':
+    '- [ ] Source\r\n- [ ] Root\r\n  - [ ] Parent\r\n\r\n    - [ ] Only\r\n',
+  'CRLF, gap, no final newline':
+    '- [ ] Source\r\n- [ ] Root\r\n  - [ ] Parent\r\n\r\n    - [ ] Only',
 } as const;
 
 describe.each(['panel', 'modal'] as const)('%s saved dependency frames', (surface) => {
@@ -203,7 +212,7 @@ describe.each(['panel', 'modal'] as const)('%s saved dependency frames', (surfac
     },
   );
 
-  it.each(['LF', 'CRLF', 'no final newline'] as const)(
+  it.each(Object.keys(onlyChildSource) as Array<keyof typeof onlyChildSource>)(
     'restores the only nested child with %s source layout',
     async (layout) => {
       const source = onlyChildSource[layout];
