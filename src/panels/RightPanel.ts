@@ -155,6 +155,28 @@ interface SubmittedDraft {
   consumed: boolean;
 }
 
+function updateDependencyBadgeCounts(
+  body: HTMLButtonElement,
+  counts: ReturnType<typeof dependencyCountPresentation>,
+): void {
+  const [lock, blockedBy, divider, blocks] = [...body.children] as [
+    HTMLElement,
+    HTMLElement,
+    HTMLElement,
+    HTMLElement,
+  ];
+  const isEmpty = counts.blockedBy === 0 && counts.blocks === 0;
+  lock.setAttribute('class', 'abyss-dep-lock');
+  blockedBy.setText(String(counts.blockedBy));
+  blockedBy.setAttribute('class', isEmpty ? 'abyss-dep-count' : 'abyss-dep-count-blocked-by');
+  divider.toggleAttribute('hidden', isEmpty);
+  blocks.setText(String(counts.blocks));
+  blocks.setAttribute('class', isEmpty ? 'abyss-dep-count' : 'abyss-dep-count-blocks');
+  blocks.toggleAttribute('hidden', isEmpty);
+  if (counts.blockedBy > 0) lock.addClass('abyss-dep-count-blocked-by');
+  else if (counts.blocks > 0) lock.addClass('abyss-dep-count-blocks');
+}
+
 function rootRefForPlanningTarget(target: PlanningTarget): TaskRef {
   let node: TaskNodeRef = target;
   while (node.type === 'subtask') node = node.ref.parent;
@@ -1481,14 +1503,7 @@ export class RightPanel {
     body.setAttribute('aria-label', counts.ariaLabel);
     body.title = counts.title;
     body.setAttribute('aria-expanded', String(this.dependencySearch_abyssPrivate !== undefined));
-    const lock = body.querySelector('.abyss-dep-lock');
-    lock?.setAttribute('class', 'abyss-dep-lock');
-    body.querySelector('.abyss-dep-count-blocked-by')?.setText(String(counts.blockedBy));
-    body.querySelector('.abyss-dep-count-blocks')?.setText(String(counts.blocks));
-    if (lock !== null) {
-      if (counts.blockedBy > 0) lock.addClass('abyss-dep-count-blocked-by');
-      else if (counts.blocks > 0) lock.addClass('abyss-dep-count-blocks');
-    }
+    updateDependencyBadgeCounts(body, counts);
     this.updateDependencyBadgeAdd_abyssPrivate(badge, projection);
   }
 
@@ -1498,8 +1513,18 @@ export class RightPanel {
       attr: { type: 'button', 'aria-haspopup': 'dialog' },
     });
     setIcon(body.createSpan({ cls: 'abyss-dep-lock', attr: { 'aria-hidden': 'true' } }), 'lock');
-    for (const name of ['count-blocked-by', 'divider', 'count-blocks'])
-      body.createSpan({ cls: `abyss-dep-${name}`, attr: { 'aria-hidden': 'true' } });
+    for (const [name, direction] of [
+      ['count-blocked-by', 'blocked-by'],
+      ['divider', undefined],
+      ['count-blocks', 'blocks'],
+    ] as const)
+      body.createSpan({
+        cls: `abyss-dep-${name}`,
+        attr: {
+          'aria-hidden': 'true',
+          ...(direction !== undefined && { 'data-dependency-count': direction }),
+        },
+      });
     body.addEventListener('click', () => {
       this.showDependencySearch_abyssPrivate();
     });

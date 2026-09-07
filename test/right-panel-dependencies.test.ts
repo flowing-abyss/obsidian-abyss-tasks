@@ -1629,26 +1629,85 @@ describe('RightPanel dependency inspector', () => {
     );
   });
 
-  it('renders a chrome-free compact dependency control with complete accessible names', async () => {
+  it('renders a neutral empty dependency badge and restores directional counts after adding one', async () => {
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
+    cleanups.unshift(
+      h.index.subscribe(() => {
+        h.state.updateInspectorSelection([h.node('Current').root]);
+      }),
+    );
     const badge = expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-badge'));
     const body = button(badge, '.abyss-dep-badge-body');
     const plus = button(badge, '.abyss-dep-badge-add');
+    const lock = expectDefined(body.querySelector<HTMLElement>('.abyss-dep-lock'));
+    const blockedBy = expectDefined(body.children.item(1) as HTMLElement | null);
+    const divider = expectDefined(body.querySelector<HTMLElement>('.abyss-dep-divider'));
+    const blocks = expectDefined(body.children.item(3) as HTMLElement | null);
 
-    expect([...body.children].map((child) => child.className)).toEqual([
-      'abyss-dep-lock',
-      'abyss-dep-count-blocked-by',
-      'abyss-dep-divider',
-      'abyss-dep-count-blocks',
+    expect(body.children).toHaveLength(4);
+    expect(blockedBy.dataset['dependencyCount']).toBe('blocked-by');
+    expect(blocks.dataset['dependencyCount']).toBe('blocks');
+    expect([...body.children].filter((child) => !child.hasAttribute('hidden'))).toEqual([
+      lock,
+      blockedBy,
     ]);
-    expect(body.textContent).toBe('00');
-    expect(body.querySelector('.abyss-dep-divider')?.textContent).toBe('');
+    expect(lock.classList).not.toContain('abyss-dep-count-blocked-by');
+    expect(lock.classList).not.toContain('abyss-dep-count-blocks');
+    expect(blockedBy.classList).not.toContain('abyss-dep-count-blocked-by');
+    expect(blockedBy.textContent).toBe('0');
+    expect(divider.hidden).toBe(true);
+    expect(blocks.hidden).toBe(true);
     expect(body.getAttribute('aria-label')).toBe('Dependencies: blocked by 0; blocks 0');
     expect(body.title).toBe('Dependencies: blocked by 0; blocks 0');
     expect(plus.parentElement).toBe(badge);
     expect(body.contains(plus)).toBe(false);
     expect(plus.getAttribute('aria-label')).toBe('Add dependency sections');
     expect(plus.title).toBe('Add dependency');
+
+    await h.api.execute({
+      type: 'add-dependency',
+      blocker: h.node('Candidate').target,
+      dependent: h.node('Current').target,
+    });
+    await flushMicrotasks(30);
+
+    const updatedBody = button(h.el, '.abyss-dep-badge-body');
+    const updatedDivider = expectDefined(
+      updatedBody.querySelector<HTMLElement>('.abyss-dep-divider'),
+    );
+    const updatedBlockedBy = expectDefined(
+      updatedBody.querySelector<HTMLElement>('[data-dependency-count="blocked-by"]'),
+    );
+    const updatedBlocks = expectDefined(
+      updatedBody.querySelector<HTMLElement>('[data-dependency-count="blocks"]'),
+    );
+    expect(updatedDivider.hidden).toBe(false);
+    expect(updatedBlocks.hidden).toBe(false);
+    expect(updatedBlockedBy.classList).toContain('abyss-dep-count-blocked-by');
+    expect(updatedBlocks.classList).toContain('abyss-dep-count-blocks');
+
+    await h.api.execute({ type: 'toggle-completion', target: h.node('Candidate').target });
+    await flushMicrotasks(30);
+
+    const settledBody = button(h.el, '.abyss-dep-badge-body');
+    const settledLock = expectDefined(settledBody.querySelector<HTMLElement>('.abyss-dep-lock'));
+    const settledBlockedBy = expectDefined(
+      settledBody.querySelector<HTMLElement>('[data-dependency-count="blocked-by"]'),
+    );
+    const settledDivider = expectDefined(
+      settledBody.querySelector<HTMLElement>('.abyss-dep-divider'),
+    );
+    const settledBlocks = expectDefined(
+      settledBody.querySelector<HTMLElement>('[data-dependency-count="blocks"]'),
+    );
+    expect([...settledBody.children].filter((child) => !child.hasAttribute('hidden'))).toEqual([
+      settledLock,
+      settledBlockedBy,
+    ]);
+    expect(settledLock.className).toBe('abyss-dep-lock');
+    expect(settledBlockedBy.className).toBe('abyss-dep-count');
+    expect(settledDivider.hidden).toBe(true);
+    expect(settledBlocks.hidden).toBe(true);
   });
 
   it('keeps blank Create hidden without an author display override and exposes a focusable nonblank action', async () => {
