@@ -1,19 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { cssRuleParts, loadPluginStyles } from './helpers';
+import { cssDeclarationsFor, loadPluginStyles } from './helpers';
 
 const css = await loadPluginStyles();
 
 function declarationsFor(selector: string): string {
   return declarationsForSource(css, selector);
-}
-
-function declarationsForRuleContaining(selector: string): string {
-  const normalizedSelector = selector.replace(/\s+/gu, '');
-  return (
-    cssRuleParts(css).find((rule) =>
-      rule.selector.replace(/\s+/gu, '').includes(normalizedSelector),
-    )?.declarations ?? ''
-  );
 }
 
 function declarationsForSource(source: string, selector: string): string {
@@ -149,7 +140,7 @@ describe('CenterPanel task metadata styles', () => {
       ['.abyss-task-card.abyss-multi-selected', 'box-shadow:'],
     ]);
     for (const [selector, paint] of paintBySelector) {
-      const declarations = declarationsForRuleContaining(selector);
+      const declarations = cssDeclarationsFor(css, selector);
       expect(declarations).toContain(paint);
       expect(declarations).not.toMatch(/(?:^|\s)(?:border|padding|margin|height|width)\s*:/u);
     }
@@ -158,6 +149,16 @@ describe('CenterPanel task metadata styles', () => {
     expect(keyboardFocus).toContain('outline:');
     expect(keyboardFocus).toContain('outline-offset:');
     expect(keyboardFocus).not.toMatch(/(?:^|\s)(?:border|padding|margin|height|width)\s*:/u);
+  });
+
+  it('requires an exact selector arm for grouped paint-state rules', () => {
+    const selected = '.abyss-task-card.is-selected';
+    const lookalikeRules = `
+      ${selected}-child,
+      .scope ${selected} { background: var(--background-modifier-active-hover); }
+    `;
+
+    expect(cssDeclarationsFor(lookalikeRules, selected)).toBe('');
   });
 
   it('separates and vertically centers date and time icons from their labels', () => {
