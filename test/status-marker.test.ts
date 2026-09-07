@@ -203,7 +203,7 @@ describe('renderStatusMarker', () => {
     const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, detail: 0 });
     el.dispatchEvent(event);
 
-    expect(el.hasAttribute('role')).toBe(false);
+    expect(el.getAttribute('role')).toBe('img');
     expect(el.getAttribute('aria-label')).toBe('In progress');
     expect(el.getAttribute('aria-haspopup')).toBe('menu');
     expect(el.getAttribute('tabindex')).toBe('0');
