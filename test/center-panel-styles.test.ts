@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { loadPluginStyles } from './helpers';
+import { cssRuleParts, loadPluginStyles } from './helpers';
 
 const css = await loadPluginStyles();
 
 function declarationsFor(selector: string): string {
   return declarationsForSource(css, selector);
+}
+
+function declarationsForRuleContaining(selector: string): string {
+  const normalizedSelector = selector.replace(/\s+/gu, '');
+  return (
+    cssRuleParts(css).find((rule) =>
+      rule.selector.replace(/\s+/gu, '').includes(normalizedSelector),
+    )?.declarations ?? ''
+  );
 }
 
 function declarationsForSource(source: string, selector: string): string {
@@ -140,7 +149,7 @@ describe('CenterPanel task metadata styles', () => {
       ['.abyss-task-card.abyss-multi-selected', 'box-shadow:'],
     ]);
     for (const [selector, paint] of paintBySelector) {
-      const declarations = declarationsFor(selector);
+      const declarations = declarationsForRuleContaining(selector);
       expect(declarations).toContain(paint);
       expect(declarations).not.toMatch(/(?:^|\s)(?:border|padding|margin|height|width)\s*:/u);
     }
