@@ -1408,7 +1408,6 @@ export class RightPanel {
         );
       },
       onContextMenu: (event) => {
-        event.stopPropagation();
         this.openStatusMenu_abyssPrivate(event, task);
       },
     });
@@ -1732,15 +1731,14 @@ export class RightPanel {
     });
     if (relation.type === 'resolved') {
       this.bindRelationDrag_abyssPrivate(row, relation, direction, current);
-      const marker = renderStatusMarker(row, {
+      renderStatusMarker(row, {
         task: relation.task.node,
         registry: this.statusRegistry_abyssPrivate,
         interactive: false,
-        onLeftClick: () => {},
-        onContextMenu: () => {},
-      });
-      marker.addEventListener('click', (event) => {
-        event.stopPropagation();
+        contextMenuOnly: true,
+        onContextMenu: (event) => {
+          this.openStatusMenu_abyssPrivate(event, relation.task.node);
+        },
       });
       row.addEventListener('click', (event) => {
         event.stopPropagation();

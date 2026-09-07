@@ -165,6 +165,31 @@ describe('renderStatusMarker', () => {
     expect(context).not.toHaveBeenCalled();
   });
 
+  it('allows only the context menu on a context-menu-only inert marker', () => {
+    const parent = createDiv();
+    const parentClick = vi.fn();
+    const left = vi.fn();
+    const context = vi.fn();
+    parent.addEventListener('click', parentClick);
+    const el = renderStatusMarker(parent, {
+      task: { statusSymbol: '/', priority: 'A' },
+      registry: reg,
+      interactive: false,
+      contextMenuOnly: true,
+      onLeftClick: left,
+      onContextMenu: context,
+    });
+    const contextEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    el.dispatchEvent(contextEvent);
+
+    expect(left).not.toHaveBeenCalled();
+    expect(context).toHaveBeenCalledOnce();
+    expect(contextEvent.defaultPrevented).toBe(true);
+    expect(parentClick).not.toHaveBeenCalled();
+  });
+
   it('styles inert preview markers with the default cursor', () => {
     const css = styles();
     const rule = /\.abyss-status-marker--inert\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';

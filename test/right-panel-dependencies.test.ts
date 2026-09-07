@@ -2,7 +2,10 @@ import { Notice, Platform, requireApiVersion, TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
-import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { toStatusRules } from '../src/settings/statusCatalogAdapter';
+import type { TaskStatusDef } from '../src/settings/types';
+import { StatusRegistry } from '../src/status/StatusRegistry';
 import {
   localDate,
   type SubtaskSnapshot,
@@ -15,6 +18,7 @@ import {
   TaskDependencyService,
   type TaskDiagnosticSink,
 } from '../src/tasks/application/TaskDependencyService';
+import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
@@ -24,7 +28,6 @@ import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/Obs
 import { TaskModal } from '../src/ui/TaskModal';
 import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
 import {
-  canonicalStatusCatalog,
   createAppWithFiles,
   cssDeclarationsFor,
   cssDeclarationValue,
@@ -47,10 +50,15 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function harness(markdown: string, selected = 'Current', additionalFiles = {}) {
+async function harness(
+  markdown: string,
+  selected = 'Current',
+  additionalFiles = {},
+  statusDefinitions: readonly TaskStatusDef[] = buildDefaultTaskStatuses(),
+) {
   // The mock metadata parser uses -0 for a root list beginning on line zero.
   const app = await createAppWithFiles({ 'tasks.md': `\n${markdown}`, ...additionalFiles });
-  const statuses = canonicalStatusCatalog();
+  const statuses = new StatusCatalog(toStatusRules(statusDefinitions));
   const authority = new TaskRefAuthority('inspector-dependencies');
   const index = new TaskIndex(app, {
     statusCatalog: statuses,
@@ -93,7 +101,14 @@ async function harness(markdown: string, selected = 'Current', additionalFiles =
   const location = node(selected);
   state.set('taskStack', [location.root, ...location.path]);
   const el = activeDocument.body.createDiv();
-  const panel = new RightPanel(state, app, testStatusRegistry(), DEFAULT_SETTINGS, undefined, api);
+  const panel = new RightPanel(
+    state,
+    app,
+    new StatusRegistry([...statusDefinitions]),
+    DEFAULT_SETTINGS,
+    undefined,
+    api,
+  );
   panel.mount(el);
   cleanups.push(() => {
     panel.destroy();
@@ -996,6 +1011,81 @@ describe('inspector dependency navigation', () => {
     expect(h.state.get('inspectorBackStack')).toBe(previous);
     expect(await h.read()).toBe(source.replace('🆔 b ⛔ c', '🆔 b'));
     expect(h.el.querySelector('[aria-label="Back to previous task"]')).not.toBeNull();
+  });
+
+  it('edits a blocked-by relation priority without changing the inspector selection or edge', async () => {
+    const h = await harness(
+      '- [ ] Previous\n- [ ] Current ⛔ related\n- [ ] Related 🆔 related\n',
+      'Previous',
+    );
+    h.state.openInspectorDependency(h.node('Current'));
+    const marker = expectDefined(
+      h.el.querySelector<HTMLElement>(
+        '[data-dependency-direction="blocked-by"] .abyss-status-marker',
+      ),
+    );
+
+    marker.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 12, clientY: 8 }),
+    );
+    button(activeDocument.body, '.abyss-status-popover-flag[data-abyss-priority="A"]').click();
+    await flushMicrotasks(30);
+
+    expect(await h.read()).toContain('- [ ] Related 🆔 related 🔺');
+    expect(h.node('Related').node.priority).toBe('A');
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Current']);
+    expect(h.state.get('inspectorBackStack').map((frame) => frame.taskStack[0]?.title)).toEqual([
+      'Previous',
+    ]);
+    expect(h.index.dependencies(h.node('Current').target).blockedBy).toMatchObject([
+      { type: 'resolved', dependencyId: 'related', task: { node: { title: 'Related' } } },
+    ]);
+  });
+
+  it('edits a blocks relation custom status without changing the inspector selection or edge', async () => {
+    const statusDefinitions = [
+      ...buildDefaultTaskStatuses(),
+      {
+        id: 'status-waiting',
+        symbol: 'w',
+        name: 'Waiting',
+        type: 'in-progress' as const,
+        icon: 'pause',
+        core: false,
+      },
+    ];
+    const source = '- [ ] Previous\n- [ ] Current 🆔 current\n- [ ] Related ⛔ current\n';
+    const h = await harness(source, 'Previous', {}, statusDefinitions);
+    h.state.openInspectorDependency(h.node('Current'));
+    const marker = expectDefined(
+      h.el.querySelector<HTMLElement>('[data-dependency-direction="blocks"] .abyss-status-marker'),
+    );
+
+    marker.click();
+    expect(await h.read()).toBe(source);
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Current']);
+    marker.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 12, clientY: 8 }),
+    );
+    expect(activeDocument.body.querySelector('.abyss-status-popover')?.textContent).toContain(
+      'Waiting',
+    );
+    expectDefined(
+      [...activeDocument.body.querySelectorAll<HTMLElement>('.abyss-status-popover-row')].find(
+        (row) => row.textContent.includes('Waiting'),
+      ),
+    ).click();
+    await flushMicrotasks(30);
+
+    expect(await h.read()).toContain('- [w] Related ⛔ current');
+    expect(h.node('Related').node.statusSymbol).toBe('w');
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Current']);
+    expect(h.state.get('inspectorBackStack').map((frame) => frame.taskStack[0]?.title)).toEqual([
+      'Previous',
+    ]);
+    expect(h.index.dependencies(h.node('Current').target).blocks).toMatchObject([
+      { type: 'resolved', dependencyId: 'current', task: { node: { title: 'Related' } } },
+    ]);
   });
 
   it('never makes unavailable or ambiguous rows navigation controls', async () => {

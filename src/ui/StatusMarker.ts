@@ -9,8 +9,9 @@ interface Opts {
   task: { statusSymbol: string; priority?: TaskPriority };
   registry: StatusRegistry;
   interactive?: boolean;
+  contextMenuOnly?: boolean;
   completionBlocked?: boolean;
-  onLeftClick: () => void;
+  onLeftClick?: () => void;
   onContextMenu: (ev: MouseEvent) => void;
 }
 
@@ -53,6 +54,14 @@ export function setStatusMarkerCompletionBlocked(marker: HTMLElement, blocked: b
   completionBlockUpdates.get(marker)?.(blocked);
 }
 
+function bindContextMenu(control: HTMLElement, onContextMenu: (event: MouseEvent) => void): void {
+  control.oncontextmenu = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onContextMenu(event);
+  };
+}
+
 function makeMarkerInteractive(
   ...args: [HTMLElement, string, boolean, () => void, (event: MouseEvent) => void]
 ): void {
@@ -72,11 +81,6 @@ function makeMarkerInteractive(
     event.stopPropagation();
     if (!blocked) onLeftClick();
   };
-  const onContext = (event: MouseEvent): void => {
-    event.preventDefault();
-    event.stopPropagation();
-    onContextMenu(event);
-  };
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
@@ -91,7 +95,7 @@ function makeMarkerInteractive(
   };
   const bind = (control: HTMLElement): void => {
     control.addEventListener('click', onClick);
-    control.addEventListener('contextmenu', onContext);
+    bindContextMenu(control, onContextMenu);
     control.addEventListener('keydown', onKeyDown);
     control.addEventListener('pointerdown', onPointer);
     control.addEventListener('touchstart', onPointer, { passive: false });
@@ -157,7 +161,14 @@ function markerPresentation(
 }
 
 export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement {
-  const { task, registry, interactive = true, onLeftClick, onContextMenu } = opts;
+  const {
+    task,
+    registry,
+    interactive = true,
+    contextMenuOnly = false,
+    onLeftClick,
+    onContextMenu,
+  } = opts;
   const def = registry.bySymbol(task.statusSymbol);
   const presentation = markerPresentation(def, task.statusSymbol);
   const el = parent.createSpan({ cls: 'abyss-status-marker' });
@@ -167,8 +178,19 @@ export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement
   renderMarkerIcon(el, task.statusSymbol, presentation.icon, def != null);
 
   if (interactive) {
-    makeMarkerInteractive(el, presentation.label, presentation.isDone, onLeftClick, onContextMenu);
+    makeMarkerInteractive(
+      el,
+      presentation.label,
+      presentation.isDone,
+      onLeftClick as () => void,
+      onContextMenu,
+    );
     setStatusMarkerCompletionBlocked(el, opts.completionBlocked === true);
+  } else if (contextMenuOnly) {
+    el.onclick = (event) => {
+      event.stopPropagation();
+    };
+    bindContextMenu(el, onContextMenu);
   }
   return el;
 }
