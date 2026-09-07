@@ -4458,7 +4458,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--color-red, #e74c3c);
 }
 
-.abyss-list-date-count {
+.abyss-list-date-count,
+.abyss-right-section-count {
   font-size: var(--font-ui-small);
   color: var(--text-faint);
   background: var(--background-modifier-hover);
@@ -5560,14 +5561,6 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-muted);
 }
 
-.abyss-right-section-count {
-  font-size: var(--font-ui-small);
-  color: var(--text-faint);
-  background: var(--background-modifier-hover);
-  border-radius: 10px;
-  padding: 0 6px;
-}
-
 .abyss-right-desc {
   width: 100%;
   border: 1px solid var(--background-modifier-border);
@@ -5613,7 +5606,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-dep-badge.abyss-chip {
   height: 24px;
-  padding: 0 2px;
+  padding: 0;
   gap: 0;
   border: 0;
   background: transparent;
@@ -5645,13 +5638,21 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   align-items: center;
   gap: 2px;
   height: 24px;
-  padding: 3px 4px;
+  padding: 3px 6px;
   border: 0;
   border-radius: inherit;
   background: transparent;
   color: inherit;
   font: inherit;
   box-shadow: none;
+}
+
+.abyss-dep-badge > .abyss-dep-badge-body {
+  padding-inline: 8px 4px;
+}
+
+.abyss-dep-badge > .abyss-dep-badge-add {
+  padding-inline: 4px 8px;
 }
 
 .abyss-dep-badge:hover {
