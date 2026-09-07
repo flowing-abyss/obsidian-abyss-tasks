@@ -89,11 +89,8 @@ and delegates persistence through repository and destination ports. It returns s
 such as success, conflict, invalid input, missing or ambiguous targets, partial moves, and I/O
 failure.
 
-`TaskDependencyService` coordinates public add/remove/restore/reverse dependency commands, atomic linked
-subtask creation, and derives the
-active blockers used by completion validation. It receives query/repository ports, an ID generator,
-and a diagnostic sink from the composition root. Dependencies use the same repository and source
-editor as ordinary task commands.
+`TaskDependencyService` owns dependency commands, linked subtask creation, and completion-blocker
+checks.
 
 The application layer may depend on its own ports and the domain. It must not depend on presentation
 or concrete infrastructure.
@@ -130,95 +127,20 @@ Panels may issue commands and query snapshots through the public task boundary. 
 navigation and transient interaction state through `AppState`. They must not edit task Markdown
 directly or import private task-layer modules.
 
-`AppState.draggingTaskNode` carries the canonical `TaskNodeDragPayload`: one detached, deeply
-frozen persisted `TaskNodeSnapshot` and its `center-card`, `inspector-subtask` or
-`inspector-relation` source. Resolved relation sources additionally carry detached original
-blocker/dependent references, dependency ID and direction. Center
-cards publish root nodes; existing inspector subtask rows publish complete root-to-subtask paths.
-Recurrence forecasts never publish this payload. `taskNodeDrag` owns native drag cleanup for the
-source document: drop, dragend, Escape, source/panel detachment and owner destruction release the
-same transient payload. AppState clears the payload atomically with selection changes, before
-listeners can accept a drop against the newly selected task. It does not store a second selection
-or drag model.
+`RightPanel` owns dependency search, direct relation lists, local removal Undo, and navigation between
+related tasks. Inspector history lives in `AppState` for the panel or modal session. It stores complete
+structural task paths, preserves only proven successors after a write, and never becomes persisted
+task identity.
 
-Left-panel tag assignment and project moves accept only center-card roots. Inspector subtask rows
-retain their existing local before/after reorder placement; relation rows do not reorder. Whole
-dependency sections consume task sources to add the directed edge and opposite-direction relation
-sources to dispatch atomic `reverse-dependency`. Dropping a relation in its own section is a no-op.
-Query eligibility protects hover/drop and the application guard validates again for the write.
-Each section caches preview eligibility for one published payload; query notifications rebuild
-sections and invalidate that cache, and drops always check eligibility again. Reversal preserves
-the original row until the committed query projection refreshes it. Center-card drag disclosure
-refreshes only dependency sections and the badge; its temporary empty sections disappear when
-dragging ends. Inspector subtask drags use already-visible sections and never remount them or insert
-empty sections during native dragstart. The existing badge `+` exposes both directions before the
-first subtask drag. Persisted relations disclose both directions. Explicit add disclosure retains
-its separate lifetime through drag cancellation.
-Dependency drops complete without success Notices and never navigate or move the source. Normal
-index reconciliation may refresh an affected saved history frame through its proven successor;
-unchanged frames retain their identities. Drag state is never persisted.
+Task cards, subtasks, and relation rows share one transient drag payload. Dependency drops add or
+reverse an edge through the public task commands; they do not move the dragged task. Existing tag,
+project, and subtask reorder drops keep their narrower source rules. The query layer previews
+eligibility and the application layer validates it again before writing.
 
-`RightPanel` consumes dependency queries through `src/tasks` for the compact badge and direct
-relation sections. Shared dependency presentation owns counts and recovery labels; the dependency
-search model owns filtering, direction eligibility and stable same-file ranking. One search
-controller handles general and scoped entry points, keyboard selection and focus dismissal.
-Explicit search selection retains the exact task-node reference across refreshes and reordered
-results. An unavailable or ineligible selected target leaves stale intent until the user edits,
-selects again or explicitly activates the native Create button; Enter never converts that intent
-into creation. The separate Create action shares the plain-Enter commit, validation and busy path.
-The inspector keeps disclosure and search drafts only for its mounted lifetime, preserving the
-search across proven selection refreshes. Index events refresh counterpart status and relation
-rows. Add/remove actions use the existing task application and inspector-local removal Undo;
-failed actions leave the search available and use the established command-result Notice.
-
-Both general and direction-scoped dependency pickers submit `create-dependency-subtask` through
-the public application API. A new direct child and its requested edge are committed together.
-Expected invalid drafts, including authored dependency carriers, remain inline with the draft;
-unexpected failures use one established command-result presenter and diagnostic boundary. Creation
-does not emit an ordinary success Notice. The inspector registers the existing pending mutation
-ownership before dispatch and preserves the selected current node and saved history across the
-proven insertion. This extends the owned-selection proof only for this composite command: the
-submitted child, dependency changes, and otherwise unchanged tree must all match.
-Exact duplicate current occurrences retain their complete positional path only under this owned
-append proof; ordinary content commands and unowned structural transitions keep their existing
-conservative uniqueness requirements.
-
-`CenterPanel` and the standalone `CalendarRenderer` resolve persisted calendar/root/subtask targets
-through the same dependency query capability. Their read callbacks pass the projection through
-the existing list, month, all-day and timed status renderers. `taskDependencyPresentation` derives
-one compact active-only indicator, with no element for zero active relations; forecasts never query
-dependencies. `StatusMarker` owns the focusable blocked-checkbox wrapper and suppresses pointer,
-touch and synthesized click completion before dispatch. Its keyboard activation and status menus
-retain the public application guard and the single command-result Notice. The Notice identifies
-the first active declared blocker, or its raw duplicate ID when ambiguous, without picking a
-candidate. `RightPanel` updates its mounted header and subtask markers when counterpart dependencies
-change, preserving drafts and restoring enabled completion after index reconciliation.
-
-`AppState.taskStack` remains one structural root-to-subtask chain. Resolved relation rows call
-`openInspectorDependency()`, which stores a detached, deeply frozen complete chain in
-`inspectorBackStack` and selects the destination's complete path. The Back button in the existing
-breadcrumb area appears only while history exists and restores one whole frame; ancestor breadcrumbs
-and subtask clicks change only the current chain. Ordinary `set('taskStack', ...)` begins a new
-selection and clears history, including explicit reselection and inspector clear. Internal refresh,
-command convergence and structural navigation use `updateInspectorSelection()` to preserve history.
-Empty or invalid frames are never retained, invalid destinations are ignored, and opening the already
-selected exact target is a no-op. Before Back pops a frame, `RightPanel` resolves its root through the
-existing task query and conservatively reconstructs the complete structural path. Only an exact or
-proven rebased root and a complete path can be restored; the live snapshots and frame pop commit
-atomically. If the former task is unavailable or ambiguous, a Notice explains the failure and both
-the current selection and retryable history remain unchanged. On each query notification, `RightPanel`
-synchronously maintains proven complete frame successors before deferred DOM refresh, so successive
-index transitions do not lose relocation evidence. `updateInspectorHistoryFrames()` replaces only
-changed frames atomically with detached frozen snapshots, retaining unproven frames and making
-unchanged refreshes no-ops. Earlier frame objects remain immutable. Frames use the canonical task
-snapshot clone helper through `src/tasks`; they are transient. A modal owns its own AppState
-and history for its open lifetime, independently of the main panel.
-History path rebuilding shares the active selection's dependency-only tree proof only for a matching
-authority transition. For an inspector-owned content edit, each saved path may use the same bounded
-pending-command proof before draft ownership is consumed. Both shells mount `RightPanel`'s query
-subscriber before active-selection convergence; consumed submissions never authorize later history
-transitions. Successful resolved-row navigation focuses the destination's Back button, retaining a
-reachable keyboard position after the source row is removed.
+`CenterPanel`, `RightPanel`, and `CalendarRenderer` use the same dependency projection and status
+presentation. Active blockers disable completion in the interface, while the application layer
+enforces the same rule for pointer, keyboard, menu, and retry paths. Presentation state such as
+search drafts, drag state, disclosure, history, and Undo remains local and transient.
 
 ### Projects
 
@@ -258,37 +180,18 @@ sidebar. Its render child owns cleanup when Obsidian removes the block from the 
 3. `TaskQueryApi` exposes filtered lists, reference resolution, and calendar projection sources.
 4. Subscribers refresh presentation from the updated snapshots.
 
-`TaskSnapshot` and `SubtaskSnapshot` expose `dependencyId` and ordered `dependsOn` values, including
-authored duplicates, as immutable projections sourced only from Tasks-compatible `🆔 id` and
-`⛔ id-1, id-2` Markdown carriers. The source Markdown remains authoritative and is read in place
-without migration. Generated recurrence occurrences strip both task IDs and dependency edges, while
-the completed original occurrence retains its authored carriers.
+Task snapshots expose dependency IDs and ordered prerequisite IDs from the Tasks-compatible `🆔`
+and `⛔` Markdown carriers. `TaskIndex` derives the direct and inverse relation graph over persisted
+roots and subtasks. Recurrence forecasts are excluded, and no dependency data is stored outside
+Markdown.
 
-The pure `taskDependencies` domain module enumerates persisted roots and subtasks in canonical
-file/root/source order. Each node carries its root and the complete subtask path for rebuilding a
-structural inspector frame. Recurrence forecasts are not graph nodes. Concrete `TaskIndex` methods
-derive direct `Blocked by` rows in declared ID order and inverse `Blocks` rows in source order.
-The application consumes these methods through `TaskDependencyQueryApi`. `listNodes()` reclassifies
-the detached root, path, and node snapshots through the live status catalog while retaining their
-persisted refs and source bytes; it does not mutate the indexed snapshots.
+Relation activity uses the live status catalog. Missing and ambiguous IDs remain visible for repair,
+but only active resolved or ambiguous blockers prevent completion. Authored cycles remain readable;
+eligibility checks reject new edges that would create a cycle. Query results are detached and
+immutable.
 
-Dependency activity follows Tasks semantics: both the dependent and a matching prerequisite must
-be open or in progress under the live status catalog. Done and cancelled endpoints never contribute
-active counts. Missing IDs remain visible but non-blocking. Duplicate IDs produce one ambiguous
-prerequisite row, active if any matching task is active; each matching task's inverse relation uses
-its own status. Authored duplicate declarations collapse in the projection, and authored cycles stay
-visible as direct relations. Eligibility separately rejects edges that would introduce cycles.
-The public `dependencyEligibility` query accepts an optional `{ without }` original edge for
-reversal previews. It verifies the exact current resolved edge, including its ID and both endpoint
-references, then evaluates only its inverse with that edge excluded. Both proofs use one captured
-node population. Ordinary two-argument add eligibility remains unchanged; execution independently
-revalidates the reversal through the application boundary.
-
-`TaskIndex` owns the derived graph cache and invalidates it when indexed file content changes,
-files are renamed or deleted, or `setStatusCatalog()` replaces the catalog. Relation activity is
-classified at query time, including in-place catalog updates, without reparsing Markdown. Node and
-relation results are detached through snapshot cloning and frozen, so callers cannot alter the
-index or subsequent projections. No dependency data is persisted outside Markdown.
+Direct relations follow declared ID order, while inverse relations follow canonical source order.
+The projection collapses repeated declarations without rewriting Markdown.
 
 ### Editing an existing task
 
@@ -302,260 +205,41 @@ index or subsequent projections. No dependency data is persisted outside Markdow
 The UI must not assume that its previous snapshot is still writable. Conflicts and ambiguous targets
 are normal command outcomes and belong at the application boundary.
 
-Dependency metadata writes use the repository's internal `set-dependency-id` and `set-depends-on`
-edit commands. `TaskMarkdownCodec` validates IDs against the same Tasks-compatible grammar used by
-the parser and serializes `🆔` and `⛔` carriers in canonical order without deduplicating authored
-dependency lists. The repository resolves the root or subtask target and delegates the single-line
-replacement to `TaskBlockEditor`, preserving the rest of the root aggregate and file bytes. These
-commands are storage primitives; `TaskDependencyService` owns public dependency orchestration.
+Dependency edits use Tasks-compatible IDs and carriers through `TaskDependencyService`; the
+repository exposes only the storage operations needed to update them. Adds, removals, restoration,
+reversal, linked subtask creation, and completion checks share one mutation coordinator. This keeps
+eligibility validation and publication in order even when several service instances issue commands.
 
-`add-dependency` resolves both endpoints and checks self-links, duplicates, inverse edges, cycles,
-and ambiguous IDs. An ID is allocated lazily from eight lowercase base36 characters; existing IDs
-and declared dependency IDs are reserved. Same-file endpoints use `editBatch()` to confirm both
-roots and publish the ID and edge together. Across files, the blocker ID commits first; both
-endpoints are resolved again and eligibility is checked before the dependent edge write. A changed
-blocker ID rejects the attempt. Repository rebases repeat resolution and eligibility before retry.
-When the second cross-file write fails, the assigned ID remains, the exact structured error is
-returned, and one content-free diagnostic is emitted. There is no compensating ID deletion.
+An add validates both endpoints, assigns an ID only when needed, and writes the edge through the
+ordinary repository path. Same-file metadata changes are committed in one batch. A cross-file add
+writes the blocker ID first and then the dependent edge. If the second write fails, the ID remains;
+the service reports the structured failure and does not risk deleting an ID now used elsewhere.
 
-Dependency mutation validation and publication share a FIFO coordinator keyed by repository,
-including separate service instances. Add/remove/restore/reverse and completion-to-done/cancelled hold
-that coordinator through their final repository result and any retry. Queued completion resolves
-again after acquisition; an idle acquisition continues the already prepared synchronous read.
-Neither path reacquires during retry. Unrelated non-completion edits bypass the coordinator, and
-failure always releases the next waiter.
+Same-file reversal is atomic. Cross-file reversal publishes only after final proof and otherwise
+attempts exact-source compensation without overwriting an external edit. Unproven recovery returns
+an I/O error with unknown content state and reconciles from the vault.
 
-`reverse-dependency` identifies the original blocker, dependent and declared ID. The service
-resolves both complete endpoints, proves the original ID is unique and declared on the dependent,
-then checks the reverse edge against a candidate graph with that original edge removed. Self,
-duplicate, inverse, cycle, unavailable, ambiguous and unproven targets still reject the command;
-completed endpoints may reverse relations. The new blocker receives an ID only when needed.
-All repeated declarations of the identified original edge are removed, preserving other ordered
-declarations. A successful dependency outcome uses `change: 'reversed'` and identifies the fresh
-blocker, dependent and ID in the new direction. This command introduces no persisted syntax.
+`TaskRefAuthority` gives repository operations temporary evidence that a resolved task is still the
+same writable occurrence. It distinguishes byte-identical tasks without adding IDs to Markdown,
+stages proven successor references, and rejects ambiguous or externally changed targets. The
+application and presentation may use a proven transition to preserve retries or selection, but that
+proof never grants general write authority.
 
-The narrow `TaskRepository.reverseDependency()` port accepts metadata batches and a pure reversal
-proof over repository-supplied roots. The proof captures the resolved endpoint snapshots, reads no
-mutable query state, and verifies their exact final dependency values and otherwise unchanged trees.
-Adapters without this capability fail closed. The Obsidian adapter shares metadata batch preparation,
-canonical parsing and complete predecessor-population capture with existing edits. Same-file endpoints
-publish both task lines in one guarded `Vault.process()` callback. Across files, a transaction reserves
-both exact before/after sources and their authority evidence and writes in file-path order.
-`TaskSnapshotState.installCommittedBatch()` prepares every authoritative final source before the
-repository proves the complete root revisions, reversed edge and live transaction ownership.
-Only after that synchronous proof succeeds does `TaskIndex` publish all prepared files together,
-retaining their captured authority transitions for one subscriber refresh. A preparation or proof
-failure cannot install a partial final graph. Ordinary single-file committed installation uses
-the same preparation path and retains its existing API. Adapters lacking batch publication reject
-reversal before writing.
+Removing a dependency or subtask returns exact transient recovery data. `RightPanel` turns that
+data into one local, short-lived Undo action and restores only while the committed result still owns
+the affected source. Undo state is not stored in `AppState` or Markdown. Creation and successful
+ordinary edits do not show success notices; failures continue through the shared command-result
+presenter.
 
-`TaskRefAuthority.reserveMutation()` owns these reservations as one ephemeral scope. Acquisition is
-all-or-none, including cleanup after a thrown predecessor capture. Every forward callback requires
-the captured original bytes, a current complete predecessor population and all original live tokens.
-Once a forward write has been issued, observing contrary source bytes permanently invalidates that
-file's reservation; contrary authoritative reads and process-callback bytes also revoke ownership
-without waiting for index notifications. Replaying captured candidate bytes cannot revive ownership for success or
-restoration.
-Restored tokens retain the same contrary-observation guard until exact restoration completion;
-an external edit during restoration proof yields unknown state and a fresh actual-source read.
-No raw token or generic ownership bypass escapes to the application. On a later failure, reversal
-attempts restoration in reverse file order while the same dependency queue remains held. Restoration
-accepts only an owned exact original or candidate source; it never overwrites intervening content.
-The existing predecessor restoration primitive grants no writable inverse transition. Exact before
-bytes and all original root revisions must be proven again before returning an unchanged I/O error.
-If rollback, authoritative reads or reconciliation cannot prove restoration, the result is an I/O
-error with unknown content state. Recovery reconciles every actually readable source after releasing
-invalid forward evidence; parsing and installation are isolated per readable source so one failure
-cannot prevent sibling reconciliation. It never installs captured bytes in place of newer external content.
-Every exit releases reservations without touching later owners.
-Metadata notifications and asynchronous index reads consult `TaskRefAuthority.deferObservation()`.
-Only exact bytes belonging to a still-owned mutation are deferred: the original before its forward
-callback, the issued candidate, or the owned restoration. A candidate observed before its forward
-callback is external, and contrary observations permanently revoke ownership and publish normally.
-Direct authoritative installation bypasses this watcher deferral. Thus pending writes and proven
-rollback retain the original graph, while unknown recovery still reconciles each readable actual
-source independently. Release ends deferral; delayed matching events preserve the committed result.
-Forward, rollback and restoration-proof diagnostics contain only phase and fixed cause codes;
-a failing diagnostic sink cannot interrupt compensation. The established command-result presenter
-remains the sole user-facing error boundary. Existing cross-file add and move behavior is unchanged.
+Completion commands check active blockers before the first write and again before a reconciled
+retry. Missing dependency IDs do not block completion, while ambiguous IDs block if any matching
+task is active. If current identity or blocker state cannot be proven, the command returns a
+conflict instead of guessing.
 
-Successful dependency commands return `DependencyCommandOutcome` with the fresh dependent
-occurrence and a blocker occurrence when uniquely resolved. Removing a raw ID deletes every
-declaration of that ID and returns its exact before/after sequences plus transient before/after
-task-line bytes. `restore-dependency` requires the current sequence and task line to equal the
-captured removal result. Its existing `set-depends-on` edit restores the original source only when
-replaying the codec's dependency edit reproduces the entire current line, preserving token position,
-spacing, and variation selectors without authorizing unrelated text changes. Older recovery values
-without source evidence retain their sequence-only restoration; no Markdown or settings migration
-is needed. Missing or ambiguous blocker IDs require no blocker lookup. Intervening line changes
-return conflict, including after a repository rebase.
-Unexpected application errors return the existing I/O error and emit one diagnostic containing
-only operation, phase, and a fixed cause. User feedback remains in the existing command-result
-presenter, which also handles the structured blocked result.
-
-Successful `delete-subtask` outcomes retain the ordinary updated-root shape and additionally carry
-`subtaskRemovalRecovery`: the exact removed source bytes, the committed parent, the original
-relative position, and committed before/after sibling references. Recovery and its owning outcome
-are deeply detached and frozen. Both repository adapters capture bytes in `TaskBlockEditor` and
-share recovery construction; the Obsidian adapter refreshes recovery references after installing
-the authoritative commit. No subtree is reconstructed from parsed presentation fields.
-
-`restore-subtask` follows the ordinary application, repository, editor, retry, and selection paths.
-It validates task syntax and ownership under the resolved parent, checks captured sibling anchors,
-and rejects changed or ambiguous parents and anchors without writing. Reconciliation requires the
-parent's complete source block to remain unchanged. A relative-only placement is usable only while
-the captured base revision still matches. Deleting a final subtree without a trailing newline can
-consume the preceding separator; an optional ephemeral `placement.lineEnding` preserves that
-otherwise-lost LF/CRLF evidence. It is validated before repository I/O and used only without an
-anchor supplying context. Older recovery payloads must have unambiguous current separator evidence
-or restoration conflicts. This adds no persisted task metadata and preserves existing deletion bytes.
-The editor and projector share the blank/quote-only line predicate. A fresh exact-base recovery may
-cross preserved, quote-compatible separator lines beyond the shortened parent's projected block,
-including its implicit empty EOF line; it never crosses intervening content or synthesizes an
-uncaptured gap. Such out-of-block placement cannot be rebased even with an otherwise valid anchor.
-Appending the captured subtree preserves its original final-newline state.
-
-`RightPanel` owns one ephemeral `createInlineTaskUndo` handle for its current selection. Dependency
-removal and subtask deletion place the native Undo button at the removed row's original position;
-a later removal revokes the earlier action. Additions and linked creation emit no success Notice
-or local Undo. `taskUndoNotice` now only derives removal inverses from committed dependency outcomes
-or exact subtask recovery, so Undo never reuses pre-write refs. Dependency recovery restores ordered
-IDs and original task-line bytes, including unavailable, ambiguous, and repeated declarations.
-The row and its focus survive same-selection rerenders. The established eight-second lifetime,
-selection identity changes, and inspector destruction revoke state, timer, and listeners. Pending
-Undo disables repeat activation and pauses expiry; failure leaves a retryable button with a fresh
-lifetime and passes exactly one result to `presentTaskCommandResult`. Unexpected throws add one
-local diagnostic at that same boundary. Successful subtask recovery uses ordinary selection
-convergence and focuses the restored row while the action still belongs to the inspector. No Undo
-state enters `AppState` or persisted metadata.
-Dependency tombstones also use a view-owned validator: exactly one current node at the captured
-structural address must retain the committed task-line bytes, or ordered dependency IDs for legacy
-recovery. Rendering and activation revoke changed evidence. A disabled pending inverse keeps its
-row through its own publication; failed settlement revalidates before enabling retry, and deferred
-execution confirms the same tombstone still owns the action.
-
-Before root or subtask toggle/set-status commands dispatch a transition to configured done or
-cancelled status, the application checks every active resolved or ambiguous blocker. Missing IDs
-do not block, and already completed dependents remain non-blocking. The same validation runs before
-a reconciled retry, including recurrence completion. A newer proven index resolution takes
-precedence over the service's recent outcome cache. For an index that is still behind the
-repository, the reconciled root is reclassified through the current catalog and overlaid in the
-dependency graph so newly added edges or newly active same-root blockers cannot be missed.
-Overlays remove the proven predecessor by full revision identity, never by the new source line;
-unrelated roots remain even when their old addresses overlap the relocated root. Graph lookup
-includes revision identity for that temporary mixed-revision world. Standalone previews may use
-a unique whole-tree comparison excluding only refs/source, dependency fields, and status values.
-Missing or ambiguous predecessor/target proof fails closed as conflict. The application carries
-its repository/reconciliation-proven completion basis through a synchronous nested-safe scope,
-cleared in `finally`; this scope neither persists evidence nor implements the asynchronous lock.
-
-Nested command reconciliation first accepts an exact full current ref. A stale source match must
-be unique in both its predecessor and current sibling sets. Completion retries use the complete
-matched current subtask ref, including relocated relative lines, before validation or dispatch.
-For authority-proven queued status commands, dependency-only changes at the proven position may
-be matched only when the shared pure `sameTaskTreeExceptDependencies` proof confirms the complete
-root tree is unchanged apart from dependency metadata and expected revision/source carriers.
-It retains source addresses, ordered child structure, and all other parsed fields, including root
-and ancestor status, planning, descriptions, and comments. Retained source-position groups at
-every sibling level also reject reorders hidden by otherwise identical dependency-stripped nodes;
-duplicate source groups are never paired into invented identities. Ordinary unique source
-relocation remains available when the dependency-only proof fails.
-
-Dependency commands have no single initiating root in `PanelView` and do not use ordinary command
-outcome convergence. Normal index events refresh the current structural selection in both the panel
-and `TaskModal`. Selection rebuilding first accepts a complete exact root-to-child ref, including
-duplicate siblings; uncertain source matching still requires uniqueness. After a proven
-authority transition, selection rebuilding may retain the same relative subtask path when every
-non-dependency field and child structure is unchanged across the complete root tree. Presentation
-imports that same proof through the task public barrel rather than maintaining a separate
-normalizer. That positional proof precedes text matching so an unchanged identical sibling cannot
-steal selection. Text fallback also requires
-predecessor uniqueness. Positional fallback is unavailable for uncertain or visual matches;
-unrelated content or structure changes stop at the last proven ancestor.
-
-For an inspector's own pending title, description, scalar metadata or non-recurring status edit,
-`RightPanel` captures the submitted command and detached structural selection before dispatch.
-`PanelView` and `TaskModal` may retain that selection through an exact owned authority transition
-using the shared `ownedTaskSelection` proof. The selected and edited paths must still be unambiguous;
-task topology and sibling source order must match, unaffected subtrees must retain exact source bytes,
-and the edited node may differ only in the command's specified fields and their derived projections.
-The actual changed values must match the submitted command. Structural commands, ambiguous sibling
-paths, unrelated changes and transitions without pending ownership use the existing conservative
-selection rebuilding. This proof affects presentation continuity only; it grants no write authority
-and introduces no persisted identity.
-
-`TaskRepository.editBatch()` groups these two metadata edit commands within one file. It validates
-every revision precondition and complete root-to-subtask reference against the original content,
-then the shared infrastructure batch preparer composes one candidate through the existing codec
-and block editor. Both repository adapters use this preparation. The Obsidian adapter performs the
-entire operation in one synchronous `Vault.process()` callback. Unsupported command kinds,
-cross-file requests, inconsistent preconditions, and unavailable outcome targets cannot publish a
-partial edit. The result contains the freshly indexed root owning `outcomeTarget`, including fresh
-references for its changed descendants. An unchanged batch preserves the existing revisions.
-
-`TaskRepository.createDependencySubtask()` is a separate structural storage primitive. It confirms
-one root revision and complete current-node ref, then creates a direct child after that node's
-complete subtree and adds the directed dependency in one candidate. `TaskBlockEditor` preserves
-the selected node's indentation, quote depth, and file newline layout; creation shares canonical
-task-line validation and created-date stamping with root capture and ordinary subtask creation.
-Submitted dependency carriers are rejected. The Obsidian adapter uses one guarded `Vault.process()`
-and the same authority staging, rollback, and committed-content installation as existing edits.
-Both adapters prove the fresh current, its direct child, and their edge before publication, and
-rebuild the dedicated `dependency-subtask` outcome from the installed root afterward. This narrow
-method does not expand metadata-only `editBatch()`, add persisted syntax, or perform public
-dependency eligibility/ID allocation; application orchestration owns those checks.
-
-The public `create-dependency-subtask` command runs in `TaskDependencyService`'s existing repository
-mutation queue. It resolves one current root/node and allocates only the required blocker ID:
-`blocked-by` assigns the child an ID and adds it to the current node's dependencies; `blocks`
-reuses or allocates a unique current ID and declares it on the child. Allocation reserves both
-authored and referenced IDs, including a proven current root when the node projection lags.
-The repository performs one atomic same-root write. A bounded reconciled retry repeats resolution
-and ID checks; a stale nested node whose subtree changed remains a conflict. Serialization grants
-no new structural identity. The application proves the returned fresh current, appended child,
-submitted content, exact directed edge and otherwise unchanged tree, then remembers the new root
-through its existing recent-outcome lifecycle.
-
-Shared domain command-reference helpers distinguish a command's complete mutation target from its
-owning root and rebase references without granting retry authority. The application, retry policy,
-and panel consume these same helpers; the repository port maps its private metadata edits onto
-the same target contract. Structural repository edits still resolve the parent that owns a child
-or comment operation. Shared tree-change and child-creation proofs also serve the application
-postcondition and pending inspector selection; presentation imports them only through `src/tasks`.
-
-Live authority-backed root refs distinguish byte-identical roots by exact line and revision.
-Initial duplicate occurrences receive distinct ephemeral authority revisions; unchanged source
-populations at the same lines retain those revisions on refresh. Unique sources retain their
-generation-zero initialization, and no identity is written to Markdown for this purpose.
-Before a repository edit permits that duplicate-source match, `TaskIndex.currentRoot()` confirms
-the transaction's ordered occurrence lines equal the indexed source population. An unobserved
-insertion, deletion, or shifted population cannot use the line hint to retarget a write. Stale and
-legacy source-only references keep conservative ambiguity and relocation behavior.
-
-Prepared repository requests in both adapters share identity-first reconciliation. An exact keyed
-authority successor is checked before any source-only location; its complete current ref must
-match the located snapshot. Byte-identical relocation additionally retains the consumed revision,
-so a remaining identical sibling cannot authorize an application retry after the selected root
-changes. `TaskIndex.resolve()` likewise accepts only an exact keyed writable authority transition
-before unrelated source ambiguity; visual/source-only matches remain conservative.
-
-The batch stages one authority transition with an explicit predecessor revision for each consumed
-root. `TaskIndex` passes those individual mappings into reconciliation, so either edited root can
-converge to its own successor through the normal index event. The legacy one-source authority
-staging path retains its recurrence fan-out semantics. Before publication, the repository attaches
-the original complete ordered line/source/revision population to the active authority token,
-after confirming it against the index and canonical original blocks. Single edits, deletions,
-recurrence edits and metadata batches share this rollback basis. After processor rejection, the
-repository holds the file reservation until its authoritative read finishes. The original active
-token can be consumed once to restore predecessor revisions only when the complete original
-bytes, fingerprint and length match. Restoration emits no writable authority transitions and
-clears stored writable/visual index reconciliation edges; the independent conservative same-line
-visual fallback is unchanged. Commit, abort, restoration and acknowledgement terminalize token
-ownership; an old or foreign token cannot affect a later same-file reservation. A failed read
-still releases the reservation and revokes forward mappings. If a
-processor reports an error after persisting the complete candidate, the repository preserves the
-actual bytes and returns the existing I/O error with unknown content state; it does not retain the
-failed operation's writable provenance or attempt a compensating file write.
+`TaskRepository.createDependencySubtask()` creates a direct child and its requested edge in one
+same-root write. The application owns eligibility and ID allocation; the repository owns exact
+Markdown placement and validates the resulting tree. `editBatch()` remains the narrower primitive
+for same-file metadata changes.
 
 ### Creating a task
 
