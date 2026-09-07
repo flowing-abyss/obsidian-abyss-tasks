@@ -159,22 +159,23 @@ function updateDependencyBadgeCounts(
   body: HTMLButtonElement,
   counts: ReturnType<typeof dependencyCountPresentation>,
 ): void {
-  const [lock, blockedBy, divider, blocks] = [...body.children] as [
-    HTMLElement,
-    HTMLElement,
-    HTMLElement,
-    HTMLElement,
-  ];
+  const lock = body.querySelector<HTMLElement>('.abyss-dep-lock') as HTMLElement;
+  const blockedBy = body.querySelector<HTMLElement>(
+    '[data-dependency-count="blocked-by"]',
+  ) as HTMLElement;
+  const divider = body.querySelector<HTMLElement>('.abyss-dep-divider') as HTMLElement;
+  const blocks = body.querySelector<HTMLElement>('[data-dependency-count="blocks"]') as HTMLElement;
   const isEmpty = counts.blockedBy === 0 && counts.blocks === 0;
-  lock.setAttribute('class', 'abyss-dep-lock');
+  let lockClass = 'abyss-dep-lock';
+  if (counts.blockedBy > 0) lockClass += ' abyss-dep-count-blocked-by';
+  else if (counts.blocks > 0) lockClass += ' abyss-dep-count-blocks';
+  lock.className = lockClass;
   blockedBy.setText(String(counts.blockedBy));
-  blockedBy.setAttribute('class', isEmpty ? 'abyss-dep-count' : 'abyss-dep-count-blocked-by');
+  blockedBy.className = isEmpty ? 'abyss-dep-count' : 'abyss-dep-count-blocked-by';
   divider.toggleAttribute('hidden', isEmpty);
   blocks.setText(String(counts.blocks));
-  blocks.setAttribute('class', isEmpty ? 'abyss-dep-count' : 'abyss-dep-count-blocks');
+  blocks.className = isEmpty ? 'abyss-dep-count' : 'abyss-dep-count-blocks';
   blocks.toggleAttribute('hidden', isEmpty);
-  if (counts.blockedBy > 0) lock.addClass('abyss-dep-count-blocked-by');
-  else if (counts.blocks > 0) lock.addClass('abyss-dep-count-blocks');
 }
 
 function rootRefForPlanningTarget(target: PlanningTarget): TaskRef {

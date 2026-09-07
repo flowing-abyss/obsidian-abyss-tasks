@@ -1640,9 +1640,13 @@ describe('RightPanel dependency inspector', () => {
     const body = button(badge, '.abyss-dep-badge-body');
     const plus = button(badge, '.abyss-dep-badge-add');
     const lock = expectDefined(body.querySelector<HTMLElement>('.abyss-dep-lock'));
-    const blockedBy = expectDefined(body.children.item(1) as HTMLElement | null);
+    const blockedBy = expectDefined(
+      body.querySelector<HTMLElement>('[data-dependency-count="blocked-by"]'),
+    );
     const divider = expectDefined(body.querySelector<HTMLElement>('.abyss-dep-divider'));
-    const blocks = expectDefined(body.children.item(3) as HTMLElement | null);
+    const blocks = expectDefined(
+      body.querySelector<HTMLElement>('[data-dependency-count="blocks"]'),
+    );
 
     expect(body.children).toHaveLength(4);
     expect(blockedBy.dataset['dependencyCount']).toBe('blocked-by');
@@ -1663,6 +1667,17 @@ describe('RightPanel dependency inspector', () => {
     expect(body.contains(plus)).toBe(false);
     expect(plus.getAttribute('aria-label')).toBe('Add dependency sections');
     expect(plus.title).toBe('Add dependency');
+
+    const decoy = body.createSpan({ cls: 'abyss-dep-test-decoy' });
+    body.insertBefore(decoy, blockedBy);
+    body.click();
+    expect(h.el.querySelector('.abyss-dep-search')).not.toBeNull();
+    expect(decoy.className).toBe('abyss-dep-test-decoy');
+    expect(blockedBy.textContent).toBe('0');
+    expect(blockedBy.className).toBe('abyss-dep-count');
+    expect(divider.hidden).toBe(true);
+    expect(blocks.hidden).toBe(true);
+    search(h.el, '').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
     await h.api.execute({
       type: 'add-dependency',
