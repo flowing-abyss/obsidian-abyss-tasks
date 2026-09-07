@@ -166,7 +166,6 @@ export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement
     setStatusMarkerCompletionBlocked(el, opts.completionBlocked === true);
   } else if (interactive === 'menu') {
     el.setAttrs({
-      role: 'button',
       'aria-label': presentation.label,
       'aria-haspopup': 'menu',
       tabindex: 0,

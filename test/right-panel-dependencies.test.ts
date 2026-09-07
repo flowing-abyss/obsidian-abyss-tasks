@@ -1120,6 +1120,44 @@ describe('inspector dependency navigation', () => {
     expect(popover.isConnected).toBe(false);
   });
 
+  it('replaces and clears a dependency status menu handle after closing and refreshing', async () => {
+    const h = await harness('- [ ] Current ⛔ related\n- [ ] Related 🆔 related\n');
+    const panel = h.panel as unknown as {
+      dependencyStatusMenu_abyssPrivate: { element: HTMLElement } | undefined;
+    };
+    const marker = expectDefined(
+      h.el.querySelector<HTMLElement>(
+        '[data-dependency-direction="blocked-by"] .abyss-status-marker',
+      ),
+    );
+    vi.useFakeTimers();
+    try {
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      vi.runOnlyPendingTimers();
+      const firstMenu = expectDefined(panel.dependencyStatusMenu_abyssPrivate);
+      expect(firstMenu.element.isConnected).toBe(true);
+
+      activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(firstMenu.element.isConnected).toBe(false);
+
+      vi.useRealTimers();
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const secondMenu = expectDefined(panel.dependencyStatusMenu_abyssPrivate);
+      expect(secondMenu).not.toBe(firstMenu);
+      await h.api.execute({
+        type: 'patch',
+        target: { type: 'task', ref: h.node('Related').root.ref },
+        patch: { priority: { type: 'set', value: 'A' } },
+      });
+      await flushMicrotasks(30);
+
+      expect(panel.dependencyStatusMenu_abyssPrivate).toBeUndefined();
+      expect(secondMenu.element.isConnected).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('edits a blocks relation custom status without changing the inspector selection or edge', async () => {
     const statusDefinitions = [
       ...buildDefaultTaskStatuses(),

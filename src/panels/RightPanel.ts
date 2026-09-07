@@ -65,7 +65,7 @@ import {
 import { renderTaskText } from '../ui/renderTaskText';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { renderStatusMarker, setStatusMarkerCompletionBlocked } from '../ui/StatusMarker';
-import { showStatusMenuAt } from '../ui/statusMenu';
+import { showStatusMenuAt, type StatusMenuHandle } from '../ui/statusMenu';
 import { showTagDropdown } from '../ui/tagDropdown';
 import { presentTaskCommandResult, requestTaskCompletion } from '../ui/taskCommandResult';
 import {
@@ -1370,7 +1370,7 @@ export class RightPanel {
   }
 
   private readonly dependencyStatusMarkers_abyssPrivate = new Map<HTMLElement, TaskLike>();
-  private dependencyStatusMenuOwner_abyssPrivate: Component | undefined;
+  private dependencyStatusMenu_abyssPrivate: StatusMenuHandle | undefined;
 
   private statusFocusTarget_abyssPrivate(stack: readonly TaskLike[]): TaskNodeRef | undefined {
     const focused = this.el_abyssPrivate.ownerDocument.activeElement;
@@ -1738,10 +1738,11 @@ export class RightPanel {
         interactive: 'menu',
         onLeftClick: () => {},
         onContextMenu: (event) => {
-          this.dependencyStatusMenuOwner_abyssPrivate?.unload();
-          const owner = this.md_abyssPrivate.addChild(new Component());
-          this.dependencyStatusMenuOwner_abyssPrivate = owner;
-          this.openStatusMenu_abyssPrivate(event, relation.task.node, owner);
+          this.closeDependencyStatusMenu_abyssPrivate();
+          this.dependencyStatusMenu_abyssPrivate = this.openStatusMenu_abyssPrivate(
+            event,
+            relation.task.node,
+          );
         },
       });
       row.addEventListener('click', (event) => {
@@ -1832,7 +1833,7 @@ export class RightPanel {
       setStatusMarkerCompletionBlocked(marker, this.isDependencyBlocked_abyssPrivate(task));
     }
     this.updateDependencyBadge_abyssPrivate();
-    this.dependencyStatusMenuOwner_abyssPrivate?.unload();
+    this.closeDependencyStatusMenu_abyssPrivate();
     this.el_abyssPrivate.querySelectorAll('.abyss-dep-section').forEach((section) => {
       section.remove();
     });
@@ -2793,16 +2794,18 @@ export class RightPanel {
     this.recurrenceDraftEditor_abyssPrivate = undefined;
   }
 
-  private openStatusMenu_abyssPrivate(
-    event: MouseEvent,
-    task: TaskLike,
-    owner: Component = this.md_abyssPrivate,
-  ): void {
+  private closeDependencyStatusMenu_abyssPrivate(): void {
+    const menu = this.dependencyStatusMenu_abyssPrivate;
+    this.dependencyStatusMenu_abyssPrivate = undefined;
+    menu?.close();
+  }
+
+  private openStatusMenu_abyssPrivate(event: MouseEvent, task: TaskLike): StatusMenuHandle {
     this.clearAnchoredSurfaces_abyssPrivate();
-    showStatusMenuAt(event, {
+    return showStatusMenuAt(event, {
       task,
       registry: this.statusRegistry_abyssPrivate,
-      owner,
+      owner: this.md_abyssPrivate,
       onPickStatus: (symbol) => {
         runAsyncAction(this.setStatus_abyssPrivate(task, symbol));
       },
