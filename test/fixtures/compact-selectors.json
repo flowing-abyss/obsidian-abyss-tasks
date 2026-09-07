@@ -188,8 +188,8 @@
     "to": ":is(.abyss-recurrence-delete-warning, .abyss-recurrence-status)[hidden]"
   },
   {
-    "from": ".abyss-dep-lock svg,\n.abyss-dep-remove svg,\n.abyss-dep-search-field svg,\n.abyss-subtask-remove svg",
-    "to": ":is(.abyss-dep-lock, .abyss-dep-remove, .abyss-dep-search-field, .abyss-subtask-remove) svg"
+    "from": ".abyss-dep-remove svg,\n.abyss-dep-search-field svg,\n.abyss-subtask-remove svg",
+    "to": ":is(.abyss-dep-remove, .abyss-dep-search-field, .abyss-subtask-remove) svg"
   },
   {
     "from": ".abyss-cal-nav-month:hover,\n.abyss-cal-nav-year:hover",
