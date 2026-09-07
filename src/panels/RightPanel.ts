@@ -1513,7 +1513,7 @@ export class RightPanel {
       cls: 'abyss-dep-badge-body',
       attr: { type: 'button', 'aria-haspopup': 'dialog' },
     });
-    setIcon(body.createSpan({ cls: 'abyss-dep-lock', attr: { 'aria-hidden': 'true' } }), 'lock');
+    body.createSpan({ cls: 'abyss-dep-lock', text: '🔒', attr: { 'aria-hidden': 'true' } });
     for (const [name, direction] of [
       ['count-blocked-by', 'blocked-by'],
       ['divider', undefined],

@@ -58,7 +58,7 @@ export function createInlineTaskUndo(): InlineTaskUndo {
       validate = validator;
       const ownerWindow = container.ownerDocument.defaultView;
       const [element, button] = createUndoRow(container, location);
-      const expire = (): number | undefined => ownerWindow?.setTimeout(clear, 8_000);
+      const expire = (): number | undefined => ownerWindow?.setTimeout(clear, 5_000);
       let timer = expire();
       const settle = (result: TaskCommandResult | undefined): void => {
         if (result === undefined) return;
@@ -103,13 +103,12 @@ function createUndoRow(
   location: InlineUndoPosition,
 ): readonly [HTMLElement, HTMLButtonElement] {
   const row = container.createDiv({ cls: 'abyss-subtask-row abyss-undo-row' });
-  row.append(
-    `${location.list.includes('subtask-section') ? 'Sub-task deleted' : 'Dependency removed'} · `,
-  );
+  row.append(location.list.includes('subtask-section') ? 'Sub-task deleted' : 'Dependency removed');
   const button = row.createEl('button', {
     text: 'Undo',
     attr: { type: 'button', 'aria-label': `Undo: ${location.title}` },
   });
+  row.createSpan({ text: '(5s)' });
   return [row, button];
 }
 

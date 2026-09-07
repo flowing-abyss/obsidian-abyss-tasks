@@ -155,7 +155,7 @@ describe.each(['panel', 'modal'] as const)('%s saved dependency frames', (surfac
         h.liveStack('Source'),
       ]);
       const undo = expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-undo-row button'));
-      expect(undo.closest('.abyss-undo-row')?.textContent).toBe('Sub-task deleted · Undo');
+      expect(undo.closest('.abyss-undo-row')?.textContent).toBe('Sub-task deletedUndo(5s)');
       expect(undo.closest('.abyss-undo-row')?.previousElementSibling?.textContent).toContain(
         'Before',
       );

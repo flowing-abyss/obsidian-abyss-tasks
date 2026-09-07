@@ -9,6 +9,43 @@ afterEach(() => {
   activeDocument.body.empty();
 });
 
+it('renders a dependency Undo action with a separate muted five-second hint', () => {
+  const container = activeDocument.body.createDiv();
+  container.createDiv({ cls: 'abyss-dep-list' });
+  const action = createInlineTaskUndo();
+  action.show(container, { list: '.abyss-dep-list', index: 0, title: 'Removed' }, async () => ({
+    type: 'io-error',
+    cause: 'test',
+    contentState: 'unchanged',
+  }));
+
+  const row = expectDefined(container.querySelector<HTMLElement>('.abyss-undo-row'));
+  expect(row.textContent).toBe('Dependency removedUndo(5s)');
+  expect(row.querySelector('button')?.textContent).toBe('Undo');
+  const hint = expectDefined(row.querySelector<HTMLElement>('span'));
+  expect(hint.textContent).toBe('(5s)');
+  expect(hint.className).toBe('');
+  expect(hint.matches('span')).toBe(true);
+});
+
+it('expires a fresh Undo exactly five seconds after showing it', async () => {
+  vi.useFakeTimers();
+  const container = activeDocument.body.createDiv();
+  container.createDiv({ cls: 'list' });
+  const action = createInlineTaskUndo();
+  action.show(container, { list: '.list', index: 0, title: 'Removed' }, async () => ({
+    type: 'io-error',
+    cause: 'test',
+    contentState: 'unchanged',
+  }));
+
+  const button = expectDefined(container.querySelector('button'));
+  await vi.advanceTimersByTimeAsync(4_999);
+  expect(button.isConnected).toBe(true);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(button.isConnected).toBe(false);
+});
+
 it('keeps a slow failed inverse actionable with a fresh lifetime and one error boundary', async () => {
   vi.useFakeTimers();
   const container = activeDocument.body.createDiv();
@@ -34,7 +71,7 @@ it('keeps a slow failed inverse actionable with a fresh lifetime and one error b
   expect(container.querySelector('button')).toBe(button);
   expect(button.disabled).toBe(false);
   expect(present).toHaveBeenCalledExactlyOnceWith(failed);
-  await vi.advanceTimersByTimeAsync(7999);
+  await vi.advanceTimersByTimeAsync(4_999);
   expect(button.isConnected).toBe(true);
   await vi.advanceTimersByTimeAsync(1);
   expect(button.isConnected).toBe(false);

@@ -823,7 +823,7 @@ describe('inspector subtask row removal', () => {
       button(h.el, '.abyss-dep-remove').click();
       await vi.advanceTimersByTimeAsync(100);
       const undo = button(h.el, '.abyss-undo-row button');
-      if (reason === 'timeout') await vi.advanceTimersByTimeAsync(8000);
+      if (reason === 'timeout') await vi.advanceTimersByTimeAsync(5000);
       else if (reason === 'selection') h.state.set('taskStack', [h.node('Other').root]);
       else h.panel.destroy();
       expect(h.el.querySelector('.abyss-undo-row')).toBeNull();
@@ -855,6 +855,7 @@ describe('inspector subtask row removal', () => {
     expect(value('.abyss-undo-row button', 'height')).toBe('24px');
     expect(value('.abyss-undo-row button', 'cursor')).toBe('pointer');
     expect(value('.abyss-undo-row button', 'color')).toBe('var(--text-accent)');
+    expect(value('.abyss-undo-row span', 'color')).toBe('var(--text-muted)');
     expect(css).toContain(':is(.abyss-breadcrumb-item, .abyss-undo-row button):hover');
     expect(value('.abyss-undo-row button:focus-visible', 'outline')).toBe(
       '2px solid var(--interactive-accent)',
@@ -918,7 +919,7 @@ describe('inspector subtask row removal', () => {
     expect(undo.getAttribute('aria-label')).toBe('Undo: Remove me');
     expect(activeDocument.activeElement).toBe(undo);
     expect(h.el.querySelector('.abyss-subtask-list .abyss-undo-row')?.textContent).toBe(
-      'Sub-task deleted · Undo',
+      'Sub-task deletedUndo(5s)',
     );
     undo.click();
     await flushMicrotasks(50);
@@ -1869,6 +1870,9 @@ describe('RightPanel dependency inspector', () => {
     );
 
     expect(body.children).toHaveLength(4);
+    expect(lock.textContent).toBe('🔒');
+    expect(lock.querySelector('svg')).toBeNull();
+    expect(lock.getAttribute('aria-hidden')).toBe('true');
     expect(blockedBy.dataset['dependencyCount']).toBe('blocked-by');
     expect(blocks.dataset['dependencyCount']).toBe('blocks');
     expect([...body.children].filter((child) => !child.hasAttribute('hidden'))).toEqual([
@@ -1989,10 +1993,10 @@ describe('RightPanel dependency inspector', () => {
     const check = (color: string | undefined, counts: string) => {
       const body = button(h.el, '.abyss-dep-badge-body');
       const lock = expectDefined(body.querySelector('.abyss-dep-lock'));
-      expect(body.textContent).toBe(counts);
+      expect(body.textContent).toBe(`🔒${counts}`);
       expect(lock.classList.contains('abyss-dep-count-blocked-by')).toBe(color === 'blocked-by');
       expect(lock.classList.contains('abyss-dep-count-blocks')).toBe(color === 'blocks');
-      expect(lock.textContent).toBe('');
+      expect(lock.textContent).toBe('🔒');
     };
     check(undefined, '00');
     await h.api.execute({

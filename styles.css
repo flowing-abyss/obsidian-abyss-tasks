@@ -5664,7 +5664,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-muted);
 }
 
-:is(.abyss-dep-lock, .abyss-dep-remove, .abyss-dep-search-field, .abyss-subtask-remove) svg {
+:is(.abyss-dep-remove, .abyss-dep-search-field, .abyss-subtask-remove) svg {
   width: 13px;
   height: 13px;
 }
@@ -5921,6 +5921,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-undo-row button {
   height: 24px;
+}
+
+.abyss-undo-row span {
+  color: var(--text-muted);
 }
 
 .abyss-subtask-row.is-dragging {
