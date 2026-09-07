@@ -876,9 +876,15 @@ describe('task architecture boundaries', () => {
     expect(barrelExports()).toEqual(
       Object.keys(PUBLIC_TASK_EXPORT_CONSUMERS).sort((left, right) => left.localeCompare(right)),
     );
+    const importsByConsumer = new Map(
+      [...new Set(Object.values(PUBLIC_TASK_EXPORT_CONSUMERS).flat())].map((path) => [
+        path,
+        publicTaskImports(path),
+      ]),
+    );
     for (const [exportName, consumers] of Object.entries(PUBLIC_TASK_EXPORT_CONSUMERS)) {
       expect(
-        consumers.some((path) => publicTaskImports(path).has(exportName)),
+        consumers.some((path) => importsByConsumer.get(path)?.has(exportName) === true),
         `${exportName} must have a named production import from src/tasks/index.ts`,
       ).toBe(true);
     }
