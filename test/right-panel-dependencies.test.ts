@@ -1014,18 +1014,27 @@ describe('inspector dependency navigation', () => {
   });
 
   it('edits a blocked-by relation priority without changing the inspector selection or edge', async () => {
-    const h = await harness(
-      '- [ ] Previous\n- [ ] Current ⛔ related\n- [ ] Related 🆔 related\n',
-      'Previous',
-    );
+    const statusDefinitions = [
+      ...buildDefaultTaskStatuses(),
+      {
+        id: 'status-waiting',
+        symbol: 'w',
+        name: 'Waiting',
+        type: 'in-progress' as const,
+        icon: 'pause',
+        core: false,
+      },
+    ];
+    const source = '- [ ] Previous\n- [ ] Current ⛔ related\n- [ ] Related 🆔 related\n';
+    const h = await harness(source, 'Previous', {}, statusDefinitions);
     h.state.openInspectorDependency(h.node('Current'));
-    const marker = expectDefined(
+    const priorityMarker = expectDefined(
       h.el.querySelector<HTMLElement>(
         '[data-dependency-direction="blocked-by"] .abyss-status-marker',
       ),
     );
 
-    marker.dispatchEvent(
+    priorityMarker.dispatchEvent(
       new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 12, clientY: 8 }),
     );
     button(activeDocument.body, '.abyss-status-popover-flag[data-abyss-priority="A"]').click();
@@ -1033,6 +1042,27 @@ describe('inspector dependency navigation', () => {
 
     expect(await h.read()).toContain('- [ ] Related 🆔 related 🔺');
     expect(h.node('Related').node.priority).toBe('A');
+    const statusMarker = expectDefined(
+      h.el.querySelector<HTMLElement>(
+        '[data-dependency-direction="blocked-by"] .abyss-status-marker[data-priority="A"]',
+      ),
+    );
+    expect(statusMarker).not.toBe(priorityMarker);
+    statusMarker.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 12, clientY: 8 }),
+    );
+    expectDefined(
+      [...activeDocument.body.querySelectorAll<HTMLElement>('.abyss-status-popover-row')].find(
+        (row) => row.textContent.includes('Waiting'),
+      ),
+    ).click();
+    await flushMicrotasks(30);
+
+    expect(await h.read()).toBe(
+      '- [ ] Previous\n- [ ] Current ⛔ related\n- [w] Related 🆔 related 🔺\n',
+    );
+    expect(h.node('Related').node.statusSymbol).toBe('w');
+    expect(h.node('Current').node.statusSymbol).toBe(' ');
     expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Current']);
     expect(h.state.get('inspectorBackStack').map((frame) => frame.taskStack[0]?.title)).toEqual([
       'Previous',
@@ -1040,6 +1070,54 @@ describe('inspector dependency navigation', () => {
     expect(h.index.dependencies(h.node('Current').target).blockedBy).toMatchObject([
       { type: 'resolved', dependencyId: 'related', task: { node: { title: 'Related' } } },
     ]);
+  });
+
+  it('restores focus to a keyboard context-menu dependency trigger on Escape', async () => {
+    const h = await harness('- [ ] Current ⛔ related\n- [ ] Related 🆔 related\n');
+    const marker = expectDefined(
+      h.el.querySelector<HTMLElement>(
+        '[data-dependency-direction="blocked-by"] .abyss-status-marker',
+      ),
+    );
+    vi.useFakeTimers();
+    try {
+      marker.focus();
+      marker.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true, detail: 0 }),
+      );
+      vi.runOnlyPendingTimers();
+
+      expect(activeDocument.body.querySelector('.abyss-status-popover')).not.toBeNull();
+      activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+      expect(activeDocument.body.querySelector('.abyss-status-popover')).toBeNull();
+      expect(activeDocument.activeElement).toBe(marker);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('closes a dependency status menu before refreshing its relation row', async () => {
+    const h = await harness('- [ ] Current ⛔ related\n- [ ] Related 🆔 related\n');
+    const marker = expectDefined(
+      h.el.querySelector<HTMLElement>(
+        '[data-dependency-direction="blocked-by"] .abyss-status-marker',
+      ),
+    );
+    marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const popover = expectDefined(
+      activeDocument.body.querySelector<HTMLElement>('.abyss-status-popover'),
+    );
+
+    await h.api.execute({
+      type: 'patch',
+      target: { type: 'task', ref: h.node('Related').root.ref },
+      patch: { priority: { type: 'set', value: 'A' } },
+    });
+    await flushMicrotasks(30);
+
+    expect(marker.isConnected).toBe(false);
+    expect(popover.isConnected).toBe(false);
   });
 
   it('edits a blocks relation custom status without changing the inspector selection or edge', async () => {

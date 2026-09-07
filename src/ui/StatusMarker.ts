@@ -8,10 +8,9 @@ interface Opts {
   // (menus/previews) can pass a plain object literal instead of a cast.
   task: { statusSymbol: string; priority?: TaskPriority };
   registry: StatusRegistry;
-  interactive?: boolean;
-  contextMenuOnly?: boolean;
+  interactive?: boolean | 'menu';
   completionBlocked?: boolean;
-  onLeftClick?: () => void;
+  onLeftClick: () => void;
   onContextMenu: (ev: MouseEvent) => void;
 }
 
@@ -22,30 +21,14 @@ const ICON_CACHE = new Map<string, SVGElement>();
 
 function getLucideIcon(iconId: string): SVGElement | null {
   let svg = ICON_CACHE.get(iconId);
-  if (svg != null) return svg.cloneNode(true) as SVGElement;
-
-  const scratch = createFragment().createSpan();
-  setIcon(scratch, iconId);
-  svg = scratch.querySelector('svg') ?? undefined;
-  if (svg == null) return null;
-  ICON_CACHE.set(iconId, svg);
-  return svg.cloneNode(true) as SVGElement;
-}
-
-function renderMarkerIcon(
-  marker: HTMLElement,
-  statusSymbol: string,
-  icon: string | undefined,
-  hasDefinition: boolean,
-): void {
-  if (icon !== undefined && icon.length > 0) {
-    const svg = getLucideIcon(icon);
-    if (svg != null) marker.appendChild(svg);
-    return;
+  if (svg == null) {
+    const scratch = createFragment().createSpan();
+    setIcon(scratch, iconId);
+    svg = scratch.querySelector('svg') ?? undefined;
+    if (svg == null) return null;
+    ICON_CACHE.set(iconId, svg);
   }
-  if (hasDefinition) return;
-  const raw = statusSymbol.trim();
-  if (raw.length > 0) marker.setText(raw);
+  return svg.cloneNode(true) as SVGElement;
 }
 
 const completionBlockUpdates = new WeakMap<HTMLElement, (blocked: boolean) => void>();
@@ -94,11 +77,11 @@ function makeMarkerInteractive(
     wrapper?.focus({ preventScroll: true });
   };
   const bind = (control: HTMLElement): void => {
-    control.addEventListener('click', onClick);
+    control.onclick = onClick;
     bindContextMenu(control, onContextMenu);
-    control.addEventListener('keydown', onKeyDown);
-    control.addEventListener('pointerdown', onPointer);
-    control.addEventListener('touchstart', onPointer, { passive: false });
+    control.onkeydown = onKeyDown;
+    control.onpointerdown = onPointer;
+    control.ontouchstart = onPointer;
   };
   semantics(marker);
   bind(marker);
@@ -135,58 +118,59 @@ function makeMarkerInteractive(
 
 function setMarkerMetadata(
   marker: HTMLElement,
-  statusId: string,
-  statusType: string,
+  presentation: { id: string; type: string },
   priority: TaskPriority | undefined,
 ): void {
-  marker.setAttribute('data-status', statusId);
-  marker.setAttribute('data-status-type', statusType);
-  if (priority !== undefined && priority !== 'D') marker.setAttribute('data-priority', priority);
+  marker.setAttrs({
+    'data-status': presentation.id,
+    'data-status-type': presentation.type,
+    ...(priority != null && priority !== 'D' ? { 'data-priority': priority } : {}),
+  });
 }
 
-function markerPresentation(
-  definition: ReturnType<StatusRegistry['bySymbol']>,
-  fallbackLabel: string,
-): { id: string; type: string; label: string; icon: string | undefined; isDone: boolean } {
-  if (definition == null) {
-    return { id: 'other', type: 'todo', label: fallbackLabel, icon: undefined, isDone: false };
+function renderMarkerIcon(
+  marker: HTMLElement,
+  statusSymbol: string,
+  icon: string | undefined,
+  hasDefinition: boolean,
+): void {
+  if (icon !== undefined && icon !== '') {
+    const svg = getLucideIcon(icon);
+    if (svg != null) marker.appendChild(svg);
+  } else if (!hasDefinition) {
+    const raw = statusSymbol.trim();
+    if (raw !== '') marker.setText(raw);
   }
-  return {
-    id: definition.id,
-    type: definition.type,
-    label: definition.name,
-    icon: definition.icon,
-    isDone: definition.type === 'done',
-  };
 }
 
 export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement {
-  const {
-    task,
-    registry,
-    interactive = true,
-    contextMenuOnly = false,
-    onLeftClick,
-    onContextMenu,
-  } = opts;
+  const { task, registry, interactive = true, onLeftClick, onContextMenu } = opts;
   const def = registry.bySymbol(task.statusSymbol);
-  const presentation = markerPresentation(def, task.statusSymbol);
+  const presentation =
+    def == null
+      ? { id: 'other', type: 'todo', label: task.statusSymbol, icon: undefined, isDone: false }
+      : {
+          id: def.id,
+          type: def.type,
+          label: def.name,
+          icon: def.icon,
+          isDone: def.type === 'done',
+        };
   const el = parent.createSpan({ cls: 'abyss-status-marker' });
-  if (!interactive) el.addClass('abyss-status-marker--inert');
-  setMarkerMetadata(el, presentation.id, presentation.type, task.priority);
-
+  if (interactive !== true) el.addClass('abyss-status-marker--inert');
+  setMarkerMetadata(el, presentation, task.priority);
   renderMarkerIcon(el, task.statusSymbol, presentation.icon, def != null);
 
-  if (interactive) {
-    makeMarkerInteractive(
-      el,
-      presentation.label,
-      presentation.isDone,
-      onLeftClick as () => void,
-      onContextMenu,
-    );
+  if (interactive === true) {
+    makeMarkerInteractive(el, presentation.label, presentation.isDone, onLeftClick, onContextMenu);
     setStatusMarkerCompletionBlocked(el, opts.completionBlocked === true);
-  } else if (contextMenuOnly) {
+  } else if (interactive === 'menu') {
+    el.setAttrs({
+      role: 'button',
+      'aria-label': presentation.label,
+      'aria-haspopup': 'menu',
+      tabindex: 0,
+    });
     el.onclick = (event) => {
       event.stopPropagation();
     };

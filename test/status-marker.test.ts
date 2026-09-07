@@ -174,8 +174,7 @@ describe('renderStatusMarker', () => {
     const el = renderStatusMarker(parent, {
       task: { statusSymbol: '/', priority: 'A' },
       registry: reg,
-      interactive: false,
-      contextMenuOnly: true,
+      interactive: 'menu',
       onLeftClick: left,
       onContextMenu: context,
     });
@@ -188,6 +187,31 @@ describe('renderStatusMarker', () => {
     expect(context).toHaveBeenCalledOnce();
     expect(contextEvent.defaultPrevented).toBe(true);
     expect(parentClick).not.toHaveBeenCalled();
+  });
+
+  it('exposes a context-menu-only marker as a keyboard-reachable menu trigger', () => {
+    const context = vi.fn();
+    const parent = activeDocument.body.createDiv();
+    const el = renderStatusMarker(parent, {
+      task: { statusSymbol: '/', priority: 'A' },
+      registry: reg,
+      interactive: 'menu',
+      onLeftClick: () => {},
+      onContextMenu: context,
+    });
+    el.focus();
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, detail: 0 });
+    el.dispatchEvent(event);
+
+    expect(el.getAttribute('role')).toBe('button');
+    expect(el.getAttribute('aria-label')).toBe('In progress');
+    expect(el.getAttribute('aria-haspopup')).toBe('menu');
+    expect(el.getAttribute('tabindex')).toBe('0');
+    expect(el.hasAttribute('aria-checked')).toBe(false);
+    expect(el.ownerDocument.activeElement).toBe(el);
+    expect(context).toHaveBeenCalledOnce();
+    expect(event.defaultPrevented).toBe(true);
+    parent.remove();
   });
 
   it('styles inert preview markers with the default cursor', () => {

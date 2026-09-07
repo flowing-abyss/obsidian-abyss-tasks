@@ -1370,6 +1370,7 @@ export class RightPanel {
   }
 
   private readonly dependencyStatusMarkers_abyssPrivate = new Map<HTMLElement, TaskLike>();
+  private dependencyStatusMenuOwner_abyssPrivate: Component | undefined;
 
   private statusFocusTarget_abyssPrivate(stack: readonly TaskLike[]): TaskNodeRef | undefined {
     const focused = this.el_abyssPrivate.ownerDocument.activeElement;
@@ -1734,10 +1735,13 @@ export class RightPanel {
       renderStatusMarker(row, {
         task: relation.task.node,
         registry: this.statusRegistry_abyssPrivate,
-        interactive: false,
-        contextMenuOnly: true,
+        interactive: 'menu',
+        onLeftClick: () => {},
         onContextMenu: (event) => {
-          this.openStatusMenu_abyssPrivate(event, relation.task.node);
+          this.dependencyStatusMenuOwner_abyssPrivate?.unload();
+          const owner = this.md_abyssPrivate.addChild(new Component());
+          this.dependencyStatusMenuOwner_abyssPrivate = owner;
+          this.openStatusMenu_abyssPrivate(event, relation.task.node, owner);
         },
       });
       row.addEventListener('click', (event) => {
@@ -1828,6 +1832,7 @@ export class RightPanel {
       setStatusMarkerCompletionBlocked(marker, this.isDependencyBlocked_abyssPrivate(task));
     }
     this.updateDependencyBadge_abyssPrivate();
+    this.dependencyStatusMenuOwner_abyssPrivate?.unload();
     this.el_abyssPrivate.querySelectorAll('.abyss-dep-section').forEach((section) => {
       section.remove();
     });
@@ -2788,12 +2793,16 @@ export class RightPanel {
     this.recurrenceDraftEditor_abyssPrivate = undefined;
   }
 
-  private openStatusMenu_abyssPrivate(event: MouseEvent, task: TaskLike): void {
+  private openStatusMenu_abyssPrivate(
+    event: MouseEvent,
+    task: TaskLike,
+    owner: Component = this.md_abyssPrivate,
+  ): void {
     this.clearAnchoredSurfaces_abyssPrivate();
     showStatusMenuAt(event, {
       task,
       registry: this.statusRegistry_abyssPrivate,
-      owner: this.md_abyssPrivate,
+      owner,
       onPickStatus: (symbol) => {
         runAsyncAction(this.setStatus_abyssPrivate(task, symbol));
       },
