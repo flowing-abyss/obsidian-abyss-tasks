@@ -512,39 +512,75 @@ describe('expandRecurrenceReferences', () => {
     });
   });
 
-  it('is timezone independent in spawned Vitest processes', async () => {
+  it('is timezone independent in isolated Node processes', async () => {
     if (!Platform.isDesktop) throw new Error('Timezone process test requires desktop APIs');
     const { execFileSync } = await import('node:child_process');
+    const probeSource = `
+      import { expandRecurrenceReferences, nextOccurrencePlanning } from './src/tasks/domain/recurrence';
+      import { localDate } from './src/tasks/domain/validation';
 
-    if (process.env['RECURRENCE_TZ_CHILD'] === '1') {
-      expect(next('every weekday', { due: localDate('2026-08-07') })).toMatchObject({
+      const policy = { removeScheduledDate: false };
+      const next = nextOccurrencePlanning({
+        rule: 'every weekday',
+        planning: { due: localDate('2026-08-07') },
+        completedOn: localDate('2040-01-01'),
+        policy,
+      });
+      const expanded = expandRecurrenceReferences({
+        rule: 'every month',
+        planning: { due: localDate('2022-01-31') },
+        visible: { from: localDate('2022-02-01'), to: localDate('2022-04-30') },
+        policy,
+        maxVisible: 512,
+        maxSequentialSteps: 4096,
+      });
+      process.stdout.write(JSON.stringify({ next, expanded }));
+    `;
+    const bundler = `
+      import { build } from 'esbuild';
+      const result = await build({
+        stdin: {
+          contents: ${JSON.stringify(probeSource)},
+          resolveDir: process.cwd(),
+          sourcefile: 'recurrence-timezone-probe.ts',
+          loader: 'ts',
+        },
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        write: false,
+        logLevel: 'silent',
+      });
+      const output = result.outputFiles[0]?.text;
+      if (output === undefined) throw new Error('Timezone probe bundle was not produced');
+      process.stdout.write(output);
+    `;
+    const probe = execFileSync(process.execPath, ['--input-type=module'], {
+      cwd: process.cwd(),
+      input: bundler,
+      encoding: 'utf8',
+    });
+
+    const outputs = ['UTC', 'America/Los_Angeles'].map((timezone) =>
+      execFileSync(process.execPath, [], {
+        cwd: process.cwd(),
+        env: { ...process.env, TZ: timezone },
+        input: probe,
+        encoding: 'utf8',
+      }),
+    );
+    const expected = JSON.stringify({
+      next: {
         type: 'next',
         planning: { due: '2026-08-10' },
-      });
-      expect(expandedDates('every month', '2022-01-31', '2022-02-01', '2022-04-30')).toEqual([
-        '2022-02-28',
-        '2022-03-28',
-        '2022-04-28',
-      ]);
-      return;
-    }
+        dayDelta: 3,
+      },
+      expanded: {
+        type: 'expanded',
+        dates: ['2022-02-28', '2022-03-28', '2022-04-28'],
+      },
+    });
 
-    for (const timezone of ['UTC', 'America/Los_Angeles']) {
-      execFileSync(
-        process.execPath,
-        [
-          'node_modules/vitest/vitest.mjs',
-          'run',
-          'test/tasks/recurrence.test.ts',
-          '-t',
-          'timezone independent',
-        ],
-        {
-          cwd: process.cwd(),
-          env: { ...process.env, TZ: timezone, RECURRENCE_TZ_CHILD: '1' },
-          stdio: 'pipe',
-        },
-      );
-    }
+    expect(outputs).toEqual([expected, expected]);
   });
 });
