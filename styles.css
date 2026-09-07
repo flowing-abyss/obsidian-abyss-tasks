@@ -3641,14 +3641,15 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
+  margin-inline-end: -2px;
   gap: 1px;
   font-size: 11px;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
-.abyss-dep-indicator .abyss-dep-lock {
-  display: inline-flex;
+.abyss-dep-indicator-divider {
+  opacity: 0.5;
 }
 
 /* Shape by status-group (type): in-progress is the only circular group. */

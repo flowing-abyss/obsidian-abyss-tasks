@@ -848,6 +848,12 @@ describe('inspector subtask row removal', () => {
     expect(value('.abyss-dep-badge > button', 'gap')).toBe('2px');
     expect(value('.abyss-dep-divider', 'background')).toBe('var(--text-muted)');
     expect(value('.abyss-dep-indicator', 'gap')).toBe('1px');
+    expect(value('.abyss-dep-indicator', 'margin-inline-end')).toBe('-2px');
+    expect(Number(value('.abyss-dep-indicator-divider', 'opacity'))).toBeLessThan(1);
+    expect(value('.abyss-dep-count-blocked-by', 'color')).toBe(
+      'var(--abyss-dependency-blocked-by)',
+    );
+    expect(value('.abyss-dep-count-blocks', 'color')).toBe('var(--abyss-dependency-blocks)');
     expect(value('.abyss-dep-indicator svg', 'width')).toBe('11px');
     expect(value('.abyss-dep-indicator svg', 'height')).toBe('11px');
     expect(css).toMatch(
