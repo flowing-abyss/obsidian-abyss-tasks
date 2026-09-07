@@ -863,8 +863,8 @@ describe('inspector subtask row removal', () => {
     expect(value('.abyss-dep-badge:hover', 'background')).toBe('var(--background-modifier-hover)');
     expect(value('.abyss-dep-badge.abyss-chip', 'padding')).toBe('0');
     expect(value('.abyss-dep-badge > button', 'padding')).toBe('3px 6px');
-    expect(value('.abyss-dep-badge > .abyss-dep-badge-body', 'padding-inline')).toBe('8px 4px');
-    expect(value('.abyss-dep-badge > .abyss-dep-badge-add', 'padding-inline')).toBe('4px 8px');
+    expect(value('.abyss-dep-badge > .abyss-dep-badge-body', 'padding-inline')).toBe('8px 2px');
+    expect(value('.abyss-dep-badge > .abyss-dep-badge-add', 'padding-inline')).toBe('2px 8px');
     expect(value('.abyss-dep-badge > button', 'gap')).toBe('2px');
     expect(value('.abyss-dep-badge-add:hover', 'background')).toBe(
       'var(--background-modifier-active-hover)',

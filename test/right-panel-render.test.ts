@@ -967,6 +967,36 @@ describe('RightPanel.renderTask', () => {
     expect(chip?.getAttribute('data-priority')).toBe('A');
   });
 
+  it('keeps an empty dependency badge directly after date and time before priority', async () => {
+    const selected = task({
+      title: 'Ordered metadata',
+      planning: { due: '2026-06-25', time: '09:30' },
+      priority: 'B',
+    });
+    const tasks: TaskApplicationApi = {
+      queries: queryApiForTasks(() => [selected]),
+      execute: vi.fn<TaskApplicationApi['execute']>(),
+    };
+    const { state, el } = await makePanel({}, tasks);
+    state.set('taskStack', [selected]);
+
+    const children = [...expectDefined(el.querySelector<HTMLElement>('.abyss-chips-row')).children];
+    expect(children.slice(0, 4).map((child) => child.className)).toEqual([
+      'abyss-chip',
+      'abyss-chip abyss-chip-time',
+      'abyss-chip abyss-dep-badge',
+      'abyss-chip abyss-priority-chip abyss-priority-chip--B',
+    ]);
+    const dependency = expectDefined(children[2]);
+    expect(dependency.querySelector('.abyss-dep-lock')?.textContent).toBe('🔒');
+    expect(dependency.querySelector('[data-dependency-count="blocked-by"]')?.textContent).toBe('0');
+    expect(dependency.querySelector('[data-dependency-count="blocks"]')).toHaveProperty(
+      'hidden',
+      true,
+    );
+    expect(dependency.querySelector('.abyss-dep-badge-add')?.textContent).toBe('+');
+  });
+
   it.each(['A', 'B', 'C', 'E', 'F'] as const)(
     'priority chip carries data-priority="%s" so it can be color-keyed anywhere it mounts',
     async (priority) => {

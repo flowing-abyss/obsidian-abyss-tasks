@@ -1425,15 +1425,15 @@ export class RightPanel {
     const chips = this.el_abyssPrivate.createDiv({ cls: 'abyss-chips-row' });
     this.renderDateChip_abyssPrivate(chips, task);
     this.renderTimeChip_abyssPrivate(chips, task);
+    if (this.tasks_abyssPrivate !== undefined) {
+      chips.createSpan({ cls: 'abyss-chip abyss-dep-badge' });
+      this.updateDependencyBadge_abyssPrivate();
+    }
     this.renderPriorityChip_abyssPrivate(chips, task);
     this.renderRecurrenceChip_abyssPrivate(chips, task, stack);
     if (task.planning.scheduled != null) this.renderScheduledChip_abyssPrivate(chips, task);
     if (task.planning.start != null) this.renderStartChip_abyssPrivate(chips, task);
     this.renderAddDateMenu_abyssPrivate(chips, task);
-    if (this.tasks_abyssPrivate !== undefined) {
-      chips.createSpan({ cls: 'abyss-chip abyss-dep-badge' });
-      this.updateDependencyBadge_abyssPrivate();
-    }
     for (const tag of task.tags) this.renderTagChip_abyssPrivate(chips, task, tag);
     const addTagBtn = chips.createEl('button', {
       cls: 'abyss-chip abyss-chip-add',

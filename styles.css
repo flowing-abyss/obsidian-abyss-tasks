@@ -5648,11 +5648,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-dep-badge > .abyss-dep-badge-body {
-  padding-inline: 8px 4px;
+  padding-inline: 8px 2px;
 }
 
 .abyss-dep-badge > .abyss-dep-badge-add {
-  padding-inline: 4px 8px;
+  padding-inline: 2px 8px;
 }
 
 .abyss-dep-badge:hover {
