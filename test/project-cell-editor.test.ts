@@ -5,12 +5,14 @@ import {
   type ProjectCellEditorResult,
 } from '../src/panels/projects/ProjectCellEditor';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
+import { ProjectEditValidationError } from '../src/projects/projectEditError';
+import type { ProjectPropertyType } from '../src/projects/projectFields';
 import { ProjectPropertySuggest } from '../src/ui/ProjectPropertySuggest';
 import { expectDefined } from './helpers';
 
 function catalog(
   values: readonly string[] = [],
-  type: 'text' | 'list' | 'number' | null = 'text',
+  type: ProjectPropertyType | null = 'text',
 ): ProjectPropertyCatalog {
   return {
     list: () => [{ name: 'Custom', type }],
@@ -74,6 +76,101 @@ describe('mountProjectCellEditor', () => {
     expect(save).toHaveBeenCalledWith([7, 'Alpha', 'Beta']);
   });
 
+  it('commits a pending freeform list value with ordinary Enter', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: ['Alpha'],
+      catalog: catalog([], 'list'),
+      save,
+      onClose,
+    });
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-project-list-input'),
+    );
+    input.value = 'Beta';
+
+    keydown(input, 'Enter');
+    await settle();
+
+    expect(save).toHaveBeenCalledWith(['Alpha', 'Beta']);
+    expect(onClose).toHaveBeenCalledWith('committed');
+  });
+
+  it.each([
+    ['checkbox', 'input[type="checkbox"]', true, true],
+    ['date', 'input[type="date"]', '2026-09-12', '2026-09-12'],
+    ['datetime', 'input[type="datetime-local"]', '2026-09-12T14:30', '2026-09-12T14:30'],
+    ['tags', '.abyss-project-list-input', '#launch', ['#launch']],
+  ] as const)(
+    'maps custom %s fields to the typed control and saved value',
+    async (type, selector, nextValue, expected) => {
+      const container = document.body.createDiv();
+      const save = vi.fn().mockResolvedValue(undefined);
+      mountProjectCellEditor({
+        app: new App(),
+        container,
+        field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type },
+        value: type === 'checkbox' ? false : undefined,
+        catalog: catalog([], type),
+        save,
+        onClose: vi.fn(),
+      });
+      const input = expectDefined(container.querySelector<HTMLInputElement>(selector));
+      if (type === 'checkbox') input.checked = nextValue;
+      else input.value = nextValue;
+
+      keydown(input, 'Enter');
+      await settle();
+
+      expect(save).toHaveBeenCalledWith(expected);
+    },
+  );
+
+  it('uses configured status labels, colors, and IDs', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'status', label: 'Status', type: 'status' },
+      value: 'active',
+      catalog: catalog(),
+      statuses: [
+        {
+          id: 'active',
+          label: 'In flight',
+          color: '#123456',
+          onLeftPanel: true,
+          match: { kind: 'property', property: 'status', value: 'active' },
+        },
+        {
+          id: 'done',
+          label: 'Shipped',
+          color: '#654321',
+          onLeftPanel: false,
+          match: { kind: 'property', property: 'status', value: 'done' },
+        },
+      ],
+      save,
+      onClose: vi.fn(),
+    });
+    const select = expectDefined(container.querySelector<HTMLSelectElement>('select'));
+    const done = expectDefined(select.querySelector<HTMLOptionElement>('option[value="done"]'));
+    expect(done.textContent).toBe('Shipped');
+    expect(done.style.color).toBe('rgb(101, 67, 33)');
+    select.value = 'done';
+
+    keydown(select, 'Enter');
+    await settle();
+
+    expect(save).toHaveBeenCalledWith('done');
+  });
+
   it('cancels with Escape without saving', () => {
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
@@ -94,7 +191,7 @@ describe('mountProjectCellEditor', () => {
     expect(onClose).toHaveBeenCalledWith('cancelled');
   });
 
-  it('retains the draft and reports one boundary error when saving rejects', async () => {
+  it('retains the draft and reports one boundary error when an I/O save rejects', async () => {
     const container = document.body.createDiv();
     const error = new Error('disk full');
     const save = vi.fn().mockRejectedValue(error);
@@ -126,6 +223,39 @@ describe('mountProjectCellEditor', () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledOnce();
     expect(notice).toHaveBeenCalledOnce();
+  });
+
+  it('keeps validation failures inline without an I/O diagnostic or Notice', async () => {
+    const container = document.body.createDiv();
+    const save = vi
+      .fn()
+      .mockRejectedValue(new ProjectEditValidationError('Start must be before End.'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const notice = vi.spyOn(
+      Notice.prototype as unknown as { constructor__(message: unknown, duration?: number): void },
+      'constructor__',
+    );
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'start', property: 'start', label: 'Start', type: 'date' },
+      value: '2026-09-20',
+      catalog: catalog(),
+      save,
+      onClose: vi.fn(),
+    });
+    const input = expectDefined(container.querySelector<HTMLInputElement>('input[type="date"]'));
+    input.value = '2026-09-30';
+    keydown(input, 'Enter');
+    await settle();
+
+    expect(input.isConnected).toBe(true);
+    expect(input.value).toBe('2026-09-30');
+    expect(container.querySelector('.abyss-project-editor-error')?.textContent).toContain(
+      'Start must be before End.',
+    );
+    expect(log).not.toHaveBeenCalled();
+    expect(notice).not.toHaveBeenCalled();
   });
 
   it('blocks a stale custom editor when Obsidian changes the assigned type', async () => {
@@ -187,5 +317,37 @@ describe('ProjectPropertySuggest', () => {
     ]);
     suggest.selectSuggestion(expectDefined(suggest.getSuggestions('quote')[0]));
     expect(picked).toHaveBeenCalledWith('[[Projects/Quote "Plan"]]');
+  });
+
+  it('consumes keyboard selection before Enter reaches the containing editor', () => {
+    const container = document.body.createDiv();
+    const input = container.createEl('input');
+    const picked = vi.fn();
+    const commit = vi.fn();
+    const suggest = new ProjectPropertySuggest({
+      app: new App(),
+      input,
+      values: ['Beta'],
+      onPick: picked,
+    });
+    container.addEventListener('keydown', commit);
+    input.addEventListener(
+      'keydown',
+      (event) => {
+        suggest.selectSuggestion(expectDefined(suggest.getSuggestions('Beta')[0]), event);
+      },
+      { once: true },
+    );
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(event);
+
+    expect(picked).toHaveBeenCalledWith('Beta');
+    expect(event.defaultPrevented).toBe(true);
+    expect(commit).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,6 @@
 import { Notice, type App } from 'obsidian';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
+import { isProjectEditValidationError } from '../../projects/projectEditError';
 import type { ProjectFieldCatalogItem, ProjectPropertyType } from '../../projects/projectFields';
 import type { ProjectStatus } from '../../settings/types';
 import { ProjectPropertySuggest } from '../../ui/ProjectPropertySuggest';
@@ -148,12 +149,6 @@ function listControl(options: ProjectCellEditorOptions, root: HTMLElement): Edit
     input.focus();
   };
   addButton.addEventListener('click', () => {
-    addPending();
-  });
-  input.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' || input.value.trim().length === 0) return;
-    event.preventDefault();
-    event.stopPropagation();
     addPending();
   });
   renderValues();
@@ -331,6 +326,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   }
 
   private readonly onKeyDown_abyssPrivate = (event: KeyboardEvent): void => {
+    if (event.defaultPrevented) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
@@ -386,6 +382,11 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     this.saveInFlight_abyssPrivate = undefined;
     this.saveButton_abyssPrivate?.removeAttribute('disabled');
     const message = errorMessage(error);
+    if (isProjectEditValidationError(error)) {
+      this.error_abyssPrivate.setText(message);
+      this.focus();
+      return;
+    }
     this.error_abyssPrivate.setText(
       `Could not save ${this.options_abyssPrivate.field.label}: ${message}`,
     );

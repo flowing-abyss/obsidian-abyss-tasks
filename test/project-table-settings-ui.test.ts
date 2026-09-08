@@ -1,16 +1,22 @@
 import { App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
+import type { ProjectPropertyInfo } from '../src/projects/projectFields';
 import { buildDefaultProjectsSettings } from '../src/settings/defaults';
-import { renderProjectTableSettings } from '../src/settings/projectTableSettings';
+import {
+  addProjectPropertyColumn,
+  renderProjectTableSettings,
+} from '../src/settings/projectTableSettings';
 import { expectDefined } from './helpers';
 
-function catalog(): ProjectPropertyCatalog {
+function catalog(
+  properties: readonly ProjectPropertyInfo[] = [
+    { name: 'Budget', type: 'number' },
+    { name: 'Owners', type: 'list' },
+  ],
+): ProjectPropertyCatalog {
   return {
-    list: () => [
-      { name: 'Budget', type: 'number' },
-      { name: 'Owners', type: 'list' },
-    ],
+    list: () => properties,
     values: () => [],
     onChange: () => () => {},
   };
@@ -119,5 +125,58 @@ describe('renderProjectTableSettings', () => {
 
     expect(projects.table.columns.filter(({ id }) => id === 'property:Budget')).toHaveLength(1);
     expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it('rejects curated and configured status-carrier properties through the shared policy', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.statuses.push({
+      id: 'tagged',
+      label: 'Tagged',
+      onLeftPanel: false,
+      match: { kind: 'tag', tag: '#project/tagged' },
+    });
+    const properties: readonly ProjectPropertyInfo[] = [
+      { name: 'Start', type: 'date' },
+      { name: 'END', type: 'date' },
+      { name: 'STATUS', type: 'text' },
+      { name: 'Tags', type: 'tags' },
+      { name: 'Budget', type: 'number' },
+    ];
+
+    expect(
+      properties
+        .slice(0, 4)
+        .map(({ name }) => addProjectPropertyColumn(projects, properties, name)),
+    ).toEqual(['reserved', 'reserved', 'reserved', 'reserved']);
+    expect(addProjectPropertyColumn(projects, properties, 'Budget')).toBe('added');
+    expect(projects.table.columns.filter(({ id }) => id.startsWith('property:'))).toEqual([
+      { id: 'property:Budget', visible: true },
+    ]);
+  });
+
+  it('shows an explicit message when a typed reserved property is entered manually', () => {
+    const projects = buildDefaultProjectsSettings();
+    const container = document.body.createDiv();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([
+        { name: 'Start', type: 'date' },
+        { name: 'Budget', type: 'number' },
+      ]),
+      save: vi.fn().mockResolvedValue(undefined),
+      refresh: vi.fn(),
+    });
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
+    );
+    input.value = 'start';
+    expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-column-add')).click();
+
+    expect(container.querySelector('.abyss-project-table-settings-error')?.textContent).toContain(
+      'reserved',
+    );
+    expect(projects.table.columns.some(({ id }) => id === 'property:Start')).toBe(false);
   });
 });

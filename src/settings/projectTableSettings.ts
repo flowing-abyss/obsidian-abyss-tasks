@@ -5,6 +5,7 @@ import type {
   ProjectPropertyInfo,
   ProjectTableSettings,
 } from '../projects/projectFields';
+import { isReservedProjectProperty } from '../projects/projectFields';
 import { ProjectPropertySuggest } from '../ui/ProjectPropertySuggest';
 import type { ProjectsSettings } from './types';
 
@@ -112,16 +113,17 @@ function selectedProperty(settings: ProjectTableSettings, property: string): boo
 }
 
 export function addProjectPropertyColumn(
-  settings: ProjectTableSettings,
+  projects: ProjectsSettings,
   properties: readonly ProjectPropertyInfo[],
   property: string,
-): 'added' | 'duplicate' | 'unsupported' | 'missing' {
+): 'added' | 'duplicate' | 'reserved' | 'unsupported' | 'missing' {
   const info = properties.find(({ name }) => sameProperty(name, property.trim()));
   if (info === undefined) return 'missing';
-  if (selectedProperty(settings, info.name)) return 'duplicate';
+  if (isReservedProjectProperty(projects, info.name)) return 'reserved';
+  if (selectedProperty(projects.table, info.name)) return 'duplicate';
   if (info.type === null) return 'unsupported';
-  settings.columns.push({ id: `property:${info.name}`, visible: true });
-  enforceProjectTableColumnInvariants(settings);
+  projects.table.columns.push({ id: `property:${info.name}`, visible: true });
+  enforceProjectTableColumnInvariants(projects.table);
   return 'added';
 }
 
@@ -242,12 +244,14 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
   });
   const choose = (property: string): void => {
     feedback.empty();
-    const result = addProjectPropertyColumn(options.projects.table, available, property);
+    const result = addProjectPropertyColumn(options.projects, available, property);
     if (result === 'added') {
       input.value = '';
       persist(true);
     } else if (result === 'duplicate') {
       feedback.setText('That property is already a table column.');
+    } else if (result === 'reserved') {
+      feedback.setText('That property is reserved for a curated project field or status.');
     } else if (result === 'unsupported') {
       feedback.setText('That Obsidian property type is not supported for editing.');
     } else {
@@ -265,7 +269,9 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
   const suggest = new ProjectPropertySuggest({
     app: options.app,
     input,
-    values: available.map(({ name }) => name),
+    values: available
+      .filter(({ name }) => !isReservedProjectProperty(options.projects, name))
+      .map(({ name }) => name),
     onPick: (property) => {
       input.value = property;
       choose(property);

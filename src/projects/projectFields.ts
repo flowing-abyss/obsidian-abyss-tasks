@@ -57,22 +57,26 @@ export function findProjectPropertyName(
   return names.find((name) => sameProperty(name, property));
 }
 
-function statusPropertyNames(settings: ProjectsSettings): string[] {
-  const properties: string[] = [];
-  for (const status of settings.statuses) {
-    if (status.match.kind === 'property') properties.push(status.match.property);
-  }
-  return properties;
+/** True when a property is owned by a curated field or configured project-status carrier. */
+export function isReservedProjectProperty(settings: ProjectsSettings, property: string): boolean {
+  const normalized = property.toLocaleLowerCase();
+  if (normalized === 'start' || normalized === 'end') return true;
+  return settings.statuses.some((status) =>
+    status.match.kind === 'property'
+      ? status.match.property.toLocaleLowerCase() === normalized
+      : normalized === 'tags',
+  );
 }
 
 function addVaultProperties(
   fields: ProjectFieldCatalogItem[],
+  settings: ProjectsSettings,
   properties: readonly ProjectPropertyInfo[],
   seen: Set<string>,
 ): void {
   for (const property of properties) {
     const normalized = property.name.toLocaleLowerCase();
-    if (seen.has(normalized)) continue;
+    if (isReservedProjectProperty(settings, property.name) || seen.has(normalized)) continue;
     seen.add(normalized);
     fields.push({
       id: `property:${property.name}`,
@@ -92,7 +96,13 @@ function addSavedProperties(
     if (!column.id.startsWith('property:')) continue;
     const property = column.id.slice('property:'.length);
     const normalized = property.toLocaleLowerCase();
-    if (property.length === 0 || seen.has(normalized)) continue;
+    if (
+      property.length === 0 ||
+      isReservedProjectProperty(settings, property) ||
+      seen.has(normalized)
+    ) {
+      continue;
+    }
     seen.add(normalized);
     fields.push({ id: column.id, property, label: property, type: null });
   }
@@ -111,12 +121,8 @@ export function buildProjectFieldCatalog(
     { id: 'end', property: endProperty, label: 'End', type: 'date' },
   ];
 
-  const reservesTags = settings.statuses.some((status) => status.match.kind === 'tag');
-  const reserved = [startProperty, endProperty, ...statusPropertyNames(settings)];
-  if (reservesTags) reserved.push('tags');
-
-  const seen = new Set(reserved.map((name) => name.toLocaleLowerCase()));
-  addVaultProperties(fields, properties, seen);
+  const seen = new Set<string>();
+  addVaultProperties(fields, settings, properties, seen);
   addSavedProperties(fields, settings, seen);
   return fields;
 }

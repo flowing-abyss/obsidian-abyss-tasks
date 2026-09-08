@@ -1,6 +1,7 @@
 import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { ProjectManager } from '../src/projects/ProjectManager';
+import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import type { ProjectField } from '../src/projects/projectFields';
 import { DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -171,6 +172,25 @@ describe('ProjectManager.setProperty', () => {
     await expect(pm.setProperty('P.md', start, '2026-09-25', '2026-09-01')).rejects.toThrow(
       /Start date must be on or before end date/u,
     );
+  });
+
+  it('checks an end update against the latest start value', async () => {
+    const app = await createAppWithFiles({
+      'P.md': '---\nstart: 2026-09-10\nend: 2026-09-20\n---\n',
+    });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+    const end: ProjectField = {
+      id: 'end',
+      property: 'end',
+      label: 'End',
+      type: 'date',
+    };
+
+    const write = pm.setProperty('P.md', end, '2026-09-05', '2026-09-20');
+
+    await expect(write).rejects.toThrow(/End date must be on or after start date/u);
+    await expect(write).rejects.toBeInstanceOf(ProjectEditValidationError);
+    expect((await readFm(app, 'P.md'))['end']).toBe('2026-09-20');
   });
 
   it('rejects invalid values, missing files and generic writes to semantic properties', async () => {

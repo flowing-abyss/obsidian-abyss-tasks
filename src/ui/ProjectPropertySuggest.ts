@@ -64,7 +64,12 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
     }
   }
 
-  override selectSuggestion(suggestion: ProjectPropertySuggestion): void {
+  override selectSuggestion(
+    suggestion: ProjectPropertySuggestion,
+    event?: MouseEvent | KeyboardEvent,
+  ): void {
+    event?.preventDefault();
+    event?.stopPropagation();
     this.onPick_abyssPrivate(suggestion.value);
     this.close();
   }
