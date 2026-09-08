@@ -34,9 +34,10 @@ interface AllowedWriter {
 }
 
 const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
-  'src/projects/ProjectManager.ts#ProjectManager.stripInlineStatusTags#process#1': {
+  'src/projects/ProjectManager.ts#ProjectManager.setStatus#process#1': {
     mutation: 'project metadata',
-    reason: 'Project status markers are project-note metadata, not task Markdown.',
+    reason:
+      'One atomic project-note transaction validates the expected status and updates its configured metadata markers.',
   },
   'src/resolvers/DailyNoteResolver.ts#DailyNoteResolver.createNoteWithTemplate#vault.create#1': {
     mutation: 'destination provisioning',
