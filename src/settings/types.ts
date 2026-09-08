@@ -1,3 +1,4 @@
+import type { ProjectTableSettings } from '../projects/projectFields';
 import type { TaskPriority, TaskStatusType } from '../tasks/domain/types';
 import type { ShortcutSettings } from './shortcuts';
 
@@ -67,6 +68,7 @@ export interface ProjectsSettings {
   // project notes can keep tasks under a dedicated heading.
   taskInsertionMode: 'append' | 'section';
   taskInsertionSection: string;
+  table: ProjectTableSettings;
 }
 
 export interface CalendarSettings {

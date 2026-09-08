@@ -39,7 +39,7 @@ The plugin has several kinds of state, but they do not have equal authority.
 | ----------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------- |
 | Tasks and task metadata                         | Markdown files in the Obsidian vault                  | `TaskIndex` snapshots and calendar projections |
 | Projects and project status                     | Project Markdown plus configured queries and mappings | `ProjectStore` entries and task statistics     |
-| Plugin preferences and saved list view states   | Obsidian plugin data                                  | Migrated in-memory `CalendarSettings`          |
+| Plugin preferences and saved view states        | Obsidian plugin data                                  | Migrated in-memory `CalendarSettings`          |
 | Current mode, selection, search, and drag state | `AppState` for the current panel session              | Rendered panel DOM                             |
 
 `TaskIndex` and `ProjectStore` are read models, not secondary databases. They may be rebuilt from the
@@ -153,6 +153,24 @@ response to both Obsidian file events and task index events.
 changes the configured frontmatter or tag status markers, and moves task blocks into project notes
 through `TaskApplicationApi`. Membership and status are derived from Markdown through configured
 queries and mappings; `ProjectStore` adds no separate persisted state.
+
+`projectFields` owns the shared project-field vocabulary and case-insensitive frontmatter lookup.
+Its catalog combines the curated name, status, progress, start, and end fields with the vault's
+property catalog. Unsupported and temporarily unavailable properties retain their exact source key
+without being treated as editable text, and status carriers cannot also become generic fields.
+
+`projectTableModel` is a DOM-free projection over `Project` snapshots. It applies typed sorting,
+search, status filtering, and scalar or multi-value grouping while reporting a unique visible
+project count. It also owns the shared progress calculation: completed top-level tasks divided by
+all non-cancelled top-level tasks. `projectTableSettings` owns defaults and normalization for saved
+column order, aliases, widths, visibility, grouping, sorting, and hidden statuses. These preferences
+live under `projects.table`; project metadata remains in Markdown.
+
+Property edits go through `ProjectManager.setProperty()`. The manager validates the field's type,
+checks the edited field's expected value inside Obsidian's frontmatter transaction, validates
+curated date ranges against the latest opposite bound, and updates or removes only that property.
+Status changes continue through `setStatus()` so configured property and tag markers remain
+authoritative. Write failures propagate to the presentation boundary that initiated the action.
 
 ### Settings and status semantics
 

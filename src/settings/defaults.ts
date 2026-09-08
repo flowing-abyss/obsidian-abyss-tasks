@@ -1,3 +1,4 @@
+import { buildDefaultProjectTableSettings } from '../projects/projectTableSettings';
 import { ACTIVE_STATUS_GROUPS } from '../status/statusConstants';
 import { defaultShortcuts } from './shortcuts';
 import type {
@@ -57,6 +58,7 @@ export function buildDefaultProjectsSettings(): ProjectsSettings {
     defaultStatusId: active.id,
     taskInsertionMode: 'append',
     taskInsertionSection: '## Tasks',
+    table: buildDefaultProjectTableSettings(),
   };
 }
 

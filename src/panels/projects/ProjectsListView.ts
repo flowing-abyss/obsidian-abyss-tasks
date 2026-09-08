@@ -137,7 +137,7 @@ function renderRow(
     nameWrap.createSpan({ cls: 'abyss-project-folder', text: parentFolder(project.path) });
   }
 
-  renderProgressBar(row, project.stats.done, project.stats.total);
+  renderProgressBar(row, project.stats);
 
   const actions = row.createDiv({ cls: 'abyss-project-row-actions' });
 

@@ -2,6 +2,133 @@ import { normalizePath, TFile, type App } from 'obsidian';
 import type { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import type { CalendarSettings, ProjectStatus } from '../settings/types';
 import type { TaskApplicationApi, TaskCommandResult, TaskRef } from '../tasks';
+import {
+  findFrontmatterProperty,
+  type ProjectField,
+  type ProjectPropertyType,
+} from './projectFields';
+
+interface NormalizedPropertyValue {
+  clear: boolean;
+  value: unknown;
+}
+
+function isClearValue(value: unknown): boolean {
+  return (
+    value === null ||
+    value === undefined ||
+    value === '' ||
+    (Array.isArray(value) && value.length === 0)
+  );
+}
+
+function validDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (match === null) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
+function validDatetime(value: string): boolean {
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?$/u.exec(value);
+  if (match === null || !validDate(match[1] ?? '')) return false;
+  const hours = Number(match[2]);
+  const minutes = Number(match[3]);
+  const seconds = match[4] === undefined ? 0 : Number(match[4]);
+  return hours <= 23 && minutes <= 59 && seconds <= 59;
+}
+
+type PropertyValidator = (value: unknown, label: string) => void;
+
+function validateText(value: unknown, label: string): void {
+  if (typeof value !== 'string') throw new Error(`${label} must be a string.`);
+}
+
+function validateList(value: unknown, label: string): void {
+  const invalid =
+    !Array.isArray(value) ||
+    value.some(
+      (entry) =>
+        typeof entry !== 'string' && !(typeof entry === 'number' && Number.isFinite(entry)),
+    );
+  if (invalid) throw new Error(`${label} list entries must be text or numbers.`);
+}
+
+function validateNumber(value: unknown, label: string): void {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`${label} must be a finite number.`);
+  }
+}
+
+function validateCheckbox(value: unknown, label: string): void {
+  if (typeof value !== 'boolean') throw new Error(`${label} must be a boolean.`);
+}
+
+function validateDate(value: unknown, label: string): void {
+  if (typeof value !== 'string' || !validDate(value)) {
+    throw new Error(`${label} must be a valid date in YYYY-MM-DD format.`);
+  }
+}
+
+function validateDatetime(value: unknown, label: string): void {
+  if (typeof value !== 'string' || !validDatetime(value)) {
+    throw new Error(`${label} must be a valid local date and time.`);
+  }
+}
+
+function validateTags(value: unknown, label: string): void {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
+    throw new Error(`${label} tags must be an array of strings.`);
+  }
+}
+
+const PROPERTY_VALIDATORS: Record<ProjectPropertyType, PropertyValidator> = {
+  text: validateText,
+  list: validateList,
+  number: validateNumber,
+  checkbox: validateCheckbox,
+  date: validateDate,
+  datetime: validateDatetime,
+  tags: validateTags,
+};
+
+function isPropertyType(type: ProjectField['type']): type is ProjectPropertyType {
+  return type in PROPERTY_VALIDATORS;
+}
+
+function normalizePropertyValue(field: ProjectField, value: unknown): NormalizedPropertyValue {
+  if (isClearValue(value)) return { clear: true, value: undefined };
+  if (!isPropertyType(field.type)) {
+    throw new Error(`${field.label} is not an editable project property.`);
+  }
+  PROPERTY_VALIDATORS[field.type](value, field.label);
+  return { clear: false, value };
+}
+
+function valuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length && left.every((value, index) => valuesEqual(value, right[index]))
+    );
+  }
+  if (left !== null && right !== null && typeof left === 'object' && typeof right === 'object') {
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord);
+    const rightKeys = Object.keys(rightRecord);
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every((key) => key in rightRecord && valuesEqual(leftRecord[key], rightRecord[key]))
+    );
+  }
+  return false;
+}
 
 function toStringArray(raw: unknown): string[] {
   if (Array.isArray(raw)) return raw.map((t) => String(t));
@@ -45,10 +172,10 @@ export class ProjectManager {
 
   async setStatus(path: string, statusId: string): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) return;
+    if (!(file instanceof TFile)) throw new Error(`Project file not found: ${path}`);
     const statuses = this.settings.projects.statuses;
     const target = statuses.find((s) => s.id === statusId);
-    if (target == null) return;
+    if (target == null) throw new Error(`Unknown project status: ${statusId}`);
 
     const propStatuses = statuses.filter((s) => s.match.kind === 'property');
     const tagStatuses = statuses.filter((s) => s.match.kind === 'tag');
@@ -77,6 +204,88 @@ export class ProjectManager {
       // marker would otherwise survive and keep matching the old status. Remove
       // inline occurrences of every defined status tag (they are plugin-managed).
       await this.stripInlineStatusTags(file, tagStatuses);
+    }
+  }
+
+  async setProperty(
+    path: string,
+    field: ProjectField,
+    value: unknown,
+    expectedValue: unknown,
+  ): Promise<void> {
+    const property = this.editableProperty(field);
+    const normalized = normalizePropertyValue(field, value);
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) throw new Error(`Project file not found: ${path}`);
+
+    await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+      const current = findFrontmatterProperty(frontmatter, property);
+      if (!valuesEqual(current?.value, expectedValue)) {
+        throw new Error(
+          `${field.label} changed externally. Reload the project and try your edit again.`,
+        );
+      }
+      if (!normalized.clear && field.id === 'start') {
+        this.validateStartRange(normalized.value, frontmatter);
+      }
+      if (!normalized.clear && field.id === 'end') {
+        this.validateEndRange(normalized.value, frontmatter);
+      }
+      const actualProperty = current?.key ?? property;
+      if (normalized.clear) delete frontmatter[actualProperty];
+      else frontmatter[actualProperty] = normalized.value;
+    });
+  }
+
+  private editableProperty(field: ProjectField): string {
+    if (field.property === undefined || !isPropertyType(field.type)) {
+      throw new Error(`${field.label} is not an editable project property.`);
+    }
+    const isCustom = field.id.startsWith('property:');
+    if (isCustom) return this.customProperty(field, field.property);
+    if ((field.id !== 'start' && field.id !== 'end') || field.type !== 'date') {
+      throw new Error(`${field.label} must use the curated date field.`);
+    }
+    return field.property;
+  }
+
+  private customProperty(field: ProjectField, property: string): string {
+    if (field.id !== `property:${property}`) {
+      throw new Error(`Project field ${field.id} does not match property ${property}.`);
+    }
+    if (this.semanticPropertyNames().has(property.toLocaleLowerCase())) {
+      throw new Error(
+        `${property} is a semantic project property and must use its dedicated editor.`,
+      );
+    }
+    return property;
+  }
+
+  private semanticPropertyNames(): Set<string> {
+    const names = new Set(['start', 'end']);
+    for (const status of this.settings.projects.statuses) {
+      if (status.match.kind === 'property') names.add(status.match.property.toLocaleLowerCase());
+      else names.add('tags');
+    }
+    return names;
+  }
+
+  private validateStartRange(value: unknown, frontmatter: Record<string, unknown>): void {
+    const end = findFrontmatterProperty(frontmatter, 'end')?.value;
+    if (typeof value === 'string' && typeof end === 'string' && validDate(end) && value > end) {
+      throw new Error('Start date must be on or before end date.');
+    }
+  }
+
+  private validateEndRange(value: unknown, frontmatter: Record<string, unknown>): void {
+    const start = findFrontmatterProperty(frontmatter, 'start')?.value;
+    if (
+      typeof value === 'string' &&
+      typeof start === 'string' &&
+      validDate(start) &&
+      value < start
+    ) {
+      throw new Error('End date must be on or after start date.');
     }
   }
 

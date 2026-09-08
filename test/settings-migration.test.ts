@@ -220,6 +220,68 @@ describe('projects migration', () => {
     expect(projects.taskInsertionMode).toBe('section');
     expect(projects.taskInsertionSection).toBe('## Todo');
   });
+
+  it('adds table defaults to old project settings without discarding sibling settings', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statuses: [{ id: 'a' }],
+        defaultStatusId: 'a',
+        view: 'external-build-value',
+        workNoteCompatibility: { enabled: true },
+      },
+    };
+
+    migrateSettings(raw);
+
+    const projects = raw['projects'] as Record<string, unknown>;
+    expect(projects['table']).toEqual({
+      columns: [
+        { id: 'name', visible: true },
+        { id: 'status', visible: true },
+        { id: 'progress', visible: true },
+        { id: 'start', visible: true },
+        { id: 'end', visible: true },
+      ],
+      groupBy: 'status',
+      sortBy: { field: 'end', dir: 'asc' },
+      hiddenStatuses: [],
+    });
+    expect(projects['view']).toBe('external-build-value');
+    expect(projects['workNoteCompatibility']).toEqual({ enabled: true });
+  });
+
+  it('deep-fills table defaults while preserving column aliases, widths and order', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statuses: [{ id: 'a' }],
+        defaultStatusId: 'a',
+        table: {
+          columns: [
+            { id: 'property:Budget', label: 'Cost', width: 240, visible: false },
+            { id: 'name', visible: true },
+          ],
+          groupBy: 'property:Budget',
+          sortBy: { field: 'property:Budget', dir: 'desc' },
+          hiddenStatuses: ['id:a'],
+        },
+      },
+    };
+
+    migrateSettings(raw);
+
+    const projects = raw['projects'] as { table: Record<string, unknown> };
+    expect(projects.table['columns']).toEqual([
+      { id: 'property:Budget', label: 'Cost', width: 240, visible: false },
+      { id: 'name', visible: true },
+      { id: 'status', visible: true },
+      { id: 'progress', visible: true },
+      { id: 'start', visible: true },
+      { id: 'end', visible: true },
+    ]);
+    expect(projects.table['groupBy']).toBe('property:Budget');
+    expect(projects.table['sortBy']).toEqual({ field: 'property:Budget', dir: 'desc' });
+    expect(projects.table['hiddenStatuses']).toEqual(['id:a']);
+  });
 });
 
 describe('task statuses migration', () => {

@@ -1,3 +1,4 @@
+import { normalizeProjectTableSettings } from '../projects/projectTableSettings';
 import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
 import { buildDefaultProjectsSettings, buildDefaultTaskStatuses } from './defaults';
 import { migrateShortcuts } from './shortcuts';
@@ -32,6 +33,7 @@ interface MigratedProjectSettings {
   defaultStatusId?: string;
   taskInsertionMode?: string;
   taskInsertionSection?: string;
+  table?: unknown;
 }
 
 function normalizeProjectSettings(projects: MigratedProjectSettings): void {
@@ -49,6 +51,7 @@ function normalizeProjectSettings(projects: MigratedProjectSettings): void {
   if (typeof projects.taskInsertionSection !== 'string') {
     projects.taskInsertionSection = defaults.taskInsertionSection;
   }
+  projects.table = normalizeProjectTableSettings(projects.table);
 }
 
 function migrateProjects(raw: Record<string, unknown>): void {

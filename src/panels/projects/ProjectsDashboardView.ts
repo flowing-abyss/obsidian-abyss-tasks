@@ -68,7 +68,7 @@ function renderProjectDetails(
   });
 
   const stats = container.createDiv({ cls: 'abyss-project-dashboard-stats' });
-  renderProgressBar(stats, project.stats.done, project.stats.total);
+  renderProgressBar(stats, project.stats);
 
   const rawDesc = project.frontmatter['description'];
   const desc = typeof rawDesc === 'string' ? rawDesc.trim() : '';

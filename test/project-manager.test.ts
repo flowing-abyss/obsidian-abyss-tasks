@@ -1,6 +1,7 @@
 import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { ProjectManager } from '../src/projects/ProjectManager';
+import type { ProjectField } from '../src/projects/projectFields';
 import { DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
@@ -39,6 +40,14 @@ async function readFm(app: unknown, path: string): Promise<Record<string, unknow
 }
 
 describe('ProjectManager.setStatus', () => {
+  it('rejects missing project files and unknown statuses', async () => {
+    const app = await createAppWithFiles({ 'P.md': '# Project\n' });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+
+    await expect(pm.setStatus('Missing.md', 'status-1')).rejects.toThrow(/Project file not found/u);
+    await expect(pm.setStatus('P.md', 'missing-status')).rejects.toThrow(/Unknown project status/u);
+  });
+
   it('writes the target property status and clears sibling property markers', async () => {
     const app = await createAppWithFiles({
       'P.md': '---\nstatus: active\nother: keep\n---\n\n- [ ] a task\n',
@@ -97,6 +106,137 @@ describe('ProjectManager.setStatus', () => {
     expect(content).toContain('wip');
     expect(content).toContain('keepme');
     expect(content).not.toMatch(/- todo\b/);
+  });
+});
+
+describe('ProjectManager.setProperty', () => {
+  const budget: ProjectField = {
+    id: 'property:Budget',
+    property: 'Budget',
+    label: 'Budget',
+    type: 'number',
+  };
+
+  it('writes through the current case-insensitive property key and preserves unrelated fields', async () => {
+    const app = await createAppWithFiles({
+      'P.md': '---\nBUDGET: 12\nother: keep\n---\n',
+    });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+
+    await pm.setProperty('P.md', budget, 20, 12);
+    await flushMicrotasks();
+
+    const fm = await readFm(app, 'P.md');
+    expect(fm['BUDGET']).toBe('20');
+    expect(fm['Budget']).toBeUndefined();
+    expect(fm['other']).toBe('keep');
+  });
+
+  it('removes only the edited property when clearing it', async () => {
+    const app = await createAppWithFiles({
+      'P.md': '---\nBudget: 12\nother: keep\n---\n',
+    });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+
+    await pm.setProperty('P.md', budget, null, 12);
+    await flushMicrotasks();
+
+    const fm = await readFm(app, 'P.md');
+    expect(fm['Budget']).toBeUndefined();
+    expect(fm['other']).toBe('keep');
+  });
+
+  it('rejects a stale expected value without overwriting the external edit', async () => {
+    const app = await createAppWithFiles({ 'P.md': '---\nBudget: 30\n---\n' });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+
+    await expect(pm.setProperty('P.md', budget, 20, 12)).rejects.toThrow(/changed externally/u);
+
+    const fm = await readFm(app, 'P.md');
+    expect(fm['Budget']).toBe('30');
+  });
+
+  it('checks a start update against the latest end value', async () => {
+    const app = await createAppWithFiles({
+      'P.md': '---\nstart: 2026-09-01\nend: 2026-09-20\n---\n',
+    });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+    const start: ProjectField = {
+      id: 'start',
+      property: 'start',
+      label: 'Start',
+      type: 'date',
+    };
+
+    await expect(pm.setProperty('P.md', start, '2026-09-25', '2026-09-01')).rejects.toThrow(
+      /Start date must be on or before end date/u,
+    );
+  });
+
+  it('rejects invalid values, missing files and generic writes to semantic properties', async () => {
+    const app = await createAppWithFiles({ 'P.md': '---\nstatus: active\n---\n' });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+    const statusAlias: ProjectField = {
+      id: 'property:STATUS',
+      property: 'STATUS',
+      label: 'Status raw',
+      type: 'text',
+    };
+
+    await expect(pm.setProperty('P.md', budget, Number.NaN, undefined)).rejects.toThrow(
+      /finite number/u,
+    );
+    await expect(pm.setProperty('Missing.md', budget, 1, undefined)).rejects.toThrow(
+      /Project file not found/u,
+    );
+    await expect(pm.setProperty('P.md', statusAlias, 'done', 'active')).rejects.toThrow(
+      /semantic project property/u,
+    );
+  });
+
+  it.each([
+    [{ id: 'property:Text', property: 'Text', label: 'Text', type: 'text' }, 4, /string/u],
+    [
+      { id: 'property:List', property: 'List', label: 'List', type: 'list' },
+      ['ok', false],
+      /text or numbers/u,
+    ],
+    [{ id: 'property:Flag', property: 'Flag', label: 'Flag', type: 'checkbox' }, 'yes', /boolean/u],
+    [{ id: 'property:Date', property: 'Date', label: 'Date', type: 'date' }, '2026-02-30', /date/u],
+    [
+      { id: 'property:When', property: 'When', label: 'When', type: 'datetime' },
+      '2026-09-01',
+      /date and time/u,
+    ],
+    [{ id: 'property:Tags', property: 'Tags', label: 'Tags', type: 'tags' }, '#one', /strings/u],
+  ] as const)('validates %s values before writing', async (field, value, message) => {
+    const app = await createAppWithFiles({ 'P.md': '# Project\n' });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+
+    await expect(pm.setProperty('P.md', field, value, undefined)).rejects.toThrow(message);
+  });
+
+  it('preserves supported numeric and text list scalars without coercion', async () => {
+    const app = await createAppWithFiles({ 'P.md': '# Project\n' });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+    const field: ProjectField = {
+      id: 'property:Links',
+      property: 'Links',
+      label: 'Links',
+      type: 'list',
+    };
+
+    await pm.setProperty('P.md', field, [7, '[[Related note]]'], undefined);
+
+    const file = (
+      app as never as { vault: { getAbstractFileByPath(p: string): TFile } }
+    ).vault.getAbstractFileByPath('P.md');
+    const cache = (
+      app as never as {
+        metadataCache: { getFileCache(f: TFile): { frontmatter?: Record<string, unknown> } | null };
+      }
+    ).metadataCache.getFileCache(file);
+    expect(cache?.frontmatter?.['Links']).toEqual([7, '[[Related note]]']);
   });
 });
 
