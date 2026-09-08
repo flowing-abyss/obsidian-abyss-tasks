@@ -237,7 +237,7 @@ describe('AppState', () => {
     expect(s.get('taskStack')).toEqual([]);
     expect(s.get('centerFilter')).toBe('');
     expect(s.get('searchQuery')).toBe('');
-    expect(s.get('projectsPanel')).toEqual({ view: 'list' });
+    expect(s.get('projectsPanel')).toEqual({ view: 'table' });
   });
 
   it('notifies on projectsPanel change with a fresh object', () => {

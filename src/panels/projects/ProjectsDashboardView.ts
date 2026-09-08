@@ -17,7 +17,7 @@ export function renderProjectDashboard(
   setIcon(back, 'arrow-left');
   back.createSpan({ text: 'Back to projects' });
   back.addEventListener('click', () => {
-    ctx.state.set('projectsPanel', { view: 'list' });
+    ctx.state.set('projectsPanel', { view: 'table' });
   });
 
   if (project == null) {

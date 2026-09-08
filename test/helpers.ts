@@ -217,6 +217,7 @@ export function taskQueryApi(
     forCalendarProjection: () => ({ materialized: [], recurringSources: [] }),
     resolve: (ref) => ({ type: 'not-found', ref: { ...ref } }),
     subscribe: () => () => {},
+    subscribeReconciled: () => () => {},
     ...overrides,
   };
 }

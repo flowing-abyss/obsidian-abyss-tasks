@@ -50,6 +50,7 @@ export class ProjectStore {
   private listeners: Array<() => void> = [];
   private eventUnsubs: Array<() => void> = [];
   private queryUnsub: (() => void) | undefined;
+  private reconciliationUnsub: (() => void) | undefined;
   private debounce: number | undefined;
   private readonly waitingPaths = new Set<string>();
   private readonly readyPaths = new Set<string>();
@@ -122,14 +123,14 @@ export class ProjectStore {
     this.queryUnsub = this.queries.subscribe((event) => {
       this.onTaskIndexEvent(event);
     });
+    this.reconciliationUnsub = this.queries.subscribeReconciled((files) => {
+      this.releaseChangedPaths(files);
+    });
   }
 
   private onTaskIndexEvent(event: TaskIndexEvent): void {
     if (event.type === 'changed') {
-      for (const path of event.files) {
-        this.pendingCreates.delete(path);
-        this.releasePath(path);
-      }
+      this.releaseChangedPaths(event.files);
     } else if (event.type === 'initialized') {
       this.releaseFull();
     } else if (event.type === 'renamed') {
@@ -139,6 +140,13 @@ export class ProjectStore {
     } else {
       this.pendingCreates.delete(event.path);
       this.releasePath(event.path);
+    }
+  }
+
+  private releaseChangedPaths(files: readonly string[]): void {
+    for (const path of files) {
+      this.pendingCreates.delete(path);
+      this.releasePath(path);
     }
   }
 
@@ -291,6 +299,8 @@ export class ProjectStore {
     if (this.debounce !== undefined) window.clearTimeout(this.debounce);
     this.queryUnsub?.();
     this.queryUnsub = undefined;
+    this.reconciliationUnsub?.();
+    this.reconciliationUnsub = undefined;
     for (const unsubscribe of this.eventUnsubs) unsubscribe();
     this.eventUnsubs = [];
     this.waitingPaths.clear();

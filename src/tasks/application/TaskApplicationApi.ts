@@ -26,6 +26,7 @@ export interface TaskQuery {
 
 export type TaskIndexEvent =
   | { readonly type: 'initialized' }
+  /** Affected files have a different indexed task projection. */
   | { readonly type: 'changed'; readonly files: readonly string[] }
   | { readonly type: 'renamed'; readonly oldPath: string; readonly newPath: string }
   | { readonly type: 'deleted'; readonly path: string };
@@ -46,6 +47,8 @@ export interface TaskQueryApi {
   forCalendarProjection(dates: readonly LocalDate[]): CalendarProjectionSources;
   resolve(ref: TaskRef): TaskResolution;
   subscribe(listener: (event: TaskIndexEvent) => void): () => void;
+  /** Synchronization barrier for accepted metadata whose indexed task projection is unchanged. */
+  subscribeReconciled(listener: (files: readonly string[]) => void): () => void;
 }
 
 export interface TaskApplicationApi {

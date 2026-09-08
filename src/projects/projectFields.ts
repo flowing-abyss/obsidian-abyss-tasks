@@ -30,7 +30,7 @@ export interface ProjectTableSettings {
   hiddenStatuses: string[];
 }
 
-export interface UnavailableProjectField {
+interface UnavailableProjectField {
   id: string;
   property: string;
   label: string;
@@ -50,10 +50,7 @@ function sameProperty(left: string, right: string): boolean {
 }
 
 /** Finds the exact vault/frontmatter spelling for a case-insensitive property name. */
-export function findProjectPropertyName(
-  names: readonly string[],
-  property: string,
-): string | undefined {
+function findProjectPropertyName(names: readonly string[], property: string): string | undefined {
   return names.find((name) => sameProperty(name, property));
 }
 

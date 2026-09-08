@@ -1094,6 +1094,7 @@ function query(
     forCalendarProjection: () => ({ materialized: [], recurringSources: [] }),
     resolve: () => resolution,
     subscribe: () => () => undefined,
+    subscribeReconciled: () => () => undefined,
   };
 }
 

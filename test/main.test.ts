@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import TaskCalendarPlugin from '../src/main';
 import { DEFAULT_SETTINGS, buildDefaultProjectsSettings } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
-import { PANEL_VIEW_TYPE } from '../src/views/PanelView';
+import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import { useRealMoment } from './helpers';
 
 useRealMoment();
@@ -118,6 +118,20 @@ describe('TaskCalendarPlugin saveSettings', () => {
     const spy = vi.spyOn(plugin, 'saveData');
     await plugin.saveSettings();
     expect(spy).toHaveBeenCalledWith(plugin.settings);
+  });
+
+  it('refreshes project table settings in open panel views after persistence', async () => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    const refreshProjectTableSettings = vi.fn();
+    const view = Object.create(PanelView.prototype) as PanelView;
+    view.refreshProjectTableSettings = refreshProjectTableSettings;
+    plugin.app.workspace.getLeavesOfType = vi.fn(() => [{ view }]);
+
+    await plugin.saveSettings();
+
+    expect(plugin.app.workspace.getLeavesOfType).toHaveBeenCalledWith(PANEL_VIEW_TYPE);
+    expect(refreshProjectTableSettings).toHaveBeenCalledOnce();
   });
 });
 

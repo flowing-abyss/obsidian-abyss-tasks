@@ -20,7 +20,7 @@ export type ListSelection =
   | { type: 'group'; groupId: string }
   | { type: 'project'; path: string };
 
-type ProjectsPanelState = { view: 'list' } | { view: 'dashboard'; path: string };
+type ProjectsPanelState = { view: 'table' } | { view: 'dashboard'; path: string };
 
 export interface InspectorHistoryFrame {
   readonly taskStack: readonly TaskSelectionNode[];
@@ -148,7 +148,7 @@ export class AppState {
     draggingTag: null,
     draggingProject: null,
     centerListViewState: getListViewDefaults('today'),
-    projectsPanel: { view: 'list' },
+    projectsPanel: { view: 'table' },
   };
 
   private readonly listeners = new Map<keyof AppStateData, Set<Listener<unknown>>>();

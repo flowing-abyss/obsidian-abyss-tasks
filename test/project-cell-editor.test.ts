@@ -8,7 +8,7 @@ import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProp
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import type { ProjectPropertyType } from '../src/projects/projectFields';
 import { ProjectPropertySuggest } from '../src/ui/ProjectPropertySuggest';
-import { expectDefined } from './helpers';
+import { expectDefined, freshContainer } from './helpers';
 
 function catalog(
   values: readonly string[] = [],
@@ -31,6 +31,27 @@ function keydown(element: HTMLElement, key: string): void {
 }
 
 describe('mountProjectCellEditor', () => {
+  it('contains action clicks within the editor even when close removes it synchronously', () => {
+    const container = freshContainer();
+    const outside = vi.fn();
+    container.addEventListener('click', outside);
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'start', property: 'start', label: 'Start', type: 'date' },
+      value: '2026-09-08',
+      catalog: catalog(),
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: vi.fn(),
+    });
+
+    expectDefined(
+      container.querySelector<HTMLButtonElement>('.abyss-project-editor-cancel'),
+    ).click();
+
+    expect(outside).not.toHaveBeenCalled();
+  });
+
   it('commits a custom number as a number', async () => {
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
@@ -50,7 +71,7 @@ describe('mountProjectCellEditor', () => {
     await settle();
 
     expect(save).toHaveBeenCalledWith(18.5);
-    expect(onClose).toHaveBeenCalledWith('committed');
+    expect(onClose).toHaveBeenCalledWith('committed', { restoreFocus: true });
   });
 
   it('adds and removes list values without coercing untouched numeric elements', async () => {
@@ -98,7 +119,7 @@ describe('mountProjectCellEditor', () => {
     await settle();
 
     expect(save).toHaveBeenCalledWith(['Alpha', 'Beta']);
-    expect(onClose).toHaveBeenCalledWith('committed');
+    expect(onClose).toHaveBeenCalledWith('committed', { restoreFocus: true });
   });
 
   it.each([
@@ -188,7 +209,7 @@ describe('mountProjectCellEditor', () => {
     keydown(expectDefined(container.querySelector('input')), 'Escape');
 
     expect(save).not.toHaveBeenCalled();
-    expect(onClose).toHaveBeenCalledWith('cancelled');
+    expect(onClose).toHaveBeenCalledWith('cancelled', { restoreFocus: true });
   });
 
   it('retains the draft and reports one boundary error when an I/O save rejects', async () => {

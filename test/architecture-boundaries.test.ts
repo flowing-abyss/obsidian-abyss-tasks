@@ -131,6 +131,7 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskQueryApi.list': 'src/panels/CenterPanel.ts',
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
+  'TaskQueryApi.subscribeReconciled': 'src/projects/ProjectStore.ts',
   'TaskDependencyQueryApi.listNodes': 'src/panels/RightPanel.ts',
   'TaskDependencyQueryApi.dependencies': [
     'src/panels/RightPanel.ts',

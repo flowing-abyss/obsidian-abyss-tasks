@@ -207,6 +207,9 @@ export default class TaskCalendarPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     beginSettingsSave(this.settings);
     await this.saveData(this.settings);
+    for (const leaf of this.app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)) {
+      if (leaf.view instanceof PanelView) leaf.view.refreshProjectTableSettings();
+    }
   }
 
   rebuildTaskStatusSemantics(): void {

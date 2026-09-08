@@ -243,6 +243,10 @@ export class PanelView extends ItemView {
     return Promise.resolve();
   }
 
+  refreshProjectTableSettings(): void {
+    this.center_abyssPrivate.refreshProjectTableSettings();
+  }
+
   private initializeNavigation_abyssPrivate(): void {
     this.panelNavigation_abyssPrivate = new PanelNavigator(
       this.state_abyssPrivate,
@@ -435,7 +439,7 @@ export class PanelView extends ItemView {
         }
         const panel = this.state_abyssPrivate.get('projectsPanel');
         if (panel.view === 'dashboard' && panel.path === file.path) {
-          this.state_abyssPrivate.set('projectsPanel', { view: 'list' });
+          this.state_abyssPrivate.set('projectsPanel', { view: 'table' });
         }
       }),
     );

@@ -46,6 +46,12 @@ const privateOwners = new Set([
   'StatusPopoverLifecycle',
   'LinkEditModal',
   'NoteSuggest',
+  'VaultFileSuggestionSource',
+  'ObsidianProjectProperties',
+  'ProjectPropertySuggest',
+  'ProjectCellEditorLifecycle',
+  'ProjectsTableToolbar',
+  'ProjectsTableView',
   'TagPickerModal',
   'TagGroupAppearanceModal',
 ]);

@@ -99,6 +99,38 @@ describe('renderProjectTableSettings', () => {
     expect(save).toHaveBeenCalledOnce();
   });
 
+  it('uses labeled, consistent column slots and compact icon actions', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.table.columns.push({ id: 'property:Budget', visible: true });
+    const container = document.body.createDiv();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog(),
+      save: vi.fn().mockResolvedValue(undefined),
+      refresh: vi.fn(),
+    });
+
+    expect(
+      Array.from(container.querySelectorAll('.abyss-project-column-settings-header > *')).map(
+        (element) => element.textContent,
+      ),
+    ).toEqual(['Source', 'Display name', 'Show', 'Width', '', '', '']);
+    const rows = Array.from(
+      container.querySelectorAll<HTMLElement>('.abyss-project-column-setting'),
+    );
+    expect(new Set(rows.map((row) => row.children.length))).toEqual(new Set([7]));
+    expect(
+      rows.every((row) =>
+        Array.from(row.querySelectorAll<HTMLButtonElement>('button')).every((button) =>
+          button.hasClass('clickable-icon'),
+        ),
+      ),
+    ).toBe(true);
+    expect(container.querySelector('[data-column-id="property:Budget"] .mod-warning')).toBeNull();
+  });
+
   it('adds a suggested property once and removes only its column preference', async () => {
     const projects = buildDefaultProjectsSettings();
     const save = vi.fn().mockResolvedValue(undefined);

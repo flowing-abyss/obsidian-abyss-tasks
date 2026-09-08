@@ -1,31 +1,38 @@
 import { TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
+import {
+  ObsidianProjectProperties,
+  type ProjectPropertyCatalog,
+} from '../../projects/ObsidianProjectProperties';
 import type { ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
+import type { ProjectField } from '../../projects/projectFields';
 import type { CalendarSettings } from '../../settings/types';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { renderProjectDashboard } from './ProjectsDashboardView';
-import { renderProjectsList } from './ProjectsListView';
+import { ProjectsTableView } from './ProjectsTableView';
 
 export interface ProjectsPanelOptions {
-  /** Render a project's tasks into `host` (PanelView wires this to reuse task rendering). */
   renderTasks?: (host: HTMLElement, path: string) => void;
+  saveSettings?: () => Promise<void>;
+  projectProperties?: ProjectPropertyCatalog;
 }
 
-/**
- * The `projects` mode surface. Self-contained deep mode: switches internally
- * between the List overview and a single-project Dashboard via `projectsPanel`
- * state, never touching the global `mode`.
- */
+/** Owns one long-lived table session and swaps it with the existing dashboard. */
 export class ProjectsPanel {
   private readonly state: AppState;
   private readonly projectStore: ProjectStore;
   private readonly projectManager: ProjectManager;
   private readonly settings: CalendarSettings;
   private readonly app: App;
-  private el: HTMLElement | null = null;
-  private offs: Array<() => void> = [];
   private readonly renderTasks: (host: HTMLElement, path: string) => void;
+  private readonly saveSettings: () => Promise<void>;
+  private readonly projectProperties: ProjectPropertyCatalog;
+  private el: HTMLElement | null = null;
+  private tableHost: HTMLElement | null = null;
+  private tableView: ProjectsTableView | null = null;
+  private dashboardHost: HTMLElement | null = null;
+  private offs: Array<() => void> = [];
 
   constructor(
     ...args: [AppState, ProjectStore, ProjectManager, CalendarSettings, App, ProjectsPanelOptions?]
@@ -37,6 +44,63 @@ export class ProjectsPanel {
     this.settings = settings;
     this.app = app;
     this.renderTasks = opts.renderTasks ?? ((): void => {});
+    this.saveSettings = opts.saveSettings ?? (async (): Promise<void> => {});
+    this.projectProperties = opts.projectProperties ?? new ObsidianProjectProperties(app);
+  }
+
+  mount(el: HTMLElement): void {
+    this.el = el;
+    el.addClass('abyss-projects-panel');
+    this.tableHost = el.createDiv({ cls: 'abyss-projects-table-session' });
+    this.tableView = new ProjectsTableView(this.tableHost, {
+      app: this.app,
+      state: this.state,
+      settings: this.settings,
+      catalog: this.projectProperties,
+      saveSettings: this.saveSettings,
+      saveProperty: (path, field, value, expectedValue) =>
+        this.saveProperty(path, field, value, expectedValue),
+      saveStatus: (path, statusId) => this.saveStatus(path, statusId),
+      createProject: (name) => this.createProject(name),
+      openProject: (path) => {
+        this.state.set('projectsPanel', { view: 'dashboard', path });
+      },
+    });
+    this.tableView.mount(this.projectStore.list());
+    this.offs.push(
+      this.state.on('projectsPanel', () => {
+        this.syncView();
+      }),
+      this.projectProperties.onChange(() => {
+        this.tableView?.refreshFields();
+      }),
+    );
+    this.syncView();
+  }
+
+  refresh(): void {
+    if (this.el === null) return;
+    const view = this.state.get('projectsPanel');
+    if (view.view === 'table') this.tableView?.update(this.projectStore.list());
+    else this.renderDashboard(view.path);
+  }
+
+  /** Rebuilds table field/column projections while preserving the owned table session. */
+  refreshTableSettings(): void {
+    this.tableView?.refreshFields();
+  }
+
+  destroy(): void {
+    for (const off of this.offs) off();
+    this.offs = [];
+    this.tableView?.destroy();
+    this.tableView = null;
+    this.tableHost?.remove();
+    this.tableHost = null;
+    this.dashboardHost?.remove();
+    this.dashboardHost = null;
+    this.el?.empty();
+    this.el = null;
   }
 
   private async createProject(name: string): Promise<void> {
@@ -44,86 +108,59 @@ export class ProjectsPanel {
     this.projectStore.refresh();
   }
 
-  mount(el: HTMLElement): void {
-    this.el = el;
-    // Only internal list⇄dashboard navigation is self-managed here. Project data
-    // changes arrive via CenterPanel rebuilding this panel (projects mode), so we
-    // deliberately do NOT also subscribe to projectStore.onUpdate — that would
-    // double-render on every store update.
-    this.offs.push(
-      this.state.on('projectsPanel', () => {
-        this.render();
-      }),
-    );
-    this.render();
+  private async saveStatus(path: string, statusId: string): Promise<void> {
+    await this.projectManager.setStatus(path, statusId);
+    this.projectStore.refresh();
   }
 
-  refresh(): void {
-    if (this.el !== null) this.render();
-  }
-
-  private setStatus(path: string, statusId: string): void {
-    runAsyncAction(
-      this.projectManager.setStatus(path, statusId).then(() => {
-        this.projectStore.refresh();
-      }),
-      'Could not update project status',
-    );
+  private async saveProperty(
+    path: string,
+    field: ProjectField,
+    value: unknown,
+    expectedValue: unknown,
+  ): Promise<void> {
+    await this.projectManager.setProperty(path, field, value, expectedValue);
+    this.projectStore.refresh();
   }
 
   private openNote(path: string): void {
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof TFile) {
-      runAsyncAction(
-        this.app.workspace.getLeaf(false).openFile(file),
-        'Could not open project note',
-      );
-    }
+    if (!(file instanceof TFile)) return;
+    runAsyncAction(this.app.workspace.getLeaf(false).openFile(file), 'Could not open project note');
   }
 
-  private render(): void {
+  private syncView(): void {
     const el = this.el;
-    if (el === null) return;
-    el.empty();
-    el.addClass('abyss-projects-panel');
+    const tableHost = this.tableHost;
+    if (el === null || tableHost === null) return;
     const view = this.state.get('projectsPanel');
-
-    if (view.view === 'dashboard') {
-      const container = el.createDiv();
-      renderProjectDashboard(container, this.projectStore.get(view.path), {
-        state: this.state,
-        settings: this.settings,
-        onSetStatus: (p, id) => {
-          this.setStatus(p, id);
-        },
-        openNote: (p) => {
-          this.openNote(p);
-        },
-        renderTasks: this.renderTasks,
-      });
+    if (view.view === 'table') {
+      this.dashboardHost?.remove();
+      this.dashboardHost = null;
+      el.appendChild(tableHost);
+      this.tableView?.update(this.projectStore.list());
       return;
     }
-
-    const container = el.createDiv();
-    renderProjectsList(container, this.projectStore.list(), {
-      state: this.state,
-      settings: this.settings,
-      onCreate: (name) => this.createProject(name),
-      onSetStatus: (p, id) => {
-        this.setStatus(p, id);
-      },
-      openNote: (p) => {
-        this.openNote(p);
-      },
-    });
+    tableHost.remove();
+    this.renderDashboard(view.path);
   }
 
-  destroy(): void {
-    this.offs.forEach((f) => {
-      f();
+  private renderDashboard(path: string): void {
+    const el = this.el;
+    if (el === null) return;
+    this.dashboardHost?.remove();
+    const host = el.createDiv({ cls: 'abyss-project-dashboard-session' });
+    this.dashboardHost = host;
+    renderProjectDashboard(host, this.projectStore.get(path), {
+      state: this.state,
+      settings: this.settings,
+      onSetStatus: (projectPath, statusId) => {
+        runAsyncAction(this.saveStatus(projectPath, statusId), 'Could not update project status');
+      },
+      openNote: (projectPath) => {
+        this.openNote(projectPath);
+      },
+      renderTasks: this.renderTasks,
     });
-    this.offs = [];
-    this.el?.empty();
-    this.el = null;
   }
 }

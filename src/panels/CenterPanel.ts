@@ -43,6 +43,11 @@ import { LinkEditModal } from '../ui/LinkEditModal';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { TagPickerModal } from '../ui/TagPickerModal';
 import { TaskModal } from '../ui/TaskModal';
+import {
+  openViewOptionsPopover,
+  type ViewOptionsMultiRow,
+  type ViewOptionsSingleRow,
+} from '../ui/ViewOptionsPopover';
 import { isImeOwnedEvent } from '../ui/ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
@@ -194,43 +199,6 @@ interface CalendarRenderContext {
   readonly forecastMenuOwner: ForecastContextMenuOwner;
   readonly projectionDiagnosticOwner: CalendarProjectionDiagnosticOwner;
   readonly handlers: CalendarHandlers;
-}
-
-interface ViewStateOption {
-  readonly label: string;
-  readonly value: string;
-}
-
-interface ViewStateRowSpec {
-  readonly icon: string;
-  readonly label: string;
-  readonly displayValue: string;
-  readonly activeValue: string;
-  readonly defaultValue: string;
-  readonly options: readonly ViewStateOption[];
-  readonly onSelect: (value: string) => void;
-}
-
-interface ViewStatePreset {
-  readonly label: string;
-  readonly onClick: () => void;
-  readonly isActive?: boolean;
-}
-
-interface ViewStateMultiRowSpec {
-  readonly icon: string;
-  readonly label: string;
-  readonly displayValue: string;
-  readonly selected: readonly string[];
-  readonly options: readonly ViewStateOption[];
-  readonly onToggle: (value: string) => void;
-  readonly initiallyOpen: boolean;
-  readonly presets: readonly ViewStatePreset[];
-}
-
-interface ViewStatePopoverSession {
-  readonly popover: HTMLElement;
-  readonly close: (restoreFocus?: boolean) => void;
 }
 
 interface PanelCaptureSession {
@@ -532,6 +500,11 @@ export class CenterPanel {
       this.state_abyssPrivate.on('taskStack', () => {
         this.updateTaskStackSelection_abyssPrivate();
       }),
+      this.state_abyssPrivate.on('projectsPanel', (next, previous) => {
+        if (previous.view === 'dashboard' && next.view === 'table') {
+          this.cancelActiveCapture_abyssPrivate();
+        }
+      }),
       this.state_abyssPrivate.onCommit((changed) => {
         this.handleStateCommit_abyssPrivate(changed);
       }),
@@ -738,6 +711,7 @@ export class CenterPanel {
   }
 
   refresh(): void {
+    if (this.refreshMountedProjects_abyssPrivate(this.state_abyssPrivate.get('mode'))) return;
     if (
       this.state_abyssPrivate.get('mode') === 'search' &&
       (this.searchInputEl_abyssPrivate?.isConnected ?? false) &&
@@ -747,6 +721,10 @@ export class CenterPanel {
       return;
     }
     this.render_abyssPrivate();
+  }
+
+  refreshProjectTableSettings(): void {
+    this.projectsPanel_abyssPrivate?.refreshTableSettings();
   }
 
   calendarView(): CalViewType {
@@ -865,6 +843,7 @@ export class CenterPanel {
 
   private render_abyssPrivate(): void {
     const mode = this.state_abyssPrivate.get('mode');
+    if (this.refreshMountedProjects_abyssPrivate(mode)) return;
     this.prepareRender_abyssPrivate(mode);
     if (mode !== 'projects') this.destroyProjectsPanel_abyssPrivate();
     if (mode === 'calendar') {
@@ -881,6 +860,16 @@ export class CenterPanel {
       return;
     }
     this.renderTasksMode_abyssPrivate();
+  }
+
+  private refreshMountedProjects_abyssPrivate(mode: string): boolean {
+    const panel = this.projectsPanel_abyssPrivate;
+    if (mode !== 'projects' || panel === null) return false;
+    if (this.state_abyssPrivate.get('projectsPanel').view === 'dashboard') {
+      this.prepareRender_abyssPrivate(mode);
+    }
+    panel.refresh();
+    return true;
   }
 
   private prepareRender_abyssPrivate(mode: string): void {
@@ -926,6 +915,7 @@ export class CenterPanel {
       this.settings_abyssPrivate,
       this.app_abyssPrivate,
       {
+        saveSettings: this.onSaveSettings_abyssPrivate,
         renderTasks: (host, path) => {
           this.renderProjectTasks_abyssPrivate(host, path);
         },
@@ -3147,86 +3137,34 @@ export class CenterPanel {
       return;
     }
 
-    const vs = this.state_abyssPrivate.get('centerListViewState');
-    const popover = this.el.createDiv({
-      cls: 'abyss-view-state-popover abyss-popover',
-      attr: { role: 'dialog', 'aria-label': 'Sort and group options' },
-    });
-    const ownerDocument = popover.ownerDocument;
-    const ownershipToken = this.interactionOwnership_abyssPrivate.acquire({
-      blocksShortcuts: true,
-    });
-
-    let dismissListening = false;
-    let dismissTimer: number | undefined;
-    let closed = false;
-    const close = (restoreFocus = false): void => {
-      if (closed) return;
-      closed = true;
-      if (dismissTimer !== undefined) {
-        window.clearTimeout(dismissTimer);
-        dismissTimer = undefined;
-      }
-      if (dismissListening) {
-        ownerDocument.removeEventListener('click', dismiss, true);
-        dismissListening = false;
-      }
-      popover.remove();
-      if (this.viewStatePopoverCleanup_abyssPrivate === close)
-        this.viewStatePopoverCleanup_abyssPrivate = null;
-      ownershipToken.release();
-      if (restoreFocus && anchor.isConnected) anchor.focus();
-    };
-    this.viewStatePopoverCleanup_abyssPrivate = close;
-    const dismiss = (e: MouseEvent): void => {
-      if (!popover.contains(e.target as Node) && e.target !== anchor) {
-        close(false);
-      }
-    };
-    popover.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopPropagation();
-      close(true);
-    });
-
-    this.renderViewStatePopoverRows_abyssPrivate({ popover, close }, vs, autoOpenStatusGroupRow);
-
-    anchor.after(popover);
-    popover.querySelector<HTMLElement>('.abyss-view-state-row-main')?.focus();
-    dismissTimer = window.setTimeout(() => {
-      dismissTimer = undefined;
-      if (!popover.isConnected) return;
-      ownerDocument.addEventListener('click', dismiss, true);
-      dismissListening = true;
-    }, 0);
-  }
-
-  private renderViewStatePopoverRows_abyssPrivate(
-    session: ViewStatePopoverSession,
-    viewState: ListViewState,
-    autoOpenStatusGroupRow: boolean,
-  ): void {
+    const viewState = this.state_abyssPrivate.get('centerListViewState');
     const defaults = getListViewDefaults(this.activeListKey_abyssPrivate());
-    this.renderViewStateRow_abyssPrivate(
-      session,
-      this.groupByRowSpec_abyssPrivate(viewState, defaults),
-    );
-    this.renderViewStateRow_abyssPrivate(
-      session,
-      this.sortByRowSpec_abyssPrivate(viewState, defaults),
-    );
-    this.renderViewStateMultiRow_abyssPrivate(
-      session,
-      this.statusGroupsRowSpec_abyssPrivate(session, viewState, autoOpenStatusGroupRow),
-    );
-    this.renderViewStateReset_abyssPrivate(session, viewState);
+    const close = openViewOptionsPopover({
+      host: this.el,
+      anchor,
+      rows: [
+        this.groupByRowSpec_abyssPrivate(viewState, defaults),
+        this.sortByRowSpec_abyssPrivate(viewState, defaults),
+        this.statusGroupsRowSpec_abyssPrivate(viewState, autoOpenStatusGroupRow),
+      ],
+      showReset: isListViewCustomized(viewState, this.activeListKey_abyssPrivate()),
+      onReset: () => {
+        this.updateViewState_abyssPrivate(getListViewDefaults(this.activeListKey_abyssPrivate()));
+      },
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
+      onClose: () => {
+        if (this.viewStatePopoverCleanup_abyssPrivate === close) {
+          this.viewStatePopoverCleanup_abyssPrivate = null;
+        }
+      },
+    });
+    this.viewStatePopoverCleanup_abyssPrivate = close;
   }
 
   private groupByRowSpec_abyssPrivate(
     viewState: ListViewState,
     defaults: ListViewState,
-  ): ViewStateRowSpec {
+  ): ViewOptionsSingleRow {
     const labels: Record<string, string> = {
       none: 'None',
       date: 'Date',
@@ -3235,12 +3173,16 @@ export class CenterPanel {
       status: 'Status',
     };
     return {
+      kind: 'single',
       icon: 'layout-list',
       label: 'Group by',
       displayValue: labels[viewState.groupBy] ?? viewState.groupBy,
       activeValue: viewState.groupBy,
-      defaultValue: defaults.groupBy,
-      options: Object.entries(labels).map(([value, label]) => ({ label, value })),
+      options: Object.entries(labels).map(([value, label]) => ({
+        label,
+        value,
+        isDefault: value === defaults.groupBy,
+      })),
       onSelect: (value) => {
         this.updateViewState_abyssPrivate({
           ...viewState,
@@ -3253,7 +3195,7 @@ export class CenterPanel {
   private sortByRowSpec_abyssPrivate(
     viewState: ListViewState,
     defaults: ListViewState,
-  ): ViewStateRowSpec {
+  ): ViewOptionsSingleRow {
     const arrow = viewState.sortBy.dir === 'asc' ? '↑' : '↓';
     const fields: Array<ListViewState['sortBy']['field']> = [
       'date',
@@ -3263,15 +3205,16 @@ export class CenterPanel {
       'status',
     ];
     return {
+      kind: 'single',
       icon: 'arrow-up-down',
       label: 'Sort by',
       displayValue: `${this.capitalize_abyssPrivate(viewState.sortBy.field)} ${arrow}`,
       activeValue: viewState.sortBy.field,
-      defaultValue: defaults.sortBy.field,
       options: fields.map((field) => ({
         label:
           `${this.capitalize_abyssPrivate(field)} ${viewState.sortBy.field === field ? arrow : ''}`.trim(),
         value: field,
+        isDefault: field === defaults.sortBy.field,
       })),
       onSelect: (value) => {
         const field = value as ListViewState['sortBy']['field'];
@@ -3287,14 +3230,14 @@ export class CenterPanel {
   }
 
   private statusGroupsRowSpec_abyssPrivate(
-    session: ViewStatePopoverSession,
     viewState: ListViewState,
     initiallyOpen: boolean,
-  ): ViewStateMultiRowSpec {
+  ): ViewOptionsMultiRow {
     const apply = (groups: TaskStatusType[] | undefined): void => {
-      this.applyStatusGroupsChange_abyssPrivate(session, viewState, groups);
+      this.applyStatusGroupsChange_abyssPrivate(viewState, groups);
     };
     return {
+      kind: 'multi',
       icon: 'eye',
       label: 'Show',
       displayValue: this.statusGroupsLabel_abyssPrivate(viewState.statusGroups),
@@ -3312,17 +3255,17 @@ export class CenterPanel {
       presets: [
         {
           label: 'Active',
-          onClick: () => {
+          onSelect: () => {
             apply(ACTIVE_STATUS_GROUPS);
           },
-          isActive: statusGroupsEqual(viewState.statusGroups, ACTIVE_STATUS_GROUPS),
+          active: statusGroupsEqual(viewState.statusGroups, ACTIVE_STATUS_GROUPS),
         },
         {
           label: 'All',
-          onClick: () => {
+          onSelect: () => {
             apply(undefined);
           },
-          isActive: normalizeStatusGroups(viewState.statusGroups) === undefined,
+          active: normalizeStatusGroups(viewState.statusGroups) === undefined,
         },
       ],
     };
@@ -3336,157 +3279,16 @@ export class CenterPanel {
   }
 
   private applyStatusGroupsChange_abyssPrivate(
-    session: ViewStatePopoverSession,
     viewState: ListViewState,
     groups: TaskStatusType[] | undefined,
   ): void {
     this.reopenStatusGroupPopover_abyssPrivate = true;
-    session.close();
+    this.viewStatePopoverCleanup_abyssPrivate?.();
     const withoutStatusGroups = { ...viewState };
     delete withoutStatusGroups.statusGroups;
     this.updateViewState_abyssPrivate(
       groups === undefined ? withoutStatusGroups : { ...viewState, statusGroups: groups },
     );
-  }
-
-  private renderViewStateRow_abyssPrivate(
-    session: ViewStatePopoverSession,
-    spec: ViewStateRowSpec,
-  ): void {
-    const { rowMain, subList } = this.createViewStateRowShell_abyssPrivate(
-      session.popover,
-      spec,
-      false,
-    );
-    this.bindExpandableViewStateRow_abyssPrivate(session.popover, rowMain, subList);
-    for (const option of spec.options) {
-      const isActive = option.value === spec.activeValue;
-      const element = this.createViewStateOption_abyssPrivate(subList, option.label, isActive);
-      if (option.value === spec.defaultValue) {
-        element.createSpan({ cls: 'abyss-view-state-option-default', text: 'Default' });
-      }
-      element.addEventListener('click', () => {
-        session.close();
-        spec.onSelect(option.value);
-      });
-    }
-  }
-
-  private renderViewStateMultiRow_abyssPrivate(
-    session: ViewStatePopoverSession,
-    spec: ViewStateMultiRowSpec,
-  ): void {
-    const { rowMain, subList } = this.createViewStateRowShell_abyssPrivate(
-      session.popover,
-      spec,
-      spec.initiallyOpen,
-    );
-    this.bindExpandableViewStateRow_abyssPrivate(session.popover, rowMain, subList);
-    for (const preset of spec.presets) {
-      const element = this.createViewStateOption_abyssPrivate(
-        subList,
-        preset.label,
-        preset.isActive === true,
-      );
-      element.addEventListener('click', preset.onClick);
-    }
-    if (spec.presets.length > 0) subList.createDiv({ cls: 'abyss-view-state-sublist-divider' });
-    for (const option of spec.options) {
-      const element = this.createViewStateOption_abyssPrivate(
-        subList,
-        option.label,
-        spec.selected.includes(option.value),
-      );
-      element.addEventListener('click', () => {
-        spec.onToggle(option.value);
-      });
-    }
-  }
-
-  private createViewStateRowShell_abyssPrivate(
-    popover: HTMLElement,
-    spec: Pick<ViewStateRowSpec, 'icon' | 'label' | 'displayValue'>,
-    initiallyOpen: boolean,
-  ): { readonly rowMain: HTMLElement; readonly subList: HTMLElement } {
-    const row = popover.createDiv({ cls: 'abyss-view-state-row' });
-    const rowMain = row.createDiv({
-      cls: 'abyss-view-state-row-main',
-      attr: { role: 'button', tabindex: '0', 'aria-expanded': String(initiallyOpen) },
-    });
-    const icon = rowMain.createSpan({ cls: 'abyss-view-state-row-icon' });
-    setIcon(icon, spec.icon);
-    rowMain.createSpan({ cls: 'abyss-view-state-row-label', text: spec.label });
-    rowMain.createSpan({ cls: 'abyss-view-state-row-value', text: spec.displayValue });
-    const chevron = rowMain.createSpan({ cls: 'abyss-view-state-row-chevron' });
-    setIcon(chevron, 'chevron-right');
-    const subList = row.createDiv({ cls: 'abyss-view-state-sublist abyss-hidden' });
-    if (initiallyOpen) {
-      subList.removeClass('abyss-hidden');
-      rowMain.addClass('is-open');
-    }
-    return { rowMain, subList };
-  }
-
-  private createViewStateOption_abyssPrivate(
-    host: HTMLElement,
-    label: string,
-    active: boolean,
-  ): HTMLButtonElement {
-    const element = host.createEl('button', {
-      cls: 'abyss-view-state-option',
-      attr: { 'aria-pressed': String(active) },
-    });
-    const check = element.createSpan({ cls: 'abyss-view-state-option-check' });
-    if (active) setIcon(check, 'check');
-    element.createSpan({ cls: 'abyss-view-state-option-label', text: label });
-    return element;
-  }
-
-  private bindExpandableViewStateRow_abyssPrivate(
-    popover: HTMLElement,
-    rowMain: HTMLElement,
-    subList: HTMLElement,
-  ): void {
-    const toggle = (): void => {
-      const shouldOpen = subList.hasClass('abyss-hidden');
-      this.closeViewStateSublists_abyssPrivate(popover);
-      if (!shouldOpen) return;
-      subList.removeClass('abyss-hidden');
-      rowMain.addClass('is-open');
-      rowMain.setAttribute('aria-expanded', 'true');
-    };
-    rowMain.addEventListener('click', toggle);
-    rowMain.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' && event.key !== ' ') return;
-      event.preventDefault();
-      toggle();
-    });
-  }
-
-  private closeViewStateSublists_abyssPrivate(popover: HTMLElement): void {
-    popover.querySelectorAll<HTMLElement>('.abyss-view-state-sublist').forEach((element) => {
-      element.addClass('abyss-hidden');
-    });
-    popover.querySelectorAll<HTMLElement>('.abyss-view-state-row-main').forEach((element) => {
-      element.removeClass('is-open');
-      element.setAttribute('aria-expanded', 'false');
-    });
-  }
-
-  private renderViewStateReset_abyssPrivate(
-    session: ViewStatePopoverSession,
-    viewState: ListViewState,
-  ): void {
-    if (!isListViewCustomized(viewState, this.activeListKey_abyssPrivate())) return;
-    const row = session.popover.createDiv({ cls: 'abyss-view-state-reset' });
-    const button = row.createEl('button', {
-      cls: 'abyss-view-state-reset-btn',
-      text: 'Reset to defaults',
-    });
-    button.addEventListener('click', () => {
-      session.close();
-      this.updateViewState_abyssPrivate(getListViewDefaults(this.activeListKey_abyssPrivate()));
-    });
   }
 
   /** Keep the positioned calendar wrapper while delegating capture state and submission. */

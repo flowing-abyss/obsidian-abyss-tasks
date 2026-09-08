@@ -166,6 +166,13 @@ all non-cancelled top-level tasks. `projectTableSettings` owns defaults and norm
 column order, aliases, widths, visibility, grouping, sorting, and hidden statuses. These preferences
 live under `projects.table`; project metadata remains in Markdown.
 
+`ProjectsPanel` owns the long-lived project-table controller and the vault property-catalog
+subscription. Ordinary project-store refreshes update that controller instead of reconstructing
+it, so search text, collapsed groups, scroll position, focused cells, and active editor drafts remain
+session state. The controller renders the table through the shared view-options primitive and sends
+all edits through `ProjectManager`; it does not write Markdown or frontmatter itself. Switching to a
+project dashboard temporarily detaches the table surface, and returning reattaches the same session.
+
 Property edits go through `ProjectManager.setProperty()`. The manager validates the field's type,
 checks the edited field's expected value inside Obsidian's frontmatter transaction, validates
 curated date ranges against the latest opposite bound, and updates or removes only that property.
@@ -274,6 +281,12 @@ for same-file metadata changes.
 `TaskIndex` scans Markdown when it initializes. Later Obsidian vault and metadata events cause
 `TaskIndex` and `ProjectStore` to reevaluate affected content and notify subscribers. Plugin writes
 and external edits therefore converge on the same visible state.
+
+`TaskIndexEvent` `changed` identifies files whose indexed tasks changed. A separate reconciled-file
+subscription is a synchronization barrier for accepted metadata observations whose task projection
+stayed identical, including notes without tasks. `ProjectStore` uses both signals as barriers: it
+waits until task reconciliation finishes, then reads the latest frontmatter and combines it with the
+matching task statistics in one coherent project snapshot.
 
 ### Project operations
 

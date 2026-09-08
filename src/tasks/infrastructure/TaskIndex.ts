@@ -955,7 +955,9 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     FileReconciliationTransition
   >();
   private listeners_abyssPrivate: Listener[] = [];
+  private reconciledListeners_abyssPrivate: Array<(files: readonly string[]) => void> = [];
   private readonly pendingFiles_abyssPrivate = new Set<string>();
+  private readonly pendingReconciledFiles_abyssPrivate = new Set<string>();
   private fileLifecycles_abyssPrivate = new WeakMap<TFile, FileLifecycle>();
   private readonly pendingReads_abyssPrivate = new Set<Promise<void>>();
   private flushScheduled_abyssPrivate = false;
@@ -1121,6 +1123,15 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     };
   }
 
+  subscribeReconciled(listener: (files: readonly string[]) => void): () => void {
+    this.reconciledListeners_abyssPrivate.push(listener);
+    return () => {
+      this.reconciledListeners_abyssPrivate = this.reconciledListeners_abyssPrivate.filter(
+        (candidate) => candidate !== listener,
+      );
+    };
+  }
+
   destroy(): void {
     if (this.destroyed_abyssPrivate) return;
     this.destroyed_abyssPrivate = true;
@@ -1130,7 +1141,9 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     this.metadataCacheRefs_abyssPrivate = [];
     this.vaultRefs_abyssPrivate = [];
     this.listeners_abyssPrivate = [];
+    this.reconciledListeners_abyssPrivate = [];
     this.pendingFiles_abyssPrivate.clear();
+    this.pendingReconciledFiles_abyssPrivate.clear();
     this.fileLifecycles_abyssPrivate = new WeakMap();
     this.pendingReads_abyssPrivate.clear();
     this.taskMap_abyssPrivate.clear();
@@ -1527,6 +1540,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     });
     const changed = this.replaceFile_abyssPrivate(path, tasks, authorityTransitions, true);
     if (changed) this.queueChanged_abyssPrivate(path);
+    else this.queueReconciled_abyssPrivate(path);
   }
 
   private handleVaultCreate_abyssPrivate(file: TAbstractFile): void {
@@ -1635,6 +1649,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     this.fileGenerations_abyssPrivate.delete(filePath);
     this.reconciliationTransitions_abyssPrivate.delete(filePath);
     this.pendingFiles_abyssPrivate.delete(filePath);
+    this.pendingReconciledFiles_abyssPrivate.delete(filePath);
     this.options_abyssPrivate.refAuthority?.discard(filePath);
   }
 
@@ -1694,17 +1709,38 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
   private queueChanged_abyssPrivate(filePath: string): void {
     if (this.destroyed_abyssPrivate || !this.initialized_abyssPrivate) return;
     this.pendingFiles_abyssPrivate.add(filePath);
+    this.pendingReconciledFiles_abyssPrivate.delete(filePath);
+    this.scheduleFileEvents_abyssPrivate();
+  }
+
+  private queueReconciled_abyssPrivate(filePath: string): void {
+    if (
+      this.destroyed_abyssPrivate ||
+      !this.initialized_abyssPrivate ||
+      this.pendingFiles_abyssPrivate.has(filePath)
+    )
+      return;
+    this.pendingReconciledFiles_abyssPrivate.add(filePath);
+    this.scheduleFileEvents_abyssPrivate();
+  }
+
+  private scheduleFileEvents_abyssPrivate(): void {
     if (this.flushScheduled_abyssPrivate) return;
     this.flushScheduled_abyssPrivate = true;
     Promise.resolve()
       .then(() => {
         this.flushScheduled_abyssPrivate = false;
-        if (this.destroyed_abyssPrivate || this.pendingFiles_abyssPrivate.size === 0) return;
+        if (this.destroyed_abyssPrivate) return;
         const files = [...this.pendingFiles_abyssPrivate].sort((left, right) =>
           left.localeCompare(right),
         );
+        const reconciledFiles = [...this.pendingReconciledFiles_abyssPrivate]
+          .filter((path) => !this.pendingFiles_abyssPrivate.has(path))
+          .sort((left, right) => left.localeCompare(right));
         this.pendingFiles_abyssPrivate.clear();
-        this.publish_abyssPrivate({ type: 'changed', files });
+        this.pendingReconciledFiles_abyssPrivate.clear();
+        if (files.length > 0) this.publish_abyssPrivate({ type: 'changed', files });
+        if (reconciledFiles.length > 0) this.publishReconciled_abyssPrivate(reconciledFiles);
       })
       .catch(() => undefined);
   }
@@ -1717,5 +1753,11 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       return;
     const detached = immutableEvent(event);
     for (const listener of [...this.listeners_abyssPrivate]) listener(detached);
+  }
+
+  private publishReconciled_abyssPrivate(files: readonly string[]): void {
+    if (this.destroyed_abyssPrivate || !this.initialized_abyssPrivate) return;
+    const detached = Object.freeze([...files]);
+    for (const listener of [...this.reconciledListeners_abyssPrivate]) listener(detached);
   }
 }

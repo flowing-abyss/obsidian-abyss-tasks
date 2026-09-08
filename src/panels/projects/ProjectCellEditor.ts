@@ -6,6 +6,9 @@ import type { ProjectStatus } from '../../settings/types';
 import { ProjectPropertySuggest } from '../../ui/ProjectPropertySuggest';
 
 export type ProjectCellEditorResult = 'committed' | 'cancelled';
+interface ProjectCellEditorCloseContext {
+  readonly restoreFocus: boolean;
+}
 
 export interface ProjectCellEditorOptions {
   readonly app: App;
@@ -16,7 +19,10 @@ export interface ProjectCellEditorOptions {
   readonly statuses?: readonly ProjectStatus[];
   readonly sourcePath?: string;
   readonly save: (value: unknown) => Promise<void>;
-  readonly onClose: (result: ProjectCellEditorResult) => void;
+  readonly onClose: (
+    result: ProjectCellEditorResult,
+    context: ProjectCellEditorCloseContext,
+  ) => void;
   readonly restoreFocus?: () => void;
 }
 
@@ -273,6 +279,9 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
       attr: { role: 'alert', 'aria-live': 'polite' },
     });
     this.renderActions_abyssPrivate();
+    this.element.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
     this.element.addEventListener('keydown', this.onKeyDown_abyssPrivate);
     this.focus();
   }
@@ -401,7 +410,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   private finish_abyssPrivate(result: ProjectCellEditorResult, restoreFocus = true): void {
     if (this.closed_abyssPrivate) return;
     this.destroy();
-    this.options_abyssPrivate.onClose(result);
+    this.options_abyssPrivate.onClose(result, { restoreFocus });
     if (restoreFocus) this.options_abyssPrivate.restoreFocus?.();
   }
 }

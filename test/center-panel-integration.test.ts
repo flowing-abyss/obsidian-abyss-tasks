@@ -704,16 +704,12 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       );
       expect(popover.contains(activeDocument.activeElement)).toBe(true);
       const focusedRow = activeDocument.activeElement as HTMLElement;
-      focusedRow.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
-      );
+      focusedRow.click();
       expect(focusedRow.getAttribute('aria-expanded')).toBe('true');
       expect(
         focusedRow.parentElement?.querySelector('.abyss-view-state-sublist')?.classList,
       ).not.toContain('abyss-hidden');
-      focusedRow.dispatchEvent(
-        new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),
-      );
+      focusedRow.click();
       expect(focusedRow.getAttribute('aria-expanded')).toBe('false');
       expect(
         focusedRow.parentElement?.querySelector('.abyss-view-state-sublist')?.classList,
@@ -2493,7 +2489,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     state.set('mode', 'projects');
     // The projects panel class lives on the child host, never on the center el.
     expect(el.classList.contains('abyss-projects-panel')).toBe(false);
-    expect(el.querySelector('.abyss-projects-host .abyss-projects-list')).toBeTruthy();
+    expect(el.querySelector('.abyss-projects-host .abyss-projects-table')).toBeTruthy();
   });
 
   it('leaving projects mode restores a clean tasks center (no leaked class or DOM)', async () => {

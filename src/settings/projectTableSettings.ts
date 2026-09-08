@@ -1,4 +1,4 @@
-import { Notice, type App } from 'obsidian';
+import { Notice, setIcon, type App } from 'obsidian';
 import type { ProjectPropertyCatalog } from '../projects/ObsidianProjectProperties';
 import type {
   ProjectColumn,
@@ -34,7 +34,7 @@ function sourceProperty(column: ProjectColumn): string | undefined {
   return column.id.startsWith('property:') ? column.id.slice('property:'.length) : undefined;
 }
 
-export function projectColumnSourceLabel(column: ProjectColumn): string {
+function projectColumnSourceLabel(column: ProjectColumn): string {
   return sourceProperty(column) ?? CURATED_LABELS[column.id] ?? column.id;
 }
 
@@ -64,7 +64,7 @@ export function setProjectColumnLabel(
   return true;
 }
 
-export function setProjectColumnVisibility(
+function setProjectColumnVisibility(
   settings: ProjectTableSettings,
   columnId: string,
   visible: boolean,
@@ -90,7 +90,7 @@ export function setProjectColumnWidth(
   return true;
 }
 
-export function moveProjectColumn(
+function moveProjectColumn(
   settings: ProjectTableSettings,
   columnId: string,
   delta: -1 | 1,
@@ -127,7 +127,7 @@ export function addProjectPropertyColumn(
   return 'added';
 }
 
-export function removeProjectColumn(settings: ProjectTableSettings, columnId: string): boolean {
+function removeProjectColumn(settings: ProjectTableSettings, columnId: string): boolean {
   if (!columnId.startsWith('property:')) return false;
   const index = settings.columns.findIndex(({ id }) => id === columnId);
   if (index < 0) return false;
@@ -143,6 +143,23 @@ interface ColumnRowContext {
   readonly index: number;
   readonly options: RenderProjectTableSettingsOptions;
   readonly persist: (refresh?: boolean) => void;
+}
+
+interface ColumnActionOptions {
+  readonly icon: string;
+  readonly label: string;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+}
+
+function createColumnAction(row: HTMLElement, options: ColumnActionOptions): void {
+  const button = row.createEl('button', {
+    cls: 'clickable-icon abyss-project-column-action',
+    attr: { type: 'button', 'aria-label': options.label, title: options.label },
+  });
+  setIcon(button, options.icon);
+  button.disabled = options.disabled;
+  button.addEventListener('click', options.onClick);
 }
 
 function renderColumnRow(context: ColumnRowContext): void {
@@ -164,6 +181,7 @@ function renderColumnRow(context: ColumnRowContext): void {
   });
 
   const visible = row.createEl('input', {
+    cls: 'abyss-project-column-visible',
     attr: { type: 'checkbox', 'aria-label': `Show ${source}` },
   });
   visible.checked = column.visible;
@@ -188,31 +206,36 @@ function renderColumnRow(context: ColumnRowContext): void {
     if (setProjectColumnWidth(options.projects.table, column.id, next)) persist();
   });
 
-  const up = row.createEl('button', {
-    text: 'Up',
-    attr: { type: 'button', 'aria-label': `Move ${source} up` },
+  createColumnAction(row, {
+    icon: 'chevron-up',
+    label: `Move ${source} up`,
+    disabled: index <= 1,
+    onClick: () => {
+      if (moveProjectColumn(options.projects.table, column.id, -1)) persist(true);
+    },
   });
-  up.disabled = index <= 1;
-  up.addEventListener('click', () => {
-    if (moveProjectColumn(options.projects.table, column.id, -1)) persist(true);
-  });
-  const down = row.createEl('button', {
-    text: 'Down',
-    attr: { type: 'button', 'aria-label': `Move ${source} down` },
-  });
-  down.disabled = column.id === 'name' || index >= options.projects.table.columns.length - 1;
-  down.addEventListener('click', () => {
-    if (moveProjectColumn(options.projects.table, column.id, 1)) persist(true);
+  createColumnAction(row, {
+    icon: 'chevron-down',
+    label: `Move ${source} down`,
+    disabled: column.id === 'name' || index >= options.projects.table.columns.length - 1,
+    onClick: () => {
+      if (moveProjectColumn(options.projects.table, column.id, 1)) persist(true);
+    },
   });
 
   if (column.id.startsWith('property:')) {
-    const remove = row.createEl('button', {
-      cls: 'mod-warning',
-      text: 'Remove',
-      attr: { type: 'button', 'aria-label': `Remove ${source} column` },
+    createColumnAction(row, {
+      icon: 'x',
+      label: `Remove ${source} column`,
+      disabled: false,
+      onClick: () => {
+        if (removeProjectColumn(options.projects.table, column.id)) persist(true);
+      },
     });
-    remove.addEventListener('click', () => {
-      if (removeProjectColumn(options.projects.table, column.id)) persist(true);
+  } else {
+    row.createSpan({
+      cls: 'abyss-project-column-action-placeholder',
+      attr: { 'aria-hidden': 'true' },
     });
   }
 }
@@ -314,6 +337,10 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
   };
 
   const rows = section.createDiv({ cls: 'abyss-project-column-settings' });
+  const headings = rows.createDiv({ cls: 'abyss-project-column-settings-header' });
+  for (const label of ['Source', 'Display name', 'Show', 'Width', '', '', '']) {
+    headings.createSpan({ text: label, attr: label.length === 0 ? { 'aria-hidden': 'true' } : {} });
+  }
   options.projects.table.columns.forEach((column, index) => {
     renderColumnRow({ host: rows, column, index, options, persist });
   });

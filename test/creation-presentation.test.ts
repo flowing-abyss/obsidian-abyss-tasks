@@ -67,6 +67,7 @@ function queryHarness(initial: TaskResolution): {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
+      subscribeReconciled: () => () => {},
     },
     setResolution: (next) => {
       resolution = next;
@@ -364,6 +365,7 @@ describe('CreationPresentationController', () => {
         listeners.add(listener);
         return () => listeners.delete(listener);
       },
+      subscribeReconciled: () => () => {},
     };
     const host = freshContainer();
     const root = freshContainer();
@@ -400,6 +402,7 @@ describe('CreationPresentationController', () => {
       forCalendarProjection: () => ({ materialized: [], recurringSources: [] }),
       resolve: (ref) => resolutions.get(taskReconciliationKey(ref)) ?? { type: 'not-found', ref },
       subscribe: () => () => {},
+      subscribeReconciled: () => () => {},
     };
     const host = freshContainer();
     const root = freshContainer();

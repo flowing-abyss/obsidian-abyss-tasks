@@ -70,6 +70,7 @@ function harness() {
     return ref;
   };
   const getMarkdownFiles = vi.fn(() => files);
+  let currentFrontmatter: Record<string, unknown> = { status: 'active' };
   const app = {
     vault: {
       getMarkdownFiles,
@@ -78,14 +79,16 @@ function harness() {
       offref,
     },
     metadataCache: {
-      getFileCache: () => ({ frontmatter: { status: 'active' } }),
+      getFileCache: () => ({ frontmatter: currentFrontmatter }),
       on,
       offref,
     },
   };
   let snapshots: readonly TaskSnapshot[] = [task('open')];
   let indexListener: ((event: TaskIndexEvent) => void) | undefined;
+  let reconciledListener: ((files: readonly string[]) => void) | undefined;
   const indexUnsub = vi.fn();
+  const reconciledUnsub = vi.fn();
   const queries: TaskQueryApi = taskQueryApi({
     list: (query) =>
       snapshots.filter(
@@ -96,12 +99,22 @@ function harness() {
       indexListener = listener;
       return indexUnsub;
     },
+    subscribeReconciled: (listener) => {
+      reconciledListener = listener;
+      return reconciledUnsub;
+    },
   });
   return {
     app: app as never,
     queries,
-    metadata: (changedFile: TFile = file, data = '', cache = { listItems: [] } as CachedMetadata) =>
-      metadataChanged[0]?.(changedFile, data, cache),
+    metadata: (
+      changedFile: TFile = file,
+      data = '',
+      cache = { listItems: [] } as CachedMetadata,
+    ) => {
+      if (cache.frontmatter !== undefined) currentFrontmatter = cache.frontmatter;
+      metadataChanged[0]?.(changedFile, data, cache);
+    },
     vault: (
       event: 'create' | 'delete' | 'rename',
       changedFile: TFile = file,
@@ -112,6 +125,7 @@ function harness() {
       }
     },
     index: (event: TaskIndexEvent) => indexListener?.(event),
+    reconciled: (files: readonly string[]) => reconciledListener?.(files),
     setTasks: (next: readonly TaskSnapshot[]) => {
       snapshots = next;
     },
@@ -120,6 +134,7 @@ function harness() {
     },
     file,
     indexUnsub,
+    reconciledUnsub,
     offref,
     getMarkdownFiles,
   };
@@ -282,6 +297,7 @@ describe('ProjectStore event convergence', () => {
     expect(store.get('Projects/A.md')).toBeDefined();
     store.destroy();
     expect(h.indexUnsub).toHaveBeenCalledTimes(1);
+    expect(h.reconciledUnsub).toHaveBeenCalledTimes(1);
     expect(h.offref).toHaveBeenCalledTimes(4);
   });
 
@@ -297,10 +313,82 @@ describe('ProjectStore event convergence', () => {
     vi.advanceTimersByTime(1_000);
     expect(listener).not.toHaveBeenCalled();
     expect(store.get('Projects/A.md')?.stats.done).toBe(0);
-    h.index({ type: 'changed', files: ['Projects/A.md'] });
+    h.reconciled(['Projects/A.md']);
     vi.advanceTimersByTime(150);
     expect(listener).toHaveBeenCalledOnce();
     expect(store.get('Projects/A.md')?.stats.done).toBe(1);
+    store.destroy();
+  });
+
+  it('publishes changed frontmatter after the task-index barrier with coherent statistics', () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+    store.initialize();
+    const listener = vi.fn();
+    store.onUpdate(listener);
+    store.refresh();
+    listener.mockClear();
+
+    h.metadata(h.file, '- [ ] open', {
+      frontmatter: { status: 'active', budget: 140 },
+      listItems: [
+        {
+          task: ' ',
+          parent: -1,
+          position: {
+            start: { line: 0, col: 0, offset: 0 },
+            end: { line: 0, col: 10, offset: 10 },
+          },
+        },
+      ],
+    });
+
+    expect(store.get('Projects/A.md')?.frontmatter['budget']).toBeUndefined();
+    expect(listener).not.toHaveBeenCalled();
+    h.index({ type: 'changed', files: ['Projects/A.md'] });
+    vi.advanceTimersByTime(150);
+
+    expect(store.get('Projects/A.md')?.frontmatter['budget']).toBe(140);
+    expect(store.get('Projects/A.md')?.stats).toEqual({
+      total: 1,
+      done: 0,
+      cancelled: 0,
+      inProgress: 0,
+    });
+    expect(listener).toHaveBeenCalledOnce();
+    store.destroy();
+  });
+
+  it('publishes frontmatter and changed task statistics together after one barrier', () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+    store.initialize();
+    const snapshots: Array<{ budget: unknown; done: number | undefined }> = [];
+    store.onUpdate(() => {
+      const current = store.get('Projects/A.md');
+      snapshots.push({ budget: current?.frontmatter['budget'], done: current?.stats.done });
+    });
+
+    h.setTasks([task('done')]);
+    h.metadata(h.file, '- [x] done', {
+      frontmatter: { status: 'active', budget: 140 },
+      listItems: [
+        {
+          task: 'x',
+          parent: -1,
+          position: {
+            start: { line: 0, col: 0, offset: 0 },
+            end: { line: 0, col: 10, offset: 10 },
+          },
+        },
+      ],
+    });
+    h.index({ type: 'changed', files: ['Projects/A.md'] });
+    vi.advanceTimersByTime(150);
+
+    expect(snapshots).toEqual([{ budget: 140, done: 1 }]);
     store.destroy();
   });
 

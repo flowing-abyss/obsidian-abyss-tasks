@@ -876,6 +876,39 @@ describe('TaskIndex lifecycle and events', () => {
     index.destroy();
   });
 
+  it('publishes an accepted metadata observation when task snapshots are unchanged', async () => {
+    const source = '- [ ] unchanged';
+    const { app, index, fireChanged } = await setup({ 'project.md': source });
+    await index.initialize();
+    const reconciled: string[][] = [];
+    index.subscribeReconciled((files) => reconciled.push([...files]));
+
+    fireChanged(mdFile(app, 'project.md'), source, taskCache(0, { budget: 140 }));
+    await flushMicrotasks();
+
+    expect(index.list({ filePath: 'project.md' }).map(({ title }) => title)).toEqual(['unchanged']);
+    expect(reconciled).toEqual([['project.md']]);
+    index.destroy();
+  });
+
+  it('publishes an accepted metadata observation for an empty markdown note', async () => {
+    const source = '---\nstatus: active\n---\n';
+    const { app, index, fireChanged } = await setup({ 'empty.md': source });
+    await index.initialize();
+    const reconciled: string[][] = [];
+    index.subscribeReconciled((files) => reconciled.push([...files]));
+
+    fireChanged(mdFile(app, 'empty.md'), source, {
+      frontmatter: { status: 'active', budget: 140 },
+      listItems: [],
+    });
+    await flushMicrotasks();
+
+    expect(index.list({ filePath: 'empty.md' })).toEqual([]);
+    expect(reconciled).toEqual([['empty.md']]);
+    index.destroy();
+  });
+
   it('handles create, rename with oldPath, and delete after applying each change', async () => {
     const { app, index, fireChanged } = await setup({ 'old.md': '- [ ] old' });
     await index.initialize();
