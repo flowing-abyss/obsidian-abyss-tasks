@@ -23,8 +23,7 @@ function matcherForIgnoreFilter(filter: string): ((path: string) => boolean) | u
  * reports the picked file back to the caller.
  */
 export class NoteSuggest extends AbstractInputSuggest<TFile> {
-  // Compiled once per suggester (the modal lifetime) rather than per keystroke per file.
-  private readonly ignoreMatchers_abyssPrivate: Array<(path: string) => boolean>;
+  private readonly source_abyssPrivate: VaultFileSuggestionSource;
 
   constructor(
     app: App,
@@ -32,40 +31,11 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
     private readonly onPick_abyssPrivate: (file: TFile) => void,
   ) {
     super(app, inputElement);
-    this.ignoreMatchers_abyssPrivate = this.buildIgnoreMatchers_abyssPrivate();
-  }
-
-  /** Mirrors Obsidian's Excluded-files matching: `/regex/` entries or folder-path prefixes. */
-  private buildIgnoreMatchers_abyssPrivate(): Array<(path: string) => boolean> {
-    const raw = (this.app.vault as unknown as VaultWithConfig).getConfig('userIgnoreFilters');
-    const filters = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
-    const matchers: Array<(path: string) => boolean> = [];
-    for (const filter of filters) {
-      const matcher = matcherForIgnoreFilter(filter);
-      if (matcher !== undefined) matchers.push(matcher);
-    }
-    return matchers;
-  }
-
-  private isIgnored_abyssPrivate(path: string): boolean {
-    return this.ignoreMatchers_abyssPrivate.some((match) => match(path));
+    this.source_abyssPrivate = new VaultFileSuggestionSource(app);
   }
 
   getSuggestions(query: string): TFile[] {
-    const q = query.toLowerCase();
-    // All files (not just markdown) so a wiki link can target attachments/images too,
-    // honouring Obsidian's excluded-files setting.
-    return this.app.vault
-      .getFiles()
-      .filter((file) => !this.isIgnored_abyssPrivate(file.path))
-      .filter(
-        (file) =>
-          q.length === 0 ||
-          file.name.toLowerCase().includes(q) ||
-          file.path.toLowerCase().includes(q),
-      )
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, 50);
+    return this.source_abyssPrivate.list(query);
   }
 
   renderSuggestion(file: TFile, el: HTMLElement): void {
@@ -83,5 +53,36 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
   override selectSuggestion(file: TFile): void {
     this.onPick_abyssPrivate(file);
     this.close();
+  }
+}
+
+/** Shared vault-file filtering for inputs that combine note targets with other suggestions. */
+export class VaultFileSuggestionSource {
+  private readonly ignoreMatchers_abyssPrivate: Array<(path: string) => boolean>;
+
+  constructor(private readonly app_abyssPrivate: App) {
+    const raw = (app_abyssPrivate.vault as unknown as VaultWithConfig).getConfig(
+      'userIgnoreFilters',
+    );
+    const filters = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
+    this.ignoreMatchers_abyssPrivate = filters.flatMap((filter) => {
+      const matcher = matcherForIgnoreFilter(filter);
+      return matcher === undefined ? [] : [matcher];
+    });
+  }
+
+  list(query: string): TFile[] {
+    const normalized = query.toLocaleLowerCase();
+    return this.app_abyssPrivate.vault
+      .getFiles()
+      .filter((file) => !this.ignoreMatchers_abyssPrivate.some((match) => match(file.path)))
+      .filter(
+        (file) =>
+          normalized.length === 0 ||
+          file.name.toLocaleLowerCase().includes(normalized) ||
+          file.path.toLocaleLowerCase().includes(normalized),
+      )
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .slice(0, 50);
   }
 }

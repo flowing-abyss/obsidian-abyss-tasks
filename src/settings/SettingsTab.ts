@@ -9,6 +9,10 @@ import {
   Setting,
   type SettingDefinitionItem,
 } from 'obsidian';
+import {
+  ObsidianProjectProperties,
+  type ProjectPropertyCatalog,
+} from '../projects/ObsidianProjectProperties';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import { StatusRegistry } from '../status/StatusRegistry';
 import { TYPE_LABELS, TYPE_ORDER } from '../status/statusConstants';
@@ -16,6 +20,7 @@ import type { TagManager } from '../tags/TagManager';
 import type { TaskStatusType } from '../tasks';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { runAsyncAction } from '../ui/runAsyncAction';
+import { renderProjectTableSettings } from './projectTableSettings';
 import {
   type ParsedShortcutAlternative,
   SHORTCUT_ACTION_IDS,
@@ -153,10 +158,15 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private shortcutSaveRetryEl_abyssPrivate: HTMLButtonElement | undefined;
   private readonly openSections_abyssPrivate = new Set<string>();
   private readonly sectionScope_abyssPrivate = ++nextSettingsTabScope;
+  private projectSettingsCleanup_abyssPrivate: (() => void) | undefined = undefined;
+  private propertyCatalogCleanup_abyssPrivate: (() => void) | undefined = undefined;
 
   constructor(
     app: App,
     private readonly plugin_abyssPrivate: TaskCalendarPlugin,
+    private readonly projectProperties_abyssPrivate: ProjectPropertyCatalog = new ObsidianProjectProperties(
+      app,
+    ),
   ) {
     super(app, plugin_abyssPrivate);
   }
@@ -286,12 +296,27 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   override display(): void {
+    this.propertyCatalogCleanup_abyssPrivate ??= this.projectProperties_abyssPrivate.onChange(
+      () => {
+        this.render_abyssPrivate();
+      },
+    );
     this.render_abyssPrivate();
+  }
+
+  override hide(): void {
+    this.projectSettingsCleanup_abyssPrivate?.();
+    this.projectSettingsCleanup_abyssPrivate = undefined;
+    this.propertyCatalogCleanup_abyssPrivate?.();
+    this.propertyCatalogCleanup_abyssPrivate = undefined;
+    super.hide();
   }
 
   private render_abyssPrivate(): void {
     const { containerEl } = this;
 
+    this.projectSettingsCleanup_abyssPrivate?.();
+    this.projectSettingsCleanup_abyssPrivate = undefined;
     containerEl.empty();
 
     this.addSection_abyssPrivate(containerEl, 'General', 'sliders-horizontal', (body) => {
@@ -947,6 +972,16 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private renderProjectsSettings_abyssPrivate(containerEl: HTMLElement): void {
     this.renderProjectDefinitionSettings_abyssPrivate(containerEl);
     this.renderProjectTaskInsertionSettings_abyssPrivate(containerEl);
+    this.projectSettingsCleanup_abyssPrivate = renderProjectTableSettings({
+      app: this.app,
+      container: containerEl,
+      projects: this.plugin_abyssPrivate.settings.projects,
+      catalog: this.projectProperties_abyssPrivate,
+      save: () => this.plugin_abyssPrivate.saveSettings(),
+      refresh: () => {
+        this.render_abyssPrivate();
+      },
+    });
     this.renderProjectStatusesSettings_abyssPrivate(containerEl);
   }
 
