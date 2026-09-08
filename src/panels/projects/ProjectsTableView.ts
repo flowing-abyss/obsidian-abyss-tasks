@@ -177,7 +177,6 @@ export class ProjectsTableView {
 
   update(projects: readonly Project[]): void {
     this.projects_abyssPrivate = projects;
-    if (this.activeEditor_abyssPrivate !== undefined) return;
     this.renderTable_abyssPrivate();
   }
 
@@ -186,7 +185,6 @@ export class ProjectsTableView {
       this.context_abyssPrivate.settings.projects,
       this.context_abyssPrivate.catalog.list(),
     );
-    if (this.activeEditor_abyssPrivate !== undefined) return;
     this.renderTable_abyssPrivate();
   }
 
@@ -264,7 +262,7 @@ export class ProjectsTableView {
   }
 
   private renderTable_abyssPrivate(): void {
-    if (!this.mounted_abyssPrivate) return;
+    if (!this.mounted_abyssPrivate || this.activeEditor_abyssPrivate !== undefined) return;
     const scrollTop = this.scroll_abyssPrivate.scrollTop;
     const scrollLeft = this.scroll_abyssPrivate.scrollLeft;
     const focusedIdentity = this.focusedCellIdentity_abyssPrivate();

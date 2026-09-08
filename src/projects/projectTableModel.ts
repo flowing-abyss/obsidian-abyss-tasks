@@ -21,6 +21,12 @@ interface ProjectTableGroup {
   projects: Project[];
 }
 
+interface ProjectTableValueGroup {
+  key: string;
+  label: string;
+  value: unknown;
+}
+
 export interface ProjectTableModel {
   groups: ProjectTableGroup[];
   uniqueVisibleCount: number;
@@ -81,23 +87,30 @@ function linkLabel(value: string): string {
   return inner.slice(inner.lastIndexOf('/') + 1);
 }
 
-function displayValues(
+function displayScalar(value: unknown): string {
+  if (isEmptyValue(value)) return '—';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  return linkLabel(stringValue(value));
+}
+
+export function projectProgressDisplayValue(stats: ProjectStats): string {
+  const progress = projectProgress(stats);
+  return progress.percent === null
+    ? '—'
+    : `${progress.percent}% (${progress.done}/${progress.total})`;
+}
+
+/** Returns the exact text values exposed by a project table cell. */
+export function projectTableDisplayValues(
   project: Project,
   field: ProjectFieldCatalogItem,
   statuses: readonly ProjectStatus[],
 ): string[] {
   if (field.type === 'status') return [statusLabel(project, statuses)];
-  if (field.type === 'progress') {
-    const progress = projectProgress(project.stats);
-    return progress.percent === null
-      ? ['—']
-      : [`${progress.percent}%`, `${progress.done}/${progress.total}`];
-  }
+  if (field.type === 'progress') return [projectProgressDisplayValue(project.stats)];
   const value = projectFieldValue(project, field);
   const values = Array.isArray(value) ? value : [value];
-  return values
-    .filter((entry) => !isEmptyValue(entry))
-    .map((entry) => linkLabel(stringValue(entry)));
+  return values.length === 0 ? ['—'] : values.map((entry) => displayScalar(entry));
 }
 
 function compareStrings(left: string, right: string): number {
@@ -196,29 +209,39 @@ function matchesSearch(
   if (search.length === 0) return true;
   if (project.name.toLocaleLowerCase().includes(search)) return true;
   return fields.some((field) =>
-    displayValues(project, field, statuses).some((value) =>
+    projectTableDisplayValues(project, field, statuses).some((value) =>
       value.toLocaleLowerCase().includes(search),
     ),
   );
 }
 
-function groupValues(
+function statusValueGroup(
+  project: Project,
+  statuses: readonly ProjectStatus[],
+): ProjectTableValueGroup[] {
+  return [
+    {
+      key: statusGroupKey(project),
+      label: statusLabel(project, statuses),
+      value: project.statusId,
+    },
+  ];
+}
+
+function progressValueGroup(project: Project): ProjectTableValueGroup[] {
+  const progress = projectProgress(project.stats);
+  if (progress.percent === null) return [{ key: 'empty', label: 'No value', value: null }];
+  const label = projectProgressDisplayValue(project.stats);
+  return [{ key: `value:${label.toLocaleLowerCase()}`, label, value: label }];
+}
+
+function propertyValueGroups(
   project: Project,
   field: ProjectFieldCatalogItem,
-  statuses: readonly ProjectStatus[],
-): Array<{ key: string; label: string; value: unknown }> {
-  if (field.type === 'status') {
-    return [
-      {
-        key: statusGroupKey(project),
-        label: statusLabel(project, statuses),
-        value: project.statusId,
-      },
-    ];
-  }
+): ProjectTableValueGroup[] {
   const raw = projectFieldValue(project, field);
   const values = Array.isArray(raw) ? raw : [raw];
-  const groups = new Map<string, { key: string; label: string; value: unknown }>();
+  const groups = new Map<string, ProjectTableValueGroup>();
   for (const value of values) {
     const empty = isEmptyValue(value);
     const label = empty ? 'No value' : linkLabel(stringValue(value));
@@ -228,6 +251,16 @@ function groupValues(
   return groups.size > 0
     ? [...groups.values()]
     : [{ key: 'empty', label: 'No value', value: null }];
+}
+
+function groupValues(
+  project: Project,
+  field: ProjectFieldCatalogItem,
+  statuses: readonly ProjectStatus[],
+): ProjectTableValueGroup[] {
+  if (field.type === 'status') return statusValueGroup(project, statuses);
+  if (field.type === 'progress') return progressValueGroup(project);
+  return propertyValueGroups(project, field);
 }
 
 interface MakeGroupsInput {

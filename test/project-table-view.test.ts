@@ -466,6 +466,101 @@ describe('ProjectsTableView', () => {
     expect(activeDocument.activeElement).toBe(draft);
   });
 
+  it('keeps an editor attached through table interactions and resumes rendering after cancel', () => {
+    const item = project({});
+    const { host, view, config } = mount([item]);
+    const endCell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
+    );
+    const header = expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        '.abyss-project-table-header-cell[data-column-id="end"] .abyss-project-table-column-button',
+      ),
+    );
+    const statusFilter = expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        `.abyss-project-status-filter[data-status-key="id:${active.id}"]`,
+      ),
+    );
+    const groupToggle = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    );
+    const resize = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-header-cell[data-column-id="end"] .abyss-project-column-resize',
+      ),
+    );
+    const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
+
+    endCell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const draft = expectDefined(endCell.querySelector<HTMLInputElement>('input[type="date"]'));
+    draft.value = '2026-12-24';
+    draft.focus();
+
+    header.click();
+    search.value = 'A';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    statusFilter.click();
+    statusFilter.click();
+    groupToggle.click();
+    resize.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100 }));
+    resize.ownerDocument.dispatchEvent(new PointerEvent('pointermove', { clientX: 120 }));
+    resize.ownerDocument.dispatchEvent(new PointerEvent('pointerup', { clientX: 120 }));
+
+    expect(draft.isConnected).toBe(true);
+    expect(draft.value).toBe('2026-12-24');
+    expect(activeDocument.activeElement).toBe(draft);
+    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'desc' });
+    expect(config.projects.table.hiddenStatuses).toEqual([]);
+    expect(config.projects.table.columns.find(({ id }) => id === 'end')?.width).toBe(170);
+
+    draft.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    ).click();
+    view.update([{ ...item, frontmatter: { ...item.frontmatter, end: '2027-01-02' } }]);
+
+    const refreshed = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
+    );
+    expect(refreshed.textContent).toContain('2027-01-02');
+    refreshed.click();
+    expect(refreshed.querySelector('.abyss-project-cell-editor')).not.toBeNull();
+  });
+
+  it('explains unavailable custom fields while retaining their value and curated editing', () => {
+    const config = settings();
+    config.projects.table.columns.push({
+      id: 'property:LegacyKey',
+      visible: true,
+      label: 'Legacy',
+    });
+    const { host } = mount([project({ frontmatter: { LegacyKey: 'Keep me' } })], {
+      settings: config,
+      catalog: catalog(),
+    });
+
+    const unavailable = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-cell[data-column-id="property:LegacyKey"]',
+      ),
+    );
+    expect(unavailable.textContent).toContain('Keep me');
+    expect(unavailable.classList.contains('is-editable')).toBe(false);
+    const explanation = expectDefined(
+      unavailable.querySelector<HTMLElement>('.abyss-project-table-unavailable'),
+    );
+    expect(explanation.textContent).toBe('Type unavailable');
+    expect(explanation.getAttribute('aria-label')).toContain('LegacyKey');
+    expect(explanation.getAttribute('aria-label')).toContain('read-only');
+
+    const end = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
+    );
+    end.click();
+    expect(end.querySelector('.abyss-project-cell-editor')).not.toBeNull();
+  });
+
   it('retains a status draft across external refresh and surfaces the stale conflict', async () => {
     const item = project({});
     const done = expectDefined(DEFAULT_SETTINGS.projects.statuses[2]);

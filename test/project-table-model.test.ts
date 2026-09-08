@@ -33,6 +33,7 @@ const fields: ProjectField[] = [
   { id: 'end', property: 'end', label: 'End', type: 'date' },
   { id: 'property:budget', property: 'budget', label: 'Budget', type: 'number' },
   { id: 'property:owners', property: 'owners', label: 'Owners', type: 'list' },
+  { id: 'property:approved', property: 'approved', label: 'Approved', type: 'checkbox' },
 ];
 
 function project(name: string, overrides: Partial<Project> = {}): Project {
@@ -182,6 +183,58 @@ describe('buildProjectTableModel', () => {
     expect(model(projects, table(), 'alpha').uniqueVisibleCount).toBe(1);
     expect(model(projects, table(), 'hopper').groups[0]?.projects.map(({ name }) => name)).toEqual([
       'Beta',
+    ]);
+  });
+
+  it('searches the complete displayed checkbox and progress values', () => {
+    const projects = [
+      project('Approved', {
+        frontmatter: { approved: true },
+        stats: { total: 10, done: 6, cancelled: 0, inProgress: 1 },
+      }),
+      project('Rejected', {
+        frontmatter: { approved: false },
+        stats: { total: 4, done: 1, cancelled: 0, inProgress: 0 },
+      }),
+    ];
+
+    expect(model(projects, table(), 'yes').groups[0]?.projects.map(({ name }) => name)).toEqual([
+      'Approved',
+    ]);
+    expect(model(projects, table(), 'no').groups[0]?.projects.map(({ name }) => name)).toEqual([
+      'Rejected',
+    ]);
+    expect(
+      model(projects, table(), '60% (6/10)').groups[0]?.projects.map(({ name }) => name),
+    ).toEqual(['Approved']);
+    expect(model(projects, table(), 'true').uniqueVisibleCount).toBe(0);
+  });
+
+  it('groups equal displayed progress together and treats an empty denominator as missing', () => {
+    const result = model(
+      [
+        project('Open remainder', {
+          stats: { total: 2, done: 1, cancelled: 0, inProgress: 0 },
+        }),
+        project('In-progress remainder', {
+          stats: { total: 3, done: 1, cancelled: 1, inProgress: 1 },
+        }),
+        project('No included tasks', {
+          stats: { total: 2, done: 0, cancelled: 2, inProgress: 0 },
+        }),
+      ],
+      table({ groupBy: 'progress' }),
+    );
+
+    expect(
+      result.groups.map(({ key, label, projects }) => [
+        key,
+        label,
+        projects.map(({ name }) => name),
+      ]),
+    ).toEqual([
+      ['value:50% (1/2)', '50% (1/2)', ['In-progress remainder', 'Open remainder']],
+      ['empty', 'No value', ['No included tasks']],
     ]);
   });
 

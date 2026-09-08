@@ -1,28 +1,12 @@
 import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
 import { projectFieldValue } from '../../projects/projectFields';
-import { projectProgress } from '../../projects/projectTableModel';
+import {
+  projectProgress,
+  projectProgressDisplayValue,
+  projectTableDisplayValues,
+} from '../../projects/projectTableModel';
 import type { Project } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
-
-function displayScalar(value: unknown): string {
-  if (value === null || value === undefined || value === '') return '—';
-  if (typeof value === 'boolean') return booleanLabel(value);
-  if (typeof value === 'string') return linkLabel(value);
-  if (typeof value === 'number') return value.toString();
-  return JSON.stringify(value);
-}
-
-function booleanLabel(value: boolean): string {
-  return value ? 'Yes' : 'No';
-}
-
-function linkLabel(value: string): string {
-  if (!value.startsWith('[[') || !value.endsWith(']]')) return value;
-  const inner = value.slice(2, -2);
-  const separator = inner.indexOf('|');
-  if (separator >= 0) return inner.slice(separator + 1);
-  return inner.slice(inner.lastIndexOf('/') + 1);
-}
 
 function statusFor(
   project: Project,
@@ -54,30 +38,68 @@ function renderProgress(cell: HTMLElement, project: Project): void {
   }
   root.createSpan({
     cls: 'abyss-project-progress-value',
-    text:
-      progress.percent === null ? '—' : `${progress.percent}% (${progress.done}/${progress.total})`,
+    text: projectProgressDisplayValue(project.stats),
   });
 }
 
 function renderStatus(
   cell: HTMLElement,
   project: Project,
+  field: ProjectFieldCatalogItem,
   statuses: readonly ProjectStatus[],
 ): void {
   const status = statusFor(project, statuses);
   const pill = cell.createSpan({
     cls: 'abyss-project-table-status-pill',
-    text: status?.label ?? project.rawStatus ?? 'No status',
+    text: projectTableDisplayValues(project, field, statuses)[0] ?? 'No status',
   });
   if (status?.color !== undefined && status.color.length > 0) {
     pill.style.setProperty('--abyss-project-status-color', status.color);
   }
 }
 
+function renderUnavailableType(cell: HTMLElement, field: ProjectFieldCatalogItem): void {
+  if (field.type !== null) return;
+  const explanation = `${field.property} is read-only because its Obsidian property type is unavailable`;
+  cell.createSpan({
+    cls: 'abyss-project-table-unavailable',
+    text: 'Type unavailable',
+    attr: { role: 'note', title: explanation, 'aria-label': explanation },
+  });
+}
+
 interface RenderProjectTableCellOptions {
   readonly field: ProjectFieldCatalogItem;
   readonly statuses: readonly ProjectStatus[];
   readonly openProject: (path: string) => void;
+}
+
+function renderPropertyValue(
+  cell: HTMLElement,
+  project: Project,
+  field: ProjectFieldCatalogItem,
+  statuses: readonly ProjectStatus[],
+): void {
+  const value = projectFieldValue(project, field);
+  const displayedValues = projectTableDisplayValues(project, field, statuses);
+  if (Array.isArray(value)) {
+    const list = cell.createDiv({ cls: 'abyss-project-table-values' });
+    for (const displayed of displayedValues) {
+      list.createSpan({
+        cls: value.length === 0 ? 'abyss-project-table-empty-value' : 'abyss-project-table-value',
+        text: displayed,
+      });
+    }
+  } else {
+    cell.createSpan({
+      cls:
+        value === null || value === undefined || value === ''
+          ? 'abyss-project-table-empty-value'
+          : '',
+      text: displayedValues[0] ?? '—',
+    });
+  }
+  renderUnavailableType(cell, field);
 }
 
 export function renderProjectTableCell(
@@ -98,27 +120,12 @@ export function renderProjectTableCell(
     return;
   }
   if (field.type === 'status') {
-    renderStatus(cell, project, statuses);
+    renderStatus(cell, project, field, statuses);
     return;
   }
   if (field.type === 'progress') {
     renderProgress(cell, project);
     return;
   }
-  const value = projectFieldValue(project, field);
-  if (Array.isArray(value)) {
-    const list = cell.createDiv({ cls: 'abyss-project-table-values' });
-    if (value.length === 0) list.createSpan({ cls: 'abyss-project-table-empty-value', text: '—' });
-    for (const entry of value) {
-      list.createSpan({ cls: 'abyss-project-table-value', text: displayScalar(entry) });
-    }
-    return;
-  }
-  cell.createSpan({
-    cls:
-      value === null || value === undefined || value === ''
-        ? 'abyss-project-table-empty-value'
-        : '',
-    text: displayScalar(value),
-  });
+  renderPropertyValue(cell, project, field, statuses);
 }
