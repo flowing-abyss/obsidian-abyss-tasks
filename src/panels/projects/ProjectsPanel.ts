@@ -4,7 +4,7 @@ import {
   ObsidianProjectProperties,
   type ProjectPropertyCatalog,
 } from '../../projects/ObsidianProjectProperties';
-import type { ProjectManager } from '../../projects/ProjectManager';
+import type { ExpectedProjectStatus, ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
 import type { ProjectField } from '../../projects/projectFields';
 import type { CalendarSettings } from '../../settings/types';
@@ -60,7 +60,8 @@ export class ProjectsPanel {
       saveSettings: this.saveSettings,
       saveProperty: (path, field, value, expectedValue) =>
         this.saveProperty(path, field, value, expectedValue),
-      saveStatus: (path, statusId) => this.saveStatus(path, statusId),
+      saveStatus: (path, statusId, expectedStatus) =>
+        this.saveStatus(path, statusId, expectedStatus),
       createProject: (name) => this.createProject(name),
       openProject: (path) => {
         this.state.set('projectsPanel', { view: 'dashboard', path });
@@ -108,8 +109,12 @@ export class ProjectsPanel {
     this.projectStore.refresh();
   }
 
-  private async saveStatus(path: string, statusId: string): Promise<void> {
-    await this.projectManager.setStatus(path, statusId);
+  private async saveStatus(
+    path: string,
+    statusId: string,
+    expectedStatus?: ExpectedProjectStatus,
+  ): Promise<void> {
+    await this.projectManager.setStatus(path, statusId, expectedStatus);
     this.projectStore.refresh();
   }
 

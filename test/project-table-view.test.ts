@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
+import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import type { ProjectFieldCatalogItem } from '../src/projects/projectFields';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -233,6 +234,50 @@ describe('ProjectsTableView', () => {
     expect(saveSettings).toHaveBeenCalledTimes(2);
   });
 
+  it('moves columns one step right, to the end, and back left without sorting', async () => {
+    const { host, config, saveSettings } = mount([project({})]);
+    const transfer = {
+      types: [] as string[],
+      value: '',
+      setData(type: string, value: string) {
+        this.types = [type];
+        this.value = value;
+      },
+      getData: () => transfer.value,
+    };
+    const drag = (sourceId: string, targetId: string, clientX: number): void => {
+      const source = expectDefined(
+        host.querySelector<HTMLElement>(`th[data-column-id="${sourceId}"]`),
+      );
+      const target = expectDefined(
+        host.querySelector<HTMLElement>(`th[data-column-id="${targetId}"]`),
+      );
+      vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+        left: 0,
+        width: 100,
+      } as DOMRect);
+      for (const [element, type, x] of [
+        [source, 'dragstart', 0],
+        [target, 'drop', clientX],
+      ] as const) {
+        const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x });
+        Object.defineProperty(event, 'dataTransfer', { value: transfer });
+        element.dispatchEvent(event);
+      }
+    };
+    const order = (): string[] => config.projects.table.columns.map(({ id }) => id);
+
+    drag('status', 'progress', 75);
+    expect(order()).toEqual(['name', 'progress', 'status', 'start', 'end']);
+    drag('progress', 'end', 75);
+    expect(order()).toEqual(['name', 'status', 'start', 'end', 'progress']);
+    drag('progress', 'status', 25);
+    expect(order()).toEqual(['name', 'progress', 'status', 'start', 'end']);
+
+    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'asc' });
+    expect(saveSettings).toHaveBeenCalledTimes(3);
+  });
+
   it('shows invalid external date ranges for correction without rewriting them', () => {
     const { host, saveProperty } = mount([
       project({ frontmatter: { start: '2026-10-10', end: '2026-09-01' } }),
@@ -288,6 +333,24 @@ describe('ProjectsTableView', () => {
     expect(host.querySelector('.abyss-project-table-count')?.textContent).toBe('1 project');
     expect(host.querySelectorAll('.abyss-project-table-group-row')).toHaveLength(2);
     expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(2);
+  });
+
+  it('renders and searches an explicit wiki-link alias verbatim', () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:creator', visible: true });
+    const { host } = mount([project({ frontmatter: { creator: '[[People/Team|Team/West]]' } })], {
+      settings: config,
+      catalog: catalog([{ name: 'creator', type: 'text' }]),
+    });
+
+    expect(
+      host.querySelector('.abyss-project-table-cell[data-column-id="property:creator"]')
+        ?.textContent,
+    ).toBe('Team/West');
+    const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
+    search.value = 'Team/West';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(1);
   });
 
   it('keeps collapsed group keys stable across project refreshes', () => {
@@ -401,6 +464,47 @@ describe('ProjectsTableView', () => {
     expect(scroll.scrollTop).toBe(47);
     expect(draft.value).toBe('2026-12-24');
     expect(activeDocument.activeElement).toBe(draft);
+  });
+
+  it('retains a status draft across external refresh and surfaces the stale conflict', async () => {
+    const item = project({});
+    const done = expectDefined(DEFAULT_SETTINGS.projects.statuses[2]);
+    const saveStatus = vi.fn(
+      async (
+        _path: string,
+        _statusId: string,
+        expectedStatus: Pick<Project, 'statusId' | 'rawStatus'>,
+      ) => {
+        if (item.statusId !== expectedStatus.statusId) {
+          throw new ProjectEditValidationError(
+            'Status changed externally. Reload the project and try your edit again.',
+          );
+        }
+      },
+    );
+    const { host, view } = mount([item], { saveStatus });
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
+    );
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const select = expectDefined(cell.querySelector<HTMLSelectElement>('select'));
+    select.value = done.id;
+
+    item.statusId = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]).id;
+    view.update([item]);
+    expect(select.isConnected).toBe(true);
+    expect(select.value).toBe(done.id);
+    select.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(saveStatus).toHaveBeenCalledWith('Projects/A.md', done.id, {
+      statusId: active.id,
+      rawStatus: null,
+    });
+    expect(select.isConnected).toBe(true);
+    expect(host.querySelector('.abyss-project-editor-error')?.textContent).toContain(
+      'changed externally',
+    );
   });
 
   it('Tab commits and moves focus to the next table cell', async () => {

@@ -12,7 +12,11 @@ export interface ProjectTableColumnOptions {
   readonly sort: { readonly field: string; readonly dir: 'asc' | 'desc' };
   readonly onSort: (field: string) => void;
   readonly onRename: (columnId: string, label: string) => void;
-  readonly onMove: (columnId: string, beforeColumnId: string) => void;
+  readonly onMove: (
+    columnId: string,
+    targetColumnId: string,
+    placement: 'before' | 'after',
+  ) => void;
   readonly onResize: (resize: ProjectTableColumnResize) => void;
 }
 
@@ -160,7 +164,9 @@ function bindColumnDrag(
     const moved = event.dataTransfer?.getData('text/abyss-project-column');
     if (moved === undefined || moved === '' || moved === columnId) return;
     event.preventDefault();
-    onMove(moved, columnId);
+    const bounds = th.getBoundingClientRect();
+    const placement = event.clientX >= bounds.left + bounds.width / 2 ? 'after' : 'before';
+    onMove(moved, columnId, placement);
   });
 }
 

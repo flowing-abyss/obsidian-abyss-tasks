@@ -1,6 +1,6 @@
 import { TFile } from 'obsidian';
-import { describe, expect, it, vi } from 'vitest';
-import { ProjectManager } from '../src/projects/ProjectManager';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { joinSerializedFrontmatter, ProjectManager } from '../src/projects/ProjectManager';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import type { ProjectField } from '../src/projects/projectFields';
 import { DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
@@ -17,6 +17,10 @@ import {
 } from './helpers';
 
 useRealMoment();
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function clone(): CalendarSettings {
   return JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
@@ -63,6 +67,38 @@ describe('ProjectManager.setStatus', () => {
     expect(fm['other']).toBe('keep');
   });
 
+  it('writes one newline before a native closing delimiter without trimming YAML', () => {
+    expect(joinSerializedFrontmatter('status: done', '---\n')).toBe('status: done\n---\n');
+    expect(joinSerializedFrontmatter('description: |+\n  line\n\n', '\n---\n')).toBe(
+      'description: |+\n  line\n\n---\n',
+    );
+  });
+
+  it('atomically rejects a stale property status without changing any source', async () => {
+    const app = await createAppWithFiles({
+      'P.md': '---\nstatus: active\nother: keep\n---\n\n- [ ] a task\n',
+    });
+    const settings = clone();
+    const planned = expectDefined(settings.projects.statuses[1]);
+    const done = expectDefined(settings.projects.statuses[2]);
+    const file = expectDefined(app.vault.getAbstractFileByPath('P.md'));
+    if (!(file instanceof TFile)) throw new Error('missing project file');
+    await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+      frontmatter['status'] = planned.match.kind === 'property' ? planned.match.value : 'planned';
+    });
+    const before = await app.vault.read(file);
+    const pm = new ProjectManager(app, settings, {} as never, {} as never);
+
+    await expect(
+      pm.setStatus('P.md', done.id, {
+        statusId: expectDefined(settings.projects.statuses[0]).id,
+        rawStatus: null,
+      }),
+    ).rejects.toThrow(/Status changed externally/u);
+
+    expect(await app.vault.read(file)).toBe(before);
+  });
+
   it('strips an inline body status tag so status resolution does not stick', async () => {
     const app = await createAppWithFiles({
       'P.md': '---\ntags:\n  - keepme\n---\n\nProject notes #todo here.\n',
@@ -107,6 +143,83 @@ describe('ProjectManager.setStatus', () => {
     expect(content).toContain('wip');
     expect(content).toContain('keepme');
     expect(content).not.toMatch(/- todo\b/);
+  });
+
+  it('clears descendant status tags while preserving literal code and comments', async () => {
+    const app = await createAppWithFiles({
+      'P.md': [
+        '---',
+        'tags:',
+        '  - qa-project/active/child',
+        '---',
+        'Live #qa-project/active/child.',
+        '`#qa-project/active/child`',
+        '<!-- #qa-project/active/child -->',
+        '',
+      ].join('\n'),
+    });
+    const settings = clone();
+    settings.projects.statuses = [
+      {
+        id: 'active',
+        label: 'Active',
+        onLeftPanel: true,
+        match: { kind: 'tag', tag: 'qa-project/active' },
+      },
+      {
+        id: 'done',
+        label: 'Done',
+        onLeftPanel: true,
+        match: { kind: 'tag', tag: 'qa-project/done' },
+      },
+    ];
+    const pm = new ProjectManager(app, settings, {} as never, {} as never);
+
+    await pm.setStatus('P.md', 'done', { statusId: 'active', rawStatus: null });
+
+    const file = expectDefined(app.vault.getAbstractFileByPath('P.md'));
+    if (!(file instanceof TFile)) throw new Error('missing project file');
+    const content = await app.vault.read(file);
+    expect(content).toContain('- qa-project/done');
+    expect(content).not.toContain('Live #qa-project/active/child');
+    expect(content).toContain('`#qa-project/active/child`');
+    expect(content).toContain('<!-- #qa-project/active/child -->');
+  });
+
+  it('atomically rejects a stale inline tag status without partial frontmatter writes', async () => {
+    const app = await createAppWithFiles({
+      'P.md': '---\nother: keep\n---\n\nProject #wip here.\n',
+    });
+    const settings = clone();
+    settings.projects.statuses = [
+      { id: 'todo', label: 'Todo', onLeftPanel: true, match: { kind: 'tag', tag: 'todo' } },
+      { id: 'wip', label: 'WIP', onLeftPanel: true, match: { kind: 'tag', tag: 'wip' } },
+      { id: 'done', label: 'Done', onLeftPanel: false, match: { kind: 'tag', tag: 'done' } },
+    ];
+    const file = expectDefined(app.vault.getAbstractFileByPath('P.md'));
+    if (!(file instanceof TFile)) throw new Error('missing project file');
+    const before = await app.vault.read(file);
+    const pm = new ProjectManager(app, settings, {} as never, {} as never);
+
+    await expect(
+      pm.setStatus('P.md', 'done', { statusId: 'todo', rawStatus: null }),
+    ).rejects.toThrow(/Status changed externally/u);
+
+    expect(await app.vault.read(file)).toBe(before);
+  });
+
+  it('accepts guarded unknown and no-status snapshots when they are still current', async () => {
+    const settings = clone();
+    const done = expectDefined(settings.projects.statuses[2]);
+    const unknownApp = await createAppWithFiles({ 'Unknown.md': '---\nstatus: mystery\n---\n' });
+    const unknown = new ProjectManager(unknownApp, settings, {} as never, {} as never);
+    await unknown.setStatus('Unknown.md', done.id, { statusId: null, rawStatus: 'mystery' });
+    expect((await readFm(unknownApp, 'Unknown.md'))['status']).toBe('done');
+
+    const noneApp = await createAppWithFiles({ 'None.md': '# No status\n' });
+    const none = new ProjectManager(noneApp, settings, {} as never, {} as never);
+    await none.setStatus('None.md', done.id, { statusId: null, rawStatus: null });
+    expect((await readFm(noneApp, 'None.md'))['status']).toBe('done');
   });
 });
 

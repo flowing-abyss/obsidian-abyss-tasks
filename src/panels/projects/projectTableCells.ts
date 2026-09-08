@@ -20,8 +20,8 @@ function linkLabel(value: string): string {
   if (!value.startsWith('[[') || !value.endsWith(']]')) return value;
   const inner = value.slice(2, -2);
   const separator = inner.indexOf('|');
-  const shown = separator < 0 ? inner : inner.slice(separator + 1);
-  return shown.slice(shown.lastIndexOf('/') + 1);
+  if (separator >= 0) return inner.slice(separator + 1);
+  return inner.slice(inner.lastIndexOf('/') + 1);
 }
 
 function statusFor(

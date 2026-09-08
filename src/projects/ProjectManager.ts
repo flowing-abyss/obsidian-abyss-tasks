@@ -1,6 +1,15 @@
-import { normalizePath, TFile, type App } from 'obsidian';
+import {
+  getFrontMatterInfo,
+  normalizePath,
+  parseFrontMatterTags,
+  parseYaml,
+  stringifyYaml,
+  TFile,
+  type App,
+} from 'obsidian';
 import type { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import type { CalendarSettings, ProjectStatus } from '../settings/types';
+import { normalizeTag, transformMarkdownTags } from '../tags/markdownTagRename';
 import type { TaskApplicationApi, TaskCommandResult, TaskRef } from '../tasks';
 import { ProjectEditValidationError } from './projectEditError';
 import {
@@ -9,6 +18,12 @@ import {
   type ProjectField,
   type ProjectPropertyType,
 } from './projectFields';
+import { resolveStatus } from './status';
+
+export interface ExpectedProjectStatus {
+  readonly statusId: string | null;
+  readonly rawStatus: string | null;
+}
 
 interface NormalizedPropertyValue {
   clear: boolean;
@@ -144,6 +159,155 @@ function toStringArray(raw: unknown): string[] {
   return [];
 }
 
+const INLINE_TAG_CANDIDATE = /#\S+/gu;
+
+interface ParsedProjectSource {
+  readonly frontmatter: Record<string, unknown>;
+  readonly prefix: string;
+  readonly delimiter: string;
+  body: string;
+}
+
+function parseProjectSource(source: string): ParsedProjectSource {
+  const info = getFrontMatterInfo(source);
+  if (!info.exists) return { frontmatter: {}, prefix: '---\n', delimiter: '\n---\n', body: source };
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(info.frontmatter);
+  } catch {
+    throw new ProjectEditValidationError('Project frontmatter is not valid YAML.');
+  }
+  if (parsed !== null && (typeof parsed !== 'object' || Array.isArray(parsed))) {
+    throw new ProjectEditValidationError('Project frontmatter must be a YAML object.');
+  }
+  return {
+    frontmatter: (parsed ?? {}) as Record<string, unknown>,
+    prefix: source.slice(0, info.from),
+    delimiter: source.slice(info.to, info.contentStart),
+    body: source.slice(info.contentStart),
+  };
+}
+
+function semanticInlineTags(body: string): string[] {
+  const tags = new Set<string>();
+  for (const match of body.matchAll(INLINE_TAG_CANDIDATE)) {
+    const tag = normalizedTagCandidate(match[0]);
+    if (tag !== null && transformMarkdownTags(body, tag, '#abyss-status-probe', 'exact') !== body) {
+      tags.add(tag);
+    }
+  }
+  return [...tags];
+}
+
+function normalizedTagCandidate(raw: string): string | null {
+  let candidate = raw;
+  while (candidate.length > 1) {
+    const normalized = normalizeTag(candidate);
+    if (normalized !== null) return normalized;
+    candidate = candidate.slice(0, -1);
+  }
+  return null;
+}
+
+function sourceStatus(
+  parsed: ParsedProjectSource,
+  statuses: ProjectStatus[],
+): ExpectedProjectStatus {
+  const tags = [
+    ...(parseFrontMatterTags(parsed.frontmatter) ?? []),
+    ...semanticInlineTags(parsed.body),
+  ];
+  return resolveStatus(statuses, tags, parsed.frontmatter);
+}
+
+function sameStatus(left: ExpectedProjectStatus, right: ExpectedProjectStatus): boolean {
+  return left.statusId === right.statusId && left.rawStatus === right.rawStatus;
+}
+
+function applyStatusFrontmatter(
+  frontmatter: Record<string, unknown>,
+  statuses: ProjectStatus[],
+  target: ProjectStatus,
+): void {
+  applyPropertyStatusMarkers(frontmatter, statuses, target);
+  applyTagStatusMarkers(frontmatter, statuses, target);
+}
+
+function applyPropertyStatusMarkers(
+  frontmatter: Record<string, unknown>,
+  statuses: ProjectStatus[],
+  target: ProjectStatus,
+): void {
+  for (const status of statuses) {
+    if (status.match.kind !== 'property') continue;
+    const current = frontmatter[status.match.property];
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- Project status matching follows Obsidian frontmatter scalar semantics.
+    const currentString = current === null || current === undefined ? '' : String(current);
+    if (currentString === status.match.value) delete frontmatter[status.match.property];
+  }
+  if (target.match.kind === 'property') {
+    frontmatter[target.match.property] = target.match.value;
+  }
+}
+
+function applyTagStatusMarkers(
+  frontmatter: Record<string, unknown>,
+  statuses: ProjectStatus[],
+  target: ProjectStatus,
+): void {
+  const statusTags = statuses.flatMap((status) =>
+    status.match.kind === 'tag' ? [status.match.tag.replace(/^#/u, '')] : [],
+  );
+  let tags = toStringArray(frontmatter['tags']);
+  const stripped = new Set(statusTags.map((tag) => tag.toLowerCase()));
+  tags = tags.filter((tag) => {
+    const normalized = tag.replace(/^#/u, '').toLowerCase();
+    return ![...stripped].some(
+      (statusTag) => normalized === statusTag || normalized.startsWith(`${statusTag}/`),
+    );
+  });
+  if (target.match.kind === 'tag') {
+    const wanted = target.match.tag.replace(/^#/u, '');
+    if (!tags.some((tag) => tag.replace(/^#/u, '').toLowerCase() === wanted.toLowerCase())) {
+      tags.push(wanted);
+    }
+  }
+  if (tags.length > 0) frontmatter['tags'] = tags;
+  else delete frontmatter['tags'];
+}
+
+function stripInlineStatusTags(body: string, statuses: ProjectStatus[]): string {
+  let transformed = body;
+  const statusTags = statuses.flatMap((status) => {
+    if (status.match.kind !== 'tag') return [];
+    const tag = normalizeTag(status.match.tag);
+    return tag === null ? [] : [tag.toLowerCase()];
+  });
+  for (const tag of semanticInlineTags(body)) {
+    const normalized = tag.toLowerCase();
+    if (
+      statusTags.some(
+        (statusTag) => normalized === statusTag || normalized.startsWith(`${statusTag}/`),
+      )
+    ) {
+      transformed = transformMarkdownTags(transformed, tag, '', 'exact');
+    }
+  }
+  return transformed;
+}
+
+export function joinSerializedFrontmatter(yaml: string, delimiter: string): string {
+  if (yaml.endsWith('\n')) return yaml + delimiter.replace(/^\r?\n/u, '');
+  if (/^\r?\n/u.test(delimiter)) return yaml + delimiter;
+  const lineEnding = delimiter.includes('\r\n') ? '\r\n' : '\n';
+  return yaml + lineEnding + delimiter;
+}
+
+function serializeProjectSource(parsed: ParsedProjectSource): string {
+  const yaml = stringifyYaml(parsed.frontmatter);
+  return `${parsed.prefix}${joinSerializedFrontmatter(yaml, parsed.delimiter)}${parsed.body}`;
+}
+
 /**
  * Creates project notes and writes their status markers. Status is stored
  * either as a frontmatter property or as a tag, depending on each status's
@@ -178,7 +342,11 @@ export class ProjectManager {
     });
   }
 
-  async setStatus(path: string, statusId: string): Promise<void> {
+  async setStatus(
+    path: string,
+    statusId: string,
+    expectedStatus?: ExpectedProjectStatus,
+  ): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) {
       throw new ProjectEditValidationError(`Project file not found: ${path}`);
@@ -189,34 +357,20 @@ export class ProjectManager {
       throw new ProjectEditValidationError(`Unknown project status: ${statusId}`);
     }
 
-    const propStatuses = statuses.filter((s) => s.match.kind === 'property');
-    const tagStatuses = statuses.filter((s) => s.match.kind === 'tag');
-
-    // Property markers: clear every defined property-status whose value is set,
-    // then apply the target if it is a property status. Unrelated keys untouched.
-    if (propStatuses.length > 0 || target.match.kind === 'property') {
-      await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-        for (const s of propStatuses) {
-          const m = s.match as { property: string; value: string };
-          const cur = fm[m.property];
-          // eslint-disable-next-line @typescript-eslint/no-base-to-string -- Frontmatter scalar values are compared using Obsidian's string semantics.
-          const curStr = cur === null || cur === undefined ? '' : String(cur);
-          if (curStr === m.value) delete fm[m.property];
-        }
-        if (target.match.kind === 'property') {
-          fm[target.match.property] = target.match.value;
-        }
-      });
-    }
-
-    // Tag markers: strip sibling status tags, add the target tag if tag-kind.
-    if (tagStatuses.length > 0 || target.match.kind === 'tag') {
-      await this.applyTagMarkers(file, target, tagStatuses);
-      // Status resolution also reads INLINE body tags (getAllTags), so an inline
-      // marker would otherwise survive and keep matching the old status. Remove
-      // inline occurrences of every defined status tag (they are plugin-managed).
-      await this.stripInlineStatusTags(file, tagStatuses);
-    }
+    await this.app.vault.process(file, (source) => {
+      const parsed = parseProjectSource(source);
+      if (
+        expectedStatus !== undefined &&
+        !sameStatus(sourceStatus(parsed, statuses), expectedStatus)
+      ) {
+        throw new ProjectEditValidationError(
+          'Status changed externally. Reload the project and try your edit again.',
+        );
+      }
+      applyStatusFrontmatter(parsed.frontmatter, statuses, target);
+      parsed.body = stripInlineStatusTags(parsed.body, statuses);
+      return serializeProjectSource(parsed);
+    });
   }
 
   async setProperty(
@@ -294,43 +448,6 @@ export class ProjectManager {
     ) {
       throw new ProjectEditValidationError('End date must be on or after start date.');
     }
-  }
-
-  private async stripInlineStatusTags(file: TFile, tagStatuses: ProjectStatus[]): Promise<void> {
-    const tags = tagStatuses.map((s) => (s.match as { tag: string }).tag.replace(/^#/, ''));
-    if (tags.length === 0) return;
-    await this.app.vault.process(file, (content) => {
-      let out = content;
-      for (const tag of tags) {
-        const escaped = tag.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-        // Match an inline #tag (not inside a word/path), keep any leading space.
-        const re = new RegExp(`(^|\\s)#${escaped}(?![\\w/-])`, 'gmu');
-        out = out.replace(re, '$1');
-      }
-      return out;
-    });
-  }
-
-  private async applyTagMarkers(
-    file: TFile,
-    target: ProjectStatus,
-    tagStatuses: ProjectStatus[],
-  ): Promise<void> {
-    await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-      let tags = toStringArray(fm['tags']);
-      const strip = new Set(
-        tagStatuses.map((s) => (s.match as { tag: string }).tag.replace(/^#/, '').toLowerCase()),
-      );
-      tags = tags.filter((t) => !strip.has(t.replace(/^#/, '').toLowerCase()));
-      if (target.match.kind === 'tag') {
-        const want = target.match.tag.replace(/^#/, '');
-        if (!tags.some((t) => t.replace(/^#/, '').toLowerCase() === want.toLowerCase())) {
-          tags.push(want);
-        }
-      }
-      if (tags.length > 0) fm['tags'] = tags;
-      else delete fm['tags'];
-    });
   }
 
   async create(name: string): Promise<TFile | null> {

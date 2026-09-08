@@ -290,8 +290,13 @@ matching task statistics in one coherent project snapshot.
 
 ### Project operations
 
-Project discovery is a query over Markdown metadata. Project status changes update the configured
-frontmatter property or tag. Moving a task into a project uses the standard task move command, so it
+Project discovery is a query over Markdown metadata. Table status edits carry the captured resolved
+`statusId` plus `rawStatus` into `ProjectManager`. The manager performs one `Vault.process`
+transaction over fresh source: it parses frontmatter and semantic inline tags, rejects a stale
+status snapshot before any mutation, then updates configured property/tag carriers and removes
+managed inline markers in the same write. Inline recognition reuses the shared Markdown tag transformer so
+code, comments, links, and escapes remain literal. Unguarded dashboard/default-status callers retain
+the same status operation. Moving a task into a project uses the standard task move command, so it
 retains the same validation, recovery, and reindexing behavior as other task moves.
 
 ## Enforced dependency rules

@@ -40,7 +40,11 @@ export interface ProjectsTableViewContext {
     value: unknown,
     expectedValue: unknown,
   ) => Promise<void>;
-  readonly saveStatus: (path: string, statusId: string) => Promise<void>;
+  readonly saveStatus: (
+    path: string,
+    statusId: string,
+    expectedStatus: Pick<Project, 'statusId' | 'rawStatus'>,
+  ) => Promise<void>;
   readonly createProject: (name: string) => Promise<void>;
   readonly openProject: (path: string) => void;
 }
@@ -306,8 +310,8 @@ export class ProjectsTableView {
       onRename: (columnId, label) => {
         this.renameColumn_abyssPrivate(columnId, label);
       },
-      onMove: (columnId, beforeColumnId) => {
-        this.moveColumn_abyssPrivate(columnId, beforeColumnId);
+      onMove: (columnId, targetColumnId, placement) => {
+        this.moveColumn_abyssPrivate(columnId, targetColumnId, placement);
       },
       onResize: (resize) => {
         this.resizeColumns_abyssPrivate(resize);
@@ -432,18 +436,19 @@ export class ProjectsTableView {
     if (setProjectColumnLabel(table, columnId, label)) this.persistAndRender_abyssPrivate();
   }
 
-  private moveColumn_abyssPrivate(columnId: string, beforeColumnId: string): void {
+  private moveColumn_abyssPrivate(
+    columnId: string,
+    targetColumnId: string,
+    placement: 'before' | 'after',
+  ): void {
     const columns = this.context_abyssPrivate.settings.projects.table.columns;
     const from = columns.findIndex(({ id }) => id === columnId);
-    const to = columns.findIndex(({ id }) => id === beforeColumnId);
+    const to = columns.findIndex(({ id }) => id === targetColumnId);
     if (from <= 0 || to <= 0 || from === to) return;
     const moved = columns.splice(from, 1)[0];
     if (moved === undefined) return;
-    columns.splice(
-      columns.findIndex(({ id }) => id === beforeColumnId),
-      0,
-      moved,
-    );
+    const target = columns.findIndex(({ id }) => id === targetColumnId);
+    columns.splice(placement === 'after' ? target + 1 : target, 0, moved);
     this.persistAndRender_abyssPrivate();
   }
 
@@ -517,6 +522,7 @@ export class ProjectsTableView {
   private editCell_abyssPrivate(cell: HTMLElement, project: Project, field: ProjectField): void {
     if (this.activeEditor_abyssPrivate !== undefined || !cell.isConnected) return;
     const expectedValue = projectFieldValue(project, field);
+    const expectedStatus = { statusId: project.statusId, rawStatus: project.rawStatus };
     const nextCell = nextCellIdentity(cell);
     cell.empty();
     const handle = mountProjectCellEditor({
@@ -529,7 +535,9 @@ export class ProjectsTableView {
       sourcePath: project.path,
       save: async (value) => {
         if (field.type === 'status') {
-          await this.context_abyssPrivate.saveStatus(project.path, String(value));
+          await this.context_abyssPrivate.saveStatus(project.path, String(value), {
+            ...expectedStatus,
+          });
         } else {
           await this.context_abyssPrivate.saveProperty(project.path, field, value, expectedValue);
         }
