@@ -1349,6 +1349,81 @@ describe('ProjectsTableView', () => {
     expect(renderedDestination.querySelector('select')).not.toBeNull();
   });
 
+  it('keeps the latest clicked table cell while an earlier blur save is pending', async () => {
+    let release: (() => void) | undefined;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { host } = mount(
+      ['A', 'B', 'C'].map((name) => project({ path: `Projects/${name}.md`, name })),
+      { saveProperty: vi.fn().mockReturnValue(pending) },
+    );
+    const cell = (name: string): HTMLElement =>
+      expectDefined(
+        host.querySelector<HTMLElement>(
+          `[data-project-path="Projects/${name}.md"] [data-column-id="start"]`,
+        ),
+      );
+    cell('A').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(cell('A').querySelector<HTMLInputElement>('input'));
+    input.value = '2026-09-02';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    cell('B').focus();
+    input.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: cell('B') }));
+    await flushMicrotasks();
+
+    cell('C').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(activeDocument.activeElement).toBe(cell('C'));
+    expect(cell('C').classList.contains('is-selection-focus')).toBe(true);
+    expectDefined(release)();
+    await flushMicrotasks();
+
+    const rendered = cell('C');
+    expect(activeDocument.activeElement).toBe(rendered);
+    expect(rendered.classList.contains('is-selection-focus')).toBe(true);
+  });
+
+  it('keeps the latest external control focus while an earlier table-cell blur save is pending', async () => {
+    let release: (() => void) | undefined;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { host } = mount(
+      [
+        project({ path: 'Projects/A.md', name: 'A' }),
+        project({ path: 'Projects/B.md', name: 'B' }),
+      ],
+      { saveProperty: vi.fn().mockReturnValue(pending) },
+    );
+    const edited = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/A.md"] [data-column-id="start"]',
+      ),
+    );
+    const initialDestination = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/B.md"] [data-column-id="start"]',
+      ),
+    );
+    const outside = activeDocument.body.createEl('button');
+    edited.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(edited.querySelector<HTMLInputElement>('input'));
+    input.value = '2026-09-02';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    initialDestination.focus();
+    input.dispatchEvent(
+      new FocusEvent('focusout', { bubbles: true, relatedTarget: initialDestination }),
+    );
+    await flushMicrotasks();
+
+    outside.focus();
+    expect(activeDocument.activeElement).toBe(outside);
+    expectDefined(release)();
+    await flushMicrotasks();
+
+    expect(activeDocument.activeElement).toBe(outside);
+  });
+
   it('resolves editor Tab from the saved project occurrence after current grouped projection', async () => {
     const config = settings();
     config.projects.table.groupBy = 'property:Owner';

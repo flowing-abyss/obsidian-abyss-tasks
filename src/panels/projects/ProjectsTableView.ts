@@ -146,6 +146,11 @@ interface ProjectCellEditorState {
   ownedClear: OwnedInferredPropertyClear | undefined;
 }
 
+interface EditorCloseDestination {
+  readonly cell: ProjectTableSelectableCell | undefined;
+  readonly preservesExternalFocus: boolean;
+}
+
 interface ProjectReceiptProjection {
   readonly receipt: AppliedProjectCellChange;
   readonly sourceRevisionAtMutationStart: number;
@@ -1699,6 +1704,41 @@ export class ProjectsTableView {
     if (target !== undefined) this.focusSelectionCell_abyssPrivate(target);
   }
 
+  private editorCloseDestination_abyssPrivate(
+    edited: ProjectTableSelectableCell | undefined,
+    navigation: ProjectCellEditorNavigation,
+    initialTarget: HTMLElement | undefined,
+    editorCell: HTMLElement,
+  ): EditorCloseDestination {
+    const initialCell = this.keydownCell_abyssPrivate(initialTarget ?? null)?.identity;
+    const activeElement = this.tableHost_abyssPrivate.ownerDocument.activeElement;
+    const activeCell = this.keydownCell_abyssPrivate(activeElement)?.identity;
+    const selectedCell = this.selection_abyssPrivate.focus;
+    const selectionMoved =
+      selectedCell !== undefined &&
+      edited !== undefined &&
+      (selectedCell.occurrenceId !== edited.occurrenceId ||
+        selectedCell.columnId !== edited.columnId);
+    return {
+      cell: activeCell ?? (selectionMoved ? selectedCell : initialCell),
+      preservesExternalFocus:
+        navigation === 'preserve-focus' &&
+        this.isExternalFocusDestination_abyssPrivate(activeElement, activeCell, editorCell),
+    };
+  }
+
+  private isExternalFocusDestination_abyssPrivate(
+    activeElement: Element | null,
+    activeCell: ProjectTableSelectableCell | undefined,
+    editorCell: HTMLElement,
+  ): boolean {
+    if (!(activeElement instanceof HTMLElement)) return false;
+    if (!activeElement.isConnected) return false;
+    if (activeElement === this.tableHost_abyssPrivate.ownerDocument.body) return false;
+    if (activeCell !== undefined) return false;
+    return !editorCell.contains(activeElement);
+  }
+
   private currentProjectionCell_abyssPrivate(
     identity: ProjectTableSelectableCell,
     cells: readonly ProjectTableSelectableCell[],
@@ -1760,18 +1800,21 @@ export class ProjectsTableView {
         });
       },
       onClose: (_result, closeContext) => {
-        const deliberateFocus = this.keydownCell_abyssPrivate(
-          closeContext.focusTarget ?? null,
-        )?.identity;
+        const destination = this.editorCloseDestination_abyssPrivate(
+          edited,
+          closeContext.navigation,
+          closeContext.focusTarget,
+          cell,
+        );
         this.activeEditor_abyssPrivate = undefined;
         this.renderTable_abyssPrivate();
         const pendingAction = this.pendingAction_abyssPrivate !== undefined;
         this.runPendingAction_abyssPrivate();
-        if (!pendingAction) {
+        if (!pendingAction && !destination.preservesExternalFocus) {
           this.finishEditorNavigation_abyssPrivate(
             edited,
             closeContext.navigation,
-            deliberateFocus,
+            destination.cell,
           );
         }
       },
