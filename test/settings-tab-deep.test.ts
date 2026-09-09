@@ -1,5 +1,6 @@
 import { App, Setting } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import { SHORTCUT_ACTION_IDS } from '../src/settings/shortcuts';
@@ -20,6 +21,7 @@ interface StubPlugin {
   app: App;
   settings: CalendarSettings;
   saveSettings: ReturnType<typeof vi.fn>;
+  renameProjectStatus: ReturnType<typeof vi.fn>;
 }
 
 interface CapturedComp {
@@ -70,7 +72,11 @@ function patchSetting(captured: CapturedComp[]): () => void {
 
 function makeTab(
   settingsOverrides: Partial<CalendarSettings> = {},
-  opts: { expand?: boolean; saveSettings?: StubPlugin['saveSettings'] } = {},
+  opts: {
+    expand?: boolean;
+    saveSettings?: StubPlugin['saveSettings'];
+    projectProperties?: ProjectPropertyCatalog;
+  } = {},
 ): {
   tab: CalendarSettingsTab;
   plugin: StubPlugin;
@@ -86,12 +92,21 @@ function makeTab(
   };
   const settings = { ...structuredClone(DEFAULT_SETTINGS), ...settingsOverrides };
   const saveSettings = opts.saveSettings ?? vi.fn().mockResolvedValue(undefined);
-  const plugin: StubPlugin = { app, settings, saveSettings };
+  const renameProjectStatus = vi.fn(
+    async (id: string, name: string, expectedName: string): Promise<void> => {
+      const status = settings.projects.statuses.find((candidate) => candidate.id === id);
+      if (status?.name !== expectedName) throw new Error('status changed externally');
+      status.name = name.trim();
+      await (saveSettings as unknown as () => Promise<void>)();
+    },
+  );
+  const plugin: StubPlugin = { app, settings, saveSettings, renameProjectStatus };
   const captured: CapturedComp[] = [];
   const restore = patchSetting(captured);
   const tab = new CalendarSettingsTab(
     app,
     plugin as unknown as ConstructorParameters<typeof CalendarSettingsTab>[1],
+    opts.projectProperties,
   );
   // Cards (tag groups / statuses) are collapsed by default; expand them all so
   // their body Settings render and are captured for inspection.
@@ -809,7 +824,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(cards).toHaveLength(DEFAULT_SETTINGS.projects.statuses.length);
     // Collapsed: title shown, no expanded body.
     expect(expectDefined(cards[0]).querySelector('.abyss-settings-card-title')?.textContent).toBe(
-      'Active',
+      'active',
     );
     expect(expectDefined(cards[0]).querySelector('.abyss-settings-card-body')).toBeNull();
   });
@@ -862,7 +877,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
   });
 });
 
-describe('CalendarSettingsTab card badges (manual/prefix, property/tag)', () => {
+describe('CalendarSettingsTab card badges and project status metadata', () => {
   it('tag-group card headers show a mode badge distinguishing manual vs prefix', () => {
     const { tab } = makeTab({
       tagGroups: [
@@ -878,14 +893,99 @@ describe('CalendarSettingsTab card badges (manual/prefix, property/tag)', () => 
     expect(badges).toContain('manual');
   });
 
-  it('status card headers show a property/tag badge', () => {
+  it('status cards have one shared property source and no per-status source badge', () => {
     const { tab } = makeTab();
     const body = openSection(tab, 5);
     const badges = Array.from(body.querySelectorAll('.abyss-settings-card-badge')).map(
       (b) => b.textContent,
     );
-    // Default statuses are all property-defined.
-    expect(badges.every((b) => b === 'property')).toBe(true);
-    expect(badges.length).toBeGreaterThan(0);
+    expect(badges).toEqual([]);
+    expect(findDropdown(body, 'Status property')?.value).toBe('status');
+    expect(body.textContent).not.toContain('Defined by');
+    expect(body.textContent).not.toContain('Value');
+  });
+
+  it('commits a status rename on blur rather than on each input event', async () => {
+    const { tab, plugin } = makeTab();
+    const body = openSection(tab, 5);
+    const input = expectDefined(findInput(body, 'Name'));
+    input.value = 'running';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(plugin.renameProjectStatus).not.toHaveBeenCalled();
+
+    input.dispatchEvent(new Event('blur'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(plugin.renameProjectStatus).toHaveBeenCalledWith('status-1', 'running', 'active');
+  });
+
+  it('renders Statuses before the project Columns section', () => {
+    const { tab } = makeTab();
+    const body = openSection(tab, 5);
+    const text = body.textContent;
+    expect(text.indexOf('Statuses')).toBeLessThan(text.indexOf('Table columns'));
+    expect(text.indexOf('Status property')).toBeLessThan(text.indexOf('Table columns'));
+    expect(text.indexOf('Start property')).toBeGreaterThan(text.indexOf('Table columns'));
+    expect(text.indexOf('End property')).toBeGreaterThan(text.indexOf('Table columns'));
+  });
+
+  it('offers native text/date sources and rejects a date source collision', async () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.statusProperty = 'Статус';
+    projects.startProperty = 'Начало';
+    projects.endProperty = 'Конец';
+    const projectProperties: ProjectPropertyCatalog = {
+      list: () => [
+        { name: 'Статус', type: 'text' },
+        { name: 'Фаза', type: 'text' },
+        { name: 'Начало', type: 'date' },
+        { name: 'Конец', type: 'date' },
+        { name: 'Wrong type', type: 'number' },
+      ],
+      values: () => [],
+      onChange: () => () => {},
+    };
+    const { tab, plugin } = makeTab({ projects }, { projectProperties });
+    const body = openSection(tab, 5);
+    const status = expectDefined(findDropdown(body, 'Status property'));
+    const start = expectDefined(findDropdown(body, 'Start property'));
+    expect(Array.from(status.options).map(({ value }) => value)).toEqual(['Статус', 'Фаза']);
+    expect(Array.from(start.options).map(({ value }) => value)).toEqual(['Начало', 'Конец']);
+
+    start.value = 'Конец';
+    start.dispatchEvent(new Event('change', { bubbles: true }));
+    await Promise.resolve();
+
+    expect(plugin.settings.projects.startProperty).toBe('Начало');
+    expect(plugin.saveSettings).not.toHaveBeenCalled();
+  });
+
+  it('shows recoverable legacy binding evidence until a source is selected', async () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.statusProperty = '';
+    projects.statusMigration = {
+      issue: 'conflicting-properties',
+      legacyStatuses: [
+        { id: 'a', match: { kind: 'property', property: 'status', value: 'active' } },
+      ],
+      propertyCandidates: ['status', 'phase'],
+    };
+    const { tab, plugin, captured } = makeTab({ projects });
+    const body = openSection(tab, 5);
+    expect(findDropdown(body, 'Status migration needs attention')).not.toBeNull();
+    const resolution = expectDefined(
+      captured.find(
+        (entry) => entry.type === 'dropdown' && entry.name === 'Status migration needs attention',
+      ),
+    );
+
+    resolution.comp.setValue('phase');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(plugin.settings.projects.statusProperty).toBe('phase');
+    expect(plugin.settings.projects.statusMigration).toBeUndefined();
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
   });
 });

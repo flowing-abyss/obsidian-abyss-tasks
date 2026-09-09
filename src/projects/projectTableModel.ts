@@ -58,7 +58,7 @@ function statusGroupKey(project: Project): string {
 
 function statusLabel(project: Project, statuses: readonly ProjectStatus[]): string {
   if (project.statusId !== null) {
-    return statuses.find(({ id }) => id === project.statusId)?.label ?? project.statusId;
+    return statuses.find(({ id }) => id === project.statusId)?.name ?? project.statusId;
   }
   return project.rawStatus ?? 'No status';
 }

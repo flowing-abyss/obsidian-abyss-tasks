@@ -161,7 +161,11 @@ describe('ProjectsPanel dispatch', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
       projectProperties: {
-        list: () => [{ name: 'Budget', type: 'number' }],
+        list: () => [
+          { name: 'start', type: 'date' },
+          { name: 'end', type: 'date' },
+          { name: 'Budget', type: 'number' },
+        ],
         values: () => [],
         onChange: () => () => {},
       },

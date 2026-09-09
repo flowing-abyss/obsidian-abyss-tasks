@@ -170,6 +170,139 @@ describe('migrateSettings', () => {
 });
 
 describe('projects migration', () => {
+  it('migrates one legacy property source using the persisted value as the literal name', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statuses: [
+          {
+            id: 'a',
+            label: 'Active',
+            match: { kind: 'property', property: 'status', value: 'active' },
+            onLeftPanel: true,
+          },
+        ],
+      },
+    };
+
+    migrateSettings(raw);
+
+    const projects = raw['projects'] as {
+      statusProperty: string;
+      statuses: Array<Record<string, unknown>>;
+    };
+    expect(projects.statusProperty).toBe('status');
+    expect(projects.statuses[0]).toMatchObject({ id: 'a', name: 'active' });
+    expect(projects.statuses[0]).not.toHaveProperty('label');
+    expect(projects.statuses[0]).not.toHaveProperty('match');
+  });
+
+  it('normalizes the new project metadata shape idempotently', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statusProperty: 'Статус',
+        startProperty: 'Начало',
+        endProperty: 'Конец',
+        statuses: [{ id: 'a', name: 'активный', onLeftPanel: true }],
+        defaultStatusId: 'a',
+      },
+    };
+
+    migrateSettings(raw);
+    const once = structuredClone(raw);
+    migrateSettings(raw);
+
+    expect(raw).toEqual(once);
+  });
+
+  it('retains conflicting legacy source evidence instead of choosing or erasing definitions', () => {
+    const legacyStatuses = [
+      {
+        id: 'a',
+        label: 'Active',
+        match: { kind: 'property', property: 'status', value: 'active' },
+        onLeftPanel: true,
+      },
+      {
+        id: 'q',
+        label: 'Queued',
+        match: { kind: 'property', property: 'phase', value: 'queued' },
+        onLeftPanel: false,
+      },
+    ];
+    const raw: Record<string, unknown> = { projects: { statuses: legacyStatuses } };
+
+    migrateSettings(raw);
+
+    const projects = raw['projects'] as Record<string, unknown>;
+    expect(projects['statusMigration']).toEqual({
+      issue: 'conflicting-properties',
+      legacyStatuses,
+      propertyCandidates: ['status', 'phase'],
+    });
+    expect(projects['statuses']).toEqual([
+      { id: 'a', name: 'active', onLeftPanel: true },
+      { id: 'q', name: 'queued', onLeftPanel: false },
+    ]);
+  });
+
+  it('retains malformed legacy name evidence without binding or crashing', () => {
+    const malformed = [
+      {
+        id: 'a',
+        label: 'Active',
+        match: { kind: 'property', property: 'status', value: '' },
+        onLeftPanel: true,
+      },
+    ];
+    const raw: Record<string, unknown> = { projects: { statuses: malformed } };
+
+    migrateSettings(raw);
+
+    const projects = raw['projects'] as Record<string, unknown>;
+    expect(projects['statusProperty']).toBe('');
+    expect(projects['statusMigration']).toEqual({
+      issue: 'invalid-statuses',
+      legacyStatuses: malformed,
+      propertyCandidates: [],
+    });
+    expect(projects['statuses']).toEqual([
+      { id: 'status-1', name: 'active', color: '#4caf50', onLeftPanel: true },
+      { id: 'status-2', name: 'planned', color: '#2196f3', onLeftPanel: false },
+      { id: 'status-3', name: 'done', color: '#888888', onLeftPanel: false },
+    ]);
+  });
+
+  it('removes legacy tag definitions while retaining ordinary settings tags and reports one notice', () => {
+    const raw: Record<string, unknown> = {
+      pinnedTags: ['#keep'],
+      projects: {
+        statuses: [
+          {
+            id: 'tag',
+            label: 'Tagged',
+            match: { kind: 'tag', tag: '#project/active' },
+            onLeftPanel: true,
+          },
+          {
+            id: 'done',
+            label: 'Done',
+            match: { kind: 'property', property: 'status', value: 'done' },
+            onLeftPanel: false,
+          },
+        ],
+      },
+    };
+
+    const result = migrateSettings(raw);
+
+    const projects = raw['projects'] as { statuses: Array<{ id: string }> };
+    expect(projects.statuses.map(({ id }) => id)).toEqual(['done']);
+    expect(raw['pinnedTags']).toEqual(['#keep']);
+    expect(result.notices).toEqual([
+      'Project tag statuses were removed. Their note tags are unchanged; choose a Status property in Projects settings.',
+    ]);
+  });
+
   it('adds projects + sectionCollapse when missing', () => {
     const raw: Record<string, unknown> = {};
     migrateSettings(raw);
@@ -271,8 +404,8 @@ describe('projects migration', () => {
 
     const projects = raw['projects'] as { table: Record<string, unknown> };
     expect(projects.table['columns']).toEqual([
-      { id: 'property:Budget', label: 'Cost', width: 240, visible: false },
       { id: 'name', visible: true },
+      { id: 'property:Budget', label: 'Cost', width: 240, visible: false },
       { id: 'status', visible: true },
       { id: 'progress', visible: true },
       { id: 'start', visible: true },
@@ -281,6 +414,32 @@ describe('projects migration', () => {
     expect(projects.table['groupBy']).toBe('property:Budget');
     expect(projects.table['sortBy']).toEqual({ field: 'property:Budget', dir: 'desc' });
     expect(projects.table['hiddenStatuses']).toEqual(['id:a']);
+  });
+
+  it('restores all five curated columns and keeps Name first and visible', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statusProperty: 'status',
+        startProperty: 'start',
+        endProperty: 'end',
+        statuses: [{ id: 'a', name: 'active', onLeftPanel: true }],
+        defaultStatusId: 'a',
+        table: { columns: [{ id: 'name', visible: false }] },
+      },
+    };
+
+    migrateSettings(raw);
+
+    const projects = raw['projects'] as {
+      table: { columns: Array<{ id: string; visible: boolean }> };
+    };
+    expect(projects.table.columns).toEqual([
+      { id: 'name', visible: true },
+      { id: 'status', visible: true },
+      { id: 'progress', visible: true },
+      { id: 'start', visible: true },
+      { id: 'end', visible: true },
+    ]);
   });
 });
 

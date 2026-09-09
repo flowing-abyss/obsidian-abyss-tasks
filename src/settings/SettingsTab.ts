@@ -37,6 +37,7 @@ interface TaskCalendarPlugin extends Plugin {
   tagManager: TagManager;
   rebuildTaskStatusSemantics(): void;
   saveSettings(): Promise<void>;
+  renameProjectStatus(id: string, name: string, expectedName: string): Promise<void>;
 }
 
 interface CardListOptions<T> {
@@ -83,6 +84,13 @@ interface TaskStatusIconResults {
   query: string;
   focusIcon?: string;
   selectIcon: (iconId: string) => void;
+}
+
+interface ProjectMetadataSourceSetting {
+  readonly description: string;
+  readonly key: 'statusProperty' | 'startProperty' | 'endProperty';
+  readonly name: string;
+  readonly requiredType: 'text' | 'date';
 }
 
 let nextSettingsTabScope = 0;
@@ -972,6 +980,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private renderProjectsSettings_abyssPrivate(containerEl: HTMLElement): void {
     this.renderProjectDefinitionSettings_abyssPrivate(containerEl);
     this.renderProjectTaskInsertionSettings_abyssPrivate(containerEl);
+    this.renderProjectStatusesSettings_abyssPrivate(containerEl);
     this.projectSettingsCleanup_abyssPrivate = renderProjectTableSettings({
       app: this.app,
       container: containerEl,
@@ -982,7 +991,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
         this.render_abyssPrivate();
       },
     });
-    this.renderProjectStatusesSettings_abyssPrivate(containerEl);
   }
 
   private renderProjectDefinitionSettings_abyssPrivate(containerEl: HTMLElement): void {
@@ -1057,14 +1065,100 @@ export class CalendarSettingsTab extends PluginSettingTab {
     }
   }
 
+  private renderStatusMigration_abyssPrivate(containerEl: HTMLElement): void {
+    const projects = this.plugin_abyssPrivate.settings.projects;
+    const migration = projects.statusMigration;
+    if (migration === undefined) return;
+    const setting = new Setting(containerEl)
+      .setName('Status migration needs attention')
+      .setDesc(
+        migration.issue === 'conflicting-properties'
+          ? 'Legacy statuses used several properties. Choose the one property that now defines every status; note properties are not renamed.'
+          : 'Some legacy status definitions were malformed or duplicated. Valid definitions remain available; discard the invalid entries to continue.',
+      );
+    if (migration.propertyCandidates.length > 0) {
+      setting.addDropdown((dropdown) => {
+        dropdown.addOption('', 'Choose source');
+        for (const property of migration.propertyCandidates) dropdown.addOption(property, property);
+        dropdown.onChange(async (property) => {
+          if (property.length === 0) return;
+          projects.statusProperty = property;
+          delete projects.statusMigration;
+          await this.plugin_abyssPrivate.saveSettings();
+          this.render_abyssPrivate();
+        });
+      });
+    } else {
+      setting.addButton((button) =>
+        button.setButtonText('Discard invalid entries').onClick(async () => {
+          projects.statusProperty = 'status';
+          delete projects.statusMigration;
+          await this.plugin_abyssPrivate.saveSettings();
+          this.render_abyssPrivate();
+        }),
+      );
+    }
+  }
+
+  private renderProjectMetadataSource_abyssPrivate(
+    containerEl: HTMLElement,
+    source: ProjectMetadataSourceSetting,
+  ): void {
+    const { description, key, name, requiredType } = source;
+    const projects = this.plugin_abyssPrivate.settings.projects;
+    const current = projects[key];
+    const setting = new Setting(containerEl).setName(name).setDesc(description);
+    setting.addDropdown((dropdown) => {
+      const options =
+        this.projectProperties_abyssPrivate
+          .list()
+          ?.filter(({ type }) => type === requiredType)
+          .map(({ name: property }) => property) ?? [];
+      if (
+        current.length > 0 &&
+        !options.some((property) => this.sameProperty_abyssPrivate(property, current))
+      ) {
+        dropdown.addOption(current, `${current} (current)`);
+      }
+      for (const property of options) dropdown.addOption(property, property);
+      dropdown.setValue(current).onChange(async (property) => {
+        const siblingKeys = (['statusProperty', 'startProperty', 'endProperty'] as const).filter(
+          (candidate) => candidate !== key,
+        );
+        if (
+          siblingKeys.some((candidate) =>
+            this.sameProperty_abyssPrivate(projects[candidate], property),
+          )
+        ) {
+          new Notice(`${name} must use a different property from the other curated fields.`);
+          this.render_abyssPrivate();
+          return;
+        }
+        projects[key] = property;
+        await this.plugin_abyssPrivate.saveSettings();
+        this.render_abyssPrivate();
+      });
+    });
+  }
+
+  private sameProperty_abyssPrivate(left: string, right: string): boolean {
+    return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
+  }
+
   private renderProjectStatusesSettings_abyssPrivate(containerEl: HTMLElement): void {
     const projects = this.plugin_abyssPrivate.settings.projects;
     new Setting(containerEl).setName('Statuses').setHeading();
+    this.renderStatusMigration_abyssPrivate(containerEl);
+    this.renderProjectMetadataSource_abyssPrivate(containerEl, {
+      name: 'Status property',
+      description: 'The single frontmatter property used for every project status.',
+      key: 'statusProperty',
+      requiredType: 'text',
+    });
     this.renderCardList_abyssPrivate(containerEl, projects.statuses, {
       id: (s) => s.id,
-      title: (s) => s.label,
+      title: (s) => s.name,
       accent: (s) => s.color,
-      badge: (s) => (s.match.kind === 'tag' ? 'tag' : 'property'),
       body: (bodyEl, idx) => {
         this.renderStatusCard_abyssPrivate(bodyEl, idx);
       },
@@ -1082,14 +1176,19 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .onClick(async () => {
           // Collision-proof id: smallest status-N not already taken.
           let n = projects.statuses.length + 1;
-          while (projects.statuses.some((s) => s.id === `status-${n}`)) n++;
+          while (
+            projects.statuses.some(
+              (status) => status.id === `status-${n}` || status.name === `status ${n}`,
+            )
+          ) {
+            n++;
+          }
           const id = `status-${n}`;
           projects.statuses.push({
             id,
-            label: 'New status',
+            name: `status ${n}`,
             color: '#888888',
             onLeftPanel: false,
-            match: { kind: 'property', property: 'status', value: '' },
           });
           this.expandedCards_abyssPrivate.add(id); // open the new card for editing
           await this.plugin_abyssPrivate.saveSettings();
@@ -1111,7 +1210,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .setName('Default status')
       .setDesc('Applied to newly created projects.')
       .addDropdown((dropdown) => {
-        for (const status of projects.statuses) dropdown.addOption(status.id, status.label);
+        for (const status of projects.statuses) dropdown.addOption(status.id, status.name);
         dropdown
           .setValue(projects.defaultStatusId === '' ? firstStatus.id : projects.defaultStatusId)
           .onChange(async (value) => {
@@ -1127,28 +1226,43 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const status = statuses[idx];
     if (status == null) return;
 
-    new Setting(card).setName('Label').addText((t) =>
-      t.setValue(status.label).onChange(async (v) => {
-        status.label = v;
-        await this.plugin_abyssPrivate.saveSettings();
-      }),
-    );
-
-    new Setting(card).setName('Defined by').addDropdown((d) =>
-      d
-        .addOptions({ property: 'Frontmatter property', tag: 'Tag' })
-        .setValue(status.match.kind)
-        .onChange(async (v) => {
-          status.match =
-            v === 'tag'
-              ? { kind: 'tag', tag: '' }
-              : { kind: 'property', property: 'status', value: '' };
-          await this.plugin_abyssPrivate.saveSettings();
-          this.render_abyssPrivate();
-        }),
-    );
-
-    this.renderProjectStatusMatchSettings_abyssPrivate(card, status);
+    new Setting(card).setName('Name').addText((text) => {
+      text.setValue(status.name);
+      const input = text.inputEl;
+      const expectedName = status.name;
+      const commit = (): void => {
+        if (input.value === expectedName || input.disabled) return;
+        const requestedName = input.value;
+        input.disabled = true;
+        runAsyncAction(
+          this.plugin_abyssPrivate.renameProjectStatus(status.id, requestedName, expectedName).then(
+            () => {
+              this.render_abyssPrivate();
+            },
+            (error: unknown) => {
+              input.value = expectedName;
+              input.disabled = false;
+              const message = error instanceof Error ? error.message : String(error);
+              console.error('[abyss-tasks] Could not rename project status', {
+                statusId: status.id,
+                expectedName,
+                requestedName,
+                cause: error,
+              });
+              new Notice(`Could not rename project status: ${message}`);
+            },
+          ),
+        );
+      };
+      input.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        input.blur();
+      });
+      input.addEventListener('blur', () => {
+        commit();
+      });
+    });
 
     new Setting(card).setName('Color').addColorPicker((cp) =>
       cp.setValue(status.color ?? '#888888').onChange(async (v) => {
@@ -1165,44 +1279,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
     );
 
     this.renderDeleteProjectStatusSetting_abyssPrivate(card, idx);
-  }
-
-  private renderProjectStatusMatchSettings_abyssPrivate(
-    card: HTMLElement,
-    status: ProjectStatus,
-  ): void {
-    if (status.match.kind === 'property') {
-      const match = status.match;
-      new Setting(card).setName('Property').addText((t) =>
-        t
-          .setPlaceholder('Status')
-          .setValue(match.property)
-          .onChange(async (v) => {
-            match.property = v.trim();
-            await this.plugin_abyssPrivate.saveSettings();
-          }),
-      );
-      new Setting(card).setName('Value').addText((t) =>
-        t
-          .setPlaceholder('Active')
-          .setValue(match.value)
-          .onChange(async (v) => {
-            match.value = v.trim();
-            await this.plugin_abyssPrivate.saveSettings();
-          }),
-      );
-    } else {
-      const match = status.match;
-      new Setting(card).setName('Tag').addText((t) =>
-        t
-          .setPlaceholder('Active')
-          .setValue(match.tag)
-          .onChange(async (v) => {
-            match.tag = v.trim().replace(/^#/, '');
-            await this.plugin_abyssPrivate.saveSettings();
-          }),
-      );
-    }
   }
 
   private renderDeleteProjectStatusSetting_abyssPrivate(card: HTMLElement, idx: number): void {

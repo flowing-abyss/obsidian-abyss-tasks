@@ -1,4 +1,4 @@
-import { Notice, setIcon, type App } from 'obsidian';
+import { Notice, setIcon, Setting, type App } from 'obsidian';
 import type { ProjectPropertyCatalog } from '../projects/ObsidianProjectProperties';
 import type {
   ProjectColumn,
@@ -34,8 +34,17 @@ function sourceProperty(column: ProjectColumn): string | undefined {
   return column.id.startsWith('property:') ? column.id.slice('property:'.length) : undefined;
 }
 
-function projectColumnSourceLabel(column: ProjectColumn): string {
+function projectColumnDisplayLabel(column: ProjectColumn): string {
   return sourceProperty(column) ?? CURATED_LABELS[column.id] ?? column.id;
+}
+
+function projectColumnSourceLabel(projects: ProjectsSettings, column: ProjectColumn): string {
+  if (column.id === 'name') return 'Filename';
+  if (column.id === 'progress') return 'Tasks';
+  if (column.id === 'status') return projects.statusProperty;
+  if (column.id === 'start') return projects.startProperty;
+  if (column.id === 'end') return projects.endProperty;
+  return sourceProperty(column) ?? column.id;
 }
 
 export function enforceProjectTableColumnInvariants(settings: ProjectTableSettings): void {
@@ -58,7 +67,7 @@ export function setProjectColumnLabel(
   const column = settings.columns.find(({ id }) => id === columnId);
   if (column === undefined) return false;
   const normalized = label.trim();
-  if (normalized.length === 0 || normalized === projectColumnSourceLabel(column))
+  if (normalized.length === 0 || normalized === projectColumnDisplayLabel(column))
     delete column.label;
   else column.label = normalized;
   return true;
@@ -93,15 +102,16 @@ export function setProjectColumnWidth(
 function moveProjectColumn(
   settings: ProjectTableSettings,
   columnId: string,
-  delta: -1 | 1,
+  targetId: string,
 ): boolean {
   enforceProjectTableColumnInvariants(settings);
   const index = settings.columns.findIndex(({ id }) => id === columnId);
-  const target = index + delta;
-  if (index <= 0 || target <= 0 || target >= settings.columns.length) return false;
+  const target = settings.columns.findIndex(({ id }) => id === targetId);
+  if (index <= 0 || target <= 0 || index === target) return false;
   const [column] = settings.columns.splice(index, 1);
   if (column === undefined) return false;
-  settings.columns.splice(target, 0, column);
+  const adjustedTarget = index < target ? target - 1 : target;
+  settings.columns.splice(adjustedTarget, 0, column);
   return true;
 }
 
@@ -145,35 +155,111 @@ interface ColumnRowContext {
   readonly persist: (refresh?: boolean) => void;
 }
 
-interface ColumnActionOptions {
-  readonly icon: string;
-  readonly label: string;
-  readonly disabled: boolean;
-  readonly onClick: () => void;
-}
-
-function createColumnAction(row: HTMLElement, options: ColumnActionOptions): void {
+function createRemoveColumnAction(row: HTMLElement, label: string, onClick: () => void): void {
   const button = row.createEl('button', {
     cls: 'clickable-icon abyss-project-column-action',
-    attr: { type: 'button', 'aria-label': options.label, title: options.label },
+    attr: { type: 'button', 'aria-label': label, title: label },
   });
-  setIcon(button, options.icon);
-  button.disabled = options.disabled;
-  button.addEventListener('click', options.onClick);
+  setIcon(button, 'x');
+  button.addEventListener('click', onClick);
+}
+
+function columnDragId(event: DragEvent): string | undefined {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(event.dataTransfer?.getData('text/plain') ?? '');
+  } catch {
+    return undefined;
+  }
+  if (payload === null || typeof payload !== 'object') return undefined;
+  const record = payload as { type?: unknown; columnId?: unknown };
+  return record.type === 'project-column' && typeof record.columnId === 'string'
+    ? record.columnId
+    : undefined;
+}
+
+function wireColumnDrag(
+  row: HTMLElement,
+  column: ProjectColumn,
+  options: RenderProjectTableSettingsOptions,
+  persist: (refresh?: boolean) => void,
+): void {
+  const order = row.createSpan({ cls: 'abyss-project-column-order' });
+  const grip = order.createSpan({ cls: 'abyss-settings-card-grip' });
+  const curated = column.id in CURATED_LABELS;
+  if (column.id === 'name') {
+    grip.addClass('abyss-project-column-required');
+    grip.setAttribute('aria-label', 'Required column');
+    grip.setAttribute('title', 'Required column');
+    setIcon(grip, 'lock');
+  } else {
+    setIcon(grip, 'grip-vertical');
+    if (curated) {
+      const required = order.createSpan({
+        cls: 'abyss-project-column-required',
+        attr: { 'aria-label': 'Required column', title: 'Required column' },
+      });
+      setIcon(required, 'lock');
+    }
+  }
+  row.addEventListener('dragstart', (event) => {
+    if (column.id === 'name') {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer?.setData(
+      'text/plain',
+      JSON.stringify({ type: 'project-column', columnId: column.id }),
+    );
+    row.addClass('abyss-dragging');
+  });
+  row.addEventListener('dragend', () => {
+    row.removeClass('abyss-dragging');
+  });
+  row.addEventListener('dragover', (event) => {
+    if (column.id === 'name') return;
+    event.preventDefault();
+    row.addClass('abyss-drag-over');
+  });
+  row.addEventListener('dragleave', () => {
+    row.removeClass('abyss-drag-over');
+  });
+  row.addEventListener('drop', (event) => {
+    row.removeClass('abyss-drag-over');
+    const draggedId = columnDragId(event);
+    if (
+      draggedId !== undefined &&
+      moveProjectColumn(options.projects.table, draggedId, column.id)
+    ) {
+      persist(true);
+    }
+  });
 }
 
 function renderColumnRow(context: ColumnRowContext): void {
-  const { host, column, index, options, persist } = context;
-  const source = projectColumnSourceLabel(column);
+  const { host, column, options, persist } = context;
+  const source = projectColumnSourceLabel(options.projects, column);
+  const display = projectColumnDisplayLabel(column);
   const row = host.createDiv({
     cls: 'abyss-project-column-setting',
-    attr: { 'data-column-id': column.id },
+    attr: { 'data-column-id': column.id, draggable: String(column.id !== 'name') },
   });
-  row.createDiv({ cls: 'abyss-project-column-source', text: source });
+  wireColumnDrag(row, column, options, persist);
+  const sourceElement = row.createDiv({ cls: 'abyss-project-column-source' });
+  sourceElement.createSpan({ text: source });
+  if (column.id === 'name' || column.id === 'progress') {
+    sourceElement.createSpan({
+      cls:
+        column.id === 'progress'
+          ? 'abyss-project-column-source-badge abyss-project-column-auto'
+          : 'abyss-project-column-source-badge',
+      text: column.id === 'progress' ? 'Auto' : 'Derived',
+    });
+  }
 
   const label = row.createEl('input', {
     cls: 'abyss-project-column-label',
-    attr: { type: 'text', 'aria-label': `Display name for ${source}`, placeholder: source },
+    attr: { type: 'text', 'aria-label': `Display name for ${display}`, placeholder: display },
   });
   label.value = column.label ?? '';
   label.addEventListener('change', () => {
@@ -206,31 +292,9 @@ function renderColumnRow(context: ColumnRowContext): void {
     if (setProjectColumnWidth(options.projects.table, column.id, next)) persist();
   });
 
-  createColumnAction(row, {
-    icon: 'chevron-up',
-    label: `Move ${source} up`,
-    disabled: index <= 1,
-    onClick: () => {
-      if (moveProjectColumn(options.projects.table, column.id, -1)) persist(true);
-    },
-  });
-  createColumnAction(row, {
-    icon: 'chevron-down',
-    label: `Move ${source} down`,
-    disabled: column.id === 'name' || index >= options.projects.table.columns.length - 1,
-    onClick: () => {
-      if (moveProjectColumn(options.projects.table, column.id, 1)) persist(true);
-    },
-  });
-
   if (column.id.startsWith('property:')) {
-    createColumnAction(row, {
-      icon: 'x',
-      label: `Remove ${source} column`,
-      disabled: false,
-      onClick: () => {
-        if (removeProjectColumn(options.projects.table, column.id)) persist(true);
-      },
+    createRemoveColumnAction(row, `Remove ${source} column`, () => {
+      if (removeProjectColumn(options.projects.table, column.id)) persist(true);
     });
   } else {
     row.createSpan({
@@ -238,6 +302,44 @@ function renderColumnRow(context: ColumnRowContext): void {
       attr: { 'aria-hidden': 'true' },
     });
   }
+}
+
+function renderCuratedDateSource(
+  section: HTMLElement,
+  key: 'startProperty' | 'endProperty',
+  options: RenderProjectTableSettingsOptions,
+  persist: (refresh?: boolean) => void,
+): void {
+  const name = key === 'startProperty' ? 'Start property' : 'End property';
+  const current = options.projects[key];
+  new Setting(section)
+    .setName(name)
+    .setDesc(
+      `The date property used by the curated ${key === 'startProperty' ? 'Start' : 'End'} column.`,
+    )
+    .addDropdown((dropdown) => {
+      const properties =
+        options.catalog
+          .list()
+          ?.filter(({ type }) => type === 'date')
+          .map(({ name: property }) => property) ?? [];
+      if (!properties.some((property) => sameProperty(property, current))) {
+        dropdown.addOption(current, `${current} (current)`);
+      }
+      for (const property of properties) dropdown.addOption(property, property);
+      dropdown.setValue(current).onChange((property) => {
+        const siblingKeys = (['statusProperty', 'startProperty', 'endProperty'] as const).filter(
+          (candidate) => candidate !== key,
+        );
+        if (siblingKeys.some((candidate) => sameProperty(options.projects[candidate], property))) {
+          dropdown.setValue(current);
+          new Notice(`${name} must use a different property from the other curated fields.`);
+          return;
+        }
+        options.projects[key] = property;
+        persist(true);
+      });
+    });
 }
 
 interface AddPropertyContext {
@@ -336,9 +438,12 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
     );
   };
 
+  renderCuratedDateSource(section, 'startProperty', options, persist);
+  renderCuratedDateSource(section, 'endProperty', options, persist);
+
   const rows = section.createDiv({ cls: 'abyss-project-column-settings' });
   const headings = rows.createDiv({ cls: 'abyss-project-column-settings-header' });
-  for (const label of ['Source', 'Display name', 'Show', 'Width', '', '', '']) {
+  for (const label of ['', 'Source', 'Display name', 'Show', 'Width', '']) {
     headings.createSpan({ text: label, attr: label.length === 0 ? { 'aria-hidden': 'true' } : {} });
   }
   options.projects.table.columns.forEach((column, index) => {
@@ -348,7 +453,7 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
   return renderAddPropertyControl({
     section,
     feedback,
-    available: options.catalog.list(),
+    available: options.catalog.list() ?? [],
     options,
     persist,
   });

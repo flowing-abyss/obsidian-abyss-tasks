@@ -46,22 +46,28 @@ interface InboxSettings {
   removeTagOnAssign: boolean;
 }
 
-type StatusMatch =
-  { kind: 'property'; property: string; value: string } | { kind: 'tag'; tag: string };
-
 export interface ProjectStatus {
   id: string;
-  label: string;
+  name: string;
   color?: string;
   onLeftPanel: boolean;
-  match: StatusMatch;
+}
+
+interface ProjectStatusMigration {
+  issue: 'conflicting-properties' | 'invalid-statuses';
+  legacyStatuses: unknown[];
+  propertyCandidates: string[];
 }
 
 export interface ProjectsSettings {
   membershipQuery: string;
   createFolder: string;
   templatePath: string;
+  statusProperty: string;
+  startProperty: string;
+  endProperty: string;
   statuses: ProjectStatus[];
+  statusMigration?: ProjectStatusMigration;
   defaultStatusId: string;
   // Where a task lands inside a project note when it is created there or moved
   // in (drag-and-drop). Independent of the global task-insertion setting so

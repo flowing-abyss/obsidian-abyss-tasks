@@ -42,13 +42,13 @@ function renderProjectDetails(
   const pill = header.createEl('button', { cls: 'abyss-status-pill' });
   const statusColor = status?.color;
   if (statusColor !== undefined && statusColor.length > 0) pill.style.background = statusColor;
-  pill.setText(status?.label ?? project.rawStatus ?? 'No status');
+  pill.setText(status?.name ?? project.rawStatus ?? 'No status');
   pill.addEventListener('click', (e) => {
     const menu = new Menu();
     for (const s of statuses) {
       menu.addItem((item) =>
         item
-          .setTitle(s.label)
+          .setTitle(s.name)
           .setChecked(s.id === project.statusId)
           .onClick(() => {
             ctx.onSetStatus(project.path, s.id);

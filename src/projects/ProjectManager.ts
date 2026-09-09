@@ -7,6 +7,7 @@ import {
   TFile,
   type App,
 } from 'obsidian';
+import { evaluateQuery } from '../query/evaluateQuery';
 import type { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import type { CalendarSettings, ProjectStatus } from '../settings/types';
 import { normalizeTag, transformMarkdownTags } from '../tags/markdownTagRename';
@@ -153,12 +154,6 @@ function valuesEqual(left: unknown, right: unknown): boolean {
   return false;
 }
 
-function toStringArray(raw: unknown): string[] {
-  if (Array.isArray(raw)) return raw.map((t) => String(t));
-  if (typeof raw === 'string') return [raw];
-  return [];
-}
-
 const INLINE_TAG_CANDIDATE = /#\S+/gu;
 
 interface ParsedProjectSource {
@@ -211,89 +206,92 @@ function normalizedTagCandidate(raw: string): string | null {
 
 function sourceStatus(
   parsed: ParsedProjectSource,
-  statuses: ProjectStatus[],
+  projects: CalendarSettings['projects'],
 ): ExpectedProjectStatus {
-  const tags = [
-    ...(parseFrontMatterTags(parsed.frontmatter) ?? []),
-    ...semanticInlineTags(parsed.body),
-  ];
-  return resolveStatus(statuses, tags, parsed.frontmatter);
+  return resolveStatus(projects, parsed.frontmatter);
 }
 
 function sameStatus(left: ExpectedProjectStatus, right: ExpectedProjectStatus): boolean {
   return left.statusId === right.statusId && left.rawStatus === right.rawStatus;
 }
 
-function applyStatusFrontmatter(
-  frontmatter: Record<string, unknown>,
-  statuses: ProjectStatus[],
-  target: ProjectStatus,
-): void {
-  applyPropertyStatusMarkers(frontmatter, statuses, target);
-  applyTagStatusMarkers(frontmatter, statuses, target);
+function matchingFrontmatterProperties(
+  frontmatter: Readonly<Record<string, unknown>>,
+  property: string,
+): Array<{ key: string; value: unknown }> {
+  return Object.keys(frontmatter)
+    .filter((key) => key.localeCompare(property, undefined, { sensitivity: 'accent' }) === 0)
+    .map((key) => ({ key, value: frontmatter[key] }));
 }
 
-function applyPropertyStatusMarkers(
-  frontmatter: Record<string, unknown>,
-  statuses: ProjectStatus[],
-  target: ProjectStatus,
-): void {
-  for (const status of statuses) {
-    if (status.match.kind !== 'property') continue;
-    const current = frontmatter[status.match.property];
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- Project status matching follows Obsidian frontmatter scalar semantics.
-    const currentString = current === null || current === undefined ? '' : String(current);
-    if (currentString === status.match.value) delete frontmatter[status.match.property];
-  }
-  if (target.match.kind === 'property') {
-    frontmatter[target.match.property] = target.match.value;
-  }
-}
-
-function applyTagStatusMarkers(
-  frontmatter: Record<string, unknown>,
-  statuses: ProjectStatus[],
-  target: ProjectStatus,
-): void {
-  const statusTags = statuses.flatMap((status) =>
-    status.match.kind === 'tag' ? [status.match.tag.replace(/^#/u, '')] : [],
-  );
-  let tags = toStringArray(frontmatter['tags']);
-  const stripped = new Set(statusTags.map((tag) => tag.toLowerCase()));
-  tags = tags.filter((tag) => {
-    const normalized = tag.replace(/^#/u, '').toLowerCase();
-    return ![...stripped].some(
-      (statusTag) => normalized === statusTag || normalized.startsWith(`${statusTag}/`),
+function uniqueFrontmatterProperty(
+  frontmatter: Readonly<Record<string, unknown>>,
+  property: string,
+): { key: string; value: unknown } | undefined {
+  const matches = matchingFrontmatterProperties(frontmatter, property);
+  if (matches.length > 1) {
+    throw new ProjectEditValidationError(
+      `Project has ambiguous ${property} properties that differ only by case.`,
     );
-  });
-  if (target.match.kind === 'tag') {
-    const wanted = target.match.tag.replace(/^#/u, '');
-    if (!tags.some((tag) => tag.replace(/^#/u, '').toLowerCase() === wanted.toLowerCase())) {
-      tags.push(wanted);
-    }
   }
-  if (tags.length > 0) frontmatter['tags'] = tags;
-  else delete frontmatter['tags'];
+  return matches[0];
 }
 
-function stripInlineStatusTags(body: string, statuses: ProjectStatus[]): string {
-  let transformed = body;
-  const statusTags = statuses.flatMap((status) => {
-    if (status.match.kind !== 'tag') return [];
-    const tag = normalizeTag(status.match.tag);
-    return tag === null ? [] : [tag.toLowerCase()];
-  });
-  for (const tag of semanticInlineTags(body)) {
-    const normalized = tag.toLowerCase();
-    if (
-      statusTags.some(
-        (statusTag) => normalized === statusTag || normalized.startsWith(`${statusTag}/`),
-      )
-    ) {
-      transformed = transformMarkdownTags(transformed, tag, '', 'exact');
-    }
+function projectTags(parsed: ParsedProjectSource): string[] {
+  return [
+    ...(parseFrontMatterTags(parsed.frontmatter) ?? []),
+    ...semanticInlineTags(parsed.body),
+  ].map((tag) => tag.toLowerCase());
+}
+
+function isProject(
+  path: string,
+  parsed: ParsedProjectSource,
+  projects: CalendarSettings['projects'],
+): boolean {
+  return evaluateQuery(projects.membershipQuery, path, projectTags(parsed), parsed.frontmatter);
+}
+
+interface StatusRenameWrite {
+  readonly file: TFile;
+  readonly path: string;
+}
+
+interface StatusRenameContext {
+  readonly definition: ProjectStatus;
+  readonly expectedName: string;
+  readonly property: string;
+  readonly targetName: string;
+}
+
+class ProjectStatusRenameError extends Error {
+  constructor(
+    message: string,
+    readonly unresolvedPaths: readonly string[],
+  ) {
+    super(message);
+    this.name = 'ProjectStatusRenameError';
   }
-  return transformed;
+}
+
+const metadataOperations = new WeakMap<App, Promise<void>>();
+
+async function coordinateMetadataOperation<T>(app: App, operation: () => Promise<T>): Promise<T> {
+  const previous = metadataOperations.get(app) ?? Promise.resolve();
+  let release: () => void = () => {};
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  metadataOperations.set(
+    app,
+    previous.catch(() => {}).then(() => current),
+  );
+  await previous.catch(() => {});
+  try {
+    return await operation();
+  } finally {
+    release();
+  }
 }
 
 export function joinSerializedFrontmatter(yaml: string, delimiter: string): string {
@@ -308,12 +306,7 @@ function serializeProjectSource(parsed: ParsedProjectSource): string {
   return `${parsed.prefix}${joinSerializedFrontmatter(yaml, parsed.delimiter)}${parsed.body}`;
 }
 
-/**
- * Creates project notes and writes their status markers. Status is stored
- * either as a frontmatter property or as a tag, depending on each status's
- * `match.kind`; changing a status clears the markers of sibling defined
- * statuses so a note carries at most one plugin-managed status.
- */
+/** Creates project notes and owns guarded writes to configured project metadata. */
 export class ProjectManager {
   constructor(
     private readonly app: App,
@@ -347,6 +340,16 @@ export class ProjectManager {
     statusId: string,
     expectedStatus?: ExpectedProjectStatus,
   ): Promise<void> {
+    await coordinateMetadataOperation(this.app, () =>
+      this.setStatusGuarded(path, statusId, expectedStatus),
+    );
+  }
+
+  private async setStatusGuarded(
+    path: string,
+    statusId: string,
+    expectedStatus?: ExpectedProjectStatus,
+  ): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) {
       throw new ProjectEditValidationError(`Project file not found: ${path}`);
@@ -356,21 +359,176 @@ export class ProjectManager {
     if (target == null) {
       throw new ProjectEditValidationError(`Unknown project status: ${statusId}`);
     }
+    const property = this.settings.projects.statusProperty.trim();
+    if (property.length === 0) {
+      throw new ProjectEditValidationError(
+        'Choose a project Status property in settings before changing statuses.',
+      );
+    }
 
     await this.app.vault.process(file, (source) => {
       const parsed = parseProjectSource(source);
       if (
         expectedStatus !== undefined &&
-        !sameStatus(sourceStatus(parsed, statuses), expectedStatus)
+        !sameStatus(sourceStatus(parsed, this.settings.projects), expectedStatus)
       ) {
         throw new ProjectEditValidationError(
           'Status changed externally. Reload the project and try your edit again.',
         );
       }
-      applyStatusFrontmatter(parsed.frontmatter, statuses, target);
-      parsed.body = stripInlineStatusTags(parsed.body, statuses);
+      const current = uniqueFrontmatterProperty(parsed.frontmatter, property);
+      parsed.frontmatter[current?.key ?? property] = target.name;
       return serializeProjectSource(parsed);
     });
+  }
+
+  async renameStatusDefinition(
+    id: string,
+    name: string,
+    expectedName: string,
+    persistSettings: () => Promise<void>,
+  ): Promise<void> {
+    await coordinateMetadataOperation(this.app, () =>
+      this.renameStatusDefinitionGuarded(id, name, expectedName, persistSettings),
+    );
+  }
+
+  private async renameStatusDefinitionGuarded(
+    id: string,
+    name: string,
+    expectedName: string,
+    persistSettings: () => Promise<void>,
+  ): Promise<void> {
+    const context = this.validateStatusRename(id, name, expectedName);
+    if (context.targetName === expectedName) return;
+    const candidates = await this.collectStatusRenameCandidates(context);
+    const writes: StatusRenameWrite[] = [];
+    let definitionChanged = false;
+    try {
+      for (const file of candidates) {
+        if (await this.writeStatusRename(file, context)) writes.push({ file, path: file.path });
+      }
+      context.definition.name = context.targetName;
+      definitionChanged = true;
+      await persistSettings();
+    } catch (cause) {
+      const unresolvedPaths = await this.recoverStatusRename(
+        writes,
+        context,
+        definitionChanged,
+        persistSettings,
+      );
+      const reason = cause instanceof Error ? cause.message : String(cause);
+      const recovery =
+        unresolvedPaths.length === 0
+          ? 'All owned changes were recovered.'
+          : `Recovery remains unresolved for: ${unresolvedPaths.join(', ')}.`;
+      throw new ProjectStatusRenameError(`${reason}. ${recovery}`, unresolvedPaths);
+    }
+  }
+
+  private validateStatusRename(
+    id: string,
+    name: string,
+    expectedName: string,
+  ): StatusRenameContext {
+    const projects = this.settings.projects;
+    const targetName = name.trim();
+    if (targetName.length === 0) {
+      throw new ProjectEditValidationError('Project status name cannot be empty.');
+    }
+    const property = projects.statusProperty.trim();
+    if (property.length === 0) {
+      throw new ProjectEditValidationError(
+        'Choose a project Status property in settings before renaming statuses.',
+      );
+    }
+    const definition = projects.statuses.find((status) => status.id === id);
+    if (definition?.name !== expectedName) {
+      throw new ProjectEditValidationError(
+        'Project status definition changed externally. Reload settings and try again.',
+      );
+    }
+    if (projects.statuses.some((status) => status.id !== id && status.name === targetName)) {
+      throw new ProjectEditValidationError(`A project status named ${targetName} already exists.`);
+    }
+    return { definition, expectedName, property, targetName };
+  }
+
+  private async collectStatusRenameCandidates(context: StatusRenameContext): Promise<TFile[]> {
+    const projects = this.settings.projects;
+    const candidates: TFile[] = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const parsed = parseProjectSource(await this.app.vault.read(file));
+      if (!isProject(file.path, parsed, projects)) continue;
+      const current = uniqueFrontmatterProperty(parsed.frontmatter, context.property);
+      if (current !== undefined && String(current.value) === context.expectedName) {
+        candidates.push(file);
+      }
+    }
+    return candidates;
+  }
+
+  private async writeStatusRename(file: TFile, context: StatusRenameContext): Promise<boolean> {
+    let changed: boolean | undefined;
+    await this.app.vault.process(file, (source) => {
+      const parsed = parseProjectSource(source);
+      if (!isProject(file.path, parsed, this.settings.projects)) return source;
+      const current = uniqueFrontmatterProperty(parsed.frontmatter, context.property);
+      if (current === undefined || String(current.value) !== context.expectedName) return source;
+      parsed.frontmatter[current.key] = context.targetName;
+      changed = true;
+      return serializeProjectSource(parsed);
+    });
+    return changed === true;
+  }
+
+  private async recoverStatusRename(
+    writes: readonly StatusRenameWrite[],
+    context: StatusRenameContext,
+    definitionChanged: boolean,
+    persistSettings: () => Promise<void>,
+  ): Promise<string[]> {
+    if (definitionChanged && context.definition.name === context.targetName) {
+      context.definition.name = context.expectedName;
+    }
+    const unresolvedPaths = await this.compensateStatusRename(writes, context);
+    if (!definitionChanged) return unresolvedPaths;
+    try {
+      await persistSettings();
+    } catch {
+      unresolvedPaths.push('plugin settings');
+    }
+    return unresolvedPaths;
+  }
+
+  private async compensateStatusRename(
+    writes: readonly StatusRenameWrite[],
+    context: StatusRenameContext,
+  ): Promise<string[]> {
+    const unresolvedPaths: string[] = [];
+    for (const write of [...writes].reverse()) {
+      try {
+        if (!(await this.restoreStatusRename(write.file, context)))
+          unresolvedPaths.push(write.path);
+      } catch {
+        unresolvedPaths.push(write.path);
+      }
+    }
+    return unresolvedPaths;
+  }
+
+  private async restoreStatusRename(file: TFile, context: StatusRenameContext): Promise<boolean> {
+    let restored: boolean | undefined;
+    await this.app.vault.process(file, (source) => {
+      const parsed = parseProjectSource(source);
+      const current = uniqueFrontmatterProperty(parsed.frontmatter, context.property);
+      if (current === undefined || String(current.value) !== context.targetName) return source;
+      parsed.frontmatter[current.key] = context.expectedName;
+      restored = true;
+      return serializeProjectSource(parsed);
+    });
+    return restored === true;
   }
 
   async setProperty(
@@ -414,6 +572,15 @@ export class ProjectManager {
     if ((field.id !== 'start' && field.id !== 'end') || field.type !== 'date') {
       throw new ProjectEditValidationError(`${field.label} must use the curated date field.`);
     }
+    const configured =
+      field.id === 'start'
+        ? this.settings.projects.startProperty
+        : this.settings.projects.endProperty;
+    if (field.property.localeCompare(configured, undefined, { sensitivity: 'accent' }) !== 0) {
+      throw new ProjectEditValidationError(
+        `${field.label} does not match its configured project property.`,
+      );
+    }
     return field.property;
   }
 
@@ -432,14 +599,14 @@ export class ProjectManager {
   }
 
   private validateStartRange(value: unknown, frontmatter: Record<string, unknown>): void {
-    const end = findFrontmatterProperty(frontmatter, 'end')?.value;
+    const end = findFrontmatterProperty(frontmatter, this.settings.projects.endProperty)?.value;
     if (typeof value === 'string' && typeof end === 'string' && validDate(end) && value > end) {
       throw new ProjectEditValidationError('Start date must be on or before end date.');
     }
   }
 
   private validateEndRange(value: unknown, frontmatter: Record<string, unknown>): void {
-    const start = findFrontmatterProperty(frontmatter, 'start')?.value;
+    const start = findFrontmatterProperty(frontmatter, this.settings.projects.startProperty)?.value;
     if (
       typeof value === 'string' &&
       typeof start === 'string' &&

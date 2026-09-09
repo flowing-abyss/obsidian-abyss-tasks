@@ -54,14 +54,10 @@ function findProjectPropertyName(names: readonly string[], property: string): st
   return names.find((name) => sameProperty(name, property));
 }
 
-/** True when a property is owned by a curated field or configured project-status carrier. */
+/** True when a property is owned by one of the configured curated fields. */
 export function isReservedProjectProperty(settings: ProjectsSettings, property: string): boolean {
-  const normalized = property.toLocaleLowerCase();
-  if (normalized === 'start' || normalized === 'end') return true;
-  return settings.statuses.some((status) =>
-    status.match.kind === 'property'
-      ? status.match.property.toLocaleLowerCase() === normalized
-      : normalized === 'tags',
+  return [settings.statusProperty, settings.startProperty, settings.endProperty].some(
+    (configured) => configured.length > 0 && sameProperty(configured, property),
   );
 }
 
@@ -107,19 +103,37 @@ function addSavedProperties(
 
 export function buildProjectFieldCatalog(
   settings: ProjectsSettings,
-  properties: readonly ProjectPropertyInfo[],
+  properties: readonly ProjectPropertyInfo[] | null,
 ): ProjectFieldCatalogItem[] {
-  const propertyNames = properties.map(({ name }) => name);
-  const startProperty = findProjectPropertyName(propertyNames, 'start') ?? 'start';
-  const endProperty = findProjectPropertyName(propertyNames, 'end') ?? 'end';
+  const discoveredProperties = properties ?? [];
+  const propertyNames = discoveredProperties.map(({ name }) => name);
+  const startProperty =
+    findProjectPropertyName(propertyNames, settings.startProperty) ?? settings.startProperty;
+  const endProperty =
+    findProjectPropertyName(propertyNames, settings.endProperty) ?? settings.endProperty;
+  const dateSourcesCollide = sameProperty(startProperty, endProperty);
+  const startInfo = discoveredProperties.find(({ name }) => sameProperty(name, startProperty));
+  const endInfo = discoveredProperties.find(({ name }) => sameProperty(name, endProperty));
+  const curatedDateType = (info: ProjectPropertyInfo | undefined): 'date' | null =>
+    properties !== null && (info === undefined || info.type === 'date') ? 'date' : null;
   const fields: ProjectFieldCatalogItem[] = [
     ...CORE_FIELDS,
-    { id: 'start', property: startProperty, label: 'Start', type: 'date' },
-    { id: 'end', property: endProperty, label: 'End', type: 'date' },
+    {
+      id: 'start',
+      property: startProperty,
+      label: 'Start',
+      type: !dateSourcesCollide ? curatedDateType(startInfo) : null,
+    },
+    {
+      id: 'end',
+      property: endProperty,
+      label: 'End',
+      type: !dateSourcesCollide ? curatedDateType(endInfo) : null,
+    },
   ];
 
   const seen = new Set<string>();
-  addVaultProperties(fields, settings, properties, seen);
+  addVaultProperties(fields, settings, discoveredProperties, seen);
   addSavedProperties(fields, settings, seen);
   return fields;
 }

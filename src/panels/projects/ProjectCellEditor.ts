@@ -65,7 +65,7 @@ function currentCustomType(
   catalog: ProjectPropertyCatalog,
 ): ProjectPropertyType | null | undefined {
   if (!field.id.startsWith('property:') || field.property === undefined) return undefined;
-  return catalog.list().find(({ name }) => sameProperty(name, field.property ?? ''))?.type;
+  return catalog.list()?.find(({ name }) => sameProperty(name, field.property ?? ''))?.type;
 }
 
 function suggestOptions(
@@ -245,7 +245,7 @@ function statusControl(options: ProjectCellEditorOptions, root: HTMLElement): Ed
     attr: { 'aria-label': options.field.label },
   });
   for (const status of options.statuses ?? []) {
-    const option = select.createEl('option', { value: status.id, text: status.label });
+    const option = select.createEl('option', { value: status.id, text: status.name });
     if (status.color !== undefined) option.style.color = status.color;
   }
   select.value = typeof options.value === 'string' ? options.value : '';

@@ -34,10 +34,20 @@ interface AllowedWriter {
 }
 
 const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
-  'src/projects/ProjectManager.ts#ProjectManager.setStatus#process#1': {
+  'src/projects/ProjectManager.ts#ProjectManager.setStatusGuarded#process#1': {
     mutation: 'project metadata',
     reason:
-      'One atomic project-note transaction validates the expected status and updates its configured metadata markers.',
+      'One atomic project-note transaction validates the expected status and updates the configured global status property.',
+  },
+  'src/projects/ProjectManager.ts#ProjectManager.writeStatusRename#process#1': {
+    mutation: 'project metadata',
+    reason:
+      'A guarded status-definition rename updates only fresh qualifying project notes still carrying the expected literal.',
+  },
+  'src/projects/ProjectManager.ts#ProjectManager.restoreStatusRename#process#1': {
+    mutation: 'project metadata',
+    reason:
+      'Rename recovery compensates only note values that still match the value written by the failed operation.',
   },
   'src/resolvers/DailyNoteResolver.ts#DailyNoteResolver.createNoteWithTemplate#vault.create#1': {
     mutation: 'destination provisioning',

@@ -71,7 +71,7 @@ describe('ObsidianProjectProperties', () => {
     expect(getTypeInfo.mock.calls.map(([name]) => name)).toEqual([...nativeTypes.keys()]);
   });
 
-  it('does not guess property types when the internal manager is unavailable or malformed', () => {
+  it('distinguishes successful empty discovery from unavailable or malformed discovery', () => {
     const app = {
       vault: { getMarkdownFiles: () => [] },
       metadataCache: { getFileCache: () => null, ...eventSource() },
@@ -82,8 +82,19 @@ describe('ObsidianProjectProperties', () => {
       metadataCache: { getFileCache: () => null, ...eventSource() },
     } as unknown as App;
 
-    expect(new ObsidianProjectProperties(app).list()).toEqual([]);
-    expect(new ObsidianProjectProperties(malformed).list()).toEqual([]);
+    const empty = {
+      metadataTypeManager: {
+        getAllProperties: () => ({}),
+        getTypeInfo: () => ({ expected: { type: 'text' } }),
+        ...eventSource(),
+      },
+      vault: { getMarkdownFiles: () => [] },
+      metadataCache: { getFileCache: () => null, ...eventSource() },
+    } as unknown as App;
+
+    expect(new ObsidianProjectProperties(empty).list()).toEqual([]);
+    expect(new ObsidianProjectProperties(app).list()).toBeNull();
+    expect(new ObsidianProjectProperties(malformed).list()).toBeNull();
   });
 
   it('collects stable case-insensitive scalar and list suggestions using the exact property key', () => {

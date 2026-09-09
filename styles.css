@@ -7370,8 +7370,8 @@ table.abyss-project-table {
 .abyss-project-column-settings-header {
   display: grid;
   grid-template-columns:
-    minmax(60px, 1fr) minmax(80px, 1.2fr) 38px minmax(60px, 0.6fr)
-    repeat(3, 28px);
+    38px minmax(60px, 1fr) minmax(80px, 1.2fr) 38px minmax(60px, 0.6fr)
+    28px;
   align-items: center;
   gap: 6px;
 }
@@ -7382,7 +7382,7 @@ table.abyss-project-table {
   font-size: var(--font-ui-smaller);
 }
 
-.abyss-project-column-settings-header > :nth-child(3) {
+.abyss-project-column-settings-header > :nth-child(4) {
   text-align: center;
 }
 
@@ -7393,12 +7393,45 @@ table.abyss-project-table {
   background: var(--background-secondary);
 }
 
+.abyss-project-column-setting.abyss-dragging {
+  opacity: 0.5;
+}
+
+.abyss-project-column-setting.abyss-drag-over {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
 .abyss-project-column-source {
   overflow: hidden;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.abyss-project-column-order {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.abyss-project-column-required {
+  color: var(--text-faint);
+}
+
+.abyss-project-column-required svg {
+  width: 12px;
+  height: 12px;
+}
+
+.abyss-project-column-source-badge {
+  margin-inline-start: 5px;
+  padding: 1px 4px;
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-hover);
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
 }
 
 .abyss-project-column-label,
@@ -7459,10 +7492,10 @@ table.abyss-project-table {
 
   .abyss-project-column-setting,
   .abyss-project-column-settings-header {
-    grid-template-columns: minmax(90px, 1fr) minmax(110px, 1fr) 36px minmax(68px, 0.7fr);
+    grid-template-columns: 38px minmax(90px, 1fr) minmax(110px, 1fr) 36px minmax(68px, 0.7fr);
   }
 
-  .abyss-project-column-settings-header > :nth-child(n + 5) {
+  .abyss-project-column-settings-header > :nth-child(6) {
     display: none;
   }
 

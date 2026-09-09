@@ -152,7 +152,7 @@ describe('mountProjectCellEditor', () => {
     },
   );
 
-  it('uses configured status labels, colors, and IDs', async () => {
+  it('uses configured status names, colors, and IDs', async () => {
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
     mountProjectCellEditor({
@@ -164,17 +164,15 @@ describe('mountProjectCellEditor', () => {
       statuses: [
         {
           id: 'active',
-          label: 'In flight',
+          name: 'In flight',
           color: '#123456',
           onLeftPanel: true,
-          match: { kind: 'property', property: 'status', value: 'active' },
         },
         {
           id: 'done',
-          label: 'Shipped',
+          name: 'Shipped',
           color: '#654321',
           onLeftPanel: false,
-          match: { kind: 'property', property: 'status', value: 'done' },
         },
       ],
       save,

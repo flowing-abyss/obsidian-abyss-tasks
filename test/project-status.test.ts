@@ -1,27 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { orderedGroups, resolveStatus } from '../src/projects/status';
 import type { Project } from '../src/projects/types';
-import type { ProjectStatus } from '../src/settings/types';
+import type { ProjectStatus, ProjectsSettings } from '../src/settings/types';
 
 const S: ProjectStatus[] = [
-  {
-    id: 'a',
-    label: 'Active',
-    onLeftPanel: true,
-    match: { kind: 'property', property: 'status', value: 'active' },
-  },
-  { id: 'w', label: 'WIP', onLeftPanel: true, match: { kind: 'tag', tag: 'wip' } },
-  {
-    id: 'd',
-    label: 'Done',
-    onLeftPanel: false,
-    match: { kind: 'property', property: 'status', value: 'done' },
-  },
+  { id: 'a', name: 'active', onLeftPanel: true },
+  { id: 'w', name: 'working', onLeftPanel: true },
+  { id: 'd', name: 'done', onLeftPanel: false },
 ];
+
+const projectSettings = (
+  statuses: ProjectStatus[] = S,
+  statusProperty = 'status',
+): Pick<ProjectsSettings, 'statusProperty' | 'statuses'> => ({ statusProperty, statuses });
 
 function proj(over: Partial<Project>): Project {
   return {
-    path: 'P.md',
+    path: 'Projects/P.md',
     name: 'P',
     frontmatter: {},
     tags: [],
@@ -33,43 +28,56 @@ function proj(over: Partial<Project>): Project {
 }
 
 describe('resolveStatus', () => {
-  it('resolves a property status', () => {
-    expect(resolveStatus(S, [], { status: 'active' })).toEqual({ statusId: 'a', rawStatus: null });
-  });
-  it('resolves a tag status (case-insensitive)', () => {
-    expect(resolveStatus(S, ['#WIP'], {})).toEqual({ statusId: 'w', rawStatus: null });
-  });
-  it('first-in-order wins on ambiguity', () => {
-    // both active (property) and wip (tag) present → property 'a' is earlier
-    expect(resolveStatus(S, ['#wip'], { status: 'active' })).toEqual({
+  it('resolves one literal value through the configured global property', () => {
+    expect(resolveStatus(projectSettings(), { status: 'active' })).toEqual({
       statusId: 'a',
       rawStatus: null,
     });
   });
-  it('surfaces a discovered status under a known status property', () => {
-    expect(resolveStatus(S, [], { status: 'archive' })).toEqual({
+
+  it('preserves a custom Cyrillic source key and value', () => {
+    expect(
+      resolveStatus(
+        projectSettings([{ id: 'doing', name: 'в работе', onLeftPanel: true }], 'Статус'),
+        { СТАТУС: 'в работе' },
+      ),
+    ).toEqual({ statusId: 'doing', rawStatus: null });
+  });
+
+  it('surfaces an unknown status even when the catalog is empty', () => {
+    expect(resolveStatus(projectSettings([]), { status: 'archive' })).toEqual({
       statusId: null,
       rawStatus: 'archive',
     });
   });
-  it('returns null/null when nothing matches', () => {
-    expect(resolveStatus(S, [], {})).toEqual({ statusId: null, rawStatus: null });
+
+  it('returns null/null for no configured property value', () => {
+    expect(resolveStatus(projectSettings(), {})).toEqual({ statusId: null, rawStatus: null });
   });
 });
 
 describe('orderedGroups', () => {
-  it('defined order, then discovered, then No status', () => {
+  it('uses literal names in defined order, then discovered values, then No status', () => {
     const projects = [
       proj({ statusId: 'a' }),
       proj({ statusId: 'd' }),
       proj({ rawStatus: 'archive' }),
       proj({ statusId: null, rawStatus: null }),
     ];
-    const keys = orderedGroups(S, projects).map((g) => g.label);
-    expect(keys).toEqual(['Active', 'WIP', 'Done', 'archive', 'No status']);
+    expect(orderedGroups(S, projects).map((group) => group.label)).toEqual([
+      'active',
+      'working',
+      'done',
+      'archive',
+      'No status',
+    ]);
   });
-  it('omits empty defined groups? no — keeps all defined, drops empty discovered/none', () => {
-    const groups = orderedGroups(S, [proj({ statusId: 'a' })]);
-    expect(groups.map((g) => g.label)).toEqual(['Active', 'WIP', 'Done']);
+
+  it('keeps every configured definition when discovered and empty groups are absent', () => {
+    expect(orderedGroups(S, [proj({ statusId: 'a' })]).map((group) => group.label)).toEqual([
+      'active',
+      'working',
+      'done',
+    ]);
   });
 });

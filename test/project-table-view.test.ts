@@ -34,9 +34,13 @@ function settings(): CalendarSettings {
 }
 
 function catalog(
-  properties: ReturnType<ProjectPropertyCatalog['list']> = [],
+  properties: NonNullable<ReturnType<ProjectPropertyCatalog['list']>> = [],
 ): ProjectPropertyCatalog {
-  return { list: () => properties, values: () => [], onChange: () => () => {} };
+  return {
+    list: () => [{ name: 'start', type: 'date' }, { name: 'end', type: 'date' }, ...properties],
+    values: () => [],
+    onChange: () => () => {},
+  };
 }
 
 function mount(

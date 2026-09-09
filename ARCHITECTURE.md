@@ -35,12 +35,12 @@ Later Obsidian events reconcile it through the same parsing path used for manual
 
 The plugin has several kinds of state, but they do not have equal authority.
 
-| Concern                                         | Authoritative source                                  | Derived or temporary representation            |
-| ----------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------- |
-| Tasks and task metadata                         | Markdown files in the Obsidian vault                  | `TaskIndex` snapshots and calendar projections |
-| Projects and project status                     | Project Markdown plus configured queries and mappings | `ProjectStore` entries and task statistics     |
-| Plugin preferences and saved view states        | Obsidian plugin data                                  | Migrated in-memory `CalendarSettings`          |
-| Current mode, selection, search, and drag state | `AppState` for the current panel session              | Rendered panel DOM                             |
+| Concern                                         | Authoritative source                                                                             | Derived or temporary representation            |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| Tasks and task metadata                         | Markdown files in the Obsidian vault                                                             | `TaskIndex` snapshots and calendar projections |
+| Projects and project status                     | Project Markdown plus membership query, one configured status property, and literal status names | `ProjectStore` entries and task statistics     |
+| Plugin preferences and saved view states        | Obsidian plugin data                                                                             | Migrated in-memory `CalendarSettings`          |
+| Current mode, selection, search, and drag state | `AppState` for the current panel session                                                         | Rendered panel DOM                             |
 
 `TaskIndex` and `ProjectStore` are read models, not secondary databases. They may be rebuilt from the
 vault and current settings. `AppState` coordinates the open interface and must not become a hidden
@@ -150,14 +150,20 @@ the result with task snapshots to calculate project statistics. It updates its d
 response to both Obsidian file events and task index events.
 
 `ProjectManager` contains project writes. It creates project notes from the configured template,
-changes the configured frontmatter or tag status markers, and moves task blocks into project notes
-through `TaskApplicationApi`. Membership and status are derived from Markdown through configured
-queries and mappings; `ProjectStore` adds no separate persisted state.
+changes the configured project frontmatter, and moves task blocks into project notes through
+`TaskApplicationApi`. Membership comes from the configured query. Status comes from one configured
+frontmatter property whose literal value is the status definition's name; project tags do not carry
+status. `ProjectStore` adds no separate persisted state.
 
 `projectFields` owns the shared project-field vocabulary and case-insensitive frontmatter lookup.
 Its catalog combines the curated name, status, progress, start, and end fields with the vault's
-property catalog. Unsupported and temporarily unavailable properties retain their exact source key
-without being treated as editable text, and status carriers cannot also become generic fields.
+native property catalog. Status, start, and end each have one configured source property. Name is
+the filename and progress is derived from tasks, so neither has a metadata source. Unsupported,
+type-conflicting, and temporarily unavailable properties retain their exact source key without
+being treated as editable text, and curated source properties cannot also become generic fields.
+The native property catalog distinguishes successful empty discovery from an unavailable registry:
+an absent Start or End source is editable after successful discovery because its curated role fixes
+the date type, while an existing incompatible source or unavailable discovery remains read-only.
 
 `projectTableModel` is a DOM-free projection over `Project` snapshots. It applies typed sorting,
 search, status filtering, and scalar or multi-value grouping while reporting a unique visible
@@ -176,7 +182,7 @@ project dashboard temporarily detaches the table surface, and returning reattach
 Property edits go through `ProjectManager.setProperty()`. The manager validates the field's type,
 checks the edited field's expected value inside Obsidian's frontmatter transaction, validates
 curated date ranges against the latest opposite bound, and updates or removes only that property.
-Status changes continue through `setStatus()` so configured property and tag markers remain
+Status changes continue through `setStatus()` so the configured global status property remains
 authoritative. Write failures propagate to the presentation boundary that initiated the action.
 
 ### Settings and status semantics
@@ -186,6 +192,10 @@ interface. `TaskCalendarPlugin.loadSettings()` migrates persisted data before it
 Changes to task status settings rebuild the shared `StatusCatalog`, `StatusRegistry`, and the
 indexer's interpretation of task symbols together.
 
+Project settings migrate legacy per-status property definitions to one global source and literal
+names using the old persisted values. Removed tag definitions leave note tags untouched. Conflicting
+property sources or malformed definitions retain recoverable migration evidence and require an
+explicit source selection or discard action in settings; loading never rewrites vault notes.
 Settings that change a persisted contract need a compatibility and migration design. A new setting
 must not be used to create a second implementation of an existing workflow.
 
@@ -292,12 +302,21 @@ matching task statistics in one coherent project snapshot.
 
 Project discovery is a query over Markdown metadata. Table status edits carry the captured resolved
 `statusId` plus `rawStatus` into `ProjectManager`. The manager performs one `Vault.process`
-transaction over fresh source: it parses frontmatter and semantic inline tags, rejects a stale
-status snapshot before any mutation, then updates configured property/tag carriers and removes
-managed inline markers in the same write. Inline recognition reuses the shared Markdown tag transformer so
-code, comments, links, and escapes remain literal. Unguarded dashboard/default-status callers retain
-the same status operation. Moving a task into a project uses the standard task move command, so it
-retains the same validation, recovery, and reindexing behavior as other task moves.
+transaction over fresh source, rejects a stale status snapshot before mutation, and updates only
+the configured global property while preserving its current spelling. Unguarded dashboard and
+default-status callers retain the same status operation.
+
+Status-definition renames also run through `ProjectManager`. One per-App coordinator serializes
+renames with ordinary status assignments across the settings-owned and panel-owned manager
+instances; panel managers still receive their panel-specific task-selection capability. A rename
+rechecks membership and the expected literal in fresh source, records each owned note edit, then
+persists the renamed definition. On write or settings-save failure it restores the definition and
+compensates only note values still owned by that operation. Unresolved paths propagate to the
+settings boundary, which shows one Notice and logs diagnostic detail. This recovery is best effort
+across files and settings and does not claim crash atomicity.
+
+Moving a task into a project uses the standard task move command, so it retains the same validation,
+recovery, and reindexing behavior as other task moves.
 
 ## Enforced dependency rules
 

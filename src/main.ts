@@ -1,5 +1,6 @@
-import { Plugin } from 'obsidian';
+import { Notice, Plugin } from 'obsidian';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
+import { ProjectManager } from './projects/ProjectManager';
 import { DailyNoteResolver } from './resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from './settings/defaults';
 import { migrateSettings } from './settings/migration';
@@ -43,6 +44,7 @@ export default class TaskCalendarPlugin extends Plugin {
   private taskIndex!: TaskIndex;
   private statusCatalog!: StatusCatalog;
   private statusRegistry!: StatusRegistry;
+  private projectManager!: ProjectManager;
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -127,6 +129,7 @@ export default class TaskCalendarPlugin extends Plugin {
       diagnostics,
     );
     this.queries = this.tasks.queries;
+    this.projectManager = new ProjectManager(this.app, this.settings, dailyNotes, this.tasks);
     this.tagManager = new TagManager(this.app, this.settings, () => this.saveSettings());
   }
 
@@ -199,17 +202,24 @@ export default class TaskCalendarPlugin extends Plugin {
   async loadSettings(): Promise<void> {
     const raw = (await this.loadData()) as Record<string, unknown> | null | undefined;
     const data: Record<string, unknown> = raw ?? {};
-    migrateSettings(data);
+    const migration = migrateSettings(data);
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- Runtime settings are migrated before being merged with the complete defaults object.
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data) as CalendarSettings;
+    for (const message of migration.notices) new Notice(message);
   }
 
   async saveSettings(): Promise<void> {
     beginSettingsSave(this.settings);
     await this.saveData(this.settings);
     for (const leaf of this.app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)) {
-      if (leaf.view instanceof PanelView) leaf.view.refreshProjectTableSettings();
+      if (leaf.view instanceof PanelView) leaf.view.refreshProjectSettings();
     }
+  }
+
+  async renameProjectStatus(id: string, name: string, expectedName: string): Promise<void> {
+    await this.projectManager.renameStatusDefinition(id, name, expectedName, () =>
+      this.saveSettings(),
+    );
   }
 
   rebuildTaskStatusSemantics(): void {

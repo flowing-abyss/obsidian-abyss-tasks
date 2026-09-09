@@ -421,7 +421,7 @@ export class LeftPanel {
         for (const s of statuses) {
           sub.addItem((si) =>
             si
-              .setTitle(s.label)
+              .setTitle(s.name)
               .setChecked(s.id === project.statusId)
               .onClick(() => {
                 this.changeProjectStatus_abyssPrivate(project.path, s.id);

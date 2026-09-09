@@ -10,16 +10,13 @@ import { buildDefaultProjectsSettings } from '../src/settings/defaults';
 describe('buildProjectFieldCatalog', () => {
   it('preserves vault property spelling while suppressing curated and status-carrier aliases', () => {
     const settings = buildDefaultProjectsSettings();
-    settings.statuses.push({
-      id: 'tagged',
-      label: 'Tagged',
-      onLeftPanel: false,
-      match: { kind: 'tag', tag: '#project/tagged' },
-    });
+    settings.statusProperty = 'Статус';
+    settings.startProperty = 'Начало';
+    settings.endProperty = 'Конец';
     const properties: readonly ProjectPropertyInfo[] = [
-      { name: 'Start', type: 'date' },
-      { name: 'END', type: 'date' },
-      { name: 'STATUS', type: 'text' },
+      { name: 'Начало', type: 'date' },
+      { name: 'КОНЕЦ', type: 'date' },
+      { name: 'СТАТУС', type: 'text' },
       { name: 'Tags', type: 'tags' },
       { name: 'Budget', type: 'number' },
       { name: 'budget', type: 'number' },
@@ -33,13 +30,17 @@ describe('buildProjectFieldCatalog', () => {
       'progress',
       'start',
       'end',
+      'property:Tags',
       'property:Budget',
     ]);
     expect(fields.find(({ id }) => id === 'start')).toMatchObject({
-      property: 'Start',
+      property: 'Начало',
       type: 'date',
     });
-    expect(fields.find(({ id }) => id === 'end')).toMatchObject({ property: 'END', type: 'date' });
+    expect(fields.find(({ id }) => id === 'end')).toMatchObject({
+      property: 'КОНЕЦ',
+      type: 'date',
+    });
   });
 
   it('keeps unsupported vault properties visible as unavailable', () => {
@@ -73,6 +74,48 @@ describe('buildProjectFieldCatalog', () => {
       type: null,
     });
   });
+
+  it('marks a curated date source unavailable when its native type conflicts', () => {
+    const settings = buildDefaultProjectsSettings();
+    settings.startProperty = 'Budget';
+
+    const fields = buildProjectFieldCatalog(settings, [{ name: 'Budget', type: 'number' }]);
+
+    expect(fields.find(({ id }) => id === 'start')).toEqual({
+      id: 'start',
+      property: 'Budget',
+      label: 'Start',
+      type: null,
+    });
+  });
+
+  it('enables absent curated dates after successful discovery', () => {
+    const fields = buildProjectFieldCatalog(buildDefaultProjectsSettings(), []);
+
+    expect(fields.find(({ id }) => id === 'start')?.type).toBe('date');
+    expect(fields.find(({ id }) => id === 'end')?.type).toBe('date');
+  });
+
+  it('keeps curated dates unavailable when native discovery is unavailable', () => {
+    const fields = buildProjectFieldCatalog(buildDefaultProjectsSettings(), null);
+
+    expect(fields.find(({ id }) => id === 'start')?.type).toBeNull();
+    expect(fields.find(({ id }) => id === 'end')?.type).toBeNull();
+  });
+
+  it.each([null, 'text', 'datetime'] as const)(
+    'keeps an existing curated source with native type %s unavailable',
+    (type) => {
+      const fields = buildProjectFieldCatalog(buildDefaultProjectsSettings(), [
+        { name: 'Start', type },
+      ]);
+
+      expect(fields.find(({ id }) => id === 'start')).toMatchObject({
+        property: 'Start',
+        type: null,
+      });
+    },
+  );
 });
 
 describe('projectFieldValue', () => {
@@ -111,15 +154,15 @@ describe('normalizeProjectTableSettings', () => {
       hiddenStatuses: ['id:done'],
     });
 
-    expect(result.columns[0]).toEqual({
+    expect(result.columns[1]).toEqual({
       id: 'property:ActualKey',
       label: 'Friendly name',
       width: 280,
       visible: false,
     });
     expect(result.columns.map(({ id }) => id)).toEqual([
-      'property:ActualKey',
       'name',
+      'property:ActualKey',
       'status',
       'progress',
       'start',

@@ -3,7 +3,7 @@ import type { ProjectPropertyInfo, ProjectPropertyType } from './projectFields';
 import { findFrontmatterProperty } from './projectFields';
 
 export interface ProjectPropertyCatalog {
-  list(): readonly ProjectPropertyInfo[];
+  list(): readonly ProjectPropertyInfo[] | null;
   values(property: string): readonly string[];
   onChange(callback: () => void): () => void;
 }
@@ -111,15 +111,15 @@ export class ObsidianProjectProperties implements ProjectPropertyCatalog {
 
   constructor(private readonly app_abyssPrivate: App) {}
 
-  list(): readonly ProjectPropertyInfo[] {
+  list(): readonly ProjectPropertyInfo[] | null {
     const manager = metadataTypeManager(this.app_abyssPrivate);
-    if (manager === undefined) return [];
+    if (manager === undefined) return null;
     try {
       const names = propertyNames(manager.getAllProperties());
-      if (names === undefined) return [];
+      if (names === undefined) return null;
       return names.map((name) => ({ name, type: nativeTypeFrom(manager.getTypeInfo(name)) }));
     } catch {
-      return [];
+      return null;
     }
   }
 

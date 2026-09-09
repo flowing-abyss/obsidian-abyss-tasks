@@ -7,21 +7,18 @@ import type { ProjectStatus } from '../src/settings/types';
 const statuses: ProjectStatus[] = [
   {
     id: 'planned',
-    label: 'Planned',
+    name: 'Planned',
     onLeftPanel: true,
-    match: { kind: 'property', property: 'status', value: 'planned' },
   },
   {
     id: 'active',
-    label: 'Active',
+    name: 'Active',
     onLeftPanel: true,
-    match: { kind: 'property', property: 'status', value: 'active' },
   },
   {
     id: 'done',
-    label: 'Done',
+    name: 'Done',
     onLeftPanel: false,
-    match: { kind: 'property', property: 'status', value: 'done' },
   },
 ];
 

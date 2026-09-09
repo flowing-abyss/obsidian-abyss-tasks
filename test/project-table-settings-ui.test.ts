@@ -27,8 +27,23 @@ async function settle(): Promise<void> {
   await Promise.resolve();
 }
 
+function dragColumn(source: HTMLElement, target: HTMLElement): void {
+  let payload = '';
+  const dataTransfer = {
+    setData: (_type: string, value: string) => {
+      payload = value;
+    },
+    getData: () => payload,
+  };
+  for (const type of ['dragstart', 'dragover', 'drop']) {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+    (type === 'dragstart' ? source : target).dispatchEvent(event);
+  }
+}
+
 describe('renderProjectTableSettings', () => {
-  it('keeps Name first and visible while persisting hide and reorder changes', async () => {
+  it('keeps Name first and visible while persisting hide and drag reorder changes', async () => {
     const projects = buildDefaultProjectsSettings();
     const save = vi.fn().mockResolvedValue(undefined);
     const container = document.body.createDiv();
@@ -55,9 +70,10 @@ describe('renderProjectTableSettings', () => {
       statusRow.querySelector<HTMLInputElement>('input[type="checkbox"]'),
     );
     statusToggle.click();
-    expectDefined(
-      statusRow.querySelector<HTMLButtonElement>('[aria-label="Move Status down"]'),
-    ).click();
+    const startRow = expectDefined(
+      container.querySelector<HTMLElement>('[data-column-id="start"]'),
+    );
+    dragColumn(statusRow, startRow);
     await settle();
 
     expect(projects.table.columns.find(({ id }) => id === 'status')?.visible).toBe(false);
@@ -67,6 +83,8 @@ describe('renderProjectTableSettings', () => {
       'status',
     ]);
     expect(save).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[aria-label^="Move "]')).toBeNull();
+    expect(statusRow.getAttribute('draggable')).toBe('true');
   });
 
   it('changes a display label without changing the custom property source key', async () => {
@@ -99,7 +117,7 @@ describe('renderProjectTableSettings', () => {
     expect(save).toHaveBeenCalledOnce();
   });
 
-  it('uses labeled, consistent column slots and compact icon actions', () => {
+  it('separates source hints from display defaults and marks all curated rows as required', () => {
     const projects = buildDefaultProjectsSettings();
     projects.table.columns.push({ id: 'property:Budget', visible: true });
     const container = document.body.createDiv();
@@ -116,11 +134,11 @@ describe('renderProjectTableSettings', () => {
       Array.from(container.querySelectorAll('.abyss-project-column-settings-header > *')).map(
         (element) => element.textContent,
       ),
-    ).toEqual(['Source', 'Display name', 'Show', 'Width', '', '', '']);
+    ).toEqual(['', 'Source', 'Display name', 'Show', 'Width', '']);
     const rows = Array.from(
       container.querySelectorAll<HTMLElement>('.abyss-project-column-setting'),
     );
-    expect(new Set(rows.map((row) => row.children.length))).toEqual(new Set([7]));
+    expect(new Set(rows.map((row) => row.children.length))).toEqual(new Set([6]));
     expect(
       rows.every((row) =>
         Array.from(row.querySelectorAll<HTMLButtonElement>('button')).every((button) =>
@@ -128,6 +146,31 @@ describe('renderProjectTableSettings', () => {
         ),
       ),
     ).toBe(true);
+    expect(container.querySelector('[data-column-id="name"]')?.textContent).toContain('Filename');
+    expect(
+      container.querySelector('[data-column-id="name"] .abyss-project-column-source-badge')
+        ?.textContent,
+    ).toBe('Derived');
+    expect(container.querySelector('[data-column-id="progress"]')?.textContent).toContain('Tasks');
+    const curated = ['name', 'status', 'progress', 'start', 'end'];
+    expect(
+      curated.map(
+        (id) =>
+          expectDefined(
+            container.querySelector<HTMLInputElement>(
+              `[data-column-id="${id}"] .abyss-project-column-label`,
+            ),
+          ).placeholder,
+      ),
+    ).toEqual(['Name', 'Status', 'Progress', 'Start', 'End']);
+    expect(container.querySelectorAll('.abyss-project-column-required')).toHaveLength(5);
+    expect(
+      container.querySelector('[data-column-id="progress"] .abyss-project-column-auto')
+        ?.textContent,
+    ).toBe('Auto');
+    expect(container.querySelectorAll('.abyss-settings-card-grip')).toHaveLength(
+      projects.table.columns.length,
+    );
     expect(container.querySelector('[data-column-id="property:Budget"] .mod-warning')).toBeNull();
   });
 
@@ -159,14 +202,8 @@ describe('renderProjectTableSettings', () => {
     expect(refresh).toHaveBeenCalledOnce();
   });
 
-  it('rejects curated and configured status-carrier properties through the shared policy', () => {
+  it('rejects curated metadata sources while leaving ordinary Tags available', () => {
     const projects = buildDefaultProjectsSettings();
-    projects.statuses.push({
-      id: 'tagged',
-      label: 'Tagged',
-      onLeftPanel: false,
-      match: { kind: 'tag', tag: '#project/tagged' },
-    });
     const properties: readonly ProjectPropertyInfo[] = [
       { name: 'Start', type: 'date' },
       { name: 'END', type: 'date' },
@@ -177,11 +214,13 @@ describe('renderProjectTableSettings', () => {
 
     expect(
       properties
-        .slice(0, 4)
+        .slice(0, 3)
         .map(({ name }) => addProjectPropertyColumn(projects, properties, name)),
-    ).toEqual(['reserved', 'reserved', 'reserved', 'reserved']);
+    ).toEqual(['reserved', 'reserved', 'reserved']);
+    expect(addProjectPropertyColumn(projects, properties, 'Tags')).toBe('added');
     expect(addProjectPropertyColumn(projects, properties, 'Budget')).toBe('added');
     expect(projects.table.columns.filter(({ id }) => id.startsWith('property:'))).toEqual([
+      { id: 'property:Tags', visible: true },
       { id: 'property:Budget', visible: true },
     ]);
   });

@@ -240,7 +240,7 @@ export class ProjectStore {
     const fm = (cache?.frontmatter ?? {}) as Record<string, unknown>;
     const tags = (cache != null ? (getAllTags(cache) ?? []) : []).map((tag) => tag.toLowerCase());
     if (!evaluateQuery(this.settings.projects.membershipQuery, path, tags, fm)) return null;
-    const { statusId, rawStatus } = resolveStatus(this.settings.projects.statuses, tags, fm);
+    const { statusId, rawStatus } = resolveStatus(this.settings.projects, fm);
     return {
       path,
       name: basename(path),

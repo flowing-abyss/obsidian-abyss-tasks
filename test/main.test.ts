@@ -120,18 +120,18 @@ describe('TaskCalendarPlugin saveSettings', () => {
     expect(spy).toHaveBeenCalledWith(plugin.settings);
   });
 
-  it('refreshes project table settings in open panel views after persistence', async () => {
+  it('refreshes project stores and table settings in open panel views after persistence', async () => {
     const plugin = makePlugin();
     await plugin.loadSettings();
-    const refreshProjectTableSettings = vi.fn();
+    const refreshProjectSettings = vi.fn();
     const view = Object.create(PanelView.prototype) as PanelView;
-    view.refreshProjectTableSettings = refreshProjectTableSettings;
+    view.refreshProjectSettings = refreshProjectSettings;
     plugin.app.workspace.getLeavesOfType = vi.fn(() => [{ view }]);
 
     await plugin.saveSettings();
 
     expect(plugin.app.workspace.getLeavesOfType).toHaveBeenCalledWith(PANEL_VIEW_TYPE);
-    expect(refreshProjectTableSettings).toHaveBeenCalledOnce();
+    expect(refreshProjectSettings).toHaveBeenCalledOnce();
   });
 });
 

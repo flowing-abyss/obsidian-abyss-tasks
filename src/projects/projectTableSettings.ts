@@ -36,19 +36,28 @@ export function buildDefaultProjectTableSettings(): ProjectTableSettings {
   };
 }
 
+function normalizeColumns(value: unknown, defaults: readonly ProjectColumn[]): ProjectColumn[] {
+  const saved = Array.isArray(value)
+    ? value.map(normalizeColumn).filter((column) => column !== undefined)
+    : [];
+  const existingIds = new Set(saved.map(({ id }) => id));
+  const columns = [
+    ...saved,
+    ...defaults.filter(({ id }) => !existingIds.has(id)).map((column) => ({ ...column })),
+  ];
+  const nameIndex = columns.findIndex(({ id }) => id === 'name');
+  const name = columns.splice(nameIndex, 1)[0] ?? { id: 'name', visible: true };
+  name.visible = true;
+  columns.unshift(name);
+  return columns;
+}
+
 /** Deep-fills table defaults while retaining valid saved custom columns and presentation details. */
 export function normalizeProjectTableSettings(value: unknown): ProjectTableSettings {
   const defaults = buildDefaultProjectTableSettings();
   if (!isRecord(value)) return defaults;
 
-  const savedColumns = Array.isArray(value['columns'])
-    ? value['columns'].map(normalizeColumn).filter((column) => column !== undefined)
-    : [];
-  const existingIds = new Set(savedColumns.map(({ id }) => id));
-  const columns = [
-    ...savedColumns,
-    ...defaults.columns.filter(({ id }) => !existingIds.has(id)).map((column) => ({ ...column })),
-  ];
+  const columns = normalizeColumns(value['columns'], defaults.columns);
   const sortBy = isRecord(value['sortBy']) ? value['sortBy'] : undefined;
   const direction = sortBy?.['dir'] === 'desc' ? 'desc' : 'asc';
   const sortField = typeof sortBy?.['field'] === 'string' ? sortBy['field'] : defaults.sortBy.field;

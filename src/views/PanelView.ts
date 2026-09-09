@@ -247,6 +247,11 @@ export class PanelView extends ItemView {
     this.center_abyssPrivate.refreshProjectTableSettings();
   }
 
+  refreshProjectSettings(): void {
+    this.projectStore_abyssPrivate?.refresh();
+    this.refreshProjectTableSettings();
+  }
+
   private initializeNavigation_abyssPrivate(): void {
     this.panelNavigation_abyssPrivate = new PanelNavigator(
       this.state_abyssPrivate,

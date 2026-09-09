@@ -58,7 +58,7 @@ describe('ProjectManager.setStatus', () => {
       'P.md': '---\nstatus: active\nother: keep\n---\n\n- [ ] a task\n',
     });
     const settings = clone();
-    const doneId = expectDefined(settings.projects.statuses[2]).id; // Done → status=done
+    const doneId = expectDefined(settings.projects.statuses[2]).id;
     const pm = new ProjectManager(app, settings, {} as never, {} as never);
     await pm.setStatus('P.md', doneId);
     await flushMicrotasks();
@@ -84,7 +84,7 @@ describe('ProjectManager.setStatus', () => {
     const file = expectDefined(app.vault.getAbstractFileByPath('P.md'));
     if (!(file instanceof TFile)) throw new Error('missing project file');
     await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
-      frontmatter['status'] = planned.match.kind === 'property' ? planned.match.value : 'planned';
+      frontmatter['status'] = planned.name;
     });
     const before = await app.vault.read(file);
     const pm = new ProjectManager(app, settings, {} as never, {} as never);
@@ -99,113 +99,23 @@ describe('ProjectManager.setStatus', () => {
     expect(await app.vault.read(file)).toBe(before);
   });
 
-  it('strips an inline body status tag so status resolution does not stick', async () => {
+  it('leaves note and task tags unchanged while setting the configured property', async () => {
     const app = await createAppWithFiles({
-      'P.md': '---\ntags:\n  - keepme\n---\n\nProject notes #todo here.\n',
+      'P.md':
+        '---\ntags:\n  - project/active\n  - keepme\nstatus: active\n---\n\nProject notes #project/active here.\n- [ ] Task #task/keep\n',
     });
     const settings = clone();
-    settings.projects.statuses = [
-      { id: 'todo', label: 'Todo', onLeftPanel: true, match: { kind: 'tag', tag: 'todo' } },
-      { id: 'done', label: 'Done', onLeftPanel: false, match: { kind: 'tag', tag: 'done' } },
-    ];
     const pm = new ProjectManager(app, settings, {} as never, {} as never);
-    await pm.setStatus('P.md', 'done');
+    await pm.setStatus('P.md', expectDefined(settings.projects.statuses[2]).id);
     await flushMicrotasks();
-    const file = (
-      app as never as { vault: { getAbstractFileByPath(p: string): TFile } }
-    ).vault.getAbstractFileByPath('P.md');
-    const content = await (
-      app as never as { vault: { read(f: TFile): Promise<string> } }
-    ).vault.read(file);
-    // The inline task tag is removed from the body; #done is applied via frontmatter.
-    expect(content).not.toMatch(/#todo\b/);
-    expect(content).toContain('keepme');
-    expect(content).toMatch(/done/);
-    expect(content).toContain('Project notes  here.');
-  });
-
-  it('adds a tag marker and strips sibling tag markers for tag-kind statuses', async () => {
-    const app = await createAppWithFiles({ 'P.md': '---\ntags:\n  - todo\n  - keepme\n---\n' });
-    const settings = clone();
-    settings.projects.statuses = [
-      { id: 'todo', label: 'Todo', onLeftPanel: true, match: { kind: 'tag', tag: 'todo' } },
-      { id: 'wip', label: 'WIP', onLeftPanel: true, match: { kind: 'tag', tag: 'wip' } },
-    ];
-    const pm = new ProjectManager(app, settings, {} as never, {} as never);
-    await pm.setStatus('P.md', 'wip');
-    await flushMicrotasks();
-    const file = (
-      app as never as { vault: { getAbstractFileByPath(p: string): TFile } }
-    ).vault.getAbstractFileByPath('P.md');
-    const content = await (
-      app as never as { vault: { read(f: TFile): Promise<string> } }
-    ).vault.read(file);
-    expect(content).toContain('wip');
-    expect(content).toContain('keepme');
-    expect(content).not.toMatch(/- todo\b/);
-  });
-
-  it('clears descendant status tags while preserving literal code and comments', async () => {
-    const app = await createAppWithFiles({
-      'P.md': [
-        '---',
-        'tags:',
-        '  - qa-project/active/child',
-        '---',
-        'Live #qa-project/active/child.',
-        '`#qa-project/active/child`',
-        '<!-- #qa-project/active/child -->',
-        '',
-      ].join('\n'),
-    });
-    const settings = clone();
-    settings.projects.statuses = [
-      {
-        id: 'active',
-        label: 'Active',
-        onLeftPanel: true,
-        match: { kind: 'tag', tag: 'qa-project/active' },
-      },
-      {
-        id: 'done',
-        label: 'Done',
-        onLeftPanel: true,
-        match: { kind: 'tag', tag: 'qa-project/done' },
-      },
-    ];
-    const pm = new ProjectManager(app, settings, {} as never, {} as never);
-
-    await pm.setStatus('P.md', 'done', { statusId: 'active', rawStatus: null });
-
     const file = expectDefined(app.vault.getAbstractFileByPath('P.md'));
     if (!(file instanceof TFile)) throw new Error('missing project file');
     const content = await app.vault.read(file);
-    expect(content).toContain('- qa-project/done');
-    expect(content).not.toContain('Live #qa-project/active/child');
-    expect(content).toContain('`#qa-project/active/child`');
-    expect(content).toContain('<!-- #qa-project/active/child -->');
-  });
-
-  it('atomically rejects a stale inline tag status without partial frontmatter writes', async () => {
-    const app = await createAppWithFiles({
-      'P.md': '---\nother: keep\n---\n\nProject #wip here.\n',
-    });
-    const settings = clone();
-    settings.projects.statuses = [
-      { id: 'todo', label: 'Todo', onLeftPanel: true, match: { kind: 'tag', tag: 'todo' } },
-      { id: 'wip', label: 'WIP', onLeftPanel: true, match: { kind: 'tag', tag: 'wip' } },
-      { id: 'done', label: 'Done', onLeftPanel: false, match: { kind: 'tag', tag: 'done' } },
-    ];
-    const file = expectDefined(app.vault.getAbstractFileByPath('P.md'));
-    if (!(file instanceof TFile)) throw new Error('missing project file');
-    const before = await app.vault.read(file);
-    const pm = new ProjectManager(app, settings, {} as never, {} as never);
-
-    await expect(
-      pm.setStatus('P.md', 'done', { statusId: 'todo', rawStatus: null }),
-    ).rejects.toThrow(/Status changed externally/u);
-
-    expect(await app.vault.read(file)).toBe(before);
+    expect(content).toContain('- project/active');
+    expect(content).toContain('keepme');
+    expect(content).toContain('Project notes #project/active here.');
+    expect(content).toContain('- [ ] Task #task/keep');
+    expect((await readFm(app, 'P.md'))['status']).toBe('done');
   });
 
   it('accepts guarded unknown and no-status snapshots when they are still current', async () => {
@@ -230,6 +140,32 @@ describe('ProjectManager.setProperty', () => {
     label: 'Budget',
     type: 'number',
   };
+
+  const start: ProjectField = {
+    id: 'start',
+    property: 'start',
+    label: 'Start',
+    type: 'date',
+  };
+
+  it('creates an absent curated date from an undefined snapshot', async () => {
+    const app = await createAppWithFiles({ 'P.md': '# Project\n' });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+
+    await pm.setProperty('P.md', start, '2026-09-09', undefined);
+
+    expect((await readFm(app, 'P.md'))['start']).toBe('2026-09-09');
+  });
+
+  it('rejects an absent-date write when an external value appeared', async () => {
+    const app = await createAppWithFiles({ 'P.md': '---\nstart: 2026-09-08\n---\n' });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+
+    await expect(pm.setProperty('P.md', start, '2026-09-09', undefined)).rejects.toThrow(
+      /changed externally/u,
+    );
+    expect((await readFm(app, 'P.md'))['start']).toBe('2026-09-08');
+  });
 
   it('writes through the current case-insensitive property key and preserves unrelated fields', async () => {
     const app = await createAppWithFiles({
@@ -275,13 +211,6 @@ describe('ProjectManager.setProperty', () => {
       'P.md': '---\nstart: 2026-09-01\nend: 2026-09-20\n---\n',
     });
     const pm = new ProjectManager(app, clone(), {} as never, {} as never);
-    const start: ProjectField = {
-      id: 'start',
-      property: 'start',
-      label: 'Start',
-      type: 'date',
-    };
-
     await expect(pm.setProperty('P.md', start, '2026-09-25', '2026-09-01')).rejects.toThrow(
       /Start date must be on or before end date/u,
     );

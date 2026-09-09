@@ -31,29 +31,29 @@ export function buildDefaultProjectsSettings(): ProjectsSettings {
 
   const active: ProjectsSettings['statuses'][number] = {
     id: statusId(),
-    label: 'Active',
+    name: 'active',
     color: '#4caf50',
     onLeftPanel: true,
-    match: { kind: 'property', property: 'status', value: 'active' },
   };
   const planned = {
     id: statusId(),
-    label: 'Planned',
+    name: 'planned',
     color: '#2196f3',
     onLeftPanel: false,
-    match: { kind: 'property' as const, property: 'status', value: 'planned' },
   };
   const done = {
     id: statusId(),
-    label: 'Done',
+    name: 'done',
     color: '#888888',
     onLeftPanel: false,
-    match: { kind: 'property' as const, property: 'status', value: 'done' },
   };
   return {
     membershipQuery: 'Projects/',
     createFolder: 'Projects',
     templatePath: '',
+    statusProperty: 'status',
+    startProperty: 'start',
+    endProperty: 'end',
     statuses: [active, planned, done],
     defaultStatusId: active.id,
     taskInsertionMode: 'append',
