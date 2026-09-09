@@ -1,5 +1,5 @@
 import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
-import { projectFieldValue } from '../../projects/projectFields';
+import { isProjectStatusField, projectFieldValue } from '../../projects/projectFields';
 import {
   projectProgress,
   projectProgressDisplayValue,
@@ -56,6 +56,7 @@ function renderStatus(
   if (status?.color !== undefined && status.color.length > 0) {
     pill.style.setProperty('--abyss-project-status-color', status.color);
   }
+  renderUnavailableType(cell, field);
 }
 
 function renderUnavailableType(cell: HTMLElement, field: ProjectFieldCatalogItem): void {
@@ -119,7 +120,7 @@ export function renderProjectTableCell(
     });
     return;
   }
-  if (field.type === 'status') {
+  if (isProjectStatusField(field)) {
     renderStatus(cell, project, field, statuses);
     return;
   }

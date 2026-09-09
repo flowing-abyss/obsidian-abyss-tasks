@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { ProjectField, ProjectTableSettings } from '../src/projects/projectFields';
-import { buildProjectTableModel, projectProgress } from '../src/projects/projectTableModel';
+import type {
+  ProjectField,
+  ProjectFieldCatalogItem,
+  ProjectTableSettings,
+} from '../src/projects/projectFields';
+import {
+  buildProjectTableModel,
+  projectProgress,
+  projectTableDisplayValues,
+} from '../src/projects/projectTableModel';
 import type { Project } from '../src/projects/types';
 import type { ProjectStatus } from '../src/settings/types';
 
@@ -136,6 +144,37 @@ describe('buildProjectTableModel', () => {
     );
 
     expect(result.groups.map(({ label }) => label)).toEqual(['Planned', 'Active', 'Done']);
+  });
+
+  it('keeps status labels and configured grouping when the status field is read-only', () => {
+    const readOnlyStatus: ProjectFieldCatalogItem = {
+      id: 'status',
+      property: 'status',
+      label: 'Status',
+      type: null,
+    };
+    const readOnlyFields = fields.map((field) => (field.id === 'status' ? readOnlyStatus : field));
+    const activeProject = project('Active project', {
+      statusId: 'active',
+      frontmatter: { status: 'active' },
+    });
+    const projects = [
+      project('Done project', { statusId: 'done', frontmatter: { status: 'done' } }),
+      activeProject,
+    ];
+
+    const result = buildProjectTableModel({
+      projects,
+      fields: readOnlyFields,
+      statuses,
+      settings: table({ groupBy: 'status', sortBy: { field: 'status', dir: 'asc' } }),
+    });
+
+    expect(result.groups.map(({ key, label }) => [key, label])).toEqual([
+      ['id:active', 'Active'],
+      ['id:done', 'Done'],
+    ]);
+    expect(projectTableDisplayValues(activeProject, readOnlyStatus, statuses)).toEqual(['Active']);
   });
 
   it('repeats list-valued projects across groups while counting unique projects once', () => {

@@ -168,6 +168,11 @@ export function isAvailableProjectField(field: ProjectFieldCatalogItem): field i
   return field.type !== null;
 }
 
+/** True for the curated Status field regardless of current edit availability. */
+export function isProjectStatusField(field: ProjectFieldCatalogItem): boolean {
+  return field.id === 'status';
+}
+
 export function findProjectFieldById(
   fields: readonly ProjectFieldCatalogItem[],
   id: string,
@@ -193,7 +198,7 @@ export function findFrontmatterProperty(
 
 export function projectFieldValue(project: Project, field: ProjectFieldCatalogItem): unknown {
   if (field.type === 'name') return project.name;
-  if (field.type === 'status') return project.statusId ?? project.rawStatus;
+  if (isProjectStatusField(field)) return project.statusId ?? project.rawStatus;
   if (field.type === 'progress') return project.stats;
   if (field.property === undefined) return undefined;
   return findFrontmatterProperty(project.frontmatter, field.property)?.value;

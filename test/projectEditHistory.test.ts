@@ -99,6 +99,41 @@ describe('ProjectEditHistory', () => {
     expect(submitted?.field.property).toBe('Owners');
   });
 
+  it('reuses the exact owned key and absence provenance across clear undo and redo', async () => {
+    const apply = vi.fn(async (changes: readonly ProjectCellChange[]) => successful(changes));
+    const history = new ProjectEditHistory(apply);
+    history.record({
+      applied: [
+        {
+          ...applied('A.md', undefined, ['old']),
+          sourceKey: 'OWNERS',
+          appliedExists: false,
+        },
+      ],
+      failed: [],
+    });
+
+    await history.undo();
+    expect(apply.mock.calls[0]?.[0]).toEqual([
+      expect.objectContaining({
+        sourceKey: 'OWNERS',
+        expectedExists: false,
+        valueExists: true,
+        value: ['old'],
+      }),
+    ]);
+
+    await history.redo();
+    expect(apply.mock.calls[1]?.[0]).toEqual([
+      expect.objectContaining({
+        sourceKey: 'OWNERS',
+        expectedExists: true,
+        valueExists: false,
+        expectedValue: ['old'],
+      }),
+    ]);
+  });
+
   it('keeps failed undo cells owned while making successful cells redoable', async () => {
     const apply = vi.fn(
       async (changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> => ({

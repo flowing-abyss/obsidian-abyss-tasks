@@ -553,4 +553,19 @@ describe('ProjectManager.applyEdits', () => {
     await expect(history.undo()).rejects.toThrow(/source key changed/u);
     expect((await frontmatter(app, 'A.md'))['title']).toBe('new');
   });
+
+  it('undo and redo preserve an owned case-variant key after clearing it', async () => {
+    const app = await createAppWithFiles({ 'A.md': '---\nTITLE: old\n---\n' });
+    const pm = manager(app, cloneSettings(), [{ name: 'Title', type: 'text' }]);
+    const history = new ProjectEditHistory((changes) => pm.applyEdits(changes));
+    history.record(
+      await pm.applyEdits([{ path: 'A.md', field: title, value: '', expectedValue: 'old' }]),
+    );
+
+    expect(await frontmatter(app, 'A.md')).toEqual({});
+    await history.undo();
+    expect(await frontmatter(app, 'A.md')).toEqual({ TITLE: 'old' });
+    await history.redo();
+    expect(await frontmatter(app, 'A.md')).toEqual({});
+  });
 });

@@ -1,6 +1,7 @@
 import type { ProjectStatus } from '../settings/types';
 import {
   findProjectFieldById,
+  isProjectStatusField,
   projectFieldValue,
   type ProjectFieldCatalogItem,
   type ProjectTableSettings,
@@ -106,7 +107,7 @@ export function projectTableDisplayValues(
   field: ProjectFieldCatalogItem,
   statuses: readonly ProjectStatus[],
 ): string[] {
-  if (field.type === 'status') return [statusLabel(project, statuses)];
+  if (isProjectStatusField(field)) return [statusLabel(project, statuses)];
   if (field.type === 'progress') return [projectProgressDisplayValue(project.stats)];
   const value = projectFieldValue(project, field);
   const values = Array.isArray(value) ? value : [value];
@@ -173,7 +174,9 @@ function comparePopulatedValues(
   statuses: readonly ProjectStatus[],
 ): number {
   if (field === undefined) return 0;
-  if (field.type === 'status') return compareStatusValues(leftProject, rightProject, statuses);
+  if (isProjectStatusField(field)) {
+    return compareStatusValues(leftProject, rightProject, statuses);
+  }
   const left = sortableValue(leftProject, field);
   const right = sortableValue(rightProject, field);
   if (field.type === 'number' || field.type === 'progress') {
@@ -258,7 +261,7 @@ function groupValues(
   field: ProjectFieldCatalogItem,
   statuses: readonly ProjectStatus[],
 ): ProjectTableValueGroup[] {
-  if (field.type === 'status') return statusValueGroup(project, statuses);
+  if (isProjectStatusField(field)) return statusValueGroup(project, statuses);
   if (field.type === 'progress') return progressValueGroup(project);
   return propertyValueGroups(project, field);
 }
@@ -288,7 +291,7 @@ function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
     const paths = new Set(group.projects.map(({ path }) => path));
     group.projects = sortedProjects.filter(({ path }) => paths.has(path));
   }
-  if (groupField.type === 'status') {
+  if (isProjectStatusField(groupField)) {
     return availableStatuses
       .map(({ key, label, statusId }) => ({
         key,

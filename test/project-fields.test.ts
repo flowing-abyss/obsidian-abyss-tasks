@@ -153,6 +153,31 @@ describe('projectFieldValue', () => {
       ),
     ).toBe(12);
   });
+
+  it.each([
+    { state: 'available', properties: [] },
+    { state: 'unavailable', properties: null },
+    { state: 'incompatible', properties: [{ name: 'status', type: 'number' }] },
+  ] as const)('keeps the logical status id when its edit type is $state', ({ properties }) => {
+    const settings = buildDefaultProjectsSettings();
+    const field = buildProjectFieldCatalog(settings, properties).find(({ id }) => id === 'status');
+    if (field === undefined) throw new Error('Missing Status field');
+
+    expect(
+      projectFieldValue(
+        {
+          path: 'Projects/A.md',
+          name: 'A',
+          frontmatter: { status: 'active' },
+          tags: [],
+          statusId: 'status-id',
+          rawStatus: null,
+          stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+        },
+        field,
+      ),
+    ).toBe('status-id');
+  });
 });
 
 describe('normalizeProjectTableSettings', () => {

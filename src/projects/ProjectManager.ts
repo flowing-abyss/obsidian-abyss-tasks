@@ -535,7 +535,15 @@ export class ProjectManager {
     checkExpected: boolean,
   ): PreparedProjectCellChange {
     const current = uniqueFrontmatterProperty(frontmatter, entry.property);
-    const sourceKey = current?.key ?? entry.property;
+    const receiptSourceKey = entry.change.sourceKey;
+    const sourceKey =
+      current?.key ??
+      (entry.change.restoreSourceValue === true &&
+      entry.change.expectedExists === false &&
+      receiptSourceKey !== undefined &&
+      samePropertyName(receiptSourceKey, entry.property)
+        ? receiptSourceKey
+        : entry.property);
     const exists = current !== undefined;
     this.assertSourceKey(entry.change, sourceKey);
     this.assertExpectedValue(entry.change, current?.value, exists, checkExpected);

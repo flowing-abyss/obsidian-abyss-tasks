@@ -117,6 +117,26 @@ describe('ProjectsTableView', () => {
     ).toBe(true);
   });
 
+  it('renders a read-only status with its configured label and unavailable badge', () => {
+    const unavailableCatalog: ProjectPropertyCatalog = {
+      list: () => null,
+      values: () => [],
+      onChange: () => () => {},
+    };
+    const { host } = mount([project({ frontmatter: { status: 'active' } })], {
+      catalog: unavailableCatalog,
+    });
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
+    );
+
+    expect(cell.querySelector('.abyss-project-table-status-pill')?.textContent).toBe(active.name);
+    expect(cell.querySelector('.abyss-project-table-unavailable')?.textContent).toBe(
+      'Type unavailable',
+    );
+    expect(cell.classList.contains('is-editable')).toBe(false);
+  });
+
   it('uses aliases in headers and clicks select then reverse the sort field', async () => {
     const config = settings();
     const endColumn = expectDefined(config.projects.table.columns.find(({ id }) => id === 'end'));
