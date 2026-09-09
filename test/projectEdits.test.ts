@@ -847,7 +847,126 @@ describe('ProjectManager.applyEdits', () => {
           } as never,
         },
       ]),
-    ).rejects.toThrow(/known native type/u);
+    ).rejects.toThrow(/owned clear receipt/u);
+  });
+
+  it.each([
+    {
+      label: 'live native type',
+      budget: {
+        kind: 'available',
+        property: { name: 'Budget', type: 'number' },
+        assignment: { kind: 'none' },
+      } satisfies ProjectNativePropertySnapshot,
+    },
+    {
+      label: 'explicit assigned native type',
+      budget: {
+        kind: 'available',
+        property: undefined,
+        assignment: { kind: 'assigned', nativeType: 'number', type: 'number' },
+      } satisfies ProjectNativePropertySnapshot,
+    },
+  ])(
+    'rejects another cell receipt before a $label edit can select its key',
+    async ({ budget: nativeBudget }) => {
+      const app = await createAppWithFiles({
+        'A.md': '---\nTITLE: old\n---\n',
+        'B.md': '---\nTITLE: protected\n---\n',
+      });
+      const native: ProjectPropertyCatalog = {
+        list: () => [
+          { name: 'Title', type: 'text' },
+          ...(nativeBudget.property === undefined ? [] : [nativeBudget.property]),
+        ],
+        inspect: (property) =>
+          property === 'Title'
+            ? {
+                kind: 'available',
+                property: { name: 'Title', type: 'text' },
+                assignment: { kind: 'none' },
+              }
+            : nativeBudget,
+        values: () => [],
+        onChange: () => () => {},
+      };
+      const pm = new ProjectManager(app, cloneSettings(), {} as never, {} as never, native);
+      const clear = await pm.applyEdits([
+        { path: 'A.md', field: title, value: '', expectedValue: 'old' },
+      ]);
+      const wrongReceipt = expectDefined(clear.applied[0]?.ownedClear);
+      const file = expectDefined(app.vault.getAbstractFileByPath('B.md'));
+      if (!(file instanceof TFile)) throw new Error('Missing B.md');
+      const before = await app.vault.read(file);
+
+      await expect(
+        pm.applyEdits([
+          {
+            path: 'B.md',
+            field: budget,
+            value: 20,
+            expectedValue: undefined,
+            expectedExists: false,
+            ownedClear: wrongReceipt,
+          },
+        ]),
+      ).rejects.toThrow(/owned clear receipt/u);
+      expect(await app.vault.read(file)).toBe(before);
+    },
+  );
+
+  it('rechecks owned clear binding inside the file callback', async () => {
+    const app = await createAppWithFiles({
+      'A.md': '---\nBudget: 10\n---\n',
+      'T.md': '---\nTitle: old\n---\n',
+    });
+    let nativePresent = true;
+    const native: ProjectPropertyCatalog = {
+      list: () => [],
+      inspect: (property) => ({
+        kind: 'available',
+        property: nativePresent
+          ? { name: property, type: property === 'Budget' ? 'number' : 'text' }
+          : undefined,
+        assignment: { kind: 'none' },
+      }),
+      values: () => [],
+      onChange: () => () => {},
+    };
+    const pm = new ProjectManager(app, cloneSettings(), {} as never, {} as never, native);
+    const cleared = await pm.applyEdits([
+      { path: 'A.md', field: budget, value: '', expectedValue: 10 },
+      { path: 'T.md', field: title, value: '', expectedValue: 'old' },
+    ]);
+    const budgetReceipt = expectDefined(
+      cleared.applied.find(({ path }) => path === 'A.md')?.ownedClear,
+    );
+    const titleReceipt = expectDefined(
+      cleared.applied.find(({ path }) => path === 'T.md')?.ownedClear,
+    );
+    nativePresent = false;
+    const change: ProjectCellChange = {
+      path: 'A.md',
+      field: budget,
+      value: 20,
+      expectedValue: undefined,
+      expectedExists: false,
+      ownedClear: budgetReceipt,
+    };
+    const file = expectDefined(app.vault.getAbstractFileByPath('A.md'));
+    if (!(file instanceof TFile)) throw new Error('Missing A.md');
+    const before = await app.vault.read(file);
+    const originalProcess = app.vault.process.bind(app.vault);
+    vi.spyOn(app.vault, 'process').mockImplementation(async (target, fn, options) => {
+      change.ownedClear = titleReceipt;
+      return originalProcess(target, fn, options);
+    });
+
+    const result = await pm.applyEdits([change]);
+
+    expect(result.applied).toEqual([]);
+    expect(result.failed[0]?.message).toMatch(/owned clear receipt/u);
+    expect(await app.vault.read(file)).toBe(before);
   });
 
   it('rejects unavailable or changed native provenance instead of trusting an owned clear', async () => {

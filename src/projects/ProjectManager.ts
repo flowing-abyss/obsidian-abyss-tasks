@@ -23,6 +23,7 @@ import {
   isOwnedInferredPropertyClear,
   normalizeProjectLinkInput,
   type AppliedProjectCellChange,
+  type OwnedInferredPropertyClear,
   type ProjectCellChange,
   type ProjectEditResult,
 } from './projectEdits';
@@ -52,6 +53,7 @@ interface PreparedProjectCellChange {
   readonly expectedExists: boolean;
   readonly sourceKey: string;
   readonly inferredCustomProperty: boolean;
+  readonly ownedClear: OwnedInferredPropertyClear | undefined;
 }
 
 type RequestedProjectCellChange = Omit<
@@ -68,6 +70,7 @@ interface PreparedProjectFileEdits {
 interface EditableNativeProperty {
   readonly property: string;
   readonly inferredCustomProperty: boolean;
+  readonly ownedClear: OwnedInferredPropertyClear | undefined;
 }
 
 type AvailableNativePropertySnapshot = Extract<
@@ -179,9 +182,13 @@ function isPropertyType(type: ProjectField['type']): type is ProjectPropertyType
   return type in PROPERTY_VALIDATORS;
 }
 
-function absentEditSourceKey(change: ProjectCellChange, property: string): string {
-  if (change.expectedExists === false && isOwnedInferredPropertyClear(change.ownedClear)) {
-    return change.ownedClear.sourceKey;
+function absentEditSourceKey(
+  change: ProjectCellChange,
+  property: string,
+  ownedClear: OwnedInferredPropertyClear | undefined,
+): string {
+  if (change.expectedExists === false && ownedClear !== undefined) {
+    return ownedClear.sourceKey;
   }
   if (
     change.restoreSourceValue === true &&
@@ -437,28 +444,9 @@ export class ProjectManager {
         const fileReceipts: AppliedProjectCellChange[] = [];
         await this.app.vault.process(preparedFile.file, (source) => {
           const parsed = parseProjectSource(source);
-          const refreshed = preparedFile.changes.map((prepared) => {
-            const currentNative = this.editablePropertyWithNativeType(prepared.change);
-            if (currentNative.property !== prepared.property) {
-              throw new ProjectEditValidationError(
-                `${prepared.change.field.label} source property changed. Reload the project and try again.`,
-              );
-            }
-            const current = uniqueFrontmatterProperty(parsed.frontmatter, currentNative.property);
-            if (
-              (current !== undefined && current.key !== prepared.sourceKey) ||
-              (current !== undefined) !== prepared.expectedExists ||
-              !valuesEqual(current?.value, prepared.expectedValue)
-            ) {
-              throw new ProjectEditValidationError(
-                `${prepared.change.field.label} changed externally. Reload the project and try your edit again.`,
-              );
-            }
-            if (prepared.change.ownedClear !== undefined && current === undefined) {
-              this.assertOwnedClearSourceKey(prepared.change, prepared.sourceKey);
-            }
-            return { ...prepared, inferredCustomProperty: currentNative.inferredCustomProperty };
-          });
+          const refreshed = preparedFile.changes.map((prepared) =>
+            this.refreshPreparedEdit(parsed.frontmatter, prepared),
+          );
           this.validateCombinedDateRange(parsed.frontmatter, refreshed);
           for (const prepared of refreshed) {
             const current = uniqueFrontmatterProperty(parsed.frontmatter, prepared.property);
@@ -504,6 +492,40 @@ export class ProjectManager {
     return { applied, failed };
   }
 
+  private refreshPreparedEdit(
+    frontmatter: Readonly<Record<string, unknown>>,
+    prepared: PreparedProjectCellChange,
+  ): PreparedProjectCellChange {
+    const currentNative = this.editablePropertyWithNativeType(prepared.change);
+    if (currentNative.property !== prepared.property) {
+      throw new ProjectEditValidationError(
+        `${prepared.change.field.label} source property changed. Reload the project and try again.`,
+      );
+    }
+    const current = uniqueFrontmatterProperty(frontmatter, currentNative.property);
+    const currentSourceKey =
+      current?.key ??
+      absentEditSourceKey(prepared.change, currentNative.property, currentNative.ownedClear);
+    if (currentSourceKey !== prepared.sourceKey) {
+      throw new ProjectEditValidationError(
+        `${prepared.change.field.label} source key changed. Reload the project and try again.`,
+      );
+    }
+    if (
+      (current !== undefined) !== prepared.expectedExists ||
+      !valuesEqual(current?.value, prepared.expectedValue)
+    ) {
+      throw new ProjectEditValidationError(
+        `${prepared.change.field.label} changed externally. Reload the project and try your edit again.`,
+      );
+    }
+    return {
+      ...prepared,
+      inferredCustomProperty: currentNative.inferredCustomProperty,
+      ownedClear: currentNative.ownedClear,
+    };
+  }
+
   private async preflightEdits(
     changes: readonly ProjectCellChange[],
     checkExpected: boolean,
@@ -543,6 +565,7 @@ export class ProjectManager {
         value: normalized.value,
         valueExists: !normalized.clear,
         inferredCustomProperty: native.inferredCustomProperty,
+        ownedClear: native.ownedClear,
       });
       byPath.set(change.path, entries);
     }
@@ -575,12 +598,10 @@ export class ProjectManager {
     checkExpected: boolean,
   ): PreparedProjectCellChange {
     const current = uniqueFrontmatterProperty(frontmatter, entry.property);
-    const sourceKey = current?.key ?? absentEditSourceKey(entry.change, entry.property);
+    const sourceKey =
+      current?.key ?? absentEditSourceKey(entry.change, entry.property, entry.ownedClear);
     const exists = current !== undefined;
     this.assertSourceKey(entry.change, sourceKey);
-    if (entry.change.ownedClear !== undefined && current === undefined) {
-      this.assertOwnedClearSourceKey(entry.change, sourceKey);
-    }
     this.assertExpectedValue(entry.change, current?.value, exists, checkExpected);
     return {
       ...entry,
@@ -666,6 +687,7 @@ export class ProjectManager {
   private editablePropertyWithNativeType(change: ProjectCellChange): EditableNativeProperty {
     const { field } = change;
     const property = this.editableProperty(field);
+    const ownedClear = this.validatedOwnedClear(change, property);
     const native = this.projectProperties.inspect(property);
     if (native.kind === 'unavailable') {
       throw new ProjectEditValidationError(
@@ -678,15 +700,17 @@ export class ProjectManager {
       return {
         property: native.property.name,
         inferredCustomProperty: native.assignment.kind === 'none' && !this.isCuratedField(field),
+        ownedClear,
       };
     }
     if (native.assignment.kind === 'assigned') {
-      return { property, inferredCustomProperty: false };
+      return { property, inferredCustomProperty: false, ownedClear };
     }
-    if (this.isCuratedField(field)) return { property, inferredCustomProperty: false };
-    const ownedClear = this.matchingOwnedClear(change, property);
+    if (this.isCuratedField(field)) {
+      return { property, inferredCustomProperty: false, ownedClear };
+    }
     if (ownedClear !== undefined) {
-      return { property: ownedClear.sourceProperty, inferredCustomProperty: false };
+      return { property: ownedClear.sourceProperty, inferredCustomProperty: false, ownedClear };
     }
     throw new ProjectEditValidationError(
       `${field.label} no longer has a known native type. Reload the project and try again.`,
@@ -707,32 +731,27 @@ export class ProjectManager {
     );
   }
 
-  private matchingOwnedClear(
+  private validatedOwnedClear(
     change: ProjectCellChange,
     property: string,
-  ): ProjectCellChange['ownedClear'] {
+  ): OwnedInferredPropertyClear | undefined {
     const owned = change.ownedClear;
-    if (!isOwnedInferredPropertyClear(owned) || change.expectedExists !== false) return undefined;
-    const cellMatches = [
-      owned.path === change.path && owned.fieldId === change.field.id,
-      owned.sourceProperty === property,
-      samePropertyName(owned.sourceKey, property),
-      owned.type === change.field.type,
-      change.sourceProperty === undefined || change.sourceProperty === owned.sourceProperty,
-      change.sourceKey === undefined || change.sourceKey === owned.sourceKey,
-    ].every(Boolean);
-    return cellMatches ? owned : undefined;
-  }
-
-  private assertOwnedClearSourceKey(change: ProjectCellChange, sourceKey: string): void {
-    if (
-      !isOwnedInferredPropertyClear(change.ownedClear) ||
-      change.ownedClear.sourceKey !== sourceKey
-    ) {
-      throw new ProjectEditValidationError(
-        `${change.field.label} source key changed. Reload the project and try again.`,
-      );
-    }
+    if (owned === undefined) return undefined;
+    const matches =
+      isOwnedInferredPropertyClear(owned) &&
+      [
+        change.expectedExists === false,
+        owned.path === change.path && owned.fieldId === change.field.id,
+        owned.sourceProperty === property,
+        samePropertyName(owned.sourceKey, property),
+        owned.type === change.field.type,
+        change.sourceProperty === undefined || change.sourceProperty === owned.sourceProperty,
+        change.sourceKey === undefined || change.sourceKey === owned.sourceKey,
+      ].every(Boolean);
+    if (matches && isOwnedInferredPropertyClear(owned)) return owned;
+    throw new ProjectEditValidationError(
+      `${change.field.label} owned clear receipt does not match this project cell. Reload the project and try again.`,
+    );
   }
 
   private normalizeCellValue(change: ProjectCellChange): NormalizedPropertyValue {
