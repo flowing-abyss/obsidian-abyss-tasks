@@ -18,6 +18,11 @@ interface PendingSourceObservation {
   readonly cache: CachedMetadata | undefined;
 }
 
+interface PublishedSourceObservation {
+  readonly pending: PendingSourceObservation;
+  readonly observation: ProjectSourceObservation;
+}
+
 export function computeStats(tasks: readonly TaskSnapshot[]): ProjectStats {
   let done = 0;
   let cancelled = 0;
@@ -71,6 +76,7 @@ export class ProjectStore {
   private readyFull = false;
   private readonly pendingCreates = new Set<string>();
   private readonly pendingSourceObservations = new Map<string, PendingSourceObservation>();
+  private readonly publishedSourceObservations = new Map<string, PublishedSourceObservation>();
   private sourceRevision = 0;
 
   constructor(
@@ -271,6 +277,7 @@ export class ProjectStore {
       revision: pending.revision,
       project,
     };
+    this.publishedSourceObservations.set(path, { pending, observation });
     for (const listener of this.sourceListeners) listener(observation);
   }
 
@@ -385,6 +392,31 @@ export class ProjectStore {
     };
   }
 
+  /** Rechecks that a previously published native observation still describes the current source. */
+  async revalidateSourceObservation(observation: ProjectSourceObservation): Promise<boolean> {
+    const published = this.publishedSourceObservations.get(observation.path);
+    if (published?.observation !== observation) return false;
+    const { pending } = published;
+    if (pending.data === undefined) {
+      return this.app.vault.getAbstractFileByPath(observation.path) === null;
+    }
+    const file = this.app.vault.getAbstractFileByPath(observation.path);
+    if (!(file instanceof TFile) || file.extension !== 'md') return false;
+    try {
+      const currentData = await this.app.vault.read(file);
+      return (
+        this.publishedSourceObservations.get(observation.path) === published &&
+        currentData === pending.data
+      );
+    } catch (error) {
+      console.error('[abyss-tasks] Could not revalidate project source observation', {
+        path: observation.path,
+        cause: error,
+      });
+      return false;
+    }
+  }
+
   destroy(): void {
     if (this.debounce !== undefined) window.clearTimeout(this.debounce);
     this.queryUnsub?.();
@@ -397,6 +429,7 @@ export class ProjectStore {
     this.readyPaths.clear();
     this.pendingCreates.clear();
     this.pendingSourceObservations.clear();
+    this.publishedSourceObservations.clear();
     this.listeners = [];
     this.sourceListeners = [];
   }

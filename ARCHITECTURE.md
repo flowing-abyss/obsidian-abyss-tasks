@@ -202,7 +202,10 @@ refreshes update the base snapshot without retiring that overlay. `ProjectStore`
 separate per-path source observation after the existing metadata/task barrier; it verifies the
 native event content against a fresh vault read and carries the Project snapshot derived from that
 event's cache. A matching observation acknowledges the receipt, while a verified later differing
-observation supersedes it. Deletion, rename, or source-based membership loss also retires the
+observation supersedes it. When a differing observation arrives during a write, the table asks the
+store to revalidate that exact published observation after installing the receipt; a fresh vault
+read retires only the same latest local receipt, so neither an older observation nor an older async
+check can retire a newer write. Deletion, rename, or source-based membership loss also retires the
 affected path without allowing an overlay to resurrect it. Cell and group links reuse the shared
 Markdown renderer with their original source paths and ask the same editor boundary to finish before
 navigation.

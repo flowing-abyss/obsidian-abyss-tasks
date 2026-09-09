@@ -53,6 +53,7 @@ export interface ProjectsTableViewContext {
   readonly history: ProjectEditHistory;
   readonly createProject: (name: string) => Promise<void>;
   readonly openProject: (path: string) => void;
+  readonly revalidateSourceObservation: (observation: ProjectSourceObservation) => Promise<boolean>;
 }
 
 interface ActiveEditor {
@@ -927,25 +928,55 @@ export class ProjectsTableView {
   /** Publishes successful editor, paste, drop, Undo, and Redo receipts into this session. */
   publishAppliedReceipts(receipts: readonly AppliedProjectCellChange[]): void {
     for (const receipt of receipts) {
-      const sourceRevisionAtMutationStart =
-        this.activeMutationSourceRevisions_abyssPrivate?.get(receipt.path) ??
-        this.sourceObservations_abyssPrivate.get(receipt.path)?.revision ??
-        0;
-      const observation = this.sourceObservations_abyssPrivate.get(receipt.path);
-      const observedDuringMutation =
-        observation !== undefined && observation.revision > sourceRevisionAtMutationStart;
-      const key = projectionKey(receipt);
-      if (observedDuringMutation && observationMatchesReceipt(observation, receipt)) {
-        this.receiptProjections_abyssPrivate.delete(key);
-        continue;
-      }
-      this.receiptProjections_abyssPrivate.set(key, {
-        receipt,
-        sourceRevisionAtMutationStart,
-        ordinal: ++this.nextReceiptOrdinal_abyssPrivate,
-      });
+      this.publishAppliedReceipt_abyssPrivate(receipt);
     }
     this.renderTable_abyssPrivate();
+  }
+
+  private publishAppliedReceipt_abyssPrivate(receipt: AppliedProjectCellChange): void {
+    const activeRevisions = this.activeMutationSourceRevisions_abyssPrivate;
+    const sourceRevisionAtMutationStart =
+      activeRevisions !== undefined
+        ? (activeRevisions.get(receipt.path) ?? 0)
+        : (this.sourceObservations_abyssPrivate.get(receipt.path)?.revision ?? 0);
+    const observation = this.sourceObservations_abyssPrivate.get(receipt.path);
+    const observedDuringMutation =
+      observation !== undefined && observation.revision > sourceRevisionAtMutationStart;
+    const key = projectionKey(receipt);
+    if (observedDuringMutation && observationMatchesReceipt(observation, receipt)) {
+      this.receiptProjections_abyssPrivate.delete(key);
+      return;
+    }
+    const projection: ProjectReceiptProjection = {
+      receipt,
+      sourceRevisionAtMutationStart,
+      ordinal: ++this.nextReceiptOrdinal_abyssPrivate,
+    };
+    this.receiptProjections_abyssPrivate.set(key, projection);
+    if (observedDuringMutation) {
+      this.revalidateReceiptProjection_abyssPrivate(key, projection, observation);
+    }
+  }
+
+  private revalidateReceiptProjection_abyssPrivate(
+    key: string,
+    projection: ProjectReceiptProjection,
+    observation: ProjectSourceObservation,
+  ): void {
+    void this.context_abyssPrivate.revalidateSourceObservation(observation).then(
+      (current) => {
+        if (!current || this.receiptProjections_abyssPrivate.get(key) !== projection) return;
+        if (this.sourceObservations_abyssPrivate.get(observation.path) !== observation) return;
+        this.receiptProjections_abyssPrivate.delete(key);
+        this.renderTable_abyssPrivate();
+      },
+      (error: unknown) => {
+        console.error('[abyss-tasks] Could not revalidate project receipt projection', {
+          path: observation.path,
+          cause: error,
+        });
+      },
+    );
   }
 
   private projectedProjects_abyssPrivate(): readonly Project[] {

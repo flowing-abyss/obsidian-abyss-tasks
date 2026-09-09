@@ -112,6 +112,7 @@ function mount(
     history,
     createProject: vi.fn().mockResolvedValue(undefined),
     openProject,
+    revalidateSourceObservation: vi.fn().mockResolvedValue(false),
     ...overrides,
   });
   view.mount(projects);
@@ -882,6 +883,63 @@ describe('ProjectsTableView', () => {
         ),
       ).textContent,
     ).toBe('Second');
+  });
+
+  it('revalidates a first-path external source observed before receipt publication', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Owner', visible: true });
+    const original = project({ frontmatter: { Owner: 'Original' } });
+    const external = project({ frontmatter: { Owner: 'External' } });
+    const viewRef: { current?: ProjectsTableView } = {};
+    const revalidateSourceObservation = vi.fn().mockResolvedValue(true);
+    const applyEdits = vi.fn(
+      async (changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> => {
+        const change = expectDefined(changes[0]);
+        const currentView = expectDefined(viewRef.current);
+        currentView.update([external]);
+        currentView.observeProjectSource({ path: external.path, revision: 1, project: external });
+        return {
+          applied: [
+            {
+              ...change,
+              value: 'Local',
+              previousValue: 'Original',
+              sourceProperty: 'Owner',
+              sourceKey: 'Owner',
+              previousExists: true,
+              appliedExists: true,
+            },
+          ],
+          failed: [],
+        };
+      },
+    );
+    const mounted = mount([original], {
+      settings: config,
+      catalog: catalog([{ name: 'Owner', type: 'text' }]),
+      applyEdits,
+      revalidateSourceObservation,
+    });
+    viewRef.current = mounted.view;
+    const cell = expectDefined(
+      mounted.host.querySelector<HTMLElement>(
+        '.abyss-project-table-row [data-column-id="property:Owner"]',
+      ),
+    );
+    cell.click();
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('input'));
+    input.value = 'Local';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(revalidateSourceObservation).toHaveBeenCalledOnce();
+    expect(
+      expectDefined(
+        mounted.host.querySelector<HTMLElement>(
+          '.abyss-project-table-row [data-column-id="property:Owner"]',
+        ),
+      ).textContent,
+    ).toBe('External');
   });
 
   it('uses the canonical clear receipt when refilling the last list value in one editor', async () => {

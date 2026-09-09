@@ -67,6 +67,8 @@ export class ProjectsPanel {
       openProject: (path) => {
         this.state.set('projectsPanel', { view: 'dashboard', path });
       },
+      revalidateSourceObservation: (observation) =>
+        this.projectStore.revalidateSourceObservation(observation),
     });
     this.tableView.mount(this.projectStore.list());
     this.offs.push(

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectStore, type ProjectSourceObservation } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskIndexEvent, TaskQueryApi, TaskSnapshot } from '../src/tasks';
-import { taskQueryApi } from './helpers';
+import { expectDefined, taskQueryApi } from './helpers';
 
 function tfile(path: string, extension = 'md'): TFile {
   const candidate: unknown = Object.assign(Object.create(TFile.prototype), {
@@ -177,6 +177,10 @@ describe('ProjectStore event convergence', () => {
       revision: 2,
       project: { frontmatter: { status: 'active', budget: 200 } },
     });
+    const observation = expectDefined(sourceListener.mock.calls[0]?.[0]);
+    await expect(store.revalidateSourceObservation(observation)).resolves.toBe(true);
+    h.setSourceData('external source');
+    await expect(store.revalidateSourceObservation(observation)).resolves.toBe(false);
     store.refresh();
     expect(sourceListener).toHaveBeenCalledOnce();
     store.destroy();
