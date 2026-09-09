@@ -58,6 +58,16 @@ function rectangle(left: number, top: number, right: number, bottom: number): DO
   return { left, top, right, bottom, width: right - left, height: bottom - top } as DOMRect;
 }
 
+function cappedStylePixels(value: string, natural: number, offset = 0): number {
+  const parsed = Number.parseFloat(value);
+  return Math.min(natural, Number.isFinite(parsed) ? parsed - offset : Infinity);
+}
+
+function positiveStylePixels(value: string, fallback: number): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
 afterEach(() => {
   activeDocument.body.empty();
@@ -931,26 +941,78 @@ describe('ProjectsTableView', () => {
         '.abyss-project-table-cell[data-column-id="property:Owners"]',
       ),
     );
-    let paneRight = 300;
-    let cellLeft = 250;
-    let cellRight = 300;
-    let editorHeight = 220;
-    let valuesHeight = 140;
+    let paneRight = 480;
+    let paneClientWidth = 417;
+    let cellLeft = 385;
+    let cellRight = 605;
+    const editorNaturalHeight = 422;
+    const valuesNaturalHeight = 379;
+    Object.defineProperties(scroll, {
+      clientHeight: { configurable: true, get: () => 457 },
+      clientWidth: { configurable: true, get: () => paneClientWidth },
+    });
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
       this: HTMLElement,
     ) {
-      if (this === scroll) return rectangle(0, 100, paneRight, 400);
-      if (this === header) return rectangle(0, 100, paneRight, 134);
-      if (this === cell) return rectangle(cellLeft, 356, cellRight, 390);
-      if (this === row) return rectangle(0, 356, paneRight, 390);
+      if (this === scroll) return rectangle(48, 137, paneRight, 609);
+      if (this === header) return rectangle(-410, 137, 1175, 171);
+      if (this === cell) return rectangle(cellLeft, 557, cellRight, 591);
+      if (this === row) return rectangle(48, 557, paneRight, 591);
       if (this.classList.contains('abyss-project-cell-editor-host')) {
-        const width = Number.parseFloat(this.style.width);
-        return rectangle(0, 0, Number.isFinite(width) && width > 0 ? width : 150, editorHeight);
+        return rectangle(
+          0,
+          0,
+          positiveStylePixels(this.style.width, 150),
+          cappedStylePixels(this.style.maxHeight, editorNaturalHeight),
+        );
+      }
+      if (this.classList.contains('abyss-project-cell-editor')) {
+        return rectangle(
+          0,
+          0,
+          140,
+          cappedStylePixels(
+            expectDefined(this.parentElement).style.getPropertyValue(
+              '--abyss-project-editor-content-max-height',
+            ),
+            editorNaturalHeight,
+          ),
+        );
       }
       if (this.classList.contains('abyss-project-list-values')) {
-        return rectangle(0, 0, 140, valuesHeight);
+        return rectangle(
+          0,
+          0,
+          140,
+          cappedStylePixels(
+            expectDefined(expectDefined(this.parentElement).parentElement).style.getPropertyValue(
+              '--abyss-project-editor-content-max-height',
+            ),
+            valuesNaturalHeight,
+            43,
+          ),
+        );
       }
       return rectangle(0, 0, 0, 0);
+    });
+    const nativeGetComputedStyle = activeWindow.getComputedStyle.bind(activeWindow);
+    vi.spyOn(activeWindow, 'getComputedStyle').mockImplementation((element, pseudoElement) => {
+      const computed = nativeGetComputedStyle(element, pseudoElement);
+      if (!element.classList.contains('abyss-project-cell-editor-host')) return computed;
+      const chrome: Readonly<Record<string, string>> = {
+        paddingTop: '3px',
+        paddingBottom: '3px',
+        borderTopWidth: '1px',
+        borderBottomWidth: '1px',
+      };
+      return new Proxy(computed, {
+        get(target, property, receiver): unknown {
+          const override = chrome[String(property)];
+          if (override !== undefined) return override;
+          const fallback: unknown = Reflect.get(target, property, receiver);
+          return fallback;
+        },
+      });
     });
     scroll.scrollTop = 137;
     const rowBefore = row.getBoundingClientRect();
@@ -961,13 +1023,20 @@ describe('ProjectsTableView', () => {
     const editorHost = expectDefined(
       cell.querySelector<HTMLElement>('.abyss-project-cell-editor-host'),
     );
+    const positionObserver = expectDefined(
+      resizeObservers.find(({ targets }) => targets.includes(editorHost)),
+    );
+    positionObserver.trigger();
     expect(editorHost.dataset['side']).toBe('above');
-    expect(editorHost.style.left).toBe('-108px');
-    expect(editorHost.style.top).toBe('-214px');
-    expect(editorHost.style.width).toBe('150px');
-    expect(editorHost.style.maxHeight).toBe('250px');
+    expect(editorHost.style.left).toBe('-140px');
+    expect(editorHost.style.top).toBe('-378px');
+    expect(editorHost.style.width).toBe('212px');
+    expect(editorHost.style.maxHeight).toBe('407px');
+    expect(editorHost.style.getPropertyValue('--abyss-project-editor-content-max-height')).toBe(
+      '399px',
+    );
     expect(editorHost.style.getPropertyValue('--abyss-project-editor-values-max-height')).toBe(
-      '170px',
+      '356px',
     );
     expect(row.getBoundingClientRect()).toEqual(rowBefore);
     expect(scroll.scrollTop).toBe(137);
@@ -975,22 +1044,18 @@ describe('ProjectsTableView', () => {
       tableWidth,
     );
 
-    const positionObserver = expectDefined(
-      resizeObservers.find(({ targets }) => targets.includes(editorHost)),
-    );
-    editorHeight = 260;
-    valuesHeight = 140;
     positionObserver.trigger();
     expect(editorHost.style.getPropertyValue('--abyss-project-editor-values-max-height')).toBe(
-      '130px',
+      '356px',
     );
 
     paneRight = 140;
+    paneClientWidth = 77;
     cellLeft = 100;
     cellRight = 140;
     activeWindow.dispatchEvent(new Event('resize'));
-    expect(editorHost.style.left).toBe('-92px');
-    expect(editorHost.style.width).toBe('124px');
+    expect(editorHost.style.left).toBe('-44px');
+    expect(editorHost.style.width).toBe('61px');
 
     expectDefined(editorHost.querySelector<HTMLInputElement>('input')).dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),

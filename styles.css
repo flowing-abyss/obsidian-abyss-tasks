@@ -7382,14 +7382,19 @@ table.abyss-project-table {
 }
 
 .abyss-project-cell-editor {
+  box-sizing: border-box;
   display: flex;
   width: 100%;
-  max-height: inherit;
+  max-height: var(--abyss-project-editor-content-max-height, none);
   overflow-y: auto;
   flex-direction: column;
   gap: 5px;
   padding: 4px 0;
   white-space: normal;
+}
+
+.abyss-project-cell-editor > :not(.abyss-project-list-values) {
+  flex-shrink: 0;
 }
 
 .abyss-project-table-cell.is-editing {

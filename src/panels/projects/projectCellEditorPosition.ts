@@ -8,16 +8,20 @@ interface ProjectCellEditorPositionOptions {
 }
 
 function visibleBoundary(options: ProjectCellEditorPositionOptions): DOMRect {
-  const boundary = options.boundary.getBoundingClientRect();
-  const stickyBottom = options.stickyHeader?.getBoundingClientRect().bottom ?? boundary.top;
-  const top = Math.min(boundary.bottom, Math.max(boundary.top, stickyBottom));
+  const borderBox = options.boundary.getBoundingClientRect();
+  const left = borderBox.left + options.boundary.clientLeft;
+  const boundaryTop = borderBox.top + options.boundary.clientTop;
+  const right = left + options.boundary.clientWidth;
+  const bottom = boundaryTop + options.boundary.clientHeight;
+  const stickyBottom = options.stickyHeader?.getBoundingClientRect().bottom ?? boundaryTop;
+  const top = Math.min(bottom, Math.max(boundaryTop, stickyBottom));
   return {
-    left: boundary.left,
-    right: boundary.right,
+    left,
+    right,
     top,
-    bottom: boundary.bottom,
-    width: boundary.width,
-    height: Math.max(0, boundary.bottom - top),
+    bottom,
+    width: options.boundary.clientWidth,
+    height: Math.max(0, bottom - top),
   } as DOMRect;
 }
 
@@ -25,6 +29,22 @@ function measured(element: HTMLElement, dimension: 'width' | 'height'): number {
   const rect = element.getBoundingClientRect()[dimension];
   if (rect > 0) return rect;
   return dimension === 'width' ? element.offsetWidth : element.offsetHeight;
+}
+
+function cssPixels(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function editorContentHeight(host: HTMLElement, maxHeight: number): number {
+  const style = host.ownerDocument.defaultView?.getComputedStyle(host);
+  if (style === undefined) return maxHeight;
+  const chrome =
+    cssPixels(style.paddingTop) +
+    cssPixels(style.paddingBottom) +
+    cssPixels(style.borderTopWidth) +
+    cssPixels(style.borderBottomWidth);
+  return Math.max(0, maxHeight - chrome);
 }
 
 function positionEditor(options: ProjectCellEditorPositionOptions): void {
@@ -38,12 +58,15 @@ function positionEditor(options: ProjectCellEditorPositionOptions): void {
   const maxHeight = Math.max(0, boundary.height - edgeGap * 2);
   host.style.width = `${width}px`;
   host.style.maxHeight = `${maxHeight}px`;
+  const contentHeight = editorContentHeight(host, maxHeight);
+  host.style.setProperty('--abyss-project-editor-content-max-height', `${contentHeight}px`);
+  const editor = host.querySelector<HTMLElement>('.abyss-project-cell-editor');
   const values = host.querySelector<HTMLElement>('.abyss-project-list-values');
-  if (values !== null) {
-    const chromeHeight = Math.max(0, measured(host, 'height') - measured(values, 'height'));
+  if (editor !== null && values !== null) {
+    const chromeHeight = Math.max(0, measured(editor, 'height') - measured(values, 'height'));
     host.style.setProperty(
       '--abyss-project-editor-values-max-height',
-      `${Math.max(0, maxHeight - chromeHeight)}px`,
+      `${Math.max(0, contentHeight - chromeHeight)}px`,
     );
   }
   const placement = anchoredPlacement({
