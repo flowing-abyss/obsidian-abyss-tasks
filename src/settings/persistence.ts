@@ -237,6 +237,7 @@ function isMalformedProjectTable(value: unknown): boolean {
   if (!isRecord(value)) return value !== undefined;
   return (
     (value['columns'] !== undefined && !Array.isArray(value['columns'])) ||
+    (value['showDescription'] !== undefined && typeof value['showDescription'] !== 'boolean') ||
     (value['groupBy'] !== undefined && typeof value['groupBy'] !== 'string') ||
     isMalformedProjectTableSort(value['sortBy']) ||
     isMalformedHiddenStatuses(value['hiddenStatuses'])
@@ -393,6 +394,7 @@ function createStateEnvelope(
   const listViewStates = mergeListViewStates(rawViews['listViewStates'], settings.listViewStates);
   const table = detached(rawTable);
   table['columns'] = mergeColumns(rawTable['columns'], settings.projects.table.columns);
+  table['showDescription'] = settings.projects.table.showDescription;
   table['groupBy'] = settings.projects.table.groupBy;
   table['sortBy'] = detached(settings.projects.table.sortBy);
   table['hiddenStatuses'] = detached(settings.projects.table.hiddenStatuses);

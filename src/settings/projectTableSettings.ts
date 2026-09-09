@@ -16,7 +16,7 @@ export interface RenderProjectTableSettingsOptions {
   readonly catalog: ProjectPropertyCatalog;
   readonly saveStatic: () => Promise<void>;
   readonly saveViewState: () => Promise<void>;
-  readonly refresh: () => void;
+  readonly refresh: (focus?: 'add-property') => void;
 }
 
 const CURATED_LABELS: Readonly<Record<string, string>> = {
@@ -153,7 +153,7 @@ interface ColumnRowContext {
   readonly column: ProjectColumn;
   readonly index: number;
   readonly options: RenderProjectTableSettingsOptions;
-  readonly persist: (refresh?: boolean) => void;
+  readonly persist: (refresh?: boolean | 'add-property') => void;
 }
 
 function createRemoveColumnAction(row: HTMLElement, label: string, onClick: () => void): void {
@@ -183,7 +183,7 @@ function wireColumnDrag(
   row: HTMLElement,
   column: ProjectColumn,
   options: RenderProjectTableSettingsOptions,
-  persist: (refresh?: boolean) => void,
+  persist: (refresh?: boolean | 'add-property') => void,
 ): void {
   const order = row.createSpan({ cls: 'abyss-project-column-order' });
   const grip = order.createSpan({ cls: 'abyss-settings-card-grip' });
@@ -319,7 +319,11 @@ function renderCuratedDateSource(
       const properties =
         options.catalog
           .list()
-          ?.filter(({ type }) => type === 'date')
+          ?.filter(
+            ({ name: property, type }) =>
+              type === 'date' &&
+              (!sameProperty(property, 'description') || sameProperty(property, current)),
+          )
           .map(({ name: property }) => property) ?? [];
       const matching = properties.find((property) => sameProperty(property, current));
       const selected = matching ?? current;
@@ -331,7 +335,10 @@ function renderCuratedDateSource(
         const siblingKeys = (['statusProperty', 'startProperty', 'endProperty'] as const).filter(
           (candidate) => candidate !== key,
         );
-        if (siblingKeys.some((candidate) => sameProperty(options.projects[candidate], property))) {
+        if (
+          sameProperty(property, 'description') ||
+          siblingKeys.some((candidate) => sameProperty(options.projects[candidate], property))
+        ) {
           dropdown.selectEl.value = selected;
           new Notice(`${name} must use a different property from the other curated fields.`);
           return;
@@ -347,7 +354,7 @@ interface AddPropertyContext {
   readonly feedback: HTMLElement;
   readonly available: readonly ProjectPropertyInfo[];
   readonly options: RenderProjectTableSettingsOptions;
-  readonly persist: (refresh?: boolean) => void;
+  readonly persist: (refresh?: boolean | 'add-property') => void;
 }
 
 function renderAddPropertyControl(context: AddPropertyContext): () => void {
@@ -372,7 +379,7 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
     const result = addProjectPropertyColumn(options.projects, available, property);
     if (result === 'added') {
       input.value = '';
-      persist(true);
+      persist('add-property');
     } else if (result === 'duplicate') {
       feedback.setText('That property is already a table column.');
     } else if (result === 'reserved') {
@@ -423,11 +430,17 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
     cls: 'abyss-project-table-settings-error',
     attr: { role: 'status', 'aria-live': 'polite' },
   });
-  const persist = (save: () => Promise<void>, refresh = false, showFailureNotice = false): void => {
+  const persist = (
+    save: () => Promise<void>,
+    refresh: boolean | 'add-property' = false,
+    showFailureNotice = false,
+  ): void => {
     feedback.empty();
     void save().then(
       () => {
-        if (refresh) options.refresh();
+        if (refresh !== false) {
+          options.refresh(refresh === 'add-property' ? refresh : undefined);
+        }
       },
       (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -441,12 +454,24 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
   const persistStatic = (refresh = false): void => {
     persist(options.saveStatic, refresh, true);
   };
-  const persistViewState = (refresh = false): void => {
+  const persistViewState = (refresh: boolean | 'add-property' = false): void => {
     persist(options.saveViewState, refresh);
   };
 
   renderCuratedDateSource(section, 'startProperty', options, persistStatic);
   renderCuratedDateSource(section, 'endProperty', options, persistStatic);
+  const descriptionSetting = new Setting(section)
+    .setName('Show description')
+    .setDesc('Display the description property beneath each project name.');
+  const descriptionToggle = descriptionSetting.controlEl.createEl('input', {
+    cls: 'abyss-project-show-description',
+    attr: { type: 'checkbox', 'aria-label': 'Show project descriptions' },
+  });
+  descriptionToggle.checked = options.projects.table.showDescription;
+  descriptionToggle.addEventListener('change', () => {
+    options.projects.table.showDescription = descriptionToggle.checked;
+    persistViewState();
+  });
 
   const rows = section.createDiv({ cls: 'abyss-project-column-settings' });
   const headings = rows.createDiv({ cls: 'abyss-project-column-settings-header' });

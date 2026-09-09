@@ -1,4 +1,4 @@
-import type { App, Component } from 'obsidian';
+import { setIcon, type App, type Component } from 'obsidian';
 import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
 import { isProjectStatusField, projectFieldValue } from '../../projects/projectFields';
 import { projectProgress, projectTableDisplayValues } from '../../projects/projectTableModel';
@@ -88,6 +88,12 @@ interface RenderProjectTableCellOptions {
   readonly beforeOpenLink: () => Promise<boolean>;
   readonly openProject: (path: string) => void;
   readonly onRemoveListValue: (index: number) => void;
+  readonly onToggleCheckbox: (value: boolean, input: HTMLInputElement) => void;
+  readonly description?: {
+    readonly field: ProjectFieldCatalogItem;
+    readonly show: boolean;
+    readonly onEdit: () => void;
+  };
 }
 
 interface RenderValueTextOptions {
@@ -126,35 +132,83 @@ interface RenderListValuesOptions {
   readonly displayedValues: readonly string[];
 }
 
+interface RenderListValueOptions {
+  readonly list: HTMLElement;
+  readonly values: RenderListValuesOptions;
+  readonly index: number;
+  readonly displayed: string;
+  readonly nativeTags: boolean;
+  readonly cell: RenderProjectTableCellOptions;
+}
+
+function renderListValue(itemOptions: RenderListValueOptions): void {
+  const { list, values, index, displayed, nativeTags, cell } = itemOptions;
+  const item = list.createSpan({
+    cls: nativeTags ? 'multi-select-pill' : 'abyss-project-table-value',
+  });
+  const text = item.createSpan({
+    cls: nativeTags ? 'multi-select-pill-content' : 'abyss-project-table-value-text',
+  });
+  const raw = values.values[index];
+  if (nativeTags && typeof raw === 'string') {
+    text.createEl('a', { cls: 'tag', text: raw, attr: { href: raw } });
+  } else {
+    renderValueText({ host: text, raw, displayed, sourcePath: values.project.path }, cell);
+  }
+  if (values.field.type === null) return;
+  const remove = item.createEl('button', {
+    cls: nativeTags
+      ? 'multi-select-pill-remove-button abyss-project-table-value-remove'
+      : 'abyss-project-table-value-remove',
+    text: '×',
+    attr: { type: 'button', 'aria-label': `Remove ${displayed}` },
+  });
+  remove.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    cell.onRemoveListValue(index);
+  });
+}
+
 function renderListValues(
   valueOptions: RenderListValuesOptions,
   options: RenderProjectTableCellOptions,
 ): void {
-  const { cell, project, field, values, displayedValues } = valueOptions;
+  const { cell, field, values, displayedValues } = valueOptions;
   if (values.length === 0) {
     renderEmptyList(cell);
     return;
   }
-  const list = cell.createDiv({ cls: 'abyss-project-table-values' });
+  const nativeTags = field.type === 'tags';
+  const list = cell.createDiv({
+    cls: nativeTags
+      ? 'abyss-project-table-values metadata-property-value'
+      : 'abyss-project-table-values',
+    ...(nativeTags ? { attr: { 'data-property-type': 'tags' } } : {}),
+  });
   for (const [index, displayed] of displayedValues.entries()) {
-    const item = list.createSpan({ cls: 'abyss-project-table-value' });
-    const text = item.createSpan({ cls: 'abyss-project-table-value-text' });
-    renderValueText(
-      { host: text, raw: values[index], displayed, sourcePath: project.path },
-      options,
-    );
-    if (field.type === null) continue;
-    const remove = item.createEl('button', {
-      cls: 'abyss-project-table-value-remove',
-      text: '×',
-      attr: { type: 'button', 'aria-label': `Remove ${displayed}` },
-    });
-    remove.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      options.onRemoveListValue(index);
-    });
+    renderListValue({ list, values: valueOptions, index, displayed, nativeTags, cell: options });
   }
+}
+
+function renderCheckbox(
+  cell: HTMLElement,
+  value: unknown,
+  options: RenderProjectTableCellOptions,
+): void {
+  const input = cell.createEl('input', {
+    cls: 'metadata-input-checkbox',
+    attr: {
+      type: 'checkbox',
+      'aria-label': options.field.label,
+      'data-indeterminate': String(value !== true && value !== false),
+    },
+  });
+  input.checked = value === true;
+  input.indeterminate = false;
+  input.addEventListener('change', () => {
+    options.onToggleCheckbox(input.checked, input);
+  });
 }
 
 interface RenderScalarValueOptions {
@@ -181,6 +235,10 @@ function renderPropertyValue(
   options: RenderProjectTableCellOptions,
 ): void {
   const value = projectFieldValue(project, field);
+  if (field.type === 'checkbox') {
+    renderCheckbox(cell, value, options);
+    return;
+  }
   const displayedValues = projectTableDisplayValues(project, field, options.statuses);
   if (Array.isArray(value)) {
     renderListValues({ cell, project, field, values: value, displayedValues }, options);
@@ -190,21 +248,48 @@ function renderPropertyValue(
   renderUnavailableType(cell, field);
 }
 
+function renderName(
+  cell: HTMLElement,
+  project: Project,
+  options: RenderProjectTableCellOptions,
+): void {
+  const button = cell.createEl('button', {
+    cls: 'abyss-project-table-name',
+    text: project.name,
+    attr: { type: 'button', title: project.path },
+  });
+  button.addEventListener('click', () => {
+    options.openProject(project.path);
+  });
+  const description = options.description;
+  if (description?.show !== true) return;
+  const raw = projectFieldValue(project, description.field);
+  const value = typeof raw === 'string' ? (raw.split('\n', 1)[0] ?? '') : '';
+  const detail = cell.createDiv({
+    cls: `abyss-project-description${value.length === 0 ? ' is-empty' : ''}`,
+  });
+  detail.createSpan({ cls: 'abyss-project-description-text', text: value });
+  if (description.field.type !== 'text') return;
+  const edit = detail.createEl('button', {
+    cls: 'abyss-project-description-edit',
+    attr: {
+      type: 'button',
+      title: value.length === 0 ? 'Add description' : 'Edit description',
+      'aria-label': `Edit description for ${project.name}`,
+    },
+  });
+  setIcon(edit, 'pencil');
+  edit.addEventListener('click', description.onEdit);
+}
+
 export function renderProjectTableCell(
   cell: HTMLElement,
   project: Project,
   options: RenderProjectTableCellOptions,
 ): void {
-  const { field, statuses, openProject } = options;
+  const { field, statuses } = options;
   if (field.type === 'name') {
-    const button = cell.createEl('button', {
-      cls: 'abyss-project-table-name',
-      text: project.name,
-      attr: { type: 'button', title: project.path },
-    });
-    button.addEventListener('click', () => {
-      openProject(project.path);
-    });
+    renderName(cell, project, options);
     return;
   }
   if (isProjectStatusField(field)) {

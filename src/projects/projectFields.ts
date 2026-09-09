@@ -25,6 +25,7 @@ export interface ProjectColumn {
 
 export interface ProjectTableSettings {
   columns: ProjectColumn[];
+  showDescription: boolean;
   groupBy: string;
   sortBy: { field: string; dir: 'asc' | 'desc' };
   hiddenStatuses: string[];
@@ -41,6 +42,7 @@ export type ProjectFieldCatalogItem = ProjectField | UnavailableProjectField;
 
 const NAME_FIELD: ProjectField = { id: 'name', label: 'Name', type: 'name' };
 const PROGRESS_FIELD: ProjectField = { id: 'progress', label: 'Progress', type: 'progress' };
+const DESCRIPTION_PROPERTY = 'description';
 
 function sameProperty(left: string, right: string): boolean {
   return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
@@ -53,9 +55,12 @@ function findProjectPropertyName(names: readonly string[], property: string): st
 
 /** True when a property is owned by one of the configured curated fields. */
 export function isReservedProjectProperty(settings: ProjectsSettings, property: string): boolean {
-  return [settings.statusProperty, settings.startProperty, settings.endProperty].some(
-    (configured) => configured.length > 0 && sameProperty(configured, property),
-  );
+  return [
+    DESCRIPTION_PROPERTY,
+    settings.statusProperty,
+    settings.startProperty,
+    settings.endProperty,
+  ].some((configured) => configured.length > 0 && sameProperty(configured, property));
 }
 
 function addVaultProperties(
@@ -117,6 +122,15 @@ function curatedDateType(
   return info === undefined || info.type === 'date' ? 'date' : null;
 }
 
+function curatedDescriptionType(
+  properties: readonly ProjectPropertyInfo[] | null,
+  info: ProjectPropertyInfo | undefined,
+  collides: boolean,
+): 'text' | null {
+  if (collides || properties === null) return null;
+  return info === undefined || info.type === 'text' ? 'text' : null;
+}
+
 export function buildProjectFieldCatalog(
   settings: ProjectsSettings,
   properties: readonly ProjectPropertyInfo[] | null,
@@ -129,32 +143,46 @@ export function buildProjectFieldCatalog(
     findProjectPropertyName(propertyNames, settings.startProperty) ?? settings.startProperty;
   const endProperty =
     findProjectPropertyName(propertyNames, settings.endProperty) ?? settings.endProperty;
-  const statusSourceCollides =
-    sameProperty(statusProperty, startProperty) || sameProperty(statusProperty, endProperty);
-  const dateSourcesCollide = statusSourceCollides || sameProperty(startProperty, endProperty);
+  const descriptionProperty =
+    findProjectPropertyName(propertyNames, DESCRIPTION_PROPERTY) ?? DESCRIPTION_PROPERTY;
+  const curatedProperties = [statusProperty, startProperty, endProperty, descriptionProperty];
+  const sourceCollides = (index: number): boolean =>
+    curatedProperties.some(
+      (property, candidate) =>
+        candidate !== index && sameProperty(curatedProperties[index] ?? '', property),
+    );
   const statusInfo = discoveredProperties.find(({ name }) => sameProperty(name, statusProperty));
   const startInfo = discoveredProperties.find(({ name }) => sameProperty(name, startProperty));
   const endInfo = discoveredProperties.find(({ name }) => sameProperty(name, endProperty));
+  const descriptionInfo = discoveredProperties.find(({ name }) =>
+    sameProperty(name, descriptionProperty),
+  );
   const fields: ProjectFieldCatalogItem[] = [
     NAME_FIELD,
     {
       id: 'status',
       property: statusProperty,
       label: 'Status',
-      type: curatedStatusType(statusProperty, properties, statusInfo, statusSourceCollides),
+      type: curatedStatusType(statusProperty, properties, statusInfo, sourceCollides(0)),
     },
     PROGRESS_FIELD,
     {
       id: 'start',
       property: startProperty,
       label: 'Start',
-      type: curatedDateType(properties, startInfo, dateSourcesCollide),
+      type: curatedDateType(properties, startInfo, sourceCollides(1)),
     },
     {
       id: 'end',
       property: endProperty,
       label: 'End',
-      type: curatedDateType(properties, endInfo, dateSourcesCollide),
+      type: curatedDateType(properties, endInfo, sourceCollides(2)),
+    },
+    {
+      id: 'description',
+      property: descriptionProperty,
+      label: 'Description',
+      type: curatedDescriptionType(properties, descriptionInfo, sourceCollides(3)),
     },
   ];
 

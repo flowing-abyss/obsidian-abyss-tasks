@@ -345,6 +345,7 @@ describe('SettingsPersistenceCoordinator migration', () => {
       projects: {
         table: {
           ...structuredClone(DEFAULT_SETTINGS.projects.table),
+          showDescription: 'sometimes',
           sortBy: { field: 42, dir: 'sideways' },
           columns: [null, { id: 'name', visible: 'yes', width: -5, future: 'keep' }],
         },
@@ -361,6 +362,7 @@ describe('SettingsPersistenceCoordinator migration', () => {
     );
     expect(loaded.settings.listViewStates).toEqual({});
     expect(loaded.settings.projects.table.columns[0]?.id).toBe('name');
+    expect(loaded.settings.projects.table.showDescription).toBe(true);
     const saved = JSON.parse(port.stateText ?? '') as {
       recovery: unknown;
       views: { projects: { table: { columns: unknown[] } } };
@@ -385,8 +387,16 @@ describe('SettingsPersistenceCoordinator migration', () => {
       malformedViews: { projectTable: Record<string, unknown> };
     };
     expect(recovery.malformedViews.projectTable).toMatchObject({
+      showDescription: 'sometimes',
       sortBy: { field: 42, dir: 'sideways' },
     });
+    expect(
+      (
+        JSON.parse(port.stateText ?? '') as {
+          views: { projects: { table: { showDescription: unknown } } };
+        }
+      ).views.projects.table.showDescription,
+    ).toBe(true);
     expect(saved.views.projects.table.columns).not.toContain(null);
     expect(saved.views.projects.table.columns[0]).toMatchObject({ id: 'name', future: 'keep' });
   });

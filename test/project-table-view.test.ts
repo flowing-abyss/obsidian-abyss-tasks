@@ -172,6 +172,168 @@ function mount(
 }
 
 describe('ProjectsTableView', () => {
+  it('renders and edits description beneath Name without creating a description column', async () => {
+    const saveProperty = vi.fn().mockResolvedValue(undefined);
+    const initial = project({ frontmatter: { description: 'First line\nSecond line' } });
+    const { host, view } = mount([initial], { saveProperty });
+
+    expect(host.querySelector('[data-column-id="description"]')).toBeNull();
+    expect(host.querySelector('.abyss-project-description-text')?.textContent).toBe('First line');
+    const nameCell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="name"]'),
+    );
+    view.update([{ ...initial, frontmatter: { description: 'Updated\nRetained' } }]);
+    expect(host.querySelector('.abyss-project-table-cell[data-column-id="name"]')).toBe(nameCell);
+    expect(host.querySelector('.abyss-project-description-text')?.textContent).toBe('Updated');
+    const edit = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-description-edit'),
+    );
+    edit.click();
+    const textarea = expectDefined(
+      host.querySelector<HTMLTextAreaElement>('.abyss-project-description-editor'),
+    );
+    expect(textarea.value).toBe('Updated\nRetained');
+    textarea.value = 'Changed\nStill here';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    expect(saveProperty).toHaveBeenCalledWith(
+      'Projects/A.md',
+      expect.objectContaining({ id: 'description', property: 'description', type: 'text' }),
+      'Changed\nStill here',
+      'Updated\nRetained',
+    );
+  });
+
+  it('offers description editing for an empty value without adding a second row line', () => {
+    const { host } = mount([project({ frontmatter: {} })]);
+    const description = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-description.is-empty'),
+    );
+
+    expect(description.querySelector('.abyss-project-description-text')?.textContent).toBe('');
+    expect(description.querySelector('.abyss-project-description-edit')).not.toBeNull();
+  });
+
+  it('hides description without leaving an extra Name line', () => {
+    const config = settings();
+    config.projects.table.showDescription = false;
+    const { host } = mount([project({ frontmatter: { description: 'Hidden' } })], {
+      settings: config,
+    });
+
+    expect(host.querySelector('.abyss-project-description')).toBeNull();
+    expect(host.querySelector('.abyss-project-description-edit')).toBeNull();
+  });
+
+  it('uses native tag pills and searchable tag anchors without generic pill styling', () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Tags', visible: true });
+    const { host } = mount([project({ frontmatter: { Tags: ['#work', '#next'] } })], {
+      settings: config,
+      catalog: catalog([{ name: 'Tags', type: 'tags' }]),
+    });
+    const property = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-column-id="property:Tags"] .metadata-property-value[data-property-type="tags"]',
+      ),
+    );
+
+    expect(property.querySelectorAll('.multi-select-pill')).toHaveLength(2);
+    expect(property.querySelector('.abyss-project-table-value')).toBeNull();
+    expect(property.querySelector<HTMLAnchorElement>('a.tag[href="#work"]')?.textContent).toBe(
+      '#work',
+    );
+  });
+
+  it.each([
+    [undefined, false, 'true'],
+    [true, true, 'false'],
+    [false, false, 'false'],
+  ] as const)('renders native checkbox state %#', (value, checked, indeterminate) => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Flag', visible: true });
+    const { host } = mount([project({ frontmatter: value === undefined ? {} : { Flag: value } })], {
+      settings: config,
+      catalog: catalog([{ name: 'Flag', type: 'checkbox' }]),
+    });
+    const checkbox = expectDefined(
+      host.querySelector<HTMLInputElement>(
+        '[data-column-id="property:Flag"] input.metadata-input-checkbox',
+      ),
+    );
+
+    expect(checkbox.checked).toBe(checked);
+    expect(checkbox.indeterminate).toBe(false);
+    expect(checkbox.dataset['indeterminate']).toBe(indeterminate);
+  });
+
+  it('toggles an unset checkbox through history and restores native DOM after rejection', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Flag', visible: true });
+    const applyEdits = vi.fn().mockRejectedValue(new Error('disk full'));
+    const { host } = mount([project({ frontmatter: {} })], {
+      settings: config,
+      catalog: catalog([{ name: 'Flag', type: 'checkbox' }]),
+      applyEdits,
+    });
+    const checkbox = expectDefined(
+      host.querySelector<HTMLInputElement>(
+        '[data-column-id="property:Flag"] input.metadata-input-checkbox',
+      ),
+    );
+
+    checkbox.click();
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledWith([
+      expect.objectContaining({ value: true, expectedValue: undefined }),
+    ]);
+    expect(checkbox.checked).toBe(false);
+    expect(checkbox.indeterminate).toBe(false);
+    expect(checkbox.dataset['indeterminate']).toBe('true');
+  });
+
+  it('clears a false checkbox through the shared mutation and history path', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Flag', visible: true });
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => ({
+      applied: changes.map((change) => ({
+        ...change,
+        previousValue: false,
+        sourceProperty: 'Flag',
+        sourceKey: 'Flag',
+        previousExists: true,
+        appliedExists: false,
+      })),
+      failed: [],
+    }));
+    const history = new ProjectEditHistory(applyEdits);
+    const { host } = mount([project({ frontmatter: { Flag: false } })], {
+      settings: config,
+      catalog: catalog([{ name: 'Flag', type: 'checkbox' }]),
+      applyEdits,
+      history,
+    });
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Flag"]'),
+      'Missing checkbox data cell',
+    );
+    cell.click();
+    cell.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledWith([
+      expect.objectContaining({ value: undefined, expectedValue: false, expectedExists: true }),
+    ]);
+    expect(history.canUndo).toBe(true);
+  });
+
   it('renders one sticky header in default column order and sorts empty end values last', () => {
     const { host } = mount([
       project({ path: 'Projects/Z.md', name: 'Zulu', frontmatter: {} }),

@@ -353,6 +353,7 @@ describe('projects migration', () => {
         { id: 'start', visible: true },
         { id: 'end', visible: true },
       ],
+      showDescription: true,
       groupBy: 'status',
       sortBy: { field: 'start', dir: 'asc' },
       hiddenStatuses: [],

@@ -54,6 +54,32 @@ function dragColumn(source: HTMLElement, target: HTMLElement): void {
 }
 
 describe('renderProjectTableSettings', () => {
+  it('persists Show description through the view-state channel outside column rows', async () => {
+    const projects = buildDefaultProjectsSettings();
+    const saveViewState = vi.fn().mockResolvedValue(undefined);
+    const container = document.body.createDiv();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([{ name: 'description', type: 'text' }]),
+      saveStatic: vi.fn().mockResolvedValue(undefined),
+      saveViewState,
+      refresh: vi.fn(),
+    });
+    const toggle = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-project-show-description'),
+    );
+
+    expect(toggle.checked).toBe(true);
+    expect(container.querySelector('[data-column-id="description"]')).toBeNull();
+    toggle.click();
+    await settle();
+
+    expect(projects.table.showDescription).toBe(false);
+    expect(saveViewState).toHaveBeenCalledOnce();
+  });
+
   it('selects native Start and End spelling for case-insensitive saved sources', () => {
     const projects = buildDefaultProjectsSettings();
     projects.startProperty = 'start';
@@ -118,6 +144,44 @@ describe('renderProjectTableSettings', () => {
       expect(projects.startProperty).toBe('start');
       expect(projects.endProperty).toBe('end');
       expect(save).not.toHaveBeenCalled();
+    } finally {
+      dropdownSpy.mockRestore();
+    }
+  });
+
+  it('does not offer description as a new curated date source', () => {
+    const projects = buildDefaultProjectsSettings();
+    const container = document.body.createDiv();
+    const dropdowns: DropdownComponent[] = [];
+    const dropdownSpy = vi.spyOn(Setting.prototype, 'addDropdown').mockImplementation(function (
+      this: Setting,
+      callback,
+    ) {
+      const dropdown = new DropdownComponent(this.controlEl);
+      this.components.push(dropdown);
+      dropdowns.push(dropdown);
+      callback(dropdown);
+      return this;
+    });
+    try {
+      renderProjectTableSettings({
+        app: new App(),
+        container,
+        projects,
+        catalog: catalog([
+          { name: 'start', type: 'date' },
+          { name: 'end', type: 'date' },
+          { name: 'description', type: 'date' },
+        ]),
+        saveStatic: vi.fn().mockResolvedValue(undefined),
+        saveViewState: vi.fn().mockResolvedValue(undefined),
+        refresh: vi.fn(),
+      });
+
+      expect(
+        Array.from(expectDefined(dropdowns[0]).selectEl.options).map(({ value }) => value),
+      ).not.toContain('description');
+      expect(projects.startProperty).toBe('start');
     } finally {
       dropdownSpy.mockRestore();
     }

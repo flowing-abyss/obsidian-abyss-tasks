@@ -30,6 +30,7 @@ describe('buildProjectFieldCatalog', () => {
       'progress',
       'start',
       'end',
+      'description',
       'property:Tags',
       'property:Budget',
     ]);
@@ -107,6 +108,46 @@ describe('buildProjectFieldCatalog', () => {
     expect(fields.find(({ id }) => id === 'end')?.type).toBeNull();
   });
 
+  it('curates description as text and suppresses its generic property alias', () => {
+    const settings = buildDefaultProjectsSettings();
+    settings.table.columns.push({ id: 'property:description', visible: true });
+
+    const absent = buildProjectFieldCatalog(settings, []);
+    const discovered = buildProjectFieldCatalog(settings, [{ name: 'Description', type: 'text' }]);
+    const incompatible = buildProjectFieldCatalog(settings, [
+      { name: 'DESCRIPTION', type: 'number' },
+    ]);
+
+    expect(absent.find(({ id }) => id === 'description')).toMatchObject({
+      property: 'description',
+      type: 'text',
+    });
+    expect(discovered.find(({ id }) => id === 'description')).toMatchObject({
+      property: 'Description',
+      type: 'text',
+    });
+    expect(discovered.some(({ id }) => id.startsWith('property:Description'))).toBe(false);
+    expect(incompatible.find(({ id }) => id === 'description')?.type).toBeNull();
+  });
+
+  it('keeps colliding description and configured source roles unavailable without rebinding them', () => {
+    const settings = buildDefaultProjectsSettings();
+    settings.startProperty = 'Description';
+
+    const fields = buildProjectFieldCatalog(settings, [{ name: 'description', type: 'text' }]);
+
+    expect(fields.find(({ id }) => id === 'description')).toMatchObject({
+      property: 'description',
+      type: null,
+    });
+    expect(fields.find(({ id }) => id === 'start')).toMatchObject({
+      property: 'description',
+      type: null,
+    });
+    expect(fields.find(({ id }) => id === 'status')?.type).toBe('status');
+    expect(fields.find(({ id }) => id === 'end')?.type).toBe('date');
+  });
+
   it('makes the configured status source editable only with a compatible native type', () => {
     const settings = buildDefaultProjectsSettings();
     const missing = buildProjectFieldCatalog(settings, []);
@@ -181,6 +222,34 @@ describe('projectFieldValue', () => {
 });
 
 describe('normalizeProjectTableSettings', () => {
+  it('defaults description on and migrates a legacy description column into under-name state', () => {
+    expect(normalizeProjectTableSettings(undefined).showDescription).toBe(true);
+
+    const migrated = normalizeProjectTableSettings({
+      columns: [
+        { id: 'name', visible: true },
+        { id: 'property:Description', visible: false },
+      ],
+      groupBy: 'property:DESCRIPTION',
+      sortBy: { field: 'property:description', dir: 'desc' },
+    });
+
+    expect(migrated.showDescription).toBe(false);
+    expect(migrated.columns.some(({ id }) => id.toLowerCase() === 'property:description')).toBe(
+      false,
+    );
+    expect(migrated.groupBy).toBe('description');
+    expect(migrated.sortBy).toEqual({ field: 'description', dir: 'desc' });
+  });
+
+  it('prefers a valid explicit description option over legacy visibility', () => {
+    const result = normalizeProjectTableSettings({
+      showDescription: true,
+      columns: [{ id: 'property:description', visible: false }],
+    });
+
+    expect(result.showDescription).toBe(true);
+  });
   it('defaults and falls back to Start ascending while preserving an explicit saved sort', () => {
     expect(normalizeProjectTableSettings(undefined).sortBy).toEqual({ field: 'start', dir: 'asc' });
     expect(normalizeProjectTableSettings({ sortBy: { field: 42, dir: 'desc' } }).sortBy).toEqual({

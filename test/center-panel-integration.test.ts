@@ -2508,6 +2508,17 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     expect(el.querySelector('.abyss-center-scroll')).toBeTruthy();
   });
 
+  it('leaving projects mode for Calendar removes the project mode class', async () => {
+    const { state, el } = await makeProjectsPanel();
+    state.set('mode', 'projects');
+    expect(el.classList.contains('abyss-center--projects')).toBe(true);
+
+    state.set('mode', 'calendar');
+
+    expect(el.classList.contains('abyss-center--projects')).toBe(false);
+    expect(el.classList.contains('abyss-center--calendar')).toBe(true);
+  });
+
   it('restores project trigger on Escape and preserves blur focus semantics', async () => {
     const { panel, container, sessionExecute } = await projectCaptureHarness();
     const next = activeDocument.body.createEl('button', { text: 'Next project control' });

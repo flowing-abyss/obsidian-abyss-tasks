@@ -354,6 +354,27 @@ export class CalendarSettingsTab extends PluginSettingTab {
     });
   }
 
+  private redrawPreservingPosition_abyssPrivate(focus?: () => HTMLElement | null): void {
+    const scroller = this.containerEl.closest<HTMLElement>('.vertical-tab-content');
+    const scrollTop = scroller?.scrollTop;
+    this.render_abyssPrivate();
+    if (scroller !== null && scrollTop !== undefined) {
+      scroller.scrollTop = scrollTop;
+    }
+    focus?.()?.focus({ preventScroll: true });
+  }
+
+  private projectStatusNameInput_abyssPrivate(name: string): HTMLInputElement | null {
+    const cards = this.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-card');
+    for (const card of cards) {
+      const title = card.querySelector('.abyss-settings-card-title');
+      if (title?.textContent === name) {
+        return card.querySelector<HTMLInputElement>('.abyss-settings-card-body input');
+      }
+    }
+    return null;
+  }
+
   private addSection_abyssPrivate(
     containerEl: HTMLElement,
     title: string,
@@ -989,8 +1010,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
       catalog: this.projectProperties_abyssPrivate,
       saveStatic: () => this.plugin_abyssPrivate.saveSettings(),
       saveViewState: () => this.plugin_abyssPrivate.saveViewState(),
-      refresh: () => {
-        this.render_abyssPrivate();
+      refresh: (focus) => {
+        this.redrawPreservingPosition_abyssPrivate(
+          focus === 'add-property'
+            ? () =>
+                this.containerEl.querySelector<HTMLInputElement>('.abyss-project-column-add-input')
+            : undefined,
+        );
       },
     });
   }
@@ -1114,7 +1140,12 @@ export class CalendarSettingsTab extends PluginSettingTab {
       const options =
         this.projectProperties_abyssPrivate
           .list()
-          ?.filter(({ type }) => type === requiredType)
+          ?.filter(
+            ({ name: property, type }) =>
+              type === requiredType &&
+              (!this.sameProperty_abyssPrivate(property, 'description') ||
+                this.sameProperty_abyssPrivate(property, current)),
+          )
           .map(({ name: property }) => property) ?? [];
       const matching = options.find((property) =>
         this.sameProperty_abyssPrivate(property, current),
@@ -1129,6 +1160,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           (candidate) => candidate !== key,
         );
         if (
+          this.sameProperty_abyssPrivate(property, 'description') ||
           siblingKeys.some((candidate) =>
             this.sameProperty_abyssPrivate(projects[candidate], property),
           )
@@ -1195,7 +1227,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
           });
           this.expandedCards_abyssPrivate.add(id); // open the new card for editing
           await this.plugin_abyssPrivate.saveSettings();
-          this.render_abyssPrivate();
+          this.redrawPreservingPosition_abyssPrivate(() =>
+            this.projectStatusNameInput_abyssPrivate(`status ${n}`),
+          );
         }),
     );
 

@@ -159,6 +159,22 @@ function textControl(
   return { focusTarget: input, suggest, value: () => input.value };
 }
 
+function descriptionControl(
+  options: ProjectCellEditorOptions,
+  root: HTMLElement,
+  events: EditorEvents,
+): EditorControl {
+  const textarea = root.createEl('textarea', {
+    cls: 'abyss-project-editor-input abyss-project-description-editor',
+    attr: { 'aria-label': options.field.label },
+  });
+  textarea.value = typeof options.value === 'string' ? options.value : '';
+  textarea.addEventListener('input', () => {
+    events.changed();
+  });
+  return { focusTarget: textarea, value: () => textarea.value };
+}
+
 function initialListValues(value: unknown): unknown[] {
   if (Array.isArray(value)) return value.map(copyValue);
   return value === undefined || value === null || value === '' ? [] : [value];
@@ -326,7 +342,9 @@ function propertyControl(
 ): EditorControl {
   switch (type) {
     case 'text':
-      return textControl(options, root, events);
+      return options.field.id === 'description'
+        ? descriptionControl(options, root, events)
+        : textControl(options, root, events);
     case 'list':
     case 'tags':
       return listControl(options, root, events);
@@ -334,10 +352,15 @@ function propertyControl(
       return numberControl(root, options.field.label, options.value, events);
     case 'checkbox': {
       const input = root.createEl('input', {
-        cls: 'abyss-project-editor-checkbox',
-        attr: { type: 'checkbox', 'aria-label': options.field.label },
+        cls: 'abyss-project-editor-checkbox metadata-input-checkbox',
+        attr: {
+          type: 'checkbox',
+          'aria-label': options.field.label,
+          'data-indeterminate': String(options.value !== true && options.value !== false),
+        },
       });
       input.checked = options.value === true;
+      input.indeterminate = false;
       input.addEventListener('change', () => {
         events.changed();
         events.commit(true);
@@ -497,6 +520,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
       return;
     }
     if (event.defaultPrevented) return;
+    if (event.key === 'Enter' && event.target instanceof HTMLTextAreaElement) return;
     if (event.key !== 'Enter' && event.key !== 'Tab') return;
     event.preventDefault();
     event.stopPropagation();

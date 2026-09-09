@@ -820,6 +820,66 @@ describe('sourceNoteDisplay setting', () => {
 });
 
 describe('CalendarSettingsTab collapsible cards + default status', () => {
+  it('keeps the project toolbar in the shared compact row at constrained widths', () => {
+    expect(css).toMatch(
+      /@media \(width <= 720px\)[\s\S]*?\.abyss-projects-toolbar\s*\{[^}]*flex-wrap: nowrap/u,
+    );
+    expect(declarationsFor('.abyss-projects-toolbar')).toContain('min-height: 60px');
+  });
+
+  it('preserves the real settings scroller and focuses a newly added project status', async () => {
+    const { tab, captured } = makeTab();
+    const scroller = document.body.createDiv({ cls: 'vertical-tab-content' });
+    scroller.append(tab.containerEl);
+    scroller.scrollTop = 720.5;
+    const add = expectDefined(
+      captured.find((candidate) => {
+        if (candidate.type !== 'button') return false;
+        const button = (candidate.comp as { buttonEl?: HTMLButtonElement }).buttonEl;
+        return button?.textContent === '+ add status';
+      }),
+    );
+
+    add.comp.clickHandler?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(scroller.scrollTop).toBe(720.5);
+    const newCard = Array.from(
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-card'),
+    ).find((card) => card.querySelector('.abyss-settings-card-title')?.textContent === 'status 4');
+    expect(activeDocument.activeElement).toBe(
+      expectDefined(newCard).querySelector('.abyss-settings-card-body input'),
+    );
+  });
+
+  it('preserves the real settings scroller and add-property focus after redraw', async () => {
+    const projectProperties: ProjectPropertyCatalog = {
+      list: () => [{ name: 'Budget', type: 'number' }],
+      inspect: () => ({ kind: 'available', property: undefined, assignment: { kind: 'none' } }),
+      values: () => [],
+      onChange: () => () => {},
+    };
+    const { tab } = makeTab({}, { projectProperties });
+    const scroller = document.body.createDiv({ cls: 'vertical-tab-content' });
+    scroller.append(tab.containerEl);
+    scroller.scrollTop = 1855;
+    const input = expectDefined(
+      tab.containerEl.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
+    );
+    input.value = 'Budget';
+    expectDefined(
+      tab.containerEl.querySelector<HTMLButtonElement>('.abyss-project-column-add'),
+    ).click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(scroller.scrollTop).toBe(1855);
+    expect(activeDocument.activeElement).toBe(
+      tab.containerEl.querySelector('.abyss-project-column-add-input'),
+    );
+  });
+
   it('statuses render as collapsed cards (title only) by default', () => {
     const { tab } = makeTab({}, { expand: false });
     const body = openSection(tab, 5); // Projects
@@ -942,6 +1002,7 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
       list: () => [
         { name: 'Статус', type: 'text' },
         { name: 'Фаза', type: 'text' },
+        { name: 'description', type: 'text' },
         { name: 'Начало', type: 'date' },
         { name: 'Конец', type: 'date' },
         { name: 'Wrong type', type: 'number' },

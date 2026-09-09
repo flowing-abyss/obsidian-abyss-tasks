@@ -2,6 +2,7 @@ import { TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { joinSerializedFrontmatter, ProjectManager } from '../src/projects/ProjectManager';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
+import { ProjectEditHistory } from '../src/projects/projectEditHistory';
 import type { ProjectField } from '../src/projects/projectFields';
 import { DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -181,6 +182,65 @@ describe('ProjectManager.setProperty', () => {
     label: 'Start',
     type: 'date',
   };
+
+  const description: ProjectField = {
+    id: 'description',
+    property: 'description',
+    label: 'Description',
+    type: 'text',
+  };
+
+  it('writes and history-restores an exact multiline curated description', async () => {
+    const app = await createAppWithFiles({ 'P.md': '# Project\n' });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+    const value = 'First line\nSecond line';
+    const result = await pm.applyEdits([
+      { path: 'P.md', field: description, value, expectedValue: undefined },
+    ]);
+    const history = new ProjectEditHistory((changes) => pm.applyEdits(changes));
+    history.record(result);
+
+    expect(result.applied[0]).toMatchObject({
+      sourceProperty: 'description',
+      previousExists: false,
+      appliedExists: true,
+      value,
+    });
+    await history.undo();
+    expect((await readFm(app, 'P.md'))['description']).toBeUndefined();
+    await history.redo();
+    const file = expectDefined(app.vault.getAbstractFileByPath('P.md'));
+    if (!(file instanceof TFile)) throw new Error('missing project file');
+    expect(app.metadataCache.getFileCache(file)?.frontmatter?.['description']).toBe(value);
+  });
+
+  it('rejects description writes when another curated source already owns that property', async () => {
+    const app = await createAppWithFiles({ 'P.md': '# Project\n' });
+    const settings = clone();
+    settings.projects.startProperty = 'Description';
+    const pm = new ProjectManager(app, settings, {} as never, {} as never);
+
+    await expect(pm.setProperty('P.md', description, 'text', undefined)).rejects.toThrow(
+      /distinct project/u,
+    );
+  });
+
+  it('rejects a curated description when its native assignment is no longer text', async () => {
+    NATIVE_PROJECT_PROPERTIES.set('description', 'number');
+    try {
+      const app = await createAppWithFiles({
+        'P.md': '---\ndescription: Existing\n---\n',
+      });
+      const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+
+      await expect(pm.setProperty('P.md', description, 'Changed', 'Existing')).rejects.toThrow(
+        /native type changed/u,
+      );
+      expect((await readFm(app, 'P.md'))['description']).toBe('Existing');
+    } finally {
+      NATIVE_PROJECT_PROPERTIES.delete('description');
+    }
+  });
 
   it('creates an absent curated date from an undefined snapshot', async () => {
     const app = await createAppWithFiles({ 'P.md': '# Project\n' });

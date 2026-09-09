@@ -162,14 +162,17 @@ frontmatter property whose literal value is the status definition's name; projec
 status. `ProjectStore` adds no separate persisted state.
 
 `projectFields` owns the shared project-field vocabulary and case-insensitive frontmatter lookup.
-Its catalog combines the curated name, status, progress, start, and end fields with the vault's
-native property catalog. Status, start, and end each have one configured source property. Name is
-the filename and progress is derived from tasks, so neither has a metadata source. Unsupported,
+Its catalog combines the curated name, status, progress, start, end, and description fields with the
+vault's native property catalog. Status, start, and end each have one configured source property;
+description is fixed to the native text property `description`. Name is the filename and progress is
+derived from tasks, so neither has a metadata source. Unsupported,
 type-conflicting, and temporarily unavailable properties retain their exact source key without
 being treated as editable text, and curated source properties cannot also become generic fields.
 The native property catalog distinguishes successful empty discovery from an unavailable registry:
-an absent Start or End source is editable after successful discovery because its curated role fixes
-the date type, while an existing incompatible source or unavailable discovery remains read-only.
+an absent Start, End, or Description source is editable after successful discovery because its
+curated role fixes the native type, while an existing incompatible source or unavailable discovery
+remains read-only. Curated source collisions retain their configured spelling and note metadata but
+make each colliding role read-only.
 Its per-property inspection also distinguishes a live property, an explicit native type assignment,
 and an absent unassigned name. The Obsidian adapter contains the read-only private compatibility
 probe for assignment provenance; malformed or inaccessible provenance makes the inspection
@@ -183,8 +186,10 @@ rendering and later edits. A shared link-target helper strips note subpaths and 
 path escaping only for native lookup; absolute external Markdown targets instead keep their exact,
 source-independent identity. It also owns the shared progress calculation: completed top-level
 tasks divided by all non-cancelled top-level tasks. `projectTableSettings` owns defaults and
-normalization for saved column order, aliases, widths, visibility, grouping, sorting, and hidden
-statuses. These preferences live under `projects.table`; project metadata remains in Markdown.
+normalization for saved column order, aliases, widths, visibility, under-name description display,
+grouping, sorting, and hidden statuses. A legacy custom description column becomes the under-name
+display preference while valid grouping and sorting references are remapped to the curated field.
+These preferences live under `projects.table`; project metadata remains in Markdown.
 
 `ProjectsPanel` owns the long-lived project-table controller and the vault property-catalog
 subscription. Ordinary project-store refreshes update that controller instead of reconstructing
@@ -197,9 +202,12 @@ project dashboard temporarily detaches the table surface, and returning reattach
 project path, and field id. Projection changes patch changed cell contents, insert or remove affected
 rows, and move only rows whose relative order changed. Surviving cell listeners read their mutable
 reconciled context, so a later edit uses the current project snapshot and source capability. The
-column renderer owns header controls and live width preview. Viewport spare width is rendered into
-Name without changing saved state; a manual Name-boundary drag couples it to the next visible column
-and persists both explicit widths through the view-state channel.
+column renderer owns header controls and live width preview. The Name cell also projects the first
+description line and anchors its exact multiline editor without adding a visible column. Native
+checkbox and tag values retain Obsidian's public DOM classes and theme variables while their edits
+continue through the table mutation coordinator. Viewport spare width is rendered into Name without
+changing saved state; a manual Name-boundary drag couples it to the next visible column and persists
+both explicit widths through the view-state channel.
 
 `ProjectsTableView` owns spreadsheet selection as an occurrence-and-column range over the current
 visible projection. Repeated list-group occurrences remain distinct in that transient range, while
@@ -250,8 +258,9 @@ all changes to one note into one `Vault.process` transaction, and returns exact 
 receipts when later file writes fail. It rechecks each field's configured source, native type, exact
 frontmatter key, presence, and expected value before mutation, and validates curated date ranges
 against the combined final values. `setProperty()` and `setStatus()` use the same guarded write path;
-status inputs become configured literal names before metadata is written. Write failures propagate
-to the presentation boundary that initiated the action.
+status inputs become configured literal names before metadata is written. Description uses that same
+receipt and history path and never receives the absent custom-property capability. Write failures
+propagate to the presentation boundary that initiated the action.
 
 `ProjectEditHistory` stores at most 50 session-only receipt groups. Undo and Redo use the same batch
 capability with reversed expected values and exact source-key and presence provenance, so they restore

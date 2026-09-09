@@ -415,12 +415,7 @@ export class ProjectsTableView {
       },
       onReset: () => {
         this.finishEditorBeforeAction(() => {
-          const defaults = buildDefaultProjectTableSettings();
-          const table = this.context_abyssPrivate.settings.projects.table;
-          table.groupBy = defaults.groupBy;
-          table.sortBy = defaults.sortBy;
-          table.hiddenStatuses = defaults.hiddenStatuses;
-          this.persistAndRender_abyssPrivate();
+          this.resetViewState_abyssPrivate();
         });
       },
     });
@@ -461,6 +456,16 @@ export class ProjectsTableView {
       });
     });
     this.count_abyssPrivate = footer.createSpan({ cls: 'abyss-project-table-count' });
+  }
+
+  private resetViewState_abyssPrivate(): void {
+    const defaults = buildDefaultProjectTableSettings();
+    const table = this.context_abyssPrivate.settings.projects.table;
+    table.groupBy = defaults.groupBy;
+    table.sortBy = defaults.sortBy;
+    table.hiddenStatuses = defaults.hiddenStatuses;
+    table.showDescription = defaults.showDescription;
+    this.persistAndRender_abyssPrivate();
   }
 
   private handleTableResize_abyssPrivate(): void {
@@ -1234,9 +1239,7 @@ export class ProjectsTableView {
     rendered.contentSignature = contentSignature;
     cell.empty();
     const content =
-      field.type === 'name' && grouped
-        ? cell.createDiv({ cls: 'abyss-project-table-name-content' })
-        : cell;
+      field.type === 'name' ? cell.createDiv({ cls: 'abyss-project-table-name-content' }) : cell;
     this.renderProjectCellContent_abyssPrivate(content, rendered);
     if (invalidRange) {
       cell.createSpan({
@@ -1274,6 +1277,10 @@ export class ProjectsTableView {
     invalidRange: boolean,
   ): string {
     const { project, field } = rendered;
+    const descriptionField =
+      field.type === 'name'
+        ? findProjectFieldById(this.fields_abyssPrivate, 'description')
+        : undefined;
     return JSON.stringify({
       field,
       value: projectFieldValue(project, field),
@@ -1287,6 +1294,14 @@ export class ProjectsTableView {
       invalidRange,
       ownedClear: rendered.ownedClear,
       grouped,
+      description:
+        descriptionField === undefined
+          ? undefined
+          : {
+              field: descriptionField,
+              value: projectFieldValue(project, descriptionField),
+              show: this.context_abyssPrivate.settings.projects.table.showDescription,
+            },
     });
   }
 
@@ -1294,6 +1309,11 @@ export class ProjectsTableView {
     content: HTMLElement,
     rendered: RenderedCellContext,
   ): void {
+    const descriptionField = findProjectFieldById(this.fields_abyssPrivate, 'description');
+    const effectiveDescription =
+      descriptionField === undefined
+        ? undefined
+        : this.effectiveField_abyssPrivate(rendered.project, descriptionField);
     renderProjectTableCell(content, rendered.project, {
       field: rendered.field,
       statuses: this.context_abyssPrivate.settings.projects.statuses,
@@ -1313,6 +1333,77 @@ export class ProjectsTableView {
           valueIndex,
         );
       },
+      onToggleCheckbox: (value, input) => {
+        this.requestToggleCheckbox_abyssPrivate(rendered, value, input);
+      },
+      ...(rendered.field.type !== 'name' || effectiveDescription === undefined
+        ? {}
+        : {
+            description: {
+              field: effectiveDescription.field,
+              show: this.context_abyssPrivate.settings.projects.table.showDescription,
+              onEdit: () => {
+                const field = effectiveDescription.field;
+                if (!editableField(field)) return;
+                this.finishEditorBeforeAction(() => {
+                  this.selectCell_abyssPrivate(rendered, false);
+                  this.editCell_abyssPrivate(
+                    rendered.element,
+                    rendered.project,
+                    field,
+                    effectiveDescription.ownedClear,
+                  );
+                });
+              },
+            },
+          }),
+    });
+  }
+
+  private requestToggleCheckbox_abyssPrivate(
+    rendered: RenderedCellContext,
+    value: boolean,
+    input: HTMLInputElement,
+  ): void {
+    const { project, field, ownedClear } = rendered;
+    const current = projectFieldValue(project, field);
+    const restore = (): void => {
+      input.checked = current === true;
+      input.indeterminate = false;
+      input.dataset['indeterminate'] = String(current !== true && current !== false);
+    };
+    if (this.activeEditor_abyssPrivate !== undefined) restore();
+    this.finishEditorBeforeAction(() => {
+      if (!editableField(field) || field.type !== 'checkbox') {
+        restore();
+        return;
+      }
+      const state = projectCellEditorState(
+        project,
+        field,
+        this.context_abyssPrivate.settings,
+        ownedClear,
+      );
+      void this.applyCellEdit_abyssPrivate({
+        project,
+        field,
+        value,
+        expectedValue: state.expectedValue,
+        expectedExists: state.expectedExists,
+        sourceProperty: state.sourceProperty,
+        sourceKey: state.sourceKey,
+        ownedClear: state.ownedClear,
+      }).catch((error: unknown) => {
+        restore();
+        const message = error instanceof Error ? error.message : String(error);
+        this.feedback_abyssPrivate.setText(`Could not update ${field.label}: ${message}`);
+        if (isProjectEditValidationError(error)) return;
+        console.error('[abyss-tasks] Could not update project checkbox property', {
+          property: field.property,
+          cause: error,
+        });
+        new Notice(`Could not update ${field.label}: ${message}`);
+      });
     });
   }
 

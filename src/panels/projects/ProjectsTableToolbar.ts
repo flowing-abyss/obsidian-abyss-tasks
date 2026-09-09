@@ -34,6 +34,7 @@ function isCustomized(settings: ProjectTableSettings): boolean {
     settings.groupBy !== defaults.groupBy ||
     settings.sortBy.field !== defaults.sortBy.field ||
     settings.sortBy.dir !== defaults.sortBy.dir ||
+    settings.showDescription !== defaults.showDescription ||
     settings.hiddenStatuses.length > 0
   );
 }

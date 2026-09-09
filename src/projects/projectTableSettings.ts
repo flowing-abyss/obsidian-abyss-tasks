@@ -30,19 +30,25 @@ function normalizeColumn(value: unknown): ProjectColumn | undefined {
 export function buildDefaultProjectTableSettings(): ProjectTableSettings {
   return {
     columns: DEFAULT_COLUMNS.map((column) => ({ ...column })),
+    showDescription: true,
     groupBy: 'status',
     sortBy: { field: 'start', dir: 'asc' },
     hiddenStatuses: [],
   };
 }
 
+function isLegacyDescriptionId(id: string): boolean {
+  return id.toLocaleLowerCase() === 'property:description';
+}
+
 function normalizeColumns(value: unknown, defaults: readonly ProjectColumn[]): ProjectColumn[] {
   const saved = Array.isArray(value)
     ? value.map(normalizeColumn).filter((column) => column !== undefined)
     : [];
-  const existingIds = new Set(saved.map(({ id }) => id));
+  const presentationColumns = saved.filter(({ id }) => !isLegacyDescriptionId(id));
+  const existingIds = new Set(presentationColumns.map(({ id }) => id));
   const columns = [
-    ...saved,
+    ...presentationColumns,
     ...defaults.filter(({ id }) => !existingIds.has(id)).map((column) => ({ ...column })),
   ];
   const nameIndex = columns.findIndex(({ id }) => id === 'name');
@@ -72,11 +78,24 @@ export function normalizeProjectTableSettings(value: unknown): ProjectTableSetti
   const hiddenStatuses = Array.isArray(value['hiddenStatuses'])
     ? value['hiddenStatuses'].filter((status): status is string => typeof status === 'string')
     : [];
+  const legacyDescription = Array.isArray(value['columns'])
+    ? value['columns']
+        .map(normalizeColumn)
+        .find((column) => column !== undefined && isLegacyDescriptionId(column.id))
+    : undefined;
+  const remapDescription = (field: string): string =>
+    isLegacyDescriptionId(field) ? 'description' : field;
+  const sortBy = normalizeSort(value['sortBy'], defaults.sortBy);
 
   return {
     columns,
-    groupBy: typeof value['groupBy'] === 'string' ? value['groupBy'] : defaults.groupBy,
-    sortBy: normalizeSort(value['sortBy'], defaults.sortBy),
+    showDescription:
+      typeof value['showDescription'] === 'boolean'
+        ? value['showDescription']
+        : (legacyDescription?.visible ?? defaults.showDescription),
+    groupBy:
+      typeof value['groupBy'] === 'string' ? remapDescription(value['groupBy']) : defaults.groupBy,
+    sortBy: { ...sortBy, field: remapDescription(sortBy.field) },
     hiddenStatuses,
   };
 }

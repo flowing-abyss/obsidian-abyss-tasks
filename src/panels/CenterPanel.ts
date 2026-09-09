@@ -898,6 +898,7 @@ export class CenterPanel {
     this.pendingCalScrollTop_abyssPrivate =
       this.el.querySelector<HTMLElement>('.abyss-tg-grid-row')?.scrollTop;
     this.el.empty();
+    this.el.removeClass('abyss-center--projects');
     this.el.addClass('abyss-center--calendar');
     this.destroyCalendarView_abyssPrivate();
     this.renderCalendarMode_abyssPrivate();

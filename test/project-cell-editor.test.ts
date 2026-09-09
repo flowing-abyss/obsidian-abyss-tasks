@@ -36,6 +36,73 @@ function keydown(element: HTMLElement, key: string): void {
 }
 
 describe('mountProjectCellEditor', () => {
+  it('edits a multiline curated description in a textarea without committing Enter', async () => {
+    const container = freshContainer();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'description', property: 'description', label: 'Description', type: 'text' },
+      value: 'First line\nSecond line',
+      catalog: catalog(),
+      save,
+      onClose,
+    });
+    const textarea = expectDefined(
+      container.querySelector<HTMLTextAreaElement>('.abyss-project-description-editor'),
+    );
+    expect(textarea.value).toBe('First line\nSecond line');
+
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    textarea.dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(false);
+    expect(save).not.toHaveBeenCalled();
+
+    textarea.value = 'First line\nSecond line\nThird line';
+    keydown(textarea, 'Tab');
+    await settle();
+    expect(save).toHaveBeenCalledWith('First line\nSecond line\nThird line');
+    expect(onClose).toHaveBeenCalledWith('committed', { navigation: 'tab-forward' });
+  });
+
+  it('closes an unchanged multiline description without writing', async () => {
+    const container = freshContainer();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'description', property: 'description', label: 'Description', type: 'text' },
+      value: 'First line\nSecond line',
+      catalog: catalog(),
+      save,
+      onClose: vi.fn(),
+    });
+
+    await expect(handle.commit()).resolves.toBe(true);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('matches native unset checkbox attributes in the editor', () => {
+    const container = freshContainer();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Flag', property: 'Flag', label: 'Flag', type: 'checkbox' },
+      value: undefined,
+      catalog: catalog([], 'checkbox'),
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: vi.fn(),
+    });
+    const checkbox = expectDefined(
+      container.querySelector<HTMLInputElement>('input.metadata-input-checkbox'),
+    );
+
+    expect(checkbox.checked).toBe(false);
+    expect(checkbox.indeterminate).toBe(false);
+    expect(checkbox.dataset['indeterminate']).toBe('true');
+  });
+
   it('reports forward and backward Tab separately and preserves an external blur target', async () => {
     const forwardContainer = freshContainer();
     const forwardClose = vi.fn();

@@ -667,6 +667,9 @@ export class ProjectManager {
     if (field.id === 'end') {
       return !samePropertyName(field.property, this.settings.projects.endProperty);
     }
+    if (field.id === 'description') {
+      return !samePropertyName(field.property, 'description');
+    }
     return false;
   }
 
@@ -1039,9 +1042,9 @@ export class ProjectManager {
     if (field.property?.trim().length === 0) {
       throw new ProjectEditValidationError('Project property name cannot be empty.');
     }
-    if (this.isCuratedField(field) && this.curatedSourcesCollide()) {
+    if (this.isCuratedField(field) && this.curatedSourceCollides(field)) {
       throw new ProjectEditValidationError(
-        'Choose distinct project Status, Start, and End properties in settings before editing.',
+        'Choose distinct project Status, Start, End, and Description properties in settings before editing.',
       );
     }
     if (field.type === 'status') return this.editableStatusProperty(field);
@@ -1049,11 +1052,30 @@ export class ProjectManager {
       throw new ProjectEditValidationError(`${field.label} is not an editable project property.`);
     }
     if (field.id.startsWith('property:')) return this.customProperty(field, field.property);
+    if (field.id === 'description') return this.editableDescriptionProperty(field);
     return this.editableDateProperty(field);
   }
 
   private isCuratedField(field: ProjectField): boolean {
-    return field.type === 'status' || field.id === 'start' || field.id === 'end';
+    return (
+      field.type === 'status' ||
+      field.id === 'start' ||
+      field.id === 'end' ||
+      field.id === 'description'
+    );
+  }
+
+  private editableDescriptionProperty(field: ProjectField): string {
+    if (
+      field.property === undefined ||
+      field.type !== 'text' ||
+      !samePropertyName(field.property, 'description')
+    ) {
+      throw new ProjectEditValidationError(
+        `${field.label} must use the curated description property.`,
+      );
+    }
+    return field.property;
   }
 
   private editableStatusProperty(field: ProjectField): string {
@@ -1100,12 +1122,16 @@ export class ProjectManager {
     return field.property;
   }
 
-  private curatedSourcesCollide(): boolean {
+  private curatedSourceCollides(field: ProjectField): boolean {
     const { statusProperty, startProperty, endProperty } = this.settings.projects;
-    return (
-      samePropertyName(statusProperty, startProperty) ||
-      samePropertyName(statusProperty, endProperty) ||
-      samePropertyName(startProperty, endProperty)
+    const properties = [statusProperty, startProperty, endProperty, 'description'];
+    let index = 3;
+    if (field.id === 'status') index = 0;
+    else if (field.id === 'start') index = 1;
+    else if (field.id === 'end') index = 2;
+    const source = properties[index] ?? '';
+    return properties.some(
+      (property, candidate) => candidate !== index && samePropertyName(source, property),
     );
   }
 

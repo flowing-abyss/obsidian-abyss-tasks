@@ -58,6 +58,7 @@ function project(name: string, overrides: Partial<Project> = {}): Project {
 function table(overrides: Partial<ProjectTableSettings> = {}): ProjectTableSettings {
   return {
     columns: fields.map(({ id }) => ({ id, visible: true })),
+    showDescription: true,
     groupBy: 'none',
     sortBy: { field: 'end', dir: 'asc' },
     hiddenStatuses: [],
