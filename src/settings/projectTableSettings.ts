@@ -144,7 +144,7 @@ function removeProjectColumn(settings: ProjectTableSettings, columnId: string): 
   if (index < 0) return false;
   settings.columns.splice(index, 1);
   if (settings.groupBy === columnId) settings.groupBy = 'status';
-  if (settings.sortBy.field === columnId) settings.sortBy = { field: 'end', dir: 'asc' };
+  if (settings.sortBy.field === columnId) settings.sortBy = { field: 'start', dir: 'asc' };
   return true;
 }
 

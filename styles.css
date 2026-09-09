@@ -6930,6 +6930,7 @@ body.abyss-modal-open .popover.hover-popover {
   overflow: auto;
   background: var(--background-primary);
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .abyss-project-table-host {
@@ -7108,29 +7109,11 @@ table.abyss-project-table {
   gap: 4px;
 }
 
-.abyss-projects-table button.abyss-project-table-row-handle {
-  flex: 0 0 auto;
-  width: 18px;
-  min-width: 18px;
-  height: 24px;
-  min-height: 24px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-faint);
+.abyss-project-table-row[draggable='true'] {
   cursor: grab;
-  font-size: 11px;
-  letter-spacing: -3px;
-  line-height: 1;
 }
 
-.abyss-projects-table button.abyss-project-table-row-handle:hover,
-.abyss-projects-table button.abyss-project-table-row-handle:focus-visible {
-  color: var(--text-normal);
-}
-
-.abyss-projects-table button.abyss-project-table-row-handle.is-dragging {
+.abyss-project-table-row.is-dragging {
   cursor: grabbing;
   opacity: 0.55;
 }
@@ -7197,7 +7180,10 @@ table.abyss-project-table {
 }
 
 .abyss-project-table-group-chevron {
+  display: inline-flex;
   width: 10px;
+  align-items: center;
+  justify-content: center;
   color: var(--text-faint);
   font-size: 16px;
 }
@@ -7339,7 +7325,7 @@ table.abyss-project-table {
 }
 
 .abyss-projects-table button.abyss-project-table-value-remove {
-  display: none;
+  display: inline-flex;
   width: 16px;
   min-width: 16px;
   height: 16px;
@@ -7350,14 +7336,15 @@ table.abyss-project-table {
   background: transparent;
   box-shadow: none;
   color: var(--text-muted);
+  opacity: 0;
   line-height: 1;
+  align-items: center;
+  justify-content: center;
 }
 
 .abyss-project-table-value:hover .abyss-project-table-value-remove,
 .abyss-project-table-value:focus-within .abyss-project-table-value-remove {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  opacity: 1;
 }
 
 .abyss-project-table-empty-value {
@@ -7398,6 +7385,31 @@ table.abyss-project-table {
   gap: 5px;
   padding: 4px 0;
   white-space: normal;
+}
+
+.abyss-project-table-cell.is-editing {
+  position: relative;
+  z-index: 6;
+  overflow: visible;
+}
+
+.abyss-project-table-cell.is-editing > :not(.abyss-project-cell-editor-host) {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.abyss-project-cell-editor-host {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  z-index: 7;
+  width: max(calc(100% - 8px), 150px);
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--interactive-accent);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  box-shadow: var(--shadow-s);
 }
 
 .abyss-project-editor-input,

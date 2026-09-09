@@ -193,6 +193,14 @@ session state. The controller renders the table through the shared view-options 
 all edits through `ProjectManager`; it does not write Markdown or frontmatter itself. Switching to a
 project dashboard temporarily detaches the table surface, and returning reattaches the same session.
 
+`ProjectsTableView` also owns a long-lived table element and reconciles its body by group key,
+project path, and field id. Projection changes patch changed cell contents, insert or remove affected
+rows, and move only rows whose relative order changed. Surviving cell listeners read their mutable
+reconciled context, so a later edit uses the current project snapshot and source capability. The
+column renderer owns header controls and live width preview. Viewport spare width is rendered into
+Name without changing saved state; a manual Name-boundary drag couples it to the next visible column
+and persists both explicit widths through the view-state channel.
+
 `ProjectsTableView` owns spreadsheet selection as an occurrence-and-column range over the current
 visible projection. Repeated list-group occurrences remain distinct in that transient range, while
 batch mutations deduplicate their physical project cells. Projection changes reconcile the range
@@ -203,14 +211,19 @@ quoted TSV. Paste parses that captured payload before its asynchronous mutation,
 wiki and Markdown links into each destination note's context while preserving syntax, and never
 copies native-type or history capabilities.
 
-Row-to-group moves start only from the dedicated project-row handle and target group headers,
-including collapsed and no-value groups. Scalar moves replace the grouped value; list moves replace
-only the source group value, preserve unrelated values, and deduplicate with the same resolved-link
-identity used by grouping. Dropping a list into No value explicitly clears the whole list. Selection,
+Row-to-group moves start from the non-interactive surface of a project row, including its displayed
+project title, and target the full group row, including collapsed and no-value groups. Links,
+checkboxes, remove controls, and active editors do not initiate row drags; a completed title drag
+suppresses its following click. Scalar moves replace the grouped value; list moves replace only the
+source group value, preserve unrelated values, and deduplicate with the same resolved-link identity
+used by grouping. Dropping a list into No value explicitly clears the whole list. Selection,
 clipboard payloads, drag payloads, and edit history remain bounded to the table session.
 
 `ProjectCellEditor` owns typed drafts, suggestion-popup lifetime, validation, and autosave. Its
 async commit handle remains mounted on failure and coalesces a newer draft while a save is pending.
+The table mounts that handle in an anchored, out-of-flow host so editing does not change row height.
+Suggestions come only from the edited property's native value catalog; they do not enumerate vault
+notes. Escape closes the editor in one action even when the suggestion popup is open.
 On close it reports restore-current, forward Tab, backward Tab, or preserve-focus intent;
 `ProjectsTableView` resolves that intent against the post-commit visible occurrence projection and
 uses the same selection, focus, and reveal path as ordinary keyboard navigation.

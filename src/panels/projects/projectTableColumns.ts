@@ -92,6 +92,50 @@ interface BindResizeOptions {
   readonly suppressSort: (value: boolean) => void;
 }
 
+function configuredColumnWidths(
+  th: HTMLTableCellElement,
+): ProjectTableColumnResize['visibleWidths'] {
+  return Array.from(
+    th.parentElement?.querySelectorAll<HTMLElement>('[data-column-id]') ?? [],
+    (header) => {
+      const configured = Number(header.dataset['configuredWidth']);
+      return {
+        columnId: header.dataset['columnId'] ?? '',
+        width:
+          Number.isFinite(configured) && configured > 0
+            ? configured
+            : Math.round(initialColumnWidth(header)),
+      };
+    },
+  ).filter(({ columnId }) => columnId !== '');
+}
+
+function minimumResizeWidth(
+  th: HTMLTableCellElement,
+  columnId: string,
+  neighbor: ProjectTableColumnResize['visibleWidths'][number] | undefined,
+  startWidth: number,
+): number {
+  if (neighbor !== undefined || columnId !== 'name') return 60;
+  const viewportWidth = th.closest<HTMLElement>('.abyss-project-table-scroll')?.clientWidth ?? 0;
+  return Math.max(60, viewportWidth > 0 ? viewportWidth : startWidth);
+}
+
+function resizeWidths(
+  widths: ProjectTableColumnResize['visibleWidths'],
+  columnId: string,
+  width: number,
+  neighbor: { readonly columnId: string; readonly width: number } | undefined,
+): ProjectTableColumnResize['visibleWidths'] {
+  return widths.map((entry) => {
+    if (entry.columnId === columnId) return { columnId, width };
+    if (entry.columnId === neighbor?.columnId) {
+      return { columnId: entry.columnId, width: neighbor.width };
+    }
+    return entry;
+  });
+}
+
 function bindResize(options: BindResizeOptions): () => void {
   const { handle, th, columnId, onResize, suppressSort } = options;
   let cleanup: (() => void) | undefined;
@@ -103,22 +147,47 @@ function bindResize(options: BindResizeOptions): () => void {
     const ownerDocument = handle.ownerDocument;
     const startX = event.clientX;
     const startWidth = initialColumnWidth(th);
-    const visibleWidths = Array.from(
-      th.parentElement?.querySelectorAll<HTMLElement>('[data-column-id]') ?? [],
-      (header) => ({
-        columnId: header.dataset['columnId'] ?? '',
-        width: Math.round(initialColumnWidth(header)),
-      }),
-    ).filter(({ columnId }) => columnId !== '');
+    const configuredWidths = configuredColumnWidths(th);
+    const renderedWidths = configuredWidths.map(({ columnId, width }) => ({
+      columnId,
+      width:
+        columnId === th.dataset['columnId']
+          ? Math.round(startWidth)
+          : renderedColumnWidth(th, columnId, width),
+    }));
+    const targetIndex = configuredWidths.findIndex((entry) => entry.columnId === columnId);
+    const neighbor = columnId === 'name' ? configuredWidths[targetIndex + 1] : undefined;
+    const minimumWidth = minimumResizeWidth(th, columnId, neighbor, startWidth);
     let width = startWidth;
+    let previewWidths: ProjectTableColumnResize['visibleWidths'] = renderedWidths;
+    let savedWidths: ProjectTableColumnResize['visibleWidths'] = configuredWidths;
+    let changed = false;
     const move = (moveEvent: PointerEvent): void => {
-      width = Math.max(60, Math.round(startWidth + moveEvent.clientX - startX));
-      applyLiveColumnWidths(th, columnId, width, visibleWidths);
+      const requested = Math.round(startWidth + moveEvent.clientX - startX);
+      width = Math.max(minimumWidth, requested);
+      const neighborWidth =
+        neighbor === undefined ? undefined : Math.max(60, neighbor.width - (width - startWidth));
+      const resizedNeighbor =
+        neighbor === undefined || neighborWidth === undefined
+          ? undefined
+          : { columnId: neighbor.columnId, width: neighborWidth };
+      previewWidths = resizeWidths(renderedWidths, columnId, width, resizedNeighbor);
+      savedWidths = resizeWidths(configuredWidths, columnId, width, resizedNeighbor);
+      changed = previewWidths.some((entry, index) => entry.width !== renderedWidths[index]?.width);
+      applyLiveColumnWidths(th, previewWidths);
     };
     const finish = (): void => {
       cleanup?.();
       cleanup = undefined;
-      onResize({ columnId, width, visibleWidths });
+      if (changed) onResize({ columnId, width, visibleWidths: savedWidths });
+      window.setTimeout(() => {
+        suppressSort(false);
+      }, 0);
+    };
+    const cancel = (): void => {
+      cleanup?.();
+      cleanup = undefined;
+      applyLiveColumnWidths(th, renderedWidths);
       window.setTimeout(() => {
         suppressSort(false);
       }, 0);
@@ -126,11 +195,11 @@ function bindResize(options: BindResizeOptions): () => void {
     cleanup = () => {
       ownerDocument.removeEventListener('pointermove', move);
       ownerDocument.removeEventListener('pointerup', finish);
-      ownerDocument.removeEventListener('pointercancel', finish);
+      ownerDocument.removeEventListener('pointercancel', cancel);
     };
     ownerDocument.addEventListener('pointermove', move);
     ownerDocument.addEventListener('pointerup', finish);
-    ownerDocument.addEventListener('pointercancel', finish);
+    ownerDocument.addEventListener('pointercancel', cancel);
   };
   handle.addEventListener('pointerdown', start);
   return () => {
@@ -141,24 +210,29 @@ function bindResize(options: BindResizeOptions): () => void {
 
 function applyLiveColumnWidths(
   th: HTMLTableCellElement,
-  columnId: string,
-  width: number,
   visibleWidths: ProjectTableColumnResize['visibleWidths'],
 ): void {
   const table = th.closest<HTMLTableElement>('table');
   if (table === null) return;
   let total = 0;
   for (const visible of visibleWidths) {
-    const next = visible.columnId === columnId ? width : visible.width;
-    total += next;
+    total += visible.width;
     const col = Array.from(table.querySelectorAll<HTMLElement>('col[data-column-id]')).find(
       (candidate) => candidate.dataset['columnId'] === visible.columnId,
     );
-    if (col !== undefined) col.style.width = `${next}px`;
+    if (col !== undefined) col.style.width = `${visible.width}px`;
   }
-  th.dataset['width'] = String(width);
   table.style.width = `${total}px`;
   table.style.minWidth = `${total}px`;
+}
+
+function renderedColumnWidth(th: HTMLTableCellElement, columnId: string, fallback: number): number {
+  const table = th.closest<HTMLTableElement>('table');
+  const col = Array.from(table?.querySelectorAll<HTMLElement>('col[data-column-id]') ?? []).find(
+    (candidate) => candidate.dataset['columnId'] === columnId,
+  );
+  const width = Number.parseFloat(col?.style.width ?? '');
+  return Number.isFinite(width) && width > 0 ? Math.round(width) : fallback;
 }
 
 function initialColumnWidth(th: HTMLElement): number {
@@ -213,6 +287,7 @@ function renderHeaderColumn(
     attr: { scope: 'col', 'data-column-id': column.id, draggable: String(field.type !== 'name') },
   });
   th.dataset['width'] = String(width);
+  th.dataset['configuredWidth'] = String(width);
   const button = th.createEl('button', {
     cls: 'abyss-project-table-column-button',
     attr: { type: 'button', 'aria-label': `Sort by ${column.label ?? field.label}` },

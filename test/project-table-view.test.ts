@@ -293,10 +293,10 @@ describe('ProjectsTableView', () => {
     expect(header.textContent).toContain('Deadline');
     header.click();
     await flushMicrotasks();
-    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'desc' });
+    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'asc' });
     header.click();
     await flushMicrotasks();
-    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'asc' });
+    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'desc' });
     expect(saveSettings).toHaveBeenCalledTimes(2);
   });
 
@@ -360,7 +360,7 @@ describe('ProjectsTableView', () => {
     );
     startHeader.dispatchEvent(new Event('dragstart', { bubbles: true }));
     startButton.click();
-    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'asc' });
+    expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
 
     const resize = expectDefined(
       startHeader.querySelector<HTMLElement>('.abyss-project-column-resize'),
@@ -371,20 +371,20 @@ describe('ProjectsTableView', () => {
       host.querySelector<HTMLTableColElement>('col[data-column-id="start"]')?.style.width,
     ).toBe('290px');
     expect(host.querySelector<HTMLTableElement>('.abyss-project-table')?.style.width).toBe(
-      '1490px',
+      '1040px',
     );
     startHeader.ownerDocument.dispatchEvent(new PointerEvent('pointerup', { clientX: 140 }));
     await flushMicrotasks();
 
     expect(config.projects.table.columns.map(({ id, width }) => [id, width])).toEqual([
-      ['name', 400],
-      ['status', 250],
-      ['progress', 300],
+      ['name', 260],
+      ['status', 150],
+      ['progress', 190],
       ['start', 290],
-      ['end', 250],
+      ['end', 150],
     ]);
     expect(host.querySelector<HTMLTableElement>('.abyss-project-table')?.style.width).toBe(
-      '1490px',
+      '1040px',
     );
 
     renderedWidths['start'] = 290;
@@ -400,9 +400,131 @@ describe('ProjectsTableView', () => {
 
     expect(config.projects.table.columns.find(({ id }) => id === 'start')?.width).toBe(250);
     expect(host.querySelector<HTMLTableElement>('.abyss-project-table')?.style.width).toBe(
-      '1450px',
+      '1000px',
     );
-    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'asc' });
+    expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
+    expect(saveSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a full-width Name resize visible by transferring width to its neighbor', async () => {
+    const { host, view, config, saveSettings } = mount([project({})]);
+    const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+    Object.defineProperty(scroll, 'clientWidth', { value: 1000, configurable: true });
+    view.update([project({})]);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const columnId = this.dataset['columnId'];
+      const col =
+        columnId === undefined
+          ? null
+          : host.querySelector<HTMLElement>(`col[data-column-id="${columnId}"]`);
+      return { width: Number.parseFloat(col?.style.width ?? '0') } as DOMRect;
+    });
+    const nameHeader = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-header-cell[data-column-id="name"]'),
+    );
+    const resize = expectDefined(
+      nameHeader.querySelector<HTMLElement>('.abyss-project-column-resize'),
+    );
+    expect(host.querySelector<HTMLElement>('col[data-column-id="name"]')?.style.width).toBe(
+      '360px',
+    );
+
+    resize.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100 }));
+    nameHeader.ownerDocument.dispatchEvent(new PointerEvent('pointerup', { clientX: 100 }));
+    await flushMicrotasks();
+    expect(config.projects.table.columns.find(({ id }) => id === 'name')?.width).toBeUndefined();
+    expect(saveSettings).not.toHaveBeenCalled();
+
+    resize.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100 }));
+    nameHeader.ownerDocument.dispatchEvent(new PointerEvent('pointermove', { clientX: 50 }));
+    expect(host.querySelector<HTMLElement>('col[data-column-id="name"]')?.style.width).toBe(
+      '310px',
+    );
+    expect(host.querySelector<HTMLElement>('col[data-column-id="status"]')?.style.width).toBe(
+      '200px',
+    );
+    nameHeader.ownerDocument.dispatchEvent(new PointerEvent('pointerup', { clientX: 50 }));
+    await flushMicrotasks();
+
+    expect(config.projects.table.columns.find(({ id }) => id === 'name')?.width).toBe(310);
+    expect(config.projects.table.columns.find(({ id }) => id === 'status')?.width).toBe(200);
+    expect(saveSettings).toHaveBeenCalledOnce();
+
+    const currentHeader = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-header-cell[data-column-id="name"]'),
+    );
+    const currentResize = expectDefined(
+      currentHeader.querySelector<HTMLElement>('.abyss-project-column-resize'),
+    );
+    currentResize.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 50 }));
+    currentHeader.ownerDocument.dispatchEvent(new PointerEvent('pointermove', { clientX: 20 }));
+    currentHeader.ownerDocument.dispatchEvent(new PointerEvent('pointercancel', { clientX: 20 }));
+    await flushMicrotasks();
+
+    expect(host.querySelector<HTMLElement>('col[data-column-id="name"]')?.style.width).toBe(
+      '310px',
+    );
+    expect(host.querySelector<HTMLElement>('col[data-column-id="status"]')?.style.width).toBe(
+      '200px',
+    );
+    expect(saveSettings).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a lone Name column at viewport width while allowing manual overflow growth', async () => {
+    const { host, view, config, saveSettings } = mount([project({})]);
+    for (const column of config.projects.table.columns) {
+      column.visible = column.id === 'name';
+    }
+    const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+    Object.defineProperty(scroll, 'clientWidth', { value: 500, configurable: true });
+    view.update([project({})]);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const columnId = this.dataset['columnId'];
+      const col =
+        columnId === undefined
+          ? null
+          : host.querySelector<HTMLElement>(`col[data-column-id="${columnId}"]`);
+      return { width: Number.parseFloat(col?.style.width ?? '0') } as DOMRect;
+    });
+    const nameHeader = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-header-cell[data-column-id="name"]'),
+    );
+    const resize = expectDefined(
+      nameHeader.querySelector<HTMLElement>('.abyss-project-column-resize'),
+    );
+
+    resize.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100 }));
+    nameHeader.ownerDocument.dispatchEvent(new PointerEvent('pointermove', { clientX: 20 }));
+    expect(host.querySelector<HTMLElement>('col[data-column-id="name"]')?.style.width).toBe(
+      '500px',
+    );
+    nameHeader.ownerDocument.dispatchEvent(new PointerEvent('pointermove', { clientX: 140 }));
+    expect(host.querySelector<HTMLElement>('col[data-column-id="name"]')?.style.width).toBe(
+      '540px',
+    );
+    nameHeader.ownerDocument.dispatchEvent(new PointerEvent('pointerup', { clientX: 140 }));
+    await flushMicrotasks();
+
+    expect(config.projects.table.columns.find(({ id }) => id === 'name')?.width).toBe(540);
+    expect(host.querySelector<HTMLTableElement>('.abyss-project-table')?.style.width).toBe('540px');
+    expect(saveSettings).toHaveBeenCalledOnce();
+
+    const grownHeader = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-header-cell[data-column-id="name"]'),
+    );
+    expectDefined(
+      grownHeader.querySelector<HTMLElement>('.abyss-project-column-resize'),
+    ).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 140 }));
+    grownHeader.ownerDocument.dispatchEvent(new PointerEvent('pointermove', { clientX: 100 }));
+    grownHeader.ownerDocument.dispatchEvent(new PointerEvent('pointerup', { clientX: 100 }));
+    await flushMicrotasks();
+
+    expect(config.projects.table.columns.find(({ id }) => id === 'name')?.width).toBe(500);
+    expect(host.querySelector<HTMLTableElement>('.abyss-project-table')?.style.width).toBe('500px');
     expect(saveSettings).toHaveBeenCalledTimes(2);
   });
 
@@ -446,7 +568,7 @@ describe('ProjectsTableView', () => {
     drag('progress', 'status', 25);
     expect(order()).toEqual(['name', 'progress', 'status', 'start', 'end']);
 
-    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'asc' });
+    expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
     expect(saveSettings).toHaveBeenCalledTimes(3);
   });
 
@@ -488,7 +610,7 @@ describe('ProjectsTableView', () => {
 
     expect(config.projects.table.columns).toEqual(before);
     expect(config.projects.table.groupBy).toBe('status');
-    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'asc' });
+    expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
     expect(config.projects.table.hiddenStatuses).toEqual([]);
     expect(host.querySelector('.abyss-view-state-reset-btn')).toBeNull();
   });
@@ -533,6 +655,11 @@ describe('ProjectsTableView', () => {
     search.value = 'West team';
     search.dispatchEvent(new Event('input', { bubbles: true }));
     expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(1);
+
+    const contextEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    link.dispatchEvent(contextEvent);
+    expect(contextEvent.defaultPrevented).toBe(true);
+    expect(host.querySelectorAll('.abyss-project-cell-editor')).toHaveLength(1);
   });
 
   it('renders a Markdown group anchor without toggling its group or editing its cell', async () => {
@@ -561,6 +688,10 @@ describe('ProjectsTableView', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(1);
     expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
+
+    expectDefined(toggle.closest('td')).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
   });
 
   it('keeps collapsed group keys stable across project refreshes', () => {
@@ -577,6 +708,128 @@ describe('ProjectsTableView', () => {
     expect(
       host.querySelector('.abyss-project-table-group-toggle')?.getAttribute('aria-expanded'),
     ).toBe('false');
+  });
+
+  it('reconciles filter, collapse, and value updates without replacing surviving table nodes', () => {
+    const config = settings();
+    config.projects.table.groupBy = 'property:Owner';
+    config.projects.table.columns.push({ id: 'property:Owner', visible: true });
+    const alpha = project({
+      path: 'Projects/A.md',
+      name: 'Alpha',
+      frontmatter: { Owner: 'One', start: '2026-09-01', end: '2026-09-30' },
+    });
+    const beta = project({
+      path: 'Projects/B.md',
+      name: 'Beta',
+      frontmatter: { Owner: 'Two', start: '2026-09-02', end: '2026-09-30' },
+    });
+    const { host, view } = mount([alpha, beta], {
+      settings: config,
+      catalog: catalog([{ name: 'Owner', type: 'text' }]),
+    });
+    const tableBefore = expectDefined(host.querySelector<HTMLTableElement>('table'));
+    const headerBefore = expectDefined(tableBefore.querySelector('thead'));
+    const alphaRowBefore = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/A.md"]'),
+    );
+    const betaRowBefore = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/B.md"]'),
+    );
+    const betaStartBefore = expectDefined(
+      betaRowBefore.querySelector<HTMLElement>('[data-column-id="start"]'),
+    );
+
+    const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
+    search.value = 'Beta';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(host.querySelector('table')).toBe(tableBefore);
+    expect(host.querySelector('thead')).toBe(headerBefore);
+    expect(host.querySelector('[data-project-path="Projects/B.md"]')).toBe(betaRowBefore);
+    search.value = '';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(host.querySelector('[data-project-path="Projects/A.md"]')).not.toBe(alphaRowBefore);
+    expect(host.querySelector('[data-project-path="Projects/B.md"]')).toBe(betaRowBefore);
+
+    view.update([alpha, { ...beta, frontmatter: { ...beta.frontmatter, start: '2026-10-03' } }]);
+    const betaRowAfterUpdate = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/B.md"]'),
+    );
+    expect(betaRowAfterUpdate).toBe(betaRowBefore);
+    const betaStartAfterUpdate = expectDefined(
+      betaRowAfterUpdate.querySelector<HTMLElement>('[data-column-id="start"]'),
+    );
+    expect(betaStartAfterUpdate).toBe(betaStartBefore);
+    expect(betaStartAfterUpdate.textContent).toContain('2026-10-03');
+    const alphaRowAfterFilter = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/A.md"]'),
+    );
+
+    const betaGroup = expectDefined(betaRowBefore.previousElementSibling as HTMLElement | null);
+    expectDefined(
+      betaGroup.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    ).click();
+    expect(host.querySelector('table')).toBe(tableBefore);
+    expect(host.querySelector('thead')).toBe(headerBefore);
+    expect(host.querySelector('[data-project-path="Projects/A.md"]')).toBe(alphaRowAfterFilter);
+    expectDefined(
+      betaGroup.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    ).click();
+    expect(host.querySelector('[data-project-path="Projects/A.md"]')).toBe(alphaRowAfterFilter);
+    expect(
+      host.querySelector('[data-project-path="Projects/B.md"] [data-column-id="start"]')
+        ?.textContent,
+    ).toContain('2026-10-03');
+  });
+
+  it('opens the current retained cell on context click exactly once', async () => {
+    const first = project({
+      frontmatter: { status: active.name, start: '2026-09-01', end: '2026-09-30' },
+    });
+    const saveProperty = vi.fn().mockResolvedValue(undefined);
+    const { host, view } = mount([first], { saveProperty });
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    view.update([{ ...first, frontmatter: { ...first.frontmatter, start: '2026-10-04' } }]);
+    const contextEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    cell.dispatchEvent(contextEvent);
+    expect(contextEvent.defaultPrevented).toBe(true);
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('input[type="date"]'));
+    expect(input.value).toBe('2026-10-04');
+
+    cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(cell.querySelectorAll('.abyss-project-cell-editor')).toHaveLength(1);
+    input.value = '2026-10-05';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    expect(saveProperty).toHaveBeenCalledWith(
+      'Projects/A.md',
+      expect.anything(),
+      '2026-10-05',
+      '2026-10-04',
+    );
+    await vi.waitFor(() => {
+      expect(cell.querySelector('.abyss-project-cell-editor')).toBeNull();
+    });
+    expect(cell.isConnected).toBe(true);
+    expect(host.querySelector('.abyss-project-table-cell[data-column-id="start"]')).toBe(cell);
+
+    cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const nextInput = expectDefined(cell.querySelector<HTMLInputElement>('input[type="date"]'));
+    expect(nextInput.value).toBe('2026-10-05');
+    nextInput.value = '2026-10-06';
+    nextInput.dispatchEvent(new Event('input', { bubbles: true }));
+    nextInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    expect(saveProperty).toHaveBeenNthCalledWith(
+      2,
+      'Projects/A.md',
+      expect.anything(),
+      '2026-10-06',
+      '2026-10-05',
+    );
   });
 
   it('creates a project from the inline footer control', async () => {
@@ -693,12 +946,12 @@ describe('ProjectsTableView', () => {
     expect(draft.isConnected).toBe(true);
     expect(draft.value).toBe('2026-12-24');
     expect(activeDocument.activeElement).toBe(draft);
-    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'asc' });
+    expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
     expect(config.projects.table.hiddenStatuses).toEqual([]);
 
     draft.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(config.projects.table.hiddenStatuses).toEqual([`id:${active.id}`]);
-    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'asc' });
+    expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
     expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
     view.destroy();
   });
@@ -1060,7 +1313,10 @@ describe('ProjectsTableView', () => {
     cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     expectDefined(cell.querySelector<HTMLButtonElement>('[aria-label="Remove Celia"]')).click();
     await flushMicrotasks();
-    const input = expectDefined(cell.querySelector<HTMLInputElement>('.abyss-project-list-input'));
+    const input = expectDefined(
+      cell.querySelector<HTMLInputElement>('.abyss-project-list-input'),
+      cell.outerHTML,
+    );
     input.value = 'Mina';
 
     expectDefined(cell.querySelector<HTMLButtonElement>('.abyss-project-list-add')).click();
@@ -2018,7 +2274,7 @@ describe('ProjectsTableView', () => {
     expect(values).toEqual([done.name, active.name]);
   });
 
-  it('moves a row by its dedicated handle into a collapsed list group without losing other values', async () => {
+  it('moves a whole row into a collapsed list group without a permanent grip', async () => {
     const config = settings();
     config.projects.table.groupBy = 'property:Owners';
     config.projects.table.columns.push({ id: 'property:Owners', visible: true });
@@ -2033,7 +2289,7 @@ describe('ProjectsTableView', () => {
       })),
       failed: [],
     }));
-    const { host } = mount(
+    const { host, openProject } = mount(
       [
         project({ path: 'Projects/A.md', name: 'A project', frontmatter: { Owners: ['A', 'C'] } }),
         project({ path: 'Projects/B.md', name: 'B project', frontmatter: { Owners: ['B'] } }),
@@ -2060,8 +2316,10 @@ describe('ProjectsTableView', () => {
         (row) => row.dataset['groupKey'] === 'value:a',
       ),
     );
-    const handle = expectDefined(
-      sourceRow.querySelector<HTMLElement>('.abyss-project-table-row-handle'),
+    expect(sourceRow.draggable).toBe(true);
+    expect(sourceRow.querySelector('.abyss-project-table-row-handle')).toBeNull();
+    const title = expectDefined(
+      sourceRow.querySelector<HTMLButtonElement>('.abyss-project-table-name'),
     );
     const stored = transfer();
     let protectedStore = false;
@@ -2076,7 +2334,7 @@ describe('ProjectsTableView', () => {
       dropEffect: 'none',
       effectAllowed: 'uninitialized',
     };
-    handle.dispatchEvent(dragEvent('dragstart', data));
+    title.dispatchEvent(dragEvent('dragstart', data));
     protectedStore = true;
     target.dispatchEvent(dragEvent('dragover', data));
     expect(target.classList.contains('is-drop-target')).toBe(true);
@@ -2087,11 +2345,13 @@ describe('ProjectsTableView', () => {
     expect(target.getAttribute('title')).toBeNull();
 
     target.dispatchEvent(dragEvent('dragover', data));
-    handle.dispatchEvent(dragEvent('dragend', data));
+    sourceRow.dispatchEvent(dragEvent('dragend', data));
+    title.click();
+    expect(openProject).not.toHaveBeenCalled();
     expect(target.getAttribute('title')).toBeNull();
 
     protectedStore = false;
-    handle.dispatchEvent(dragEvent('dragstart', data));
+    sourceRow.dispatchEvent(dragEvent('dragstart', data));
     protectedStore = true;
     target.dispatchEvent(dragEvent('dragover', data));
     protectedStore = false;

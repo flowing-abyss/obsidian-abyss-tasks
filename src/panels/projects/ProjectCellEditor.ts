@@ -106,7 +106,6 @@ function suggestOptions(
   suggestion: {
     readonly values: readonly string[];
     readonly onPick: (value: string) => void;
-    readonly includeNotes: boolean;
   },
   events: EditorEvents,
 ): ConstructorParameters<typeof ProjectPropertySuggest>[0] {
@@ -120,7 +119,6 @@ function suggestOptions(
     onClose: () => {
       events.suggestionOpen(false);
     },
-    ...(options.sourcePath === undefined ? {} : { sourcePath: options.sourcePath }),
   };
 }
 
@@ -150,7 +148,6 @@ function textControl(
           events.changed();
           events.commit(true);
         },
-        includeNotes: true,
       },
       events,
     ),
@@ -229,7 +226,6 @@ function listControl(
         onPick: (value) => {
           if (addPending(value)) events.commit(false);
         },
-        includeNotes: options.field.type === 'list',
       },
       events,
     ),
@@ -487,13 +483,13 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   }
 
   private readonly onKeyDown_abyssPrivate = (event: KeyboardEvent): void => {
-    if (event.defaultPrevented) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
       this.cancel();
       return;
     }
+    if (event.defaultPrevented) return;
     if (event.key !== 'Enter' && event.key !== 'Tab') return;
     event.preventDefault();
     event.stopPropagation();
@@ -601,7 +597,17 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
       this.closeFocusTarget_abyssPrivate =
         navigation === 'preserve-focus' ? focusTarget : undefined;
     }
-    if (this.saveInFlight_abyssPrivate !== undefined) return this.saveInFlight_abyssPrivate;
+    if (this.saveInFlight_abyssPrivate !== undefined) {
+      const inFlight = this.saveInFlight_abyssPrivate;
+      return inFlight.then(async (saved): Promise<boolean> => {
+        if (!saved || this.closed_abyssPrivate || !this.closeRequested_abyssPrivate) return saved;
+        return await this.commitWithOptions_abyssPrivate(
+          true,
+          this.closeNavigation_abyssPrivate,
+          this.closeFocusTarget_abyssPrivate,
+        );
+      });
+    }
     const saving = this.saveUntilCurrent_abyssPrivate().catch((error: unknown) => {
       this.handleSaveFailure_abyssPrivate(error);
       return false;

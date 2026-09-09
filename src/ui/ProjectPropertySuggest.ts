@@ -1,8 +1,7 @@
-import { AbstractInputSuggest, type App, type TFile } from 'obsidian';
-import { VaultFileSuggestionSource } from './NoteSuggest';
+import { AbstractInputSuggest, type App } from 'obsidian';
 
 export interface ProjectPropertySuggestion {
-  readonly kind: 'value' | 'note';
+  readonly kind: 'value';
   readonly value: string;
   readonly label: string;
   readonly detail?: string;
@@ -13,8 +12,6 @@ export interface ProjectPropertySuggestOptions {
   readonly input: HTMLInputElement;
   readonly values: readonly string[];
   readonly onPick: (value: string) => void;
-  readonly includeNotes?: boolean;
-  readonly sourcePath?: string;
   readonly onOpen?: () => void;
   readonly onClose?: () => void;
 }
@@ -23,9 +20,8 @@ function matches(value: string, query: string): boolean {
   return value.toLocaleLowerCase().includes(query.toLocaleLowerCase());
 }
 
-/** One keyboard-aware suggester for prior property values and optional wiki-link targets. */
+/** Keyboard-aware suggestions from values already used by the edited property. */
 export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectPropertySuggestion> {
-  private readonly noteSource_abyssPrivate: VaultFileSuggestionSource | undefined;
   private readonly values_abyssPrivate: readonly string[];
   private readonly onPick_abyssPrivate: (value: string) => void;
   private readonly options_abyssPrivate: ProjectPropertySuggestOptions;
@@ -36,8 +32,6 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
     this.values_abyssPrivate = options.values;
     this.onPick_abyssPrivate = options.onPick;
     this.options_abyssPrivate = options;
-    this.noteSource_abyssPrivate =
-      options.includeNotes === true ? new VaultFileSuggestionSource(options.app) : undefined;
   }
 
   override open(): void {
@@ -64,13 +58,6 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
       seen.add(normalized);
       suggestions.push({ kind: 'value', value, label: value });
     }
-    for (const file of this.noteSource_abyssPrivate?.list(query) ?? []) {
-      const suggestion = this.noteSuggestion_abyssPrivate(file);
-      const normalized = suggestion.value.toLocaleLowerCase();
-      if (seen.has(normalized)) continue;
-      seen.add(normalized);
-      suggestions.push(suggestion);
-    }
     return suggestions;
   }
 
@@ -89,21 +76,5 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
     event?.stopPropagation();
     this.onPick_abyssPrivate(suggestion.value);
     this.close();
-  }
-
-  private noteSuggestion_abyssPrivate(file: TFile): ProjectPropertySuggestion {
-    const linktext = this.app.metadataCache.fileToLinktext(
-      file,
-      this.options_abyssPrivate.sourcePath ?? '',
-      true,
-    );
-    return {
-      kind: 'note',
-      value: `[[${linktext}]]`,
-      label: file.extension === 'md' ? file.basename : file.name,
-      ...(file.parent?.path == null || file.parent.path === '/'
-        ? {}
-        : { detail: file.parent.path }),
-    };
   }
 }

@@ -354,7 +354,7 @@ describe('projects migration', () => {
         { id: 'end', visible: true },
       ],
       groupBy: 'status',
-      sortBy: { field: 'end', dir: 'asc' },
+      sortBy: { field: 'start', dir: 'asc' },
       hiddenStatuses: [],
     });
     expect(projects['view']).toBe('external-build-value');

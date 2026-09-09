@@ -31,7 +31,7 @@ export function buildDefaultProjectTableSettings(): ProjectTableSettings {
   return {
     columns: DEFAULT_COLUMNS.map((column) => ({ ...column })),
     groupBy: 'status',
-    sortBy: { field: 'end', dir: 'asc' },
+    sortBy: { field: 'start', dir: 'asc' },
     hiddenStatuses: [],
   };
 }
@@ -52,15 +52,23 @@ function normalizeColumns(value: unknown, defaults: readonly ProjectColumn[]): P
   return columns;
 }
 
+function normalizeSort(
+  value: unknown,
+  fallback: ProjectTableSettings['sortBy'],
+): ProjectTableSettings['sortBy'] {
+  if (!isRecord(value) || typeof value['field'] !== 'string') return { ...fallback };
+  return {
+    field: value['field'],
+    dir: value['dir'] === 'desc' ? 'desc' : 'asc',
+  };
+}
+
 /** Deep-fills table defaults while retaining valid saved custom columns and presentation details. */
 export function normalizeProjectTableSettings(value: unknown): ProjectTableSettings {
   const defaults = buildDefaultProjectTableSettings();
   if (!isRecord(value)) return defaults;
 
   const columns = normalizeColumns(value['columns'], defaults.columns);
-  const sortBy = isRecord(value['sortBy']) ? value['sortBy'] : undefined;
-  const direction = sortBy?.['dir'] === 'desc' ? 'desc' : 'asc';
-  const sortField = typeof sortBy?.['field'] === 'string' ? sortBy['field'] : defaults.sortBy.field;
   const hiddenStatuses = Array.isArray(value['hiddenStatuses'])
     ? value['hiddenStatuses'].filter((status): status is string => typeof status === 'string')
     : [];
@@ -68,7 +76,7 @@ export function normalizeProjectTableSettings(value: unknown): ProjectTableSetti
   return {
     columns,
     groupBy: typeof value['groupBy'] === 'string' ? value['groupBy'] : defaults.groupBy,
-    sortBy: { field: sortField, dir: direction },
+    sortBy: normalizeSort(value['sortBy'], defaults.sortBy),
     hiddenStatuses,
   };
 }

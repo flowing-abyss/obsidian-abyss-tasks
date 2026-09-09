@@ -181,6 +181,17 @@ describe('projectFieldValue', () => {
 });
 
 describe('normalizeProjectTableSettings', () => {
+  it('defaults and falls back to Start ascending while preserving an explicit saved sort', () => {
+    expect(normalizeProjectTableSettings(undefined).sortBy).toEqual({ field: 'start', dir: 'asc' });
+    expect(normalizeProjectTableSettings({ sortBy: { field: 42, dir: 'desc' } }).sortBy).toEqual({
+      field: 'start',
+      dir: 'asc',
+    });
+    expect(normalizeProjectTableSettings({ sortBy: { field: 'end', dir: 'desc' } }).sortBy).toEqual(
+      { field: 'end', dir: 'desc' },
+    );
+  });
+
   it('retains a renamed custom column source key, order, visibility and width', () => {
     const result = normalizeProjectTableSettings({
       columns: [

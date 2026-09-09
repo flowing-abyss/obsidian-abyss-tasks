@@ -246,6 +246,67 @@ describe('mountProjectCellEditor', () => {
     expect(save).toHaveBeenCalledWith(['Mina']);
   });
 
+  it('closes after a committed list addition when focus then leaves the editor', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const close = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: ['Celia'],
+      catalog: catalog(['Mina'], 'list'),
+      save,
+      onClose: close,
+    });
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-project-list-input'),
+    );
+    input.value = 'Mina';
+    expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-list-add')).click();
+    await settle();
+    input.dispatchEvent(
+      new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body }),
+    );
+    await settle();
+
+    expect(save).toHaveBeenCalledWith(['Celia', 'Mina']);
+    expect(close).toHaveBeenCalledWith('committed', {
+      navigation: 'preserve-focus',
+      focusTarget: document.body,
+    });
+  });
+
+  it('closes in one Escape while suggestions are open and retains committed chips', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const close = vi.fn();
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: ['Celia'],
+      catalog: catalog(['Mina'], 'list'),
+      save,
+      onClose: close,
+    });
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-project-list-input'),
+    );
+    input.value = 'Mina';
+    expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-list-add')).click();
+    await settle();
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    expectDefined(internals.control_abyssPrivate.suggest).open();
+
+    keydown(input, 'Escape');
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith(['Celia', 'Mina']);
+  });
+
   it('does not close solely because a suggester closes during a transient focus gap', async () => {
     const container = document.body.createDiv();
     const handle = mountProjectCellEditor({
@@ -745,7 +806,7 @@ describe('ProjectPropertySuggest', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it('offers existing values and escaped wiki-link targets through one suggester', () => {
+  it('offers same-property values without enumerating unrelated vault notes', () => {
     const candidate: unknown = Object.assign(Object.create(TFile.prototype), {
       path: 'Projects/Quote "Plan".md',
       name: 'Quote "Plan".md',
@@ -760,21 +821,14 @@ describe('ProjectPropertySuggest', () => {
       metadataCache: { fileToLinktext: () => 'Projects/Quote "Plan"' },
     } as unknown as App;
     const input = document.body.createEl('input');
-    const picked = vi.fn();
     const suggest = new ProjectPropertySuggest({
       app,
       input,
-      values: ['Alpha'],
-      onPick: picked,
-      includeNotes: true,
+      values: ['P1', 'P2'],
+      onPick: vi.fn(),
     });
 
-    expect(suggest.getSuggestions('')).toMatchObject([
-      { kind: 'value', value: 'Alpha' },
-      { kind: 'note', value: '[[Projects/Quote "Plan"]]' },
-    ]);
-    suggest.selectSuggestion(expectDefined(suggest.getSuggestions('quote')[0]));
-    expect(picked).toHaveBeenCalledWith('[[Projects/Quote "Plan"]]');
+    expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual(['P1', 'P2']);
   });
 
   it('consumes keyboard selection before Enter reaches the containing editor', () => {
