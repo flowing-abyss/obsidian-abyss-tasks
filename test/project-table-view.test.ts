@@ -69,7 +69,15 @@ function positiveStylePixels(value: string, fallback: number): number {
 }
 
 const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+const mountedViews = new Set<ProjectsTableView>();
+
+function destroyMountedView(view: ProjectsTableView): void {
+  if (mountedViews.delete(view)) view.destroy();
+}
+
 afterEach(() => {
+  for (const view of mountedViews) view.destroy();
+  mountedViews.clear();
   activeDocument.body.empty();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -167,6 +175,7 @@ function mount(
     revalidateSourceObservation: vi.fn().mockResolvedValue(false),
     ...overrides,
   });
+  mountedViews.add(view);
   view.mount(projects);
   return { host, view, config, saveSettings, saveProperty, saveStatus, openProject };
 }
@@ -1131,7 +1140,7 @@ describe('ProjectsTableView', () => {
     expect(
       host.querySelector('.abyss-project-table-cell[data-column-id="end"]')?.textContent,
     ).toContain('2026-10-10');
-    view.destroy();
+    destroyMountedView(view);
   });
 
   it('keeps a bottom-right long-list editor within the visible pane and releases positioning', () => {
@@ -1371,7 +1380,7 @@ describe('ProjectsTableView', () => {
     expect(config.projects.table.hiddenStatuses).toEqual([`id:${active.id}`]);
     expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
     expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
-    view.destroy();
+    destroyMountedView(view);
   });
 
   it('explains unavailable custom fields while retaining their value and curated editing', () => {
@@ -1995,12 +2004,18 @@ describe('ProjectsTableView', () => {
 
   it('captures only table F2 before document interceptors and removes the window bridge', () => {
     const ownerWindow = expectDefined(activeDocument.defaultView);
+    const addListener = vi.spyOn(ownerWindow, 'addEventListener');
     const removeListener = vi.spyOn(ownerWindow, 'removeEventListener');
     const intercepted = vi.fn((event: KeyboardEvent) => {
       event.stopImmediatePropagation();
     });
     activeDocument.addEventListener('keydown', intercepted, true);
     const { host, view } = mount([project({})]);
+    const registeredCallback = expectDefined(
+      addListener.mock.calls.find(
+        ([type, , options]) => type === 'keydown' && options === true,
+      )?.[1],
+    );
     const cell = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
     );
@@ -2036,10 +2051,10 @@ describe('ProjectsTableView', () => {
       expect(intercepted).toHaveBeenCalledTimes(4);
       expect(cell.querySelector('input[type="date"]')).not.toBeNull();
     } finally {
-      view.destroy();
+      destroyMountedView(view);
       activeDocument.removeEventListener('keydown', intercepted, true);
     }
-    expect(removeListener).toHaveBeenCalledWith('keydown', expect.any(Function), true);
+    expect(removeListener).toHaveBeenCalledWith('keydown', registeredCallback, true);
   });
 
   it('preserves an external focus destination when an editor commits on blur', async () => {
