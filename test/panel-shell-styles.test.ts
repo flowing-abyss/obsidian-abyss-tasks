@@ -143,24 +143,32 @@ describe('Panel shell top rhythm', () => {
   });
 
   it.each([
-    ['.abyss-layout > .abyss-rail', '8px'],
-    ['.abyss-layout > .abyss-left > .abyss-left-section:first-child', '12px'],
+    ['.abyss-layout > .abyss-rail', '8px', false],
+    ['.abyss-layout > .abyss-left > .abyss-left-section:first-child', '12px', false],
     [
       '.abyss-layout--tasks > .abyss-center-shell > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center-shell > .abyss-center > .abyss-center-header',
       '12px',
+      true,
     ],
-    ['.abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav', '8px'],
+    ['.abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav', '8px', true],
     [
       '.abyss-layout--projects > .abyss-center-shell > .abyss-center .abyss-projects-toolbar',
       '12px',
+      true,
     ],
-    ['.abyss-layout > .abyss-right > .abyss-right-header:first-child', '12px'],
-    ['.abyss-layout > .abyss-right > .abyss-breadcrumb:first-child', '18px'],
-  ])('adds the inset to the approved top-level surface %s', (selector, existingTopPadding) => {
-    expect(declarationsFor(selector)).toContain(
-      `padding-top: calc(${existingTopPadding} + var(--abyss-shell-top-inset))`,
-    );
-  });
+    ['.abyss-layout > .abyss-right > .abyss-right-header:first-child', '12px', false],
+    ['.abyss-layout > .abyss-right > .abyss-breadcrumb:first-child', '18px', false],
+  ])(
+    'adds the inset to the approved top-level surface %s',
+    (selector, existingTopPadding, capped) => {
+      const inset = capped
+        ? 'min(var(--abyss-shell-top-inset), 5px)'
+        : 'var(--abyss-shell-top-inset)';
+      expect(declarationsFor(selector)).toContain(
+        `padding-top: calc(${existingTopPadding} + ${inset})`,
+      );
+    },
+  );
 
   it('calibrates the first task-mode controls to the same 26px plus inset centerline', () => {
     // Existing geometry after each supplemental top padding:

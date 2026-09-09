@@ -639,7 +639,7 @@ describe('CaptureSurface', () => {
     expect(feedback).not.toContain('inset-block-end:');
   });
 
-  it('wraps narrow calendar controls and clears capture feedback above mobile chrome', () => {
+  it('keeps narrow calendar controls horizontally reachable and clears feedback above mobile chrome', () => {
     const compact = lastAtRuleBlock('@container abyss-task-list (max-width: 30rem)');
     const nav = declarationsForSource(compact, '.abyss-cal-nav');
     const calendarFeedback = declarationsForSource(
@@ -648,7 +648,9 @@ describe('CaptureSurface', () => {
     );
     const globalFeedback = declarationsFor('body.is-phone.is-mobile .abyss-creation-feedback');
 
-    expect(nav).toContain('flex-wrap: wrap');
+    expect(nav).toContain('overflow-x: auto');
+    expect(nav).toContain('flex-wrap: nowrap');
+    expect(nav).toContain('scrollbar-width: none');
     expect(calendarFeedback).toContain('inset-block-start:');
     expect(calendarFeedback).toContain('var(--size-4-16');
     expect(calendarFeedback).toContain('var(--size-4-12');

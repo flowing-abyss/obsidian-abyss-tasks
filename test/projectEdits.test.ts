@@ -323,7 +323,7 @@ describe('ProjectManager.applyEdits', () => {
           expectedValue: undefined,
         },
       ]),
-    ).rejects.toThrow(/distinct project Status, Start, and End properties/u);
+    ).rejects.toThrow(/distinct project Status, Start, End, and Description properties/u);
   });
 
   it('rejects ambiguous keys, stale fields, unknown types/statuses and readonly fields', async () => {
