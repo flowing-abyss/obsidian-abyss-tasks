@@ -3,6 +3,7 @@
    ============================================================ */
 .abyss-panel-view {
   --abyss-shell-top-inset: clamp(3px, 0.4vw, 5px);
+  --abyss-center-toolbar-height: 60px;
   --abyss-priority-a: var(--color-red);
   --abyss-priority-b: var(--color-orange);
   --abyss-priority-c: var(--color-yellow);
@@ -3446,6 +3447,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
+:is(.abyss-center-header, .abyss-cal-nav) {
+  box-sizing: border-box;
+  min-height: var(--abyss-center-toolbar-height);
+}
+
 .abyss-center-title {
   font-size: 16px;
   font-weight: 600;
@@ -6845,7 +6851,7 @@ body.abyss-modal-open .popover.hover-popover {
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  min-height: 60px;
+  min-height: var(--abyss-center-toolbar-height);
   padding: 17px 16px 12px;
   border-bottom: 1px solid var(--background-modifier-border);
 }
@@ -7141,20 +7147,23 @@ table.abyss-project-table {
   text-decoration: underline;
 }
 
-.abyss-project-description {
+.abyss-projects-table .abyss-project-description {
   position: relative;
   display: flex;
   overflow: hidden;
   width: 100%;
   min-width: 0;
   align-items: center;
+  margin: 0;
   color: var(--text-muted);
   font-size: var(--font-smallest, 11px);
   line-height: 1.15;
+  white-space: nowrap;
 }
 
-.abyss-project-description.is-empty {
+.abyss-projects-table .abyss-project-description.is-empty {
   height: 0;
+  margin: 0;
   overflow: visible;
 }
 
@@ -8097,15 +8106,15 @@ table.abyss-project-table {
   > .abyss-center-shell
   > .abyss-center
   > .abyss-center-header {
-  padding-top: calc(12px + var(--abyss-shell-top-inset));
+  padding-top: calc(12px + min(var(--abyss-shell-top-inset), 5px));
 }
 
 .abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav {
-  padding-top: calc(8px + var(--abyss-shell-top-inset));
+  padding-top: calc(8px + min(var(--abyss-shell-top-inset), 5px));
 }
 
 .abyss-layout--projects > .abyss-center-shell > .abyss-center .abyss-projects-toolbar {
-  padding-top: calc(12px + var(--abyss-shell-top-inset));
+  padding-top: calc(12px + min(var(--abyss-shell-top-inset), 5px));
 }
 
 .abyss-layout > .abyss-right > .abyss-right-header:first-child {
@@ -8189,8 +8198,9 @@ table.abyss-project-table {
 /* Keep the complete calendar toolbar and its portal visible in narrow center panes. */
 @container abyss-task-list (max-width: 30rem) {
   .abyss-cal-nav {
-    flex-wrap: wrap;
-    align-content: flex-start;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
   }
 
   .abyss-cal-nav-left,

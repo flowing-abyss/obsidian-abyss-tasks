@@ -5,6 +5,7 @@ import { projectProgress, projectTableDisplayValues } from '../../projects/proje
 import type { Project } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
 import { renderTaskText } from '../../ui/renderTaskText';
+import { runAsyncAction } from '../../ui/runAsyncAction';
 
 function statusFor(
   project: Project,
@@ -141,17 +142,61 @@ interface RenderListValueOptions {
   readonly cell: RenderProjectTableCellOptions;
 }
 
+async function openTagSearch(app: App, raw: string): Promise<void> {
+  const tag = raw.startsWith('#') ? raw : `#${raw}`;
+  const leaf =
+    app.workspace.getLeavesOfType('search')[0] ??
+    app.workspace.getLeftLeaf(false) ??
+    app.workspace.getLeftLeaf(true);
+  if (leaf === null) return;
+  const current = leaf.getViewState();
+  const state = current.type === 'search' ? current.state : {};
+  await leaf.setViewState({
+    type: 'search',
+    active: true,
+    state: { ...state, query: `tag:${tag}` },
+  });
+  await app.workspace.revealLeaf(leaf);
+}
+
+function tagHref(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  return raw.startsWith('#') ? raw : `#${raw}`;
+}
+
+function activateTag(
+  anchor: HTMLAnchorElement,
+  raw: string,
+  options: RenderProjectTableCellOptions,
+): void {
+  anchor.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    runAsyncAction(
+      (async () => {
+        if ((await options.beforeOpenLink()) === false) return;
+        await openTagSearch(options.app, raw);
+      })(),
+      'Could not open project tag',
+    );
+  });
+}
+
 function renderListValue(itemOptions: RenderListValueOptions): void {
   const { list, values, index, displayed, nativeTags, cell } = itemOptions;
-  const item = list.createSpan({
-    cls: nativeTags ? 'multi-select-pill' : 'abyss-project-table-value',
-  });
+  const raw = values.values[index];
+  const item = nativeTags
+    ? list.createEl('a', {
+        cls: 'multi-select-pill tag',
+        attr: { href: tagHref(raw) },
+      })
+    : list.createSpan({ cls: 'abyss-project-table-value' });
   const text = item.createSpan({
     cls: nativeTags ? 'multi-select-pill-content' : 'abyss-project-table-value-text',
   });
-  const raw = values.values[index];
   if (nativeTags && typeof raw === 'string') {
-    text.createEl('a', { cls: 'tag', text: raw, attr: { href: raw } });
+    text.createSpan({ text: raw });
+    activateTag(item as HTMLAnchorElement, raw, cell);
   } else {
     renderValueText({ host: text, raw, displayed, sourcePath: values.project.path }, cell);
   }

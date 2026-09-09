@@ -821,10 +821,26 @@ describe('sourceNoteDisplay setting', () => {
 
 describe('CalendarSettingsTab collapsible cards + default status', () => {
   it('keeps the project toolbar in the shared compact row at constrained widths', () => {
+    expect(css).toContain('--abyss-center-toolbar-height: 60px');
+    expect(css).toMatch(
+      /\.abyss-center-header,\s*\.abyss-cal-nav\s*\{[^}]*min-height: var\(--abyss-center-toolbar-height\)/u,
+    );
     expect(css).toMatch(
       /@media \(width <= 720px\)[\s\S]*?\.abyss-projects-toolbar\s*\{[^}]*flex-wrap: nowrap/u,
     );
-    expect(declarationsFor('.abyss-projects-toolbar')).toContain('min-height: 60px');
+    expect(css).toMatch(
+      /@container abyss-task-list \(max-width: 30rem\)[\s\S]*?\.abyss-cal-nav\s*\{(?=[^}]*flex-wrap: nowrap)(?=[^}]*overflow-x: auto)/u,
+    );
+    expect(css).toContain('min(var(--abyss-shell-top-inset), 5px)');
+  });
+
+  it('isolates compact table descriptions from dashboard spacing', () => {
+    const declarations = declarationsFor('.abyss-projects-table .abyss-project-description');
+    expect(declarations).toContain('margin: 0');
+    expect(declarations).toContain('white-space: nowrap');
+    expect(declarationsFor('.abyss-projects-table .abyss-project-description.is-empty')).toContain(
+      'height: 0',
+    );
   });
 
   it('preserves the real settings scroller and focuses a newly added project status', async () => {

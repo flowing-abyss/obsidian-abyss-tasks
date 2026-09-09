@@ -1,4 +1,4 @@
-import { App, MarkdownRenderer, Menu } from 'obsidian';
+import { App, MarkdownRenderer, Menu, type WorkspaceLeaf } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
@@ -229,7 +229,7 @@ describe('ProjectsTableView', () => {
     expect(host.querySelector('.abyss-project-description-edit')).toBeNull();
   });
 
-  it('uses native tag pills and searchable tag anchors without generic pill styling', () => {
+  it('uses one native pill per searchable tag without nested tag decoration', () => {
     const config = settings();
     config.projects.table.columns.push({ id: 'property:Tags', visible: true });
     const { host } = mount([project({ frontmatter: { Tags: ['#work', '#next'] } })], {
@@ -242,10 +242,57 @@ describe('ProjectsTableView', () => {
       ),
     );
 
-    expect(property.querySelectorAll('.multi-select-pill')).toHaveLength(2);
+    const pills = property.querySelectorAll<HTMLAnchorElement>('a.multi-select-pill.tag');
+    expect(pills).toHaveLength(2);
     expect(property.querySelector('.abyss-project-table-value')).toBeNull();
-    expect(property.querySelector<HTMLAnchorElement>('a.tag[href="#work"]')?.textContent).toBe(
-      '#work',
+    expect(pills[0]?.getAttribute('href')).toBe('#work');
+    expect(pills[0]?.querySelector('.multi-select-pill-content span')?.textContent).toBe('#work');
+    expect(pills[0]?.querySelector('a.tag')).toBeNull();
+  });
+
+  it('finishes an active editor before delegating native tag activation', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Tags', visible: true });
+    const saveProperty = vi.fn().mockResolvedValue(undefined);
+    const setViewState = vi.fn().mockResolvedValue(undefined);
+    const revealLeaf = vi.fn().mockResolvedValue(undefined);
+    const app = new App();
+    vi.spyOn(app.workspace, 'getLeavesOfType').mockReturnValue([
+      {
+        getViewState: () => ({ type: 'search', state: { matchingCase: true } }),
+        setViewState,
+      } as unknown as WorkspaceLeaf,
+    ]);
+    vi.spyOn(app.workspace, 'revealLeaf').mockImplementation(revealLeaf);
+    const { host } = mount([project({ frontmatter: { description: 'Before', Tags: ['work'] } })], {
+      app,
+      settings: config,
+      catalog: catalog([{ name: 'Tags', type: 'tags' }]),
+      saveProperty,
+    });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-project-description-edit')).click();
+    const textarea = expectDefined(
+      host.querySelector<HTMLTextAreaElement>('.abyss-project-description-editor'),
+    );
+    textarea.value = 'After';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    expectDefined(host.querySelector<HTMLAnchorElement>('a.multi-select-pill.tag')).click();
+    await flushMicrotasks();
+
+    expect(saveProperty).toHaveBeenCalledWith(
+      'Projects/A.md',
+      expect.objectContaining({ id: 'description' }),
+      'After',
+      'Before',
+    );
+    expect(setViewState).toHaveBeenCalledWith({
+      type: 'search',
+      active: true,
+      state: { matchingCase: true, query: 'tag:#work' },
+    });
+    expect(revealLeaf).toHaveBeenCalledOnce();
+    expect(expectDefined(saveProperty.mock.invocationCallOrder[0])).toBeLessThan(
+      expectDefined(setViewState.mock.invocationCallOrder[0]),
     );
   });
 
