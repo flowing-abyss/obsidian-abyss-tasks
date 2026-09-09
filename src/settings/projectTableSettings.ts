@@ -247,13 +247,10 @@ function renderColumnRow(context: ColumnRowContext): void {
   wireColumnDrag(row, column, options, persist);
   const sourceElement = row.createDiv({ cls: 'abyss-project-column-source' });
   sourceElement.createSpan({ text: source });
-  if (column.id === 'name' || column.id === 'progress') {
+  if (column.id === 'progress') {
     sourceElement.createSpan({
-      cls:
-        column.id === 'progress'
-          ? 'abyss-project-column-source-badge abyss-project-column-auto'
-          : 'abyss-project-column-source-badge',
-      text: column.id === 'progress' ? 'Auto' : 'Derived',
+      cls: 'abyss-project-column-source-badge abyss-project-column-auto',
+      text: 'Auto',
     });
   }
 

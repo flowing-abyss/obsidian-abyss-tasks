@@ -12,35 +12,62 @@ interface CellPosition {
   readonly column: number;
 }
 
+interface ProjectionIndex {
+  readonly rows: readonly string[];
+  readonly columns: readonly string[];
+  readonly rowByOccurrence: ReadonlyMap<string, number>;
+  readonly columnById: ReadonlyMap<string, number>;
+  readonly cellByPosition: ReadonlyMap<string, ProjectTableSelectableCell>;
+}
+
 function sameCell(left: ProjectTableSelectableCell, right: ProjectTableSelectableCell): boolean {
   return left.occurrenceId === right.occurrenceId && left.columnId === right.columnId;
 }
 
-function rows(cells: readonly ProjectTableSelectableCell[]): string[] {
-  return [...new Set(cells.map(({ occurrenceId }) => occurrenceId))];
+function positionKey(row: number, column: number): string {
+  return `${row}\u0000${column}`;
 }
 
-function columns(cells: readonly ProjectTableSelectableCell[]): string[] {
-  return [...new Set(cells.map(({ columnId }) => columnId))];
+function projectionIndex(cells: readonly ProjectTableSelectableCell[]): ProjectionIndex {
+  const rows: string[] = [];
+  const columns: string[] = [];
+  const rowByOccurrence = new Map<string, number>();
+  const columnById = new Map<string, number>();
+  for (const cell of cells) {
+    if (!rowByOccurrence.has(cell.occurrenceId)) {
+      rowByOccurrence.set(cell.occurrenceId, rows.length);
+      rows.push(cell.occurrenceId);
+    }
+    if (!columnById.has(cell.columnId)) {
+      columnById.set(cell.columnId, columns.length);
+      columns.push(cell.columnId);
+    }
+  }
+  const cellByPosition = new Map<string, ProjectTableSelectableCell>();
+  for (const cell of cells) {
+    const row = rowByOccurrence.get(cell.occurrenceId);
+    const column = columnById.get(cell.columnId);
+    if (row !== undefined && column !== undefined) {
+      cellByPosition.set(positionKey(row, column), cell);
+    }
+  }
+  return { rows, columns, rowByOccurrence, columnById, cellByPosition };
 }
 
 function positionOf(
   cell: ProjectTableSelectableCell,
-  cells: readonly ProjectTableSelectableCell[],
+  index: ProjectionIndex,
 ): CellPosition | undefined {
-  const row = rows(cells).indexOf(cell.occurrenceId);
-  const column = columns(cells).indexOf(cell.columnId);
-  return row < 0 || column < 0 ? undefined : { row, column };
+  const row = index.rowByOccurrence.get(cell.occurrenceId);
+  const column = index.columnById.get(cell.columnId);
+  return row === undefined || column === undefined ? undefined : { row, column };
 }
 
 function atPosition(
   position: CellPosition,
-  cells: readonly ProjectTableSelectableCell[],
+  index: ProjectionIndex,
 ): ProjectTableSelectableCell | undefined {
-  const occurrenceId = rows(cells)[position.row];
-  const columnId = columns(cells)[position.column];
-  if (occurrenceId === undefined || columnId === undefined) return undefined;
-  return cells.find((cell) => cell.occurrenceId === occurrenceId && cell.columnId === columnId);
+  return index.cellByPosition.get(positionKey(position.row, position.column));
 }
 
 function moveAxis(position: number, direction: -1 | 0 | 1, count: number): number {
@@ -85,18 +112,19 @@ export class ProjectTableSelection {
     extend: boolean,
   ): ProjectTableSelectableCell | undefined {
     if (cells.length === 0) return undefined;
+    const index = projectionIndex(cells);
     const current = this.#focus ?? cells[0];
     if (current === undefined) return undefined;
-    const position = positionOf(current, cells) ?? { row: 0, column: 0 };
-    const rowCount = rows(cells).length;
-    const columnCount = columns(cells).length;
+    const position = positionOf(current, index) ?? { row: 0, column: 0 };
+    const rowCount = index.rows.length;
+    const columnCount = index.columns.length;
     const rowDirection = axisDirection(direction, 'up', 'down');
     const columnDirection = axisDirection(direction, 'left', 'right');
     const next = {
       row: moveAxis(position.row, rowDirection, rowCount),
       column: moveAxis(position.column, columnDirection, columnCount),
     };
-    const target = atPosition(next, cells);
+    const target = atPosition(next, index);
     if (target !== undefined) this.select(target, cells, extend);
     return target;
   }
@@ -133,15 +161,16 @@ export class ProjectTableSelection {
     const anchor = this.#anchor;
     const focus = this.#focus;
     if (anchor === undefined || focus === undefined) return [];
-    const from = positionOf(anchor, cells);
-    const to = positionOf(focus, cells);
+    const index = projectionIndex(cells);
+    const from = positionOf(anchor, index);
+    const to = positionOf(focus, index);
     if (from === undefined || to === undefined) return [];
     const top = Math.min(from.row, to.row);
     const bottom = Math.max(from.row, to.row);
     const left = Math.min(from.column, to.column);
     const right = Math.max(from.column, to.column);
     return cells.filter((cell) => {
-      const position = positionOf(cell, cells);
+      const position = positionOf(cell, index);
       return (
         position !== undefined &&
         position.row >= top &&

@@ -7,6 +7,7 @@ import {
   type ProjectFieldCatalogItem,
   type ProjectTableSettings,
 } from './projectFields';
+import { projectTableLinkTargetParts } from './projectTableLinkTarget';
 import { orderedGroups, type StatusGroup } from './status';
 import type { Project, ProjectStats } from './types';
 
@@ -105,9 +106,11 @@ export function projectTableGroupLinkIdentity(
 ): string | undefined {
   const link = exactLink(value);
   if (link === undefined) return undefined;
-  const resolved = resolveLink?.(link.target, sourcePath);
+  const target = projectTableLinkTargetParts(link);
+  if (target.externalTarget !== undefined) return `link:external:${target.externalTarget}`;
+  const resolved = resolveLink?.(target.resolverTarget, sourcePath);
   return resolved === undefined
-    ? `link:unresolved:${sourcePath.toLocaleLowerCase()}:${link.target.toLocaleLowerCase()}`
+    ? `link:unresolved:${sourcePath.toLocaleLowerCase()}:${target.resolverTarget.toLocaleLowerCase()}`
     : `link:${resolved.toLocaleLowerCase()}`;
 }
 

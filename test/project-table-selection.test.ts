@@ -58,6 +58,39 @@ describe('ProjectTableSelection', () => {
     expect(selection.tab(repeated, true)).toEqual(repeated[1]);
   });
 
+  it('wraps Tab across row boundaries in both directions', () => {
+    const selection = new ProjectTableSelection();
+    selection.select(expectDefined(cells[2]), cells, false);
+    expect(selection.tab(cells, false)).toEqual(cells[3]);
+    expect(selection.tab(cells, true)).toEqual(cells[2]);
+
+    selection.select(expectDefined(cells[3]), cells, false);
+    expect(selection.tab(cells, true)).toEqual(cells[2]);
+  });
+
+  it('selects a repeated-occurrence range by visible row and column identity', () => {
+    const repeated = [
+      cell('a@g1', 'Projects/A.md', 'g1', 'name'),
+      cell('a@g1', 'Projects/A.md', 'g1', 'status'),
+      cell('b@g1', 'Projects/B.md', 'g1', 'name'),
+      cell('b@g1', 'Projects/B.md', 'g1', 'status'),
+      cell('a@g2', 'Projects/A.md', 'g2', 'name'),
+      cell('a@g2', 'Projects/A.md', 'g2', 'status'),
+    ];
+    const selection = new ProjectTableSelection();
+    selection.select(expectDefined(repeated[1]), repeated, false);
+    selection.select(expectDefined(repeated[4]), repeated, true);
+
+    expect(selection.selected(repeated)).toEqual([
+      repeated[0],
+      repeated[1],
+      repeated[2],
+      repeated[3],
+      repeated[4],
+      repeated[5],
+    ]);
+  });
+
   it('selects only the current group and clears or reconciles stale identities', () => {
     const selection = new ProjectTableSelection();
     selection.select(expectDefined(cells[4]), cells, false);

@@ -7308,6 +7308,10 @@ table.abyss-project-table {
   white-space: nowrap;
 }
 
+.abyss-project-progress-percent {
+  color: var(--abyss-project-progress-color, var(--text-muted));
+}
+
 .abyss-project-table-values {
   display: flex;
   overflow: hidden;

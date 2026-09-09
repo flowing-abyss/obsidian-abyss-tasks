@@ -220,9 +220,8 @@ describe('renderProjectTableSettings', () => {
     ).toBe(true);
     expect(container.querySelector('[data-column-id="name"]')?.textContent).toContain('Filename');
     expect(
-      container.querySelector('[data-column-id="name"] .abyss-project-column-source-badge')
-        ?.textContent,
-    ).toBe('Derived');
+      container.querySelector('[data-column-id="name"] .abyss-project-column-source-badge'),
+    ).toBeNull();
     expect(container.querySelector('[data-column-id="progress"]')?.textContent).toContain('Tasks');
     const curated = ['name', 'status', 'progress', 'start', 'end'];
     expect(

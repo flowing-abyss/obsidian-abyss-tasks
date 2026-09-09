@@ -6,8 +6,11 @@ import type { ProjectStatus } from '../../settings/types';
 import { ProjectPropertySuggest } from '../../ui/ProjectPropertySuggest';
 
 export type ProjectCellEditorResult = 'committed' | 'cancelled';
+export type ProjectCellEditorNavigation =
+  'restore-current' | 'tab-forward' | 'tab-backward' | 'preserve-focus';
 interface ProjectCellEditorCloseContext {
-  readonly restoreFocus: boolean;
+  readonly navigation: ProjectCellEditorNavigation;
+  readonly focusTarget?: HTMLElement;
 }
 
 export interface ProjectCellEditorOptions {
@@ -405,7 +408,8 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   private committedValue_abyssPrivate: unknown;
   private saveInFlight_abyssPrivate: Promise<boolean> | undefined;
   private closeRequested_abyssPrivate = false;
-  private restoreFocusOnClose_abyssPrivate = true;
+  private closeNavigation_abyssPrivate: ProjectCellEditorNavigation = 'restore-current';
+  private closeFocusTarget_abyssPrivate: HTMLElement | undefined;
   private suggestOpen_abyssPrivate = false;
   private ownedPointerActive_abyssPrivate = false;
   private ownedPointerCleanup_abyssPrivate: (() => void) | undefined;
@@ -424,7 +428,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
         this.error_abyssPrivate.empty();
       },
       commit: (close) => {
-        this.requestCommit_abyssPrivate(close, true);
+        this.requestCommit_abyssPrivate(close, 'restore-current');
       },
       suggestionOpen: (open) => {
         this.suggestOpen_abyssPrivate = open;
@@ -454,7 +458,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   }
 
   commit(): Promise<boolean> {
-    return this.commitWithOptions_abyssPrivate(true, true);
+    return this.commitWithOptions_abyssPrivate(true, 'restore-current');
   }
 
   cancel(): void {
@@ -493,7 +497,9 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     if (event.key !== 'Enter' && event.key !== 'Tab') return;
     event.preventDefault();
     event.stopPropagation();
-    this.requestCommit_abyssPrivate(true, event.key !== 'Tab');
+    let navigation: ProjectCellEditorNavigation = 'restore-current';
+    if (event.key === 'Tab') navigation = event.shiftKey ? 'tab-backward' : 'tab-forward';
+    this.requestCommit_abyssPrivate(true, navigation);
   };
 
   private readonly onFocusOut_abyssPrivate = (event: FocusEvent): void => {
@@ -511,7 +517,11 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
       return;
     }
     this.blurPending_abyssPrivate = false;
-    this.requestCommit_abyssPrivate(true, false);
+    this.requestCommit_abyssPrivate(
+      true,
+      'preserve-focus',
+      next instanceof HTMLElement ? next : undefined,
+    );
   };
 
   private readonly onOwnedPointerDown_abyssPrivate = (): void => {
@@ -553,7 +563,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
       }
       const active = this.element.ownerDocument.activeElement;
       if (active instanceof Node && this.element.contains(active)) return;
-      this.requestCommit_abyssPrivate(true, false);
+      this.requestCommit_abyssPrivate(true, 'preserve-focus');
     });
   }
 
@@ -571,10 +581,26 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     return false;
   }
 
-  private commitWithOptions_abyssPrivate(close: boolean, restoreFocus: boolean): Promise<boolean> {
+  private commitWithOptions_abyssPrivate(
+    close: boolean,
+    navigation: ProjectCellEditorNavigation,
+    focusTarget?: HTMLElement,
+  ): Promise<boolean> {
     if (this.closed_abyssPrivate) return Promise.resolve(true);
     this.closeRequested_abyssPrivate ||= close;
-    if (close) this.restoreFocusOnClose_abyssPrivate = restoreFocus;
+    if (
+      close &&
+      !(
+        navigation === 'preserve-focus' &&
+        this.saveInFlight_abyssPrivate !== undefined &&
+        (this.closeNavigation_abyssPrivate === 'tab-forward' ||
+          this.closeNavigation_abyssPrivate === 'tab-backward')
+      )
+    ) {
+      this.closeNavigation_abyssPrivate = navigation;
+      this.closeFocusTarget_abyssPrivate =
+        navigation === 'preserve-focus' ? focusTarget : undefined;
+    }
     if (this.saveInFlight_abyssPrivate !== undefined) return this.saveInFlight_abyssPrivate;
     const saving = this.saveUntilCurrent_abyssPrivate().catch((error: unknown) => {
       this.handleSaveFailure_abyssPrivate(error);
@@ -588,8 +614,12 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     return saving;
   }
 
-  private requestCommit_abyssPrivate(close: boolean, restoreFocus: boolean): void {
-    this.commitWithOptions_abyssPrivate(close, restoreFocus).then(
+  private requestCommit_abyssPrivate(
+    close: boolean,
+    navigation: ProjectCellEditorNavigation,
+    focusTarget?: HTMLElement,
+  ): void {
+    this.commitWithOptions_abyssPrivate(close, navigation, focusTarget).then(
       () => undefined,
       (error: unknown) => {
         this.handleSaveFailure_abyssPrivate(error);
@@ -611,7 +641,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
 
   private finishUnchanged_abyssPrivate(): void {
     if (this.closeRequested_abyssPrivate) {
-      this.finish_abyssPrivate('committed', this.restoreFocusOnClose_abyssPrivate);
+      this.finish_abyssPrivate('committed', this.closeNavigation_abyssPrivate);
     } else {
       this.focus();
     }
@@ -663,11 +693,19 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     this.focus();
   }
 
-  private finish_abyssPrivate(result: ProjectCellEditorResult, restoreFocus = true): void {
+  private finish_abyssPrivate(
+    result: ProjectCellEditorResult,
+    navigation: ProjectCellEditorNavigation = 'restore-current',
+  ): void {
     if (this.closed_abyssPrivate) return;
     this.destroy();
-    this.options_abyssPrivate.onClose(result, { restoreFocus });
-    if (restoreFocus) this.options_abyssPrivate.restoreFocus?.();
+    this.options_abyssPrivate.onClose(result, {
+      navigation,
+      ...(this.closeFocusTarget_abyssPrivate === undefined
+        ? {}
+        : { focusTarget: this.closeFocusTarget_abyssPrivate }),
+    });
+    if (navigation === 'restore-current') this.options_abyssPrivate.restoreFocus?.();
   }
 }
 

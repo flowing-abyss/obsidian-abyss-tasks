@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { planProjectGroupDrop } from '../src/panels/projects/projectTableDrag';
 import type { ProjectField } from '../src/projects/projectFields';
+import { projectTableGroupLinkIdentity } from '../src/projects/projectTableModel';
 
 const status: ProjectField = { id: 'status', property: 'status', label: 'Status', type: 'status' };
 const date: ProjectField = { id: 'end', property: 'end', label: 'End', type: 'date' };
@@ -108,6 +109,42 @@ describe('planProjectGroupDrop', () => {
           typeof value === 'string' ? `${value}@${sourcePath}->${destinationPath}` : value,
       }),
     ).toEqual(['[[People/B|B]]@Index.md->Projects/Source.md', '[[../People/C]]']);
+  });
+
+  it('deduplicates wiki, encoded Markdown, and heading links by normalized native target', () => {
+    const identify = (value: string, sourcePath: string): string | undefined =>
+      projectTableGroupLinkIdentity(value, sourcePath, (target) => {
+        if (target === '../People/Anna Smith' || target === '../People/Anna Smith.md') {
+          return 'People/Anna Smith.md';
+        }
+        if (target === '../People/Other') return 'People/Other.md';
+        return undefined;
+      });
+
+    expect(
+      planProjectGroupDrop({
+        field: list,
+        currentValue: [
+          '[[../People/Anna Smith]]',
+          '[Anna](../People/Anna%20Smith.md#Details)',
+          '[[../People/Other]]',
+        ],
+        projectPath: 'Projects/Source.md',
+        source: {
+          key: 'link:people/other.md',
+          value: '[[../People/Other]]',
+          sourcePath: 'Projects/Source.md',
+        },
+        target: {
+          key: 'link:people/anna smith.md',
+          value: '[[../People/Anna Smith#Details|Anna]]',
+          sourcePath: 'Projects/Source.md',
+        },
+        statuses: [],
+        groupIdentity: identify,
+        rebase: (value) => value,
+      }),
+    ).toEqual(['[[../People/Anna Smith]]']);
   });
 
   it('denies unknown status targets and unavailable or derived grouping fields', () => {

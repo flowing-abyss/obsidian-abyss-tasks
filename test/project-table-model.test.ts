@@ -235,6 +235,80 @@ describe('buildProjectTableModel', () => {
     expect(result.groups[0]?.projects.map(({ name }) => name)).toEqual(['Alpha', 'Zulu']);
   });
 
+  it('normalizes internal resolver inputs while preserving raw representative links', () => {
+    const resolverInputs: Array<readonly [string, string]> = [];
+    const result = buildProjectTableModel({
+      projects: [
+        project('Plain', { frontmatter: { owners: '[[../People/Anna Smith]]' } }),
+        project('Encoded', {
+          frontmatter: { owners: '[Anna](../People/Anna%20Smith.md#Details)' },
+        }),
+        project('Heading', {
+          frontmatter: { owners: '[[../People/Anna Smith#Details|A. Smith]]' },
+        }),
+      ],
+      fields,
+      statuses,
+      settings: table({ groupBy: 'property:owners' }),
+      resolveLink: (target, sourcePath) => {
+        resolverInputs.push([target, sourcePath]);
+        return target === '../People/Anna Smith' || target === '../People/Anna Smith.md'
+          ? 'People/Anna Smith.md'
+          : undefined;
+      },
+    });
+
+    expect(resolverInputs).toEqual([
+      ['../People/Anna Smith', 'Projects/Plain.md'],
+      ['../People/Anna Smith.md', 'Projects/Encoded.md'],
+      ['../People/Anna Smith', 'Projects/Heading.md'],
+    ]);
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]).toMatchObject({
+      key: 'link:people/anna smith.md',
+      value: '[[../People/Anna Smith]]',
+      sourcePath: 'Projects/Plain.md',
+    });
+    expect(result.groups[0]?.projects.map(({ name }) => name)).toEqual([
+      'Encoded',
+      'Heading',
+      'Plain',
+    ]);
+  });
+
+  it('groups identical absolute URLs independently of source path without folding URL case', () => {
+    const url = 'https://Example.com/CaseSensitive?Token=AbC#Part';
+    const result = buildProjectTableModel({
+      projects: [
+        project('One', { frontmatter: { owners: `[First](${url})` } }),
+        project('Two', { frontmatter: { owners: `[Second](${url})` } }),
+      ],
+      fields,
+      statuses,
+      settings: table({ groupBy: 'property:owners' }),
+      resolveLink: () => undefined,
+    });
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]?.key).toBe(`link:external:${url}`);
+    expect(result.groups[0]?.projects.map(({ name }) => name)).toEqual(['One', 'Two']);
+  });
+
+  it('does not decode percent characters in wiki resolver paths', () => {
+    let resolverTarget = '';
+    expect(
+      projectTableGroupLinkIdentity(
+        '[[People/Literal%20Name#Details]]',
+        'Projects/Source.md',
+        (target) => {
+          resolverTarget = target;
+          return 'People/Literal%20Name.md';
+        },
+      ),
+    ).toBe('link:people/literal%20name.md');
+    expect(resolverTarget).toBe('People/Literal%20Name');
+  });
+
   it('keeps identical relative link text separate when native resolution finds different notes', () => {
     const projects = [
       project('One', { path: 'Projects/One/Plan.md', frontmatter: { owners: '[[Team]]' } }),

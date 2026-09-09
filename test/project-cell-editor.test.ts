@@ -36,6 +36,117 @@ function keydown(element: HTMLElement, key: string): void {
 }
 
 describe('mountProjectCellEditor', () => {
+  it('reports forward and backward Tab separately and preserves an external blur target', async () => {
+    const forwardContainer = freshContainer();
+    const forwardClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container: forwardContainer,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'Alpha',
+      catalog: catalog(),
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: forwardClose,
+    });
+    keydown(expectDefined(forwardContainer.querySelector<HTMLInputElement>('input')), 'Tab');
+    await settle();
+    expect(forwardClose).toHaveBeenCalledWith('committed', { navigation: 'tab-forward' });
+
+    const backwardContainer = freshContainer();
+    const backwardClose = vi.fn();
+    const backwardInput = (() => {
+      mountProjectCellEditor({
+        app: new App(),
+        container: backwardContainer,
+        field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+        value: 'Alpha',
+        catalog: catalog(),
+        save: vi.fn().mockResolvedValue(undefined),
+        onClose: backwardClose,
+      });
+      return expectDefined(backwardContainer.querySelector<HTMLInputElement>('input'));
+    })();
+    backwardInput.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }),
+    );
+    await settle();
+    expect(backwardClose).toHaveBeenCalledWith('committed', { navigation: 'tab-backward' });
+
+    const blurContainer = freshContainer();
+    const blurClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container: blurContainer,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'Alpha',
+      catalog: catalog(),
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: blurClose,
+    });
+    const blurInput = expectDefined(blurContainer.querySelector<HTMLInputElement>('input'));
+    const outside = document.body.createEl('button');
+    blurInput.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+    await settle();
+    expect(blurClose).toHaveBeenCalledWith('committed', {
+      navigation: 'preserve-focus',
+      focusTarget: outside,
+    });
+  });
+
+  it('keeps Tab intent through an in-flight blur but accepts a deliberate Enter retry', async () => {
+    let release: (() => void) | undefined;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pendingContainer = freshContainer();
+    const pendingClose = vi.fn();
+    const pendingSave = vi.fn().mockReturnValue(pending);
+    mountProjectCellEditor({
+      app: new App(),
+      container: pendingContainer,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'old',
+      catalog: catalog(),
+      save: pendingSave,
+      onClose: pendingClose,
+    });
+    const pendingInput = expectDefined(pendingContainer.querySelector<HTMLInputElement>('input'));
+    pendingInput.value = 'new';
+    keydown(pendingInput, 'Tab');
+    pendingInput.dispatchEvent(
+      new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body }),
+    );
+    expectDefined(release)();
+    await settle();
+    expect(pendingClose).toHaveBeenCalledWith('committed', { navigation: 'tab-forward' });
+
+    const retryContainer = freshContainer();
+    const retryClose = vi.fn();
+    const retrySave = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new ProjectEditValidationError('Conflict'))
+      .mockResolvedValue(undefined);
+    mountProjectCellEditor({
+      app: new App(),
+      container: retryContainer,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'old',
+      catalog: catalog(),
+      save: retrySave,
+      onClose: retryClose,
+    });
+    const retryInput = expectDefined(retryContainer.querySelector<HTMLInputElement>('input'));
+    retryInput.value = 'new';
+    keydown(retryInput, 'Tab');
+    await settle();
+    await settle();
+    expect(retryClose).not.toHaveBeenCalled();
+
+    keydown(retryInput, 'Enter');
+    await settle();
+    expect(retryClose).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
+  });
+
   it('contains Escape within the editor even when close removes it synchronously', () => {
     const container = freshContainer();
     const outside = vi.fn();
@@ -76,7 +187,7 @@ describe('mountProjectCellEditor', () => {
     await settle();
 
     expect(save).toHaveBeenCalledWith(18.5);
-    expect(onClose).toHaveBeenCalledWith('committed', { restoreFocus: true });
+    expect(onClose).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
   });
 
   it('adds and removes list values without coercing untouched numeric elements', async () => {
@@ -195,7 +306,7 @@ describe('mountProjectCellEditor', () => {
     await settle();
 
     expect(save).toHaveBeenCalledWith(['Alpha', 'Beta']);
-    expect(onClose).toHaveBeenCalledWith('committed', { restoreFocus: true });
+    expect(onClose).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
   });
 
   it.each([
@@ -289,7 +400,7 @@ describe('mountProjectCellEditor', () => {
     await settle();
 
     expect(save).toHaveBeenCalledWith(value);
-    expect(onClose).toHaveBeenCalledWith('committed', { restoreFocus: true });
+    expect(onClose).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
   });
 
   it.each([
@@ -350,7 +461,7 @@ describe('mountProjectCellEditor', () => {
     await settle();
 
     expect(save).toHaveBeenCalledWith(true);
-    expect(onClose).toHaveBeenCalledWith('committed', { restoreFocus: true });
+    expect(onClose).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
   });
 
   it('closes an unchanged editor without writing', async () => {
@@ -416,7 +527,7 @@ describe('mountProjectCellEditor', () => {
     keydown(expectDefined(container.querySelector('input')), 'Escape');
 
     expect(save).not.toHaveBeenCalled();
-    expect(onClose).toHaveBeenCalledWith('cancelled', { restoreFocus: true });
+    expect(onClose).toHaveBeenCalledWith('cancelled', { navigation: 'restore-current' });
   });
 
   it('autosaves a blank text value exactly once on blur', async () => {

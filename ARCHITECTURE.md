@@ -178,10 +178,12 @@ unavailable.
 search, status filtering, and scalar or multi-value grouping while reporting a unique visible
 project count. Link-valued groups receive a narrow native resolver from the table, use the resolved
 note path as identity, and retain the representative raw value and its original source path for
-rendering and later edits. It also owns the shared progress calculation: completed top-level tasks
-divided by all non-cancelled top-level tasks. `projectTableSettings` owns defaults and normalization
-for saved column order, aliases, widths, visibility, grouping, sorting, and hidden statuses. These
-preferences live under `projects.table`; project metadata remains in Markdown.
+rendering and later edits. A shared link-target helper strips note subpaths and decodes Markdown
+path escaping only for native lookup; absolute external Markdown targets instead keep their exact,
+source-independent identity. It also owns the shared progress calculation: completed top-level
+tasks divided by all non-cancelled top-level tasks. `projectTableSettings` owns defaults and
+normalization for saved column order, aliases, widths, visibility, grouping, sorting, and hidden
+statuses. These preferences live under `projects.table`; project metadata remains in Markdown.
 
 `ProjectsPanel` owns the long-lived project-table controller and the vault property-catalog
 subscription. Ordinary project-store refreshes update that controller instead of reconstructing
@@ -208,6 +210,9 @@ clipboard payloads, drag payloads, and edit history remain bounded to the table 
 
 `ProjectCellEditor` owns typed drafts, suggestion-popup lifetime, validation, and autosave. Its
 async commit handle remains mounted on failure and coalesces a newer draft while a save is pending.
+On close it reports restore-current, forward Tab, backward Tab, or preserve-focus intent;
+`ProjectsTableView` resolves that intent against the post-commit visible occurrence projection and
+uses the same selection, focus, and reveal path as ordinary keyboard navigation.
 `ProjectsTableView` owns a single mutation coordinator around each `applyEdits()` plus
 `ProjectEditHistory.record()` pair; editor saves, paste, clear, group drops, Undo, and Redo use that
 same coordinator and publish successful receipts through its session projection seam. Store and native catalog refreshes

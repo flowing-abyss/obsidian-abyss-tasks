@@ -1,11 +1,7 @@
 import type { App, Component } from 'obsidian';
 import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
 import { isProjectStatusField, projectFieldValue } from '../../projects/projectFields';
-import {
-  projectProgress,
-  projectProgressDisplayValue,
-  projectTableDisplayValues,
-} from '../../projects/projectTableModel';
+import { projectProgress, projectTableDisplayValues } from '../../projects/projectTableModel';
 import type { Project } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
 import { renderTaskText } from '../../ui/renderTaskText';
@@ -46,10 +42,15 @@ function renderProgress(cell: HTMLElement, project: Project): void {
       cls: `abyss-project-progress-segment${index < filled ? ' is-filled' : ''}`,
     });
   }
-  root.createSpan({
-    cls: 'abyss-project-progress-value',
-    text: projectProgressDisplayValue(project.stats),
-  });
+  const value = root.createSpan({ cls: 'abyss-project-progress-value' });
+  if (progress.percent === null) value.setText('—');
+  else {
+    value.createSpan({ cls: 'abyss-project-progress-percent', text: `${progress.percent}%` });
+    value.createSpan({
+      cls: 'abyss-project-progress-count',
+      text: ` (${progress.done}/${progress.total})`,
+    });
+  }
 }
 
 function renderStatus(

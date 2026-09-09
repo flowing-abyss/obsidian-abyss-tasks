@@ -209,6 +209,27 @@ describe('ProjectsTableView', () => {
     expect(band('Quarter')).toContain('is-quarter');
     expect(band('Half')).toContain('is-half');
     expect(band('High')).toContain('is-high');
+    expect(
+      expectDefined(
+        host.querySelector<HTMLElement>(
+          '[data-project-path="Projects/Zero.md"] .abyss-project-progress-percent',
+        ),
+      ).textContent,
+    ).toBe('0%');
+    for (const [path, percent] of [
+      ['Low', '20%'],
+      ['Quarter', '40%'],
+      ['Half', '60%'],
+      ['High', '80%'],
+    ]) {
+      expect(
+        expectDefined(
+          host.querySelector<HTMLElement>(
+            `[data-project-path="Projects/${path}.md"] .abyss-project-progress-percent`,
+          ),
+        ).textContent,
+      ).toBe(percent);
+    }
   });
 
   it('keeps available status badges visible while toggling their persisted filters', async () => {
@@ -1177,17 +1198,193 @@ describe('ProjectsTableView', () => {
     );
   });
 
-  it('Tab commits and moves focus to the next table cell', async () => {
+  it('hands editor Tab navigation to selection across columns and row boundaries', async () => {
+    const { host } = mount([
+      project({ path: 'Projects/A.md', name: 'A' }),
+      project({ path: 'Projects/B.md', name: 'B' }),
+    ]);
+    const tableCell = (path: string, columnId: string): HTMLElement =>
+      expectDefined(
+        host.querySelector<HTMLElement>(
+          `[data-project-path="${path}"] [data-column-id="${columnId}"]`,
+        ),
+      );
+
+    tableCell('Projects/A.md', 'start').dispatchEvent(
+      new MouseEvent('dblclick', { bubbles: true }),
+    );
+    let input = expectDefined(
+      tableCell('Projects/A.md', 'start').querySelector<HTMLInputElement>('input[type="date"]'),
+    );
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    let destination = tableCell('Projects/A.md', 'end');
+    expect(activeDocument.activeElement).toBe(destination);
+    expect(destination.classList.contains('is-selection-focus')).toBe(true);
+    const copiedEnd = transfer();
+    destination.dispatchEvent(clipboardEvent('copy', copiedEnd));
+    expect(copiedEnd.getData('text/plain')).toBe('2026-09-30');
+    destination.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    expect(destination.querySelector('input[type="date"]')).not.toBeNull();
+    expectDefined(destination.querySelector<HTMLInputElement>('input')).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+
+    tableCell('Projects/A.md', 'start').dispatchEvent(
+      new MouseEvent('dblclick', { bubbles: true }),
+    );
+    input = expectDefined(
+      tableCell('Projects/A.md', 'start').querySelector<HTMLInputElement>('input[type="date"]'),
+    );
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Tab',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await flushMicrotasks();
+    destination = tableCell('Projects/A.md', 'progress');
+    expect(activeDocument.activeElement).toBe(destination);
+    expect(destination.classList.contains('is-selection-focus')).toBe(true);
+
+    tableCell('Projects/A.md', 'end').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    input = expectDefined(
+      tableCell('Projects/A.md', 'end').querySelector<HTMLInputElement>('input[type="date"]'),
+    );
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+    destination = tableCell('Projects/B.md', 'name');
+    expect(activeDocument.activeElement).toBe(destination);
+    expect(destination.classList.contains('is-selection-focus')).toBe(true);
+    const copiedName = transfer();
+    destination.dispatchEvent(clipboardEvent('copy', copiedName));
+    expect(copiedName.getData('text/plain')).toBe('B');
+  });
+
+  it('reveals an editor Tab destination within a constrained table viewport', async () => {
     const { host } = mount([project({})]);
+    const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this === scroll) return rectangle(0, 0, 300, 200);
+      if (this.classList.contains('abyss-project-table-header-cell')) {
+        return rectangle(0, 0, 300, 40);
+      }
+      if (this.classList.contains('abyss-project-table-name-cell')) {
+        return rectangle(0, 40, 100, 70);
+      }
+      if (this.dataset['columnId'] === 'end') {
+        return rectangle(500 - scroll.scrollLeft, 40, 600 - scroll.scrollLeft, 70);
+      }
+      return rectangle(100, 40, 200, 70);
+    });
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    expectDefined(start.querySelector<HTMLInputElement>('input')).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    expect(scroll.scrollLeft).toBe(300);
+    expect((activeDocument.activeElement as HTMLElement | null)?.dataset['columnId']).toBe('end');
+  });
+
+  it('preserves an external focus destination when an editor commits on blur', async () => {
+    const { host } = mount([project({})]);
+    const outside = document.body.createEl('button');
     const cell = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
     );
     cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     const input = expectDefined(cell.querySelector<HTMLInputElement>('input[type="date"]'));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    outside.focus();
+    input.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
     await flushMicrotasks();
 
-    expect((activeDocument.activeElement as HTMLElement | null)?.dataset['columnId']).toBe('end');
+    expect(activeDocument.activeElement).toBe(outside);
+  });
+
+  it('adopts a deliberately focused table cell as selection when an editor commits on blur', async () => {
+    const { host } = mount([
+      project({ path: 'Projects/A.md', name: 'A' }),
+      project({ path: 'Projects/B.md', name: 'B' }),
+    ]);
+    const edited = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/A.md"] [data-column-id="start"]',
+      ),
+    );
+    const destination = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/B.md"] [data-column-id="status"]',
+      ),
+    );
+    edited.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(edited.querySelector<HTMLInputElement>('input'));
+    destination.focus();
+    input.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: destination }));
+    await flushMicrotasks();
+
+    const renderedDestination = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/B.md"] [data-column-id="status"]',
+      ),
+    );
+    expect(renderedDestination.classList.contains('is-selection-focus')).toBe(true);
+    renderedDestination.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    expect(renderedDestination.querySelector('select')).not.toBeNull();
+  });
+
+  it('resolves editor Tab from the saved project occurrence after current grouped projection', async () => {
+    const config = settings();
+    config.projects.table.groupBy = 'property:Owner';
+    config.projects.table.columns.push({ id: 'property:Owner', visible: true });
+    const { host } = mount(
+      [
+        project({ path: 'Projects/A.md', name: 'A', frontmatter: { Owner: 'Alpha' } }),
+        project({ path: 'Projects/B.md', name: 'B', frontmatter: { Owner: 'Beta' } }),
+      ],
+      {
+        settings: config,
+        catalog: catalog([{ name: 'Owner', type: 'text' }]),
+      },
+    );
+    const owner = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/A.md"] [data-column-id="property:Owner"]',
+      ),
+    );
+    owner.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(owner.querySelector<HTMLInputElement>('input'));
+    input.value = 'Beta';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    expect(host.querySelectorAll('[data-project-path="Projects/A.md"]')).toHaveLength(1);
+    const destination = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/B.md"] [data-column-id="name"]',
+      ),
+    );
+    expect(activeDocument.activeElement).toBe(destination);
+    expect(destination.classList.contains('is-selection-focus')).toBe(true);
   });
 
   it('selects cells on click, navigates and extends with arrows, and edits only on Enter', () => {
@@ -1808,8 +2005,23 @@ describe('ProjectsTableView', () => {
     protectedStore = true;
     target.dispatchEvent(dragEvent('dragover', data));
     expect(target.classList.contains('is-drop-target')).toBe(true);
+    expect(target.getAttribute('title')).toContain('Drop to move to');
+    const leave = dragEvent('dragleave', data);
+    Object.defineProperty(leave, 'relatedTarget', { value: document.body });
+    target.dispatchEvent(leave);
+    expect(target.getAttribute('title')).toBeNull();
+
+    target.dispatchEvent(dragEvent('dragover', data));
+    handle.dispatchEvent(dragEvent('dragend', data));
+    expect(target.getAttribute('title')).toBeNull();
+
+    protectedStore = false;
+    handle.dispatchEvent(dragEvent('dragstart', data));
+    protectedStore = true;
+    target.dispatchEvent(dragEvent('dragover', data));
     protectedStore = false;
     target.dispatchEvent(dragEvent('drop', data));
+    expect(target.getAttribute('title')).toBeNull();
     await flushMicrotasks();
 
     expect(applyEdits).toHaveBeenCalledOnce();

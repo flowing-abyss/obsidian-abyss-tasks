@@ -1,5 +1,6 @@
 import { buildLinkRaw, parseLinks } from '../../markdown/links';
 import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
+import { projectTableLinkTargetParts } from '../../projects/projectTableLinkTarget';
 
 export const PROJECT_TABLE_CLIPBOARD_TYPE = 'application/x-abyss-project-table';
 
@@ -441,21 +442,6 @@ export function deduplicateProjectCellAssignments<
   return [...unique.values()];
 }
 
-function splitSubpath(target: string): { readonly path: string; readonly subpath: string } {
-  const index = target.indexOf('#');
-  return index < 0
-    ? { path: target, subpath: '' }
-    : { path: target.slice(0, index), subpath: target.slice(index) };
-}
-
-function decodeMarkdownPath(path: string): string {
-  try {
-    return decodeURIComponent(path);
-  } catch {
-    return path;
-  }
-}
-
 function rebaseString(
   value: string,
   sourcePath: string,
@@ -465,11 +451,9 @@ function rebaseString(
   const links = parseLinks(value);
   let result = value;
   for (const link of [...links].reverse()) {
-    const { path, subpath } = splitSubpath(link.target);
-    const resolved = rebaser.resolve(
-      link.type === 'md' ? decodeMarkdownPath(path) : path,
-      sourcePath,
-    );
+    const { resolverTarget, subpath, externalTarget } = projectTableLinkTargetParts(link);
+    if (externalTarget !== undefined) continue;
+    const resolved = rebaser.resolve(resolverTarget, sourcePath);
     if (resolved === undefined) continue;
     const linktext = rebaser.linktext(resolved, destinationPath);
     const target = `${link.type === 'md' ? encodeURI(linktext) : linktext}${subpath}`;
