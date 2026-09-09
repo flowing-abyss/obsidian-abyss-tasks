@@ -323,11 +323,13 @@ function renderCuratedDateSource(
           .list()
           ?.filter(({ type }) => type === 'date')
           .map(({ name: property }) => property) ?? [];
-      if (!properties.some((property) => sameProperty(property, current))) {
+      const matching = properties.find((property) => sameProperty(property, current));
+      const selected = matching ?? current;
+      if (matching === undefined) {
         dropdown.addOption(current, `${current} (current)`);
       }
       for (const property of properties) dropdown.addOption(property, property);
-      dropdown.setValue(current).onChange((property) => {
+      dropdown.setValue(selected).onChange((property) => {
         const siblingKeys = (['statusProperty', 'startProperty', 'endProperty'] as const).filter(
           (candidate) => candidate !== key,
         );

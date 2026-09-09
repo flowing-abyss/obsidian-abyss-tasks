@@ -1114,14 +1114,15 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .list()
           ?.filter(({ type }) => type === requiredType)
           .map(({ name: property }) => property) ?? [];
-      if (
-        current.length > 0 &&
-        !options.some((property) => this.sameProperty_abyssPrivate(property, current))
-      ) {
+      const matching = options.find((property) =>
+        this.sameProperty_abyssPrivate(property, current),
+      );
+      const selected = matching ?? current;
+      if (current.length > 0 && matching === undefined) {
         dropdown.addOption(current, `${current} (current)`);
       }
       for (const property of options) dropdown.addOption(property, property);
-      dropdown.setValue(current).onChange(async (property) => {
+      dropdown.setValue(selected).onChange(async (property) => {
         const siblingKeys = (['statusProperty', 'startProperty', 'endProperty'] as const).filter(
           (candidate) => candidate !== key,
         );

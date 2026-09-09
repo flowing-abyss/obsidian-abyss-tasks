@@ -43,6 +43,31 @@ function dragColumn(source: HTMLElement, target: HTMLElement): void {
 }
 
 describe('renderProjectTableSettings', () => {
+  it('selects native Start and End spelling for case-insensitive saved sources', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.startProperty = 'start';
+    projects.endProperty = 'end';
+    const container = document.body.createDiv();
+
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([
+        { name: 'Start', type: 'date' },
+        { name: 'End', type: 'date' },
+      ]),
+      save: vi.fn().mockResolvedValue(undefined),
+      refresh: vi.fn(),
+    });
+
+    expect(
+      Array.from(container.querySelectorAll<HTMLSelectElement>('select')).map(
+        (select) => select.value,
+      ),
+    ).toEqual(['Start', 'End']);
+  });
+
   it('keeps Name first and visible while persisting hide and drag reorder changes', async () => {
     const projects = buildDefaultProjectsSettings();
     const save = vi.fn().mockResolvedValue(undefined);

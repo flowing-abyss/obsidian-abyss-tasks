@@ -961,6 +961,21 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
     expect(plugin.saveSettings).not.toHaveBeenCalled();
   });
 
+  it('selects the native Status spelling for a case-insensitive saved source', () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.statusProperty = 'status';
+    const projectProperties: ProjectPropertyCatalog = {
+      list: () => [{ name: 'Status', type: 'text' }],
+      values: () => [],
+      onChange: () => () => {},
+    };
+
+    const { tab } = makeTab({ projects }, { projectProperties });
+    const body = openSection(tab, 5);
+
+    expect(findDropdown(body, 'Status property')?.value).toBe('Status');
+  });
+
   it('shows recoverable legacy binding evidence until a source is selected', async () => {
     const projects = structuredClone(DEFAULT_SETTINGS.projects);
     projects.statusProperty = '';
