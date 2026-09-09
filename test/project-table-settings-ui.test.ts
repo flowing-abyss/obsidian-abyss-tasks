@@ -1,4 +1,4 @@
-import { App } from 'obsidian';
+import { App, DropdownComponent, Setting } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import type { ProjectPropertyInfo } from '../src/projects/projectFields';
@@ -66,6 +66,48 @@ describe('renderProjectTableSettings', () => {
         (select) => select.value,
       ),
     ).toEqual(['Start', 'End']);
+  });
+
+  it('restores native spelling after rejecting a duplicate curated date source', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.startProperty = 'start';
+    projects.endProperty = 'end';
+    const save = vi.fn().mockResolvedValue(undefined);
+    const container = document.body.createDiv();
+    const dropdowns: DropdownComponent[] = [];
+    const dropdownSpy = vi.spyOn(Setting.prototype, 'addDropdown').mockImplementation(function (
+      this: Setting,
+      callback,
+    ) {
+      const dropdown = new DropdownComponent(this.controlEl);
+      this.components.push(dropdown);
+      dropdowns.push(dropdown);
+      callback(dropdown);
+      return this;
+    });
+
+    try {
+      renderProjectTableSettings({
+        app: new App(),
+        container,
+        projects,
+        catalog: catalog([
+          { name: 'Start', type: 'date' },
+          { name: 'End', type: 'date' },
+        ]),
+        save,
+        refresh: vi.fn(),
+      });
+
+      expectDefined(dropdowns[0]).setValue('End');
+
+      expect(expectDefined(dropdowns[0]).getValue()).toBe('Start');
+      expect(projects.startProperty).toBe('start');
+      expect(projects.endProperty).toBe('end');
+      expect(save).not.toHaveBeenCalled();
+    } finally {
+      dropdownSpy.mockRestore();
+    }
   });
 
   it('keeps Name first and visible while persisting hide and drag reorder changes', async () => {

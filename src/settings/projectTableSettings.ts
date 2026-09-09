@@ -334,7 +334,7 @@ function renderCuratedDateSource(
           (candidate) => candidate !== key,
         );
         if (siblingKeys.some((candidate) => sameProperty(options.projects[candidate], property))) {
-          dropdown.setValue(current);
+          dropdown.selectEl.value = selected;
           new Notice(`${name} must use a different property from the other curated fields.`);
           return;
         }
