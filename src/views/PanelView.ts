@@ -266,6 +266,9 @@ export class PanelView extends ItemView {
           this.closeCompactPane_abyssPrivate(false);
           this.quickCapture_abyssPrivate?.openOrFocus();
         },
+        finishProjectTableEditorBefore: (action) => {
+          this.center_abyssPrivate.finishProjectTableEditorBefore(action);
+        },
       },
       this.onSaveSettings_abyssPrivate,
     );

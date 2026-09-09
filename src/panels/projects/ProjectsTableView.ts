@@ -1,6 +1,17 @@
-import { Notice, type App } from 'obsidian';
+import { Component, Notice, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
+import { parseLinks } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
+import { isProjectEditValidationError } from '../../projects/projectEditError';
+import type { ProjectEditHistory } from '../../projects/projectEditHistory';
+import {
+  projectCellSourceValue,
+  projectFieldWithOwnedClear,
+  type AppliedProjectCellChange,
+  type OwnedInferredPropertyClear,
+  type ProjectCellChange,
+  type ProjectEditResult,
+} from '../../projects/projectEdits';
 import {
   buildProjectFieldCatalog,
   findProjectFieldById,
@@ -11,6 +22,7 @@ import {
 } from '../../projects/projectFields';
 import { buildProjectTableModel, type ProjectTableModel } from '../../projects/projectTableModel';
 import { buildDefaultProjectTableSettings } from '../../projects/projectTableSettings';
+import { resolveStatus } from '../../projects/status';
 import type { Project } from '../../projects/types';
 import {
   enforceProjectTableColumnInvariants,
@@ -18,6 +30,7 @@ import {
   setProjectColumnWidth,
 } from '../../settings/projectTableSettings';
 import type { CalendarSettings } from '../../settings/types';
+import { renderTaskText } from '../../ui/renderTaskText';
 import { mountProjectCellEditor, type ProjectCellEditorHandle } from './ProjectCellEditor';
 import { ProjectsTableToolbar } from './ProjectsTableToolbar';
 import { renderProjectTableCell } from './projectTableCells';
@@ -34,17 +47,8 @@ export interface ProjectsTableViewContext {
   readonly settings: CalendarSettings;
   readonly catalog: ProjectPropertyCatalog;
   readonly saveSettings: () => Promise<void>;
-  readonly saveProperty: (
-    path: string,
-    field: ProjectField,
-    value: unknown,
-    expectedValue: unknown,
-  ) => Promise<void>;
-  readonly saveStatus: (
-    path: string,
-    statusId: string,
-    expectedStatus: Pick<Project, 'statusId' | 'rawStatus'>,
-  ) => Promise<void>;
+  readonly applyEdits: (changes: readonly ProjectCellChange[]) => Promise<ProjectEditResult>;
+  readonly history: ProjectEditHistory;
   readonly createProject: (name: string) => Promise<void>;
   readonly openProject: (path: string) => void;
 }
@@ -60,12 +64,35 @@ interface FocusedCellIdentity {
   readonly columnId: string | undefined;
 }
 
+interface ProjectCellEditRequest {
+  readonly project: Project;
+  readonly field: ProjectField;
+  readonly value: unknown;
+  readonly expectedValue: unknown;
+  readonly ownedClear: OwnedInferredPropertyClear | undefined;
+}
+
+interface ProjectCellEditorState {
+  expectedValue: unknown;
+  ownedClear: OwnedInferredPropertyClear | undefined;
+}
+
+interface RemoveListValueRequest {
+  readonly project: Project;
+  readonly field: ProjectField;
+  readonly value: unknown[];
+  readonly expectedValue: unknown[];
+  readonly ownedClear: OwnedInferredPropertyClear | undefined;
+}
+
 interface RenderGroupOptions {
   readonly key: string;
   readonly label: string;
   readonly count: number;
   readonly columnCount: number;
   readonly statuses: ProjectTableModel['availableStatusGroups'];
+  readonly value: unknown;
+  readonly sourcePath?: string;
 }
 
 interface RenderTableGroupOptions {
@@ -104,6 +131,10 @@ function nextCellIdentity(
   return next === undefined || columnId === undefined ? undefined : { projectPath, columnId };
 }
 
+function copyProjectedValue(value: unknown): unknown {
+  return Array.isArray(value) ? value.map(copyProjectedValue) : value;
+}
+
 export class ProjectsTableView {
   private projects_abyssPrivate: readonly Project[] = [];
   private fields_abyssPrivate: readonly ProjectFieldCatalogItem[] = [];
@@ -113,11 +144,18 @@ export class ProjectsTableView {
   private readonly feedback_abyssPrivate: HTMLElement;
   private readonly count_abyssPrivate: HTMLElement;
   private readonly toolbar_abyssPrivate: ProjectsTableToolbar;
+  private readonly markdown_abyssPrivate = new Component();
   private activeEditor_abyssPrivate: ActiveEditor | undefined;
   private columnCleanup_abyssPrivate: (() => void) | undefined;
   private readonly collapsedGroups_abyssPrivate = new Set<string>();
   private search_abyssPrivate = '';
   private mounted_abyssPrivate = false;
+  private mutationTail_abyssPrivate: Promise<void> = Promise.resolve();
+  private mutationActive_abyssPrivate = false;
+  private renderPending_abyssPrivate = false;
+  private pendingAction_abyssPrivate:
+    { readonly run: () => void; readonly replace?: () => void } | undefined;
+  private finishingEditor_abyssPrivate: Promise<void> | undefined;
 
   constructor(
     host: HTMLElement,
@@ -129,22 +167,36 @@ export class ProjectsTableView {
       settings: context_abyssPrivate.settings.projects.table,
       fields: () => this.fields_abyssPrivate,
       onSearch: (query) => {
-        this.search_abyssPrivate = query;
-        this.renderTable_abyssPrivate();
+        this.finishEditorBeforeAction(() => {
+          this.search_abyssPrivate = query;
+          this.renderTable_abyssPrivate();
+        });
       },
       onStatusToggle: (key) => {
-        this.toggleStatus_abyssPrivate(key);
+        this.finishEditorBeforeAction(() => {
+          this.toggleStatus_abyssPrivate(key);
+        });
       },
-      onViewChange: () => {
-        this.persistAndRender_abyssPrivate();
+      onGroupBy: (field) => {
+        this.finishEditorBeforeAction(() => {
+          this.context_abyssPrivate.settings.projects.table.groupBy = field;
+          this.persistAndRender_abyssPrivate();
+        });
+      },
+      onSortBy: (field) => {
+        this.finishEditorBeforeAction(() => {
+          this.sortByColumn_abyssPrivate(field);
+        });
       },
       onReset: () => {
-        const defaults = buildDefaultProjectTableSettings();
-        const table = this.context_abyssPrivate.settings.projects.table;
-        table.groupBy = defaults.groupBy;
-        table.sortBy = defaults.sortBy;
-        table.hiddenStatuses = defaults.hiddenStatuses;
-        this.persistAndRender_abyssPrivate();
+        this.finishEditorBeforeAction(() => {
+          const defaults = buildDefaultProjectTableSettings();
+          const table = this.context_abyssPrivate.settings.projects.table;
+          table.groupBy = defaults.groupBy;
+          table.sortBy = defaults.sortBy;
+          table.hiddenStatuses = defaults.hiddenStatuses;
+          this.persistAndRender_abyssPrivate();
+        });
       },
     });
     this.feedback_abyssPrivate = this.root_abyssPrivate.createDiv({
@@ -164,13 +216,16 @@ export class ProjectsTableView {
       attr: { type: 'button' },
     });
     create.addEventListener('click', () => {
-      this.showNewProjectInput_abyssPrivate();
+      this.finishEditorBeforeAction(() => {
+        this.showNewProjectInput_abyssPrivate();
+      });
     });
     this.count_abyssPrivate = footer.createSpan({ cls: 'abyss-project-table-count' });
   }
 
   mount(projects: readonly Project[]): void {
     this.mounted_abyssPrivate = true;
+    this.markdown_abyssPrivate.load();
     this.projects_abyssPrivate = projects;
     this.refreshFields();
   }
@@ -190,12 +245,84 @@ export class ProjectsTableView {
 
   destroy(): void {
     this.mounted_abyssPrivate = false;
+    this.pendingAction_abyssPrivate?.replace?.();
+    this.pendingAction_abyssPrivate = undefined;
     this.activeEditor_abyssPrivate?.handle.destroy();
     this.activeEditor_abyssPrivate = undefined;
     this.columnCleanup_abyssPrivate?.();
     this.columnCleanup_abyssPrivate = undefined;
     this.toolbar_abyssPrivate.destroy();
+    this.markdown_abyssPrivate.unload();
     this.root_abyssPrivate.remove();
+  }
+
+  /**
+   * Serializes every table-session metadata mutation. Task 4 Undo/Redo uses this same queue.
+   */
+  runTableSessionMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    const run = async (): Promise<T> => {
+      this.mutationActive_abyssPrivate = true;
+      try {
+        return await mutation();
+      } finally {
+        this.mutationActive_abyssPrivate = false;
+        if (this.renderPending_abyssPrivate) this.renderTable_abyssPrivate();
+      }
+    };
+    const result = this.mutationTail_abyssPrivate.then(run, run);
+    this.mutationTail_abyssPrivate = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  /** Keeps only the newest deliberate action while an editor is saving or blocked. */
+  finishEditorBeforeAction(action: () => void): void {
+    this.pendingAction_abyssPrivate?.replace?.();
+    this.pendingAction_abyssPrivate = { run: action };
+    this.finishActiveEditor_abyssPrivate();
+  }
+
+  /** Resolves only when the current pending navigation may proceed. */
+  requestFinishActiveEditor(): Promise<boolean> {
+    if (this.activeEditor_abyssPrivate === undefined) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      this.pendingAction_abyssPrivate?.replace?.();
+      this.pendingAction_abyssPrivate = {
+        run: () => {
+          resolve(true);
+        },
+        replace: () => {
+          resolve(false);
+        },
+      };
+      this.finishActiveEditor_abyssPrivate();
+    });
+  }
+
+  private finishActiveEditor_abyssPrivate(): void {
+    if (this.finishingEditor_abyssPrivate !== undefined) return;
+    const editor = this.activeEditor_abyssPrivate;
+    if (editor === undefined) {
+      this.runPendingAction_abyssPrivate();
+      return;
+    }
+    const finishing = editor.handle.commit().then(() => undefined);
+    this.finishingEditor_abyssPrivate = finishing;
+    const settle = (): void => {
+      if (this.finishingEditor_abyssPrivate === finishing) {
+        this.finishingEditor_abyssPrivate = undefined;
+      }
+      if (this.activeEditor_abyssPrivate === undefined) this.runPendingAction_abyssPrivate();
+    };
+    finishing.then(settle, settle);
+  }
+
+  private runPendingAction_abyssPrivate(): void {
+    const pending = this.pendingAction_abyssPrivate;
+    this.pendingAction_abyssPrivate = undefined;
+    pending?.run();
   }
 
   private persistAndRender_abyssPrivate(): void {
@@ -262,7 +389,12 @@ export class ProjectsTableView {
   }
 
   private renderTable_abyssPrivate(): void {
-    if (!this.mounted_abyssPrivate || this.activeEditor_abyssPrivate !== undefined) return;
+    if (!this.mounted_abyssPrivate) return;
+    if (this.mutationActive_abyssPrivate || this.activeEditor_abyssPrivate !== undefined) {
+      this.renderPending_abyssPrivate = true;
+      return;
+    }
+    this.renderPending_abyssPrivate = false;
     const scrollTop = this.scroll_abyssPrivate.scrollTop;
     const scrollLeft = this.scroll_abyssPrivate.scrollLeft;
     const focusedIdentity = this.focusedCellIdentity_abyssPrivate();
@@ -279,6 +411,8 @@ export class ProjectsTableView {
       statuses: this.context_abyssPrivate.settings.projects.statuses,
       settings: tableSettings,
       search: this.search_abyssPrivate,
+      resolveLink: (target, sourcePath) =>
+        this.context_abyssPrivate.app.metadataCache.getFirstLinkpathDest(target, sourcePath)?.path,
     });
     this.toolbar_abyssPrivate.update(model.availableStatusGroups);
     this.count_abyssPrivate.setText(
@@ -303,16 +437,24 @@ export class ProjectsTableView {
       columns,
       sort: tableSettings.sortBy,
       onSort: (field) => {
-        this.sortByColumn_abyssPrivate(field);
+        this.finishEditorBeforeAction(() => {
+          this.sortByColumn_abyssPrivate(field);
+        });
       },
       onRename: (columnId, label) => {
-        this.renameColumn_abyssPrivate(columnId, label);
+        this.finishEditorBeforeAction(() => {
+          this.renameColumn_abyssPrivate(columnId, label);
+        });
       },
       onMove: (columnId, targetColumnId, placement) => {
-        this.moveColumn_abyssPrivate(columnId, targetColumnId, placement);
+        this.finishEditorBeforeAction(() => {
+          this.moveColumn_abyssPrivate(columnId, targetColumnId, placement);
+        });
       },
       onResize: (resize) => {
-        this.resizeColumns_abyssPrivate(resize);
+        this.finishEditorBeforeAction(() => {
+          this.resizeColumns_abyssPrivate(resize);
+        });
       },
     });
     return table;
@@ -352,6 +494,8 @@ export class ProjectsTableView {
       this.renderGroup_abyssPrivate(body, {
         key: group.key,
         label: group.label,
+        value: group.value,
+        ...(group.sourcePath === undefined ? {} : { sourcePath: group.sourcePath }),
         count: group.projects.length,
         columnCount: columns.length,
         statuses,
@@ -381,7 +525,7 @@ export class ProjectsTableView {
     body: HTMLTableSectionElement,
     options: RenderGroupOptions,
   ): void {
-    const { key, label, count, columnCount, statuses } = options;
+    const { key, label, value, sourcePath, count, columnCount, statuses } = options;
     const row = body.createEl('tr', { cls: 'abyss-project-table-group-row' });
     const cell = row.createEl('td', { attr: { colspan: String(Math.max(1, columnCount)) } });
     const collapsed = this.collapsedGroups_abyssPrivate.has(key);
@@ -399,12 +543,24 @@ export class ProjectsTableView {
       const dot = button.createSpan({ cls: 'abyss-status-dot' });
       dot.style.background = status.color;
     }
-    button.createSpan({ cls: 'abyss-projects-group-label', text: label });
+    const labelEl = button.createSpan({ cls: 'abyss-projects-group-label' });
+    if (typeof value === 'string' && sourcePath !== undefined && parseLinks(value).length > 0) {
+      renderTaskText(labelEl, value, {
+        app: this.context_abyssPrivate.app,
+        sourcePath,
+        component: this.markdown_abyssPrivate,
+        beforeOpenLink: () => this.requestFinishActiveEditor(),
+      });
+    } else {
+      labelEl.setText(label);
+    }
     button.createSpan({ cls: 'abyss-projects-group-count', text: String(count) });
     button.addEventListener('click', () => {
-      if (collapsed) this.collapsedGroups_abyssPrivate.delete(key);
-      else this.collapsedGroups_abyssPrivate.add(key);
-      this.renderTable_abyssPrivate();
+      this.finishEditorBeforeAction(() => {
+        if (collapsed) this.collapsedGroups_abyssPrivate.delete(key);
+        else this.collapsedGroups_abyssPrivate.add(key);
+        this.renderTable_abyssPrivate();
+      });
     });
   }
 
@@ -473,7 +629,8 @@ export class ProjectsTableView {
       cls: 'abyss-project-table-row',
       attr: { 'data-project-path': project.path },
     });
-    for (const { column, field } of columns) {
+    for (const { column, field: rawField } of columns) {
+      const { field, ownedClear } = this.effectiveField_abyssPrivate(project, rawField);
       const cell = row.createEl('td', {
         cls: `abyss-project-table-cell${field.type === 'name' ? ' abyss-project-table-name-cell' : ''}`,
         attr: {
@@ -485,7 +642,33 @@ export class ProjectsTableView {
       renderProjectTableCell(cell, project, {
         field,
         statuses: this.context_abyssPrivate.settings.projects.statuses,
-        openProject: this.context_abyssPrivate.openProject,
+        app: this.context_abyssPrivate.app,
+        component: this.markdown_abyssPrivate,
+        beforeOpenLink: () => this.requestFinishActiveEditor(),
+        openProject: (path) => {
+          this.finishEditorBeforeAction(() => {
+            this.context_abyssPrivate.openProject(path);
+          });
+        },
+        onRemoveListValue: (valueIndex) => {
+          this.finishEditorBeforeAction(() => {
+            if (!editableField(field)) return;
+            const current = projectCellSourceValue(
+              project,
+              field,
+              this.context_abyssPrivate.settings.projects,
+            );
+            if (!Array.isArray(current)) return;
+            const next = current.filter((_value, index) => index !== valueIndex);
+            this.removeListValue_abyssPrivate({
+              project,
+              field,
+              value: next,
+              expectedValue: current,
+              ownedClear,
+            });
+          });
+        },
       });
       if (
         (field.id === 'start' || field.id === 'end') &&
@@ -503,46 +686,62 @@ export class ProjectsTableView {
       if (editableField(field)) {
         cell.addClass('is-editable');
         cell.addEventListener('click', () => {
-          this.editCell_abyssPrivate(cell, project, field);
+          this.editCell_abyssPrivate(cell, project, field, ownedClear);
         });
         cell.addEventListener('dblclick', () => {
-          this.editCell_abyssPrivate(cell, project, field);
+          this.editCell_abyssPrivate(cell, project, field, ownedClear);
         });
         cell.addEventListener('keydown', (event) => {
           if (event.key !== 'Enter') return;
           event.preventDefault();
-          this.editCell_abyssPrivate(cell, project, field);
+          this.editCell_abyssPrivate(cell, project, field, ownedClear);
         });
       }
     }
   }
 
-  private editCell_abyssPrivate(cell: HTMLElement, project: Project, field: ProjectField): void {
+  private editCell_abyssPrivate(
+    cell: HTMLElement,
+    project: Project,
+    field: ProjectField,
+    ownedClear: OwnedInferredPropertyClear | undefined,
+  ): void {
     if (this.activeEditor_abyssPrivate !== undefined || !cell.isConnected) return;
-    const expectedValue = projectFieldValue(project, field);
-    const expectedStatus = { statusId: project.statusId, rawStatus: project.rawStatus };
+    const editorState: ProjectCellEditorState = {
+      expectedValue: projectCellSourceValue(
+        project,
+        field,
+        this.context_abyssPrivate.settings.projects,
+      ),
+      ownedClear,
+    };
     const nextCell = nextCellIdentity(cell);
     cell.empty();
     const handle = mountProjectCellEditor({
       app: this.context_abyssPrivate.app,
       container: cell,
       field,
-      value: expectedValue,
+      value: editorState.expectedValue,
       catalog: this.context_abyssPrivate.catalog,
       statuses: this.context_abyssPrivate.settings.projects.statuses,
       sourcePath: project.path,
-      save: async (value) => {
-        if (field.type === 'status') {
-          await this.context_abyssPrivate.saveStatus(project.path, String(value), {
-            ...expectedStatus,
-          });
-        } else {
-          await this.context_abyssPrivate.saveProperty(project.path, field, value, expectedValue);
-        }
+      save: (value) => {
+        const pending = this.applyCellEdit_abyssPrivate({
+          project,
+          field,
+          value,
+          expectedValue: editorState.expectedValue,
+          ownedClear: editorState.ownedClear,
+        });
+        return pending.then((nextOwnedClear) => {
+          editorState.ownedClear = nextOwnedClear;
+          editorState.expectedValue = value;
+        });
       },
       onClose: (_result, closeContext) => {
         this.activeEditor_abyssPrivate = undefined;
         this.renderTable_abyssPrivate();
+        this.runPendingAction_abyssPrivate();
         const target = closeContext.restoreFocus
           ? { projectPath: project.path, columnId: field.id }
           : nextCell;
@@ -559,6 +758,94 @@ export class ProjectsTableView {
       columnId: field.id,
       handle,
     };
+  }
+
+  private effectiveField_abyssPrivate(
+    project: Project,
+    field: ProjectFieldCatalogItem,
+  ): { readonly field: ProjectFieldCatalogItem; readonly ownedClear?: OwnedInferredPropertyClear } {
+    if (field.property === undefined) return { field };
+    let ownedClear: OwnedInferredPropertyClear | undefined;
+    try {
+      ownedClear = this.context_abyssPrivate.history.ownedClear(project.path, field);
+    } catch {
+      return { field };
+    }
+    if (ownedClear === undefined) return { field };
+    return {
+      field: projectFieldWithOwnedClear(
+        project,
+        field,
+        this.context_abyssPrivate.catalog.inspect(field.property),
+        ownedClear,
+      ),
+      ownedClear,
+    };
+  }
+
+  private async applyCellEdit_abyssPrivate(
+    request: ProjectCellEditRequest,
+  ): Promise<OwnedInferredPropertyClear | undefined> {
+    const { project, field, value, expectedValue, ownedClear } = request;
+    await this.runTableSessionMutation(async () => {
+      const change: ProjectCellChange = {
+        path: project.path,
+        field,
+        value,
+        expectedValue,
+        ...(ownedClear === undefined ? {} : { ownedClear, expectedExists: false }),
+      };
+      const result = await this.context_abyssPrivate.applyEdits([change]);
+      this.context_abyssPrivate.history.record(result);
+      this.publishAppliedReceipts(result.applied);
+      const failure = result.failed[0];
+      if (failure !== undefined) throw new Error(failure.message);
+    });
+    return this.context_abyssPrivate.history.ownedClear(project.path, field);
+  }
+
+  /** Publishes successful editor, paste, drop, Undo, and Redo receipts into this session. */
+  publishAppliedReceipts(receipts: readonly AppliedProjectCellChange[]): void {
+    const byPath = new Map<string, AppliedProjectCellChange[]>();
+    for (const receipt of receipts) {
+      const projectReceipts = byPath.get(receipt.path) ?? [];
+      projectReceipts.push(receipt);
+      byPath.set(receipt.path, projectReceipts);
+    }
+    this.projects_abyssPrivate = this.projects_abyssPrivate.map((project) => {
+      const projectReceipts = byPath.get(project.path);
+      if (projectReceipts === undefined) return project;
+      const frontmatter = { ...project.frontmatter };
+      for (const receipt of projectReceipts) {
+        if (receipt.appliedExists) {
+          frontmatter[receipt.sourceKey] = copyProjectedValue(receipt.value);
+        } else {
+          delete frontmatter[receipt.sourceKey];
+        }
+      }
+      return {
+        ...project,
+        frontmatter,
+        ...resolveStatus(this.context_abyssPrivate.settings.projects, frontmatter),
+      };
+    });
+  }
+
+  private removeListValue_abyssPrivate(request: RemoveListValueRequest): void {
+    const { project, field, value, expectedValue, ownedClear } = request;
+    this.applyCellEdit_abyssPrivate({ project, field, value, expectedValue, ownedClear }).then(
+      () => undefined,
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.feedback_abyssPrivate.setText(`Could not update ${field.label}: ${message}`);
+        if (isProjectEditValidationError(error)) return;
+        console.error('[abyss-tasks] Could not update project list property', {
+          property: field.property,
+          cause: error,
+        });
+        new Notice(`Could not update ${field.label}: ${message}`);
+      },
+    );
   }
 
   private findCell_abyssPrivate(projectPath: string, columnId: string): HTMLElement | null {

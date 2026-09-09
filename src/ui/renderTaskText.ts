@@ -8,6 +8,7 @@ export interface RenderTaskTextOptions {
   sourcePath: string;
   component: Component;
   onEditLink?: ((occurrenceIndex: number, token: LinkToken) => void) | undefined;
+  beforeOpenLink?: (() => Promise<boolean>) | undefined;
 }
 
 export function renderTaskText(
@@ -54,8 +55,12 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
       e.preventDefault();
       const href = a.getAttribute('data-href') ?? a.getAttribute('href') ?? '';
       if (href.length > 0) {
+        const newLeaf = Keymap.isModEvent(e);
         runAsyncAction(
-          opts.app.workspace.openLinkText(href, opts.sourcePath, Keymap.isModEvent(e)),
+          (async () => {
+            if ((await opts.beforeOpenLink?.()) === false) return;
+            await opts.app.workspace.openLinkText(href, opts.sourcePath, newLeaf);
+          })(),
           'Could not open task link',
         );
       }

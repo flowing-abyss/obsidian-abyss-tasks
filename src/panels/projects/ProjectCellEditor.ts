@@ -28,6 +28,8 @@ export interface ProjectCellEditorOptions {
 
 export interface ProjectCellEditorHandle {
   readonly element: HTMLElement;
+  commit(): Promise<boolean>;
+  cancel(): void;
   focus(): void;
   destroy(): void;
 }
@@ -36,6 +38,12 @@ interface EditorControl {
   readonly focusTarget?: HTMLElement;
   readonly suggest?: ProjectPropertySuggest;
   value(): unknown;
+}
+
+interface EditorEvents {
+  changed(): void;
+  commit(close: boolean): void;
+  suggestionOpen(open: boolean): void;
 }
 
 function isEditablePropertyType(
@@ -56,8 +64,17 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function sameProperty(left: string, right: string): boolean {
-  return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
+function copyValue(value: unknown): unknown {
+  return Array.isArray(value) ? value.map(copyValue) : value;
+}
+
+function equalValue(left: unknown, right: unknown): boolean {
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length && left.every((value, index) => equalValue(value, right[index]))
+    );
+  }
+  return Object.is(left, right);
 }
 
 function currentCustomType(
@@ -65,7 +82,10 @@ function currentCustomType(
   catalog: ProjectPropertyCatalog,
 ): ProjectPropertyType | null | undefined {
   if (!field.id.startsWith('property:') || field.property === undefined) return undefined;
-  return catalog.list()?.find(({ name }) => sameProperty(name, field.property ?? ''))?.type;
+  const snapshot = catalog.inspect(field.property);
+  if (snapshot.kind === 'unavailable') return null;
+  if (snapshot.assignment.kind === 'assigned') return snapshot.assignment.type;
+  return snapshot.property?.type;
 }
 
 function suggestOptions(
@@ -76,53 +96,75 @@ function suggestOptions(
     readonly onPick: (value: string) => void;
     readonly includeNotes: boolean;
   },
+  events: EditorEvents,
 ): ConstructorParameters<typeof ProjectPropertySuggest>[0] {
   return {
     app: options.app,
     input,
     ...suggestion,
+    onOpen: () => {
+      events.suggestionOpen(true);
+    },
+    onClose: () => {
+      events.suggestionOpen(false);
+    },
     ...(options.sourcePath === undefined ? {} : { sourcePath: options.sourcePath }),
   };
 }
 
-function textControl(options: ProjectCellEditorOptions, root: HTMLElement): EditorControl {
+function textControl(
+  options: ProjectCellEditorOptions,
+  root: HTMLElement,
+  events: EditorEvents,
+): EditorControl {
   const input = root.createEl('input', {
     cls: 'abyss-project-editor-input',
     attr: { type: 'text', 'aria-label': options.field.label, autocomplete: 'off' },
   });
   input.value = typeof options.value === 'string' ? options.value : '';
+  input.addEventListener('input', () => {
+    events.changed();
+  });
   const values =
     options.field.property === undefined ? [] : options.catalog.values(options.field.property);
   const suggest = new ProjectPropertySuggest(
-    suggestOptions(options, input, {
-      values,
-      onPick: (value) => {
-        input.value = value;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
+    suggestOptions(
+      options,
+      input,
+      {
+        values,
+        onPick: (value) => {
+          input.value = value;
+          events.changed();
+          events.commit(true);
+        },
+        includeNotes: true,
       },
-      includeNotes: true,
-    }),
+      events,
+    ),
   );
   return { focusTarget: input, suggest, value: () => input.value };
 }
 
 function initialListValues(value: unknown): unknown[] {
-  const values: unknown[] = [];
-  if (Array.isArray(value)) {
-    for (const item of value as unknown[]) values.push(item);
-  } else if (value !== undefined && value !== null && value !== '') {
-    values.push(value);
-  }
-  return values;
+  if (Array.isArray(value)) return value.map(copyValue);
+  return value === undefined || value === null || value === '' ? [] : [value];
 }
 
-function listControl(options: ProjectCellEditorOptions, root: HTMLElement): EditorControl {
+function listControl(
+  options: ProjectCellEditorOptions,
+  root: HTMLElement,
+  events: EditorEvents,
+): EditorControl {
   const values = initialListValues(options.value);
   const list = root.createDiv({ cls: 'abyss-project-list-values' });
   const inputRow = root.createDiv({ cls: 'abyss-project-list-entry' });
   const input = inputRow.createEl('input', {
     cls: 'abyss-project-editor-input abyss-project-list-input',
     attr: { type: 'text', 'aria-label': `Add ${options.field.label}`, autocomplete: 'off' },
+  });
+  input.addEventListener('input', () => {
+    events.changed();
   });
   const addButton = inputRow.createEl('button', {
     cls: 'abyss-project-list-add',
@@ -136,39 +178,49 @@ function listControl(options: ProjectCellEditorOptions, root: HTMLElement): Edit
       const item = list.createDiv({ cls: 'abyss-project-list-value' });
       item.createSpan({ text: String(value) });
       const remove = item.createEl('button', {
-        text: 'Remove',
+        cls: 'abyss-project-list-remove',
+        text: '×',
         attr: { type: 'button', 'aria-label': `Remove ${String(value)}` },
       });
       remove.addEventListener('click', () => {
         values.splice(index, 1);
         renderValues();
+        events.changed();
+        events.commit(false);
         input.focus();
       });
     });
   };
-  const addPending = (value = input.value): void => {
+  const addPending = (value = input.value): boolean => {
     const normalized = value.trim();
-    if (normalized.length === 0) return;
+    if (normalized.length === 0) return false;
     values.push(normalized);
     input.value = '';
     renderValues();
+    events.changed();
     input.focus();
+    return true;
   };
   addButton.addEventListener('click', () => {
-    addPending();
+    if (addPending()) events.commit(false);
   });
   renderValues();
 
   const suggestions =
     options.field.property === undefined ? [] : options.catalog.values(options.field.property);
   const suggest = new ProjectPropertySuggest(
-    suggestOptions(options, input, {
-      values: suggestions,
-      onPick: (value) => {
-        addPending(value);
+    suggestOptions(
+      options,
+      input,
+      {
+        values: suggestions,
+        onPick: (value) => {
+          if (addPending(value)) events.commit(false);
+        },
+        includeNotes: options.field.type === 'list',
       },
-      includeNotes: options.field.type === 'list',
-    }),
+      events,
+    ),
   );
   return {
     focusTarget: input,
@@ -180,29 +232,63 @@ function listControl(options: ProjectCellEditorOptions, root: HTMLElement): Edit
   };
 }
 
-function temporalControl(
-  root: HTMLElement,
-  type: 'date' | 'datetime-local',
-  label: string,
-  value: unknown,
-): EditorControl {
+function validNativeInput(input: HTMLInputElement, label: string, kind: string): void {
+  if (input.validity.badInput) throw new Error(`${label} must be a valid ${kind}.`);
+}
+
+interface TemporalControlOptions {
+  readonly root: HTMLElement;
+  readonly type: 'date' | 'datetime-local';
+  readonly label: string;
+  readonly value: unknown;
+  readonly events: EditorEvents;
+}
+
+function temporalControl(options: TemporalControlOptions): EditorControl {
+  const { root, type, label, value, events } = options;
   const input = root.createEl('input', {
     cls: 'abyss-project-editor-input',
     attr: { type, 'aria-label': label },
   });
   input.value = typeof value === 'string' ? value : '';
-  return { focusTarget: input, value: () => input.value };
+  input.addEventListener('input', () => {
+    events.changed();
+  });
+  input.addEventListener('change', () => {
+    events.changed();
+    events.commit(true);
+  });
+  return {
+    focusTarget: input,
+    value: () => {
+      validNativeInput(input, label, type === 'date' ? 'date' : 'date and time');
+      return input.value;
+    },
+  };
 }
 
-function numberControl(root: HTMLElement, label: string, value: unknown): EditorControl {
+function numberControl(
+  root: HTMLElement,
+  label: string,
+  value: unknown,
+  events: EditorEvents,
+): EditorControl {
   const input = root.createEl('input', {
     cls: 'abyss-project-editor-input',
     attr: { type: 'number', 'aria-label': label },
   });
   input.value = typeof value === 'number' || typeof value === 'string' ? String(value) : '';
+  input.addEventListener('input', () => {
+    events.changed();
+  });
+  input.addEventListener('change', () => {
+    events.changed();
+    events.commit(true);
+  });
   return {
     focusTarget: input,
     value: (): unknown => {
+      validNativeInput(input, label, 'number');
       if (input.value === '') return '';
       const number = input.valueAsNumber;
       if (!Number.isFinite(number)) throw new Error(`${label} must be a finite number.`);
@@ -215,51 +301,82 @@ function propertyControl(
   options: ProjectCellEditorOptions,
   root: HTMLElement,
   type: ProjectPropertyType,
+  events: EditorEvents,
 ): EditorControl {
   switch (type) {
     case 'text':
-      return textControl(options, root);
+      return textControl(options, root, events);
     case 'list':
     case 'tags':
-      return listControl(options, root);
+      return listControl(options, root, events);
     case 'number':
-      return numberControl(root, options.field.label, options.value);
+      return numberControl(root, options.field.label, options.value, events);
     case 'checkbox': {
       const input = root.createEl('input', {
         cls: 'abyss-project-editor-checkbox',
         attr: { type: 'checkbox', 'aria-label': options.field.label },
       });
       input.checked = options.value === true;
+      input.addEventListener('change', () => {
+        events.changed();
+        events.commit(true);
+      });
       return { focusTarget: input, value: () => input.checked };
     }
     case 'date':
-      return temporalControl(root, 'date', options.field.label, options.value);
+      return temporalControl({
+        root,
+        type: 'date',
+        label: options.field.label,
+        value: options.value,
+        events,
+      });
     case 'datetime':
-      return temporalControl(root, 'datetime-local', options.field.label, options.value);
+      return temporalControl({
+        root,
+        type: 'datetime-local',
+        label: options.field.label,
+        value: options.value,
+        events,
+      });
   }
 }
 
-function statusControl(options: ProjectCellEditorOptions, root: HTMLElement): EditorControl {
+function statusControl(
+  options: ProjectCellEditorOptions,
+  root: HTMLElement,
+  events: EditorEvents,
+): EditorControl {
   const select = root.createEl('select', {
     cls: 'abyss-project-editor-status',
     attr: { 'aria-label': options.field.label },
   });
+  select.createEl('option', { value: '', text: 'No status' });
+  const current = typeof options.value === 'string' ? options.value : '';
+  if (current.length > 0 && !(options.statuses ?? []).some(({ name }) => name === current)) {
+    select.createEl('option', { value: current, text: current });
+  }
   for (const status of options.statuses ?? []) {
-    const option = select.createEl('option', { value: status.id, text: status.name });
+    const option = select.createEl('option', { value: status.name, text: status.name });
     if (status.color !== undefined) option.style.color = status.color;
   }
-  select.value = typeof options.value === 'string' ? options.value : '';
+  select.value = current;
+  select.addEventListener('change', () => {
+    events.changed();
+    events.commit(true);
+  });
   return { focusTarget: select, value: () => select.value };
 }
 
 function buildControl(
   options: ProjectCellEditorOptions,
   root: HTMLElement,
+  events: EditorEvents,
 ): EditorControl | undefined {
   if (isEditablePropertyType(options.field.type)) {
-    return propertyControl(options, root, options.field.type);
+    return propertyControl(options, root, options.field.type, events);
   }
-  if (options.field.type === 'status') return statusControl(options, root);
+  if (options.field.type === 'status') return statusControl(options, root, events);
   return undefined;
 }
 
@@ -267,58 +384,71 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   readonly element: HTMLElement;
   private readonly control_abyssPrivate: EditorControl | undefined;
   private readonly error_abyssPrivate: HTMLElement;
-  private saveButton_abyssPrivate: HTMLButtonElement | undefined;
-  private saveInFlight_abyssPrivate: Promise<void> | undefined;
+  private committedValue_abyssPrivate: unknown;
+  private saveInFlight_abyssPrivate: Promise<boolean> | undefined;
+  private closeRequested_abyssPrivate = false;
+  private restoreFocusOnClose_abyssPrivate = true;
+  private suggestOpen_abyssPrivate = false;
+  private ownedPointerActive_abyssPrivate = false;
+  private ownedPointerCleanup_abyssPrivate: (() => void) | undefined;
+  private blurPending_abyssPrivate = false;
   private closed_abyssPrivate = false;
 
   constructor(private readonly options_abyssPrivate: ProjectCellEditorOptions) {
+    this.committedValue_abyssPrivate = copyValue(options_abyssPrivate.value);
     this.element = options_abyssPrivate.container.createDiv({ cls: 'abyss-project-cell-editor' });
-    this.control_abyssPrivate = buildControl(options_abyssPrivate, this.element);
     this.error_abyssPrivate = this.element.createDiv({
       cls: 'abyss-project-editor-error',
       attr: { role: 'alert', 'aria-live': 'polite' },
     });
-    this.renderActions_abyssPrivate();
+    const events: EditorEvents = {
+      changed: () => {
+        this.error_abyssPrivate.empty();
+      },
+      commit: (close) => {
+        this.requestCommit_abyssPrivate(close, true);
+      },
+      suggestionOpen: (open) => {
+        this.suggestOpen_abyssPrivate = open;
+        if (!open) this.finishAfterSuggestion_abyssPrivate();
+      },
+    };
+    this.control_abyssPrivate = buildControl(options_abyssPrivate, this.element, events);
+    this.element.appendChild(this.error_abyssPrivate);
+    if (this.control_abyssPrivate === undefined) this.renderUnavailable_abyssPrivate();
     this.element.addEventListener('click', (event) => {
       event.stopPropagation();
     });
     this.element.addEventListener('keydown', this.onKeyDown_abyssPrivate);
+    this.element.addEventListener('focusout', this.onFocusOut_abyssPrivate);
+    this.element.addEventListener('focusin', () => {
+      this.blurPending_abyssPrivate = false;
+    });
+    this.element.addEventListener('pointerdown', this.onOwnedPointerDown_abyssPrivate, true);
+    this.element.addEventListener('click', () => {
+      this.clearOwnedPointer_abyssPrivate();
+    });
     this.focus();
   }
 
+  commit(): Promise<boolean> {
+    return this.commitWithOptions_abyssPrivate(true, true);
+  }
+
+  cancel(): void {
+    this.finish_abyssPrivate('cancelled');
+  }
+
   focus(): void {
-    this.control_abyssPrivate?.focusTarget?.focus();
+    this.control_abyssPrivate?.focusTarget?.focus({ preventScroll: true });
   }
 
   destroy(): void {
     if (this.closed_abyssPrivate) return;
     this.closed_abyssPrivate = true;
+    this.clearOwnedPointer_abyssPrivate();
     this.control_abyssPrivate?.suggest?.close();
     this.element.remove();
-  }
-
-  private renderActions_abyssPrivate(): void {
-    if (this.control_abyssPrivate === undefined) {
-      this.renderUnavailable_abyssPrivate();
-      return;
-    }
-    const actions = this.element.createDiv({ cls: 'abyss-project-editor-actions' });
-    this.saveButton_abyssPrivate = actions.createEl('button', {
-      cls: 'abyss-project-editor-save mod-cta',
-      text: 'Save',
-      attr: { type: 'button' },
-    });
-    const cancel = actions.createEl('button', {
-      cls: 'abyss-project-editor-cancel',
-      text: 'Cancel',
-      attr: { type: 'button' },
-    });
-    this.saveButton_abyssPrivate.addEventListener('click', () => {
-      this.commit_abyssPrivate();
-    });
-    cancel.addEventListener('click', () => {
-      this.finish_abyssPrivate('cancelled');
-    });
   }
 
   private renderUnavailable_abyssPrivate(): void {
@@ -328,10 +458,6 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
         ? 'Obsidian property type is unavailable. Editing is disabled.'
         : `${field.label} is not editable here.`,
     );
-    const close = this.element.createEl('button', { text: 'Close', attr: { type: 'button' } });
-    close.addEventListener('click', () => {
-      this.finish_abyssPrivate('cancelled');
-    });
   }
 
   private readonly onKeyDown_abyssPrivate = (event: KeyboardEvent): void => {
@@ -339,57 +465,165 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      this.finish_abyssPrivate('cancelled');
+      this.cancel();
       return;
     }
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      this.commit_abyssPrivate();
-    } else if (event.key === 'Tab') {
-      this.commit_abyssPrivate(false);
-    }
+    if (event.key !== 'Enter' && event.key !== 'Tab') return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.requestCommit_abyssPrivate(true, event.key !== 'Tab');
   };
+
+  private readonly onFocusOut_abyssPrivate = (event: FocusEvent): void => {
+    const next = event.relatedTarget;
+    if (next instanceof Node && this.element.contains(next)) {
+      this.blurPending_abyssPrivate = false;
+      return;
+    }
+    if (this.ownedPointerActive_abyssPrivate) {
+      this.blurPending_abyssPrivate = false;
+      return;
+    }
+    if (this.suggestOpen_abyssPrivate) {
+      this.blurPending_abyssPrivate = true;
+      return;
+    }
+    this.blurPending_abyssPrivate = false;
+    this.requestCommit_abyssPrivate(true, false);
+  };
+
+  private readonly onOwnedPointerDown_abyssPrivate = (): void => {
+    this.ownedPointerCleanup_abyssPrivate?.();
+    this.ownedPointerActive_abyssPrivate = true;
+    const ownerDocument = this.element.ownerDocument;
+    const release = (): void => {
+      window.setTimeout(() => {
+        this.clearOwnedPointer_abyssPrivate();
+      }, 0);
+    };
+    const cancel = (): void => {
+      this.clearOwnedPointer_abyssPrivate();
+    };
+    this.ownedPointerCleanup_abyssPrivate = () => {
+      ownerDocument.removeEventListener('pointerup', release);
+      ownerDocument.removeEventListener('pointercancel', cancel);
+      this.ownedPointerCleanup_abyssPrivate = undefined;
+    };
+    ownerDocument.addEventListener('pointerup', release);
+    ownerDocument.addEventListener('pointercancel', cancel);
+  };
+
+  private clearOwnedPointer_abyssPrivate(): void {
+    this.ownedPointerActive_abyssPrivate = false;
+    this.ownedPointerCleanup_abyssPrivate?.();
+  }
+
+  private finishAfterSuggestion_abyssPrivate(): void {
+    if (!this.blurPending_abyssPrivate) return;
+    this.blurPending_abyssPrivate = false;
+    queueMicrotask(() => {
+      if (
+        this.closed_abyssPrivate ||
+        this.suggestOpen_abyssPrivate ||
+        this.ownedPointerActive_abyssPrivate
+      ) {
+        return;
+      }
+      const active = this.element.ownerDocument.activeElement;
+      if (active instanceof Node && this.element.contains(active)) return;
+      this.requestCommit_abyssPrivate(true, false);
+    });
+  }
 
   private validateCurrentType_abyssPrivate(): boolean {
     const { catalog, field } = this.options_abyssPrivate;
     if (!field.id.startsWith('property:')) return true;
-    if (currentCustomType(field, catalog) === field.type) return true;
+    const current = currentCustomType(field, catalog);
+    if (current === undefined || current === field.type) return true;
     this.error_abyssPrivate.setText(
-      'This property type changed in Obsidian. Close and reopen the editor.',
+      current === null
+        ? 'This property type is unavailable in Obsidian. Close and reopen the editor.'
+        : 'This property type changed in Obsidian. Close and reopen the editor.',
     );
     this.focus();
     return false;
   }
 
-  private commit_abyssPrivate(restoreFocus = true): void {
-    const control = this.control_abyssPrivate;
-    if (control === undefined || this.saveInFlight_abyssPrivate !== undefined) return;
-    this.error_abyssPrivate.empty();
-    if (!this.validateCurrentType_abyssPrivate()) return;
-    let value: unknown;
-    try {
-      value = control.value();
-    } catch (error) {
-      this.error_abyssPrivate.setText(errorMessage(error));
-      this.focus();
-      return;
-    }
-    this.saveButton_abyssPrivate?.setAttribute('disabled', '');
-    const save = this.options_abyssPrivate.save(value);
-    this.saveInFlight_abyssPrivate = save;
-    void save.then(
-      () => {
-        this.finish_abyssPrivate('committed', restoreFocus);
-      },
+  private commitWithOptions_abyssPrivate(close: boolean, restoreFocus: boolean): Promise<boolean> {
+    if (this.closed_abyssPrivate) return Promise.resolve(true);
+    this.closeRequested_abyssPrivate ||= close;
+    if (close) this.restoreFocusOnClose_abyssPrivate = restoreFocus;
+    if (this.saveInFlight_abyssPrivate !== undefined) return this.saveInFlight_abyssPrivate;
+    const saving = this.saveUntilCurrent_abyssPrivate().catch((error: unknown) => {
+      this.handleSaveFailure_abyssPrivate(error);
+      return false;
+    });
+    this.saveInFlight_abyssPrivate = saving;
+    const clearInFlight = (): void => {
+      if (this.saveInFlight_abyssPrivate === saving) this.saveInFlight_abyssPrivate = undefined;
+    };
+    saving.then(clearInFlight, clearInFlight);
+    return saving;
+  }
+
+  private requestCommit_abyssPrivate(close: boolean, restoreFocus: boolean): void {
+    this.commitWithOptions_abyssPrivate(close, restoreFocus).then(
+      () => undefined,
       (error: unknown) => {
         this.handleSaveFailure_abyssPrivate(error);
       },
     );
   }
 
+  private readDraft_abyssPrivate(
+    control: EditorControl,
+  ): { readonly ok: true; readonly value: unknown } | { readonly ok: false } {
+    try {
+      return { ok: true, value: control.value() };
+    } catch (error) {
+      this.error_abyssPrivate.setText(errorMessage(error));
+      this.focus();
+      return { ok: false };
+    }
+  }
+
+  private finishUnchanged_abyssPrivate(): void {
+    if (this.closeRequested_abyssPrivate) {
+      this.finish_abyssPrivate('committed', this.restoreFocusOnClose_abyssPrivate);
+    } else {
+      this.focus();
+    }
+  }
+
+  private async persistDraft_abyssPrivate(value: unknown): Promise<boolean> {
+    try {
+      await this.options_abyssPrivate.save(value);
+      return true;
+    } catch (error) {
+      this.handleSaveFailure_abyssPrivate(error);
+      return false;
+    }
+  }
+
+  private async saveUntilCurrent_abyssPrivate(): Promise<boolean> {
+    const control = this.control_abyssPrivate;
+    if (control === undefined || !this.validateCurrentType_abyssPrivate()) return false;
+    this.error_abyssPrivate.empty();
+    while (!this.closed_abyssPrivate) {
+      const draft = this.readDraft_abyssPrivate(control);
+      if (!draft.ok) return false;
+      if (equalValue(draft.value, this.committedValue_abyssPrivate)) {
+        this.finishUnchanged_abyssPrivate();
+        return true;
+      }
+      const submitted = copyValue(draft.value);
+      if (!(await this.persistDraft_abyssPrivate(submitted))) return false;
+      this.committedValue_abyssPrivate = submitted;
+    }
+    return true;
+  }
+
   private handleSaveFailure_abyssPrivate(error: unknown): void {
-    this.saveInFlight_abyssPrivate = undefined;
-    this.saveButton_abyssPrivate?.removeAttribute('disabled');
     const message = errorMessage(error);
     if (isProjectEditValidationError(error)) {
       this.error_abyssPrivate.setText(message);

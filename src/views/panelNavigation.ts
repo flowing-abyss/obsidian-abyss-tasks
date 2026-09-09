@@ -20,6 +20,7 @@ export interface PanelNavigationCenterPort {
   calendarView(): CalViewType;
   setCalendarView(view: CalViewType): void;
   openQuickCapture(): void;
+  finishProjectTableEditorBefore?(action: () => void): void;
 }
 
 export class PanelNavigator implements PanelNavigationActions {
@@ -39,14 +40,16 @@ export class PanelNavigator implements PanelNavigationActions {
   }
 
   openList(selection: ListSelection): void {
-    this.state.batch(() => {
-      this.persistListState(this.lastTasksList);
-      this.lastTasksList = selection;
-      const next = this.listState(selection);
-      this.state.set('selectedList', selection);
-      this.state.set('centerListViewState', next);
-      this.state.set('centerFilter', '');
-      this.state.set('mode', 'tasks');
+    this.beforeModeChange(() => {
+      this.state.batch(() => {
+        this.persistListState(this.lastTasksList);
+        this.lastTasksList = selection;
+        const next = this.listState(selection);
+        this.state.set('selectedList', selection);
+        this.state.set('centerListViewState', next);
+        this.state.set('centerFilter', '');
+        this.state.set('mode', 'tasks');
+      });
     });
   }
 
@@ -86,11 +89,22 @@ export class PanelNavigator implements PanelNavigationActions {
   }
 
   private openMode(mode: ViewMode, prepare: () => void = () => {}): void {
-    this.state.batch(() => {
-      if (this.state.get('mode') === 'tasks') this.persistListState(this.lastTasksList);
-      prepare();
-      this.state.set('mode', mode);
+    this.beforeModeChange(() => {
+      this.state.batch(() => {
+        if (this.state.get('mode') === 'tasks') this.persistListState(this.lastTasksList);
+        prepare();
+        this.state.set('mode', mode);
+      });
     });
+  }
+
+  private beforeModeChange(change: () => void): void {
+    if (this.state.get('mode') !== 'projects') {
+      change();
+      return;
+    }
+    if (this.center.finishProjectTableEditorBefore === undefined) change();
+    else this.center.finishProjectTableEditorBefore(change);
   }
 
   private persistListState(selection: ListSelection): void {

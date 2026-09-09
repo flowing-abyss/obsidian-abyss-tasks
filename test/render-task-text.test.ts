@@ -36,6 +36,40 @@ describe('renderTaskText link occurrence pairing', () => {
     );
   });
 
+  it('waits for the navigation guard and preserves modifier intent', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+      const anchor = holder.createEl('a', { text: 'Project' });
+      anchor.addClass('internal-link');
+      anchor.setAttribute('data-href', 'Project');
+    });
+    let release: ((value: boolean) => void) | undefined;
+    const beforeOpenLink = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const openLinkText = vi.fn().mockResolvedValue(undefined);
+    const host = document.body.createDiv();
+    renderTaskText(host, '[[Project]]', {
+      app: { workspace: { openLinkText, trigger: vi.fn() } } as unknown as App,
+      sourcePath: 'tasks.md',
+      component: new Component(),
+      beforeOpenLink,
+    });
+    await vi.runAllTimersAsync();
+    expectDefined(host.querySelector('a')).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true }),
+    );
+    expect(openLinkText).not.toHaveBeenCalled();
+    expectDefined(release)(true);
+    await Promise.resolve();
+
+    expect(beforeOpenLink).toHaveBeenCalledOnce();
+    expect(openLinkText).toHaveBeenCalledWith('Project', 'tasks.md', 'tab');
+  });
+
   it.each([
     ['`[[Same]]` [[Same]]', 'Same', '[[Same]]'],
     ['`[Same](Same)` [Same](Same)', 'Same', '[Same](Same)'],

@@ -36,7 +36,7 @@ function keydown(element: HTMLElement, key: string): void {
 }
 
 describe('mountProjectCellEditor', () => {
-  it('contains action clicks within the editor even when close removes it synchronously', () => {
+  it('contains Escape within the editor even when close removes it synchronously', () => {
     const container = freshContainer();
     const outside = vi.fn();
     container.addEventListener('click', outside);
@@ -50,11 +50,11 @@ describe('mountProjectCellEditor', () => {
       onClose: vi.fn(),
     });
 
-    expectDefined(
-      container.querySelector<HTMLButtonElement>('.abyss-project-editor-cancel'),
-    ).click();
+    keydown(expectDefined(container.querySelector<HTMLInputElement>('input')), 'Escape');
 
     expect(outside).not.toHaveBeenCalled();
+    expect(container.querySelector('.abyss-project-editor-save')).toBeNull();
+    expect(container.querySelector('.abyss-project-editor-cancel')).toBeNull();
   });
 
   it('commits a custom number as a number', async () => {
@@ -96,10 +96,81 @@ describe('mountProjectCellEditor', () => {
     );
     input.value = 'Beta';
     expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-list-add')).click();
-    expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-editor-save')).click();
     await settle();
 
     expect(save).toHaveBeenCalledWith([7, 'Alpha', 'Beta']);
+    expect(input.isConnected).toBe(true);
+  });
+
+  it('keeps an editor-owned list removal alive through transient blur', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: ['Celia', 'Mina'],
+      catalog: catalog([], 'list'),
+      save,
+      onClose: vi.fn(),
+    });
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-project-list-input'),
+    );
+    const remove = expectDefined(
+      container.querySelector<HTMLButtonElement>('[aria-label="Remove Celia"]'),
+    );
+
+    remove.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    input.dispatchEvent(
+      new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body }),
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    remove.dispatchEvent(
+      new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body }),
+    );
+    remove.click();
+    await settle();
+
+    expect(save).toHaveBeenCalledWith(['Mina']);
+  });
+
+  it('does not close solely because a suggester closes during a transient focus gap', async () => {
+    const container = document.body.createDiv();
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: ['Celia'],
+      catalog: catalog([], 'list'),
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: vi.fn(),
+    });
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-project-list-input'),
+    );
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    const suggest = expectDefined(internals.control_abyssPrivate.suggest);
+    const outside = document.body.createEl('button');
+    input.addEventListener(
+      'focusout',
+      (event) => {
+        event.stopImmediatePropagation();
+      },
+      {
+        capture: true,
+        once: true,
+      },
+    );
+
+    suggest.open();
+    outside.focus();
+    suggest.close();
+    await settle();
+
+    expect(input.isConnected).toBe(true);
   });
 
   it('commits a pending freeform list value with ordinary Enter', async () => {
@@ -157,14 +228,14 @@ describe('mountProjectCellEditor', () => {
     },
   );
 
-  it('uses configured status names, colors, and IDs', async () => {
+  it('uses and saves literal configured status names while preserving an unknown value', async () => {
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
     mountProjectCellEditor({
       app: new App(),
       container,
       field: { id: 'status', label: 'Status', type: 'status' },
-      value: 'active',
+      value: 'Waiting on vendor',
       catalog: catalog(),
       statuses: [
         {
@@ -184,15 +255,86 @@ describe('mountProjectCellEditor', () => {
       onClose: vi.fn(),
     });
     const select = expectDefined(container.querySelector<HTMLSelectElement>('select'));
-    const done = expectDefined(select.querySelector<HTMLOptionElement>('option[value="done"]'));
+    const done = expectDefined(select.querySelector<HTMLOptionElement>('option[value="Shipped"]'));
     expect(done.textContent).toBe('Shipped');
     expect(done.style.color).toBe('rgb(101, 67, 33)');
-    select.value = 'done';
-
-    keydown(select, 'Enter');
+    expect(select.value).toBe('Waiting on vendor');
+    select.value = 'Shipped';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
     await settle();
 
-    expect(save).toHaveBeenCalledWith('done');
+    expect(save).toHaveBeenCalledWith('Shipped');
+  });
+
+  it.each([
+    ['date', 'input[type="date"]', '2026-09-14'],
+    ['datetime', 'input[type="datetime-local"]', '2026-09-14T09:45'],
+  ] as const)('commits a finished native %s value on change', async (type, selector, value) => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type },
+      value: undefined,
+      catalog: catalog([], type),
+      save,
+      onClose,
+    });
+    const input = expectDefined(container.querySelector<HTMLInputElement>(selector));
+    input.value = value;
+
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
+    expect(save).toHaveBeenCalledWith(value);
+    expect(onClose).toHaveBeenCalledWith('committed', { restoreFocus: true });
+  });
+
+  it('commits a checkbox on change without waiting for Enter', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'checkbox' },
+      value: false,
+      catalog: catalog([], 'checkbox'),
+      save,
+      onClose,
+    });
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('input[type="checkbox"]'),
+    );
+    input.checked = true;
+
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
+    expect(save).toHaveBeenCalledWith(true);
+    expect(onClose).toHaveBeenCalledWith('committed', { restoreFocus: true });
+  });
+
+  it('closes an unchanged editor without writing', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'unchanged',
+      catalog: catalog(),
+      save,
+      onClose,
+    });
+
+    await expect(handle.commit()).resolves.toBe(true);
+
+    expect(save).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('cancels with Escape without saving', () => {
@@ -213,6 +355,104 @@ describe('mountProjectCellEditor', () => {
 
     expect(save).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledWith('cancelled', { restoreFocus: true });
+  });
+
+  it('autosaves a blank text value exactly once on blur', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'old',
+      catalog: catalog(),
+      save,
+      onClose,
+    });
+    const input = expectDefined(container.querySelector<HTMLInputElement>('input'));
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(
+      new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body }),
+    );
+    await settle();
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith('');
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('returns false from a failed commit and retains focus and the draft', async () => {
+    const container = document.body.createDiv();
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'old',
+      catalog: catalog(),
+      save: vi.fn().mockRejectedValue(new ProjectEditValidationError('Conflict')),
+      onClose: vi.fn(),
+    });
+    const input = expectDefined(container.querySelector<HTMLInputElement>('input'));
+    input.value = 'draft';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    await expect(handle.commit()).resolves.toBe(false);
+
+    expect(input.isConnected).toBe(true);
+    expect(input.value).toBe('draft');
+    expect(activeDocument.activeElement).toBe(input);
+  });
+
+  it('coalesces an in-flight commit and saves the newer draft before closing', async () => {
+    const container = document.body.createDiv();
+    let release: (() => void) | undefined;
+    const first = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const save = vi.fn().mockReturnValueOnce(first).mockResolvedValue(undefined);
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'old',
+      catalog: catalog(),
+      save,
+      onClose: vi.fn(),
+    });
+    const input = expectDefined(container.querySelector<HTMLInputElement>('input'));
+    input.value = 'first';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const committed = handle.commit();
+    input.value = 'second';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const coalesced = handle.commit();
+    expectDefined(release)();
+
+    await expect(Promise.all([committed, coalesced])).resolves.toEqual([true, true]);
+    expect(save.mock.calls).toEqual([['first'], ['second']]);
+  });
+
+  it('does not treat an empty native input with badInput as a clear', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'start', property: 'start', label: 'Start', type: 'date' },
+      value: '2026-09-08',
+      catalog: catalog([], 'date'),
+      save,
+      onClose: vi.fn(),
+    });
+    const input = expectDefined(container.querySelector<HTMLInputElement>('input[type="date"]'));
+    input.value = '';
+    Object.defineProperty(input, 'validity', { value: { badInput: true }, configurable: true });
+
+    await expect(handle.commit()).resolves.toBe(false);
+    expect(save).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('valid date');
   });
 
   it('retains the draft and reports one boundary error when an I/O save rejects', async () => {
@@ -311,6 +551,27 @@ describe('mountProjectCellEditor', () => {
 });
 
 describe('ProjectPropertySuggest', () => {
+  it('reports popup ownership once for each open lifetime', () => {
+    const onOpen = vi.fn();
+    const onClose = vi.fn();
+    const suggest = new ProjectPropertySuggest({
+      app: new App(),
+      input: document.body.createEl('input'),
+      values: [],
+      onPick: vi.fn(),
+      onOpen,
+      onClose,
+    });
+
+    suggest.open();
+    suggest.open();
+    suggest.close();
+    suggest.close();
+
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it('offers existing values and escaped wiki-link targets through one suggester', () => {
     const candidate: unknown = Object.assign(Object.create(TFile.prototype), {
       path: 'Projects/Quote "Plan".md',

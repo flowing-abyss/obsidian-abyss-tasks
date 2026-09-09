@@ -727,6 +727,13 @@ export class CenterPanel {
     this.projectsPanel_abyssPrivate?.refreshTableSettings();
   }
 
+  /** Keeps project-table draft ownership at the table before a mode transition. */
+  finishProjectTableEditorBefore(action: () => void): void {
+    const panel = this.projectsPanel_abyssPrivate;
+    if (panel === null) action();
+    else panel.finishTableEditorBefore(action);
+  }
+
   calendarView(): CalViewType {
     return this.calViewType_abyssPrivate;
   }

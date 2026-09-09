@@ -6,7 +6,8 @@ import {
 } from '../../projects/ObsidianProjectProperties';
 import type { ExpectedProjectStatus, ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
-import type { ProjectField } from '../../projects/projectFields';
+import { ProjectEditHistory } from '../../projects/projectEditHistory';
+import type { ProjectCellChange, ProjectEditResult } from '../../projects/projectEdits';
 import type { CalendarSettings } from '../../settings/types';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { renderProjectDashboard } from './ProjectsDashboardView';
@@ -28,6 +29,7 @@ export class ProjectsPanel {
   private readonly renderTasks: (host: HTMLElement, path: string) => void;
   private readonly saveSettings: () => Promise<void>;
   private readonly projectProperties: ProjectPropertyCatalog;
+  private readonly editHistory: ProjectEditHistory;
   private el: HTMLElement | null = null;
   private tableHost: HTMLElement | null = null;
   private tableView: ProjectsTableView | null = null;
@@ -46,6 +48,7 @@ export class ProjectsPanel {
     this.renderTasks = opts.renderTasks ?? ((): void => {});
     this.saveSettings = opts.saveSettings ?? (async (): Promise<void> => {});
     this.projectProperties = opts.projectProperties ?? new ObsidianProjectProperties(app);
+    this.editHistory = new ProjectEditHistory((changes) => this.applyTableEdits(changes));
   }
 
   mount(el: HTMLElement): void {
@@ -58,10 +61,8 @@ export class ProjectsPanel {
       settings: this.settings,
       catalog: this.projectProperties,
       saveSettings: this.saveSettings,
-      saveProperty: (path, field, value, expectedValue) =>
-        this.saveProperty(path, field, value, expectedValue),
-      saveStatus: (path, statusId, expectedStatus) =>
-        this.saveStatus(path, statusId, expectedStatus),
+      applyEdits: (changes) => this.applyTableEdits(changes),
+      history: this.editHistory,
       createProject: (name) => this.createProject(name),
       openProject: (path) => {
         this.state.set('projectsPanel', { view: 'dashboard', path });
@@ -91,6 +92,13 @@ export class ProjectsPanel {
     this.tableView?.refreshFields();
   }
 
+  /** Runs an action after the table's active draft is committed or explicitly cancelled. */
+  finishTableEditorBefore(action: () => void): void {
+    const table = this.tableView;
+    if (table === null) action();
+    else table.finishEditorBeforeAction(action);
+  }
+
   destroy(): void {
     for (const off of this.offs) off();
     this.offs = [];
@@ -118,14 +126,8 @@ export class ProjectsPanel {
     this.projectStore.refresh();
   }
 
-  private async saveProperty(
-    path: string,
-    field: ProjectField,
-    value: unknown,
-    expectedValue: unknown,
-  ): Promise<void> {
-    await this.projectManager.setProperty(path, field, value, expectedValue);
-    this.projectStore.refresh();
+  private async applyTableEdits(changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> {
+    return this.projectManager.applyEdits(changes);
   }
 
   private openNote(path: string): void {

@@ -1,3 +1,4 @@
+import type { App, Component } from 'obsidian';
 import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
 import { isProjectStatusField, projectFieldValue } from '../../projects/projectFields';
 import {
@@ -7,6 +8,7 @@ import {
 } from '../../projects/projectTableModel';
 import type { Project } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
+import { renderTaskText } from '../../ui/renderTaskText';
 
 function statusFor(
   project: Project,
@@ -15,10 +17,18 @@ function statusFor(
   return project.statusId === null ? undefined : statuses.find(({ id }) => id === project.statusId);
 }
 
+function progressBand(percent: number | null): 'empty' | 'low' | 'quarter' | 'half' | 'high' {
+  if (percent === null || percent === 0) return 'empty';
+  if (percent < 25) return 'low';
+  if (percent < 50) return 'quarter';
+  if (percent < 75) return 'half';
+  return 'high';
+}
+
 function renderProgress(cell: HTMLElement, project: Project): void {
   const progress = projectProgress(project.stats);
   const root = cell.createDiv({
-    cls: `abyss-project-table-progress${progress.percent === null ? ' is-empty' : ''}`,
+    cls: `abyss-project-table-progress is-${progressBand(progress.percent)}`,
     attr: {
       'aria-label':
         progress.percent === null
@@ -72,33 +82,109 @@ function renderUnavailableType(cell: HTMLElement, field: ProjectFieldCatalogItem
 interface RenderProjectTableCellOptions {
   readonly field: ProjectFieldCatalogItem;
   readonly statuses: readonly ProjectStatus[];
+  readonly app: App;
+  readonly component: Component;
+  readonly beforeOpenLink: () => Promise<boolean>;
   readonly openProject: (path: string) => void;
+  readonly onRemoveListValue: (index: number) => void;
+}
+
+interface RenderValueTextOptions {
+  readonly host: HTMLElement;
+  readonly raw: unknown;
+  readonly displayed: string;
+  readonly sourcePath: string;
+}
+
+function renderValueText(
+  valueOptions: RenderValueTextOptions,
+  options: RenderProjectTableCellOptions,
+): void {
+  const { host, raw, displayed, sourcePath } = valueOptions;
+  if (typeof raw !== 'string') {
+    host.setText(displayed);
+    return;
+  }
+  renderTaskText(host, raw, {
+    app: options.app,
+    sourcePath,
+    component: options.component,
+    beforeOpenLink: options.beforeOpenLink,
+  });
+}
+
+function renderEmptyList(cell: HTMLElement): void {
+  cell.createSpan({ cls: 'abyss-project-table-empty-value', text: '—' });
+}
+
+interface RenderListValuesOptions {
+  readonly cell: HTMLElement;
+  readonly project: Project;
+  readonly field: ProjectFieldCatalogItem;
+  readonly values: readonly unknown[];
+  readonly displayedValues: readonly string[];
+}
+
+function renderListValues(
+  valueOptions: RenderListValuesOptions,
+  options: RenderProjectTableCellOptions,
+): void {
+  const { cell, project, field, values, displayedValues } = valueOptions;
+  if (values.length === 0) {
+    renderEmptyList(cell);
+    return;
+  }
+  const list = cell.createDiv({ cls: 'abyss-project-table-values' });
+  for (const [index, displayed] of displayedValues.entries()) {
+    const item = list.createSpan({ cls: 'abyss-project-table-value' });
+    const text = item.createSpan({ cls: 'abyss-project-table-value-text' });
+    renderValueText(
+      { host: text, raw: values[index], displayed, sourcePath: project.path },
+      options,
+    );
+    if (field.type === null) continue;
+    const remove = item.createEl('button', {
+      cls: 'abyss-project-table-value-remove',
+      text: '×',
+      attr: { type: 'button', 'aria-label': `Remove ${displayed}` },
+    });
+    remove.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      options.onRemoveListValue(index);
+    });
+  }
+}
+
+interface RenderScalarValueOptions {
+  readonly cell: HTMLElement;
+  readonly project: Project;
+  readonly value: unknown;
+  readonly displayed: string;
+}
+
+function renderScalarValue(
+  valueOptions: RenderScalarValueOptions,
+  options: RenderProjectTableCellOptions,
+): void {
+  const { cell, project, value, displayed } = valueOptions;
+  const empty = value === null || value === undefined || value === '';
+  const text = cell.createSpan({ cls: empty ? 'abyss-project-table-empty-value' : '' });
+  renderValueText({ host: text, raw: value, displayed, sourcePath: project.path }, options);
 }
 
 function renderPropertyValue(
   cell: HTMLElement,
   project: Project,
   field: ProjectFieldCatalogItem,
-  statuses: readonly ProjectStatus[],
+  options: RenderProjectTableCellOptions,
 ): void {
   const value = projectFieldValue(project, field);
-  const displayedValues = projectTableDisplayValues(project, field, statuses);
+  const displayedValues = projectTableDisplayValues(project, field, options.statuses);
   if (Array.isArray(value)) {
-    const list = cell.createDiv({ cls: 'abyss-project-table-values' });
-    for (const displayed of displayedValues) {
-      list.createSpan({
-        cls: value.length === 0 ? 'abyss-project-table-empty-value' : 'abyss-project-table-value',
-        text: displayed,
-      });
-    }
+    renderListValues({ cell, project, field, values: value, displayedValues }, options);
   } else {
-    cell.createSpan({
-      cls:
-        value === null || value === undefined || value === ''
-          ? 'abyss-project-table-empty-value'
-          : '',
-      text: displayedValues[0] ?? '—',
-    });
+    renderScalarValue({ cell, project, value, displayed: displayedValues[0] ?? '—' }, options);
   }
   renderUnavailableType(cell, field);
 }
@@ -128,5 +214,5 @@ export function renderProjectTableCell(
     renderProgress(cell, project);
     return;
   }
-  renderPropertyValue(cell, project, field, statuses);
+  renderPropertyValue(cell, project, field, options);
 }

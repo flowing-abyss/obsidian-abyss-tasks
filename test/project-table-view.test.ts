@@ -1,9 +1,16 @@
-import { Menu } from 'obsidian';
+import { App, MarkdownRenderer, Menu } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
+import { ProjectEditHistory } from '../src/projects/projectEditHistory';
+import type {
+  AppliedProjectCellChange,
+  ProjectCellChange,
+  ProjectEditResult,
+} from '../src/projects/projectEdits';
+import { createOwnedInferredPropertyClear } from '../src/projects/projectEdits';
 import type { ProjectFieldCatalogItem } from '../src/projects/projectFields';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -55,23 +62,54 @@ function catalog(
 
 function mount(
   projects: Project[],
-  overrides: Partial<ConstructorParameters<typeof ProjectsTableView>[1]> = {},
+  overrides: Partial<ConstructorParameters<typeof ProjectsTableView>[1]> & {
+    saveProperty?: (
+      path: string,
+      field: ProjectFieldCatalogItem,
+      value: unknown,
+      expectedValue: unknown,
+    ) => Promise<void>;
+    saveStatus?: (path: string, value: string, expectedValue: unknown) => Promise<void>;
+  } = {},
 ) {
   const host = freshContainer();
   activeDocument.body.append(host);
   const config = settings();
   const saveSettings = vi.fn().mockResolvedValue(undefined);
-  const saveProperty = vi.fn().mockResolvedValue(undefined);
-  const saveStatus = vi.fn().mockResolvedValue(undefined);
+  const saveProperty = overrides.saveProperty ?? vi.fn().mockResolvedValue(undefined);
+  const saveStatus = overrides.saveStatus ?? vi.fn().mockResolvedValue(undefined);
   const openProject = vi.fn();
+  const successful = (changes: readonly ProjectCellChange[]): ProjectEditResult => ({
+    applied: changes.map((change): AppliedProjectCellChange => ({
+      ...change,
+      sourceProperty: change.field.property ?? config.projects.statusProperty,
+      sourceKey: change.field.property ?? config.projects.statusProperty,
+      previousValue: change.expectedValue,
+      previousExists: change.expectedValue !== undefined,
+      appliedExists: change.value !== undefined && change.value !== '',
+    })),
+    failed: [],
+  });
+  const applyEdits =
+    overrides.applyEdits ??
+    vi.fn(async (changes: readonly ProjectCellChange[]) => {
+      const change = expectDefined(changes[0]);
+      if (change.field.type === 'status') {
+        await saveStatus(change.path, String(change.value), change.expectedValue);
+      } else {
+        await saveProperty(change.path, change.field, change.value, change.expectedValue);
+      }
+      return successful(changes);
+    });
+  const history = overrides.history ?? new ProjectEditHistory(applyEdits);
   const view = new ProjectsTableView(host, {
-    app: null as never,
+    app: new App(),
     state: new AppState(),
     settings: config,
     catalog: catalog(),
     saveSettings,
-    saveProperty,
-    saveStatus,
+    applyEdits,
+    history,
     createProject: vi.fn().mockResolvedValue(undefined),
     openProject,
     ...overrides,
@@ -99,6 +137,36 @@ describe('ProjectsTableView', () => {
         (row) => row.dataset['projectPath'],
       ),
     ).toEqual(['Projects/A.md', 'Projects/B.md', 'Projects/Z.md']);
+  });
+
+  it('assigns the four quarter progress tones while keeping zero neutral', () => {
+    const { host } = mount(
+      [
+        ['Zero', 0],
+        ['Low', 2],
+        ['Quarter', 4],
+        ['Half', 6],
+        ['High', 8],
+      ].map(([name, done]) =>
+        project({
+          path: `Projects/${name}.md`,
+          name: String(name),
+          stats: { total: 10, done: Number(done), cancelled: 0, inProgress: 0 },
+        }),
+      ),
+    );
+    const band = (path: string): string =>
+      expectDefined(
+        host.querySelector<HTMLElement>(
+          `[data-project-path="Projects/${path}.md"] .abyss-project-table-progress`,
+        ),
+      ).className;
+
+    expect(band('Zero')).toContain('is-empty');
+    expect(band('Low')).toContain('is-low');
+    expect(band('Quarter')).toContain('is-quarter');
+    expect(band('Half')).toContain('is-half');
+    expect(band('High')).toContain('is-high');
   });
 
   it('keeps available status badges visible while toggling their persisted filters', async () => {
@@ -236,6 +304,12 @@ describe('ProjectsTableView', () => {
     );
     resize.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100 }));
     startHeader.ownerDocument.dispatchEvent(new PointerEvent('pointermove', { clientX: 140 }));
+    expect(
+      host.querySelector<HTMLTableColElement>('col[data-column-id="start"]')?.style.width,
+    ).toBe('290px');
+    expect(host.querySelector<HTMLTableElement>('.abyss-project-table')?.style.width).toBe(
+      '1490px',
+    );
     startHeader.ownerDocument.dispatchEvent(new PointerEvent('pointerup', { clientX: 140 }));
     await flushMicrotasks();
 
@@ -370,22 +444,60 @@ describe('ProjectsTableView', () => {
     expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(2);
   });
 
-  it('renders and searches an explicit wiki-link alias verbatim', () => {
+  it('renders and searches an explicit wiki-link alias as a real anchor', async () => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+      const anchor = holder.createEl('a', { cls: 'internal-link' });
+      anchor.textContent = 'West team';
+      anchor.setAttribute('data-href', 'People/Team');
+    });
     const config = settings();
     config.projects.table.columns.push({ id: 'property:creator', visible: true });
-    const { host } = mount([project({ frontmatter: { creator: '[[People/Team|Team/West]]' } })], {
+    const { host } = mount([project({ frontmatter: { creator: '[[People/Team|West team]]' } })], {
       settings: config,
       catalog: catalog([{ name: 'creator', type: 'text' }]),
     });
 
-    expect(
-      host.querySelector('.abyss-project-table-cell[data-column-id="property:creator"]')
-        ?.textContent,
-    ).toBe('Team/West');
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    const link = expectDefined(
+      host.querySelector<HTMLAnchorElement>(
+        '.abyss-project-table-cell[data-column-id="property:creator"] a.internal-link',
+      ),
+    );
+    expect(link.textContent).toBe('West team');
+    link.click();
+    expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
     const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
-    search.value = 'Team/West';
+    search.value = 'West team';
     search.dispatchEvent(new Event('input', { bubbles: true }));
     expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(1);
+  });
+
+  it('renders a Markdown group anchor without toggling its group or editing its cell', async () => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+      const anchor = holder.createEl('a', { cls: 'internal-link', text: 'Core team' });
+      anchor.setAttribute('data-href', 'People/Team');
+    });
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:creator', visible: true });
+    config.projects.table.groupBy = 'property:creator';
+    const app = new App();
+    vi.spyOn(app.metadataCache, 'getFirstLinkpathDest').mockReturnValue(null);
+    const { host } = mount([project({ frontmatter: { creator: '[Core team](People/Team)' } })], {
+      app,
+      settings: config,
+      catalog: catalog([{ name: 'creator', type: 'text' }]),
+    });
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    const toggle = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    );
+    const link = expectDefined(toggle.querySelector<HTMLAnchorElement>('a.internal-link'));
+
+    link.click();
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(1);
+    expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
   });
 
   it('keeps collapsed group keys stable across project refreshes', () => {
@@ -458,24 +570,6 @@ describe('ProjectsTableView', () => {
     expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
   });
 
-  it('opens the next cell after cancelling with the editor button', () => {
-    const { host } = mount([project({})]);
-    expectDefined(
-      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
-    ).click();
-    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-project-editor-cancel')).click();
-
-    expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
-    expectDefined(
-      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
-    ).click();
-    expect(
-      host.querySelector(
-        '.abyss-project-table-cell[data-column-id="end"] .abyss-project-cell-editor',
-      ),
-    ).not.toBeNull();
-  });
-
   it('preserves search, scroll, focused editor and draft across repeated data refreshes', () => {
     const a = project({});
     const { host, view } = mount([a, project({ path: 'Projects/B.md', name: 'Beta' })]);
@@ -501,9 +595,12 @@ describe('ProjectsTableView', () => {
     expect(activeDocument.activeElement).toBe(draft);
   });
 
-  it('keeps an editor attached through table interactions and resumes rendering after cancel', () => {
+  it('blocks table mutation on a failed draft and runs only the latest action after Escape', async () => {
     const item = project({});
-    const { host, view, config } = mount([item]);
+    const saveProperty = vi
+      .fn()
+      .mockRejectedValue(new ProjectEditValidationError('Fix the draft first.'));
+    const { host, view, config } = mount([item], { saveProperty });
     const endCell = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
     );
@@ -517,14 +614,6 @@ describe('ProjectsTableView', () => {
         `.abyss-project-status-filter[data-status-key="id:${active.id}"]`,
       ),
     );
-    const groupToggle = expectDefined(
-      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
-    );
-    const resize = expectDefined(
-      host.querySelector<HTMLElement>(
-        '.abyss-project-table-header-cell[data-column-id="end"] .abyss-project-column-resize',
-      ),
-    );
     const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
 
     endCell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
@@ -536,31 +625,19 @@ describe('ProjectsTableView', () => {
     search.value = 'A';
     search.dispatchEvent(new Event('input', { bubbles: true }));
     statusFilter.click();
-    statusFilter.click();
-    groupToggle.click();
-    resize.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100 }));
-    resize.ownerDocument.dispatchEvent(new PointerEvent('pointermove', { clientX: 120 }));
-    resize.ownerDocument.dispatchEvent(new PointerEvent('pointerup', { clientX: 120 }));
+    await flushMicrotasks();
 
     expect(draft.isConnected).toBe(true);
     expect(draft.value).toBe('2026-12-24');
     expect(activeDocument.activeElement).toBe(draft);
-    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'desc' });
+    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'asc' });
     expect(config.projects.table.hiddenStatuses).toEqual([]);
-    expect(config.projects.table.columns.find(({ id }) => id === 'end')?.width).toBe(170);
 
     draft.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    expectDefined(
-      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
-    ).click();
-    view.update([{ ...item, frontmatter: { ...item.frontmatter, end: '2027-01-02' } }]);
-
-    const refreshed = expectDefined(
-      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
-    );
-    expect(refreshed.textContent).toContain('2027-01-02');
-    refreshed.click();
-    expect(refreshed.querySelector('.abyss-project-cell-editor')).not.toBeNull();
+    expect(config.projects.table.hiddenStatuses).toEqual([`id:${active.id}`]);
+    expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'asc' });
+    expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
+    view.destroy();
   });
 
   it('explains unavailable custom fields while retaining their value and curated editing', () => {
@@ -596,41 +673,150 @@ describe('ProjectsTableView', () => {
     expect(end.querySelector('.abyss-project-cell-editor')).not.toBeNull();
   });
 
-  it('retains a status draft across external refresh and surfaces the stale conflict', async () => {
-    const item = project({});
-    const done = expectDefined(DEFAULT_SETTINGS.projects.statuses[2]);
-    const saveStatus = vi.fn(
-      async (
-        _path: string,
-        _statusId: string,
-        expectedStatus: Pick<Project, 'statusId' | 'rawStatus'>,
-      ) => {
-        if (item.statusId !== expectedStatus.statusId) {
-          throw new ProjectEditValidationError(
-            'Status changed externally. Reload the project and try your edit again.',
-          );
-        }
-      },
+  it('restores only a history-owned cleared custom cell and forwards its proof on refill', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Budget', visible: true });
+    const budget = {
+      id: 'property:Budget',
+      property: 'Budget',
+      label: 'Budget',
+      type: 'number',
+    } as const;
+    const ownedClear = createOwnedInferredPropertyClear({
+      path: 'Projects/A.md',
+      fieldId: budget.id,
+      sourceProperty: budget.property,
+      sourceKey: budget.property,
+      type: budget.type,
+    });
+    const applied: AppliedProjectCellChange = {
+      path: 'Projects/A.md',
+      field: budget,
+      value: '',
+      expectedValue: 10,
+      previousValue: 10,
+      sourceProperty: 'Budget',
+      sourceKey: 'Budget',
+      previousExists: true,
+      appliedExists: false,
+      ownedClear,
+    };
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => ({
+      applied: changes.map((change) => ({
+        ...applied,
+        ...change,
+        previousValue: change.expectedValue,
+        previousExists: false,
+        appliedExists: true,
+      })),
+      failed: [],
+    }));
+    const history = new ProjectEditHistory(applyEdits);
+    history.record({ applied: [applied], failed: [] });
+    const { host } = mount([project({ frontmatter: {} })], {
+      settings: config,
+      catalog: catalog(),
+      history,
+      applyEdits,
+    });
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-cell[data-column-id="property:Budget"]',
+      ),
     );
+
+    expect(cell.hasClass('is-editable')).toBe(true);
+    cell.click();
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('input[type="number"]'));
+    input.value = '42';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    const calledChanges = expectDefined(applyEdits.mock.lastCall?.[0]);
+    const change: ProjectCellChange = expectDefined(calledChanges[0]);
+    expect(change).toMatchObject({
+      path: 'Projects/A.md',
+      value: 42,
+      expectedValue: undefined,
+      expectedExists: false,
+      ownedClear,
+    });
+    expect(change.field).toMatchObject({ id: 'property:Budget', type: 'number' });
+  });
+
+  it('projects an applied receipt before the native metadata cache catches up', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Owner', visible: true });
+    const { host } = mount([project({ frontmatter: { Owner: 'Original' } })], {
+      settings: config,
+      catalog: catalog([{ name: 'Owner', type: 'text' }]),
+    });
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Owner"]'),
+    );
+    cell.click();
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('input[type="text"]'));
+    input.value = '';
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    await flushMicrotasks();
+
+    const rendered = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Owner"]'),
+    );
+    expect(rendered.textContent).toBe('—');
+    rendered.click();
+    expect(expectDefined(rendered.querySelector<HTMLInputElement>('input')).value).toBe('');
+  });
+
+  it('serializes table-session mutations for later Undo and Redo integration', async () => {
+    const { view } = mount([project({})]);
+    let release: (() => void) | undefined;
+    const first = view.runTableSessionMutation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const secondMutation = vi.fn().mockResolvedValue('second');
+    const second = view.runTableSessionMutation(secondMutation);
+    await flushMicrotasks();
+    expect(secondMutation).not.toHaveBeenCalled();
+
+    expectDefined(release)();
+    await expect(first).resolves.toBeUndefined();
+    await expect(second).resolves.toBe('second');
+    expect(secondMutation).toHaveBeenCalledOnce();
+  });
+
+  it('retains a status draft across external refresh and surfaces the stale conflict', async () => {
+    const item = project({ frontmatter: { status: active.name } });
+    const done = expectDefined(DEFAULT_SETTINGS.projects.statuses[2]);
+    const saveStatus = vi.fn(async (_path: string, _status: string, expectedStatus: unknown) => {
+      if (item.frontmatter['status'] !== expectedStatus) {
+        throw new ProjectEditValidationError(
+          'Status changed externally. Reload the project and try your edit again.',
+        );
+      }
+    });
     const { host, view } = mount([item], { saveStatus });
     const cell = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
     );
     cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     const select = expectDefined(cell.querySelector<HTMLSelectElement>('select'));
-    select.value = done.id;
+    select.value = done.name;
 
-    item.statusId = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]).id;
+    const externalStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    item.statusId = externalStatus.id;
+    item.frontmatter['status'] = externalStatus.name;
     view.update([item]);
     expect(select.isConnected).toBe(true);
-    expect(select.value).toBe(done.id);
+    expect(select.value).toBe(done.name);
     select.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks();
 
-    expect(saveStatus).toHaveBeenCalledWith('Projects/A.md', done.id, {
-      statusId: active.id,
-      rawStatus: null,
-    });
+    expect(saveStatus).toHaveBeenCalledWith('Projects/A.md', done.name, active.name);
     expect(select.isConnected).toBe(true);
     expect(host.querySelector('.abyss-project-editor-error')?.textContent).toContain(
       'changed externally',

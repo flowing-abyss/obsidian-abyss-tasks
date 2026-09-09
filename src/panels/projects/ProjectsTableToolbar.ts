@@ -10,7 +10,8 @@ export interface ProjectsTableToolbarOptions {
   readonly fields: () => readonly ProjectFieldCatalogItem[];
   readonly onSearch: (query: string) => void;
   readonly onStatusToggle: (key: string) => void;
-  readonly onViewChange: () => void;
+  readonly onGroupBy: (field: string) => void;
+  readonly onSortBy: (field: string) => void;
   readonly onReset: () => void;
 }
 
@@ -138,8 +139,7 @@ export class ProjectsTableToolbar {
           })),
         ],
         onSelect: (value) => {
-          settings.groupBy = value;
-          this.options_abyssPrivate.onViewChange();
+          this.options_abyssPrivate.onGroupBy(value);
         },
       },
       {
@@ -155,11 +155,7 @@ export class ProjectsTableToolbar {
           isDefault: field.id === 'end',
         })),
         onSelect: (value) => {
-          settings.sortBy = {
-            field: value,
-            dir: settings.sortBy.field === value && settings.sortBy.dir === 'asc' ? 'desc' : 'asc',
-          };
-          this.options_abyssPrivate.onViewChange();
+          this.options_abyssPrivate.onSortBy(value);
         },
       },
     ];

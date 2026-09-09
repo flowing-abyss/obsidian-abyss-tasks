@@ -8,6 +8,7 @@ import {
   buildProjectTableModel,
   projectProgress,
   projectTableDisplayValues,
+  projectTableGroupLinkIdentity,
 } from '../src/projects/projectTableModel';
 import type { Project } from '../src/projects/types';
 import type { ProjectStatus } from '../src/settings/types';
@@ -193,6 +194,65 @@ describe('buildProjectTableModel', () => {
       ['Lin', ['Shared', 'Solo']],
     ]);
     expect(result.uniqueVisibleCount).toBe(2);
+  });
+
+  it('groups link aliases by resolved target and retains the representative source context', () => {
+    expect(
+      projectTableGroupLinkIdentity(
+        '[[People/Team|Platform]]',
+        'Projects/Origin.md',
+        () => 'People/Team.md',
+      ),
+    ).toBe('link:people/team.md');
+    const projects = [
+      project('Zulu', {
+        path: 'Projects/Origin.md',
+        frontmatter: { owners: '[[People/Team|Platform]]' },
+      }),
+      project('Alpha', {
+        path: 'Projects/Sorted-first.md',
+        frontmatter: { owners: '[Core team](../../People/Team.md)' },
+      }),
+    ];
+    const result = buildProjectTableModel({
+      projects,
+      fields,
+      statuses,
+      settings: table({ groupBy: 'property:owners', sortBy: { field: 'name', dir: 'asc' } }),
+      resolveLink: (target) =>
+        target === 'People/Team' || target === '../../People/Team.md'
+          ? 'People/Team.md'
+          : undefined,
+    });
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]).toMatchObject({
+      key: 'link:people/team.md',
+      label: 'Platform',
+      value: '[[People/Team|Platform]]',
+      sourcePath: 'Projects/Origin.md',
+    });
+    expect(result.groups[0]?.projects.map(({ name }) => name)).toEqual(['Alpha', 'Zulu']);
+  });
+
+  it('keeps identical relative link text separate when native resolution finds different notes', () => {
+    const projects = [
+      project('One', { path: 'Projects/One/Plan.md', frontmatter: { owners: '[[Team]]' } }),
+      project('Two', { path: 'Projects/Two/Plan.md', frontmatter: { owners: '[[Team]]' } }),
+    ];
+    const result = buildProjectTableModel({
+      projects,
+      fields,
+      statuses,
+      settings: table({ groupBy: 'property:owners' }),
+      resolveLink: (_target, sourcePath) =>
+        sourcePath.includes('/One/') ? 'Projects/One/Team.md' : 'Projects/Two/Team.md',
+    });
+
+    expect(result.groups.map(({ key }) => key)).toEqual([
+      'link:projects/one/team.md',
+      'link:projects/two/team.md',
+    ]);
   });
 
   it('sorts list values as a deduplicated display set without changing source order', () => {

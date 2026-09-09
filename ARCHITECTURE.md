@@ -127,6 +127,11 @@ Panels may issue commands and query snapshots through the public task boundary. 
 navigation and transient interaction state through `AppState`. They must not edit task Markdown
 directly or import private task-layer modules.
 
+`PanelNavigator` asks `CenterPanel` to finish any active project-table editor before the existing
+mode-changing `AppState.batch()`. The delegate remains local to the center/project/table ownership
+chain, so a rejected draft leaves both the active mode and table projection unchanged. The table
+retains only the newest deliberate continuation until a successful retry or Escape.
+
 `RightPanel` owns dependency search, direct relation lists, local removal Undo, and navigation between
 related tasks. Inspector history lives in `AppState` for the panel or modal session. It stores complete
 structural task paths, preserves only proven successors after a write, and never becomes persisted
@@ -171,10 +176,12 @@ unavailable.
 
 `projectTableModel` is a DOM-free projection over `Project` snapshots. It applies typed sorting,
 search, status filtering, and scalar or multi-value grouping while reporting a unique visible
-project count. It also owns the shared progress calculation: completed top-level tasks divided by
-all non-cancelled top-level tasks. `projectTableSettings` owns defaults and normalization for saved
-column order, aliases, widths, visibility, grouping, sorting, and hidden statuses. These preferences
-live under `projects.table`; project metadata remains in Markdown.
+project count. Link-valued groups receive a narrow native resolver from the table, use the resolved
+note path as identity, and retain the representative raw value and its original source path for
+rendering and later edits. It also owns the shared progress calculation: completed top-level tasks
+divided by all non-cancelled top-level tasks. `projectTableSettings` owns defaults and normalization
+for saved column order, aliases, widths, visibility, grouping, sorting, and hidden statuses. These
+preferences live under `projects.table`; project metadata remains in Markdown.
 
 `ProjectsPanel` owns the long-lived project-table controller and the vault property-catalog
 subscription. Ordinary project-store refreshes update that controller instead of reconstructing
@@ -182,6 +189,18 @@ it, so search text, collapsed groups, scroll position, focused cells, and active
 session state. The controller renders the table through the shared view-options primitive and sends
 all edits through `ProjectManager`; it does not write Markdown or frontmatter itself. Switching to a
 project dashboard temporarily detaches the table surface, and returning reattaches the same session.
+
+`ProjectCellEditor` owns typed drafts, suggestion-popup lifetime, validation, and autosave. Its
+async commit handle remains mounted on failure and coalesces a newer draft while a save is pending.
+`ProjectsTableView` owns a single mutation coordinator around each `applyEdits()` plus
+`ProjectEditHistory.record()` pair; future paste/drop and Undo/Redo use that same coordinator and
+publish successful receipts through its session projection seam. Store and native catalog refreshes
+are deferred while a coordinated mutation is active and reconciled afterward, so
+history-owned clear lookup never races a busy history operation. Successful receipts are projected
+into the table's session snapshot immediately; the existing `ProjectStore` metadata barrier later
+replaces that projection with the authoritative cache, avoiding stale reopen drafts while Obsidian
+publishes native metadata. Cell and group links reuse the shared Markdown renderer with their
+original source paths and ask the same editor boundary to finish before navigation.
 
 Property edits go through `ProjectManager`. `applyEdits()` performs a full guarded preflight, groups
 all changes to one note into one `Vault.process` transaction, and returns exact applied and failed

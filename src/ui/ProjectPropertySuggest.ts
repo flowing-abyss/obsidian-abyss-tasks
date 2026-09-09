@@ -15,6 +15,8 @@ export interface ProjectPropertySuggestOptions {
   readonly onPick: (value: string) => void;
   readonly includeNotes?: boolean;
   readonly sourcePath?: string;
+  readonly onOpen?: () => void;
+  readonly onClose?: () => void;
 }
 
 function matches(value: string, query: string): boolean {
@@ -27,6 +29,7 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
   private readonly values_abyssPrivate: readonly string[];
   private readonly onPick_abyssPrivate: (value: string) => void;
   private readonly options_abyssPrivate: ProjectPropertySuggestOptions;
+  private open_abyssPrivate = false;
 
   constructor(options: ProjectPropertySuggestOptions) {
     super(options.app, options.input);
@@ -35,6 +38,20 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
     this.options_abyssPrivate = options;
     this.noteSource_abyssPrivate =
       options.includeNotes === true ? new VaultFileSuggestionSource(options.app) : undefined;
+  }
+
+  override open(): void {
+    super.open();
+    if (this.open_abyssPrivate) return;
+    this.open_abyssPrivate = true;
+    this.options_abyssPrivate.onOpen?.();
+  }
+
+  override close(): void {
+    super.close();
+    if (!this.open_abyssPrivate) return;
+    this.open_abyssPrivate = false;
+    this.options_abyssPrivate.onClose?.();
   }
 
   getSuggestions(query: string): ProjectPropertySuggestion[] {

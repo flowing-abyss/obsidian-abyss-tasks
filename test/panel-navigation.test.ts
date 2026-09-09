@@ -43,16 +43,20 @@ function harness(
   if (options.mode !== undefined) state.set('mode', options.mode);
   if (options.selection !== undefined) state.set('selectedList', options.selection);
   let calendarView = options.calendarView ?? 'month';
+  const finishProjectTableEditorBefore = vi.fn((action: () => void) => {
+    action();
+  });
   const center: PanelNavigationCenterPort = {
     calendarView: vi.fn(() => calendarView),
     setCalendarView: vi.fn((view: CalViewType) => {
       calendarView = view;
     }),
     openQuickCapture: vi.fn(),
+    finishProjectTableEditorBefore,
   };
   const save = vi.fn().mockResolvedValue(undefined);
   const navigator = new PanelNavigator(state, options.settings ?? settings(), center, save);
-  return { state, center, navigator, save };
+  return { state, center, navigator, save, finishProjectTableEditorBefore };
 }
 
 describe('center inspector selection', () => {
@@ -191,6 +195,20 @@ describe('PanelNavigator', () => {
 
     expect(projects.state.get('mode')).toBe('projects');
     expect(search.state.get('mode')).toBe('search');
+  });
+
+  it('lets the project table finish its editor before mutating the active mode', () => {
+    let continueNavigation: (() => void) | undefined;
+    const { state, navigator, finishProjectTableEditorBefore } = harness({ mode: 'projects' });
+    finishProjectTableEditorBefore.mockImplementation((action: () => void) => {
+      continueNavigation = action;
+    });
+
+    navigator.openCalendar();
+
+    expect(state.get('mode')).toBe('projects');
+    expectDefined(continueNavigation)();
+    expect(state.get('mode')).toBe('calendar');
   });
 
   it('opens Quick Capture through its port without changing the active mode or list', () => {

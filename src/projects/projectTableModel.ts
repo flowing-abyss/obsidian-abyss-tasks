@@ -1,3 +1,4 @@
+import { parseLinks } from '../markdown/links';
 import type { ProjectStatus } from '../settings/types';
 import {
   findProjectFieldById,
@@ -19,6 +20,7 @@ interface ProjectTableGroup {
   key: string;
   label: string;
   value: unknown;
+  sourcePath?: string;
   projects: Project[];
 }
 
@@ -26,6 +28,7 @@ interface ProjectTableValueGroup {
   key: string;
   label: string;
   value: unknown;
+  sourcePath?: string;
 }
 
 export interface ProjectTableModel {
@@ -40,7 +43,10 @@ export interface ProjectTableModelInput {
   statuses: readonly ProjectStatus[];
   settings: ProjectTableSettings;
   search?: string;
+  resolveLink?: (target: string, sourcePath: string) => string | undefined;
 }
+
+type ProjectTableLinkResolver = (target: string, sourcePath: string) => string | undefined;
 
 export function projectProgress(stats: ProjectStats): ProjectProgress {
   const total = Math.max(0, stats.total - stats.cancelled);
@@ -81,11 +87,28 @@ function stringValue(value: unknown): string {
 }
 
 function linkLabel(value: string): string {
-  if (!value.startsWith('[[') || !value.endsWith(']]')) return value;
-  const inner = value.slice(2, -2);
-  const separator = inner.indexOf('|');
-  if (separator >= 0) return inner.slice(separator + 1);
-  return inner.slice(inner.lastIndexOf('/') + 1);
+  const token = exactLink(value);
+  return token?.display ?? value;
+}
+
+function exactLink(value: string): ReturnType<typeof parseLinks>[number] | undefined {
+  const tokens = parseLinks(value);
+  const token = tokens[0];
+  return tokens.length === 1 && token?.raw === value ? token : undefined;
+}
+
+/** Resolves one complete cell link to a stable group identity in its original note context. */
+export function projectTableGroupLinkIdentity(
+  value: string,
+  sourcePath: string,
+  resolveLink: ProjectTableLinkResolver | undefined,
+): string | undefined {
+  const link = exactLink(value);
+  if (link === undefined) return undefined;
+  const resolved = resolveLink?.(link.target, sourcePath);
+  return resolved === undefined
+    ? `link:unresolved:${sourcePath.toLocaleLowerCase()}:${link.target.toLocaleLowerCase()}`
+    : `link:${resolved.toLocaleLowerCase()}`;
 }
 
 function displayScalar(value: unknown): string {
@@ -227,43 +250,75 @@ function statusValueGroup(
       key: statusGroupKey(project),
       label: statusLabel(project, statuses),
       value: project.statusId,
+      sourcePath: project.path,
     },
   ];
 }
 
 function progressValueGroup(project: Project): ProjectTableValueGroup[] {
   const progress = projectProgress(project.stats);
-  if (progress.percent === null) return [{ key: 'empty', label: 'No value', value: null }];
+  if (progress.percent === null) {
+    return [{ key: 'empty', label: 'No value', value: null, sourcePath: project.path }];
+  }
   const label = projectProgressDisplayValue(project.stats);
-  return [{ key: `value:${label.toLocaleLowerCase()}`, label, value: label }];
+  return [
+    {
+      key: `value:${label.toLocaleLowerCase()}`,
+      label,
+      value: label,
+      sourcePath: project.path,
+    },
+  ];
+}
+
+function propertyValueGroup(
+  value: unknown,
+  project: Project,
+  resolveLink: ProjectTableLinkResolver | undefined,
+): ProjectTableValueGroup {
+  if (isEmptyValue(value)) {
+    return { key: 'empty', label: 'No value', value, sourcePath: project.path };
+  }
+  const text = stringValue(value);
+  const link = exactLink(text);
+  let key = `value:${text.toLocaleLowerCase()}`;
+  if (link !== undefined) {
+    key = projectTableGroupLinkIdentity(text, project.path, resolveLink) ?? key;
+  }
+  return {
+    key,
+    label: link?.display ?? text,
+    value,
+    sourcePath: project.path,
+  };
 }
 
 function propertyValueGroups(
   project: Project,
   field: ProjectFieldCatalogItem,
+  resolveLink: ProjectTableLinkResolver | undefined,
 ): ProjectTableValueGroup[] {
   const raw = projectFieldValue(project, field);
   const values = Array.isArray(raw) ? raw : [raw];
   const groups = new Map<string, ProjectTableValueGroup>();
   for (const value of values) {
-    const empty = isEmptyValue(value);
-    const label = empty ? 'No value' : linkLabel(stringValue(value));
-    const key = empty ? 'empty' : `value:${stringValue(value).toLocaleLowerCase()}`;
-    if (!groups.has(key)) groups.set(key, { key, label, value });
+    const group = propertyValueGroup(value, project, resolveLink);
+    if (!groups.has(group.key)) groups.set(group.key, group);
   }
   return groups.size > 0
     ? [...groups.values()]
-    : [{ key: 'empty', label: 'No value', value: null }];
+    : [{ key: 'empty', label: 'No value', value: null, sourcePath: project.path }];
 }
 
 function groupValues(
   project: Project,
   field: ProjectFieldCatalogItem,
   statuses: readonly ProjectStatus[],
+  resolveLink: ProjectTableModelInput['resolveLink'],
 ): ProjectTableValueGroup[] {
   if (isProjectStatusField(field)) return statusValueGroup(project, statuses);
   if (field.type === 'progress') return progressValueGroup(project);
-  return propertyValueGroups(project, field);
+  return propertyValueGroups(project, field, resolveLink);
 }
 
 interface MakeGroupsInput {
@@ -272,16 +327,17 @@ interface MakeGroupsInput {
   sortedProjects: readonly Project[];
   availableStatuses: readonly StatusGroup[];
   statuses: readonly ProjectStatus[];
+  resolveLink: ProjectTableModelInput['resolveLink'];
 }
 
 function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
-  const { projects, groupField, sortedProjects, availableStatuses, statuses } = input;
+  const { projects, groupField, sortedProjects, availableStatuses, statuses, resolveLink } = input;
   if (groupField === undefined || groupField.id === 'none') {
     return [{ key: 'all', label: '', value: null, projects: [...sortedProjects] }];
   }
   const byKey = new Map<string, ProjectTableGroup>();
   for (const project of projects) {
-    for (const group of groupValues(project, groupField, statuses)) {
+    for (const group of groupValues(project, groupField, statuses, resolveLink)) {
       const current = byKey.get(group.key) ?? { ...group, projects: [] };
       current.projects.push(project);
       byKey.set(group.key, current);
@@ -293,12 +349,16 @@ function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
   }
   if (isProjectStatusField(groupField)) {
     return availableStatuses
-      .map(({ key, label, statusId }) => ({
-        key,
-        label,
-        value: statusId,
-        projects: byKey.get(key)?.projects ?? [],
-      }))
+      .map(({ key, label, statusId }) => {
+        const existing = byKey.get(key);
+        return {
+          key,
+          label,
+          value: statusId,
+          ...(existing?.sourcePath === undefined ? {} : { sourcePath: existing.sourcePath }),
+          projects: existing?.projects ?? [],
+        };
+      })
       .filter(({ projects: groupProjects }) => groupProjects.length > 0);
   }
   return [...byKey.values()].sort((left, right) => {
@@ -335,6 +395,7 @@ export function buildProjectTableModel(input: ProjectTableModelInput): ProjectTa
       sortedProjects,
       availableStatuses: availableStatusGroups,
       statuses: input.statuses,
+      resolveLink: input.resolveLink,
     }),
     uniqueVisibleCount: visibleProjects.length,
     availableStatusGroups,
