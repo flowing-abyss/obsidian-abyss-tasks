@@ -241,6 +241,53 @@ describe('SettingsPersistenceCoordinator migration', () => {
     expect(port.writes).toEqual([]);
   });
 
+  it.each(['corrupt', 'future', 'read'] as const)(
+    'preserves unmarked legacy views when %s state is unavailable during a later static save',
+    async (failure) => {
+      const legacy = legacySettings({
+        taskPrefix: '#before',
+        listViewStates: {
+          today: {
+            groupBy: 'tag',
+            sortBy: { field: 'title', dir: 'desc' },
+            filters: [],
+            futureListOption: 'retain',
+          },
+        },
+        sectionCollapse: { pinned: true, projects: false, tags: true },
+      });
+      const legacyProjects = legacy['projects'] as Record<string, unknown>;
+      const legacyTable = legacyProjects['table'] as Record<string, unknown>;
+      legacyTable['futureTableOption'] = { retain: true };
+      const original = structuredClone(legacy);
+      const port = memoryPort(legacy, stateEnvelope());
+      if (failure === 'corrupt') port.stateText = '{bad json';
+      if (failure === 'future') {
+        port.stateText = JSON.stringify({ schemaVersion: 99, views: {} });
+      }
+      if (failure === 'read') {
+        port.state.read = vi.fn().mockRejectedValue(new Error('permission denied'));
+      }
+      const originalStateText = port.stateText;
+      const coordinator = new SettingsPersistenceCoordinator(port);
+
+      const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      loaded.settings.taskPrefix = '#after';
+      await coordinator.saveSettings(loaded.settings);
+
+      const saved = port.staticData as Record<string, unknown>;
+      expect(saved['taskPrefix']).toBe('#after');
+      expect(saved['listViewStates']).toEqual(original['listViewStates']);
+      expect(saved['sectionCollapse']).toEqual(original['sectionCollapse']);
+      expect((saved['projects'] as Record<string, unknown>)['table']).toEqual(
+        (original['projects'] as Record<string, unknown>)['table'],
+      );
+      expect(saved).not.toHaveProperty(STATIC_SAVED_VIEW_STATE_MARKER);
+      expect(port.stateText).toBe(originalStateText);
+      expect(port.writes).toEqual(['data.json']);
+    },
+  );
+
   it('does not overwrite unreadable static settings with defaults', async () => {
     const port = memoryPort(undefined, undefined);
     port.loadStatic = vi.fn().mockRejectedValue(new Error('invalid data.json'));

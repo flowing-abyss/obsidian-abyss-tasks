@@ -421,6 +421,27 @@ function createStaticDocument(settings: CalendarSettings): Record<string, unknow
   return data;
 }
 
+function restoreLegacyViewFields(
+  data: Record<string, unknown>,
+  legacy: Record<string, unknown>,
+): Record<string, unknown> {
+  for (const key of ['listViewStates', 'sectionCollapse'] as const) {
+    if (key in legacy) data[key] = detached(legacy[key]);
+  }
+  const legacyProjects = isRecord(legacy['projects']) ? legacy['projects'] : undefined;
+  if (legacyProjects !== undefined && 'table' in legacyProjects) {
+    const projects = isRecord(data['projects']) ? data['projects'] : {};
+    projects['table'] = detached(legacyProjects['table']);
+    data['projects'] = projects;
+  }
+  if (STATIC_SAVED_VIEW_STATE_MARKER in legacy) {
+    data[STATIC_SAVED_VIEW_STATE_MARKER] = detached(legacy[STATIC_SAVED_VIEW_STATE_MARKER]);
+  } else {
+    delete data[STATIC_SAVED_VIEW_STATE_MARKER];
+  }
+  return data;
+}
+
 function serialize(value: unknown): string {
   return JSON.stringify(value);
 }
@@ -464,6 +485,7 @@ export class SettingsPersistenceCoordinator {
   private lastStateSerialized: string | undefined;
   private rawStateEnvelope: Record<string, unknown> | undefined;
   private stateRecovery: SavedViewStateRecovery | undefined;
+  private guardedLegacyStatic: Record<string, unknown> | undefined;
   private stateWritesSuspended = false;
 
   constructor(private readonly port: SettingsPersistencePort) {}
@@ -481,8 +503,11 @@ export class SettingsPersistenceCoordinator {
     }
     if (state.kind === 'unavailable' && state.issue !== undefined) {
       this.stateWritesSuspended = true;
+      if (rawStatic[STATIC_SAVED_VIEW_STATE_MARKER] !== SAVED_VIEW_STATE_SCHEMA_VERSION) {
+        this.guardedLegacyStatic = detached(rawStatic);
+      }
       const composed = composeSettings(rawStatic, decodeViews({}, defaults), defaults);
-      this.lastStaticSerialized = serialize(createStaticDocument(composed.settings));
+      this.lastStaticSerialized = serialize(this.staticDocument(composed.settings));
       return { ...composed, issues: [state.issue] };
     }
     if (rawStatic[STATIC_SAVED_VIEW_STATE_MARKER] === SAVED_VIEW_STATE_SCHEMA_VERSION) {
@@ -494,7 +519,7 @@ export class SettingsPersistenceCoordinator {
   }
 
   saveSettings(settings: CalendarSettings): Promise<void> {
-    const payload = createStaticDocument(settings);
+    const payload = this.staticDocument(settings);
     const serialized = serialize(payload);
     return this.enqueue(async () => {
       if (serialized === this.lastStaticSerialized) return;
@@ -547,6 +572,13 @@ export class SettingsPersistenceCoordinator {
         },
       };
     }
+  }
+
+  private staticDocument(settings: CalendarSettings): Record<string, unknown> {
+    const data = createStaticDocument(settings);
+    return this.guardedLegacyStatic === undefined
+      ? data
+      : restoreLegacyViewFields(data, this.guardedLegacyStatic);
   }
 
   private async installRecognizedState(

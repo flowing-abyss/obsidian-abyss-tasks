@@ -265,6 +265,8 @@ normalization. On first migration it writes and verifies the versioned state env
 exact pre-split recovery snapshot, before removing moved keys from `data.json`. A recognized state
 document wins when both copies exist. Corrupt, unreadable, and future-version state is left in place,
 view writes are suspended, and the runtime uses temporary view defaults. The coordinator retains
+unmarked legacy view fields during subsequent static saves until state recovery is verified, so an
+unrelated static change cannot complete migration or discard the only usable legacy copy. It also retains
 unknown static and nested view keys, queues detached write snapshots in order, deduplicates unchanged
 writes, and continues the queue after a rejected operation.
 

@@ -1,4 +1,5 @@
-import { App, DropdownComponent, Setting } from 'obsidian';
+import type * as ObsidianModule from 'obsidian';
+import { App, DropdownComponent, Notice, Setting } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import type { ProjectPropertyInfo } from '../src/projects/projectFields';
@@ -8,6 +9,11 @@ import {
   renderProjectTableSettings,
 } from '../src/settings/projectTableSettings';
 import { expectDefined } from './helpers';
+
+vi.mock('obsidian', async () => {
+  const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
+  return { ...actual, Notice: vi.fn() };
+});
 
 function catalog(
   properties: readonly ProjectPropertyInfo[] = [
@@ -204,6 +210,79 @@ describe('renderProjectTableSettings', () => {
     } finally {
       dropdownSpy.mockRestore();
     }
+  });
+
+  it('shows exactly one Notice when a curated date source static save fails', async () => {
+    const projects = buildDefaultProjectsSettings();
+    const saveStatic = vi.fn().mockRejectedValue(new Error('disk full'));
+    const saveViewState = vi.fn().mockResolvedValue(undefined);
+    const container = document.body.createDiv();
+    const dropdowns: DropdownComponent[] = [];
+    const dropdownSpy = vi.spyOn(Setting.prototype, 'addDropdown').mockImplementation(function (
+      this: Setting,
+      callback,
+    ) {
+      const dropdown = new DropdownComponent(this.controlEl);
+      this.components.push(dropdown);
+      dropdowns.push(dropdown);
+      callback(dropdown);
+      return this;
+    });
+    vi.mocked(Notice).mockClear();
+    try {
+      renderProjectTableSettings({
+        app: new App(),
+        container,
+        projects,
+        catalog: catalog([
+          { name: 'Start', type: 'date' },
+          { name: 'Kickoff', type: 'date' },
+          { name: 'End', type: 'date' },
+        ]),
+        saveStatic,
+        saveViewState,
+        refresh: vi.fn(),
+      });
+
+      expectDefined(dropdowns[0]).setValue('Kickoff');
+      await settle();
+
+      expect(saveStatic).toHaveBeenCalledOnce();
+      expect(saveViewState).not.toHaveBeenCalled();
+      expect(Notice).toHaveBeenCalledOnce();
+      expect(vi.mocked(Notice).mock.calls[0]?.[0]).toBe(
+        'Could not save project table settings: disk full',
+      );
+      expect(container.querySelector('.abyss-project-table-settings-error')?.textContent).toBe(
+        'Could not save project table settings: disk full',
+      );
+    } finally {
+      dropdownSpy.mockRestore();
+    }
+  });
+
+  it('leaves state-save Notice ownership at the plugin boundary', async () => {
+    const projects = buildDefaultProjectsSettings();
+    const saveViewState = vi.fn().mockRejectedValue(new Error('state unavailable'));
+    const container = document.body.createDiv();
+    vi.mocked(Notice).mockClear();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog(),
+      saveStatic: vi.fn().mockResolvedValue(undefined),
+      saveViewState,
+      refresh: vi.fn(),
+    });
+
+    expectDefined(
+      container.querySelector<HTMLInputElement>('[data-column-id="status"] input[type="checkbox"]'),
+    ).click();
+    await settle();
+
+    expect(saveViewState).toHaveBeenCalledOnce();
+    expect(Notice).not.toHaveBeenCalled();
   });
 
   it('changes a display label without changing the custom property source key', async () => {

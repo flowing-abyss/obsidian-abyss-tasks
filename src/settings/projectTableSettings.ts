@@ -423,7 +423,7 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
     cls: 'abyss-project-table-settings-error',
     attr: { role: 'status', 'aria-live': 'polite' },
   });
-  const persist = (save: () => Promise<void>, refresh = false): void => {
+  const persist = (save: () => Promise<void>, refresh = false, showFailureNotice = false): void => {
     feedback.empty();
     void save().then(
       () => {
@@ -433,12 +433,13 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
         const message = error instanceof Error ? error.message : String(error);
         feedback.setText(`Could not save project table settings: ${message}`);
         console.error('[abyss-tasks] Could not save project table settings', error);
+        if (showFailureNotice) new Notice(`Could not save project table settings: ${message}`);
       },
     );
   };
 
   const persistStatic = (refresh = false): void => {
-    persist(options.saveStatic, refresh);
+    persist(options.saveStatic, refresh, true);
   };
   const persistViewState = (refresh = false): void => {
     persist(options.saveViewState, refresh);
