@@ -4,13 +4,25 @@ import { findFrontmatterProperty } from './projectFields';
 
 export interface ProjectPropertyCatalog {
   list(): readonly ProjectPropertyInfo[] | null;
+  inspect(property: string): ProjectNativePropertySnapshot;
   values(property: string): readonly string[];
   onChange(callback: () => void): () => void;
 }
 
+export type ProjectNativePropertySnapshot =
+  | { kind: 'unavailable' }
+  | {
+      kind: 'available';
+      property: ProjectPropertyInfo | undefined;
+      assignment:
+        | { kind: 'none' }
+        | { kind: 'assigned'; nativeType: string; type: ProjectPropertyType | null };
+    };
+
 interface MetadataTypeManager {
   getAllProperties(): unknown;
   getTypeInfo(name: string): unknown;
+  getAssignedWidget?: (name: string) => unknown;
   on(event: 'changed', callback: (property: string) => void): EventRef;
   offref(ref: EventRef): void;
 }
@@ -68,6 +80,26 @@ function propertyNames(properties: unknown): string[] | undefined {
   return names;
 }
 
+function sameProperty(left: string, right: string): boolean {
+  return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
+}
+
+type NativeAssignment = Extract<ProjectNativePropertySnapshot, { kind: 'available' }>['assignment'];
+
+function nativeAssignment(
+  manager: MetadataTypeManager,
+  property: string,
+): NativeAssignment | undefined {
+  const assigned = manager.getAssignedWidget?.(property);
+  if (assigned === null) return { kind: 'none' };
+  if (typeof assigned !== 'string' || assigned.length === 0) return undefined;
+  return {
+    kind: 'assigned',
+    nativeType: assigned,
+    type: NATIVE_TYPES[assigned] ?? null,
+  };
+}
+
 function addValue(values: Map<string, string>, value: unknown): void {
   if (typeof value !== 'string' && !(typeof value === 'number' && Number.isFinite(value))) return;
   const text = String(value);
@@ -120,6 +152,31 @@ export class ObsidianProjectProperties implements ProjectPropertyCatalog {
       return names.map((name) => ({ name, type: nativeTypeFrom(manager.getTypeInfo(name)) }));
     } catch {
       return null;
+    }
+  }
+
+  inspect(property: string): ProjectNativePropertySnapshot {
+    try {
+      const manager = metadataTypeManager(this.app_abyssPrivate);
+      if (manager === undefined || typeof manager.getAssignedWidget !== 'function') {
+        return { kind: 'unavailable' };
+      }
+      const names = propertyNames(manager.getAllProperties());
+      if (names === undefined) return { kind: 'unavailable' };
+      const matches = names.filter((name) => sameProperty(name, property));
+      if (matches.length > 1) return { kind: 'unavailable' };
+      const name = matches[0];
+      const assignment = nativeAssignment(manager, name ?? property);
+      if (assignment === undefined) return { kind: 'unavailable' };
+      const nativeProperty =
+        name === undefined ? undefined : { name, type: nativeTypeFrom(manager.getTypeInfo(name)) };
+      return {
+        kind: 'available',
+        property: nativeProperty,
+        assignment,
+      };
+    } catch {
+      return { kind: 'unavailable' };
     }
   }
 

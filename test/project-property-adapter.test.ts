@@ -28,6 +28,98 @@ function eventSource() {
 }
 
 describe('ObsidianProjectProperties', () => {
+  it('inspects native presence and explicit assignment provenance without inventing missing types', () => {
+    const assignments = new Map<string, string | null>([
+      ['budget', null],
+      ['aliases', 'aliases'],
+      ['formula', 'formula'],
+      ['missing', null],
+    ]);
+    const manager = {
+      getAllProperties: () => ({
+        budget: { name: 'Budget' },
+        aliases: { name: 'aliases' },
+      }),
+      getTypeInfo: (name: string) => ({
+        expected: { type: name === 'Budget' ? 'number' : 'aliases' },
+      }),
+      getAssignedWidget: (name: string) => assignments.get(name.toLocaleLowerCase()) ?? null,
+      ...eventSource(),
+    };
+    const app = {
+      metadataTypeManager: manager,
+      vault: { getMarkdownFiles: () => [] },
+      metadataCache: { getFileCache: () => null, ...eventSource() },
+    } as unknown as App;
+    const catalog = new ObsidianProjectProperties(app);
+
+    expect(catalog.inspect('budget')).toEqual({
+      kind: 'available',
+      property: { name: 'Budget', type: 'number' },
+      assignment: { kind: 'none' },
+    });
+    expect(catalog.inspect('aliases')).toEqual({
+      kind: 'available',
+      property: { name: 'aliases', type: 'list' },
+      assignment: { kind: 'assigned', nativeType: 'aliases', type: 'list' },
+    });
+    expect(catalog.inspect('formula')).toEqual({
+      kind: 'available',
+      property: undefined,
+      assignment: { kind: 'assigned', nativeType: 'formula', type: null },
+    });
+    expect(catalog.inspect('missing')).toEqual({
+      kind: 'available',
+      property: undefined,
+      assignment: { kind: 'none' },
+    });
+  });
+
+  it('reports unavailable inspection for missing, malformed, throwing, or ambiguous provenance', () => {
+    const base = {
+      getAllProperties: () => ({ budget: { name: 'Budget' } }),
+      getTypeInfo: () => ({ expected: { type: 'number' } }),
+      ...eventSource(),
+    };
+    const app = (manager: object) =>
+      ({
+        metadataTypeManager: manager,
+        vault: { getMarkdownFiles: () => [] },
+        metadataCache: { getFileCache: () => null, ...eventSource() },
+      }) as unknown as App;
+
+    expect(new ObsidianProjectProperties(app(base)).inspect('Budget')).toEqual({
+      kind: 'unavailable',
+    });
+    expect(
+      new ObsidianProjectProperties(
+        app({ ...base, getAssignedWidget: () => ({ widget: 'number' }) }),
+      ).inspect('Budget'),
+    ).toEqual({ kind: 'unavailable' });
+    expect(
+      new ObsidianProjectProperties(
+        app({
+          ...base,
+          getAssignedWidget: () => {
+            throw new Error('private API unavailable');
+          },
+        }),
+      ).inspect('Budget'),
+    ).toEqual({ kind: 'unavailable' });
+    expect(
+      new ObsidianProjectProperties(
+        app({
+          ...base,
+          getAllProperties: () => ({
+            first: { name: 'Budget' },
+            second: { name: 'BUDGET' },
+          }),
+          getAssignedWidget: () => null,
+        }),
+      ).inspect('Budget'),
+    ).toEqual({ kind: 'unavailable' });
+  });
+
   it('uses getTypeInfo(name).expected.type and maps every supported native type', () => {
     const nativeTypes = new Map([
       ['Title', 'text'],

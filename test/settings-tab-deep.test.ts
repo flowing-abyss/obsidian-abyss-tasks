@@ -943,6 +943,11 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
         { name: 'Конец', type: 'date' },
         { name: 'Wrong type', type: 'number' },
       ],
+      inspect: () => ({
+        kind: 'available',
+        property: undefined,
+        assignment: { kind: 'none' },
+      }),
       values: () => [],
       onChange: () => () => {},
     };
@@ -966,6 +971,11 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
     projects.statusProperty = 'status';
     const projectProperties: ProjectPropertyCatalog = {
       list: () => [{ name: 'Status', type: 'text' }],
+      inspect: () => ({
+        kind: 'available',
+        property: { name: 'Status', type: 'text' },
+        assignment: { kind: 'none' },
+      }),
       values: () => [],
       onChange: () => () => {},
     };

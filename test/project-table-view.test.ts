@@ -36,8 +36,18 @@ function settings(): CalendarSettings {
 function catalog(
   properties: NonNullable<ReturnType<ProjectPropertyCatalog['list']>> = [],
 ): ProjectPropertyCatalog {
+  const all = [
+    { name: 'start', type: 'date' as const },
+    { name: 'end', type: 'date' as const },
+    ...properties,
+  ];
   return {
-    list: () => [{ name: 'start', type: 'date' }, { name: 'end', type: 'date' }, ...properties],
+    list: () => all,
+    inspect: (property) => ({
+      kind: 'available',
+      property: all.find(({ name }) => name === property),
+      assignment: { kind: 'none' },
+    }),
     values: () => [],
     onChange: () => () => {},
   };
@@ -120,6 +130,7 @@ describe('ProjectsTableView', () => {
   it('renders a read-only status with its configured label and unavailable badge', () => {
     const unavailableCatalog: ProjectPropertyCatalog = {
       list: () => null,
+      inspect: () => ({ kind: 'unavailable' }),
       values: () => [],
       onChange: () => () => {},
     };

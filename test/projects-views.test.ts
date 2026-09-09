@@ -109,6 +109,11 @@ describe('ProjectsPanel dispatch', () => {
   } as never;
   const projectProperties = {
     list: () => [],
+    inspect: () => ({
+      kind: 'available' as const,
+      property: undefined,
+      assignment: { kind: 'none' as const },
+    }),
     values: () => [],
     onChange: () => () => {},
   };
@@ -166,6 +171,11 @@ describe('ProjectsPanel dispatch', () => {
           { name: 'end', type: 'date' },
           { name: 'Budget', type: 'number' },
         ],
+        inspect: () => ({
+          kind: 'available',
+          property: undefined,
+          assignment: { kind: 'none' },
+        }),
         values: () => [],
         onChange: () => () => {},
       },

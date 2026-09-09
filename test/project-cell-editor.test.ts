@@ -16,6 +16,11 @@ function catalog(
 ): ProjectPropertyCatalog {
   return {
     list: () => [{ name: 'Custom', type }],
+    inspect: (property) => ({
+      kind: 'available',
+      property: { name: property, type },
+      assignment: { kind: 'none' },
+    }),
     values: () => values,
     onChange: () => () => {},
   };

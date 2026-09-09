@@ -24,6 +24,11 @@ async function frontmatterValue(
 function manager(app: Awaited<ReturnType<typeof createAppWithFiles>>, settings: CalendarSettings) {
   const properties: ProjectPropertyCatalog = {
     list: () => [{ name: 'status', type: 'text' }],
+    inspect: (property) => ({
+      kind: 'available',
+      property: { name: property, type: 'text' },
+      assignment: { kind: 'none' },
+    }),
     values: () => [],
     onChange: () => () => {},
   };

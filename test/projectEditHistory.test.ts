@@ -5,6 +5,7 @@ import type {
   ProjectCellChange,
   ProjectEditResult,
 } from '../src/projects/projectEdits';
+import { createOwnedInferredPropertyClear } from '../src/projects/projectEdits';
 import type { ProjectField } from '../src/projects/projectFields';
 
 const field: ProjectField = {
@@ -17,7 +18,7 @@ const field: ProjectField = {
 function applied(path: string, value: unknown, previousValue: unknown): AppliedProjectCellChange {
   return {
     path,
-    field,
+    field: { ...field },
     value,
     expectedValue: previousValue,
     previousValue,
@@ -40,6 +41,16 @@ function successful(changes: readonly ProjectCellChange[]): ProjectEditResult {
     })),
     failed: [],
   };
+}
+
+function ownedClear(path: string) {
+  return createOwnedInferredPropertyClear({
+    path,
+    fieldId: field.id,
+    sourceProperty: 'Owners',
+    sourceKey: 'OWNERS',
+    type: 'list',
+  });
 }
 
 describe('ProjectEditHistory', () => {
@@ -169,6 +180,103 @@ describe('ProjectEditHistory', () => {
     expect(history.canUndo).toBe(false);
     expect(apply).toHaveBeenCalledTimes(50);
     expect(apply.mock.calls[49]?.[0][0]?.path).toBe('1.md');
+  });
+
+  it('copies and evicts owned clear capabilities with their bounded receipts', () => {
+    const history = new ProjectEditHistory(async (changes) => successful(changes));
+    const owned = ownedClear('A.md');
+    history.record({
+      applied: [
+        {
+          ...applied('A.md', undefined, ['old']),
+          sourceKey: 'OWNERS',
+          appliedExists: false,
+          ownedClear: owned,
+        },
+      ],
+      failed: [],
+    });
+
+    const copied = history.ownedClear('A.md', field);
+    expect(copied).toEqual(owned);
+    expect(copied).not.toBe(owned);
+    expect(Object.isFrozen(copied)).toBe(true);
+
+    for (let index = 0; index < 50; index += 1) {
+      history.record({ applied: [applied(`${index}.md`, index, index - 1)], failed: [] });
+    }
+    expect(history.ownedClear('A.md', field)).toBeUndefined();
+  });
+
+  it('tracks a final-occurrence clear created by Undo and forwards it to Redo', async () => {
+    const apply = vi.fn(
+      async (changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> => ({
+        applied: changes.map((change) => {
+          const appliedExists = change.valueExists ?? true;
+          return {
+            ...change,
+            previousValue: change.expectedValue,
+            sourceProperty: change.sourceProperty ?? 'Owners',
+            sourceKey: change.sourceKey ?? 'OWNERS',
+            previousExists: change.expectedExists ?? true,
+            appliedExists,
+            ...(appliedExists ? {} : { ownedClear: ownedClear(change.path) }),
+          };
+        }),
+        failed: [],
+      }),
+    );
+    const history = new ProjectEditHistory(apply);
+    history.record({
+      applied: [
+        {
+          ...applied('A.md', ['new'], undefined),
+          sourceKey: 'OWNERS',
+          previousExists: false,
+        },
+      ],
+      failed: [],
+    });
+
+    await history.undo();
+    expect(history.ownedClear('A.md', field)?.sourceKey).toBe('OWNERS');
+
+    await history.redo();
+    expect(apply.mock.calls[1]?.[0][0]?.ownedClear?.sourceKey).toBe('OWNERS');
+    expect(history.ownedClear('A.md', field)).toBeUndefined();
+  });
+
+  it('discards owned clear capabilities and rejects discard while history is busy', async () => {
+    let release: (result: ProjectEditResult) => void = () => {};
+    const pending = new Promise<ProjectEditResult>((resolve) => {
+      release = resolve;
+    });
+    const history = new ProjectEditHistory(() => {
+      return pending;
+    });
+    history.record({
+      applied: [
+        {
+          ...applied('A.md', undefined, ['old']),
+          appliedExists: false,
+          ownedClear: ownedClear('A.md'),
+        },
+      ],
+      failed: [],
+    });
+    const undo = history.undo();
+
+    expect(() => {
+      history.discard();
+    }).toThrow(/already in progress/u);
+    release({ applied: [], failed: [{ path: 'A.md', message: 'failed' }] });
+    await undo;
+    expect(history.ownedClear('A.md', field)).toBeDefined();
+
+    history.discard();
+    expect(history.ownedClear('A.md', field)).toBeUndefined();
+    expect(history.canUndo).toBe(false);
+    expect(history.canRedo).toBe(false);
   });
 
   it('returns an empty receipt when there is nothing to undo or redo', async () => {

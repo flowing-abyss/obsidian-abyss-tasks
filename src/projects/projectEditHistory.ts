@@ -1,8 +1,11 @@
 import type {
   AppliedProjectCellChange,
+  OwnedInferredPropertyClear,
   ProjectCellChange,
   ProjectEditResult,
 } from './projectEdits';
+import { copyOwnedInferredPropertyClear } from './projectEdits';
+import type { ProjectFieldCatalogItem } from './projectFields';
 
 const MAX_HISTORY_OPERATIONS = 50;
 
@@ -20,16 +23,21 @@ function copyValue(value: unknown): unknown {
 }
 
 function copyApplied(edit: AppliedProjectCellChange): AppliedProjectCellChange {
-  return {
+  const ownedClear = copyOwnedInferredPropertyClear(edit.ownedClear);
+  const copied: AppliedProjectCellChange = {
     ...edit,
     field: { ...edit.field },
     value: copyValue(edit.value),
     expectedValue: copyValue(edit.expectedValue),
     previousValue: copyValue(edit.previousValue),
   };
+  delete copied.ownedClear;
+  if (ownedClear !== undefined) copied.ownedClear = ownedClear;
+  return copied;
 }
 
 function reverse(edit: AppliedProjectCellChange): ProjectCellChange {
+  const ownedClear = copyOwnedInferredPropertyClear(edit.ownedClear);
   return {
     path: edit.path,
     field: { ...edit.field },
@@ -40,10 +48,12 @@ function reverse(edit: AppliedProjectCellChange): ProjectCellChange {
     expectedExists: edit.appliedExists,
     valueExists: edit.previousExists,
     restoreSourceValue: true,
+    ...(ownedClear === undefined ? {} : { ownedClear }),
   };
 }
 
 function replay(edit: AppliedProjectCellChange): ProjectCellChange {
+  const ownedClear = copyOwnedInferredPropertyClear(edit.ownedClear);
   return {
     path: edit.path,
     field: { ...edit.field },
@@ -54,6 +64,7 @@ function replay(edit: AppliedProjectCellChange): ProjectCellChange {
     expectedExists: edit.previousExists,
     valueExists: edit.appliedExists,
     restoreSourceValue: true,
+    ...(ownedClear === undefined ? {} : { ownedClear }),
   };
 }
 
@@ -81,6 +92,27 @@ export class ProjectEditHistory {
 
   redo(): Promise<ProjectEditResult> {
     return this.runExclusive(() => this.move(this.redoStack, this.undoStack, replay));
+  }
+
+  /** Returns session-owned native provenance only while this exact cell is currently cleared. */
+  ownedClear(path: string, field: ProjectFieldCatalogItem): OwnedInferredPropertyClear | undefined {
+    this.assertIdle();
+    let current: OwnedInferredPropertyClear | undefined;
+    for (const edit of this.undoStack.flat()) {
+      if (!sameCell(edit, path, field)) continue;
+      current = edit.appliedExists ? undefined : copyOwnedInferredPropertyClear(edit.ownedClear);
+    }
+    for (const edit of this.redoStack.flat()) {
+      if (!sameCell(edit, path, field)) continue;
+      current = edit.previousExists ? undefined : copyOwnedInferredPropertyClear(edit.ownedClear);
+    }
+    return current;
+  }
+
+  discard(): void {
+    this.assertIdle();
+    this.undoStack.length = 0;
+    this.redoStack.length = 0;
   }
 
   get canUndo(): boolean {
@@ -117,7 +149,17 @@ export class ProjectEditHistory {
     try {
       const result = await this.apply(operation.map(buildChange));
       const appliedPaths = new Set(result.applied.map(({ path }) => path));
-      const moved = operation.filter(({ path }) => appliedPaths.has(path));
+      const moved = operation
+        .filter(({ path }) => appliedPaths.has(path))
+        .map((edit) => {
+          const ownedClear = copyOwnedInferredPropertyClear(
+            result.applied.find((applied) => sameReceiptCell(applied, edit))?.ownedClear,
+          );
+          const receipt = copyApplied(edit);
+          delete receipt.ownedClear;
+          if (ownedClear !== undefined) receipt.ownedClear = ownedClear;
+          return receipt;
+        });
       const remaining = operation.filter(({ path }) => !appliedPaths.has(path));
       if (remaining.length > 0) source.push(remaining);
       if (moved.length > 0) destination.push(moved);
@@ -127,4 +169,29 @@ export class ProjectEditHistory {
       throw error;
     }
   }
+}
+
+function samePropertyName(left: string, right: string): boolean {
+  return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
+}
+
+function sameCell(
+  edit: AppliedProjectCellChange,
+  path: string,
+  field: ProjectFieldCatalogItem,
+): boolean {
+  return (
+    edit.path === path &&
+    edit.field.id === field.id &&
+    field.property !== undefined &&
+    samePropertyName(edit.sourceProperty, field.property)
+  );
+}
+
+function sameReceiptCell(left: AppliedProjectCellChange, right: AppliedProjectCellChange): boolean {
+  return (
+    left.path === right.path &&
+    left.field.id === right.field.id &&
+    samePropertyName(left.sourceProperty, right.sourceProperty)
+  );
 }

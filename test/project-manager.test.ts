@@ -52,6 +52,7 @@ async function createAppWithFiles(files: Record<string, string>) {
       getTypeInfo: (name: string) => ({
         expected: { type: NATIVE_PROJECT_PROPERTIES.get(name) },
       }),
+      getAssignedWidget: () => null,
       on: () => ({ id: 'project-property-test' }),
       offref: () => {},
     },

@@ -164,6 +164,10 @@ being treated as editable text, and curated source properties cannot also become
 The native property catalog distinguishes successful empty discovery from an unavailable registry:
 an absent Start or End source is editable after successful discovery because its curated role fixes
 the date type, while an existing incompatible source or unavailable discovery remains read-only.
+Its per-property inspection also distinguishes a live property, an explicit native type assignment,
+and an absent unassigned name. The Obsidian adapter contains the read-only private compatibility
+probe for assignment provenance; malformed or inaccessible provenance makes the inspection
+unavailable.
 
 `projectTableModel` is a DOM-free projection over `Project` snapshots. It applies typed sorting,
 search, status filtering, and scalar or multi-value grouping while reporting a unique visible
@@ -190,6 +194,13 @@ to the presentation boundary that initiated the action.
 `ProjectEditHistory` stores at most 50 session-only receipt groups. Undo and Redo use the same batch
 capability with reversed expected values and exact source-key and presence provenance, so they restore
 owned unknown literals and empty values without overwriting external edits or a rebound property.
+When a committed clear removes the final occurrence of an inferred custom property, its receipt also
+owns an immutable, cell-bound native-type capability. History derives the currently cleared cells
+from its two bounded stacks and replaces capabilities from actual partial Undo and Redo results. This
+allows only that absent cell to be restored or refilled while native discovery has no name or explicit
+assignment; live or assigned native types remain authoritative. Refill, supersession, eviction,
+discard, or session end removes the capability, and no schema cache or private native-type write is
+created.
 
 ### Settings and status semantics
 
