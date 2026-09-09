@@ -7067,7 +7067,7 @@ table.abyss-project-table {
 }
 
 .abyss-project-table-row:hover .abyss-project-table-name-cell {
-  background: var(--background-modifier-hover);
+  background: color-mix(in srgb, var(--background-primary) 82%, var(--text-normal) 18%);
 }
 
 .abyss-project-table-cell {
@@ -7081,9 +7081,65 @@ table.abyss-project-table {
   cursor: text;
 }
 
+.abyss-project-table-cell.is-selected {
+  background: color-mix(in srgb, var(--background-primary) 82%, var(--interactive-accent) 18%);
+}
+
+.abyss-project-table-cell.is-selection-focus {
+  box-shadow: inset 0 0 0 2px var(--interactive-accent);
+}
+
+.abyss-project-table-row:hover .abyss-project-table-name-cell.is-selected,
+.abyss-project-table-name-cell.is-selected {
+  background: color-mix(in srgb, var(--background-primary) 78%, var(--interactive-accent) 22%);
+}
+
+.abyss-projects-table.is-name-unpinned .abyss-project-table-name-cell,
+.abyss-projects-table.is-name-unpinned .abyss-project-table th:first-child {
+  position: static;
+}
+
+.abyss-project-table-name-content {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  align-items: center;
+  gap: 4px;
+}
+
+.abyss-projects-table button.abyss-project-table-row-handle {
+  flex: 0 0 auto;
+  width: 18px;
+  min-width: 18px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-faint);
+  cursor: grab;
+  font-size: 11px;
+  letter-spacing: -3px;
+  line-height: 1;
+}
+
+.abyss-projects-table button.abyss-project-table-row-handle:hover,
+.abyss-projects-table button.abyss-project-table-row-handle:focus-visible {
+  color: var(--text-normal);
+}
+
+.abyss-projects-table button.abyss-project-table-row-handle.is-dragging {
+  cursor: grabbing;
+  opacity: 0.55;
+}
+
 .abyss-projects-table button.abyss-project-table-name {
   display: block;
+  flex: 1 1 auto;
   overflow: hidden;
+  min-width: 0;
   width: 100%;
   padding: 0;
   border: 0;
@@ -7108,6 +7164,14 @@ table.abyss-project-table {
   height: 32px;
   padding: 0;
   background: var(--background-secondary-alt);
+}
+
+.abyss-project-table-group-row.is-drop-target td {
+  box-shadow: inset 0 0 0 2px var(--interactive-accent);
+}
+
+.abyss-project-table-group-row.is-drop-disabled td {
+  box-shadow: inset 0 0 0 1px var(--text-error);
 }
 
 .abyss-projects-table button.abyss-project-table-group-toggle {
@@ -7152,6 +7216,15 @@ table.abyss-project-table {
 
 .abyss-project-table-group-toggle .abyss-projects-group-count {
   margin-left: 2px;
+}
+
+.abyss-project-table-drop-hint {
+  overflow: hidden;
+  max-width: 220px;
+  color: var(--text-faint);
+  font-weight: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .abyss-projects-empty {

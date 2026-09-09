@@ -40,7 +40,7 @@ The plugin has several kinds of state, but they do not have equal authority.
 | Tasks and task metadata                         | Markdown files in the Obsidian vault                                                             | `TaskIndex` snapshots and calendar projections |
 | Projects and project status                     | Project Markdown plus membership query, one configured status property, and literal status names | `ProjectStore` entries and task statistics     |
 | Plugin preferences and saved view states        | Obsidian plugin data                                                                             | Migrated in-memory `CalendarSettings`          |
-| Current mode, selection, search, and drag state | `AppState` for the current panel session                                                         | Rendered panel DOM                             |
+| Current mode, selection, search, and drag state | `AppState` or the owning view controller for the current panel session                           | Rendered panel DOM                             |
 
 `TaskIndex` and `ProjectStore` are read models, not secondary databases. They may be rebuilt from the
 vault and current settings. `AppState` coordinates the open interface and must not become a hidden
@@ -190,11 +190,27 @@ session state. The controller renders the table through the shared view-options 
 all edits through `ProjectManager`; it does not write Markdown or frontmatter itself. Switching to a
 project dashboard temporarily detaches the table surface, and returning reattaches the same session.
 
+`ProjectsTableView` owns spreadsheet selection as an occurrence-and-column range over the current
+visible projection. Repeated list-group occurrences remain distinct in that transient range, while
+batch mutations deduplicate their physical project cells. Projection changes reconcile the range
+and move keyboard ownership to the stable table session when the focused occurrence disappears, so
+Undo and Redo remain available after a mutation regroups a row. Copy is synchronous on the DOM
+clipboard event and carries typed raw values plus source-note context in a private payload alongside
+quoted TSV. Paste parses that captured payload before its asynchronous mutation, rebases recognized
+wiki and Markdown links into each destination note's context while preserving syntax, and never
+copies native-type or history capabilities.
+
+Row-to-group moves start only from the dedicated project-row handle and target group headers,
+including collapsed and no-value groups. Scalar moves replace the grouped value; list moves replace
+only the source group value, preserve unrelated values, and deduplicate with the same resolved-link
+identity used by grouping. Dropping a list into No value explicitly clears the whole list. Selection,
+clipboard payloads, drag payloads, and edit history remain bounded to the table session.
+
 `ProjectCellEditor` owns typed drafts, suggestion-popup lifetime, validation, and autosave. Its
 async commit handle remains mounted on failure and coalesces a newer draft while a save is pending.
 `ProjectsTableView` owns a single mutation coordinator around each `applyEdits()` plus
-`ProjectEditHistory.record()` pair; future paste/drop and Undo/Redo use that same coordinator and
-publish successful receipts through its session projection seam. Store and native catalog refreshes
+`ProjectEditHistory.record()` pair; editor saves, paste, clear, group drops, Undo, and Redo use that
+same coordinator and publish successful receipts through its session projection seam. Store and native catalog refreshes
 are deferred while a coordinated mutation is active and reconciled afterward, so
 history-owned clear lookup never races a busy history operation. Successful receipts enter a
 latest-per-cell table overlay immediately. Ordinary task, settings, and unrelated-path store

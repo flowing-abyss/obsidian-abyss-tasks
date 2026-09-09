@@ -17,6 +17,43 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
 
+interface TestTransfer {
+  readonly types: string[];
+  setData(type: string, value: string): void;
+  getData(type: string): string;
+  dropEffect: string;
+  effectAllowed: string;
+}
+
+function transfer(initial: Readonly<Record<string, string>> = {}): TestTransfer {
+  const values = new Map(Object.entries(initial));
+  return {
+    get types() {
+      return [...values.keys()];
+    },
+    setData(type, value) {
+      values.set(type, value);
+    },
+    getData(type) {
+      return values.get(type) ?? '';
+    },
+    dropEffect: 'none',
+    effectAllowed: 'uninitialized',
+  };
+}
+
+function clipboardEvent(type: 'copy' | 'paste', data: TestTransfer): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', { value: data });
+  return event;
+}
+
+function dragEvent(type: string, data: TestTransfer): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', { value: data });
+  return event;
+}
+
 const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
 afterEach(() => {
   activeDocument.body.empty();
@@ -670,7 +707,7 @@ describe('ProjectsTableView', () => {
     const end = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
     );
-    end.click();
+    end.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     expect(end.querySelector('.abyss-project-cell-editor')).not.toBeNull();
   });
 
@@ -727,7 +764,7 @@ describe('ProjectsTableView', () => {
     );
 
     expect(cell.hasClass('is-editable')).toBe(true);
-    cell.click();
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     const input = expectDefined(cell.querySelector<HTMLInputElement>('input[type="number"]'));
     input.value = '42';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -755,7 +792,7 @@ describe('ProjectsTableView', () => {
     const cell = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Owner"]'),
     );
-    cell.click();
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     const input = expectDefined(cell.querySelector<HTMLInputElement>('input[type="text"]'));
     input.value = '';
 
@@ -766,7 +803,7 @@ describe('ProjectsTableView', () => {
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Owner"]'),
     );
     expect(rendered.textContent).toBe('—');
-    rendered.click();
+    rendered.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     expect(expectDefined(rendered.querySelector<HTMLInputElement>('input')).value).toBe('');
   });
 
@@ -794,7 +831,7 @@ describe('ProjectsTableView', () => {
         ),
       );
     const cell = ownerCell('Projects/A.md');
-    cell.click();
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     const input = expectDefined(cell.querySelector<HTMLInputElement>('input'));
     input.value = 'Saved';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
@@ -811,7 +848,7 @@ describe('ProjectsTableView', () => {
 
     const projected = ownerCell('Projects/A.md');
     expect(projected.textContent).toBe('Saved');
-    projected.click();
+    projected.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     expect(expectDefined(projected.querySelector<HTMLInputElement>('input')).value).toBe('Saved');
     expectDefined(projected.querySelector<HTMLInputElement>('input')).dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
@@ -870,7 +907,7 @@ describe('ProjectsTableView', () => {
       ),
     );
     expect(cell.hasClass('is-editable')).toBe(true);
-    cell.click();
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     const input = expectDefined(cell.querySelector<HTMLInputElement>('input'));
     input.value = 'Second';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
@@ -926,7 +963,7 @@ describe('ProjectsTableView', () => {
         '.abyss-project-table-row [data-column-id="property:Owner"]',
       ),
     );
-    cell.click();
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     const input = expectDefined(cell.querySelector<HTMLInputElement>('input'));
     input.value = 'Local';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
@@ -995,7 +1032,7 @@ describe('ProjectsTableView', () => {
         '.abyss-project-table-cell[data-column-id="property:Owners"]',
       ),
     );
-    cell.click();
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     expectDefined(cell.querySelector<HTMLButtonElement>('[aria-label="Remove Celia"]')).click();
     await flushMicrotasks();
     const input = expectDefined(cell.querySelector<HTMLInputElement>('.abyss-project-list-input'));
@@ -1050,7 +1087,7 @@ describe('ProjectsTableView', () => {
     const cell = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-row [data-column-id="property:Owner"]'),
     );
-    cell.click();
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     const input = expectDefined(cell.querySelector<HTMLInputElement>('input'));
     input.value = '"[[People/Anna]]"';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -1147,5 +1184,527 @@ describe('ProjectsTableView', () => {
     await flushMicrotasks();
 
     expect((activeDocument.activeElement as HTMLElement | null)?.dataset['columnId']).toBe('end');
+  });
+
+  it('selects cells on click, navigates and extends with arrows, and edits only on Enter', () => {
+    const { host } = mount([
+      project({ path: 'Projects/A.md', name: 'A' }),
+      project({ path: 'Projects/B.md', name: 'B' }),
+    ]);
+    const first = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/A.md"] [data-column-id="status"]',
+      ),
+    );
+    first.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(first.classList.contains('is-selected')).toBe(true);
+    expect(first.querySelector('.abyss-project-cell-editor')).toBeNull();
+
+    first.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+    );
+    const progress = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/A.md"] [data-column-id="progress"]',
+      ),
+    );
+    expect(progress.classList.contains('is-selection-focus')).toBe(true);
+    progress.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(host.querySelectorAll('.abyss-project-table-cell.is-selected')).toHaveLength(2);
+
+    progress.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    progress.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }),
+    );
+    const status = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/A.md"] [data-column-id="status"]',
+      ),
+    );
+    status.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    expect(status.querySelector('.abyss-project-cell-editor')).not.toBeNull();
+  });
+
+  it('supports Shift-click, Tab and Escape while keeping repeated group occurrences distinct', () => {
+    const config = settings();
+    config.projects.table.groupBy = 'property:Owners';
+    config.projects.table.columns.push({ id: 'property:Owners', visible: true });
+    const item = project({ path: 'Projects/A.md', frontmatter: { Owners: ['A', 'B'] } });
+    const { host } = mount([item], {
+      settings: config,
+      catalog: catalog([{ name: 'Owners', type: 'list' }]),
+    });
+    const occurrences = Array.from(
+      host.querySelectorAll<HTMLElement>('[data-project-path="Projects/A.md"]'),
+    );
+    expect(occurrences).toHaveLength(2);
+    const firstName = expectDefined(
+      occurrences[0]?.querySelector<HTMLElement>('[data-column-id="name"]'),
+    );
+    const secondStatus = expectDefined(
+      occurrences[1]?.querySelector<HTMLElement>('[data-column-id="status"]'),
+    );
+    firstName.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    secondStatus.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+    expect(host.querySelectorAll('.abyss-project-table-cell.is-selected')).toHaveLength(4);
+
+    secondStatus.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+    );
+    expect(
+      expectDefined(
+        occurrences[1]?.querySelector<HTMLElement>('[data-column-id="progress"]'),
+      ).classList.contains('is-selection-focus'),
+    ).toBe(true);
+    secondStatus.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    expect(host.querySelectorAll('.abyss-project-table-cell.is-selected')).toHaveLength(0);
+  });
+
+  it('copies projected raw values synchronously and leaves editor text copy untouched', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Owner', label: 'Lead', visible: true });
+    const item = project({ frontmatter: { Owner: 'Original' } });
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => ({
+      applied: changes.map((change): AppliedProjectCellChange => ({
+        ...change,
+        sourceProperty: 'Owner',
+        sourceKey: 'Owner',
+        previousValue: change.expectedValue,
+        previousExists: true,
+        appliedExists: true,
+      })),
+      failed: [],
+    }));
+    const { host } = mount([item], {
+      settings: config,
+      catalog: catalog([{ name: 'Owner', type: 'text' }]),
+      applyEdits,
+    });
+    let cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Owner"]'),
+    );
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('input'));
+    input.value = 'Projected';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    await flushMicrotasks();
+
+    cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Owner"]'),
+    );
+    cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const copied = transfer();
+    const copy = clipboardEvent('copy', copied);
+    cell.dispatchEvent(copy);
+    expect(copy.defaultPrevented).toBe(true);
+    expect(copied.getData('text/plain')).toBe('Projected');
+    expect(copied.getData('application/x-abyss-project-table')).toContain('Projected');
+
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const editorInput = expectDefined(cell.querySelector<HTMLInputElement>('input'));
+    const editorCopy = clipboardEvent('copy', transfer());
+    editorInput.dispatchEvent(editorCopy);
+    expect(editorCopy.defaultPrevented).toBe(false);
+  });
+
+  it('copies filename, raw status and the displayed progress string as TSV text', () => {
+    const config = settings();
+    const { host } = mount(
+      [project({ frontmatter: { [config.projects.statusProperty]: active.name } })],
+      { settings: config },
+    );
+    const name = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="name"]'),
+    );
+    const progress = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="progress"]'),
+    );
+    name.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    progress.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+    const data = transfer();
+    progress.dispatchEvent(clipboardEvent('copy', data));
+
+    expect(data.getData('text/plain')).toBe(`A\t${active.name}\t60% (6/10)`);
+    expect(data.getData('application/x-abyss-project-table')).not.toContain('"total"');
+  });
+
+  it('pastes one external cell over a range and rejects readonly targets before writing', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Owner', visible: true });
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => ({
+      applied: changes.map((change): AppliedProjectCellChange => ({
+        ...change,
+        sourceProperty: 'Owner',
+        sourceKey: 'Owner',
+        previousValue: change.expectedValue,
+        previousExists: true,
+        appliedExists: true,
+      })),
+      failed: [],
+    }));
+    const { host } = mount(
+      [
+        project({ path: 'Projects/A.md', frontmatter: { Owner: 'A' } }),
+        project({ path: 'Projects/B.md', frontmatter: { Owner: 'B' } }),
+      ],
+      {
+        settings: config,
+        catalog: catalog([{ name: 'Owner', type: 'text' }]),
+        applyEdits,
+      },
+    );
+    const ownerCells = Array.from(
+      host.querySelectorAll<HTMLElement>(
+        '.abyss-project-table-cell[data-column-id="property:Owner"]',
+      ),
+    );
+    expectDefined(ownerCells[0]).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expectDefined(ownerCells[1]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, shiftKey: true }),
+    );
+    ownerCells[1]?.dispatchEvent(clipboardEvent('paste', transfer({ 'text/plain': 'Shared' })));
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(applyEdits.mock.calls[0]?.[0]).toMatchObject([
+      { path: 'Projects/A.md', value: 'Shared', expectedValue: 'A' },
+      { path: 'Projects/B.md', value: 'Shared', expectedValue: 'B' },
+    ]);
+
+    const name = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="name"]'),
+    );
+    name.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    name.dispatchEvent(clipboardEvent('paste', transfer({ 'text/plain': 'Blocked' })));
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain('read-only');
+  });
+
+  it('pastes into a receipt-owned cleared native field but rejects an ordinary unavailable custom cell', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Budget', visible: true });
+    const budget = {
+      id: 'property:Budget',
+      property: 'Budget',
+      label: 'Budget',
+      type: 'number',
+    } as const;
+    const ownedClear = createOwnedInferredPropertyClear({
+      path: 'Projects/A.md',
+      fieldId: budget.id,
+      sourceProperty: budget.property,
+      sourceKey: budget.property,
+      type: budget.type,
+    });
+    const cleared: AppliedProjectCellChange = {
+      path: 'Projects/A.md',
+      field: budget,
+      value: undefined,
+      expectedValue: 10,
+      previousValue: 10,
+      sourceProperty: 'Budget',
+      sourceKey: 'Budget',
+      previousExists: true,
+      appliedExists: false,
+      ownedClear,
+    };
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => ({
+      applied: changes.map((change): AppliedProjectCellChange => ({
+        ...change,
+        sourceProperty: 'Budget',
+        sourceKey: 'Budget',
+        previousValue: change.expectedValue,
+        previousExists: false,
+        appliedExists: true,
+      })),
+      failed: [],
+    }));
+    const history = new ProjectEditHistory(applyEdits);
+    history.record({ applied: [cleared], failed: [] });
+    const { host } = mount([project({ frontmatter: {} })], {
+      settings: config,
+      catalog: catalog(),
+      applyEdits,
+      history,
+    });
+    const budgetCell = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-cell[data-column-id="property:Budget"]',
+      ),
+    );
+    budgetCell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    budgetCell.dispatchEvent(clipboardEvent('paste', transfer({ 'text/plain': '42' })));
+    await flushMicrotasks();
+    expect(applyEdits.mock.lastCall?.[0]?.[0]).toMatchObject({
+      value: 42,
+      expectedValue: undefined,
+      expectedExists: false,
+      ownedClear,
+    });
+
+    const unavailableApply = vi.fn().mockResolvedValue({ applied: [], failed: [] });
+    const unavailable = mount([project({ frontmatter: { Budget: 10 } })], {
+      settings: config,
+      catalog: catalog(),
+      applyEdits: unavailableApply,
+    });
+    const unavailableCell = expectDefined(
+      unavailable.host.querySelector<HTMLElement>(
+        '.abyss-project-table-cell[data-column-id="property:Budget"]',
+      ),
+    );
+    unavailableCell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    unavailableCell.dispatchEvent(clipboardEvent('paste', transfer({ 'text/plain': '12' })));
+    await flushMicrotasks();
+    expect(unavailableApply).not.toHaveBeenCalled();
+    expect(unavailable.host.querySelector('.abyss-project-table-feedback')?.textContent).toContain(
+      'Budget is read-only',
+    );
+  });
+
+  it('publishes partial paste receipts and reports the exact applied and failed counts', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Owner', visible: true });
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => ({
+      applied: [
+        {
+          ...expectDefined(changes[0]),
+          sourceProperty: 'Owner',
+          sourceKey: 'Owner',
+          previousValue: 'A',
+          previousExists: true,
+          appliedExists: true,
+        },
+      ],
+      failed: [{ path: 'Projects/B.md', message: 'disk full' }],
+    }));
+    const history = new ProjectEditHistory(applyEdits);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { host } = mount(
+      [
+        project({ path: 'Projects/A.md', frontmatter: { Owner: 'A' } }),
+        project({ path: 'Projects/B.md', frontmatter: { Owner: 'B' } }),
+      ],
+      {
+        settings: config,
+        catalog: catalog([{ name: 'Owner', type: 'text' }]),
+        applyEdits,
+        history,
+      },
+    );
+    const cells = Array.from(
+      host.querySelectorAll<HTMLElement>(
+        '.abyss-project-table-cell[data-column-id="property:Owner"]',
+      ),
+    );
+    expectDefined(cells[0]).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expectDefined(cells[1]).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, shiftKey: true }),
+    );
+    cells[1]?.dispatchEvent(clipboardEvent('paste', transfer({ 'text/plain': 'Shared' })));
+    await flushMicrotasks();
+
+    expect(history.canUndo).toBe(true);
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe(
+      '1 updated; 1 failed: disk full',
+    );
+  });
+
+  it('unpins only an oversized saved Name column when the actual table pane is constrained', () => {
+    const config = settings();
+    const name = expectDefined(config.projects.table.columns.find(({ id }) => id === 'name'));
+    name.width = 480;
+    const { host, view } = mount([project({})], { settings: config });
+    const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+    Object.defineProperty(scroll, 'clientWidth', { value: 480, configurable: true });
+    view.refreshFields();
+    const root = expectDefined(host.querySelector<HTMLElement>('.abyss-projects-table'));
+    expect(root.classList.contains('is-name-unpinned')).toBe(true);
+
+    name.width = 220;
+    view.refreshFields();
+    expect(root.classList.contains('is-name-unpinned')).toBe(false);
+  });
+
+  it('clears selected cells and publishes Undo and Redo through the same history queue', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Owner', visible: true });
+    const values: unknown[] = [];
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => {
+      values.push(changes[0]?.value);
+      return {
+        applied: changes.map((change): AppliedProjectCellChange => ({
+          ...change,
+          sourceProperty: 'Owner',
+          sourceKey: 'Owner',
+          previousValue: change.expectedValue,
+          previousExists: change.expectedValue !== undefined,
+          appliedExists: change.value !== undefined,
+        })),
+        failed: [],
+      };
+    });
+    const history = new ProjectEditHistory(applyEdits);
+    const { host } = mount([project({ frontmatter: { Owner: 'A' } })], {
+      settings: config,
+      catalog: catalog([{ name: 'Owner', type: 'text' }]),
+      applyEdits,
+      history,
+    });
+    let cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Owner"]'),
+    );
+    cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    cell.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+    cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Owner"]'),
+    );
+    cell.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+    cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Owner"]'),
+    );
+    cell.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'z',
+        metaKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await flushMicrotasks();
+
+    expect(values).toEqual([undefined, 'A', undefined]);
+  });
+
+  it('keeps the stable table session focused so Undo works immediately after paste regroups rows', async () => {
+    const config = settings();
+    config.projects.table.groupBy = 'status';
+    const done = expectDefined(config.projects.statuses[2]);
+    const values: unknown[] = [];
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => {
+      values.push(changes[0]?.value);
+      return {
+        applied: changes.map((change): AppliedProjectCellChange => ({
+          ...change,
+          sourceProperty: config.projects.statusProperty,
+          sourceKey: config.projects.statusProperty,
+          previousValue: change.expectedValue,
+          previousExists: true,
+          appliedExists: change.value !== undefined,
+        })),
+        failed: [],
+      };
+    });
+    const history = new ProjectEditHistory(applyEdits);
+    const { host } = mount(
+      [project({ frontmatter: { [config.projects.statusProperty]: active.name } })],
+      { settings: config, applyEdits, history },
+    );
+    const status = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
+    );
+    status.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    status.dispatchEvent(clipboardEvent('paste', transfer({ 'text/plain': done.name })));
+    await flushMicrotasks();
+
+    expect(host.querySelectorAll('.abyss-project-table-cell.is-selected')).toHaveLength(0);
+    const owner = expectDefined(activeDocument.activeElement as HTMLElement | null);
+    owner.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    expect(values).toEqual([done.name, active.name]);
+  });
+
+  it('moves a row by its dedicated handle into a collapsed list group without losing other values', async () => {
+    const config = settings();
+    config.projects.table.groupBy = 'property:Owners';
+    config.projects.table.columns.push({ id: 'property:Owners', visible: true });
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => ({
+      applied: changes.map((change): AppliedProjectCellChange => ({
+        ...change,
+        sourceProperty: 'Owners',
+        sourceKey: 'Owners',
+        previousValue: change.expectedValue,
+        previousExists: true,
+        appliedExists: true,
+      })),
+      failed: [],
+    }));
+    const { host } = mount(
+      [
+        project({ path: 'Projects/A.md', name: 'A project', frontmatter: { Owners: ['A', 'C'] } }),
+        project({ path: 'Projects/B.md', name: 'B project', frontmatter: { Owners: ['B'] } }),
+      ],
+      {
+        settings: config,
+        catalog: catalog([{ name: 'Owners', type: 'list' }]),
+        applyEdits,
+      },
+    );
+    const groups = Array.from(host.querySelectorAll<HTMLElement>('.abyss-project-table-group-row'));
+    let target = expectDefined(groups.find((group) => group.textContent.includes('B')));
+    const targetKey = expectDefined(target.dataset['groupKey']);
+    expectDefined(
+      target.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    ).click();
+    target = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-table-group-row[data-group-key="${targetKey}"]`,
+      ),
+    );
+    const sourceRow = expectDefined(
+      Array.from(host.querySelectorAll<HTMLElement>('[data-project-path="Projects/A.md"]')).find(
+        (row) => row.dataset['groupKey'] === 'value:a',
+      ),
+    );
+    const handle = expectDefined(
+      sourceRow.querySelector<HTMLElement>('.abyss-project-table-row-handle'),
+    );
+    const stored = transfer();
+    let protectedStore = false;
+    const data: TestTransfer = {
+      get types() {
+        return stored.types;
+      },
+      setData: (type, value) => {
+        stored.setData(type, value);
+      },
+      getData: (type) => (protectedStore ? '' : stored.getData(type)),
+      dropEffect: 'none',
+      effectAllowed: 'uninitialized',
+    };
+    handle.dispatchEvent(dragEvent('dragstart', data));
+    protectedStore = true;
+    target.dispatchEvent(dragEvent('dragover', data));
+    expect(target.classList.contains('is-drop-target')).toBe(true);
+    protectedStore = false;
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(applyEdits.mock.calls[0]?.[0]).toMatchObject([
+      { path: 'Projects/A.md', value: ['B', 'C'], expectedValue: ['A', 'C'] },
+    ]);
   });
 });
