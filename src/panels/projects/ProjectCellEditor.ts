@@ -45,6 +45,7 @@ interface EditorControl {
 
 interface EditorEvents {
   changed(): void;
+  cancel(): void;
   commit(close: boolean): void;
   suggestionOpen(open: boolean): void;
 }
@@ -113,6 +114,9 @@ function suggestOptions(
     app: options.app,
     input,
     ...suggestion,
+    onEscape: () => {
+      events.cancel();
+    },
     onOpen: () => {
       events.suggestionOpen(true);
     },
@@ -422,6 +426,9 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     const events: EditorEvents = {
       changed: () => {
         this.error_abyssPrivate.empty();
+      },
+      cancel: () => {
+        this.cancel();
       },
       commit: (close) => {
         this.requestCommit_abyssPrivate(close, 'restore-current');

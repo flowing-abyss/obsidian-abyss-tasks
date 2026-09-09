@@ -131,6 +131,7 @@ interface RenderedGroupContext extends ProjectTableDragGroup {
 interface RenderedProjectRow {
   readonly element: HTMLTableRowElement;
   readonly cells: Map<string, RenderedCellContext>;
+  dragCleanup?: () => void;
   project: Project;
   groupKey: string;
   occurrenceId: string;
@@ -147,6 +148,18 @@ interface RenderedGroupRow {
   readonly dropHint: HTMLElement;
   context: RenderedGroupContext;
   contentSignature: string;
+}
+
+function visibleRowCells(
+  row: RenderedProjectRow,
+  columns: readonly VisibleProjectColumn[],
+): RenderedCellContext[] {
+  const cells: RenderedCellContext[] = [];
+  for (const { column } of columns) {
+    const cell = row.cells.get(column.id);
+    if (cell !== undefined) cells.push(cell);
+  }
+  return cells;
 }
 
 interface ProjectCellEditRequest {
@@ -483,6 +496,7 @@ export class ProjectsTableView {
     this.selection_abyssPrivate.clear();
     this.renderedCells_abyssPrivate = [];
     this.renderedGroups_abyssPrivate.clear();
+    for (const row of this.renderedProjectRows_abyssPrivate.values()) row.dragCleanup?.();
     this.renderedProjectRows_abyssPrivate.clear();
     this.renderedGroupRows_abyssPrivate.clear();
     this.columnCleanup_abyssPrivate?.();
@@ -840,7 +854,7 @@ export class ProjectsTableView {
       });
       rows.retainedProjects.add(row.occurrenceId);
       rows.desired.push(row.element);
-      rows.cells.push(...row.cells.values());
+      rows.cells.push(...visibleRowCells(row, columns));
     }
   }
 
@@ -940,16 +954,24 @@ export class ProjectsTableView {
         this.renderTable_abyssPrivate();
       });
     });
+    this.bindGroupDropTarget_abyssPrivate(row, () => rendered.context.key, dropHint);
+  }
+
+  private bindGroupDropTarget_abyssPrivate(
+    row: HTMLTableRowElement,
+    groupKey: () => string,
+    dropHint?: HTMLElement,
+  ): () => void {
     const clearDropState = (): void => {
       row.removeClass('is-drop-target', 'is-drop-disabled');
-      dropHint.empty();
+      dropHint?.empty();
       row.removeAttribute('title');
     };
     const previewDrop = (event: DragEvent): void => {
       if (event.dataTransfer?.types.includes(PROJECT_TABLE_ROW_DRAG_TYPE) !== true) return;
       event.preventDefault();
       clearDropState();
-      const preview = this.previewGroupDrop_abyssPrivate(rendered.context.key);
+      const preview = this.previewGroupDrop_abyssPrivate(groupKey());
       if (preview.allowed) {
         row.addClass('is-drop-target');
         event.dataTransfer.dropEffect = 'move';
@@ -957,20 +979,29 @@ export class ProjectsTableView {
         row.addClass('is-drop-disabled');
         event.dataTransfer.dropEffect = 'none';
       }
-      dropHint.setText(preview.message);
+      dropHint?.setText(preview.message);
       row.setAttribute('title', preview.message);
     };
-    row.addEventListener('dragenter', previewDrop);
-    row.addEventListener('dragover', previewDrop);
-    row.addEventListener('dragleave', (event) => {
+    const leaveDropTarget = (event: DragEvent): void => {
       if (!row.contains(event.relatedTarget as Node | null)) clearDropState();
-    });
-    row.addEventListener('drop', (event) => {
+    };
+    const drop = (event: DragEvent): void => {
       if (event.dataTransfer?.types.includes(PROJECT_TABLE_ROW_DRAG_TYPE) !== true) return;
       event.preventDefault();
       clearDropState();
-      this.dropProjectIntoGroup_abyssPrivate(event.dataTransfer, rendered.context.key);
-    });
+      this.dropProjectIntoGroup_abyssPrivate(event.dataTransfer, groupKey());
+    };
+    row.addEventListener('dragenter', previewDrop);
+    row.addEventListener('dragover', previewDrop);
+    row.addEventListener('dragleave', leaveDropTarget);
+    row.addEventListener('drop', drop);
+    return () => {
+      clearDropState();
+      row.removeEventListener('dragenter', previewDrop);
+      row.removeEventListener('dragover', previewDrop);
+      row.removeEventListener('dragleave', leaveDropTarget);
+      row.removeEventListener('drop', drop);
+    };
   }
 
   private removeMissingRows_abyssPrivate(
@@ -979,6 +1010,7 @@ export class ProjectsTableView {
   ): void {
     for (const [key, rendered] of this.renderedProjectRows_abyssPrivate) {
       if (retainedProjects.has(key)) continue;
+      rendered.dragCleanup?.();
       rendered.element.remove();
       this.renderedProjectRows_abyssPrivate.delete(key);
     }
@@ -1124,7 +1156,7 @@ export class ProjectsTableView {
       occurrenceId,
     };
     this.renderedProjectRows_abyssPrivate.set(occurrenceId, rendered);
-    this.bindProjectRowDrag_abyssPrivate(rendered);
+    rendered.dragCleanup = this.bindProjectRowDrag_abyssPrivate(rendered);
     return rendered;
   }
 
@@ -1782,11 +1814,34 @@ export class ProjectsTableView {
     this.feedback_abyssPrivate.setText(message);
   }
 
-  private bindProjectRowDrag_abyssPrivate(rendered: RenderedProjectRow): void {
+  private bindProjectRowDrag_abyssPrivate(rendered: RenderedProjectRow): () => void {
     const row = rendered.element;
     let suppressClick = false;
-    row.addEventListener('dragstart', (event) => {
-      if (!row.draggable || this.isProtectedRowDragTarget_abyssPrivate(event.target, row)) {
+    let gestureTarget: EventTarget | null = null;
+    let gestureCleanup: (() => void) | undefined;
+    const clearGesture = (): void => {
+      gestureCleanup?.();
+      gestureCleanup = undefined;
+      gestureTarget = null;
+    };
+    const rememberGesture = (event: PointerEvent): void => {
+      clearGesture();
+      gestureTarget = event.target;
+      const ownerDocument = row.ownerDocument;
+      const finishGesture = (): void => {
+        clearGesture();
+      };
+      gestureCleanup = () => {
+        ownerDocument.removeEventListener('pointerup', finishGesture, true);
+        ownerDocument.removeEventListener('pointercancel', finishGesture, true);
+      };
+      ownerDocument.addEventListener('pointerup', finishGesture, true);
+      ownerDocument.addEventListener('pointercancel', finishGesture, true);
+    };
+    const startDrag = (event: DragEvent): void => {
+      const origin = gestureTarget ?? event.target;
+      clearGesture();
+      if (!row.draggable || this.isProtectedRowDragTarget_abyssPrivate(origin, row)) {
         event.preventDefault();
         return;
       }
@@ -1803,24 +1858,34 @@ export class ProjectsTableView {
       this.activeRowDrag_abyssPrivate = payload;
       row.addClass('is-dragging');
       suppressClick = true;
-    });
-    row.addEventListener('dragend', () => {
+    };
+    const finishDrag = (): void => {
+      clearGesture();
       row.removeClass('is-dragging');
       this.activeRowDrag_abyssPrivate = undefined;
       this.clearGroupDropStates_abyssPrivate();
       window.setTimeout(() => {
         suppressClick = false;
       }, 0);
-    });
-    row.addEventListener(
-      'click',
-      (event) => {
-        if (!suppressClick) return;
-        event.preventDefault();
-        event.stopPropagation();
-      },
-      true,
-    );
+    };
+    const suppressDraggedClick = (event: MouseEvent): void => {
+      if (!suppressClick) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    const dropCleanup = this.bindGroupDropTarget_abyssPrivate(row, () => rendered.groupKey);
+    row.addEventListener('pointerdown', rememberGesture, true);
+    row.addEventListener('dragstart', startDrag);
+    row.addEventListener('dragend', finishDrag);
+    row.addEventListener('click', suppressDraggedClick, true);
+    return () => {
+      clearGesture();
+      dropCleanup();
+      row.removeEventListener('pointerdown', rememberGesture, true);
+      row.removeEventListener('dragstart', startDrag);
+      row.removeEventListener('dragend', finishDrag);
+      row.removeEventListener('click', suppressDraggedClick, true);
+    };
   }
 
   private isProtectedRowDragTarget_abyssPrivate(
@@ -1978,7 +2043,7 @@ export class ProjectsTableView {
 
   private clearGroupDropStates_abyssPrivate(): void {
     for (const row of this.tableHost_abyssPrivate.querySelectorAll<HTMLElement>(
-      '.abyss-project-table-group-row',
+      '.abyss-project-table-group-row, .abyss-project-table-row',
     )) {
       row.removeClass('is-drop-target', 'is-drop-disabled');
       row.querySelector<HTMLElement>('.abyss-project-table-drop-hint')?.empty();

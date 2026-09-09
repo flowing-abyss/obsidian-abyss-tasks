@@ -1,4 +1,4 @@
-import { AbstractInputSuggest, type App } from 'obsidian';
+import { AbstractInputSuggest, Scope, type App } from 'obsidian';
 
 export interface ProjectPropertySuggestion {
   readonly kind: 'value';
@@ -12,6 +12,7 @@ export interface ProjectPropertySuggestOptions {
   readonly input: HTMLInputElement;
   readonly values: readonly string[];
   readonly onPick: (value: string) => void;
+  readonly onEscape?: (event: KeyboardEvent) => void;
   readonly onOpen?: () => void;
   readonly onClose?: () => void;
 }
@@ -29,9 +30,16 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
 
   constructor(options: ProjectPropertySuggestOptions) {
     super(options.app, options.input);
+    this.scope = new Scope(this.scope);
     this.values_abyssPrivate = options.values;
     this.onPick_abyssPrivate = options.onPick;
     this.options_abyssPrivate = options;
+    this.scope.register([], 'Escape', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      options.onEscape?.(event);
+      return false;
+    });
   }
 
   override open(): void {

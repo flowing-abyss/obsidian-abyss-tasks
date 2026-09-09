@@ -1,4 +1,4 @@
-import { App, Notice, TFile } from 'obsidian';
+import { App, Notice, Scope, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import {
   mountProjectCellEditor,
@@ -278,6 +278,7 @@ describe('mountProjectCellEditor', () => {
   });
 
   it('closes in one Escape while suggestions are open and retains committed chips', async () => {
+    const scopeRegister = vi.spyOn(Scope.prototype, 'register');
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
     const close = vi.fn();
@@ -300,11 +301,23 @@ describe('mountProjectCellEditor', () => {
       readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
     };
     expectDefined(internals.control_abyssPrivate.suggest).open();
+    input.value = 'Anna';
+    input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    const escapeHandler = expectDefined(
+      scopeRegister.mock.calls.find(([, key]) => key === 'Escape')?.[2],
+    );
+    const escape = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
 
-    keydown(input, 'Escape');
+    escapeHandler(escape, { vkey: 'Escape', key: 'Escape', modifiers: null });
 
+    expect(escape.defaultPrevented).toBe(true);
     expect(close).toHaveBeenCalledOnce();
     expect(save).toHaveBeenCalledWith(['Celia', 'Mina']);
+    expect(save).not.toHaveBeenCalledWith(['Celia', 'Mina', 'Anna']);
   });
 
   it('does not close solely because a suggester closes during a transient focus gap', async () => {

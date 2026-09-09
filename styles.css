@@ -7307,9 +7307,11 @@ table.abyss-project-table {
 
 .abyss-project-table-value {
   display: inline-flex;
+  flex: 0 0 auto;
   overflow: hidden;
   align-items: center;
   gap: 2px;
+  max-width: 140px;
   padding: 1px 6px;
   border-radius: var(--radius-s);
   background: var(--background-secondary);
@@ -7320,6 +7322,7 @@ table.abyss-project-table {
 
 .abyss-project-table-value-text {
   overflow: hidden;
+  max-width: 104px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

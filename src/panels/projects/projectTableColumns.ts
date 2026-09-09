@@ -192,14 +192,22 @@ function bindResize(options: BindResizeOptions): () => void {
         suppressSort(false);
       }, 0);
     };
+    const cancelOnEscape = (keyEvent: KeyboardEvent): void => {
+      if (keyEvent.key !== 'Escape') return;
+      keyEvent.preventDefault();
+      keyEvent.stopPropagation();
+      cancel();
+    };
     cleanup = () => {
       ownerDocument.removeEventListener('pointermove', move);
       ownerDocument.removeEventListener('pointerup', finish);
       ownerDocument.removeEventListener('pointercancel', cancel);
+      ownerDocument.removeEventListener('keydown', cancelOnEscape, true);
     };
     ownerDocument.addEventListener('pointermove', move);
     ownerDocument.addEventListener('pointerup', finish);
     ownerDocument.addEventListener('pointercancel', cancel);
+    ownerDocument.addEventListener('keydown', cancelOnEscape, true);
   };
   handle.addEventListener('pointerdown', start);
   return () => {
