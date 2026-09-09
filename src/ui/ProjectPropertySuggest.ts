@@ -30,16 +30,18 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
 
   constructor(options: ProjectPropertySuggestOptions) {
     super(options.app, options.input);
-    this.scope = new Scope(this.scope);
+    if (options.onEscape !== undefined) {
+      this.scope = new Scope(this.scope);
+      this.scope.register([], 'Escape', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        options.onEscape?.(event);
+        return false;
+      });
+    }
     this.values_abyssPrivate = options.values;
     this.onPick_abyssPrivate = options.onPick;
     this.options_abyssPrivate = options;
-    this.scope.register([], 'Escape', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      options.onEscape?.(event);
-      return false;
-    });
   }
 
   override open(): void {

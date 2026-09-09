@@ -185,18 +185,19 @@ function activateTag(
 function renderListValue(itemOptions: RenderListValueOptions): void {
   const { list, values, index, displayed, nativeTags, cell } = itemOptions;
   const raw = values.values[index];
-  const item = nativeTags
-    ? list.createEl('a', {
-        cls: 'multi-select-pill tag',
-        attr: { href: tagHref(raw) },
-      })
-    : list.createSpan({ cls: 'abyss-project-table-value' });
+  const item = list.createSpan({
+    cls: nativeTags ? 'multi-select-pill' : 'abyss-project-table-value',
+  });
   const text = item.createSpan({
     cls: nativeTags ? 'multi-select-pill-content' : 'abyss-project-table-value-text',
   });
   if (nativeTags && typeof raw === 'string') {
-    text.createSpan({ text: raw });
-    activateTag(item as HTMLAnchorElement, raw, cell);
+    const link = text.createEl('a', {
+      cls: 'abyss-project-table-tag-link',
+      text: raw,
+      attr: { href: tagHref(raw) },
+    });
+    activateTag(link, raw, cell);
   } else {
     renderValueText({ host: text, raw, displayed, sourcePath: values.project.path }, cell);
   }

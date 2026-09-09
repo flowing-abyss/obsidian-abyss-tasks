@@ -245,6 +245,12 @@ export default class TaskCalendarPlugin extends Plugin {
     }
   }
 
+  refreshProjectTableSettings(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)) {
+      if (leaf.view instanceof PanelView) leaf.view.refreshProjectTableSettings();
+    }
+  }
+
   async renameProjectStatus(id: string, name: string, expectedName: string): Promise<void> {
     await this.projectManager.renameStatusDefinition(id, name, expectedName, () =>
       this.saveSettings(),

@@ -128,20 +128,6 @@ export interface SavedViewStateRecovery {
   };
 }
 
-export interface SavedViewStateEnvelope {
-  schemaVersion: 1;
-  views: SavedViewState;
-  recovery?: SavedViewStateRecovery;
-}
-
-/** Persisted data.json shape after saved view preferences have moved to state.json. */
-export type StaticCalendarSettings = Omit<
-  CalendarSettings,
-  'listViewStates' | 'sectionCollapse' | 'projects'
-> & {
-  projects: Omit<ProjectsSettings, 'table'>;
-};
-
 // Params parsed from a task-calendar code block (all optional overrides of ViewConfig)
 export interface CodeBlockParams {
   view?: 'month' | 'week' | 'list';

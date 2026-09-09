@@ -242,12 +242,16 @@ describe('ProjectsTableView', () => {
       ),
     );
 
-    const pills = property.querySelectorAll<HTMLAnchorElement>('a.multi-select-pill.tag');
+    const pills = property.querySelectorAll<HTMLElement>('.multi-select-pill');
     expect(pills).toHaveLength(2);
     expect(property.querySelector('.abyss-project-table-value')).toBeNull();
-    expect(pills[0]?.getAttribute('href')).toBe('#work');
-    expect(pills[0]?.querySelector('.multi-select-pill-content span')?.textContent).toBe('#work');
+    expect(pills[0]?.matches('a, button')).toBe(false);
+    expect(
+      pills[0]?.querySelector<HTMLAnchorElement>('.multi-select-pill-content > a')?.href,
+    ).toContain('#work');
+    expect(pills[0]?.querySelector('.multi-select-pill-content > a')?.textContent).toBe('#work');
     expect(pills[0]?.querySelector('a.tag')).toBeNull();
+    expect(pills[0]?.querySelector('a button, button a')).toBeNull();
   });
 
   it('finishes an active editor before delegating native tag activation', async () => {
@@ -276,7 +280,7 @@ describe('ProjectsTableView', () => {
     );
     textarea.value = 'After';
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    expectDefined(host.querySelector<HTMLAnchorElement>('a.multi-select-pill.tag')).click();
+    expectDefined(host.querySelector<HTMLAnchorElement>('.multi-select-pill-content > a')).click();
     await flushMicrotasks();
 
     expect(saveProperty).toHaveBeenCalledWith(
@@ -855,6 +859,21 @@ describe('ProjectsTableView', () => {
     expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
     expect(config.projects.table.hiddenStatuses).toEqual([]);
     expect(host.querySelector('.abyss-view-state-reset-btn')).toBeNull();
+  });
+
+  it('marks Start as the default project sort option', () => {
+    const { host } = mount([project({})]);
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const sortRow = Array.from(host.querySelectorAll<HTMLElement>('.abyss-view-state-row')).find(
+      (row) => row.querySelector('.abyss-view-state-row-label')?.textContent === 'Sort by',
+    );
+    expectDefined(sortRow).querySelector<HTMLButtonElement>('.abyss-view-state-row-main')?.click();
+    const defaultBadge = expectDefined(
+      sortRow?.querySelector<HTMLElement>('.abyss-view-state-option-default'),
+    );
+
+    expect(defaultBadge.parentElement?.textContent).toContain('Start');
+    expect(defaultBadge.parentElement?.textContent).not.toContain('End');
   });
 
   it('repeats a project in each distinct list-value group while reporting one unique project', () => {
@@ -1954,6 +1973,20 @@ describe('ProjectsTableView', () => {
 
     expect(scroll.scrollLeft).toBe(300);
     expect((activeDocument.activeElement as HTMLElement | null)?.dataset['columnId']).toBe('end');
+  });
+
+  it('opens the selected editable cell with F2 through the standard edit path', () => {
+    const { host } = mount([project({})]);
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    cell.focus();
+
+    cell.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }),
+    );
+
+    expect(cell.querySelector('input[type="date"]')).not.toBeNull();
   });
 
   it('preserves an external focus destination when an editor commits on blur', async () => {

@@ -293,7 +293,9 @@ unknown static and nested view keys, queues detached write snapshots in order, d
 writes, and continues the queue after a rejected operation.
 
 Static and saved-view changes use separate callbacks. Static saves advance the existing rollback
-revision and refresh project settings after durability; state-only saves do neither. Changes to task
+revision and refresh project settings after durability. State-only saves do not advance that
+revision or refresh the project store; project-table changes made in Settings narrowly ask each
+mounted `PanelView` to refresh its existing table controller after the state write succeeds. Changes to task
 status settings rebuild the shared `StatusCatalog`, `StatusRegistry`, and the
 indexer's interpretation of task symbols together.
 

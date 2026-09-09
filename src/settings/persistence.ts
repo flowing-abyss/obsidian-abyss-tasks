@@ -13,7 +13,7 @@ import type {
 export const SAVED_VIEW_STATE_SCHEMA_VERSION = 1 as const;
 export const STATIC_SAVED_VIEW_STATE_MARKER = 'savedViewStateSchemaVersion' as const;
 
-export interface SavedViewStatePort {
+interface SavedViewStatePort {
   readonly path: string;
   exists: (path: string) => Promise<boolean>;
   read: (path: string) => Promise<string>;
@@ -26,7 +26,7 @@ export interface SettingsPersistencePort {
   readonly state: SavedViewStatePort;
 }
 
-export interface SettingsPersistenceIssue {
+interface SettingsPersistenceIssue {
   readonly message: string;
   readonly cause: unknown;
 }

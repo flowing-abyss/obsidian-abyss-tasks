@@ -38,6 +38,7 @@ interface TaskCalendarPlugin extends Plugin {
   rebuildTaskStatusSemantics(): void;
   saveSettings(): Promise<void>;
   saveViewState(): Promise<void>;
+  refreshProjectTableSettings(): void;
   renameProjectStatus(id: string, name: string, expectedName: string): Promise<void>;
 }
 
@@ -1009,7 +1010,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
       projects: this.plugin_abyssPrivate.settings.projects,
       catalog: this.projectProperties_abyssPrivate,
       saveStatic: () => this.plugin_abyssPrivate.saveSettings(),
-      saveViewState: () => this.plugin_abyssPrivate.saveViewState(),
+      saveViewState: async () => {
+        await this.plugin_abyssPrivate.saveViewState();
+        this.plugin_abyssPrivate.refreshProjectTableSettings();
+      },
       refresh: (focus) => {
         this.redrawPreservingPosition_abyssPrivate(
           focus === 'add-property'

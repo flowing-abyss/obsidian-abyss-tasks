@@ -1632,7 +1632,7 @@ export class ProjectsTableView {
       });
       return;
     }
-    if (event.key !== 'Enter') return;
+    if (event.key !== 'Enter' && event.key !== 'F2') return;
     event.preventDefault();
     const focused = this.selection_abyssPrivate.focus;
     const editorCell = focused === undefined ? cell : this.renderedCell_abyssPrivate(focused);

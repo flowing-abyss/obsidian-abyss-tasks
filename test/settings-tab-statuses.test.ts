@@ -12,6 +12,7 @@ interface StubPlugin {
   settings: CalendarSettings;
   saveSettings(): Promise<void>;
   saveViewState(): Promise<void>;
+  refreshProjectTableSettings(): void;
   rebuildTaskStatusSemantics: ReturnType<typeof vi.fn>;
 }
 
@@ -98,6 +99,7 @@ function makeTab(opts: { withCustomStatus?: boolean } = {}): {
     settings,
     saveSettings: vi.fn().mockResolvedValue(undefined),
     saveViewState: vi.fn().mockResolvedValue(undefined),
+    refreshProjectTableSettings: vi.fn(),
     rebuildTaskStatusSemantics: vi.fn(),
   };
   const captured: CapturedButton[] = [];

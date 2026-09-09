@@ -7380,6 +7380,13 @@ table.abyss-project-table {
   white-space: nowrap;
 }
 
+.abyss-project-table-values[data-property-type='tags'] .abyss-project-table-tag-link {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-decoration: none;
+}
+
 .abyss-project-table-value {
   display: inline-flex;
   flex: 0 0 auto;

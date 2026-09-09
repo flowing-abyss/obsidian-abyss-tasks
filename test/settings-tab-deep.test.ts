@@ -22,6 +22,7 @@ interface StubPlugin {
   settings: CalendarSettings;
   saveSettings: ReturnType<typeof vi.fn>;
   saveViewState: ReturnType<typeof vi.fn>;
+  refreshProjectTableSettings: ReturnType<typeof vi.fn>;
   renameProjectStatus: ReturnType<typeof vi.fn>;
 }
 
@@ -95,6 +96,7 @@ function makeTab(
   const settings = { ...structuredClone(DEFAULT_SETTINGS), ...settingsOverrides };
   const saveSettings = opts.saveSettings ?? vi.fn().mockResolvedValue(undefined);
   const saveViewState = opts.saveViewState ?? vi.fn().mockResolvedValue(undefined);
+  const refreshProjectTableSettings = vi.fn();
   const renameProjectStatus = vi.fn(
     async (id: string, name: string, expectedName: string): Promise<void> => {
       const status = settings.projects.statuses.find((candidate) => candidate.id === id);
@@ -103,7 +105,14 @@ function makeTab(
       await (saveSettings as unknown as () => Promise<void>)();
     },
   );
-  const plugin: StubPlugin = { app, settings, saveSettings, saveViewState, renameProjectStatus };
+  const plugin: StubPlugin = {
+    app,
+    settings,
+    saveSettings,
+    saveViewState,
+    refreshProjectTableSettings,
+    renameProjectStatus,
+  };
   const captured: CapturedComp[] = [];
   const restore = patchSetting(captured);
   const tab = new CalendarSettingsTab(
@@ -820,6 +829,34 @@ describe('sourceNoteDisplay setting', () => {
 });
 
 describe('CalendarSettingsTab collapsible cards + default status', () => {
+  it('refreshes a mounted project table after description and column view saves', async () => {
+    const { tab, plugin } = makeTab();
+    const projectsHeader = Array.from(
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
+    ).find((header) => header.textContent.includes('Projects'));
+    expectDefined(projectsHeader).click();
+    const description = expectDefined(
+      tab.containerEl.querySelector<HTMLInputElement>('.abyss-project-show-description'),
+    );
+
+    description.checked = false;
+    description.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    expect(plugin.saveViewState).toHaveBeenCalledOnce();
+    expect(plugin.refreshProjectTableSettings).toHaveBeenCalledOnce();
+
+    const column = expectDefined(
+      Array.from(
+        tab.containerEl.querySelectorAll<HTMLInputElement>('.abyss-project-column-visible'),
+      ).find((input) => !input.disabled),
+    );
+    column.checked = !column.checked;
+    column.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    expect(plugin.saveViewState).toHaveBeenCalledTimes(2);
+    expect(plugin.refreshProjectTableSettings).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps the project toolbar in the shared compact row at constrained widths', () => {
     expect(css).toContain('--abyss-center-toolbar-height: 60px');
     expect(css).toMatch(

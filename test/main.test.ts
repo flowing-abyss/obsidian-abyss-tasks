@@ -45,6 +45,7 @@ interface PluginLike {
   loadSettings: () => Promise<void>;
   saveSettings: () => Promise<void>;
   saveViewState: () => Promise<void>;
+  refreshProjectTableSettings: () => void;
   openPanel: () => Promise<void>;
 }
 
@@ -183,6 +184,23 @@ describe('TaskCalendarPlugin saveSettings', () => {
     expect(plugin.data__).toEqual(staticBefore);
     expect(latestSettingsSaveRevision(plugin.settings)).toBe(revisionBefore);
     expect(plugin.app.workspace.getLeavesOfType).not.toHaveBeenCalled();
+    expect(refreshProjectSettings).not.toHaveBeenCalled();
+  });
+
+  it('refreshes only mounted project-table projections when settings request it', async () => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    const refreshProjectTableSettings = vi.fn();
+    const refreshProjectSettings = vi.fn();
+    const view = Object.create(PanelView.prototype) as PanelView;
+    view.refreshProjectTableSettings = refreshProjectTableSettings;
+    view.refreshProjectSettings = refreshProjectSettings;
+    plugin.app.workspace.getLeavesOfType = vi.fn(() => [{ view }]);
+
+    plugin.refreshProjectTableSettings();
+
+    expect(plugin.app.workspace.getLeavesOfType).toHaveBeenCalledWith(PANEL_VIEW_TYPE);
+    expect(refreshProjectTableSettings).toHaveBeenCalledOnce();
     expect(refreshProjectSettings).not.toHaveBeenCalled();
   });
 });

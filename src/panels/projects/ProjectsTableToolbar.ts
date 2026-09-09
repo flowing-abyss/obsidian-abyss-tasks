@@ -124,6 +124,7 @@ export class ProjectsTableToolbar {
     configured.add(settings.sortBy.field);
     const selectable = fields.filter((field) => configured.has(field.id));
     const arrow = settings.sortBy.dir === 'asc' ? '↑' : '↓';
+    const defaultSortField = buildDefaultProjectTableSettings().sortBy.field;
     const rows: ViewOptionsRow[] = [
       {
         kind: 'single',
@@ -153,7 +154,7 @@ export class ProjectsTableToolbar {
           value: field.id,
           label:
             `${fieldLabel(fields, settings, field.id)} ${settings.sortBy.field === field.id ? arrow : ''}`.trim(),
-          isDefault: field.id === 'end',
+          isDefault: field.id === defaultSortField,
         })),
         onSelect: (value) => {
           this.options_abyssPrivate.onSortBy(value);

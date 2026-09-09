@@ -865,6 +865,20 @@ describe('mountProjectCellEditor', () => {
 });
 
 describe('ProjectPropertySuggest', () => {
+  it('leaves native Escape dismissal in charge when no editor callback is supplied', () => {
+    const scopeRegister = vi.spyOn(Scope.prototype, 'register');
+
+    const suggest = new ProjectPropertySuggest({
+      app: new App(),
+      input: document.body.createEl('input'),
+      values: ['Owner'],
+      onPick: vi.fn(),
+    });
+
+    expect(suggest).toBeInstanceOf(ProjectPropertySuggest);
+    expect(scopeRegister.mock.calls.some(([, key]) => key === 'Escape')).toBe(false);
+  });
+
   it('reports popup ownership once for each open lifetime', () => {
     const onOpen = vi.fn();
     const onClose = vi.fn();
