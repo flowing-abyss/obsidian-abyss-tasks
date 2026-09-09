@@ -1983,10 +1983,63 @@ describe('ProjectsTableView', () => {
     cell.focus();
 
     cell.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'F2', metaKey: true, bubbles: true, cancelable: true }),
+    );
+    expect(cell.querySelector('input')).toBeNull();
+    cell.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }),
     );
 
     expect(cell.querySelector('input[type="date"]')).not.toBeNull();
+  });
+
+  it('captures only table F2 before document interceptors and removes the window bridge', () => {
+    const ownerWindow = expectDefined(activeDocument.defaultView);
+    const removeListener = vi.spyOn(ownerWindow, 'removeEventListener');
+    const intercepted = vi.fn((event: KeyboardEvent) => {
+      event.stopImmediatePropagation();
+    });
+    activeDocument.addEventListener('keydown', intercepted, true);
+    const { host, view } = mount([project({})]);
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const outside = activeDocument.body.createEl('button');
+    const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
+
+    try {
+      outside.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }),
+      );
+      cell.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'F2', ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+      search.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }),
+      );
+      cell.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'F2',
+          isComposing: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(intercepted).toHaveBeenCalledTimes(4);
+      expect(cell.querySelector('input')).toBeNull();
+
+      cell.focus();
+      cell.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }),
+      );
+
+      expect(intercepted).toHaveBeenCalledTimes(4);
+      expect(cell.querySelector('input[type="date"]')).not.toBeNull();
+    } finally {
+      view.destroy();
+      activeDocument.removeEventListener('keydown', intercepted, true);
+    }
+    expect(removeListener).toHaveBeenCalledWith('keydown', expect.any(Function), true);
   });
 
   it('preserves an external focus destination when an editor commits on blur', async () => {

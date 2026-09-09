@@ -355,6 +355,7 @@ export class ProjectsTableView {
   private readonly count_abyssPrivate: HTMLElement;
   private readonly toolbar_abyssPrivate: ProjectsTableToolbar;
   private readonly markdown_abyssPrivate = new Component();
+  private readonly ownerWindow_abyssPrivate: Window | undefined;
   private activeEditor_abyssPrivate: ActiveEditor | undefined;
   private activeRowDrag_abyssPrivate: ProjectRowDragPayload | undefined;
   private columnCleanup_abyssPrivate: (() => void) | undefined;
@@ -430,6 +431,8 @@ export class ProjectsTableView {
     this.root_abyssPrivate.addEventListener('keydown', (event) => {
       this.handleTableKeydown_abyssPrivate(event);
     });
+    this.ownerWindow_abyssPrivate = this.root_abyssPrivate.ownerDocument.defaultView ?? undefined;
+    this.listenForOwnerWindowF2_abyssPrivate();
     this.tableHost_abyssPrivate = this.scroll_abyssPrivate.createDiv({
       cls: 'abyss-project-table-host',
     });
@@ -511,6 +514,11 @@ export class ProjectsTableView {
     this.columnCleanup_abyssPrivate = undefined;
     this.toolbar_abyssPrivate.destroy();
     this.resizeObserver_abyssPrivate?.disconnect();
+    this.ownerWindow_abyssPrivate?.removeEventListener(
+      'keydown',
+      this.handleOwnerWindowKeydown_abyssPrivate,
+      true,
+    );
     this.markdown_abyssPrivate.unload();
     this.root_abyssPrivate.remove();
   }
@@ -1522,6 +1530,44 @@ export class ProjectsTableView {
     );
   }
 
+  private readonly handleOwnerWindowKeydown_abyssPrivate = (event: KeyboardEvent): void => {
+    if (!this.isOwnerWindowF2_abyssPrivate(event)) return;
+    const cell = this.keydownCell_abyssPrivate(event.target);
+    if (cell === undefined || !editableField(cell.field)) return;
+    const selected = this.selection_abyssPrivate.focus;
+    if (
+      selected !== undefined &&
+      (selected.occurrenceId !== cell.identity.occurrenceId ||
+        selected.columnId !== cell.identity.columnId)
+    )
+      return;
+    this.handleTableKeydown_abyssPrivate(event);
+    if (event.defaultPrevented) event.stopPropagation();
+  };
+
+  private listenForOwnerWindowF2_abyssPrivate(): void {
+    this.ownerWindow_abyssPrivate?.addEventListener(
+      'keydown',
+      this.handleOwnerWindowKeydown_abyssPrivate,
+      true,
+    );
+  }
+
+  private isOwnerWindowF2_abyssPrivate(event: KeyboardEvent): boolean {
+    return (
+      this.mounted_abyssPrivate &&
+      this.isUnmodifiedF2_abyssPrivate(event) &&
+      !event.isComposing &&
+      !this.isTextEditingTarget_abyssPrivate(event.target)
+    );
+  }
+
+  private isUnmodifiedF2_abyssPrivate(event: KeyboardEvent): boolean {
+    return (
+      event.key === 'F2' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
+    );
+  }
+
   private handleTableKeydown_abyssPrivate(event: KeyboardEvent): void {
     if (event.isComposing || this.isTextEditingTarget_abyssPrivate(event.target)) return;
     if (this.handleHistoryShortcut_abyssPrivate(event)) return;
@@ -1632,7 +1678,7 @@ export class ProjectsTableView {
       });
       return;
     }
-    if (event.key !== 'Enter' && event.key !== 'F2') return;
+    if (event.key !== 'Enter' && !this.isUnmodifiedF2_abyssPrivate(event)) return;
     event.preventDefault();
     const focused = this.selection_abyssPrivate.focus;
     const editorCell = focused === undefined ? cell : this.renderedCell_abyssPrivate(focused);
