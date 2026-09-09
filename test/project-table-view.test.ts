@@ -54,6 +54,10 @@ function dragEvent(type: string, data: TestTransfer): Event {
   return event;
 }
 
+function rectangle(left: number, top: number, right: number, bottom: number): DOMRect {
+  return { left, top, right, bottom, width: right - left, height: bottom - top } as DOMRect;
+}
+
 const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
 afterEach(() => {
   activeDocument.body.empty();
@@ -1234,6 +1238,95 @@ describe('ProjectsTableView', () => {
     expect(status.querySelector('.abyss-project-cell-editor')).not.toBeNull();
   });
 
+  it('reveals Arrow and Tab destinations within a constrained pane around sticky surfaces', () => {
+    const { host } = mount([
+      project({ path: 'Projects/A.md', name: 'A' }),
+      project({ path: 'Projects/B.md', name: 'B' }),
+    ]);
+    const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+    const header = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-header-cell[data-column-id="name"]'),
+    );
+    const firstRow = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/A.md"]'),
+    );
+    const secondRow = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/B.md"]'),
+    );
+    const firstStatus = expectDefined(
+      firstRow.querySelector<HTMLElement>('[data-column-id="status"]'),
+    );
+    const firstProgress = expectDefined(
+      firstRow.querySelector<HTMLElement>('[data-column-id="progress"]'),
+    );
+    const secondStatus = expectDefined(
+      secondRow.querySelector<HTMLElement>('[data-column-id="status"]'),
+    );
+    const secondProgress = expectDefined(
+      secondRow.querySelector<HTMLElement>('[data-column-id="progress"]'),
+    );
+    const stickyName = expectDefined(
+      firstRow.querySelector<HTMLElement>('[data-column-id="name"]'),
+    );
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 800, 300));
+    vi.spyOn(header, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 220, 40));
+    vi.spyOn(stickyName, 'getBoundingClientRect').mockReturnValue(rectangle(0, 40, 220, 70));
+    vi.spyOn(firstStatus, 'getBoundingClientRect').mockImplementation(() =>
+      rectangle(
+        160 - scroll.scrollLeft,
+        40 - scroll.scrollTop,
+        260 - scroll.scrollLeft,
+        70 - scroll.scrollTop,
+      ),
+    );
+    vi.spyOn(firstProgress, 'getBoundingClientRect').mockImplementation(() =>
+      rectangle(
+        760 - scroll.scrollLeft,
+        40 - scroll.scrollTop,
+        860 - scroll.scrollLeft,
+        70 - scroll.scrollTop,
+      ),
+    );
+    vi.spyOn(secondStatus, 'getBoundingClientRect').mockImplementation(() =>
+      rectangle(
+        160 - scroll.scrollLeft,
+        300 - scroll.scrollTop,
+        260 - scroll.scrollLeft,
+        330 - scroll.scrollTop,
+      ),
+    );
+    vi.spyOn(secondProgress, 'getBoundingClientRect').mockImplementation(() =>
+      rectangle(
+        760 - scroll.scrollLeft,
+        300 - scroll.scrollTop,
+        860 - scroll.scrollLeft,
+        330 - scroll.scrollTop,
+      ),
+    );
+
+    firstStatus.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    firstStatus.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+    );
+    expect(scroll.scrollLeft).toBe(60);
+    firstProgress.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    );
+    expect(scroll.scrollTop).toBe(30);
+    secondProgress.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }),
+    );
+    expect(scroll.scrollLeft).toBe(0);
+    secondStatus.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }),
+    );
+    expect(scroll.scrollTop).toBe(0);
+    firstStatus.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+    );
+    expect(scroll.scrollLeft).toBe(60);
+  });
+
   it('supports Shift-click, Tab and Escape while keeping repeated group occurrences distinct', () => {
     const config = settings();
     config.projects.table.groupBy = 'property:Owners';
@@ -1390,6 +1483,23 @@ describe('ProjectsTableView', () => {
     await flushMicrotasks();
     expect(applyEdits).toHaveBeenCalledOnce();
     expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain('read-only');
+  });
+
+  it('captures malformed external TSV synchronously in the table paste failure boundary', () => {
+    const applyEdits = vi.fn();
+    const { host } = mount([project({})], { applyEdits });
+    const status = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
+    );
+    status.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const event = clipboardEvent('paste', transfer({ 'text/plain': '"unfinished' }));
+
+    expect(() => status.dispatchEvent(event)).not.toThrow();
+    expect(event.defaultPrevented).toBe(true);
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe(
+      'Unterminated quoted clipboard cell',
+    );
+    expect(applyEdits).not.toHaveBeenCalled();
   });
 
   it('pastes into a receipt-owned cleared native field but rejects an ordinary unavailable custom cell', async () => {

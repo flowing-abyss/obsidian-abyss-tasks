@@ -253,6 +253,17 @@ function sameRowDragPayload(left: ProjectRowDragPayload, right: ProjectRowDragPa
   );
 }
 
+function nearestViewportDelta(
+  start: number,
+  end: number,
+  viewportStart: number,
+  viewportEnd: number,
+): number {
+  if (start < viewportStart) return start - viewportStart;
+  if (end > viewportEnd) return end - viewportEnd;
+  return 0;
+}
+
 function observationMatchesReceipt(
   observation: ProjectSourceObservation,
   receipt: AppliedProjectCellChange,
@@ -1129,9 +1140,38 @@ export class ProjectsTableView {
       return false;
     }
     this.syncSelection_abyssPrivate();
-    if (next !== undefined)
-      this.renderedCell_abyssPrivate(next)?.element.focus({ preventScroll: true });
+    if (next !== undefined) {
+      const rendered = this.renderedCell_abyssPrivate(next);
+      rendered?.element.focus({ preventScroll: true });
+      if (rendered !== undefined) this.revealSelectionCell_abyssPrivate(rendered.element);
+    }
     return true;
+  }
+
+  private revealSelectionCell_abyssPrivate(cell: HTMLElement): void {
+    const viewport = this.scroll_abyssPrivate.getBoundingClientRect();
+    const target = cell.getBoundingClientRect();
+    const header = this.tableHost_abyssPrivate.querySelector<HTMLElement>(
+      '.abyss-project-table-header-cell',
+    );
+    const pinnedName = this.root_abyssPrivate.classList.contains('is-name-unpinned')
+      ? null
+      : this.tableHost_abyssPrivate.querySelector<HTMLElement>('.abyss-project-table-name-cell');
+    const usableTop = Math.max(
+      viewport.top,
+      header?.getBoundingClientRect().bottom ?? viewport.top,
+    );
+    const usableLeft =
+      pinnedName === null || cell.classList.contains('abyss-project-table-name-cell')
+        ? viewport.left
+        : Math.max(viewport.left, pinnedName.getBoundingClientRect().right);
+    const horizontal = nearestViewportDelta(target.left, target.right, usableLeft, viewport.right);
+    const vertical = nearestViewportDelta(target.top, target.bottom, usableTop, viewport.bottom);
+    this.scroll_abyssPrivate.scrollLeft = Math.max(
+      0,
+      this.scroll_abyssPrivate.scrollLeft + horizontal,
+    );
+    this.scroll_abyssPrivate.scrollTop = Math.max(0, this.scroll_abyssPrivate.scrollTop + vertical);
   }
 
   private handleSelectionAction_abyssPrivate(
@@ -1269,18 +1309,22 @@ export class ProjectsTableView {
     if (this.isTextEditingTarget_abyssPrivate(event.target) || event.clipboardData === null) return;
     const bounds = this.selectionBounds_abyssPrivate();
     if (bounds === undefined) return;
-    const internal = decodeProjectTableClipboard(
-      event.clipboardData.getData(PROJECT_TABLE_CLIPBOARD_TYPE),
-    );
-    const source =
-      internal ??
-      parseProjectTableTsv(event.clipboardData.getData('text/plain')).map((row) =>
-        row.map(clipboardPayloadFromText),
-      );
     event.preventDefault();
-    this.finishEditorBeforeAction(() => {
-      this.pasteCells_abyssPrivate(source, bounds);
-    });
+    try {
+      const internal = decodeProjectTableClipboard(
+        event.clipboardData.getData(PROJECT_TABLE_CLIPBOARD_TYPE),
+      );
+      const source =
+        internal ??
+        parseProjectTableTsv(event.clipboardData.getData('text/plain')).map((row) =>
+          row.map(clipboardPayloadFromText),
+        );
+      this.finishEditorBeforeAction(() => {
+        this.pasteCells_abyssPrivate(source, bounds);
+      });
+    } catch (error) {
+      this.showInputFailure_abyssPrivate(error);
+    }
   }
 
   private linkRebaser_abyssPrivate(): ProjectLinkRebaser {
