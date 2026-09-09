@@ -39,7 +39,8 @@ The plugin has several kinds of state, but they do not have equal authority.
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
 | Tasks and task metadata                         | Markdown files in the Obsidian vault                                                             | `TaskIndex` snapshots and calendar projections |
 | Projects and project status                     | Project Markdown plus membership query, one configured status property, and literal status names | `ProjectStore` entries and task statistics     |
-| Plugin preferences and saved view states        | Obsidian plugin data                                                                             | Migrated in-memory `CalendarSettings`          |
+| Static plugin preferences                       | Obsidian plugin `data.json`                                                                      | Composed runtime `CalendarSettings`            |
+| Saved list, section, and project-table views    | Versioned plugin `state.json`                                                                    | Composed runtime `CalendarSettings`            |
 | Current mode, selection, search, and drag state | `AppState` or the owning view controller for the current panel session                           | Rendered panel DOM                             |
 
 `TaskIndex` and `ProjectStore` are read models, not secondary databases. They may be rebuilt from the
@@ -253,8 +254,23 @@ created.
 ### Settings and status semantics
 
 [`src/settings/`](src/settings/) defines defaults, persisted settings, migrations, and the settings
-interface. `TaskCalendarPlugin.loadSettings()` migrates persisted data before it merges defaults.
-Changes to task status settings rebuild the shared `StatusCatalog`, `StatusRegistry`, and the
+interface. `SettingsPersistenceCoordinator` serializes two documents through Obsidian's public
+vault adapter: `data.json` contains static configuration, while adjacent `state.json` contains
+`listViewStates`, `sectionCollapse`, and the complete `projects.table` preference. A single
+`CalendarSettings` object remains the runtime authority; the persistence boundary partitions and
+recomposes it instead of giving panels independent settings copies.
+
+`TaskCalendarPlugin.loadSettings()` captures the untouched legacy document before destructive
+normalization. On first migration it writes and verifies the versioned state envelope, including an
+exact pre-split recovery snapshot, before removing moved keys from `data.json`. A recognized state
+document wins when both copies exist. Corrupt, unreadable, and future-version state is left in place,
+view writes are suspended, and the runtime uses temporary view defaults. The coordinator retains
+unknown static and nested view keys, queues detached write snapshots in order, deduplicates unchanged
+writes, and continues the queue after a rejected operation.
+
+Static and saved-view changes use separate callbacks. Static saves advance the existing rollback
+revision and refresh project settings after durability; state-only saves do neither. Changes to task
+status settings rebuild the shared `StatusCatalog`, `StatusRegistry`, and the
 indexer's interpretation of task symbols together.
 
 Project settings migrate legacy per-status property definitions to one global source and literal

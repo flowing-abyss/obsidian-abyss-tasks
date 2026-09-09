@@ -62,7 +62,8 @@ describe('renderProjectTableSettings', () => {
         { name: 'Start', type: 'date' },
         { name: 'End', type: 'date' },
       ]),
-      save: vi.fn().mockResolvedValue(undefined),
+      saveStatic: vi.fn().mockResolvedValue(undefined),
+      saveViewState: vi.fn().mockResolvedValue(undefined),
       refresh: vi.fn(),
     });
 
@@ -100,7 +101,8 @@ describe('renderProjectTableSettings', () => {
           { name: 'Start', type: 'date' },
           { name: 'End', type: 'date' },
         ]),
-        save,
+        saveStatic: save,
+        saveViewState: save,
         refresh: vi.fn(),
       });
 
@@ -117,14 +119,16 @@ describe('renderProjectTableSettings', () => {
 
   it('keeps Name first and visible while persisting hide and drag reorder changes', async () => {
     const projects = buildDefaultProjectsSettings();
-    const save = vi.fn().mockResolvedValue(undefined);
+    const saveStatic = vi.fn().mockResolvedValue(undefined);
+    const saveViewState = vi.fn().mockResolvedValue(undefined);
     const container = document.body.createDiv();
     renderProjectTableSettings({
       app: new App(),
       container,
       projects,
       catalog: catalog(),
-      save,
+      saveStatic,
+      saveViewState,
       refresh: vi.fn(),
     });
 
@@ -154,9 +158,52 @@ describe('renderProjectTableSettings', () => {
       'progress',
       'status',
     ]);
-    expect(save).toHaveBeenCalledTimes(2);
+    expect(saveStatic).not.toHaveBeenCalled();
+    expect(saveViewState).toHaveBeenCalledTimes(2);
     expect(container.querySelector('[aria-label^="Move "]')).toBeNull();
     expect(statusRow.getAttribute('draggable')).toBe('true');
+  });
+
+  it('persists curated date sources through the static settings channel', async () => {
+    const projects = buildDefaultProjectsSettings();
+    const saveStatic = vi.fn().mockResolvedValue(undefined);
+    const saveViewState = vi.fn().mockResolvedValue(undefined);
+    const container = document.body.createDiv();
+    const dropdowns: DropdownComponent[] = [];
+    const dropdownSpy = vi.spyOn(Setting.prototype, 'addDropdown').mockImplementation(function (
+      this: Setting,
+      callback,
+    ) {
+      const dropdown = new DropdownComponent(this.controlEl);
+      this.components.push(dropdown);
+      dropdowns.push(dropdown);
+      callback(dropdown);
+      return this;
+    });
+    try {
+      renderProjectTableSettings({
+        app: new App(),
+        container,
+        projects,
+        catalog: catalog([
+          { name: 'Start', type: 'date' },
+          { name: 'Kickoff', type: 'date' },
+          { name: 'End', type: 'date' },
+        ]),
+        saveStatic,
+        saveViewState,
+        refresh: vi.fn(),
+      });
+
+      expectDefined(dropdowns[0]).setValue('Kickoff');
+      await settle();
+
+      expect(projects.startProperty).toBe('Kickoff');
+      expect(saveStatic).toHaveBeenCalledOnce();
+      expect(saveViewState).not.toHaveBeenCalled();
+    } finally {
+      dropdownSpy.mockRestore();
+    }
   });
 
   it('changes a display label without changing the custom property source key', async () => {
@@ -169,7 +216,8 @@ describe('renderProjectTableSettings', () => {
       container,
       projects,
       catalog: catalog(),
-      save,
+      saveStatic: save,
+      saveViewState: save,
       refresh: vi.fn(),
     });
     const row = expectDefined(
@@ -198,7 +246,8 @@ describe('renderProjectTableSettings', () => {
       container,
       projects,
       catalog: catalog(),
-      save: vi.fn().mockResolvedValue(undefined),
+      saveStatic: vi.fn().mockResolvedValue(undefined),
+      saveViewState: vi.fn().mockResolvedValue(undefined),
       refresh: vi.fn(),
     });
 
@@ -255,7 +304,8 @@ describe('renderProjectTableSettings', () => {
       container,
       projects,
       catalog: catalog(),
-      save,
+      saveStatic: save,
+      saveViewState: save,
       refresh,
     });
     const input = expectDefined(
@@ -307,7 +357,8 @@ describe('renderProjectTableSettings', () => {
         { name: 'Start', type: 'date' },
         { name: 'Budget', type: 'number' },
       ]),
-      save: vi.fn().mockResolvedValue(undefined),
+      saveStatic: vi.fn().mockResolvedValue(undefined),
+      saveViewState: vi.fn().mockResolvedValue(undefined),
       refresh: vi.fn(),
     });
     const input = expectDefined(

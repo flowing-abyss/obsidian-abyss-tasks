@@ -15,7 +15,7 @@ import { ProjectsTableView } from './ProjectsTableView';
 
 export interface ProjectsPanelOptions {
   renderTasks?: (host: HTMLElement, path: string) => void;
-  saveSettings?: () => Promise<void>;
+  saveViewState?: () => Promise<void>;
   projectProperties?: ProjectPropertyCatalog;
 }
 
@@ -27,7 +27,7 @@ export class ProjectsPanel {
   private readonly settings: CalendarSettings;
   private readonly app: App;
   private readonly renderTasks: (host: HTMLElement, path: string) => void;
-  private readonly saveSettings: () => Promise<void>;
+  private readonly saveViewState: () => Promise<void>;
   private readonly projectProperties: ProjectPropertyCatalog;
   private readonly editHistory: ProjectEditHistory;
   private el: HTMLElement | null = null;
@@ -46,7 +46,7 @@ export class ProjectsPanel {
     this.settings = settings;
     this.app = app;
     this.renderTasks = opts.renderTasks ?? ((): void => {});
-    this.saveSettings = opts.saveSettings ?? (async (): Promise<void> => {});
+    this.saveViewState = opts.saveViewState ?? (async (): Promise<void> => {});
     this.projectProperties = opts.projectProperties ?? new ObsidianProjectProperties(app);
     this.editHistory = new ProjectEditHistory((changes) => this.applyTableEdits(changes));
   }
@@ -60,7 +60,7 @@ export class ProjectsPanel {
       state: this.state,
       settings: this.settings,
       catalog: this.projectProperties,
-      saveSettings: this.saveSettings,
+      saveViewState: this.saveViewState,
       applyEdits: (changes) => this.applyTableEdits(changes),
       history: this.editHistory,
       createProject: (name) => this.createProject(name),

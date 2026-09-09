@@ -31,6 +31,7 @@ type LeftPanelConstructorArgs = [
   projectStore?: ProjectStore | null,
   projectManager?: ProjectManager | null,
   navigation?: PanelNavigationActions,
+  onSaveViewState?: () => Promise<void>,
 ];
 
 interface TagGroupRenderContext {
@@ -59,6 +60,7 @@ export class LeftPanel {
   private readonly queries_abyssPrivate: TaskQueryApi;
   private readonly tasks_abyssPrivate: TaskApplicationApi;
   private readonly onSaveSettings_abyssPrivate: () => Promise<void>;
+  private readonly onSaveViewState_abyssPrivate: () => Promise<void>;
   private readonly projectStore_abyssPrivate: ProjectStore | null;
   private readonly projectManager_abyssPrivate: ProjectManager | null;
   private el_abyssPrivate!: HTMLElement;
@@ -83,6 +85,7 @@ export class LeftPanel {
       projectStore = null,
       projectManager = null,
       navigation,
+      onSaveViewState = async () => {},
     ] = args;
     this.state_abyssPrivate = state;
     this.settings_abyssPrivate = settings;
@@ -91,6 +94,7 @@ export class LeftPanel {
     this.queries_abyssPrivate = queries;
     this.tasks_abyssPrivate = tasks;
     this.onSaveSettings_abyssPrivate = onSaveSettings;
+    this.onSaveViewState_abyssPrivate = onSaveViewState;
     this.projectStore_abyssPrivate = projectStore;
     this.projectManager_abyssPrivate = projectManager;
     this.navigation_abyssPrivate =
@@ -103,7 +107,7 @@ export class LeftPanel {
           setCalendarView: () => {},
           openQuickCapture: () => {},
         },
-        onSaveSettings,
+        onSaveViewState,
       );
   }
 
@@ -271,7 +275,7 @@ export class LeftPanel {
 
     header.addEventListener('click', () => {
       this.settings_abyssPrivate.sectionCollapse[key] = !collapsed;
-      runAsyncAction(this.onSaveSettings_abyssPrivate());
+      runAsyncAction(this.onSaveViewState_abyssPrivate(), 'Could not save section state');
       this.render_abyssPrivate();
     });
 
@@ -354,7 +358,7 @@ export class LeftPanel {
     // Ensure the section is expanded so the input is visible.
     if (this.settings_abyssPrivate.sectionCollapse[key]) {
       this.settings_abyssPrivate.sectionCollapse[key] = false;
-      runAsyncAction(this.onSaveSettings_abyssPrivate());
+      runAsyncAction(this.onSaveViewState_abyssPrivate(), 'Could not save section state');
       this.render_abyssPrivate();
     }
     const section = this.el_abyssPrivate.querySelector(`.abyss-left-section--${key}`);

@@ -279,6 +279,7 @@ type LeftPanelTestArgs = readonly [
   projectStore?: ProjectStore | null,
   projectManager?: ProjectManager | null,
   tasks?: TaskApplicationApi,
+  onSaveViewState?: () => Promise<void>,
 ];
 
 export function makeLeftPanelForTest(
@@ -292,6 +293,7 @@ export function makeLeftPanelForTest(
     projectStore = null,
     projectManager = null,
     tasks,
+    onSaveViewState,
   ]: LeftPanelTestArgs
 ): LeftPanel {
   const application = tasks ?? taskHarness;
@@ -305,6 +307,8 @@ export function makeLeftPanelForTest(
     onSaveSettings,
     projectStore,
     projectManager,
+    undefined,
+    onSaveViewState,
   );
 }
 

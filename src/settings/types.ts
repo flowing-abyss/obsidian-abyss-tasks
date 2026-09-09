@@ -107,6 +107,41 @@ export interface CalendarSettings {
   shortcuts: ShortcutSettings;
 }
 
+/** Saved view preferences composed into CalendarSettings at runtime. */
+export interface SavedViewState {
+  listViewStates?: Record<string, ListViewState>;
+  sectionCollapse: CalendarSettings['sectionCollapse'];
+  projects: {
+    table: ProjectTableSettings;
+  };
+}
+
+export interface SavedViewStateRecovery {
+  /** Exact data.json value captured once before the settings/state split. */
+  preSplitData?: unknown;
+  /** Invalid nested values omitted from the active runtime representation. */
+  malformedViews?: {
+    listViewStates?: Record<string, unknown>;
+    sectionCollapse?: unknown;
+    projectTable?: unknown;
+    projectTableColumns?: unknown[];
+  };
+}
+
+export interface SavedViewStateEnvelope {
+  schemaVersion: 1;
+  views: SavedViewState;
+  recovery?: SavedViewStateRecovery;
+}
+
+/** Persisted data.json shape after saved view preferences have moved to state.json. */
+export type StaticCalendarSettings = Omit<
+  CalendarSettings,
+  'listViewStates' | 'sectionCollapse' | 'projects'
+> & {
+  projects: Omit<ProjectsSettings, 'table'>;
+};
+
 // Params parsed from a task-calendar code block (all optional overrides of ViewConfig)
 export interface CodeBlockParams {
   view?: 'month' | 'week' | 'list';

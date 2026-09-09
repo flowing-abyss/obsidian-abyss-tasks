@@ -37,6 +37,7 @@ interface TaskCalendarPlugin extends Plugin {
   tagManager: TagManager;
   rebuildTaskStatusSemantics(): void;
   saveSettings(): Promise<void>;
+  saveViewState(): Promise<void>;
   renameProjectStatus(id: string, name: string, expectedName: string): Promise<void>;
 }
 
@@ -986,7 +987,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
       container: containerEl,
       projects: this.plugin_abyssPrivate.settings.projects,
       catalog: this.projectProperties_abyssPrivate,
-      save: () => this.plugin_abyssPrivate.saveSettings(),
+      saveStatic: () => this.plugin_abyssPrivate.saveSettings(),
+      saveViewState: () => this.plugin_abyssPrivate.saveViewState(),
       refresh: () => {
         this.render_abyssPrivate();
       },

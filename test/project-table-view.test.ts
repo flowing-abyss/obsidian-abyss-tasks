@@ -148,7 +148,7 @@ function mount(
     state: new AppState(),
     settings: config,
     catalog: catalog(),
-    saveSettings,
+    saveViewState: saveSettings,
     applyEdits,
     history,
     createProject: vi.fn().mockResolvedValue(undefined),

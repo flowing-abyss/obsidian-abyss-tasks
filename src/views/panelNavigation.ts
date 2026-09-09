@@ -30,7 +30,7 @@ export class PanelNavigator implements PanelNavigationActions {
     private readonly state: AppState,
     private readonly settings: CalendarSettings,
     private readonly center: PanelNavigationCenterPort,
-    private readonly onSaveSettings: () => Promise<void> = async () => {},
+    private readonly onSaveViewState: () => Promise<void> = async () => {},
   ) {
     this.lastTasksList = state.get('selectedList');
   }
@@ -84,7 +84,7 @@ export class PanelNavigator implements PanelNavigationActions {
       this.state.set('selectedList', selection);
       this.state.set('centerListViewState', this.listState(selection));
       this.state.set('centerFilter', '');
-      this.saveSettings();
+      this.saveViewState();
     });
   }
 
@@ -109,11 +109,11 @@ export class PanelNavigator implements PanelNavigationActions {
 
   private persistListState(selection: ListSelection): void {
     this.storeListState(selection);
-    this.saveSettings();
+    this.saveViewState();
   }
 
-  private saveSettings(): void {
-    this.onSaveSettings().catch((error: unknown) => {
+  private saveViewState(): void {
+    this.onSaveViewState().catch((error: unknown) => {
       console.error('[abyss-tasks] failed to persist list view settings', error);
     });
   }

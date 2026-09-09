@@ -79,7 +79,7 @@ export interface ProjectsTableViewContext {
   readonly state: AppState;
   readonly settings: CalendarSettings;
   readonly catalog: ProjectPropertyCatalog;
-  readonly saveSettings: () => Promise<void>;
+  readonly saveViewState: () => Promise<void>;
   readonly applyEdits: (changes: readonly ProjectCellChange[]) => Promise<ProjectEditResult>;
   readonly history: ProjectEditHistory;
   readonly createProject: (name: string) => Promise<void>;
@@ -548,12 +548,11 @@ export class ProjectsTableView {
 
   private persistSettings_abyssPrivate(): void {
     this.feedback_abyssPrivate.empty();
-    void this.context_abyssPrivate.saveSettings().catch((error: unknown) => {
+    void this.context_abyssPrivate.saveViewState().catch((error: unknown) => {
       if (!this.mounted_abyssPrivate) return;
       const message = error instanceof Error ? error.message : String(error);
       this.feedback_abyssPrivate.setText(`Could not save project table settings: ${message}`);
       console.error('[abyss-tasks] Could not save project table settings', error);
-      new Notice(`Could not save project table settings: ${message}`);
     });
   }
 

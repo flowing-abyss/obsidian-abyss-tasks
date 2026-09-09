@@ -30,6 +30,7 @@ interface StubPlugin {
   app: App;
   settings: CalendarSettings;
   saveSettings(): Promise<void>;
+  saveViewState(): Promise<void>;
 }
 
 function makeTab(): CalendarSettingsTab {
@@ -43,6 +44,7 @@ function makeTab(): CalendarSettingsTab {
     app,
     settings: structuredClone(DEFAULT_SETTINGS),
     saveSettings: vi.fn().mockResolvedValue(undefined),
+    saveViewState: vi.fn().mockResolvedValue(undefined),
   };
   const tab = new CalendarSettingsTab(
     app,

@@ -1,9 +1,12 @@
-import { Notice, Plugin } from 'obsidian';
+import { normalizePath, Notice, Plugin } from 'obsidian';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
 import { ProjectManager } from './projects/ProjectManager';
 import { DailyNoteResolver } from './resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from './settings/defaults';
-import { migrateSettings } from './settings/migration';
+import {
+  SettingsPersistenceCoordinator,
+  type SettingsPersistencePort,
+} from './settings/persistence';
 import { beginSettingsSave } from './settings/settingsSaveRevision';
 import { CalendarSettingsTab } from './settings/SettingsTab';
 import { toStatusRules } from './settings/statusCatalogAdapter';
@@ -45,6 +48,7 @@ export default class TaskCalendarPlugin extends Plugin {
   private statusCatalog!: StatusCatalog;
   private statusRegistry!: StatusRegistry;
   private projectManager!: ProjectManager;
+  private settingsPersistence!: SettingsPersistenceCoordinator;
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -146,6 +150,7 @@ export default class TaskCalendarPlugin extends Plugin {
           this.statusRegistry,
           () => this.saveSettings(),
           commentTimeContext,
+          () => this.saveViewState(),
         ),
     );
   }
@@ -200,19 +205,43 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    const raw = (await this.loadData()) as Record<string, unknown> | null | undefined;
-    const data: Record<string, unknown> = raw ?? {};
-    const migration = migrateSettings(data);
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- Runtime settings are migrated before being merged with the complete defaults object.
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data) as CalendarSettings;
-    for (const message of migration.notices) new Notice(message);
+    this.settingsPersistence = new SettingsPersistenceCoordinator(this.persistencePort());
+    try {
+      const loaded = await this.settingsPersistence.loadSettings(DEFAULT_SETTINGS);
+      this.settings = loaded.settings;
+      for (const message of loaded.notices) new Notice(message);
+      if (loaded.issues.length > 0) {
+        for (const issue of loaded.issues) {
+          console.error('[abyss-tasks] saved view state is unavailable', issue);
+        }
+        new Notice(
+          'Saved view state could not be loaded. View preferences are using temporary defaults; view preference writes are suspended to preserve the existing file.',
+        );
+      }
+    } catch (error) {
+      console.error('[abyss-tasks] settings load failed', error);
+      new Notice(
+        'Abyss tasks settings could not be loaded. Existing settings were left unchanged.',
+      );
+      throw error;
+    }
   }
 
   async saveSettings(): Promise<void> {
     beginSettingsSave(this.settings);
-    await this.saveData(this.settings);
+    await this.settingsPersistence.saveSettings(this.settings);
     for (const leaf of this.app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)) {
       if (leaf.view instanceof PanelView) leaf.view.refreshProjectSettings();
+    }
+  }
+
+  async saveViewState(): Promise<void> {
+    try {
+      await this.settingsPersistence.saveViewState(this.settings);
+    } catch (error) {
+      console.error('[abyss-tasks] saved view state write failed', error);
+      new Notice('Could not save view preferences. Your current session is unchanged.');
+      throw error;
     }
   }
 
@@ -237,5 +266,22 @@ export default class TaskCalendarPlugin extends Plugin {
     const leaf = this.app.workspace.getLeaf('tab');
     await leaf.setViewState({ type: PANEL_VIEW_TYPE, active: true });
     await this.app.workspace.revealLeaf(leaf);
+  }
+
+  private persistencePort(): SettingsPersistencePort {
+    const adapter = this.app.vault.adapter;
+    const pluginDirectory =
+      this.manifest.dir ?? normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}`);
+    const statePath = normalizePath(`${pluginDirectory}/state.json`);
+    return {
+      loadStatic: () => this.loadData(),
+      saveStatic: (data) => this.saveData(data),
+      state: {
+        path: statePath,
+        exists: (path) => adapter.exists(path),
+        read: (path) => adapter.read(path),
+        write: (path, data) => adapter.write(path, data),
+      },
+    };
   }
 }

@@ -14,7 +14,8 @@ export interface RenderProjectTableSettingsOptions {
   readonly container: HTMLElement;
   readonly projects: ProjectsSettings;
   readonly catalog: ProjectPropertyCatalog;
-  readonly save: () => Promise<void>;
+  readonly saveStatic: () => Promise<void>;
+  readonly saveViewState: () => Promise<void>;
   readonly refresh: () => void;
 }
 
@@ -305,7 +306,7 @@ function renderCuratedDateSource(
   section: HTMLElement,
   key: 'startProperty' | 'endProperty',
   options: RenderProjectTableSettingsOptions,
-  persist: (refresh?: boolean) => void,
+  persistStatic: (refresh?: boolean) => void,
 ): void {
   const name = key === 'startProperty' ? 'Start property' : 'End property';
   const current = options.projects[key];
@@ -336,7 +337,7 @@ function renderCuratedDateSource(
           return;
         }
         options.projects[key] = property;
-        persist(true);
+        persistStatic(true);
       });
     });
 }
@@ -422,9 +423,9 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
     cls: 'abyss-project-table-settings-error',
     attr: { role: 'status', 'aria-live': 'polite' },
   });
-  const persist = (refresh = false): void => {
+  const persist = (save: () => Promise<void>, refresh = false): void => {
     feedback.empty();
-    void options.save().then(
+    void save().then(
       () => {
         if (refresh) options.refresh();
       },
@@ -432,13 +433,19 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
         const message = error instanceof Error ? error.message : String(error);
         feedback.setText(`Could not save project table settings: ${message}`);
         console.error('[abyss-tasks] Could not save project table settings', error);
-        new Notice(`Could not save project table settings: ${message}`);
       },
     );
   };
 
-  renderCuratedDateSource(section, 'startProperty', options, persist);
-  renderCuratedDateSource(section, 'endProperty', options, persist);
+  const persistStatic = (refresh = false): void => {
+    persist(options.saveStatic, refresh);
+  };
+  const persistViewState = (refresh = false): void => {
+    persist(options.saveViewState, refresh);
+  };
+
+  renderCuratedDateSource(section, 'startProperty', options, persistStatic);
+  renderCuratedDateSource(section, 'endProperty', options, persistStatic);
 
   const rows = section.createDiv({ cls: 'abyss-project-column-settings' });
   const headings = rows.createDiv({ cls: 'abyss-project-column-settings-header' });
@@ -446,7 +453,7 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
     headings.createSpan({ text: label, attr: label.length === 0 ? { 'aria-hidden': 'true' } : {} });
   }
   options.projects.table.columns.forEach((column, index) => {
-    renderColumnRow({ host: rows, column, index, options, persist });
+    renderColumnRow({ host: rows, column, index, options, persist: persistViewState });
   });
 
   return renderAddPropertyControl({
@@ -454,6 +461,6 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
     feedback,
     available: options.catalog.list() ?? [],
     options,
-    persist,
+    persist: persistViewState,
   });
 }

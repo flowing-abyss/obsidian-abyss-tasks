@@ -1,8 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
-import TaskCalendarPlugin from '../src/main';
+import { describe, expect, it } from 'vitest';
 import { migrateSettings } from '../src/settings/migration';
 import { defaultShortcuts } from '../src/settings/shortcuts';
-import { expectDefined, methodOf } from './helpers';
+import { expectDefined } from './helpers';
 
 describe('migrateSettings', () => {
   it('creates a complete shortcut collection when legacy settings have none', () => {
@@ -88,27 +87,6 @@ describe('migrateSettings', () => {
       newOccurrencePlacement: 'after',
       removeScheduledDate: true,
     });
-  });
-
-  it('loads migrated lifecycle settings without saving them back', async () => {
-    const plugin = Object.create(TaskCalendarPlugin.prototype) as TaskCalendarPlugin & {
-      loadData: ReturnType<typeof vi.fn>;
-      saveData: ReturnType<typeof vi.fn>;
-    };
-    plugin.loadData = vi.fn().mockResolvedValue({});
-    plugin.saveData = vi.fn().mockResolvedValue(undefined);
-
-    await plugin.loadSettings();
-
-    expect(plugin.settings.taskLifecycle).toEqual({
-      addCreatedDate: true,
-      addCompletionDate: true,
-    });
-    expect(plugin.settings.recurrence).toEqual({
-      newOccurrencePlacement: 'before',
-      removeScheduledDate: false,
-    });
-    expect(methodOf(plugin, 'saveData')).not.toHaveBeenCalled();
   });
 
   it('adds missing pinnedTags and archivedTags arrays', () => {

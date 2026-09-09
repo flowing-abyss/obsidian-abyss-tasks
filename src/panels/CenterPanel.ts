@@ -229,6 +229,7 @@ type CenterPanelConstructorArgs = [
   onRenderComplete?: (root: HTMLElement) => void,
   interactionOwnership?: InteractionOwnershipPort,
   navigation?: PanelNavigationActions,
+  onSaveViewState?: () => Promise<void>,
 ];
 
 function isRealmHTMLElement(target: EventTarget | null): target is HTMLElement {
@@ -310,7 +311,7 @@ export class CenterPanel {
   // full re-render triggered by updateViewState re-opens the popover with
   // the "Status group" row still expanded (multi-select shouldn't close on pick).
   private reopenStatusGroupPopover_abyssPrivate = false;
-  private readonly onSaveSettings_abyssPrivate: () => Promise<void>;
+  private readonly onSaveViewState_abyssPrivate: () => Promise<void>;
   private md_abyssPrivate = new Component();
   private searchInputEl_abyssPrivate: HTMLInputElement | null = null;
   private searchResultsEl_abyssPrivate: HTMLElement | null = null;
@@ -351,7 +352,7 @@ export class CenterPanel {
       settings,
       queries,
       statusRegistry,
-      onSaveSettings = async (): Promise<void> => {},
+      ,
       projectStore = null,
       projectManager = null,
       tasks,
@@ -361,13 +362,14 @@ export class CenterPanel {
       onRenderComplete = (): void => {},
       interactionOwnership = noInteractionOwnership,
       navigation,
+      onSaveViewState = async () => {},
     ] = args;
     this.state_abyssPrivate = state;
     this.app_abyssPrivate = app;
     this.settings_abyssPrivate = settings;
     this.queries_abyssPrivate = queries;
     this.statusRegistry_abyssPrivate = statusRegistry;
-    this.onSaveSettings_abyssPrivate = onSaveSettings;
+    this.onSaveViewState_abyssPrivate = onSaveViewState;
     this.projectStore_abyssPrivate = projectStore;
     this.projectManager_abyssPrivate = projectManager;
     this.tasks_abyssPrivate = tasks;
@@ -399,7 +401,7 @@ export class CenterPanel {
           },
           openQuickCapture: () => undefined,
         },
-        this.onSaveSettings_abyssPrivate,
+        this.onSaveViewState_abyssPrivate,
       )
     );
   }
@@ -922,7 +924,7 @@ export class CenterPanel {
       this.settings_abyssPrivate,
       this.app_abyssPrivate,
       {
-        saveSettings: this.onSaveSettings_abyssPrivate,
+        saveViewState: this.onSaveViewState_abyssPrivate,
         renderTasks: (host, path) => {
           this.renderProjectTasks_abyssPrivate(host, path);
         },
@@ -3103,7 +3105,7 @@ export class CenterPanel {
   private updateViewState_abyssPrivate(next: ListViewState): void {
     this.settings_abyssPrivate.listViewStates ??= {};
     this.settings_abyssPrivate.listViewStates[this.activeListKey_abyssPrivate()] = next;
-    runAsyncAction(this.onSaveSettings_abyssPrivate());
+    runAsyncAction(this.onSaveViewState_abyssPrivate(), 'Could not save list view state');
     this.state_abyssPrivate.set('centerListViewState', next);
   }
 

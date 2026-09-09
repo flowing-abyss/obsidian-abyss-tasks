@@ -2,6 +2,8 @@ import { App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import TaskCalendarPlugin from '../src/main';
 import { DEFAULT_SETTINGS, buildDefaultProjectsSettings } from '../src/settings/defaults';
+import { STATIC_SAVED_VIEW_STATE_MARKER } from '../src/settings/persistence';
+import { latestSettingsSaveRevision } from '../src/settings/settingsSaveRevision';
 import type { CalendarSettings } from '../src/settings/types';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import { useRealMoment } from './helpers';
@@ -31,6 +33,7 @@ interface PluginLike {
   };
   settings: CalendarSettings;
   data__: unknown;
+  stateFiles__: Map<string, string>;
   commands__: Map<string, { id: string; name: string }>;
   views__: Map<string, (...args: unknown[]) => unknown>;
   markdownCodeBlockProcessors__: Map<string, (...args: unknown[]) => unknown>;
@@ -41,6 +44,7 @@ interface PluginLike {
   onunload: () => void;
   loadSettings: () => Promise<void>;
   saveSettings: () => Promise<void>;
+  saveViewState: () => Promise<void>;
   openPanel: () => Promise<void>;
 }
 
@@ -49,10 +53,24 @@ function makePlugin(data: Record<string, unknown> | null = null): PluginLike {
   const workspace = app.workspace as unknown as WorkspaceLike;
   // Keep layout NOT ready so onLayoutReady queues callbacks (lets onload finish before initialize fires)
   workspace.layoutReady = false;
+  const stateFiles = new Map<string, string>();
+  const adapter = {
+    exists: vi.fn(async (path: string) => stateFiles.has(path)),
+    read: vi.fn(async (path: string) => {
+      const value = stateFiles.get(path);
+      if (value === undefined) throw new Error(`Missing ${path}`);
+      return value;
+    }),
+    write: vi.fn(async (path: string, value: string) => {
+      stateFiles.set(path, value);
+    }),
+  };
+  Object.assign(app.vault, { adapter, configDir: '.test-config' });
 
   const plugin = new TaskCalendarPlugin(app, MANIFEST) as unknown as PluginLike;
   // loadData() returns this.data__; seed it so loadSettings merges persisted values.
   plugin.data__ = data ?? {};
+  plugin.stateFiles__ = stateFiles;
   return plugin;
 }
 
@@ -109,15 +127,30 @@ describe('TaskCalendarPlugin loadSettings', () => {
     });
     expect(plugin.settings.shortcuts).not.toHaveProperty('unknownAction');
   });
+
+  it('stores state beside the plugin using the configured vault directory fallback', async () => {
+    const plugin = makePlugin();
+
+    await plugin.loadSettings();
+
+    expect(plugin.stateFiles__.has('.test-config/plugins/abyss-tasks/state.json')).toBe(true);
+  });
 });
 
 describe('TaskCalendarPlugin saveSettings', () => {
-  it('calls saveData with current settings', async () => {
+  it('writes static settings without saved view fields', async () => {
     const plugin = makePlugin();
     await plugin.loadSettings();
     const spy = vi.spyOn(plugin, 'saveData');
+    plugin.settings.taskPrefix = '#changed';
     await plugin.saveSettings();
-    expect(spy).toHaveBeenCalledWith(plugin.settings);
+    expect(spy).toHaveBeenCalledOnce();
+    const saved = spy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(saved['taskPrefix']).toBe(plugin.settings.taskPrefix);
+    expect(saved['listViewStates']).toBeUndefined();
+    expect(saved['sectionCollapse']).toBeUndefined();
+    expect((saved['projects'] as Record<string, unknown>)['table']).toBeUndefined();
+    expect(saved[STATIC_SAVED_VIEW_STATE_MARKER]).toBe(1);
   });
 
   it('refreshes project stores and table settings in open panel views after persistence', async () => {
@@ -132,6 +165,25 @@ describe('TaskCalendarPlugin saveSettings', () => {
 
     expect(plugin.app.workspace.getLeavesOfType).toHaveBeenCalledWith(PANEL_VIEW_TYPE);
     expect(refreshProjectSettings).toHaveBeenCalledOnce();
+  });
+
+  it('saves view state without advancing static revision or refreshing every project panel', async () => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    const staticBefore = structuredClone(plugin.data__);
+    const revisionBefore = latestSettingsSaveRevision(plugin.settings);
+    const refreshProjectSettings = vi.fn();
+    const view = Object.create(PanelView.prototype) as PanelView;
+    view.refreshProjectSettings = refreshProjectSettings;
+    plugin.app.workspace.getLeavesOfType = vi.fn(() => [{ view }]);
+
+    plugin.settings.sectionCollapse.tags = true;
+    await plugin.saveViewState();
+
+    expect(plugin.data__).toEqual(staticBefore);
+    expect(latestSettingsSaveRevision(plugin.settings)).toBe(revisionBefore);
+    expect(plugin.app.workspace.getLeavesOfType).not.toHaveBeenCalled();
+    expect(refreshProjectSettings).not.toHaveBeenCalled();
   });
 });
 

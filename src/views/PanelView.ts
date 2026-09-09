@@ -81,6 +81,7 @@ type PanelViewDependencies = [
   statusRegistry: StatusRegistry,
   onSaveSettings?: () => Promise<void>,
   commentTimeContext?: CommentTimeContextProvider,
+  onSaveViewState?: () => Promise<void>,
 ];
 
 function hasFinitePositiveBounds(bounds: DOMRect): boolean {
@@ -178,6 +179,7 @@ export class PanelView extends ItemView {
   private readonly tasks_abyssPrivate: TaskApplicationApi & TaskCaptureApplicationApi;
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
   private readonly onSaveSettings_abyssPrivate: () => Promise<void>;
+  private readonly onSaveViewState_abyssPrivate: () => Promise<void>;
   private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
 
   constructor(leaf: WorkspaceLeaf, ...dependencies: PanelViewDependencies) {
@@ -190,6 +192,7 @@ export class PanelView extends ItemView {
       statusRegistry,
       onSaveSettings = async () => {},
       commentTimeContext,
+      onSaveViewState = async () => {},
     ] = dependencies;
     this.settings_abyssPrivate = settings;
     this.tagManager_abyssPrivate = tagManager;
@@ -197,6 +200,7 @@ export class PanelView extends ItemView {
     this.tasks_abyssPrivate = tasks;
     this.statusRegistry_abyssPrivate = statusRegistry;
     this.onSaveSettings_abyssPrivate = onSaveSettings;
+    this.onSaveViewState_abyssPrivate = onSaveViewState;
     this.commentTimeContext_abyssPrivate = commentTimeContext;
   }
 
@@ -270,7 +274,7 @@ export class PanelView extends ItemView {
           this.center_abyssPrivate.finishProjectTableEditorBefore(action);
         },
       },
-      this.onSaveSettings_abyssPrivate,
+      this.onSaveViewState_abyssPrivate,
     );
     this.selectedListRenameUnsub_abyssPrivate =
       this.tagManager_abyssPrivate.registerSelectedListState({
@@ -373,6 +377,7 @@ export class PanelView extends ItemView {
       projectStore,
       projectManager,
       this.panelNavigation_abyssPrivate,
+      this.onSaveViewState_abyssPrivate,
     );
     this.center_abyssPrivate = new CenterPanel(
       this.state_abyssPrivate,
@@ -390,6 +395,7 @@ export class PanelView extends ItemView {
       (root) => this.creationPresentation_abyssPrivate?.afterRender(root),
       this.interactionRegistry_abyssPrivate,
       this.panelNavigation_abyssPrivate,
+      this.onSaveViewState_abyssPrivate,
     );
     this.right_abyssPrivate = new RightPanel(
       this.state_abyssPrivate,

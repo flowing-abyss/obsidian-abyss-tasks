@@ -1322,6 +1322,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     const store = makeStubStore(opts.tasks ?? []);
     const merged: CalendarSettings = { ...DEFAULT_SETTINGS, ...opts.settings };
     const save = vi.fn().mockResolvedValue(undefined);
+    const saveViewState = vi.fn().mockResolvedValue(undefined);
     const tm = new TagManager(null as never, merged, save);
     const fullProjects = (opts.projects ?? []).map((p) => ({
       frontmatter: {},
@@ -1346,10 +1347,12 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       save,
       projectStore,
       projectManager,
+      undefined,
+      saveViewState,
     );
     const el = freshContainer();
     panel.mount(el);
-    return { panel, state, el, tm, save, merged };
+    return { panel, state, el, tm, save, saveViewState, merged };
   }
 
   it('renders a chevron span (SVG icon, not a text glyph) on the Tags header', () => {
@@ -1375,14 +1378,15 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     expect(el.querySelector('.abyss-left-divider')).toBeNull();
   });
 
-  it('persists section collapse via onSaveSettings', () => {
-    const { el, save, merged } = makeFull({});
+  it('persists section collapse through saved view state', () => {
+    const { el, save, saveViewState, merged } = makeFull({});
     const header = el.querySelector(
       '.abyss-left-section--tags .abyss-left-section-header',
     ) as HTMLElement;
     header.click();
     expect(merged.sectionCollapse.tags).toBe(true);
-    expect(save).toHaveBeenCalled();
+    expect(saveViewState).toHaveBeenCalledOnce();
+    expect(save).not.toHaveBeenCalled();
   });
 
   it('renders active projects capped at 10 with a show-more affordance', () => {

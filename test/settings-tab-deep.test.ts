@@ -21,6 +21,7 @@ interface StubPlugin {
   app: App;
   settings: CalendarSettings;
   saveSettings: ReturnType<typeof vi.fn>;
+  saveViewState: ReturnType<typeof vi.fn>;
   renameProjectStatus: ReturnType<typeof vi.fn>;
 }
 
@@ -75,6 +76,7 @@ function makeTab(
   opts: {
     expand?: boolean;
     saveSettings?: StubPlugin['saveSettings'];
+    saveViewState?: StubPlugin['saveViewState'];
     projectProperties?: ProjectPropertyCatalog;
   } = {},
 ): {
@@ -92,6 +94,7 @@ function makeTab(
   };
   const settings = { ...structuredClone(DEFAULT_SETTINGS), ...settingsOverrides };
   const saveSettings = opts.saveSettings ?? vi.fn().mockResolvedValue(undefined);
+  const saveViewState = opts.saveViewState ?? vi.fn().mockResolvedValue(undefined);
   const renameProjectStatus = vi.fn(
     async (id: string, name: string, expectedName: string): Promise<void> => {
       const status = settings.projects.statuses.find((candidate) => candidate.id === id);
@@ -100,7 +103,7 @@ function makeTab(
       await (saveSettings as unknown as () => Promise<void>)();
     },
   );
-  const plugin: StubPlugin = { app, settings, saveSettings, renameProjectStatus };
+  const plugin: StubPlugin = { app, settings, saveSettings, saveViewState, renameProjectStatus };
   const captured: CapturedComp[] = [];
   const restore = patchSetting(captured);
   const tab = new CalendarSettingsTab(
