@@ -39,11 +39,8 @@ interface UnavailableProjectField {
 
 export type ProjectFieldCatalogItem = ProjectField | UnavailableProjectField;
 
-const CORE_FIELDS: readonly ProjectField[] = [
-  { id: 'name', label: 'Name', type: 'name' },
-  { id: 'status', label: 'Status', type: 'status' },
-  { id: 'progress', label: 'Progress', type: 'progress' },
-];
+const NAME_FIELD: ProjectField = { id: 'name', label: 'Name', type: 'name' };
+const PROGRESS_FIELD: ProjectField = { id: 'progress', label: 'Progress', type: 'progress' };
 
 function sameProperty(left: string, right: string): boolean {
   return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
@@ -101,34 +98,63 @@ function addSavedProperties(
   }
 }
 
+function curatedStatusType(
+  property: string,
+  properties: readonly ProjectPropertyInfo[] | null,
+  info: ProjectPropertyInfo | undefined,
+  collides: boolean,
+): 'status' | null {
+  if (property.length === 0 || collides || properties === null) return null;
+  return info === undefined || info.type === 'text' ? 'status' : null;
+}
+
+function curatedDateType(
+  properties: readonly ProjectPropertyInfo[] | null,
+  info: ProjectPropertyInfo | undefined,
+  collides: boolean,
+): 'date' | null {
+  if (collides || properties === null) return null;
+  return info === undefined || info.type === 'date' ? 'date' : null;
+}
+
 export function buildProjectFieldCatalog(
   settings: ProjectsSettings,
   properties: readonly ProjectPropertyInfo[] | null,
 ): ProjectFieldCatalogItem[] {
   const discoveredProperties = properties ?? [];
   const propertyNames = discoveredProperties.map(({ name }) => name);
+  const statusProperty =
+    findProjectPropertyName(propertyNames, settings.statusProperty) ?? settings.statusProperty;
   const startProperty =
     findProjectPropertyName(propertyNames, settings.startProperty) ?? settings.startProperty;
   const endProperty =
     findProjectPropertyName(propertyNames, settings.endProperty) ?? settings.endProperty;
-  const dateSourcesCollide = sameProperty(startProperty, endProperty);
+  const statusSourceCollides =
+    sameProperty(statusProperty, startProperty) || sameProperty(statusProperty, endProperty);
+  const dateSourcesCollide = statusSourceCollides || sameProperty(startProperty, endProperty);
+  const statusInfo = discoveredProperties.find(({ name }) => sameProperty(name, statusProperty));
   const startInfo = discoveredProperties.find(({ name }) => sameProperty(name, startProperty));
   const endInfo = discoveredProperties.find(({ name }) => sameProperty(name, endProperty));
-  const curatedDateType = (info: ProjectPropertyInfo | undefined): 'date' | null =>
-    properties !== null && (info === undefined || info.type === 'date') ? 'date' : null;
   const fields: ProjectFieldCatalogItem[] = [
-    ...CORE_FIELDS,
+    NAME_FIELD,
+    {
+      id: 'status',
+      property: statusProperty,
+      label: 'Status',
+      type: curatedStatusType(statusProperty, properties, statusInfo, statusSourceCollides),
+    },
+    PROGRESS_FIELD,
     {
       id: 'start',
       property: startProperty,
       label: 'Start',
-      type: !dateSourcesCollide ? curatedDateType(startInfo) : null,
+      type: curatedDateType(properties, startInfo, dateSourcesCollide),
     },
     {
       id: 'end',
       property: endProperty,
       label: 'End',
-      type: !dateSourcesCollide ? curatedDateType(endInfo) : null,
+      type: curatedDateType(properties, endInfo, dateSourcesCollide),
     },
   ];
 

@@ -37,6 +37,10 @@ describe('buildProjectFieldCatalog', () => {
       property: 'Начало',
       type: 'date',
     });
+    expect(fields.find(({ id }) => id === 'status')).toMatchObject({
+      property: 'СТАТУС',
+      type: 'status',
+    });
     expect(fields.find(({ id }) => id === 'end')).toMatchObject({
       property: 'КОНЕЦ',
       type: 'date',
@@ -101,6 +105,20 @@ describe('buildProjectFieldCatalog', () => {
 
     expect(fields.find(({ id }) => id === 'start')?.type).toBeNull();
     expect(fields.find(({ id }) => id === 'end')?.type).toBeNull();
+  });
+
+  it('makes the configured status source editable only with a compatible native type', () => {
+    const settings = buildDefaultProjectsSettings();
+    const missing = buildProjectFieldCatalog(settings, []);
+    const unavailable = buildProjectFieldCatalog(settings, null);
+    const incompatible = buildProjectFieldCatalog(settings, [{ name: 'status', type: 'number' }]);
+
+    expect(missing.find(({ id }) => id === 'status')).toMatchObject({
+      property: 'status',
+      type: 'status',
+    });
+    expect(unavailable.find(({ id }) => id === 'status')?.type).toBeNull();
+    expect(incompatible.find(({ id }) => id === 'status')?.type).toBeNull();
   });
 
   it.each([null, 'text', 'datetime'] as const)(

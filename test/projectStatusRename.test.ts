@@ -1,5 +1,6 @@
 import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { ProjectManager } from '../src/projects/ProjectManager';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
@@ -21,7 +22,12 @@ async function frontmatterValue(
 }
 
 function manager(app: Awaited<ReturnType<typeof createAppWithFiles>>, settings: CalendarSettings) {
-  return new ProjectManager(app, settings, {} as never, {} as never);
+  const properties: ProjectPropertyCatalog = {
+    list: () => [{ name: 'status', type: 'text' }],
+    values: () => [],
+    onChange: () => () => {},
+  };
+  return new ProjectManager(app, settings, {} as never, {} as never, properties);
 }
 
 describe('ProjectManager.renameStatusDefinition', () => {

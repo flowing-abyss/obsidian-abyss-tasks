@@ -12,11 +12,21 @@ import type { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import type { CalendarSettings, ProjectStatus } from '../settings/types';
 import { normalizeTag, transformMarkdownTags } from '../tags/markdownTagRename';
 import type { TaskApplicationApi, TaskCommandResult, TaskRef } from '../tasks';
+import {
+  ObsidianProjectProperties,
+  type ProjectPropertyCatalog,
+} from './ObsidianProjectProperties';
 import { ProjectEditValidationError } from './projectEditError';
 import {
-  findFrontmatterProperty,
+  normalizeProjectLinkInput,
+  type AppliedProjectCellChange,
+  type ProjectCellChange,
+  type ProjectEditResult,
+} from './projectEdits';
+import {
   isReservedProjectProperty,
   type ProjectField,
+  type ProjectPropertyInfo,
   type ProjectPropertyType,
 } from './projectFields';
 import { resolveStatus } from './status';
@@ -29,6 +39,27 @@ export interface ExpectedProjectStatus {
 interface NormalizedPropertyValue {
   clear: boolean;
   value: unknown;
+}
+
+interface PreparedProjectCellChange {
+  readonly change: ProjectCellChange;
+  readonly property: string;
+  readonly value: unknown;
+  readonly valueExists: boolean;
+  readonly expectedValue: unknown;
+  readonly expectedExists: boolean;
+  readonly sourceKey: string;
+}
+
+type RequestedProjectCellChange = Omit<
+  PreparedProjectCellChange,
+  'expectedValue' | 'expectedExists' | 'sourceKey'
+>;
+
+interface PreparedProjectFileEdits {
+  readonly file: TFile;
+  readonly path: string;
+  readonly changes: PreparedProjectCellChange[];
 }
 
 function isClearValue(value: unknown): boolean {
@@ -59,6 +90,16 @@ function validDatetime(value: string): boolean {
   const minutes = Number(match[3]);
   const seconds = match[4] === undefined ? 0 : Number(match[4]);
   return hours <= 23 && minutes <= 59 && seconds <= 59;
+}
+
+function isInvalidProjectDateRange(start: unknown, end: unknown): boolean {
+  return (
+    typeof start === 'string' &&
+    typeof end === 'string' &&
+    validDate(start) &&
+    validDate(end) &&
+    start > end
+  );
 }
 
 type PropertyValidator = (value: unknown, label: string) => void;
@@ -125,13 +166,33 @@ function isPropertyType(type: ProjectField['type']): type is ProjectPropertyType
   return type in PROPERTY_VALIDATORS;
 }
 
-function normalizePropertyValue(field: ProjectField, value: unknown): NormalizedPropertyValue {
+function normalizePropertyLinks(value: unknown): unknown {
+  if (typeof value === 'string') return normalizeProjectLinkInput(value);
+  if (!Array.isArray(value)) return value;
+  return (value as unknown[]).map((entry) =>
+    typeof entry === 'string' ? normalizeProjectLinkInput(entry) : entry,
+  );
+}
+
+function normalizePropertyValue(
+  field: ProjectField,
+  value: unknown,
+  restoreSourceValue = false,
+  valueExists?: boolean,
+): NormalizedPropertyValue {
+  if (restoreSourceValue) {
+    if (valueExists === undefined) {
+      throw new ProjectEditValidationError('Project history receipt is missing source provenance.');
+    }
+    return valueExists ? { clear: false, value } : { clear: true, value: undefined };
+  }
   if (isClearValue(value)) return { clear: true, value: undefined };
   if (!isPropertyType(field.type)) {
     throw new ProjectEditValidationError(`${field.label} is not an editable project property.`);
   }
-  PROPERTY_VALIDATORS[field.type](value, field.label);
-  return { clear: false, value };
+  const normalized = normalizePropertyLinks(value);
+  PROPERTY_VALIDATORS[field.type](normalized, field.label);
+  return { clear: false, value: normalized };
 }
 
 function valuesEqual(left: unknown, right: unknown): boolean {
@@ -161,6 +222,10 @@ interface ParsedProjectSource {
   readonly prefix: string;
   readonly delimiter: string;
   body: string;
+}
+
+function samePropertyName(left: string, right: string): boolean {
+  return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
 }
 
 function parseProjectSource(source: string): ParsedProjectSource {
@@ -308,12 +373,339 @@ function serializeProjectSource(parsed: ParsedProjectSource): string {
 
 /** Creates project notes and owns guarded writes to configured project metadata. */
 export class ProjectManager {
+  private readonly app: App;
+  private readonly settings: CalendarSettings;
+  private readonly resolver: DailyNoteResolver;
+  private readonly tasks: TaskApplicationApi;
+  private readonly projectProperties: ProjectPropertyCatalog;
+
   constructor(
-    private readonly app: App,
-    private readonly settings: CalendarSettings,
-    private readonly resolver: DailyNoteResolver,
-    private readonly tasks: TaskApplicationApi,
-  ) {}
+    ...args: [App, CalendarSettings, DailyNoteResolver, TaskApplicationApi, ProjectPropertyCatalog?]
+  ) {
+    const [app, settings, resolver, tasks, projectProperties] = args;
+    this.app = app;
+    this.settings = settings;
+    this.resolver = resolver;
+    this.tasks = tasks;
+    this.projectProperties = projectProperties ?? new ObsidianProjectProperties(app);
+  }
+
+  async applyEdits(changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> {
+    return coordinateMetadataOperation(this.app, () => this.applyEditsGuarded(changes, true));
+  }
+
+  private async applyEditsGuarded(
+    changes: readonly ProjectCellChange[],
+    checkExpected: boolean,
+    collectFailures = true,
+  ): Promise<ProjectEditResult> {
+    if (changes.length === 0) return { applied: [], failed: [] };
+    const preparedFiles = await this.preflightEdits(changes, checkExpected);
+    const applied: AppliedProjectCellChange[] = [];
+    const failed: Array<{ path: string; message: string }> = [];
+
+    for (const preparedFile of preparedFiles) {
+      try {
+        const fileReceipts: AppliedProjectCellChange[] = [];
+        await this.app.vault.process(preparedFile.file, (source) => {
+          const properties = this.requirePropertyCatalog();
+          const parsed = parseProjectSource(source);
+          const refreshed = preparedFile.changes.map((prepared) => {
+            const currentProperty = this.editablePropertyWithNativeType(
+              prepared.change.field,
+              properties,
+            );
+            if (currentProperty !== prepared.property) {
+              throw new ProjectEditValidationError(
+                `${prepared.change.field.label} source property changed. Reload the project and try again.`,
+              );
+            }
+            const current = uniqueFrontmatterProperty(parsed.frontmatter, currentProperty);
+            if (
+              (current !== undefined && current.key !== prepared.sourceKey) ||
+              (current !== undefined) !== prepared.expectedExists ||
+              !valuesEqual(current?.value, prepared.expectedValue)
+            ) {
+              throw new ProjectEditValidationError(
+                `${prepared.change.field.label} changed externally. Reload the project and try your edit again.`,
+              );
+            }
+            return prepared;
+          });
+          this.validateCombinedDateRange(parsed.frontmatter, refreshed);
+          for (const prepared of refreshed) {
+            const current = uniqueFrontmatterProperty(parsed.frontmatter, prepared.property);
+            fileReceipts.push({
+              path: prepared.change.path,
+              field: { ...prepared.change.field },
+              value: prepared.value,
+              expectedValue: prepared.expectedValue,
+              previousValue: current?.value,
+              sourceProperty: prepared.property,
+              sourceKey: prepared.sourceKey,
+              previousExists: current !== undefined,
+              appliedExists: prepared.valueExists,
+            });
+            if (prepared.valueExists) parsed.frontmatter[prepared.sourceKey] = prepared.value;
+            else delete parsed.frontmatter[prepared.sourceKey];
+          }
+          return serializeProjectSource(parsed);
+        });
+        applied.push(...fileReceipts);
+      } catch (error) {
+        if (!collectFailures) throw error;
+        failed.push({
+          path: preparedFile.path,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return { applied, failed };
+  }
+
+  private async preflightEdits(
+    changes: readonly ProjectCellChange[],
+    checkExpected: boolean,
+  ): Promise<PreparedProjectFileEdits[]> {
+    const properties = this.requirePropertyCatalog();
+    const byPath = this.groupEditRequests(changes, properties);
+    const preparedFiles: PreparedProjectFileEdits[] = [];
+    for (const [path, entries] of byPath) {
+      preparedFiles.push(await this.preflightFile(path, entries, checkExpected));
+    }
+    return preparedFiles;
+  }
+
+  private groupEditRequests(
+    changes: readonly ProjectCellChange[],
+    properties: readonly ProjectPropertyInfo[],
+  ): Map<string, RequestedProjectCellChange[]> {
+    const byPath = new Map<string, RequestedProjectCellChange[]>();
+    for (const change of changes) {
+      if (change.path.length === 0) {
+        throw new ProjectEditValidationError('Project path cannot be empty.');
+      }
+      if (change.sourceProperty !== undefined && this.curatedSourceBindingChanged(change.field)) {
+        throw new ProjectEditValidationError(
+          `${change.field.label} source property changed. Reload the project and try again.`,
+        );
+      }
+      const property = this.editablePropertyWithNativeType(change.field, properties);
+      if (change.sourceProperty !== undefined && change.sourceProperty !== property) {
+        throw new ProjectEditValidationError(
+          `${change.field.label} source property changed. Reload the project and try again.`,
+        );
+      }
+      const normalized = this.normalizeCellValue(change);
+      const entries = byPath.get(change.path) ?? [];
+      entries.push({
+        change,
+        property,
+        value: normalized.value,
+        valueExists: !normalized.clear,
+      });
+      byPath.set(change.path, entries);
+    }
+    return byPath;
+  }
+
+  private async preflightFile(
+    path: string,
+    entries: readonly RequestedProjectCellChange[],
+    checkExpected: boolean,
+  ): Promise<PreparedProjectFileEdits> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      throw new ProjectEditValidationError(`Project file not found: ${path}`);
+    }
+    const parsed = parseProjectSource(await this.app.vault.read(file));
+    const deduplicated = new Map<string, PreparedProjectCellChange>();
+    for (const entry of entries) {
+      const prepared = this.prepareCurrentEdit(parsed.frontmatter, entry, checkExpected);
+      this.addPreparedEdit(path, deduplicated, prepared);
+    }
+    const prepared = [...deduplicated.values()];
+    this.validateCombinedDateRange(parsed.frontmatter, prepared);
+    return { file, path, changes: prepared };
+  }
+
+  private prepareCurrentEdit(
+    frontmatter: Readonly<Record<string, unknown>>,
+    entry: RequestedProjectCellChange,
+    checkExpected: boolean,
+  ): PreparedProjectCellChange {
+    const current = uniqueFrontmatterProperty(frontmatter, entry.property);
+    const sourceKey = current?.key ?? entry.property;
+    const exists = current !== undefined;
+    this.assertSourceKey(entry.change, sourceKey);
+    this.assertExpectedValue(entry.change, current?.value, exists, checkExpected);
+    return {
+      ...entry,
+      expectedValue: current?.value,
+      expectedExists: exists,
+      sourceKey,
+    };
+  }
+
+  private assertSourceKey(change: ProjectCellChange, sourceKey: string): void {
+    if (change.sourceKey === undefined || change.sourceKey === sourceKey) return;
+    throw new ProjectEditValidationError(
+      `${change.field.label} source key changed. Reload the project and try again.`,
+    );
+  }
+
+  private assertExpectedValue(
+    change: ProjectCellChange,
+    currentValue: unknown,
+    currentExists: boolean,
+    checkExpected: boolean,
+  ): void {
+    if (change.expectedExists !== undefined && change.expectedExists !== currentExists) {
+      throw this.changedExternally(change.field);
+    }
+    if (checkExpected && !valuesEqual(currentValue, change.expectedValue)) {
+      throw this.changedExternally(change.field);
+    }
+  }
+
+  private addPreparedEdit(
+    path: string,
+    deduplicated: Map<string, PreparedProjectCellChange>,
+    prepared: PreparedProjectCellChange,
+  ): void {
+    const key = `${path}\u0000${prepared.sourceKey.toLocaleLowerCase()}`;
+    const duplicate = deduplicated.get(key);
+    if (duplicate === undefined) {
+      deduplicated.set(key, prepared);
+      return;
+    }
+    if (!this.samePreparedEdit(duplicate, prepared)) {
+      throw new ProjectEditValidationError(
+        `Project cell ${prepared.change.field.label} has contradictory edits.`,
+      );
+    }
+  }
+
+  private changedExternally(field: ProjectField): ProjectEditValidationError {
+    return new ProjectEditValidationError(
+      `${field.label} changed externally. Reload the project and try your edit again.`,
+    );
+  }
+
+  private curatedSourceBindingChanged(field: ProjectField): boolean {
+    if (field.property === undefined) return true;
+    if (field.type === 'status') {
+      return !samePropertyName(field.property, this.settings.projects.statusProperty.trim());
+    }
+    if (field.id === 'start') {
+      return !samePropertyName(field.property, this.settings.projects.startProperty);
+    }
+    if (field.id === 'end') {
+      return !samePropertyName(field.property, this.settings.projects.endProperty);
+    }
+    return false;
+  }
+
+  private samePreparedEdit(
+    left: PreparedProjectCellChange,
+    right: PreparedProjectCellChange,
+  ): boolean {
+    return (
+      left.property === right.property &&
+      left.sourceKey === right.sourceKey &&
+      left.valueExists === right.valueExists &&
+      left.expectedExists === right.expectedExists &&
+      valuesEqual(left.value, right.value) &&
+      valuesEqual(left.expectedValue, right.expectedValue)
+    );
+  }
+
+  private requirePropertyCatalog(): readonly ProjectPropertyInfo[] {
+    const properties = this.projectProperties.list();
+    if (properties === null) {
+      throw new ProjectEditValidationError(
+        'Project property types are temporarily unavailable. Reload Obsidian and try again.',
+      );
+    }
+    return properties;
+  }
+
+  private editablePropertyWithNativeType(
+    field: ProjectField,
+    properties: readonly ProjectPropertyInfo[],
+  ): string {
+    const property = this.editableProperty(field);
+    const matches = properties.filter(({ name }) => samePropertyName(name, property));
+    if (matches.length > 1) {
+      throw new ProjectEditValidationError(
+        `${field.label} has ambiguous native property definitions that differ only by case.`,
+      );
+    }
+    const native = matches[0];
+    const curatedType = field.type === 'status' ? 'text' : field.type;
+    const isCurated = field.type === 'status' || field.id === 'start' || field.id === 'end';
+    if (native === undefined) {
+      if (isCurated) return property;
+      throw new ProjectEditValidationError(
+        `${field.label} no longer has a known native type. Reload the project and try again.`,
+      );
+    }
+    if (native.type !== curatedType) {
+      throw new ProjectEditValidationError(
+        `${field.label} native type changed. Reload the project and try again.`,
+      );
+    }
+    return native.name;
+  }
+
+  private normalizeCellValue(change: ProjectCellChange): NormalizedPropertyValue {
+    if (change.field.type !== 'status') {
+      return normalizePropertyValue(
+        change.field,
+        change.value,
+        change.restoreSourceValue,
+        change.valueExists,
+      );
+    }
+    if (change.restoreSourceValue === true) {
+      if (change.valueExists === false) return { clear: true, value: undefined };
+      if (change.valueExists === true) return { clear: false, value: change.value };
+      throw new ProjectEditValidationError('Status history receipt is missing source provenance.');
+    }
+    if (isClearValue(change.value)) return { clear: true, value: undefined };
+    if (
+      typeof change.value !== 'string' ||
+      !this.settings.projects.statuses.some(({ name }) => name === change.value)
+    ) {
+      throw new ProjectEditValidationError(`Unknown project status: ${String(change.value)}`);
+    }
+    return { clear: false, value: change.value };
+  }
+
+  private validateCombinedDateRange(
+    frontmatter: Readonly<Record<string, unknown>>,
+    changes: readonly PreparedProjectCellChange[],
+  ): void {
+    const resulting = { ...frontmatter };
+    for (const change of changes) {
+      const current = uniqueFrontmatterProperty(resulting, change.property);
+      const key = current?.key ?? change.sourceKey;
+      if (change.valueExists) resulting[key] = change.value;
+      else delete resulting[key];
+    }
+    const start = uniqueFrontmatterProperty(resulting, this.settings.projects.startProperty)?.value;
+    const end = uniqueFrontmatterProperty(resulting, this.settings.projects.endProperty)?.value;
+    if (!isInvalidProjectDateRange(start, end)) return;
+    throw new ProjectEditValidationError(this.dateRangeMessage(changes));
+  }
+
+  private dateRangeMessage(changes: readonly PreparedProjectCellChange[]): string {
+    const changedStart = changes.some(({ change }) => change.field.id === 'start');
+    const changedEnd = changes.some(({ change }) => change.field.id === 'end');
+    return changedEnd && !changedStart
+      ? 'End date must be on or after start date.'
+      : 'Start date must be on or before end date.';
+  }
 
   /**
    * Move a task into a project by physically relocating its markdown block into
@@ -350,10 +742,6 @@ export class ProjectManager {
     statusId: string,
     expectedStatus?: ExpectedProjectStatus,
   ): Promise<void> {
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) {
-      throw new ProjectEditValidationError(`Project file not found: ${path}`);
-    }
     const statuses = this.settings.projects.statuses;
     const target = statuses.find((s) => s.id === statusId);
     if (target == null) {
@@ -365,21 +753,28 @@ export class ProjectManager {
         'Choose a project Status property in settings before changing statuses.',
       );
     }
-
-    await this.app.vault.process(file, (source) => {
-      const parsed = parseProjectSource(source);
-      if (
-        expectedStatus !== undefined &&
-        !sameStatus(sourceStatus(parsed, this.settings.projects), expectedStatus)
-      ) {
+    const field: ProjectField = { id: 'status', property, label: 'Status', type: 'status' };
+    let expectedValue: unknown;
+    let checkExpected = false;
+    if (expectedStatus !== undefined) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) {
+        throw new ProjectEditValidationError(`Project file not found: ${path}`);
+      }
+      const parsed = parseProjectSource(await this.app.vault.read(file));
+      if (!sameStatus(sourceStatus(parsed, this.settings.projects), expectedStatus)) {
         throw new ProjectEditValidationError(
           'Status changed externally. Reload the project and try your edit again.',
         );
       }
-      const current = uniqueFrontmatterProperty(parsed.frontmatter, property);
-      parsed.frontmatter[current?.key ?? property] = target.name;
-      return serializeProjectSource(parsed);
-    });
+      expectedValue = uniqueFrontmatterProperty(parsed.frontmatter, property)?.value;
+      checkExpected = true;
+    }
+    await this.applyEditsGuarded(
+      [{ path, field, value: target.name, expectedValue }],
+      checkExpected,
+      false,
+    );
   }
 
   async renameStatusDefinition(
@@ -401,6 +796,7 @@ export class ProjectManager {
   ): Promise<void> {
     const context = this.validateStatusRename(id, name, expectedName);
     if (context.targetName === expectedName) return;
+    this.assertStatusPropertyNativeType(context.property);
     const candidates = await this.collectStatusRenameCandidates(context);
     const writes: StatusRenameWrite[] = [];
     let definitionChanged = false;
@@ -472,6 +868,7 @@ export class ProjectManager {
   private async writeStatusRename(file: TFile, context: StatusRenameContext): Promise<boolean> {
     let changed: boolean | undefined;
     await this.app.vault.process(file, (source) => {
+      this.assertStatusPropertyNativeType(context.property);
       const parsed = parseProjectSource(source);
       if (!isProject(file.path, parsed, this.settings.projects)) return source;
       const current = uniqueFrontmatterProperty(parsed.frontmatter, context.property);
@@ -537,39 +934,60 @@ export class ProjectManager {
     value: unknown,
     expectedValue: unknown,
   ): Promise<void> {
-    const property = this.editableProperty(field);
-    const normalized = normalizePropertyValue(field, value);
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) {
-      throw new ProjectEditValidationError(`Project file not found: ${path}`);
-    }
-
-    await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
-      const current = findFrontmatterProperty(frontmatter, property);
-      if (!valuesEqual(current?.value, expectedValue)) {
-        throw new ProjectEditValidationError(
-          `${field.label} changed externally. Reload the project and try your edit again.`,
-        );
-      }
-      if (!normalized.clear && field.id === 'start') {
-        this.validateStartRange(normalized.value, frontmatter);
-      }
-      if (!normalized.clear && field.id === 'end') {
-        this.validateEndRange(normalized.value, frontmatter);
-      }
-      const actualProperty = current?.key ?? property;
-      if (normalized.clear) delete frontmatter[actualProperty];
-      else frontmatter[actualProperty] = normalized.value;
+    await coordinateMetadataOperation(this.app, async () => {
+      await this.applyEditsGuarded([{ path, field, value, expectedValue }], true, false);
     });
   }
 
   private editableProperty(field: ProjectField): string {
+    if (field.property?.trim().length === 0) {
+      throw new ProjectEditValidationError('Project property name cannot be empty.');
+    }
+    if (this.isCuratedField(field) && this.curatedSourcesCollide()) {
+      throw new ProjectEditValidationError(
+        'Choose distinct project Status, Start, and End properties in settings before editing.',
+      );
+    }
+    if (field.type === 'status') return this.editableStatusProperty(field);
     if (field.property === undefined || !isPropertyType(field.type)) {
       throw new ProjectEditValidationError(`${field.label} is not an editable project property.`);
     }
-    const isCustom = field.id.startsWith('property:');
-    if (isCustom) return this.customProperty(field, field.property);
-    if ((field.id !== 'start' && field.id !== 'end') || field.type !== 'date') {
+    if (field.id.startsWith('property:')) return this.customProperty(field, field.property);
+    return this.editableDateProperty(field);
+  }
+
+  private isCuratedField(field: ProjectField): boolean {
+    return field.type === 'status' || field.id === 'start' || field.id === 'end';
+  }
+
+  private editableStatusProperty(field: ProjectField): string {
+    const configured = this.settings.projects.statusProperty.trim();
+    if (
+      field.id !== 'status' ||
+      field.property === undefined ||
+      configured.length === 0 ||
+      !samePropertyName(field.property, configured)
+    ) {
+      throw new ProjectEditValidationError(
+        `${field.label} does not match its configured project property.`,
+      );
+    }
+    return field.property;
+  }
+
+  private assertStatusPropertyNativeType(property: string): void {
+    this.editablePropertyWithNativeType(
+      { id: 'status', property, label: 'Status', type: 'status' },
+      this.requirePropertyCatalog(),
+    );
+  }
+
+  private editableDateProperty(field: ProjectField): string {
+    if (
+      field.property === undefined ||
+      (field.id !== 'start' && field.id !== 'end') ||
+      field.type !== 'date'
+    ) {
       throw new ProjectEditValidationError(`${field.label} must use the curated date field.`);
     }
     const configured =
@@ -584,6 +1002,15 @@ export class ProjectManager {
     return field.property;
   }
 
+  private curatedSourcesCollide(): boolean {
+    const { statusProperty, startProperty, endProperty } = this.settings.projects;
+    return (
+      samePropertyName(statusProperty, startProperty) ||
+      samePropertyName(statusProperty, endProperty) ||
+      samePropertyName(startProperty, endProperty)
+    );
+  }
+
   private customProperty(field: ProjectField, property: string): string {
     if (field.id !== `property:${property}`) {
       throw new ProjectEditValidationError(
@@ -596,25 +1023,6 @@ export class ProjectManager {
       );
     }
     return property;
-  }
-
-  private validateStartRange(value: unknown, frontmatter: Record<string, unknown>): void {
-    const end = findFrontmatterProperty(frontmatter, this.settings.projects.endProperty)?.value;
-    if (typeof value === 'string' && typeof end === 'string' && validDate(end) && value > end) {
-      throw new ProjectEditValidationError('Start date must be on or before end date.');
-    }
-  }
-
-  private validateEndRange(value: unknown, frontmatter: Record<string, unknown>): void {
-    const start = findFrontmatterProperty(frontmatter, this.settings.projects.startProperty)?.value;
-    if (
-      typeof value === 'string' &&
-      typeof start === 'string' &&
-      validDate(start) &&
-      value < start
-    ) {
-      throw new ProjectEditValidationError('End date must be on or after start date.');
-    }
   }
 
   async create(name: string): Promise<TFile | null> {

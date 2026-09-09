@@ -34,10 +34,10 @@ interface AllowedWriter {
 }
 
 const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
-  'src/projects/ProjectManager.ts#ProjectManager.setStatusGuarded#process#1': {
+  'src/projects/ProjectManager.ts#ProjectManager.applyEditsGuarded#process#1': {
     mutation: 'project metadata',
     reason:
-      'One atomic project-note transaction validates the expected status and updates the configured global status property.',
+      'One guarded project-note transaction validates fresh expected metadata and applies the prepared batch for that file.',
   },
   'src/projects/ProjectManager.ts#ProjectManager.writeStatusRename#process#1': {
     mutation: 'project metadata',

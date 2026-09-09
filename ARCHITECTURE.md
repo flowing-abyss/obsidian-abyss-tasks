@@ -179,11 +179,17 @@ session state. The controller renders the table through the shared view-options 
 all edits through `ProjectManager`; it does not write Markdown or frontmatter itself. Switching to a
 project dashboard temporarily detaches the table surface, and returning reattaches the same session.
 
-Property edits go through `ProjectManager.setProperty()`. The manager validates the field's type,
-checks the edited field's expected value inside Obsidian's frontmatter transaction, validates
-curated date ranges against the latest opposite bound, and updates or removes only that property.
-Status changes continue through `setStatus()` so the configured global status property remains
-authoritative. Write failures propagate to the presentation boundary that initiated the action.
+Property edits go through `ProjectManager`. `applyEdits()` performs a full guarded preflight, groups
+all changes to one note into one `Vault.process` transaction, and returns exact applied and failed
+receipts when later file writes fail. It rechecks each field's configured source, native type, exact
+frontmatter key, presence, and expected value before mutation, and validates curated date ranges
+against the combined final values. `setProperty()` and `setStatus()` use the same guarded write path;
+status inputs become configured literal names before metadata is written. Write failures propagate
+to the presentation boundary that initiated the action.
+
+`ProjectEditHistory` stores at most 50 session-only receipt groups. Undo and Redo use the same batch
+capability with reversed expected values and exact source-key and presence provenance, so they restore
+owned unknown literals and empty values without overwriting external edits or a rebound property.
 
 ### Settings and status semantics
 
@@ -307,9 +313,10 @@ the configured global property while preserving its current spelling. Unguarded 
 default-status callers retain the same status operation.
 
 Status-definition renames also run through `ProjectManager`. One per-App coordinator serializes
-renames with ordinary status assignments across the settings-owned and panel-owned manager
+renames with ordinary status assignments and metadata batches across the settings-owned and panel-owned manager
 instances; panel managers still receive their panel-specific task-selection capability. A rename
-rechecks membership and the expected literal in fresh source, records each owned note edit, then
+preflights the configured status source's native text role, rechecks that role plus membership and
+the expected literal in fresh source, records each owned note edit, then
 persists the renamed definition. On write or settings-save failure it restores the definition and
 compensates only note values still owned by that operation. Unresolved paths propagate to the
 settings boundary, which shows one Notice and logs diagnostic detail. This recovery is best effort

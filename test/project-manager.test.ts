@@ -9,7 +9,7 @@ import type { CalendarSettings } from '../src/settings/types';
 import type { TaskApplicationApi, TaskCommandResult } from '../src/tasks';
 import type { TaskRef } from '../src/tasks/domain/types';
 import {
-  createAppWithFiles,
+  createAppWithFiles as createBaseAppWithFiles,
   expectDefined,
   flushMicrotasks,
   methodOf,
@@ -24,6 +24,39 @@ afterEach(() => {
 
 function clone(): CalendarSettings {
   return JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
+}
+
+const NATIVE_PROJECT_PROPERTIES = new Map<string, string>([
+  ['status', 'text'],
+  ['start', 'date'],
+  ['end', 'date'],
+  ['Budget', 'number'],
+  ['Text', 'text'],
+  ['List', 'multitext'],
+  ['Flag', 'checkbox'],
+  ['Date', 'date'],
+  ['When', 'datetime'],
+  ['Tags', 'tags'],
+  ['Links', 'multitext'],
+]);
+
+async function createAppWithFiles(files: Record<string, string>) {
+  const app = await createBaseAppWithFiles(files);
+  Object.defineProperty(app, 'metadataTypeManager', {
+    configurable: true,
+    value: {
+      getAllProperties: () =>
+        Object.fromEntries(
+          [...NATIVE_PROJECT_PROPERTIES.keys()].map((name) => [name.toLocaleLowerCase(), { name }]),
+        ),
+      getTypeInfo: (name: string) => ({
+        expected: { type: NATIVE_PROJECT_PROPERTIES.get(name) },
+      }),
+      on: () => ({ id: 'project-property-test' }),
+      offref: () => {},
+    },
+  });
+  return app;
 }
 
 async function readFm(app: unknown, path: string): Promise<Record<string, unknown>> {
@@ -299,6 +332,15 @@ describe('ProjectManager.setProperty', () => {
       }
     ).metadataCache.getFileCache(file);
     expect(cache?.frontmatter?.['Links']).toEqual([7, '[[Related note]]']);
+  });
+
+  it('propagates the original single-cell write failure to the presentation boundary', async () => {
+    const app = await createAppWithFiles({ 'P.md': '---\nBudget: 12\n---\n' });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+    const cause = new Error('injected disk failure');
+    vi.spyOn(app.vault, 'process').mockRejectedValueOnce(cause);
+
+    await expect(pm.setProperty('P.md', budget, 20, 12)).rejects.toBe(cause);
   });
 });
 
