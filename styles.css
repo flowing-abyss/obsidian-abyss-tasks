@@ -7384,6 +7384,8 @@ table.abyss-project-table {
 .abyss-project-cell-editor {
   display: flex;
   width: 100%;
+  max-height: inherit;
+  overflow-y: auto;
   flex-direction: column;
   gap: 5px;
   padding: 4px 0;
@@ -7406,6 +7408,8 @@ table.abyss-project-table {
   top: 2px;
   left: 4px;
   z-index: 7;
+  box-sizing: border-box;
+  overflow: hidden;
   width: max(calc(100% - 8px), 150px);
   min-width: 0;
   padding: 3px 6px;
@@ -7450,6 +7454,10 @@ table.abyss-project-table {
 
 .abyss-project-list-values {
   display: flex;
+  overflow-y: auto;
+  min-height: 0;
+  max-height: var(--abyss-project-editor-values-max-height, none);
+  flex: 0 1 auto;
   flex-wrap: wrap;
   gap: 4px;
 }

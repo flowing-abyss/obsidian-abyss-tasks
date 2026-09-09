@@ -2,7 +2,6 @@ import { Component, Notice, TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import { parseLinks } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
-import type { ProjectSourceObservation } from '../../projects/ProjectStore';
 import { isProjectEditValidationError } from '../../projects/projectEditError';
 import type { ProjectEditHistory } from '../../projects/projectEditHistory';
 import {
@@ -22,6 +21,7 @@ import {
   type ProjectField,
   type ProjectFieldCatalogItem,
 } from '../../projects/projectFields';
+import type { ProjectSourceObservation } from '../../projects/ProjectStore';
 import {
   buildProjectTableModel,
   projectProgressDisplayValue,
@@ -43,6 +43,7 @@ import {
   type ProjectCellEditorHandle,
   type ProjectCellEditorNavigation,
 } from './ProjectCellEditor';
+import { mountProjectCellEditorPosition } from './projectCellEditorPosition';
 import { ProjectsTableToolbar } from './ProjectsTableToolbar';
 import { renderProjectTableCell } from './projectTableCells';
 import {
@@ -91,6 +92,7 @@ interface ActiveEditor {
   readonly projectPath: string;
   readonly columnId: string;
   readonly handle: ProjectCellEditorHandle;
+  readonly positionCleanup: () => void;
 }
 
 interface FocusedCellIdentity {
@@ -490,6 +492,7 @@ export class ProjectsTableView {
     this.mounted_abyssPrivate = false;
     this.pendingAction_abyssPrivate?.replace?.();
     this.pendingAction_abyssPrivate = undefined;
+    this.activeEditor_abyssPrivate?.positionCleanup();
     this.activeEditor_abyssPrivate?.handle.destroy();
     this.activeEditor_abyssPrivate = undefined;
     this.activeRowDrag_abyssPrivate = undefined;
@@ -2151,6 +2154,16 @@ export class ProjectsTableView {
     );
   }
 
+  private positionEditorHost_abyssPrivate(cell: HTMLElement, host: HTMLElement): () => void {
+    const stickyHeader = this.table_abyssPrivate?.tHead;
+    return mountProjectCellEditorPosition({
+      anchor: cell,
+      host,
+      boundary: this.scroll_abyssPrivate,
+      ...(stickyHeader === null || stickyHeader === undefined ? {} : { stickyHeader }),
+    });
+  }
+
   private editCell_abyssPrivate(
     cell: HTMLElement,
     project: Project,
@@ -2170,6 +2183,7 @@ export class ProjectsTableView {
     const editorHost = cell.createDiv({ cls: 'abyss-project-cell-editor-host' });
     cell.prepend(editorHost);
     cell.addClass('is-editing');
+    let positionCleanup = (): void => {};
     const handle = mountProjectCellEditor({
       app: this.context_abyssPrivate.app,
       container: editorHost,
@@ -2204,6 +2218,7 @@ export class ProjectsTableView {
           closeContext.focusTarget,
           cell,
         );
+        positionCleanup();
         editorHost.remove();
         cell.removeClass('is-editing');
         this.activeEditor_abyssPrivate = undefined;
@@ -2220,10 +2235,12 @@ export class ProjectsTableView {
       },
       restoreFocus: () => {},
     });
+    positionCleanup = this.positionEditorHost_abyssPrivate(cell, editorHost);
     this.activeEditor_abyssPrivate = {
       projectPath: project.path,
       columnId: field.id,
       handle,
+      positionCleanup,
     };
   }
 

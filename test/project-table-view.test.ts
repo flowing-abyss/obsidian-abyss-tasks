@@ -62,6 +62,7 @@ const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
 afterEach(() => {
   activeDocument.body.empty();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function project(over: Partial<Project>): Project {
@@ -893,6 +894,108 @@ describe('ProjectsTableView', () => {
       host.querySelector('.abyss-project-table-cell[data-column-id="end"]')?.textContent,
     ).toContain('2026-10-10');
     view.destroy();
+  });
+
+  it('keeps a bottom-right long-list editor within the visible pane and releases positioning', () => {
+    const resizeObservers: Array<{
+      readonly targets: Element[];
+      readonly disconnect: ReturnType<typeof vi.fn>;
+      trigger(): void;
+    }> = [];
+    class TestResizeObserver {
+      readonly targets: Element[] = [];
+      readonly disconnect = vi.fn();
+      constructor(private readonly callback: ResizeObserverCallback) {
+        resizeObservers.push(this);
+      }
+      observe(target: Element): void {
+        this.targets.push(target);
+      }
+      trigger(): void {
+        this.callback([], this as unknown as ResizeObserver);
+      }
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver);
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Owners', visible: true });
+    const owners = Array.from({ length: 20 }, (_, index) => `Owner ${String(index + 1)}`);
+    const { host } = mount([project({ frontmatter: { Owners: owners } })], {
+      settings: config,
+      catalog: catalog([{ name: 'Owners', type: 'list' }]),
+    });
+    const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+    const header = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table thead'));
+    const row = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-row'));
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-cell[data-column-id="property:Owners"]',
+      ),
+    );
+    let paneRight = 300;
+    let cellLeft = 250;
+    let cellRight = 300;
+    let editorHeight = 220;
+    let valuesHeight = 140;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this === scroll) return rectangle(0, 100, paneRight, 400);
+      if (this === header) return rectangle(0, 100, paneRight, 134);
+      if (this === cell) return rectangle(cellLeft, 356, cellRight, 390);
+      if (this === row) return rectangle(0, 356, paneRight, 390);
+      if (this.classList.contains('abyss-project-cell-editor-host')) {
+        const width = Number.parseFloat(this.style.width);
+        return rectangle(0, 0, Number.isFinite(width) && width > 0 ? width : 150, editorHeight);
+      }
+      if (this.classList.contains('abyss-project-list-values')) {
+        return rectangle(0, 0, 140, valuesHeight);
+      }
+      return rectangle(0, 0, 0, 0);
+    });
+    scroll.scrollTop = 137;
+    const rowBefore = row.getBoundingClientRect();
+    const tableWidth = expectDefined(host.querySelector<HTMLTableElement>('table')).style.width;
+
+    cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    const editorHost = expectDefined(
+      cell.querySelector<HTMLElement>('.abyss-project-cell-editor-host'),
+    );
+    expect(editorHost.dataset['side']).toBe('above');
+    expect(editorHost.style.left).toBe('-108px');
+    expect(editorHost.style.top).toBe('-214px');
+    expect(editorHost.style.width).toBe('150px');
+    expect(editorHost.style.maxHeight).toBe('250px');
+    expect(editorHost.style.getPropertyValue('--abyss-project-editor-values-max-height')).toBe(
+      '170px',
+    );
+    expect(row.getBoundingClientRect()).toEqual(rowBefore);
+    expect(scroll.scrollTop).toBe(137);
+    expect(expectDefined(host.querySelector<HTMLTableElement>('table')).style.width).toBe(
+      tableWidth,
+    );
+
+    const positionObserver = expectDefined(
+      resizeObservers.find(({ targets }) => targets.includes(editorHost)),
+    );
+    editorHeight = 260;
+    valuesHeight = 140;
+    positionObserver.trigger();
+    expect(editorHost.style.getPropertyValue('--abyss-project-editor-values-max-height')).toBe(
+      '130px',
+    );
+
+    paneRight = 140;
+    cellLeft = 100;
+    cellRight = 140;
+    activeWindow.dispatchEvent(new Event('resize'));
+    expect(editorHost.style.left).toBe('-92px');
+    expect(editorHost.style.width).toBe('124px');
+
+    expectDefined(editorHost.querySelector<HTMLInputElement>('input')).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    expect(positionObserver.disconnect).toHaveBeenCalledOnce();
   });
 
   it('Escape cancels editing without saving', () => {
