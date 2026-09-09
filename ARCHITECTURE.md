@@ -196,11 +196,16 @@ async commit handle remains mounted on failure and coalesces a newer draft while
 `ProjectEditHistory.record()` pair; future paste/drop and Undo/Redo use that same coordinator and
 publish successful receipts through its session projection seam. Store and native catalog refreshes
 are deferred while a coordinated mutation is active and reconciled afterward, so
-history-owned clear lookup never races a busy history operation. Successful receipts are projected
-into the table's session snapshot immediately; the existing `ProjectStore` metadata barrier later
-replaces that projection with the authoritative cache, avoiding stale reopen drafts while Obsidian
-publishes native metadata. Cell and group links reuse the shared Markdown renderer with their
-original source paths and ask the same editor boundary to finish before navigation.
+history-owned clear lookup never races a busy history operation. Successful receipts enter a
+latest-per-cell table overlay immediately. Ordinary task, settings, and unrelated-path store
+refreshes update the base snapshot without retiring that overlay. `ProjectStore` publishes a
+separate per-path source observation after the existing metadata/task barrier; it verifies the
+native event content against a fresh vault read and carries the Project snapshot derived from that
+event's cache. A matching observation acknowledges the receipt, while a verified later differing
+observation supersedes it. Deletion, rename, or source-based membership loss also retires the
+affected path without allowing an overlay to resurrect it. Cell and group links reuse the shared
+Markdown renderer with their original source paths and ask the same editor boundary to finish before
+navigation.
 
 Property edits go through `ProjectManager`. `applyEdits()` performs a full guarded preflight, groups
 all changes to one note into one `Vault.process` transaction, and returns exact applied and failed

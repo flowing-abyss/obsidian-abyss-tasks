@@ -100,6 +100,7 @@ describe('ProjectsPanel dispatch', () => {
     get: () => proj({}),
     activeForLeftPanel: () => [],
     onUpdate: () => () => {},
+    onSourceObservation: () => () => {},
     refresh: () => {},
   } as never;
   const stubMgr = {

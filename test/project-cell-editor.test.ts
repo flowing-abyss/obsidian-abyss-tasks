@@ -292,6 +292,42 @@ describe('mountProjectCellEditor', () => {
     expect(onClose).toHaveBeenCalledWith('committed', { restoreFocus: true });
   });
 
+  it.each([
+    ['date', 'input[type="date"]', '2026-09-01', '2026-09-15'],
+    ['datetime', 'input[type="datetime-local"]', '2026-09-09T01:00', '2026-09-09T15:00'],
+  ] as const)(
+    'keeps manual native %s digit entry mounted until an explicit finish',
+    async (type, selector, firstDigitValue, completedValue) => {
+      const container = document.body.createDiv();
+      const save = vi.fn().mockResolvedValue(undefined);
+      const onClose = vi.fn();
+      mountProjectCellEditor({
+        app: new App(),
+        container,
+        field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type },
+        value: '2026-09-09',
+        catalog: catalog([], type),
+        save,
+        onClose,
+      });
+      const input = expectDefined(container.querySelector<HTMLInputElement>(selector));
+      keydown(input, '1');
+      input.value = firstDigitValue;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+
+      expect(save).not.toHaveBeenCalled();
+      expect(input.isConnected).toBe(true);
+      input.value = completedValue;
+      keydown(input, 'Tab');
+      await settle();
+
+      expect(save).toHaveBeenCalledWith(completedValue);
+      expect(onClose).toHaveBeenCalledOnce();
+    },
+  );
+
   it('commits a checkbox on change without waiting for Enter', async () => {
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
@@ -335,6 +371,32 @@ describe('mountProjectCellEditor', () => {
 
     expect(save).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['text', undefined],
+    ['checkbox', undefined],
+    ['date', undefined],
+    ['datetime', undefined],
+    ['number', undefined],
+    ['list', undefined],
+    ['list', 'Celia'],
+  ] as const)('does not write an untouched %s source value %#', async (type, value) => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type },
+      value,
+      catalog: catalog([], type),
+      save,
+      onClose: vi.fn(),
+    });
+
+    await expect(handle.commit()).resolves.toBe(true);
+
+    expect(save).not.toHaveBeenCalled();
   });
 
   it('cancels with Escape without saving', () => {

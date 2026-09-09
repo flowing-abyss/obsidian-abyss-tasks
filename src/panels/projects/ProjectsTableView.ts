@@ -2,6 +2,7 @@ import { Component, Notice, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import { parseLinks } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
+import type { ProjectSourceObservation } from '../../projects/ProjectStore';
 import { isProjectEditValidationError } from '../../projects/projectEditError';
 import type { ProjectEditHistory } from '../../projects/projectEditHistory';
 import {
@@ -14,6 +15,7 @@ import {
 } from '../../projects/projectEdits';
 import {
   buildProjectFieldCatalog,
+  findFrontmatterProperty,
   findProjectFieldById,
   isAvailableProjectField,
   projectFieldValue,
@@ -69,20 +71,29 @@ interface ProjectCellEditRequest {
   readonly field: ProjectField;
   readonly value: unknown;
   readonly expectedValue: unknown;
+  readonly expectedExists: boolean;
+  readonly sourceProperty: string;
+  readonly sourceKey: string | undefined;
   readonly ownedClear: OwnedInferredPropertyClear | undefined;
 }
 
 interface ProjectCellEditorState {
   expectedValue: unknown;
+  expectedExists: boolean;
+  sourceProperty: string;
+  sourceKey: string | undefined;
   ownedClear: OwnedInferredPropertyClear | undefined;
 }
 
-interface RemoveListValueRequest {
-  readonly project: Project;
-  readonly field: ProjectField;
+interface ProjectReceiptProjection {
+  readonly receipt: AppliedProjectCellChange;
+  readonly sourceRevisionAtMutationStart: number;
+  readonly ordinal: number;
+}
+
+interface RemoveListValueRequest extends ProjectCellEditRequest {
   readonly value: unknown[];
   readonly expectedValue: unknown[];
-  readonly ownedClear: OwnedInferredPropertyClear | undefined;
 }
 
 interface RenderGroupOptions {
@@ -135,6 +146,53 @@ function copyProjectedValue(value: unknown): unknown {
   return Array.isArray(value) ? value.map(copyProjectedValue) : value;
 }
 
+function equalProjectedValue(left: unknown, right: unknown): boolean {
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((value, index) => equalProjectedValue(value, right[index]))
+    );
+  }
+  return Object.is(left, right);
+}
+
+function observationMatchesReceipt(
+  observation: ProjectSourceObservation,
+  receipt: AppliedProjectCellChange,
+): boolean {
+  const source =
+    observation.project === undefined
+      ? undefined
+      : findFrontmatterProperty(observation.project.frontmatter, receipt.sourceProperty);
+  return (
+    (source !== undefined) === receipt.appliedExists &&
+    (!receipt.appliedExists || equalProjectedValue(source?.value, receipt.value))
+  );
+}
+
+function projectionKey(receipt: AppliedProjectCellChange): string {
+  return `${receipt.path}\u0000${receipt.field.id}`;
+}
+
+function projectCellEditorState(
+  project: Project,
+  field: ProjectField,
+  settings: CalendarSettings,
+  ownedClear: OwnedInferredPropertyClear | undefined,
+): ProjectCellEditorState {
+  const sourceProperty =
+    field.type === 'status' ? settings.projects.statusProperty : field.property;
+  if (sourceProperty === undefined) throw new Error(`Field ${field.id} has no metadata source`);
+  const source = findFrontmatterProperty(project.frontmatter, sourceProperty);
+  return {
+    expectedValue: source?.value,
+    expectedExists: source !== undefined,
+    sourceProperty,
+    sourceKey: source?.key ?? ownedClear?.sourceKey,
+    ownedClear,
+  };
+}
+
 export class ProjectsTableView {
   private projects_abyssPrivate: readonly Project[] = [];
   private fields_abyssPrivate: readonly ProjectFieldCatalogItem[] = [];
@@ -153,6 +211,10 @@ export class ProjectsTableView {
   private mutationTail_abyssPrivate: Promise<void> = Promise.resolve();
   private mutationActive_abyssPrivate = false;
   private renderPending_abyssPrivate = false;
+  private readonly sourceObservations_abyssPrivate = new Map<string, ProjectSourceObservation>();
+  private readonly receiptProjections_abyssPrivate = new Map<string, ProjectReceiptProjection>();
+  private activeMutationSourceRevisions_abyssPrivate: ReadonlyMap<string, number> | undefined;
+  private nextReceiptOrdinal_abyssPrivate = 0;
   private pendingAction_abyssPrivate:
     { readonly run: () => void; readonly replace?: () => void } | undefined;
   private finishingEditor_abyssPrivate: Promise<void> | undefined;
@@ -262,9 +324,16 @@ export class ProjectsTableView {
   runTableSessionMutation<T>(mutation: () => Promise<T>): Promise<T> {
     const run = async (): Promise<T> => {
       this.mutationActive_abyssPrivate = true;
+      this.activeMutationSourceRevisions_abyssPrivate = new Map(
+        Array.from(this.sourceObservations_abyssPrivate, ([path, observation]) => [
+          path,
+          observation.revision,
+        ]),
+      );
       try {
         return await mutation();
       } finally {
+        this.activeMutationSourceRevisions_abyssPrivate = undefined;
         this.mutationActive_abyssPrivate = false;
         if (this.renderPending_abyssPrivate) this.renderTable_abyssPrivate();
       }
@@ -275,6 +344,24 @@ export class ProjectsTableView {
       () => undefined,
     );
     return result;
+  }
+
+  /** Reconciles receipt projections only from ProjectStore's verified per-path source stream. */
+  observeProjectSource(observation: ProjectSourceObservation): void {
+    const current = this.sourceObservations_abyssPrivate.get(observation.path);
+    if (current !== undefined && current.revision >= observation.revision) return;
+    this.sourceObservations_abyssPrivate.set(observation.path, observation);
+    let changed = false;
+    for (const [key, projection] of this.receiptProjections_abyssPrivate) {
+      if (
+        projection.receipt.path === observation.path &&
+        observation.revision > projection.sourceRevisionAtMutationStart
+      ) {
+        this.receiptProjections_abyssPrivate.delete(key);
+        changed = true;
+      }
+    }
+    if (changed) this.renderTable_abyssPrivate();
   }
 
   /** Keeps only the newest deliberate action while an editor is saving or blocked. */
@@ -406,7 +493,7 @@ export class ProjectsTableView {
     enforceProjectTableColumnInvariants(tableSettings);
     const columns = visibleColumns(this.context_abyssPrivate.settings, this.fields_abyssPrivate);
     const model = buildProjectTableModel({
-      projects: this.projects_abyssPrivate,
+      projects: this.projectedProjects_abyssPrivate(),
       fields: this.fields_abyssPrivate,
       statuses: this.context_abyssPrivate.settings.projects.statuses,
       settings: tableSettings,
@@ -651,23 +738,7 @@ export class ProjectsTableView {
           });
         },
         onRemoveListValue: (valueIndex) => {
-          this.finishEditorBeforeAction(() => {
-            if (!editableField(field)) return;
-            const current = projectCellSourceValue(
-              project,
-              field,
-              this.context_abyssPrivate.settings.projects,
-            );
-            if (!Array.isArray(current)) return;
-            const next = current.filter((_value, index) => index !== valueIndex);
-            this.removeListValue_abyssPrivate({
-              project,
-              field,
-              value: next,
-              expectedValue: current,
-              ownedClear,
-            });
-          });
+          this.requestRemoveListValue_abyssPrivate(project, field, ownedClear, valueIndex);
         },
       });
       if (
@@ -700,6 +771,30 @@ export class ProjectsTableView {
     }
   }
 
+  private requestRemoveListValue_abyssPrivate(
+    project: Project,
+    field: ProjectFieldCatalogItem,
+    ownedClear: OwnedInferredPropertyClear | undefined,
+    valueIndex: number,
+  ): void {
+    this.finishEditorBeforeAction(() => {
+      if (!editableField(field) || field.property === undefined) return;
+      const current = projectCellSourceValue(
+        project,
+        field,
+        this.context_abyssPrivate.settings.projects,
+      );
+      if (!Array.isArray(current)) return;
+      this.removeListValue_abyssPrivate({
+        ...projectCellEditorState(project, field, this.context_abyssPrivate.settings, ownedClear),
+        project,
+        field,
+        value: current.filter((_value, index) => index !== valueIndex),
+        expectedValue: current,
+      });
+    });
+  }
+
   private editCell_abyssPrivate(
     cell: HTMLElement,
     project: Project,
@@ -707,14 +802,12 @@ export class ProjectsTableView {
     ownedClear: OwnedInferredPropertyClear | undefined,
   ): void {
     if (this.activeEditor_abyssPrivate !== undefined || !cell.isConnected) return;
-    const editorState: ProjectCellEditorState = {
-      expectedValue: projectCellSourceValue(
-        project,
-        field,
-        this.context_abyssPrivate.settings.projects,
-      ),
+    const editorState = projectCellEditorState(
+      project,
+      field,
+      this.context_abyssPrivate.settings,
       ownedClear,
-    };
+    );
     const nextCell = nextCellIdentity(cell);
     cell.empty();
     const handle = mountProjectCellEditor({
@@ -731,11 +824,17 @@ export class ProjectsTableView {
           field,
           value,
           expectedValue: editorState.expectedValue,
+          expectedExists: editorState.expectedExists,
+          sourceProperty: editorState.sourceProperty,
+          sourceKey: editorState.sourceKey,
           ownedClear: editorState.ownedClear,
         });
-        return pending.then((nextOwnedClear) => {
-          editorState.ownedClear = nextOwnedClear;
-          editorState.expectedValue = value;
+        return pending.then((nextState) => {
+          editorState.expectedValue = nextState.expectedValue;
+          editorState.expectedExists = nextState.expectedExists;
+          editorState.sourceProperty = nextState.sourceProperty;
+          editorState.sourceKey = nextState.sourceKey;
+          editorState.ownedClear = nextState.ownedClear;
         });
       },
       onClose: (_result, closeContext) => {
@@ -785,38 +884,84 @@ export class ProjectsTableView {
 
   private async applyCellEdit_abyssPrivate(
     request: ProjectCellEditRequest,
-  ): Promise<OwnedInferredPropertyClear | undefined> {
-    const { project, field, value, expectedValue, ownedClear } = request;
-    await this.runTableSessionMutation(async () => {
+  ): Promise<ProjectCellEditorState> {
+    const {
+      project,
+      field,
+      value,
+      expectedValue,
+      expectedExists,
+      sourceProperty,
+      sourceKey,
+      ownedClear,
+    } = request;
+    const receipt = await this.runTableSessionMutation(async () => {
       const change: ProjectCellChange = {
         path: project.path,
         field,
         value,
         expectedValue,
-        ...(ownedClear === undefined ? {} : { ownedClear, expectedExists: false }),
+        expectedExists,
+        sourceProperty,
+        ...(sourceKey === undefined ? {} : { sourceKey }),
+        ...(ownedClear === undefined ? {} : { ownedClear }),
       };
       const result = await this.context_abyssPrivate.applyEdits([change]);
       this.context_abyssPrivate.history.record(result);
       this.publishAppliedReceipts(result.applied);
       const failure = result.failed[0];
       if (failure !== undefined) throw new Error(failure.message);
+      const applied = result.applied[0];
+      if (applied === undefined) throw new Error(`Could not update ${field.label}`);
+      return applied;
     });
-    return this.context_abyssPrivate.history.ownedClear(project.path, field);
+    return {
+      expectedValue: copyProjectedValue(receipt.value),
+      expectedExists: receipt.appliedExists,
+      sourceProperty: receipt.sourceProperty,
+      sourceKey: receipt.sourceKey,
+      ownedClear: this.context_abyssPrivate.history.ownedClear(project.path, field),
+    };
   }
 
   /** Publishes successful editor, paste, drop, Undo, and Redo receipts into this session. */
   publishAppliedReceipts(receipts: readonly AppliedProjectCellChange[]): void {
-    const byPath = new Map<string, AppliedProjectCellChange[]>();
     for (const receipt of receipts) {
-      const projectReceipts = byPath.get(receipt.path) ?? [];
-      projectReceipts.push(receipt);
-      byPath.set(receipt.path, projectReceipts);
+      const sourceRevisionAtMutationStart =
+        this.activeMutationSourceRevisions_abyssPrivate?.get(receipt.path) ??
+        this.sourceObservations_abyssPrivate.get(receipt.path)?.revision ??
+        0;
+      const observation = this.sourceObservations_abyssPrivate.get(receipt.path);
+      const observedDuringMutation =
+        observation !== undefined && observation.revision > sourceRevisionAtMutationStart;
+      const key = projectionKey(receipt);
+      if (observedDuringMutation && observationMatchesReceipt(observation, receipt)) {
+        this.receiptProjections_abyssPrivate.delete(key);
+        continue;
+      }
+      this.receiptProjections_abyssPrivate.set(key, {
+        receipt,
+        sourceRevisionAtMutationStart,
+        ordinal: ++this.nextReceiptOrdinal_abyssPrivate,
+      });
     }
-    this.projects_abyssPrivate = this.projects_abyssPrivate.map((project) => {
-      const projectReceipts = byPath.get(project.path);
-      if (projectReceipts === undefined) return project;
+    this.renderTable_abyssPrivate();
+  }
+
+  private projectedProjects_abyssPrivate(): readonly Project[] {
+    const byPath = new Map<string, ProjectReceiptProjection[]>();
+    for (const projection of this.receiptProjections_abyssPrivate.values()) {
+      const projections = byPath.get(projection.receipt.path) ?? [];
+      projections.push(projection);
+      byPath.set(projection.receipt.path, projections);
+    }
+    return this.projects_abyssPrivate.map((project) => {
+      const projections = byPath.get(project.path);
+      if (projections === undefined) return project;
       const frontmatter = { ...project.frontmatter };
-      for (const receipt of projectReceipts) {
+      const sortedProjections = [...projections];
+      sortedProjections.sort((left, right) => left.ordinal - right.ordinal);
+      for (const { receipt } of sortedProjections) {
         if (receipt.appliedExists) {
           frontmatter[receipt.sourceKey] = copyProjectedValue(receipt.value);
         } else {
@@ -832,8 +977,8 @@ export class ProjectsTableView {
   }
 
   private removeListValue_abyssPrivate(request: RemoveListValueRequest): void {
-    const { project, field, value, expectedValue, ownedClear } = request;
-    this.applyCellEdit_abyssPrivate({ project, field, value, expectedValue, ownedClear }).then(
+    const { field } = request;
+    this.applyCellEdit_abyssPrivate(request).then(
       () => undefined,
       (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);

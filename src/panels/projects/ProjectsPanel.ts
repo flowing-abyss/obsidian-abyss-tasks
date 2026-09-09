@@ -76,6 +76,9 @@ export class ProjectsPanel {
       this.projectProperties.onChange(() => {
         this.tableView?.refreshFields();
       }),
+      this.projectStore.onSourceObservation((observation) => {
+        this.tableView?.observeProjectSource(observation);
+      }),
     );
     this.syncView();
   }

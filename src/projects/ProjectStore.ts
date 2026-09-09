@@ -5,6 +5,19 @@ import type { TaskIndexEvent, TaskQueryApi, TaskSnapshot } from '../tasks';
 import { resolveStatus } from './status';
 import type { Project, ProjectStats } from './types';
 
+/** A verified native source observation for one project path. */
+export interface ProjectSourceObservation {
+  readonly path: string;
+  readonly revision: number;
+  readonly project: Project | undefined;
+}
+
+interface PendingSourceObservation {
+  readonly revision: number;
+  readonly data: string | undefined;
+  readonly cache: CachedMetadata | undefined;
+}
+
 export function computeStats(tasks: readonly TaskSnapshot[]): ProjectStats {
   let done = 0;
   let cancelled = 0;
@@ -48,6 +61,7 @@ export class ProjectStore {
   private cache: Project[] = [];
   private byPath = new Map<string, Project>();
   private listeners: Array<() => void> = [];
+  private sourceListeners: Array<(observation: ProjectSourceObservation) => void> = [];
   private eventUnsubs: Array<() => void> = [];
   private queryUnsub: (() => void) | undefined;
   private reconciliationUnsub: (() => void) | undefined;
@@ -56,6 +70,8 @@ export class ProjectStore {
   private readonly readyPaths = new Set<string>();
   private readyFull = false;
   private readonly pendingCreates = new Set<string>();
+  private readonly pendingSourceObservations = new Map<string, PendingSourceObservation>();
+  private sourceRevision = 0;
 
   constructor(
     private readonly app: App,
@@ -69,6 +85,7 @@ export class ProjectStore {
     // Create/delete/rename change the membership set → full rescan (rare events).
     const metadataRef = this.app.metadataCache.on('changed', (file, data, cache) => {
       if (file.extension === 'md' && this.app.vault.getAbstractFileByPath(file.path) === file) {
+        this.recordSourceObservation(file.path, data, cache);
         if (this.pendingCreates.has(file.path)) {
           if (!metadataMayContainTasks(data, cache) && !this.hasIndexedTasks(file.path)) {
             this.pendingCreates.delete(file.path);
@@ -88,6 +105,7 @@ export class ProjectStore {
     const deleteRef = this.app.vault.on('delete', (file) => {
       if (!isMarkdownFile(file)) return;
       this.pendingCreates.delete(file.path);
+      this.recordSourceObservation(file.path, undefined, undefined);
       const project = this.byPath.get(file.path);
       if (project?.stats.total === 0 && !this.hasIndexedTasks(file.path)) {
         this.releasePath(file.path);
@@ -98,6 +116,7 @@ export class ProjectStore {
     const renameRef = this.app.vault.on('rename', (file, oldPath) => {
       if (file instanceof TFile && (file.extension === 'md' || wasMarkdown(oldPath))) {
         this.pendingCreates.delete(oldPath);
+        this.recordSourceObservation(oldPath, undefined, undefined);
         const project = this.byPath.get(oldPath);
         if (
           (project === undefined || project.stats.total === 0) &&
@@ -180,9 +199,10 @@ export class ProjectStore {
 
   private flush(): void {
     const before = this.cacheSignature();
+    const observedPaths = new Set(this.readyPaths);
     if (this.readyFull) {
       this.recomputeAll();
-      this.readyPaths.clear();
+      for (const path of this.pendingSourceObservations.keys()) observedPaths.add(path);
     } else if (this.readyPaths.size > 0) {
       for (const path of this.readyPaths) this.updateOne(path);
       this.rebuildCache();
@@ -190,6 +210,68 @@ export class ProjectStore {
     this.readyFull = false;
     this.readyPaths.clear();
     this.notifyIfChanged(before);
+    for (const path of observedPaths) this.reconcileSourceObservation(path);
+  }
+
+  private recordSourceObservation(
+    path: string,
+    data: string | undefined,
+    cache: CachedMetadata | undefined,
+  ): void {
+    this.pendingSourceObservations.set(path, {
+      revision: ++this.sourceRevision,
+      data,
+      cache,
+    });
+  }
+
+  private reconcileSourceObservation(path: string): void {
+    const pending = this.pendingSourceObservations.get(path);
+    if (pending === undefined) return;
+    if (this.sourceListeners.length === 0) {
+      this.pendingSourceObservations.delete(path);
+      return;
+    }
+    const project =
+      pending.cache === undefined
+        ? undefined
+        : (this.makeEntry(path, pending.cache, this.queries.list({ filePath: path })) ?? undefined);
+    if (pending.data === undefined) {
+      this.publishSourceObservation(path, pending, project);
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile) || file.extension !== 'md') {
+      this.publishSourceObservation(path, pending, project);
+      return;
+    }
+    void this.app.vault.read(file).then(
+      (currentData) => {
+        if (currentData === pending.data) this.publishSourceObservation(path, pending, project);
+      },
+      (error: unknown) => {
+        if (this.pendingSourceObservations.get(path) !== pending) return;
+        console.error('[abyss-tasks] Could not reconcile project source observation', {
+          path,
+          cause: error,
+        });
+      },
+    );
+  }
+
+  private publishSourceObservation(
+    path: string,
+    pending: PendingSourceObservation,
+    project: Project | undefined,
+  ): void {
+    if (this.pendingSourceObservations.get(path) !== pending) return;
+    this.pendingSourceObservations.delete(path);
+    const observation: ProjectSourceObservation = {
+      path,
+      revision: pending.revision,
+      project,
+    };
+    for (const listener of this.sourceListeners) listener(observation);
   }
 
   private hasIndexedTasks(...paths: string[]): boolean {
@@ -295,6 +377,14 @@ export class ProjectStore {
     };
   }
 
+  /** Subscribes only to verified native source observations, never task/settings refreshes. */
+  onSourceObservation(cb: (observation: ProjectSourceObservation) => void): () => void {
+    this.sourceListeners.push(cb);
+    return () => {
+      this.sourceListeners = this.sourceListeners.filter((listener) => listener !== cb);
+    };
+  }
+
   destroy(): void {
     if (this.debounce !== undefined) window.clearTimeout(this.debounce);
     this.queryUnsub?.();
@@ -306,6 +396,8 @@ export class ProjectStore {
     this.waitingPaths.clear();
     this.readyPaths.clear();
     this.pendingCreates.clear();
+    this.pendingSourceObservations.clear();
     this.listeners = [];
+    this.sourceListeners = [];
   }
 }

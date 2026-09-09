@@ -769,6 +769,261 @@ describe('ProjectsTableView', () => {
     expect(expectDefined(rendered.querySelector<HTMLInputElement>('input')).value).toBe('');
   });
 
+  it('retains A receipt through an unrelated B snapshot until A source is observed', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Owner', visible: true });
+    const staleA = project({
+      path: 'Projects/A.md',
+      name: 'A',
+      frontmatter: { Owner: 'Original' },
+    });
+    const originalB = project({
+      path: 'Projects/B.md',
+      name: 'B',
+      frontmatter: { Owner: 'B original' },
+    });
+    const { host, view } = mount([staleA, originalB], {
+      settings: config,
+      catalog: catalog([{ name: 'Owner', type: 'text' }]),
+    });
+    const ownerCell = (path: string): HTMLElement =>
+      expectDefined(
+        host.querySelector<HTMLElement>(
+          `[data-project-path="${path}"] [data-column-id="property:Owner"]`,
+        ),
+      );
+    const cell = ownerCell('Projects/A.md');
+    cell.click();
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('input'));
+    input.value = 'Saved';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    await flushMicrotasks();
+
+    view.update([
+      staleA,
+      project({
+        path: 'Projects/B.md',
+        name: 'B',
+        frontmatter: { Owner: 'B changed' },
+      }),
+    ]);
+
+    const projected = ownerCell('Projects/A.md');
+    expect(projected.textContent).toBe('Saved');
+    projected.click();
+    expect(expectDefined(projected.querySelector<HTMLInputElement>('input')).value).toBe('Saved');
+    expectDefined(projected.querySelector<HTMLInputElement>('input')).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+
+    const savedA = project({
+      path: 'Projects/A.md',
+      name: 'A',
+      frontmatter: { Owner: 'Saved' },
+    });
+    view.observeProjectSource({ path: savedA.path, revision: 1, project: savedA });
+    view.update([savedA, originalB]);
+    expect(ownerCell('Projects/A.md').textContent).toBe('Saved');
+    view.observeProjectSource({ path: staleA.path, revision: 2, project: staleA });
+    view.update([staleA, originalB]);
+    expect(ownerCell('Projects/A.md').textContent).toBe('Original');
+  });
+
+  it('keeps the latest receipt when an older differing source is observed during its mutation', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Owner', visible: true });
+    const oldA = project({ frontmatter: { Owner: 'First' } });
+    const viewRef: { current?: ProjectsTableView } = {};
+    const applyEdits = vi.fn(
+      async (changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> => {
+        const change = expectDefined(changes[0]);
+        const currentView = expectDefined(viewRef.current);
+        currentView.observeProjectSource({ path: oldA.path, revision: 2, project: oldA });
+        currentView.update([oldA]);
+        return {
+          applied: [
+            {
+              ...change,
+              value: 'Second',
+              previousValue: 'First',
+              sourceProperty: 'Owner',
+              sourceKey: 'Owner',
+              previousExists: true,
+              appliedExists: true,
+            },
+          ],
+          failed: [],
+        };
+      },
+    );
+    const mounted = mount([oldA], {
+      settings: config,
+      catalog: catalog([{ name: 'Owner', type: 'text' }]),
+      applyEdits,
+    });
+    viewRef.current = mounted.view;
+    mounted.view.observeProjectSource({ path: oldA.path, revision: 1, project: oldA });
+    const cell = expectDefined(
+      mounted.host.querySelector<HTMLElement>(
+        '.abyss-project-table-row [data-column-id="property:Owner"]',
+      ),
+    );
+    expect(cell.hasClass('is-editable')).toBe(true);
+    cell.click();
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('input'));
+    input.value = 'Second';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(
+      expectDefined(
+        mounted.host.querySelector<HTMLElement>(
+          '.abyss-project-table-row [data-column-id="property:Owner"]',
+        ),
+      ).textContent,
+    ).toBe('Second');
+  });
+
+  it('uses the canonical clear receipt when refilling the last list value in one editor', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Owners', visible: true });
+    let nativePresent = true;
+    const ownedClear = createOwnedInferredPropertyClear({
+      path: 'Projects/A.md',
+      fieldId: 'property:Owners',
+      sourceProperty: 'Owners',
+      sourceKey: 'Owners',
+      type: 'list',
+    });
+    const nativeCatalog: ProjectPropertyCatalog = {
+      list: () => (nativePresent ? [{ name: 'Owners', type: 'list' }] : []),
+      inspect: () => ({
+        kind: 'available',
+        property: nativePresent ? { name: 'Owners', type: 'list' } : undefined,
+        assignment: { kind: 'none' },
+      }),
+      values: () => [],
+      onChange: () => () => {},
+    };
+    const applyEdits = vi.fn(
+      async (changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> => {
+        const change = expectDefined(changes[0]);
+        const clearing = Array.isArray(change.value) && change.value.length === 0;
+        nativePresent = !clearing;
+        return {
+          applied: [
+            {
+              ...change,
+              value: clearing ? undefined : change.value,
+              previousValue: clearing ? ['Celia'] : undefined,
+              sourceProperty: 'Owners',
+              sourceKey: 'Owners',
+              previousExists: clearing,
+              appliedExists: !clearing,
+              ...(clearing ? { ownedClear } : {}),
+            },
+          ],
+          failed: [],
+        };
+      },
+    );
+    const { host } = mount([project({ frontmatter: { Owners: ['Celia'] } })], {
+      settings: config,
+      catalog: nativeCatalog,
+      applyEdits,
+    });
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-cell[data-column-id="property:Owners"]',
+      ),
+    );
+    cell.click();
+    expectDefined(cell.querySelector<HTMLButtonElement>('[aria-label="Remove Celia"]')).click();
+    await flushMicrotasks();
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('.abyss-project-list-input'));
+    input.value = 'Mina';
+
+    expectDefined(cell.querySelector<HTMLButtonElement>('.abyss-project-list-add')).click();
+    await flushMicrotasks();
+
+    const refill = expectDefined(applyEdits.mock.calls[1]?.[0]?.[0]);
+    expect(refill).toMatchObject({
+      value: ['Mina'],
+      expectedValue: undefined,
+      expectedExists: false,
+      ownedClear,
+    });
+    expect(cell.querySelector('.abyss-project-editor-error')?.textContent).toBe('');
+    expect(input.isConnected).toBe(true);
+  });
+
+  it('guards a coalesced draft with the canonical normalized receipt value', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Owner', visible: true });
+    let resolveFirst: ((result: ProjectEditResult) => void) | undefined;
+    const applyEdits = vi.fn(
+      async (changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> => {
+        const change = expectDefined(changes[0]);
+        if (applyEdits.mock.calls.length === 1) {
+          return new Promise<ProjectEditResult>((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return {
+          applied: [
+            {
+              ...change,
+              previousValue: '[[People/Anna]]',
+              sourceProperty: 'Owner',
+              sourceKey: 'Owner',
+              previousExists: true,
+              appliedExists: true,
+            },
+          ],
+          failed: [],
+        };
+      },
+    );
+    const { host } = mount([project({ frontmatter: { Owner: 'Original' } })], {
+      settings: config,
+      catalog: catalog([{ name: 'Owner', type: 'text' }]),
+      applyEdits,
+    });
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-row [data-column-id="property:Owner"]'),
+    );
+    cell.click();
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('input'));
+    input.value = '"[[People/Anna]]"';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    input.value = 'Mina';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expectDefined(resolveFirst)({
+      applied: [
+        {
+          ...expectDefined(applyEdits.mock.calls[0]?.[0]?.[0]),
+          value: '[[People/Anna]]',
+          previousValue: 'Original',
+          sourceProperty: 'Owner',
+          sourceKey: 'Owner',
+          previousExists: true,
+          appliedExists: true,
+        },
+      ],
+      failed: [],
+    });
+    await flushMicrotasks();
+
+    expect(expectDefined(applyEdits.mock.calls[1]?.[0]?.[0])).toMatchObject({
+      value: 'Mina',
+      expectedValue: '[[People/Anna]]',
+      expectedExists: true,
+      sourceProperty: 'Owner',
+      sourceKey: 'Owner',
+    });
+  });
+
   it('serializes table-session mutations for later Undo and Redo integration', async () => {
     const { view } = mount([project({})]);
     let release: (() => void) | undefined;

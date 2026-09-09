@@ -1,6 +1,6 @@
 import { TFile, type CachedMetadata } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ProjectStore } from '../src/projects/ProjectStore';
+import { ProjectStore, type ProjectSourceObservation } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskIndexEvent, TaskQueryApi, TaskSnapshot } from '../src/tasks';
 import { taskQueryApi } from './helpers';
@@ -71,10 +71,12 @@ function harness() {
   };
   const getMarkdownFiles = vi.fn(() => files);
   let currentFrontmatter: Record<string, unknown> = { status: 'active' };
+  let currentData = '';
   const app = {
     vault: {
       getMarkdownFiles,
       getAbstractFileByPath: (path: string) => files.find((candidate) => candidate.path === path),
+      read: vi.fn(async () => currentData),
       on,
       offref,
     },
@@ -112,6 +114,7 @@ function harness() {
       data = '',
       cache = { listItems: [] } as CachedMetadata,
     ) => {
+      currentData = data;
       if (cache.frontmatter !== undefined) currentFrontmatter = cache.frontmatter;
       metadataChanged[0]?.(changedFile, data, cache);
     },
@@ -132,6 +135,9 @@ function harness() {
     setFiles: (next: TFile[]) => {
       files = next;
     },
+    setSourceData: (data: string) => {
+      currentData = data;
+    },
     file,
     indexUnsub,
     reconciledUnsub,
@@ -143,6 +149,63 @@ function harness() {
 afterEach(() => vi.useRealTimers());
 
 describe('ProjectStore event convergence', () => {
+  it('publishes only a current per-path source observation after the task barrier', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+    store.initialize();
+    const sourceListener = vi.fn<(observation: ProjectSourceObservation) => void>();
+    store.onSourceObservation(sourceListener);
+
+    h.metadata(h.file, 'stale source', {
+      frontmatter: { status: 'active', budget: 100 },
+    });
+    h.setSourceData('newer source');
+    h.reconciled([h.file.path]);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(sourceListener).not.toHaveBeenCalled();
+
+    h.metadata(h.file, 'newer source', {
+      frontmatter: { status: 'active', budget: 200 },
+    });
+    h.reconciled([h.file.path]);
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(sourceListener).toHaveBeenCalledOnce();
+    expect(sourceListener.mock.calls[0]?.[0]).toMatchObject({
+      path: h.file.path,
+      revision: 2,
+      project: { frontmatter: { status: 'active', budget: 200 } },
+    });
+    store.refresh();
+    expect(sourceListener).toHaveBeenCalledOnce();
+    store.destroy();
+  });
+
+  it('publishes source reconciliation even when the Project snapshot is unchanged', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+    store.initialize();
+    const updateListener = vi.fn();
+    const sourceListener = vi.fn<(observation: ProjectSourceObservation) => void>();
+    store.onUpdate(updateListener);
+    store.onSourceObservation(sourceListener);
+
+    h.metadata(h.file, 'same project source', { frontmatter: { status: 'active' } });
+    h.reconciled([h.file.path]);
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(updateListener).not.toHaveBeenCalled();
+    expect(sourceListener).toHaveBeenCalledOnce();
+    expect(sourceListener.mock.calls[0]?.[0]).toMatchObject({
+      path: h.file.path,
+      revision: 1,
+      project: { frontmatter: { status: 'active' } },
+    });
+    store.destroy();
+  });
+
   it.each(['changed', 'renamed'] as const)(
     'does not let a late equivalent empty-project %s event release unrelated task metadata',
     (lateEvent) => {

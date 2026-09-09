@@ -77,6 +77,15 @@ function equalValue(left: unknown, right: unknown): boolean {
   return Object.is(left, right);
 }
 
+function initialDraftValue(control: EditorControl | undefined, sourceValue: unknown): unknown {
+  if (control === undefined) return copyValue(sourceValue);
+  try {
+    return copyValue(control.value());
+  } catch {
+    return copyValue(sourceValue);
+  }
+}
+
 function currentCustomType(
   field: ProjectFieldCatalogItem,
   catalog: ProjectPropertyCatalog,
@@ -246,6 +255,7 @@ interface TemporalControlOptions {
 
 function temporalControl(options: TemporalControlOptions): EditorControl {
   const { root, type, label, value, events } = options;
+  let keyboardEditing = false;
   const input = root.createEl('input', {
     cls: 'abyss-project-editor-input',
     attr: { type, 'aria-label': label },
@@ -254,9 +264,17 @@ function temporalControl(options: TemporalControlOptions): EditorControl {
   input.addEventListener('input', () => {
     events.changed();
   });
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== 'Tab' && event.key !== 'Escape') {
+      keyboardEditing = true;
+    }
+  });
+  input.addEventListener('pointerdown', () => {
+    keyboardEditing = false;
+  });
   input.addEventListener('change', () => {
     events.changed();
-    events.commit(true);
+    if (!keyboardEditing) events.commit(true);
   });
   return {
     focusTarget: input,
@@ -414,6 +432,10 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
       },
     };
     this.control_abyssPrivate = buildControl(options_abyssPrivate, this.element, events);
+    this.committedValue_abyssPrivate = initialDraftValue(
+      this.control_abyssPrivate,
+      options_abyssPrivate.value,
+    );
     this.element.appendChild(this.error_abyssPrivate);
     if (this.control_abyssPrivate === undefined) this.renderUnavailable_abyssPrivate();
     this.element.addEventListener('click', (event) => {

@@ -2376,6 +2376,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       get: () => undefined,
       activeForLeftPanel: () => [],
       onUpdate: () => () => {},
+      onSourceObservation: () => () => {},
       refresh: () => {},
     } as never;
   }
@@ -2462,6 +2463,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       get: () => project,
       activeForLeftPanel: () => [project],
       onUpdate: () => () => {},
+      onSourceObservation: () => () => {},
       refresh: () => {},
     } as never;
     const panel = new CenterPanel(
@@ -2669,6 +2671,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       get: () => project,
       activeForLeftPanel: () => [project],
       onUpdate: () => () => {},
+      onSourceObservation: () => () => {},
       refresh: () => {},
     } as never;
     const panel = new CenterPanel(
