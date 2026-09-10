@@ -38,6 +38,7 @@ function focusableElements(scope: HTMLElement): HTMLElement[] {
 
 function focusKey(control: HTMLElement): string {
   return (
+    control.dataset['settingsFocusKey'] ??
     control.getAttribute('aria-label') ??
     control.dataset['shortcutAction'] ??
     control.closest<HTMLElement>('.setting-item')?.querySelector<HTMLElement>('.setting-item-name')

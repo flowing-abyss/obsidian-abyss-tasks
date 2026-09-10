@@ -344,8 +344,11 @@ rescans projects or recomputes task statistics. Type, preset, alias, color, alig
 presentation changes reuse the existing project snapshots. `PanelView` then reconciles the current
 project table once and asks `LeftPanel` to replace only its project section, so a presentation save
 does not query the task-wide list. The settings UI uses one shared expandable-card primitive for tag,
-task-status, project-status, and project-property rows; project statuses live inside the expanded
-Status property card and retain the same expansion, drag, draft, scroll, and focus state.
+task-status, and project-property rows. Project statuses and custom-property presets use one shared
+compact value-row primitive inside their expanded property cards; adapters retain domain validation
+and persistence while the row owns native value, display-name, color, appearance, drag, and remove
+controls. Runtime preset row identities stay outside persisted settings so reorder can move existing
+DOM and preserve draft, scroll, and focus state without changing the raw preset records.
 
 Project settings migrate legacy per-status property definitions to one global source and literal
 names using the old persisted values. Removed tag definitions leave note tags untouched. Conflicting

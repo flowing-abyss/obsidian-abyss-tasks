@@ -23,6 +23,14 @@ export interface SettingsCardOptions<T> {
   readonly toggleClass?: string;
 }
 
+export interface SettingsReorderOptions {
+  readonly listKey: string;
+  readonly groupKey?: string;
+  readonly draggable?: boolean;
+  readonly onReorder?: (draggedId: string, targetId: string) => boolean;
+  readonly onCrossGroupDrop?: (draggedId: string, targetGroup: string) => void;
+}
+
 const SETTINGS_CARD_MIME_PREFIX = 'application/x-abyss-settings-card-';
 const INTERACTIVE_SELECTOR = 'button, input, select, textarea, a, [contenteditable="true"]';
 
@@ -48,7 +56,9 @@ function payload(value: string): CardPayload | undefined {
 
 function clearDragState(card: HTMLElement): void {
   card.ownerDocument
-    .querySelectorAll('.abyss-settings-card.abyss-dragging, .abyss-settings-card.abyss-drag-over')
+    .querySelectorAll(
+      '[data-settings-item-id].abyss-dragging, [data-settings-item-id].abyss-drag-over',
+    )
     .forEach((candidate) => {
       candidate.removeClass('abyss-dragging');
       candidate.removeClass('abyss-drag-over');
@@ -57,7 +67,7 @@ function clearDragState(card: HTMLElement): void {
 
 function moveRenderedCard(target: HTMLElement, sourceId: string): void {
   const source = Array.from(target.parentElement?.children ?? []).find(
-    (candidate) => candidate.getAttribute('data-card-id') === sourceId,
+    (candidate) => candidate.getAttribute('data-settings-item-id') === sourceId,
   );
   if (source === undefined) return;
   if ((source.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0) {
@@ -65,23 +75,23 @@ function moveRenderedCard(target: HTMLElement, sourceId: string): void {
   } else target.before(source);
 }
 
-function owningCard(event: Event): Element | null {
-  return (event.target as Element | null)?.closest('.abyss-settings-card') ?? null;
+function owningSettingsItem(event: Event): Element | null {
+  return (event.target as Element | null)?.closest('[data-settings-item-id]') ?? null;
 }
 
-function handleGroupDrop<T>(dragged: CardPayload, options: SettingsCardOptions<T>): boolean {
+function handleGroupDrop(dragged: CardPayload, options: SettingsReorderOptions): boolean {
   if (options.groupKey === undefined || dragged.groupKey === options.groupKey) return false;
   options.onCrossGroupDrop?.(dragged.id, options.groupKey);
   return true;
 }
 
-function handleCardDrop<T>(
+function handleCardDrop(
   event: DragEvent,
   card: HTMLElement,
   id: string,
-  options: SettingsCardOptions<T>,
+  options: SettingsReorderOptions,
 ): void {
-  if (owningCard(event) !== card) return;
+  if (owningSettingsItem(event) !== card) return;
   event.preventDefault();
   event.stopPropagation();
   clearDragState(card);
@@ -91,14 +101,14 @@ function handleCardDrop<T>(
   if (options.onReorder?.(dragged.id, id) === true) moveRenderedCard(card, dragged.id);
 }
 
-function registerDragHandlers<T>(
+export function registerSettingsDragHandlers(
   card: HTMLElement,
   header: HTMLElement,
   id: string,
-  options: SettingsCardOptions<T>,
+  options: SettingsReorderOptions,
 ): void {
   card.addEventListener('dragover', (event) => {
-    if (owningCard(event) !== card) return;
+    if (owningSettingsItem(event) !== card) return;
     if (!Array.from(event.dataTransfer?.types ?? []).includes(dragType(options.listKey))) return;
     event.preventDefault();
     event.stopPropagation();
@@ -106,7 +116,7 @@ function registerDragHandlers<T>(
     card.addClass('abyss-drag-over');
   });
   card.addEventListener('dragleave', (event) => {
-    if (owningCard(event) !== card) return;
+    if (owningSettingsItem(event) !== card) return;
     const OwnerNode = card.ownerDocument.defaultView?.Node;
     const inside = OwnerNode !== undefined && event.relatedTarget instanceof OwnerNode;
     if (inside && card.contains(event.relatedTarget)) return;
@@ -116,7 +126,7 @@ function registerDragHandlers<T>(
     handleCardDrop(event, card, id, options);
   });
   header.addEventListener('dragstart', (event) => {
-    if (owningCard(event) !== card) return;
+    if (owningSettingsItem(event) !== card) return;
     event.stopPropagation();
     const interactive = (event.target as Element | null)?.closest(INTERACTIVE_SELECTOR) ?? null;
     if (options.draggable === false || interactive !== null) {
@@ -134,7 +144,7 @@ function registerDragHandlers<T>(
     card.addClass('abyss-dragging');
   });
   header.addEventListener('dragend', (event) => {
-    if (owningCard(event) !== card) return;
+    if (owningSettingsItem(event) !== card) return;
     event.stopPropagation();
     clearDragState(card);
   });
@@ -171,11 +181,11 @@ export function renderSettingsCard<T>(options: SettingsCardOptions<T>): HTMLElem
   const extraCardClass = options.cardClass === undefined ? '' : ` ${options.cardClass}`;
   const card = options.container.createDiv({
     cls: `abyss-settings-card${extraCardClass}${isOpen ? ' is-open' : ''}`,
-    attr: { 'data-card-id': id },
+    attr: { 'data-card-id': id, 'data-settings-item-id': id },
   });
   const header = card.createDiv({ cls: 'abyss-settings-card-header' });
   if (options.draggable !== false) header.setAttribute('draggable', 'true');
-  registerDragHandlers(card, header, id, options);
+  registerSettingsDragHandlers(card, header, id, options);
   const grip = header.createSpan({ cls: 'abyss-settings-card-grip' });
   setIcon(grip, options.draggable === false ? 'lock' : 'grip-vertical');
   if (options.renderSummary !== undefined) options.renderSummary(header, options.item);

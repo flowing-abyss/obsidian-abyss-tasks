@@ -22,6 +22,7 @@ import type { TaskStatusType } from '../tasks';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { renderProjectTableSettings } from './projectTableSettings';
+import { type ProjectValueRowControls, renderProjectValueRow } from './projectValueRow';
 import { renderSettingsCard } from './settingsCard';
 import { captureSettingsRenderContext, restoreSettingsRenderContext } from './settingsRenderState';
 import { saveSettingsDraft } from './settingsSaveFailure';
@@ -81,15 +82,6 @@ function parseCardDragPayload(raw: string | undefined): CardDragPayload | null {
   } catch {
     return null;
   }
-}
-
-function configureProjectStatusAppearance(
-  select: HTMLSelectElement,
-  status: ProjectStatus,
-): HTMLSelectElement {
-  select.addClass('dropdown');
-  select.setAttribute('aria-label', `Appearance for ${projectStatusDisplayName(status)}`);
-  return select;
 }
 
 interface ShortcutIssueView {
@@ -1197,51 +1189,39 @@ export class CalendarSettingsTab extends PluginSettingTab {
       description: 'The single frontmatter property used for every project status.',
       key: 'statusProperty',
     });
-    this.renderCardList_abyssPrivate(containerEl, projects.statuses, {
-      listKey: 'project-statuses',
-      id: (s) => s.id,
-      title: projectStatusDisplayName,
-      accent: (s) => s.color,
-      body: (bodyEl, status) => {
-        this.renderStatusCard_abyssPrivate(bodyEl, status.id);
-      },
-      onReorder: (draggedId, targetId) =>
-        this.reorderItems_abyssPrivate(projects.statuses, draggedId, targetId, [
-          (status) => status.id,
-          () => this.plugin_abyssPrivate.saveSettings(),
-          'reorder project statuses',
-        ]),
-    });
+    const list = containerEl.createDiv({ cls: 'abyss-project-value-list' });
+    for (const status of projects.statuses) {
+      this.renderProjectStatusRow_abyssPrivate(list, status);
+    }
 
-    new Setting(containerEl).addButton((b) =>
-      b
-        .setButtonText('+ add status')
-        .setCta()
-        .onClick(() => {
-          // Collision-proof id: smallest status-N not already taken.
-          let n = projects.statuses.length + 1;
-          while (
-            projects.statuses.some(
-              (status) => status.id === `status-${n}` || status.name === `status ${n}`,
-            )
-          ) {
-            n++;
-          }
-          const id = `status-${n}`;
-          projects.statuses.push({
-            id,
-            name: `status ${n}`,
-            color: '#888888',
-            onLeftPanel: false,
-          });
-          this.expandedCards_abyssPrivate.add(id); // open the new card for editing
-          this.commitDraft_abyssPrivate('add project status', () =>
-            this.containerEl.querySelector<HTMLInputElement>(
-              `[data-card-id="${id}"] .abyss-settings-card-body input`,
-            ),
-          );
-        }),
-    );
+    const add = containerEl.createEl('button', {
+      cls: 'abyss-project-value-add',
+      text: '+ add status',
+      attr: { type: 'button', 'aria-label': 'Add project status' },
+    });
+    add.addEventListener('click', () => {
+      // Collision-proof id: smallest status-N not already taken.
+      let n = projects.statuses.length + 1;
+      while (
+        projects.statuses.some(
+          (status) => status.id === `status-${n}` || status.name === `status ${n}`,
+        )
+      ) {
+        n++;
+      }
+      const id = `status-${n}`;
+      projects.statuses.push({
+        id,
+        name: `status ${n}`,
+        color: '#888888',
+        onLeftPanel: false,
+      });
+      this.commitDraft_abyssPrivate('add project status', () =>
+        this.containerEl.querySelector<HTMLInputElement>(
+          `[data-settings-item-id="${id}"] .abyss-project-value-raw`,
+        ),
+      );
+    });
 
     const firstStatus = projects.statuses[0];
     if (firstStatus !== undefined)
@@ -1269,112 +1249,120 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
-  private renderStatusCard_abyssPrivate(card: HTMLElement, statusId: string): void {
+  private renderProjectStatusRow_abyssPrivate(
+    containerEl: HTMLElement,
+    status: ProjectStatus,
+  ): void {
     const projects = this.plugin_abyssPrivate.settings.projects;
     const statuses = projects.statuses;
-    const status = statuses.find((candidate) => candidate.id === statusId);
-    if (status == null) return;
-
-    new Setting(card)
-      .setName('Value')
-      .setDesc('Raw value written to project notes.')
-      .addText((text) => {
-        text.setValue(status.name);
-        const input = text.inputEl;
-        const expectedName = status.name;
-        const commit = (): void => {
-          if (input.value === expectedName || input.disabled) return;
-          const requestedName = input.value;
-          input.disabled = true;
-          runAsyncAction(
-            this.plugin_abyssPrivate
-              .renameProjectStatus(status.id, requestedName, expectedName)
-              .then(
-                () => {
-                  this.render_abyssPrivate();
-                },
-                (error: unknown) => {
-                  input.value = expectedName;
-                  input.disabled = false;
-                  const message = error instanceof Error ? error.message : String(error);
-                  console.error('[abyss-tasks] Could not rename project status', {
-                    statusId: status.id,
-                    expectedName,
-                    requestedName,
-                    cause: error,
-                  });
-                  new Notice(`Could not rename project status: ${message}`);
-                },
-              ),
-          );
-        };
-        input.addEventListener('keydown', (event) => {
-          if (event.key !== 'Enter') return;
-          event.preventDefault();
-          input.blur();
-        });
-        input.addEventListener('blur', () => {
-          commit();
-        });
-      });
-
-    new Setting(card).setName('Display name').addText((text) =>
-      text.setValue(status.displayName ?? '').onChange(async (value) => {
-        const displayName = value.trim();
-        if (displayName === '') delete status.displayName;
-        else status.displayName = displayName;
-        await this.plugin_abyssPrivate.saveSettings();
-      }),
-    );
-
-    new Setting(card).setName('Color').addColorPicker((cp) =>
-      cp.setValue(status.color ?? '#888888').onChange(async (v) => {
-        status.color = v;
-        await this.plugin_abyssPrivate.saveSettings();
-      }),
-    );
-
-    new Setting(card).setName('Appearance').addDropdown((dropdown) =>
-      dropdown
-        .then((component) => configureProjectStatusAppearance(component.selectEl, status))
-        .addOptions({ badge: 'Badge', text: 'Text', dot: 'Dot' })
-        .setValue(status.display ?? 'badge')
-        .onChange(async (value) => {
-          status.display = value === 'text' || value === 'dot' ? value : 'badge';
-          await this.plugin_abyssPrivate.saveSettings();
-        }),
-    );
-
-    new Setting(card).setName('Show on left panel').addToggle((tg) =>
-      tg.setValue(status.onLeftPanel).onChange(async (v) => {
-        status.onLeftPanel = v;
-        await this.plugin_abyssPrivate.saveSettings();
-      }),
-    );
-
-    this.renderDeleteProjectStatusSetting_abyssPrivate(card, status.id);
+    const label = projectStatusDisplayName(status);
+    const controls = renderProjectValueRow({
+      container: containerEl,
+      id: status.id,
+      listKey: 'project-statuses',
+      label,
+      value: status.name,
+      valueType: 'text',
+      ...(status.displayName === undefined ? {} : { displayName: status.displayName }),
+      ...(status.color === undefined ? {} : { color: status.color }),
+      ...(status.display === undefined ? {} : { display: status.display }),
+      onLeftPanel: status.onLeftPanel,
+      removeDisabled: statuses.length <= 1,
+      onReorder: (draggedId, targetId) =>
+        this.reorderItems_abyssPrivate(statuses, draggedId, targetId, [
+          (candidate) => candidate.id,
+          () => this.plugin_abyssPrivate.saveSettings(),
+          'reorder project statuses',
+        ]),
+    });
+    const expectedName = status.name;
+    this.registerProjectStatusName_abyssPrivate(status, controls, expectedName);
+    this.registerProjectStatusPresentation_abyssPrivate(status, controls);
+    controls.remove.addEventListener('click', () => {
+      const index = statuses.findIndex((candidate) => candidate.id === status.id);
+      const removed = index < 0 ? undefined : statuses.splice(index, 1)[0];
+      if (removed?.id === projects.defaultStatusId) {
+        projects.defaultStatusId = statuses[0]?.id ?? '';
+      }
+      this.commitDraft_abyssPrivate('delete project status');
+    });
   }
 
-  private renderDeleteProjectStatusSetting_abyssPrivate(card: HTMLElement, statusId: string): void {
-    const projects = this.plugin_abyssPrivate.settings.projects;
-    const statuses = projects.statuses;
-    new Setting(card).addButton((b) =>
-      b
-        .setButtonText('Delete status')
-        .setClass('mod-warning')
-        .setDisabled(statuses.length <= 1)
-        .onClick(() => {
-          const index = statuses.findIndex((candidate) => candidate.id === statusId);
-          const removed = index < 0 ? undefined : statuses.splice(index, 1)[0];
-          if (removed != null) {
-            this.expandedCards_abyssPrivate.delete(removed.id);
-            if (projects.defaultStatusId === removed.id) {
-              projects.defaultStatusId = statuses[0]?.id ?? '';
-            }
-          }
-          this.commitDraft_abyssPrivate('delete project status');
-        }),
-    );
+  private registerProjectStatusName_abyssPrivate(
+    status: ProjectStatus,
+    controls: ProjectValueRowControls,
+    expectedName: string,
+  ): void {
+    const commitName = (): void => {
+      if (controls.value.value === expectedName || controls.value.disabled) return;
+      const requestedName = controls.value.value;
+      controls.value.disabled = true;
+      runAsyncAction(
+        this.plugin_abyssPrivate.renameProjectStatus(status.id, requestedName, expectedName).then(
+          () => {
+            this.render_abyssPrivate();
+          },
+          (error: unknown) => {
+            controls.value.value = expectedName;
+            controls.value.disabled = false;
+            const message = error instanceof Error ? error.message : String(error);
+            console.error('[abyss-tasks] Could not rename project status', {
+              statusId: status.id,
+              expectedName,
+              requestedName,
+              cause: error,
+            });
+            new Notice(`Could not rename project status: ${message}`);
+          },
+        ),
+      );
+    };
+    controls.value.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      controls.value.blur();
+    });
+    controls.value.addEventListener('blur', commitName);
+  }
+
+  private registerProjectStatusPresentation_abyssPrivate(
+    status: ProjectStatus,
+    controls: ProjectValueRowControls,
+  ): void {
+    controls.displayName.addEventListener('change', () => {
+      const displayName = controls.displayName.value.trim();
+      if (displayName === '') delete status.displayName;
+      else status.displayName = displayName;
+      saveSettingsDraft({
+        action: 'save project status display name',
+        save: () => this.plugin_abyssPrivate.saveSettings(),
+      });
+    });
+    controls.color.addEventListener('change', () => {
+      status.color = controls.color.value;
+      saveSettingsDraft({
+        action: 'save project status color',
+        save: () => this.plugin_abyssPrivate.saveSettings(),
+      });
+    });
+    controls.appearance.addEventListener('change', () => {
+      status.display =
+        controls.appearance.value === 'text' || controls.appearance.value === 'dot'
+          ? controls.appearance.value
+          : 'badge';
+      saveSettingsDraft({
+        action: 'save project status appearance',
+        save: () => this.plugin_abyssPrivate.saveSettings(),
+      });
+    });
+    const onLeftPanel = controls.onLeftPanel;
+    onLeftPanel?.addEventListener('change', () => {
+      status.onLeftPanel = onLeftPanel.checked;
+      saveSettingsDraft({
+        action: 'save project status left panel visibility',
+        save: () => this.plugin_abyssPrivate.saveSettings(),
+      });
+    });
   }
 
   private renderViewConfigSettings_abyssPrivate(

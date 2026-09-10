@@ -6,6 +6,7 @@ import type {
 } from '../projects/projectPropertyDefinitions';
 import { projectPropertyTypeChoices } from '../projects/projectPropertyDefinitions';
 import { projectPropertyPresetIssue } from '../projects/projectPropertyPresets';
+import { renderProjectValueRow, type ProjectValueRowControls } from './projectValueRow';
 
 const PROPERTY_TYPE_LABELS: Readonly<Record<ProjectPropertyType, string>> = {
   text: 'Text',
@@ -99,83 +100,69 @@ interface PresetRowContext {
   readonly host: HTMLElement;
   readonly definition: ProjectPropertyDefinition;
   readonly rawPresets: unknown[];
-  readonly index: number;
+  readonly identities: string[];
+  readonly id: string;
+  readonly listKey: string;
   readonly options: RenderProjectPropertyOptions;
 }
 
-interface PresetRowControls {
-  readonly value: HTMLInputElement;
-  readonly displayName: HTMLInputElement;
-  readonly color: HTMLInputElement;
-  readonly appearance: HTMLSelectElement;
-  readonly remove: HTMLButtonElement;
+interface PresetRowControls extends ProjectValueRowControls {
   readonly error: HTMLElement;
 }
 
-function createPresetRowControls(row: HTMLElement, context: PresetRowContext): PresetRowControls {
-  const { definition, index, options, rawPresets } = context;
+function movePreset(context: PresetRowContext, draggedId: string, targetId: string): boolean {
+  const from = context.identities.indexOf(draggedId);
+  const to = context.identities.indexOf(targetId);
+  if (from < 0 || to < 0 || from === to) return false;
+  const [preset] = context.rawPresets.splice(from, 1);
+  const [identity] = context.identities.splice(from, 1);
+  if (identity === undefined) return false;
+  context.rawPresets.splice(to, 0, preset);
+  context.identities.splice(to, 0, identity);
+  context.options.onDefinitionChange();
+  return true;
+}
+
+function createPresetRowControls(context: PresetRowContext): PresetRowControls {
+  const { definition, id, identities, listKey, options, rawPresets } = context;
+  const index = identities.indexOf(id);
   const record = isRecord(rawPresets[index]) ? rawPresets[index] : {};
   const rawValue = record['value'];
-  const value = row.createEl('input', {
-    cls: 'abyss-project-preset-value',
-    attr: {
-      type: definition.type === 'number' ? 'number' : 'text',
-      'aria-label': `Value for ${options.label} preset ${index + 1}`,
-      placeholder: 'Value',
-    },
-  });
-  value.value =
-    typeof rawValue === 'string' || typeof rawValue === 'number' ? String(rawValue) : '';
-  const displayName = row.createEl('input', {
-    cls: 'abyss-project-preset-display-name',
-    attr: {
-      type: 'text',
-      'aria-label': `Display name for ${options.label} preset ${index + 1}`,
-      placeholder: 'Display name',
-    },
-  });
-  displayName.value = typeof record['displayName'] === 'string' ? record['displayName'] : '';
-  const color = row.createEl('input', {
-    cls: 'abyss-project-preset-color',
-    attr: { type: 'color', 'aria-label': `Color for ${options.label} preset ${index + 1}` },
-  });
-  color.value =
-    typeof record['color'] === 'string' && /^#[\da-f]{6}$/iu.test(record['color'])
-      ? record['color']
-      : '#888888';
-  const savedDisplay = record['display'];
-  const appearanceDropdown = new DropdownComponent(row)
-    .addOptions({ badge: 'Badge', text: 'Text', dot: 'Dot' })
-    .setValue(savedDisplay === 'text' || savedDisplay === 'dot' ? savedDisplay : 'badge');
-  const appearance = appearanceDropdown.selectEl;
-  appearance.addClasses(['dropdown', 'abyss-project-preset-appearance']);
-  appearance.setAttribute('aria-label', `Appearance for ${options.label} preset ${index + 1}`);
-  const remove = row.createEl('button', {
-    cls: 'clickable-icon abyss-project-preset-remove',
-    text: '×',
-    attr: { type: 'button', 'aria-label': `Remove ${options.label} preset ${index + 1}` },
+  const display = record['display'];
+  const controls = renderProjectValueRow({
+    container: context.host,
+    id,
+    listKey,
+    label: `${options.label} preset ${index + 1}`,
+    value: typeof rawValue === 'string' || typeof rawValue === 'number' ? String(rawValue) : '',
+    valueType: definition.type === 'number' ? 'number' : 'text',
+    ...(typeof record['displayName'] === 'string' ? { displayName: record['displayName'] } : {}),
+    ...(typeof record['color'] === 'string' ? { color: record['color'] } : {}),
+    ...(display === 'badge' || display === 'text' || display === 'dot' ? { display } : {}),
+    onReorder: (draggedId, targetId) => movePreset(context, draggedId, targetId),
   });
   const error = renderPresetError(
-    row,
+    controls.row,
     projectPropertyPresetIssue(
       definition.type,
       rawPresets[index],
       rawPresets.filter((_candidate, candidateIndex) => candidateIndex !== index),
     ),
   );
-  return { value, displayName, color, appearance, remove, error };
+  return { ...controls, error };
 }
 
 function renderPresetRow(context: PresetRowContext): void {
-  const { host, definition, rawPresets, index, options } = context;
-  const currentRecord = (): Record<string, unknown> =>
-    isRecord(rawPresets[index]) ? rawPresets[index] : {};
-  const row = host.createDiv({
-    cls: 'abyss-project-preset-row',
-    attr: { 'data-preset-index': String(index) },
-  });
-  const controls = createPresetRowControls(row, context);
+  const { definition, id, identities, options, rawPresets } = context;
+  const currentIndex = (): number => identities.indexOf(id);
+  const currentRecord = (): Record<string, unknown> => {
+    const index = currentIndex();
+    return index >= 0 && isRecord(rawPresets[index]) ? rawPresets[index] : {};
+  };
+  const controls = createPresetRowControls(context);
   controls.value.addEventListener('change', () => {
+    const index = currentIndex();
+    if (index < 0) return;
     const nextValue =
       definition.type === 'number' ? controls.value.valueAsNumber : controls.value.value;
     const next = { ...currentRecord(), value: nextValue };
@@ -190,6 +177,8 @@ function renderPresetRow(context: PresetRowContext): void {
     options.onDefinitionChange();
   });
   controls.displayName.addEventListener('change', () => {
+    const index = currentIndex();
+    if (index < 0) return;
     const next: Record<string, unknown> = {
       ...currentRecord(),
       value: currentRecord()['value'] ?? controls.value.value,
@@ -200,6 +189,8 @@ function renderPresetRow(context: PresetRowContext): void {
     options.onDefinitionChange();
   });
   controls.color.addEventListener('change', () => {
+    const index = currentIndex();
+    if (index < 0) return;
     const next: Record<string, unknown> = {
       ...currentRecord(),
       value: currentRecord()['value'] ?? controls.value.value,
@@ -209,6 +200,8 @@ function renderPresetRow(context: PresetRowContext): void {
     options.onDefinitionChange();
   });
   controls.appearance.addEventListener('change', () => {
+    const index = currentIndex();
+    if (index < 0) return;
     const next: Record<string, unknown> = {
       ...currentRecord(),
       value: currentRecord()['value'] ?? controls.value.value,
@@ -218,10 +211,51 @@ function renderPresetRow(context: PresetRowContext): void {
     options.onDefinitionChange();
   });
   controls.remove.addEventListener('click', () => {
+    const index = currentIndex();
+    if (index < 0) return;
     rawPresets.splice(index, 1);
+    identities.splice(index, 1);
     options.onDefinitionChange();
     options.refresh();
   });
+}
+
+interface PresetListState {
+  readonly presets: unknown[];
+  readonly listKey: string;
+  readonly identities: string[];
+}
+
+const presetListStates = new WeakMap<ProjectPropertyDefinition, PresetListState>();
+let nextPresetListId = 0;
+let nextPresetRuntimeId = 0;
+
+function appendPresetIdentity(state: PresetListState): string {
+  const id = `project-preset-${++nextPresetRuntimeId}`;
+  state.identities.push(id);
+  return id;
+}
+
+function presetListState(
+  definition: ProjectPropertyDefinition,
+  presets: unknown[],
+): PresetListState {
+  const existing = presetListStates.get(definition);
+  if (existing?.presets === presets) {
+    while (existing.identities.length < presets.length) appendPresetIdentity(existing);
+    if (existing.identities.length > presets.length) {
+      existing.identities.splice(presets.length);
+    }
+    return existing;
+  }
+  const state: PresetListState = {
+    presets,
+    listKey: `project-presets-${++nextPresetListId}`,
+    identities: [],
+  };
+  while (state.identities.length < presets.length) appendPresetIdentity(state);
+  presetListStates.set(definition, state);
+  return state;
 }
 
 function renderPresets(options: RenderProjectPropertyOptions): void {
@@ -239,19 +273,32 @@ function renderPresets(options: RenderProjectPropertyOptions): void {
     });
   }
   const values = presets ?? [];
-  const list = options.container.createDiv({ cls: 'abyss-project-preset-list' });
-  values.forEach((_preset, index) => {
-    renderPresetRow({ host: list, definition, rawPresets: values, index, options });
+  const list = options.container.createDiv({
+    cls: 'abyss-project-value-list abyss-project-preset-list',
+  });
+  const state = presetListState(definition, values);
+  const { identities, listKey } = state;
+  identities.forEach((id) => {
+    renderPresetRow({
+      host: list,
+      definition,
+      rawPresets: values,
+      identities,
+      id,
+      listKey,
+      options,
+    });
   });
   const add = options.container.createEl('button', {
-    cls: 'abyss-project-preset-add',
+    cls: 'abyss-project-value-add abyss-project-preset-add',
     text: '+ add predefined value',
     attr: { type: 'button' },
   });
   add.addEventListener('click', () => {
-    const next = presets ?? [];
+    const next = values;
     if (presets === undefined) definition.presets = next as ProjectPropertyPreset[];
     next.push({ value: definition.type === 'number' ? 0 : '' });
+    appendPresetIdentity(state);
     options.onDefinitionChange();
     options.refresh();
   });

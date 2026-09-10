@@ -3,6 +3,8 @@ import { App, DropdownComponent, Notice, Setting } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import type { ProjectPropertyInfo } from '../src/projects/projectFields';
+import type { ProjectPropertyDefinition } from '../src/projects/projectPropertyDefinitions';
+import { compatibleProjectPropertyPresets } from '../src/projects/projectPropertyPresets';
 import { buildDefaultProjectsSettings } from '../src/settings/defaults';
 import {
   addProjectPropertyColumn,
@@ -56,6 +58,28 @@ function dragColumn(source: HTMLElement, target: HTMLElement): void {
       ? expectDefined(source.querySelector<HTMLElement>('.abyss-settings-card-header'))
       : target
     ).dispatchEvent(event);
+  }
+}
+
+function dragValueRow(source: HTMLElement, target: HTMLElement): void {
+  const payloads = new Map<string, string>();
+  const dataTransfer = {
+    setData: (type: string, value: string) => {
+      payloads.set(type, value);
+    },
+    getData: (type: string) => payloads.get(type) ?? '',
+    get types() {
+      return [...payloads.keys()];
+    },
+  };
+  for (const [element, type] of [
+    [expectDefined(source.querySelector<HTMLElement>('.abyss-project-value-grip')), 'dragstart'],
+    [target, 'dragover'],
+    [target, 'drop'],
+  ] as const) {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+    element.dispatchEvent(event);
   }
 }
 
@@ -195,17 +219,13 @@ describe('renderProjectTableSettings', () => {
     expect(
       card.querySelector<HTMLInputElement>('[aria-label="Use predefined values for Priority"]'),
     ).toBeNull();
-    const value = expectDefined(
-      card.querySelector<HTMLInputElement>('.abyss-project-preset-value'),
-    );
+    const value = expectDefined(card.querySelector<HTMLInputElement>('.abyss-project-value-raw'));
     const displayName = expectDefined(
-      card.querySelector<HTMLInputElement>('.abyss-project-preset-display-name'),
+      card.querySelector<HTMLInputElement>('.abyss-project-value-alias'),
     );
-    const color = expectDefined(
-      card.querySelector<HTMLInputElement>('.abyss-project-preset-color'),
-    );
+    const color = expectDefined(card.querySelector<HTMLInputElement>('.abyss-project-value-color'));
     const appearance = expectDefined(
-      card.querySelector<HTMLSelectElement>('.abyss-project-preset-appearance'),
+      card.querySelector<HTMLSelectElement>('.abyss-project-value-appearance'),
     );
     expect(appearance.classList.contains('dropdown')).toBe(true);
     expect(Array.from(appearance.options).map(({ value }) => value)).toEqual([
@@ -241,6 +261,74 @@ describe('renderProjectTableSettings', () => {
       futureDefinitionOption: { exact: ['keep', { nested: true }] },
     });
     expect(saveStatic).toHaveBeenCalledTimes(5);
+  });
+
+  it('reorders preset suggestions and keeps moved-row edits bound to runtime identity', async () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.table.columns.push({ id: 'property:Priority', visible: true });
+    const definition = {
+      type: 'text',
+      presets: [
+        { value: 'A', future: { rank: 1 } },
+        { value: 'B', future: { rank: 2 } },
+        { value: 'C', future: { rank: 3 } },
+        { value: ['legacy'], display: 'future-display', future: { rank: 4 } },
+      ],
+    } as unknown as ProjectPropertyDefinition;
+    projects.propertyDefinitions['property:Priority'] = definition;
+    const saveStatic = vi.fn().mockResolvedValue(undefined);
+    const refresh = vi.fn();
+    const container = document.body.createDiv();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([{ name: 'Priority', type: 'text' }]),
+      saveStatic,
+      saveViewState: vi.fn().mockResolvedValue(undefined),
+      refresh,
+    });
+    expandProperty(container, 'property:Priority');
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('.abyss-project-value-row'));
+
+    dragValueRow(expectDefined(rows[2]), expectDefined(rows[0]));
+
+    expect((definition.presets as Array<{ value: unknown }>).map(({ value }) => value)).toEqual([
+      'C',
+      'A',
+      'B',
+      ['legacy'],
+    ]);
+    expect(compatibleProjectPropertyPresets(definition).map(({ value }) => value)).toEqual([
+      'C',
+      'A',
+      'B',
+    ]);
+    expect(
+      Array.from(
+        container.querySelectorAll<HTMLInputElement>('.abyss-project-value-raw'),
+        ({ value }) => value,
+      ),
+    ).toEqual(['C', 'A', 'B', '']);
+
+    const moved = expectDefined(rows[2]);
+    const alias = expectDefined(
+      moved.querySelector<HTMLInputElement>('.abyss-project-value-alias'),
+    );
+    alias.value = 'See';
+    alias.dispatchEvent(new Event('change', { bubbles: true }));
+    expectDefined(
+      expectDefined(rows[1]).querySelector<HTMLButtonElement>('.abyss-project-value-remove'),
+    ).click();
+    await settle();
+
+    expect(definition.presets).toEqual([
+      { value: 'C', displayName: 'See', future: { rank: 3 } },
+      { value: 'A', future: { rank: 1 } },
+      { value: ['legacy'], display: 'future-display', future: { rank: 4 } },
+    ]);
+    expect(saveStatic).toHaveBeenCalledTimes(3);
+    expect(refresh).toHaveBeenCalledOnce();
   });
 
   it('persists a newly added predefined value before it is edited', async () => {
