@@ -125,11 +125,7 @@ export function compatibleProjectPropertyPresets(definition: unknown): ProjectPr
 
 /** Compiles validation and exact typed-identity lookup once for a render/model revision. */
 export function compileProjectPropertyPresets(definition: unknown): CompiledProjectPropertyPresets {
-  if (
-    !isProjectPropertyDefinition(definition) ||
-    definition.presetsEnabled !== true ||
-    !PRESET_TYPES.has(definition.type)
-  ) {
+  if (!isProjectPropertyDefinition(definition) || !PRESET_TYPES.has(definition.type)) {
     return EMPTY_COMPILED_PRESETS;
   }
   const presets: unknown = definition.presets;

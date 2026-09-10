@@ -179,8 +179,10 @@ it never writes Obsidian's registry.
 
 `projectPropertyPresets` owns DOM-free typed preset identity, validation, compatibility, and display
 metadata. Settings, table projection, and cell editors consume that shared interpretation. Presets
-are offered before cached same-property vault values, and the editor excludes selected values by
-typed raw identity. `ui/projectPropertyValuePresentation` renders the resulting badge or text
+are active whenever valid configured entries exist, regardless of the retained deprecated
+`presetsEnabled` compatibility field. They are offered before cached same-property vault values,
+and the editor excludes selected values by typed raw identity.
+`ui/projectPropertyValuePresentation` renders the resulting badge or text
 appearance across suggestion popups, cells, and group labels without importing settings UI.
 
 `projectTableModel` is a DOM-free projection over `Project` snapshots. It applies typed sorting,

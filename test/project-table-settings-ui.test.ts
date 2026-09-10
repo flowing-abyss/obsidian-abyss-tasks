@@ -168,14 +168,15 @@ describe('renderProjectTableSettings', () => {
     expect(saveStatic).toHaveBeenCalledOnce();
   });
 
-  it('retains sequential predefined-value edits and keeps values when disabled', async () => {
+  it('retains sequential predefined-value edits without an enable control', async () => {
     const projects = buildDefaultProjectsSettings();
     projects.table.columns.push({ id: 'property:Priority', visible: true });
     projects.propertyDefinitions['property:Priority'] = {
       type: 'text',
-      presetsEnabled: true,
-      presets: [{ value: 'low' }],
-    };
+      presetsEnabled: false,
+      presets: [{ value: 'low', futurePresetOption: { exact: ['keep', 7] } }],
+      futureDefinitionOption: { exact: ['keep', { nested: true }] },
+    } as never;
     const saveStatic = vi.fn().mockResolvedValue(undefined);
     const container = document.body.createDiv();
     renderProjectTableSettings({
@@ -191,6 +192,9 @@ describe('renderProjectTableSettings', () => {
     const card = expectDefined(
       container.querySelector<HTMLElement>('[data-column-id="property:Priority"]'),
     );
+    expect(
+      card.querySelector<HTMLInputElement>('[aria-label="Use predefined values for Priority"]'),
+    ).toBeNull();
     const value = expectDefined(
       card.querySelector<HTMLInputElement>('.abyss-project-preset-value'),
     );
@@ -219,19 +223,19 @@ describe('renderProjectTableSettings', () => {
 
     expect(projects.propertyDefinitions['property:Priority']).toEqual({
       type: 'text',
-      presetsEnabled: true,
-      presets: [{ value: 'urgent', displayName: 'High', color: '#112233', display: 'text' }],
-    });
-    const toggle = expectDefined(
-      card.querySelector<HTMLInputElement>('[aria-label="Use predefined values for Priority"]'),
-    );
-    toggle.click();
-    await settle();
-    expect(projects.propertyDefinitions['property:Priority']).toMatchObject({
       presetsEnabled: false,
-      presets: [{ value: 'urgent', displayName: 'High', color: '#112233', display: 'text' }],
+      presets: [
+        {
+          value: 'urgent',
+          displayName: 'High',
+          color: '#112233',
+          display: 'text',
+          futurePresetOption: { exact: ['keep', 7] },
+        },
+      ],
+      futureDefinitionOption: { exact: ['keep', { nested: true }] },
     });
-    expect(saveStatic).toHaveBeenCalledTimes(6);
+    expect(saveStatic).toHaveBeenCalledTimes(5);
   });
 
   it('persists a newly added predefined value before it is edited', async () => {
@@ -239,7 +243,7 @@ describe('renderProjectTableSettings', () => {
     projects.table.columns.push({ id: 'property:Budget', visible: true });
     projects.propertyDefinitions['property:Budget'] = {
       type: 'number',
-      presetsEnabled: true,
+      presetsEnabled: false,
       presets: [],
     };
     const saveStatic = vi.fn().mockResolvedValue(undefined);

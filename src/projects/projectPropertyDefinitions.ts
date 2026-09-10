@@ -14,6 +14,7 @@ export interface ProjectPropertyPreset extends ProjectValuePresentation {
 
 export interface ProjectPropertyDefinition {
   type: ProjectPropertyType;
+  /** @deprecated Presets are active whenever valid configured entries exist. */
   presetsEnabled?: boolean;
   presets?: ProjectPropertyPreset[];
 }
@@ -79,9 +80,6 @@ function isProjectPropertyPreset(value: unknown): value is ProjectPropertyPreset
 
 export function hasMalformedProjectPropertyDefinitionPresentation(value: unknown): boolean {
   if (!isProjectPropertyDefinition(value)) return false;
-  if (value['presetsEnabled'] !== undefined && typeof value['presetsEnabled'] !== 'boolean') {
-    return true;
-  }
   if (value['presets'] === undefined) return false;
   return (
     !Array.isArray(value['presets']) ||

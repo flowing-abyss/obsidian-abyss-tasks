@@ -7,26 +7,29 @@ import {
 } from '../src/projects/projectPropertyPresets';
 
 describe('project property preset options', () => {
-  it('keeps only enabled, valid presets compatible with the configured type', () => {
+  it.each([
+    ['false', false],
+    ['absent', undefined],
+    ['true', true],
+    ['malformed', 'obsolete'],
+  ] as const)('compiles valid presets when the legacy flag is %s', (_label, presetsEnabled) => {
+    const definition = {
+      type: 'number' as const,
+      presets: [
+        { value: 42, displayName: 'Forty two', color: '#123456', display: 'badge' as const },
+        { value: '42', displayName: 'Legacy text' },
+        { value: Number.POSITIVE_INFINITY },
+        null,
+      ],
+      ...(presetsEnabled === undefined ? {} : { presetsEnabled }),
+    };
+
+    expect(compatibleProjectPropertyPresets(definition)).toEqual([
+      { value: 42, displayName: 'Forty two', color: '#123456', display: 'badge' },
+    ]);
     expect(
-      compatibleProjectPropertyPresets({
-        type: 'number',
-        presetsEnabled: true,
-        presets: [
-          { value: 42, displayName: 'Forty two' },
-          { value: '42', displayName: 'Legacy text' },
-          { value: Number.POSITIVE_INFINITY },
-          null,
-        ],
-      }),
-    ).toEqual([{ value: 42, displayName: 'Forty two' }]);
-    expect(
-      compatibleProjectPropertyPresets({
-        type: 'number',
-        presetsEnabled: false,
-        presets: [{ value: 42 }],
-      }),
-    ).toEqual([]);
+      compiledProjectPropertyPresentation(compileProjectPropertyPresets(definition), 42),
+    ).toEqual({ value: 42, displayName: 'Forty two', color: '#123456', display: 'badge' });
   });
 
   it('validates nonempty, finite, tag-shaped and exact typed identities', () => {
@@ -48,7 +51,6 @@ describe('project property preset options', () => {
     expect(compatibleProjectPropertyPresets(null)).toEqual([]);
     const definition = {
       type: 'list' as const,
-      presetsEnabled: true,
       presets: [
         { value: 'same', displayName: 'First' },
         { value: 'same', displayName: 'Duplicate' },
@@ -77,7 +79,6 @@ describe('project property preset options', () => {
 
     const compiled = compileProjectPropertyPresets({
       type: 'text',
-      presetsEnabled: true,
       presets,
     });
 

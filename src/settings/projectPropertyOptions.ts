@@ -226,18 +226,9 @@ function renderPresetRow(context: PresetRowContext): void {
 function renderPresets(options: RenderProjectPropertyOptions): void {
   const definition = options.definition;
   if (definition === undefined || !PRESET_TYPES.has(definition.type)) return;
-  const setting = new Setting(options.container)
+  new Setting(options.container)
     .setName('Predefined values')
     .setDesc('Offer configured values before values already used by this property.');
-  const toggle = setting.controlEl.createEl('input', {
-    attr: { type: 'checkbox', 'aria-label': `Use predefined values for ${options.label}` },
-  });
-  toggle.checked = definition.presetsEnabled === true;
-  toggle.addEventListener('change', () => {
-    definition.presetsEnabled = toggle.checked;
-    options.onDefinitionChange();
-    options.refresh();
-  });
   const presets = rawPresetList(definition);
   if (presets === undefined && definition.presets !== undefined) {
     options.container.createDiv({
@@ -256,7 +247,6 @@ function renderPresets(options: RenderProjectPropertyOptions): void {
     text: '+ add predefined value',
     attr: { type: 'button' },
   });
-  add.disabled = definition.presetsEnabled !== true;
   add.addEventListener('click', () => {
     const next = presets ?? [];
     if (presets === undefined) definition.presets = next as ProjectPropertyPreset[];

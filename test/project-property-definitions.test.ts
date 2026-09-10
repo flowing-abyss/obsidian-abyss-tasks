@@ -3,6 +3,7 @@ import { initializeProjectPropertyDefinitions } from '../src/projects/initialize
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import {
   captureMissingProjectPropertyDefinitions,
+  hasMalformedProjectPropertyDefinitionPresentation,
   projectPresetPresentation,
   projectPropertyTypeChoices,
   resolveConfiguredProjectField,
@@ -158,6 +159,46 @@ describe('project property definitions', () => {
     expect(loaded.propertyDefinitions['property:Effort']?.presets).toEqual([
       { value: 'high', displayName: 'High effort' },
     ]);
+  });
+
+  it('preserves a saved false legacy flag and unknown preset payload through migration', () => {
+    const definition = {
+      type: 'text',
+      presetsEnabled: false,
+      presets: [
+        {
+          value: 'high',
+          displayName: 'High effort',
+          futurePresetOption: { exact: ['nested', 7] },
+        },
+      ],
+      futureDefinitionOption: { exact: ['keep', { nested: true }] },
+    };
+    const raw = {
+      projects: { propertyDefinitions: { 'property:Effort': structuredClone(definition) } },
+    };
+
+    const migration = migrateSettings(raw);
+
+    expect(raw.projects.propertyDefinitions['property:Effort']).toEqual(definition);
+    expect(migration.notices).toEqual([]);
+  });
+
+  it('ignores the obsolete flag when checking presentation data for repair', () => {
+    expect(
+      hasMalformedProjectPropertyDefinitionPresentation({
+        type: 'text',
+        presetsEnabled: 'obsolete',
+        presets: [{ value: 'high', displayName: 'High' }],
+      }),
+    ).toBe(false);
+    expect(
+      hasMalformedProjectPropertyDefinitionPresentation({
+        type: 'text',
+        presetsEnabled: 'obsolete',
+        presets: [{ value: 'high', displayName: 7 }],
+      }),
+    ).toBe(true);
   });
 
   it('returns presentation only for an exact raw preset value', () => {
