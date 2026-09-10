@@ -1285,8 +1285,15 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     const declarations = declarationsFor('.abyss-projects-table .abyss-project-description');
     expect(declarations).toContain('margin: 0');
     expect(declarations).toContain('white-space: nowrap');
-    expect(declarationsFor('.abyss-projects-table .abyss-project-description.is-empty')).toContain(
-      'height: 0',
+    expect(declarationsFor('.abyss-projects-table .abyss-project-description.is-empty')).toBe('');
+  });
+
+  it('lets the sorted drop marker override the group perimeter', () => {
+    expect(
+      declarationsFor('.abyss-project-table-row.is-drop-target.is-drop-before > td'),
+    ).toContain('inset 0 2px');
+    expect(declarationsFor('.abyss-project-table-row.is-drop-target.is-drop-after > td')).toContain(
+      'inset 0 -2px',
     );
   });
 

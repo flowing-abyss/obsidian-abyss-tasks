@@ -3067,6 +3067,7 @@ describe('ProjectsTableView', () => {
   it('routes a row drop through an expanded group body', async () => {
     const config = settings();
     config.projects.table.groupBy = 'property:Owners';
+    config.projects.table.sortBy = { field: 'start', dir: 'asc' };
     config.projects.table.columns.push({ id: 'property:Owners', visible: true });
     const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => ({
       applied: changes.map((change): AppliedProjectCellChange => ({
@@ -3079,18 +3080,28 @@ describe('ProjectsTableView', () => {
       })),
       failed: [],
     }));
-    const { host, view } = mount(
-      [
-        project({ path: 'Projects/A.md', frontmatter: { Owners: ['A'] } }),
-        project({ path: 'Projects/B.md', frontmatter: { Owners: ['B'] } }),
-        project({ path: 'Projects/C.md', frontmatter: { Owners: ['B'] } }),
-      ],
-      {
-        settings: config,
-        catalog: catalog([{ name: 'Owners', type: 'list' }]),
-        applyEdits,
-      },
+    const projects = [
+      project({ path: 'Projects/A.md', frontmatter: { Owners: ['A'], start: '2026-09-10' } }),
+      project({ path: 'Projects/B.md', frontmatter: { Owners: ['B'], start: '2026-09-20' } }),
+      project({ path: 'Projects/C.md', frontmatter: { Owners: ['B'], start: '2026-09-30' } }),
+    ];
+    const { host, view } = mount(projects, {
+      settings: config,
+      catalog: catalog([{ name: 'Owners', type: 'list' }]),
+      applyEdits,
+    });
+    const originalB = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-row[data-project-path="Projects/B.md"]',
+      ),
     );
+    const originalC = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-row[data-project-path="Projects/C.md"]',
+      ),
+    );
+    config.projects.table.sortBy.dir = 'desc';
+    view.update(projects);
     const sourceRow = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-row[data-group-key="value:a"]'),
     );
@@ -3106,6 +3117,7 @@ describe('ProjectsTableView', () => {
       host.querySelectorAll<HTMLElement>('.abyss-project-table-row[data-group-key="value:b"]'),
     );
     expect(targetRows).toHaveLength(2);
+    expect(targetRows).toEqual([originalC, originalB]);
     const data = transfer();
     sourceRow.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     sourceRow.dispatchEvent(dragEvent('dragstart', data));
@@ -3114,8 +3126,8 @@ describe('ProjectsTableView', () => {
     expect(over.defaultPrevented).toBe(true);
     expect(targetHeader.classList.contains('is-drop-target')).toBe(true);
     expect(targetRows.every((row) => row.classList.contains('is-drop-target'))).toBe(true);
-    expect(targetRows[0]?.classList.contains('is-drop-before')).toBe(true);
-    expect(targetRows[1]?.classList.contains('is-drop-before')).toBe(false);
+    expect(originalB.classList.contains('is-drop-after')).toBe(true);
+    expect(originalC.classList.contains('is-drop-after')).toBe(false);
 
     const observer = new MutationObserver(() => {});
     for (const row of [targetHeader, ...targetRows]) {

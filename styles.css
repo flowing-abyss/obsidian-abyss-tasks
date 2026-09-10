@@ -7236,11 +7236,11 @@ table.abyss-project-table {
   --abyss-project-drop-color: var(--text-error);
 }
 
-.abyss-project-table-row.is-drop-before > td {
+.abyss-project-table-row.is-drop-target.is-drop-before > td {
   box-shadow: inset 0 2px var(--interactive-accent);
 }
 
-.abyss-project-table-row.is-drop-after > td {
+.abyss-project-table-row.is-drop-target.is-drop-after > td {
   box-shadow: inset 0 -2px var(--interactive-accent);
 }
 

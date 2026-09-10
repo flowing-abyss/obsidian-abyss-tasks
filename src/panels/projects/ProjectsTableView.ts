@@ -2238,9 +2238,7 @@ export class ProjectsTableView {
     if (current !== undefined) return current;
     this.clearGroupDropStates_abyssPrivate();
     const result = this.groupDropPreviewResult_abyssPrivate(payload, targetGroupKey);
-    const targetRows = Array.from(this.renderedProjectRows_abyssPrivate.values()).filter(
-      ({ groupKey }) => groupKey === targetGroupKey,
-    );
+    const targetRows = this.displayedGroupRows_abyssPrivate(targetGroupKey);
     const groupRow = this.renderedGroupRows_abyssPrivate.get(targetGroupKey);
     const rows = [groupRow?.element, ...targetRows.map(({ element }) => element)].filter(
       (row) => row !== undefined,
@@ -2268,6 +2266,17 @@ export class ProjectsTableView {
     };
     this.groupDropPreview_abyssPrivate = preview;
     return preview;
+  }
+
+  private displayedGroupRows_abyssPrivate(groupKey: string): RenderedProjectRow[] {
+    const rows: RenderedProjectRow[] = [];
+    for (const element of this.body_abyssPrivate?.rows ?? []) {
+      const occurrenceId = element.dataset['occurrenceId'];
+      if (occurrenceId === undefined) continue;
+      const row = this.renderedProjectRows_abyssPrivate.get(occurrenceId);
+      if (row?.groupKey === groupKey) rows.push(row);
+    }
+    return rows;
   }
 
   private cachedGroupDropPreview_abyssPrivate(
