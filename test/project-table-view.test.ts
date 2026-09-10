@@ -346,7 +346,14 @@ describe('ProjectsTableView', () => {
     config.projects.propertyDefinitions['property:Lead'] = {
       type: 'text',
       presetsEnabled: true,
-      presets: [{ value: '[[People/Owner]]', displayName: 'Lead alias', display: 'text' }],
+      presets: [
+        {
+          value: '[[People/Owner]]',
+          displayName: 'Lead alias',
+          display: 'dot',
+          color: '#abcdef',
+        },
+      ],
     };
     const { host } = mount(
       [
@@ -384,6 +391,88 @@ describe('ProjectsTableView', () => {
     );
     expect(link.textContent).toBe('Lead alias');
     expect(link.dataset['href']).toBe('People/Owner');
+    const dotValue = expectDefined(link.closest<HTMLElement>('.abyss-project-property-value'));
+    expect(dotValue.classList.contains('is-dot')).toBe(true);
+    expect(dotValue.classList.contains('is-badge')).toBe(false);
+    expect(dotValue.style.getPropertyValue('--abyss-project-property-color')).toBe('#abcdef');
+  });
+
+  it('renders one dot presentation marker with a status label and no badge treatment', () => {
+    const config = settings();
+    const configured = expectDefined(config.projects.statuses[0]);
+    configured.display = 'dot';
+    configured.displayName = 'In progress';
+    const { host } = mount([project({ statusId: configured.id, rawStatus: configured.name })], {
+      settings: config,
+    });
+
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
+    );
+    const value = expectDefined(
+      cell.querySelector<HTMLElement>('.abyss-project-table-status-pill'),
+    );
+    expect(value.textContent).toBe('In progress');
+    expect(cell.querySelectorAll('.is-dot')).toHaveLength(1);
+    expect(value.classList.contains('is-dot')).toBe(true);
+    expect(value.classList.contains('is-badge')).toBe(false);
+  });
+
+  it('keeps the existing single subdued group marker for colorless dot presentations', () => {
+    const config = settings();
+    config.projects.table.groupBy = 'property:Owner';
+    config.projects.table.columns.push({ id: 'property:Owner', visible: true });
+    config.projects.propertyDefinitions['property:Owner'] = {
+      type: 'text',
+      presets: [{ value: 'mina', displayName: 'Mina', display: 'dot' }],
+    };
+    const { host } = mount([project({ frontmatter: { Owner: 'mina' } })], {
+      settings: config,
+      catalog: catalog([{ name: 'Owner', type: 'text' }]),
+    });
+
+    const group = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-group-row'));
+    const marker = expectDefined(group.querySelector<HTMLElement>('.abyss-status-dot'));
+    expect(marker.hidden).toBe(false);
+    expect(marker.style.background).toBe('');
+    expect(group.querySelectorAll('.abyss-status-dot')).toHaveLength(1);
+    expect(group.querySelector('.is-dot')).toBeNull();
+    expect(group.querySelector('.abyss-projects-group-label')?.textContent).toBe('Mina');
+  });
+
+  it('uses an explicit preset display name for a grouped link value', async () => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+      const anchor = holder.createEl('a', { cls: 'internal-link', text: markdown });
+      anchor.setAttribute('data-href', 'People/Owner');
+    });
+    const config = settings();
+    config.projects.table.groupBy = 'property:Lead';
+    config.projects.table.columns.push({ id: 'property:Lead', visible: true });
+    config.projects.propertyDefinitions['property:Lead'] = {
+      type: 'text',
+      presets: [
+        {
+          value: '[[People/Owner]]',
+          displayName: 'Lead alias',
+          display: 'dot',
+          color: '#123456',
+        },
+      ],
+    };
+    const { host } = mount([project({ frontmatter: { Lead: '[[People/Owner]]' } })], {
+      settings: config,
+      catalog: catalog([{ name: 'Lead', type: 'text' }]),
+    });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    const link = expectDefined(
+      host.querySelector<HTMLAnchorElement>(
+        '.abyss-project-table-group-row .abyss-projects-group-label a.internal-link',
+      ),
+    );
+    expect(link.textContent).toBe('Lead alias');
+    expect(link.dataset['href']).toBe('People/Owner');
   });
 
   it('keeps malformed definitions unavailable and repairable without throwing while rendering', () => {
@@ -414,7 +503,7 @@ describe('ProjectsTableView', () => {
     config.projects.propertyDefinitions['property:Tags'] = {
       type: 'tags',
       presetsEnabled: true,
-      presets: [{ value: 'qa', displayName: '#Quality', color: '#123456', display: 'badge' }],
+      presets: [{ value: 'qa', displayName: '#Quality', color: '#123456', display: 'dot' }],
     };
     const { host, view } = mount([project({ frontmatter: { Tags: ['qa'] } })], {
       settings: config,
@@ -428,9 +517,11 @@ describe('ProjectsTableView', () => {
     );
     expect(link.textContent).toBe('#Quality');
     expect(link.getAttribute('href')).toBe('#qa');
-    expect(link.style.color).toBe('rgb(18, 52, 86)');
+    expect(link.style.getPropertyValue('--abyss-project-property-color')).toBe('#123456');
+    expect(link.style.color).toBe('');
     expect(link.hasClass('abyss-project-property-value')).toBe(false);
     expect(link.hasClass('is-badge')).toBe(false);
+    expect(link.hasClass('is-dot')).toBe(true);
     const cell = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Tags"]'),
     );
@@ -447,6 +538,106 @@ describe('ProjectsTableView', () => {
       editor.activeEditor_abyssPrivate?.handle.control_abyssPrivate.suggest,
     ).getSuggestions('Quality')[0];
     expect(suggestion).toMatchObject({ value: 'qa', label: '#Quality', appearance: 'tag' });
+  });
+
+  it('uses native link and tag labels for dot preset editor chips without display names', async () => {
+    const config = settings();
+    config.projects.table.columns.push(
+      { id: 'property:creator', visible: true },
+      { id: 'property:Tags', visible: true },
+    );
+    config.projects.propertyDefinitions['property:creator'] = {
+      type: 'list',
+      presets: [
+        {
+          value: '[[People Demo/Анна Смирнова|Анна]]',
+          display: 'dot',
+          color: '#123456',
+        },
+      ],
+    };
+    config.projects.propertyDefinitions['property:Tags'] = {
+      type: 'tags',
+      presets: [{ value: 'demo', display: 'dot', color: '#654321' }],
+    };
+    const { host, view } = mount(
+      [
+        project({
+          frontmatter: {
+            creator: ['[[People Demo/Анна Смирнова|Анна]]'],
+            Tags: ['demo'],
+          },
+        }),
+      ],
+      {
+        settings: config,
+        catalog: catalog([
+          { name: 'creator', type: 'list' },
+          { name: 'Tags', type: 'tags' },
+        ]),
+      },
+    );
+    const creator = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-cell[data-column-id="property:creator"]',
+      ),
+    );
+    creator.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+
+    const creatorChip = expectDefined(
+      creator.querySelector<HTMLElement>('.abyss-project-list-value-text'),
+    );
+    expect(creatorChip.textContent).toBe('Анна');
+    expect(creatorChip.classList.contains('is-dot')).toBe(true);
+    await expect(view.requestFinishActiveEditor()).resolves.toBe(true);
+
+    const tags = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Tags"]'),
+    );
+    tags.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const tagChip = expectDefined(
+      tags.querySelector<HTMLElement>('.abyss-project-list-value-text.tag'),
+    );
+    expect(tagChip.textContent).toBe('#demo');
+    expect(tagChip.classList.contains('is-dot')).toBe(true);
+  });
+
+  it('defaults a configured custom preset suggestion to badge presentation', () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Priority', visible: true });
+    config.projects.propertyDefinitions['property:Priority'] = {
+      type: 'list',
+      presets: [{ value: 'high', displayName: 'High' }],
+    };
+    const { host, view } = mount([project({ frontmatter: { Priority: [] } })], {
+      settings: config,
+      catalog: catalog([{ name: 'Priority', type: 'list' }]),
+    });
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-cell[data-column-id="property:Priority"]',
+      ),
+    );
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const editor = view as unknown as {
+      readonly activeEditor_abyssPrivate?: {
+        readonly handle: {
+          readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+        };
+      };
+    };
+    const suggest = expectDefined(
+      editor.activeEditor_abyssPrivate?.handle.control_abyssPrivate.suggest,
+    );
+    const high = expectDefined(suggest.getSuggestions('').find(({ value }) => value === 'high'));
+    const rendered = document.body.createDiv();
+    suggest.renderSuggestion(high, rendered);
+
+    expect(
+      rendered
+        .querySelector<HTMLElement>('.abyss-suggest-title')
+        ?.classList.contains('abyss-project-preset-suggestion'),
+    ).toBe(true);
   });
 
   it('reports the focused visible occurrence path and forgets filtered or removed selection', () => {

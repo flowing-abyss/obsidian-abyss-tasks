@@ -1450,8 +1450,13 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(expectDefined(appearance).classList.contains('dropdown')).toBe(true);
     expect(appearance?.getAttribute('aria-label')).toBe('Appearance for active');
     expect(appearanceComponent.getValue?.()).toBe('badge');
-    appearanceComponent.setValue('text');
-    expect(plugin.settings.projects.statuses[0]?.display).toBe('text');
+    expect(Array.from(expectDefined(appearance).options).map(({ value }) => value)).toEqual([
+      'badge',
+      'text',
+      'dot',
+    ]);
+    appearanceComponent.setValue('dot');
+    expect(plugin.settings.projects.statuses[0]?.display).toBe('dot');
   });
 
   it('deleting the default status repoints defaultStatusId to the first remaining', () => {

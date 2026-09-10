@@ -443,7 +443,7 @@ describe('mountProjectCellEditor', () => {
     ).toEqual(['demo', '#demo']);
   });
 
-  it('shows the configured label for an existing exact preset list value', () => {
+  it('shows one dot marker with the configured label for an existing exact preset list value', () => {
     const container = document.body.createDiv();
     mountProjectCellEditor({
       app: new App(),
@@ -455,7 +455,7 @@ describe('mountProjectCellEditor', () => {
         {
           value: '[[People/Anna]]',
           label: 'QA Anna',
-          display: 'badge',
+          display: 'dot',
           color: '#123456',
         },
       ],
@@ -470,7 +470,9 @@ describe('mountProjectCellEditor', () => {
     );
     expect(chip.textContent).toContain('QA Anna');
     expect(chip.textContent).not.toContain('Anna]]');
-    expect(presentation.hasClass('is-badge')).toBe(true);
+    expect(chip.querySelectorAll('.is-dot')).toHaveLength(1);
+    expect(presentation.hasClass('is-dot')).toBe(true);
+    expect(presentation.hasClass('is-badge')).toBe(false);
     expect(presentation.hasClass('is-link')).toBe(true);
     expect(presentation.style.getPropertyValue('--abyss-project-property-color')).toBe('#123456');
   });
@@ -531,7 +533,7 @@ describe('mountProjectCellEditor', () => {
       field: { id: 'property:tags', property: 'tags', label: 'Tags', type: 'tags' },
       value: ['qa'],
       catalog: catalog([], 'tags'),
-      presets: [{ value: 'qa', label: '#Quality', display: 'badge', color: '#123456' }],
+      presets: [{ value: 'qa', label: '#Quality', display: 'dot', color: '#123456' }],
       sourceField: 'tags',
       save: vi.fn().mockResolvedValue(undefined),
       onClose: vi.fn(),
@@ -544,7 +546,9 @@ describe('mountProjectCellEditor', () => {
     expect(chip.hasClass('tag')).toBe(true);
     expect(chip.hasClass('abyss-project-property-value')).toBe(false);
     expect(chip.hasClass('is-badge')).toBe(false);
-    expect(chip.style.color).toBe('rgb(18, 52, 86)');
+    expect(chip.hasClass('is-dot')).toBe(true);
+    expect(chip.style.getPropertyValue('--abyss-project-property-color')).toBe('#123456');
+    expect(chip.style.color).toBe('');
   });
 
   it('writes the exact raw link once when a readable scalar suggestion is selected', async () => {
@@ -1011,6 +1015,7 @@ describe('mountProjectCellEditor', () => {
           id: 'done',
           name: 'Shipped',
           color: '#654321',
+          display: 'dot',
           onLeftPanel: false,
         },
       ],
@@ -1031,14 +1036,28 @@ describe('mountProjectCellEditor', () => {
       'In flight',
       'Shipped',
     ]);
+    const inFlight = expectDefined(
+      suggest.getSuggestions('').find(({ value }) => value === 'In flight'),
+    );
+    const renderedDefault = document.body.createDiv();
+    suggest.renderSuggestion(inFlight, renderedDefault);
+    expect(
+      renderedDefault
+        .querySelector<HTMLElement>('.abyss-suggest-status')
+        ?.classList.contains('abyss-project-preset-suggestion'),
+    ).toBe(true);
     const shipped = expectDefined(
       suggest.getSuggestions('').find(({ value }) => value === 'Shipped'),
     );
     const rendered = document.body.createDiv();
     suggest.renderSuggestion(shipped, rendered);
-    expect(rendered.querySelector<HTMLElement>('.abyss-suggest-status')?.style.color).toBe(
-      'rgb(101, 67, 33)',
+    const renderedStatus = expectDefined(
+      rendered.querySelector<HTMLElement>('.abyss-suggest-status'),
     );
+    expect(renderedStatus.classList.contains('is-dot')).toBe(true);
+    expect(rendered.querySelectorAll('.is-dot')).toHaveLength(1);
+    expect(renderedStatus.style.getPropertyValue('--abyss-project-status-color')).toBe('#654321');
+    expect(renderedStatus.style.color).toBe('');
     suggest.selectSuggestion(shipped, new KeyboardEvent('keydown', { key: 'Enter' }));
     await settle();
 
@@ -1492,7 +1511,7 @@ describe('ProjectPropertySuggest', () => {
         value: 'quality',
         label: '#Quality',
         appearance: 'tag',
-        display: 'badge',
+        display: 'dot',
         color: '#123456',
       },
       rendered,
@@ -1501,9 +1520,34 @@ describe('ProjectPropertySuggest', () => {
     const title = expectDefined(rendered.querySelector<HTMLElement>('.abyss-suggest-title'));
     const tag = expectDefined(title.querySelector<HTMLElement>('.tag'));
     expect(title.classList.contains('abyss-project-preset-suggestion')).toBe(false);
+    expect(title.classList.contains('is-dot')).toBe(false);
+    expect(tag.classList.contains('is-dot')).toBe(true);
     expect(title.style.getPropertyValue('--abyss-project-property-color')).toBe('');
     expect(tag.style.getPropertyValue('--abyss-project-property-color')).toBe('#123456');
-    expect(tag.style.color).toBe('rgb(18, 52, 86)');
+    expect(tag.style.color).toBe('');
+  });
+
+  it('renders a configured property suggestion as one dot and an uncolored label', () => {
+    const suggest = new ProjectPropertySuggest({
+      app: new App(),
+      input: document.body.createEl('input'),
+      values: [],
+      onPick: vi.fn(),
+    });
+    const rendered = document.body.createDiv();
+
+    suggest.renderSuggestion(
+      { value: 'review', label: 'Review', display: 'dot', color: '#123456' },
+      rendered,
+    );
+
+    const title = expectDefined(rendered.querySelector<HTMLElement>('.abyss-suggest-title'));
+    expect(rendered.querySelectorAll('.is-dot')).toHaveLength(1);
+    expect(title.classList.contains('is-dot')).toBe(true);
+    expect(title.classList.contains('abyss-project-preset-suggestion')).toBe(false);
+    expect(title.style.getPropertyValue('--abyss-project-property-color')).toBe('#123456');
+    expect(title.style.color).toBe('');
+    expect(title.textContent).toBe('Review');
   });
 
   it('filters selected values dynamically before applying the text query', () => {

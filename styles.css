@@ -7386,10 +7386,13 @@ table.abyss-project-table {
   white-space: nowrap;
 }
 
-.abyss-project-table-status-pill.is-text {
+.abyss-project-table-status-pill:is(.is-text, .is-dot) {
   padding-inline: 0;
   border-color: transparent;
   background: transparent;
+}
+
+.abyss-project-table-status-pill.is-text {
   color: var(--abyss-project-status-color, var(--text-normal));
 }
 
@@ -7410,8 +7413,45 @@ table.abyss-project-table {
   vertical-align: middle;
 }
 
-.abyss-project-property-value:not(.is-badge) {
+.abyss-project-property-value:not(.is-badge, .is-dot) {
   color: var(--abyss-project-property-color, inherit);
+}
+
+:is(
+  .abyss-project-table-status-pill,
+  .abyss-project-property-value,
+  .abyss-suggest-title,
+  .abyss-project-list-value-text.tag,
+  .abyss-project-table-tag-link.tag,
+  .abyss-suggest-title > .tag
+).is-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+:is(
+    .abyss-project-table-status-pill,
+    .abyss-project-property-value,
+    .abyss-suggest-title,
+    .abyss-project-list-value-text.tag,
+    .abyss-project-table-tag-link.tag,
+    .abyss-suggest-title > .tag
+  ).is-dot::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(
+    --abyss-project-status-color,
+    var(--abyss-project-property-color, var(--text-faint))
+  );
+  content: '';
+  flex: 0 0 auto;
+}
+
+.abyss-suggest-title.is-dot {
+  width: fit-content;
+  max-width: 100%;
 }
 
 .abyss-project-preset-suggestion {
@@ -7419,11 +7459,19 @@ table.abyss-project-table {
   max-width: 100%;
   padding: 1px 6px;
   border: 1px solid
-    color-mix(in srgb, var(--abyss-project-property-color, var(--text-faint)) 38%, transparent);
+    color-mix(
+      in srgb,
+      var(--abyss-project-status-color, var(--abyss-project-property-color, var(--text-faint))) 38%,
+      transparent
+    );
   border-radius: var(--radius-s);
   background: color-mix(
     in srgb,
-    var(--abyss-project-property-color, var(--background-modifier-border)) 16%,
+    var(
+        --abyss-project-status-color,
+        var(--abyss-project-property-color, var(--background-modifier-border))
+      )
+      16%,
     transparent
   );
 }

@@ -184,6 +184,31 @@ describe('project property definitions', () => {
     expect(migration.notices).toEqual([]);
   });
 
+  it('loads dot status and custom presentations without rewriting their order', () => {
+    const statuses = [
+      { id: 'planned', name: 'planned', display: 'dot', onLeftPanel: true },
+      { id: 'active', name: 'active', display: 'text', onLeftPanel: false },
+    ];
+    const presets = [
+      { value: 'medium', display: 'dot' },
+      { value: 'high', display: 'badge' },
+    ];
+    const raw = {
+      projects: {
+        statuses: structuredClone(statuses),
+        propertyDefinitions: {
+          'property:Priority': { type: 'text', presets: structuredClone(presets) },
+        },
+      },
+    };
+
+    const migration = migrateSettings(raw);
+
+    expect(raw.projects.statuses).toEqual(statuses);
+    expect(raw.projects.propertyDefinitions['property:Priority'].presets).toEqual(presets);
+    expect(migration.notices).toEqual([]);
+  });
+
   it('ignores the obsolete flag when checking presentation data for repair', () => {
     expect(
       hasMalformedProjectPropertyDefinitionPresentation({

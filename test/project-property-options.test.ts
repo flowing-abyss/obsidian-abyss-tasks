@@ -65,6 +65,21 @@ describe('project property preset options', () => {
     expect(compiledProjectPropertyPresentation(compiled, '7')).toBeUndefined();
   });
 
+  it('compiles dot presentations without changing preset order', () => {
+    const definition = {
+      type: 'text' as const,
+      presets: [
+        { value: 'planned', displayName: 'Planned', display: 'dot' as const },
+        { value: 'active', displayName: 'In progress', display: 'text' as const },
+      ],
+    };
+
+    const compiled = compileProjectPropertyPresets(definition);
+
+    expect(compiled.presets).toEqual(definition.presets);
+    expect(compiledProjectPropertyPresentation(compiled, 'planned')).toEqual(definition.presets[0]);
+  });
+
   it('compiles a large preset list with linear value inspection', () => {
     let reads = 0;
     const presets = Array.from({ length: 200 }, (_, index) =>

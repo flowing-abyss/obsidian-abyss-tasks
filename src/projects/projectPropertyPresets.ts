@@ -64,7 +64,7 @@ function presentationIsValid(preset: Record<string, unknown>): boolean {
   return (
     (preset['displayName'] === undefined || typeof preset['displayName'] === 'string') &&
     (preset['color'] === undefined || typeof preset['color'] === 'string') &&
-    (display === undefined || display === 'badge' || display === 'text')
+    (display === undefined || display === 'badge' || display === 'text' || display === 'dot')
   );
 }
 

@@ -1,6 +1,6 @@
 import { Component, Menu, moment, Notice, setIcon, TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
-import { parseLinks } from '../../markdown/links';
+import { exactLinkToken, parseLinks } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
 import { isProjectEditValidationError } from '../../projects/projectEditError';
 import type { ProjectEditHistory } from '../../projects/projectEditHistory';
@@ -56,6 +56,10 @@ import {
 import { saveSettingsDraft } from '../../settings/settingsSaveFailure';
 import type { CalendarSettings } from '../../settings/types';
 import type { ProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
+import {
+  projectPropertyValuePresentation,
+  projectTagLabel,
+} from '../../ui/projectPropertyValuePresentation';
 import { renderTaskText } from '../../ui/renderTaskText';
 import {
   mountProjectCellEditor,
@@ -96,9 +100,20 @@ import {
 
 const PROJECT_TABLE_ROW_DRAG_TYPE = 'application/x-abyss-project-table-row';
 
-function presetLabel(displayName: string | undefined, value: string | number): string {
+function exactGroupLinkLabel(value: string, label: string): string | undefined {
+  return exactLinkToken(value) === undefined ? undefined : label;
+}
+
+function presetLabel(
+  displayName: string | undefined,
+  value: string | number,
+  isTag: boolean,
+): string {
   const trimmed = displayName?.trim();
-  return trimmed === undefined || trimmed === '' ? String(value) : trimmed;
+  if (trimmed !== undefined && trimmed !== '') return trimmed;
+  if (typeof value !== 'string') return String(value);
+  const label = projectPropertyValuePresentation(value).label;
+  return isTag ? projectTagLabel(label) : label;
 }
 
 function editorPresets(
@@ -113,10 +128,10 @@ function editorPresets(
       : [
           {
             value: preset.value,
-            label: presetLabel(preset.displayName, preset.value),
+            label: presetLabel(preset.displayName, preset.value, isTag),
             ...(isTag ? { appearance: 'tag' as const } : {}),
             ...(preset.color === undefined ? {} : { color: preset.color }),
-            ...(preset.display === undefined ? {} : { display: preset.display }),
+            display: preset.display ?? 'badge',
           },
         ],
   );
@@ -1163,7 +1178,7 @@ export class ProjectsTableView {
     signature: string,
   ): void {
     rendered.contentSignature = signature;
-    rendered.statusDot.hidden = color === undefined;
+    rendered.statusDot.hidden = color === undefined && options.presentation?.display !== 'dot';
     rendered.statusDot.style.background = color ?? '';
     rendered.label.empty();
     rendered.label.style.color = options.presentation?.display === 'text' ? (color ?? '') : '';
@@ -1177,6 +1192,7 @@ export class ProjectsTableView {
       sourcePath,
       component: this.markdown_abyssPrivate,
       beforeOpenLink: () => this.requestFinishActiveEditor(),
+      exactLinkLabel: exactGroupLinkLabel(value, label),
     });
   }
 

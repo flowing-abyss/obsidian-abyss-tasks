@@ -208,6 +208,11 @@ describe('renderProjectTableSettings', () => {
       card.querySelector<HTMLSelectElement>('.abyss-project-preset-appearance'),
     );
     expect(appearance.classList.contains('dropdown')).toBe(true);
+    expect(Array.from(appearance.options).map(({ value }) => value)).toEqual([
+      'badge',
+      'text',
+      'dot',
+    ]);
 
     value.value = 'high';
     value.dispatchEvent(new Event('change', { bubbles: true }));
@@ -215,7 +220,7 @@ describe('renderProjectTableSettings', () => {
     displayName.dispatchEvent(new Event('change', { bubbles: true }));
     color.value = '#112233';
     color.dispatchEvent(new Event('change', { bubbles: true }));
-    appearance.value = 'text';
+    appearance.value = 'dot';
     appearance.dispatchEvent(new Event('change', { bubbles: true }));
     value.value = 'urgent';
     value.dispatchEvent(new Event('change', { bubbles: true }));
@@ -229,7 +234,7 @@ describe('renderProjectTableSettings', () => {
           value: 'urgent',
           displayName: 'High',
           color: '#112233',
-          display: 'text',
+          display: 'dot',
           futurePresetOption: { exact: ['keep', 7] },
         },
       ],

@@ -32,6 +32,12 @@ function progressBand(percent: number | null): 'empty' | 'low' | 'quarter' | 'ha
   return 'high';
 }
 
+function statusDisplayClass(display: ProjectStatus['display']): string {
+  if (display === 'text') return ' is-text';
+  if (display === 'dot') return ' is-dot';
+  return '';
+}
+
 function renderProgress(cell: HTMLElement, project: Project): void {
   const progress = projectProgress(project.stats);
   const root = cell.createDiv({
@@ -72,7 +78,7 @@ function renderStatus(
 ): void {
   const status = statusFor(project, statuses);
   const pill = cell.createSpan({
-    cls: `abyss-project-table-status-pill${status?.display === 'text' ? ' is-text' : ''}`,
+    cls: `abyss-project-table-status-pill${statusDisplayClass(status?.display)}`,
     text: projectTableDisplayValues(project, field, statuses)[0] ?? 'No status',
   });
   if (status?.color !== undefined && status.color.length > 0) {
@@ -125,7 +131,8 @@ function displayNameOr(displayName: string | undefined, fallback: string): strin
 
 function applyValuePresentation(host: HTMLElement, configured: ProjectValuePresentation): void {
   host.addClass('abyss-project-property-value');
-  host.toggleClass('is-badge', configured.display !== 'text');
+  host.toggleClass('is-badge', configured.display !== 'text' && configured.display !== 'dot');
+  host.toggleClass('is-dot', configured.display === 'dot');
   if (configured.color !== undefined) {
     host.style.setProperty('--abyss-project-property-color', configured.color);
   }
@@ -243,11 +250,14 @@ function renderTagValue(
 ): void {
   const configured = compiledProjectPropertyPresentation(options.compiledPresets, raw);
   const link = text.createEl('a', {
-    cls: 'tag abyss-project-table-tag-link',
+    cls: `tag abyss-project-table-tag-link${configured?.display === 'dot' ? ' is-dot' : ''}`,
     text: displayNameOr(configured?.displayName, projectTagLabel(raw)),
     attr: { href: tagHref(raw) },
   });
-  if (configured?.color !== undefined) link.style.color = configured.color;
+  if (configured?.color !== undefined) {
+    link.style.setProperty('--abyss-project-property-color', configured.color);
+    if (configured.display !== 'dot') link.style.color = configured.color;
+  }
   activateTag(link, raw, options);
 }
 

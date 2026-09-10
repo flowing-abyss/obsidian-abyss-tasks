@@ -1337,10 +1337,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
     new Setting(card).setName('Appearance').addDropdown((dropdown) =>
       dropdown
         .then((component) => configureProjectStatusAppearance(component.selectEl, status))
-        .addOptions({ badge: 'Badge', text: 'Text' })
+        .addOptions({ badge: 'Badge', text: 'Text', dot: 'Dot' })
         .setValue(status.display ?? 'badge')
         .onChange(async (value) => {
-          status.display = value === 'text' ? 'text' : 'badge';
+          status.display = value === 'text' || value === 'dot' ? value : 'badge';
           await this.plugin_abyssPrivate.saveSettings();
         }),
     );

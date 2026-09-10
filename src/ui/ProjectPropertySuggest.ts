@@ -1,4 +1,5 @@
 import { AbstractInputSuggest, Scope, type App } from 'obsidian';
+import type { ProjectValuePresentation } from '../projects/projectPropertyDefinitions';
 import {
   projectPropertyValuePresentation,
   projectPropertyValuePresentations,
@@ -12,7 +13,7 @@ export interface ProjectPropertySuggestion {
   readonly detail?: string;
   readonly appearance?: 'status' | 'tag';
   readonly color?: string;
-  readonly display?: 'badge' | 'text';
+  readonly display?: ProjectValuePresentation['display'];
 }
 
 export interface ProjectPropertySuggestOptions {
@@ -31,6 +32,33 @@ export interface ProjectPropertySuggestOptions {
 
 function matches(value: string | number, query: string): boolean {
   return String(value).toLocaleLowerCase().includes(query.toLocaleLowerCase());
+}
+
+function suggestionTitleClass(
+  suggestion: ProjectPropertySuggestion,
+  isLink: boolean,
+  isTag: boolean,
+): string {
+  let className = 'abyss-suggest-title';
+  if (isLink) className += ' is-link';
+  if (suggestion.appearance === 'status') className += ' abyss-suggest-status';
+  if (suggestion.display === 'badge' && !isTag) className += ' abyss-project-preset-suggestion';
+  return className;
+}
+
+function applySuggestionColor(
+  element: HTMLElement,
+  suggestion: ProjectPropertySuggestion,
+  isDot: boolean,
+): void {
+  if (suggestion.color === undefined) return;
+  element.style.setProperty(
+    suggestion.appearance === 'status'
+      ? '--abyss-project-status-color'
+      : '--abyss-project-property-color',
+    suggestion.color,
+  );
+  if (!isDot) element.style.color = suggestion.color;
 }
 
 function suggestionsForValues(
@@ -110,15 +138,14 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
   renderSuggestion(suggestion: ProjectPropertySuggestion, element: HTMLElement): void {
     const presentation = projectPropertyValuePresentation(String(suggestion.value));
     const isTag = suggestion.appearance === 'tag';
+    const isDot = suggestion.display === 'dot';
     const title = element.createDiv({
-      cls: `abyss-suggest-title${presentation.link === undefined ? '' : ' is-link'}${suggestion.appearance === 'status' ? ' abyss-suggest-status' : ''}${suggestion.display === 'badge' && !isTag ? ' abyss-project-preset-suggestion' : ''}`,
+      cls: suggestionTitleClass(suggestion, presentation.link !== undefined, isTag),
     });
     const valueElement = isTag ? title.createSpan({ cls: 'tag', text: suggestion.label }) : title;
     if (!isTag) title.setText(suggestion.label);
-    if (suggestion.color !== undefined) {
-      valueElement.style.setProperty('--abyss-project-property-color', suggestion.color);
-      valueElement.style.color = suggestion.color;
-    }
+    if (isDot) valueElement.addClass('is-dot');
+    applySuggestionColor(valueElement, suggestion, isDot);
     if (suggestion.detail !== undefined) {
       element.createDiv({ cls: 'abyss-suggest-path', text: suggestion.detail });
     }

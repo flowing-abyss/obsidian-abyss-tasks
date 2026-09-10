@@ -5,7 +5,7 @@ import type { ProjectFieldCatalogItem, ProjectPropertyType } from './projectFiel
 export interface ProjectValuePresentation {
   displayName?: string;
   color?: string;
-  display?: 'badge' | 'text';
+  display?: 'badge' | 'text' | 'dot';
 }
 
 export interface ProjectPropertyPreset extends ProjectValuePresentation {
@@ -58,7 +58,7 @@ function hasOptionalString(record: Record<string, unknown>, key: string): boolea
 
 function hasOptionalPresetDisplay(record: Record<string, unknown>): boolean {
   const display = record['display'];
-  return display === undefined || display === 'badge' || display === 'text';
+  return display === undefined || display === 'badge' || display === 'text' || display === 'dot';
 }
 
 function isProjectPropertyType(value: unknown): value is ProjectPropertyType {

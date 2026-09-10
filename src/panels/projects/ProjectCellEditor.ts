@@ -329,10 +329,11 @@ function listValueClass(
 ): string {
   let className = 'abyss-project-list-value-text';
   if (isLink) className += ' is-link';
-  if (isTag) return `${className} tag`;
+  if (isTag) return `${className} tag${configured?.display === 'dot' ? ' is-dot' : ''}`;
   if (configured === undefined) return className;
   className += ' abyss-project-property-value';
-  if (configured.display !== 'text') className += ' is-badge';
+  if (configured.display === 'dot') className += ' is-dot';
+  else if (configured.display !== 'text') className += ' is-badge';
   return className;
 }
 
@@ -352,7 +353,9 @@ function renderListValueLabel(
   });
   if (configured?.color !== undefined) {
     text.style.setProperty('--abyss-project-property-color', configured.color);
-    if (options.field.type === 'tags') text.style.color = configured.color;
+    if (options.field.type === 'tags' && configured.display !== 'dot') {
+      text.style.color = configured.color;
+    }
   }
   return displayed;
 }
@@ -609,7 +612,7 @@ function statusControl(
       value: status.name,
       label: projectStatusDisplayName(status),
       appearance: 'status' as const,
-      ...(status.display === undefined ? {} : { display: status.display }),
+      display: status.display ?? 'badge',
       ...(status.color === undefined ? {} : { color: status.color }),
     })),
     ...unknown.map((value) => ({

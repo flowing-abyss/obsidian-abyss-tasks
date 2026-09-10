@@ -180,6 +180,42 @@ describe('SettingsPersistenceCoordinator migration', () => {
     expect(savedProjects['statuses']).toEqual(loadedProjects['statuses']);
   });
 
+  it('loads and saves dot presentations without changing status or preset order', async () => {
+    const staticData = markedStatic();
+    const projects = staticData['projects'] as Record<string, unknown>;
+    const statuses = [
+      { id: 'planned', name: 'planned', display: 'dot', onLeftPanel: true },
+      { id: 'active', name: 'active', display: 'badge', onLeftPanel: false },
+    ];
+    const definitions = {
+      'property:Priority': {
+        type: 'text',
+        presets: [
+          { value: 'medium', display: 'dot' },
+          { value: 'high', display: 'text' },
+        ],
+      },
+    };
+    projects['statuses'] = structuredClone(statuses);
+    projects['defaultStatusId'] = 'planned';
+    projects['propertyDefinitions'] = structuredClone(definitions);
+    const port = memoryPort(staticData, stateEnvelope());
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+
+    expect(loaded.notices).toEqual([]);
+    expect(loaded.settings.projects.statuses).toEqual(statuses);
+    expect(loaded.settings.projects.propertyDefinitions).toEqual(definitions);
+    await coordinator.saveSettings(loaded.settings);
+    const savedProjects = (port.staticData as Record<string, unknown>)['projects'] as Record<
+      string,
+      unknown
+    >;
+    expect(savedProjects['statuses']).toEqual(statuses);
+    expect(savedProjects['propertyDefinitions']).toEqual(definitions);
+  });
+
   it('partitions populated legacy view state, verifies it, then removes it from static data', async () => {
     const originalRawData = legacySettings({
       taskPrefix: '#custom',

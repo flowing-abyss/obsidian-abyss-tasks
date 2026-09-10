@@ -182,8 +182,9 @@ metadata. Settings, table projection, and cell editors consume that shared inter
 are active whenever valid configured entries exist, regardless of the retained deprecated
 `presetsEnabled` compatibility field. They are offered before cached same-property vault values,
 and the editor excludes selected values by typed raw identity.
-`ui/projectPropertyValuePresentation` renders the resulting badge or text
-appearance across suggestion popups, cells, and group labels without importing settings UI.
+`ProjectValuePresentation` carries badge, text, or dot appearance through suggestion popups and
+cells without importing settings UI. Group labels retain their existing single color marker while
+sharing the compiled label and color metadata.
 
 `projectTableModel` is a DOM-free projection over `Project` snapshots. It applies typed sorting,
 search, status filtering, and scalar or multi-value grouping while reporting a unique visible

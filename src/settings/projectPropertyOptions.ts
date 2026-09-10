@@ -143,9 +143,10 @@ function createPresetRowControls(row: HTMLElement, context: PresetRowContext): P
     typeof record['color'] === 'string' && /^#[\da-f]{6}$/iu.test(record['color'])
       ? record['color']
       : '#888888';
+  const savedDisplay = record['display'];
   const appearanceDropdown = new DropdownComponent(row)
-    .addOptions({ badge: 'Badge', text: 'Text' })
-    .setValue(record['display'] === 'text' ? 'text' : 'badge');
+    .addOptions({ badge: 'Badge', text: 'Text', dot: 'Dot' })
+    .setValue(savedDisplay === 'text' || savedDisplay === 'dot' ? savedDisplay : 'badge');
   const appearance = appearanceDropdown.selectEl;
   appearance.addClasses(['dropdown', 'abyss-project-preset-appearance']);
   appearance.setAttribute('aria-label', `Appearance for ${options.label} preset ${index + 1}`);
