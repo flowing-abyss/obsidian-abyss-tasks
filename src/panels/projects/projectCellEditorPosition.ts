@@ -1,10 +1,9 @@
-import { anchoredPlacement } from '../../ui/anchoredPlacement';
-
 interface ProjectCellEditorPositionOptions {
   readonly anchor: HTMLElement;
   readonly host: HTMLElement;
   readonly boundary: HTMLElement;
   readonly stickyHeader?: HTMLElement;
+  readonly onMove?: () => void;
 }
 
 function visibleBoundary(options: ProjectCellEditorPositionOptions): DOMRect {
@@ -25,61 +24,33 @@ function visibleBoundary(options: ProjectCellEditorPositionOptions): DOMRect {
   } as DOMRect;
 }
 
-function measured(element: HTMLElement, dimension: 'width' | 'height'): number {
-  const rect = element.getBoundingClientRect()[dimension];
-  if (rect > 0) return rect;
-  return dimension === 'width' ? element.offsetWidth : element.offsetHeight;
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.max(minimum, Math.min(value, maximum));
 }
 
-function cssPixels(value: string): number {
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function editorContentHeight(host: HTMLElement, maxHeight: number): number {
-  const style = host.ownerDocument.defaultView?.getComputedStyle(host);
-  if (style === undefined) return maxHeight;
-  const chrome =
-    cssPixels(style.paddingTop) +
-    cssPixels(style.paddingBottom) +
-    cssPixels(style.borderTopWidth) +
-    cssPixels(style.borderBottomWidth);
-  return Math.max(0, maxHeight - chrome);
-}
-
-function positionEditor(options: ProjectCellEditorPositionOptions): void {
+function positionEditor(options: ProjectCellEditorPositionOptions): string | undefined {
   const { anchor, host } = options;
-  if (!anchor.isConnected || !host.isConnected) return;
+  if (!anchor.isConnected || !host.isConnected) return undefined;
   const boundary = visibleBoundary(options);
   const anchorRect = anchor.getBoundingClientRect();
   const edgeGap = 8;
   const maxWidth = Math.max(0, boundary.width - edgeGap * 2);
-  const width = Math.min(Math.max(anchorRect.width - 8, 150), maxWidth);
+  const width = Math.min(anchorRect.width, maxWidth);
   const maxHeight = Math.max(0, boundary.height - edgeGap * 2);
   host.style.width = `${width}px`;
   host.style.maxHeight = `${maxHeight}px`;
-  const contentHeight = editorContentHeight(host, maxHeight);
-  host.style.setProperty('--abyss-project-editor-content-max-height', `${contentHeight}px`);
-  const editor = host.querySelector<HTMLElement>('.abyss-project-cell-editor');
-  const values = host.querySelector<HTMLElement>('.abyss-project-list-values');
-  if (editor !== null && values !== null) {
-    const chromeHeight = Math.max(0, measured(editor, 'height') - measured(values, 'height'));
-    host.style.setProperty(
-      '--abyss-project-editor-values-max-height',
-      `${Math.max(0, contentHeight - chromeHeight)}px`,
-    );
-  }
-  const placement = anchoredPlacement({
-    anchor: anchorRect,
-    floating: { width, height: Math.min(measured(host, 'height'), maxHeight) },
-    boundary,
-    gap: 4,
-    edgeGap,
-    preferred: 'below-start',
-  });
-  host.style.left = `${placement.left - anchorRect.left - anchor.clientLeft + anchor.scrollLeft}px`;
-  host.style.top = `${placement.top - anchorRect.top - anchor.clientTop + anchor.scrollTop}px`;
-  host.dataset['side'] = placement.side;
+  host.style.setProperty('--abyss-project-editor-content-max-height', `${maxHeight}px`);
+  const measured = host.getBoundingClientRect().height;
+  const measuredHeight = measured > 0 ? measured : host.offsetHeight;
+  const height = Math.min(measuredHeight, maxHeight);
+  const left = clamp(anchorRect.left, boundary.left + edgeGap, boundary.right - edgeGap - width);
+  const top = clamp(anchorRect.top, boundary.top + edgeGap, boundary.bottom - edgeGap - height);
+  host.style.left = `${left - anchorRect.left - anchor.clientLeft + anchor.scrollLeft}px`;
+  host.style.top = `${top - anchorRect.top - anchor.clientTop + anchor.scrollTop}px`;
+  host.dataset['side'] = 'aligned';
+  const input = host.querySelector<HTMLElement>('.abyss-project-editor-input');
+  const inputRect = input?.getBoundingClientRect();
+  return `${left}:${top}:${width}:${height}:${inputRect?.left}:${inputRect?.top}:${inputRect?.width}`;
 }
 
 export function mountProjectCellEditorPosition(
@@ -87,8 +58,11 @@ export function mountProjectCellEditorPosition(
 ): () => void {
   const ownerDocument = options.host.ownerDocument;
   const ownerWindow = ownerDocument.defaultView;
+  let geometry: string | undefined;
   const position = (): void => {
-    positionEditor(options);
+    const next = positionEditor(options);
+    if (geometry !== undefined && next !== undefined && geometry !== next) options.onMove?.();
+    geometry = next;
   };
   position();
   ownerDocument.addEventListener('scroll', position, true);

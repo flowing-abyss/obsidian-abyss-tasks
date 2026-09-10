@@ -7117,12 +7117,15 @@ table.abyss-project-table {
 }
 
 .abyss-project-table-name-content {
+  box-sizing: border-box;
   display: flex;
   width: 100%;
   min-width: 0;
   height: 100%;
   flex-direction: column;
   justify-content: center;
+  gap: 2px;
+  padding-block: 4px;
 }
 
 .abyss-project-table-row[draggable='true'] {
@@ -7136,10 +7139,12 @@ table.abyss-project-table {
 
 .abyss-projects-table button.abyss-project-table-name {
   display: block;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   overflow: hidden;
   min-width: 0;
+  min-height: 0;
   width: 100%;
+  height: auto;
   padding: 0;
   border: 0;
   background: transparent;
@@ -7147,6 +7152,7 @@ table.abyss-project-table {
   color: var(--text-normal);
   font: inherit;
   font-weight: var(--font-medium);
+  line-height: 1.2;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7171,12 +7177,6 @@ table.abyss-project-table {
   white-space: nowrap;
 }
 
-.abyss-projects-table .abyss-project-description.is-empty {
-  height: 0;
-  margin: 0;
-  overflow: visible;
-}
-
 .abyss-project-description-text {
   overflow: hidden;
   min-width: 0;
@@ -7184,28 +7184,23 @@ table.abyss-project-table {
   white-space: nowrap;
 }
 
-.abyss-projects-table button.abyss-project-description-edit {
-  position: absolute;
-  right: 0;
-  bottom: -1px;
-  display: inline-flex;
-  width: 18px;
-  min-width: 18px;
-  height: 16px;
-  min-height: 16px;
-  align-items: center;
-  justify-content: center;
+.abyss-projects-table button.abyss-project-description-text {
+  display: block;
+  overflow: hidden;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 0;
   padding: 0;
   border: 0;
-  background: var(--background-primary);
+  background: transparent;
   box-shadow: none;
-  color: var(--text-muted);
-  opacity: 0;
-}
-
-.abyss-project-table-name-cell:hover .abyss-project-description-edit,
-.abyss-project-table-name-cell:focus-within .abyss-project-description-edit {
-  opacity: 1;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .abyss-project-table-group-row td {
@@ -7379,6 +7374,7 @@ table.abyss-project-table {
 }
 
 .abyss-project-table-values[data-property-type='tags'] .multi-select-pill {
+  position: relative;
   flex: 0 0 auto;
   overflow: hidden;
   max-width: 140px;
@@ -7398,11 +7394,11 @@ table.abyss-project-table {
 }
 
 .abyss-project-table-value {
+  position: relative;
   display: inline-flex;
   flex: 0 0 auto;
   overflow: hidden;
   align-items: center;
-  gap: 2px;
   max-width: 140px;
   padding: 1px 6px;
   border-radius: var(--radius-s);
@@ -7414,12 +7410,16 @@ table.abyss-project-table {
 
 .abyss-project-table-value-text {
   overflow: hidden;
-  max-width: 104px;
+  max-width: 128px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .abyss-projects-table button.abyss-project-table-value-remove {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  z-index: 1;
   display: inline-flex;
   width: 16px;
   min-width: 16px;
@@ -7428,10 +7428,11 @@ table.abyss-project-table {
   padding: 0;
   border: 0;
   border-radius: 4px;
-  background: transparent;
+  background: var(--background-secondary);
   box-shadow: none;
   color: var(--text-muted);
   opacity: 0;
+  transform: translateY(-50%);
   line-height: 1;
   align-items: center;
   justify-content: center;
@@ -7442,6 +7443,10 @@ table.abyss-project-table {
 .abyss-projects-table .multi-select-pill:hover .abyss-project-table-value-remove,
 .abyss-projects-table .multi-select-pill:focus-within .abyss-project-table-value-remove {
   opacity: 1;
+}
+
+.abyss-projects-table .multi-select-pill .abyss-project-table-value-remove {
+  background: var(--tag-background, var(--background-secondary));
 }
 
 .abyss-project-table-empty-value {
@@ -7480,48 +7485,55 @@ table.abyss-project-table {
   display: flex;
   width: 100%;
   max-height: var(--abyss-project-editor-content-max-height, none);
-  overflow-y: auto;
+  overflow: visible;
   flex-direction: column;
-  gap: 5px;
-  padding: 4px 0;
+  gap: 3px;
+  padding: 0;
   white-space: normal;
 }
 
-.abyss-project-cell-editor > :not(.abyss-project-list-values) {
-  flex-shrink: 0;
-}
-
 .abyss-project-table-cell.is-editing {
-  position: relative;
   z-index: 6;
   overflow: visible;
 }
 
-.abyss-project-table-cell.is-editing > :not(.abyss-project-cell-editor-host) {
-  visibility: hidden;
-  pointer-events: none;
+.abyss-project-table-cell.is-editing:not(.abyss-project-table-name-cell) {
+  position: relative;
+}
+
+.abyss-project-description.is-editor-anchor {
+  overflow: visible;
+}
+
+.abyss-project-description-editor-anchor {
+  height: 0;
 }
 
 .abyss-project-cell-editor-host {
   position: absolute;
-  top: 2px;
-  left: 4px;
+  top: 0;
+  left: 0;
   z-index: 7;
   box-sizing: border-box;
-  overflow: hidden;
-  width: max(calc(100% - 8px), 150px);
+  overflow: visible;
+  width: 100%;
   min-width: 0;
-  padding: 3px 6px;
-  border: 1px solid var(--interactive-accent);
-  border-radius: var(--radius-s);
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 0;
   background: var(--background-primary);
-  box-shadow: var(--shadow-s);
+  box-shadow: none;
+}
+
+.abyss-project-cell-editor-host.is-expanded {
+  padding-block: 0;
 }
 
 .abyss-project-editor-input,
 .abyss-project-editor-status {
   width: 100%;
   min-width: 0;
+  margin: 0;
 }
 
 .abyss-project-editor-checkbox {
@@ -7535,21 +7547,38 @@ table.abyss-project-table {
 
 .abyss-project-description-editor {
   min-height: 3.5rem;
-  max-height: var(--abyss-project-editor-values-max-height, 12rem);
+  max-height: var(--abyss-project-editor-content-max-height, 12rem);
   resize: none;
   white-space: pre-wrap;
 }
 
+.abyss-project-list-control {
+  display: flex;
+  overflow: hidden;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
 .abyss-project-list-entry {
   display: flex;
+  min-width: 96px;
+  max-width: 100%;
+  flex: 1 1 128px;
   align-items: center;
-  gap: 5px;
+  gap: 3px;
+}
+
+.abyss-project-list-input {
+  width: 0;
+  flex: 1 1 auto;
 }
 
 .abyss-project-list-entry button,
 .abyss-project-list-value button {
-  min-height: 24px;
-  padding: 2px 7px;
+  min-height: 20px;
+  padding: 1px 5px;
   font-size: var(--font-ui-smaller);
 }
 
@@ -7565,30 +7594,43 @@ table.abyss-project-table {
 
 .abyss-project-list-values {
   display: flex;
-  overflow-y: auto;
+  overflow-x: auto;
   min-height: 0;
-  max-height: var(--abyss-project-editor-values-max-height, none);
-  flex: 0 1 auto;
-  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
   gap: 4px;
+  scrollbar-width: none;
+}
+
+.abyss-project-list-values:empty {
+  display: none;
 }
 
 .abyss-project-list-value {
-  display: flex;
+  display: inline-flex;
+  overflow: hidden;
+  max-width: 160px;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 4px;
   padding-left: 6px;
   border-radius: var(--radius-s);
   background: var(--background-secondary);
   font-size: var(--font-ui-smaller);
 }
 
-.abyss-projects-table button.abyss-project-list-remove {
-  opacity: 0;
+.abyss-project-list-value-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.abyss-project-list-value:hover .abyss-project-list-remove,
-.abyss-project-list-value:focus-within .abyss-project-list-remove {
+.abyss-projects-table button.abyss-project-list-remove {
+  display: inline-flex;
+  width: 18px;
+  min-width: 18px;
+  align-items: center;
+  justify-content: center;
   opacity: 1;
 }
 

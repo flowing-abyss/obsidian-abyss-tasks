@@ -1,4 +1,5 @@
 import { AbstractInputSuggest, Scope, type App } from 'obsidian';
+import { exactLinkToken, linkValueLabel } from '../markdown/links';
 
 export interface ProjectPropertySuggestion {
   readonly kind: 'value';
@@ -15,18 +16,49 @@ export interface ProjectPropertySuggestOptions {
   readonly onEscape?: (event: KeyboardEvent) => void;
   readonly onOpen?: () => void;
   readonly onClose?: () => void;
+  readonly browseOnOpen?: boolean;
 }
 
 function matches(value: string, query: string): boolean {
   return value.toLocaleLowerCase().includes(query.toLocaleLowerCase());
 }
 
+function suggestionsForValues(values: readonly string[]): ProjectPropertySuggestion[] {
+  const suggestions: ProjectPropertySuggestion[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const normalized = value.toLocaleLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    suggestions.push({ kind: 'value', value, label: linkValueLabel(value) });
+  }
+  const labelCounts = new Map<string, number>();
+  for (const { label } of suggestions) {
+    const normalized = label.toLocaleLowerCase();
+    labelCounts.set(normalized, (labelCounts.get(normalized) ?? 0) + 1);
+  }
+  return suggestions.map((suggestion) => {
+    if ((labelCounts.get(suggestion.label.toLocaleLowerCase()) ?? 0) < 2) return suggestion;
+    const target = exactLinkToken(suggestion.value)?.target;
+    return target === undefined ? suggestion : { ...suggestion, detail: target };
+  });
+}
+
 /** Keyboard-aware suggestions from values already used by the edited property. */
 export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectPropertySuggestion> {
-  private readonly values_abyssPrivate: readonly string[];
+  private readonly suggestions_abyssPrivate: readonly ProjectPropertySuggestion[];
   private readonly onPick_abyssPrivate: (value: string) => void;
   private readonly options_abyssPrivate: ProjectPropertySuggestOptions;
+  private browse_abyssPrivate: boolean;
   private open_abyssPrivate = false;
+
+  private readonly onInput_abyssPrivate = (): void => {
+    this.browse_abyssPrivate = false;
+  };
+
+  private readonly onFocus_abyssPrivate = (): void => {
+    this.browse_abyssPrivate = this.options_abyssPrivate.browseOnOpen === true;
+  };
 
   constructor(options: ProjectPropertySuggestOptions) {
     super(options.app, options.input);
@@ -39,9 +71,12 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
         return false;
       });
     }
-    this.values_abyssPrivate = options.values;
+    this.suggestions_abyssPrivate = suggestionsForValues(options.values);
     this.onPick_abyssPrivate = options.onPick;
     this.options_abyssPrivate = options;
+    this.browse_abyssPrivate = options.browseOnOpen === true;
+    options.input.addEventListener('input', this.onInput_abyssPrivate, true);
+    options.input.addEventListener('focus', this.onFocus_abyssPrivate, true);
   }
 
   override open(): void {
@@ -59,16 +94,11 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
   }
 
   getSuggestions(query: string): ProjectPropertySuggestion[] {
-    const suggestions: ProjectPropertySuggestion[] = [];
-    const seen = new Set<string>();
-    for (const value of this.values_abyssPrivate) {
-      if (!matches(value, query)) continue;
-      const normalized = value.toLocaleLowerCase();
-      if (seen.has(normalized)) continue;
-      seen.add(normalized);
-      suggestions.push({ kind: 'value', value, label: value });
-    }
-    return suggestions;
+    if (this.browse_abyssPrivate) return [...this.suggestions_abyssPrivate];
+    return this.suggestions_abyssPrivate.filter(
+      ({ value, label, detail }) =>
+        matches(value, query) || matches(label, query) || matches(detail ?? '', query),
+    );
   }
 
   renderSuggestion(suggestion: ProjectPropertySuggestion, element: HTMLElement): void {

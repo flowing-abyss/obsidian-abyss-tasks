@@ -1,4 +1,5 @@
 import { Notice, type App } from 'obsidian';
+import { linkValueLabel } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
 import { isProjectEditValidationError } from '../../projects/projectEditError';
 import type { ProjectFieldCatalogItem, ProjectPropertyType } from '../../projects/projectFields';
@@ -34,6 +35,7 @@ export interface ProjectCellEditorHandle {
   commit(): Promise<boolean>;
   cancel(): void;
   focus(): void;
+  closeSuggestion(): void;
   destroy(): void;
 }
 
@@ -107,6 +109,7 @@ function suggestOptions(
   suggestion: {
     readonly values: readonly string[];
     readonly onPick: (value: string) => void;
+    readonly browseOnOpen?: boolean;
   },
   events: EditorEvents,
 ): ConstructorParameters<typeof ProjectPropertySuggest>[0] {
@@ -152,6 +155,7 @@ function textControl(
           events.changed();
           events.commit(true);
         },
+        browseOnOpen: true,
       },
       events,
     ),
@@ -164,9 +168,11 @@ function descriptionControl(
   root: HTMLElement,
   events: EditorEvents,
 ): EditorControl {
+  const label = root.createSpan({ cls: 'abyss-sr-only', text: options.field.label });
+  label.id = 'abyss-project-description-editor-label';
   const textarea = root.createEl('textarea', {
     cls: 'abyss-project-editor-input abyss-project-description-editor',
-    attr: { 'aria-label': options.field.label },
+    attr: { 'aria-labelledby': label.id },
   });
   textarea.value = typeof options.value === 'string' ? options.value : '';
   textarea.addEventListener('input', () => {
@@ -186,8 +192,9 @@ function listControl(
   events: EditorEvents,
 ): EditorControl {
   const values = initialListValues(options.value);
-  const list = root.createDiv({ cls: 'abyss-project-list-values' });
-  const inputRow = root.createDiv({ cls: 'abyss-project-list-entry' });
+  const control = root.createDiv({ cls: 'abyss-project-list-control' });
+  const list = control.createDiv({ cls: 'abyss-project-list-values' });
+  const inputRow = control.createDiv({ cls: 'abyss-project-list-entry' });
   const input = inputRow.createEl('input', {
     cls: 'abyss-project-editor-input abyss-project-list-input',
     attr: { type: 'text', 'aria-label': `Add ${options.field.label}`, autocomplete: 'off' },
@@ -205,11 +212,12 @@ function listControl(
     list.empty();
     values.forEach((value, index) => {
       const item = list.createDiv({ cls: 'abyss-project-list-value' });
-      item.createSpan({ text: String(value) });
+      const displayed = linkValueLabel(String(value));
+      item.createSpan({ cls: 'abyss-project-list-value-text', text: displayed });
       const remove = item.createEl('button', {
         cls: 'abyss-project-list-remove',
         text: '×',
-        attr: { type: 'button', 'aria-label': `Remove ${String(value)}` },
+        attr: { type: 'button', 'aria-label': `Remove ${displayed}` },
       });
       remove.addEventListener('click', () => {
         values.splice(index, 1);
@@ -480,7 +488,6 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     this.element.addEventListener('click', () => {
       this.clearOwnedPointer_abyssPrivate();
     });
-    this.focus();
   }
 
   commit(): Promise<boolean> {
@@ -495,11 +502,15 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     this.control_abyssPrivate?.focusTarget?.focus({ preventScroll: true });
   }
 
+  closeSuggestion(): void {
+    this.control_abyssPrivate?.suggest?.close();
+  }
+
   destroy(): void {
     if (this.closed_abyssPrivate) return;
     this.closed_abyssPrivate = true;
     this.clearOwnedPointer_abyssPrivate();
-    this.control_abyssPrivate?.suggest?.close();
+    this.closeSuggestion();
     this.element.remove();
   }
 

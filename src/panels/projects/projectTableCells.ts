@@ -1,4 +1,4 @@
-import { setIcon, type App, type Component } from 'obsidian';
+import type { App, Component } from 'obsidian';
 import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
 import { isProjectStatusField, projectFieldValue } from '../../projects/projectFields';
 import { projectProgress, projectTableDisplayValues } from '../../projects/projectTableModel';
@@ -93,7 +93,7 @@ interface RenderProjectTableCellOptions {
   readonly description?: {
     readonly field: ProjectFieldCatalogItem;
     readonly show: boolean;
-    readonly onEdit: () => void;
+    readonly onEdit: (anchor: HTMLElement) => void;
   };
 }
 
@@ -311,21 +311,22 @@ function renderName(
   if (description?.show !== true) return;
   const raw = projectFieldValue(project, description.field);
   const value = typeof raw === 'string' ? (raw.split('\n', 1)[0] ?? '') : '';
-  const detail = cell.createDiv({
-    cls: `abyss-project-description${value.length === 0 ? ' is-empty' : ''}`,
-  });
-  detail.createSpan({ cls: 'abyss-project-description-text', text: value });
-  if (description.field.type !== 'text') return;
+  if (value.length === 0) return;
+  const detail = cell.createDiv({ cls: 'abyss-project-description' });
+  if (description.field.type !== 'text') {
+    detail.createSpan({ cls: 'abyss-project-description-text', text: value });
+    return;
+  }
   const edit = detail.createEl('button', {
-    cls: 'abyss-project-description-edit',
-    attr: {
-      type: 'button',
-      title: value.length === 0 ? 'Add description' : 'Edit description',
-      'aria-label': `Edit description for ${project.name}`,
-    },
+    cls: 'abyss-project-description-text',
+    text: value,
+    attr: { type: 'button', 'aria-label': `Edit description for ${project.name}` },
   });
-  setIcon(edit, 'pencil');
-  edit.addEventListener('click', description.onEdit);
+  edit.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    description.onEdit(detail);
+  });
 }
 
 export function renderProjectTableCell(

@@ -1,4 +1,4 @@
-import { Component, Notice, TFile, type App } from 'obsidian';
+import { Component, Menu, Notice, TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import { parseLinks } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
@@ -181,6 +181,11 @@ interface ProjectCellEditorState {
   sourceProperty: string;
   sourceKey: string | undefined;
   ownedClear: OwnedInferredPropertyClear | undefined;
+}
+
+interface EditCellOptions {
+  readonly ownedClear: OwnedInferredPropertyClear | undefined;
+  readonly anchor?: HTMLElement;
 }
 
 interface EditorCloseDestination {
@@ -1264,6 +1269,10 @@ export class ProjectsTableView {
     cell.tabIndex = 0;
     cell.dataset['columnId'] = rendered.identity.columnId;
     cell.setAttribute('aria-label', `${field.label} for ${project.name}`);
+    if (field.type === 'name') {
+      cell.setAttribute('aria-description', 'Use the context menu to add or edit the description');
+      cell.setAttribute('aria-keyshortcuts', 'Shift+F10');
+    }
     const invalidRange =
       (field.id === 'start' || field.id === 'end') &&
       this.projectHasInvalidRange_abyssPrivate(project);
@@ -1350,22 +1359,67 @@ export class ProjectsTableView {
             description: {
               field: effectiveDescription.field,
               show: this.context_abyssPrivate.settings.projects.table.showDescription,
-              onEdit: () => {
-                const field = effectiveDescription.field;
-                if (!editableField(field)) return;
-                this.finishEditorBeforeAction(() => {
-                  this.selectCell_abyssPrivate(rendered, false);
-                  this.editCell_abyssPrivate(
-                    rendered.element,
-                    rendered.project,
-                    field,
-                    effectiveDescription.ownedClear,
-                  );
-                });
+              onEdit: (anchor: HTMLElement) => {
+                this.editDescription_abyssPrivate(
+                  rendered,
+                  effectiveDescription.field,
+                  effectiveDescription.ownedClear,
+                  anchor,
+                );
               },
             },
           }),
     });
+  }
+
+  private editDescription_abyssPrivate(
+    rendered: RenderedCellContext,
+    field: ProjectFieldCatalogItem,
+    ownedClear: OwnedInferredPropertyClear | undefined,
+    preferredAnchor?: HTMLElement,
+  ): void {
+    this.finishEditorBeforeAction(() => {
+      if (!editableField(field)) return;
+      const anchor =
+        preferredAnchor?.isConnected === true
+          ? preferredAnchor
+          : (rendered.element.querySelector<HTMLElement>('.abyss-project-description') ??
+            rendered.element
+              .querySelector<HTMLElement>('.abyss-project-table-name-content')
+              ?.createDiv({
+                cls: 'abyss-project-description abyss-project-description-editor-anchor',
+              }));
+      if (anchor === undefined) return;
+      this.selectCell_abyssPrivate(rendered, false);
+      this.editCell_abyssPrivate(rendered.element, rendered.project, field, { ownedClear, anchor });
+    });
+  }
+
+  private showDescriptionMenu_abyssPrivate(
+    rendered: RenderedCellContext,
+    event: MouseEvent | KeyboardEvent,
+  ): boolean {
+    const description = findProjectFieldById(this.fields_abyssPrivate, 'description');
+    if (rendered.field.type !== 'name' || description === undefined) return false;
+    const effective = this.effectiveField_abyssPrivate(rendered.project, description);
+    if (!editableField(effective.field)) return false;
+    const value = projectFieldValue(rendered.project, effective.field);
+    const hasDescription = typeof value === 'string' && value.length > 0;
+    const menu = new Menu();
+    menu.addItem((item) => {
+      item
+        .setTitle(hasDescription ? 'Edit description' : 'Add description')
+        .setIcon('pencil')
+        .onClick(() => {
+          this.editDescription_abyssPrivate(rendered, effective.field, effective.ownedClear);
+        });
+    });
+    if (event instanceof MouseEvent) menu.showAtMouseEvent(event);
+    else {
+      const bounds = rendered.element.getBoundingClientRect();
+      menu.showAtPosition({ x: bounds.left + 8, y: bounds.bottom }, rendered.element.ownerDocument);
+    }
+    return true;
   }
 
   private requestToggleCheckbox_abyssPrivate(
@@ -1434,16 +1488,24 @@ export class ProjectsTableView {
         return;
       event.preventDefault();
       this.selectCell_abyssPrivate(rendered, false);
-      this.editCell_abyssPrivate(cell, rendered.project, rendered.field, rendered.ownedClear);
+      this.editCell_abyssPrivate(cell, rendered.project, rendered.field, {
+        ownedClear: rendered.ownedClear,
+      });
     });
     cell.addEventListener('contextmenu', (event) => {
       const field = rendered.field;
-      if (!editableField(field)) return;
       if (
         event.target instanceof Element &&
         event.target.closest('.abyss-project-cell-editor') !== null
       )
         return;
+      if (field.type === 'name') {
+        if (!this.showDescriptionMenu_abyssPrivate(rendered, event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (!editableField(field)) return;
       event.preventDefault();
       event.stopPropagation();
       const active = this.activeEditor_abyssPrivate;
@@ -1451,7 +1513,9 @@ export class ProjectsTableView {
         return;
       this.finishEditorBeforeAction(() => {
         this.selectCell_abyssPrivate(rendered, false);
-        this.editCell_abyssPrivate(cell, rendered.project, field, rendered.ownedClear);
+        this.editCell_abyssPrivate(cell, rendered.project, field, {
+          ownedClear: rendered.ownedClear,
+        });
       });
     });
   }
@@ -1665,6 +1729,7 @@ export class ProjectsTableView {
     event: KeyboardEvent,
     cell: RenderedCellContext,
   ): void {
+    if (this.handleDescriptionMenuKey_abyssPrivate(event, cell)) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       this.selection_abyssPrivate.clear();
@@ -1683,13 +1748,21 @@ export class ProjectsTableView {
     const focused = this.selection_abyssPrivate.focus;
     const editorCell = focused === undefined ? cell : this.renderedCell_abyssPrivate(focused);
     if (editorCell !== undefined && editableField(editorCell.field)) {
-      this.editCell_abyssPrivate(
-        editorCell.element,
-        editorCell.project,
-        editorCell.field,
-        editorCell.ownedClear,
-      );
+      this.editCell_abyssPrivate(editorCell.element, editorCell.project, editorCell.field, {
+        ownedClear: editorCell.ownedClear,
+      });
     }
+  }
+
+  private handleDescriptionMenuKey_abyssPrivate(
+    event: KeyboardEvent,
+    cell: RenderedCellContext,
+  ): boolean {
+    const requestsMenu = event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey);
+    if (!requestsMenu || !this.showDescriptionMenu_abyssPrivate(cell, event)) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
   }
 
   private rowIds_abyssPrivate(): string[] {
@@ -2291,12 +2364,17 @@ export class ProjectsTableView {
     );
   }
 
-  private positionEditorHost_abyssPrivate(cell: HTMLElement, host: HTMLElement): () => void {
+  private positionEditorHost_abyssPrivate(
+    anchor: HTMLElement,
+    host: HTMLElement,
+    onMove: () => void,
+  ): () => void {
     const stickyHeader = this.table_abyssPrivate?.tHead;
     return mountProjectCellEditorPosition({
-      anchor: cell,
+      anchor,
       host,
       boundary: this.scroll_abyssPrivate,
+      onMove,
       ...(stickyHeader === null || stickyHeader === undefined ? {} : { stickyHeader }),
     });
   }
@@ -2305,9 +2383,11 @@ export class ProjectsTableView {
     cell: HTMLElement,
     project: Project,
     field: ProjectField,
-    ownedClear: OwnedInferredPropertyClear | undefined,
+    options: EditCellOptions,
   ): void {
     if (this.activeEditor_abyssPrivate !== undefined || !cell.isConnected) return;
+    const { ownedClear } = options;
+    const anchor = options.anchor ?? cell;
     const editorState = projectCellEditorState(
       project,
       field,
@@ -2317,9 +2397,11 @@ export class ProjectsTableView {
     const edited = this.renderedCells_abyssPrivate.find(
       ({ element }) => element === cell,
     )?.identity;
-    const editorHost = cell.createDiv({ cls: 'abyss-project-cell-editor-host' });
-    cell.prepend(editorHost);
+    const editorHost = anchor.createDiv({ cls: 'abyss-project-cell-editor-host' });
+    anchor.prepend(editorHost);
+    editorHost.toggleClass('is-expanded', field.id === 'description');
     cell.addClass('is-editing');
+    anchor.addClass('is-editor-anchor');
     let positionCleanup = (): void => {};
     const handle = mountProjectCellEditor({
       app: this.context_abyssPrivate.app,
@@ -2329,25 +2411,7 @@ export class ProjectsTableView {
       catalog: this.context_abyssPrivate.catalog,
       statuses: this.context_abyssPrivate.settings.projects.statuses,
       sourcePath: project.path,
-      save: (value) => {
-        const pending = this.applyCellEdit_abyssPrivate({
-          project,
-          field,
-          value,
-          expectedValue: editorState.expectedValue,
-          expectedExists: editorState.expectedExists,
-          sourceProperty: editorState.sourceProperty,
-          sourceKey: editorState.sourceKey,
-          ownedClear: editorState.ownedClear,
-        });
-        return pending.then((nextState) => {
-          editorState.expectedValue = nextState.expectedValue;
-          editorState.expectedExists = nextState.expectedExists;
-          editorState.sourceProperty = nextState.sourceProperty;
-          editorState.sourceKey = nextState.sourceKey;
-          editorState.ownedClear = nextState.ownedClear;
-        });
-      },
+      save: (value) => this.saveEditorValue_abyssPrivate(project, field, editorState, value),
       onClose: (_result, closeContext) => {
         const destination = this.editorCloseDestination_abyssPrivate(
           edited,
@@ -2357,6 +2421,8 @@ export class ProjectsTableView {
         );
         positionCleanup();
         editorHost.remove();
+        anchor.removeClass('is-editor-anchor');
+        if (anchor.hasClass('abyss-project-description-editor-anchor')) anchor.remove();
         cell.removeClass('is-editing');
         this.activeEditor_abyssPrivate = undefined;
         this.renderTable_abyssPrivate();
@@ -2372,13 +2438,35 @@ export class ProjectsTableView {
       },
       restoreFocus: () => {},
     });
-    positionCleanup = this.positionEditorHost_abyssPrivate(cell, editorHost);
+    positionCleanup = this.positionEditorHost_abyssPrivate(anchor, editorHost, () => {
+      handle.closeSuggestion();
+    });
     this.activeEditor_abyssPrivate = {
       projectPath: project.path,
       columnId: field.id,
       handle,
       positionCleanup,
     };
+    handle.focus();
+  }
+
+  private async saveEditorValue_abyssPrivate(
+    project: Project,
+    field: ProjectField,
+    state: ProjectCellEditorState,
+    value: unknown,
+  ): Promise<void> {
+    const nextState = await this.applyCellEdit_abyssPrivate({
+      project,
+      field,
+      value,
+      expectedValue: state.expectedValue,
+      expectedExists: state.expectedExists,
+      sourceProperty: state.sourceProperty,
+      sourceKey: state.sourceKey,
+      ownedClear: state.ownedClear,
+    });
+    Object.assign(state, nextState);
   }
 
   private effectiveField_abyssPrivate(

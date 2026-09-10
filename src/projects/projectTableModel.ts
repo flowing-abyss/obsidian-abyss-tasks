@@ -1,4 +1,4 @@
-import { parseLinks } from '../markdown/links';
+import { exactLinkToken, linkValueLabel } from '../markdown/links';
 import type { ProjectStatus } from '../settings/types';
 import {
   findProjectFieldById,
@@ -87,24 +87,13 @@ function stringValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function linkLabel(value: string): string {
-  const token = exactLink(value);
-  return token?.display ?? value;
-}
-
-function exactLink(value: string): ReturnType<typeof parseLinks>[number] | undefined {
-  const tokens = parseLinks(value);
-  const token = tokens[0];
-  return tokens.length === 1 && token?.raw === value ? token : undefined;
-}
-
 /** Resolves one complete cell link to a stable group identity in its original note context. */
 export function projectTableGroupLinkIdentity(
   value: string,
   sourcePath: string,
   resolveLink: ProjectTableLinkResolver | undefined,
 ): string | undefined {
-  const link = exactLink(value);
+  const link = exactLinkToken(value);
   if (link === undefined) return undefined;
   const target = projectTableLinkTargetParts(link);
   if (target.externalTarget !== undefined) return `link:external:${target.externalTarget}`;
@@ -117,7 +106,7 @@ export function projectTableGroupLinkIdentity(
 function displayScalar(value: unknown): string {
   if (isEmptyValue(value)) return '—';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  return linkLabel(stringValue(value));
+  return linkValueLabel(stringValue(value));
 }
 
 export function projectProgressDisplayValue(stats: ProjectStats): string {
@@ -162,7 +151,7 @@ function compareStatusValues(
 
 function textualSortValue(value: unknown): string {
   const displayed = (Array.isArray(value) ? value : [value]).map((entry) =>
-    linkLabel(stringValue(entry)),
+    linkValueLabel(stringValue(entry)),
   );
   return [...new Set(displayed)].sort(compareStrings).join('\0');
 }
@@ -283,7 +272,7 @@ function propertyValueGroup(
     return { key: 'empty', label: 'No value', value, sourcePath: project.path };
   }
   const text = stringValue(value);
-  const link = exactLink(text);
+  const link = exactLinkToken(text);
   let key = `value:${text.toLocaleLowerCase()}`;
   if (link !== undefined) {
     key = projectTableGroupLinkIdentity(text, project.path, resolveLink) ?? key;

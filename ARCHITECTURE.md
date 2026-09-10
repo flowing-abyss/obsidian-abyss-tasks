@@ -203,7 +203,9 @@ project path, and field id. Projection changes patch changed cell contents, inse
 rows, and move only rows whose relative order changed. Surviving cell listeners read their mutable
 reconciled context, so a later edit uses the current project snapshot and source capability. The
 column renderer owns header controls and live width preview. The Name cell also projects the first
-description line and anchors its exact multiline editor without adding a visible column. Native
+description line as its direct edit affordance and exposes the same curated description editor from
+one pointer-and-keyboard context-menu path when that line is absent. Its multiline editor anchors to
+the description region without hiding the project title or adding a visible column. Native
 checkbox and tag values retain Obsidian's public DOM classes and theme variables while their edits
 continue through the table mutation coordinator. Viewport spare width is rendered into Name without
 changing saved state; a manual Name-boundary drag couples it to the next visible column and persists
@@ -229,9 +231,13 @@ clipboard payloads, drag payloads, and edit history remain bounded to the table 
 
 `ProjectCellEditor` owns typed drafts, suggestion-popup lifetime, validation, and autosave. Its
 async commit handle remains mounted on failure and coalesces a newer draft while a save is pending.
-The table mounts that handle in an anchored, out-of-flow host so editing does not change row height.
-Suggestions come only from the edited property's native value catalog; they do not enumerate vault
-notes. Escape closes the editor in one action even when the suggestion popup is open.
+The table mounts that handle without focus, positions its bounded out-of-flow surface against the
+edited cell or description region, registers the active handle, and then focuses it, so editing does
+not change row height and native suggestions measure the final input position. List chips and their
+entry share one horizontally bounded band. Suggestions come only from the edited property's native
+value catalog; they do not enumerate vault notes. Scalar editors browse those values on a fresh
+focus without clearing the raw draft, then filter readable link labels and exact raw values after
+typing. Escape closes the editor in one action even when the suggestion popup is open.
 On close it reports restore-current, forward Tab, backward Tab, or preserve-focus intent;
 `ProjectsTableView` resolves that intent against the post-commit visible occurrence projection and
 uses the same selection, focus, and reveal path as ordinary keyboard navigation.

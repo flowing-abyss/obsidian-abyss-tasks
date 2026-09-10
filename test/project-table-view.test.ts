@@ -15,6 +15,7 @@ import type { ProjectFieldCatalogItem } from '../src/projects/projectFields';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
+import { ProjectPropertySuggest } from '../src/ui/ProjectPropertySuggest';
 import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
 
 interface TestTransfer {
@@ -195,8 +196,9 @@ describe('ProjectsTableView', () => {
     expect(host.querySelector('.abyss-project-table-cell[data-column-id="name"]')).toBe(nameCell);
     expect(host.querySelector('.abyss-project-description-text')?.textContent).toBe('Updated');
     const edit = expectDefined(
-      host.querySelector<HTMLButtonElement>('.abyss-project-description-edit'),
+      host.querySelector<HTMLButtonElement>('.abyss-project-description-text'),
     );
+    expect(host.querySelector('.abyss-project-description-edit')).toBeNull();
     edit.click();
     const textarea = expectDefined(
       host.querySelector<HTMLTextAreaElement>('.abyss-project-description-editor'),
@@ -217,14 +219,88 @@ describe('ProjectsTableView', () => {
     );
   });
 
-  it('offers description editing for an empty value without adding a second row line', () => {
+  it('keeps an empty description out of the Name cell layout', () => {
     const { host } = mount([project({ frontmatter: {} })]);
-    const description = expectDefined(
-      host.querySelector<HTMLElement>('.abyss-project-description.is-empty'),
-    );
 
-    expect(description.querySelector('.abyss-project-description-text')?.textContent).toBe('');
-    expect(description.querySelector('.abyss-project-description-edit')).not.toBeNull();
+    expect(host.querySelector('.abyss-project-description')).toBeNull();
+    expect(host.querySelector('.abyss-project-description-edit')).toBeNull();
+  });
+
+  it('opens Edit description from the Name native context menu', () => {
+    let title = '';
+    let activate: (() => void) | undefined;
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
+      const item = {
+        setTitle: (value: string) => {
+          title = value;
+          return item;
+        },
+        setIcon: () => item,
+        onClick: (handler: () => void) => {
+          activate = handler;
+          return item;
+        },
+      };
+      callback(item as never);
+      return this;
+    });
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    const { host } = mount([project({ frontmatter: { description: 'Existing' } })]);
+    const name = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="name"]'),
+    );
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+
+    name.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(show).toHaveBeenCalledOnce();
+    expect(title).toBe('Edit description');
+    expectDefined(activate)();
+    expect(host.querySelector('.abyss-project-description-editor')).not.toBeNull();
+  });
+
+  it.each([
+    ['ContextMenu', false],
+    ['F10', true],
+  ] as const)('opens Add description from Name with %s keyboard parity', (key, shiftKey) => {
+    let title = '';
+    let activate: (() => void) | undefined;
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
+      const item = {
+        setTitle: (value: string) => {
+          title = value;
+          return item;
+        },
+        setIcon: () => item,
+        onClick: (handler: () => void) => {
+          activate = handler;
+          return item;
+        },
+      };
+      callback(item as never);
+      return this;
+    });
+    const show = vi.spyOn(Menu.prototype, 'showAtPosition');
+    const { host } = mount([project({ frontmatter: {} })]);
+    const name = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="name"]'),
+    );
+    name.focus();
+    const event = new KeyboardEvent('keydown', {
+      key,
+      shiftKey,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    name.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(show).toHaveBeenCalledOnce();
+    expect(title).toBe('Add description');
+    expectDefined(activate)();
+    expect(host.querySelector('.abyss-project-description-editor')).not.toBeNull();
   });
 
   it('hides description without leaving an extra Name line', () => {
@@ -283,7 +359,7 @@ describe('ProjectsTableView', () => {
       catalog: catalog([{ name: 'Tags', type: 'tags' }]),
       saveProperty,
     });
-    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-project-description-edit')).click();
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-project-description-text')).click();
     const textarea = expectDefined(
       host.querySelector<HTMLTextAreaElement>('.abyss-project-description-editor'),
     );
@@ -1143,7 +1219,27 @@ describe('ProjectsTableView', () => {
     destroyMountedView(view);
   });
 
+  it('positions an editor host before focusing its control', () => {
+    const { host } = mount([project({})]);
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    let sideAtFocus: string | undefined;
+    host.addEventListener('focusin', (event) => {
+      if (!(event.target instanceof HTMLInputElement)) return;
+      sideAtFocus = event.target.closest<HTMLElement>('.abyss-project-cell-editor-host')?.dataset[
+        'side'
+      ];
+    });
+
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+
+    expect(activeDocument.activeElement).toBe(cell.querySelector('input'));
+    expect(sideAtFocus).toBe('aligned');
+  });
+
   it('keeps a bottom-right long-list editor within the visible pane and releases positioning', () => {
+    const suggestionClose = vi.spyOn(ProjectPropertySuggest.prototype, 'close');
     const resizeObservers: Array<{
       readonly targets: Element[];
       readonly disconnect: ReturnType<typeof vi.fn>;
@@ -1182,8 +1278,8 @@ describe('ProjectsTableView', () => {
     let paneClientWidth = 417;
     let cellLeft = 385;
     let cellRight = 605;
-    const editorNaturalHeight = 422;
-    const valuesNaturalHeight = 379;
+    const measuredEditorHeight = cell.getBoundingClientRect().height;
+    const editorNaturalHeight = measuredEditorHeight > 0 ? measuredEditorHeight : 34;
     Object.defineProperties(scroll, {
       clientHeight: { configurable: true, get: () => 457 },
       clientWidth: { configurable: true, get: () => paneClientWidth },
@@ -1203,53 +1299,7 @@ describe('ProjectsTableView', () => {
           cappedStylePixels(this.style.maxHeight, editorNaturalHeight),
         );
       }
-      if (this.classList.contains('abyss-project-cell-editor')) {
-        return rectangle(
-          0,
-          0,
-          140,
-          cappedStylePixels(
-            expectDefined(this.parentElement).style.getPropertyValue(
-              '--abyss-project-editor-content-max-height',
-            ),
-            editorNaturalHeight,
-          ),
-        );
-      }
-      if (this.classList.contains('abyss-project-list-values')) {
-        return rectangle(
-          0,
-          0,
-          140,
-          cappedStylePixels(
-            expectDefined(expectDefined(this.parentElement).parentElement).style.getPropertyValue(
-              '--abyss-project-editor-content-max-height',
-            ),
-            valuesNaturalHeight,
-            43,
-          ),
-        );
-      }
       return rectangle(0, 0, 0, 0);
-    });
-    const nativeGetComputedStyle = activeWindow.getComputedStyle.bind(activeWindow);
-    vi.spyOn(activeWindow, 'getComputedStyle').mockImplementation((element, pseudoElement) => {
-      const computed = nativeGetComputedStyle(element, pseudoElement);
-      if (!element.classList.contains('abyss-project-cell-editor-host')) return computed;
-      const chrome: Readonly<Record<string, string>> = {
-        paddingTop: '3px',
-        paddingBottom: '3px',
-        borderTopWidth: '1px',
-        borderBottomWidth: '1px',
-      };
-      return new Proxy(computed, {
-        get(target, property, receiver): unknown {
-          const override = chrome[String(property)];
-          if (override !== undefined) return override;
-          const fallback: unknown = Reflect.get(target, property, receiver);
-          return fallback;
-        },
-      });
     });
     scroll.scrollTop = 137;
     const rowBefore = row.getBoundingClientRect();
@@ -1264,17 +1314,21 @@ describe('ProjectsTableView', () => {
       resizeObservers.find(({ targets }) => targets.includes(editorHost)),
     );
     positionObserver.trigger();
-    expect(editorHost.dataset['side']).toBe('above');
-    expect(editorHost.style.left).toBe('-140px');
-    expect(editorHost.style.top).toBe('-378px');
-    expect(editorHost.style.width).toBe('212px');
+    expect(editorHost.dataset['side']).toBe('aligned');
+    expect(suggestionClose).not.toHaveBeenCalled();
+    expect(editorHost.style.width).toBe('220px');
     expect(editorHost.style.maxHeight).toBe('407px');
     expect(editorHost.style.getPropertyValue('--abyss-project-editor-content-max-height')).toBe(
-      '399px',
+      '407px',
     );
-    expect(editorHost.style.getPropertyValue('--abyss-project-editor-values-max-height')).toBe(
-      '356px',
+    const positionedLeft = cellLeft + Number.parseFloat(editorHost.style.left);
+    const positionedTop = 557 + Number.parseFloat(editorHost.style.top);
+    expect(positionedLeft).toBeGreaterThanOrEqual(48 + 8);
+    expect(positionedLeft + Number.parseFloat(editorHost.style.width)).toBeLessThanOrEqual(
+      48 + paneClientWidth - 8,
     );
+    expect(positionedTop).toBeGreaterThanOrEqual(171 + 8);
+    expect(positionedTop + editorNaturalHeight).toBeLessThanOrEqual(137 + 457 - 8);
     expect(row.getBoundingClientRect()).toEqual(rowBefore);
     expect(scroll.scrollTop).toBe(137);
     expect(expectDefined(host.querySelector<HTMLTableElement>('table')).style.width).toBe(
@@ -1282,17 +1336,20 @@ describe('ProjectsTableView', () => {
     );
 
     positionObserver.trigger();
-    expect(editorHost.style.getPropertyValue('--abyss-project-editor-values-max-height')).toBe(
-      '356px',
-    );
+    expect(editorHost.dataset['side']).toBe('aligned');
 
     paneRight = 140;
     paneClientWidth = 77;
     cellLeft = 100;
     cellRight = 140;
     activeWindow.dispatchEvent(new Event('resize'));
-    expect(editorHost.style.left).toBe('-44px');
-    expect(editorHost.style.width).toBe('61px');
+    expect(editorHost.style.width).toBe('40px');
+    expect(suggestionClose).toHaveBeenCalledOnce();
+    const constrainedLeft = cellLeft + Number.parseFloat(editorHost.style.left);
+    expect(constrainedLeft).toBeGreaterThanOrEqual(48 + 8);
+    expect(constrainedLeft + Number.parseFloat(editorHost.style.width)).toBeLessThanOrEqual(
+      48 + paneClientWidth - 8,
+    );
 
     expectDefined(editorHost.querySelector<HTMLInputElement>('input')).dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),

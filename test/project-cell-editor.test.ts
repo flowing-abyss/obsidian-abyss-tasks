@@ -36,6 +36,27 @@ function keydown(element: HTMLElement, key: string): void {
 }
 
 describe('mountProjectCellEditor', () => {
+  it('defers focus until the caller positions and activates the mounted editor', () => {
+    const container = document.body.createDiv();
+    const outside = document.body.createEl('button');
+    outside.focus();
+
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'Alpha',
+      catalog: catalog(),
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: vi.fn(),
+    });
+    const input = expectDefined(container.querySelector<HTMLInputElement>('input'));
+
+    expect(activeDocument.activeElement).toBe(outside);
+    handle.focus();
+    expect(activeDocument.activeElement).toBe(input);
+  });
+
   it('edits a multiline curated description in a textarea without committing Enter', async () => {
     const container = freshContainer();
     const save = vi.fn().mockResolvedValue(undefined);
@@ -257,6 +278,35 @@ describe('mountProjectCellEditor', () => {
     expect(onClose).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
   });
 
+  it('writes the exact raw link once when a readable scalar suggestion is selected', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owner', type: 'text' },
+      value: 'Infrastructure',
+      catalog: catalog(['[[People/Anna Smith|Anna]]', '[Anna](People/Anna-Jones.md)']),
+      save,
+      onClose: vi.fn(),
+    });
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    const suggest = expectDefined(internals.control_abyssPrivate.suggest);
+    const picked = expectDefined(
+      suggest
+        .getSuggestions('Infrastructure')
+        .find(({ value }) => value === '[Anna](People/Anna-Jones.md)'),
+    );
+
+    suggest.selectSuggestion(picked, new KeyboardEvent('keydown', { key: 'Enter' }));
+    await settle();
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith('[Anna](People/Anna-Jones.md)');
+  });
+
   it('adds and removes list values without coercing untouched numeric elements', async () => {
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
@@ -278,6 +328,30 @@ describe('mountProjectCellEditor', () => {
 
     expect(save).toHaveBeenCalledWith([7, 'Alpha', 'Beta']);
     expect(input.isConnected).toBe(true);
+  });
+
+  it('keeps raw list links while showing readable chip labels in one entry band', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const raw = '[[People/Anna Smith|Anna]]';
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: [raw],
+      catalog: catalog([], 'list'),
+      save,
+      onClose: vi.fn(),
+    });
+
+    const band = expectDefined(container.querySelector<HTMLElement>('.abyss-project-list-control'));
+    expect(band.querySelector('.abyss-project-list-value')?.textContent).toContain('Anna');
+    expect(band.querySelector('.abyss-project-list-value')?.textContent).not.toContain(
+      'People/Anna Smith',
+    );
+    expect(band.querySelector('.abyss-project-list-entry')).not.toBeNull();
+    await expect(handle.commit()).resolves.toBe(true);
+    expect(save).not.toHaveBeenCalled();
   });
 
   it('keeps an editor-owned list removal alive through transient blur', async () => {
@@ -865,6 +939,61 @@ describe('mountProjectCellEditor', () => {
 });
 
 describe('ProjectPropertySuggest', () => {
+  it('browses alternatives for an unchanged populated value, then filters after actual input', () => {
+    const input = document.body.createEl('input');
+    input.value = 'Infrastructure';
+    const suggest = new ProjectPropertySuggest({
+      app: new App(),
+      input,
+      values: ['Infrastructure', 'Marketing'],
+      onPick: vi.fn(),
+      browseOnOpen: true,
+    });
+
+    expect(suggest.getSuggestions(input.value).map(({ value }) => value)).toEqual([
+      'Infrastructure',
+      'Marketing',
+    ]);
+    input.value = 'Mark';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(suggest.getSuggestions(input.value).map(({ value }) => value)).toEqual(['Marketing']);
+    suggest.close();
+    input.dispatchEvent(new FocusEvent('focus'));
+    suggest.open();
+    expect(suggest.getSuggestions(input.value).map(({ value }) => value)).toEqual([
+      'Infrastructure',
+      'Marketing',
+    ]);
+    suggest.close();
+  });
+
+  it('shows exact-link aliases while preserving and distinguishing their raw targets', () => {
+    const suggest = new ProjectPropertySuggest({
+      app: new App(),
+      input: document.body.createEl('input'),
+      values: ['[[People/Anna Smith|Anna]]', '[Anna](People/Anna-Jones.md)', 'Plain value'],
+      onPick: vi.fn(),
+    });
+
+    expect(suggest.getSuggestions('Anna')).toEqual([
+      {
+        kind: 'value',
+        value: '[[People/Anna Smith|Anna]]',
+        label: 'Anna',
+        detail: 'People/Anna Smith',
+      },
+      {
+        kind: 'value',
+        value: '[Anna](People/Anna-Jones.md)',
+        label: 'Anna',
+        detail: 'People/Anna-Jones.md',
+      },
+    ]);
+    expect(suggest.getSuggestions('Anna-Jones').map(({ value }) => value)).toEqual([
+      '[Anna](People/Anna-Jones.md)',
+    ]);
+  });
+
   it('leaves native Escape dismissal in charge when no editor callback is supplied', () => {
     const scopeRegister = vi.spyOn(Scope.prototype, 'register');
 

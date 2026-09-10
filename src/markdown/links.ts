@@ -111,6 +111,18 @@ export function parseLinks(input: string): LinkToken[] {
   ]);
 }
 
+/** Return a link only when its markup occupies the complete value. */
+export function exactLinkToken(value: string): LinkToken | undefined {
+  const tokens = parseLinks(value);
+  const token = tokens[0];
+  return tokens.length === 1 && token?.raw === value ? token : undefined;
+}
+
+/** Present complete links by their readable alias while retaining all other text exactly. */
+export function linkValueLabel(value: string): string {
+  return exactLinkToken(value)?.display ?? value;
+}
+
 /** Total number of links (wiki + markdown) across the given texts. */
 export function countLinksIn(texts: Array<string | undefined>): number {
   let total = 0;
