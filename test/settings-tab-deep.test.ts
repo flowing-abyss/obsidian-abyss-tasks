@@ -1,11 +1,24 @@
-import { App, Setting } from 'obsidian';
+import type * as ObsidianModule from 'obsidian';
+import { App, Notice, Setting } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import { SHORTCUT_ACTION_IDS } from '../src/settings/shortcuts';
 import type { CalendarSettings } from '../src/settings/types';
-import { deferred, expectDefined, loadPluginStyles, useRealMoment } from './helpers';
+import {
+  DataTransferStub,
+  deferred,
+  expectDefined,
+  loadPluginStyles,
+  objectMatching,
+  useRealMoment,
+} from './helpers';
+
+vi.mock('obsidian', async () => {
+  const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
+  return { ...actual, Notice: vi.fn() };
+});
 
 useRealMoment();
 
@@ -184,6 +197,45 @@ function findComp(
   type: CapturedComp['type'],
 ): CapturedComp | undefined {
   return captured.find((c) => c.name === name && c.type === type);
+}
+
+function attachSettingsScroller(tab: CalendarSettingsTab, scrollTop: number): HTMLElement {
+  const scroller = document.body.createDiv({ cls: 'vertical-tab-content' });
+  scroller.append(tab.containerEl);
+  scroller.scrollTop = scrollTop;
+  return scroller;
+}
+
+function cardNamed(container: HTMLElement, title: string): HTMLElement {
+  return expectDefined(
+    Array.from(container.querySelectorAll<HTMLElement>('.abyss-settings-card')).find(
+      (card) => card.querySelector('.abyss-settings-card-title')?.textContent === title,
+    ),
+  );
+}
+
+function dragCard(source: HTMLElement, target: HTMLElement): void {
+  const dataTransfer = new DataTransferStub();
+  for (const [element, type] of [
+    [expectDefined(source.querySelector<HTMLElement>('.abyss-settings-card-header')), 'dragstart'],
+    [target, 'drop'],
+  ] as const) {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+    element.dispatchEvent(event);
+  }
+}
+
+function projectStatusOrder(tab: CalendarSettingsTab): string[] {
+  const projects = expectDefined(
+    Array.from(tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section')).find(
+      (section) =>
+        section.querySelector('.abyss-settings-section-label')?.textContent === 'Projects',
+    ),
+  );
+  return Array.from(projects.querySelectorAll('.abyss-settings-card-title'))
+    .slice(0, 3)
+    .map((title) => title.textContent);
 }
 
 describe('CalendarSettingsTab renderGeneralSettings', () => {
@@ -829,6 +881,248 @@ describe('sourceNoteDisplay setting', () => {
 });
 
 describe('CalendarSettingsTab collapsible cards + default status', () => {
+  it('rejects a tag-group card payload dropped on the project-status list', () => {
+    const tagGroups = [{ id: 'group-work', name: 'Work', mode: 'prefix' as const, prefix: 'work' }];
+    const { tab, plugin } = makeTab({ tagGroups });
+    const tagBody = openSection(tab, 4);
+    const projectBody = openSection(tab, 5);
+    const beforeStatuses = plugin.settings.projects.statuses.map(({ id }) => id);
+
+    dragCard(
+      cardNamed(tagBody, 'Work'),
+      cardNamed(projectBody, expectDefined(plugin.settings.projects.statuses[1]).name),
+    );
+
+    expect(plugin.settings.projects.statuses.map(({ id }) => id)).toEqual(beforeStatuses);
+    expect(plugin.settings.tagGroups.map(({ id }) => id)).toEqual(['group-work']);
+    expect(plugin.saveSettings).not.toHaveBeenCalled();
+  });
+
+  it('keeps the focused draft and current identities through repeated project-status drops', () => {
+    const { tab, plugin } = makeTab();
+    const body = openSection(tab, 5);
+    const scroller = attachSettingsScroller(tab, 513);
+    const [first, second, third] = plugin.settings.projects.statuses;
+    const firstStatus = expectDefined(first);
+    const secondStatus = expectDefined(second);
+    const thirdStatus = expectDefined(third);
+    const firstCard = cardNamed(body, firstStatus.name);
+    const secondCard = cardNamed(body, secondStatus.name);
+    const thirdCard = cardNamed(body, thirdStatus.name);
+    const draft = expectDefined(firstCard.querySelector<HTMLInputElement>('input'));
+    draft.value = 'unfinished status draft';
+    draft.focus();
+    draft.setSelectionRange(10, 10);
+
+    dragCard(secondCard, firstCard);
+    dragCard(secondCard, thirdCard);
+
+    expect(plugin.settings.projects.statuses.slice(0, 3).map(({ id }) => id)).toEqual([
+      firstStatus.id,
+      thirdStatus.id,
+      secondStatus.id,
+    ]);
+    expect(projectStatusOrder(tab)).toEqual([
+      firstStatus.name,
+      thirdStatus.name,
+      secondStatus.name,
+    ]);
+    expect(scroller.scrollTop).toBe(513);
+    expect(activeDocument.activeElement).toBe(draft);
+    expect(draft.isConnected).toBe(true);
+    expect(draft.value).toBe('unfinished status draft');
+    expect(draft.selectionStart).toBe(10);
+  });
+
+  it('preserves focused draft context when display rebuilds an open settings tab', () => {
+    const { tab, plugin } = makeTab();
+    const body = openSection(tab, 5);
+    const scroller = attachSettingsScroller(tab, 513);
+    const status = expectDefined(plugin.settings.projects.statuses[0]);
+    const before = expectDefined(
+      cardNamed(body, status.name).querySelector<HTMLInputElement>('input'),
+    );
+    before.value = 'display draft';
+    before.focus();
+    before.setSelectionRange(4, 9, 'backward');
+
+    (tab as unknown as { display(): void }).display();
+
+    const after = expectDefined(
+      cardNamed(tab.containerEl, status.name).querySelector<HTMLInputElement>('input'),
+    );
+    expect(after).not.toBe(before);
+    expect(scroller.scrollTop).toBe(513);
+    expect(activeDocument.activeElement).toBe(after);
+    expect(after.value).toBe('display draft');
+    expect(after.selectionStart).toBe(4);
+    expect(after.selectionEnd).toBe(9);
+    expect(after.selectionDirection).toBe('backward');
+  });
+
+  it('preserves a focused project-column width draft through display', () => {
+    const { tab } = makeTab();
+    openSection(tab, 5);
+    const scroller = attachSettingsScroller(tab, 513);
+    const before = expectDefined(
+      tab.containerEl.querySelector<HTMLInputElement>(
+        '[data-column-id="progress"] .abyss-project-column-width',
+      ),
+    );
+    before.value = '260';
+    before.focus();
+
+    (tab as unknown as { display(): void }).display();
+
+    const after = expectDefined(
+      tab.containerEl.querySelector<HTMLInputElement>(
+        '[data-column-id="progress"] .abyss-project-column-width',
+      ),
+    );
+    expect(after.value).toBe('260');
+    expect(activeDocument.activeElement).toBe(after);
+    expect(scroller.scrollTop).toBe(513);
+  });
+
+  it('expands one card without replacing an unrelated focused settings control', () => {
+    const { tab } = makeTab({}, { expand: false });
+    const general = openSection(tab, 0);
+    const projects = openSection(tab, 5);
+    attachSettingsScroller(tab, 513);
+    const taskPrefix = expectDefined(findInput(general, 'Task prefix'));
+    taskPrefix.value = '#unfinished';
+    taskPrefix.focus();
+    taskPrefix.setSelectionRange(5, 5);
+    expect(activeDocument.activeElement).toBe(taskPrefix);
+
+    expectDefined(projects.querySelector<HTMLElement>('.abyss-settings-card-header')).click();
+
+    expect(activeDocument.activeElement).toBe(taskPrefix);
+    expect(taskPrefix.isConnected).toBe(true);
+    expect(taskPrefix.value).toBe('#unfinished');
+    expect(taskPrefix.selectionStart).toBe(5);
+    expect(projects.querySelector('.abyss-settings-card.is-open')).not.toBeNull();
+  });
+
+  it('ignores unchanged catalog events and preserves draft context for a changed catalog', () => {
+    let properties = [{ name: 'status', type: 'text' as const }];
+    let publish: () => void = () => {};
+    const projectProperties: ProjectPropertyCatalog = {
+      list: () => properties,
+      inspect: () => ({ kind: 'available', property: undefined, assignment: { kind: 'none' } }),
+      values: () => [],
+      onChange: (callback) => {
+        publish = callback;
+        return () => {};
+      },
+    };
+    const { tab, plugin } = makeTab({}, { projectProperties });
+    const body = openSection(tab, 5);
+    const scroller = attachSettingsScroller(tab, 513);
+    const status = expectDefined(plugin.settings.projects.statuses[0]);
+    const input = expectDefined(
+      cardNamed(body, status.name).querySelector<HTMLInputElement>('input'),
+    );
+    input.value = 'catalog draft';
+    input.focus();
+    input.setSelectionRange(7, 7);
+
+    publish();
+    expect(activeDocument.activeElement).toBe(input);
+    expect(input.isConnected).toBe(true);
+
+    properties = [...properties, { name: 'Phase', type: 'text' }];
+    publish();
+
+    const replacement = expectDefined(
+      cardNamed(tab.containerEl, status.name).querySelector<HTMLInputElement>('input'),
+    );
+    const statusSource = findDropdown(tab.containerEl, 'Status property');
+    expect(Array.from(expectDefined(statusSource).options).map(({ value }) => value)).toContain(
+      'Phase',
+    );
+    expect(scroller.scrollTop).toBe(513);
+    expect(activeDocument.activeElement).toBe(replacement);
+    expect(replacement.value).toBe('catalog draft');
+    expect(replacement.selectionStart).toBe(7);
+  });
+
+  it('keeps the reordered draft and offers a current-state retry after save failure', async () => {
+    vi.mocked(Notice).mockClear();
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const saveSettings = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('disk unavailable'))
+      .mockResolvedValue(undefined);
+    const { tab, plugin } = makeTab({}, { saveSettings });
+    const body = openSection(tab, 5);
+    const before = plugin.settings.projects.statuses.map(({ id }) => id);
+    const first = cardNamed(body, expectDefined(plugin.settings.projects.statuses[0]).name);
+    const second = cardNamed(body, expectDefined(plugin.settings.projects.statuses[1]).name);
+
+    dragCard(second, first);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(plugin.settings.projects.statuses.map(({ id }) => id)).toEqual([
+      expectDefined(before[1]),
+      expectDefined(before[0]),
+      ...before.slice(2),
+    ]);
+    expect(projectStatusOrder(tab)).toEqual(
+      plugin.settings.projects.statuses.slice(0, 3).map(({ name }) => name),
+    );
+    expect(Notice).toHaveBeenCalledOnce();
+    const noticeContent = vi.mocked(Notice).mock.calls[0]?.[0];
+    expect(noticeContent).toBeInstanceOf(DocumentFragment);
+    expect((noticeContent as DocumentFragment).textContent).toContain(
+      'Could not reorder project statuses: disk unavailable. Changes are kept in this session.',
+    );
+    expectDefined((noticeContent as DocumentFragment).querySelector('button')).click();
+    await Promise.resolve();
+    expect(saveSettings).toHaveBeenCalledTimes(2);
+    expect(errorLog).toHaveBeenCalledWith(
+      '[abyss-tasks] Could not reorder project statuses',
+      objectMatching<{ cause: unknown }>({ cause: expect.any(Error) as unknown }),
+    );
+    errorLog.mockRestore();
+  });
+
+  it('does not let an older failed reorder overwrite a newer project-status order', async () => {
+    let rejectFirst!: (error: Error) => void;
+    const firstSave = new Promise<void>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    const saveSettings = vi
+      .fn()
+      .mockImplementationOnce(() => firstSave)
+      .mockResolvedValue(undefined);
+    const { tab, plugin } = makeTab({}, { saveSettings });
+    const body = openSection(tab, 5);
+    const [first, second, third] = plugin.settings.projects.statuses;
+    const firstStatus = expectDefined(first);
+    const secondStatus = expectDefined(second);
+    const thirdStatus = expectDefined(third);
+    const secondCard = cardNamed(body, secondStatus.name);
+
+    dragCard(secondCard, cardNamed(body, firstStatus.name));
+    dragCard(secondCard, cardNamed(body, thirdStatus.name));
+    rejectFirst(new Error('older write failed'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(plugin.settings.projects.statuses.slice(0, 3).map(({ id }) => id)).toEqual([
+      firstStatus.id,
+      thirdStatus.id,
+      secondStatus.id,
+    ]);
+    expect(projectStatusOrder(tab)).toEqual([
+      firstStatus.name,
+      thirdStatus.name,
+      secondStatus.name,
+    ]);
+  });
+
   it('refreshes a mounted project table after description and column view saves', async () => {
     const { tab, plugin } = makeTab();
     const projectsHeader = Array.from(

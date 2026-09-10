@@ -21,6 +21,8 @@ import type { TaskStatusType } from '../tasks';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { renderProjectTableSettings } from './projectTableSettings';
+import { captureSettingsRenderContext, restoreSettingsRenderContext } from './settingsRenderState';
+import { saveSettingsDraft } from './settingsSaveFailure';
 import {
   type ParsedShortcutAlternative,
   SHORTCUT_ACTION_IDS,
@@ -43,21 +45,40 @@ interface TaskCalendarPlugin extends Plugin {
 }
 
 interface CardListOptions<T> {
+  listKey: string;
   id: (item: T) => string;
   title: (item: T) => string;
   accent?: (item: T) => string | undefined;
   badge?: (item: T) => string | undefined;
   preview?: (headerEl: HTMLElement, item: T) => void;
-  body: (bodyEl: HTMLElement, idx: number) => void;
-  onReorder: (from: number, to: number) => void;
+  body: (bodyEl: HTMLElement, item: T) => void;
+  onReorder: (draggedId: string, targetId: string) => boolean;
   groupKey?: string;
   onCrossGroupDrop?: (draggedId: string, targetGroupKey: string) => void;
 }
 
 interface CardDragPayload {
-  idx: number;
   id: string;
+  listKey: string;
   groupKey?: string;
+}
+
+type ReorderItemsOptions<T> = readonly [
+  idFor: (item: T) => string,
+  persist: () => Promise<void>,
+  action: string,
+];
+
+function parseCardDragPayload(raw: string | undefined): CardDragPayload | null {
+  if (raw === undefined || raw === '') return null;
+  try {
+    const payload = JSON.parse(raw) as Partial<CardDragPayload>;
+    return typeof payload.id === 'string' && typeof payload.listKey === 'string'
+      ? (payload as CardDragPayload)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 interface ShortcutIssueView {
@@ -170,6 +191,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private readonly sectionScope_abyssPrivate = ++nextSettingsTabScope;
   private projectSettingsCleanup_abyssPrivate: (() => void) | undefined = undefined;
   private propertyCatalogCleanup_abyssPrivate: (() => void) | undefined = undefined;
+  private propertyCatalogSignature_abyssPrivate: string | undefined = undefined;
 
   constructor(
     app: App,
@@ -179,6 +201,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     ),
   ) {
     super(app, plugin_abyssPrivate);
+    this.containerEl.addClass('abyss-settings-tab');
   }
 
   override getSettingDefinitions(): SettingDefinitionItem[] {
@@ -195,21 +218,21 @@ export class CalendarSettingsTab extends PluginSettingTab {
     items: T[],
     opts: CardListOptions<T>,
   ): void {
-    items.forEach((item, idx) => {
-      this.renderCard_abyssPrivate(containerEl, item, idx, opts);
+    items.forEach((item) => {
+      this.renderCard_abyssPrivate(containerEl, item, opts);
     });
   }
 
   private renderCard_abyssPrivate<T>(
     containerEl: HTMLElement,
     item: T,
-    idx: number,
     opts: CardListOptions<T>,
   ): void {
     const id = opts.id(item);
     const expanded = this.expandedCards_abyssPrivate.has(id);
     const card = containerEl.createDiv({
       cls: `abyss-settings-card${expanded ? ' is-open' : ''}`,
+      attr: { 'data-card-id': id },
     });
     card.addEventListener('dragover', (event) => {
       event.preventDefault();
@@ -219,7 +242,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       card.removeClass('abyss-drag-over');
     });
     card.addEventListener('drop', (event) => {
-      this.handleCardDrop_abyssPrivate(event, card, idx, opts);
+      this.handleCardDrop_abyssPrivate(event, card, id, opts);
     });
 
     const header = card.createDiv({
@@ -228,8 +251,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
     });
     header.addEventListener('dragstart', (event) => {
       const payload: CardDragPayload = {
-        idx,
         id,
+        listKey: opts.listKey,
         ...(opts.groupKey === undefined ? {} : { groupKey: opts.groupKey }),
       };
       event.dataTransfer?.setData('text/plain', JSON.stringify(payload));
@@ -247,37 +270,31 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const chevron = header.createSpan({ cls: 'abyss-settings-card-chevron' });
     setIcon(chevron, expanded ? 'chevron-down' : 'chevron-right');
     header.addEventListener('click', () => {
-      this.toggleCard_abyssPrivate(id, expanded);
+      this.toggleCard_abyssPrivate(card, chevron, item, opts);
     });
 
     if (!expanded) return;
     const bodyEl = card.createDiv({ cls: 'abyss-settings-card-body' });
-    opts.body(bodyEl, idx);
+    opts.body(bodyEl, item);
   }
 
   private handleCardDrop_abyssPrivate<T>(
     event: DragEvent,
     card: HTMLElement,
-    targetIndex: number,
+    targetId: string,
     opts: CardListOptions<T>,
   ): void {
     event.preventDefault();
     event.stopPropagation();
     card.removeClass('abyss-drag-over');
-    const raw = event.dataTransfer?.getData('text/plain');
-    if (raw === undefined || raw === '') return;
-    let payload: CardDragPayload;
-    try {
-      payload = JSON.parse(raw) as CardDragPayload;
-    } catch {
-      return;
-    }
+    const payload = parseCardDragPayload(event.dataTransfer?.getData('text/plain'));
+    if (payload?.listKey !== opts.listKey) return;
     if (opts.groupKey !== undefined && payload.groupKey !== opts.groupKey) {
       opts.onCrossGroupDrop?.(payload.id, opts.groupKey);
       return;
     }
-    if (!Number.isNaN(payload.idx) && payload.idx !== targetIndex) {
-      opts.onReorder(payload.idx, targetIndex);
+    if (payload.id !== targetId && opts.onReorder(payload.id, targetId)) {
+      this.moveRenderedCard_abyssPrivate(card, payload.id);
     }
   }
 
@@ -292,22 +309,59 @@ export class CalendarSettingsTab extends PluginSettingTab {
     header.createSpan({ cls: 'abyss-settings-card-badge', text: badge });
   }
 
-  private toggleCard_abyssPrivate(id: string, expanded: boolean): void {
-    if (expanded) this.expandedCards_abyssPrivate.delete(id);
-    else this.expandedCards_abyssPrivate.add(id);
-    this.render_abyssPrivate();
+  private toggleCard_abyssPrivate<T>(
+    card: HTMLElement,
+    chevron: HTMLElement,
+    item: T,
+    opts: CardListOptions<T>,
+  ): void {
+    const id = opts.id(item);
+    const opening = !card.classList.contains('is-open');
+    card.classList.toggle('is-open', opening);
+    chevron.empty();
+    setIcon(chevron, opening ? 'chevron-down' : 'chevron-right');
+    if (opening) {
+      this.expandedCards_abyssPrivate.add(id);
+      const bodyEl = card.createDiv({ cls: 'abyss-settings-card-body' });
+      opts.body(bodyEl, item);
+    } else {
+      this.expandedCards_abyssPrivate.delete(id);
+      card.querySelector('.abyss-settings-card-body')?.remove();
+    }
   }
 
-  private moveItem_abyssPrivate<T>(arr: T[], from: number, to: number): void {
-    const item = arr[from];
-    if (item === undefined) return;
-    arr.splice(from, 1);
-    arr.splice(to, 0, item);
+  private moveRenderedCard_abyssPrivate(targetCard: HTMLElement, draggedId: string): void {
+    const sourceCard = Array.from(targetCard.parentElement?.children ?? []).find(
+      (candidate) => candidate.getAttribute('data-card-id') === draggedId,
+    );
+    if (sourceCard === undefined) return;
+    if ((sourceCard.compareDocumentPosition(targetCard) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)
+      targetCard.after(sourceCard);
+    else targetCard.before(sourceCard);
+  }
+
+  private reorderItems_abyssPrivate<T>(
+    items: T[],
+    draggedId: string,
+    targetId: string,
+    options: ReorderItemsOptions<T>,
+  ): boolean {
+    const [idFor, persist, action] = options;
+    const from = items.findIndex((item) => idFor(item) === draggedId);
+    const to = items.findIndex((item) => idFor(item) === targetId);
+    if (from < 0 || to < 0 || from === to) return false;
+    items.splice(to, 0, ...items.splice(from, 1));
+    saveSettingsDraft({ action, save: persist });
+    return true;
   }
 
   override display(): void {
+    this.propertyCatalogSignature_abyssPrivate = this.projectCatalogSignature_abyssPrivate();
     this.propertyCatalogCleanup_abyssPrivate ??= this.projectProperties_abyssPrivate.onChange(
       () => {
+        const signature = this.projectCatalogSignature_abyssPrivate();
+        if (signature === this.propertyCatalogSignature_abyssPrivate) return;
+        this.propertyCatalogSignature_abyssPrivate = signature;
         this.render_abyssPrivate();
       },
     );
@@ -322,58 +376,45 @@ export class CalendarSettingsTab extends PluginSettingTab {
     super.hide();
   }
 
-  private render_abyssPrivate(): void {
+  private render_abyssPrivate(focus?: () => HTMLElement | null): void {
     const { containerEl } = this;
-
-    this.projectSettingsCleanup_abyssPrivate?.();
+    const renderContext = captureSettingsRenderContext(containerEl);
+    const previousCleanup = this.projectSettingsCleanup_abyssPrivate;
     this.projectSettingsCleanup_abyssPrivate = undefined;
-    containerEl.empty();
+    this.statusHeaderPreviewEls_abyssPrivate.clear();
+    const nextContainer = containerEl.ownerDocument.adoptNode(createFragment().createDiv());
 
-    this.addSection_abyssPrivate(containerEl, 'General', 'sliders-horizontal', (body) => {
+    this.addSection_abyssPrivate(nextContainer, 'General', 'sliders-horizontal', (body) => {
       this.renderGeneralSettings_abyssPrivate(body);
     });
-    this.addSection_abyssPrivate(containerEl, 'Desktop', 'monitor', (body) => {
+    this.addSection_abyssPrivate(nextContainer, 'Desktop', 'monitor', (body) => {
       this.renderViewConfigSettings_abyssPrivate(body, 'desktop');
     });
-    this.addSection_abyssPrivate(containerEl, 'Mobile', 'smartphone', (body) => {
+    this.addSection_abyssPrivate(nextContainer, 'Mobile', 'smartphone', (body) => {
       this.renderViewConfigSettings_abyssPrivate(body, 'mobile');
     });
-    this.addSection_abyssPrivate(containerEl, 'Inbox', 'inbox', (body) => {
+    this.addSection_abyssPrivate(nextContainer, 'Inbox', 'inbox', (body) => {
       this.renderInboxSettings_abyssPrivate(body);
     });
-    this.addSection_abyssPrivate(containerEl, 'Tag groups', 'tags', (body) => {
+    this.addSection_abyssPrivate(nextContainer, 'Tag groups', 'tags', (body) => {
       this.renderTagGroupSettings_abyssPrivate(body);
     });
-    this.addSection_abyssPrivate(containerEl, 'Projects', 'folder-kanban', (body) => {
+    this.addSection_abyssPrivate(nextContainer, 'Projects', 'folder-kanban', (body) => {
       this.renderProjectsSettings_abyssPrivate(body);
     });
-    this.addSection_abyssPrivate(containerEl, 'Custom statuses', 'list-checks', (body) => {
+    this.addSection_abyssPrivate(nextContainer, 'Custom statuses', 'list-checks', (body) => {
       this.renderTaskStatusesSettings_abyssPrivate(body);
     });
-    this.addSection_abyssPrivate(containerEl, 'Hotkeys', 'keyboard', (body) => {
+    this.addSection_abyssPrivate(nextContainer, 'Hotkeys', 'keyboard', (body) => {
       this.renderShortcutSettings_abyssPrivate(body);
     });
+    previousCleanup?.();
+    containerEl.replaceChildren(...nextContainer.childNodes);
+    restoreSettingsRenderContext(containerEl, renderContext, focus);
   }
 
-  private redrawPreservingPosition_abyssPrivate(focus?: () => HTMLElement | null): void {
-    const scroller = this.containerEl.closest<HTMLElement>('.vertical-tab-content');
-    const scrollTop = scroller?.scrollTop;
-    this.render_abyssPrivate();
-    if (scroller !== null && scrollTop !== undefined) {
-      scroller.scrollTop = scrollTop;
-    }
-    focus?.()?.focus({ preventScroll: true });
-  }
-
-  private projectStatusNameInput_abyssPrivate(name: string): HTMLInputElement | null {
-    const cards = this.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-card');
-    for (const card of cards) {
-      const title = card.querySelector('.abyss-settings-card-title');
-      if (title?.textContent === name) {
-        return card.querySelector<HTMLInputElement>('.abyss-settings-card-body input');
-      }
-    }
-    return null;
+  private projectCatalogSignature_abyssPrivate(): string {
+    return JSON.stringify(this.projectProperties_abyssPrivate.list() ?? null);
   }
 
   private addSection_abyssPrivate(
@@ -385,6 +426,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const isOpen = this.openSections_abyssPrivate.has(title);
     const section = containerEl.createDiv({
       cls: `abyss-settings-section${isOpen ? ' is-open' : ''}`,
+      attr: { 'data-section-title': title },
     });
     const bodyId = `abyss-settings-section-${this.sectionScope_abyssPrivate}-${title
       .toLowerCase()
@@ -880,18 +922,20 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private renderTagGroupSettings_abyssPrivate(containerEl: HTMLElement): void {
     const groups = this.plugin_abyssPrivate.settings.tagGroups;
     this.renderCardList_abyssPrivate(containerEl, groups, {
+      listKey: 'tag-groups',
       id: (g) => g.id,
       title: (g) => g.name,
       accent: (g) => g.color,
       badge: (g) => (g.mode === 'prefix' ? 'prefix' : 'manual'),
-      body: (bodyEl, idx) => {
-        this.renderTagGroupCard_abyssPrivate(bodyEl, idx);
+      body: (bodyEl, group) => {
+        this.renderTagGroupCard_abyssPrivate(bodyEl, group.id);
       },
-      onReorder: (from, to) => {
-        this.moveItem_abyssPrivate(groups, from, to);
-        runAsyncAction(this.plugin_abyssPrivate.saveSettings());
-        this.render_abyssPrivate();
-      },
+      onReorder: (draggedId, targetId) =>
+        this.reorderItems_abyssPrivate(groups, draggedId, targetId, [
+          (group) => group.id,
+          () => this.plugin_abyssPrivate.saveSettings(),
+          'reorder tag groups',
+        ]),
     });
 
     const archived = this.plugin_abyssPrivate.settings.archivedTags;
@@ -926,9 +970,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
     );
   }
 
-  private renderTagGroupCard_abyssPrivate(card: HTMLElement, idx: number): void {
+  private renderTagGroupCard_abyssPrivate(card: HTMLElement, groupId: string): void {
     const groups = this.plugin_abyssPrivate.settings.tagGroups;
-    const group = groups[idx];
+    const group = groups.find((candidate) => candidate.id === groupId);
     if (group == null) return;
 
     new Setting(card).setName('Group name').addText((t) =>
@@ -992,7 +1036,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .setButtonText('Delete group')
         .setClass('mod-warning')
         .onClick(async () => {
-          const removed = groups.splice(idx, 1)[0];
+          const index = groups.findIndex((candidate) => candidate.id === group.id);
+          const removed = index < 0 ? undefined : groups.splice(index, 1)[0];
           if (removed != null) this.expandedCards_abyssPrivate.delete(removed.id);
           await this.plugin_abyssPrivate.saveSettings();
           this.render_abyssPrivate();
@@ -1015,7 +1060,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
         this.plugin_abyssPrivate.refreshProjectTableSettings();
       },
       refresh: (focus) => {
-        this.redrawPreservingPosition_abyssPrivate(
+        this.render_abyssPrivate(
           focus === 'add-property'
             ? () =>
                 this.containerEl.querySelector<HTMLInputElement>('.abyss-project-column-add-input')
@@ -1195,17 +1240,19 @@ export class CalendarSettingsTab extends PluginSettingTab {
       requiredType: 'text',
     });
     this.renderCardList_abyssPrivate(containerEl, projects.statuses, {
+      listKey: 'project-statuses',
       id: (s) => s.id,
       title: (s) => s.name,
       accent: (s) => s.color,
-      body: (bodyEl, idx) => {
-        this.renderStatusCard_abyssPrivate(bodyEl, idx);
+      body: (bodyEl, status) => {
+        this.renderStatusCard_abyssPrivate(bodyEl, status.id);
       },
-      onReorder: (from, to) => {
-        this.moveItem_abyssPrivate(projects.statuses, from, to);
-        runAsyncAction(this.plugin_abyssPrivate.saveSettings());
-        this.render_abyssPrivate();
-      },
+      onReorder: (draggedId, targetId) =>
+        this.reorderItems_abyssPrivate(projects.statuses, draggedId, targetId, [
+          (status) => status.id,
+          () => this.plugin_abyssPrivate.saveSettings(),
+          'reorder project statuses',
+        ]),
     });
 
     new Setting(containerEl).addButton((b) =>
@@ -1231,8 +1278,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
           });
           this.expandedCards_abyssPrivate.add(id); // open the new card for editing
           await this.plugin_abyssPrivate.saveSettings();
-          this.redrawPreservingPosition_abyssPrivate(() =>
-            this.projectStatusNameInput_abyssPrivate(`status ${n}`),
+          this.render_abyssPrivate(() =>
+            this.containerEl.querySelector<HTMLInputElement>(
+              `[data-card-id="${id}"] .abyss-settings-card-body input`,
+            ),
           );
         }),
     );
@@ -1261,10 +1310,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
   }
 
-  private renderStatusCard_abyssPrivate(card: HTMLElement, idx: number): void {
+  private renderStatusCard_abyssPrivate(card: HTMLElement, statusId: string): void {
     const projects = this.plugin_abyssPrivate.settings.projects;
     const statuses = projects.statuses;
-    const status = statuses[idx];
+    const status = statuses.find((candidate) => candidate.id === statusId);
     if (status == null) return;
 
     new Setting(card).setName('Name').addText((text) => {
@@ -1319,10 +1368,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
       }),
     );
 
-    this.renderDeleteProjectStatusSetting_abyssPrivate(card, idx);
+    this.renderDeleteProjectStatusSetting_abyssPrivate(card, status.id);
   }
 
-  private renderDeleteProjectStatusSetting_abyssPrivate(card: HTMLElement, idx: number): void {
+  private renderDeleteProjectStatusSetting_abyssPrivate(card: HTMLElement, statusId: string): void {
     const projects = this.plugin_abyssPrivate.settings.projects;
     const statuses = projects.statuses;
     new Setting(card).addButton((b) =>
@@ -1331,7 +1380,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .setClass('mod-warning')
         .setDisabled(statuses.length <= 1)
         .onClick(async () => {
-          const removed = statuses.splice(idx, 1)[0];
+          const index = statuses.findIndex((candidate) => candidate.id === statusId);
+          const removed = index < 0 ? undefined : statuses.splice(index, 1)[0];
           if (removed != null) {
             this.expandedCards_abyssPrivate.delete(removed.id);
             if (projects.defaultStatusId === removed.id) {
@@ -1434,24 +1484,33 @@ export class CalendarSettingsTab extends PluginSettingTab {
     if (def == null || def.type === targetType) return;
     if (def.core) return; // core cards cannot leave their own type group
     def.type = targetType;
-    runAsyncAction(this.persistAndRerenderStatuses_abyssPrivate());
+    this.plugin_abyssPrivate.rebuildTaskStatusSemantics();
+    this.render_abyssPrivate();
+    saveSettingsDraft({
+      action: 'move task status',
+      save: () => this.persistStatuses_abyssPrivate(),
+    });
   }
 
   private reorderStatusWithinType_abyssPrivate(
     type: TaskStatusType,
-    from: number,
-    to: number,
-  ): void {
+    draggedId: string,
+    targetId: string,
+  ): boolean {
     const statuses = this.plugin_abyssPrivate.settings.taskStatuses;
-    const groupIndices = statuses
-      .map((s, i) => ({ s, i }))
-      .filter((x) => x.s.type === type)
-      .map((x) => x.i);
-    const fromAbs = groupIndices[from];
-    const toAbs = groupIndices[to];
-    if (fromAbs === undefined || toAbs === undefined) return;
-    this.moveItem_abyssPrivate(statuses, fromAbs, toAbs);
-    runAsyncAction(this.persistAndRerenderStatuses_abyssPrivate());
+    if (
+      statuses.find((status) => status.id === draggedId)?.type !== type ||
+      statuses.find((status) => status.id === targetId)?.type !== type
+    ) {
+      return false;
+    }
+    const reordered = this.reorderItems_abyssPrivate(statuses, draggedId, targetId, [
+      (status) => status.id,
+      () => this.persistStatuses_abyssPrivate(),
+      'reorder task statuses',
+    ]);
+    if (reordered) this.plugin_abyssPrivate.rebuildTaskStatusSemantics();
+    return reordered;
   }
 
   private renderTaskStatusesSettings_abyssPrivate(containerEl: HTMLElement): void {
@@ -1473,19 +1532,14 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
       groupEl.addEventListener('drop', (e) => {
         e.preventDefault();
-        const raw = e.dataTransfer?.getData('text/plain');
-        if (raw === undefined || raw === '') return;
-        let payload: { id: string; groupKey?: string };
-        try {
-          payload = JSON.parse(raw) as typeof payload;
-        } catch {
-          return;
-        }
+        const payload = parseCardDragPayload(e.dataTransfer?.getData('text/plain'));
+        if (payload?.listKey !== 'task-statuses') return;
         if (payload.groupKey === type) return; // handled by a card's own drop listener
         this.moveStatusToGroup_abyssPrivate(payload.id, type);
       });
 
       this.renderCardList_abyssPrivate(groupEl, items, {
+        listKey: 'task-statuses',
         id: (s) => s.id,
         title: (s) => s.name,
         badge: (s) => s.symbol,
@@ -1498,12 +1552,11 @@ export class CalendarSettingsTab extends PluginSettingTab {
         onCrossGroupDrop: (id, targetType) => {
           this.moveStatusToGroup_abyssPrivate(id, targetType as TaskStatusType);
         },
-        body: (bodyEl, idx) => {
-          this.renderTaskStatusCardBody_abyssPrivate(bodyEl, items, idx);
+        body: (bodyEl, item) => {
+          this.renderTaskStatusCardBody_abyssPrivate(bodyEl, item);
         },
-        onReorder: (from, to) => {
-          this.reorderStatusWithinType_abyssPrivate(type, from, to);
-        },
+        onReorder: (draggedId, targetId) =>
+          this.reorderStatusWithinType_abyssPrivate(type, draggedId, targetId),
       });
     }
 
@@ -1551,13 +1604,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     });
   }
 
-  private renderTaskStatusCardBody_abyssPrivate(
-    bodyEl: HTMLElement,
-    groupItems: TaskStatusDef[],
-    idx: number,
-  ): void {
-    const def = groupItems[idx];
-    if (def == null) return;
+  private renderTaskStatusCardBody_abyssPrivate(bodyEl: HTMLElement, def: TaskStatusDef): void {
     const statuses = this.plugin_abyssPrivate.settings.taskStatuses;
     let updatePreview: () => void = () => {};
     const refreshPreview = (): void => {

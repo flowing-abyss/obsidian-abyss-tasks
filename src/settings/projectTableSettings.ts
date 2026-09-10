@@ -7,6 +7,7 @@ import type {
 } from '../projects/projectFields';
 import { isReservedProjectProperty } from '../projects/projectFields';
 import { ProjectPropertySuggest } from '../ui/ProjectPropertySuggest';
+import { saveSettingsDraft } from './settingsSaveFailure';
 import type { ProjectsSettings } from './types';
 
 export interface RenderProjectTableSettingsOptions {
@@ -153,8 +154,10 @@ interface ColumnRowContext {
   readonly column: ProjectColumn;
   readonly index: number;
   readonly options: RenderProjectTableSettingsOptions;
-  readonly persist: (refresh?: boolean | 'add-property') => void;
+  readonly persist: ProjectTablePersist;
 }
+
+type ProjectTablePersist = (refresh?: boolean | 'add-property') => void;
 
 function createRemoveColumnAction(row: HTMLElement, label: string, onClick: () => void): void {
   const button = row.createEl('button', {
@@ -183,7 +186,7 @@ function wireColumnDrag(
   row: HTMLElement,
   column: ProjectColumn,
   options: RenderProjectTableSettingsOptions,
-  persist: (refresh?: boolean | 'add-property') => void,
+  persist: ProjectTablePersist,
 ): void {
   const order = row.createSpan({ cls: 'abyss-project-column-order' });
   const grip = order.createSpan({ cls: 'abyss-settings-card-grip' });
@@ -232,7 +235,8 @@ function wireColumnDrag(
       draggedId !== undefined &&
       moveProjectColumn(options.projects.table, draggedId, column.id)
     ) {
-      persist(true);
+      persist();
+      options.refresh();
     }
   });
 }
@@ -292,7 +296,10 @@ function renderColumnRow(context: ColumnRowContext): void {
 
   if (column.id.startsWith('property:')) {
     createRemoveColumnAction(row, `Remove ${source} column`, () => {
-      if (removeProjectColumn(options.projects.table, column.id)) persist(true);
+      if (removeProjectColumn(options.projects.table, column.id)) {
+        persist();
+        options.refresh();
+      }
     });
   } else {
     row.createSpan({
@@ -354,7 +361,7 @@ interface AddPropertyContext {
   readonly feedback: HTMLElement;
   readonly available: readonly ProjectPropertyInfo[];
   readonly options: RenderProjectTableSettingsOptions;
-  readonly persist: (refresh?: boolean | 'add-property') => void;
+  readonly persist: ProjectTablePersist;
 }
 
 function renderAddPropertyControl(context: AddPropertyContext): () => void {
@@ -379,7 +386,8 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
     const result = addProjectPropertyColumn(options.projects, available, property);
     if (result === 'added') {
       input.value = '';
-      persist('add-property');
+      persist();
+      options.refresh('add-property');
     } else if (result === 'duplicate') {
       feedback.setText('That property is already a table column.');
     } else if (result === 'reserved') {
@@ -430,31 +438,23 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
     cls: 'abyss-project-table-settings-error',
     attr: { role: 'status', 'aria-live': 'polite' },
   });
-  const persist = (
-    save: () => Promise<void>,
-    refresh: boolean | 'add-property' = false,
-    showFailureNotice = false,
-  ): void => {
+  const persist = (save: () => Promise<void>, refresh: boolean | 'add-property' = false): void => {
     feedback.empty();
-    void save().then(
-      () => {
+    saveSettingsDraft({
+      action: 'save project table settings',
+      save: async () => {
+        await save();
         if (refresh !== false) {
           options.refresh(refresh === 'add-property' ? refresh : undefined);
         }
       },
-      (error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        feedback.setText(`Could not save project table settings: ${message}`);
-        console.error('[abyss-tasks] Could not save project table settings', error);
-        if (showFailureNotice) new Notice(`Could not save project table settings: ${message}`);
-      },
-    );
+    });
   };
 
-  const persistStatic = (refresh = false): void => {
-    persist(options.saveStatic, refresh, true);
+  const persistStatic: ProjectTablePersist = (refresh = false): void => {
+    persist(options.saveStatic, refresh);
   };
-  const persistViewState = (refresh: boolean | 'add-property' = false): void => {
+  const persistViewState: ProjectTablePersist = (refresh = false): void => {
     persist(options.saveViewState, refresh);
   };
 

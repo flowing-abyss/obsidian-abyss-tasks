@@ -3272,6 +3272,16 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 /* Settings card */
 
 /* Settings sections — collapsible accordion */
+.abyss-settings-tab {
+  overflow-anchor: none;
+}
+
+.abyss-settings-tab .setting-item-control > select:not([aria-hidden='true']) {
+  inline-size: 10rem;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+
 .abyss-settings-section {
   border: 1px solid var(--background-modifier-border);
   border-left: 3px solid var(--interactive-accent);

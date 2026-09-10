@@ -314,18 +314,15 @@ describe('renderProjectTableSettings', () => {
       expect(saveStatic).toHaveBeenCalledOnce();
       expect(saveViewState).not.toHaveBeenCalled();
       expect(Notice).toHaveBeenCalledOnce();
-      expect(vi.mocked(Notice).mock.calls[0]?.[0]).toBe(
-        'Could not save project table settings: disk full',
-      );
-      expect(container.querySelector('.abyss-project-table-settings-error')?.textContent).toBe(
-        'Could not save project table settings: disk full',
+      expect((vi.mocked(Notice).mock.calls[0]?.[0] as DocumentFragment).textContent).toContain(
+        'Could not save project table settings: disk full. Changes are kept in this session.',
       );
     } finally {
       dropdownSpy.mockRestore();
     }
   });
 
-  it('leaves state-save Notice ownership at the plugin boundary', async () => {
+  it('offers a retry for a failed view-state save', async () => {
     const projects = buildDefaultProjectsSettings();
     const saveViewState = vi.fn().mockRejectedValue(new Error('state unavailable'));
     const container = document.body.createDiv();
@@ -346,7 +343,42 @@ describe('renderProjectTableSettings', () => {
     await settle();
 
     expect(saveViewState).toHaveBeenCalledOnce();
-    expect(Notice).not.toHaveBeenCalled();
+    expect(Notice).toHaveBeenCalledOnce();
+    expect(
+      (vi.mocked(Notice).mock.calls[0]?.[0] as DocumentFragment).querySelector('button'),
+    ).not.toBeNull();
+  });
+
+  it('keeps a failed column addition once and retries the current draft', async () => {
+    const projects = buildDefaultProjectsSettings();
+    const saveViewState = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('state unavailable'))
+      .mockResolvedValue(undefined);
+    const container = document.body.createDiv();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog(),
+      saveStatic: vi.fn().mockResolvedValue(undefined),
+      saveViewState,
+      refresh: vi.fn(),
+    });
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
+    );
+    input.value = 'Budget';
+
+    expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-column-add')).click();
+    await settle();
+
+    expect(projects.table.columns.filter(({ id }) => id === 'property:Budget')).toHaveLength(1);
+    const noticeContent = vi.mocked(Notice).mock.calls[0]?.[0] as DocumentFragment;
+    expectDefined(noticeContent.querySelector('button')).click();
+    await settle();
+    expect(saveViewState).toHaveBeenCalledTimes(2);
+    expect(projects.table.columns.filter(({ id }) => id === 'property:Budget')).toHaveLength(1);
   });
 
   it('changes a display label without changing the custom property source key', async () => {
