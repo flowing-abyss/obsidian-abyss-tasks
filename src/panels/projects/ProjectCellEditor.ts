@@ -1,10 +1,15 @@
 import { Notice, type App } from 'obsidian';
-import { linkValueLabel } from '../../markdown/links';
+import { exactLinkToken } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
 import { isProjectEditValidationError } from '../../projects/projectEditError';
 import type { ProjectFieldCatalogItem, ProjectPropertyType } from '../../projects/projectFields';
+import { projectTableLinkTargetParts } from '../../projects/projectTableLinkTarget';
 import type { ProjectStatus } from '../../settings/types';
 import { ProjectPropertySuggest } from '../../ui/ProjectPropertySuggest';
+import {
+  projectPropertyValuePresentation,
+  projectTagLabel,
+} from './projectPropertyValuePresentation';
 
 export type ProjectCellEditorResult = 'committed' | 'cancelled';
 export type ProjectCellEditorNavigation =
@@ -42,6 +47,7 @@ export interface ProjectCellEditorHandle {
 interface EditorControl {
   readonly focusTarget?: HTMLElement;
   readonly suggest?: ProjectPropertySuggest;
+  readonly openSuggestionOnFocus?: boolean;
   value(): unknown;
 }
 
@@ -108,6 +114,9 @@ function suggestOptions(
   input: HTMLInputElement,
   suggestion: {
     readonly values: readonly string[];
+    readonly suggestions?: ConstructorParameters<typeof ProjectPropertySuggest>[0]['suggestions'];
+    readonly exclude?: (value: string) => boolean;
+    readonly appearance?: 'tag';
     readonly onPick: (value: string) => void;
     readonly browseOnOpen?: boolean;
   },
@@ -116,7 +125,12 @@ function suggestOptions(
   return {
     app: options.app,
     input,
-    ...suggestion,
+    values: suggestion.values,
+    onPick: suggestion.onPick,
+    ...(suggestion.suggestions === undefined ? {} : { suggestions: suggestion.suggestions }),
+    ...(suggestion.exclude === undefined ? {} : { exclude: suggestion.exclude }),
+    ...(suggestion.appearance === undefined ? {} : { appearance: suggestion.appearance }),
+    ...(suggestion.browseOnOpen === undefined ? {} : { browseOnOpen: suggestion.browseOnOpen }),
     onEscape: () => {
       events.cancel();
     },
@@ -186,6 +200,45 @@ function initialListValues(value: unknown): unknown[] {
   return value === undefined || value === null || value === '' ? [] : [value];
 }
 
+function notifyChanged(events: EditorEvents): void {
+  events.changed();
+}
+
+function listDraftValue(values: readonly unknown[], input: HTMLInputElement): unknown[] {
+  const pending = input.value.trim();
+  return pending.length === 0 ? [...values] : [...values, pending];
+}
+
+function equivalentListValue(
+  options: ProjectCellEditorOptions,
+  existing: unknown,
+  candidate: string,
+): boolean {
+  const raw = String(existing);
+  if (raw.toLocaleLowerCase() === candidate.toLocaleLowerCase()) return true;
+  const existingLink = exactLinkToken(raw);
+  const candidateLink = exactLinkToken(candidate);
+  if (existingLink === undefined || candidateLink === undefined) return false;
+  const existingParts = projectTableLinkTargetParts(existingLink);
+  const candidateParts = projectTableLinkTargetParts(candidateLink);
+  if (existingParts.externalTarget !== undefined || candidateParts.externalTarget !== undefined)
+    return false;
+  const sourcePath = options.sourcePath ?? '';
+  const existingFile = options.app.metadataCache.getFirstLinkpathDest(
+    existingParts.resolverTarget,
+    sourcePath,
+  );
+  const candidateFile = options.app.metadataCache.getFirstLinkpathDest(
+    candidateParts.resolverTarget,
+    sourcePath,
+  );
+  return (
+    existingFile !== null &&
+    candidateFile !== null &&
+    existingFile.path.toLocaleLowerCase() === candidateFile.path.toLocaleLowerCase()
+  );
+}
+
 function listControl(
   options: ProjectCellEditorOptions,
   root: HTMLElement,
@@ -200,20 +253,21 @@ function listControl(
     attr: { type: 'text', 'aria-label': `Add ${options.field.label}`, autocomplete: 'off' },
   });
   input.addEventListener('input', () => {
-    events.changed();
+    notifyChanged(events);
   });
-  const addButton = inputRow.createEl('button', {
-    cls: 'abyss-project-list-add',
-    text: 'Add',
-    attr: { type: 'button' },
-  });
-
   const renderValues = (): void => {
     list.empty();
     values.forEach((value, index) => {
-      const item = list.createDiv({ cls: 'abyss-project-list-value' });
-      const displayed = linkValueLabel(String(value));
-      item.createSpan({ cls: 'abyss-project-list-value-text', text: displayed });
+      const item = list.createDiv({
+        cls: `abyss-project-list-value${options.field.type === 'tags' ? ' is-tag' : ''}`,
+      });
+      const presentation = projectPropertyValuePresentation(String(value));
+      const displayed =
+        options.field.type === 'tags' ? projectTagLabel(presentation.label) : presentation.label;
+      item.createSpan({
+        cls: `abyss-project-list-value-text${presentation.link === undefined ? '' : ' is-link'}${options.field.type === 'tags' ? ' tag' : ''}`,
+        text: displayed,
+      });
       const remove = item.createEl('button', {
         cls: 'abyss-project-list-remove',
         text: '×',
@@ -238,11 +292,7 @@ function listControl(
     input.focus();
     return true;
   };
-  addButton.addEventListener('click', () => {
-    if (addPending()) events.commit(false);
-  });
   renderValues();
-
   const suggestions =
     options.field.property === undefined ? [] : options.catalog.values(options.field.property);
   const suggest = new ProjectPropertySuggest(
@@ -251,6 +301,9 @@ function listControl(
       input,
       {
         values: suggestions,
+        ...(options.field.type === 'tags' ? { appearance: 'tag' as const } : {}),
+        exclude: (candidate) =>
+          values.some((value) => equivalentListValue(options, value, candidate)),
         onPick: (value) => {
           if (addPending(value)) events.commit(false);
         },
@@ -261,10 +314,7 @@ function listControl(
   return {
     focusTarget: input,
     suggest,
-    value: () => {
-      const pending = input.value.trim();
-      return pending.length === 0 ? [...values] : [...values, pending];
-    },
+    value: () => listDraftValue(values, input),
   };
 }
 
@@ -399,25 +449,45 @@ function statusControl(
   root: HTMLElement,
   events: EditorEvents,
 ): EditorControl {
-  const select = root.createEl('select', {
+  const input = root.createEl('input', {
     cls: 'abyss-project-editor-status',
-    attr: { 'aria-label': options.field.label },
+    attr: { type: 'text', readonly: '', 'aria-label': options.field.label, autocomplete: 'off' },
   });
-  select.createEl('option', { value: '', text: 'No status' });
-  const current = typeof options.value === 'string' ? options.value : '';
-  if (current.length > 0 && !(options.statuses ?? []).some(({ name }) => name === current)) {
-    select.createEl('option', { value: current, text: current });
-  }
-  for (const status of options.statuses ?? []) {
-    const option = select.createEl('option', { value: status.name, text: status.name });
-    if (status.color !== undefined) option.style.color = status.color;
-  }
-  select.value = current;
-  select.addEventListener('change', () => {
-    events.changed();
-    events.commit(true);
-  });
-  return { focusTarget: select, value: () => select.value };
+  let current = typeof options.value === 'string' ? options.value : '';
+  input.value = current.length === 0 ? 'No status' : current;
+  const configured = options.statuses ?? [];
+  const suggestions = [
+    { kind: 'value' as const, value: '', label: 'No status', appearance: 'status' as const },
+    ...(current.length > 0 && !configured.some(({ name }) => name === current)
+      ? [{ kind: 'value' as const, value: current, label: current, appearance: 'status' as const }]
+      : []),
+    ...configured.map(({ name, color }) => ({
+      kind: 'value' as const,
+      value: name,
+      label: name,
+      appearance: 'status' as const,
+      ...(color === undefined ? {} : { color }),
+    })),
+  ];
+  const suggest = new ProjectPropertySuggest(
+    suggestOptions(
+      options,
+      input,
+      {
+        values: [],
+        suggestions,
+        browseOnOpen: true,
+        onPick: (value) => {
+          current = value;
+          input.value = value.length === 0 ? 'No status' : value;
+          events.changed();
+          events.commit(true);
+        },
+      },
+      events,
+    ),
+  );
+  return { focusTarget: input, suggest, openSuggestionOnFocus: true, value: () => current };
 }
 
 function buildControl(
@@ -500,6 +570,9 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
 
   focus(): void {
     this.control_abyssPrivate?.focusTarget?.focus({ preventScroll: true });
+    if (this.control_abyssPrivate?.openSuggestionOnFocus === true) {
+      this.control_abyssPrivate.suggest?.open();
+    }
   }
 
   closeSuggestion(): void {

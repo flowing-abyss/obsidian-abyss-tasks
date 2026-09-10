@@ -9,6 +9,7 @@ export interface RenderTaskTextOptions {
   component: Component;
   onEditLink?: ((occurrenceIndex: number, token: LinkToken) => void) | undefined;
   beforeOpenLink?: (() => Promise<boolean>) | undefined;
+  exactLinkLabel?: string | undefined;
 }
 
 export function renderTaskText(
@@ -46,6 +47,9 @@ export function renderTaskText(
 
 function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTextOptions): void {
   const anchors = Array.from(holder.querySelectorAll('a'));
+  if (opts.exactLinkLabel !== undefined && anchors.length === 1) {
+    anchors[0]?.setText(opts.exactLinkLabel);
+  }
   // Link click navigates; never bubble to the card/row handler. Obsidian's global
   // internal-link handler is bypassed by stopPropagation, so open the note ourselves.
   anchors.forEach((a) => {

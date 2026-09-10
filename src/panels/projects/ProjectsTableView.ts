@@ -414,6 +414,7 @@ export class ProjectsTableView {
     { readonly run: () => void; readonly replace?: () => void } | undefined;
   private finishingEditor_abyssPrivate: Promise<void> | undefined;
   private readonly resizeObserver_abyssPrivate: ResizeObserver | undefined;
+  private nativeMenuOpen_abyssPrivate = false;
 
   constructor(
     host: HTMLElement,
@@ -469,6 +470,7 @@ export class ProjectsTableView {
     this.tableHost_abyssPrivate = this.scroll_abyssPrivate.createDiv({
       cls: 'abyss-project-table-host',
     });
+    this.listenForDocumentFocus_abyssPrivate();
     const resizeObserver =
       this.scroll_abyssPrivate.ownerDocument.defaultView === null
         ? undefined
@@ -492,6 +494,14 @@ export class ProjectsTableView {
       });
     });
     this.count_abyssPrivate = footer.createSpan({ cls: 'abyss-project-table-count' });
+  }
+
+  private listenForDocumentFocus_abyssPrivate(): void {
+    this.root_abyssPrivate.ownerDocument.addEventListener(
+      'focusin',
+      this.handleDocumentFocusIn_abyssPrivate,
+      true,
+    );
   }
 
   private resetViewState_abyssPrivate(): void {
@@ -551,6 +561,11 @@ export class ProjectsTableView {
     this.ownerWindow_abyssPrivate?.removeEventListener(
       'keydown',
       this.handleOwnerWindowKeydown_abyssPrivate,
+      true,
+    );
+    this.root_abyssPrivate.ownerDocument.removeEventListener(
+      'focusin',
+      this.handleDocumentFocusIn_abyssPrivate,
       true,
     );
     this.markdown_abyssPrivate.unload();
@@ -1387,14 +1402,6 @@ export class ProjectsTableView {
             description: {
               field: effectiveDescription.field,
               show: this.context_abyssPrivate.settings.projects.table.showDescription,
-              onEdit: (anchor: HTMLElement) => {
-                this.editDescription_abyssPrivate(
-                  rendered,
-                  effectiveDescription.field,
-                  effectiveDescription.ownedClear,
-                  anchor,
-                );
-              },
             },
           }),
     });
@@ -1441,6 +1448,20 @@ export class ProjectsTableView {
         .onClick(() => {
           this.editDescription_abyssPrivate(rendered, effective.field, effective.ownedClear);
         });
+    });
+    this.nativeMenuOpen_abyssPrivate = true;
+    this.syncSelection_abyssPrivate();
+    menu.onHide(() => {
+      this.nativeMenuOpen_abyssPrivate = false;
+      const active = rendered.element.ownerDocument.activeElement;
+      if (
+        active === rendered.element.ownerDocument.body ||
+        (active instanceof HTMLElement && active.contains(this.root_abyssPrivate))
+      ) {
+        this.focusSelectionCell_abyssPrivate(rendered.identity);
+      } else {
+        this.syncSelection_abyssPrivate();
+      }
     });
     if (event instanceof MouseEvent) menu.showAtMouseEvent(event);
     else {
@@ -1505,8 +1526,9 @@ export class ProjectsTableView {
       }
     });
     cell.addEventListener('focus', () => {
-      if (this.selection_abyssPrivate.focus === undefined)
+      if (!this.sameCell_abyssPrivate(this.selection_abyssPrivate.focus, rendered.identity))
         this.selectCell_abyssPrivate(rendered, false);
+      else this.syncSelection_abyssPrivate();
     });
     cell.addEventListener('dblclick', (event) => {
       if (
@@ -1528,9 +1550,13 @@ export class ProjectsTableView {
       )
         return;
       if (field.type === 'name') {
-        if (!this.showDescriptionMenu_abyssPrivate(rendered, event)) return;
+        const description = findProjectFieldById(this.fields_abyssPrivate, 'description');
+        if (description === undefined) return;
+        const effective = this.effectiveField_abyssPrivate(rendered.project, description);
+        if (!editableField(effective.field)) return;
         event.preventDefault();
         event.stopPropagation();
+        this.editDescription_abyssPrivate(rendered, effective.field, effective.ownedClear);
         return;
       }
       if (!editableField(field)) return;
@@ -1573,15 +1599,15 @@ export class ProjectsTableView {
 
   private selectCell_abyssPrivate(cell: RenderedCellContext, extend: boolean): void {
     this.selection_abyssPrivate.select(cell.identity, this.selectableCells_abyssPrivate(), extend);
-    this.syncSelection_abyssPrivate();
     cell.element.focus({ preventScroll: true });
+    this.syncSelection_abyssPrivate();
   }
 
   private focusSelectionCell_abyssPrivate(identity: ProjectTableSelectableCell): void {
-    this.syncSelection_abyssPrivate();
     const rendered = this.renderedCell_abyssPrivate(identity);
     if (rendered === undefined) return;
     rendered.element.focus({ preventScroll: true });
+    this.syncSelection_abyssPrivate();
     this.revealSelectionCell_abyssPrivate(rendered.element);
   }
 
@@ -1592,13 +1618,16 @@ export class ProjectsTableView {
         .map(({ occurrenceId, columnId }) => `${occurrenceId}\u0000${columnId}`),
     );
     const focus = this.selection_abyssPrivate.focus;
+    const active = this.tableHost_abyssPrivate.ownerDocument.activeElement;
     for (const cell of this.renderedCells_abyssPrivate) {
       const key = `${cell.identity.occurrenceId}\u0000${cell.identity.columnId}`;
       cell.element.toggleClass('is-selected', selected.has(key));
       cell.element.toggleClass(
         'is-selection-focus',
         focus?.occurrenceId === cell.identity.occurrenceId &&
-          focus.columnId === cell.identity.columnId,
+          focus.columnId === cell.identity.columnId &&
+          active === cell.element &&
+          !this.nativeMenuOpen_abyssPrivate,
       );
       cell.element.setAttribute('aria-selected', String(selected.has(key)));
     }
@@ -1682,10 +1711,31 @@ export class ProjectsTableView {
   }
 
   private ensureSelectionFocus_abyssPrivate(cell: RenderedCellContext): void {
-    if (this.selection_abyssPrivate.focus === undefined) {
+    if (!this.sameCell_abyssPrivate(this.selection_abyssPrivate.focus, cell.identity)) {
       this.selection_abyssPrivate.select(cell.identity, this.selectableCells_abyssPrivate(), false);
     }
   }
+
+  private sameCell_abyssPrivate(
+    left: ProjectTableSelectableCell | undefined,
+    right: ProjectTableSelectableCell,
+  ): boolean {
+    return left?.occurrenceId === right.occurrenceId && left.columnId === right.columnId;
+  }
+
+  private readonly handleDocumentFocusIn_abyssPrivate = (event: FocusEvent): void => {
+    const cell = this.keydownCell_abyssPrivate(event.target);
+    if (cell !== undefined && !this.isTextEditingTarget_abyssPrivate(event.target)) {
+      if (!this.sameCell_abyssPrivate(this.selection_abyssPrivate.focus, cell.identity)) {
+        this.selection_abyssPrivate.select(
+          cell.identity,
+          this.selectableCells_abyssPrivate(),
+          false,
+        );
+      }
+    }
+    this.syncSelection_abyssPrivate();
+  };
 
   private handleHistoryShortcut_abyssPrivate(event: KeyboardEvent): boolean {
     if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'z') {
@@ -2438,8 +2488,9 @@ export class ProjectsTableView {
   ): void {
     const cells = this.selectableCells_abyssPrivate();
     if (navigation === 'preserve-focus') {
-      if (deliberateFocus === undefined) return;
-      const target = this.currentProjectionCell_abyssPrivate(deliberateFocus, cells);
+      const requested = deliberateFocus ?? edited;
+      if (requested === undefined) return;
+      const target = this.currentProjectionCell_abyssPrivate(requested, cells);
       if (target === undefined) return;
       this.selection_abyssPrivate.select(target, cells, false);
       this.focusSelectionCell_abyssPrivate(target);
@@ -2487,6 +2538,7 @@ export class ProjectsTableView {
     if (!(activeElement instanceof HTMLElement)) return false;
     if (!activeElement.isConnected) return false;
     if (activeElement === this.tableHost_abyssPrivate.ownerDocument.body) return false;
+    if (activeElement.contains(this.root_abyssPrivate)) return false;
     if (activeCell !== undefined) return false;
     return !editorCell.contains(activeElement);
   }

@@ -307,7 +307,7 @@ describe('mountProjectCellEditor', () => {
     expect(save).toHaveBeenCalledWith('[Anna](People/Anna-Jones.md)');
   });
 
-  it('adds and removes list values without coercing untouched numeric elements', async () => {
+  it('commits a pending list value with Enter without an Add control or coercion', async () => {
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
     mountProjectCellEditor({
@@ -322,12 +322,13 @@ describe('mountProjectCellEditor', () => {
     const input = expectDefined(
       container.querySelector<HTMLInputElement>('.abyss-project-list-input'),
     );
+    expect(container.querySelector('.abyss-project-list-add')).toBeNull();
     input.value = 'Beta';
-    expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-list-add')).click();
+    keydown(input, 'Enter');
     await settle();
 
     expect(save).toHaveBeenCalledWith([7, 'Alpha', 'Beta']);
-    expect(input.isConnected).toBe(true);
+    expect(input.isConnected).toBe(false);
   });
 
   it('keeps raw list links while showing readable chip labels in one entry band', async () => {
@@ -345,13 +346,81 @@ describe('mountProjectCellEditor', () => {
     });
 
     const band = expectDefined(container.querySelector<HTMLElement>('.abyss-project-list-control'));
-    expect(band.querySelector('.abyss-project-list-value')?.textContent).toContain('Anna');
+    const displayed = expectDefined(
+      band.querySelector<HTMLElement>('.abyss-project-list-value-text'),
+    );
+    expect(displayed.textContent).toContain('Anna');
+    expect(displayed.classList.contains('is-link')).toBe(true);
     expect(band.querySelector('.abyss-project-list-value')?.textContent).not.toContain(
       'People/Anna Smith',
     );
     expect(band.querySelector('.abyss-project-list-entry')).not.toBeNull();
     await expect(handle.commit()).resolves.toBe(true);
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it('excludes selected equivalent links and restores them after removal', () => {
+    const container = document.body.createDiv();
+    const app = new App();
+    vi.spyOn(app.metadataCache, 'getFirstLinkpathDest').mockImplementation((target) => {
+      if (target === 'People/Anna Smith' || target === 'People/Anna Smith.md') {
+        const candidate: unknown = Object.assign(Object.create(TFile.prototype), {
+          path: 'People/Anna Smith.md',
+        });
+        return candidate instanceof TFile ? candidate : null;
+      }
+      if (target === 'Partners/Anna') {
+        const candidate: unknown = Object.assign(Object.create(TFile.prototype), {
+          path: 'Partners/Anna.md',
+        });
+        return candidate instanceof TFile ? candidate : null;
+      }
+      return null;
+    });
+    const handle = mountProjectCellEditor({
+      app,
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: ['[[People/Anna Smith|Anna]]'],
+      catalog: catalog(
+        ['[[People/Anna Smith|Anna]]', '[Anna](People/Anna%20Smith.md)', '[[Partners/Anna|Anna]]'],
+        'list',
+      ),
+      sourcePath: 'Projects/Current.md',
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: vi.fn(),
+    });
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    const suggest = expectDefined(internals.control_abyssPrivate.suggest);
+
+    expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual([
+      '[[Partners/Anna|Anna]]',
+    ]);
+    expectDefined(container.querySelector<HTMLButtonElement>('[aria-label="Remove Anna"]')).click();
+    expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual([
+      '[[People/Anna Smith|Anna]]',
+      '[Anna](People/Anna%20Smith.md)',
+      '[[Partners/Anna|Anna]]',
+    ]);
+  });
+
+  it('uses native tag styling without a generic outer chip background', () => {
+    const container = document.body.createDiv();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:tags', property: 'tags', label: 'Tags', type: 'tags' },
+      value: ['work'],
+      catalog: catalog([], 'tags'),
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: vi.fn(),
+    });
+
+    const item = expectDefined(container.querySelector<HTMLElement>('.abyss-project-list-value'));
+    expect(item.classList.contains('is-tag')).toBe(true);
+    expect(item.querySelector('.tag')?.textContent).toBe('#work');
   });
 
   it('keeps an editor-owned list removal alive through transient blur', async () => {
@@ -391,7 +460,7 @@ describe('mountProjectCellEditor', () => {
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
     const close = vi.fn();
-    mountProjectCellEditor({
+    const handle = mountProjectCellEditor({
       app: new App(),
       container,
       field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
@@ -403,8 +472,14 @@ describe('mountProjectCellEditor', () => {
     const input = expectDefined(
       container.querySelector<HTMLInputElement>('.abyss-project-list-input'),
     );
-    input.value = 'Mina';
-    expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-list-add')).click();
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    const suggest = expectDefined(internals.control_abyssPrivate.suggest);
+    suggest.selectSuggestion(
+      expectDefined(suggest.getSuggestions('Mina').find(({ value }) => value === 'Mina')),
+      new KeyboardEvent('keydown', { key: 'Enter' }),
+    );
     await settle();
     input.dispatchEvent(
       new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body }),
@@ -435,13 +510,16 @@ describe('mountProjectCellEditor', () => {
     const input = expectDefined(
       container.querySelector<HTMLInputElement>('.abyss-project-list-input'),
     );
-    input.value = 'Mina';
-    expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-list-add')).click();
-    await settle();
     const internals = handle as unknown as {
       readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
     };
-    expectDefined(internals.control_abyssPrivate.suggest).open();
+    const suggest = expectDefined(internals.control_abyssPrivate.suggest);
+    suggest.selectSuggestion(
+      expectDefined(suggest.getSuggestions('Mina').find(({ value }) => value === 'Mina')),
+      new KeyboardEvent('keydown', { key: 'Enter' }),
+    );
+    await settle();
+    suggest.open();
     input.value = 'Anna';
     input.dispatchEvent(new InputEvent('input', { bubbles: true }));
     const escapeHandler = expectDefined(
@@ -524,6 +602,48 @@ describe('mountProjectCellEditor', () => {
     expect(onClose).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
   });
 
+  it('commits a pending freeform list value on blur and discards it on Escape', async () => {
+    const blurContainer = document.body.createDiv();
+    const blurSave = vi.fn().mockResolvedValue(undefined);
+    mountProjectCellEditor({
+      app: new App(),
+      container: blurContainer,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: ['Alpha'],
+      catalog: catalog([], 'list'),
+      save: blurSave,
+      onClose: vi.fn(),
+    });
+    const blurInput = expectDefined(
+      blurContainer.querySelector<HTMLInputElement>('.abyss-project-list-input'),
+    );
+    blurInput.value = 'Beta';
+    blurInput.dispatchEvent(
+      new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body }),
+    );
+    await settle();
+    expect(blurSave).toHaveBeenCalledWith(['Alpha', 'Beta']);
+
+    const escapeContainer = document.body.createDiv();
+    const escapeSave = vi.fn().mockResolvedValue(undefined);
+    mountProjectCellEditor({
+      app: new App(),
+      container: escapeContainer,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: ['Alpha'],
+      catalog: catalog([], 'list'),
+      save: escapeSave,
+      onClose: vi.fn(),
+    });
+    const escapeInput = expectDefined(
+      escapeContainer.querySelector<HTMLInputElement>('.abyss-project-list-input'),
+    );
+    escapeInput.value = 'Beta';
+    keydown(escapeInput, 'Escape');
+    await settle();
+    expect(escapeSave).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['checkbox', 'input[type="checkbox"]', true, true],
     ['date', 'input[type="date"]', '2026-09-12', '2026-09-12'],
@@ -554,10 +674,10 @@ describe('mountProjectCellEditor', () => {
     },
   );
 
-  it('uses and saves literal configured status names while preserving an unknown value', async () => {
+  it('opens and saves colored configured status choices while preserving an unknown value', async () => {
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
-    mountProjectCellEditor({
+    const handle = mountProjectCellEditor({
       app: new App(),
       container,
       field: { id: 'status', label: 'Status', type: 'status' },
@@ -580,13 +700,29 @@ describe('mountProjectCellEditor', () => {
       save,
       onClose: vi.fn(),
     });
-    const select = expectDefined(container.querySelector<HTMLSelectElement>('select'));
-    const done = expectDefined(select.querySelector<HTMLOptionElement>('option[value="Shipped"]'));
-    expect(done.textContent).toBe('Shipped');
-    expect(done.style.color).toBe('rgb(101, 67, 33)');
-    expect(select.value).toBe('Waiting on vendor');
-    select.value = 'Shipped';
-    select.dispatchEvent(new Event('change', { bubbles: true }));
+    const input = expectDefined(container.querySelector<HTMLInputElement>('input'));
+    expect(input.value).toBe('Waiting on vendor');
+    handle.focus();
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    const suggest = expectDefined(internals.control_abyssPrivate.suggest);
+    expect((suggest as unknown as { readonly isOpen: boolean }).isOpen).toBe(true);
+    expect(suggest.getSuggestions('').map(({ label }) => label)).toEqual([
+      'No status',
+      'Waiting on vendor',
+      'In flight',
+      'Shipped',
+    ]);
+    const shipped = expectDefined(
+      suggest.getSuggestions('').find(({ value }) => value === 'Shipped'),
+    );
+    const rendered = document.body.createDiv();
+    suggest.renderSuggestion(shipped, rendered);
+    expect(rendered.querySelector<HTMLElement>('.abyss-suggest-status')?.style.color).toBe(
+      'rgb(101, 67, 33)',
+    );
+    suggest.selectSuggestion(shipped, new KeyboardEvent('keydown', { key: 'Enter' }));
     await settle();
 
     expect(save).toHaveBeenCalledWith('Shipped');
@@ -992,6 +1128,26 @@ describe('ProjectPropertySuggest', () => {
     expect(suggest.getSuggestions('Anna-Jones').map(({ value }) => value)).toEqual([
       '[Anna](People/Anna-Jones.md)',
     ]);
+    const rendered = document.body.createDiv();
+    suggest.renderSuggestion(expectDefined(suggest.getSuggestions('Anna')[0]), rendered);
+    expect(rendered.querySelector('.abyss-suggest-title')?.classList.contains('is-link')).toBe(
+      true,
+    );
+  });
+
+  it('filters selected values dynamically before applying the text query', () => {
+    const selected = ['Alpha'];
+    const suggest = new ProjectPropertySuggest({
+      app: new App(),
+      input: document.body.createEl('input'),
+      values: ['Alpha', 'Beta'],
+      onPick: vi.fn(),
+      exclude: (value) => selected.includes(value),
+    });
+
+    expect(suggest.getSuggestions('a').map(({ value }) => value)).toEqual(['Beta']);
+    selected.splice(0, 1);
+    expect(suggest.getSuggestions('a').map(({ value }) => value)).toEqual(['Alpha', 'Beta']);
   });
 
   it('leaves native Escape dismissal in charge when no editor callback is supplied', () => {

@@ -6,6 +6,10 @@ import type { Project } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { runAsyncAction } from '../../ui/runAsyncAction';
+import {
+  projectPropertyValuePresentation,
+  projectTagLabel,
+} from './projectPropertyValuePresentation';
 
 function statusFor(
   project: Project,
@@ -93,7 +97,6 @@ interface RenderProjectTableCellOptions {
   readonly description?: {
     readonly field: ProjectFieldCatalogItem;
     readonly show: boolean;
-    readonly onEdit: (anchor: HTMLElement) => void;
   };
 }
 
@@ -113,11 +116,14 @@ function renderValueText(
     host.setText(displayed);
     return;
   }
+  const presentation = projectPropertyValuePresentation(raw);
+  if (presentation.link !== undefined) host.addClass('is-link');
   renderTaskText(host, raw, {
     app: options.app,
     sourcePath,
     component: options.component,
     beforeOpenLink: options.beforeOpenLink,
+    ...(presentation.link === undefined ? {} : { exactLinkLabel: presentation.label }),
   });
 }
 
@@ -186,15 +192,15 @@ function renderListValue(itemOptions: RenderListValueOptions): void {
   const { list, values, index, displayed, nativeTags, cell } = itemOptions;
   const raw = values.values[index];
   const item = list.createSpan({
-    cls: nativeTags ? 'multi-select-pill' : 'abyss-project-table-value',
+    cls: nativeTags ? 'abyss-project-table-tag-value' : 'abyss-project-table-value',
   });
   const text = item.createSpan({
-    cls: nativeTags ? 'multi-select-pill-content' : 'abyss-project-table-value-text',
+    cls: nativeTags ? 'abyss-project-table-tag-content' : 'abyss-project-table-value-text',
   });
   if (nativeTags && typeof raw === 'string') {
     const link = text.createEl('a', {
-      cls: 'abyss-project-table-tag-link',
-      text: raw,
+      cls: 'tag abyss-project-table-tag-link',
+      text: projectTagLabel(raw),
       attr: { href: tagHref(raw) },
     });
     activateTag(link, raw, cell);
@@ -203,9 +209,7 @@ function renderListValue(itemOptions: RenderListValueOptions): void {
   }
   if (values.field.type === null) return;
   const remove = item.createEl('button', {
-    cls: nativeTags
-      ? 'multi-select-pill-remove-button abyss-project-table-value-remove'
-      : 'abyss-project-table-value-remove',
+    cls: 'abyss-project-table-value-remove',
     text: '×',
     attr: { type: 'button', 'aria-label': `Remove ${displayed}` },
   });
@@ -286,8 +290,9 @@ function renderPropertyValue(
     return;
   }
   const displayedValues = projectTableDisplayValues(project, field, options.statuses);
-  if (Array.isArray(value)) {
-    renderListValues({ cell, project, field, values: value, displayedValues }, options);
+  if (Array.isArray(value) || (field.type === 'tags' && typeof value === 'string')) {
+    const values = Array.isArray(value) ? value : [value];
+    renderListValues({ cell, project, field, values, displayedValues }, options);
   } else {
     renderScalarValue({ cell, project, value, displayed: displayedValues[0] ?? '—' }, options);
   }
@@ -317,15 +322,9 @@ function renderName(
     detail.createSpan({ cls: 'abyss-project-description-text', text: value });
     return;
   }
-  const edit = detail.createEl('button', {
+  detail.createSpan({
     cls: 'abyss-project-description-text',
     text: value,
-    attr: { type: 'button', 'aria-label': `Edit description for ${project.name}` },
-  });
-  edit.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    description.onEdit(detail);
   });
 }
 

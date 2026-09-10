@@ -7184,25 +7184,6 @@ table.abyss-project-table {
   white-space: nowrap;
 }
 
-.abyss-projects-table button.abyss-project-description-text {
-  display: block;
-  overflow: hidden;
-  width: 100%;
-  min-width: 0;
-  height: auto;
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  color: inherit;
-  font: inherit;
-  line-height: inherit;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .abyss-project-table-group-row td {
   position: relative;
   z-index: 1;
@@ -7398,24 +7379,27 @@ table.abyss-project-table {
   flex-wrap: nowrap;
 }
 
-.abyss-project-table-values[data-property-type='tags'] .multi-select-pill {
+.abyss-project-table-values[data-property-type='tags'] .abyss-project-table-tag-value {
   position: relative;
   flex: 0 0 auto;
   overflow: hidden;
   max-width: 140px;
 }
 
-.abyss-project-table-values[data-property-type='tags'] .multi-select-pill-content {
+.abyss-project-table-values[data-property-type='tags'] .abyss-project-table-tag-content {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .abyss-project-table-values[data-property-type='tags'] .abyss-project-table-tag-link {
-  padding: 0;
-  background: transparent;
-  color: inherit;
   text-decoration: none;
+}
+
+.abyss-project-table-value-text.is-link,
+.abyss-project-list-value-text.is-link,
+.abyss-suggest-title.is-link {
+  color: var(--link-color);
 }
 
 .abyss-project-table-value {
@@ -7530,6 +7514,11 @@ table.abyss-project-table {
   overflow: visible;
 }
 
+.abyss-project-description.is-editor-anchor .abyss-project-cell-editor-host {
+  padding-inline: 0;
+  background: transparent;
+}
+
 .abyss-project-description-editor-anchor {
   height: 0;
 }
@@ -7642,6 +7631,11 @@ table.abyss-project-table {
   border-radius: var(--radius-s);
   background: var(--background-secondary);
   font-size: var(--font-ui-smaller);
+}
+
+.abyss-project-list-value.is-tag {
+  padding: 0;
+  background: transparent;
 }
 
 .abyss-project-list-value-text {

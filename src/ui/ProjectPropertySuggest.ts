@@ -1,17 +1,26 @@
 import { AbstractInputSuggest, Scope, type App } from 'obsidian';
-import { exactLinkToken, linkValueLabel } from '../markdown/links';
+import {
+  projectPropertyValuePresentation,
+  projectPropertyValuePresentations,
+  projectTagLabel,
+} from '../panels/projects/projectPropertyValuePresentation';
 
 export interface ProjectPropertySuggestion {
   readonly kind: 'value';
   readonly value: string;
   readonly label: string;
   readonly detail?: string;
+  readonly appearance?: 'status' | 'tag';
+  readonly color?: string;
 }
 
 export interface ProjectPropertySuggestOptions {
   readonly app: App;
   readonly input: HTMLInputElement;
   readonly values: readonly string[];
+  readonly suggestions?: readonly ProjectPropertySuggestion[];
+  readonly exclude?: (value: string) => boolean;
+  readonly appearance?: 'tag';
   readonly onPick: (value: string) => void;
   readonly onEscape?: (event: KeyboardEvent) => void;
   readonly onOpen?: () => void;
@@ -23,25 +32,17 @@ function matches(value: string, query: string): boolean {
   return value.toLocaleLowerCase().includes(query.toLocaleLowerCase());
 }
 
-function suggestionsForValues(values: readonly string[]): ProjectPropertySuggestion[] {
-  const suggestions: ProjectPropertySuggestion[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const normalized = value.toLocaleLowerCase();
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
-    suggestions.push({ kind: 'value', value, label: linkValueLabel(value) });
-  }
-  const labelCounts = new Map<string, number>();
-  for (const { label } of suggestions) {
-    const normalized = label.toLocaleLowerCase();
-    labelCounts.set(normalized, (labelCounts.get(normalized) ?? 0) + 1);
-  }
-  return suggestions.map((suggestion) => {
-    if ((labelCounts.get(suggestion.label.toLocaleLowerCase()) ?? 0) < 2) return suggestion;
-    const target = exactLinkToken(suggestion.value)?.target;
-    return target === undefined ? suggestion : { ...suggestion, detail: target };
-  });
+function suggestionsForValues(
+  values: readonly string[],
+  appearance: ProjectPropertySuggestOptions['appearance'],
+): ProjectPropertySuggestion[] {
+  return projectPropertyValuePresentations(values).map(({ value, label, detail }) => ({
+    kind: 'value',
+    value,
+    label: appearance === 'tag' ? projectTagLabel(label) : label,
+    ...(detail === undefined ? {} : { detail }),
+    ...(appearance === undefined ? {} : { appearance }),
+  }));
 }
 
 /** Keyboard-aware suggestions from values already used by the edited property. */
@@ -71,7 +72,8 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
         return false;
       });
     }
-    this.suggestions_abyssPrivate = suggestionsForValues(options.values);
+    this.suggestions_abyssPrivate =
+      options.suggestions ?? suggestionsForValues(options.values, options.appearance);
     this.onPick_abyssPrivate = options.onPick;
     this.options_abyssPrivate = options;
     this.browse_abyssPrivate = options.browseOnOpen === true;
@@ -94,15 +96,25 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
   }
 
   getSuggestions(query: string): ProjectPropertySuggestion[] {
-    if (this.browse_abyssPrivate) return [...this.suggestions_abyssPrivate];
-    return this.suggestions_abyssPrivate.filter(
+    const available = this.suggestions_abyssPrivate.filter(
+      ({ value }) => this.options_abyssPrivate.exclude?.(value) !== true,
+    );
+    if (this.browse_abyssPrivate) return available;
+    return available.filter(
       ({ value, label, detail }) =>
         matches(value, query) || matches(label, query) || matches(detail ?? '', query),
     );
   }
 
   renderSuggestion(suggestion: ProjectPropertySuggestion, element: HTMLElement): void {
-    element.createDiv({ cls: 'abyss-suggest-title', text: suggestion.label });
+    const presentation = projectPropertyValuePresentation(suggestion.value);
+    const title = element.createDiv({
+      cls: `abyss-suggest-title${presentation.link === undefined ? '' : ' is-link'}${suggestion.appearance === 'status' ? ' abyss-suggest-status' : ''}`,
+    });
+    if (suggestion.appearance === 'tag') {
+      title.createSpan({ cls: 'tag', text: suggestion.label });
+    } else title.setText(suggestion.label);
+    if (suggestion.color !== undefined) title.style.color = suggestion.color;
     if (suggestion.detail !== undefined) {
       element.createDiv({ cls: 'abyss-suggest-path', text: suggestion.detail });
     }

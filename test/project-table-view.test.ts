@@ -196,11 +196,9 @@ describe('ProjectsTableView', () => {
     view.update([{ ...initial, frontmatter: { description: 'Updated\nRetained' } }]);
     expect(host.querySelector('.abyss-project-table-cell[data-column-id="name"]')).toBe(nameCell);
     expect(host.querySelector('.abyss-project-description-text')?.textContent).toBe('Updated');
-    const edit = expectDefined(
-      host.querySelector<HTMLButtonElement>('.abyss-project-description-text'),
-    );
+    const edit = expectDefined(host.querySelector<HTMLElement>('.abyss-project-description-text'));
     expect(host.querySelector('.abyss-project-description-edit')).toBeNull();
-    edit.click();
+    edit.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     const textarea = expectDefined(
       host.querySelector<HTMLTextAreaElement>('.abyss-project-description-editor'),
     );
@@ -220,27 +218,23 @@ describe('ProjectsTableView', () => {
     );
   });
 
-  it('leaves bubbling Enter on description text to the native button action', () => {
+  it('focuses the Name cell on description click without opening an editor', () => {
     const { host } = mount([project({ frontmatter: { description: 'Existing' } })]);
     const other = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
     );
+    const name = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="name"]'),
+    );
     const description = expectDefined(
-      host.querySelector<HTMLButtonElement>('.abyss-project-description-text'),
+      host.querySelector<HTMLElement>('.abyss-project-description-text'),
     );
     other.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    description.focus();
-    const enter = new KeyboardEvent('keydown', {
-      key: 'Enter',
-      bubbles: true,
-      cancelable: true,
-    });
+    description.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-    const runsDefault = description.dispatchEvent(enter);
-    if (runsDefault) description.click();
-
-    expect(enter.defaultPrevented).toBe(false);
-    expect(host.querySelector('.abyss-project-description-editor')).not.toBeNull();
+    expect(activeDocument.activeElement).toBe(name);
+    expect(name.classList.contains('is-selection-focus')).toBe(true);
+    expect(host.querySelector('.abyss-project-description-editor')).toBeNull();
     expect(other.querySelector('.abyss-project-cell-editor')).toBeNull();
   });
 
@@ -251,38 +245,56 @@ describe('ProjectsTableView', () => {
     expect(host.querySelector('.abyss-project-description-edit')).toBeNull();
   });
 
-  it('opens Edit description from the Name native context menu', () => {
-    let title = '';
-    let activate: (() => void) | undefined;
-    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
-      const item = {
-        setTitle: (value: string) => {
-          title = value;
-          return item;
-        },
-        setIcon: () => item,
-        onClick: (handler: () => void) => {
-          activate = handler;
-          return item;
-        },
-      };
-      callback(item as never);
-      return this;
-    });
+  it('opens Edit description directly from a pointer context action', () => {
     const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
     const { host } = mount([project({ frontmatter: { description: 'Existing' } })]);
-    const name = expectDefined(
-      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="name"]'),
+    const description = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-description-text'),
     );
     const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
 
-    name.dispatchEvent(event);
+    description.dispatchEvent(event);
 
     expect(event.defaultPrevented).toBe(true);
-    expect(show).toHaveBeenCalledOnce();
-    expect(title).toBe('Edit description');
-    expectDefined(activate)();
+    expect(show).not.toHaveBeenCalled();
     expect(host.querySelector('.abyss-project-description-editor')).not.toBeNull();
+  });
+
+  it('opens status choices directly from a pointer context action', () => {
+    const open = vi.spyOn(ProjectPropertySuggest.prototype, 'open');
+    const { host } = mount([project({})]);
+    const status = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
+    );
+
+    status.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    expect(status.querySelector('select')).toBeNull();
+    expect(status.querySelector<HTMLInputElement>('.abyss-project-editor-status')).not.toBeNull();
+    expect(open).toHaveBeenCalledOnce();
+    const suggest = expectDefined(open.mock.instances[0]) as ProjectPropertySuggest;
+    expect(suggest.getSuggestions('').map(({ label }) => label)).toEqual([
+      'No status',
+      ...DEFAULT_SETTINGS.projects.statuses.map(({ name }) => name),
+    ]);
+  });
+
+  it('suppresses table focus while the native description menu owns keys and restores it on hide', () => {
+    const show = vi.spyOn(Menu.prototype, 'showAtPosition');
+    const { host } = mount([project({ frontmatter: {} })]);
+    const name = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="name"]'),
+    );
+    name.focus();
+
+    name.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true, cancelable: true }),
+    );
+
+    expect(name.classList.contains('is-selection-focus')).toBe(false);
+    (expectDefined(show.mock.instances[0]) as Menu).close();
+    expect(activeDocument.activeElement).toBe(name);
+    expect(name.classList.contains('is-selection-focus')).toBe(true);
   });
 
   it.each([
@@ -339,7 +351,7 @@ describe('ProjectsTableView', () => {
     expect(host.querySelector('.abyss-project-description-edit')).toBeNull();
   });
 
-  it('uses one native pill per searchable tag without nested tag decoration', () => {
+  it('uses one native searchable tag per value without a generic outer pill', () => {
     const config = settings();
     config.projects.table.columns.push({ id: 'property:Tags', visible: true });
     const { host } = mount([project({ frontmatter: { Tags: ['#work', '#next'] } })], {
@@ -352,16 +364,13 @@ describe('ProjectsTableView', () => {
       ),
     );
 
-    const pills = property.querySelectorAll<HTMLElement>('.multi-select-pill');
-    expect(pills).toHaveLength(2);
+    const tags = property.querySelectorAll<HTMLAnchorElement>('a.tag');
+    expect(tags).toHaveLength(2);
     expect(property.querySelector('.abyss-project-table-value')).toBeNull();
-    expect(pills[0]?.matches('a, button')).toBe(false);
-    expect(
-      pills[0]?.querySelector<HTMLAnchorElement>('.multi-select-pill-content > a')?.href,
-    ).toContain('#work');
-    expect(pills[0]?.querySelector('.multi-select-pill-content > a')?.textContent).toBe('#work');
-    expect(pills[0]?.querySelector('a.tag')).toBeNull();
-    expect(pills[0]?.querySelector('a button, button a')).toBeNull();
+    expect(property.querySelector('.multi-select-pill')).toBeNull();
+    expect(tags[0]?.href).toContain('#work');
+    expect(tags[0]?.textContent).toBe('#work');
+    expect(tags[0]?.querySelector('button')).toBeNull();
   });
 
   it('finishes an active editor before delegating native tag activation', async () => {
@@ -384,13 +393,15 @@ describe('ProjectsTableView', () => {
       catalog: catalog([{ name: 'Tags', type: 'tags' }]),
       saveProperty,
     });
-    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-project-description-text')).click();
+    expectDefined(host.querySelector<HTMLElement>('.abyss-project-description-text')).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
     const textarea = expectDefined(
       host.querySelector<HTMLTextAreaElement>('.abyss-project-description-editor'),
     );
     textarea.value = 'After';
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    expectDefined(host.querySelector<HTMLAnchorElement>('.multi-select-pill-content > a')).click();
+    expectDefined(host.querySelector<HTMLAnchorElement>('a.tag')).click();
     await flushMicrotasks();
 
     expect(saveProperty).toHaveBeenCalledWith(
@@ -1033,6 +1044,30 @@ describe('ProjectsTableView', () => {
     expect(host.querySelectorAll('.abyss-project-cell-editor')).toHaveLength(1);
   });
 
+  it('shows the basename for an unaliased folder wikilink while retaining its target', async () => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+      const anchor = holder.createEl('a', {
+        cls: 'internal-link',
+      });
+      anchor.setText(['Work Notes QA', 'Milestone'].join('/'));
+      anchor.setAttribute('data-href', 'Work Notes QA/Milestone');
+    });
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:creator', visible: true });
+    const { host } = mount([project({ frontmatter: { creator: '[[Work Notes QA/Milestone]]' } })], {
+      settings: config,
+      catalog: catalog([{ name: 'creator', type: 'text' }]),
+    });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    const link = expectDefined(
+      host.querySelector<HTMLAnchorElement>('[data-column-id="property:creator"] a.internal-link'),
+    );
+    expect(link.textContent).toBe('Milestone');
+    expect(link.dataset['href']).toBe('Work Notes QA/Milestone');
+    expect(link.closest('.is-link')).not.toBeNull();
+  });
+
   it('renders a Markdown group anchor without toggling its group or editing its cell', async () => {
     vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
       const anchor = holder.createEl('a', { cls: 'internal-link', text: 'Core team' });
@@ -1293,7 +1328,7 @@ describe('ProjectsTableView', () => {
       return rectangle(0, 0, 0, 0);
     });
 
-    description.click();
+    cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 
     const editor = expectDefined(
       anchor.querySelector<HTMLElement>('.abyss-project-cell-editor-host'),
@@ -1897,7 +1932,9 @@ describe('ProjectsTableView', () => {
     );
     input.value = 'Mina';
 
-    expectDefined(cell.querySelector<HTMLButtonElement>('.abyss-project-list-add')).click();
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
     await flushMicrotasks();
 
     const refill = expectDefined(applyEdits.mock.calls[1]?.[0]?.[0]);
@@ -1907,8 +1944,7 @@ describe('ProjectsTableView', () => {
       expectedExists: false,
       ownedClear,
     });
-    expect(cell.querySelector('.abyss-project-editor-error')?.textContent).toBe('');
-    expect(input.isConnected).toBe(true);
+    expect(input.isConnected).toBe(false);
   });
 
   it('guards a coalesced draft with the canonical normalized receipt value', async () => {
@@ -2013,20 +2049,31 @@ describe('ProjectsTableView', () => {
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
     );
     cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-    const select = expectDefined(cell.querySelector<HTMLSelectElement>('select'));
-    select.value = done.name;
-
+    const input = expectDefined(
+      cell.querySelector<HTMLInputElement>('.abyss-project-editor-status'),
+    );
+    const editor = view as unknown as {
+      readonly activeEditor_abyssPrivate?: {
+        readonly handle: {
+          readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+        };
+      };
+    };
     const externalStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
     item.statusId = externalStatus.id;
     item.frontmatter['status'] = externalStatus.name;
     view.update([item]);
-    expect(select.isConnected).toBe(true);
-    expect(select.value).toBe(done.name);
-    select.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(input.isConnected).toBe(true);
+    const suggest = expectDefined(
+      editor.activeEditor_abyssPrivate?.handle.control_abyssPrivate.suggest,
+    );
+    suggest.selectSuggestion(
+      expectDefined(suggest.getSuggestions('').find(({ value }) => value === done.name)),
+    );
     await flushMicrotasks();
 
     expect(saveStatus).toHaveBeenCalledWith('Projects/A.md', done.name, active.name);
-    expect(select.isConnected).toBe(true);
+    expect(input.isConnected).toBe(true);
     expect(host.querySelector('.abyss-project-editor-error')?.textContent).toContain(
       'changed externally',
     );
@@ -2253,7 +2300,7 @@ describe('ProjectsTableView', () => {
     renderedDestination.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
     );
-    expect(renderedDestination.querySelector('select')).not.toBeNull();
+    expect(renderedDestination.querySelector('.abyss-project-editor-status')).not.toBeNull();
   });
 
   it('keeps the latest clicked table cell while an earlier blur save is pending', async () => {
@@ -2415,6 +2462,76 @@ describe('ProjectsTableView', () => {
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
     );
     expect(status.querySelector('.abyss-project-cell-editor')).not.toBeNull();
+  });
+
+  it('restores selected-cell keyboard ownership after editor blur to the owning panel surface', async () => {
+    const { host, view } = mount([project({})]);
+    host.tabIndex = 0;
+    const status = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
+    );
+    status.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(status.querySelector('.abyss-project-cell-editor')).not.toBeNull();
+
+    host.focus();
+    const editor = view as unknown as {
+      readonly activeEditor_abyssPrivate?: {
+        readonly handle: {
+          readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+        };
+      };
+    };
+    editor.activeEditor_abyssPrivate?.handle.control_abyssPrivate.suggest?.close();
+    await flushMicrotasks();
+
+    expect(status.querySelector('.abyss-project-cell-editor')).toBeNull();
+    expect(activeDocument.activeElement).toBe(status);
+    status.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+    );
+    expect(
+      host
+        .querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="progress"]')
+        ?.classList.contains('is-selection-focus'),
+    ).toBe(true);
+  });
+
+  it('removes the keyboard focus ring when focus deliberately leaves the table', () => {
+    const { host } = mount([project({})]);
+    const status = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
+    );
+    status.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(status.classList.contains('is-selection-focus')).toBe(true);
+
+    const outside = document.body.createEl('button');
+    outside.focus();
+
+    expect(activeDocument.activeElement).toBe(outside);
+    expect(status.classList.contains('is-selected')).toBe(true);
+    expect(status.classList.contains('is-selection-focus')).toBe(false);
+  });
+
+  it('adopts a newly focused table cell before applying arrow navigation', () => {
+    const { host } = mount([project({})]);
+    const name = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="name"]'),
+    );
+    const status = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
+    );
+    name.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    status.focus();
+    status.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+    );
+
+    expect(
+      host
+        .querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="progress"]')
+        ?.classList.contains('is-selection-focus'),
+    ).toBe(true);
   });
 
   it('reveals Arrow and Tab destinations within a constrained pane around sticky surfaces', () => {
