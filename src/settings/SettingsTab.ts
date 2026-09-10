@@ -1333,6 +1333,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       const displayName = controls.displayName.value.trim();
       if (displayName === '') delete status.displayName;
       else status.displayName = displayName;
+      controls.updateLabel(projectStatusDisplayName(status));
       saveSettingsDraft({
         action: 'save project status display name',
         save: () => this.plugin_abyssPrivate.saveSettings(),

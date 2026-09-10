@@ -24,9 +24,10 @@ export interface ProjectValueRowControls {
   readonly appearance: HTMLSelectElement;
   readonly onLeftPanel?: HTMLInputElement;
   readonly remove: HTMLButtonElement;
+  readonly updateLabel: (label: string) => void;
 }
 
-function renderGrip(row: HTMLElement, options: ProjectValueRowOptions): void {
+function renderGrip(row: HTMLElement, options: ProjectValueRowOptions): HTMLElement {
   const grip = row.createSpan({
     cls: 'abyss-settings-card-grip abyss-project-value-grip',
     attr: {
@@ -41,6 +42,7 @@ function renderGrip(row: HTMLElement, options: ProjectValueRowOptions): void {
     listKey: options.listKey,
     onReorder: options.onReorder,
   });
+  return grip;
 }
 
 function renderTextControl(
@@ -96,7 +98,7 @@ function renderAppearance(row: HTMLElement, options: ProjectValueRowOptions): HT
 function renderLeftPanel(
   row: HTMLElement,
   options: ProjectValueRowOptions,
-): HTMLInputElement | undefined {
+): { input: HTMLInputElement; label: HTMLLabelElement } | undefined {
   if (options.onLeftPanel === undefined) return undefined;
   const label = row.createEl('label', {
     cls: 'abyss-project-value-left-panel-label',
@@ -112,7 +114,7 @@ function renderLeftPanel(
   });
   input.checked = options.onLeftPanel;
   label.createSpan({ text: 'Left panel' });
-  return input;
+  return { input, label };
 }
 
 function renderRemove(row: HTMLElement, options: ProjectValueRowOptions): HTMLButtonElement {
@@ -139,7 +141,7 @@ export function renderProjectValueRow(options: ProjectValueRowOptions): ProjectV
       'data-settings-item-id': options.id,
     },
   });
-  renderGrip(row, options);
+  const grip = renderGrip(row, options);
   const value = renderTextControl(row, {
     className: 'abyss-project-value-raw',
     type: options.valueType,
@@ -158,15 +160,28 @@ export function renderProjectValueRow(options: ProjectValueRowOptions): ProjectV
   });
   const color = renderColor(row, options);
   const appearance = renderAppearance(row, options);
-  const onLeftPanel = renderLeftPanel(row, options);
+  const leftPanel = renderLeftPanel(row, options);
   const remove = renderRemove(row, options);
+  const updateLabel = (label: string): void => {
+    grip.setAttrs({ 'aria-label': `Reorder ${label}`, title: `Reorder ${label}` });
+    value.setAttribute('aria-label', `Value for ${label}`);
+    displayName.setAttribute('aria-label', `Display name for ${label}`);
+    color.setAttribute('aria-label', `Color for ${label}`);
+    appearance.setAttribute('aria-label', `Appearance for ${label}`);
+    if (leftPanel !== undefined) {
+      leftPanel.label.title = `Show ${label} on left panel`;
+      leftPanel.input.setAttribute('aria-label', `Show ${label} on left panel`);
+    }
+    remove.setAttrs({ 'aria-label': `Remove ${label}`, title: `Remove ${label}` });
+  };
   return {
     row,
     value,
     displayName,
     color,
     appearance,
-    ...(onLeftPanel === undefined ? {} : { onLeftPanel }),
+    ...(leftPanel === undefined ? {} : { onLeftPanel: leftPanel.input }),
     remove,
+    updateLabel,
   };
 }

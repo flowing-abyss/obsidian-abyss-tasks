@@ -83,6 +83,26 @@ function dragValueRow(source: HTMLElement, target: HTMLElement): void {
   }
 }
 
+function expectPresetRowLabel(row: HTMLElement, label: string): void {
+  const grip = expectDefined(row.querySelector<HTMLElement>('.abyss-project-value-grip'));
+  const value = expectDefined(row.querySelector<HTMLElement>('.abyss-project-value-raw'));
+  const alias = expectDefined(row.querySelector<HTMLElement>('.abyss-project-value-alias'));
+  const color = expectDefined(row.querySelector<HTMLElement>('.abyss-project-value-color'));
+  const appearance = expectDefined(
+    row.querySelector<HTMLElement>('.abyss-project-value-appearance'),
+  );
+  const remove = expectDefined(row.querySelector<HTMLElement>('.abyss-project-value-remove'));
+
+  expect(grip.getAttribute('aria-label')).toBe(`Reorder ${label}`);
+  expect(grip.title).toBe(`Reorder ${label}`);
+  expect(value.getAttribute('aria-label')).toBe(`Value for ${label}`);
+  expect(alias.getAttribute('aria-label')).toBe(`Display name for ${label}`);
+  expect(color.getAttribute('aria-label')).toBe(`Color for ${label}`);
+  expect(appearance.getAttribute('aria-label')).toBe(`Appearance for ${label}`);
+  expect(remove.getAttribute('aria-label')).toBe(`Remove ${label}`);
+  expect(remove.title).toBe(`Remove ${label}`);
+}
+
 function expandProperty(container: HTMLElement, columnId: string): void {
   expectDefined(
     container.querySelector<HTMLButtonElement>(
@@ -291,7 +311,11 @@ describe('renderProjectTableSettings', () => {
     expandProperty(container, 'property:Priority');
     const rows = Array.from(container.querySelectorAll<HTMLElement>('.abyss-project-value-row'));
 
-    dragValueRow(expectDefined(rows[2]), expectDefined(rows[0]));
+    const moved = expectDefined(rows[2]);
+    const movedValue = expectDefined(
+      moved.querySelector<HTMLInputElement>('.abyss-project-value-raw'),
+    );
+    dragValueRow(moved, expectDefined(rows[0]));
 
     expect((definition.presets as Array<{ value: unknown }>).map(({ value }) => value)).toEqual([
       'C',
@@ -310,8 +334,18 @@ describe('renderProjectTableSettings', () => {
         ({ value }) => value,
       ),
     ).toEqual(['C', 'A', 'B', '']);
+    const reorderedRows = Array.from(
+      container.querySelectorAll<HTMLElement>('.abyss-project-value-row'),
+    );
+    expect(reorderedRows[0]).toBe(moved);
+    expect(expectDefined(reorderedRows[0]).querySelector('.abyss-project-value-raw')).toBe(
+      movedValue,
+    );
+    expect(movedValue.dataset['settingsFocusKey']).toBe('value');
+    reorderedRows.forEach((row, index) => {
+      expectPresetRowLabel(row, `Priority preset ${index + 1}`);
+    });
 
-    const moved = expectDefined(rows[2]);
     const alias = expectDefined(
       moved.querySelector<HTMLInputElement>('.abyss-project-value-alias'),
     );
@@ -329,6 +363,63 @@ describe('renderProjectTableSettings', () => {
     ]);
     expect(saveStatic).toHaveBeenCalledTimes(3);
     expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it('preserves malformed preset values during presentation-only edits', async () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.table.columns.push({ id: 'property:Priority', visible: true });
+    const definition = {
+      type: 'text',
+      presets: [
+        { value: null, future: { kind: 'null' } },
+        { displayName: 'Missing value', future: { kind: 'missing' } },
+        { value: ['legacy'], future: { kind: 'unknown' } },
+        'malformed preset',
+      ],
+    } as unknown as ProjectPropertyDefinition;
+    projects.propertyDefinitions['property:Priority'] = definition;
+    const saveStatic = vi.fn().mockResolvedValue(undefined);
+    const container = document.body.createDiv();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([{ name: 'Priority', type: 'text' }]),
+      saveStatic,
+      saveViewState: vi.fn().mockResolvedValue(undefined),
+      refresh: vi.fn(),
+    });
+    expandProperty(container, 'property:Priority');
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('.abyss-project-value-row'));
+
+    const nullAlias = expectDefined(
+      expectDefined(rows[0]).querySelector<HTMLInputElement>('.abyss-project-value-alias'),
+    );
+    nullAlias.value = 'Null value';
+    nullAlias.dispatchEvent(new Event('change', { bubbles: true }));
+    const missingColor = expectDefined(
+      expectDefined(rows[1]).querySelector<HTMLInputElement>('.abyss-project-value-color'),
+    );
+    missingColor.value = '#112233';
+    missingColor.dispatchEvent(new Event('change', { bubbles: true }));
+    const unknownAppearance = expectDefined(
+      expectDefined(rows[2]).querySelector<HTMLSelectElement>('.abyss-project-value-appearance'),
+    );
+    unknownAppearance.value = 'dot';
+    unknownAppearance.dispatchEvent(new Event('change', { bubbles: true }));
+    const malformedAlias = expectDefined(
+      expectDefined(rows[3]).querySelector<HTMLInputElement>('.abyss-project-value-alias'),
+    );
+    malformedAlias.value = 'Ignored alias';
+    malformedAlias.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
+    expect(definition.presets).toEqual([
+      { value: null, displayName: 'Null value', future: { kind: 'null' } },
+      { displayName: 'Missing value', color: '#112233', future: { kind: 'missing' } },
+      { value: ['legacy'], display: 'dot', future: { kind: 'unknown' } },
+      'malformed preset',
+    ]);
   });
 
   it('persists a newly added predefined value before it is edited', async () => {

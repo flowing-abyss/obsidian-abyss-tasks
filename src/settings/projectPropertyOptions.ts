@@ -103,6 +103,7 @@ interface PresetRowContext {
   readonly identities: string[];
   readonly id: string;
   readonly listKey: string;
+  readonly labelers: Map<string, (label: string) => void>;
   readonly options: RenderProjectPropertyOptions;
 }
 
@@ -119,6 +120,9 @@ function movePreset(context: PresetRowContext, draggedId: string, targetId: stri
   if (identity === undefined) return false;
   context.rawPresets.splice(to, 0, preset);
   context.identities.splice(to, 0, identity);
+  context.identities.forEach((id, index) => {
+    context.labelers.get(id)?.(`${context.options.label} preset ${index + 1}`);
+  });
   context.options.onDefinitionChange();
   return true;
 }
@@ -155,17 +159,18 @@ function createPresetRowControls(context: PresetRowContext): PresetRowControls {
 function renderPresetRow(context: PresetRowContext): void {
   const { definition, id, identities, options, rawPresets } = context;
   const currentIndex = (): number => identities.indexOf(id);
-  const currentRecord = (): Record<string, unknown> => {
+  const currentRecord = (): Record<string, unknown> | undefined => {
     const index = currentIndex();
-    return index >= 0 && isRecord(rawPresets[index]) ? rawPresets[index] : {};
+    return index >= 0 && isRecord(rawPresets[index]) ? rawPresets[index] : undefined;
   };
   const controls = createPresetRowControls(context);
+  context.labelers.set(id, controls.updateLabel);
   controls.value.addEventListener('change', () => {
     const index = currentIndex();
     if (index < 0) return;
     const nextValue =
       definition.type === 'number' ? controls.value.valueAsNumber : controls.value.value;
-    const next = { ...currentRecord(), value: nextValue };
+    const next = { ...(currentRecord() ?? {}), value: nextValue };
     const issue = projectPropertyPresetIssue(
       definition.type,
       next,
@@ -179,10 +184,9 @@ function renderPresetRow(context: PresetRowContext): void {
   controls.displayName.addEventListener('change', () => {
     const index = currentIndex();
     if (index < 0) return;
-    const next: Record<string, unknown> = {
-      ...currentRecord(),
-      value: currentRecord()['value'] ?? controls.value.value,
-    };
+    const record = currentRecord();
+    if (record === undefined) return;
+    const next: Record<string, unknown> = { ...record };
     if (controls.displayName.value.trim().length === 0) delete next['displayName'];
     else next['displayName'] = controls.displayName.value;
     rawPresets[index] = next;
@@ -191,10 +195,9 @@ function renderPresetRow(context: PresetRowContext): void {
   controls.color.addEventListener('change', () => {
     const index = currentIndex();
     if (index < 0) return;
-    const next: Record<string, unknown> = {
-      ...currentRecord(),
-      value: currentRecord()['value'] ?? controls.value.value,
-    };
+    const record = currentRecord();
+    if (record === undefined) return;
+    const next: Record<string, unknown> = { ...record };
     next['color'] = controls.color.value;
     rawPresets[index] = next;
     options.onDefinitionChange();
@@ -202,10 +205,9 @@ function renderPresetRow(context: PresetRowContext): void {
   controls.appearance.addEventListener('change', () => {
     const index = currentIndex();
     if (index < 0) return;
-    const next: Record<string, unknown> = {
-      ...currentRecord(),
-      value: currentRecord()['value'] ?? controls.value.value,
-    };
+    const record = currentRecord();
+    if (record === undefined) return;
+    const next: Record<string, unknown> = { ...record };
     next['display'] = controls.appearance.value;
     rawPresets[index] = next;
     options.onDefinitionChange();
@@ -278,6 +280,7 @@ function renderPresets(options: RenderProjectPropertyOptions): void {
   });
   const state = presetListState(definition, values);
   const { identities, listKey } = state;
+  const labelers = new Map<string, (label: string) => void>();
   identities.forEach((id) => {
     renderPresetRow({
       host: list,
@@ -286,6 +289,7 @@ function renderPresets(options: RenderProjectPropertyOptions): void {
       identities,
       id,
       listKey,
+      labelers,
       options,
     });
   });

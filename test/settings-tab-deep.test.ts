@@ -1113,7 +1113,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(after.selectionDirection).toBe('backward');
   });
 
-  it('restores a status draft when a committed display name changes its aria label', () => {
+  it('updates status labels in place and restores a draft after the display name changes', () => {
     const { tab, plugin } = makeTab();
     const body = openSection(tab, 5);
     attachSettingsScroller(tab, 513);
@@ -1122,9 +1122,33 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     const displayName = expectDefined(
       row.querySelector<HTMLInputElement>('.abyss-project-value-alias'),
     );
+    const grip = expectDefined(row.querySelector<HTMLElement>('.abyss-project-value-grip'));
+    const value = expectDefined(row.querySelector<HTMLInputElement>('.abyss-project-value-raw'));
+    const color = expectDefined(row.querySelector<HTMLInputElement>('.abyss-project-value-color'));
+    const appearance = expectDefined(
+      row.querySelector<HTMLSelectElement>('.abyss-project-value-appearance'),
+    );
+    const leftPanel = expectDefined(
+      row.querySelector<HTMLInputElement>('.abyss-project-value-left-panel'),
+    );
+    const leftPanelLabel = expectDefined(leftPanel.closest<HTMLLabelElement>('label'));
+    const remove = expectDefined(
+      row.querySelector<HTMLButtonElement>('.abyss-project-value-remove'),
+    );
     displayName.value = 'Current work';
     displayName.dispatchEvent(new Event('change', { bubbles: true }));
-    const value = expectDefined(row.querySelector<HTMLInputElement>('.abyss-project-value-raw'));
+
+    expect(grip.getAttribute('aria-label')).toBe('Reorder Current work');
+    expect(grip.title).toBe('Reorder Current work');
+    expect(value.getAttribute('aria-label')).toBe('Value for Current work');
+    expect(displayName.getAttribute('aria-label')).toBe('Display name for Current work');
+    expect(color.getAttribute('aria-label')).toBe('Color for Current work');
+    expect(appearance.getAttribute('aria-label')).toBe('Appearance for Current work');
+    expect(leftPanel.getAttribute('aria-label')).toBe('Show Current work on left panel');
+    expect(leftPanelLabel.title).toBe('Show Current work on left panel');
+    expect(remove.getAttribute('aria-label')).toBe('Remove Current work');
+    expect(remove.title).toBe('Remove Current work');
+    expect(value.dataset['settingsFocusKey']).toBe('value');
     value.value = 'unfinished status draft';
     value.focus();
     value.setSelectionRange(5, 11);
