@@ -1620,6 +1620,7 @@ export class ProjectsTableView {
     if (
       !this.mounted_abyssPrivate ||
       !this.root_abyssPrivate.isConnected ||
+      !this.root_abyssPrivate.isShown() ||
       ownerDocument.visibilityState === 'hidden'
     ) {
       return;

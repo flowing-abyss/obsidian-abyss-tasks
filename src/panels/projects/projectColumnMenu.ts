@@ -226,10 +226,13 @@ function currentColumnHeader(
   ).find((candidate) => candidate.dataset['columnId'] === options.column.id);
 }
 
-function restoreMenuFocus(options: ProjectColumnMenuOptions, previous: Element | null): void {
+function restoreMenuFocus(
+  options: ProjectColumnMenuOptions,
+  previous: Element | null,
+  tableRoot: HTMLElement | null,
+): void {
   const active = options.header.ownerDocument.activeElement;
   if (active?.classList.contains('abyss-project-column-rename') === true) return;
-  const tableRoot = options.header.closest<HTMLElement>('.abyss-projects-table');
   const prior = priorTableFocus(options, previous, tableRoot);
   if (prior !== undefined) {
     prior.focus({ preventScroll: true });
@@ -243,8 +246,9 @@ function restoreMenuFocus(options: ProjectColumnMenuOptions, previous: Element |
 
 export function showProjectColumnMenu(options: ProjectColumnMenuOptions): void {
   const previous = options.header.ownerDocument.activeElement;
+  const tableRoot = options.header.closest<HTMLElement>('.abyss-projects-table');
   const restoreFocus = (): void => {
-    restoreMenuFocus(options, previous);
+    restoreMenuFocus(options, previous, tableRoot);
   };
   const menu = new Menu();
   addSortActions(menu, options);

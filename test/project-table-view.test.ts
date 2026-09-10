@@ -222,6 +222,7 @@ function lastShownMenu(spy: { readonly mock: { readonly instances: readonly unkn
 describe('ProjectsTableView', () => {
   it('refreshes relative date text in place and stops its one view timer on destroy', () => {
     vi.useFakeTimers({ now: new Date(2026, 8, 10, 23, 0, 0).getTime() });
+    vi.spyOn(HTMLElement.prototype, 'isShown').mockReturnValue(true);
     const config = settings();
     const start = expectDefined(config.projects.table.columns.find(({ id }) => id === 'start'));
     start.dateDisplay = 'relative';
@@ -244,6 +245,9 @@ describe('ProjectsTableView', () => {
 
   it('skips sleeping relative-date updates and refreshes after the table is reattached', () => {
     vi.useFakeTimers({ now: new Date(2026, 8, 10, 23, 0, 0).getTime() });
+    vi.spyOn(HTMLElement.prototype, 'isShown').mockImplementation(function (this: HTMLElement) {
+      return this.closest('[hidden]') === null;
+    });
     const config = settings();
     expectDefined(config.projects.table.columns.find(({ id }) => id === 'start')).dateDisplay =
       'relative';
@@ -256,10 +260,16 @@ describe('ProjectsTableView', () => {
     vi.advanceTimersByTime(60_000);
     expect(relative.textContent).toBe('in 15 minutes');
 
+    host.hidden = true;
     activeDocument.body.append(host);
     activeWindow.dispatchEvent(new Event('focus'));
+    vi.advanceTimersByTime(60_000);
+    expect(relative.textContent).toBe('in 15 minutes');
 
-    expect(relative.textContent).toBe('in 14 minutes');
+    host.hidden = false;
+    activeWindow.dispatchEvent(new Event('focus'));
+
+    expect(relative.textContent).toBe('in 13 minutes');
     destroyMountedView(view);
   });
   it('renders native type icons and alignment while reconciling preset presentation in place', () => {
@@ -1032,6 +1042,27 @@ describe('ProjectsTableView', () => {
     lastShownMenu(show).close();
 
     expect(document.activeElement).toBe(selected);
+  });
+
+  it('returns focus to the current header when an action replaces the header without a selection', () => {
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    const { host } = mount([project({})]);
+    const oldHeader = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-header-cell[data-column-id="end"]'),
+    );
+    expectDefined(oldHeader.querySelector<HTMLButtonElement>('button')).focus();
+    oldHeader.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const rootMenu = lastShownMenu(show);
+    activateMenuItem(submenu(rootMenu, 'Alignment'), 'Center');
+    rootMenu.close();
+
+    const currentButton = expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        '.abyss-project-table-header-cell[data-column-id="end"] .abyss-project-table-column-button',
+      ),
+    );
+    expect(oldHeader.isConnected).toBe(false);
+    expect(document.activeElement).toBe(currentButton);
   });
 
   it('exposes native column actions for exact sorting, alignment, type and date display', async () => {
