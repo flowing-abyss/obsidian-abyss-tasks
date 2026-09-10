@@ -433,6 +433,25 @@ describe('ProjectManager.applyEdits', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('rejects a configured type changed before the fresh Vault process callback', async () => {
+    const app = await createAppWithFiles({ 'A.md': '---\nBudget: 10\n---\n' });
+    const settings = cloneSettings();
+    const pm = manager(app, settings, [{ name: 'Budget', type: 'number' }]);
+    const originalProcess = app.vault.process.bind(app.vault);
+    vi.spyOn(app.vault, 'process').mockImplementation(async (file, fn, options) => {
+      settings.projects.propertyDefinitions['property:Budget'] = { type: 'text' };
+      return originalProcess(file, fn, options);
+    });
+
+    const result = await pm.applyEdits([
+      { path: 'A.md', field: budget, value: 20, expectedValue: 10 },
+    ]);
+
+    expect(result.applied).toEqual([]);
+    expect(result.failed[0]?.message).toMatch(/configured project field/u);
+    expect((await frontmatter(app, 'A.md'))['Budget']).toBe(10);
+  });
+
   it.each([
     { label: 'unavailable', properties: null },
     {

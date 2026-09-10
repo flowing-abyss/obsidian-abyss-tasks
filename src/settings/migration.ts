@@ -224,14 +224,15 @@ function propertyDefinitionIsInvalid(
 }
 
 function ambiguousPropertyDefinitionKeys(definitions: Record<string, unknown>): string[][] {
-  const groups = new Map<string, string[]>();
+  const groups: string[][] = [];
   for (const key of Object.keys(definitions)) {
-    const normalized = key.toLocaleLowerCase();
-    const group = groups.get(normalized) ?? [];
-    group.push(key);
-    groups.set(normalized, group);
+    const group = groups.find(
+      (candidate) => candidate[0] !== undefined && sameProperty(candidate[0], key),
+    );
+    if (group === undefined) groups.push([key]);
+    else group.push(key);
   }
-  return [...groups.values()].filter((group) => group.length > 1);
+  return groups.filter((group) => group.length > 1);
 }
 
 function preserveInvalidPropertyDefinitions(

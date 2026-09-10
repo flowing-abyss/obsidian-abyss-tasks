@@ -6,6 +6,7 @@ import {
   SettingsPersistenceCoordinator,
   type SettingsPersistencePort,
 } from '../src/settings/persistence';
+import priorSerializerFixture from './fixtures/settings-persistence/cc84b5d-property-definitions-roundtrip.json';
 
 const STATE_PATH = '.test-config/plugins/abyss-tasks/state.json';
 
@@ -71,39 +72,55 @@ function stateEnvelope(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe('SettingsPersistenceCoordinator migration', () => {
-  it('preserves property and status extensions through a prior-format static roundtrip', async () => {
-    const data = markedStatic();
-    const projects = data['projects'] as Record<string, unknown>;
-    const definition = {
-      type: 'text',
-      presetsEnabled: true,
-      presets: [{ value: 'raw', displayName: 'Shown', futurePresetOption: 'keep' }],
-      futureDefinitionOption: { exact: ['keep'] },
-    };
-    projects['propertyDefinitions'] = { 'property:Effort': definition };
-    const statuses = projects['statuses'] as Array<Record<string, unknown>>;
-    const firstStatus = statuses[0];
-    if (firstStatus === undefined) throw new Error('Expected a default project status.');
-    firstStatus['displayName'] = 'In flight';
-    firstStatus['display'] = 'text';
-    firstStatus['futureStatusOption'] = { exact: true };
-    const port = memoryPort(data, stateEnvelope());
+  it('loads extensions roundtripped by the cc84b5d serializer without losing raw values', async () => {
+    expect(priorSerializerFixture.provenance.serializerCommit).toBe(
+      'cc84b5d879d6085c505e12313ed5b073f43a5eb2',
+    );
+    const port = memoryPort(
+      priorSerializerFixture.staticData,
+      JSON.parse(priorSerializerFixture.stateText) as unknown,
+    );
     const coordinator = new SettingsPersistenceCoordinator(port);
 
     const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
-    loaded.settings.taskPrefix = '#roundtrip';
+    const loadedProjects = loaded.settings.projects as unknown as Record<string, unknown>;
+    expect(loadedProjects['propertyDefinitions']).toEqual({
+      'property:Effort': {
+        type: 'text',
+        presetsEnabled: true,
+        presets: [
+          {
+            value: 'raw/value',
+            displayName: 'Shown value',
+            display: 'badge',
+            color: '#123456',
+            futurePresetOption: { exact: ['nested', 7] },
+          },
+        ],
+        futureDefinitionOption: { exact: ['keep', { nested: true }] },
+      },
+    });
+    expect(loadedProjects['statuses']).toEqual([
+      {
+        id: 'status-active-raw-01',
+        name: 'in progress / raw',
+        color: '#654321',
+        onLeftPanel: true,
+        displayName: 'In progress',
+        display: 'text',
+        futureStatusOption: { exact: ['keep', 9] },
+      },
+    ]);
+
+    loaded.settings.taskPrefix = '#current-roundtrip';
     await coordinator.saveSettings(loaded.settings);
 
     const savedProjects = (port.staticData as Record<string, unknown>)['projects'] as Record<
       string,
       unknown
     >;
-    expect(savedProjects['propertyDefinitions']).toEqual({ 'property:Effort': definition });
-    expect((savedProjects['statuses'] as Array<Record<string, unknown>>)[0]).toMatchObject({
-      displayName: 'In flight',
-      display: 'text',
-      futureStatusOption: { exact: true },
-    });
+    expect(savedProjects['propertyDefinitions']).toEqual(loadedProjects['propertyDefinitions']);
+    expect(savedProjects['statuses']).toEqual(loadedProjects['statuses']);
   });
 
   it('partitions populated legacy view state, verifies it, then removes it from static data', async () => {

@@ -179,6 +179,25 @@ describe('projects migration', () => {
     );
   });
 
+  it('records composed and decomposed Unicode definition keys as ambiguous', () => {
+    const definitions = {
+      'property:Caf\u00e9': { type: 'text' },
+      'property:Cafe\u0301': { type: 'number' },
+    };
+    const raw: Record<string, unknown> = { projects: { propertyDefinitions: definitions } };
+
+    const result = migrateSettings(raw);
+    const projects = raw['projects'] as Record<string, unknown>;
+
+    expect(projects['propertyDefinitionMigration']).toMatchObject({
+      propertyDefinitions: definitions,
+      ambiguousKeys: [['property:Caf\u00e9', 'property:Cafe\u0301']],
+    });
+    expect(result.notices).toContain(
+      'Some project property definitions could not be loaded. Repair or remove the conflicting definitions in Projects settings; their original values were preserved.',
+    );
+  });
+
   it('keeps a valid configured type active while retaining malformed preset evidence', () => {
     const definition = {
       type: 'text',

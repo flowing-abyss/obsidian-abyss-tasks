@@ -1,0 +1,155 @@
+{
+  "provenance": {
+    "serializerCommit": "cc84b5d879d6085c505e12313ed5b073f43a5eb2",
+    "generator": "temporary git archive plus bundled pure SettingsPersistenceCoordinator/defaults",
+    "generatedAt": "2026-09-10"
+  },
+  "staticData": {
+    "desktop": {
+      "defaultView": "month",
+      "firstDayOfWeek": 1,
+      "dailyNoteFolder": "periodic/daily",
+      "dailyNoteFormat": "YYYY-MM-DD",
+      "upcomingDays": 7,
+      "style": "style1",
+      "globalTaskFilter": "",
+      "startPosition": "",
+      "tag": "",
+      "folder": ""
+    },
+    "mobile": {
+      "defaultView": "list",
+      "firstDayOfWeek": 1,
+      "dailyNoteFolder": "periodic/daily",
+      "dailyNoteFormat": "YYYY-MM-DD",
+      "upcomingDays": 7,
+      "style": "style1",
+      "globalTaskFilter": "",
+      "startPosition": "",
+      "tag": "",
+      "folder": ""
+    },
+    "taskPrefix": "#serialized-by-cc84b5d",
+    "addToToday": true,
+    "customFilePath": "",
+    "inbox": {
+      "mode": "tag",
+      "tag": "#task/inbox",
+      "removeTagOnAssign": true
+    },
+    "pinnedTags": [],
+    "archivedTags": [],
+    "tagGroups": [],
+    "dailyNoteProvider": "auto",
+    "manualDailyNotePath": "YYYY-MM-DD",
+    "taskInsertionMode": "append",
+    "taskInsertionSection": "## Tasks",
+    "sourceNoteDisplay": "non-default",
+    "projects": {
+      "membershipQuery": "Projects/",
+      "createFolder": "Projects",
+      "templatePath": "",
+      "statusProperty": "status",
+      "startProperty": "start",
+      "endProperty": "end",
+      "statuses": [
+        {
+          "id": "status-active-raw-01",
+          "name": "in progress / raw",
+          "color": "#654321",
+          "onLeftPanel": true,
+          "displayName": "In progress",
+          "display": "text",
+          "futureStatusOption": {
+            "exact": ["keep", 9]
+          }
+        }
+      ],
+      "defaultStatusId": "status-active-raw-01",
+      "taskInsertionMode": "append",
+      "taskInsertionSection": "## Tasks",
+      "propertyDefinitions": {
+        "property:Effort": {
+          "type": "text",
+          "presetsEnabled": true,
+          "presets": [
+            {
+              "value": "raw/value",
+              "displayName": "Shown value",
+              "display": "badge",
+              "color": "#123456",
+              "futurePresetOption": {
+                "exact": ["nested", 7]
+              }
+            }
+          ],
+          "futureDefinitionOption": {
+            "exact": [
+              "keep",
+              {
+                "nested": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    "taskStatuses": [
+      {
+        "id": "status-1",
+        "symbol": " ",
+        "name": "To-do",
+        "type": "todo",
+        "icon": "",
+        "core": true
+      },
+      {
+        "id": "status-2",
+        "symbol": "/",
+        "name": "In progress",
+        "type": "in-progress",
+        "icon": "",
+        "core": true
+      },
+      {
+        "id": "status-3",
+        "symbol": "x",
+        "name": "Done",
+        "type": "done",
+        "icon": "check",
+        "core": true
+      },
+      {
+        "id": "status-4",
+        "symbol": "-",
+        "name": "Cancelled",
+        "type": "cancelled",
+        "icon": "x",
+        "core": true
+      }
+    ],
+    "taskLifecycle": {
+      "addCreatedDate": true,
+      "addCompletionDate": true
+    },
+    "recurrence": {
+      "newOccurrencePlacement": "before",
+      "removeScheduledDate": false
+    },
+    "shortcuts": {
+      "openQuickCapture": "Q",
+      "openTasks": "L",
+      "openInbox": "I",
+      "openToday": "T",
+      "openUpcoming": "U",
+      "openCalendar": "C",
+      "openCalendarToday": "D",
+      "openCalendarWeek": "W",
+      "openCalendarMonth": "M",
+      "openProjects": "P",
+      "openSearch": "S"
+    },
+    "savedViewStateSchemaVersion": 1
+  },
+  "stateText": "{\"schemaVersion\":1,\"views\":{\"sectionCollapse\":{\"pinned\":false,\"projects\":false,\"tags\":false},\"projects\":{\"table\":{\"columns\":[{\"id\":\"name\",\"visible\":true},{\"id\":\"status\",\"visible\":true},{\"id\":\"progress\",\"visible\":true},{\"id\":\"start\",\"visible\":true},{\"id\":\"end\",\"visible\":true}],\"showDescription\":true,\"groupBy\":\"status\",\"sortBy\":{\"field\":\"start\",\"dir\":\"asc\"},\"hiddenStatuses\":[]}}}}"
+}
