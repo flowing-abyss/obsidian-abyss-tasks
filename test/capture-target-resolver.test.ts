@@ -145,6 +145,15 @@ const scenarios: readonly Scenario[] = [
     },
   },
   {
+    name: 'project-table',
+    context: { type: 'project-table', path: 'Projects/Gamma.md' },
+    label: 'Projects/Gamma.md',
+    destination: {
+      filePath: 'Projects/Gamma.md',
+      insertion: { type: 'section', heading: '## Project tasks' },
+    },
+  },
+  {
     name: 'projects-overview',
     context: { type: 'default', source: 'projects' },
     label: 'Default destination',

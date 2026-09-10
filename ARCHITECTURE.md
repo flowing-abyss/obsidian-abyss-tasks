@@ -397,12 +397,15 @@ for same-file metadata changes.
 
 ### Creating a task
 
-1. The interface chooses a capture context and asks `TaskCaptureApplicationApi` to plan a
-   destination.
-2. The destination provider resolves today's note or the configured file and insertion policy.
-3. The ready creation session sends the create command through the application service and
+1. The interface chooses and freezes a capture context before asking `TaskCaptureApplicationApi` to
+   plan a destination.
+2. For the project table, `PanelView` delegates through `CenterPanel` and `ProjectsPanel` to the
+   table's active visible occurrence; an absent selection retains the default projects context.
+3. The destination provider resolves today's note or the configured file, while project contexts
+   use the selected note and the existing project insertion policy.
+4. The ready creation session sends the create command through the application service and
    repository.
-4. The creation presentation layer focuses or reveals the indexed result without inventing a
+5. The creation presentation layer focuses or reveals the indexed result without inventing a
    separate persisted identifier.
 
 ### Manual and external Markdown changes

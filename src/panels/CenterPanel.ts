@@ -736,6 +736,11 @@ export class CenterPanel {
     else panel.finishTableEditorBefore(action);
   }
 
+  selectedProjectPath(): string | undefined {
+    if (this.state_abyssPrivate.get('mode') !== 'projects') return undefined;
+    return this.projectsPanel_abyssPrivate?.selectedProjectPath();
+  }
+
   calendarView(): CalViewType {
     return this.calViewType_abyssPrivate;
   }

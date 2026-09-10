@@ -183,6 +183,38 @@ function mount(
 }
 
 describe('ProjectsTableView', () => {
+  it('reports the focused visible occurrence path and forgets filtered or removed selection', () => {
+    const alpha = project({ path: 'Projects/A.md', name: 'Alpha' });
+    const beta = project({ path: 'Projects/B.md', name: 'Beta' });
+    const { host, view } = mount([alpha, beta]);
+    const alphaStatus = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/A.md"] [data-column-id="status"]',
+      ),
+    );
+    const betaProgress = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/B.md"] [data-column-id="progress"]',
+      ),
+    );
+
+    expect(view.selectedProjectPath()).toBeUndefined();
+    alphaStatus.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    betaProgress.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+    expect(view.selectedProjectPath()).toBe('Projects/B.md');
+
+    const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
+    search.value = 'Alpha';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(view.selectedProjectPath()).toBeUndefined();
+
+    search.value = '';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    betaProgress.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    view.update([alpha]);
+    expect(view.selectedProjectPath()).toBeUndefined();
+  });
+
   it('renders and edits description beneath Name without creating a description column', async () => {
     const saveProperty = vi.fn().mockResolvedValue(undefined);
     const initial = project({ frontmatter: { description: 'First line\nSecond line' } });

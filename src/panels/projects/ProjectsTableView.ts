@@ -519,6 +519,12 @@ export class ProjectsTableView {
     this.updateResponsiveNamePinning_abyssPrivate();
   }
 
+  selectedProjectPath(): string | undefined {
+    const focused = this.selection_abyssPrivate.focus;
+    if (focused === undefined) return undefined;
+    return this.renderedCell_abyssPrivate(focused)?.project.path;
+  }
+
   mount(projects: readonly Project[]): void {
     this.mounted_abyssPrivate = true;
     this.markdown_abyssPrivate.load();

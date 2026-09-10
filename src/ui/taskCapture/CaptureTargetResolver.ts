@@ -13,6 +13,7 @@ import { localDate, shiftLocalDate } from '../../tasks';
 export type CaptureContext =
   | { readonly type: 'list'; readonly selection: ListSelection }
   | { readonly type: 'project-dashboard'; readonly path: string }
+  | { readonly type: 'project-table'; readonly path: string }
   | { readonly type: 'default'; readonly source: 'projects' | 'calendar' | 'search' };
 
 export interface CaptureTarget {
@@ -39,7 +40,8 @@ function unavailableSession(): TaskCreateSession {
 }
 
 function cloneContext(context: CaptureContext): CaptureContext {
-  if (context.type === 'project-dashboard') return { ...context };
+  if (context.type === 'project-dashboard' || context.type === 'project-table')
+    return { ...context };
   if (context.type === 'default') return { ...context };
   return {
     type: 'list',
@@ -61,7 +63,7 @@ export class CaptureTargetResolver {
 
   async resolve(context: CaptureContext): Promise<CaptureTarget> {
     const frozenContext = cloneContext(context);
-    if (frozenContext.type === 'project-dashboard') {
+    if (frozenContext.type === 'project-dashboard' || frozenContext.type === 'project-table') {
       return await this.projectTarget(frozenContext, frozenContext.path);
     }
     if (frozenContext.type === 'default') {

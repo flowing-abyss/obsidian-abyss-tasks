@@ -104,6 +104,11 @@ export class ProjectsPanel {
     else table.finishEditorBeforeAction(action);
   }
 
+  selectedProjectPath(): string | undefined {
+    if (this.state.get('projectsPanel').view !== 'table') return undefined;
+    return this.tableView?.selectedProjectPath();
+  }
+
   destroy(): void {
     for (const off of this.offs) off();
     this.offs = [];

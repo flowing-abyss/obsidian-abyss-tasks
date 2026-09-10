@@ -7516,6 +7516,10 @@ table.abyss-project-table {
   overflow: visible;
 }
 
+.abyss-project-description.is-editor-anchor > .abyss-project-description-text {
+  visibility: hidden;
+}
+
 .abyss-project-description.is-editor-anchor .abyss-project-cell-editor-host {
   padding-inline: 0;
   background: transparent;

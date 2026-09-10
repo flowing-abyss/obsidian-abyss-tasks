@@ -1463,6 +1463,159 @@ describe('PanelView', () => {
     });
   });
 
+  describe('project table Quick Capture suite', () => {
+    let app: Awaited<ReturnType<typeof createAppWithFiles>>;
+    let taskApplication: TaskApplication;
+    let leaf: WorkspaceLeaf;
+    let view: PanelView;
+    let settings: CalendarSettings;
+
+    beforeEach(async () => {
+      app = await createAppWithFiles({
+        'Projects/A.md': '---\nstatus: active\nstart: 2026-09-01\n---\n',
+        'Projects/B.md': '---\nstatus: planned\nstart: 2026-09-02\n---\n',
+      });
+      const nativeTypes = new Map([
+        ['status', 'text'],
+        ['start', 'date'],
+        ['end', 'date'],
+        ['description', 'text'],
+      ]);
+      Object.defineProperty(app, 'metadataTypeManager', {
+        configurable: true,
+        value: {
+          getAllProperties: () =>
+            Object.fromEntries([...nativeTypes.keys()].map((name) => [name, { name }])),
+          getTypeInfo: (name: string) => ({ expected: { type: nativeTypes.get(name) } }),
+          getAssignedWidget: () => null,
+          on: () => ({ id: 'project-table-quick-capture' }),
+          offref: () => {},
+        },
+      });
+      settings = structuredClone(DEFAULT_SETTINGS);
+      settings.projects.taskInsertionMode = 'section';
+      settings.projects.taskInsertionSection = '## Project tasks';
+      taskApplication = configuredTaskApplication(app, settings);
+      await taskApplication.index.initialize();
+      await flushMicrotasks();
+      leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+      view = new PanelView(
+        leaf,
+        settings,
+        makeTagManager(app, settings),
+        taskApplication.index,
+        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.statusRegistry,
+      );
+      vi.spyOn(app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
+        type === PanelView && workspaceState(app).activeLeaf === leaf ? view : null,
+      );
+      await view.onOpen();
+      document.body.appendChild(view.containerEl);
+      workspaceState(app).activeLeaf = leaf;
+      setGeometry(view.containerEl, rect(20, 20, 640, 480));
+      setGeometry(view.contentEl, rect(20, 20, 640, 480));
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('mode', 'projects');
+    });
+
+    afterEach(async () => {
+      await view.onClose();
+      view.containerEl.remove();
+      workspaceState(app).activeLeaf = null;
+      taskApplication.index.destroy();
+    });
+
+    function cell(path: string, columnId: string): HTMLElement {
+      return expectDefined(
+        view.contentEl.querySelector<HTMLElement>(
+          `[data-project-path="${path}"] [data-column-id="${columnId}"]`,
+        ),
+      );
+    }
+
+    function pressQ(target: HTMLElement): KeyboardEvent {
+      const event = new KeyboardEvent('keydown', {
+        key: 'q',
+        code: 'KeyQ',
+        bubbles: true,
+        cancelable: true,
+      });
+      target.dispatchEvent(event);
+      return event;
+    }
+
+    it('opens Q for the focused range occurrence, freezes its project, and restores cell focus', async () => {
+      const pending = deferred<TaskCreateSession>();
+      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const planCreate = vi.spyOn(application, 'planCreate').mockReturnValue(pending.promise);
+      const alphaStatus = cell('Projects/A.md', 'status');
+      const betaStatus = cell('Projects/B.md', 'status');
+      alphaStatus.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      betaStatus.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+
+      const open = pressQ(betaStatus);
+      alphaStatus.focus();
+      pending.resolve({
+        type: 'ready',
+        destination: {
+          filePath: 'Projects/B.md',
+          insertion: { type: 'section', heading: '## Project tasks' },
+        },
+        execute: vi.fn(),
+      });
+      await flushMicrotasks(0);
+
+      expect(open.defaultPrevented).toBe(true);
+      expect(planCreate).toHaveBeenCalledExactlyOnceWith({
+        type: 'explicit',
+        destination: {
+          filePath: 'Projects/B.md',
+          insertion: { type: 'section', heading: '## Project tasks' },
+        },
+      });
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+      );
+      expect(input.closest('.abyss-capture-surface')?.textContent).toContain('Projects/B.md');
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+      expect(document.activeElement).toBe(betaStatus);
+
+      betaStatus.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+      );
+      expect(document.activeElement).toBe(cell('Projects/B.md', 'progress'));
+    });
+
+    it('uses the projects default destination when the table has no selection', async () => {
+      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const planCreate = vi.spyOn(application, 'planCreate');
+      const center = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+
+      const open = pressQ(center);
+      await flushMicrotasks(0);
+
+      expect(open.defaultPrevented).toBe(true);
+      expect(planCreate).toHaveBeenCalledExactlyOnceWith({ type: 'configured-default' });
+    });
+
+    it('leaves Q in a project cell editor instead of opening Quick Capture', () => {
+      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const planCreate = vi.spyOn(application, 'planCreate');
+      const start = cell('Projects/B.md', 'start');
+      start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const editor = expectDefined(start.querySelector<HTMLInputElement>('input'));
+
+      const typed = pressQ(editor);
+
+      expect(typed.defaultPrevented).toBe(false);
+      expect(planCreate).not.toHaveBeenCalled();
+      expect(view.contentEl.querySelector('.abyss-quick-capture-input')).toBeNull();
+    });
+  });
+
   describe('populated vault suite', () => {
     let app: Awaited<ReturnType<typeof createAppWithFiles>>;
     let taskApplication: TaskApplication;

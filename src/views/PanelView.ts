@@ -857,6 +857,10 @@ export class PanelView extends ItemView {
       if (projectsPanel.view === 'dashboard') {
         return { type: 'project-dashboard', path: projectsPanel.path };
       }
+      const selectedProjectPath = this.center_abyssPrivate.selectedProjectPath();
+      if (selectedProjectPath !== undefined) {
+        return { type: 'project-table', path: selectedProjectPath };
+      }
     }
     return { type: 'default', source: mode };
   }
