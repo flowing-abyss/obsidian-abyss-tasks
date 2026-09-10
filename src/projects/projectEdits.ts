@@ -1,6 +1,7 @@
 import { parseLinks } from '../markdown/links';
 import type { ProjectsSettings } from '../settings/types';
 import type { ProjectNativePropertySnapshot } from './ObsidianProjectProperties';
+import { ProjectEditValidationError } from './projectEditError';
 import {
   findFrontmatterProperty,
   type ProjectField,
@@ -132,4 +133,47 @@ export function normalizeProjectLinkInput(value: string): string {
     return value;
   }
   return inner;
+}
+
+function isEmptyProjectAssignment(value: unknown): boolean {
+  return (
+    value === null ||
+    value === undefined ||
+    value === '' ||
+    (Array.isArray(value) && value.length === 0)
+  );
+}
+
+function normalizeProjectAssignmentLinks(value: unknown): unknown {
+  if (typeof value === 'string') return normalizeProjectLinkInput(value);
+  if (!Array.isArray(value)) return value;
+  return (value as unknown[]).map((entry) =>
+    typeof entry === 'string' ? normalizeProjectLinkInput(entry) : entry,
+  );
+}
+
+/** Normalizes the value/presence pair shared by project writes and drop forecasts. */
+export function normalizeProjectCellAssignment(
+  change: Pick<ProjectCellChange, 'field' | 'value' | 'restoreSourceValue' | 'valueExists'>,
+): { readonly value: unknown; readonly exists: boolean } {
+  if (change.restoreSourceValue === true) {
+    if (change.valueExists === undefined) {
+      const subject = change.field.type === 'status' ? 'Status' : 'Project';
+      throw new ProjectEditValidationError(
+        `${subject} history receipt is missing source provenance.`,
+      );
+    }
+    return {
+      value: change.valueExists ? change.value : undefined,
+      exists: change.valueExists,
+    };
+  }
+  const { value } = change;
+  if (isEmptyProjectAssignment(value)) {
+    return { value: undefined, exists: false };
+  }
+  return {
+    value: change.field.type === 'status' ? value : normalizeProjectAssignmentLinks(value),
+    exists: true,
+  };
 }

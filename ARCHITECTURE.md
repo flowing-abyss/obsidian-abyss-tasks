@@ -228,6 +228,12 @@ suppresses its following click. Scalar moves replace the grouped value; list mov
 source group value, preserve unrelated values, and deduplicate with the same resolved-link identity
 used by grouping. Dropping a list into No value explicitly clears the whole list. Selection,
 clipboard payloads, drag payloads, and edit history remain bounded to the table session.
+During a recognized row drag, the table caches one full target-group preview per source, target,
+and rendered projection. It decorates the group header and all visible body rows together, and may
+forecast a sorted insertion edge by applying the proposed assignment to one detached project and
+reusing `projectTableModel`; the drop still rebuilds its guarded plan before writing. The forecast
+and `ProjectManager` share `projectEdits` value/presence normalization, while unreliable tag-query,
+filtered, collapsed, self, and already-present occurrences deliberately omit the insertion edge.
 
 `ProjectCellEditor` owns typed drafts, suggestion-popup lifetime, validation, and autosave. Its
 async commit handle remains mounted on failure and coalesces a newer draft while a save is pending.

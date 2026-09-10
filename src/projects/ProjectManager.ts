@@ -21,7 +21,7 @@ import { ProjectEditValidationError } from './projectEditError';
 import {
   createOwnedInferredPropertyClear,
   isOwnedInferredPropertyClear,
-  normalizeProjectLinkInput,
+  normalizeProjectCellAssignment,
   type AppliedProjectCellChange,
   type OwnedInferredPropertyClear,
   type ProjectCellChange,
@@ -77,15 +77,6 @@ type AvailableNativePropertySnapshot = Extract<
   ProjectNativePropertySnapshot,
   { kind: 'available' }
 >;
-
-function isClearValue(value: unknown): boolean {
-  return (
-    value === null ||
-    value === undefined ||
-    value === '' ||
-    (Array.isArray(value) && value.length === 0)
-  );
-}
 
 function validDate(value: string): boolean {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
@@ -199,35 +190,6 @@ function absentEditSourceKey(
     return change.sourceKey;
   }
   return property;
-}
-
-function normalizePropertyLinks(value: unknown): unknown {
-  if (typeof value === 'string') return normalizeProjectLinkInput(value);
-  if (!Array.isArray(value)) return value;
-  return (value as unknown[]).map((entry) =>
-    typeof entry === 'string' ? normalizeProjectLinkInput(entry) : entry,
-  );
-}
-
-function normalizePropertyValue(
-  field: ProjectField,
-  value: unknown,
-  restoreSourceValue = false,
-  valueExists?: boolean,
-): NormalizedPropertyValue {
-  if (restoreSourceValue) {
-    if (valueExists === undefined) {
-      throw new ProjectEditValidationError('Project history receipt is missing source provenance.');
-    }
-    return valueExists ? { clear: false, value } : { clear: true, value: undefined };
-  }
-  if (isClearValue(value)) return { clear: true, value: undefined };
-  if (!isPropertyType(field.type)) {
-    throw new ProjectEditValidationError(`${field.label} is not an editable project property.`);
-  }
-  const normalized = normalizePropertyLinks(value);
-  PROPERTY_VALIDATORS[field.type](normalized, field.label);
-  return { clear: false, value: normalized };
 }
 
 function valuesEqual(left: unknown, right: unknown): boolean {
@@ -758,27 +720,26 @@ export class ProjectManager {
   }
 
   private normalizeCellValue(change: ProjectCellChange): NormalizedPropertyValue {
-    if (change.field.type !== 'status') {
-      return normalizePropertyValue(
-        change.field,
-        change.value,
-        change.restoreSourceValue,
-        change.valueExists,
-      );
+    const assignment = normalizeProjectCellAssignment(change);
+    if (change.restoreSourceValue === true || !assignment.exists) {
+      return { clear: !assignment.exists, value: assignment.value };
     }
-    if (change.restoreSourceValue === true) {
-      if (change.valueExists === false) return { clear: true, value: undefined };
-      if (change.valueExists === true) return { clear: false, value: change.value };
-      throw new ProjectEditValidationError('Status history receipt is missing source provenance.');
+    if (change.field.type === 'status') {
+      if (
+        typeof assignment.value !== 'string' ||
+        !this.settings.projects.statuses.some(({ name }) => name === assignment.value)
+      ) {
+        throw new ProjectEditValidationError(`Unknown project status: ${String(assignment.value)}`);
+      }
+    } else {
+      if (!isPropertyType(change.field.type)) {
+        throw new ProjectEditValidationError(
+          `${change.field.label} is not an editable project property.`,
+        );
+      }
+      PROPERTY_VALIDATORS[change.field.type](assignment.value, change.field.label);
     }
-    if (isClearValue(change.value)) return { clear: true, value: undefined };
-    if (
-      typeof change.value !== 'string' ||
-      !this.settings.projects.statuses.some(({ name }) => name === change.value)
-    ) {
-      throw new ProjectEditValidationError(`Unknown project status: ${String(change.value)}`);
-    }
-    return { clear: false, value: change.value };
+    return { clear: false, value: assignment.value };
   }
 
   private validateCombinedDateRange(

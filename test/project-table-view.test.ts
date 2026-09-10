@@ -3079,10 +3079,11 @@ describe('ProjectsTableView', () => {
       })),
       failed: [],
     }));
-    const { host } = mount(
+    const { host, view } = mount(
       [
         project({ path: 'Projects/A.md', frontmatter: { Owners: ['A'] } }),
         project({ path: 'Projects/B.md', frontmatter: { Owners: ['B'] } }),
+        project({ path: 'Projects/C.md', frontmatter: { Owners: ['B'] } }),
       ],
       {
         settings: config,
@@ -3098,13 +3099,46 @@ describe('ProjectsTableView', () => {
         '.abyss-project-table-row[data-group-key="value:b"] [data-column-id="status"]',
       ),
     );
+    const targetHeader = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-group-row[data-group-key="value:b"]'),
+    );
+    const targetRows = Array.from(
+      host.querySelectorAll<HTMLElement>('.abyss-project-table-row[data-group-key="value:b"]'),
+    );
+    expect(targetRows).toHaveLength(2);
     const data = transfer();
     sourceRow.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     sourceRow.dispatchEvent(dragEvent('dragstart', data));
     const over = dragEvent('dragover', data);
     targetCell.dispatchEvent(over);
     expect(over.defaultPrevented).toBe(true);
-    expect(targetCell.closest('tr')?.classList.contains('is-drop-target')).toBe(true);
+    expect(targetHeader.classList.contains('is-drop-target')).toBe(true);
+    expect(targetRows.every((row) => row.classList.contains('is-drop-target'))).toBe(true);
+    expect(targetRows[0]?.classList.contains('is-drop-before')).toBe(true);
+    expect(targetRows[1]?.classList.contains('is-drop-before')).toBe(false);
+
+    const observer = new MutationObserver(() => {});
+    for (const row of [targetHeader, ...targetRows]) {
+      observer.observe(row, { attributes: true });
+    }
+    targetCell.dispatchEvent(dragEvent('dragover', data));
+    expect(observer.takeRecords()).toHaveLength(0);
+
+    const siblingLeave = dragEvent('dragleave', data);
+    Object.defineProperty(siblingLeave, 'relatedTarget', {
+      value: expectDefined(targetRows[1]?.querySelector('td')),
+    });
+    targetCell.dispatchEvent(siblingLeave);
+    expect(targetHeader.classList.contains('is-drop-target')).toBe(true);
+
+    targetCell.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    expect(host.querySelector('.is-drop-target')).toBeNull();
+    expect(host.querySelector('.is-drop-before, .is-drop-after')).toBeNull();
+    targetCell.dispatchEvent(dragEvent('dragover', data));
+    view.refreshFields();
+    expect(host.querySelector('.is-drop-target')).toBeNull();
 
     targetCell.dispatchEvent(dragEvent('drop', data));
     await flushMicrotasks();
@@ -3113,5 +3147,58 @@ describe('ProjectsTableView', () => {
     expect(applyEdits.mock.calls[0]?.[0]).toMatchObject([
       { path: 'Projects/A.md', value: ['B'], expectedValue: ['A'] },
     ]);
+  });
+
+  it('marks an entire denied group and clears its owned state on destroy', () => {
+    const config = settings();
+    config.projects.table.groupBy = 'progress';
+    const { host, view } = mount(
+      [
+        project({
+          path: 'Projects/A.md',
+          stats: { total: 10, done: 8, cancelled: 0, inProgress: 0 },
+        }),
+        project({
+          path: 'Projects/B.md',
+          stats: { total: 10, done: 2, cancelled: 0, inProgress: 0 },
+        }),
+        project({
+          path: 'Projects/C.md',
+          stats: { total: 10, done: 2, cancelled: 0, inProgress: 0 },
+        }),
+      ],
+      { settings: config },
+    );
+    const source = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-row[data-group-key="value:80% (8/10)"]',
+      ),
+    );
+    const target = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-row[data-group-key="value:20% (2/10)"]',
+      ),
+    );
+    const targetGroup = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-group-row[data-group-key="value:20% (2/10)"]',
+      ),
+    );
+    const targetRows = Array.from(
+      host.querySelectorAll<HTMLElement>(
+        '.abyss-project-table-row[data-group-key="value:20% (2/10)"]',
+      ),
+    );
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+    target.dispatchEvent(dragEvent('dragover', data));
+
+    expect(targetGroup.classList.contains('is-drop-disabled')).toBe(true);
+    expect(targetRows.every((row) => row.classList.contains('is-drop-disabled'))).toBe(true);
+    expect(host.querySelector('.is-drop-before, .is-drop-after')).toBeNull();
+    destroyMountedView(view);
+    expect(targetGroup.classList.contains('is-drop-disabled')).toBe(false);
+    expect(targetRows.some((row) => row.classList.contains('is-drop-disabled'))).toBe(false);
   });
 });

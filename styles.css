@@ -7211,12 +7211,37 @@ table.abyss-project-table {
   background: var(--background-secondary-alt);
 }
 
-.abyss-project-table-group-row.is-drop-target td {
-  box-shadow: inset 0 0 0 2px var(--interactive-accent);
+.abyss-project-table-group-row.is-drop-target > td,
+.abyss-project-table-row.is-drop-target > td {
+  background: color-mix(in srgb, var(--interactive-accent) 10%, var(--background-primary));
 }
 
-.abyss-project-table-group-row.is-drop-disabled td {
-  box-shadow: inset 0 0 0 1px var(--text-error);
+.abyss-project-table-group-row.is-drop-disabled > td,
+.abyss-project-table-row.is-drop-disabled > td {
+  background: color-mix(in srgb, var(--text-error) 8%, var(--background-primary));
+}
+
+.abyss-project-table-group-row.is-drop-target > td,
+.abyss-project-table-group-row.is-drop-disabled > td {
+  box-shadow: inset 0 1px var(--abyss-project-drop-color, var(--interactive-accent));
+}
+
+.abyss-project-table-row.is-drop-target:not(:has(+ .is-drop-target)) > td,
+.abyss-project-table-row.is-drop-disabled:not(:has(+ .is-drop-disabled)) > td {
+  box-shadow: inset 0 -1px var(--abyss-project-drop-color, var(--interactive-accent));
+}
+
+.abyss-project-table-group-row.is-drop-disabled,
+.abyss-project-table-row.is-drop-disabled {
+  --abyss-project-drop-color: var(--text-error);
+}
+
+.abyss-project-table-row.is-drop-before > td {
+  box-shadow: inset 0 2px var(--interactive-accent);
+}
+
+.abyss-project-table-row.is-drop-after > td {
+  box-shadow: inset 0 -2px var(--interactive-accent);
 }
 
 .abyss-projects-table button.abyss-project-table-group-toggle {
