@@ -1,4 +1,4 @@
-import { Setting } from 'obsidian';
+import { DropdownComponent, Setting } from 'obsidian';
 import type { ProjectColumnAlignment, ProjectPropertyType } from '../projects/projectFields';
 import type {
   ProjectPropertyDefinition,
@@ -55,14 +55,16 @@ function renderType(options: RenderProjectPropertyOptions): void {
     setting.setDesc(fixedTypeLabel(options.type));
     return;
   }
-  const select = setting.controlEl.createEl('select', {
-    attr: { 'aria-label': `Type for ${options.label}` },
-  });
-  if (options.type === null) select.createEl('option', { text: 'Choose type', value: '' });
+  setting.settingEl.addClass('abyss-project-property-single-line-setting');
+  const dropdown = new DropdownComponent(setting.controlEl);
+  const select = dropdown.selectEl;
+  select.addClass('dropdown');
+  select.setAttribute('aria-label', `Type for ${options.label}`);
+  if (options.type === null) dropdown.addOption('', 'Choose type');
   for (const type of projectPropertyTypeChoices(options.property)) {
-    select.createEl('option', { text: PROPERTY_TYPE_LABELS[type], value: type });
+    dropdown.addOption(type, PROPERTY_TYPE_LABELS[type]);
   }
-  select.value = options.type ?? '';
+  dropdown.setValue(options.type ?? '');
   select.addEventListener('change', () => {
     if (select.value !== '') options.onTypeChange?.(select.value as ProjectPropertyType);
   });
@@ -70,17 +72,13 @@ function renderType(options: RenderProjectPropertyOptions): void {
 
 function renderAlignment(options: RenderProjectPropertyOptions): void {
   const setting = new Setting(options.container).setName('Alignment');
-  const select = setting.controlEl.createEl('select', {
-    attr: { 'aria-label': `Alignment for ${options.label}` },
-  });
-  for (const [value, label] of [
-    ['left', 'Left'],
-    ['center', 'Center'],
-    ['right', 'Right'],
-  ] as const) {
-    select.createEl('option', { text: label, value });
-  }
-  select.value = options.alignment ?? 'left';
+  setting.settingEl.addClass('abyss-project-property-single-line-setting');
+  const dropdown = new DropdownComponent(setting.controlEl)
+    .addOptions({ left: 'Left', center: 'Center', right: 'Right' })
+    .setValue(options.alignment ?? 'left');
+  const select = dropdown.selectEl;
+  select.addClass('dropdown');
+  select.setAttribute('aria-label', `Alignment for ${options.label}`);
   select.addEventListener('change', () => {
     options.onAlignmentChange(
       select.value === 'left' ? undefined : (select.value as ProjectColumnAlignment),
@@ -150,13 +148,12 @@ function createPresetRowControls(row: HTMLElement, context: PresetRowContext): P
     typeof record['color'] === 'string' && /^#[\da-f]{6}$/iu.test(record['color'])
       ? record['color']
       : '#888888';
-  const appearance = row.createEl('select', {
-    cls: 'abyss-project-preset-appearance',
-    attr: { 'aria-label': `Appearance for ${options.label} preset ${index + 1}` },
-  });
-  appearance.createEl('option', { text: 'Badge', attr: { value: 'badge' } });
-  appearance.createEl('option', { text: 'Text', attr: { value: 'text' } });
-  appearance.value = record['display'] === 'text' ? 'text' : 'badge';
+  const appearanceDropdown = new DropdownComponent(row)
+    .addOptions({ badge: 'Badge', text: 'Text' })
+    .setValue(record['display'] === 'text' ? 'text' : 'badge');
+  const appearance = appearanceDropdown.selectEl;
+  appearance.addClasses(['dropdown', 'abyss-project-preset-appearance']);
+  appearance.setAttribute('aria-label', `Appearance for ${options.label} preset ${index + 1}`);
   const remove = row.createEl('button', {
     cls: 'clickable-icon abyss-project-preset-remove',
     text: '×',

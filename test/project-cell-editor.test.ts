@@ -74,6 +74,7 @@ describe('mountProjectCellEditor', () => {
       container.querySelector<HTMLTextAreaElement>('.abyss-project-description-editor'),
     );
     expect(textarea.value).toBe('First line\nSecond line');
+    expect(textarea.placeholder).toBe('Description');
 
     const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
     textarea.dispatchEvent(enter);

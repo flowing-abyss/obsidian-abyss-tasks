@@ -1196,6 +1196,106 @@ describe('ProjectsTableView', () => {
     expect(saveSettings).toHaveBeenCalledTimes(3);
   });
 
+  it('shows one valid column drop boundary and clears renderer-owned feedback', () => {
+    const { host, view } = mount([project({})]);
+    const source = expectDefined(host.querySelector<HTMLElement>('th[data-column-id="status"]'));
+    const target = expectDefined(host.querySelector<HTMLElement>('th[data-column-id="start"]'));
+    const name = expectDefined(host.querySelector<HTMLElement>('th[data-column-id="name"]'));
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(rectangle(100, 0, 200, 34));
+    const data = transfer();
+    source.dispatchEvent(dragEvent('dragstart', data));
+
+    const before = new MouseEvent('dragover', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 125,
+    });
+    Object.defineProperty(before, 'dataTransfer', { value: data });
+    target.dispatchEvent(before);
+    expect(before.defaultPrevented).toBe(true);
+    expect(target.classList.contains('is-drop-before')).toBe(true);
+    expect(host.querySelectorAll('.is-drop-before, .is-drop-after')).toHaveLength(1);
+
+    const after = new MouseEvent('dragover', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 175,
+    });
+    Object.defineProperty(after, 'dataTransfer', { value: data });
+    target.dispatchEvent(after);
+    expect(target.classList.contains('is-drop-before')).toBe(false);
+    expect(target.classList.contains('is-drop-after')).toBe(true);
+    expect(host.querySelectorAll('.is-drop-before, .is-drop-after')).toHaveLength(1);
+
+    const leave = dragEvent('dragleave', data);
+    Object.defineProperty(leave, 'relatedTarget', { value: document.body });
+    target.dispatchEvent(leave);
+    expect(host.querySelector('.is-drop-before, .is-drop-after')).toBeNull();
+
+    target.dispatchEvent(after);
+    source.dispatchEvent(dragEvent('dragend', data));
+    expect(host.querySelector('.is-drop-before, .is-drop-after')).toBeNull();
+
+    source.dispatchEvent(dragEvent('dragstart', data));
+    const selfOver = dragEvent('dragover', data);
+    source.dispatchEvent(selfOver);
+    expect(selfOver.defaultPrevented).toBe(false);
+    expect(source.matches('.is-drop-before, .is-drop-after')).toBe(false);
+    source.dispatchEvent(dragEvent('dragend', data));
+
+    const invalid = transfer({ 'text/abyss-project-column': 'name' });
+    const invalidOver = new MouseEvent('dragover', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 125,
+    });
+    Object.defineProperty(invalidOver, 'dataTransfer', { value: invalid });
+    target.dispatchEvent(invalidOver);
+    expect(invalidOver.defaultPrevented).toBe(false);
+    expect(target.matches('.is-drop-before, .is-drop-after')).toBe(false);
+
+    const nameOver = dragEvent('dragover', data);
+    name.dispatchEvent(nameOver);
+    expect(nameOver.defaultPrevented).toBe(false);
+    expect(name.matches('.is-drop-before, .is-drop-after')).toBe(false);
+
+    source.dispatchEvent(dragEvent('dragstart', data));
+    target.dispatchEvent(before);
+    destroyMountedView(view);
+    expect(target.classList.contains('is-drop-before')).toBe(false);
+  });
+
+  it('clears the column boundary after a drop applies the advertised placement', async () => {
+    const { host, config } = mount([project({})]);
+    const source = expectDefined(host.querySelector<HTMLElement>('th[data-column-id="status"]'));
+    const target = expectDefined(host.querySelector<HTMLElement>('th[data-column-id="progress"]'));
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(rectangle(100, 0, 200, 34));
+    const data = transfer();
+    source.dispatchEvent(dragEvent('dragstart', data));
+    const over = new MouseEvent('dragover', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 175,
+    });
+    Object.defineProperty(over, 'dataTransfer', { value: data });
+    target.dispatchEvent(over);
+    expect(target.classList.contains('is-drop-after')).toBe(true);
+
+    const drop = new MouseEvent('drop', { bubbles: true, cancelable: true, clientX: 175 });
+    Object.defineProperty(drop, 'dataTransfer', { value: data });
+    target.dispatchEvent(drop);
+    await flushMicrotasks();
+
+    expect(host.querySelector('.is-drop-before, .is-drop-after')).toBeNull();
+    expect(config.projects.table.columns.map(({ id }) => id)).toEqual([
+      'name',
+      'progress',
+      'status',
+      'start',
+      'end',
+    ]);
+  });
+
   it('shows invalid external date ranges for correction without rewriting them', () => {
     const { host, saveProperty } = mount([
       project({ frontmatter: { start: '2026-10-10', end: '2026-09-01' } }),
@@ -3369,14 +3469,24 @@ describe('ProjectsTableView', () => {
     const groups = Array.from(host.querySelectorAll<HTMLElement>('.abyss-project-table-group-row'));
     let target = expectDefined(groups.find((group) => group.textContent.includes('B')));
     const targetKey = expectDefined(target.dataset['groupKey']);
-    expectDefined(
+    const targetToggle = expectDefined(
       target.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
-    ).click();
+    );
+    expect(
+      targetToggle.querySelector<HTMLElement>('.abyss-project-table-group-chevron')?.dataset[
+        'icon'
+      ],
+    ).toBe('chevron-down');
+    targetToggle.click();
     target = expectDefined(
       host.querySelector<HTMLElement>(
         `.abyss-project-table-group-row[data-group-key="${targetKey}"]`,
       ),
     );
+    expect(target.classList.contains('is-collapsed')).toBe(true);
+    expect(
+      target.querySelector<HTMLElement>('.abyss-project-table-group-chevron')?.dataset['icon'],
+    ).toBe('chevron-right');
     const sourceRow = expectDefined(
       Array.from(host.querySelectorAll<HTMLElement>('[data-project-path="Projects/A.md"]')).find(
         (row) => row.dataset['groupKey'] === 'value:a',
@@ -3414,6 +3524,7 @@ describe('ProjectsTableView', () => {
     protectedStore = true;
     target.dispatchEvent(dragEvent('dragover', data));
     expect(target.classList.contains('is-drop-target')).toBe(true);
+    expect(target.querySelector('.is-drop-before, .is-drop-after')).toBeNull();
     expect(target.getAttribute('title')).toContain('Drop to move to');
     const leave = dragEvent('dragleave', data);
     Object.defineProperty(leave, 'relatedTarget', { value: document.body });

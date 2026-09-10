@@ -83,6 +83,15 @@ function parseCardDragPayload(raw: string | undefined): CardDragPayload | null {
   }
 }
 
+function configureProjectStatusAppearance(
+  select: HTMLSelectElement,
+  status: ProjectStatus,
+): HTMLSelectElement {
+  select.addClass('dropdown');
+  select.setAttribute('aria-label', `Appearance for ${projectStatusDisplayName(status)}`);
+  return select;
+}
+
 interface ShortcutIssueView {
   inputs: ReadonlyMap<ShortcutActionId, HTMLInputElement>;
   messages: ReadonlyMap<ShortcutActionId, HTMLElement>;
@@ -1327,6 +1336,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
 
     new Setting(card).setName('Appearance').addDropdown((dropdown) =>
       dropdown
+        .then((component) => configureProjectStatusAppearance(component.selectEl, status))
         .addOptions({ badge: 'Badge', text: 'Text' })
         .setValue(status.display ?? 'badge')
         .onChange(async (value) => {

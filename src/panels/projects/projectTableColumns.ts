@@ -263,42 +263,101 @@ function initialColumnWidth(th: HTMLElement): number {
   return Number.isFinite(savedWidth) && savedWidth > 0 ? savedWidth : 150;
 }
 
-function bindColumnDrag(
-  th: HTMLTableCellElement,
-  columnId: string,
-  onMove: ProjectTableColumnOptions['onMove'],
-  suppressSort: (value: boolean) => void,
-): void {
-  th.addEventListener('dragstart', (event) => {
+const PROJECT_COLUMN_DRAG_TYPE = 'text/abyss-project-column';
+
+interface ProjectColumnDragSession {
+  readonly movableColumnIds: ReadonlySet<string>;
+  sourceId: string | undefined;
+}
+
+function clearColumnDropMarkers(row: HTMLTableRowElement): void {
+  for (const marker of row.querySelectorAll('.is-drop-before, .is-drop-after')) {
+    marker.removeClass('is-drop-before', 'is-drop-after');
+  }
+}
+
+function columnDropPlacement(th: HTMLTableCellElement, clientX: number): 'before' | 'after' {
+  const bounds = th.getBoundingClientRect();
+  return clientX >= bounds.left + bounds.width / 2 ? 'after' : 'before';
+}
+
+interface BindColumnDragOptions {
+  readonly th: HTMLTableCellElement;
+  readonly columnId: string;
+  readonly session: ProjectColumnDragSession;
+  readonly onMove: ProjectTableColumnOptions['onMove'];
+  readonly suppressSort: (value: boolean) => void;
+}
+
+function bindColumnDrag(options: BindColumnDragOptions): () => void {
+  const { th, columnId, session, onMove, suppressSort } = options;
+  const row = th.parentElement as HTMLTableRowElement;
+  const draggedColumn = (event: DragEvent): string | undefined => {
+    if (event.dataTransfer?.types.includes(PROJECT_COLUMN_DRAG_TYPE) !== true) return undefined;
+    const moved = session.sourceId ?? event.dataTransfer.getData(PROJECT_COLUMN_DRAG_TYPE);
+    return session.movableColumnIds.has(moved) ? moved : undefined;
+  };
+  const start = (event: DragEvent): void => {
     suppressSort(true);
-    event.dataTransfer?.setData('text/abyss-project-column', columnId);
+    session.sourceId = columnId;
+    event.dataTransfer?.setData(PROJECT_COLUMN_DRAG_TYPE, columnId);
     th.addClass('is-dragging');
-  });
-  th.addEventListener('dragend', () => {
+  };
+  const end = (): void => {
+    session.sourceId = undefined;
+    clearColumnDropMarkers(row);
     th.removeClass('is-dragging');
     window.setTimeout(() => {
       suppressSort(false);
     }, 0);
-  });
-  th.addEventListener('dragover', (event) => {
-    if (event.dataTransfer?.types.includes('text/abyss-project-column') === true) {
-      event.preventDefault();
+  };
+  const over = (event: DragEvent): void => {
+    const moved = draggedColumn(event);
+    if (moved === undefined || moved === columnId) {
+      clearColumnDropMarkers(row);
+      return;
     }
-  });
-  th.addEventListener('drop', (event) => {
-    const moved = event.dataTransfer?.getData('text/abyss-project-column');
-    if (moved === undefined || moved === '' || moved === columnId) return;
     event.preventDefault();
-    const bounds = th.getBoundingClientRect();
-    const placement = event.clientX >= bounds.left + bounds.width / 2 ? 'after' : 'before';
+    const placement = columnDropPlacement(th, event.clientX);
+    clearColumnDropMarkers(row);
+    th.addClass(placement === 'before' ? 'is-drop-before' : 'is-drop-after');
+  };
+  const leave = (event: DragEvent): void => {
+    const related = event.relatedTarget;
+    const ownerWindow = th.ownerDocument.defaultView;
+    if (ownerWindow !== null && related instanceof ownerWindow.Node && th.contains(related)) return;
+    clearColumnDropMarkers(row);
+  };
+  const drop = (event: DragEvent): void => {
+    const moved = draggedColumn(event);
+    clearColumnDropMarkers(row);
+    if (moved === undefined || moved === columnId) return;
+    event.preventDefault();
+    const placement = columnDropPlacement(th, event.clientX);
     onMove(moved, columnId, placement);
-  });
+  };
+  th.addEventListener('dragstart', start);
+  th.addEventListener('dragend', end);
+  th.addEventListener('dragover', over);
+  th.addEventListener('dragleave', leave);
+  th.addEventListener('drop', drop);
+  return () => {
+    if (session.sourceId === columnId) session.sourceId = undefined;
+    clearColumnDropMarkers(row);
+    th.removeClass('is-dragging');
+    th.removeEventListener('dragstart', start);
+    th.removeEventListener('dragend', end);
+    th.removeEventListener('dragover', over);
+    th.removeEventListener('dragleave', leave);
+    th.removeEventListener('drop', drop);
+  };
 }
 
 function renderHeaderColumn(
   row: HTMLTableRowElement,
   entry: VisibleProjectColumn,
   options: ProjectTableColumnOptions,
+  dragSession: ProjectColumnDragSession,
 ): () => void {
   const { column, field } = entry;
   let suppressSort = false;
@@ -317,7 +376,7 @@ function renderHeaderColumn(
   const iconId = field.type === null ? 'circle-help' : TYPE_ICONS[field.type];
   icon.dataset['icon'] = iconId;
   setIcon(icon, iconId);
-  button.createSpan({ text: column.label ?? field.label });
+  button.createSpan({ cls: 'abyss-project-table-column-label', text: column.label ?? field.label });
   if (options.sort.field === column.id) {
     const indicator = button.createSpan({ cls: 'abyss-project-table-sort-indicator' });
     setIcon(indicator, options.sort.dir === 'asc' ? 'arrow-up' : 'arrow-down');
@@ -342,16 +401,23 @@ function renderHeaderColumn(
     );
     showMenuAtMouseEventWithFocus(menu, event);
   });
-  if (field.type !== 'name') {
-    bindColumnDrag(th, column.id, options.onMove, (value) => {
-      suppressSort = value;
-    });
-  }
+  const dragCleanup =
+    field.type === 'name'
+      ? undefined
+      : bindColumnDrag({
+          th,
+          columnId: column.id,
+          session: dragSession,
+          onMove: options.onMove,
+          suppressSort: (value) => {
+            suppressSort = value;
+          },
+        });
   const resize = th.createSpan({
     cls: 'abyss-project-column-resize',
     attr: { role: 'separator', 'aria-label': `Resize ${column.label ?? field.label} column` },
   });
-  return bindResize({
+  const resizeCleanup = bindResize({
     handle: resize,
     th,
     columnId: column.id,
@@ -360,6 +426,10 @@ function renderHeaderColumn(
       suppressSort = value;
     },
   });
+  return () => {
+    dragCleanup?.();
+    resizeCleanup();
+  };
 }
 
 export function renderProjectTableColumns(
@@ -380,7 +450,15 @@ export function renderProjectTableColumns(
   }
 
   const row = table.createEl('thead').createEl('tr');
-  const cleanups = options.columns.map((entry) => renderHeaderColumn(row, entry, options));
+  const dragSession: ProjectColumnDragSession = {
+    movableColumnIds: new Set(
+      options.columns.filter(({ field }) => field.type !== 'name').map(({ column }) => column.id),
+    ),
+    sourceId: undefined,
+  };
+  const cleanups = options.columns.map((entry) =>
+    renderHeaderColumn(row, entry, options, dragSession),
+  );
   return () => {
     for (const cleanup of cleanups) cleanup();
   };

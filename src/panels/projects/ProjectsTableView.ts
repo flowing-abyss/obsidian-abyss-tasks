@@ -1,4 +1,4 @@
-import { Component, Menu, Notice, TFile, type App } from 'obsidian';
+import { Component, Menu, Notice, setIcon, TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import { parseLinks } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
@@ -60,7 +60,6 @@ import { forecastProjectGroupDrop, type ProjectGroupDropForecast } from './proje
 import { ProjectsTableToolbar } from './ProjectsTableToolbar';
 import { renderProjectTableCell } from './projectTableCells';
 import {
-  PROJECT_TABLE_CLIPBOARD_TYPE,
   clipboardPayloadFromText,
   coerceProjectClipboardValue,
   decodeProjectTableClipboard,
@@ -68,6 +67,7 @@ import {
   encodeProjectTableClipboard,
   formatProjectTableTsv,
   parseProjectTableTsv,
+  PROJECT_TABLE_CLIPBOARD_TYPE,
   rebaseProjectClipboardLinks,
   resolveProjectPasteRectangle,
   type ProjectClipboardCell,
@@ -1026,8 +1026,12 @@ export class ProjectsTableView {
     rendered.cell.colSpan = Math.max(1, columnCount);
     rendered.button.dataset['groupKey'] = key;
     const collapsed = this.collapsedGroups_abyssPrivate.has(key);
+    rendered.element.toggleClass('is-collapsed', collapsed);
     rendered.button.setAttribute('aria-expanded', String(!collapsed));
-    rendered.chevron.setText(collapsed ? '›' : '⌄');
+    rendered.chevron.empty();
+    const chevronIcon = collapsed ? 'chevron-right' : 'chevron-down';
+    rendered.chevron.dataset['icon'] = chevronIcon;
+    setIcon(rendered.chevron, chevronIcon);
     const status = statuses.find((candidate) => candidate.key === key);
     const color = status?.color ?? presentation?.color;
     const signature = JSON.stringify([label, value, sourcePath, color, presentation?.display]);

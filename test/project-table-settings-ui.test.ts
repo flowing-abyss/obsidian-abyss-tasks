@@ -91,6 +91,7 @@ describe('renderProjectTableSettings', () => {
     const alignment = expectDefined(
       statusCard.querySelector<HTMLSelectElement>('[aria-label="Alignment for Status"]'),
     );
+    expect(alignment.classList.contains('dropdown')).toBe(true);
 
     alignment.value = 'center';
     alignment.dispatchEvent(new Event('change', { bubbles: true }));
@@ -157,6 +158,7 @@ describe('renderProjectTableSettings', () => {
     const type = expectDefined(
       card.querySelector<HTMLSelectElement>('[aria-label="Type for Effort"]'),
     );
+    expect(type.classList.contains('dropdown')).toBe(true);
 
     type.value = 'number';
     type.dispatchEvent(new Event('change', { bubbles: true }));
@@ -201,6 +203,7 @@ describe('renderProjectTableSettings', () => {
     const appearance = expectDefined(
       card.querySelector<HTMLSelectElement>('.abyss-project-preset-appearance'),
     );
+    expect(appearance.classList.contains('dropdown')).toBe(true);
 
     value.value = 'high';
     value.dispatchEvent(new Event('change', { bubbles: true }));

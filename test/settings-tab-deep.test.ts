@@ -57,6 +57,7 @@ interface CapturedComp {
     getValue?: () => unknown;
     setValue: (v: unknown) => unknown;
     clickHandler?: () => void;
+    selectEl?: HTMLSelectElement;
   };
 }
 
@@ -1436,6 +1437,21 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(plugin.settings.projects.defaultStatusId).toBe(plannedId);
     // No per-status "Default for new projects" toggle remains.
     expect(captured.some((c) => c.name === 'Default for new projects')).toBe(false);
+  });
+
+  it('renders project status appearance with native dropdown presentation', () => {
+    const { tab, plugin, captured } = makeTab();
+    openSection(tab, 5);
+    const appearanceComponent = expectDefined(
+      captured.find((entry) => entry.name === 'Appearance' && entry.type === 'dropdown'),
+    ).comp;
+    const appearance = appearanceComponent.selectEl;
+
+    expect(expectDefined(appearance).classList.contains('dropdown')).toBe(true);
+    expect(appearance?.getAttribute('aria-label')).toBe('Appearance for active');
+    expect(appearanceComponent.getValue?.()).toBe('badge');
+    appearanceComponent.setValue('text');
+    expect(plugin.settings.projects.statuses[0]?.display).toBe('text');
   });
 
   it('deleting the default status repoints defaultStatusId to the first remaining', () => {

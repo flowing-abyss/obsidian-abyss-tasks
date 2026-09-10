@@ -265,7 +265,7 @@ function descriptionControl(
   label.id = 'abyss-project-description-editor-label';
   const textarea = root.createEl('textarea', {
     cls: 'abyss-project-editor-input abyss-project-description-editor',
-    attr: { 'aria-labelledby': label.id },
+    attr: { 'aria-labelledby': label.id, placeholder: 'Description' },
   });
   textarea.value = typeof options.value === 'string' ? options.value : '';
   textarea.addEventListener('input', () => {
