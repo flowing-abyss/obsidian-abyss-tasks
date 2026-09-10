@@ -40,7 +40,9 @@ function verticalPosition(
   if (avoidTop === undefined || anchor.top + height <= boundary.bottom - edgeGap)
     return [aligned, 'aligned'];
   const above = avoidTop - height;
-  return above >= boundary.top + edgeGap ? [above, 'above'] : [aligned, 'aligned'];
+  return above >= boundary.top + edgeGap && above + height <= boundary.bottom - edgeGap
+    ? [above, 'above']
+    : [aligned, 'aligned'];
 }
 
 function positionEditor(options: ProjectCellEditorPositionOptions): string | undefined {

@@ -2,6 +2,7 @@ import { App, MarkdownRenderer, Menu, type WorkspaceLeaf } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
+import { mountProjectCellEditorPosition } from '../src/panels/projects/projectCellEditorPosition';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
@@ -1300,6 +1301,35 @@ describe('ProjectsTableView', () => {
     const editorTop = 190 + Number.parseFloat(editor.style.top);
     expect(editor.dataset['side']).toBe('above');
     expect(editorTop + 60).toBeLessThanOrEqual(170);
+  });
+
+  it('keeps the editor bounded when its description avoid target is below the pane', () => {
+    const boundary = freshContainer();
+    document.body.appendChild(boundary);
+    const avoid = boundary.createDiv();
+    const anchor = avoid.createDiv();
+    const editor = anchor.createDiv();
+    Object.defineProperties(boundary, {
+      clientHeight: { configurable: true, value: 220 },
+      clientWidth: { configurable: true, value: 500 },
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this === boundary) return rectangle(0, 0, 500, 220);
+      if (this === avoid) return rectangle(0, 260, 220, 294);
+      if (this === anchor) return rectangle(8, 280, 212, 294);
+      if (this === editor) return rectangle(0, 0, Number.parseFloat(this.style.width), 60);
+      return rectangle(0, 0, 0, 0);
+    });
+
+    const cleanup = mountProjectCellEditorPosition({ anchor, host: editor, boundary, avoid });
+
+    const editorTop = 280 + Number.parseFloat(editor.style.top);
+    expect(editor.dataset['side']).toBe('aligned');
+    expect(editorTop).toBeGreaterThanOrEqual(8);
+    expect(editorTop + 60).toBeLessThanOrEqual(212);
+    cleanup();
   });
 
   it('keeps a bottom-right long-list editor within the visible pane and releases positioning', () => {
