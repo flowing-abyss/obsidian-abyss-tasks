@@ -1,4 +1,4 @@
-import { Component, Menu, Notice, setIcon, TFile, type App } from 'obsidian';
+import { Component, Menu, moment, Notice, setIcon, TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import { parseLinks } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
@@ -17,13 +17,17 @@ import {
   findFrontmatterProperty,
   findProjectFieldById,
   isAvailableProjectField,
+  isReservedProjectProperty,
   projectFieldValue,
   type ProjectField,
   type ProjectFieldCatalogItem,
+  type ProjectPropertyType,
 } from '../../projects/projectFields';
 import type { ProjectValuePresentation } from '../../projects/projectPropertyDefinitions';
 import {
+  projectPropertyTypeChoices,
   resolveConfiguredProjectField,
+  setProjectPropertyDefinitionType,
   type ProjectPropertyDefinition,
 } from '../../projects/projectPropertyDefinitions';
 import {
@@ -44,9 +48,12 @@ import { resolveStatus } from '../../projects/status';
 import type { Project } from '../../projects/types';
 import {
   enforceProjectTableColumnInvariants,
+  setProjectColumnAlignment,
+  setProjectColumnDateDisplay,
   setProjectColumnLabel,
   setProjectColumnWidth,
 } from '../../settings/projectTableSettings';
+import { saveSettingsDraft } from '../../settings/settingsSaveFailure';
 import type { CalendarSettings } from '../../settings/types';
 import type { ProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
 import { renderTaskText } from '../../ui/renderTaskText';
@@ -56,6 +63,7 @@ import {
   type ProjectCellEditorNavigation,
 } from './ProjectCellEditor';
 import { mountProjectCellEditorPosition } from './projectCellEditorPosition';
+import { formatProjectRelativeDate } from './projectDatePresentation';
 import { forecastProjectGroupDrop, type ProjectGroupDropForecast } from './projectGroupDropPreview';
 import { ProjectsTableToolbar } from './ProjectsTableToolbar';
 import { renderProjectTableCell } from './projectTableCells';
@@ -120,6 +128,7 @@ export interface ProjectsTableViewContext {
   readonly settings: CalendarSettings;
   readonly catalog: ProjectPropertyCatalog;
   readonly saveViewState: () => Promise<void>;
+  readonly saveStatic?: () => Promise<void>;
   readonly applyEdits: (changes: readonly ProjectCellChange[]) => Promise<ProjectEditResult>;
   readonly history: ProjectEditHistory;
   readonly createProject: (name: string) => Promise<void>;
@@ -454,44 +463,14 @@ export class ProjectsTableView {
   private finishingEditor_abyssPrivate: Promise<void> | undefined;
   private readonly resizeObserver_abyssPrivate: ResizeObserver | undefined;
   private nativeMenuOpen_abyssPrivate = false;
+  private relativeDateInterval_abyssPrivate: number | undefined;
 
   constructor(
     host: HTMLElement,
     private readonly context_abyssPrivate: ProjectsTableViewContext,
   ) {
     this.root_abyssPrivate = host.createDiv({ cls: 'abyss-projects-table' });
-    this.toolbar_abyssPrivate = new ProjectsTableToolbar({
-      host: this.root_abyssPrivate,
-      settings: context_abyssPrivate.settings.projects.table,
-      fields: () => this.fields_abyssPrivate,
-      onSearch: (query) => {
-        this.finishEditorBeforeAction(() => {
-          this.search_abyssPrivate = query;
-          this.renderTable_abyssPrivate();
-        });
-      },
-      onStatusToggle: (key) => {
-        this.finishEditorBeforeAction(() => {
-          this.toggleStatus_abyssPrivate(key);
-        });
-      },
-      onGroupBy: (field) => {
-        this.finishEditorBeforeAction(() => {
-          this.context_abyssPrivate.settings.projects.table.groupBy = field;
-          this.persistAndRender_abyssPrivate();
-        });
-      },
-      onSortBy: (field) => {
-        this.finishEditorBeforeAction(() => {
-          this.sortByColumn_abyssPrivate(field);
-        });
-      },
-      onReset: () => {
-        this.finishEditorBeforeAction(() => {
-          this.resetViewState_abyssPrivate();
-        });
-      },
-    });
+    this.toolbar_abyssPrivate = this.createToolbar_abyssPrivate();
     this.feedback_abyssPrivate = this.root_abyssPrivate.createDiv({
       cls: 'abyss-project-table-feedback',
       attr: { role: 'alert', 'aria-live': 'polite' },
@@ -506,6 +485,7 @@ export class ProjectsTableView {
     });
     this.ownerWindow_abyssPrivate = this.root_abyssPrivate.ownerDocument.defaultView ?? undefined;
     this.listenForOwnerWindowF2_abyssPrivate();
+    this.listenForRelativeDates_abyssPrivate();
     this.tableHost_abyssPrivate = this.scroll_abyssPrivate.createDiv({
       cls: 'abyss-project-table-host',
     });
@@ -533,6 +513,58 @@ export class ProjectsTableView {
       });
     });
     this.count_abyssPrivate = footer.createSpan({ cls: 'abyss-project-table-count' });
+  }
+
+  private createToolbar_abyssPrivate(): ProjectsTableToolbar {
+    return new ProjectsTableToolbar({
+      host: this.root_abyssPrivate,
+      settings: this.context_abyssPrivate.settings.projects.table,
+      fields: () => this.fields_abyssPrivate,
+      onSearch: (query) => {
+        this.finishEditorBeforeAction(() => {
+          this.search_abyssPrivate = query;
+          this.renderTable_abyssPrivate();
+        });
+      },
+      onStatusToggle: (key) => {
+        this.finishEditorBeforeAction(() => {
+          this.toggleStatus_abyssPrivate(key);
+        });
+      },
+      onGroupBy: (field) => {
+        this.finishEditorBeforeAction(() => {
+          this.context_abyssPrivate.settings.projects.table.groupBy = field;
+          this.persistAndRender_abyssPrivate();
+        });
+      },
+      onSortBy: (field) => {
+        this.finishEditorBeforeAction(() => {
+          if (field === 'none') {
+            this.context_abyssPrivate.settings.projects.table.sortBy = {
+              field: 'none',
+              dir: 'asc',
+            };
+            this.persistAndRender_abyssPrivate();
+          } else this.sortByColumn_abyssPrivate(field);
+        });
+      },
+      onReset: () => {
+        this.finishEditorBeforeAction(() => {
+          this.resetViewState_abyssPrivate();
+        });
+      },
+    });
+  }
+
+  private listenForRelativeDates_abyssPrivate(): void {
+    this.ownerWindow_abyssPrivate?.addEventListener(
+      'focus',
+      this.refreshRelativeDates_abyssPrivate,
+    );
+    this.root_abyssPrivate.ownerDocument.addEventListener(
+      'visibilitychange',
+      this.refreshRelativeDates_abyssPrivate,
+    );
   }
 
   private listenForDocumentFocus_abyssPrivate(): void {
@@ -603,18 +635,31 @@ export class ProjectsTableView {
     this.columnCleanup_abyssPrivate = undefined;
     this.toolbar_abyssPrivate.destroy();
     this.resizeObserver_abyssPrivate?.disconnect();
+    this.stopListening_abyssPrivate();
+    this.markdown_abyssPrivate.unload();
+    this.root_abyssPrivate.remove();
+  }
+
+  private stopListening_abyssPrivate(): void {
     this.ownerWindow_abyssPrivate?.removeEventListener(
       'keydown',
       this.handleOwnerWindowKeydown_abyssPrivate,
       true,
     );
+    this.ownerWindow_abyssPrivate?.removeEventListener(
+      'focus',
+      this.refreshRelativeDates_abyssPrivate,
+    );
+    this.root_abyssPrivate.ownerDocument.removeEventListener(
+      'visibilitychange',
+      this.refreshRelativeDates_abyssPrivate,
+    );
+    this.stopRelativeDateTimer_abyssPrivate();
     this.root_abyssPrivate.ownerDocument.removeEventListener(
       'focusin',
       this.handleDocumentFocusIn_abyssPrivate,
       true,
     );
-    this.markdown_abyssPrivate.unload();
-    this.root_abyssPrivate.remove();
   }
 
   /**
@@ -789,6 +834,7 @@ export class ProjectsTableView {
     const tableSettings = this.context_abyssPrivate.settings.projects.table;
     enforceProjectTableColumnInvariants(tableSettings);
     const columns = visibleColumns(this.context_abyssPrivate.settings, this.fields_abyssPrivate);
+    this.syncRelativeDateTimer_abyssPrivate(columns);
     this.compiledPresets_abyssPrivate = new Map(
       columns.map(({ field }) => [
         field.id,
@@ -867,6 +913,7 @@ export class ProjectsTableView {
         width: projectTableColumnWidth(column, field),
         type: field.type,
         alignment: column.alignment ?? 'left',
+        dateDisplay: column.dateDisplay ?? 'absolute',
       })),
       sort: tableSettings.sortBy,
     });
@@ -884,6 +931,26 @@ export class ProjectsTableView {
           this.sortByColumn_abyssPrivate(field);
         });
       },
+      onSortExact: (field, direction) => {
+        const target = this.context_abyssPrivate.settings.projects.table;
+        target.sortBy =
+          direction === 'none' ? { field: 'none', dir: 'asc' } : { field, dir: direction };
+        this.persistAndRender_abyssPrivate();
+      },
+      beforeAction: (action) => {
+        this.finishEditorBeforeAction(action);
+      },
+      onAlignment: (columnId, alignment) => {
+        this.setColumnAlignment_abyssPrivate(columnId, alignment);
+      },
+      onDateDisplay: (columnId, display) => {
+        this.setColumnDateDisplay_abyssPrivate(columnId, display);
+      },
+      typeChoices: (columnId) => this.projectColumnTypeChoices_abyssPrivate(columnId),
+      onType: (columnId, type) => {
+        this.setProjectColumnType_abyssPrivate(columnId, type);
+      },
+      restoreTableFocus: () => this.restoreTableSelectionFocus_abyssPrivate(),
       onRename: (columnId, label) => {
         this.finishEditorBeforeAction(() => {
           this.renameColumn_abyssPrivate(columnId, label);
@@ -906,6 +973,29 @@ export class ProjectsTableView {
     if (head !== null && this.body_abyssPrivate !== undefined) {
       table.insertBefore(head, this.body_abyssPrivate);
     }
+  }
+
+  private restoreTableSelectionFocus_abyssPrivate(): boolean {
+    const focus = this.selection_abyssPrivate.focus;
+    if (focus === undefined) return false;
+    this.focusSelectionCell_abyssPrivate(focus);
+    return true;
+  }
+
+  private setColumnAlignment_abyssPrivate(
+    columnId: string,
+    alignment: 'left' | 'center' | 'right',
+  ): void {
+    const table = this.context_abyssPrivate.settings.projects.table;
+    if (setProjectColumnAlignment(table, columnId, alignment)) this.persistAndRender_abyssPrivate();
+  }
+
+  private setColumnDateDisplay_abyssPrivate(
+    columnId: string,
+    display: 'absolute' | 'relative',
+  ): void {
+    const table = this.context_abyssPrivate.settings.projects.table;
+    if (setProjectColumnDateDisplay(table, columnId, display)) this.persistAndRender_abyssPrivate();
   }
 
   private renderTableBody_abyssPrivate(
@@ -1213,11 +1303,36 @@ export class ProjectsTableView {
 
   private sortByColumn_abyssPrivate(field: string): void {
     const table = this.context_abyssPrivate.settings.projects.table;
-    table.sortBy = {
-      field,
-      dir: table.sortBy.field === field && table.sortBy.dir === 'asc' ? 'desc' : 'asc',
-    };
+    if (table.sortBy.field !== field) table.sortBy = { field, dir: 'asc' };
+    else if (table.sortBy.dir === 'asc') table.sortBy = { field, dir: 'desc' };
+    else table.sortBy = { field: 'none', dir: 'asc' };
     this.persistAndRender_abyssPrivate();
+  }
+
+  private projectColumnTypeChoices_abyssPrivate(columnId: string): readonly ProjectPropertyType[] {
+    if (this.context_abyssPrivate.saveStatic === undefined || !columnId.startsWith('property:')) {
+      return [];
+    }
+    const property = columnId.slice('property:'.length);
+    if (isReservedProjectProperty(this.context_abyssPrivate.settings.projects, property)) return [];
+    const matches = Object.keys(
+      this.context_abyssPrivate.settings.projects.propertyDefinitions,
+    ).filter(
+      (candidate) => candidate.localeCompare(columnId, undefined, { sensitivity: 'accent' }) === 0,
+    );
+    return matches.length > 1 ? [] : projectPropertyTypeChoices(property);
+  }
+
+  private setProjectColumnType_abyssPrivate(columnId: string, type: ProjectPropertyType): void {
+    const saveStatic = this.context_abyssPrivate.saveStatic;
+    if (
+      saveStatic === undefined ||
+      !setProjectPropertyDefinitionType(this.context_abyssPrivate.settings.projects, columnId, type)
+    ) {
+      return;
+    }
+    this.refreshFields();
+    saveSettingsDraft({ action: 'save project property type', save: saveStatic });
   }
 
   private renameColumn_abyssPrivate(columnId: string, label: string): void {
@@ -1436,6 +1551,9 @@ export class ProjectsTableView {
       invalidRange,
       ownedClear: rendered.ownedClear,
       grouped,
+      dateDisplay: this.context_abyssPrivate.settings.projects.table.columns.find(
+        ({ id }) => id === rendered.identity.columnId,
+      )?.dateDisplay,
       description:
         descriptionField === undefined
           ? undefined
@@ -1457,6 +1575,9 @@ export class ProjectsTableView {
         ? undefined
         : this.effectiveField_abyssPrivate(rendered.project, descriptionField);
     const compiledPresets = this.compiledPresets_abyssPrivate.get(rendered.field.id);
+    const column = this.context_abyssPrivate.settings.projects.table.columns.find(
+      ({ id }) => id === rendered.identity.columnId,
+    );
     renderProjectTableCell(content, rendered.project, {
       field: rendered.field,
       statuses: this.context_abyssPrivate.settings.projects.statuses,
@@ -1480,6 +1601,9 @@ export class ProjectsTableView {
       onToggleCheckbox: (value, input) => {
         this.requestToggleCheckbox_abyssPrivate(rendered, value, input);
       },
+      ...(column?.dateDisplay === undefined ? {} : { dateDisplay: column.dateDisplay }),
+      now: new Date(),
+      locale: moment.locale(),
       ...(rendered.field.type !== 'name' || effectiveDescription === undefined
         ? {}
         : {
@@ -1489,6 +1613,48 @@ export class ProjectsTableView {
             },
           }),
     });
+  }
+
+  private readonly refreshRelativeDates_abyssPrivate = (): void => {
+    const ownerDocument = this.root_abyssPrivate.ownerDocument;
+    if (
+      !this.mounted_abyssPrivate ||
+      !this.root_abyssPrivate.isConnected ||
+      ownerDocument.visibilityState === 'hidden'
+    ) {
+      return;
+    }
+    const now = new Date();
+    const locale = moment.locale();
+    for (const text of this.root_abyssPrivate.querySelectorAll<HTMLElement>(
+      '.abyss-project-relative-date',
+    )) {
+      const raw = text.dataset['relativeDateValue'];
+      const displayed = formatProjectRelativeDate(raw, now, locale);
+      if (displayed !== undefined) text.setText(displayed);
+    }
+  };
+
+  private syncRelativeDateTimer_abyssPrivate(columns: readonly VisibleProjectColumn[]): void {
+    const needed = columns.some(
+      ({ column, field }) =>
+        column.dateDisplay === 'relative' && (field.type === 'date' || field.type === 'datetime'),
+    );
+    if (!needed) {
+      this.stopRelativeDateTimer_abyssPrivate();
+      return;
+    }
+    this.relativeDateInterval_abyssPrivate ??= this.ownerWindow_abyssPrivate?.setInterval(
+      this.refreshRelativeDates_abyssPrivate,
+      60_000,
+    );
+    this.refreshRelativeDates_abyssPrivate();
+  }
+
+  private stopRelativeDateTimer_abyssPrivate(): void {
+    if (this.relativeDateInterval_abyssPrivate === undefined) return;
+    this.ownerWindow_abyssPrivate?.clearInterval(this.relativeDateInterval_abyssPrivate);
+    this.relativeDateInterval_abyssPrivate = undefined;
   }
 
   private editDescription_abyssPrivate(

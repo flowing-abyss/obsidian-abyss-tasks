@@ -86,6 +86,18 @@ function model(
 }
 
 describe('buildProjectTableModel', () => {
+  it('preserves incoming project order when sorting is explicitly cleared', () => {
+    const projects = [project('Zulu'), project('Alpha')];
+
+    const model = buildProjectTableModel({
+      projects,
+      fields,
+      statuses: [],
+      settings: table({ groupBy: 'none', sortBy: { field: 'none', dir: 'asc' } }),
+    });
+
+    expect(model.groups[0]?.projects.map(({ name }) => name)).toEqual(['Zulu', 'Alpha']);
+  });
   it('sorts by end ascending with empty values last', () => {
     const result = model([
       project('No end'),

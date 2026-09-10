@@ -29,6 +29,12 @@ const PROPERTY_TYPES = new Set<ProjectPropertyType>([
   'tags',
 ]);
 
+export function projectPropertyTypeChoices(property: string): readonly ProjectPropertyType[] {
+  return sameIdentifier(property, 'tags')
+    ? ['tags']
+    : ['text', 'list', 'number', 'checkbox', 'date', 'datetime'];
+}
+
 function sameIdentifier(left: string, right: string): boolean {
   return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
 }
@@ -144,6 +150,27 @@ function curatedField(
 function definitionEntries(projects: ProjectsSettings): Array<[string, unknown]> {
   const definitions: unknown = projects.propertyDefinitions;
   return isRecord(definitions) ? Object.entries(definitions) : [];
+}
+
+/** Mutates one unambiguous static definition without touching its raw preset payload. */
+export function setProjectPropertyDefinitionType(
+  projects: ProjectsSettings,
+  fieldId: string,
+  type: ProjectPropertyType,
+): boolean {
+  if (!fieldId.startsWith(PROPERTY_PREFIX)) return false;
+  const property = fieldId.slice(PROPERTY_PREFIX.length);
+  if (!projectPropertyTypeChoices(property).includes(type)) return false;
+  if (isConfiguredProjectPropertySourceReserved(projects, property)) return false;
+  const matches = definitionEntries(projects).filter(([key]) => sameIdentifier(key, fieldId));
+  if (matches.length > 1) return false;
+  const key = matches[0]?.[0] ?? fieldId;
+  const current = projects.propertyDefinitions[key] as unknown;
+  projects.propertyDefinitions[key] = {
+    ...(isRecord(current) ? current : {}),
+    type,
+  };
+  return true;
 }
 
 function isConfiguredProjectPropertySourceReserved(

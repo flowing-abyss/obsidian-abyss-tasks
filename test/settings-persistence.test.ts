@@ -101,6 +101,34 @@ describe('SettingsPersistenceCoordinator migration', () => {
     ).toEqual({ id: 'status', visible: true, futureColumnOption: 'keep' });
   });
 
+  it('roundtrips relative date display and explicitly removes it when restored to absolute', async () => {
+    const state = stateEnvelope();
+    const views = state['views'] as Record<string, unknown>;
+    const projects = views['projects'] as Record<string, unknown>;
+    const table = projects['table'] as Record<string, unknown>;
+    const columns = table['columns'] as Array<Record<string, unknown>>;
+    const start = expectDefined(columns.find(({ id }) => id === 'start'));
+    start['dateDisplay'] = 'relative';
+    start['futureColumnOption'] = 'keep';
+    const port = memoryPort(markedStatic(), state);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const loadedStart = expectDefined(
+      loaded.settings.projects.table.columns.find(({ id }) => id === 'start'),
+    );
+    expect(loadedStart.dateDisplay).toBe('relative');
+    delete loadedStart.dateDisplay;
+    await coordinator.saveViewState(loaded.settings);
+
+    const saved = JSON.parse(port.stateText ?? '') as {
+      views: { projects: { table: { columns: Array<Record<string, unknown>> } } };
+    };
+    expect(
+      expectDefined(saved.views.projects.table.columns.find(({ id }) => id === 'start')),
+    ).toEqual({ id: 'start', visible: true, futureColumnOption: 'keep' });
+  });
+
   it('loads extensions roundtripped by the cc84b5d serializer without losing raw values', async () => {
     expect(priorSerializerFixture.provenance.serializerCommit).toBe(
       'cc84b5d879d6085c505e12313ed5b073f43a5eb2',

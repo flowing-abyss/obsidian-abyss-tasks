@@ -417,13 +417,15 @@ export function buildProjectTableModel(input: ProjectTableModelInput): ProjectTa
       !hidden.has(statusGroupKey(project)) &&
       matchesSearch(project, search, visibleFields, input.statuses),
   );
-  const sortField = findProjectFieldById(input.fields, input.settings.sortBy.field);
-  const sortedProjects = sortProjects(
-    visibleProjects,
-    sortField,
-    input.settings.sortBy.dir,
-    input.statuses,
-  );
+  const sortedProjects =
+    input.settings.sortBy.field === 'none'
+      ? [...visibleProjects]
+      : sortProjects(
+          visibleProjects,
+          findProjectFieldById(input.fields, input.settings.sortBy.field),
+          input.settings.sortBy.dir,
+          input.statuses,
+        );
   const groupField = findProjectFieldById(input.fields, input.settings.groupBy);
   return {
     groups: makeGroups({

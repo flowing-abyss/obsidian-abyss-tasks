@@ -1,6 +1,11 @@
-import { Menu, setIcon } from 'obsidian';
-import type { ProjectColumn, ProjectFieldCatalogItem } from '../../projects/projectFields';
-import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import { setIcon } from 'obsidian';
+import type {
+  ProjectColumn,
+  ProjectColumnAlignment,
+  ProjectFieldCatalogItem,
+  ProjectPropertyType,
+} from '../../projects/projectFields';
+import { showProjectColumnMenu } from './projectColumnMenu';
 
 export interface VisibleProjectColumn {
   readonly column: ProjectColumn;
@@ -11,7 +16,14 @@ export interface ProjectTableColumnOptions {
   readonly columns: readonly VisibleProjectColumn[];
   readonly sort: { readonly field: string; readonly dir: 'asc' | 'desc' };
   readonly onSort: (field: string) => void;
+  readonly onSortExact: (field: string, direction: 'asc' | 'desc' | 'none') => void;
   readonly onRename: (columnId: string, label: string) => void;
+  readonly beforeAction: (action: () => void) => void;
+  readonly onAlignment: (columnId: string, alignment: ProjectColumnAlignment) => void;
+  readonly onDateDisplay: (columnId: string, display: 'absolute' | 'relative') => void;
+  readonly typeChoices: (columnId: string) => readonly ProjectPropertyType[];
+  readonly onType: (columnId: string, type: ProjectPropertyType) => void;
+  readonly restoreTableFocus: () => boolean;
   readonly onMove: (
     columnId: string,
     targetColumnId: string,
@@ -146,6 +158,44 @@ function resizeWidths(
       return { columnId: entry.columnId, width: neighbor.width };
     }
     return entry;
+  });
+}
+
+function bindColumnMenu(
+  button: HTMLButtonElement,
+  th: HTMLTableCellElement,
+  entry: VisibleProjectColumn,
+  options: ProjectTableColumnOptions,
+): void {
+  const { column, field } = entry;
+  th.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    showProjectColumnMenu({
+      event,
+      header: th,
+      trigger: button,
+      column,
+      field,
+      sort: options.sort,
+      beforeAction: options.beforeAction,
+      onSort: (direction) => {
+        options.onSortExact(column.id, direction);
+      },
+      onAlignment: (alignment) => {
+        options.onAlignment(column.id, alignment);
+      },
+      onDateDisplay: (display) => {
+        options.onDateDisplay(column.id, display);
+      },
+      typeChoices: options.typeChoices(column.id),
+      onType: (type) => {
+        options.onType(column.id, type);
+      },
+      onRename: () => {
+        beginRename(th, entry, options.onRename);
+      },
+      restoreTableFocus: options.restoreTableFocus,
+    });
   });
 }
 
@@ -388,19 +438,7 @@ function renderHeaderColumn(
     }
     options.onSort(column.id);
   });
-  th.addEventListener('contextmenu', (event) => {
-    event.preventDefault();
-    const menu = new Menu();
-    menu.addItem((item) =>
-      item
-        .setTitle('Rename column')
-        .setIcon('pencil')
-        .onClick(() => {
-          beginRename(th, entry, options.onRename);
-        }),
-    );
-    showMenuAtMouseEventWithFocus(menu, event);
-  });
+  bindColumnMenu(button, th, entry, options);
   const dragCleanup =
     field.type === 'name'
       ? undefined

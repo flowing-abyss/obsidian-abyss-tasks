@@ -24,6 +24,7 @@ export interface ProjectColumn {
   label?: string;
   width?: number;
   alignment?: ProjectColumnAlignment;
+  dateDisplay?: 'relative';
   visible: boolean;
 }
 

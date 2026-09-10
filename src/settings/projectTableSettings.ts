@@ -8,7 +8,10 @@ import type {
 } from '../projects/projectFields';
 import { isReservedProjectProperty } from '../projects/projectFields';
 import type { ProjectPropertyDefinition } from '../projects/projectPropertyDefinitions';
-import { isProjectPropertyDefinition } from '../projects/projectPropertyDefinitions';
+import {
+  isProjectPropertyDefinition,
+  setProjectPropertyDefinitionType,
+} from '../projects/projectPropertyDefinitions';
 import { ProjectPropertySuggest } from '../ui/ProjectPropertySuggest';
 import { renderProjectPropertyOptions } from './projectPropertyOptions';
 import { renderSettingsCard } from './settingsCard';
@@ -69,7 +72,7 @@ function definitionEntry(
   return isProjectPropertyDefinition(value) ? { key, value } : undefined;
 }
 
-function setProjectColumnAlignment(
+export function setProjectColumnAlignment(
   settings: ProjectTableSettings,
   columnId: string,
   alignment: ProjectColumnAlignment | undefined,
@@ -78,6 +81,18 @@ function setProjectColumnAlignment(
   if (column === undefined) return false;
   if (alignment === undefined || alignment === 'left') delete column.alignment;
   else column.alignment = alignment;
+  return true;
+}
+
+export function setProjectColumnDateDisplay(
+  settings: ProjectTableSettings,
+  columnId: string,
+  display: 'absolute' | 'relative',
+): boolean {
+  const column = settings.columns.find(({ id }) => id === columnId);
+  if (column === undefined) return false;
+  if (display === 'relative') column.dateDisplay = 'relative';
+  else delete column.dateDisplay;
   return true;
 }
 
@@ -296,16 +311,11 @@ function columnType(
 
 function setDefinitionType(
   context: ColumnRenderContext,
-  entry: ReturnType<typeof definitionEntry>,
   type: ProjectPropertyDefinition['type'],
 ): void {
-  const key = entry?.key ?? context.column.id;
-  const current: unknown = context.options.projects.propertyDefinitions[key];
-  context.options.projects.propertyDefinitions[key] = {
-    ...(current !== null && typeof current === 'object' && !Array.isArray(current) ? current : {}),
-    type,
-  };
-  context.persistStatic(true);
+  if (setProjectPropertyDefinitionType(context.options.projects, context.column.id, type)) {
+    context.persistStatic(true);
+  }
 }
 
 function renderCuratedColumnSettings(body: HTMLElement, context: ColumnRenderContext): void {
@@ -337,7 +347,7 @@ function renderColumnBody(body: HTMLElement, context: ColumnRenderContext): void
       ? {}
       : {
           onTypeChange: (type) => {
-            setDefinitionType(context, entry, type);
+            setDefinitionType(context, type);
           },
         }),
     onAlignmentChange: (alignment) => {

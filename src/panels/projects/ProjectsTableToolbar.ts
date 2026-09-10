@@ -124,6 +124,10 @@ export class ProjectsTableToolbar {
     configured.add(settings.sortBy.field);
     const selectable = fields.filter((field) => configured.has(field.id));
     const arrow = settings.sortBy.dir === 'asc' ? '↑' : '↓';
+    const sortDisplay =
+      settings.sortBy.field === 'none'
+        ? 'None'
+        : `${fieldLabel(fields, settings, settings.sortBy.field)} ${arrow}`;
     const defaultSortField = buildDefaultProjectTableSettings().sortBy.field;
     const rows: ViewOptionsRow[] = [
       {
@@ -148,14 +152,17 @@ export class ProjectsTableToolbar {
         kind: 'single',
         icon: 'arrow-up-down',
         label: 'Sort by',
-        displayValue: `${fieldLabel(fields, settings, settings.sortBy.field)} ${arrow}`,
+        displayValue: sortDisplay,
         activeValue: settings.sortBy.field,
-        options: selectable.map((field) => ({
-          value: field.id,
-          label:
-            `${fieldLabel(fields, settings, field.id)} ${settings.sortBy.field === field.id ? arrow : ''}`.trim(),
-          isDefault: field.id === defaultSortField,
-        })),
+        options: [
+          { value: 'none', label: 'None' },
+          ...selectable.map((field) => ({
+            value: field.id,
+            label:
+              `${fieldLabel(fields, settings, field.id)} ${settings.sortBy.field === field.id ? arrow : ''}`.trim(),
+            isDefault: field.id === defaultSortField,
+          })),
+        ],
         onSelect: (value) => {
           this.options_abyssPrivate.onSortBy(value);
         },

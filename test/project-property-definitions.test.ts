@@ -4,7 +4,9 @@ import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProp
 import {
   captureMissingProjectPropertyDefinitions,
   projectPresetPresentation,
+  projectPropertyTypeChoices,
   resolveConfiguredProjectField,
+  setProjectPropertyDefinitionType,
 } from '../src/projects/projectPropertyDefinitions';
 import { buildDefaultProjectsSettings } from '../src/settings/defaults';
 import { migrateSettings } from '../src/settings/migration';
@@ -35,6 +37,47 @@ function assignedCatalog(property: string, type: 'text' | 'number'): ProjectProp
 }
 
 describe('project property definitions', () => {
+  it('shares editable type choices while keeping the tags source fixed', () => {
+    expect(projectPropertyTypeChoices('Priority')).toEqual([
+      'text',
+      'list',
+      'number',
+      'checkbox',
+      'date',
+      'datetime',
+    ]);
+    expect(projectPropertyTypeChoices('TAGS')).toEqual(['tags']);
+  });
+
+  it('changes one uniquely matched definition while preserving spelling and preset data', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.propertyDefinitions['property:Priority'] = {
+      type: 'text',
+      presetsEnabled: true,
+      presets: [{ value: 'high', displayName: 'High' }],
+    };
+
+    expect(setProjectPropertyDefinitionType(projects, 'property:priority', 'number')).toBe(true);
+    expect(projects.propertyDefinitions).toEqual({
+      'property:Priority': {
+        type: 'number',
+        presetsEnabled: true,
+        presets: [{ value: 'high', displayName: 'High' }],
+      },
+    });
+  });
+
+  it('refuses ambiguous case-colliding definitions and fixed tags', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.propertyDefinitions = {
+      'property:Priority': { type: 'text' },
+      'property:PRIORITY': { type: 'number' },
+      'property:Tags': { type: 'tags' },
+    };
+
+    expect(setProjectPropertyDefinitionType(projects, 'property:priority', 'date')).toBe(false);
+    expect(setProjectPropertyDefinitionType(projects, 'property:Tags', 'text')).toBe(false);
+  });
   it('resolves curated fields from configured sources without consulting native types', () => {
     const projects = buildDefaultProjectsSettings();
     projects.startProperty = 'Begins';

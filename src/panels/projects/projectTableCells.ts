@@ -15,6 +15,7 @@ import {
 } from '../../ui/projectPropertyValuePresentation';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { runAsyncAction } from '../../ui/runAsyncAction';
+import { formatProjectRelativeDate } from './projectDatePresentation';
 
 function statusFor(
   project: Project,
@@ -100,6 +101,9 @@ interface RenderProjectTableCellOptions {
   readonly openProject: (path: string) => void;
   readonly onRemoveListValue: (index: number) => void;
   readonly onToggleCheckbox: (value: boolean, input: HTMLInputElement) => void;
+  readonly dateDisplay?: 'relative';
+  readonly now?: Date;
+  readonly locale?: string;
   readonly description?: {
     readonly field: ProjectFieldCatalogItem;
     readonly show: boolean;
@@ -332,11 +336,38 @@ interface RenderScalarValueOptions {
   readonly displayed: string;
 }
 
+function renderRelativeDate(
+  valueOptions: RenderScalarValueOptions,
+  options: RenderProjectTableCellOptions,
+): boolean {
+  if (
+    options.dateDisplay !== 'relative' ||
+    (options.field.type !== 'date' && options.field.type !== 'datetime')
+  ) {
+    return false;
+  }
+  const { cell, value } = valueOptions;
+  const relative = formatProjectRelativeDate(
+    value,
+    options.now ?? new Date(),
+    options.locale ?? 'en',
+  );
+  if (relative === undefined || typeof value !== 'string') return false;
+  const text = cell.createSpan({
+    cls: 'abyss-project-relative-date',
+    text: relative,
+    attr: { title: value },
+  });
+  text.dataset['relativeDateValue'] = value;
+  return true;
+}
+
 function renderScalarValue(
   valueOptions: RenderScalarValueOptions,
   options: RenderProjectTableCellOptions,
 ): void {
   const { cell, project, value, displayed } = valueOptions;
+  if (renderRelativeDate(valueOptions, options)) return;
   const empty = value === null || value === undefined || value === '';
   const text = cell.createSpan({ cls: empty ? 'abyss-project-table-empty-value' : '' });
   const presentation = compiledProjectPropertyPresentation(options.compiledPresets, value);

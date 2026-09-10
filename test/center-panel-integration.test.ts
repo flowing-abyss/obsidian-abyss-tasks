@@ -1,4 +1,4 @@
-import { addIcon, moment, removeIcon, TFile, type App } from 'obsidian';
+import { addIcon, Menu, moment, removeIcon, TFile, type App } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
@@ -2384,22 +2384,26 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     return { setStatus: async () => {}, create: async () => null } as never;
   }
 
-  async function makeProjectsPanel(): Promise<{
+  async function makeProjectsPanel(options?: {
+    readonly settings?: CalendarSettings;
+    readonly saveSettings?: () => Promise<void>;
+  }): Promise<{
     panel: CenterPanel;
     state: AppState;
     el: HTMLElement;
   }> {
     const app = await createAppWithFiles({ 'Projects/A.md': '---\nstatus: active\n---\n' });
-    const taskApplication = configuredTaskApplication(app, DEFAULT_SETTINGS);
+    const settings = options?.settings ?? DEFAULT_SETTINGS;
+    const taskApplication = configuredTaskApplication(app, settings);
     await taskApplication.index.initialize();
     const state = new AppState();
     const panel = new CenterPanel(
       state,
       app,
-      DEFAULT_SETTINGS,
+      settings,
       taskApplication.index,
       taskApplication.statusRegistry,
-      async () => {},
+      options?.saveSettings ?? (async () => {}),
       stubProjectStore(),
       stubProjectManager(),
       taskApplication.tasks,
@@ -2492,6 +2496,42 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     // The projects panel class lives on the child host, never on the center el.
     expect(el.classList.contains('abyss-projects-panel')).toBe(false);
     expect(el.querySelector('.abyss-projects-host .abyss-projects-table')).toBeTruthy();
+  });
+
+  it('forwards the static settings save callback to project column type actions', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.table.columns.push({ id: 'property:Priority', visible: true });
+    settings.projects.propertyDefinitions['property:Priority'] = { type: 'text' };
+    const saveSettings = vi.fn().mockResolvedValue(undefined);
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    const { state, el } = await makeProjectsPanel({ settings, saveSettings });
+    state.set('mode', 'projects');
+    expectDefined(
+      el.querySelector<HTMLElement>(
+        '.abyss-project-table-header-cell[data-column-id="property:Priority"]',
+      ),
+    ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const shown = expectDefined(show.mock.instances[show.mock.instances.length - 1]) as Menu;
+    const typeMenu = (
+      shown as unknown as {
+        menuItems__: Array<{ title__: string; submenu: Menu | null }>;
+      }
+    ).menuItems__.find(({ title__ }) => title__ === 'Property type')?.submenu;
+    const numberAction = (
+      expectDefined(typeMenu) as unknown as {
+        menuItems__: Array<{
+          title__: string;
+          onClick__: ((event: MouseEvent | KeyboardEvent) => void) | null;
+        }>;
+      }
+    ).menuItems__.find(({ title__ }) => title__ === 'Number')?.onClick__;
+    expectDefined(numberAction)(new MouseEvent('click'));
+    await flushMicrotasks();
+
+    expect(expectDefined(settings.projects.propertyDefinitions['property:Priority']).type).toBe(
+      'number',
+    );
+    expect(saveSettings).toHaveBeenCalledOnce();
   });
 
   it('leaving projects mode restores a clean tasks center (no leaked class or DOM)', async () => {

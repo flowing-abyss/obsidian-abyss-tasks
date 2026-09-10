@@ -312,6 +312,7 @@ export class CenterPanel {
   // the "Status group" row still expanded (multi-select shouldn't close on pick).
   private reopenStatusGroupPopover_abyssPrivate = false;
   private readonly onSaveViewState_abyssPrivate: () => Promise<void>;
+  private readonly onSaveSettings_abyssPrivate: (() => Promise<void>) | undefined;
   private md_abyssPrivate = new Component();
   private searchInputEl_abyssPrivate: HTMLInputElement | null = null;
   private searchResultsEl_abyssPrivate: HTMLElement | null = null;
@@ -352,7 +353,7 @@ export class CenterPanel {
       settings,
       queries,
       statusRegistry,
-      ,
+      onSaveSettings,
       projectStore = null,
       projectManager = null,
       tasks,
@@ -370,6 +371,7 @@ export class CenterPanel {
     this.queries_abyssPrivate = queries;
     this.statusRegistry_abyssPrivate = statusRegistry;
     this.onSaveViewState_abyssPrivate = onSaveViewState;
+    this.onSaveSettings_abyssPrivate = onSaveSettings;
     this.projectStore_abyssPrivate = projectStore;
     this.projectManager_abyssPrivate = projectManager;
     this.tasks_abyssPrivate = tasks;
@@ -931,6 +933,9 @@ export class CenterPanel {
       this.app_abyssPrivate,
       {
         saveViewState: this.onSaveViewState_abyssPrivate,
+        ...(this.onSaveSettings_abyssPrivate === undefined
+          ? {}
+          : { saveStatic: this.onSaveSettings_abyssPrivate }),
         renderTasks: (host, path) => {
           this.renderProjectTasks_abyssPrivate(host, path);
         },

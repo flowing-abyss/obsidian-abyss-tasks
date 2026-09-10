@@ -33,6 +33,7 @@ function normalizeColumn(value: unknown): ProjectColumn | undefined {
   if (width !== undefined) column.width = width;
   const alignment = normalizedAlignment(value['alignment']);
   if (alignment !== undefined) column.alignment = alignment;
+  if (value['dateDisplay'] === 'relative') column.dateDisplay = 'relative';
   return column;
 }
 

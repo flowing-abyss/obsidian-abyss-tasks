@@ -1,4 +1,4 @@
-import { App, MarkdownRenderer, Menu, type WorkspaceLeaf } from 'obsidian';
+import { App, MarkdownRenderer, Menu, Notice, type WorkspaceLeaf } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
@@ -83,6 +83,7 @@ afterEach(() => {
   activeDocument.body.empty();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 function project(over: Partial<Project>): Project {
@@ -191,7 +192,76 @@ function mount(
   return { host, view, config, saveSettings, saveProperty, saveStatus, openProject };
 }
 
+interface TestMenuItem {
+  readonly title__: string;
+  readonly checked: boolean | null;
+  readonly submenu: Menu | null;
+  readonly onClick__: ((event: MouseEvent | KeyboardEvent) => void) | null;
+}
+
+function menuItems(menu: Menu): readonly TestMenuItem[] {
+  return (menu as unknown as { readonly menuItems__: readonly TestMenuItem[] }).menuItems__;
+}
+
+function menuItem(menu: Menu, title: string): TestMenuItem {
+  return expectDefined(menuItems(menu).find(({ title__: candidate }) => candidate === title));
+}
+
+function submenu(menu: Menu, title: string): Menu {
+  return expectDefined(menuItem(menu, title).submenu);
+}
+
+function activateMenuItem(menu: Menu, title: string): void {
+  expectDefined(menuItem(menu, title).onClick__)(new MouseEvent('click'));
+}
+
+function lastShownMenu(spy: { readonly mock: { readonly instances: readonly unknown[] } }): Menu {
+  return expectDefined(spy.mock.instances[spy.mock.instances.length - 1]) as Menu;
+}
+
 describe('ProjectsTableView', () => {
+  it('refreshes relative date text in place and stops its one view timer on destroy', () => {
+    vi.useFakeTimers({ now: new Date(2026, 8, 10, 23, 0, 0).getTime() });
+    const config = settings();
+    const start = expectDefined(config.projects.table.columns.find(({ id }) => id === 'start'));
+    start.dateDisplay = 'relative';
+    const clearInterval = vi.spyOn(window, 'clearInterval');
+    const { host, view } = mount(
+      [project({ frontmatter: { start: '2026-09-10T23:15:00', end: '2026-09-30' } })],
+      { settings: config },
+    );
+    const relative = expectDefined(host.querySelector<HTMLElement>('.abyss-project-relative-date'));
+    expect(relative.textContent).toBe('in 15 minutes');
+    expect(relative.title).toBe('2026-09-10T23:15:00');
+
+    vi.advanceTimersByTime(60_000);
+
+    expect(relative.textContent).toBe('in 14 minutes');
+    expect(host.querySelector('.abyss-project-relative-date')).toBe(relative);
+    destroyMountedView(view);
+    expect(clearInterval).toHaveBeenCalledOnce();
+  });
+
+  it('skips sleeping relative-date updates and refreshes after the table is reattached', () => {
+    vi.useFakeTimers({ now: new Date(2026, 8, 10, 23, 0, 0).getTime() });
+    const config = settings();
+    expectDefined(config.projects.table.columns.find(({ id }) => id === 'start')).dateDisplay =
+      'relative';
+    const { host, view } = mount(
+      [project({ frontmatter: { start: '2026-09-10T23:15:00', end: '2026-09-30' } })],
+      { settings: config },
+    );
+    const relative = expectDefined(host.querySelector<HTMLElement>('.abyss-project-relative-date'));
+    host.remove();
+    vi.advanceTimersByTime(60_000);
+    expect(relative.textContent).toBe('in 15 minutes');
+
+    activeDocument.body.append(host);
+    activeWindow.dispatchEvent(new Event('focus'));
+
+    expect(relative.textContent).toBe('in 14 minutes');
+    destroyMountedView(view);
+  });
   it('renders native type icons and alignment while reconciling preset presentation in place', () => {
     const config = settings();
     config.projects.table.columns.push({
@@ -899,29 +969,38 @@ describe('ProjectsTableView', () => {
     header.click();
     await flushMicrotasks();
     expect(config.projects.table.sortBy).toEqual({ field: 'end', dir: 'desc' });
-    expect(saveSettings).toHaveBeenCalledTimes(2);
+    header.click();
+    await flushMicrotasks();
+    expect(config.projects.table.sortBy).toEqual({ field: 'none', dir: 'asc' });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const sortRow = Array.from(host.querySelectorAll<HTMLElement>('.abyss-view-state-row')).find(
+      (row) => row.querySelector('.abyss-view-state-row-label')?.textContent === 'Sort by',
+    );
+    expect(sortRow?.querySelector('.abyss-view-state-row-value')?.textContent).toBe('None');
+    expectDefined(sortRow?.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+    const activeNone = Array.from(
+      expectDefined(sortRow).querySelectorAll<HTMLButtonElement>('.abyss-view-state-option'),
+    ).find((option) => option.getAttribute('aria-pressed') === 'true');
+    expect(activeNone?.textContent).toBe('None');
+    const statusHeader = expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        '[data-column-id="status"] .abyss-project-table-column-button',
+      ),
+    );
+    statusHeader.click();
+    await flushMicrotasks();
+    expect(config.projects.table.sortBy).toEqual({ field: 'status', dir: 'asc' });
+    expect(saveSettings).toHaveBeenCalledTimes(4);
   });
 
   it('commits a focused header rename once when Enter also causes blur', async () => {
-    let rename: (() => void) | undefined;
-    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
-      const item = {
-        setTitle: () => item,
-        setIcon: () => item,
-        onClick: (handler: () => void) => {
-          rename = handler;
-          return item;
-        },
-      };
-      callback(item as never);
-      return this;
-    });
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
     const { host, config, saveSettings } = mount([project({})]);
     const header = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-header-cell[data-column-id="end"]'),
     );
     header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    expectDefined(rename)();
+    activateMenuItem(lastShownMenu(show), 'Rename column');
     const input = expectDefined(
       header.querySelector<HTMLInputElement>('.abyss-project-column-rename'),
     );
@@ -936,6 +1015,142 @@ describe('ProjectsTableView', () => {
 
     expect(config.projects.table.columns.find(({ id }) => id === 'end')?.label).toBe('Deadline');
     expect(saveSettings).toHaveBeenCalledOnce();
+  });
+
+  it('returns focus to the selected table cell when the column menu closes', () => {
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    const { host } = mount([project({})]);
+    const selected = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
+    );
+    selected.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const header = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-header-cell[data-column-id="end"]'),
+    );
+    expectDefined(header.querySelector<HTMLButtonElement>('button')).focus();
+    header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    lastShownMenu(show).close();
+
+    expect(document.activeElement).toBe(selected);
+  });
+
+  it('exposes native column actions for exact sorting, alignment, type and date display', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Priority', visible: true });
+    config.projects.table.columns.push({ id: 'property:Tags', visible: true });
+    config.projects.propertyDefinitions['property:Priority'] = {
+      type: 'text',
+      presetsEnabled: true,
+      presets: [{ value: 'high', displayName: 'High' }],
+    };
+    config.projects.propertyDefinitions['property:Tags'] = { type: 'tags' };
+    const saveStatic = vi.fn().mockResolvedValue(undefined);
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    const { host, saveSettings } = mount(
+      [project({ frontmatter: { start: '2026-09-01', end: '2026-09-30', Priority: 'high' } })],
+      { settings: config, saveStatic },
+    );
+    const open = (columnId: string): Menu => {
+      expectDefined(
+        host.querySelector<HTMLElement>(
+          `.abyss-project-table-header-cell[data-column-id="${columnId}"]`,
+        ),
+      ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      return lastShownMenu(show);
+    };
+
+    const priorityMenu = open('property:Priority');
+    expect(menuItems(priorityMenu).map(({ title__ }) => title__)).toEqual([
+      'Sort ascending',
+      'Sort descending',
+      'Clear sorting',
+      'Alignment',
+      'Property type',
+      'Rename column',
+    ]);
+    for (const fixedColumnId of ['name', 'status', 'progress', 'start', 'end', 'property:Tags']) {
+      expect(
+        menuItems(open(fixedColumnId)).some(({ title__ }) => title__ === 'Property type'),
+      ).toBe(false);
+    }
+    activateMenuItem(priorityMenu, 'Sort descending');
+    expect(config.projects.table.sortBy).toEqual({ field: 'property:Priority', dir: 'desc' });
+    activateMenuItem(priorityMenu, 'Sort ascending');
+    expect(config.projects.table.sortBy).toEqual({ field: 'property:Priority', dir: 'asc' });
+    activateMenuItem(priorityMenu, 'Clear sorting');
+    expect(config.projects.table.sortBy).toEqual({ field: 'none', dir: 'asc' });
+    activateMenuItem(submenu(priorityMenu, 'Alignment'), 'Center');
+    await flushMicrotasks();
+    expect(
+      config.projects.table.columns.find(({ id }) => id === 'property:Priority')?.alignment,
+    ).toBe('center');
+
+    activateMenuItem(submenu(priorityMenu, 'Property type'), 'Number');
+    await flushMicrotasks();
+    expect(config.projects.propertyDefinitions['property:Priority']).toEqual({
+      type: 'number',
+      presetsEnabled: true,
+      presets: [{ value: 'high', displayName: 'High' }],
+    });
+    expect(saveStatic).toHaveBeenCalledOnce();
+
+    const endMenu = open('end');
+    activateMenuItem(submenu(endMenu, 'Date display'), 'Relative');
+    await flushMicrotasks();
+    expect(config.projects.table.columns.find(({ id }) => id === 'end')?.dateDisplay).toBe(
+      'relative',
+    );
+    activateMenuItem(submenu(open('end'), 'Date display'), 'Absolute');
+    await flushMicrotasks();
+    expect(
+      config.projects.table.columns.find(({ id }) => id === 'end')?.dateDisplay,
+    ).toBeUndefined();
+    expect(saveSettings).toHaveBeenCalledTimes(6);
+  });
+
+  it('keeps a changed type visible after static save failure and retries the latest draft', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Priority', visible: true });
+    config.projects.propertyDefinitions['property:Priority'] = { type: 'text' };
+    const savedTypes: string[] = [];
+    const saveStatic = vi.fn(async () => {
+      savedTypes.push(config.projects.propertyDefinitions['property:Priority']?.type ?? 'missing');
+      if (savedTypes.length === 1) throw new Error('disk full');
+    });
+    let noticeContent: DocumentFragment | undefined;
+    const noticePrototype = Notice.prototype as unknown as {
+      constructor__: (message: string | DocumentFragment, duration?: number) => HTMLElement;
+    };
+    vi.spyOn(noticePrototype, 'constructor__').mockImplementation((message) => {
+      if (message instanceof DocumentFragment) noticeContent = message;
+      return createDiv();
+    });
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    const { host } = mount([project({ frontmatter: { Priority: 'high' } })], {
+      settings: config,
+      saveStatic,
+    });
+    expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-header-cell[data-column-id="property:Priority"]',
+      ),
+    ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    activateMenuItem(submenu(lastShownMenu(show), 'Property type'), 'Number');
+    await flushMicrotasks();
+
+    expect(expectDefined(config.projects.propertyDefinitions['property:Priority']).type).toBe(
+      'number',
+    );
+    expect(
+      host.querySelector(
+        '.abyss-project-table-header-cell[data-column-id="property:Priority"] [data-icon="binary"]',
+      ),
+    ).not.toBeNull();
+    config.projects.propertyDefinitions['property:Priority'] = { type: 'date' };
+    expectDefined(noticeContent?.querySelector<HTMLButtonElement>('button')).click();
+    await flushMicrotasks();
+
+    expect(savedTypes).toEqual(['number', 'date']);
   });
 
   it('keeps sorting separate from column drag and resize gestures', async () => {
@@ -1339,8 +1554,8 @@ describe('ProjectsTableView', () => {
     expect(host.querySelector('.abyss-view-state-reset-btn')).toBeNull();
   });
 
-  it('marks Start as the default project sort option', () => {
-    const { host } = mount([project({})]);
+  it('marks Start as the default project sort option and lets the toolbar clear sorting', async () => {
+    const { host, config } = mount([project({})]);
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
     const sortRow = Array.from(host.querySelectorAll<HTMLElement>('.abyss-view-state-row')).find(
       (row) => row.querySelector('.abyss-view-state-row-label')?.textContent === 'Sort by',
@@ -1352,6 +1567,12 @@ describe('ProjectsTableView', () => {
 
     expect(defaultBadge.parentElement?.textContent).toContain('Start');
     expect(defaultBadge.parentElement?.textContent).not.toContain('End');
+    const none = Array.from(
+      expectDefined(sortRow).querySelectorAll<HTMLButtonElement>('.abyss-view-state-option'),
+    ).find((option) => option.textContent === 'None');
+    expectDefined(none).click();
+    await flushMicrotasks();
+    expect(config.projects.table.sortBy).toEqual({ field: 'none', dir: 'asc' });
   });
 
   it('repeats a project in each distinct list-value group while reporting one unique project', () => {

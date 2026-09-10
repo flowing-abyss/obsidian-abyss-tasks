@@ -192,17 +192,24 @@ function decodeSectionCollapse(
 
 const COLUMN_ALIGNMENTS = new Set<unknown>(['left', 'center', 'right']);
 
+function malformedOptional(value: unknown, type: 'boolean' | 'string'): boolean {
+  return value !== undefined && typeof value !== type;
+}
+
+function malformedColumnWidth(width: unknown): boolean {
+  if (width === undefined) return false;
+  return typeof width !== 'number' || !Number.isFinite(width) || width <= 0;
+}
+
 function hasMalformedColumnPresentation(value: Record<string, unknown>): boolean {
   const alignment = value['alignment'];
   const validAlignment = alignment === undefined || COLUMN_ALIGNMENTS.has(alignment);
-  const width = value['width'];
-  const malformedWidth =
-    width !== undefined && (typeof width !== 'number' || !Number.isFinite(width) || width <= 0);
   return (
-    (value['visible'] !== undefined && typeof value['visible'] !== 'boolean') ||
-    (value['label'] !== undefined && typeof value['label'] !== 'string') ||
+    malformedOptional(value['visible'], 'boolean') ||
+    malformedOptional(value['label'], 'string') ||
+    (value['dateDisplay'] !== undefined && value['dateDisplay'] !== 'relative') ||
     !validAlignment ||
-    malformedWidth
+    malformedColumnWidth(value['width'])
   );
 }
 
@@ -385,6 +392,8 @@ function mergeColumns(
     else merged['width'] = column.width;
     if (column.alignment === undefined) delete merged['alignment'];
     else merged['alignment'] = column.alignment;
+    if (column.dateDisplay === undefined) delete merged['dateDisplay'];
+    else merged['dateDisplay'] = column.dateDisplay;
     return merged;
   });
 }

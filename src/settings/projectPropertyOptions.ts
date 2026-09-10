@@ -4,6 +4,7 @@ import type {
   ProjectPropertyDefinition,
   ProjectPropertyPreset,
 } from '../projects/projectPropertyDefinitions';
+import { projectPropertyTypeChoices } from '../projects/projectPropertyDefinitions';
 import { projectPropertyPresetIssue } from '../projects/projectPropertyPresets';
 
 const PROPERTY_TYPE_LABELS: Readonly<Record<ProjectPropertyType, string>> = {
@@ -20,12 +21,6 @@ const PRESET_TYPES = new Set<ProjectPropertyType>(['text', 'list', 'number', 'ta
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function projectPropertyTypeChoices(property: string): readonly ProjectPropertyType[] {
-  return property.localeCompare('tags', undefined, { sensitivity: 'accent' }) === 0
-    ? ['tags']
-    : ['text', 'list', 'number', 'checkbox', 'date', 'datetime'];
 }
 
 interface RenderProjectPropertyOptions {

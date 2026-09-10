@@ -191,8 +191,9 @@ rendering and later edits. A shared link-target helper strips note subpaths and 
 path escaping only for native lookup; absolute external Markdown targets instead keep their exact,
 source-independent identity. It also owns the shared progress calculation: completed top-level
 tasks divided by all non-cancelled top-level tasks. `projectTableSettings` owns defaults and
-normalization for saved column order, aliases, widths, alignment, visibility, under-name description
-display, grouping, sorting, and hidden statuses. A legacy custom description column becomes the under-name
+normalization for saved column order, aliases, widths, alignment, visibility, absolute or relative
+date presentation, under-name description display, grouping, sorting, and hidden statuses. An
+explicit `none` sort preserves incoming project order. A legacy custom description column becomes the under-name
 display preference while valid grouping and sorting references are remapped to the curated field.
 These preferences live under `projects.table`; project metadata remains in Markdown.
 
@@ -215,6 +216,19 @@ checkbox and tag values retain Obsidian's public DOM classes and theme variables
 continue through the table mutation coordinator. Viewport spare width is rendered into Name without
 changing saved state; a manual Name-boundary drag couples it to the next visible column and persists
 both explicit widths through the view-state channel.
+
+Column headers open one native Obsidian menu for exact sorting, alignment, display-label rename,
+editable custom-property type, and temporal display choices. A guarded runtime submenu capability
+uses ordinary public secondary menus as its fallback; the table controller owns final focus recovery
+through its selection identity. Presentation choices use the view-state save path. Custom type
+changes mutate the shared static definition, preserve its preset payload, refresh the current table
+session, and use the composition root's static settings save callback with current-draft retry.
+
+Relative project dates are derived from authored strict date strings by the pure
+`projectDatePresentation` formatter. `ProjectsTableView` owns one minute timer for all visible
+relative temporal columns and refreshes only their text spans on ticks and foreground resume. It
+stops the timer at teardown and leaves table nodes, selection, editors, source values, and persistence
+untouched.
 
 `ProjectsTableView` owns spreadsheet selection as an occurrence-and-column range over the current
 visible projection. Repeated list-group occurrences remain distinct in that transient range, while
