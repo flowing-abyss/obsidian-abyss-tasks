@@ -221,7 +221,7 @@ interface ProjectReceiptProjection {
 
 interface RemoveListValueRequest extends ProjectCellEditRequest {
   readonly value: unknown[];
-  readonly expectedValue: unknown[];
+  readonly expectedValue: unknown;
 }
 
 interface RenderGroupOptions {
@@ -2470,12 +2470,18 @@ export class ProjectsTableView {
         field,
         this.context_abyssPrivate.settings.projects,
       );
-      if (!Array.isArray(current)) return;
+      let value: unknown[] | undefined;
+      if (Array.isArray(current)) {
+        value = current.filter((_value, index) => index !== valueIndex);
+      } else if (valueIndex === 0) {
+        value = [];
+      }
+      if (value === undefined) return;
       this.removeListValue_abyssPrivate({
         ...projectCellEditorState(project, field, this.context_abyssPrivate.settings, ownedClear),
         project,
         field,
-        value: current.filter((_value, index) => index !== valueIndex),
+        value,
         expectedValue: current,
       });
     });

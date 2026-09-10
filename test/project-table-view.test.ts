@@ -17,7 +17,7 @@ import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { ProjectPropertySuggest } from '../src/ui/ProjectPropertySuggest';
-import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
+import { expectDefined, flushMicrotasks, freshContainer, loadPluginStyles } from './helpers';
 
 interface TestTransfer {
   readonly types: string[];
@@ -371,6 +371,47 @@ describe('ProjectsTableView', () => {
     expect(tags[0]?.href).toContain('#work');
     expect(tags[0]?.textContent).toBe('#work');
     expect(tags[0]?.querySelector('button')).toBeNull();
+  });
+
+  it('reveals native tag remove controls on pointer and keyboard focus', async () => {
+    const styles = await loadPluginStyles();
+
+    expect(styles).toMatch(
+      /\.abyss-projects-table\s+\.abyss-project-table-tag-value:hover\s+\.abyss-project-table-value-remove/u,
+    );
+    expect(styles).toMatch(
+      /\.abyss-projects-table\s+\.abyss-project-table-tag-value:focus-within\s+\.abyss-project-table-value-remove/u,
+    );
+  });
+
+  it('removes a scalar tag through the guarded list mutation', async () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Tags', visible: true });
+    const applyEdits = vi.fn(
+      async (_changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> => ({
+        applied: [],
+        failed: [],
+      }),
+    );
+    const { host } = mount([project({ frontmatter: { Tags: '#work' } })], {
+      settings: config,
+      catalog: catalog([{ name: 'Tags', type: 'tags' }]),
+      applyEdits,
+    });
+
+    expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        '[data-column-id="property:Tags"] .abyss-project-table-value-remove',
+      ),
+    ).click();
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(applyEdits.mock.calls[0]?.[0]?.[0]).toMatchObject({
+      value: [],
+      expectedValue: '#work',
+      expectedExists: true,
+    });
   });
 
   it('finishes an active editor before delegating native tag activation', async () => {

@@ -7449,12 +7449,14 @@ table.abyss-project-table {
 
 .abyss-project-table-value:hover .abyss-project-table-value-remove,
 .abyss-project-table-value:focus-within .abyss-project-table-value-remove,
-.abyss-projects-table .multi-select-pill:hover .abyss-project-table-value-remove,
-.abyss-projects-table .multi-select-pill:focus-within .abyss-project-table-value-remove {
+.abyss-projects-table .abyss-project-table-tag-value:hover .abyss-project-table-value-remove,
+.abyss-projects-table
+  .abyss-project-table-tag-value:focus-within
+  .abyss-project-table-value-remove {
   opacity: 1;
 }
 
-.abyss-projects-table .multi-select-pill .abyss-project-table-value-remove {
+.abyss-projects-table .abyss-project-table-tag-value .abyss-project-table-value-remove {
   background: var(--tag-background, var(--background-secondary));
 }
 
