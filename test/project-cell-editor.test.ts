@@ -1366,6 +1366,34 @@ describe('ProjectPropertySuggest', () => {
     );
   });
 
+  it('renders configured tag suggestions with native tag presentation', () => {
+    const suggest = new ProjectPropertySuggest({
+      app: new App(),
+      input: document.body.createEl('input'),
+      values: [],
+      onPick: vi.fn(),
+    });
+    const rendered = document.body.createDiv();
+
+    suggest.renderSuggestion(
+      {
+        value: 'quality',
+        label: '#Quality',
+        appearance: 'tag',
+        display: 'badge',
+        color: '#123456',
+      },
+      rendered,
+    );
+
+    const title = expectDefined(rendered.querySelector<HTMLElement>('.abyss-suggest-title'));
+    const tag = expectDefined(title.querySelector<HTMLElement>('.tag'));
+    expect(title.classList.contains('abyss-project-preset-suggestion')).toBe(false);
+    expect(title.style.getPropertyValue('--abyss-project-property-color')).toBe('');
+    expect(tag.style.getPropertyValue('--abyss-project-property-color')).toBe('#123456');
+    expect(tag.style.color).toBe('rgb(18, 52, 86)');
+  });
+
   it('filters selected values dynamically before applying the text query', () => {
     const selected = ['Alpha'];
     const suggest = new ProjectPropertySuggest({

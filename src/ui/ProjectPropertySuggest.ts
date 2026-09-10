@@ -109,15 +109,15 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
 
   renderSuggestion(suggestion: ProjectPropertySuggestion, element: HTMLElement): void {
     const presentation = projectPropertyValuePresentation(String(suggestion.value));
+    const isTag = suggestion.appearance === 'tag';
     const title = element.createDiv({
-      cls: `abyss-suggest-title${presentation.link === undefined ? '' : ' is-link'}${suggestion.appearance === 'status' ? ' abyss-suggest-status' : ''}${suggestion.display === 'badge' ? ' abyss-project-preset-suggestion' : ''}`,
+      cls: `abyss-suggest-title${presentation.link === undefined ? '' : ' is-link'}${suggestion.appearance === 'status' ? ' abyss-suggest-status' : ''}${suggestion.display === 'badge' && !isTag ? ' abyss-project-preset-suggestion' : ''}`,
     });
-    if (suggestion.appearance === 'tag') {
-      title.createSpan({ cls: 'tag', text: suggestion.label });
-    } else title.setText(suggestion.label);
+    const valueElement = isTag ? title.createSpan({ cls: 'tag', text: suggestion.label }) : title;
+    if (!isTag) title.setText(suggestion.label);
     if (suggestion.color !== undefined) {
-      title.style.setProperty('--abyss-project-property-color', suggestion.color);
-      title.style.color = suggestion.color;
+      valueElement.style.setProperty('--abyss-project-property-color', suggestion.color);
+      valueElement.style.color = suggestion.color;
     }
     if (suggestion.detail !== undefined) {
       element.createDiv({ cls: 'abyss-suggest-path', text: suggestion.detail });
