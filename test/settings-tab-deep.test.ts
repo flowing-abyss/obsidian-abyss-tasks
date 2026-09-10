@@ -37,6 +37,7 @@ interface StubPlugin {
   saveViewState: ReturnType<typeof vi.fn>;
   refreshProjectTableSettings: ReturnType<typeof vi.fn>;
   renameProjectStatus: ReturnType<typeof vi.fn>;
+  rebuildTaskStatusSemantics: ReturnType<typeof vi.fn>;
 }
 
 interface CapturedComp {
@@ -125,6 +126,7 @@ function makeTab(
     saveViewState,
     refreshProjectTableSettings,
     renameProjectStatus,
+    rebuildTaskStatusSemantics: vi.fn(),
   };
   const captured: CapturedComp[] = [];
   const restore = patchSetting(captured);
@@ -140,6 +142,7 @@ function makeTab(
       .expandedCards_abyssPrivate;
     for (const g of settings.tagGroups) expanded.add(g.id);
     for (const s of settings.projects.statuses) expanded.add(s.id);
+    for (const s of settings.taskStatuses) expanded.add(s.id);
   }
   (tab as unknown as { display(): void }).display();
   restore();
@@ -212,6 +215,24 @@ function cardNamed(container: HTMLElement, title: string): HTMLElement {
       (card) => card.querySelector('.abyss-settings-card-title')?.textContent === title,
     ),
   );
+}
+
+function capturedButton(
+  captured: CapturedComp[],
+  text: string,
+  sectionTitle: string,
+): CapturedComp['comp'] {
+  return expectDefined(
+    captured.find((candidate) => {
+      if (candidate.type !== 'button') return false;
+      const button = (candidate.comp as { buttonEl?: HTMLButtonElement }).buttonEl;
+      return (
+        button?.textContent === text &&
+        button.closest<HTMLElement>('[data-section-title]')?.dataset['sectionTitle'] ===
+          sectionTitle
+      );
+    }),
+  ).comp;
 }
 
 function dragCard(source: HTMLElement, target: HTMLElement): void {
@@ -1121,6 +1142,101 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       thirdStatus.name,
       secondStatus.name,
     ]);
+  });
+
+  it('renders a tag-group addition immediately and keeps it after save failure', async () => {
+    vi.mocked(Notice).mockClear();
+    const { tab, plugin, captured } = makeTab(
+      { tagGroups: [] },
+      { saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
+    );
+    openSection(tab, 4);
+    attachSettingsScroller(tab, 513);
+
+    expectDefined(capturedButton(captured, '+ add group', 'Tag groups').clickHandler)();
+
+    expect(plugin.settings.tagGroups).toHaveLength(1);
+    expect(cardNamed(tab.containerEl, 'New group').isConnected).toBe(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect((vi.mocked(Notice).mock.calls[0]?.[0] as DocumentFragment).textContent).toContain(
+      'Changes are kept in this session',
+    );
+  });
+
+  it('renders a tag-group deletion immediately and keeps it after save failure', async () => {
+    const { tab, plugin, captured } = makeTab(
+      { tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }] },
+      { saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
+    );
+    openSection(tab, 4);
+    attachSettingsScroller(tab, 513);
+
+    expectDefined(capturedButton(captured, 'Delete group', 'Tag groups').clickHandler)();
+
+    expect(plugin.settings.tagGroups).toHaveLength(0);
+    expect(tab.containerEl.textContent).not.toContain('Work');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(Notice).toHaveBeenCalled();
+  });
+
+  it('renders project-status add and delete drafts before persistence settles', async () => {
+    const pending = deferred<void>();
+    const { tab, plugin, captured } = makeTab({}, { saveSettings: vi.fn(() => pending.promise) });
+    openSection(tab, 5);
+    attachSettingsScroller(tab, 513);
+
+    expectDefined(capturedButton(captured, '+ add status', 'Projects').clickHandler)();
+    expect(cardNamed(tab.containerEl, 'status 4').isConnected).toBe(true);
+    expect(activeDocument.activeElement).toBe(
+      cardNamed(tab.containerEl, 'status 4').querySelector('.abyss-settings-card-body input'),
+    );
+
+    const deleteStatus = expectDefined(plugin.settings.projects.statuses[0]);
+    const deleteButton = capturedButton(captured, 'Delete status', 'Projects');
+    expectDefined(deleteButton.clickHandler)();
+    expect(plugin.settings.projects.statuses.some(({ id }) => id === deleteStatus.id)).toBe(false);
+    expect(
+      tab.containerEl.querySelector(
+        `[data-section-title="Projects"] [data-card-id="${deleteStatus.id}"]`,
+      ),
+    ).toBeNull();
+    pending.resolve();
+    await pending.promise;
+  });
+
+  it('keeps task-status add and delete drafts coherent when saves fail', async () => {
+    vi.mocked(Notice).mockClear();
+    const custom = {
+      id: 'status-custom',
+      symbol: '!',
+      name: 'Important',
+      type: 'todo' as const,
+      icon: 'alert-triangle',
+      core: false,
+    };
+    const { tab, plugin, captured } = makeTab(
+      { taskStatuses: [...structuredClone(DEFAULT_SETTINGS.taskStatuses), custom] },
+      { saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
+    );
+    openSection(tab, 6);
+    attachSettingsScroller(tab, 513);
+
+    expectDefined(capturedButton(captured, '+ add status', 'Custom statuses').clickHandler)();
+    expect(cardNamed(tab.containerEl, 'New status').isConnected).toBe(true);
+    expect(plugin.rebuildTaskStatusSemantics).toHaveBeenCalled();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const deleteButton = capturedButton(captured, 'Delete status', 'Custom statuses');
+    expectDefined(deleteButton.clickHandler)();
+    expectDefined(deleteButton.clickHandler)();
+    expect(plugin.settings.taskStatuses.some(({ id }) => id === custom.id)).toBe(false);
+    expect(tab.containerEl.querySelector(`[data-card-id="${custom.id}"]`)).toBeNull();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(Notice).toHaveBeenCalled();
   });
 
   it('refreshes a mounted project table after description and column view saves', async () => {

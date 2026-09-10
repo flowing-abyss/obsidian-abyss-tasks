@@ -355,6 +355,22 @@ export class CalendarSettingsTab extends PluginSettingTab {
     return true;
   }
 
+  private commitDraft_abyssPrivate(
+    action: string,
+    focus?: () => HTMLElement | null,
+    rebuildStatuses = false,
+  ): void {
+    if (rebuildStatuses) this.plugin_abyssPrivate.rebuildTaskStatusSemantics();
+    this.render_abyssPrivate(focus);
+    saveSettingsDraft({
+      action,
+      save: () =>
+        rebuildStatuses
+          ? this.persistStatuses_abyssPrivate()
+          : this.plugin_abyssPrivate.saveSettings(),
+    });
+  }
+
   override display(): void {
     this.propertyCatalogSignature_abyssPrivate = this.projectCatalogSignature_abyssPrivate();
     this.propertyCatalogCleanup_abyssPrivate ??= this.projectProperties_abyssPrivate.onChange(
@@ -955,7 +971,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       b
         .setButtonText('+ add group')
         .setCta()
-        .onClick(async () => {
+        .onClick(() => {
           const id = `group-${Date.now()}`;
           this.plugin_abyssPrivate.settings.tagGroups.push({
             id,
@@ -964,8 +980,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
             prefix: '',
           });
           this.expandedCards_abyssPrivate.add(id);
-          await this.plugin_abyssPrivate.saveSettings();
-          this.render_abyssPrivate();
+          this.commitDraft_abyssPrivate('add tag group');
         }),
     );
   }
@@ -1035,12 +1050,11 @@ export class CalendarSettingsTab extends PluginSettingTab {
       b
         .setButtonText('Delete group')
         .setClass('mod-warning')
-        .onClick(async () => {
+        .onClick(() => {
           const index = groups.findIndex((candidate) => candidate.id === group.id);
           const removed = index < 0 ? undefined : groups.splice(index, 1)[0];
           if (removed != null) this.expandedCards_abyssPrivate.delete(removed.id);
-          await this.plugin_abyssPrivate.saveSettings();
-          this.render_abyssPrivate();
+          this.commitDraft_abyssPrivate('delete tag group');
         }),
     );
   }
@@ -1259,7 +1273,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       b
         .setButtonText('+ add status')
         .setCta()
-        .onClick(async () => {
+        .onClick(() => {
           // Collision-proof id: smallest status-N not already taken.
           let n = projects.statuses.length + 1;
           while (
@@ -1277,8 +1291,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
             onLeftPanel: false,
           });
           this.expandedCards_abyssPrivate.add(id); // open the new card for editing
-          await this.plugin_abyssPrivate.saveSettings();
-          this.render_abyssPrivate(() =>
+          this.commitDraft_abyssPrivate('add project status', () =>
             this.containerEl.querySelector<HTMLInputElement>(
               `[data-card-id="${id}"] .abyss-settings-card-body input`,
             ),
@@ -1379,7 +1392,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .setButtonText('Delete status')
         .setClass('mod-warning')
         .setDisabled(statuses.length <= 1)
-        .onClick(async () => {
+        .onClick(() => {
           const index = statuses.findIndex((candidate) => candidate.id === statusId);
           const removed = index < 0 ? undefined : statuses.splice(index, 1)[0];
           if (removed != null) {
@@ -1388,8 +1401,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
               projects.defaultStatusId = statuses[0]?.id ?? '';
             }
           }
-          await this.plugin_abyssPrivate.saveSettings();
-          this.render_abyssPrivate();
+          this.commitDraft_abyssPrivate('delete project status');
         }),
     );
   }
@@ -1472,24 +1484,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
     this.plugin_abyssPrivate.rebuildTaskStatusSemantics();
   }
 
-  /** Persists and fully re-renders — for structural changes (add/delete/type/group move). */
-  private async persistAndRerenderStatuses_abyssPrivate(): Promise<void> {
-    await this.persistStatuses_abyssPrivate();
-    this.render_abyssPrivate();
-  }
-
   private moveStatusToGroup_abyssPrivate(id: string, targetType: TaskStatusType): void {
     const statuses = this.plugin_abyssPrivate.settings.taskStatuses;
     const def = statuses.find((s) => s.id === id);
     if (def == null || def.type === targetType) return;
     if (def.core) return; // core cards cannot leave their own type group
     def.type = targetType;
-    this.plugin_abyssPrivate.rebuildTaskStatusSemantics();
-    this.render_abyssPrivate();
-    saveSettingsDraft({
-      action: 'move task status',
-      save: () => this.persistStatuses_abyssPrivate(),
-    });
+    this.commitDraft_abyssPrivate('move task status', undefined, true);
   }
 
   private reorderStatusWithinType_abyssPrivate(
@@ -1564,7 +1565,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       b
         .setButtonText('+ add status')
         .setCta()
-        .onClick(async () => {
+        .onClick(() => {
           let n = statuses.length + 1;
           while (statuses.some((s) => s.id === `status-${n}`)) n++;
           const id = `status-${n}`;
@@ -1581,7 +1582,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
             core: false,
           });
           this.expandedCards_abyssPrivate.add(id);
-          await this.persistAndRerenderStatuses_abyssPrivate();
+          this.commitDraft_abyssPrivate('add task status', undefined, true);
         }),
     );
   }
@@ -1836,7 +1837,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       button
         .setButtonText('Delete status')
         .setClass('mod-warning')
-        .onClick(async () => {
+        .onClick(() => {
           if (!armed) {
             armed = true;
             button.setButtonText('Click again to confirm');
@@ -1850,7 +1851,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           const index = statuses.findIndex((status) => status.id === def.id);
           if (index >= 0) statuses.splice(index, 1);
           this.expandedCards_abyssPrivate.delete(def.id);
-          await this.persistAndRerenderStatuses_abyssPrivate();
+          this.commitDraft_abyssPrivate('delete task status', undefined, true);
         }),
     );
   }
