@@ -7704,7 +7704,7 @@ table.abyss-project-table {
 
 .abyss-project-list-control {
   display: flex;
-  overflow: hidden;
+  overflow: visible;
   width: 100%;
   min-width: 0;
   align-items: center;
@@ -7713,9 +7713,9 @@ table.abyss-project-table {
 
 .abyss-project-list-entry {
   display: flex;
-  min-width: 96px;
+  min-width: 0;
   max-width: 100%;
-  flex: 1 1 128px;
+  flex: 0 0 96px;
   align-items: center;
   gap: 3px;
 }
@@ -7755,6 +7755,10 @@ table.abyss-project-table {
 
 .abyss-project-list-values:empty {
   display: none;
+}
+
+.abyss-project-list-values:empty + .abyss-project-list-entry {
+  flex: 1 1 100%;
 }
 
 .abyss-project-list-value {

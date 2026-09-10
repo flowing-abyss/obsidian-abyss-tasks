@@ -390,7 +390,7 @@ function listControl(
         renderValues();
         events.changed();
         events.commit(false);
-        input.focus();
+        input.focus({ preventScroll: true });
       });
     });
   };
@@ -400,7 +400,7 @@ function listControl(
     input.value = '';
     renderValues();
     events.changed();
-    input.focus();
+    input.focus({ preventScroll: true });
     return true;
   };
   renderValues();

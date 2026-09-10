@@ -978,7 +978,7 @@ export class ProjectsTableView {
   private restoreTableSelectionFocus_abyssPrivate(): boolean {
     const focus = this.selection_abyssPrivate.focus;
     if (focus === undefined) return false;
-    this.focusSelectionCell_abyssPrivate(focus);
+    this.focusSelectionCell_abyssPrivate(focus, false);
     return true;
   }
 
@@ -1854,12 +1854,15 @@ export class ProjectsTableView {
     this.syncSelection_abyssPrivate();
   }
 
-  private focusSelectionCell_abyssPrivate(identity: ProjectTableSelectableCell): void {
+  private focusSelectionCell_abyssPrivate(
+    identity: ProjectTableSelectableCell,
+    reveal = true,
+  ): void {
     const rendered = this.renderedCell_abyssPrivate(identity);
     if (rendered === undefined) return;
     rendered.element.focus({ preventScroll: true });
     this.syncSelection_abyssPrivate();
-    this.revealSelectionCell_abyssPrivate(rendered.element);
+    if (reveal) this.revealSelectionCell_abyssPrivate(rendered.element);
   }
 
   private syncSelection_abyssPrivate(): void {

@@ -675,6 +675,54 @@ describe('mountProjectCellEditor', () => {
     ]);
   });
 
+  it('refocuses the list input without scrolling after a value is removed', () => {
+    const container = document.body.createDiv();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: ['Celia', 'Mina'],
+      catalog: catalog([], 'list'),
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: vi.fn(),
+    });
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-project-list-input'),
+    );
+    const focus = vi.spyOn(input, 'focus');
+
+    expectDefined(
+      container.querySelector<HTMLButtonElement>('[aria-label="Remove Celia"]'),
+    ).click();
+
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('refocuses the list input without scrolling after a value is added', () => {
+    const container = document.body.createDiv();
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: ['Celia'],
+      catalog: catalog(['Mina'], 'list'),
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: vi.fn(),
+    });
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-project-list-input'),
+    );
+    const focus = vi.spyOn(input, 'focus');
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    const suggest = expectDefined(internals.control_abyssPrivate.suggest);
+
+    suggest.selectSuggestion(expectDefined(suggest.getSuggestions('Mina')[0]));
+
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
   it('uses native tag styling without a generic outer chip background', () => {
     const container = document.body.createDiv();
     mountProjectCellEditor({

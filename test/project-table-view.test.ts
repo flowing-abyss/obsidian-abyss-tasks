@@ -1044,6 +1044,60 @@ describe('ProjectsTableView', () => {
     expect(document.activeElement).toBe(selected);
   });
 
+  it('restores table focus after an alignment change without revealing until arrow navigation', () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Labels', visible: true });
+    config.projects.propertyDefinitions['property:Labels'] = { type: 'list' };
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    const { host } = mount(
+      [project({ frontmatter: { start: '2026-09-01', end: '2026-09-30', Labels: ['Review'] } })],
+      { settings: config, catalog: catalog([{ name: 'Labels', type: 'list' }]) },
+    );
+    const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+    const header = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-header-cell[data-column-id="name"]'),
+    );
+    const labelsHeader = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-header-cell[data-column-id="property:Labels"]',
+      ),
+    );
+    const stickyName = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-name-cell'),
+    );
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const end = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
+    );
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 800, 300));
+    vi.spyOn(header, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 220, 40));
+    vi.spyOn(stickyName, 'getBoundingClientRect').mockReturnValue(rectangle(0, 40, 220, 70));
+    vi.spyOn(start, 'getBoundingClientRect').mockImplementation(() =>
+      rectangle(468 - scroll.scrollLeft, 40, 568 - scroll.scrollLeft, 70),
+    );
+    vi.spyOn(end, 'getBoundingClientRect').mockImplementation(() =>
+      rectangle(1800 - scroll.scrollLeft, 40, 1900 - scroll.scrollLeft, 70),
+    );
+    start.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    scroll.scrollLeft = 898;
+    expectDefined(labelsHeader.querySelector<HTMLButtonElement>('button')).focus();
+    labelsHeader.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const rootMenu = lastShownMenu(show);
+
+    activateMenuItem(submenu(rootMenu, 'Alignment'), 'Center');
+    rootMenu.close();
+
+    expect(document.activeElement).toBe(start);
+    expect(scroll.scrollLeft).toBe(898);
+    start.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+    );
+    expect(document.activeElement).toBe(end);
+    expect(scroll.scrollLeft).toBe(1100);
+  });
+
   it('returns focus to the current header when an action replaces the header without a selection', () => {
     const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
     const { host } = mount([project({})]);
