@@ -54,7 +54,7 @@ function hasOptionalPresetDisplay(record: Record<string, unknown>): boolean {
   return display === undefined || display === 'badge' || display === 'text';
 }
 
-export function isProjectPropertyType(value: unknown): value is ProjectPropertyType {
+function isProjectPropertyType(value: unknown): value is ProjectPropertyType {
   return typeof value === 'string' && PROPERTY_TYPES.has(value as ProjectPropertyType);
 }
 
@@ -146,7 +146,7 @@ function definitionEntries(projects: ProjectsSettings): Array<[string, unknown]>
   return isRecord(definitions) ? Object.entries(definitions) : [];
 }
 
-export function isConfiguredProjectPropertySourceReserved(
+function isConfiguredProjectPropertySourceReserved(
   projects: Pick<ProjectsSettings, 'statusProperty' | 'startProperty' | 'endProperty'>,
   property: string,
 ): boolean {

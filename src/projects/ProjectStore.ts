@@ -78,6 +78,7 @@ export class ProjectStore {
   private readonly pendingSourceObservations = new Map<string, PendingSourceObservation>();
   private readonly publishedSourceObservations = new Map<string, PublishedSourceObservation>();
   private sourceRevision = 0;
+  private settingsSignature = '';
 
   constructor(
     private readonly app: App,
@@ -87,6 +88,7 @@ export class ProjectStore {
 
   initialize(): void {
     this.recomputeAll();
+    this.settingsSignature = this.projectEntrySettingsSignature();
     // A single note edit re-evaluates only that note (O(1) note + its tasks).
     // Create/delete/rename change the membership set → full rescan (rare events).
     const metadataRef = this.app.metadataCache.on('changed', (file, data, cache) => {
@@ -374,7 +376,29 @@ export class ProjectStore {
 
   refresh(): void {
     this.recomputeAll();
+    this.settingsSignature = this.projectEntrySettingsSignature();
     for (const cb of this.listeners) cb();
+  }
+
+  private projectEntrySettingsSignature(): string {
+    const projects = this.settings.projects;
+    return JSON.stringify({
+      membershipQuery: projects.membershipQuery,
+      statusProperty: projects.statusProperty,
+      statuses: projects.statuses.map(({ id, name }) => [id, name]),
+    });
+  }
+
+  /** Refreshes settings without rescanning unless project membership or raw status identity changed. */
+  refreshSettings(): 'rescanned' | 'presentation' {
+    const signature = this.projectEntrySettingsSignature();
+    if (signature !== this.settingsSignature) {
+      this.recomputeAll();
+      this.settingsSignature = signature;
+      for (const cb of this.listeners) cb();
+      return 'rescanned';
+    }
+    return 'presentation';
   }
 
   onUpdate(cb: () => void): () => void {

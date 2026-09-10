@@ -278,6 +278,211 @@ describe('mountProjectCellEditor', () => {
     expect(onClose).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
   });
 
+  it('prioritizes a preset-only number and writes its exact numeric payload', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Budget', type: 'number' },
+      value: '42',
+      catalog: catalog(['7'], 'number'),
+      presets: [{ value: 42, label: 'Forty two', display: 'badge', color: '#123456' }],
+      sourceField: 'property:Custom',
+      save,
+      onClose: vi.fn(),
+    });
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    const suggest = expectDefined(internals.control_abyssPrivate.suggest);
+
+    expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual([42, 7]);
+    const preset = expectDefined(suggest.getSuggestions('').find(({ value }) => value === 42));
+    expect(preset.label).toBe('Forty two');
+    suggest.selectSuggestion(preset);
+    await settle();
+
+    expect(save).toHaveBeenCalledWith(42);
+  });
+
+  it('writes a finite existing number suggestion as a number and filters invalid values', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Budget', type: 'number' },
+      value: '42',
+      catalog: catalog(['7', 'nope', ''], 'number'),
+      sourceField: 'property:Custom',
+      save,
+      onClose: vi.fn(),
+    });
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    const suggest = expectDefined(internals.control_abyssPrivate.suggest);
+
+    expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual([7]);
+    suggest.selectSuggestion(expectDefined(suggest.getSuggestions('7')[0]));
+    await settle();
+
+    expect(save).toHaveBeenCalledWith(7);
+  });
+
+  it('keeps raw identity when a preset display alias is selected', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Phase', type: 'text' },
+      value: '',
+      catalog: catalog([], 'text'),
+      presets: [{ value: 'raw-phase', label: 'Ready to ship', display: 'text' }],
+      sourceField: 'property:Custom',
+      save,
+      onClose: vi.fn(),
+    });
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    const suggest = expectDefined(internals.control_abyssPrivate.suggest);
+    suggest.selectSuggestion(expectDefined(suggest.getSuggestions('Ready')[0]));
+    await settle();
+
+    expect(save).toHaveBeenCalledWith('raw-phase');
+  });
+
+  it('excludes a preset immediately after it is picked into a list', async () => {
+    const container = document.body.createDiv();
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: [],
+      catalog: catalog([], 'list'),
+      presets: [{ value: 'Mina', label: 'Mina Torres', display: 'badge' }],
+      sourceField: 'property:Custom',
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: vi.fn(),
+    });
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    const suggest = expectDefined(internals.control_abyssPrivate.suggest);
+
+    expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual(['Mina']);
+    suggest.selectSuggestion(expectDefined(suggest.getSuggestions('Mina')[0]));
+    await settle();
+    expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual([]);
+  });
+
+  it('shows the configured label for an existing exact preset list value', () => {
+    const container = document.body.createDiv();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: ['[[People/Anna]]'],
+      catalog: catalog([], 'list'),
+      presets: [
+        {
+          value: '[[People/Anna]]',
+          label: 'QA Anna',
+          display: 'badge',
+          color: '#123456',
+        },
+      ],
+      sourceField: 'property:Custom',
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: vi.fn(),
+    });
+
+    const chip = expectDefined(container.querySelector<HTMLElement>('.abyss-project-list-value'));
+    const presentation = expectDefined(
+      chip.querySelector<HTMLElement>('.abyss-project-property-value'),
+    );
+    expect(chip.textContent).toContain('QA Anna');
+    expect(chip.textContent).not.toContain('Anna]]');
+    expect(presentation.hasClass('is-badge')).toBe(true);
+    expect(presentation.hasClass('is-link')).toBe(true);
+    expect(presentation.style.getPropertyValue('--abyss-project-property-color')).toBe('#123456');
+  });
+
+  it('keeps an explicitly selected list preset raw value exact', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Phases', type: 'list' },
+      value: [],
+      catalog: catalog([], 'list'),
+      presets: [{ value: ' planned ', label: 'Planned', display: 'badge' }],
+      sourceField: 'property:Custom',
+      save,
+      onClose: vi.fn(),
+    });
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    const suggest = expectDefined(internals.control_abyssPrivate.suggest);
+
+    suggest.selectSuggestion(expectDefined(suggest.getSuggestions('Planned')[0]));
+    await settle();
+
+    expect(save).toHaveBeenCalledWith([' planned ']);
+    expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual([]);
+  });
+
+  it('restores details for colliding existing link labels after preset-first merging', () => {
+    const container = document.body.createDiv();
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Plans', type: 'list' },
+      value: [],
+      catalog: catalog(['[[A/Plan]]', '[[B/Plan]]'], 'list'),
+      presets: [{ value: 'preset', label: 'Preset', display: 'text' }],
+      sourceField: 'property:Custom',
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: vi.fn(),
+    });
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    const suggestions = expectDefined(internals.control_abyssPrivate.suggest).getSuggestions('');
+
+    expect(suggestions.map(({ value }) => value)).toEqual(['preset', '[[A/Plan]]', '[[B/Plan]]']);
+    expect(suggestions.slice(1).map(({ detail }) => detail)).toEqual(['A/Plan', 'B/Plan']);
+  });
+
+  it('keeps a configured tag chip native instead of adding a generic preset badge', () => {
+    const container = document.body.createDiv();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:tags', property: 'tags', label: 'Tags', type: 'tags' },
+      value: ['qa'],
+      catalog: catalog([], 'tags'),
+      presets: [{ value: 'qa', label: '#Quality', display: 'badge', color: '#123456' }],
+      sourceField: 'tags',
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: vi.fn(),
+    });
+
+    const chip = expectDefined(
+      container.querySelector<HTMLElement>('.abyss-project-list-value-text'),
+    );
+    expect(chip.textContent).toBe('#Quality');
+    expect(chip.hasClass('tag')).toBe(true);
+    expect(chip.hasClass('abyss-project-property-value')).toBe(false);
+    expect(chip.hasClass('is-badge')).toBe(false);
+    expect(chip.style.color).toBe('rgb(18, 52, 86)');
+  });
+
   it('writes the exact raw link once when a readable scalar suggestion is selected', async () => {
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
@@ -1168,7 +1373,7 @@ describe('ProjectPropertySuggest', () => {
       input: document.body.createEl('input'),
       values: ['Alpha', 'Beta'],
       onPick: vi.fn(),
-      exclude: (value) => selected.includes(value),
+      exclude: (value) => typeof value === 'string' && selected.includes(value),
     });
 
     expect(suggest.getSuggestions('a').map(({ value }) => value)).toEqual(['Beta']);

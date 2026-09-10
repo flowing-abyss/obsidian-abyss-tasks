@@ -192,6 +192,183 @@ function mount(
 }
 
 describe('ProjectsTableView', () => {
+  it('renders native type icons and alignment while reconciling preset presentation in place', () => {
+    const config = settings();
+    config.projects.table.columns.push({
+      id: 'property:Budget',
+      visible: true,
+      alignment: 'center',
+    });
+    config.projects.propertyDefinitions['property:Budget'] = {
+      type: 'number',
+      presetsEnabled: true,
+      presets: [{ value: 42, displayName: 'Estimate', color: '#123456', display: 'badge' }],
+    };
+    const item = project({ frontmatter: { Budget: 42 } });
+    const { host, view } = mount([item], { settings: config });
+    const header = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-header-cell[data-column-id="property:Budget"]',
+      ),
+    );
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-cell[data-column-id="property:Budget"]',
+      ),
+    );
+
+    expect(header.classList).toContain('is-align-center');
+    expect(cell.classList).toContain('is-align-center');
+    expect(
+      header.querySelector('.abyss-project-table-column-icon')?.getAttribute('data-icon'),
+    ).toBe('binary');
+    expect(cell.textContent).toContain('Estimate');
+    expect(
+      cell
+        .querySelector<HTMLElement>('.abyss-project-property-value')
+        ?.style.getPropertyValue('--abyss-project-property-color'),
+    ).toBe('#123456');
+
+    expectDefined(
+      expectDefined(
+        expectDefined(config.projects.propertyDefinitions['property:Budget']).presets,
+      )[0],
+    ).displayName = 'Forecast';
+    view.update([item]);
+
+    expect(host.querySelector('.abyss-project-table-cell[data-column-id="property:Budget"]')).toBe(
+      cell,
+    );
+    expect(cell.textContent).toContain('Forecast');
+  });
+
+  it('renders configured aliases for scalar and list text while preserving raw link targets', async () => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+      const anchor = holder.createEl('a', { cls: 'internal-link', text: markdown });
+      anchor.setAttribute('data-href', 'People/Owner');
+    });
+    const config = settings();
+    config.projects.table.columns.push(
+      { id: 'property:Priority', visible: true },
+      { id: 'property:Owners', visible: true },
+      { id: 'property:Lead', visible: true },
+    );
+    config.projects.propertyDefinitions['property:Priority'] = {
+      type: 'text',
+      presetsEnabled: true,
+      presets: [{ value: 'QA-only priority', displayName: 'QA priority option', display: 'badge' }],
+    };
+    config.projects.propertyDefinitions['property:Owners'] = {
+      type: 'list',
+      presetsEnabled: true,
+      presets: [{ value: 'owner-id', displayName: 'Owner alias', display: 'text' }],
+    };
+    config.projects.propertyDefinitions['property:Lead'] = {
+      type: 'text',
+      presetsEnabled: true,
+      presets: [{ value: '[[People/Owner]]', displayName: 'Lead alias', display: 'text' }],
+    };
+    const { host } = mount(
+      [
+        project({
+          frontmatter: {
+            Priority: 'QA-only priority',
+            Owners: ['owner-id'],
+            Lead: '[[People/Owner]]',
+          },
+        }),
+      ],
+      {
+        settings: config,
+        catalog: catalog([
+          { name: 'Priority', type: 'text' },
+          { name: 'Owners', type: 'list' },
+          { name: 'Lead', type: 'text' },
+        ]),
+      },
+    );
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(
+      host.querySelector('.abyss-project-table-cell[data-column-id="property:Priority"]')
+        ?.textContent,
+    ).toContain('QA priority option');
+    expect(
+      host.querySelector('.abyss-project-table-cell[data-column-id="property:Owners"]')
+        ?.textContent,
+    ).toContain('Owner alias');
+    const link = expectDefined(
+      host.querySelector<HTMLAnchorElement>(
+        '.abyss-project-table-cell[data-column-id="property:Lead"] a.internal-link',
+      ),
+    );
+    expect(link.textContent).toBe('Lead alias');
+    expect(link.dataset['href']).toBe('People/Owner');
+  });
+
+  it('keeps malformed definitions unavailable and repairable without throwing while rendering', () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Broken', visible: true });
+    config.projects.table.groupBy = 'property:Broken';
+    config.projects.propertyDefinitions['property:Broken'] = null as never;
+
+    const { host } = mount([project({ frontmatter: { Broken: 'saved raw' } })], {
+      settings: config,
+      catalog: catalog([{ name: 'Broken', type: null }]),
+    });
+
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-table-cell[data-column-id="property:Broken"]',
+      ),
+    );
+    expect(cell.textContent).toContain('Type unavailable');
+    expect(
+      cell.querySelector('.abyss-project-table-unavailable')?.getAttribute('aria-label'),
+    ).toContain('choose a Type');
+  });
+
+  it('applies a configured tag alias and color through the native tag anchor only', () => {
+    const config = settings();
+    config.projects.table.columns.push({ id: 'property:Tags', visible: true });
+    config.projects.propertyDefinitions['property:Tags'] = {
+      type: 'tags',
+      presetsEnabled: true,
+      presets: [{ value: 'qa', displayName: '#Quality', color: '#123456', display: 'badge' }],
+    };
+    const { host, view } = mount([project({ frontmatter: { Tags: ['qa'] } })], {
+      settings: config,
+      catalog: catalog([{ name: 'Tags', type: 'tags' }]),
+    });
+
+    const link = expectDefined(
+      host.querySelector<HTMLAnchorElement>(
+        '.abyss-project-table-cell[data-column-id="property:Tags"] a.tag',
+      ),
+    );
+    expect(link.textContent).toBe('#Quality');
+    expect(link.getAttribute('href')).toBe('#qa');
+    expect(link.style.color).toBe('rgb(18, 52, 86)');
+    expect(link.hasClass('abyss-project-property-value')).toBe(false);
+    expect(link.hasClass('is-badge')).toBe(false);
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Tags"]'),
+    );
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const editor = view as unknown as {
+      readonly activeEditor_abyssPrivate?: {
+        readonly handle: {
+          readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+        };
+      };
+    };
+    expectDefined(cell.querySelector<HTMLButtonElement>('[aria-label="Remove #Quality"]')).click();
+    const suggestion = expectDefined(
+      editor.activeEditor_abyssPrivate?.handle.control_abyssPrivate.suggest,
+    ).getSuggestions('Quality')[0];
+    expect(suggestion).toMatchObject({ value: 'qa', label: '#Quality', appearance: 'tag' });
+  });
+
   it('reports the focused visible occurrence path and forgets filtered or removed selection', () => {
     const alpha = project({ path: 'Projects/A.md', name: 'Alpha' });
     const beta = project({ path: 'Projects/B.md', name: 'Beta' });

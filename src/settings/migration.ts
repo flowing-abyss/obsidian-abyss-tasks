@@ -1,6 +1,5 @@
 import {
   hasMalformedProjectPropertyDefinitionPresentation,
-  isConfiguredProjectPropertySourceReserved,
   isProjectPropertyDefinition,
 } from '../projects/projectPropertyDefinitions';
 import { normalizeProjectTableSettings } from '../projects/projectTableSettings';
@@ -196,27 +195,9 @@ function normalizeDefaultProjectStatus(projects: MigratedProjectSettings): void 
   }
 }
 
-function propertyDefinitionSourceIsInvalid(
-  projects: MigratedProjectSettings,
-  property: string,
-): boolean {
-  return isConfiguredProjectPropertySourceReserved(
-    {
-      statusProperty: projects.statusProperty ?? '',
-      startProperty: projects.startProperty ?? '',
-      endProperty: projects.endProperty ?? '',
-    },
-    property,
-  );
-}
-
-function propertyDefinitionIsInvalid(
-  projects: MigratedProjectSettings,
-  key: string,
-  definition: unknown,
-): boolean {
+function propertyDefinitionIsInvalid(key: string, definition: unknown): boolean {
   const property = key.startsWith('property:') ? key.slice('property:'.length) : '';
-  if (property.length === 0 || propertyDefinitionSourceIsInvalid(projects, property)) return true;
+  if (property.length === 0) return true;
   if (!isProjectPropertyDefinition(definition)) return true;
   if (hasMalformedProjectPropertyDefinitionPresentation(definition)) return true;
   if (sameProperty(property, 'tags')) return definition.type !== 'tags';
@@ -273,7 +254,7 @@ function normalizeProjectPropertyDefinitions(
     return;
   }
   const invalidKeys = Object.entries(definitions).flatMap(([key, definition]) =>
-    propertyDefinitionIsInvalid(projects, key, definition) ? [key] : [],
+    propertyDefinitionIsInvalid(key, definition) ? [key] : [],
   );
   const ambiguousKeys = ambiguousPropertyDefinitionKeys(definitions);
   if (invalidKeys.length === 0 && ambiguousKeys.length === 0) return;

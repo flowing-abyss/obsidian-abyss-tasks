@@ -10,6 +10,7 @@ import {
   DataTransferStub,
   deferred,
   expectDefined,
+  flushMicrotasks,
   loadPluginStyles,
   objectMatching,
   useRealMoment,
@@ -38,6 +39,15 @@ interface StubPlugin {
   refreshProjectTableSettings: ReturnType<typeof vi.fn>;
   renameProjectStatus: ReturnType<typeof vi.fn>;
   rebuildTaskStatusSemantics: ReturnType<typeof vi.fn>;
+}
+
+function expandAllSettingsCards(settings: CalendarSettings, expanded: Set<string>): void {
+  for (const group of settings.tagGroups) expanded.add(group.id);
+  for (const status of settings.projects.statuses) expanded.add(status.id);
+  for (const status of settings.taskStatuses) expanded.add(status.id);
+  for (const column of settings.projects.table.columns) {
+    expanded.add(`project-property:${column.id}`);
+  }
 }
 
 interface CapturedComp {
@@ -140,9 +150,7 @@ function makeTab(
   if (expandCards) {
     const expanded = (tab as unknown as { expandedCards_abyssPrivate: Set<string> })
       .expandedCards_abyssPrivate;
-    for (const g of settings.tagGroups) expanded.add(g.id);
-    for (const s of settings.projects.statuses) expanded.add(s.id);
-    for (const s of settings.taskStatuses) expanded.add(s.id);
+    expandAllSettingsCards(settings, expanded);
   }
   (tab as unknown as { display(): void }).display();
   restore();
@@ -212,7 +220,9 @@ function attachSettingsScroller(tab: CalendarSettingsTab, scrollTop: number): HT
 function cardNamed(container: HTMLElement, title: string): HTMLElement {
   return expectDefined(
     Array.from(container.querySelectorAll<HTMLElement>('.abyss-settings-card')).find(
-      (card) => card.querySelector('.abyss-settings-card-title')?.textContent === title,
+      (card) =>
+        card.querySelector(':scope > .abyss-settings-card-header > .abyss-settings-card-title')
+          ?.textContent === title,
     ),
   );
 }
@@ -247,6 +257,15 @@ function dragCard(source: HTMLElement, target: HTMLElement): void {
   }
 }
 
+function dispatchCardDragStart(source: HTMLElement): Event {
+  const event = new MouseEvent('dragstart', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', { value: new DataTransferStub() });
+  expectDefined(source.querySelector<HTMLElement>('.abyss-settings-card-header')).dispatchEvent(
+    event,
+  );
+  return event;
+}
+
 function projectStatusOrder(tab: CalendarSettingsTab): string[] {
   const projects = expectDefined(
     Array.from(tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section')).find(
@@ -254,9 +273,15 @@ function projectStatusOrder(tab: CalendarSettingsTab): string[] {
         section.querySelector('.abyss-settings-section-label')?.textContent === 'Projects',
     ),
   );
-  return Array.from(projects.querySelectorAll('.abyss-settings-card-title'))
-    .slice(0, 3)
-    .map((title) => title.textContent);
+  const statusProperty = expectDefined(
+    projects.querySelector<HTMLElement>('[data-card-id="project-property:status"]'),
+  );
+  return Array.from(
+    statusProperty.querySelectorAll(
+      ':scope > .abyss-settings-card-body > .abyss-settings-card > .abyss-settings-card-header > .abyss-settings-card-title',
+    ),
+    (title) => title.textContent,
+  );
 }
 
 describe('CalendarSettingsTab renderGeneralSettings', () => {
@@ -937,22 +962,40 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
     dragCard(secondCard, firstCard);
     dragCard(secondCard, thirdCard);
+    dragCard(thirdCard, secondCard);
 
     expect(plugin.settings.projects.statuses.slice(0, 3).map(({ id }) => id)).toEqual([
       firstStatus.id,
-      thirdStatus.id,
       secondStatus.id,
+      thirdStatus.id,
     ]);
     expect(projectStatusOrder(tab)).toEqual([
       firstStatus.name,
-      thirdStatus.name,
       secondStatus.name,
+      thirdStatus.name,
     ]);
     expect(scroller.scrollTop).toBe(513);
     expect(activeDocument.activeElement).toBe(draft);
     expect(draft.isConnected).toBe(true);
     expect(draft.value).toBe('unfinished status draft');
     expect(draft.selectionStart).toBe(10);
+  });
+
+  it('owns a nested project-status drag without bubbling it into the property card', () => {
+    const { tab, plugin } = makeTab();
+    const body = openSection(tab, 5);
+    const statusProperty = expectDefined(
+      body.querySelector<HTMLElement>('[data-card-id="project-property:status"]'),
+    );
+    const nestedStatus = cardNamed(body, expectDefined(plugin.settings.projects.statuses[0]).name);
+    const outerDragStart = vi.fn();
+    statusProperty.addEventListener('dragstart', outerDragStart);
+
+    dispatchCardDragStart(nestedStatus);
+
+    expect(outerDragStart).not.toHaveBeenCalled();
+    expect(nestedStatus.hasClass('abyss-dragging')).toBe(true);
+    expect(statusProperty.hasClass('abyss-dragging')).toBe(false);
   });
 
   it('preserves focused draft context when display rebuilds an open settings tab', () => {
@@ -1323,7 +1366,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     );
   });
 
-  it('preserves the real settings scroller and add-property focus after redraw', async () => {
+  it('preserves the real settings scroller and focuses the newly added property card', async () => {
     const projectProperties: ProjectPropertyCatalog = {
       list: () => [{ name: 'Budget', type: 'number' }],
       inspect: () => ({ kind: 'available', property: undefined, assignment: { kind: 'none' } }),
@@ -1341,19 +1384,26 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expectDefined(
       tab.containerEl.querySelector<HTMLButtonElement>('.abyss-project-column-add'),
     ).click();
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushMicrotasks();
 
     expect(scroller.scrollTop).toBe(1855);
     expect(activeDocument.activeElement).toBe(
-      tab.containerEl.querySelector('.abyss-project-column-add-input'),
+      tab.containerEl.querySelector(
+        '[data-card-id="project-property:property:Budget"] .abyss-project-property-toggle',
+      ),
     );
   });
 
   it('statuses render as collapsed cards (title only) by default', () => {
     const { tab } = makeTab({}, { expand: false });
     const body = openSection(tab, 5); // Projects
-    const cards = body.querySelectorAll('.abyss-settings-card');
+    const statusProperty = expectDefined(
+      body.querySelector<HTMLElement>('[data-card-id="project-property:status"]'),
+    );
+    expectDefined(statusProperty.querySelector<HTMLElement>('.abyss-settings-card-header')).click();
+    const cards = statusProperty.querySelectorAll<HTMLElement>(
+      '.abyss-settings-card-body > .abyss-settings-card',
+    );
     expect(cards).toHaveLength(DEFAULT_SETTINGS.projects.statuses.length);
     // Collapsed: title shown, no expanded body.
     expect(expectDefined(cards[0]).querySelector('.abyss-settings-card-title')?.textContent).toBe(
@@ -1435,13 +1485,13 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
     expect(badges).toEqual([]);
     expect(findDropdown(body, 'Status property')?.value).toBe('status');
     expect(body.textContent).not.toContain('Defined by');
-    expect(body.textContent).not.toContain('Value');
+    expect(findInput(body, 'Value')?.value).toBe('active');
   });
 
   it('commits a status rename on blur rather than on each input event', async () => {
     const { tab, plugin } = makeTab();
     const body = openSection(tab, 5);
-    const input = expectDefined(findInput(body, 'Name'));
+    const input = expectDefined(findInput(body, 'Value'));
     input.value = 'running';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     expect(plugin.renameProjectStatus).not.toHaveBeenCalled();
@@ -1453,17 +1503,17 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
     expect(plugin.renameProjectStatus).toHaveBeenCalledWith('status-1', 'running', 'active');
   });
 
-  it('renders Statuses before the project Columns section', () => {
+  it('nests status and curated date controls inside their property cards', () => {
     const { tab } = makeTab();
     const body = openSection(tab, 5);
     const text = body.textContent;
-    expect(text.indexOf('Statuses')).toBeLessThan(text.indexOf('Table columns'));
-    expect(text.indexOf('Status property')).toBeLessThan(text.indexOf('Table columns'));
+    expect(text).not.toContain('Statuses');
+    expect(text.indexOf('Status property')).toBeGreaterThan(text.indexOf('Table columns'));
     expect(text.indexOf('Start property')).toBeGreaterThan(text.indexOf('Table columns'));
     expect(text.indexOf('End property')).toBeGreaterThan(text.indexOf('Table columns'));
   });
 
-  it('offers native text/date sources and rejects a date source collision', async () => {
+  it('offers nonreserved sources independent of native type and omits curated collisions', () => {
     const projects = structuredClone(DEFAULT_SETTINGS.projects);
     projects.statusProperty = 'Статус';
     projects.startProperty = 'Начало';
@@ -1489,12 +1539,16 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
     const body = openSection(tab, 5);
     const status = expectDefined(findDropdown(body, 'Status property'));
     const start = expectDefined(findDropdown(body, 'Start property'));
-    expect(Array.from(status.options).map(({ value }) => value)).toEqual(['Статус', 'Фаза']);
-    expect(Array.from(start.options).map(({ value }) => value)).toEqual(['Начало', 'Конец']);
-
-    start.value = 'Конец';
-    start.dispatchEvent(new Event('change', { bubbles: true }));
-    await Promise.resolve();
+    expect(Array.from(status.options).map(({ value }) => value)).toEqual([
+      'Статус',
+      'Фаза',
+      'Wrong type',
+    ]);
+    expect(Array.from(start.options).map(({ value }) => value)).toEqual([
+      'Фаза',
+      'Начало',
+      'Wrong type',
+    ]);
 
     expect(plugin.settings.projects.startProperty).toBe('Начало');
     expect(plugin.saveSettings).not.toHaveBeenCalled();

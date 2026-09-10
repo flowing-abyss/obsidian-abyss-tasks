@@ -26,6 +26,19 @@ export interface ProjectTableColumnResize {
   readonly visibleWidths: ReadonlyArray<{ readonly columnId: string; readonly width: number }>;
 }
 
+const TYPE_ICONS: Readonly<Record<ProjectFieldCatalogItem['type'] & string, string>> = {
+  text: 'text',
+  list: 'list',
+  number: 'binary',
+  checkbox: 'check-square',
+  date: 'calendar',
+  datetime: 'calendar-clock',
+  tags: 'tags',
+  name: 'file-text',
+  status: 'circle-dot',
+  progress: 'percent',
+};
+
 export function projectTableColumnWidth(
   column: ProjectColumn,
   field: ProjectFieldCatalogItem,
@@ -291,7 +304,7 @@ function renderHeaderColumn(
   let suppressSort = false;
   const width = projectTableColumnWidth(column, field);
   const th = row.createEl('th', {
-    cls: `abyss-project-table-header-cell${field.type === 'name' ? ' is-sticky' : ''}`,
+    cls: `abyss-project-table-header-cell is-align-${column.alignment ?? 'left'}${field.type === 'name' ? ' is-sticky' : ''}`,
     attr: { scope: 'col', 'data-column-id': column.id, draggable: String(field.type !== 'name') },
   });
   th.dataset['width'] = String(width);
@@ -300,6 +313,10 @@ function renderHeaderColumn(
     cls: 'abyss-project-table-column-button',
     attr: { type: 'button', 'aria-label': `Sort by ${column.label ?? field.label}` },
   });
+  const icon = button.createSpan({ cls: 'abyss-project-table-column-icon' });
+  const iconId = field.type === null ? 'circle-help' : TYPE_ICONS[field.type];
+  icon.dataset['icon'] = iconId;
+  setIcon(icon, iconId);
   button.createSpan({ text: column.label ?? field.label });
   if (options.sort.field === column.id) {
     const indicator = button.createSpan({ cls: 'abyss-project-table-sort-indicator' });

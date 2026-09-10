@@ -7,6 +7,7 @@ import {
   type SettingsPersistencePort,
 } from '../src/settings/persistence';
 import priorSerializerFixture from './fixtures/settings-persistence/cc84b5d-property-definitions-roundtrip.json';
+import { expectDefined } from './helpers';
 
 const STATE_PATH = '.test-config/plugins/abyss-tasks/state.json';
 
@@ -72,6 +73,34 @@ function stateEnvelope(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe('SettingsPersistenceCoordinator migration', () => {
+  it('loads column alignment and removes its saved key when reset to left', async () => {
+    const state = stateEnvelope();
+    const views = state['views'] as Record<string, unknown>;
+    const projects = views['projects'] as Record<string, unknown>;
+    const table = projects['table'] as Record<string, unknown>;
+    const columns = table['columns'] as Array<Record<string, unknown>>;
+    const status = expectDefined(columns.find(({ id }) => id === 'status'));
+    status['alignment'] = 'center';
+    status['futureColumnOption'] = 'keep';
+    const port = memoryPort(markedStatic(), state);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const loadedStatus = expectDefined(
+      loaded.settings.projects.table.columns.find(({ id }) => id === 'status'),
+    );
+    expect(loadedStatus.alignment).toBe('center');
+    delete loadedStatus.alignment;
+    await coordinator.saveViewState(loaded.settings);
+
+    const saved = JSON.parse(port.stateText ?? '') as {
+      views: { projects: { table: { columns: Array<Record<string, unknown>> } } };
+    };
+    expect(
+      expectDefined(saved.views.projects.table.columns.find(({ id }) => id === 'status')),
+    ).toEqual({ id: 'status', visible: true, futureColumnOption: 'keep' });
+  });
+
   it('loads extensions roundtripped by the cc84b5d serializer without losing raw values', async () => {
     expect(priorSerializerFixture.provenance.serializerCommit).toBe(
       'cc84b5d879d6085c505e12313ed5b073f43a5eb2',

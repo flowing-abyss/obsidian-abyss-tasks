@@ -5,6 +5,8 @@ import type { Project } from './types';
 export type ProjectPropertyType =
   'text' | 'list' | 'number' | 'checkbox' | 'date' | 'datetime' | 'tags';
 
+export type ProjectColumnAlignment = 'left' | 'center' | 'right';
+
 export interface ProjectField {
   id: string;
   property?: string;
@@ -21,6 +23,7 @@ export interface ProjectColumn {
   id: string;
   label?: string;
   width?: number;
+  alignment?: ProjectColumnAlignment;
   visible: boolean;
 }
 

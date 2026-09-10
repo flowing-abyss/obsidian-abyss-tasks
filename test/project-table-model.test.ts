@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { planProjectGroupDrop } from '../src/panels/projects/projectTableDrag';
 import type {
   ProjectField,
   ProjectFieldCatalogItem,
   ProjectTableSettings,
 } from '../src/projects/projectFields';
+import type { ProjectPropertyDefinition } from '../src/projects/projectPropertyDefinitions';
 import {
   buildProjectTableModel,
   projectProgress,
@@ -12,6 +14,7 @@ import {
 } from '../src/projects/projectTableModel';
 import type { Project } from '../src/projects/types';
 import type { ProjectStatus } from '../src/settings/types';
+import { expectDefined } from './helpers';
 
 const statuses: ProjectStatus[] = [
   {
@@ -70,8 +73,16 @@ function model(
   projects: readonly Project[],
   settings: ProjectTableSettings = table(),
   search = '',
+  propertyDefinitions?: Readonly<Record<string, ProjectPropertyDefinition>>,
 ) {
-  return buildProjectTableModel({ projects, fields, statuses, settings, search });
+  return buildProjectTableModel({
+    projects,
+    fields,
+    statuses,
+    settings,
+    search,
+    ...(propertyDefinitions === undefined ? {} : { propertyDefinitions }),
+  });
 }
 
 describe('buildProjectTableModel', () => {
@@ -146,6 +157,42 @@ describe('buildProjectTableModel', () => {
     );
 
     expect(result.groups.map(({ label }) => label)).toEqual(['Planned', 'Active', 'Done']);
+  });
+
+  it('uses display aliases without changing raw status or property group identities', () => {
+    const presentedStatuses = statuses.map((status) =>
+      status.id === 'active' ? { ...status, displayName: 'In progress' } : status,
+    );
+    const activeProject = project('Active', {
+      frontmatter: { owners: ['raw-team'] },
+      statusId: 'active',
+    });
+    const statusModel = buildProjectTableModel({
+      projects: [activeProject],
+      fields,
+      statuses: presentedStatuses,
+      settings: table({ groupBy: 'status' }),
+    });
+    const ownerModel = model([activeProject], table({ groupBy: 'property:owners' }), '', {
+      'property:owners': {
+        type: 'list',
+        presetsEnabled: true,
+        presets: [
+          { value: 'raw-team', displayName: 'Platform', color: '#123456', display: 'badge' },
+        ],
+      },
+    });
+
+    expect(statusModel.groups[0]).toMatchObject({ key: 'id:active', label: 'In progress' });
+    expect(
+      projectTableDisplayValues(activeProject, expectDefined(fields[1]), presentedStatuses),
+    ).toEqual(['In progress']);
+    expect(ownerModel.groups[0]).toMatchObject({
+      key: 'value:raw-team',
+      label: 'Platform',
+      value: 'raw-team',
+      presentation: { color: '#123456', display: 'badge' },
+    });
   });
 
   it('keeps status labels and configured grouping when the status field is read-only', () => {
@@ -426,6 +473,26 @@ describe('buildProjectTableModel', () => {
       'raw:blocked',
       'none',
     ]);
+  });
+
+  it('keeps an unknown raw status as the assignable value of its rendered group', () => {
+    const result = model(
+      [project('Known'), project('Unknown', { statusId: null, rawStatus: 'QA unknown status' })],
+      table({ groupBy: 'status' }),
+    );
+    const source = expectDefined(result.groups.find(({ key }) => key === 'id:active'));
+    const target = expectDefined(result.groups.find(({ key }) => key === 'raw:QA unknown status'));
+
+    expect(target.value).toBe('QA unknown status');
+    expect(
+      planProjectGroupDrop({
+        field: expectDefined(fields.find(({ id }) => id === 'status')),
+        currentValue: 'Active',
+        source,
+        target,
+        statuses,
+      }),
+    ).toBe('QA unknown status');
   });
 });
 

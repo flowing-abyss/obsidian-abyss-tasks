@@ -21,7 +21,16 @@ import {
   type ProjectField,
   type ProjectFieldCatalogItem,
 } from '../../projects/projectFields';
-import { resolveConfiguredProjectField } from '../../projects/projectPropertyDefinitions';
+import type { ProjectValuePresentation } from '../../projects/projectPropertyDefinitions';
+import {
+  resolveConfiguredProjectField,
+  type ProjectPropertyDefinition,
+} from '../../projects/projectPropertyDefinitions';
+import {
+  compatibleProjectPropertyPresets,
+  compileProjectPropertyPresets,
+  type CompiledProjectPropertyPresets,
+} from '../../projects/projectPropertyPresets';
 import type { ProjectSourceObservation } from '../../projects/ProjectStore';
 import {
   buildProjectTableModel,
@@ -39,6 +48,7 @@ import {
   setProjectColumnWidth,
 } from '../../settings/projectTableSettings';
 import type { CalendarSettings } from '../../settings/types';
+import type { ProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
 import { renderTaskText } from '../../ui/renderTaskText';
 import {
   mountProjectCellEditor,
@@ -77,6 +87,32 @@ import {
 } from './projectTableSelection';
 
 const PROJECT_TABLE_ROW_DRAG_TYPE = 'application/x-abyss-project-table-row';
+
+function presetLabel(displayName: string | undefined, value: string | number): string {
+  const trimmed = displayName?.trim();
+  return trimmed === undefined || trimmed === '' ? String(value) : trimmed;
+}
+
+function editorPresets(
+  definition: unknown,
+  isTag: boolean,
+): readonly ProjectPropertySuggestion[] | undefined {
+  const presets = compatibleProjectPropertyPresets(definition);
+  if (presets.length === 0) return undefined;
+  return presets.flatMap((preset) =>
+    typeof preset.value === 'boolean'
+      ? []
+      : [
+          {
+            value: preset.value,
+            label: presetLabel(preset.displayName, preset.value),
+            ...(isTag ? { appearance: 'tag' as const } : {}),
+            ...(preset.color === undefined ? {} : { color: preset.color }),
+            ...(preset.display === undefined ? {} : { display: preset.display }),
+          },
+        ],
+  );
+}
 
 export interface ProjectsTableViewContext {
   readonly app: App;
@@ -234,6 +270,7 @@ interface RenderGroupOptions {
   readonly statuses: ProjectTableModel['availableStatusGroups'];
   readonly value: unknown;
   readonly sourcePath?: string;
+  readonly presentation?: ProjectValuePresentation;
 }
 
 interface RenderProjectRowOptions {
@@ -392,6 +429,7 @@ export class ProjectsTableView {
   private groupDropPreview_abyssPrivate: GroupDropPreview | undefined;
   private groupDropRevision_abyssPrivate = 0;
   private columnCleanup_abyssPrivate: (() => void) | undefined;
+  private compiledPresets_abyssPrivate = new Map<string, CompiledProjectPropertyPresets>();
   private readonly collapsedGroups_abyssPrivate = new Set<string>();
   private readonly selection_abyssPrivate = new ProjectTableSelection();
   private renderedCells_abyssPrivate: RenderedCellContext[] = [];
@@ -751,6 +789,12 @@ export class ProjectsTableView {
     const tableSettings = this.context_abyssPrivate.settings.projects.table;
     enforceProjectTableColumnInvariants(tableSettings);
     const columns = visibleColumns(this.context_abyssPrivate.settings, this.fields_abyssPrivate);
+    this.compiledPresets_abyssPrivate = new Map(
+      columns.map(({ field }) => [
+        field.id,
+        compileProjectPropertyPresets(this.projectPropertyDefinition_abyssPrivate(field.id)),
+      ]),
+    );
     const model = buildProjectTableModel(this.projectTableModelInput_abyssPrivate());
     this.toolbar_abyssPrivate.update(model.availableStatusGroups);
     this.count_abyssPrivate.setText(
@@ -773,10 +817,28 @@ export class ProjectsTableView {
       fields: this.fields_abyssPrivate,
       statuses: this.context_abyssPrivate.settings.projects.statuses,
       settings: this.context_abyssPrivate.settings.projects.table,
+      propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,
       search: this.search_abyssPrivate,
       resolveLink: (target, sourcePath) =>
         this.context_abyssPrivate.app.metadataCache.getFirstLinkpathDest(target, sourcePath)?.path,
     };
+  }
+
+  private projectPropertyDefinition_abyssPrivate(
+    fieldId: string,
+  ): ProjectPropertyDefinition | undefined {
+    return Object.entries(this.context_abyssPrivate.settings.projects.propertyDefinitions).find(
+      ([candidate]) => candidate.localeCompare(fieldId, undefined, { sensitivity: 'accent' }) === 0,
+    )?.[1];
+  }
+
+  private editorPresets_abyssPrivate(
+    field: ProjectField,
+  ): readonly ProjectPropertySuggestion[] | undefined {
+    return editorPresets(
+      this.projectPropertyDefinition_abyssPrivate(field.id),
+      field.type === 'tags',
+    );
   }
 
   private createTable_abyssPrivate(): HTMLTableElement {
@@ -804,6 +866,7 @@ export class ProjectsTableView {
         label: column.label ?? field.label,
         width: projectTableColumnWidth(column, field),
         type: field.type,
+        alignment: column.alignment ?? 'left',
       })),
       sort: tableSettings.sortBy,
     });
@@ -915,6 +978,7 @@ export class ProjectsTableView {
           label: group.label,
           value: group.value,
           ...(group.sourcePath === undefined ? {} : { sourcePath: group.sourcePath }),
+          ...(group.presentation === undefined ? {} : { presentation: group.presentation }),
           count: group.projects.length,
           columnCount: columns.length,
           statuses: model.availableStatusGroups,
@@ -954,7 +1018,7 @@ export class ProjectsTableView {
   }
 
   private reconcileGroupRow_abyssPrivate(options: RenderGroupOptions): HTMLTableRowElement {
-    const { key, label, value, sourcePath, count, columnCount, statuses } = options;
+    const { key, label, value, sourcePath, count, columnCount, statuses, presentation } = options;
     const rendered =
       this.renderedGroupRows_abyssPrivate.get(key) ?? this.createGroupRow_abyssPrivate(options);
     rendered.context = { key, label, value, ...(sourcePath === undefined ? {} : { sourcePath }) };
@@ -965,9 +1029,10 @@ export class ProjectsTableView {
     rendered.button.setAttribute('aria-expanded', String(!collapsed));
     rendered.chevron.setText(collapsed ? '›' : '⌄');
     const status = statuses.find((candidate) => candidate.key === key);
-    const signature = JSON.stringify([label, value, sourcePath, status?.color]);
+    const color = status?.color ?? presentation?.color;
+    const signature = JSON.stringify([label, value, sourcePath, color, presentation?.display]);
     if (signature !== rendered.contentSignature)
-      this.patchGroupContent_abyssPrivate(rendered, options, status?.color, signature);
+      this.patchGroupContent_abyssPrivate(rendered, options, color, signature);
     rendered.count.setText(String(count));
     return rendered.element;
   }
@@ -1007,6 +1072,7 @@ export class ProjectsTableView {
     rendered.statusDot.hidden = color === undefined;
     rendered.statusDot.style.background = color ?? '';
     rendered.label.empty();
+    rendered.label.style.color = options.presentation?.display === 'text' ? (color ?? '') : '';
     const { value, sourcePath, label } = options;
     if (typeof value !== 'string' || sourcePath === undefined || parseLinks(value).length === 0) {
       rendered.label.setText(label);
@@ -1315,7 +1381,11 @@ export class ProjectsTableView {
 
   private patchProjectCellAttributes_abyssPrivate(rendered: RenderedCellContext): boolean {
     const { element: cell, project, field } = rendered;
-    cell.className = `abyss-project-table-cell${field.type === 'name' ? ' abyss-project-table-name-cell' : ''}`;
+    const alignment =
+      this.context_abyssPrivate.settings.projects.table.columns.find(
+        ({ id }) => id === rendered.identity.columnId,
+      )?.alignment ?? 'left';
+    cell.className = `abyss-project-table-cell is-align-${alignment}${field.type === 'name' ? ' abyss-project-table-name-cell' : ''}`;
     cell.tabIndex = 0;
     cell.dataset['columnId'] = rendered.identity.columnId;
     cell.setAttribute('aria-label', `${field.label} for ${project.name}`);
@@ -1358,6 +1428,7 @@ export class ProjectsTableView {
       stats: field.type === 'progress' ? project.stats : undefined,
       statuses:
         field.type === 'status' ? this.context_abyssPrivate.settings.projects.statuses : undefined,
+      definition: this.projectPropertyDefinition_abyssPrivate(field.id),
       invalidRange,
       ownedClear: rendered.ownedClear,
       grouped,
@@ -1381,9 +1452,11 @@ export class ProjectsTableView {
       descriptionField === undefined
         ? undefined
         : this.effectiveField_abyssPrivate(rendered.project, descriptionField);
+    const compiledPresets = this.compiledPresets_abyssPrivate.get(rendered.field.id);
     renderProjectTableCell(content, rendered.project, {
       field: rendered.field,
       statuses: this.context_abyssPrivate.settings.projects.statuses,
+      ...(compiledPresets === undefined ? {} : { compiledPresets }),
       app: this.context_abyssPrivate.app,
       component: this.markdown_abyssPrivate,
       beforeOpenLink: () => this.requestFinishActiveEditor(),
@@ -2613,6 +2686,7 @@ export class ProjectsTableView {
     cell.addClass('is-editing');
     anchor.addClass('is-editor-anchor');
     let positionCleanup = (): void => {};
+    const presets = this.editorPresets_abyssPrivate(field);
     const handle = mountProjectCellEditor({
       app: this.context_abyssPrivate.app,
       container: editorHost,
@@ -2622,6 +2696,8 @@ export class ProjectsTableView {
       resolveField: (fieldId) =>
         resolveConfiguredProjectField(this.context_abyssPrivate.settings.projects, fieldId),
       statuses: this.context_abyssPrivate.settings.projects.statuses,
+      ...(field.property === undefined ? {} : { sourceField: field.property }),
+      ...(presets === undefined ? {} : { presets }),
       sourcePath: project.path,
       save: (value) => this.saveEditorValue_abyssPrivate(project, field, editorState, value),
       onClose: (_result, closeContext) => {

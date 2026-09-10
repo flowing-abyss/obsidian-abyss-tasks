@@ -190,14 +190,19 @@ function decodeSectionCollapse(
   };
 }
 
+const COLUMN_ALIGNMENTS = new Set<unknown>(['left', 'center', 'right']);
+
 function hasMalformedColumnPresentation(value: Record<string, unknown>): boolean {
+  const alignment = value['alignment'];
+  const validAlignment = alignment === undefined || COLUMN_ALIGNMENTS.has(alignment);
+  const width = value['width'];
+  const malformedWidth =
+    width !== undefined && (typeof width !== 'number' || !Number.isFinite(width) || width <= 0);
   return (
     (value['visible'] !== undefined && typeof value['visible'] !== 'boolean') ||
     (value['label'] !== undefined && typeof value['label'] !== 'string') ||
-    (value['width'] !== undefined &&
-      (typeof value['width'] !== 'number' ||
-        !Number.isFinite(value['width']) ||
-        value['width'] <= 0))
+    !validAlignment ||
+    malformedWidth
   );
 }
 
@@ -378,6 +383,8 @@ function mergeColumns(
     else merged['label'] = column.label;
     if (column.width === undefined) delete merged['width'];
     else merged['width'] = column.width;
+    if (column.alignment === undefined) delete merged['alignment'];
+    else merged['alignment'] = column.alignment;
     return merged;
   });
 }

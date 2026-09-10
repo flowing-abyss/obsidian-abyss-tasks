@@ -2,11 +2,16 @@ import { Notice, setIcon, Setting, type App } from 'obsidian';
 import type { ProjectPropertyCatalog } from '../projects/ObsidianProjectProperties';
 import type {
   ProjectColumn,
+  ProjectColumnAlignment,
   ProjectPropertyInfo,
   ProjectTableSettings,
 } from '../projects/projectFields';
 import { isReservedProjectProperty } from '../projects/projectFields';
+import type { ProjectPropertyDefinition } from '../projects/projectPropertyDefinitions';
+import { isProjectPropertyDefinition } from '../projects/projectPropertyDefinitions';
 import { ProjectPropertySuggest } from '../ui/ProjectPropertySuggest';
+import { renderProjectPropertyOptions } from './projectPropertyOptions';
+import { renderSettingsCard } from './settingsCard';
 import { saveSettingsDraft } from './settingsSaveFailure';
 import type { ProjectsSettings } from './types';
 
@@ -17,7 +22,9 @@ export interface RenderProjectTableSettingsOptions {
   readonly catalog: ProjectPropertyCatalog;
   readonly saveStatic: () => Promise<void>;
   readonly saveViewState: () => Promise<void>;
-  readonly refresh: (focus?: 'add-property') => void;
+  readonly renderStatusSettings?: (container: HTMLElement) => void;
+  readonly expandedCards?: Set<string>;
+  readonly refresh: (focusCardId?: string) => void;
 }
 
 const CURATED_LABELS: Readonly<Record<string, string>> = {
@@ -37,7 +44,41 @@ function sourceProperty(column: ProjectColumn): string | undefined {
 }
 
 function projectColumnDisplayLabel(column: ProjectColumn): string {
-  return sourceProperty(column) ?? CURATED_LABELS[column.id] ?? column.id;
+  return column.label ?? sourceProperty(column) ?? CURATED_LABELS[column.id] ?? column.id;
+}
+
+const expandedPropertyCards = new WeakMap<ProjectsSettings, Set<string>>();
+
+function propertyCardsFor(projects: ProjectsSettings): Set<string> {
+  const existing = expandedPropertyCards.get(projects);
+  if (existing !== undefined) return existing;
+  const created = new Set<string>();
+  expandedPropertyCards.set(projects, created);
+  return created;
+}
+
+function definitionEntry(
+  projects: ProjectsSettings,
+  fieldId: string,
+): { key: string; value: ProjectPropertyDefinition } | undefined {
+  const key = Object.keys(projects.propertyDefinitions).find((candidate) =>
+    sameProperty(candidate, fieldId),
+  );
+  if (key === undefined) return undefined;
+  const value: unknown = projects.propertyDefinitions[key];
+  return isProjectPropertyDefinition(value) ? { key, value } : undefined;
+}
+
+function setProjectColumnAlignment(
+  settings: ProjectTableSettings,
+  columnId: string,
+  alignment: ProjectColumnAlignment | undefined,
+): boolean {
+  const column = settings.columns.find(({ id }) => id === columnId);
+  if (column === undefined) return false;
+  if (alignment === undefined || alignment === 'left') delete column.alignment;
+  else column.alignment = alignment;
+  return true;
 }
 
 function projectColumnSourceLabel(projects: ProjectsSettings, column: ProjectColumn): string {
@@ -112,8 +153,7 @@ function moveProjectColumn(
   if (index <= 0 || target <= 0 || index === target) return false;
   const [column] = settings.columns.splice(index, 1);
   if (column === undefined) return false;
-  const adjustedTarget = index < target ? target - 1 : target;
-  settings.columns.splice(adjustedTarget, 0, column);
+  settings.columns.splice(target, 0, column);
   return true;
 }
 
@@ -133,8 +173,12 @@ export function addProjectPropertyColumn(
   if (info === undefined) return 'missing';
   if (isReservedProjectProperty(projects, info.name)) return 'reserved';
   if (selectedProperty(projects.table, info.name)) return 'duplicate';
-  if (info.type === null) return 'unsupported';
-  projects.table.columns.push({ id: `property:${info.name}`, visible: true });
+  const fieldId = `property:${info.name}`;
+  if (definitionEntry(projects, fieldId) === undefined) {
+    const type = sameProperty(info.name, 'tags') ? 'tags' : (info.type ?? 'text');
+    projects.propertyDefinitions[fieldId] = { type };
+  }
+  projects.table.columns.push({ id: fieldId, visible: true });
   enforceProjectTableColumnInvariants(projects.table);
   return 'added';
 }
@@ -152,12 +196,19 @@ function removeProjectColumn(settings: ProjectTableSettings, columnId: string): 
 interface ColumnRowContext {
   readonly host: HTMLElement;
   readonly column: ProjectColumn;
-  readonly index: number;
   readonly options: RenderProjectTableSettingsOptions;
   readonly persist: ProjectTablePersist;
+  readonly persistStatic: ProjectTablePersist;
 }
 
-type ProjectTablePersist = (refresh?: boolean | 'add-property') => void;
+interface ColumnRenderContext extends ColumnRowContext {
+  readonly source: string;
+  readonly display: string;
+  readonly cardId: string;
+  readonly expanded: Set<string>;
+}
+
+type ProjectTablePersist = (refresh?: boolean) => void;
 
 function createRemoveColumnAction(row: HTMLElement, label: string, onClick: () => void): void {
   const button = row.createEl('button', {
@@ -168,89 +219,9 @@ function createRemoveColumnAction(row: HTMLElement, label: string, onClick: () =
   button.addEventListener('click', onClick);
 }
 
-function columnDragId(event: DragEvent): string | undefined {
-  let payload: unknown;
-  try {
-    payload = JSON.parse(event.dataTransfer?.getData('text/plain') ?? '');
-  } catch {
-    return undefined;
-  }
-  if (payload === null || typeof payload !== 'object') return undefined;
-  const record = payload as { type?: unknown; columnId?: unknown };
-  return record.type === 'project-column' && typeof record.columnId === 'string'
-    ? record.columnId
-    : undefined;
-}
-
-function wireColumnDrag(
-  row: HTMLElement,
-  column: ProjectColumn,
-  options: RenderProjectTableSettingsOptions,
-  persist: ProjectTablePersist,
-): void {
-  const order = row.createSpan({ cls: 'abyss-project-column-order' });
-  const grip = order.createSpan({ cls: 'abyss-settings-card-grip' });
-  const curated = column.id in CURATED_LABELS;
-  if (column.id === 'name') {
-    grip.addClass('abyss-project-column-required');
-    grip.setAttribute('aria-label', 'Required column');
-    grip.setAttribute('title', 'Required column');
-    setIcon(grip, 'lock');
-  } else {
-    setIcon(grip, 'grip-vertical');
-    if (curated) {
-      const required = order.createSpan({
-        cls: 'abyss-project-column-required',
-        attr: { 'aria-label': 'Required column', title: 'Required column' },
-      });
-      setIcon(required, 'lock');
-    }
-  }
-  row.addEventListener('dragstart', (event) => {
-    if (column.id === 'name') {
-      event.preventDefault();
-      return;
-    }
-    event.dataTransfer?.setData(
-      'text/plain',
-      JSON.stringify({ type: 'project-column', columnId: column.id }),
-    );
-    row.addClass('abyss-dragging');
-  });
-  row.addEventListener('dragend', () => {
-    row.removeClass('abyss-dragging');
-  });
-  row.addEventListener('dragover', (event) => {
-    if (column.id === 'name') return;
-    event.preventDefault();
-    row.addClass('abyss-drag-over');
-  });
-  row.addEventListener('dragleave', () => {
-    row.removeClass('abyss-drag-over');
-  });
-  row.addEventListener('drop', (event) => {
-    row.removeClass('abyss-drag-over');
-    const draggedId = columnDragId(event);
-    if (
-      draggedId !== undefined &&
-      moveProjectColumn(options.projects.table, draggedId, column.id)
-    ) {
-      persist();
-      options.refresh();
-    }
-  });
-}
-
-function renderColumnRow(context: ColumnRowContext): void {
-  const { host, column, options, persist } = context;
-  const source = projectColumnSourceLabel(options.projects, column);
-  const display = projectColumnDisplayLabel(column);
-  const row = host.createDiv({
-    cls: 'abyss-project-column-setting',
-    attr: { 'data-column-id': column.id, draggable: String(column.id !== 'name') },
-  });
-  wireColumnDrag(row, column, options, persist);
-  const sourceElement = row.createDiv({ cls: 'abyss-project-column-source' });
+function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext): void {
+  const { column, options, persist, source, display, cardId, expanded } = context;
+  const sourceElement = summary.createDiv({ cls: 'abyss-project-column-source' });
   sourceElement.createSpan({ text: source });
   if (column.id === 'progress') {
     sourceElement.createSpan({
@@ -258,8 +229,7 @@ function renderColumnRow(context: ColumnRowContext): void {
       text: 'Auto',
     });
   }
-
-  const label = row.createEl('input', {
+  const label = summary.createEl('input', {
     cls: 'abyss-project-column-label',
     attr: { type: 'text', 'aria-label': `Display name for ${display}`, placeholder: display },
   });
@@ -267,8 +237,7 @@ function renderColumnRow(context: ColumnRowContext): void {
   label.addEventListener('change', () => {
     if (setProjectColumnLabel(options.projects.table, column.id, label.value)) persist();
   });
-
-  const visible = row.createEl('input', {
+  const visible = summary.createEl('input', {
     cls: 'abyss-project-column-visible',
     attr: { type: 'checkbox', 'aria-label': `Show ${source}` },
   });
@@ -277,8 +246,7 @@ function renderColumnRow(context: ColumnRowContext): void {
   visible.addEventListener('change', () => {
     if (setProjectColumnVisibility(options.projects.table, column.id, visible.checked)) persist();
   });
-
-  const width = row.createEl('input', {
+  const width = summary.createEl('input', {
     cls: 'abyss-project-column-width',
     attr: {
       type: 'number',
@@ -293,19 +261,137 @@ function renderColumnRow(context: ColumnRowContext): void {
     const next = width.value === '' ? undefined : width.valueAsNumber;
     if (setProjectColumnWidth(options.projects.table, column.id, next)) persist();
   });
-
-  if (column.id.startsWith('property:')) {
-    createRemoveColumnAction(row, `Remove ${source} column`, () => {
-      if (removeProjectColumn(options.projects.table, column.id)) {
-        persist();
-        options.refresh();
-      }
-    });
-  } else {
-    row.createSpan({
+  if (!column.id.startsWith('property:')) {
+    summary.createSpan({
       cls: 'abyss-project-column-action-placeholder',
       attr: { 'aria-hidden': 'true' },
     });
+    return;
+  }
+  createRemoveColumnAction(summary, `Remove ${source} column`, () => {
+    if (!removeProjectColumn(options.projects.table, column.id)) return;
+    expanded.delete(cardId);
+    persist();
+    options.refresh();
+  });
+}
+
+function reservedOwner(projects: ProjectsSettings, property: string): string {
+  if (sameProperty(property, projects.statusProperty)) return 'Status';
+  if (sameProperty(property, projects.startProperty)) return 'Start';
+  if (sameProperty(property, projects.endProperty)) return 'End';
+  return 'Description';
+}
+
+function columnType(
+  column: ProjectColumn,
+  entry: ReturnType<typeof definitionEntry>,
+): ProjectPropertyDefinition['type'] | 'status' | 'name' | 'progress' | null {
+  if (column.id === 'name') return 'name';
+  if (column.id === 'status') return 'status';
+  if (column.id === 'progress') return 'progress';
+  if (column.id === 'start' || column.id === 'end') return 'date';
+  return entry?.value.type ?? null;
+}
+
+function setDefinitionType(
+  context: ColumnRenderContext,
+  entry: ReturnType<typeof definitionEntry>,
+  type: ProjectPropertyDefinition['type'],
+): void {
+  const key = entry?.key ?? context.column.id;
+  const current: unknown = context.options.projects.propertyDefinitions[key];
+  context.options.projects.propertyDefinitions[key] = {
+    ...(current !== null && typeof current === 'object' && !Array.isArray(current) ? current : {}),
+    type,
+  };
+  context.persistStatic(true);
+}
+
+function renderCuratedColumnSettings(body: HTMLElement, context: ColumnRenderContext): void {
+  const { column, options, persistStatic } = context;
+  if (column.id === 'start') renderCuratedDateSource(body, 'startProperty', options, persistStatic);
+  if (column.id === 'end') renderCuratedDateSource(body, 'endProperty', options, persistStatic);
+  if (column.id === 'status') options.renderStatusSettings?.(body);
+}
+
+function renderColumnBody(body: HTMLElement, context: ColumnRenderContext): void {
+  const { column, options, persist, persistStatic, display } = context;
+  body.addClass('abyss-project-property-details');
+  const entry = definitionEntry(options.projects, column.id);
+  const native = sourceProperty(column);
+  if (native !== undefined && isReservedProjectProperty(options.projects, native)) {
+    body.createDiv({
+      cls: 'abyss-project-property-inactive',
+      text: `Used by ${reservedOwner(options.projects, native)}. This custom column is inactive; its type and predefined values remain saved.`,
+    });
+  }
+  renderProjectPropertyOptions({
+    container: body,
+    label: display,
+    ...(native === undefined ? {} : { property: native }),
+    type: columnType(column, entry),
+    ...(entry === undefined ? {} : { definition: entry.value }),
+    ...(column.alignment === undefined ? {} : { alignment: column.alignment }),
+    ...(native === undefined
+      ? {}
+      : {
+          onTypeChange: (type) => {
+            setDefinitionType(context, entry, type);
+          },
+        }),
+    onAlignmentChange: (alignment) => {
+      if (setProjectColumnAlignment(options.projects.table, column.id, alignment)) persist();
+    },
+    onDefinitionChange: () => {
+      persistStatic();
+    },
+    refresh: options.refresh,
+  });
+  renderCuratedColumnSettings(body, context);
+}
+
+function renderColumnRow(base: ColumnRowContext): void {
+  const context: ColumnRenderContext = {
+    ...base,
+    source: projectColumnSourceLabel(base.options.projects, base.column),
+    display: projectColumnDisplayLabel(base.column),
+    cardId: `project-property:${base.column.id}`,
+    expanded: base.options.expandedCards ?? propertyCardsFor(base.options.projects),
+  };
+  const { host, column, options, persist, display, cardId, expanded } = context;
+  const row = renderSettingsCard({
+    container: host,
+    item: column,
+    expandedIds: expanded,
+    id: () => cardId,
+    listKey: 'project-properties',
+    draggable: column.id !== 'name',
+    title: () => display,
+    cardClass: 'abyss-project-column-setting abyss-project-property-card',
+    toggleClass: 'abyss-project-property-toggle',
+    renderSummary: (summary) => {
+      renderColumnSummary(summary, context);
+    },
+    renderBody: (body) => {
+      renderColumnBody(body, context);
+    },
+    onReorder: (draggedCardId) => {
+      const draggedId = draggedCardId.startsWith('project-property:')
+        ? draggedCardId.slice('project-property:'.length)
+        : '';
+      if (!moveProjectColumn(options.projects.table, draggedId, column.id)) return false;
+      persist();
+      return true;
+    },
+  });
+  row.setAttribute('data-column-id', column.id);
+  row.setAttribute('draggable', String(column.id !== 'name'));
+  if (column.id in CURATED_LABELS) {
+    const grip = row.querySelector<HTMLElement>('.abyss-settings-card-grip');
+    grip?.addClass('abyss-project-column-required');
+    grip?.setAttribute('aria-label', 'Required column');
+    grip?.setAttribute('title', 'Required column');
   }
 }
 
@@ -323,13 +409,17 @@ function renderCuratedDateSource(
       `The date property used by the curated ${key === 'startProperty' ? 'Start' : 'End'} column.`,
     )
     .addDropdown((dropdown) => {
+      const siblingKeys = (['statusProperty', 'startProperty', 'endProperty'] as const).filter(
+        (candidate) => candidate !== key,
+      );
       const properties =
         options.catalog
           .list()
           ?.filter(
-            ({ name: property, type }) =>
-              type === 'date' &&
-              (!sameProperty(property, 'description') || sameProperty(property, current)),
+            ({ name: property }) =>
+              !sameProperty(property, 'tags') &&
+              !sameProperty(property, 'description') &&
+              !siblingKeys.some((candidate) => sameProperty(options.projects[candidate], property)),
           )
           .map(({ name: property }) => property) ?? [];
       const matching = properties.find((property) => sameProperty(property, current));
@@ -337,11 +427,11 @@ function renderCuratedDateSource(
       if (matching === undefined) {
         dropdown.addOption(current, `${current} (current)`);
       }
-      for (const property of properties) dropdown.addOption(property, property);
+      for (const property of properties) {
+        const suspended = definitionEntry(options.projects, `property:${property}`) !== undefined;
+        dropdown.addOption(property, suspended ? `${property} (suspends custom column)` : property);
+      }
       dropdown.setValue(selected).onChange((property) => {
-        const siblingKeys = (['statusProperty', 'startProperty', 'endProperty'] as const).filter(
-          (candidate) => candidate !== key,
-        );
         if (
           sameProperty(property, 'description') ||
           siblingKeys.some((candidate) => sameProperty(options.projects[candidate], property))
@@ -361,11 +451,10 @@ interface AddPropertyContext {
   readonly feedback: HTMLElement;
   readonly available: readonly ProjectPropertyInfo[];
   readonly options: RenderProjectTableSettingsOptions;
-  readonly persist: ProjectTablePersist;
 }
 
 function renderAddPropertyControl(context: AddPropertyContext): () => void {
-  const { section, feedback, available, options, persist } = context;
+  const { section, feedback, available, options } = context;
   const addRow = section.createDiv({ cls: 'abyss-project-column-add-row' });
   const input = addRow.createEl('input', {
     cls: 'abyss-project-column-add-input',
@@ -383,19 +472,25 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
   });
   const choose = (property: string): void => {
     feedback.empty();
+    const selected = available.find(({ name }) => sameProperty(name, property.trim()));
     const result = addProjectPropertyColumn(options.projects, available, property);
     if (result === 'added') {
+      suggest.close();
       input.value = '';
-      persist();
-      options.refresh('add-property');
+      saveSettingsDraft({
+        action: 'add project property',
+        save: async () => {
+          await options.saveStatic();
+          await options.saveViewState();
+          options.refresh(`project-property:property:${selected?.name ?? property.trim()}`);
+        },
+      });
     } else if (result === 'duplicate') {
       feedback.setText('That property is already a table column.');
     } else if (result === 'reserved') {
       feedback.setText('That property is reserved for a curated project field or status.');
-    } else if (result === 'unsupported') {
-      feedback.setText('That Obsidian property type is not supported for editing.');
     } else {
-      feedback.setText('Choose an existing Obsidian property.');
+      feedback.setText('Choose an existing configured or vault property.');
     }
   };
   add.addEventListener('click', () => {
@@ -413,14 +508,13 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
       .filter(({ name }) => !isReservedProjectProperty(options.projects, name))
       .map(({ name }) => name),
     onPick: (property) => {
+      if (typeof property !== 'string') return;
       input.value = property;
       choose(property);
     },
   });
   if (available.length === 0) {
-    feedback.setText(
-      'Obsidian property types are unavailable, or this vault has no properties to add.',
-    );
+    feedback.setText('This vault has no supported properties to add.');
     input.disabled = true;
     add.disabled = true;
   }
@@ -438,14 +532,14 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
     cls: 'abyss-project-table-settings-error',
     attr: { role: 'status', 'aria-live': 'polite' },
   });
-  const persist = (save: () => Promise<void>, refresh: boolean | 'add-property' = false): void => {
+  const persist = (save: () => Promise<void>, refresh: boolean | string = false): void => {
     feedback.empty();
     saveSettingsDraft({
       action: 'save project table settings',
       save: async () => {
         await save();
         if (refresh !== false) {
-          options.refresh(refresh === 'add-property' ? refresh : undefined);
+          options.refresh(typeof refresh === 'string' ? refresh : undefined);
         }
       },
     });
@@ -458,8 +552,6 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
     persist(options.saveViewState, refresh);
   };
 
-  renderCuratedDateSource(section, 'startProperty', options, persistStatic);
-  renderCuratedDateSource(section, 'endProperty', options, persistStatic);
   const descriptionSetting = new Setting(section)
     .setName('Show description')
     .setDesc('Display the description property beneath each project name.');
@@ -475,18 +567,36 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
 
   const rows = section.createDiv({ cls: 'abyss-project-column-settings' });
   const headings = rows.createDiv({ cls: 'abyss-project-column-settings-header' });
-  for (const label of ['', 'Source', 'Display name', 'Show', 'Width', '']) {
+  for (const label of ['', 'Source', 'Display name', 'Show', 'Width', '', '']) {
     headings.createSpan({ text: label, attr: label.length === 0 ? { 'aria-hidden': 'true' } : {} });
   }
-  options.projects.table.columns.forEach((column, index) => {
-    renderColumnRow({ host: rows, column, index, options, persist: persistViewState });
+  options.projects.table.columns.forEach((column) => {
+    renderColumnRow({
+      host: rows,
+      column,
+      options,
+      persist: persistViewState,
+      persistStatic,
+    });
   });
+
+  const catalogProperties = options.catalog.list() ?? [];
+  const configuredProperties = Object.entries(options.projects.propertyDefinitions).flatMap(
+    ([fieldId, definition]): ProjectPropertyInfo[] => {
+      if (!fieldId.startsWith('property:') || !isProjectPropertyDefinition(definition)) return [];
+      return [{ name: fieldId.slice('property:'.length), type: definition.type }];
+    },
+  );
+  const available = [...catalogProperties];
+  for (const configured of configuredProperties) {
+    if (!available.some(({ name }) => sameProperty(name, configured.name)))
+      available.push(configured);
+  }
 
   return renderAddPropertyControl({
     section,
     feedback,
-    available: options.catalog.list() ?? [],
+    available,
     options,
-    persist: persistViewState,
   });
 }

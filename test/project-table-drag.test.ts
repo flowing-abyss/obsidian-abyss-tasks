@@ -156,7 +156,7 @@ describe('planProjectGroupDrop', () => {
         target: { key: 'raw:Blocked', value: null },
         statuses: [{ id: 'a', name: 'Active' }],
       }),
-    ).toThrow('Unknown project statuses cannot be assigned');
+    ).toThrow('Unknown project status target is invalid');
     expect(() =>
       planProjectGroupDrop({
         field: { id: 'progress', label: 'Progress', type: 'progress' },
@@ -175,5 +175,17 @@ describe('planProjectGroupDrop', () => {
         statuses: [],
       }),
     ).toThrow('Missing is read-only');
+  });
+
+  it('assigns a visible unknown raw status target without inventing an id', () => {
+    expect(
+      planProjectGroupDrop({
+        field: status,
+        currentValue: 'Active',
+        source: { key: 'id:a', value: 'a' },
+        target: { key: 'raw:Waiting on vendor', value: 'Waiting on vendor' },
+        statuses: [{ id: 'a', name: 'Active' }],
+      }),
+    ).toBe('Waiting on vendor');
   });
 });

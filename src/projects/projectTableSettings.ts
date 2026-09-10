@@ -1,4 +1,4 @@
-import type { ProjectColumn, ProjectTableSettings } from './projectFields';
+import type { ProjectColumn, ProjectColumnAlignment, ProjectTableSettings } from './projectFields';
 
 const DEFAULT_COLUMNS: readonly ProjectColumn[] = [
   { id: 'name', visible: true },
@@ -12,6 +12,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function normalizedWidth(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function normalizedAlignment(value: unknown): ProjectColumnAlignment | undefined {
+  return value === 'center' || value === 'right' ? value : undefined;
+}
+
 function normalizeColumn(value: unknown): ProjectColumn | undefined {
   if (!isRecord(value) || typeof value['id'] !== 'string' || value['id'].length === 0) {
     return undefined;
@@ -21,9 +29,10 @@ function normalizeColumn(value: unknown): ProjectColumn | undefined {
     visible: typeof value['visible'] === 'boolean' ? value['visible'] : true,
   };
   if (typeof value['label'] === 'string') column.label = value['label'];
-  if (typeof value['width'] === 'number' && Number.isFinite(value['width']) && value['width'] > 0) {
-    column.width = value['width'];
-  }
+  const width = normalizedWidth(value['width']);
+  if (width !== undefined) column.width = width;
+  const alignment = normalizedAlignment(value['alignment']);
+  if (alignment !== undefined) column.alignment = alignment;
   return column;
 }
 

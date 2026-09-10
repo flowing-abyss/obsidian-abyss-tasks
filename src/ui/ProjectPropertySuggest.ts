@@ -3,15 +3,16 @@ import {
   projectPropertyValuePresentation,
   projectPropertyValuePresentations,
   projectTagLabel,
-} from '../panels/projects/projectPropertyValuePresentation';
+} from './projectPropertyValuePresentation';
 
 export interface ProjectPropertySuggestion {
-  readonly kind: 'value';
-  readonly value: string;
+  readonly kind?: 'value';
+  readonly value: string | number;
   readonly label: string;
   readonly detail?: string;
   readonly appearance?: 'status' | 'tag';
   readonly color?: string;
+  readonly display?: 'badge' | 'text';
 }
 
 export interface ProjectPropertySuggestOptions {
@@ -19,17 +20,17 @@ export interface ProjectPropertySuggestOptions {
   readonly input: HTMLInputElement;
   readonly values: readonly string[];
   readonly suggestions?: readonly ProjectPropertySuggestion[];
-  readonly exclude?: (value: string) => boolean;
+  readonly exclude?: (value: string | number) => boolean;
   readonly appearance?: 'tag';
-  readonly onPick: (value: string) => void;
+  readonly onPick: (value: string | number) => void;
   readonly onEscape?: (event: KeyboardEvent) => void;
   readonly onOpen?: () => void;
   readonly onClose?: () => void;
   readonly browseOnOpen?: boolean;
 }
 
-function matches(value: string, query: string): boolean {
-  return value.toLocaleLowerCase().includes(query.toLocaleLowerCase());
+function matches(value: string | number, query: string): boolean {
+  return String(value).toLocaleLowerCase().includes(query.toLocaleLowerCase());
 }
 
 function suggestionsForValues(
@@ -48,7 +49,7 @@ function suggestionsForValues(
 /** Keyboard-aware suggestions from values already used by the edited property. */
 export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectPropertySuggestion> {
   private readonly suggestions_abyssPrivate: readonly ProjectPropertySuggestion[];
-  private readonly onPick_abyssPrivate: (value: string) => void;
+  private readonly onPick_abyssPrivate: (value: string | number) => void;
   private readonly options_abyssPrivate: ProjectPropertySuggestOptions;
   private browse_abyssPrivate: boolean;
   private open_abyssPrivate = false;
@@ -107,14 +108,17 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
   }
 
   renderSuggestion(suggestion: ProjectPropertySuggestion, element: HTMLElement): void {
-    const presentation = projectPropertyValuePresentation(suggestion.value);
+    const presentation = projectPropertyValuePresentation(String(suggestion.value));
     const title = element.createDiv({
-      cls: `abyss-suggest-title${presentation.link === undefined ? '' : ' is-link'}${suggestion.appearance === 'status' ? ' abyss-suggest-status' : ''}`,
+      cls: `abyss-suggest-title${presentation.link === undefined ? '' : ' is-link'}${suggestion.appearance === 'status' ? ' abyss-suggest-status' : ''}${suggestion.display === 'badge' ? ' abyss-project-preset-suggestion' : ''}`,
     });
     if (suggestion.appearance === 'tag') {
       title.createSpan({ cls: 'tag', text: suggestion.label });
     } else title.setText(suggestion.label);
-    if (suggestion.color !== undefined) title.style.color = suggestion.color;
+    if (suggestion.color !== undefined) {
+      title.style.setProperty('--abyss-project-property-color', suggestion.color);
+      title.style.color = suggestion.color;
+    }
     if (suggestion.detail !== undefined) {
       element.createDiv({ cls: 'abyss-suggest-path', text: suggestion.detail });
     }

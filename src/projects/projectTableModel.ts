@@ -7,8 +7,17 @@ import {
   type ProjectFieldCatalogItem,
   type ProjectTableSettings,
 } from './projectFields';
+import type {
+  ProjectPropertyDefinition,
+  ProjectValuePresentation,
+} from './projectPropertyDefinitions';
+import {
+  compileProjectPropertyPresets,
+  compiledProjectPropertyPresentation,
+  type CompiledProjectPropertyPresets,
+} from './projectPropertyPresets';
 import { projectTableLinkTargetParts } from './projectTableLinkTarget';
-import { orderedGroups, type StatusGroup } from './status';
+import { orderedGroups, projectStatusDisplayName, type StatusGroup } from './status';
 import type { Project, ProjectStats } from './types';
 
 export interface ProjectProgress {
@@ -22,6 +31,7 @@ interface ProjectTableGroup {
   label: string;
   value: unknown;
   sourcePath?: string;
+  presentation?: ProjectValuePresentation;
   projects: Project[];
 }
 
@@ -30,6 +40,12 @@ interface ProjectTableValueGroup {
   label: string;
   value: unknown;
   sourcePath?: string;
+  presentation?: ProjectValuePresentation;
+}
+
+function displayNameOr(displayName: string | undefined, fallback: string): string {
+  const trimmed = displayName?.trim();
+  return trimmed === undefined || trimmed === '' ? fallback : trimmed;
 }
 
 export interface ProjectTableModel {
@@ -45,6 +61,7 @@ export interface ProjectTableModelInput {
   settings: ProjectTableSettings;
   search?: string;
   resolveLink?: (target: string, sourcePath: string) => string | undefined;
+  propertyDefinitions?: Readonly<Record<string, ProjectPropertyDefinition>>;
 }
 
 type ProjectTableLinkResolver = (target: string, sourcePath: string) => string | undefined;
@@ -66,7 +83,8 @@ function statusGroupKey(project: Project): string {
 
 function statusLabel(project: Project, statuses: readonly ProjectStatus[]): string {
   if (project.statusId !== null) {
-    return statuses.find(({ id }) => id === project.statusId)?.name ?? project.statusId;
+    const status = statuses.find(({ id }) => id === project.statusId);
+    return status === undefined ? project.statusId : projectStatusDisplayName(status);
   }
   return project.rawStatus ?? 'No status';
 }
@@ -241,7 +259,7 @@ function statusValueGroup(
     {
       key: statusGroupKey(project),
       label: statusLabel(project, statuses),
-      value: project.statusId,
+      value: project.statusId ?? project.rawStatus,
       sourcePath: project.path,
     },
   ];
@@ -267,6 +285,7 @@ function propertyValueGroup(
   value: unknown,
   project: Project,
   resolveLink: ProjectTableLinkResolver | undefined,
+  compiledPresets: CompiledProjectPropertyPresets | undefined,
 ): ProjectTableValueGroup {
   if (isEmptyValue(value)) {
     return { key: 'empty', label: 'No value', value, sourcePath: project.path };
@@ -277,11 +296,13 @@ function propertyValueGroup(
   if (link !== undefined) {
     key = projectTableGroupLinkIdentity(text, project.path, resolveLink) ?? key;
   }
+  const presentation = compiledProjectPropertyPresentation(compiledPresets, value);
   return {
     key,
-    label: link?.display ?? text,
+    label: displayNameOr(presentation?.displayName, link?.display ?? text),
     value,
     sourcePath: project.path,
+    ...(presentation === undefined ? {} : { presentation }),
   };
 }
 
@@ -289,12 +310,13 @@ function propertyValueGroups(
   project: Project,
   field: ProjectFieldCatalogItem,
   resolveLink: ProjectTableLinkResolver | undefined,
+  compiledPresets: CompiledProjectPropertyPresets | undefined,
 ): ProjectTableValueGroup[] {
   const raw = projectFieldValue(project, field);
   const values = Array.isArray(raw) ? raw : [raw];
   const groups = new Map<string, ProjectTableValueGroup>();
   for (const value of values) {
-    const group = propertyValueGroup(value, project, resolveLink);
+    const group = propertyValueGroup(value, project, resolveLink, compiledPresets);
     if (!groups.has(group.key)) groups.set(group.key, group);
   }
   return groups.size > 0
@@ -302,15 +324,19 @@ function propertyValueGroups(
     : [{ key: 'empty', label: 'No value', value: null, sourcePath: project.path }];
 }
 
-function groupValues(
-  project: Project,
-  field: ProjectFieldCatalogItem,
-  statuses: readonly ProjectStatus[],
-  resolveLink: ProjectTableModelInput['resolveLink'],
-): ProjectTableValueGroup[] {
+interface GroupValuesInput {
+  readonly project: Project;
+  readonly field: ProjectFieldCatalogItem;
+  readonly statuses: readonly ProjectStatus[];
+  readonly resolveLink: ProjectTableModelInput['resolveLink'];
+  readonly compiledPresets: CompiledProjectPropertyPresets | undefined;
+}
+
+function groupValues(input: GroupValuesInput): ProjectTableValueGroup[] {
+  const { project, field, statuses, resolveLink, compiledPresets } = input;
   if (isProjectStatusField(field)) return statusValueGroup(project, statuses);
   if (field.type === 'progress') return progressValueGroup(project);
-  return propertyValueGroups(project, field, resolveLink);
+  return propertyValueGroups(project, field, resolveLink, compiledPresets);
 }
 
 interface MakeGroupsInput {
@@ -320,16 +346,35 @@ interface MakeGroupsInput {
   availableStatuses: readonly StatusGroup[];
   statuses: readonly ProjectStatus[];
   resolveLink: ProjectTableModelInput['resolveLink'];
+  propertyDefinitions?: ProjectTableModelInput['propertyDefinitions'];
 }
 
 function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
-  const { projects, groupField, sortedProjects, availableStatuses, statuses, resolveLink } = input;
+  const {
+    projects,
+    groupField,
+    sortedProjects,
+    availableStatuses,
+    statuses,
+    resolveLink,
+    propertyDefinitions,
+  } = input;
   if (groupField === undefined || groupField.id === 'none') {
     return [{ key: 'all', label: '', value: null, projects: [...sortedProjects] }];
   }
+  const definition = Object.entries(propertyDefinitions ?? {}).find(
+    ([id]) => id.localeCompare(groupField.id, undefined, { sensitivity: 'accent' }) === 0,
+  )?.[1];
+  const compiledPresets = compileProjectPropertyPresets(definition);
   const byKey = new Map<string, ProjectTableGroup>();
   for (const project of projects) {
-    for (const group of groupValues(project, groupField, statuses, resolveLink)) {
+    for (const group of groupValues({
+      project,
+      field: groupField,
+      statuses,
+      resolveLink,
+      compiledPresets,
+    })) {
       const current = byKey.get(group.key) ?? { ...group, projects: [] };
       current.projects.push(project);
       byKey.set(group.key, current);
@@ -346,7 +391,7 @@ function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
         return {
           key,
           label,
-          value: statusId,
+          value: existing?.value ?? statusId,
           ...(existing?.sourcePath === undefined ? {} : { sourcePath: existing.sourcePath }),
           projects: existing?.projects ?? [],
         };
@@ -388,6 +433,9 @@ export function buildProjectTableModel(input: ProjectTableModelInput): ProjectTa
       availableStatuses: availableStatusGroups,
       statuses: input.statuses,
       resolveLink: input.resolveLink,
+      ...(input.propertyDefinitions === undefined
+        ? {}
+        : { propertyDefinitions: input.propertyDefinitions }),
     }),
     uniqueVisibleCount: visibleProjects.length,
     availableStatusGroups,

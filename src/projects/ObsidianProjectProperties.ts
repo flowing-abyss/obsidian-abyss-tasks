@@ -103,8 +103,7 @@ function nativeAssignment(
 function addValue(values: Map<string, string>, value: unknown): void {
   if (typeof value !== 'string' && !(typeof value === 'number' && Number.isFinite(value))) return;
   const text = String(value);
-  const normalized = text.toLocaleLowerCase();
-  if (!values.has(normalized)) values.set(normalized, text);
+  if (!values.has(text)) values.set(text, text);
 }
 
 function compareSuggestions(left: string, right: string): number {

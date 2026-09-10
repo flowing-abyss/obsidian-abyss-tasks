@@ -168,12 +168,20 @@ and end each have one configured source property; description is fixed to `descr
 filename and progress is derived from tasks, so neither has a metadata source. Curated types are
 fixed by their role. Custom types and optional preset presentation live in the static
 `projects.propertyDefinitions` map and remain authoritative when Obsidian's registry later changes
-or is unavailable. Unconfigured, malformed, case-ambiguous, unsupported, and curated-source custom
-properties remain visible but unavailable until their static definition is repaired. Curated source
-collisions retain their configured spelling and note metadata but make each colliding role
-read-only. The native property adapter remains a read-only discovery and suggestion boundary. Its
+or is unavailable. A valid custom definition whose source is temporarily assigned to a curated
+field stays saved but inactive; it becomes authoritative again when that curated source moves away.
+Unconfigured, malformed, case-ambiguous, and unsupported custom properties remain visible but
+unavailable until their static definition is repaired. Curated source collisions retain their
+configured spelling and note metadata but make each colliding role read-only. The native property
+adapter remains a read-only discovery and suggestion boundary. Its
 per-property inspection distinguishes live properties, explicit type assignments, and absent names;
 it never writes Obsidian's registry.
+
+`projectPropertyPresets` owns DOM-free typed preset identity, validation, compatibility, and display
+metadata. Settings, table projection, and cell editors consume that shared interpretation. Presets
+are offered before cached same-property vault values, and the editor excludes selected values by
+typed raw identity. `ui/projectPropertyValuePresentation` renders the resulting badge or text
+appearance across suggestion popups, cells, and group labels without importing settings UI.
 
 `projectTableModel` is a DOM-free projection over `Project` snapshots. It applies typed sorting,
 search, status filtering, and scalar or multi-value grouping while reporting a unique visible
@@ -183,8 +191,8 @@ rendering and later edits. A shared link-target helper strips note subpaths and 
 path escaping only for native lookup; absolute external Markdown targets instead keep their exact,
 source-independent identity. It also owns the shared progress calculation: completed top-level
 tasks divided by all non-cancelled top-level tasks. `projectTableSettings` owns defaults and
-normalization for saved column order, aliases, widths, visibility, under-name description display,
-grouping, sorting, and hidden statuses. A legacy custom description column becomes the under-name
+normalization for saved column order, aliases, widths, alignment, visibility, under-name description
+display, grouping, sorting, and hidden statuses. A legacy custom description column becomes the under-name
 display preference while valid grouping and sorting references are remapped to the curated field.
 These preferences live under `projects.table`; project metadata remains in Markdown.
 
@@ -313,6 +321,14 @@ revision or refresh the project store; project-table changes made in Settings na
 mounted `PanelView` to refresh its existing table controller after the state write succeeds. Changes to task
 status settings rebuild the shared `StatusCatalog`, `StatusRegistry`, and the
 indexer's interpretation of task symbols together.
+
+`ProjectStore.refreshSettings()` compares only membership and status-resolution inputs before it
+rescans projects or recomputes task statistics. Type, preset, alias, color, alignment, and sidebar
+presentation changes reuse the existing project snapshots. `PanelView` then reconciles the current
+project table once and asks `LeftPanel` to replace only its project section, so a presentation save
+does not query the task-wide list. The settings UI uses one shared expandable-card primitive for tag,
+task-status, project-status, and project-property rows; project statuses live inside the expanded
+Status property card and retain the same expansion, drag, draft, scroll, and focus state.
 
 Project settings migrate legacy per-status property definitions to one global source and literal
 names using the old persisted values. Removed tag definitions leave note tags untouched. Conflicting

@@ -7094,6 +7094,34 @@ table.abyss-project-table {
   white-space: nowrap;
 }
 
+.abyss-project-table-header-cell.is-align-center,
+.abyss-project-table-cell.is-align-center {
+  text-align: center;
+}
+
+.abyss-project-table-header-cell.is-align-right,
+.abyss-project-table-cell.is-align-right {
+  text-align: right;
+}
+
+.abyss-project-table-cell.is-align-center
+  > :is(.abyss-project-table-progress, .abyss-project-table-values) {
+  justify-content: center;
+}
+
+.abyss-project-table-cell.is-align-right
+  > :is(.abyss-project-table-progress, .abyss-project-table-values) {
+  justify-content: flex-end;
+}
+
+.abyss-project-table-cell.is-align-center button.abyss-project-table-name {
+  text-align: center;
+}
+
+.abyss-project-table-cell.is-align-right button.abyss-project-table-name {
+  text-align: right;
+}
+
 .abyss-project-table-cell.is-editable {
   cursor: text;
 }
@@ -7306,6 +7334,59 @@ table.abyss-project-table {
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.abyss-project-table-status-pill.is-text {
+  padding-inline: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--abyss-project-status-color, var(--text-normal));
+}
+
+.abyss-project-property-value.is-badge {
+  display: inline-block;
+  overflow: hidden;
+  max-width: 100%;
+  padding: 2px 7px;
+  border: 1px solid
+    color-mix(in srgb, var(--abyss-project-property-color, var(--text-faint)) 38%, transparent);
+  border-radius: var(--radius-s);
+  background: color-mix(
+    in srgb,
+    var(--abyss-project-property-color, var(--background-modifier-border)) 16%,
+    transparent
+  );
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.abyss-project-property-value:not(.is-badge) {
+  color: var(--abyss-project-property-color, inherit);
+}
+
+.abyss-project-preset-suggestion {
+  width: fit-content;
+  max-width: 100%;
+  padding: 1px 6px;
+  border: 1px solid
+    color-mix(in srgb, var(--abyss-project-property-color, var(--text-faint)) 38%, transparent);
+  border-radius: var(--radius-s);
+  background: color-mix(
+    in srgb,
+    var(--abyss-project-property-color, var(--background-modifier-border)) 16%,
+    transparent
+  );
+}
+
+.abyss-project-table-column-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.abyss-project-table-column-icon svg {
+  width: 14px;
+  height: 14px;
 }
 
 .abyss-project-table-progress {
@@ -7711,12 +7792,12 @@ table.abyss-project-table {
   gap: 6px;
 }
 
-.abyss-project-column-setting,
+.abyss-project-property-card > .abyss-settings-card-header,
 .abyss-project-column-settings-header {
   display: grid;
   grid-template-columns:
     38px minmax(60px, 1fr) minmax(80px, 1.2fr) 38px minmax(60px, 0.6fr)
-    28px;
+    28px 28px;
   align-items: center;
   gap: 6px;
 }
@@ -7732,10 +7813,55 @@ table.abyss-project-table {
 }
 
 .abyss-project-column-setting {
-  padding: 7px 8px;
+  display: block;
+  padding: 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
   background: var(--background-secondary);
+}
+
+.abyss-project-property-card > .abyss-settings-card-header {
+  padding: 7px 8px;
+}
+
+.abyss-project-property-details {
+  padding-block: 6px 10px;
+}
+
+.abyss-project-property-details > .setting-item {
+  padding-block: 7px;
+}
+
+.abyss-project-preset-list {
+  display: grid;
+  gap: 6px;
+}
+
+.abyss-project-preset-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) minmax(92px, 1fr) 34px 76px 28px;
+  gap: 6px;
+  align-items: center;
+}
+
+.abyss-project-preset-row input,
+.abyss-project-preset-row select {
+  min-width: 0;
+}
+
+.abyss-project-preset-error {
+  grid-column: 1 / -1;
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-project-preset-error:empty {
+  display: none;
+}
+
+.abyss-project-preset-add {
+  justify-self: start;
+  margin-top: 6px;
 }
 
 .abyss-project-column-setting.abyss-dragging {
@@ -7839,16 +7965,23 @@ table.abyss-project-table {
     flex: 0 1 auto;
   }
 
-  .abyss-project-column-setting,
+  .abyss-project-property-card > .abyss-settings-card-header,
   .abyss-project-column-settings-header {
-    grid-template-columns: 38px minmax(90px, 1fr) minmax(110px, 1fr) 36px minmax(68px, 0.7fr);
+    grid-template-columns:
+      28px minmax(82px, 1fr) minmax(96px, 1fr) 34px minmax(62px, 0.7fr)
+      28px 28px;
   }
 
   .abyss-project-column-settings-header > :nth-child(6) {
     display: none;
   }
 
-  .abyss-project-column-setting button {
+  .abyss-project-preset-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px;
+  }
+
+  .abyss-project-preset-appearance,
+  .abyss-project-preset-remove {
     grid-row: 2;
   }
 }

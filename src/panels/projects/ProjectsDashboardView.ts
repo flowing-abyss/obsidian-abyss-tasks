@@ -1,4 +1,5 @@
 import { Menu, setIcon } from 'obsidian';
+import { projectStatusDisplayName } from '../../projects/status';
 import type { Project } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
@@ -42,13 +43,15 @@ function renderProjectDetails(
   const pill = header.createEl('button', { cls: 'abyss-status-pill' });
   const statusColor = status?.color;
   if (statusColor !== undefined && statusColor.length > 0) pill.style.background = statusColor;
-  pill.setText(status?.name ?? project.rawStatus ?? 'No status');
+  pill.setText(
+    status === undefined ? (project.rawStatus ?? 'No status') : projectStatusDisplayName(status),
+  );
   pill.addEventListener('click', (e) => {
     const menu = new Menu();
     for (const s of statuses) {
       menu.addItem((item) =>
         item
-          .setTitle(s.name)
+          .setTitle(projectStatusDisplayName(s))
           .setChecked(s.id === project.statusId)
           .onClick(() => {
             ctx.onSetStatus(project.path, s.id);

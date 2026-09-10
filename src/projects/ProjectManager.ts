@@ -706,11 +706,8 @@ export class ProjectManager {
       return { clear: !assignment.exists, value: assignment.value };
     }
     if (change.field.type === 'status') {
-      if (
-        typeof assignment.value !== 'string' ||
-        !this.settings.projects.statuses.some(({ name }) => name === assignment.value)
-      ) {
-        throw new ProjectEditValidationError(`Unknown project status: ${String(assignment.value)}`);
+      if (typeof assignment.value !== 'string' || assignment.value.length === 0) {
+        throw new ProjectEditValidationError('Status must be a nonempty string.');
       }
     } else {
       if (!isPropertyType(change.field.type)) {

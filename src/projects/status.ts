@@ -9,6 +9,11 @@ export interface StatusGroup {
   statusId: string | null; // null for discovered/none groups
 }
 
+export function projectStatusDisplayName(status: ProjectStatus): string {
+  const displayName = status.displayName?.trim();
+  return displayName === undefined || displayName === '' ? status.name : displayName;
+}
+
 function toPropertyString(val: unknown): string {
   if (val == null) return '';
   if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') {
@@ -33,7 +38,7 @@ export function resolveStatus(
 export function orderedGroups(statuses: ProjectStatus[], projects: Project[]): StatusGroup[] {
   const groups: StatusGroup[] = statuses.map((s) => ({
     key: `id:${s.id}`,
-    label: s.name,
+    label: projectStatusDisplayName(s),
     ...(s.color !== undefined && { color: s.color }),
     statusId: s.id,
   }));

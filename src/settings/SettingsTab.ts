@@ -13,6 +13,7 @@ import {
   ObsidianProjectProperties,
   type ProjectPropertyCatalog,
 } from '../projects/ObsidianProjectProperties';
+import { projectStatusDisplayName } from '../projects/status';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import { StatusRegistry } from '../status/StatusRegistry';
 import { TYPE_LABELS, TYPE_ORDER } from '../status/statusConstants';
@@ -21,6 +22,7 @@ import type { TaskStatusType } from '../tasks';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { renderProjectTableSettings } from './projectTableSettings';
+import { renderSettingsCard } from './settingsCard';
 import { captureSettingsRenderContext, restoreSettingsRenderContext } from './settingsRenderState';
 import { saveSettingsDraft } from './settingsSaveFailure';
 import {
@@ -113,7 +115,6 @@ interface ProjectMetadataSourceSetting {
   readonly description: string;
   readonly key: 'statusProperty' | 'startProperty' | 'endProperty';
   readonly name: string;
-  readonly requiredType: 'text' | 'date';
 }
 
 let nextSettingsTabScope = 0;
@@ -228,116 +229,31 @@ export class CalendarSettingsTab extends PluginSettingTab {
     item: T,
     opts: CardListOptions<T>,
   ): void {
-    const id = opts.id(item);
-    const expanded = this.expandedCards_abyssPrivate.has(id);
-    const card = containerEl.createDiv({
-      cls: `abyss-settings-card${expanded ? ' is-open' : ''}`,
-      attr: { 'data-card-id': id },
+    renderSettingsCard({
+      container: containerEl,
+      item,
+      expandedIds: this.expandedCards_abyssPrivate,
+      id: opts.id,
+      listKey: opts.listKey,
+      ...(opts.groupKey === undefined ? {} : { groupKey: opts.groupKey }),
+      title: opts.title,
+      renderSummary: (header, value) => {
+        opts.preview?.(header, value);
+        const accent = opts.accent?.(value);
+        if (accent !== undefined && accent !== '') {
+          const dot = header.createSpan({ cls: 'abyss-status-dot' });
+          dot.style.background = accent;
+        }
+        header.createSpan({ cls: 'abyss-settings-card-title', text: opts.title(value) });
+        const badge = opts.badge?.(value);
+        if (badge !== undefined && badge !== '') {
+          header.createSpan({ cls: 'abyss-settings-card-badge', text: badge });
+        }
+      },
+      renderBody: opts.body,
+      onReorder: opts.onReorder,
+      ...(opts.onCrossGroupDrop === undefined ? {} : { onCrossGroupDrop: opts.onCrossGroupDrop }),
     });
-    card.addEventListener('dragover', (event) => {
-      event.preventDefault();
-      card.addClass('abyss-drag-over');
-    });
-    card.addEventListener('dragleave', () => {
-      card.removeClass('abyss-drag-over');
-    });
-    card.addEventListener('drop', (event) => {
-      this.handleCardDrop_abyssPrivate(event, card, id, opts);
-    });
-
-    const header = card.createDiv({
-      cls: 'abyss-settings-card-header',
-      attr: { draggable: 'true' },
-    });
-    header.addEventListener('dragstart', (event) => {
-      const payload: CardDragPayload = {
-        id,
-        listKey: opts.listKey,
-        ...(opts.groupKey === undefined ? {} : { groupKey: opts.groupKey }),
-      };
-      event.dataTransfer?.setData('text/plain', JSON.stringify(payload));
-      card.addClass('abyss-dragging');
-    });
-    header.addEventListener('dragend', () => {
-      card.removeClass('abyss-dragging');
-    });
-    const grip = header.createSpan({ cls: 'abyss-settings-card-grip' });
-    setIcon(grip, 'grip-vertical');
-    opts.preview?.(header, item);
-    this.renderCardAccent_abyssPrivate(header, opts.accent?.(item));
-    header.createSpan({ cls: 'abyss-settings-card-title', text: opts.title(item) });
-    this.renderCardBadge_abyssPrivate(header, opts.badge?.(item));
-    const chevron = header.createSpan({ cls: 'abyss-settings-card-chevron' });
-    setIcon(chevron, expanded ? 'chevron-down' : 'chevron-right');
-    header.addEventListener('click', () => {
-      this.toggleCard_abyssPrivate(card, chevron, item, opts);
-    });
-
-    if (!expanded) return;
-    const bodyEl = card.createDiv({ cls: 'abyss-settings-card-body' });
-    opts.body(bodyEl, item);
-  }
-
-  private handleCardDrop_abyssPrivate<T>(
-    event: DragEvent,
-    card: HTMLElement,
-    targetId: string,
-    opts: CardListOptions<T>,
-  ): void {
-    event.preventDefault();
-    event.stopPropagation();
-    card.removeClass('abyss-drag-over');
-    const payload = parseCardDragPayload(event.dataTransfer?.getData('text/plain'));
-    if (payload?.listKey !== opts.listKey) return;
-    if (opts.groupKey !== undefined && payload.groupKey !== opts.groupKey) {
-      opts.onCrossGroupDrop?.(payload.id, opts.groupKey);
-      return;
-    }
-    if (payload.id !== targetId && opts.onReorder(payload.id, targetId)) {
-      this.moveRenderedCard_abyssPrivate(card, payload.id);
-    }
-  }
-
-  private renderCardAccent_abyssPrivate(header: HTMLElement, accent: string | undefined): void {
-    if (accent === undefined || accent === '') return;
-    const dot = header.createSpan({ cls: 'abyss-status-dot' });
-    dot.style.background = accent;
-  }
-
-  private renderCardBadge_abyssPrivate(header: HTMLElement, badge: string | undefined): void {
-    if (badge === undefined || badge === '') return;
-    header.createSpan({ cls: 'abyss-settings-card-badge', text: badge });
-  }
-
-  private toggleCard_abyssPrivate<T>(
-    card: HTMLElement,
-    chevron: HTMLElement,
-    item: T,
-    opts: CardListOptions<T>,
-  ): void {
-    const id = opts.id(item);
-    const opening = !card.classList.contains('is-open');
-    card.classList.toggle('is-open', opening);
-    chevron.empty();
-    setIcon(chevron, opening ? 'chevron-down' : 'chevron-right');
-    if (opening) {
-      this.expandedCards_abyssPrivate.add(id);
-      const bodyEl = card.createDiv({ cls: 'abyss-settings-card-body' });
-      opts.body(bodyEl, item);
-    } else {
-      this.expandedCards_abyssPrivate.delete(id);
-      card.querySelector('.abyss-settings-card-body')?.remove();
-    }
-  }
-
-  private moveRenderedCard_abyssPrivate(targetCard: HTMLElement, draggedId: string): void {
-    const sourceCard = Array.from(targetCard.parentElement?.children ?? []).find(
-      (candidate) => candidate.getAttribute('data-card-id') === draggedId,
-    );
-    if (sourceCard === undefined) return;
-    if ((sourceCard.compareDocumentPosition(targetCard) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)
-      targetCard.after(sourceCard);
-    else targetCard.before(sourceCard);
   }
 
   private reorderItems_abyssPrivate<T>(
@@ -1062,7 +978,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private renderProjectsSettings_abyssPrivate(containerEl: HTMLElement): void {
     this.renderProjectDefinitionSettings_abyssPrivate(containerEl);
     this.renderProjectTaskInsertionSettings_abyssPrivate(containerEl);
-    this.renderProjectStatusesSettings_abyssPrivate(containerEl);
     this.projectSettingsCleanup_abyssPrivate = renderProjectTableSettings({
       app: this.app,
       container: containerEl,
@@ -1073,12 +988,18 @@ export class CalendarSettingsTab extends PluginSettingTab {
         await this.plugin_abyssPrivate.saveViewState();
         this.plugin_abyssPrivate.refreshProjectTableSettings();
       },
-      refresh: (focus) => {
+      expandedCards: this.expandedCards_abyssPrivate,
+      renderStatusSettings: (host) => {
+        this.renderProjectStatusesSettings_abyssPrivate(host, false);
+      },
+      refresh: (focusCardId) => {
         this.render_abyssPrivate(
-          focus === 'add-property'
-            ? () =>
-                this.containerEl.querySelector<HTMLInputElement>('.abyss-project-column-add-input')
-            : undefined,
+          focusCardId === undefined
+            ? undefined
+            : () =>
+                Array.from(this.containerEl.querySelectorAll<HTMLElement>('[data-card-id]'))
+                  .find((card) => card.dataset['cardId'] === focusCardId)
+                  ?.querySelector<HTMLButtonElement>('.abyss-project-property-toggle') ?? null,
         );
       },
     });
@@ -1195,19 +1116,24 @@ export class CalendarSettingsTab extends PluginSettingTab {
     containerEl: HTMLElement,
     source: ProjectMetadataSourceSetting,
   ): void {
-    const { description, key, name, requiredType } = source;
+    const { description, key, name } = source;
     const projects = this.plugin_abyssPrivate.settings.projects;
     const current = projects[key];
     const setting = new Setting(containerEl).setName(name).setDesc(description);
     setting.addDropdown((dropdown) => {
+      const siblingKeys = (['statusProperty', 'startProperty', 'endProperty'] as const).filter(
+        (candidate) => candidate !== key,
+      );
       const options =
         this.projectProperties_abyssPrivate
           .list()
           ?.filter(
-            ({ name: property, type }) =>
-              type === requiredType &&
-              (!this.sameProperty_abyssPrivate(property, 'description') ||
-                this.sameProperty_abyssPrivate(property, current)),
+            ({ name: property }) =>
+              !this.sameProperty_abyssPrivate(property, 'tags') &&
+              !this.sameProperty_abyssPrivate(property, 'description') &&
+              !siblingKeys.some((candidate) =>
+                this.sameProperty_abyssPrivate(projects[candidate], property),
+              ),
           )
           .map(({ name: property }) => property) ?? [];
       const matching = options.find((property) =>
@@ -1217,11 +1143,18 @@ export class CalendarSettingsTab extends PluginSettingTab {
       if (current.length > 0 && matching === undefined) {
         dropdown.addOption(current, `${current} (current)`);
       }
-      for (const property of options) dropdown.addOption(property, property);
-      dropdown.setValue(selected).onChange(async (property) => {
-        const siblingKeys = (['statusProperty', 'startProperty', 'endProperty'] as const).filter(
-          (candidate) => candidate !== key,
+      for (const property of options) {
+        const customDefinition = Object.keys(projects.propertyDefinitions).some(
+          (fieldId) =>
+            fieldId.startsWith('property:') &&
+            this.sameProperty_abyssPrivate(fieldId.slice('property:'.length), property),
         );
+        dropdown.addOption(
+          property,
+          customDefinition ? `${property} (suspends custom column)` : property,
+        );
+      }
+      dropdown.setValue(selected).onChange(async (property) => {
         if (
           this.sameProperty_abyssPrivate(property, 'description') ||
           siblingKeys.some((candidate) =>
@@ -1243,20 +1176,22 @@ export class CalendarSettingsTab extends PluginSettingTab {
     return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
   }
 
-  private renderProjectStatusesSettings_abyssPrivate(containerEl: HTMLElement): void {
+  private renderProjectStatusesSettings_abyssPrivate(
+    containerEl: HTMLElement,
+    includeHeading = true,
+  ): void {
     const projects = this.plugin_abyssPrivate.settings.projects;
-    new Setting(containerEl).setName('Statuses').setHeading();
+    if (includeHeading) new Setting(containerEl).setName('Statuses').setHeading();
     this.renderStatusMigration_abyssPrivate(containerEl);
     this.renderProjectMetadataSource_abyssPrivate(containerEl, {
       name: 'Status property',
       description: 'The single frontmatter property used for every project status.',
       key: 'statusProperty',
-      requiredType: 'text',
     });
     this.renderCardList_abyssPrivate(containerEl, projects.statuses, {
       listKey: 'project-statuses',
       id: (s) => s.id,
-      title: (s) => s.name,
+      title: projectStatusDisplayName,
       accent: (s) => s.color,
       body: (bodyEl, status) => {
         this.renderStatusCard_abyssPrivate(bodyEl, status.id);
@@ -1313,7 +1248,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .setName('Default status')
       .setDesc('Applied to newly created projects.')
       .addDropdown((dropdown) => {
-        for (const status of projects.statuses) dropdown.addOption(status.id, status.name);
+        for (const status of projects.statuses) {
+          dropdown.addOption(status.id, projectStatusDisplayName(status));
+        }
         dropdown
           .setValue(projects.defaultStatusId === '' ? firstStatus.id : projects.defaultStatusId)
           .onChange(async (value) => {
@@ -1329,49 +1266,73 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const status = statuses.find((candidate) => candidate.id === statusId);
     if (status == null) return;
 
-    new Setting(card).setName('Name').addText((text) => {
-      text.setValue(status.name);
-      const input = text.inputEl;
-      const expectedName = status.name;
-      const commit = (): void => {
-        if (input.value === expectedName || input.disabled) return;
-        const requestedName = input.value;
-        input.disabled = true;
-        runAsyncAction(
-          this.plugin_abyssPrivate.renameProjectStatus(status.id, requestedName, expectedName).then(
-            () => {
-              this.render_abyssPrivate();
-            },
-            (error: unknown) => {
-              input.value = expectedName;
-              input.disabled = false;
-              const message = error instanceof Error ? error.message : String(error);
-              console.error('[abyss-tasks] Could not rename project status', {
-                statusId: status.id,
-                expectedName,
-                requestedName,
-                cause: error,
-              });
-              new Notice(`Could not rename project status: ${message}`);
-            },
-          ),
-        );
-      };
-      input.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter') return;
-        event.preventDefault();
-        input.blur();
+    new Setting(card)
+      .setName('Value')
+      .setDesc('Raw value written to project notes.')
+      .addText((text) => {
+        text.setValue(status.name);
+        const input = text.inputEl;
+        const expectedName = status.name;
+        const commit = (): void => {
+          if (input.value === expectedName || input.disabled) return;
+          const requestedName = input.value;
+          input.disabled = true;
+          runAsyncAction(
+            this.plugin_abyssPrivate
+              .renameProjectStatus(status.id, requestedName, expectedName)
+              .then(
+                () => {
+                  this.render_abyssPrivate();
+                },
+                (error: unknown) => {
+                  input.value = expectedName;
+                  input.disabled = false;
+                  const message = error instanceof Error ? error.message : String(error);
+                  console.error('[abyss-tasks] Could not rename project status', {
+                    statusId: status.id,
+                    expectedName,
+                    requestedName,
+                    cause: error,
+                  });
+                  new Notice(`Could not rename project status: ${message}`);
+                },
+              ),
+          );
+        };
+        input.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          input.blur();
+        });
+        input.addEventListener('blur', () => {
+          commit();
+        });
       });
-      input.addEventListener('blur', () => {
-        commit();
-      });
-    });
+
+    new Setting(card).setName('Display name').addText((text) =>
+      text.setValue(status.displayName ?? '').onChange(async (value) => {
+        const displayName = value.trim();
+        if (displayName === '') delete status.displayName;
+        else status.displayName = displayName;
+        await this.plugin_abyssPrivate.saveSettings();
+      }),
+    );
 
     new Setting(card).setName('Color').addColorPicker((cp) =>
       cp.setValue(status.color ?? '#888888').onChange(async (v) => {
         status.color = v;
         await this.plugin_abyssPrivate.saveSettings();
       }),
+    );
+
+    new Setting(card).setName('Appearance').addDropdown((dropdown) =>
+      dropdown
+        .addOptions({ badge: 'Badge', text: 'Text' })
+        .setValue(status.display ?? 'badge')
+        .onChange(async (value) => {
+          status.display = value === 'text' ? 'text' : 'badge';
+          await this.plugin_abyssPrivate.saveSettings();
+        }),
     );
 
     new Setting(card).setName('Show on left panel').addToggle((tg) =>

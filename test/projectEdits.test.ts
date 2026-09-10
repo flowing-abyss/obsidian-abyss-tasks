@@ -357,10 +357,8 @@ describe('ProjectManager.applyEdits', () => {
       pm.applyEdits([{ path: 'A.md', field: budget, value: 20, expectedValue: undefined }]),
     ).rejects.toThrow(/configured project field/u);
     await expect(
-      pm.applyEdits([
-        { path: 'A.md', field: status, value: 'status-done', expectedValue: undefined },
-      ]),
-    ).rejects.toThrow(/Unknown project status/u);
+      pm.applyEdits([{ path: 'A.md', field: status, value: 17, expectedValue: undefined }]),
+    ).rejects.toThrow(/Status must be a nonempty string/u);
     for (const field of [
       { id: 'name', label: 'Name', type: 'name' },
       { id: 'progress', label: 'Progress', type: 'progress' },
@@ -369,6 +367,17 @@ describe('ProjectManager.applyEdits', () => {
         pm.applyEdits([{ path: 'A.md', field, value: 'x', expectedValue: undefined }]),
       ).rejects.toBeInstanceOf(ProjectEditValidationError);
     }
+  });
+
+  it('assigns an exact nonempty raw status value through the guarded edit path', async () => {
+    const app = await createAppWithFiles({ 'A.md': '# A\n' });
+    const pm = manager(app, cloneSettings(), [{ name: 'status', type: 'text' }]);
+
+    await pm.applyEdits([
+      { path: 'A.md', field: status, value: 'QA unknown', expectedValue: undefined },
+    ]);
+
+    expect((await frontmatter(app, 'A.md'))['status']).toBe('QA unknown');
   });
 
   it('reports a real second-file I/O failure with only the first receipt applied', async () => {

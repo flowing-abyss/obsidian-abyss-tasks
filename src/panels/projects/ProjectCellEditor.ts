@@ -3,13 +3,18 @@ import { exactLinkToken } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
 import { isProjectEditValidationError } from '../../projects/projectEditError';
 import type { ProjectFieldCatalogItem, ProjectPropertyType } from '../../projects/projectFields';
+import { projectPropertyPresetIdentity } from '../../projects/projectPropertyPresets';
 import { projectTableLinkTargetParts } from '../../projects/projectTableLinkTarget';
+import { projectStatusDisplayName } from '../../projects/status';
 import type { ProjectStatus } from '../../settings/types';
-import { ProjectPropertySuggest } from '../../ui/ProjectPropertySuggest';
+import {
+  ProjectPropertySuggest,
+  type ProjectPropertySuggestion,
+} from '../../ui/ProjectPropertySuggest';
 import {
   projectPropertyValuePresentation,
   projectTagLabel,
-} from './projectPropertyValuePresentation';
+} from '../../ui/projectPropertyValuePresentation';
 
 export type ProjectCellEditorResult = 'committed' | 'cancelled';
 export type ProjectCellEditorNavigation =
@@ -27,6 +32,8 @@ export interface ProjectCellEditorOptions {
   readonly catalog: ProjectPropertyCatalog;
   readonly resolveField?: (fieldId: string) => ProjectFieldCatalogItem | undefined;
   readonly statuses?: readonly ProjectStatus[];
+  readonly presets?: readonly ProjectPropertySuggestion[];
+  readonly sourceField?: string;
   readonly sourcePath?: string;
   readonly save: (value: unknown) => Promise<void>;
   readonly onClose: (
@@ -90,12 +97,21 @@ function equalValue(left: unknown, right: unknown): boolean {
   return Object.is(left, right);
 }
 
-function initialDraftValue(control: EditorControl | undefined, sourceValue: unknown): unknown {
-  if (control === undefined) return copyValue(sourceValue);
+function unchangedDraft(
+  changed: boolean,
+  value: unknown,
+  initialValue: unknown,
+  committedValue: unknown,
+): boolean {
+  return (!changed && equalValue(value, initialValue)) || equalValue(value, committedValue);
+}
+
+function initialControlValue(control: EditorControl | undefined, source: unknown): unknown {
+  if (control === undefined) return copyValue(source);
   try {
     return copyValue(control.value());
   } catch {
-    return copyValue(sourceValue);
+    return copyValue(source);
   }
 }
 
@@ -105,9 +121,9 @@ function suggestOptions(
   suggestion: {
     readonly values: readonly string[];
     readonly suggestions?: ConstructorParameters<typeof ProjectPropertySuggest>[0]['suggestions'];
-    readonly exclude?: (value: string) => boolean;
+    readonly exclude?: (value: string | number) => boolean;
     readonly appearance?: 'tag';
-    readonly onPick: (value: string) => void;
+    readonly onPick: (value: string | number) => void;
     readonly browseOnOpen?: boolean;
   },
   events: EditorEvents,
@@ -133,6 +149,68 @@ function suggestOptions(
   };
 }
 
+function appendSuggestion(
+  result: ProjectPropertySuggestion[],
+  seen: Set<string>,
+  suggestion: ProjectPropertySuggestion,
+): void {
+  const identity = projectPropertyPresetIdentity(suggestion.value);
+  if (seen.has(identity)) return;
+  seen.add(identity);
+  result.push(suggestion);
+}
+
+function catalogSuggestion(
+  options: ProjectCellEditorOptions,
+  value: string,
+): ProjectPropertySuggestion | undefined {
+  const presentation = projectPropertyValuePresentation(value);
+  let rawValue: string | number = value;
+  if (options.field.type === 'number') {
+    if (value.trim() === '') return undefined;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return undefined;
+    rawValue = number;
+  }
+  return {
+    kind: 'value',
+    value: rawValue,
+    label: options.field.type === 'tags' ? projectTagLabel(presentation.label) : presentation.label,
+    ...(presentation.detail === undefined ? {} : { detail: presentation.detail }),
+    ...(options.field.type === 'tags' ? { appearance: 'tag' as const } : {}),
+  };
+}
+
+function withCollidingLinkDetails(
+  suggestions: readonly ProjectPropertySuggestion[],
+): ProjectPropertySuggestion[] {
+  const counts = new Map<string, number>();
+  for (const suggestion of suggestions) {
+    if (projectPropertyValuePresentation(String(suggestion.value)).link === undefined) continue;
+    const key = suggestion.label.toLocaleLowerCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return suggestions.map((suggestion) => {
+    const link = projectPropertyValuePresentation(String(suggestion.value)).link;
+    return link !== undefined && (counts.get(suggestion.label.toLocaleLowerCase()) ?? 0) > 1
+      ? { ...suggestion, detail: suggestion.detail ?? link.target }
+      : suggestion;
+  });
+}
+
+function mergedSuggestions(options: ProjectCellEditorOptions): ProjectPropertySuggestion[] {
+  const result: ProjectPropertySuggestion[] = [];
+  const seen = new Set<string>();
+  for (const suggestion of options.presets ?? []) appendSuggestion(result, seen, suggestion);
+  const source = options.sourceField ?? options.field.property;
+  const catalogValues = source === undefined ? [] : options.catalog.values(source);
+  for (const value of catalogValues) {
+    const suggestion = catalogSuggestion(options, value);
+    if (suggestion !== undefined) appendSuggestion(result, seen, suggestion);
+  }
+  return withCollidingLinkDetails(result);
+}
+
 function textControl(
   options: ProjectCellEditorOptions,
   root: HTMLElement,
@@ -146,16 +224,16 @@ function textControl(
   input.addEventListener('input', () => {
     events.changed();
   });
-  const values =
-    options.field.property === undefined ? [] : options.catalog.values(options.field.property);
+  const suggestions = mergedSuggestions(options);
   const suggest = new ProjectPropertySuggest(
     suggestOptions(
       options,
       input,
       {
-        values,
+        values: [],
+        suggestions,
         onPick: (value) => {
-          input.value = value;
+          input.value = String(value);
           events.changed();
           events.commit(true);
         },
@@ -199,34 +277,70 @@ function listDraftValue(values: readonly unknown[], input: HTMLInputElement): un
   return pending.length === 0 ? [...values] : [...values, pending];
 }
 
+function internalLinkPath(options: ProjectCellEditorOptions, value: string): string | undefined {
+  const link = exactLinkToken(value);
+  if (link === undefined) return undefined;
+  const parts = projectTableLinkTargetParts(link);
+  if (parts.externalTarget !== undefined) return undefined;
+  return options.app.metadataCache
+    .getFirstLinkpathDest(parts.resolverTarget, options.sourcePath ?? '')
+    ?.path.toLocaleLowerCase();
+}
+
 function equivalentListValue(
   options: ProjectCellEditorOptions,
   existing: unknown,
-  candidate: string,
+  candidate: string | number,
 ): boolean {
-  const raw = String(existing);
-  if (raw.toLocaleLowerCase() === candidate.toLocaleLowerCase()) return true;
-  const existingLink = exactLinkToken(raw);
-  const candidateLink = exactLinkToken(candidate);
-  if (existingLink === undefined || candidateLink === undefined) return false;
-  const existingParts = projectTableLinkTargetParts(existingLink);
-  const candidateParts = projectTableLinkTargetParts(candidateLink);
-  if (existingParts.externalTarget !== undefined || candidateParts.externalTarget !== undefined)
-    return false;
-  const sourcePath = options.sourcePath ?? '';
-  const existingFile = options.app.metadataCache.getFirstLinkpathDest(
-    existingParts.resolverTarget,
-    sourcePath,
+  if (Object.is(existing, candidate)) return true;
+  if (typeof existing !== 'string' || typeof candidate !== 'string') return false;
+  const existingPath = internalLinkPath(options, existing);
+  return existingPath !== undefined && existingPath === internalLinkPath(options, candidate);
+}
+
+function matchingPreset(
+  options: ProjectCellEditorOptions,
+  value: unknown,
+): ProjectPropertySuggestion | undefined {
+  const identity = projectPropertyPresetIdentity(value);
+  return options.presets?.find(
+    (candidate) => projectPropertyPresetIdentity(candidate.value) === identity,
   );
-  const candidateFile = options.app.metadataCache.getFirstLinkpathDest(
-    candidateParts.resolverTarget,
-    sourcePath,
-  );
-  return (
-    existingFile !== null &&
-    candidateFile !== null &&
-    existingFile.path.toLocaleLowerCase() === candidateFile.path.toLocaleLowerCase()
-  );
+}
+
+function listValueClass(
+  isLink: boolean,
+  isTag: boolean,
+  configured: ProjectPropertySuggestion | undefined,
+): string {
+  let className = 'abyss-project-list-value-text';
+  if (isLink) className += ' is-link';
+  if (isTag) return `${className} tag`;
+  if (configured === undefined) return className;
+  className += ' abyss-project-property-value';
+  if (configured.display !== 'text') className += ' is-badge';
+  return className;
+}
+
+function renderListValueLabel(
+  item: HTMLElement,
+  options: ProjectCellEditorOptions,
+  value: unknown,
+): string {
+  const presentation = projectPropertyValuePresentation(String(value));
+  const configured = matchingPreset(options, value);
+  const displayed =
+    configured?.label ??
+    (options.field.type === 'tags' ? projectTagLabel(presentation.label) : presentation.label);
+  const text = item.createSpan({
+    cls: listValueClass(presentation.link !== undefined, options.field.type === 'tags', configured),
+    text: displayed,
+  });
+  if (configured?.color !== undefined) {
+    text.style.setProperty('--abyss-project-property-color', configured.color);
+    if (options.field.type === 'tags') text.style.color = configured.color;
+  }
+  return displayed;
 }
 
 function listControl(
@@ -251,13 +365,7 @@ function listControl(
       const item = list.createDiv({
         cls: `abyss-project-list-value${options.field.type === 'tags' ? ' is-tag' : ''}`,
       });
-      const presentation = projectPropertyValuePresentation(String(value));
-      const displayed =
-        options.field.type === 'tags' ? projectTagLabel(presentation.label) : presentation.label;
-      item.createSpan({
-        cls: `abyss-project-list-value-text${presentation.link === undefined ? '' : ' is-link'}${options.field.type === 'tags' ? ' tag' : ''}`,
-        text: displayed,
-      });
+      const displayed = renderListValueLabel(item, options, value);
       const remove = item.createEl('button', {
         cls: 'abyss-project-list-remove',
         text: '×',
@@ -272,10 +380,9 @@ function listControl(
       });
     });
   };
-  const addPending = (value = input.value): boolean => {
-    const normalized = value.trim();
-    if (normalized.length === 0) return false;
-    values.push(normalized);
+  const addSelected = (value: string | number): boolean => {
+    if (value === '') return false;
+    values.push(value);
     input.value = '';
     renderValues();
     events.changed();
@@ -283,19 +390,19 @@ function listControl(
     return true;
   };
   renderValues();
-  const suggestions =
-    options.field.property === undefined ? [] : options.catalog.values(options.field.property);
+  const suggestions = mergedSuggestions(options);
   const suggest = new ProjectPropertySuggest(
     suggestOptions(
       options,
       input,
       {
-        values: suggestions,
+        values: [],
+        suggestions,
         ...(options.field.type === 'tags' ? { appearance: 'tag' as const } : {}),
         exclude: (candidate) =>
           values.some((value) => equivalentListValue(options, value, candidate)),
         onPick: (value) => {
-          if (addPending(value)) events.commit(false);
+          if (addSelected(value)) events.commit(false);
         },
       },
       events,
@@ -353,26 +460,50 @@ function temporalControl(options: TemporalControlOptions): EditorControl {
 }
 
 function numberControl(
+  options: ProjectCellEditorOptions,
   root: HTMLElement,
-  label: string,
-  value: unknown,
   events: EditorEvents,
 ): EditorControl {
+  const { label } = options.field;
+  const value = options.value;
+  let picked: number | undefined;
   const input = root.createEl('input', {
     cls: 'abyss-project-editor-input',
     attr: { type: 'number', 'aria-label': label },
   });
   input.value = typeof value === 'number' || typeof value === 'string' ? String(value) : '';
   input.addEventListener('input', () => {
+    picked = undefined;
     events.changed();
   });
   input.addEventListener('change', () => {
     events.changed();
     events.commit(true);
   });
+  const suggest = new ProjectPropertySuggest(
+    suggestOptions(
+      options,
+      input,
+      {
+        values: [],
+        suggestions: mergedSuggestions(options),
+        browseOnOpen: true,
+        onPick: (selected) => {
+          if (typeof selected !== 'number') return;
+          picked = selected;
+          input.value = String(selected);
+          events.changed();
+          events.commit(true);
+        },
+      },
+      events,
+    ),
+  );
   return {
     focusTarget: input,
+    suggest,
     value: (): unknown => {
+      if (picked !== undefined) return picked;
       validNativeInput(input, label, 'number');
       if (input.value === '') return '';
       const number = input.valueAsNumber;
@@ -397,7 +528,7 @@ function propertyControl(
     case 'tags':
       return listControl(options, root, events);
     case 'number':
-      return numberControl(root, options.field.label, options.value, events);
+      return numberControl(options, root, events);
     case 'checkbox': {
       const input = root.createEl('input', {
         cls: 'abyss-project-editor-checkbox metadata-input-checkbox',
@@ -444,19 +575,34 @@ function statusControl(
     attr: { type: 'text', readonly: '', 'aria-label': options.field.label, autocomplete: 'off' },
   });
   let current = typeof options.value === 'string' ? options.value : '';
-  input.value = current.length === 0 ? 'No status' : current;
   const configured = options.statuses ?? [];
+  const labelFor = (value: string): string => {
+    const status = configured.find(({ name }) => name === value);
+    return status === undefined ? value : projectStatusDisplayName(status);
+  };
+  input.value = current.length === 0 ? 'No status' : labelFor(current);
+  const catalogValues = options.catalog.values(options.sourceField ?? options.field.property ?? '');
+  const unknown = catalogValues.filter(
+    (value) => !configured.some(({ name }) => name === value) && value !== current,
+  );
   const suggestions = [
     { kind: 'value' as const, value: '', label: 'No status', appearance: 'status' as const },
     ...(current.length > 0 && !configured.some(({ name }) => name === current)
       ? [{ kind: 'value' as const, value: current, label: current, appearance: 'status' as const }]
       : []),
-    ...configured.map(({ name, color }) => ({
+    ...configured.map((status) => ({
       kind: 'value' as const,
-      value: name,
-      label: name,
+      value: status.name,
+      label: projectStatusDisplayName(status),
       appearance: 'status' as const,
-      ...(color === undefined ? {} : { color }),
+      ...(status.display === undefined ? {} : { display: status.display }),
+      ...(status.color === undefined ? {} : { color: status.color }),
+    })),
+    ...unknown.map((value) => ({
+      kind: 'value' as const,
+      value,
+      label: value,
+      appearance: 'status' as const,
     })),
   ];
   const suggest = new ProjectPropertySuggest(
@@ -468,8 +614,9 @@ function statusControl(
         suggestions,
         browseOnOpen: true,
         onPick: (value) => {
+          if (typeof value !== 'string') return;
           current = value;
-          input.value = value.length === 0 ? 'No status' : value;
+          input.value = value.length === 0 ? 'No status' : labelFor(value);
           events.changed();
           events.commit(true);
         },
@@ -497,6 +644,8 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   private readonly control_abyssPrivate: EditorControl | undefined;
   private readonly error_abyssPrivate: HTMLElement;
   private committedValue_abyssPrivate: unknown;
+  private initialDraftValue_abyssPrivate: unknown;
+  private changed_abyssPrivate = false;
   private saveInFlight_abyssPrivate: Promise<boolean> | undefined;
   private closeRequested_abyssPrivate = false;
   private closeNavigation_abyssPrivate: ProjectCellEditorNavigation = 'restore-current';
@@ -509,6 +658,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
 
   constructor(private readonly options_abyssPrivate: ProjectCellEditorOptions) {
     this.committedValue_abyssPrivate = copyValue(options_abyssPrivate.value);
+    this.initialDraftValue_abyssPrivate = copyValue(options_abyssPrivate.value);
     this.element = options_abyssPrivate.container.createDiv({ cls: 'abyss-project-cell-editor' });
     this.error_abyssPrivate = this.element.createDiv({
       cls: 'abyss-project-editor-error',
@@ -516,6 +666,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     });
     const events: EditorEvents = {
       changed: () => {
+        this.changed_abyssPrivate = true;
         this.error_abyssPrivate.empty();
       },
       cancel: () => {
@@ -530,7 +681,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
       },
     };
     this.control_abyssPrivate = buildControl(options_abyssPrivate, this.element, events);
-    this.committedValue_abyssPrivate = initialDraftValue(
+    this.initialDraftValue_abyssPrivate = initialControlValue(
       this.control_abyssPrivate,
       options_abyssPrivate.value,
     );
@@ -780,13 +931,22 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     while (!this.closed_abyssPrivate) {
       const draft = this.readDraft_abyssPrivate(control);
       if (!draft.ok) return false;
-      if (equalValue(draft.value, this.committedValue_abyssPrivate)) {
+      if (
+        unchangedDraft(
+          this.changed_abyssPrivate,
+          draft.value,
+          this.initialDraftValue_abyssPrivate,
+          this.committedValue_abyssPrivate,
+        )
+      ) {
         this.finishUnchanged_abyssPrivate();
         return true;
       }
       const submitted = copyValue(draft.value);
       if (!(await this.persistDraft_abyssPrivate(submitted))) return false;
       this.committedValue_abyssPrivate = submitted;
+      this.initialDraftValue_abyssPrivate = copyValue(submitted);
+      this.changed_abyssPrivate = false;
     }
     return true;
   }

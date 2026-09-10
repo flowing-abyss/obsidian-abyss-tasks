@@ -190,6 +190,56 @@ describe('ProjectStore enumeration', () => {
     expect(cb).toHaveBeenCalledTimes(1);
     ps.destroy();
   });
+
+  it('notifies presentation settings changes without rescanning vault files or tasks', () => {
+    const mock = makeApp([{ path: 'Projects/A.md', tags: [], fm: { status: 'active' } }]);
+    const list = vi.fn(() => [] as TaskSnapshot[]);
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const ps = new ProjectStore(mock.app, queryApiForTasks(list), settings);
+    ps.initialize();
+    const getMarkdownFiles = vi.spyOn(
+      (mock.app as { vault: { getMarkdownFiles: () => unknown[] } }).vault,
+      'getMarkdownFiles',
+    );
+    list.mockClear();
+    getMarkdownFiles.mockClear();
+    const cb = vi.fn();
+    ps.onUpdate(cb);
+
+    expectDefined(settings.projects.statuses[0]).displayName = 'In progress';
+    expect(ps.refreshSettings()).toBe('presentation');
+
+    expect(getMarkdownFiles).not.toHaveBeenCalled();
+    expect(list).not.toHaveBeenCalled();
+    expect(cb).not.toHaveBeenCalled();
+    ps.destroy();
+  });
+
+  it.each(['membership', 'status source', 'status identity'] as const)(
+    'rescans projects when %s settings used by entries change',
+    (change) => {
+      const mock = makeApp([{ path: 'Projects/A.md', tags: [], fm: { status: 'active' } }]);
+      const list = vi.fn(() => [] as TaskSnapshot[]);
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      const ps = new ProjectStore(mock.app, queryApiForTasks(list), settings);
+      ps.initialize();
+      const getMarkdownFiles = vi.spyOn(
+        (mock.app as { vault: { getMarkdownFiles: () => unknown[] } }).vault,
+        'getMarkdownFiles',
+      );
+      list.mockClear();
+      getMarkdownFiles.mockClear();
+
+      if (change === 'membership') settings.projects.membershipQuery = '#project';
+      else if (change === 'status source') settings.projects.statusProperty = 'phase';
+      else expectDefined(settings.projects.statuses[0]).name = 'running';
+      ps.refreshSettings();
+
+      expect(getMarkdownFiles).toHaveBeenCalledOnce();
+      expect(list).toHaveBeenCalledOnce();
+      ps.destroy();
+    },
+  );
 });
 
 describe('ProjectStore incremental update', () => {

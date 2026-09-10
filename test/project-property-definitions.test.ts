@@ -7,6 +7,7 @@ import {
   resolveConfiguredProjectField,
 } from '../src/projects/projectPropertyDefinitions';
 import { buildDefaultProjectsSettings } from '../src/settings/defaults';
+import { migrateSettings } from '../src/settings/migration';
 
 function catalog(properties: ReturnType<ProjectPropertyCatalog['list']>): ProjectPropertyCatalog {
   return {
@@ -87,6 +88,33 @@ describe('project property definitions', () => {
       type: null,
     });
     expect(resolveConfiguredProjectField(projects, 'property:START')).toMatchObject({ type: null });
+  });
+
+  it('retains a custom definition while its source is curated and restores it after rebinding', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.startProperty = 'Effort';
+    projects.propertyDefinitions = {
+      'property:Effort': {
+        type: 'text',
+        presetsEnabled: true,
+        presets: [{ value: 'high', displayName: 'High effort' }],
+      },
+    };
+    const raw = { projects: structuredClone(projects) };
+
+    const migration = migrateSettings(raw);
+    const loaded = raw.projects;
+    expect(migration.notices).not.toContain(
+      'Some project property definitions could not be loaded. Repair or remove the conflicting definitions in Projects settings; their original values were preserved.',
+    );
+    expect(resolveConfiguredProjectField(loaded, 'property:Effort')?.type).toBeNull();
+    loaded.startProperty = 'start';
+    expect(resolveConfiguredProjectField(loaded, 'property:Effort')).toMatchObject({
+      type: 'text',
+    });
+    expect(loaded.propertyDefinitions['property:Effort']?.presets).toEqual([
+      { value: 'high', displayName: 'High effort' },
+    ]);
   });
 
   it('returns presentation only for an exact raw preset value', () => {

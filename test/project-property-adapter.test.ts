@@ -194,7 +194,7 @@ describe('ObsidianProjectProperties', () => {
     const caches = new Map([
       ['A.md', { frontmatter: { Owners: ['beta', 42] } }],
       ['B.md', { frontmatter: { owners: 'Alpha' } }],
-      ['C.md', { frontmatter: { OWNERS: ['alpha', 'beta'] } }],
+      ['C.md', { frontmatter: { OWNERS: ['alpha', 'beta', 'High', 'high'] } }],
     ]);
     const app = {
       metadataTypeManager: {
@@ -211,8 +211,8 @@ describe('ObsidianProjectProperties', () => {
 
     const catalog = new ObsidianProjectProperties(app);
 
-    expect(catalog.values('owners')).toEqual(['42', 'Alpha', 'beta']);
-    expect(catalog.values('OWNERS')).toEqual(['42', 'Alpha', 'beta']);
+    expect(catalog.values('owners')).toEqual(['42', 'Alpha', 'alpha', 'beta', 'High', 'high']);
+    expect(catalog.values('OWNERS')).toEqual(['42', 'Alpha', 'alpha', 'beta', 'High', 'high']);
   });
 
   it('invalidates values, publishes manager and metadata changes, and detaches every event ref', () => {

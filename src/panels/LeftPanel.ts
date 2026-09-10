@@ -3,6 +3,7 @@ import type { AppState, ListSelection } from '../app/AppState';
 import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
+import { projectStatusDisplayName } from '../projects/status';
 import { beginSettingsSave, latestSettingsSaveRevision } from '../settings/settingsSaveRevision';
 import type { CalendarSettings, TagGroup } from '../settings/types';
 import { RenameTagModal } from '../tags/RenameTagModal';
@@ -133,6 +134,30 @@ export class LeftPanel {
     this.render_abyssPrivate();
   }
 
+  /** Rebuilds only the project section after presentation-only settings changes. */
+  refreshProjectSettings(): void {
+    const mode = this.state_abyssPrivate.get('mode');
+    if (mode === 'search' || mode === 'projects') return;
+    const existing = this.el_abyssPrivate.querySelector<HTMLElement>(
+      '.abyss-left-section--projects',
+    );
+    const ownerWindow = this.el_abyssPrivate.ownerDocument.win as Window & {
+      createDiv(): HTMLDivElement;
+    };
+    const staging = ownerWindow.createDiv();
+    this.renderProjectsSection_abyssPrivate(staging);
+    const fresh = staging.firstElementChild;
+    if (existing !== null) {
+      if (fresh === null) existing.remove();
+      else existing.replaceWith(fresh);
+      return;
+    }
+    if (fresh !== null) {
+      const tags = this.el_abyssPrivate.querySelector('.abyss-left-section--tags');
+      this.el_abyssPrivate.insertBefore(fresh, tags);
+    }
+  }
+
   destroy(): void {
     this.offs_abyssPrivate.forEach((f) => {
       f();
@@ -188,19 +213,47 @@ export class LeftPanel {
 
     // Pinned section (collapsible)
     if (this.settings_abyssPrivate.pinnedTags.length > 0) {
-      this.renderCollapsibleSection_abyssPrivate('pinned', 'Pinned', null, (body) => {
-        for (const tag of this.settings_abyssPrivate.pinnedTags) {
-          this.renderPinnedTag_abyssPrivate(body, tag, allTasks);
-        }
+      this.renderCollapsibleSection_abyssPrivate('pinned', 'Pinned', {
+        addAction: null,
+        body: (body) => {
+          for (const tag of this.settings_abyssPrivate.pinnedTags) {
+            this.renderPinnedTag_abyssPrivate(body, tag, allTasks);
+          }
+        },
       });
     }
 
     // Projects section (collapsible) — only active (onLeftPanel) projects
+    this.renderProjectsSection_abyssPrivate(this.el_abyssPrivate);
+
+    // Tag groups (collapsible; archived tags filtered out). The section always
+    // renders so the "+" (zero-friction tag entry) stays discoverable.
+    const groups = this.settings_abyssPrivate.tagGroups;
+    this.renderCollapsibleSection_abyssPrivate('tags', 'Tags', {
+      addAction: (): void => {
+        this.startInlineAdd_abyssPrivate('tags', 'Tag name…', (name) =>
+          this.tagManager_abyssPrivate.createManualGroup(name),
+        );
+      },
+      body: (body) => {
+        for (const group of groups) {
+          this.renderTagGroup_abyssPrivate(body, group, allTasks);
+        }
+      },
+    });
+  }
+
+  private async createProject_abyssPrivate(name: string): Promise<void> {
+    if (this.projectManager_abyssPrivate == null) return;
+    await this.projectManager_abyssPrivate.create(name);
+    this.projectStore_abyssPrivate?.refresh();
+  }
+
+  private renderProjectsSection_abyssPrivate(root: HTMLElement): void {
     const activeProjects = this.projectStore_abyssPrivate?.activeForLeftPanel() ?? [];
-    if (activeProjects.length > 0) {
-      this.renderCollapsibleSection_abyssPrivate(
-        'projects',
-        'Projects',
+    if (activeProjects.length === 0) return;
+    this.renderCollapsibleSection_abyssPrivate('projects', 'Projects', {
+      addAction:
         this.projectManager_abyssPrivate != null
           ? (): void => {
               this.startInlineAdd_abyssPrivate('projects', 'Project name…', (name) =>
@@ -208,35 +261,11 @@ export class LeftPanel {
               );
             }
           : null,
-        (body) => {
-          this.renderProjectsList_abyssPrivate(body, activeProjects);
-        },
-      );
-    }
-
-    // Tag groups (collapsible; archived tags filtered out). The section always
-    // renders so the "+" (zero-friction tag entry) stays discoverable.
-    const groups = this.settings_abyssPrivate.tagGroups;
-    this.renderCollapsibleSection_abyssPrivate(
-      'tags',
-      'Tags',
-      (): void => {
-        this.startInlineAdd_abyssPrivate('tags', 'Tag name…', (name) =>
-          this.tagManager_abyssPrivate.createManualGroup(name),
-        );
+      body: (body) => {
+        this.renderProjectsList_abyssPrivate(body, activeProjects);
       },
-      (body) => {
-        for (const group of groups) {
-          this.renderTagGroup_abyssPrivate(body, group, allTasks);
-        }
-      },
-    );
-  }
-
-  private async createProject_abyssPrivate(name: string): Promise<void> {
-    if (this.projectManager_abyssPrivate == null) return;
-    await this.projectManager_abyssPrivate.create(name);
-    this.projectStore_abyssPrivate?.refresh();
+      root,
+    });
   }
 
   /**
@@ -246,11 +275,15 @@ export class LeftPanel {
   private renderCollapsibleSection_abyssPrivate(
     key: 'pinned' | 'projects' | 'tags',
     title: string,
-    addAction: (() => void) | null,
-    body: (bodyEl: HTMLElement) => void,
+    options: {
+      readonly addAction: (() => void) | null;
+      readonly body: (bodyEl: HTMLElement) => void;
+      readonly root?: HTMLElement;
+    },
   ): void {
+    const { addAction, body, root = this.el_abyssPrivate } = options;
     const collapsed = this.settings_abyssPrivate.sectionCollapse[key];
-    const section = this.el_abyssPrivate.createDiv({
+    const section = root.createDiv({
       cls: `abyss-left-section abyss-left-section--${key}`,
     });
 
@@ -425,7 +458,7 @@ export class LeftPanel {
         for (const s of statuses) {
           sub.addItem((si) =>
             si
-              .setTitle(s.name)
+              .setTitle(projectStatusDisplayName(s))
               .setChecked(s.id === project.statusId)
               .onClick(() => {
                 this.changeProjectStatus_abyssPrivate(project.path, s.id);

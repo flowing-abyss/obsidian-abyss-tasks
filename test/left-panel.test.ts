@@ -1320,6 +1320,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
   }) {
     const state = new AppState();
     const store = makeStubStore(opts.tasks ?? []);
+    const taskList = vi.spyOn(store.queries, 'list');
     const merged: CalendarSettings = { ...DEFAULT_SETTINGS, ...opts.settings };
     const save = vi.fn().mockResolvedValue(undefined);
     const saveViewState = vi.fn().mockResolvedValue(undefined);
@@ -1352,7 +1353,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     );
     const el = freshContainer();
     panel.mount(el);
-    return { panel, state, el, tm, save, saveViewState, merged };
+    return { panel, state, el, tm, save, saveViewState, merged, taskList };
   }
 
   it('renders a chevron span (SVG icon, not a text glyph) on the Tags header', () => {
@@ -1422,6 +1423,20 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
   it('does not render the Projects section when there are no active projects', () => {
     const { el } = makeFull({ projects: [] });
     expect(el.querySelector('.abyss-left-section--projects')).toBeNull();
+  });
+
+  it('refreshes only the Projects section without querying all tasks', () => {
+    const { panel, el, taskList } = makeFull({
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+    });
+    const tagsBefore = expectDefined(el.querySelector('.abyss-left-section--tags'));
+    taskList.mockClear();
+
+    panel.refreshProjectSettings();
+
+    expect(taskList).not.toHaveBeenCalled();
+    expect(el.querySelector('.abyss-left-section--tags')).toBe(tagsBefore);
+    expect(el.querySelector('.abyss-project-item')).not.toBeNull();
   });
 
   it('tags + opens an input that creates a manual group', () => {

@@ -81,6 +81,13 @@ function validateDropField(field: ProjectFieldCatalogItem): void {
 
 function statusDropValue(input: ProjectGroupDropInput, targetEmpty: boolean): string | undefined {
   if (targetEmpty) return undefined;
+  if (input.target.key.startsWith('raw:')) {
+    const raw = input.target.value;
+    if (typeof raw !== 'string' || raw.trim().length === 0 || input.target.key !== `raw:${raw}`) {
+      throw new Error('Unknown project status target is invalid');
+    }
+    return raw;
+  }
   const status = input.target.key.startsWith('id:')
     ? input.statuses.find(({ id }) => id === input.target.key.slice(3))
     : undefined;
