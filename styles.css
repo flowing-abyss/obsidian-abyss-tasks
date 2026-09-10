@@ -7239,6 +7239,11 @@ table.abyss-project-table {
   white-space: nowrap;
 }
 
+.abyss-md > p:only-child {
+  display: inline;
+  margin: 0;
+}
+
 .abyss-project-table-group-row td {
   position: relative;
   z-index: 1;
@@ -7747,7 +7752,7 @@ table.abyss-project-table {
   overflow-x: auto;
   min-height: 0;
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   flex-wrap: nowrap;
   gap: 4px;
   scrollbar-width: none;
