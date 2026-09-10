@@ -3,6 +3,7 @@ interface ProjectCellEditorPositionOptions {
   readonly host: HTMLElement;
   readonly boundary: HTMLElement;
   readonly stickyHeader?: HTMLElement;
+  readonly avoid?: HTMLElement;
   readonly onMove?: () => void;
 }
 
@@ -28,6 +29,20 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(value, maximum));
 }
 
+function verticalPosition(
+  anchor: DOMRect,
+  boundary: DOMRect,
+  height: number,
+  avoidTop: number | undefined,
+): readonly [number, 'aligned' | 'above'] {
+  const edgeGap = 8;
+  const aligned = clamp(anchor.top, boundary.top + edgeGap, boundary.bottom - edgeGap - height);
+  if (avoidTop === undefined || anchor.top + height <= boundary.bottom - edgeGap)
+    return [aligned, 'aligned'];
+  const above = avoidTop - height;
+  return above >= boundary.top + edgeGap ? [above, 'above'] : [aligned, 'aligned'];
+}
+
 function positionEditor(options: ProjectCellEditorPositionOptions): string | undefined {
   const { anchor, host } = options;
   if (!anchor.isConnected || !host.isConnected) return undefined;
@@ -44,10 +59,11 @@ function positionEditor(options: ProjectCellEditorPositionOptions): string | und
   const measuredHeight = measured > 0 ? measured : host.offsetHeight;
   const height = Math.min(measuredHeight, maxHeight);
   const left = clamp(anchorRect.left, boundary.left + edgeGap, boundary.right - edgeGap - width);
-  const top = clamp(anchorRect.top, boundary.top + edgeGap, boundary.bottom - edgeGap - height);
+  const avoidTop = options.avoid?.getBoundingClientRect().top;
+  const [top, side] = verticalPosition(anchorRect, boundary, height, avoidTop);
   host.style.left = `${left - anchorRect.left - anchor.clientLeft + anchor.scrollLeft}px`;
   host.style.top = `${top - anchorRect.top - anchor.clientTop + anchor.scrollTop}px`;
-  host.dataset['side'] = 'aligned';
+  host.dataset['side'] = side;
   const input = host.querySelector<HTMLElement>('.abyss-project-editor-input');
   const inputRect = input?.getBoundingClientRect();
   return `${left}:${top}:${width}:${height}:${inputRect?.left}:${inputRect?.top}:${inputRect?.width}`;
@@ -70,7 +86,13 @@ export function mountProjectCellEditorPosition(
   const ResizeObserverClass = ownerWindow?.ResizeObserver;
   const resizeObserver =
     typeof ResizeObserverClass === 'function' ? new ResizeObserverClass(position) : undefined;
-  for (const target of [options.host, options.anchor, options.boundary, options.stickyHeader]) {
+  for (const target of [
+    options.host,
+    options.anchor,
+    options.boundary,
+    options.stickyHeader,
+    options.avoid,
+  ]) {
     if (target !== undefined) resizeObserver?.observe(target);
   }
   const MutationObserverClass = ownerWindow?.MutationObserver;

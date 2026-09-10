@@ -219,6 +219,30 @@ describe('ProjectsTableView', () => {
     );
   });
 
+  it('leaves bubbling Enter on description text to the native button action', () => {
+    const { host } = mount([project({ frontmatter: { description: 'Existing' } })]);
+    const other = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const description = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-description-text'),
+    );
+    other.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    description.focus();
+    const enter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+
+    const runsDefault = description.dispatchEvent(enter);
+    if (runsDefault) description.click();
+
+    expect(enter.defaultPrevented).toBe(false);
+    expect(host.querySelector('.abyss-project-description-editor')).not.toBeNull();
+    expect(other.querySelector('.abyss-project-cell-editor')).toBeNull();
+  });
+
   it('keeps an empty description out of the Name cell layout', () => {
     const { host } = mount([project({ frontmatter: {} })]);
 
@@ -1236,6 +1260,46 @@ describe('ProjectsTableView', () => {
 
     expect(activeDocument.activeElement).toBe(cell.querySelector('input'));
     expect(sideAtFocus).toBe('aligned');
+  });
+
+  it('keeps a bottom-edge description editor clear of its Name title', () => {
+    const { host } = mount([project({ frontmatter: { description: 'Existing' } })]);
+    const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+    const header = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table thead'));
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="name"]'),
+    );
+    const title = expectDefined(cell.querySelector<HTMLElement>('.abyss-project-table-name'));
+    const description = expectDefined(
+      cell.querySelector<HTMLButtonElement>('.abyss-project-description-text'),
+    );
+    const anchor = expectDefined(description.parentElement);
+    Object.defineProperties(scroll, {
+      clientHeight: { configurable: true, value: 220 },
+      clientWidth: { configurable: true, value: 500 },
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this === scroll) return rectangle(0, 0, 500, 220);
+      if (this === header) return rectangle(0, 0, 500, 34);
+      if (this === cell) return rectangle(0, 170, 220, 204);
+      if (this === title) return rectangle(8, 174, 212, 190);
+      if (this === anchor) return rectangle(8, 190, 212, 204);
+      if (this.classList.contains('abyss-project-cell-editor-host')) {
+        return rectangle(0, 0, Number.parseFloat(this.style.width), 60);
+      }
+      return rectangle(0, 0, 0, 0);
+    });
+
+    description.click();
+
+    const editor = expectDefined(
+      anchor.querySelector<HTMLElement>('.abyss-project-cell-editor-host'),
+    );
+    const editorTop = 190 + Number.parseFloat(editor.style.top);
+    expect(editor.dataset['side']).toBe('above');
+    expect(editorTop + 60).toBeLessThanOrEqual(170);
   });
 
   it('keeps a bottom-right long-list editor within the visible pane and releases positioning', () => {

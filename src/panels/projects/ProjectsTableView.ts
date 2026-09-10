@@ -1638,6 +1638,8 @@ export class ProjectsTableView {
     const modifier = event.metaKey || event.ctrlKey;
     const cell = this.keydownCell_abyssPrivate(event.target);
     if (cell === undefined) return;
+    if (event.key === 'Enter' && this.isCellActionTarget_abyssPrivate(event.target, cell.element))
+      return;
     this.ensureSelectionFocus_abyssPrivate(cell);
     if (this.handleSelectionModifier_abyssPrivate(event, modifier)) return;
     if (this.handleSelectionMovement_abyssPrivate(event)) return;
@@ -2368,6 +2370,7 @@ export class ProjectsTableView {
     anchor: HTMLElement,
     host: HTMLElement,
     onMove: () => void,
+    avoid?: HTMLElement,
   ): () => void {
     const stickyHeader = this.table_abyssPrivate?.tHead;
     return mountProjectCellEditorPosition({
@@ -2375,6 +2378,7 @@ export class ProjectsTableView {
       host,
       boundary: this.scroll_abyssPrivate,
       onMove,
+      ...(avoid === undefined ? {} : { avoid }),
       ...(stickyHeader === null || stickyHeader === undefined ? {} : { stickyHeader }),
     });
   }
@@ -2438,9 +2442,14 @@ export class ProjectsTableView {
       },
       restoreFocus: () => {},
     });
-    positionCleanup = this.positionEditorHost_abyssPrivate(anchor, editorHost, () => {
-      handle.closeSuggestion();
-    });
+    positionCleanup = this.positionEditorHost_abyssPrivate(
+      anchor,
+      editorHost,
+      () => {
+        handle.closeSuggestion();
+      },
+      field.id === 'description' ? cell : undefined,
+    );
     this.activeEditor_abyssPrivate = {
       projectPath: project.path,
       columnId: field.id,
