@@ -7838,6 +7838,7 @@ table.abyss-project-table {
 
 .abyss-project-column-settings {
   display: grid;
+  min-width: 0;
   gap: 6px;
 }
 
@@ -7863,6 +7864,7 @@ table.abyss-project-table {
 
 .abyss-project-column-setting {
   display: block;
+  min-width: 0;
   padding: 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
@@ -8021,8 +8023,37 @@ table.abyss-project-table {
   .abyss-project-property-card > .abyss-settings-card-header,
   .abyss-project-column-settings-header {
     grid-template-columns:
-      28px minmax(82px, 1fr) minmax(96px, 1fr) 34px minmax(62px, 0.7fr)
+      28px minmax(0, 0.8fr) minmax(0, 1.2fr) 28px minmax(48px, 0.7fr)
       28px 28px;
+    gap: 4px;
+  }
+
+  .abyss-project-property-details > .abyss-project-property-single-line-setting {
+    flex-direction: row;
+  }
+
+  .abyss-project-property-details
+    > .abyss-project-property-single-line-setting
+    > .setting-item-info {
+    min-width: 60px;
+    flex: 1 1 auto;
+    align-self: center;
+  }
+
+  .abyss-project-property-details
+    > .abyss-project-property-single-line-setting
+    > .setting-item-control {
+    flex: 0 0 auto;
+    align-self: center;
+    width: auto;
+    justify-content: flex-end;
+  }
+
+  .abyss-project-property-details > .setting-item > .setting-item-control > input[type='checkbox'] {
+    width: var(--checkbox-size, 15px);
+    min-width: var(--checkbox-size, 15px);
+    max-width: var(--checkbox-size, 15px);
+    flex: 0 0 var(--checkbox-size, 15px);
   }
 
   .abyss-project-column-settings-header > :nth-child(6) {
