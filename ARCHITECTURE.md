@@ -162,21 +162,18 @@ frontmatter property whose literal value is the status definition's name; projec
 status. `ProjectStore` adds no separate persisted state.
 
 `projectFields` owns the shared project-field vocabulary and case-insensitive frontmatter lookup.
-Its catalog combines the curated name, status, progress, start, end, and description fields with the
-vault's native property catalog. Status, start, and end each have one configured source property;
-description is fixed to the native text property `description`. Name is the filename and progress is
-derived from tasks, so neither has a metadata source. Unsupported,
-type-conflicting, and temporarily unavailable properties retain their exact source key without
-being treated as editable text, and curated source properties cannot also become generic fields.
-The native property catalog distinguishes successful empty discovery from an unavailable registry:
-an absent Start, End, or Description source is editable after successful discovery because its
-curated role fixes the native type, while an existing incompatible source or unavailable discovery
-remains read-only. Curated source collisions retain their configured spelling and note metadata but
-make each colliding role read-only.
-Its per-property inspection also distinguishes a live property, an explicit native type assignment,
-and an absent unassigned name. The Obsidian adapter contains the read-only private compatibility
-probe for assignment provenance; malformed or inaccessible provenance makes the inspection
-unavailable.
+Its catalog combines the curated name, status, progress, start, end, and description fields with
+custom properties discovered from the vault or retained by saved table references. Status, start,
+and end each have one configured source property; description is fixed to `description`. Name is the
+filename and progress is derived from tasks, so neither has a metadata source. Curated types are
+fixed by their role. Custom types and optional preset presentation live in the static
+`projects.propertyDefinitions` map and remain authoritative when Obsidian's registry later changes
+or is unavailable. Unconfigured, malformed, case-ambiguous, unsupported, and curated-source custom
+properties remain visible but unavailable until their static definition is repaired. Curated source
+collisions retain their configured spelling and note metadata but make each colliding role
+read-only. The native property adapter remains a read-only discovery and suggestion boundary. Its
+per-property inspection distinguishes live properties, explicit type assignments, and absent names;
+it never writes Obsidian's registry.
 
 `projectTableModel` is a DOM-free projection over `Project` snapshots. It applies typed sorting,
 search, status filtering, and scalar or multi-value grouping while reporting a unique visible
@@ -267,7 +264,7 @@ navigation.
 
 Property edits go through `ProjectManager`. `applyEdits()` performs a full guarded preflight, groups
 all changes to one note into one `Vault.process` transaction, and returns exact applied and failed
-receipts when later file writes fail. It rechecks each field's configured source, native type, exact
+receipts when later file writes fail. It rechecks each field's current configured source and type, exact
 frontmatter key, presence, and expected value before mutation, and validates curated date ranges
 against the combined final values. `setProperty()` and `setStatus()` use the same guarded write path;
 status inputs become configured literal names before metadata is written. Description uses that same
@@ -278,12 +275,11 @@ propagate to the presentation boundary that initiated the action.
 capability with reversed expected values and exact source-key and presence provenance, so they restore
 owned unknown literals and empty values without overwriting external edits or a rebound property.
 When a committed clear removes the final occurrence of an inferred custom property, its receipt also
-owns an immutable, cell-bound native-type capability. History derives the currently cleared cells
+owns immutable, cell-bound source provenance. History derives the currently cleared cells
 from its two bounded stacks and replaces capabilities from actual partial Undo and Redo results. This
-allows only that absent cell to be restored or refilled while native discovery has no name or explicit
-assignment; live or assigned native types remain authoritative. Refill, supersession, eviction,
-discard, or session end removes the capability, and no schema cache or private native-type write is
-created.
+allows only that absent cell to be restored or refilled without granting general write authority.
+Refill, supersession, eviction, discard, or session end removes the provenance, and no private native
+type write is created.
 
 ### Settings and status semantics
 
@@ -293,6 +289,13 @@ vault adapter: `data.json` contains static configuration, while adjacent `state.
 `listViewStates`, `sectionCollapse`, and the complete `projects.table` preference. A single
 `CalendarSettings` object remains the runtime authority; the persistence boundary partitions and
 recomposes it instead of giving panels independent settings copies.
+
+After composing both settings documents, the plugin captures supported native types for still
+unconfigured custom column, grouping, and sorting references. The initial capture is awaited before
+view registration; one early metadata-resolved event and one layout-ready callback provide bounded
+additional opportunities. Each attempt merges only missing definitions synchronously into the
+shared settings object before persistence. A failed save keeps that current draft and presents the
+existing persistent Retry action, so later user edits remain part of the retried snapshot.
 
 `TaskCalendarPlugin.loadSettings()` captures the untouched legacy document before destructive
 normalization. On first migration it writes and verifies the versioned state envelope, including an

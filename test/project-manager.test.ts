@@ -24,7 +24,18 @@ afterEach(() => {
 });
 
 function clone(): CalendarSettings {
-  return JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
+  const settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
+  settings.projects.propertyDefinitions = {
+    'property:Budget': { type: 'number' },
+    'property:Text': { type: 'text' },
+    'property:List': { type: 'list' },
+    'property:Flag': { type: 'checkbox' },
+    'property:Date': { type: 'date' },
+    'property:When': { type: 'datetime' },
+    'property:Tags': { type: 'tags' },
+    'property:Links': { type: 'list' },
+  };
+  return settings;
 }
 
 const NATIVE_PROJECT_PROPERTIES = new Map<string, string>([
@@ -221,11 +232,11 @@ describe('ProjectManager.setProperty', () => {
     const pm = new ProjectManager(app, settings, {} as never, {} as never);
 
     await expect(pm.setProperty('P.md', description, 'text', undefined)).rejects.toThrow(
-      /distinct project/u,
+      /configured project field/u,
     );
   });
 
-  it('rejects a curated description when its native assignment is no longer text', async () => {
+  it('keeps curated description text authoritative when the native registry reports number', async () => {
     NATIVE_PROJECT_PROPERTIES.set('description', 'number');
     try {
       const app = await createAppWithFiles({
@@ -233,10 +244,8 @@ describe('ProjectManager.setProperty', () => {
       });
       const pm = new ProjectManager(app, clone(), {} as never, {} as never);
 
-      await expect(pm.setProperty('P.md', description, 'Changed', 'Existing')).rejects.toThrow(
-        /native type changed/u,
-      );
-      expect((await readFm(app, 'P.md'))['description']).toBe('Existing');
+      await pm.setProperty('P.md', description, 'Changed', 'Existing');
+      expect((await readFm(app, 'P.md'))['description']).toBe('Changed');
     } finally {
       NATIVE_PROJECT_PROPERTIES.delete('description');
     }
@@ -274,6 +283,48 @@ describe('ProjectManager.setProperty', () => {
     expect(fm['BUDGET']).toBe('20');
     expect(fm['Budget']).toBeUndefined();
     expect(fm['other']).toBe('keep');
+  });
+
+  it('rejects a forged number field when the current configured type is text', async () => {
+    const app = await createAppWithFiles({ 'P.md': '---\nBudget: old\n---\n' });
+    const settings = clone();
+    settings.projects.propertyDefinitions['property:Budget'] = { type: 'text' };
+    const pm = new ProjectManager(app, settings, {} as never, {} as never);
+
+    await expect(pm.setProperty('P.md', budget, 20, 'old')).rejects.toThrow(
+      /configured project field/u,
+    );
+    expect((await readFm(app, 'P.md'))['Budget']).toBe('old');
+  });
+
+  it('accepts a current configured definition whose key differs only by case', async () => {
+    const app = await createAppWithFiles({ 'P.md': '---\nBUDGET: 12\n---\n' });
+    const settings = clone();
+    delete settings.projects.propertyDefinitions['property:Budget'];
+    settings.projects.propertyDefinitions['property:budget'] = { type: 'number' };
+    const pm = new ProjectManager(app, settings, {} as never, {} as never);
+
+    await pm.setProperty('P.md', budget, 20, 12);
+
+    expect((await readFm(app, 'P.md'))['BUDGET']).toBe('20');
+  });
+
+  it('rejects a configured custom field rebound to the curated status source', async () => {
+    const app = await createAppWithFiles({ 'P.md': '---\nstatus: active\n---\n' });
+    const settings = clone();
+    settings.projects.propertyDefinitions['property:STATUS'] = { type: 'text' };
+    const pm = new ProjectManager(app, settings, {} as never, {} as never);
+    const forged: ProjectField = {
+      id: 'property:STATUS',
+      property: 'STATUS',
+      label: 'Status raw',
+      type: 'text',
+    };
+
+    await expect(pm.setProperty('P.md', forged, 'done', 'active')).rejects.toThrow(
+      /configured project field/u,
+    );
+    expect((await readFm(app, 'P.md'))['status']).toBe('active');
   });
 
   it('removes only the edited property when clearing it', async () => {
@@ -346,7 +397,7 @@ describe('ProjectManager.setProperty', () => {
       /Project file not found/u,
     );
     await expect(pm.setProperty('P.md', statusAlias, 'done', 'active')).rejects.toThrow(
-      /semantic project property/u,
+      /configured project field/u,
     );
   });
 

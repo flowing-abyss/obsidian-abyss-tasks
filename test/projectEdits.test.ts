@@ -20,7 +20,15 @@ import type { CalendarSettings } from '../src/settings/types';
 import { createAppWithFiles, expectDefined, flushMicrotasks } from './helpers';
 
 function cloneSettings(): CalendarSettings {
-  return JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
+  const settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
+  settings.projects.propertyDefinitions = {
+    'property:Title': { type: 'text' },
+    'property:Owners': { type: 'list' },
+    'property:Budget': { type: 'number' },
+    'property:Approved': { type: 'checkbox' },
+    'property:When': { type: 'datetime' },
+  };
+  return settings;
 }
 
 function catalog(properties: readonly ProjectPropertyInfo[] | null): ProjectPropertyCatalog {
@@ -297,7 +305,7 @@ describe('ProjectManager.applyEdits', () => {
 
     await expect(
       pm.applyEdits([{ path: 'A.md', field: emptyField, value: 'x', expectedValue: undefined }]),
-    ).rejects.toThrow(/property name cannot be empty/u);
+    ).rejects.toThrow(/configured project field/u);
     expect(await frontmatter(app, 'A.md')).toEqual({});
   });
 
@@ -323,7 +331,7 @@ describe('ProjectManager.applyEdits', () => {
           expectedValue: undefined,
         },
       ]),
-    ).rejects.toThrow(/distinct project Status, Start, End, and Description properties/u);
+    ).rejects.toThrow(/configured project field/u);
   });
 
   it('rejects ambiguous keys, stale fields, unknown types/statuses and readonly fields', async () => {
@@ -337,16 +345,17 @@ describe('ProjectManager.applyEdits', () => {
 
     const app = await createAppWithFiles({ 'A.md': '# A\n' });
     const settings = cloneSettings();
+    delete settings.projects.propertyDefinitions['property:Budget'];
     const pm = manager(app, settings, [{ name: 'Budget', type: null }]);
     settings.projects.startProperty = 'Begins';
     await expect(
       pm.applyEdits([
         { path: 'A.md', field: start, value: '2026-09-01', expectedValue: undefined },
       ]),
-    ).rejects.toThrow(/configured project property/u);
+    ).rejects.toThrow(/configured project field/u);
     await expect(
       pm.applyEdits([{ path: 'A.md', field: budget, value: 20, expectedValue: undefined }]),
-    ).rejects.toThrow(/native type/u);
+    ).rejects.toThrow(/configured project field/u);
     await expect(
       pm.applyEdits([
         { path: 'A.md', field: status, value: 'status-done', expectedValue: undefined },
@@ -385,7 +394,7 @@ describe('ProjectManager.applyEdits', () => {
     expect((await frontmatter(app, 'B.md'))['Budget']).toBe(10);
   });
 
-  it('rechecks native types for each file write and rejects unavailable catalogs on every edit path', async () => {
+  it('rechecks configured types while native catalogs change or become unavailable', async () => {
     const app = await createAppWithFiles({ 'A.md': '---\nBudget: 10\nstatus: active\n---\n' });
     const settings = cloneSettings();
     let currentType: ProjectPropertyInfo['type'] = 'number';
@@ -409,49 +418,41 @@ describe('ProjectManager.applyEdits', () => {
     const changedType = await changing.applyEdits([
       { path: 'A.md', field: budget, value: 20, expectedValue: 10 },
     ]);
-    expect(changedType.applied).toEqual([]);
-    expect(changedType.failed).toHaveLength(1);
-    expect(changedType.failed[0]?.path).toBe('A.md');
-    expect(changedType.failed[0]?.message).toMatch(/native type changed/u);
-    expect((await frontmatter(app, 'A.md'))['Budget']).toBe(10);
+    expect(changedType.applied).toHaveLength(1);
+    expect(changedType.failed).toEqual([]);
+    expect((await frontmatter(app, 'A.md'))['Budget']).toBe(20);
     expect(inspect).toHaveBeenCalledTimes(2);
 
     const unavailable = manager(app, settings, null);
     await expect(
-      unavailable.applyEdits([{ path: 'A.md', field: budget, value: 20, expectedValue: 10 }]),
-    ).rejects.toThrow(/temporarily unavailable/u);
-    await expect(unavailable.setProperty('A.md', budget, 20, 10)).rejects.toThrow(
-      /temporarily unavailable/u,
-    );
+      unavailable.applyEdits([{ path: 'A.md', field: budget, value: 30, expectedValue: 20 }]),
+    ).resolves.toMatchObject({ failed: [] });
+    await expect(unavailable.setProperty('A.md', budget, 40, 30)).resolves.toBeUndefined();
     await expect(
       unavailable.setStatus('A.md', settings.projects.statuses[2]?.id ?? ''),
-    ).rejects.toThrow(/temporarily unavailable/u);
+    ).resolves.toBeUndefined();
   });
 
   it.each([
-    { label: 'unavailable', properties: null, message: /temporarily unavailable/u },
+    { label: 'unavailable', properties: null },
     {
       label: 'incompatible',
       properties: [{ name: 'status', type: 'number' }] as const,
-      message: /native type changed/u,
     },
-  ])(
-    'rejects a status rename when the native catalog is $label',
-    async ({ properties, message }) => {
-      const app = await createAppWithFiles({
-        'Projects/A.md': '---\nstatus: active\n---\n',
-      });
-      const settings = cloneSettings();
-      const active = expectDefined(settings.projects.statuses[0]);
-      const pm = manager(app, settings, properties);
+  ])('renames a configured status when the native catalog is $label', async ({ properties }) => {
+    const app = await createAppWithFiles({
+      'Projects/A.md': '---\nstatus: active\n---\n',
+    });
+    const settings = cloneSettings();
+    const active = expectDefined(settings.projects.statuses[0]);
+    const pm = manager(app, settings, properties);
 
-      await expect(
-        pm.renameStatusDefinition(active.id, 'running', 'active', vi.fn()),
-      ).rejects.toThrow(message);
-      expect(active.name).toBe('active');
-      expect((await frontmatter(app, 'Projects/A.md'))['status']).toBe('active');
-    },
-  );
+    await expect(
+      pm.renameStatusDefinition(active.id, 'running', 'active', vi.fn()),
+    ).resolves.toBeUndefined();
+    expect(active.name).toBe('running');
+    expect((await frontmatter(app, 'Projects/A.md'))['status']).toBe('running');
+  });
 
   it('serializes batches from separate managers through the shared per-App coordinator', async () => {
     const app = await createAppWithFiles({
@@ -789,21 +790,18 @@ describe('ProjectManager.applyEdits', () => {
     {
       label: 'same supported assignment',
       assignment: { kind: 'assigned', nativeType: 'number', type: 'number' },
-      succeeds: true,
     },
     {
       label: 'incompatible assignment',
       assignment: { kind: 'assigned', nativeType: 'text', type: 'text' },
-      succeeds: false,
     },
     {
       label: 'unsupported assignment',
       assignment: { kind: 'assigned', nativeType: 'formula', type: null },
-      succeeds: false,
     },
   ] as const)(
     'treats an absent custom property with $label as authoritative',
-    async ({ assignment, succeeds }) => {
+    async ({ assignment }) => {
       const app = await createAppWithFiles({ 'A.md': '# A\n' });
       const native = inspectingCatalog(() => ({
         kind: 'available',
@@ -815,8 +813,7 @@ describe('ProjectManager.applyEdits', () => {
         { path: 'A.md', field: budget, value: 20, expectedValue: undefined },
       ]);
 
-      if (succeeds) await expect(edit).resolves.toMatchObject({ failed: [] });
-      else await expect(edit).rejects.toThrow(/native type/u);
+      await expect(edit).resolves.toMatchObject({ failed: [] });
     },
   );
 
@@ -969,7 +966,7 @@ describe('ProjectManager.applyEdits', () => {
     expect(await app.vault.read(file)).toBe(before);
   });
 
-  it('rejects unavailable or changed native provenance instead of trusting an owned clear', async () => {
+  it('uses configured authority for owned clear recovery while preserving source-key conflicts', async () => {
     const app = await createAppWithFiles({ 'A.md': '---\nBUDGET: 10\n---\n' });
     let snapshot: ProjectNativePropertySnapshot = {
       kind: 'available',
@@ -985,15 +982,9 @@ describe('ProjectManager.applyEdits', () => {
     history.record(clear);
 
     snapshot = { kind: 'unavailable' };
-    await expect(history.undo()).rejects.toThrow(/temporarily unavailable/u);
-    snapshot = {
-      kind: 'available',
-      property: { name: 'Budget', type: 'text' },
-      assignment: { kind: 'none' },
-    };
-    await expect(history.undo()).rejects.toThrow(/native type/u);
-
-    snapshot = { kind: 'available', property: undefined, assignment: { kind: 'none' } };
+    await expect(history.undo()).resolves.toMatchObject({ failed: [] });
+    expect((await frontmatter(app, 'A.md'))['BUDGET']).toBe(10);
+    await history.redo();
     const file = expectDefined(app.vault.getAbstractFileByPath('A.md'));
     if (!(file instanceof TFile)) throw new Error('Missing A.md');
     await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {

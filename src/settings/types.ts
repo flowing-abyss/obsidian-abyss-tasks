@@ -1,4 +1,8 @@
 import type { ProjectTableSettings } from '../projects/projectFields';
+import type {
+  ProjectPropertyDefinition,
+  ProjectValuePresentation,
+} from '../projects/projectPropertyDefinitions';
 import type { TaskPriority, TaskStatusType } from '../tasks/domain/types';
 import type { ShortcutSettings } from './shortcuts';
 
@@ -46,7 +50,7 @@ interface InboxSettings {
   removeTagOnAssign: boolean;
 }
 
-export interface ProjectStatus {
+export interface ProjectStatus extends ProjectValuePresentation {
   id: string;
   name: string;
   color?: string;
@@ -66,6 +70,7 @@ export interface ProjectsSettings {
   statusProperty: string;
   startProperty: string;
   endProperty: string;
+  propertyDefinitions: Record<string, ProjectPropertyDefinition>;
   statuses: ProjectStatus[];
   statusMigration?: ProjectStatusMigration;
   defaultStatusId: string;

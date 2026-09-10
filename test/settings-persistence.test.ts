@@ -71,6 +71,41 @@ function stateEnvelope(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe('SettingsPersistenceCoordinator migration', () => {
+  it('preserves property and status extensions through a prior-format static roundtrip', async () => {
+    const data = markedStatic();
+    const projects = data['projects'] as Record<string, unknown>;
+    const definition = {
+      type: 'text',
+      presetsEnabled: true,
+      presets: [{ value: 'raw', displayName: 'Shown', futurePresetOption: 'keep' }],
+      futureDefinitionOption: { exact: ['keep'] },
+    };
+    projects['propertyDefinitions'] = { 'property:Effort': definition };
+    const statuses = projects['statuses'] as Array<Record<string, unknown>>;
+    const firstStatus = statuses[0];
+    if (firstStatus === undefined) throw new Error('Expected a default project status.');
+    firstStatus['displayName'] = 'In flight';
+    firstStatus['display'] = 'text';
+    firstStatus['futureStatusOption'] = { exact: true };
+    const port = memoryPort(data, stateEnvelope());
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    loaded.settings.taskPrefix = '#roundtrip';
+    await coordinator.saveSettings(loaded.settings);
+
+    const savedProjects = (port.staticData as Record<string, unknown>)['projects'] as Record<
+      string,
+      unknown
+    >;
+    expect(savedProjects['propertyDefinitions']).toEqual({ 'property:Effort': definition });
+    expect((savedProjects['statuses'] as Array<Record<string, unknown>>)[0]).toMatchObject({
+      displayName: 'In flight',
+      display: 'text',
+      futureStatusOption: { exact: true },
+    });
+  });
+
   it('partitions populated legacy view state, verifies it, then removes it from static data', async () => {
     const originalRawData = legacySettings({
       taskPrefix: '#custom',

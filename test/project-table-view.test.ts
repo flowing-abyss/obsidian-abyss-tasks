@@ -99,7 +99,16 @@ function project(over: Partial<Project>): Project {
 }
 
 function settings(): CalendarSettings {
-  return structuredClone(DEFAULT_SETTINGS);
+  const config = structuredClone(DEFAULT_SETTINGS);
+  config.projects.propertyDefinitions = {
+    'property:Budget': { type: 'number' },
+    'property:Flag': { type: 'checkbox' },
+    'property:Owner': { type: 'text' },
+    'property:Owners': { type: 'list' },
+    'property:Tags': { type: 'tags' },
+    'property:creator': { type: 'text' },
+  };
+  return config;
 }
 
 function catalog(
@@ -676,7 +685,7 @@ describe('ProjectsTableView', () => {
     ).toBe(true);
   });
 
-  it('renders a read-only status with its configured label and unavailable badge', () => {
+  it('renders the configured status as editable when the native catalog is unavailable', () => {
     const unavailableCatalog: ProjectPropertyCatalog = {
       list: () => null,
       inspect: () => ({ kind: 'unavailable' }),
@@ -691,10 +700,8 @@ describe('ProjectsTableView', () => {
     );
 
     expect(cell.querySelector('.abyss-project-table-status-pill')?.textContent).toBe(active.name);
-    expect(cell.querySelector('.abyss-project-table-unavailable')?.textContent).toBe(
-      'Type unavailable',
-    );
-    expect(cell.classList.contains('is-editable')).toBe(false);
+    expect(cell.querySelector('.abyss-project-table-unavailable')).toBeNull();
+    expect(cell.classList.contains('is-editable')).toBe(true);
   });
 
   it('uses aliases in headers and clicks select then reverse the sort field', async () => {
@@ -2909,7 +2916,7 @@ describe('ProjectsTableView', () => {
     expect(applyEdits).not.toHaveBeenCalled();
   });
 
-  it('pastes into a receipt-owned cleared native field but rejects an ordinary unavailable custom cell', async () => {
+  it('pastes into a configured field with or without an owned clear receipt', async () => {
     const config = settings();
     config.projects.table.columns.push({ id: 'property:Budget', visible: true });
     const budget = {
@@ -2971,7 +2978,9 @@ describe('ProjectsTableView', () => {
       ownedClear,
     });
 
-    const unavailableApply = vi.fn().mockResolvedValue({ applied: [], failed: [] });
+    const unavailableApply = vi
+      .fn<(changes: readonly ProjectCellChange[]) => Promise<ProjectEditResult>>()
+      .mockResolvedValue({ applied: [], failed: [] });
     const unavailable = mount([project({ frontmatter: { Budget: 10 } })], {
       settings: config,
       catalog: catalog(),
@@ -2985,10 +2994,11 @@ describe('ProjectsTableView', () => {
     unavailableCell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     unavailableCell.dispatchEvent(clipboardEvent('paste', transfer({ 'text/plain': '12' })));
     await flushMicrotasks();
-    expect(unavailableApply).not.toHaveBeenCalled();
-    expect(unavailable.host.querySelector('.abyss-project-table-feedback')?.textContent).toContain(
-      'Budget is read-only',
-    );
+    expect(unavailableApply).toHaveBeenCalledOnce();
+    expect(unavailableApply.mock.lastCall?.[0]?.[0]).toMatchObject({
+      value: 12,
+      expectedValue: 10,
+    });
   });
 
   it('publishes partial paste receipts and reports the exact applied and failed counts', async () => {

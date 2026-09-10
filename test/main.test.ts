@@ -1,12 +1,15 @@
-import { App } from 'obsidian';
+import { App, Notice } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import TaskCalendarPlugin from '../src/main';
 import { DEFAULT_SETTINGS, buildDefaultProjectsSettings } from '../src/settings/defaults';
-import { STATIC_SAVED_VIEW_STATE_MARKER } from '../src/settings/persistence';
+import {
+  SAVED_VIEW_STATE_SCHEMA_VERSION,
+  STATIC_SAVED_VIEW_STATE_MARKER,
+} from '../src/settings/persistence';
 import { latestSettingsSaveRevision } from '../src/settings/settingsSaveRevision';
 import type { CalendarSettings } from '../src/settings/types';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
-import { useRealMoment } from './helpers';
+import { flushMicrotasks, useRealMoment } from './helpers';
 
 useRealMoment();
 
@@ -25,7 +28,10 @@ interface WorkspaceLike {
 }
 
 interface PluginLike {
-  app: { workspace: WorkspaceLike };
+  app: {
+    workspace: WorkspaceLike;
+    metadataCache: { trigger: (event: string, ...args: unknown[]) => void };
+  };
   taskIndex: {
     initialize: () => Promise<void>;
     destroy: () => void;
@@ -206,6 +212,175 @@ describe('TaskCalendarPlugin saveSettings', () => {
 });
 
 describe('TaskCalendarPlugin onload', () => {
+  it('captures configured custom column types before registering the panel', async () => {
+    const projects = buildDefaultProjectsSettings();
+    const table = structuredClone(projects.table);
+    table.columns.push({ id: 'property:Effort', visible: true });
+    delete (projects as unknown as Record<string, unknown>)['table'];
+    const plugin = makePlugin({
+      projects,
+      [STATIC_SAVED_VIEW_STATE_MARKER]: SAVED_VIEW_STATE_SCHEMA_VERSION,
+    });
+    plugin.stateFiles__.set(
+      '.test-config/plugins/abyss-tasks/state.json',
+      JSON.stringify({
+        schemaVersion: SAVED_VIEW_STATE_SCHEMA_VERSION,
+        views: {
+          sectionCollapse: DEFAULT_SETTINGS.sectionCollapse,
+          projects: { table },
+        },
+      }),
+    );
+    Object.defineProperty(plugin.app, 'metadataTypeManager', {
+      configurable: true,
+      value: {
+        getAllProperties: () => ({ effort: { name: 'Effort' } }),
+        getTypeInfo: () => ({ expected: { type: 'text' } }),
+        getAssignedWidget: () => null,
+        on: () => ({ id: 'property-capture' }),
+        offref: () => {},
+      },
+    });
+    const save = vi.spyOn(plugin, 'saveData').mockImplementation(async (data: unknown) => {
+      const savedProjects = (data as { projects: Record<string, unknown> }).projects;
+      if ('propertyDefinitions' in savedProjects) {
+        expect(plugin.views__.has(PANEL_VIEW_TYPE)).toBe(false);
+      }
+      plugin.data__ = data;
+    });
+
+    await plugin.onload();
+
+    expect(plugin.settings.projects.propertyDefinitions).toEqual({
+      'property:Effort': { type: 'text' },
+    });
+    expect(save).toHaveBeenCalledOnce();
+    expect(plugin.views__.has(PANEL_VIEW_TYPE)).toBe(true);
+  });
+
+  it('keeps a failed capture draft and retries the then-current settings', async () => {
+    const projects = buildDefaultProjectsSettings();
+    const table = structuredClone(projects.table);
+    table.columns.push({ id: 'property:Effort', visible: true });
+    delete (projects as unknown as Record<string, unknown>)['table'];
+    const plugin = makePlugin({
+      projects,
+      [STATIC_SAVED_VIEW_STATE_MARKER]: SAVED_VIEW_STATE_SCHEMA_VERSION,
+    });
+    plugin.stateFiles__.set(
+      '.test-config/plugins/abyss-tasks/state.json',
+      JSON.stringify({
+        schemaVersion: SAVED_VIEW_STATE_SCHEMA_VERSION,
+        views: {
+          sectionCollapse: DEFAULT_SETTINGS.sectionCollapse,
+          projects: { table },
+        },
+      }),
+    );
+    Object.defineProperty(plugin.app, 'metadataTypeManager', {
+      configurable: true,
+      value: {
+        getAllProperties: () => ({ effort: { name: 'Effort' } }),
+        getTypeInfo: () => ({ expected: { type: 'text' } }),
+        getAssignedWidget: () => null,
+        on: () => ({ id: 'property-capture' }),
+        offref: () => {},
+      },
+    });
+    const error = new Error('disk full');
+    const save = vi
+      .spyOn(plugin, 'saveData')
+      .mockRejectedValueOnce(error)
+      .mockImplementation(async (data: unknown) => {
+        plugin.data__ = data;
+      });
+    let noticeContent: unknown;
+    const notice = vi.spyOn(
+      Notice.prototype as unknown as { constructor__(message: unknown, duration?: number): void },
+      'constructor__',
+    );
+    notice.mockImplementation((message: unknown) => {
+      noticeContent = message;
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await plugin.onload();
+
+    expect(plugin.settings.projects.propertyDefinitions).toEqual({
+      'property:Effort': { type: 'text' },
+    });
+    expect(notice).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith(
+      '[abyss-tasks] Could not save captured project property types',
+      { cause: error },
+    );
+    plugin.settings.projects.propertyDefinitions['property:Effort'] = { type: 'number' };
+    const retry = (noticeContent as DocumentFragment).querySelector<HTMLButtonElement>('button');
+    expect(retry?.textContent).toBe('Retry');
+    retry?.click();
+    await flushMicrotasks();
+
+    const saved = plugin.data__ as { projects: { propertyDefinitions: unknown } };
+    expect(saved.projects.propertyDefinitions).toEqual({
+      'property:Effort': { type: 'number' },
+    });
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses one layout and one resolved opportunity only for definitions still missing', async () => {
+    const projects = buildDefaultProjectsSettings();
+    const table = structuredClone(projects.table);
+    table.columns.push(
+      { id: 'property:First', visible: false },
+      { id: 'property:Second', visible: false },
+    );
+    delete (projects as unknown as Record<string, unknown>)['table'];
+    const plugin = makePlugin({
+      projects,
+      [STATIC_SAVED_VIEW_STATE_MARKER]: SAVED_VIEW_STATE_SCHEMA_VERSION,
+    });
+    plugin.stateFiles__.set(
+      '.test-config/plugins/abyss-tasks/state.json',
+      JSON.stringify({
+        schemaVersion: SAVED_VIEW_STATE_SCHEMA_VERSION,
+        views: {
+          sectionCollapse: DEFAULT_SETTINGS.sectionCollapse,
+          projects: { table },
+        },
+      }),
+    );
+    let names: string[] = [];
+    Object.defineProperty(plugin.app, 'metadataTypeManager', {
+      configurable: true,
+      value: {
+        getAllProperties: () =>
+          Object.fromEntries(names.map((name) => [name.toLocaleLowerCase(), { name }])),
+        getTypeInfo: (name: string) => ({
+          expected: { type: name === 'First' ? 'text' : 'number' },
+        }),
+        getAssignedWidget: () => null,
+        on: () => ({ id: 'property-capture' }),
+        offref: () => {},
+      },
+    });
+
+    await plugin.onload();
+    names = ['First'];
+    plugin.app.workspace.setLayoutReady__();
+    await flushMicrotasks();
+    expect(plugin.settings.projects.propertyDefinitions).toEqual({
+      'property:First': { type: 'text' },
+    });
+
+    names = ['First', 'Second'];
+    plugin.app.metadataCache.trigger('resolved');
+    await flushMicrotasks();
+    expect(plugin.settings.projects.propertyDefinitions).toEqual({
+      'property:First': { type: 'text' },
+      'property:Second': { type: 'number' },
+    });
+  });
+
   it('constructs the shared TaskIndex', async () => {
     const plugin = makePlugin();
     await plugin.onload();

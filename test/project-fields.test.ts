@@ -8,7 +8,7 @@ import { normalizeProjectTableSettings } from '../src/projects/projectTableSetti
 import { buildDefaultProjectsSettings } from '../src/settings/defaults';
 
 describe('buildProjectFieldCatalog', () => {
-  it('preserves vault property spelling while suppressing curated and status-carrier aliases', () => {
+  it('preserves configured curated spelling while suppressing case-insensitive aliases', () => {
     const settings = buildDefaultProjectsSettings();
     settings.statusProperty = 'Статус';
     settings.startProperty = 'Начало';
@@ -39,11 +39,11 @@ describe('buildProjectFieldCatalog', () => {
       type: 'date',
     });
     expect(fields.find(({ id }) => id === 'status')).toMatchObject({
-      property: 'СТАТУС',
+      property: 'Статус',
       type: 'status',
     });
     expect(fields.find(({ id }) => id === 'end')).toMatchObject({
-      property: 'КОНЕЦ',
+      property: 'Конец',
       type: 'date',
     });
   });
@@ -80,7 +80,24 @@ describe('buildProjectFieldCatalog', () => {
     });
   });
 
-  it('marks a curated date source unavailable when its native type conflicts', () => {
+  it('keeps saved field identity when a configured definition differs only by case', () => {
+    const settings = buildDefaultProjectsSettings();
+    settings.propertyDefinitions = { 'property:creator': { type: 'list' } };
+    settings.table.columns.push({ id: 'property:Creator', visible: true });
+    settings.table.groupBy = 'property:CREATOR';
+    settings.table.sortBy = { field: 'property:Creator', dir: 'asc' };
+
+    const fields = buildProjectFieldCatalog(settings, [{ name: 'CREATOR', type: 'text' }]);
+
+    expect(fields.find(({ id }) => id === 'property:Creator')).toEqual({
+      id: 'property:Creator',
+      property: 'Creator',
+      label: 'Creator',
+      type: 'list',
+    });
+  });
+
+  it('keeps a curated date authoritative when the native type conflicts', () => {
     const settings = buildDefaultProjectsSettings();
     settings.startProperty = 'Budget';
 
@@ -90,7 +107,7 @@ describe('buildProjectFieldCatalog', () => {
       id: 'start',
       property: 'Budget',
       label: 'Start',
-      type: null,
+      type: 'date',
     });
   });
 
@@ -101,11 +118,11 @@ describe('buildProjectFieldCatalog', () => {
     expect(fields.find(({ id }) => id === 'end')?.type).toBe('date');
   });
 
-  it('keeps curated dates unavailable when native discovery is unavailable', () => {
+  it('keeps curated dates available when native discovery is unavailable', () => {
     const fields = buildProjectFieldCatalog(buildDefaultProjectsSettings(), null);
 
-    expect(fields.find(({ id }) => id === 'start')?.type).toBeNull();
-    expect(fields.find(({ id }) => id === 'end')?.type).toBeNull();
+    expect(fields.find(({ id }) => id === 'start')?.type).toBe('date');
+    expect(fields.find(({ id }) => id === 'end')?.type).toBe('date');
   });
 
   it('curates description as text and suppresses its generic property alias', () => {
@@ -123,11 +140,11 @@ describe('buildProjectFieldCatalog', () => {
       type: 'text',
     });
     expect(discovered.find(({ id }) => id === 'description')).toMatchObject({
-      property: 'Description',
+      property: 'description',
       type: 'text',
     });
     expect(discovered.some(({ id }) => id.startsWith('property:Description'))).toBe(false);
-    expect(incompatible.find(({ id }) => id === 'description')?.type).toBeNull();
+    expect(incompatible.find(({ id }) => id === 'description')?.type).toBe('text');
   });
 
   it('keeps colliding description and configured source roles unavailable without rebinding them', () => {
@@ -141,14 +158,14 @@ describe('buildProjectFieldCatalog', () => {
       type: null,
     });
     expect(fields.find(({ id }) => id === 'start')).toMatchObject({
-      property: 'description',
+      property: 'Description',
       type: null,
     });
     expect(fields.find(({ id }) => id === 'status')?.type).toBe('status');
     expect(fields.find(({ id }) => id === 'end')?.type).toBe('date');
   });
 
-  it('makes the configured status source editable only with a compatible native type', () => {
+  it('keeps the configured status source authoritative across native catalog states', () => {
     const settings = buildDefaultProjectsSettings();
     const missing = buildProjectFieldCatalog(settings, []);
     const unavailable = buildProjectFieldCatalog(settings, null);
@@ -158,20 +175,20 @@ describe('buildProjectFieldCatalog', () => {
       property: 'status',
       type: 'status',
     });
-    expect(unavailable.find(({ id }) => id === 'status')?.type).toBeNull();
-    expect(incompatible.find(({ id }) => id === 'status')?.type).toBeNull();
+    expect(unavailable.find(({ id }) => id === 'status')?.type).toBe('status');
+    expect(incompatible.find(({ id }) => id === 'status')?.type).toBe('status');
   });
 
   it.each([null, 'text', 'datetime'] as const)(
-    'keeps an existing curated source with native type %s unavailable',
+    'keeps an existing curated source authoritative with native type %s',
     (type) => {
       const fields = buildProjectFieldCatalog(buildDefaultProjectsSettings(), [
         { name: 'Start', type },
       ]);
 
       expect(fields.find(({ id }) => id === 'start')).toMatchObject({
-        property: 'Start',
-        type: null,
+        property: 'start',
+        type: 'date',
       });
     },
   );

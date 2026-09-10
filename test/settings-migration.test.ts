@@ -148,6 +148,58 @@ describe('migrateSettings', () => {
 });
 
 describe('projects migration', () => {
+  it('adds an empty property definition map to legacy project settings', () => {
+    const raw: Record<string, unknown> = { projects: {} };
+
+    migrateSettings(raw);
+
+    expect((raw['projects'] as Record<string, unknown>)['propertyDefinitions']).toEqual({});
+  });
+
+  it('retains malformed and ambiguous definitions as exact recovery evidence', () => {
+    const definitions = {
+      'property:Effort': { type: 'bogus', future: { raw: true } },
+      'property:Phase': { type: 'text' },
+      'property:PHASE': { type: 'number' },
+    };
+    const raw: Record<string, unknown> = { projects: { propertyDefinitions: definitions } };
+
+    const result = migrateSettings(raw);
+    const projects = raw['projects'] as Record<string, unknown>;
+
+    expect(projects['propertyDefinitions']).toEqual(definitions);
+    expect(projects['propertyDefinitionMigration']).toEqual({
+      issue: 'invalid-property-definitions',
+      propertyDefinitions: definitions,
+      invalidKeys: ['property:Effort'],
+      ambiguousKeys: [['property:Phase', 'property:PHASE']],
+    });
+    expect(result.notices).toContain(
+      'Some project property definitions could not be loaded. Repair or remove the conflicting definitions in Projects settings; their original values were preserved.',
+    );
+  });
+
+  it('keeps a valid configured type active while retaining malformed preset evidence', () => {
+    const definition = {
+      type: 'text',
+      presetsEnabled: true,
+      presets: [{ value: ['invalid'], displayName: 7 }],
+    };
+    const raw: Record<string, unknown> = {
+      projects: { propertyDefinitions: { 'property:Effort': definition } },
+    };
+
+    const result = migrateSettings(raw);
+    const projects = raw['projects'] as Record<string, unknown>;
+
+    expect(projects['propertyDefinitions']).toEqual({ 'property:Effort': definition });
+    expect(projects['propertyDefinitionMigration']).toMatchObject({
+      propertyDefinitions: { 'property:Effort': definition },
+      invalidKeys: ['property:Effort'],
+    });
+    expect(result.notices).toHaveLength(1);
+  });
+
   it('migrates one legacy property source using the persisted value as the literal name', () => {
     const raw: Record<string, unknown> = {
       projects: {

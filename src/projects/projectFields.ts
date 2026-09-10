@@ -1,4 +1,5 @@
 import type { ProjectsSettings } from '../settings/types';
+import { resolveConfiguredProjectField } from './projectPropertyDefinitions';
 import type { Project } from './types';
 
 export type ProjectPropertyType =
@@ -63,132 +64,82 @@ export function isReservedProjectProperty(settings: ProjectsSettings, property: 
   ].some((configured) => configured.length > 0 && sameProperty(configured, property));
 }
 
-function addVaultProperties(
-  fields: ProjectFieldCatalogItem[],
+function customFieldIds(
   settings: ProjectsSettings,
   properties: readonly ProjectPropertyInfo[],
-  seen: Set<string>,
-): void {
-  for (const property of properties) {
-    const normalized = property.name.toLocaleLowerCase();
-    if (isReservedProjectProperty(settings, property.name) || seen.has(normalized)) continue;
-    seen.add(normalized);
-    fields.push({
-      id: `property:${property.name}`,
-      property: property.name,
-      label: property.name,
-      type: property.type,
-    });
-  }
+): string[] {
+  const definitions: unknown = settings.propertyDefinitions;
+  const definitionIds =
+    definitions !== null && typeof definitions === 'object' && !Array.isArray(definitions)
+      ? Object.keys(definitions)
+      : [];
+  return [
+    ...settings.table.columns.map(({ id }) => id),
+    settings.table.groupBy,
+    settings.table.sortBy.field,
+    ...definitionIds,
+    ...properties.map(({ name }) => `property:${name}`),
+  ];
 }
 
-function addSavedProperties(
+function appendCustomField(
   fields: ProjectFieldCatalogItem[],
-  settings: ProjectsSettings,
   seen: Set<string>,
+  settings: ProjectsSettings,
+  fieldId: string,
 ): void {
-  for (const column of settings.table.columns) {
-    if (!column.id.startsWith('property:')) continue;
-    const property = column.id.slice('property:'.length);
-    const normalized = property.toLocaleLowerCase();
-    if (
-      property.length === 0 ||
-      isReservedProjectProperty(settings, property) ||
-      seen.has(normalized)
-    ) {
-      continue;
-    }
-    seen.add(normalized);
-    fields.push({ id: column.id, property, label: property, type: null });
-  }
-}
-
-function curatedStatusType(
-  property: string,
-  properties: readonly ProjectPropertyInfo[] | null,
-  info: ProjectPropertyInfo | undefined,
-  collides: boolean,
-): 'status' | null {
-  if (property.length === 0 || collides || properties === null) return null;
-  return info === undefined || info.type === 'text' ? 'status' : null;
-}
-
-function curatedDateType(
-  properties: readonly ProjectPropertyInfo[] | null,
-  info: ProjectPropertyInfo | undefined,
-  collides: boolean,
-): 'date' | null {
-  if (collides || properties === null) return null;
-  return info === undefined || info.type === 'date' ? 'date' : null;
-}
-
-function curatedDescriptionType(
-  properties: readonly ProjectPropertyInfo[] | null,
-  info: ProjectPropertyInfo | undefined,
-  collides: boolean,
-): 'text' | null {
-  if (collides || properties === null) return null;
-  return info === undefined || info.type === 'text' ? 'text' : null;
+  if (!fieldId.startsWith('property:')) return;
+  const property = fieldId.slice('property:'.length);
+  const normalized = property.toLocaleLowerCase();
+  if (property.length === 0 || isReservedProjectProperty(settings, property)) return;
+  if (seen.has(normalized)) return;
+  seen.add(normalized);
+  fields.push(
+    resolveConfiguredProjectField(settings, fieldId) ?? {
+      id: fieldId,
+      property,
+      label: property,
+      type: null,
+    },
+  );
 }
 
 export function buildProjectFieldCatalog(
   settings: ProjectsSettings,
   properties: readonly ProjectPropertyInfo[] | null,
 ): ProjectFieldCatalogItem[] {
-  const discoveredProperties = properties ?? [];
-  const propertyNames = discoveredProperties.map(({ name }) => name);
-  const statusProperty =
-    findProjectPropertyName(propertyNames, settings.statusProperty) ?? settings.statusProperty;
-  const startProperty =
-    findProjectPropertyName(propertyNames, settings.startProperty) ?? settings.startProperty;
-  const endProperty =
-    findProjectPropertyName(propertyNames, settings.endProperty) ?? settings.endProperty;
-  const descriptionProperty =
-    findProjectPropertyName(propertyNames, DESCRIPTION_PROPERTY) ?? DESCRIPTION_PROPERTY;
-  const curatedProperties = [statusProperty, startProperty, endProperty, descriptionProperty];
-  const sourceCollides = (index: number): boolean =>
-    curatedProperties.some(
-      (property, candidate) =>
-        candidate !== index && sameProperty(curatedProperties[index] ?? '', property),
-    );
-  const statusInfo = discoveredProperties.find(({ name }) => sameProperty(name, statusProperty));
-  const startInfo = discoveredProperties.find(({ name }) => sameProperty(name, startProperty));
-  const endInfo = discoveredProperties.find(({ name }) => sameProperty(name, endProperty));
-  const descriptionInfo = discoveredProperties.find(({ name }) =>
-    sameProperty(name, descriptionProperty),
-  );
   const fields: ProjectFieldCatalogItem[] = [
     NAME_FIELD,
-    {
+    resolveConfiguredProjectField(settings, 'status') ?? {
       id: 'status',
-      property: statusProperty,
+      property: settings.statusProperty,
       label: 'Status',
-      type: curatedStatusType(statusProperty, properties, statusInfo, sourceCollides(0)),
+      type: null,
     },
     PROGRESS_FIELD,
-    {
+    resolveConfiguredProjectField(settings, 'start') ?? {
       id: 'start',
-      property: startProperty,
+      property: settings.startProperty,
       label: 'Start',
-      type: curatedDateType(properties, startInfo, sourceCollides(1)),
+      type: null,
     },
-    {
+    resolveConfiguredProjectField(settings, 'end') ?? {
       id: 'end',
-      property: endProperty,
+      property: settings.endProperty,
       label: 'End',
-      type: curatedDateType(properties, endInfo, sourceCollides(2)),
+      type: null,
     },
-    {
+    resolveConfiguredProjectField(settings, 'description') ?? {
       id: 'description',
-      property: descriptionProperty,
+      property: DESCRIPTION_PROPERTY,
       label: 'Description',
-      type: curatedDescriptionType(properties, descriptionInfo, sourceCollides(3)),
+      type: null,
     },
   ];
-
   const seen = new Set<string>();
-  addVaultProperties(fields, settings, discoveredProperties, seen);
-  addSavedProperties(fields, settings, seen);
+  for (const fieldId of customFieldIds(settings, properties ?? [])) {
+    appendCustomField(fields, seen, settings, fieldId);
+  }
   return fields;
 }
 

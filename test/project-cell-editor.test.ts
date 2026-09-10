@@ -1046,7 +1046,7 @@ describe('mountProjectCellEditor', () => {
     expect(notice).not.toHaveBeenCalled();
   });
 
-  it('blocks a stale custom editor when Obsidian changes the assigned type', async () => {
+  it('keeps the configured editor type when the native registry changes', async () => {
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
     const currentCatalog = catalog([], 'number');
@@ -1065,11 +1065,37 @@ describe('mountProjectCellEditor', () => {
     keydown(input, 'Enter');
     await settle();
 
+    expect(save).toHaveBeenCalledWith('unfinished');
+  });
+
+  it('blocks a stale custom editor against the owner current configured field', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'draft',
+      catalog: catalog([], 'text'),
+      resolveField: () => ({
+        id: 'property:Custom',
+        property: 'Custom',
+        label: 'Custom',
+        type: 'number',
+      }),
+      save,
+      onClose: vi.fn(),
+    });
+
+    const input = expectDefined(container.querySelector<HTMLInputElement>('input'));
+    input.value = 'unfinished';
+    keydown(input, 'Enter');
+    await settle();
+
     expect(save).not.toHaveBeenCalled();
-    expect(input.isConnected).toBe(true);
     expect(input.value).toBe('unfinished');
     expect(container.querySelector('.abyss-project-editor-error')?.textContent).toContain(
-      'type changed',
+      'configuration changed',
     );
   });
 });

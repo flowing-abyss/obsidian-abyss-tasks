@@ -14,7 +14,6 @@ import { normalizeTag, transformMarkdownTags } from '../tags/markdownTagRename';
 import type { TaskApplicationApi, TaskCommandResult, TaskRef } from '../tasks';
 import {
   ObsidianProjectProperties,
-  type ProjectNativePropertySnapshot,
   type ProjectPropertyCatalog,
 } from './ObsidianProjectProperties';
 import { ProjectEditValidationError } from './projectEditError';
@@ -28,10 +27,11 @@ import {
   type ProjectEditResult,
 } from './projectEdits';
 import {
-  isReservedProjectProperty,
+  isAvailableProjectField,
   type ProjectField,
   type ProjectPropertyType,
 } from './projectFields';
+import { resolveConfiguredProjectField } from './projectPropertyDefinitions';
 import { resolveStatus } from './status';
 
 export interface ExpectedProjectStatus {
@@ -67,16 +67,11 @@ interface PreparedProjectFileEdits {
   readonly changes: PreparedProjectCellChange[];
 }
 
-interface EditableNativeProperty {
+interface EditableConfiguredProperty {
   readonly property: string;
   readonly inferredCustomProperty: boolean;
   readonly ownedClear: OwnedInferredPropertyClear | undefined;
 }
-
-type AvailableNativePropertySnapshot = Extract<
-  ProjectNativePropertySnapshot,
-  { kind: 'available' }
->;
 
 function validDate(value: string): boolean {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
@@ -458,16 +453,20 @@ export class ProjectManager {
     frontmatter: Readonly<Record<string, unknown>>,
     prepared: PreparedProjectCellChange,
   ): PreparedProjectCellChange {
-    const currentNative = this.editablePropertyWithNativeType(prepared.change);
-    if (currentNative.property !== prepared.property) {
+    const currentConfigured = this.editableConfiguredProperty(prepared.change);
+    if (currentConfigured.property !== prepared.property) {
       throw new ProjectEditValidationError(
         `${prepared.change.field.label} source property changed. Reload the project and try again.`,
       );
     }
-    const current = uniqueFrontmatterProperty(frontmatter, currentNative.property);
+    const current = uniqueFrontmatterProperty(frontmatter, currentConfigured.property);
     const currentSourceKey =
       current?.key ??
-      absentEditSourceKey(prepared.change, currentNative.property, currentNative.ownedClear);
+      absentEditSourceKey(
+        prepared.change,
+        currentConfigured.property,
+        currentConfigured.ownedClear,
+      );
     if (currentSourceKey !== prepared.sourceKey) {
       throw new ProjectEditValidationError(
         `${prepared.change.field.label} source key changed. Reload the project and try again.`,
@@ -483,8 +482,8 @@ export class ProjectManager {
     }
     return {
       ...prepared,
-      inferredCustomProperty: currentNative.inferredCustomProperty,
-      ownedClear: currentNative.ownedClear,
+      inferredCustomProperty: currentConfigured.inferredCustomProperty,
+      ownedClear: currentConfigured.ownedClear,
     };
   }
 
@@ -513,8 +512,8 @@ export class ProjectManager {
           `${change.field.label} source property changed. Reload the project and try again.`,
         );
       }
-      const native = this.editablePropertyWithNativeType(change);
-      if (change.sourceProperty !== undefined && change.sourceProperty !== native.property) {
+      const configured = this.editableConfiguredProperty(change);
+      if (change.sourceProperty !== undefined && change.sourceProperty !== configured.property) {
         throw new ProjectEditValidationError(
           `${change.field.label} source property changed. Reload the project and try again.`,
         );
@@ -523,11 +522,11 @@ export class ProjectManager {
       const entries = byPath.get(change.path) ?? [];
       entries.push({
         change,
-        property: native.property,
+        property: configured.property,
         value: normalized.value,
         valueExists: !normalized.clear,
-        inferredCustomProperty: native.inferredCustomProperty,
-        ownedClear: native.ownedClear,
+        inferredCustomProperty: configured.inferredCustomProperty,
+        ownedClear: configured.ownedClear,
       });
       byPath.set(change.path, entries);
     }
@@ -640,7 +639,7 @@ export class ProjectManager {
     right: PreparedProjectCellChange,
   ): boolean {
     return (
-      left.property === right.property &&
+      samePropertyName(left.property, right.property) &&
       left.sourceKey === right.sourceKey &&
       left.valueExists === right.valueExists &&
       left.expectedExists === right.expectedExists &&
@@ -649,51 +648,33 @@ export class ProjectManager {
     );
   }
 
-  private editablePropertyWithNativeType(change: ProjectCellChange): EditableNativeProperty {
+  private editableConfiguredProperty(change: ProjectCellChange): EditableConfiguredProperty {
     const { field } = change;
-    const property = this.editableProperty(field);
-    const ownedClear = this.validatedOwnedClear(change, property);
-    const native = this.projectProperties.inspect(property);
-    if (native.kind === 'unavailable') {
+    const configured = resolveConfiguredProjectField(this.settings.projects, field.id);
+    if (
+      configured === undefined ||
+      !isAvailableProjectField(configured) ||
+      configured.property === undefined ||
+      configured.id !== field.id ||
+      configured.type !== field.type ||
+      field.property === undefined ||
+      !samePropertyName(configured.property, field.property)
+    ) {
       throw new ProjectEditValidationError(
-        'Project property types are temporarily unavailable. Reload Obsidian and try again.',
+        `${field.label} no longer matches its configured project field. Reload the project and try again.`,
       );
     }
-    const curatedType = field.type === 'status' ? 'text' : field.type;
-    this.assertNativeType(field, native, curatedType);
-    if (native.property !== undefined) {
-      return {
-        property: native.property.name,
-        inferredCustomProperty: native.assignment.kind === 'none' && !this.isCuratedField(field),
-        ownedClear,
-      };
-    }
-    if (native.assignment.kind === 'assigned') {
-      return { property, inferredCustomProperty: false, ownedClear };
-    }
-    if (this.isCuratedField(field)) {
-      return { property, inferredCustomProperty: false, ownedClear };
-    }
-    if (ownedClear !== undefined) {
-      return { property: ownedClear.sourceProperty, inferredCustomProperty: false, ownedClear };
-    }
-    throw new ProjectEditValidationError(
-      `${field.label} no longer has a known native type. Reload the project and try again.`,
-    );
-  }
-
-  private assertNativeType(
-    field: ProjectField,
-    native: AvailableNativePropertySnapshot,
-    expected: ProjectField['type'],
-  ): void {
-    const liveChanged = native.property !== undefined && native.property.type !== expected;
-    const assignedChanged =
-      native.assignment.kind === 'assigned' && native.assignment.type !== expected;
-    if (!liveChanged && !assignedChanged) return;
-    throw new ProjectEditValidationError(
-      `${field.label} native type changed. Reload the project and try again.`,
-    );
+    const property = configured.property;
+    const ownedClear = this.validatedOwnedClear(change, property);
+    const native = this.projectProperties.inspect(property);
+    return {
+      property,
+      inferredCustomProperty:
+        field.id.startsWith('property:') &&
+        native.kind === 'available' &&
+        native.assignment.kind === 'none',
+      ownedClear,
+    };
   }
 
   private validatedOwnedClear(
@@ -856,7 +837,7 @@ export class ProjectManager {
   ): Promise<void> {
     const context = this.validateStatusRename(id, name, expectedName);
     if (context.targetName === expectedName) return;
-    this.assertStatusPropertyNativeType(context.property);
+    this.assertConfiguredStatusProperty(context.property);
     const candidates = await this.collectStatusRenameCandidates(context);
     const writes: StatusRenameWrite[] = [];
     let definitionChanged = false;
@@ -928,7 +909,7 @@ export class ProjectManager {
   private async writeStatusRename(file: TFile, context: StatusRenameContext): Promise<boolean> {
     let changed: boolean | undefined;
     await this.app.vault.process(file, (source) => {
-      this.assertStatusPropertyNativeType(context.property);
+      this.assertConfiguredStatusProperty(context.property);
       const parsed = parseProjectSource(source);
       if (!isProject(file.path, parsed, this.settings.projects)) return source;
       const current = uniqueFrontmatterProperty(parsed.frontmatter, context.property);
@@ -999,115 +980,13 @@ export class ProjectManager {
     });
   }
 
-  private editableProperty(field: ProjectField): string {
-    if (field.property?.trim().length === 0) {
-      throw new ProjectEditValidationError('Project property name cannot be empty.');
-    }
-    if (this.isCuratedField(field) && this.curatedSourceCollides(field)) {
-      throw new ProjectEditValidationError(
-        'Choose distinct project Status, Start, End, and Description properties in settings before editing.',
-      );
-    }
-    if (field.type === 'status') return this.editableStatusProperty(field);
-    if (field.property === undefined || !isPropertyType(field.type)) {
-      throw new ProjectEditValidationError(`${field.label} is not an editable project property.`);
-    }
-    if (field.id.startsWith('property:')) return this.customProperty(field, field.property);
-    if (field.id === 'description') return this.editableDescriptionProperty(field);
-    return this.editableDateProperty(field);
-  }
-
-  private isCuratedField(field: ProjectField): boolean {
-    return (
-      field.type === 'status' ||
-      field.id === 'start' ||
-      field.id === 'end' ||
-      field.id === 'description'
-    );
-  }
-
-  private editableDescriptionProperty(field: ProjectField): string {
-    if (
-      field.property === undefined ||
-      field.type !== 'text' ||
-      !samePropertyName(field.property, 'description')
-    ) {
-      throw new ProjectEditValidationError(
-        `${field.label} must use the curated description property.`,
-      );
-    }
-    return field.property;
-  }
-
-  private editableStatusProperty(field: ProjectField): string {
-    const configured = this.settings.projects.statusProperty.trim();
-    if (
-      field.id !== 'status' ||
-      field.property === undefined ||
-      configured.length === 0 ||
-      !samePropertyName(field.property, configured)
-    ) {
-      throw new ProjectEditValidationError(
-        `${field.label} does not match its configured project property.`,
-      );
-    }
-    return field.property;
-  }
-
-  private assertStatusPropertyNativeType(property: string): void {
-    this.editablePropertyWithNativeType({
+  private assertConfiguredStatusProperty(property: string): void {
+    this.editableConfiguredProperty({
       path: '',
       field: { id: 'status', property, label: 'Status', type: 'status' },
       value: undefined,
       expectedValue: undefined,
     });
-  }
-
-  private editableDateProperty(field: ProjectField): string {
-    if (
-      field.property === undefined ||
-      (field.id !== 'start' && field.id !== 'end') ||
-      field.type !== 'date'
-    ) {
-      throw new ProjectEditValidationError(`${field.label} must use the curated date field.`);
-    }
-    const configured =
-      field.id === 'start'
-        ? this.settings.projects.startProperty
-        : this.settings.projects.endProperty;
-    if (field.property.localeCompare(configured, undefined, { sensitivity: 'accent' }) !== 0) {
-      throw new ProjectEditValidationError(
-        `${field.label} does not match its configured project property.`,
-      );
-    }
-    return field.property;
-  }
-
-  private curatedSourceCollides(field: ProjectField): boolean {
-    const { statusProperty, startProperty, endProperty } = this.settings.projects;
-    const properties = [statusProperty, startProperty, endProperty, 'description'];
-    let index = 3;
-    if (field.id === 'status') index = 0;
-    else if (field.id === 'start') index = 1;
-    else if (field.id === 'end') index = 2;
-    const source = properties[index] ?? '';
-    return properties.some(
-      (property, candidate) => candidate !== index && samePropertyName(source, property),
-    );
-  }
-
-  private customProperty(field: ProjectField, property: string): string {
-    if (field.id !== `property:${property}`) {
-      throw new ProjectEditValidationError(
-        `Project field ${field.id} does not match property ${property}.`,
-      );
-    }
-    if (isReservedProjectProperty(this.settings.projects, property)) {
-      throw new ProjectEditValidationError(
-        `${property} is a semantic project property and must use its dedicated editor.`,
-      );
-    }
-    return property;
   }
 
   async create(name: string): Promise<TFile | null> {

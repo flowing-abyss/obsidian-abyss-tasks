@@ -54,6 +54,7 @@ export function buildDefaultProjectsSettings(): ProjectsSettings {
     statusProperty: 'status',
     startProperty: 'start',
     endProperty: 'end',
+    propertyDefinitions: {},
     statuses: [active, planned, done],
     defaultStatusId: active.id,
     taskInsertionMode: 'append',

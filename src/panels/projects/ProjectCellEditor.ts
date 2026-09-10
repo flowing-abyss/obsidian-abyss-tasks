@@ -25,6 +25,7 @@ export interface ProjectCellEditorOptions {
   readonly field: ProjectFieldCatalogItem;
   readonly value: unknown;
   readonly catalog: ProjectPropertyCatalog;
+  readonly resolveField?: (fieldId: string) => ProjectFieldCatalogItem | undefined;
   readonly statuses?: readonly ProjectStatus[];
   readonly sourcePath?: string;
   readonly save: (value: unknown) => Promise<void>;
@@ -96,17 +97,6 @@ function initialDraftValue(control: EditorControl | undefined, sourceValue: unkn
   } catch {
     return copyValue(sourceValue);
   }
-}
-
-function currentCustomType(
-  field: ProjectFieldCatalogItem,
-  catalog: ProjectPropertyCatalog,
-): ProjectPropertyType | null | undefined {
-  if (!field.id.startsWith('property:') || field.property === undefined) return undefined;
-  const snapshot = catalog.inspect(field.property);
-  if (snapshot.kind === 'unavailable') return null;
-  if (snapshot.assignment.kind === 'assigned') return snapshot.assignment.type;
-  return snapshot.property?.type;
 }
 
 function suggestOptions(
@@ -591,7 +581,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     const { field } = this.options_abyssPrivate;
     this.error_abyssPrivate.setText(
       field.type === null
-        ? 'Obsidian property type is unavailable. Editing is disabled.'
+        ? 'Project property type is not configured. Choose a Type in project settings.'
         : `${field.label} is not editable here.`,
     );
   }
@@ -679,14 +669,19 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   }
 
   private validateCurrentType_abyssPrivate(): boolean {
-    const { catalog, field } = this.options_abyssPrivate;
+    const { field, resolveField } = this.options_abyssPrivate;
     if (!field.id.startsWith('property:')) return true;
-    const current = currentCustomType(field, catalog);
-    if (current === undefined || current === field.type) return true;
+    if (resolveField === undefined) return true;
+    const configured = resolveField(field.id);
+    const matches =
+      configured !== undefined &&
+      configured.type !== null &&
+      configured.id === field.id &&
+      configured.property === field.property &&
+      configured.type === field.type;
+    if (matches) return true;
     this.error_abyssPrivate.setText(
-      current === null
-        ? 'This property type is unavailable in Obsidian. Close and reopen the editor.'
-        : 'This property type changed in Obsidian. Close and reopen the editor.',
+      'This project property configuration changed. Close and reopen the editor.',
     );
     this.focus();
     return false;

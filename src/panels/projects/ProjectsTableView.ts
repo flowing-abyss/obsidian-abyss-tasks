@@ -21,6 +21,7 @@ import {
   type ProjectField,
   type ProjectFieldCatalogItem,
 } from '../../projects/projectFields';
+import { resolveConfiguredProjectField } from '../../projects/projectPropertyDefinitions';
 import type { ProjectSourceObservation } from '../../projects/ProjectStore';
 import {
   buildProjectTableModel,
@@ -2618,6 +2619,8 @@ export class ProjectsTableView {
       field,
       value: editorState.expectedValue,
       catalog: this.context_abyssPrivate.catalog,
+      resolveField: (fieldId) =>
+        resolveConfiguredProjectField(this.context_abyssPrivate.settings.projects, fieldId),
       statuses: this.context_abyssPrivate.settings.projects.statuses,
       sourcePath: project.path,
       save: (value) => this.saveEditorValue_abyssPrivate(project, field, editorState, value),

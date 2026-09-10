@@ -1,3 +1,8 @@
+import {
+  hasMalformedProjectPropertyDefinitionPresentation,
+  isConfiguredProjectPropertySourceReserved,
+  isProjectPropertyDefinition,
+} from '../projects/projectPropertyDefinitions';
 import { normalizeProjectTableSettings } from '../projects/projectTableSettings';
 import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
 import { buildDefaultProjectsSettings, buildDefaultTaskStatuses } from './defaults';
@@ -32,6 +37,8 @@ interface MigratedProjectSettings {
   statusProperty?: string;
   startProperty?: string;
   endProperty?: string;
+  propertyDefinitions?: unknown;
+  propertyDefinitionMigration?: unknown;
   statuses?: unknown[];
   statusMigration?: unknown;
   defaultStatusId?: string;
@@ -54,6 +61,8 @@ interface LegacyPropertyStatus {
 
 const TAG_STATUS_NOTICE =
   'Project tag statuses were removed. Their note tags are unchanged; choose a Status property in Projects settings.';
+const PROPERTY_DEFINITION_NOTICE =
+  'Some project property definitions could not be loaded. Repair or remove the conflicting definitions in Projects settings; their original values were preserved.';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -187,6 +196,93 @@ function normalizeDefaultProjectStatus(projects: MigratedProjectSettings): void 
   }
 }
 
+function propertyDefinitionSourceIsInvalid(
+  projects: MigratedProjectSettings,
+  property: string,
+): boolean {
+  return isConfiguredProjectPropertySourceReserved(
+    {
+      statusProperty: projects.statusProperty ?? '',
+      startProperty: projects.startProperty ?? '',
+      endProperty: projects.endProperty ?? '',
+    },
+    property,
+  );
+}
+
+function propertyDefinitionIsInvalid(
+  projects: MigratedProjectSettings,
+  key: string,
+  definition: unknown,
+): boolean {
+  const property = key.startsWith('property:') ? key.slice('property:'.length) : '';
+  if (property.length === 0 || propertyDefinitionSourceIsInvalid(projects, property)) return true;
+  if (!isProjectPropertyDefinition(definition)) return true;
+  if (hasMalformedProjectPropertyDefinitionPresentation(definition)) return true;
+  if (sameProperty(property, 'tags')) return definition.type !== 'tags';
+  return definition.type === 'tags';
+}
+
+function ambiguousPropertyDefinitionKeys(definitions: Record<string, unknown>): string[][] {
+  const groups = new Map<string, string[]>();
+  for (const key of Object.keys(definitions)) {
+    const normalized = key.toLocaleLowerCase();
+    const group = groups.get(normalized) ?? [];
+    group.push(key);
+    groups.set(normalized, group);
+  }
+  return [...groups.values()].filter((group) => group.length > 1);
+}
+
+function preserveInvalidPropertyDefinitions(
+  projects: MigratedProjectSettings,
+  result: SettingsMigrationResult,
+  recovery: {
+    definitions: unknown;
+    invalidKeys: string[];
+    ambiguousKeys: string[][];
+  },
+): void {
+  const { definitions, invalidKeys, ambiguousKeys } = recovery;
+  projects.propertyDefinitionMigration = {
+    issue: 'invalid-property-definitions',
+    propertyDefinitions: structuredClone(definitions),
+    invalidKeys,
+    ambiguousKeys,
+  };
+  result.notices.push(PROPERTY_DEFINITION_NOTICE);
+}
+
+function normalizeProjectPropertyDefinitions(
+  projects: MigratedProjectSettings,
+  result: SettingsMigrationResult,
+): void {
+  const definitions = projects.propertyDefinitions;
+  if (definitions === undefined) {
+    projects.propertyDefinitions = {};
+    return;
+  }
+  if (!isRecord(definitions)) {
+    preserveInvalidPropertyDefinitions(projects, result, {
+      definitions,
+      invalidKeys: [],
+      ambiguousKeys: [],
+    });
+    projects.propertyDefinitions = {};
+    return;
+  }
+  const invalidKeys = Object.entries(definitions).flatMap(([key, definition]) =>
+    propertyDefinitionIsInvalid(projects, key, definition) ? [key] : [],
+  );
+  const ambiguousKeys = ambiguousPropertyDefinitionKeys(definitions);
+  if (invalidKeys.length === 0 && ambiguousKeys.length === 0) return;
+  preserveInvalidPropertyDefinitions(projects, result, {
+    definitions,
+    invalidKeys,
+    ambiguousKeys,
+  });
+}
+
 function normalizeProjectSettings(
   projects: MigratedProjectSettings,
   result: SettingsMigrationResult,
@@ -195,6 +291,7 @@ function normalizeProjectSettings(
   const defaults = buildDefaultProjectsSettings();
   normalizeProjectSources(projects, defaults);
   normalizeDefaultProjectStatus(projects);
+  normalizeProjectPropertyDefinitions(projects, result);
 
   if (projects.taskInsertionMode !== 'append' && projects.taskInsertionMode !== 'section') {
     projects.taskInsertionMode = defaults.taskInsertionMode;

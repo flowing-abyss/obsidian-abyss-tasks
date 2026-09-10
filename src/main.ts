@@ -1,5 +1,10 @@
 import { normalizePath, Notice, Plugin } from 'obsidian';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
+import { initializeProjectPropertyDefinitions } from './projects/initializeProjectPropertyDefinitions';
+import {
+  ObsidianProjectProperties,
+  type ProjectPropertyCatalog,
+} from './projects/ObsidianProjectProperties';
 import { ProjectManager } from './projects/ProjectManager';
 import { DailyNoteResolver } from './resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from './settings/defaults';
@@ -7,6 +12,7 @@ import {
   SettingsPersistenceCoordinator,
   type SettingsPersistencePort,
 } from './settings/persistence';
+import { reportSettingsDraftSaveFailure } from './settings/settingsSaveFailure';
 import { beginSettingsSave } from './settings/settingsSaveRevision';
 import { CalendarSettingsTab } from './settings/SettingsTab';
 import { toStatusRules } from './settings/statusCatalogAdapter';
@@ -48,10 +54,15 @@ export default class TaskCalendarPlugin extends Plugin {
   private statusCatalog!: StatusCatalog;
   private statusRegistry!: StatusRegistry;
   private projectManager!: ProjectManager;
+  private projectProperties!: ProjectPropertyCatalog;
   private settingsPersistence!: SettingsPersistenceCoordinator;
+  private projectPropertyCaptureQueue: Promise<void> = Promise.resolve();
 
   override async onload(): Promise<void> {
     await this.loadSettings();
+    this.projectProperties = new ObsidianProjectProperties(this.app);
+    this.registerProjectPropertyCaptureOpportunities();
+    await this.captureProjectPropertyDefinitions();
     this.initializeTaskServices();
     const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
     this.registerPanel(commentTimeContext);
@@ -133,7 +144,13 @@ export default class TaskCalendarPlugin extends Plugin {
       diagnostics,
     );
     this.queries = this.tasks.queries;
-    this.projectManager = new ProjectManager(this.app, this.settings, dailyNotes, this.tasks);
+    this.projectManager = new ProjectManager(
+      this.app,
+      this.settings,
+      dailyNotes,
+      this.tasks,
+      this.projectProperties,
+    );
     this.tagManager = new TagManager(this.app, this.settings, () => this.saveSettings());
   }
 
@@ -167,10 +184,51 @@ export default class TaskCalendarPlugin extends Plugin {
 
   private initializeIndexWhenReady(): void {
     this.app.workspace.onLayoutReady(() => {
+      this.captureProjectPropertyDefinitions().catch((error: unknown) => {
+        console.error('[abyss-tasks] project property capture failed unexpectedly', error);
+      });
       this.taskIndex.initialize().catch((error: unknown) => {
         console.error('[abyss-tasks] task index initialization failed', error);
       });
     });
+  }
+
+  private registerProjectPropertyCaptureOpportunities(): void {
+    let used = false;
+    this.registerEvent(
+      this.app.metadataCache.on('resolved', () => {
+        if (used) return;
+        used = true;
+        this.captureProjectPropertyDefinitions().catch((error: unknown) => {
+          console.error('[abyss-tasks] project property capture failed unexpectedly', error);
+        });
+      }),
+    );
+  }
+
+  private async captureProjectPropertyDefinitions(): Promise<void> {
+    const capture = this.projectPropertyCaptureQueue.then(async () => {
+      await initializeProjectPropertyDefinitions({
+        projects: this.settings.projects,
+        catalog: this.projectProperties,
+        save: () => this.saveSettings(),
+      });
+    });
+    this.projectPropertyCaptureQueue = capture.then(
+      () => undefined,
+      () => undefined,
+    );
+    try {
+      await capture;
+    } catch (error) {
+      reportSettingsDraftSaveFailure(
+        {
+          action: 'save captured project property types',
+          save: () => this.saveSettings(),
+        },
+        error,
+      );
+    }
   }
 
   private installLegacyCalendarShim(commentTimeContext: CommentTimeContextProvider): void {
