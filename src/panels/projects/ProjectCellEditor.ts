@@ -7,6 +7,7 @@ import { projectPropertyPresetIdentity } from '../../projects/projectPropertyPre
 import { projectTableLinkTargetParts } from '../../projects/projectTableLinkTarget';
 import { projectStatusDisplayName } from '../../projects/status';
 import type { ProjectStatus } from '../../settings/types';
+import { normalizeTag } from '../../tags/markdownTagRename';
 import {
   ProjectPropertySuggest,
   type ProjectPropertySuggestion,
@@ -150,14 +151,23 @@ function suggestOptions(
 }
 
 function appendSuggestion(
+  options: ProjectCellEditorOptions,
   result: ProjectPropertySuggestion[],
   seen: Set<string>,
   suggestion: ProjectPropertySuggestion,
 ): void {
-  const identity = projectPropertyPresetIdentity(suggestion.value);
+  const identity = editorValueIdentity(options, suggestion.value);
   if (seen.has(identity)) return;
   seen.add(identity);
   result.push(suggestion);
+}
+
+function editorValueIdentity(options: ProjectCellEditorOptions, value: unknown): string {
+  if (options.field.type === 'tags' && typeof value === 'string') {
+    const tag = normalizeTag(value);
+    if (tag !== null) return `tag:${tag}`;
+  }
+  return projectPropertyPresetIdentity(value);
 }
 
 function catalogSuggestion(
@@ -201,12 +211,13 @@ function withCollidingLinkDetails(
 function mergedSuggestions(options: ProjectCellEditorOptions): ProjectPropertySuggestion[] {
   const result: ProjectPropertySuggestion[] = [];
   const seen = new Set<string>();
-  for (const suggestion of options.presets ?? []) appendSuggestion(result, seen, suggestion);
+  for (const suggestion of options.presets ?? [])
+    appendSuggestion(options, result, seen, suggestion);
   const source = options.sourceField ?? options.field.property;
   const catalogValues = source === undefined ? [] : options.catalog.values(source);
   for (const value of catalogValues) {
     const suggestion = catalogSuggestion(options, value);
-    if (suggestion !== undefined) appendSuggestion(result, seen, suggestion);
+    if (suggestion !== undefined) appendSuggestion(options, result, seen, suggestion);
   }
   return withCollidingLinkDetails(result);
 }
@@ -292,6 +303,9 @@ function equivalentListValue(
   existing: unknown,
   candidate: string | number,
 ): boolean {
+  if (options.field.type === 'tags') {
+    return editorValueIdentity(options, existing) === editorValueIdentity(options, candidate);
+  }
   if (Object.is(existing, candidate)) return true;
   if (typeof existing !== 'string' || typeof candidate !== 'string') return false;
   const existingPath = internalLinkPath(options, existing);

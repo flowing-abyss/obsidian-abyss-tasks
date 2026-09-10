@@ -379,6 +379,69 @@ describe('mountProjectCellEditor', () => {
     expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual([]);
   });
 
+  it('deduplicates and excludes tag suggestions by canonical tag identity', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:tags', property: 'tags', label: 'Tags', type: 'tags' },
+      value: ['qa-table', 'qa-nested/example'],
+      catalog: catalog(
+        ['qa-table', '#qa-table', '#qa-nested/example', '#demo', 'demo', '#fresh'],
+        'tags',
+      ),
+      presets: [
+        { value: '#qa-table', label: '#QA table', appearance: 'tag' },
+        { value: 'demo', label: '#Demo preset', appearance: 'tag' },
+        { value: '#preset-only', label: '#Preset only', appearance: 'tag' },
+      ],
+      sourceField: 'property:tags',
+      save,
+      onClose: vi.fn(),
+    });
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+    const suggest = expectDefined(internals.control_abyssPrivate.suggest);
+
+    expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual([
+      'demo',
+      '#preset-only',
+      '#fresh',
+    ]);
+    suggest.selectSuggestion(expectDefined(suggest.getSuggestions('Demo')[0]));
+    await settle();
+
+    expect(save).toHaveBeenCalledWith(['qa-table', 'qa-nested/example', 'demo']);
+    expect(suggest.getSuggestions('').map(({ value }) => value)).toEqual([
+      '#preset-only',
+      '#fresh',
+    ]);
+  });
+
+  it('keeps hashtag and unprefixed values distinct for generic lists', () => {
+    const container = document.body.createDiv();
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Values', type: 'list' },
+      value: [],
+      catalog: catalog(['demo', '#demo'], 'list'),
+      save: vi.fn().mockResolvedValue(undefined),
+      onClose: vi.fn(),
+    });
+    const internals = handle as unknown as {
+      readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
+    };
+
+    expect(
+      expectDefined(internals.control_abyssPrivate.suggest)
+        .getSuggestions('')
+        .map(({ value }) => value),
+    ).toEqual(['demo', '#demo']);
+  });
+
   it('shows the configured label for an existing exact preset list value', () => {
     const container = document.body.createDiv();
     mountProjectCellEditor({
