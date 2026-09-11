@@ -53,6 +53,7 @@ describe('CenterPanel task metadata styles', () => {
     expect(titleRow).toContain('align-items: center');
     expect(metadata).not.toContain('padding-top');
     expect(deleteButton).not.toContain('align-self');
+    expect(deleteButton).toContain('height: var(--abyss-task-card-marker-size)');
   });
 
   it('keeps descriptions title-aligned while narrow primary rows contain their content', () => {
