@@ -743,6 +743,92 @@ describe('project Kanban overview', () => {
     expect(overlay.querySelector('.abyss-project-kanban-insertion-line')).not.toBeNull();
   });
 
+  it('positions initial and sustained rail forecasts in the scrolled destination group', () => {
+    vi.useFakeTimers();
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const moving = project({
+      statusId: sourceStatus.id,
+      frontmatter: { status: sourceStatus.name, Owners: ['Maria'] },
+    });
+    const boris = project({
+      path: 'Projects/B.md',
+      name: 'B',
+      statusId: targetStatus.id,
+      frontmatter: { status: targetStatus.name, Owners: ['Boris'] },
+    });
+    const maria = project({
+      path: 'Projects/C.md',
+      name: 'C',
+      statusId: targetStatus.id,
+      frontmatter: { status: targetStatus.name, Owners: ['Maria'] },
+    });
+    const { host, settings, view } = mountView([moving, boris, maria], {
+      catalog: catalog([{ name: 'Owners', type: 'list' }]),
+    });
+    settings.projects.propertyDefinitions['property:Owners'] = { type: 'list' };
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.groupBy = 'property:Owners';
+    settings.projects.kanban.sortBy = { field: 'none', dir: 'asc' };
+    settings.projects.kanban.collapsedColumns = [`id:${targetStatus.id}`];
+    view.refreshFields();
+    clickView(host, 'Kanban');
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const scrollTop =
+        host.querySelector<HTMLElement>('.abyss-project-kanban-hover-body')?.scrollTop ?? 0;
+      if (this.matches('.abyss-project-kanban-hover-preview')) return rectangle(0, 100, 272, 500);
+      if (this.matches('[data-group-key="value:boris"].abyss-project-kanban-hover-group'))
+        return rectangle(0, 140 - scrollTop, 272, 230 - scrollTop);
+      if (this.matches('[data-group-key="value:maria"].abyss-project-kanban-hover-group'))
+        return rectangle(0, 260 - scrollTop, 272, 420 - scrollTop);
+      if (this.matches('[data-project-path="Projects/C.md"].abyss-project-kanban-hover-card'))
+        return rectangle(4, 300 - scrollTop, 268, 330 - scrollTop);
+      return rectangle(0, 0, 1000, 700);
+    });
+    const card = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"]',
+      ),
+    );
+    const column = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
+      ),
+    );
+    const data = transfer();
+    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    card.dispatchEvent(dragEvent('dragstart', data));
+    column.dispatchEvent(dragEvent('dragover', data));
+    vi.advanceTimersByTime(450);
+
+    const overlay = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-kanban-hover-preview'),
+    );
+    expect(overlay.querySelectorAll('.abyss-project-kanban-hover-group')).toHaveLength(2);
+    const group = expectDefined(
+      overlay.querySelector<HTMLElement>(
+        '[data-group-key="value:maria"].abyss-project-kanban-hover-group',
+      ),
+    );
+    let marker = expectDefined(
+      group.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'),
+    );
+    expect(marker.parentElement).toBe(group);
+    expect(marker.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('70px');
+
+    expectDefined(
+      overlay.querySelector<HTMLElement>('.abyss-project-kanban-hover-body'),
+    ).scrollTop = 30;
+    column.dispatchEvent(dragEvent('dragover', data));
+    marker = expectDefined(
+      group.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'),
+    );
+    expect(marker.parentElement).toBe(group);
+    expect(marker.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('70px');
+  });
+
   it('restores focus to the exact destination occurrence after a list-group move', async () => {
     const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
     const moving = project({

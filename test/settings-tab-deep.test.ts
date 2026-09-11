@@ -1462,13 +1462,16 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(plugin.refreshProjectTableSettings).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps the project toolbar in the shared compact row at constrained widths', () => {
+  it('keeps the project toolbar contained at constrained panel widths', () => {
     expect(css).toContain('--abyss-center-toolbar-height: 60px');
     expect(css).toMatch(
       /\.abyss-center-header,\s*\.abyss-cal-nav\s*\{[^}]*min-height: var\(--abyss-center-toolbar-height\)/u,
     );
     expect(css).toMatch(
-      /@media \(width <= 720px\)[\s\S]*?\.abyss-projects-toolbar\s*\{[^}]*flex-wrap: nowrap/u,
+      /@container abyss-panel-layout \(max-width: 45rem\)[\s\S]*?\.abyss-projects-toolbar\s*\{(?=[^}]*display: grid)(?=[^}]*grid-template-columns: max-content minmax\(0, 1fr\))/u,
+    );
+    expect(css).toMatch(
+      /@container abyss-panel-layout \(max-width: 45rem\)[\s\S]*?\.abyss-project-status-filters\s*\{(?=[^}]*grid-row: 2)(?=[^}]*max-width: none)/u,
     );
     expect(css).toMatch(
       /@container abyss-task-list \(max-width: 30rem\)[\s\S]*?\.abyss-cal-nav\s*\{(?=[^}]*flex-wrap: nowrap)(?=[^}]*overflow-x: auto)/u,

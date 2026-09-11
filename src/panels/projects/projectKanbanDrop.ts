@@ -22,7 +22,7 @@ import type { Project } from '../../projects/types';
 import { evaluateQuery } from '../../query/evaluateQuery';
 import { planProjectGroupDrop, type ProjectTableDragGroup } from './projectTableDrag';
 
-export interface ProjectKanbanFieldGuard {
+interface ProjectKanbanFieldGuard {
   readonly fieldId: string;
   readonly fieldType: ProjectField['type'];
   readonly sourceProperty: string;
@@ -66,7 +66,7 @@ export interface ProjectKanbanDropInput extends Omit<
   rebase?: (value: unknown, sourcePath: string, destinationPath: string) => unknown;
 }
 
-export type ProjectKanbanInsertion =
+type ProjectKanbanInsertion =
   | {
       readonly kind: 'before';
       readonly groupKey: string;

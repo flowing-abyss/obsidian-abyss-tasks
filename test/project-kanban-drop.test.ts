@@ -115,6 +115,43 @@ describe('project Kanban drop planning', () => {
     });
   });
 
+  it('allows a sorted list-group assignment within the same status column', () => {
+    const moving = project('Projects/A.md', 'Planned', '2026-09-30', ['Anna', 'Maria']);
+    const target = project('Projects/C.md', 'Planned', '2026-09-20', ['Boris']);
+    const board = settings({
+      groupBy: 'property:Owners',
+      sortBy: { field: 'end', dir: 'asc' },
+    });
+    const input = planInput(moving, [moving, target], board);
+    input.source = captureProjectKanbanDropSource({
+      project: moving,
+      fields,
+      settings: board,
+      statusProperty: 'status',
+      statusKey: 'id:planned',
+      group: { key: 'value:anna', value: 'Anna', sourcePath: moving.path },
+    });
+    input.target.status = { key: 'id:planned', value: 'planned' };
+    input.target.group = { key: 'value:boris', value: 'Boris', sourcePath: target.path };
+
+    const result = planProjectKanbanDrop(input);
+
+    expect(result.allowed).toBe(true);
+    if (!result.allowed) return;
+    expect(result.changes).toMatchObject([
+      {
+        field: { id: 'property:Owners' },
+        expectedValue: ['Anna', 'Maria'],
+        value: ['Boris', 'Maria'],
+      },
+    ]);
+    expect(result.insertion).toEqual({
+      kind: 'after',
+      groupKey: 'value:boris',
+      afterPath: 'Projects/C.md',
+    });
+  });
+
   it('seeds manual order with hidden and unranked destination paths before inserting', () => {
     const moving = project('Projects/A.md', 'Planned', '2026-09-30');
     const hidden = project('Projects/Hidden.md', 'Active', '2026-09-01');

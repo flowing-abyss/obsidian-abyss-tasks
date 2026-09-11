@@ -29,7 +29,7 @@ import {
   type ProjectKanbanDropTarget,
 } from './projectKanbanDrop';
 
-export interface ProjectKanbanCellIdentity {
+interface ProjectKanbanCellIdentity {
   readonly occurrenceId: string;
   readonly projectPath: string;
   readonly groupKey: string;

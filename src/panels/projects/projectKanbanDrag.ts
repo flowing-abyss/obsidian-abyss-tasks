@@ -5,7 +5,7 @@ import type {
   ProjectKanbanDropTarget,
 } from './projectKanbanDrop';
 
-export const PROJECT_KANBAN_DRAG_TYPE = 'application/x-abyss-project-kanban-card';
+const PROJECT_KANBAN_DRAG_TYPE = 'application/x-abyss-project-kanban-card';
 
 export interface ProjectKanbanDragAdapter {
   readonly capture: (card: HTMLElement) => ProjectKanbanDropSource;
@@ -312,6 +312,7 @@ export class ProjectKanbanDragController {
     const card = this.insertionCard_abyssPrivate(actualGroup ?? zone, plan);
     const host =
       actualGroup?.querySelector<HTMLElement>('.abyss-project-kanban-group-body') ??
+      actualGroup ??
       zone.querySelector<HTMLElement>('.abyss-project-kanban-column-body') ??
       zone;
     const line = host.createDiv({ cls: 'abyss-project-kanban-insertion-line' });
