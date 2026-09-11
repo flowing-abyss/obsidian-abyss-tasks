@@ -1,6 +1,7 @@
 import {
   projectFieldValue,
   type ProjectColumn,
+  type ProjectDateDisplay,
   type ProjectFieldCatalogItem,
 } from '../../projects/projectFields';
 import type { ProjectKanbanSettings } from '../../projects/projectKanbanSettings';
@@ -9,7 +10,7 @@ import type { Project } from '../../projects/types';
 export interface ProjectKanbanCardField {
   readonly field: ProjectFieldCatalogItem;
   readonly label: string;
-  readonly dateDisplay?: 'relative';
+  readonly dateDisplay?: ProjectDateDisplay;
 }
 
 export function projectKanbanCardKey(groupKey: string, projectPath: string): string {

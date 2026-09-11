@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ProjectTableSettings } from '../src/projects/projectFields';
 import {
   buildDefaultProjectKanbanSettings,
+  isMalformedProjectKanbanSettings,
   normalizeProjectKanbanSettings,
 } from '../src/projects/projectKanbanSettings';
 
@@ -109,5 +110,24 @@ describe('project Kanban settings', () => {
     expect(result).toEqual(buildDefaultProjectKanbanSettings(source));
     expect(result.sortBy).not.toBe(source.sortBy);
     expect(result.hiddenStatuses).not.toBe(source.hiddenStatuses);
+  });
+
+  it('normalizes and validates explicit card date display modes', () => {
+    const raw = {
+      fields: [
+        { id: 'start', visible: true, dateDisplay: 'relative' },
+        { id: 'end', visible: true, dateDisplay: 'raw' },
+        { id: 'property:Review', visible: true, dateDisplay: 'pretty' },
+      ],
+    };
+
+    expect(normalizeProjectKanbanSettings(raw, table()).fields).toEqual(raw.fields);
+    expect(isMalformedProjectKanbanSettings(raw)).toBe(false);
+    expect(
+      normalizeProjectKanbanSettings(
+        { fields: [{ id: 'start', visible: true, dateDisplay: 'future-mode' }] },
+        table(),
+      ).fields,
+    ).toEqual([{ id: 'start', visible: true }]);
   });
 });

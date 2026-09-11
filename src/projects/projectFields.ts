@@ -7,6 +7,8 @@ export type ProjectPropertyType =
 
 export type ProjectColumnAlignment = 'left' | 'center' | 'right';
 
+export type ProjectDateDisplay = 'raw' | 'relative' | 'pretty';
+
 export interface ProjectField {
   id: string;
   property?: string;
@@ -24,7 +26,7 @@ export interface ProjectColumn {
   label?: string;
   width?: number;
   alignment?: ProjectColumnAlignment;
-  dateDisplay?: 'relative';
+  dateDisplay?: ProjectDateDisplay;
   visible: boolean;
 }
 

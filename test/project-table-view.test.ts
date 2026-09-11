@@ -220,6 +220,31 @@ function lastShownMenu(spy: { readonly mock: { readonly instances: readonly unkn
 }
 
 describe('ProjectsTableView', () => {
+  it('defaults valid dates to Pretty while preserving raw display, tooltip, and copy text', () => {
+    const config = settings();
+    expectDefined(config.projects.table.columns.find(({ id }) => id === 'end')).dateDisplay = 'raw';
+    const startRaw = '2026-09-10';
+    const endRaw = '2026-09-11T00:30:00-10:00';
+    const { host } = mount([project({ frontmatter: { start: startRaw, end: endRaw } })], {
+      settings: config,
+    });
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const end = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
+    );
+    const pretty = expectDefined(start.querySelector<HTMLElement>('.abyss-project-pretty-date'));
+
+    expect(pretty.textContent).toBe('Sep 10, 2026');
+    expect(pretty.title).toBe(startRaw);
+    expect(end.textContent).toBe(endRaw);
+    start.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const copied = transfer();
+    start.dispatchEvent(clipboardEvent('copy', copied));
+    expect(copied.getData('text/plain')).toBe(startRaw);
+  });
+
   it('refreshes relative date text in place and stops its one view timer on destroy', () => {
     vi.useFakeTimers({ now: new Date(2026, 8, 10, 23, 0, 0).getTime() });
     vi.spyOn(HTMLElement.prototype, 'isShown').mockReturnValue(true);
@@ -1397,17 +1422,27 @@ describe('ProjectsTableView', () => {
     expect(saveStatic).toHaveBeenCalledOnce();
 
     const endMenu = open('end');
-    activateMenuItem(submenu(endMenu, 'Date display'), 'Relative');
+    const dateDisplay = submenu(endMenu, 'Date display');
+    expect(menuItems(dateDisplay).map(({ title__ }) => title__)).toEqual([
+      'Pretty',
+      'Raw',
+      'Relative',
+    ]);
+    expect(menuItem(dateDisplay, 'Pretty').checked).toBe(true);
+    activateMenuItem(dateDisplay, 'Raw');
+    await flushMicrotasks();
+    expect(config.projects.table.columns.find(({ id }) => id === 'end')?.dateDisplay).toBe('raw');
+    activateMenuItem(submenu(open('end'), 'Date display'), 'Pretty');
+    await flushMicrotasks();
+    expect(config.projects.table.columns.find(({ id }) => id === 'end')?.dateDisplay).toBe(
+      'pretty',
+    );
+    activateMenuItem(submenu(open('end'), 'Date display'), 'Relative');
     await flushMicrotasks();
     expect(config.projects.table.columns.find(({ id }) => id === 'end')?.dateDisplay).toBe(
       'relative',
     );
-    activateMenuItem(submenu(open('end'), 'Date display'), 'Absolute');
-    await flushMicrotasks();
-    expect(
-      config.projects.table.columns.find(({ id }) => id === 'end')?.dateDisplay,
-    ).toBeUndefined();
-    expect(saveSettings).toHaveBeenCalledTimes(6);
+    expect(saveSettings).toHaveBeenCalledTimes(7);
   });
 
   it('keeps a changed type visible after static save failure and retries the latest draft', async () => {
@@ -2046,7 +2081,7 @@ describe('ProjectsTableView', () => {
       betaRowAfterUpdate.querySelector<HTMLElement>('[data-column-id="start"]'),
     );
     expect(betaStartAfterUpdate).toBe(betaStartBefore);
-    expect(betaStartAfterUpdate.textContent).toContain('2026-10-03');
+    expect(betaStartAfterUpdate.textContent).toContain('Oct 3, 2026');
     const alphaRowAfterFilter = expectDefined(
       host.querySelector<HTMLElement>('[data-project-path="Projects/A.md"]'),
     );
@@ -2065,7 +2100,7 @@ describe('ProjectsTableView', () => {
     expect(
       host.querySelector('[data-project-path="Projects/B.md"] [data-column-id="start"]')
         ?.textContent,
-    ).toContain('2026-10-03');
+    ).toContain('Oct 3, 2026');
   });
 
   it('opens the current retained cell on context click exactly once', async () => {
@@ -2155,7 +2190,7 @@ describe('ProjectsTableView', () => {
     expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
     expect(
       host.querySelector('.abyss-project-table-cell[data-column-id="end"]')?.textContent,
-    ).toContain('2026-10-10');
+    ).toContain('Oct 10, 2026');
     destroyMountedView(view);
   });
 

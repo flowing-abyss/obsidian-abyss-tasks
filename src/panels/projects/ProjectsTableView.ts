@@ -20,6 +20,7 @@ import {
   isReservedProjectProperty,
   projectFieldValue,
   type ProjectColumn,
+  type ProjectDateDisplay,
   type ProjectField,
   type ProjectFieldCatalogItem,
   type ProjectPropertyType,
@@ -1242,7 +1243,7 @@ export class ProjectsTableView {
         width: projectTableColumnWidth(column, field),
         type: field.type,
         alignment: column.alignment ?? 'left',
-        dateDisplay: column.dateDisplay ?? 'absolute',
+        dateDisplay: column.dateDisplay ?? 'pretty',
       })),
       sort: tableSettings.sortBy,
     });
@@ -1319,10 +1320,7 @@ export class ProjectsTableView {
     if (setProjectColumnAlignment(table, columnId, alignment)) this.persistAndRender_abyssPrivate();
   }
 
-  private setColumnDateDisplay_abyssPrivate(
-    columnId: string,
-    display: 'absolute' | 'relative',
-  ): void {
+  private setColumnDateDisplay_abyssPrivate(columnId: string, display: ProjectDateDisplay): void {
     const table = this.context_abyssPrivate.settings.projects.table;
     if (setProjectColumnDateDisplay(table, columnId, display)) this.persistAndRender_abyssPrivate();
   }

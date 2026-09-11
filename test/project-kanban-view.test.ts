@@ -1487,6 +1487,33 @@ describe('project Kanban overview', () => {
     expect(progress.hidden).toBe(false);
   });
 
+  it('renders card dates as Pretty by default and preserves explicit Raw values', () => {
+    const startRaw = '2026-09-10';
+    const endRaw = '2026-09-11T00:30:00-10:00';
+    const { host, settings } = mountView([
+      project({ frontmatter: { start: startRaw, end: endRaw } }),
+    ]);
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    expectDefined(settings.projects.kanban.fields.find(({ id }) => id === 'end')).dateDisplay =
+      'raw';
+
+    clickView(host, 'Kanban');
+
+    const start = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban [data-column-id="start"] .abyss-project-pretty-date',
+      ),
+    );
+    const end = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban .abyss-project-kanban-field-value[data-column-id="end"]',
+      ),
+    );
+    expect(start.textContent).toBe('Sep 10, 2026');
+    expect(start.title).toBe(startRaw);
+    expect(end.textContent).toBe(endRaw);
+  });
+
   it('detaches table aliases and relative dates when initializing board fields', () => {
     const { host, settings } = mountView();
     const start = expectDefined(settings.projects.table.columns.find(({ id }) => id === 'start'));

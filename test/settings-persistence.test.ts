@@ -245,7 +245,7 @@ describe('SettingsPersistenceCoordinator migration', () => {
     ).toEqual({ id: 'status', visible: true, futureColumnOption: 'keep' });
   });
 
-  it('roundtrips relative date display and explicitly removes it when restored to absolute', async () => {
+  it('roundtrips the old relative date display and preserves a missing Pretty default', async () => {
     const state = stateEnvelope();
     const views = state['views'] as Record<string, unknown>;
     const projects = views['projects'] as Record<string, unknown>;
@@ -271,6 +271,64 @@ describe('SettingsPersistenceCoordinator migration', () => {
     expect(
       expectDefined(saved.views.projects.table.columns.find(({ id }) => id === 'start')),
     ).toEqual({ id: 'start', visible: true, futureColumnOption: 'keep' });
+  });
+
+  it('roundtrips explicit Pretty and Raw modes for table columns and Kanban fields', async () => {
+    const table = structuredClone(DEFAULT_SETTINGS.projects.table) as unknown as Record<
+      string,
+      unknown
+    >;
+    const columns = table['columns'] as Array<Record<string, unknown>>;
+    expectDefined(columns.find(({ id }) => id === 'start'))['dateDisplay'] = 'pretty';
+    expectDefined(columns.find(({ id }) => id === 'end'))['dateDisplay'] = 'raw';
+    const kanban = buildDefaultProjectKanbanSettings(DEFAULT_SETTINGS.projects.table);
+    const state = stateEnvelope({
+      projects: {
+        table,
+        kanban: {
+          ...kanban,
+          fields: [
+            { id: 'start', visible: true, dateDisplay: 'raw' },
+            { id: 'end', visible: true, dateDisplay: 'pretty' },
+          ],
+        },
+      },
+    });
+    const port = memoryPort(markedStatic(), state);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+
+    expect(loaded.settings.projects.table.columns.find(({ id }) => id === 'start')).toMatchObject({
+      dateDisplay: 'pretty',
+    });
+    expect(loaded.settings.projects.table.columns.find(({ id }) => id === 'end')).toMatchObject({
+      dateDisplay: 'raw',
+    });
+    expect(loaded.settings.projects.kanban?.fields).toEqual([
+      { id: 'start', visible: true, dateDisplay: 'raw' },
+      { id: 'end', visible: true, dateDisplay: 'pretty' },
+    ]);
+    await coordinator.saveViewState(loaded.settings);
+
+    const saved = JSON.parse(port.stateText ?? '') as {
+      views: {
+        projects: {
+          table: { columns: Array<Record<string, unknown>> };
+          kanban: { fields: Array<Record<string, unknown>> };
+        };
+      };
+    };
+    expect(saved.views.projects.table.columns.find(({ id }) => id === 'start')).toMatchObject({
+      dateDisplay: 'pretty',
+    });
+    expect(saved.views.projects.table.columns.find(({ id }) => id === 'end')).toMatchObject({
+      dateDisplay: 'raw',
+    });
+    expect(saved.views.projects.kanban.fields).toEqual([
+      { id: 'start', visible: true, dateDisplay: 'raw' },
+      { id: 'end', visible: true, dateDisplay: 'pretty' },
+    ]);
   });
 
   it('loads extensions roundtripped by the cc84b5d serializer without losing raw values', async () => {

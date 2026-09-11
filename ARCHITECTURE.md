@@ -194,8 +194,10 @@ rendering and later edits. A shared link-target helper strips note subpaths and 
 path escaping only for native lookup; absolute external Markdown targets instead keep their exact,
 source-independent identity. It also owns the shared progress calculation: completed top-level
 tasks divided by all non-cancelled top-level tasks. `projectTableSettings` owns defaults and
-normalization for saved column order, aliases, widths, alignment, visibility, absolute or relative
-date presentation, under-name description display, grouping, sorting, and hidden statuses. An
+normalization for saved column order, aliases, widths, alignment, visibility, raw, relative, or
+pretty date presentation, under-name description display, grouping, sorting, and hidden statuses.
+Missing date presentation adopts Pretty while explicit modes roundtrip through table and Kanban
+view state. An
 explicit `none` sort preserves incoming project order. A legacy custom description column becomes the under-name
 display preference while valid grouping and sorting references are remapped to the curated field.
 These preferences live under `projects.table`; project metadata remains in Markdown.
@@ -258,11 +260,12 @@ through its selection identity. Presentation choices use the view-state save pat
 changes mutate the shared static definition, preserve its preset payload, refresh the current table
 session, and use the composition root's static settings save callback with current-draft retry.
 
-Relative project dates are derived from authored strict date strings by the pure
-`projectDatePresentation` formatter. `ProjectsTableView` owns one minute timer for all visible
-relative temporal columns and refreshes only their text spans on ticks and foreground resume. It
-stops the timer at teardown and leaves table nodes, selection, editors, source values, and persistence
-untouched.
+Pretty and Relative project dates share the strict parser in the pure `projectDatePresentation`
+formatter. Pretty preserves date-only calendar values and converts offset datetimes to the system
+timezone; invalid values fall back to their authored text. `ProjectsTableView` owns one minute timer
+for all visible relative temporal columns and refreshes only their text spans on ticks and
+foreground resume. It stops the timer at teardown and leaves table nodes, selection, editors,
+source values, tooltips, clipboard values, and persistence untouched.
 
 `ProjectsTableView` owns spreadsheet selection as an occurrence-and-column range over the current
 visible projection. Repeated list-group occurrences remain distinct in that transient range, while

@@ -264,12 +264,14 @@ describe('projectFieldValue', () => {
 });
 
 describe('normalizeProjectTableSettings', () => {
-  it('normalizes relative date display and explicit no-sort without rewriting old columns', () => {
+  it('normalizes every date display mode and explicit no-sort without rewriting old columns', () => {
     const result = normalizeProjectTableSettings({
       columns: [
         { id: 'name', visible: true },
         { id: 'start', visible: true, dateDisplay: 'relative' },
-        { id: 'end', visible: true, dateDisplay: 'future-mode' },
+        { id: 'end', visible: true, dateDisplay: 'raw' },
+        { id: 'property:Review', visible: true, dateDisplay: 'pretty' },
+        { id: 'property:Invalid', visible: true, dateDisplay: 'future-mode' },
       ],
       sortBy: { field: 'none', dir: 'asc' },
     });
@@ -278,7 +280,13 @@ describe('normalizeProjectTableSettings', () => {
     expect(result.columns.find(({ id }) => id === 'start')).toMatchObject({
       dateDisplay: 'relative',
     });
-    expect(result.columns.find(({ id }) => id === 'end')).not.toHaveProperty('dateDisplay');
+    expect(result.columns.find(({ id }) => id === 'end')).toMatchObject({ dateDisplay: 'raw' });
+    expect(result.columns.find(({ id }) => id === 'property:Review')).toMatchObject({
+      dateDisplay: 'pretty',
+    });
+    expect(result.columns.find(({ id }) => id === 'property:Invalid')).not.toHaveProperty(
+      'dateDisplay',
+    );
     expect(normalizeProjectTableSettings(undefined).columns).toEqual([
       { id: 'name', visible: true },
       { id: 'status', visible: true },

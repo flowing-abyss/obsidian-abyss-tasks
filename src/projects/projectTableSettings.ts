@@ -1,4 +1,9 @@
-import type { ProjectColumn, ProjectColumnAlignment, ProjectTableSettings } from './projectFields';
+import type {
+  ProjectColumn,
+  ProjectColumnAlignment,
+  ProjectDateDisplay,
+  ProjectTableSettings,
+} from './projectFields';
 
 const DEFAULT_COLUMNS: readonly ProjectColumn[] = [
   { id: 'name', visible: true },
@@ -20,6 +25,10 @@ function normalizedAlignment(value: unknown): ProjectColumnAlignment | undefined
   return value === 'center' || value === 'right' ? value : undefined;
 }
 
+function normalizedDateDisplay(value: unknown): ProjectDateDisplay | undefined {
+  return value === 'raw' || value === 'relative' || value === 'pretty' ? value : undefined;
+}
+
 function normalizeColumn(value: unknown): ProjectColumn | undefined {
   if (!isRecord(value) || typeof value['id'] !== 'string' || value['id'].length === 0) {
     return undefined;
@@ -33,7 +42,8 @@ function normalizeColumn(value: unknown): ProjectColumn | undefined {
   if (width !== undefined) column.width = width;
   const alignment = normalizedAlignment(value['alignment']);
   if (alignment !== undefined) column.alignment = alignment;
-  if (value['dateDisplay'] === 'relative') column.dateDisplay = 'relative';
+  const dateDisplay = normalizedDateDisplay(value['dateDisplay']);
+  if (dateDisplay !== undefined) column.dateDisplay = dateDisplay;
   return column;
 }
 

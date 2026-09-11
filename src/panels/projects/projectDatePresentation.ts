@@ -3,11 +3,30 @@ const ISO_TIME = /^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:\d{2
 
 let cachedRelativeTimeFormat:
   { readonly locale: string; readonly value: Intl.RelativeTimeFormat } | undefined;
+let cachedPrettyDateFormat:
+  { readonly locale: string; readonly value: Intl.DateTimeFormat } | undefined;
+let cachedPrettyDateTimeFormat:
+  { readonly locale: string; readonly value: Intl.DateTimeFormat } | undefined;
 
 function relativeTimeFormat(locale: string): Intl.RelativeTimeFormat {
   if (cachedRelativeTimeFormat?.locale === locale) return cachedRelativeTimeFormat.value;
   const value = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
   cachedRelativeTimeFormat = { locale, value };
+  return value;
+}
+
+function prettyDateFormat(locale: string, includeTime: boolean): Intl.DateTimeFormat {
+  const cached = includeTime ? cachedPrettyDateTimeFormat : cachedPrettyDateFormat;
+  if (cached?.locale === locale) return cached.value;
+  const value = new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    ...(includeTime ? { hour: 'numeric', minute: '2-digit' } : {}),
+  });
+  const entry = { locale, value };
+  if (includeTime) cachedPrettyDateTimeFormat = entry;
+  else cachedPrettyDateFormat = entry;
   return value;
 }
 
@@ -23,10 +42,10 @@ function parseDateParts(value: string): readonly [number, number, number] | unde
   return validDateParts(...parts) ? parts : undefined;
 }
 
-function dateOnlyDifference(value: string, now: Date): number | undefined {
-  const parts = parseDateParts(value);
-  if (parts === undefined) return undefined;
-  const [year, month, day] = parts;
+function dateOnlyDifference(value: Date, now: Date): number {
+  const year = value.getFullYear();
+  const month = value.getMonth() + 1;
+  const day = value.getDate();
   const targetOrdinal = Date.UTC(year, month - 1, day);
   const nowOrdinal = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
   return (targetOrdinal - nowOrdinal) / 86_400_000;
@@ -81,6 +100,22 @@ function validDateTime(value: string): Date | undefined {
   return new Date(timestamp);
 }
 
+interface ParsedProjectDate {
+  readonly kind: 'date' | 'datetime';
+  readonly value: Date;
+}
+
+function parseProjectDate(value: unknown): ParsedProjectDate | undefined {
+  if (typeof value !== 'string' || value.trim() !== value || value.length === 0) return undefined;
+  const dateParts = parseDateParts(value);
+  if (dateParts !== undefined) {
+    const [year, month, day] = dateParts;
+    return { kind: 'date', value: new Date(year, month - 1, day) };
+  }
+  const datetime = validDateTime(value);
+  return datetime === undefined ? undefined : { kind: 'datetime', value: datetime };
+}
+
 function signedNearest(value: number): number {
   return Math.sign(value) * Math.round(Math.abs(value));
 }
@@ -91,14 +126,14 @@ export function formatProjectRelativeDate(
   now: Date,
   locale: string,
 ): string | undefined {
-  if (typeof value !== 'string' || value.trim() !== value || value.length === 0) return undefined;
-  const dayDifference = dateOnlyDifference(value, now);
+  const parsed = parseProjectDate(value);
+  if (parsed === undefined) return undefined;
   const formatter = relativeTimeFormat(locale);
-  if (dayDifference !== undefined) return formatter.format(dayDifference, 'day');
+  if (parsed.kind === 'date') {
+    return formatter.format(dateOnlyDifference(parsed.value, now), 'day');
+  }
 
-  const target = validDateTime(value);
-  if (target === undefined) return undefined;
-  const milliseconds = target.getTime() - now.getTime();
+  const milliseconds = parsed.value.getTime() - now.getTime();
   const absoluteMilliseconds = Math.abs(milliseconds);
   if (absoluteMilliseconds < 30_000) return formatter.format(0, 'second');
   if (absoluteMilliseconds < 3_600_000)
@@ -106,4 +141,11 @@ export function formatProjectRelativeDate(
   if (absoluteMilliseconds < 86_400_000)
     return formatter.format(signedNearest(milliseconds / 3_600_000), 'hour');
   return formatter.format(signedNearest(milliseconds / 86_400_000), 'day');
+}
+
+/** Formats strict project dates in the system timezone without changing their authored value. */
+export function formatProjectPrettyDate(value: unknown, locale: string): string | undefined {
+  const parsed = parseProjectDate(value);
+  if (parsed === undefined) return undefined;
+  return prettyDateFormat(locale, parsed.kind === 'datetime').format(parsed.value);
 }

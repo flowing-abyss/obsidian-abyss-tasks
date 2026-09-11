@@ -2,6 +2,7 @@ import { setIcon } from 'obsidian';
 import type {
   ProjectColumn,
   ProjectColumnAlignment,
+  ProjectDateDisplay,
   ProjectFieldCatalogItem,
   ProjectPropertyType,
 } from '../../projects/projectFields';
@@ -20,7 +21,7 @@ export interface ProjectTableColumnOptions {
   readonly onRename: (columnId: string, label: string) => void;
   readonly beforeAction: (action: () => void) => void;
   readonly onAlignment: (columnId: string, alignment: ProjectColumnAlignment) => void;
-  readonly onDateDisplay: (columnId: string, display: 'absolute' | 'relative') => void;
+  readonly onDateDisplay: (columnId: string, display: ProjectDateDisplay) => void;
   readonly typeChoices: (columnId: string) => readonly ProjectPropertyType[];
   readonly onType: (columnId: string, type: ProjectPropertyType) => void;
   readonly restoreTableFocus: () => boolean;

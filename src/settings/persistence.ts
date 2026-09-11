@@ -199,6 +199,7 @@ function decodeSectionCollapse(
 }
 
 const COLUMN_ALIGNMENTS = new Set<unknown>(['left', 'center', 'right']);
+const PROJECT_DATE_DISPLAYS = new Set<unknown>(['raw', 'relative', 'pretty']);
 
 function malformedOptional(value: unknown, type: 'boolean' | 'string'): boolean {
   return value !== undefined && typeof value !== type;
@@ -215,7 +216,7 @@ function hasMalformedColumnPresentation(value: Record<string, unknown>): boolean
   return (
     malformedOptional(value['visible'], 'boolean') ||
     malformedOptional(value['label'], 'string') ||
-    (value['dateDisplay'] !== undefined && value['dateDisplay'] !== 'relative') ||
+    (value['dateDisplay'] !== undefined && !PROJECT_DATE_DISPLAYS.has(value['dateDisplay'])) ||
     !validAlignment ||
     malformedColumnWidth(value['width'])
   );
