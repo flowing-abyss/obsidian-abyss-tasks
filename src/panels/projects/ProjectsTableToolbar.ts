@@ -1,18 +1,27 @@
 import { setIcon } from 'obsidian';
 import type { ProjectFieldCatalogItem, ProjectTableSettings } from '../../projects/projectFields';
+import type {
+  ProjectKanbanSettings,
+  ProjectOverviewMode,
+} from '../../projects/projectKanbanSettings';
 import { buildDefaultProjectTableSettings } from '../../projects/projectTableSettings';
 import type { StatusGroup } from '../../projects/status';
 import { openViewOptionsPopover, type ViewOptionsRow } from '../../ui/ViewOptionsPopover';
+import { isProjectKanbanCustomized, projectKanbanOptionsRows } from './ProjectKanbanOptions';
 
 export interface ProjectsTableToolbarOptions {
   readonly host: HTMLElement;
-  readonly settings: ProjectTableSettings;
+  readonly settings: () => ProjectTableSettings | ProjectKanbanSettings;
+  readonly tableSettings: () => ProjectTableSettings;
+  readonly mode: () => ProjectOverviewMode;
   readonly fields: () => readonly ProjectFieldCatalogItem[];
   readonly onSearch: (query: string) => void;
   readonly onStatusToggle: (key: string) => void;
   readonly onGroupBy: (field: string) => void;
   readonly onSortBy: (field: string) => void;
   readonly onReset: () => void;
+  readonly onOverviewMode: (mode: ProjectOverviewMode) => void;
+  readonly onViewOptionChange: () => void;
 }
 
 function fieldLabel(
@@ -26,6 +35,12 @@ function fieldLabel(
     fields.find((field) => field.id === id)?.label ??
     id
   );
+}
+
+function isTableSettings(
+  settings: ProjectTableSettings | ProjectKanbanSettings,
+): settings is ProjectTableSettings {
+  return 'columns' in settings;
 }
 
 function isCustomized(settings: ProjectTableSettings): boolean {
@@ -43,6 +58,8 @@ export class ProjectsTableToolbar {
   readonly searchInput: HTMLInputElement;
   private readonly badges_abyssPrivate: HTMLElement;
   private readonly viewButton_abyssPrivate: HTMLButtonElement;
+  private readonly modeButtons_abyssPrivate = new Map<ProjectOverviewMode, HTMLButtonElement>();
+  private readonly statusButtons_abyssPrivate = new Map<string, HTMLButtonElement>();
   private popoverCleanup_abyssPrivate: (() => void) | undefined;
 
   constructor(private readonly options_abyssPrivate: ProjectsTableToolbarOptions) {
@@ -66,6 +83,20 @@ export class ProjectsTableToolbar {
     this.viewButton_abyssPrivate.addEventListener('click', () => {
       this.togglePopover_abyssPrivate();
     });
+    for (const [mode, label, icon] of [
+      ['table', 'Table view', 'table-2'],
+      ['kanban', 'Kanban view', 'columns-3'],
+    ] as const) {
+      const button = controls.createEl('button', {
+        cls: `abyss-project-overview-mode abyss-project-overview-mode--${mode}`,
+        attr: { type: 'button', 'aria-label': label, 'aria-pressed': 'false' },
+      });
+      setIcon(button, icon);
+      button.addEventListener('click', () => {
+        options_abyssPrivate.onOverviewMode(mode);
+      });
+      this.modeButtons_abyssPrivate.set(mode, button);
+    }
     this.searchInput = controls.createEl('input', {
       cls: 'abyss-center-search',
       attr: { type: 'text', placeholder: 'Filter…', 'aria-label': 'Filter projects' },
@@ -73,31 +104,45 @@ export class ProjectsTableToolbar {
     this.searchInput.addEventListener('input', () => {
       options_abyssPrivate.onSearch(this.searchInput.value);
     });
-    this.syncViewButton();
+    this.sync();
   }
 
   update(statuses: readonly StatusGroup[]): void {
-    this.badges_abyssPrivate.empty();
-    const hidden = new Set(this.options_abyssPrivate.settings.hiddenStatuses);
+    const settings = this.options_abyssPrivate.settings();
+    const hidden = new Set(settings.hiddenStatuses);
+    const retained = new Set<string>();
     for (const status of statuses) {
+      retained.add(status.key);
       const disabled = hidden.has(status.key);
-      const button = this.badges_abyssPrivate.createEl('button', {
-        cls: `abyss-project-status-filter${disabled ? ' is-disabled' : ''}`,
-        text: status.label,
-        attr: {
-          type: 'button',
-          'aria-pressed': String(!disabled),
-          'data-status-key': status.key,
-        },
-      });
+      let button = this.statusButtons_abyssPrivate.get(status.key);
+      if (button === undefined) {
+        button = this.badges_abyssPrivate.createEl('button', {
+          cls: 'abyss-project-status-filter',
+          attr: { type: 'button', 'data-status-key': status.key },
+        });
+        button.addEventListener('click', () => {
+          this.options_abyssPrivate.onStatusToggle(status.key);
+        });
+        this.statusButtons_abyssPrivate.set(status.key, button);
+      }
+      button.setText(status.label);
+      button.toggleClass('is-disabled', disabled);
+      button.setAttribute('aria-pressed', String(!disabled));
+      button.style.removeProperty('--abyss-project-status-color');
       if (status.color !== undefined && status.color.length > 0) {
         button.style.setProperty('--abyss-project-status-color', status.color);
       }
-      button.addEventListener('click', () => {
-        this.options_abyssPrivate.onStatusToggle(status.key);
-      });
     }
-    this.syncViewButton();
+    for (const [key, button] of this.statusButtons_abyssPrivate) {
+      if (retained.has(key)) continue;
+      button.remove();
+      this.statusButtons_abyssPrivate.delete(key);
+    }
+    this.sync();
+  }
+
+  setSearchValue(value: string): void {
+    if (this.searchInput.value !== value) this.searchInput.value = value;
   }
 
   destroy(): void {
@@ -105,11 +150,18 @@ export class ProjectsTableToolbar {
     this.popoverCleanup_abyssPrivate = undefined;
   }
 
-  private syncViewButton(): void {
-    this.viewButton_abyssPrivate.classList.toggle(
-      'abyss-view-state-btn--active',
-      isCustomized(this.options_abyssPrivate.settings),
-    );
+  private sync(): void {
+    const mode = this.options_abyssPrivate.mode();
+    for (const [candidate, button] of this.modeButtons_abyssPrivate) {
+      const active = candidate === mode;
+      button.toggleClass('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
+    const settings = this.options_abyssPrivate.settings();
+    const customized = isTableSettings(settings)
+      ? isCustomized(settings)
+      : isProjectKanbanCustomized(settings, this.options_abyssPrivate.tableSettings());
+    this.viewButton_abyssPrivate.classList.toggle('abyss-view-state-btn--active', customized);
   }
 
   private togglePopover_abyssPrivate(): void {
@@ -117,8 +169,38 @@ export class ProjectsTableToolbar {
       this.popoverCleanup_abyssPrivate();
       return;
     }
-    const { settings } = this.options_abyssPrivate;
+    const settings = this.options_abyssPrivate.settings();
     const fields = this.options_abyssPrivate.fields();
+    const rows = isTableSettings(settings)
+      ? this.tableRows_abyssPrivate(settings, fields)
+      : projectKanbanOptionsRows({
+          settings,
+          tableSettings: this.options_abyssPrivate.tableSettings(),
+          fields,
+          onChange: this.options_abyssPrivate.onViewOptionChange,
+        });
+    const customized = isTableSettings(settings)
+      ? isCustomized(settings)
+      : isProjectKanbanCustomized(settings, this.options_abyssPrivate.tableSettings());
+    const close = openViewOptionsPopover({
+      host: this.options_abyssPrivate.host,
+      anchor: this.viewButton_abyssPrivate,
+      rows,
+      showReset: customized,
+      onReset: this.options_abyssPrivate.onReset,
+      onClose: () => {
+        if (this.popoverCleanup_abyssPrivate === close) {
+          this.popoverCleanup_abyssPrivate = undefined;
+        }
+      },
+    });
+    this.popoverCleanup_abyssPrivate = close;
+  }
+
+  private tableRows_abyssPrivate(
+    settings: ProjectTableSettings,
+    fields: readonly ProjectFieldCatalogItem[],
+  ): ViewOptionsRow[] {
     const configured = new Set(settings.columns.map(({ id }) => id));
     configured.add(settings.groupBy);
     configured.add(settings.sortBy.field);
@@ -129,7 +211,7 @@ export class ProjectsTableToolbar {
         ? 'None'
         : `${fieldLabel(fields, settings, settings.sortBy.field)} ${arrow}`;
     const defaultSortField = buildDefaultProjectTableSettings().sortBy.field;
-    const rows: ViewOptionsRow[] = [
+    return [
       {
         kind: 'single',
         icon: 'layout-list',
@@ -168,18 +250,5 @@ export class ProjectsTableToolbar {
         },
       },
     ];
-    const close = openViewOptionsPopover({
-      host: this.options_abyssPrivate.host,
-      anchor: this.viewButton_abyssPrivate,
-      rows,
-      showReset: isCustomized(settings),
-      onReset: this.options_abyssPrivate.onReset,
-      onClose: () => {
-        if (this.popoverCleanup_abyssPrivate === close) {
-          this.popoverCleanup_abyssPrivate = undefined;
-        }
-      },
-    });
-    this.popoverCleanup_abyssPrivate = close;
   }
 }

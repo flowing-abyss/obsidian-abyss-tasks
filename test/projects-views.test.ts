@@ -3,6 +3,7 @@ import { AppState } from '../src/app/AppState';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
+import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { expectDefined, freshContainer } from './helpers';
@@ -160,6 +161,36 @@ describe('ProjectsPanel dispatch', () => {
     expect(el.querySelector<HTMLInputElement>('.abyss-center-search')).toBe(search);
     expect(search.value).toBe('A');
     expect(scroll.scrollTop).toBe(33);
+  });
+
+  it('keeps the selected Kanban card and board scroll positions when returning from a dashboard', () => {
+    const state = new AppState();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.overviewView = 'kanban';
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
+      projectProperties,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    const board = expectDefined(el.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
+    const column = expectDefined(
+      el.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+    );
+    const card = expectDefined(el.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    board.scrollLeft = 47;
+    column.scrollTop = 31;
+    card.click();
+    expect(panel.selectedProjectPath()).toBe('Projects/A.md');
+
+    expectDefined(card.querySelector<HTMLButtonElement>('.abyss-project-table-name')).click();
+    expect(el.querySelector('.abyss-projects-dashboard')).not.toBeNull();
+    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-back')).click();
+
+    expect(el.querySelector<HTMLElement>('.abyss-project-kanban-scroll')).toBe(board);
+    expect(board.scrollLeft).toBe(47);
+    expect(column.scrollTop).toBe(31);
+    expect(panel.selectedProjectPath()).toBe('Projects/A.md');
   });
 
   it('repaints column settings without a project-data change and defers safely for an active draft', () => {

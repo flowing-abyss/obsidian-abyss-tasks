@@ -27,6 +27,7 @@ export interface ViewOptionsMultiRow extends ViewOptionsRowBase {
   readonly options: readonly ViewOption[];
   readonly presets?: ReadonlyArray<{ label: string; active?: boolean; onSelect: () => void }>;
   readonly onToggle: (value: string) => void;
+  readonly onMove?: (value: string, direction: 'up' | 'down') => void;
 }
 
 export type ViewOptionsRow = ViewOptionsSingleRow | ViewOptionsMultiRow;
@@ -72,12 +73,29 @@ function renderMultiOptions(sublist: HTMLElement, spec: ViewOptionsMultiRow): vo
     sublist.createDiv({ cls: 'abyss-view-state-sublist-divider' });
   }
   for (const option of spec.options) {
-    optionButton(sublist, option.label, spec.selected.includes(option.value)).addEventListener(
+    const row = sublist.createDiv({ cls: 'abyss-view-state-option-row' });
+    optionButton(row, option.label, spec.selected.includes(option.value)).addEventListener(
       'click',
       () => {
         spec.onToggle(option.value);
       },
     );
+    renderMoveButtons(row, option, spec);
+  }
+}
+
+function renderMoveButtons(row: HTMLElement, option: ViewOption, spec: ViewOptionsMultiRow): void {
+  const onMove = spec.onMove;
+  if (onMove === undefined || !spec.selected.includes(option.value)) return;
+  for (const direction of ['up', 'down'] as const) {
+    const move = row.createEl('button', {
+      cls: 'abyss-view-state-option-move',
+      attr: { type: 'button', 'aria-label': `Move ${option.label} ${direction}` },
+    });
+    setIcon(move, direction === 'up' ? 'chevron-up' : 'chevron-down');
+    move.addEventListener('click', () => {
+      onMove(option.value, direction);
+    });
   }
 }
 

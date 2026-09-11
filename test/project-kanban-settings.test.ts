@@ -26,7 +26,7 @@ describe('project Kanban settings', () => {
 
     expect(board).toEqual({
       fields: [
-        { id: 'start', visible: true },
+        { id: 'start', label: 'Begins', visible: true, dateDisplay: 'relative' },
         { id: 'end', visible: true },
       ],
       showEmptyFields: false,

@@ -1107,7 +1107,7 @@ describe('ProjectsTableView', () => {
     }
   });
 
-  it('keeps available status badges visible while toggling their persisted filters', async () => {
+  it('patches available status badges in place while toggling their persisted filters', async () => {
     const { host, config, saveSettings } = mount([
       project({}),
       project({ path: 'Projects/U.md', name: 'Unknown', statusId: null, rawStatus: 'waiting' }),
@@ -1119,6 +1119,7 @@ describe('ProjectsTableView', () => {
       ),
     );
 
+    button.focus();
     button.click();
     await flushMicrotasks();
 
@@ -1127,10 +1128,17 @@ describe('ProjectsTableView', () => {
     expect(host.querySelector('[data-status-key="raw:waiting"]')).not.toBeNull();
     expect(host.querySelector('[data-status-key="none"]')).not.toBeNull();
     expect(host.querySelectorAll('[data-project-path="Projects/A.md"]')).toHaveLength(0);
-    expect(button.isConnected).toBe(false);
+    expect(button.isConnected).toBe(true);
+    expect(host.querySelector(`[data-status-key="id:${active.id}"]`)).toBe(button);
+    expect(button.ownerDocument.activeElement).toBe(button);
     expect(
       host.querySelector(`[data-status-key="id:${active.id}"]`)?.classList.contains('is-disabled'),
     ).toBe(true);
+    button.click();
+    await flushMicrotasks();
+    expect(config.projects.table.hiddenStatuses).not.toContain(`id:${active.id}`);
+    expect(saveSettings).toHaveBeenCalledTimes(2);
+    expect(button.textContent).toBe(active.displayName ?? active.name);
   });
 
   it('renders the configured status as editable when the native catalog is unavailable', () => {

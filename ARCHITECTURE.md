@@ -208,12 +208,22 @@ projects by the shared status-group identity, then delegates search, typed sorti
 grouping to `projectTableModel`; configured statuses remain ordered even when empty, while synthetic
 raw and No status columns exist only for source values that are present.
 
-`ProjectsPanel` owns the long-lived project-table controller and the vault property-catalog
+`ProjectsPanel` owns one long-lived project-overview controller and the vault property-catalog
 subscription. Ordinary project-store refreshes update that controller instead of reconstructing
-it, so search text, collapsed groups, scroll position, focused cells, and active editor drafts remain
-session state. The controller renders the table through the shared view-options primitive and sends
-all edits through `ProjectManager`; it does not write Markdown or frontmatter itself. Switching to a
-project dashboard temporarily detaches the table surface, and returning reattaches the same session.
+it. The controller keeps the shared toolbar, editor boundary, mutation queue, receipt projection,
+source observations, and edit history while delegating keyed board DOM to `ProjectsKanbanView`.
+Table and Kanban retain separate searches, selections, filters, sorting, grouping, and viewport
+positions; switching hides the inactive surface without destroying its nodes. Both surfaces render
+metadata and progress through the shared project-cell renderer and send edits through the same
+`ProjectManager.applyEdits` coordinator. Switching to a project dashboard temporarily detaches the
+overview surface, and returning reattaches the same session and active overview mode.
+
+`ProjectsKanbanView` projects ordered status columns and optional inner groups from
+`projectKanbanModel`. It reconciles columns by status key, cards by grouped project occurrence, and
+fields by catalog id, moving surviving card elements between columns. Its context contains only
+rendering, selection, and view-state callbacks from the overview controller; it does not construct a
+manager, history, receipt cache, or Markdown writer. Exposed column, group, card, and cell contexts
+are the native drag-and-drop adapter seam.
 
 `ProjectsTableView` also owns a long-lived table element and reconciles its body by group key,
 project path, and field id. Projection changes patch changed cell contents, insert or remove affected
@@ -447,8 +457,8 @@ for same-file metadata changes.
 
 1. The interface chooses and freezes a capture context before asking `TaskCaptureApplicationApi` to
    plan a destination.
-2. For the project table, `PanelView` delegates through `CenterPanel` and `ProjectsPanel` to the
-   table's active visible occurrence; an absent selection retains the default projects context.
+2. For the project overview, `PanelView` delegates through `CenterPanel` and `ProjectsPanel` to the
+   active table row or Kanban card; an absent selection retains the default projects context.
 3. The destination provider resolves today's note or the configured file, while project contexts
    use the selected note and the existing project insertion policy.
 4. The ready creation session sends the create command through the application service and

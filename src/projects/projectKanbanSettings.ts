@@ -100,11 +100,13 @@ function normalizedBoolean(value: unknown, fallback: boolean): boolean {
 export function buildDefaultProjectKanbanSettings(
   table: ProjectTableSettings,
 ): ProjectKanbanSettings {
+  const initialField = (id: string): ProjectColumn => ({
+    ...(table.columns.find((column) => column.id === id) ?? { id }),
+    id,
+    visible: true,
+  });
   return {
-    fields: [
-      { id: 'start', visible: true },
-      { id: 'end', visible: true },
-    ],
+    fields: [initialField('start'), initialField('end')],
     showEmptyFields: false,
     descriptionLines: 1,
     progress: 'full',

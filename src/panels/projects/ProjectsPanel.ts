@@ -20,7 +20,7 @@ export interface ProjectsPanelOptions {
   projectProperties?: ProjectPropertyCatalog;
 }
 
-/** Owns one long-lived table session and swaps it with the existing dashboard. */
+/** Owns one long-lived project overview session and swaps it with the existing dashboard. */
 export class ProjectsPanel {
   private readonly state: AppState;
   private readonly projectStore: ProjectStore;
@@ -51,7 +51,7 @@ export class ProjectsPanel {
     this.saveViewState = opts.saveViewState ?? (async (): Promise<void> => {});
     this.saveStatic = opts.saveStatic;
     this.projectProperties = opts.projectProperties ?? new ObsidianProjectProperties(app);
-    this.editHistory = new ProjectEditHistory((changes) => this.applyTableEdits(changes));
+    this.editHistory = new ProjectEditHistory((changes) => this.applyProjectEdits(changes));
   }
 
   mount(el: HTMLElement): void {
@@ -65,7 +65,7 @@ export class ProjectsPanel {
       catalog: this.projectProperties,
       saveViewState: this.saveViewState,
       ...(this.saveStatic === undefined ? {} : { saveStatic: this.saveStatic }),
-      applyEdits: (changes) => this.applyTableEdits(changes),
+      applyEdits: (changes) => this.applyProjectEdits(changes),
       history: this.editHistory,
       createProject: (name) => this.createProject(name),
       openProject: (path) => {
@@ -96,12 +96,12 @@ export class ProjectsPanel {
     else this.renderDashboard(view.path);
   }
 
-  /** Rebuilds table field/column projections while preserving the owned table session. */
+  /** Rebuilds overview field projections while preserving the owned table and board sessions. */
   refreshTableSettings(): void {
     this.tableView?.refreshFields();
   }
 
-  /** Runs an action after the table's active draft is committed or explicitly cancelled. */
+  /** Runs an action after the project overview's active draft is committed or cancelled. */
   finishTableEditorBefore(action: () => void): void {
     const table = this.tableView;
     if (table === null) action();
@@ -140,7 +140,9 @@ export class ProjectsPanel {
     this.projectStore.refresh();
   }
 
-  private async applyTableEdits(changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> {
+  private async applyProjectEdits(
+    changes: readonly ProjectCellChange[],
+  ): Promise<ProjectEditResult> {
     return this.projectManager.applyEdits(changes);
   }
 
