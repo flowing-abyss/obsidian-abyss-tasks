@@ -1042,6 +1042,21 @@ export class ProjectsTableView {
       applyChanges: (changes) => this.applyBoardChanges_abyssPrivate(changes),
       projectSnapshot: (path) =>
         this.projectedProjects_abyssPrivate().find((project) => project.path === path),
+      projectsSnapshot: () => this.projectedProjects_abyssPrivate(),
+      statusProperty: () => this.context_abyssPrivate.settings.projects.statusProperty,
+      membershipQuery: () => this.context_abyssPrivate.settings.projects.membershipQuery,
+      tagsReliable: (path, fieldId) => this.boardTagsReliable_abyssPrivate(path, fieldId),
+      rebaseGroupValue: (value, sourcePath, destinationPath) =>
+        rebaseProjectClipboardLinks(
+          value,
+          sourcePath,
+          destinationPath,
+          this.linkRebaser_abyssPrivate(),
+        ),
+      commitDrop: (build) => this.commitBoardDrop_abyssPrivate(build),
+      reportDropFailure: (error) => {
+        this.reportBoardDropFailure_abyssPrivate(error);
+      },
     });
     this.scroll_abyssPrivate.after(board.root);
     return board;
@@ -1056,6 +1071,50 @@ export class ProjectsTableView {
       this.publishAppliedReceipts(result.applied);
       return result;
     });
+  }
+
+  private async commitBoardDrop_abyssPrivate(
+    build: () => {
+      readonly changes: readonly ProjectCellChange[];
+      readonly afterApplied?: () => void;
+    },
+  ): Promise<ProjectEditResult> {
+    if (!(await this.requestFinishActiveEditor())) {
+      throw new Error('The active project edit must finish before moving the card');
+    }
+    return this.runTableSessionMutation(async () => {
+      const planned = build();
+      const result: ProjectEditResult =
+        planned.changes.length === 0
+          ? { applied: [], failed: [] }
+          : await this.context_abyssPrivate.applyEdits(planned.changes);
+      if (result.applied.length > 0) {
+        this.context_abyssPrivate.history.record(result);
+        this.publishAppliedReceipts(result.applied);
+      }
+      if (result.failed.length === 0 && result.applied.length === planned.changes.length) {
+        planned.afterApplied?.();
+        if (planned.afterApplied !== undefined) this.persistSettings_abyssPrivate();
+      }
+      return result;
+    });
+  }
+
+  private reportBoardDropFailure_abyssPrivate(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.feedback_abyssPrivate.setText(message);
+    if (isProjectEditValidationError(error)) return;
+    console.error('[abyss-tasks] Could not move project card', { cause: error });
+    new Notice(`Could not move project card: ${message}`);
+  }
+
+  private boardTagsReliable_abyssPrivate(path: string, fieldId: string): boolean {
+    const field = findProjectFieldById(this.fields_abyssPrivate, fieldId);
+    const property = field?.property;
+    const pendingTagChange = Array.from(this.receiptProjections_abyssPrivate.values()).some(
+      ({ receipt }) => receipt.path === path && isTagCarrier(receipt.sourceKey),
+    );
+    return field?.type !== 'tags' && !isTagCarrier(property) && !pendingTagChange;
   }
 
   private renderKanbanCell_abyssPrivate(options: {

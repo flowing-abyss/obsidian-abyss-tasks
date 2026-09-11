@@ -20,6 +20,14 @@ import {
   projectKanbanDescription,
   projectKanbanOccurrenceId,
 } from './projectKanbanCards';
+import { ProjectKanbanDragController } from './projectKanbanDrag';
+import {
+  captureProjectKanbanDropSource,
+  planProjectKanbanDrop,
+  type ProjectKanbanDropPlan,
+  type ProjectKanbanDropSource,
+  type ProjectKanbanDropTarget,
+} from './projectKanbanDrop';
 
 export interface ProjectKanbanCellIdentity {
   readonly occurrenceId: string;
@@ -89,6 +97,22 @@ export interface ProjectsKanbanViewContext<TCell extends ProjectKanbanCellContex
   ) => void;
   readonly applyChanges: (changes: readonly ProjectCellChange[]) => Promise<ProjectEditResult>;
   readonly projectSnapshot: (path: string) => Project | undefined;
+  readonly projectsSnapshot: () => readonly Project[];
+  readonly statusProperty: () => string;
+  readonly membershipQuery: () => string;
+  readonly tagsReliable: (path: string, groupFieldId: string) => boolean;
+  readonly rebaseGroupValue: (
+    value: unknown,
+    sourcePath: string,
+    destinationPath: string,
+  ) => unknown;
+  readonly commitDrop: (
+    build: () => {
+      readonly changes: readonly ProjectCellChange[];
+      readonly afterApplied?: () => void;
+    },
+  ) => Promise<ProjectEditResult>;
+  readonly reportDropFailure: (error: unknown) => void;
 }
 
 export interface ProjectKanbanViewportState {
@@ -142,6 +166,8 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
   private selectedPath_abyssPrivate: string | undefined;
   private visibleCells_abyssPrivate: TCell[] = [];
   private model_abyssPrivate: ProjectKanbanModel | undefined;
+  private readonly drag_abyssPrivate: ProjectKanbanDragController;
+  private dragFocus_abyssPrivate: { readonly path: string; readonly fieldId?: string } | undefined;
 
   constructor(
     host: HTMLElement,
@@ -151,6 +177,14 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     this.scroll = this.root.createDiv({
       cls: 'abyss-project-kanban-scroll',
       attr: { 'aria-label': 'Project Kanban board', tabindex: '0' },
+    });
+    this.drag_abyssPrivate = new ProjectKanbanDragController(this.root, this.scroll, {
+      capture: (card) => this.captureDragSource_abyssPrivate(card),
+      preview: (source, target) => this.dropPlan_abyssPrivate(source, target),
+      commit: (source, target) => this.commitDrop_abyssPrivate(source, target),
+      reportFailure: (error) => {
+        this.context_abyssPrivate.reportDropFailure(error);
+      },
     });
   }
 
@@ -170,7 +204,112 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     this.columns_abyssPrivate.clear();
     this.cards_abyssPrivate.clear();
     this.visibleCells_abyssPrivate = [];
+    this.drag_abyssPrivate.destroy();
     this.root.remove();
+  }
+
+  private findGroup_abyssPrivate(
+    statusKey: string,
+    groupKey: string,
+  ): ProjectKanbanGroupContext<TCell> | undefined {
+    for (const group of this.columns_abyssPrivate.get(statusKey)?.groups.values() ?? []) {
+      if (group.groupKey === groupKey) return group;
+    }
+    return undefined;
+  }
+
+  private captureDragSource_abyssPrivate(cardElement: HTMLElement): ProjectKanbanDropSource {
+    const path = cardElement.dataset['projectPath'];
+    const card = [...this.cards_abyssPrivate.values()].find(
+      (candidate) => candidate.element === cardElement && candidate.project.path === path,
+    );
+    if (card === undefined) throw new Error('Project card is no longer available');
+    const group = this.findGroup_abyssPrivate(card.statusKey, card.groupKey);
+    if (group === undefined) throw new Error('Project group is no longer available');
+    const active = this.root.ownerDocument.activeElement;
+    const focusedFieldId =
+      active instanceof HTMLElement
+        ? active.closest<HTMLElement>('[data-column-id]')?.dataset['columnId']
+        : undefined;
+    this.dragFocus_abyssPrivate =
+      active instanceof HTMLElement && card.element.contains(active)
+        ? {
+            path: card.project.path,
+            ...(focusedFieldId === undefined ? {} : { fieldId: focusedFieldId }),
+          }
+        : undefined;
+    return captureProjectKanbanDropSource({
+      project: card.project,
+      fields: this.context_abyssPrivate.modelInput().fields,
+      settings: this.context_abyssPrivate.settings(),
+      statusProperty: this.context_abyssPrivate.statusProperty(),
+      statusKey: card.statusKey,
+      group: {
+        key: group.groupKey,
+        value: group.value,
+        ...(group.element.dataset['sourcePath'] === undefined
+          ? {}
+          : { sourcePath: group.element.dataset['sourcePath'] }),
+      },
+    });
+  }
+
+  private dropPlan_abyssPrivate(
+    source: ProjectKanbanDropSource,
+    target: ProjectKanbanDropTarget,
+  ): ProjectKanbanDropPlan {
+    const project = this.context_abyssPrivate.projectSnapshot(source.projectPath);
+    if (project === undefined) return { allowed: false, message: 'Project is no longer available' };
+    return planProjectKanbanDrop({
+      ...this.context_abyssPrivate.modelInput(),
+      project,
+      projects: this.context_abyssPrivate.projectsSnapshot(),
+      settings: this.context_abyssPrivate.settings(),
+      source,
+      target,
+      statusProperty: this.context_abyssPrivate.statusProperty(),
+      membershipQuery: this.context_abyssPrivate.membershipQuery(),
+      tagsReliable: this.context_abyssPrivate.tagsReliable(
+        source.projectPath,
+        this.context_abyssPrivate.settings().groupBy,
+      ),
+      search: this.search_abyssPrivate,
+      rebase: this.context_abyssPrivate.rebaseGroupValue,
+    });
+  }
+
+  private async commitDrop_abyssPrivate(
+    source: ProjectKanbanDropSource,
+    target: ProjectKanbanDropTarget,
+  ): Promise<void> {
+    const result = await this.context_abyssPrivate.commitDrop(() => {
+      const plan = this.dropPlan_abyssPrivate(source, target);
+      if (!plan.allowed) throw new Error(plan.message);
+      const manualOrder = plan.manualOrder;
+      return {
+        changes: plan.changes,
+        ...(manualOrder === undefined
+          ? {}
+          : {
+              afterApplied: () => {
+                this.context_abyssPrivate.settings().manualOrder[manualOrder.statusKey] = [
+                  ...manualOrder.paths,
+                ];
+              },
+            }),
+      };
+    });
+    const failure = result.failed[0];
+    if (failure !== undefined) throw new Error(failure.message);
+    const focus = this.dragFocus_abyssPrivate;
+    this.dragFocus_abyssPrivate = undefined;
+    if (focus?.path !== source.projectPath) return;
+    const card = [...this.cards_abyssPrivate.values()].find(
+      (candidate) => candidate.project.path === source.projectPath,
+    );
+    const element =
+      focus.fieldId === undefined ? card?.element : card?.cells.get(focus.fieldId)?.element;
+    element?.focus({ preventScroll: true });
   }
 
   selectedProjectPath(): string | undefined {
@@ -322,6 +461,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     column.statusKey = key;
     column.value = model.status.statusId;
     column.element.dataset['statusKey'] = key;
+    column.element.dataset['statusValue'] = model.status.statusId ?? '';
     column.label.setText(model.status.label);
     column.count.setText(String(model.uniqueVisibleCount));
     column.marker.style.removeProperty('background-color');
@@ -374,6 +514,10 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
       group.statusKey = column.key;
       group.groupKey = modelGroup.key;
       group.value = modelGroup.value;
+      group.element.dataset['groupKey'] = modelGroup.key;
+      if (modelGroup.sourcePath === undefined) delete group.element.dataset['sourcePath'];
+      else group.element.dataset['sourcePath'] = modelGroup.sourcePath;
+      Reflect.set(group.element, '__abyssGroupValue', modelGroup.value);
       const collapsed = this.patchGroup_abyssPrivate(group, modelGroup, grouped);
       desiredGroups.push(group.element);
       this.reconcileCards_abyssPrivate({
@@ -488,7 +632,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
   ): RenderedCard<TCell> {
     const element = group.body.createDiv({
       cls: 'abyss-project-kanban-card',
-      attr: { tabindex: '0' },
+      attr: { tabindex: '0', draggable: 'true' },
     });
     const title = element.createDiv({ cls: 'abyss-project-kanban-title' });
     const description = element.createDiv({ cls: 'abyss-project-kanban-description' });

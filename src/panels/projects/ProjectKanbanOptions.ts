@@ -93,6 +93,17 @@ function fieldOptions(
   }));
 }
 
+function groupFieldOptions(
+  context: ProjectKanbanOptionsContext,
+): Array<{ value: string; label: string }> {
+  return context.fields
+    .filter(({ id }) => id !== 'status')
+    .map((field) => ({
+      value: field.id,
+      label: labelFor(context.fields, context.settings, context.tableSettings, field.id),
+    }));
+}
+
 function cardFieldsRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
   return {
     kind: 'multi',
@@ -226,7 +237,7 @@ function groupRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
     options: [
       { value: 'none', label: 'None' },
       { value: 'status', label: 'Status columns', isDefault: true },
-      ...fieldOptions(context),
+      ...groupFieldOptions(context),
     ],
     onSelect: (value) =>
       applyMutation(context, () => {

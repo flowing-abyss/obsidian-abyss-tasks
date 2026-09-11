@@ -225,6 +225,19 @@ rendering, selection, and view-state callbacks from the overview controller; it 
 manager, history, receipt cache, or Markdown writer. Exposed column, group, card, and cell contexts
 are the native drag-and-drop adapter seam.
 
+`projectKanbanDrop` captures exact status and grouping source capabilities at native drag start and
+revalidates them, the source occurrence, visible target column, explicit target-group meaning, and
+active group/sort settings against the fresh session projection inside the shared mutation queue.
+It combines status and editable group assignments into one guarded note batch, applies the
+normalized assignments to one detached project, and rebuilds `projectKanbanModel` for the actual
+sorted/grouped landing occurrence. Manual rank is state-only and is changed after the note batch
+succeeds; its destination seed includes saved paths plus every current destination-column path, so
+filters do not discard hidden ranks. Unknown status columns and impossible inner-group assignments
+remain readable targets only. `projectKanbanDrag` owns native payload, drag image, target decoration,
+collapsed-column hover forecast, insertion line, edge scrolling, click suppression, and complete
+Escape/drop/dragend teardown; it delegates plans and commits through `ProjectsKanbanView` and never
+writes metadata or settings itself.
+
 `ProjectsTableView` also owns a long-lived table element and reconciles its body by group key,
 project path, and field id. Projection changes patch changed cell contents, insert or remove affected
 rows, and move only rows whose relative order changed. Surviving cell listeners read their mutable

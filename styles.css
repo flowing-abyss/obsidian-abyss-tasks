@@ -7907,6 +7907,7 @@ table.abyss-project-table {
 
 /* Project Kanban shares the table session, cell renderers, and toolbar. */
 .abyss-project-kanban {
+  position: relative;
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
@@ -8017,6 +8018,88 @@ table.abyss-project-table {
   flex: 1 1 auto;
   padding: 8px;
   scrollbar-gutter: stable;
+}
+
+.abyss-status-dot[hidden] {
+  display: none;
+}
+
+.abyss-project-kanban-column.is-drop-target,
+.abyss-project-kanban-group.is-drop-target,
+.abyss-project-kanban-hover-group.is-drop-target {
+  border-color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
+}
+
+.abyss-project-kanban-column.is-drop-disabled,
+.abyss-project-kanban-group.is-drop-disabled,
+.abyss-project-kanban-hover-group.is-drop-disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.abyss-project-kanban-insertion-line {
+  height: 2px;
+  margin: 3px 0;
+  border-radius: 1px;
+  background: var(--interactive-accent);
+  pointer-events: none;
+}
+
+.abyss-project-kanban-card.is-dragging {
+  opacity: 0.46;
+}
+
+.abyss-project-kanban-drag-image {
+  position: fixed;
+  z-index: -1;
+  top: -10000px;
+  left: -10000px;
+  width: 252px;
+  pointer-events: none;
+}
+
+.abyss-project-kanban-hover-preview {
+  position: absolute;
+  z-index: var(--layer-popover, 30);
+  display: flex;
+  overflow: hidden;
+  width: 272px;
+  max-height: calc(100% - 16px);
+  flex-direction: column;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+}
+
+.abyss-project-kanban-hover-title,
+.abyss-project-kanban-hover-group-title {
+  padding: 8px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
+}
+
+.abyss-project-kanban-hover-body {
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+
+.abyss-project-kanban-hover-group {
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+.abyss-project-kanban-hover-card {
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
 }
 
 .abyss-project-kanban-group + .abyss-project-kanban-group {
