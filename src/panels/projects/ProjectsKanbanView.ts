@@ -473,6 +473,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
       card.occurrenceId = projectKanbanOccurrenceId(group.statusKey, group.groupKey, project.path);
       card.element.dataset['projectPath'] = project.path;
       card.element.dataset['occurrenceId'] = card.occurrenceId;
+      if (card.element.parentElement !== group.body) group.body.append(card.element);
       this.patchCard_abyssPrivate(card, collectedCells);
       group.cards.set(cardKey, card);
       desiredCards.push(card.element);

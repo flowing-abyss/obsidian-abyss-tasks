@@ -420,6 +420,74 @@ describe('project Kanban overview', () => {
     expect(activeDocument.activeElement).toBe(focusedCell);
   });
 
+  it('reveals a moved card through its destination column on the first update', () => {
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const destinationStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const moving = project({
+      path: 'Projects/Z.md',
+      name: 'Z project',
+      statusId: sourceStatus.id,
+      frontmatter: { start: '2026-09-02', end: '2026-09-30' },
+    });
+    const preceding = project({
+      path: 'Projects/B.md',
+      name: 'B project',
+      statusId: destinationStatus.id,
+      frontmatter: { start: '2026-09-01', end: '2026-09-30' },
+    });
+    const { host, view } = mountView([moving, preceding]);
+    clickView(host, 'Kanban');
+    const sourceBody = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${sourceStatus.id}"] .abyss-project-kanban-column-body`,
+      ),
+    );
+    const destinationBody = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${destinationStatus.id}"] .abyss-project-kanban-column-body`,
+      ),
+    );
+
+    view.update([{ ...moving, statusId: destinationStatus.id }, preceding]);
+
+    const precedingStart = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/B.md"] [data-column-id="start"]',
+      ),
+    );
+    const movedStart = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/Z.md"] [data-column-id="start"]',
+      ),
+    );
+    const board = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
+    const destinationHeader = expectDefined(
+      destinationBody.parentElement?.querySelector<HTMLElement>(
+        '.abyss-project-kanban-column-header',
+      ),
+    );
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this === board) return rectangle(40, 100, 340, 300);
+      if (this === sourceBody) return rectangle(360, 140, 632, 300);
+      if (this === destinationBody) return rectangle(40, 140, 312, 300);
+      if (this === destinationHeader) return rectangle(40, 100, 312, 140);
+      if (this === precedingStart) return rectangle(80, 170, 240, 204);
+      if (this === movedStart) return rectangle(80, 330, 240, 364);
+      return rectangle(0, 0, 0, 0);
+    });
+    sourceBody.scrollTop = 13;
+    destinationBody.scrollTop = 17;
+    precedingStart.focus();
+
+    precedingStart.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+
+    expect(activeDocument.activeElement).toBe(movedStart);
+    expect(destinationBody.scrollTop).toBeGreaterThan(17);
+    expect(sourceBody.scrollTop).toBe(13);
+  });
+
   it('guards group collapse and board option mutations behind a rejected editor', async () => {
     const rejected: ProjectEditResult = {
       applied: [],
@@ -665,6 +733,7 @@ describe('project Kanban overview', () => {
     await flushMicrotasks();
 
     expect(budget.getAttribute('aria-pressed')).toBe('false');
+    expect(row.querySelector('.abyss-view-state-row-value')?.textContent).toBe('2 shown');
     const configured = expectDefined(
       settings.projects.kanban.fields.find(({ id }) => id === 'property:Budget'),
     );
@@ -677,6 +746,7 @@ describe('project Kanban overview', () => {
     await flushMicrotasks();
 
     expect(budget.getAttribute('aria-pressed')).toBe('true');
+    expect(row.querySelector('.abyss-view-state-row-value')?.textContent).toBe('3 shown');
     expect(configured).toMatchObject({ label: 'Board cost', visible: true });
     const moveEnd = expectDefined(
       row.querySelector<HTMLButtonElement>('[aria-label="Move End up"]'),

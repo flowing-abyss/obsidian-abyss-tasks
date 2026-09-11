@@ -10,7 +10,7 @@ interface ViewOption {
 interface ViewOptionsRowBase {
   readonly icon: string;
   readonly label: string;
-  readonly displayValue: string;
+  readonly displayValue: string | (() => string);
   readonly initiallyOpen?: boolean;
 }
 
@@ -75,6 +75,10 @@ function selectedValues(spec: ViewOptionsMultiRow): readonly string[] {
   return typeof spec.selected === 'function' ? spec.selected() : spec.selected;
 }
 
+function currentDisplayValue(spec: ViewOptionsRow): string {
+  return typeof spec.displayValue === 'function' ? spec.displayValue() : spec.displayValue;
+}
+
 function compareMultiOptions(
   left: RenderedMultiOption,
   right: RenderedMultiOption,
@@ -118,6 +122,7 @@ function syncMultiOptions(
   host: HTMLElement,
   spec: ViewOptionsMultiRow,
   rows: RenderedMultiOption[],
+  summary: HTMLElement,
 ): void {
   const selected = selectedValues(spec);
   const rank = new Map(selected.map((value, index) => [value, index]));
@@ -127,12 +132,17 @@ function syncMultiOptions(
   for (const rendered of rows) {
     syncMultiOption(rendered, rank.has(rendered.option.value));
   }
+  summary.setText(currentDisplayValue(spec));
   if (focused instanceof HTMLElement && focused.isConnected && host.contains(focused)) {
     focused.focus({ preventScroll: true });
   }
 }
 
-function renderMultiOptions(sublist: HTMLElement, spec: ViewOptionsMultiRow): void {
+function renderMultiOptions(
+  sublist: HTMLElement,
+  spec: ViewOptionsMultiRow,
+  summary: HTMLElement,
+): void {
   for (const preset of spec.presets ?? []) {
     optionButton(sublist, preset.label, preset.active === true).addEventListener('click', () => {
       preset.onSelect();
@@ -144,7 +154,7 @@ function renderMultiOptions(sublist: HTMLElement, spec: ViewOptionsMultiRow): vo
   const optionsHost = sublist.createDiv({ cls: 'abyss-view-state-options' });
   const renderedRows: RenderedMultiOption[] = [];
   const sync = (): void => {
-    syncMultiOptions(optionsHost, spec, renderedRows);
+    syncMultiOptions(optionsHost, spec, renderedRows, summary);
   };
   for (const option of spec.options) {
     const row = optionsHost.createDiv({ cls: 'abyss-view-state-option-row' });
@@ -199,7 +209,10 @@ function renderRow(popover: HTMLElement, spec: ViewOptionsRow, close: () => void
   const icon = main.createSpan({ cls: 'abyss-view-state-row-icon' });
   setIcon(icon, spec.icon);
   main.createSpan({ cls: 'abyss-view-state-row-label', text: spec.label });
-  main.createSpan({ cls: 'abyss-view-state-row-value', text: spec.displayValue });
+  const summary = main.createSpan({
+    cls: 'abyss-view-state-row-value',
+    text: currentDisplayValue(spec),
+  });
   const chevron = main.createSpan({ cls: 'abyss-view-state-row-chevron' });
   setIcon(chevron, 'chevron-right');
   const sublist = row.createDiv({
@@ -216,7 +229,7 @@ function renderRow(popover: HTMLElement, spec: ViewOptionsRow, close: () => void
   };
   main.addEventListener('click', toggle);
 
-  if (spec.kind === 'multi') renderMultiOptions(sublist, spec);
+  if (spec.kind === 'multi') renderMultiOptions(sublist, spec, summary);
   else renderSingleOptions(sublist, spec, close);
 }
 

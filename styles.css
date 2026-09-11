@@ -8207,6 +8207,10 @@ table.abyss-project-table {
   padding: 5px;
 }
 
+.abyss-view-state-option-move[hidden] {
+  display: none;
+}
+
 .abyss-projects-new-input {
   position: sticky;
   left: 0;
@@ -8454,7 +8458,7 @@ table.abyss-project-table {
   display: none;
 }
 
-@media (width <= 720px) {
+@container abyss-panel-layout (max-width: 45rem) {
   .abyss-projects-toolbar {
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);
@@ -8476,7 +8480,9 @@ table.abyss-project-table {
     min-width: 0;
     justify-self: end;
   }
+}
 
+@media (width <= 720px) {
   .abyss-project-property-card > .abyss-settings-card-header,
   .abyss-project-column-settings-header {
     grid-template-columns:

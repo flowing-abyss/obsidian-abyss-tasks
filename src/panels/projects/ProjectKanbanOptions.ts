@@ -94,12 +94,14 @@ function fieldOptions(
 }
 
 function cardFieldsRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
-  const selectedCount = selectedFieldIds(context.settings).length;
   return {
     kind: 'multi',
     icon: 'list-plus',
     label: 'Card fields',
-    displayValue: selectedCount === 0 ? 'None' : `${selectedCount} shown`,
+    displayValue: () => {
+      const selectedCount = selectedFieldIds(context.settings).length;
+      return selectedCount === 0 ? 'None' : `${selectedCount} shown`;
+    },
     selected: () => selectedFieldIds(context.settings),
     options: fieldOptions(context),
     onToggle: (fieldId) =>
