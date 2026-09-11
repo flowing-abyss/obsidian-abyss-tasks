@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import {
   SAVED_VIEW_STATE_SCHEMA_VERSION,
@@ -73,6 +74,149 @@ function stateEnvelope(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe('SettingsPersistenceCoordinator migration', () => {
+  it('loads a legacy version-1 envelope without initializing Kanban preferences', async () => {
+    const port = memoryPort(markedStatic(), stateEnvelope());
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    await coordinator.saveViewState(loaded.settings);
+
+    expect(loaded.settings.projects.kanban).toBeUndefined();
+    expect(loaded.settings.projects.overviewView).toBeUndefined();
+    const saved = JSON.parse(port.stateText ?? '') as {
+      schemaVersion: number;
+      views: { projects: Record<string, unknown> };
+    };
+    expect(saved.schemaVersion).toBe(1);
+    expect(saved.views.projects).not.toHaveProperty('kanban');
+    expect(saved.views.projects).not.toHaveProperty('overviewView');
+  });
+
+  it('roundtrips initialized Kanban preferences and unknown nested keys', async () => {
+    const kanban = buildDefaultProjectKanbanSettings(DEFAULT_SETTINGS.projects.table);
+    kanban.fields = [{ id: 'start', visible: true }];
+    const state = stateEnvelope({
+      projects: {
+        table: structuredClone(DEFAULT_SETTINGS.projects.table),
+        overviewView: 'kanban',
+        kanban: {
+          ...kanban,
+          futureBoardOption: { retained: true },
+          fields: [{ ...kanban.fields[0], futureFieldOption: 'keep' }],
+          sortBy: { ...kanban.sortBy, futureSortOption: 7 },
+        },
+      },
+    });
+    const port = memoryPort(markedStatic(), state);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(loaded.settings.projects.overviewView).toBe('kanban');
+    expect(loaded.settings.projects.kanban).toEqual(kanban);
+    if (loaded.settings.projects.kanban === undefined) throw new Error('Expected Kanban state.');
+    loaded.settings.projects.kanban.descriptionLines = 2;
+    await coordinator.saveViewState(loaded.settings);
+
+    const saved = JSON.parse(port.stateText ?? '') as {
+      views: {
+        projects: {
+          overviewView: string;
+          kanban: Record<string, unknown> & {
+            fields: Array<Record<string, unknown>>;
+            sortBy: Record<string, unknown>;
+          };
+        };
+      };
+    };
+    expect(saved.views.projects.overviewView).toBe('kanban');
+    expect(saved.views.projects.kanban).toMatchObject({
+      descriptionLines: 2,
+      futureBoardOption: { retained: true },
+    });
+    expect(saved.views.projects.kanban.fields[0]).toEqual({
+      id: 'start',
+      visible: true,
+      futureFieldOption: 'keep',
+    });
+    expect(saved.views.projects.kanban.sortBy).toEqual({
+      field: 'start',
+      dir: 'asc',
+      futureSortOption: 7,
+    });
+  });
+
+  it('moves legacy static Kanban preferences into version-1 view state', async () => {
+    const raw = legacySettings();
+    const projects = raw['projects'] as Record<string, unknown>;
+    projects['overviewView'] = 'kanban';
+    projects['kanban'] = buildDefaultProjectKanbanSettings(DEFAULT_SETTINGS.projects.table);
+    const port = memoryPort(raw, undefined);
+
+    const loaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+
+    expect(loaded.settings.projects.overviewView).toBe('kanban');
+    expect(loaded.settings.projects.kanban).toEqual(
+      buildDefaultProjectKanbanSettings(DEFAULT_SETTINGS.projects.table),
+    );
+    expect((port.staticData as { projects: Record<string, unknown> }).projects).not.toHaveProperty(
+      'kanban',
+    );
+    const saved = JSON.parse(port.stateText ?? '') as {
+      schemaVersion: number;
+      views: { projects: Record<string, unknown> };
+    };
+    expect(saved.schemaVersion).toBe(1);
+    expect(saved.views.projects).toMatchObject({ overviewView: 'kanban', kanban: {} });
+  });
+
+  it('retains malformed Kanban payloads in recovery while using safe runtime values', async () => {
+    const malformedKanban = {
+      fields: [null, { id: 'start', visible: 'yes', future: 'keep' }],
+      showEmptyFields: 'sometimes',
+      descriptionLines: 7,
+      progress: 'circle',
+      showEmptyProgress: null,
+      emptyColumns: 'hidden',
+      groupBy: 42,
+      sortBy: { field: 42, dir: 'sideways' },
+      hiddenStatuses: ['id:done', 9],
+      collapsedColumns: 'planned',
+      manualOrder: { 'id:planned': 'not paths' },
+    };
+    const state = stateEnvelope({
+      projects: {
+        table: structuredClone(DEFAULT_SETTINGS.projects.table),
+        overviewView: 'cards',
+        kanban: malformedKanban,
+      },
+    });
+    const port = memoryPort(markedStatic(), state);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    await coordinator.saveViewState(loaded.settings);
+
+    expect(loaded.notices).toContain(
+      'Saved view preferences contained invalid values. Safe defaults were used and the original values were retained for recovery.',
+    );
+    expect(loaded.settings.projects.overviewView).toBeUndefined();
+    expect(loaded.settings.projects.kanban).toEqual({
+      ...buildDefaultProjectKanbanSettings(DEFAULT_SETTINGS.projects.table),
+      fields: [{ id: 'start', visible: true }],
+      hiddenStatuses: ['id:done'],
+    });
+    const saved = JSON.parse(port.stateText ?? '') as {
+      recovery: {
+        malformedViews: {
+          projectKanban: unknown;
+          projectOverviewView: unknown;
+        };
+      };
+    };
+    expect(saved.recovery.malformedViews.projectKanban).toEqual(malformedKanban);
+    expect(saved.recovery.malformedViews.projectOverviewView).toBe('cards');
+  });
+
   it('loads column alignment and removes its saved key when reset to left', async () => {
     const state = stateEnvelope();
     const views = state['views'] as Record<string, unknown>;

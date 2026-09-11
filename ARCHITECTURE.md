@@ -40,7 +40,7 @@ The plugin has several kinds of state, but they do not have equal authority.
 | Tasks and task metadata                         | Markdown files in the Obsidian vault                                                             | `TaskIndex` snapshots and calendar projections |
 | Projects and project status                     | Project Markdown plus membership query, one configured status property, and literal status names | `ProjectStore` entries and task statistics     |
 | Static plugin preferences                       | Obsidian plugin `data.json`                                                                      | Composed runtime `CalendarSettings`            |
-| Saved list, section, and project-table views    | Versioned plugin `state.json`                                                                    | Composed runtime `CalendarSettings`            |
+| Saved list, section, and project overview views | Versioned plugin `state.json`                                                                    | Composed runtime `CalendarSettings`            |
 | Current mode, selection, search, and drag state | `AppState` or the owning view controller for the current panel session                           | Rendered panel DOM                             |
 
 `TaskIndex` and `ProjectStore` are read models, not secondary databases. They may be rebuilt from the
@@ -200,6 +200,14 @@ explicit `none` sort preserves incoming project order. A legacy custom descripti
 display preference while valid grouping and sorting references are remapped to the curated field.
 These preferences live under `projects.table`; project metadata remains in Markdown.
 
+`projectKanbanSettings` owns the optional saved card fields, presentation, independent grouping,
+sorting and status filters, collapsed columns, and path-based manual order for the project Kanban
+view. Missing Kanban state leaves existing installations on the table and is initialized from the
+current table filters, grouping, and sorting only when requested. `projectKanbanModel` partitions
+projects by the shared status-group identity, then delegates search, typed sorting, and inner
+grouping to `projectTableModel`; configured statuses remain ordered even when empty, while synthetic
+raw and No status columns exist only for source values that are present.
+
 `ProjectsPanel` owns the long-lived project-table controller and the vault property-catalog
 subscription. Ordinary project-store refreshes update that controller instead of reconstructing
 it, so search text, collapsed groups, scroll position, focused cells, and active editor drafts remain
@@ -311,7 +319,8 @@ type write is created.
 [`src/settings/`](src/settings/) defines defaults, persisted settings, migrations, and the settings
 interface. `SettingsPersistenceCoordinator` serializes two documents through Obsidian's public
 vault adapter: `data.json` contains static configuration, while adjacent `state.json` contains
-`listViewStates`, `sectionCollapse`, and the complete `projects.table` preference. A single
+`listViewStates`, `sectionCollapse`, the complete `projects.table` preference, and optional
+`projects.kanban` and `projects.overviewView` preferences. A single
 `CalendarSettings` object remains the runtime authority; the persistence boundary partitions and
 recomposes it instead of giving panels independent settings copies.
 

@@ -1,4 +1,5 @@
 import type { ProjectTableSettings } from '../projects/projectFields';
+import type { ProjectKanbanSettings, ProjectOverviewMode } from '../projects/projectKanbanSettings';
 import type {
   ProjectPropertyDefinition,
   ProjectValuePresentation,
@@ -80,6 +81,8 @@ export interface ProjectsSettings {
   taskInsertionMode: 'append' | 'section';
   taskInsertionSection: string;
   table: ProjectTableSettings;
+  kanban?: ProjectKanbanSettings;
+  overviewView?: ProjectOverviewMode;
 }
 
 export interface CalendarSettings {
@@ -118,6 +121,8 @@ export interface SavedViewState {
   sectionCollapse: CalendarSettings['sectionCollapse'];
   projects: {
     table: ProjectTableSettings;
+    kanban?: ProjectKanbanSettings;
+    overviewView?: ProjectOverviewMode;
   };
 }
 
@@ -130,6 +135,8 @@ export interface SavedViewStateRecovery {
     sectionCollapse?: unknown;
     projectTable?: unknown;
     projectTableColumns?: unknown[];
+    projectKanban?: unknown;
+    projectOverviewView?: unknown;
   };
 }
 

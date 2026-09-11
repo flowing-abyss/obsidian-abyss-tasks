@@ -26,7 +26,7 @@ export interface ProjectProgress {
   percent: number | null;
 }
 
-interface ProjectTableGroup {
+export interface ProjectTableGroup {
   key: string;
   label: string;
   value: unknown;

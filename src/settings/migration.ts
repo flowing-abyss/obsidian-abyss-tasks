@@ -1,3 +1,4 @@
+import { normalizeProjectKanbanSettings } from '../projects/projectKanbanSettings';
 import {
   hasMalformedProjectPropertyDefinitionPresentation,
   isProjectPropertyDefinition,
@@ -44,6 +45,8 @@ interface MigratedProjectSettings {
   taskInsertionMode?: string;
   taskInsertionSection?: string;
   table?: unknown;
+  kanban?: unknown;
+  overviewView?: unknown;
 }
 
 interface SettingsMigrationResult {
@@ -65,6 +68,10 @@ const PROPERTY_DEFINITION_NOTICE =
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasOwn(record: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
 }
 
 function sameProperty(left: string, right: string): boolean {
@@ -281,7 +288,14 @@ function normalizeProjectSettings(
   if (typeof projects.taskInsertionSection !== 'string') {
     projects.taskInsertionSection = defaults.taskInsertionSection;
   }
-  projects.table = normalizeProjectTableSettings(projects.table);
+  const table = normalizeProjectTableSettings(projects.table);
+  projects.table = table;
+  if (hasOwn(projects, 'kanban')) {
+    projects.kanban = normalizeProjectKanbanSettings(projects.kanban, table);
+  }
+  if (projects.overviewView !== 'table' && projects.overviewView !== 'kanban') {
+    delete projects.overviewView;
+  }
 }
 
 function migrateProjects(raw: Record<string, unknown>, result: SettingsMigrationResult): void {

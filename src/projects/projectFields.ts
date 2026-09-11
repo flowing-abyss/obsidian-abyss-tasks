@@ -81,6 +81,10 @@ function customFieldIds(
     ...settings.table.columns.map(({ id }) => id),
     settings.table.groupBy,
     settings.table.sortBy.field,
+    ...(settings.kanban?.fields.map(({ id }) => id) ?? []),
+    ...(settings.kanban === undefined
+      ? []
+      : [settings.kanban.groupBy, settings.kanban.sortBy.field]),
     ...definitionIds,
     ...properties.map(({ name }) => `property:${name}`),
   ];

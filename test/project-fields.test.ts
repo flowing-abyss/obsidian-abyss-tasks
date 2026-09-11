@@ -80,6 +80,31 @@ describe('buildProjectFieldCatalog', () => {
     });
   });
 
+  it('keeps custom fields referenced only by initialized Kanban settings', () => {
+    const settings = buildDefaultProjectsSettings();
+    settings.kanban = {
+      fields: [{ id: 'property:Card only', visible: true }],
+      showEmptyFields: false,
+      descriptionLines: 1,
+      progress: 'full',
+      showEmptyProgress: false,
+      emptyColumns: 'compact',
+      groupBy: 'property:Kanban group',
+      sortBy: { field: 'property:Kanban sort', dir: 'asc' },
+      hiddenStatuses: [],
+      collapsedColumns: [],
+      manualOrder: {},
+    };
+
+    const fields = buildProjectFieldCatalog(settings, []);
+
+    expect(fields.filter(({ id }) => id.startsWith('property:')).map(({ id }) => id)).toEqual([
+      'property:Card only',
+      'property:Kanban group',
+      'property:Kanban sort',
+    ]);
+  });
+
   it('keeps saved field identity when a configured definition differs only by case', () => {
     const settings = buildDefaultProjectsSettings();
     settings.propertyDefinitions = { 'property:creator': { type: 'list' } };
