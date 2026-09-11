@@ -3276,6 +3276,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   overflow-anchor: none;
 }
 
+.abyss-settings-tab .setting-item-control {
+  align-self: center;
+}
+
 .abyss-settings-tab .setting-item-control > select:not([aria-hidden='true']) {
   inline-size: 10rem;
   max-inline-size: 100%;
