@@ -24,6 +24,7 @@ import { planProjectGroupDrop, type ProjectTableDragGroup } from './projectTable
 
 export interface ProjectKanbanFieldGuard {
   readonly fieldId: string;
+  readonly fieldType: ProjectField['type'];
   readonly sourceProperty: string;
   readonly sourceKey?: string;
   readonly expectedValue: unknown;
@@ -45,7 +46,7 @@ export interface ProjectKanbanDropSource {
 
 export interface ProjectKanbanDropTarget {
   status: ProjectTableDragGroup;
-  group?: ProjectTableDragGroup;
+  group?: ProjectTableDragGroup & { readonly projected?: boolean };
   beforePath?: string;
 }
 
@@ -110,6 +111,7 @@ function guardFor(
   const source = findFrontmatterProperty(project.frontmatter, sourceProperty);
   return {
     fieldId: field.id,
+    fieldType: field.type,
     sourceProperty,
     ...(source === undefined ? {} : { sourceKey: source.key }),
     expectedValue: copyValue(source?.value),
@@ -165,7 +167,9 @@ function validateGuard(
   field: ProjectField,
   guard: ProjectKanbanFieldGuard,
 ): void {
-  if (field.id !== guard.fieldId) throw new Error(`${field.label} capability changed during drag`);
+  if (field.id !== guard.fieldId || field.type !== guard.fieldType) {
+    throw new Error(`${field.label} capability changed during drag`);
+  }
   const property = field.type === 'status' ? guard.sourceProperty : field.property;
   const rebound = field.property !== guard.sourceProperty;
   if (rebound || property === undefined || property.length === 0) {
@@ -327,6 +331,7 @@ function validateTarget(input: ProjectKanbanDropInput, model: ProjectKanbanModel
   if (column === undefined) throw new Error('Project status column is no longer visible');
   const expected = input.target.group;
   if (expected === undefined) return;
+  if (expected.projected === true) return;
   const group = column.groups.find(({ key }) => key === expected.key);
   if (group === undefined) throw new Error('Project target group is no longer visible');
   const wrongValue = !equalValue(group.value, expected.value);
@@ -355,7 +360,9 @@ function statusField(input: ProjectKanbanDropInput): ProjectField {
 
 function groupField(input: ProjectKanbanDropInput): ProjectField | undefined {
   const grouped = input.settings.groupBy !== 'none' && input.settings.groupBy !== 'status';
-  if (!grouped || input.target.group === undefined) return undefined;
+  if (!grouped || input.target.group === undefined || input.target.group.projected === true) {
+    return undefined;
+  }
   const group = findProjectFieldById(input.fields, input.settings.groupBy);
   if (group === undefined || !isAvailableProjectField(group)) {
     throw new Error('Project grouping field is read-only');
@@ -370,7 +377,13 @@ function groupChange(
   input: ProjectKanbanDropInput,
   field: ProjectField | undefined,
 ): ProjectCellChange | undefined {
-  if (field === undefined || input.target.group === undefined) return undefined;
+  if (
+    field === undefined ||
+    input.target.group === undefined ||
+    input.target.group.projected === true
+  ) {
+    return undefined;
+  }
   const guard = input.source.groupGuard;
   if (guard === undefined) throw new Error(`${field.label} capability changed during drag`);
   const value = planProjectGroupDrop({
@@ -456,6 +469,7 @@ function plan(input: ProjectKanbanDropInput): Exclude<ProjectKanbanDropPlan, { a
     projects,
     settings: projection.settings,
   });
+  validateProjectedTarget(input, model);
   const groupKey = forecastGroupKey(model, input);
   const existingGroupKeys = new Set(
     currentModel.columns
@@ -481,6 +495,20 @@ function plan(input: ProjectKanbanDropInput): Exclude<ProjectKanbanDropPlan, { a
     insertion,
     ...(projection.manualOrder === undefined ? {} : { manualOrder: projection.manualOrder }),
   };
+}
+
+function validateProjectedTarget(input: ProjectKanbanDropInput, model: ProjectKanbanModel): void {
+  const expected = input.target.group;
+  if (expected?.projected !== true) return;
+  const group = model.columns
+    .find(({ status }) => status.key === input.target.status.key)
+    ?.groups.find(({ key }) => key === expected.key);
+  const containsProject = group?.projects.some(({ path }) => path === input.source.projectPath);
+  const wrongValue = group === undefined || !equalValue(group.value, expected.value);
+  const wrongSource = group?.sourcePath !== expected.sourcePath;
+  if (containsProject !== true || wrongValue || wrongSource) {
+    throw new Error('Project preview target changed during drag');
+  }
 }
 
 function forecastIsReliable(input: ProjectKanbanDropInput, proposed: Project): boolean {

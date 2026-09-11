@@ -331,6 +331,39 @@ describe('project Kanban overview', () => {
     expect(host.querySelector('.is-drop-target, .is-dragging')).toBeNull();
   });
 
+  it('does not suppress a later intentional title click when no post-drag click fired', async () => {
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const openProject = vi.fn();
+    const { host, settings } = mountView(
+      [
+        project({
+          frontmatter: { status: sourceStatus.name },
+          statusId: sourceStatus.id,
+        }),
+      ],
+      { openProject },
+    );
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    clickView(host, 'Kanban');
+    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const data = transfer();
+    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    card.dispatchEvent(dragEvent('dragstart', data));
+    expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
+      ),
+    ).dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+    const title = expectDefined(card.querySelector<HTMLButtonElement>('.abyss-project-table-name'));
+
+    title.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    title.click();
+
+    expect(openProject).toHaveBeenCalledOnce();
+  });
+
   it('does not start from selected text and tears down Escape and dragend state', () => {
     const { host } = mountView();
     clickView(host, 'Kanban');
@@ -392,6 +425,7 @@ describe('project Kanban overview', () => {
       ),
     );
     vi.spyOn(middle, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 240, 100));
+    const initialRect = middle.getBoundingClientRect();
     const data = transfer();
     source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     source.dispatchEvent(dragEvent('dragstart', data));
@@ -401,8 +435,49 @@ describe('project Kanban overview', () => {
     const line = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'),
     );
+    expect(line.style.getPropertyValue('--abyss-project-kanban-insertion-top')).not.toBe('');
+    expect(middle.getBoundingClientRect()).toEqual(initialRect);
     expect(line.previousElementSibling).toBe(middle);
     expect(line.nextElementSibling).toBe(last);
+  });
+
+  it('renders a completed manual-only reorder immediately', async () => {
+    const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const projects = ['A', 'B', 'C'].map((name) =>
+      project({
+        path: `Projects/${name}.md`,
+        name,
+        statusId: status.id,
+        frontmatter: { status: status.name },
+      }),
+    );
+    const { host, settings, applyEdits } = mountView(projects);
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.sortBy = { field: 'none', dir: 'asc' };
+    clickView(host, 'Kanban');
+    const cards = Array.from(host.querySelectorAll<HTMLElement>('.abyss-project-kanban-card'));
+    const source = expectDefined(cards[1]);
+    const target = expectDefined(cards[0]);
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 240, 100));
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+
+    target.dispatchEvent(dragEvent('drop', data, { clientX: 120, clientY: 10 }));
+    await flushMicrotasks();
+
+    expect(settings.projects.kanban.manualOrder[`id:${status.id}`]).toEqual([
+      'Projects/B.md',
+      'Projects/A.md',
+      'Projects/C.md',
+    ]);
+    expect(applyEdits).not.toHaveBeenCalled();
+    expect(
+      Array.from(
+        host.querySelectorAll<HTMLElement>('.abyss-project-kanban-card'),
+        (card) => card.dataset['projectPath'],
+      ),
+    ).toEqual(['Projects/B.md', 'Projects/A.md', 'Projects/C.md']);
   });
 
   it('revalidates the captured source inside the queued drop', async () => {
@@ -621,6 +696,93 @@ describe('project Kanban overview', () => {
     flushFrame();
     expect(overlayBody.scrollTop).toBeGreaterThan(20);
     expect(activeBody.scrollTop).toBe(activeAfterColumn);
+  });
+
+  it('keeps a proposed group eligible and forecast-marked while hovering an empty rail', () => {
+    vi.useFakeTimers();
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const { host, settings, view } = mountView(
+      [
+        project({
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name, Owners: ['Only'] },
+        }),
+      ],
+      { catalog: catalog([{ name: 'Owners', type: 'list' }]) },
+    );
+    settings.projects.propertyDefinitions['property:Owners'] = { type: 'list' };
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.groupBy = 'property:Owners';
+    settings.projects.kanban.sortBy = { field: 'none', dir: 'asc' };
+    view.refreshFields();
+    clickView(host, 'Kanban');
+    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const column = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
+      ),
+    );
+    const data = transfer();
+    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    card.dispatchEvent(dragEvent('dragstart', data));
+    column.dispatchEvent(dragEvent('dragover', data));
+    vi.advanceTimersByTime(450);
+    const overlay = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-kanban-hover-preview'),
+    );
+    const target = expectDefined(
+      overlay.querySelector<HTMLElement>('.abyss-project-kanban-hover-card'),
+    );
+
+    target.dispatchEvent(dragEvent('dragover', data));
+    expect(
+      target.closest('.abyss-project-kanban-hover-group')?.classList.contains('is-drop-disabled'),
+    ).toBe(false);
+    column.dispatchEvent(dragEvent('dragover', data));
+    expect(overlay.querySelector('.abyss-project-kanban-insertion-line')).not.toBeNull();
+  });
+
+  it('restores focus to the exact destination occurrence after a list-group move', async () => {
+    const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const moving = project({
+      path: 'Projects/A.md',
+      statusId: status.id,
+      frontmatter: { status: status.name, Owners: ['A', 'B'] },
+    });
+    const targetProject = project({
+      path: 'Projects/B.md',
+      name: 'B',
+      statusId: status.id,
+      frontmatter: { status: status.name, Owners: ['C'] },
+    });
+    const { host, settings, view } = mountView([moving, targetProject], {
+      catalog: catalog([{ name: 'Owners', type: 'list' }]),
+    });
+    settings.projects.propertyDefinitions['property:Owners'] = { type: 'list' };
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.groupBy = 'property:Owners';
+    settings.projects.kanban.sortBy = { field: 'none', dir: 'asc' };
+    view.refreshFields();
+    clickView(host, 'Kanban');
+    const source = expectDefined(
+      host.querySelector<HTMLElement>('[data-group-key="value:a"] .abyss-project-kanban-card'),
+    );
+    const target = expectDefined(
+      host.querySelector<HTMLElement>('[data-group-key="value:c"] .abyss-project-kanban-card'),
+    );
+    source.focus();
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+
+    expect(view.selectedProjectPath()).toBe('Projects/A.md');
+    expect(
+      activeDocument.activeElement?.closest('[data-group-key]')?.getAttribute('data-group-key'),
+    ).toBe('value:c');
   });
 
   it('forecasts a new inner group at its actual group boundary', () => {

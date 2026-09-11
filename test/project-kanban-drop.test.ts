@@ -233,6 +233,30 @@ describe('project Kanban drop planning', () => {
     expect(result.message).toContain('source changed');
   });
 
+  it('rejects a grouping field type change after capturing its list capability', () => {
+    const source = project('Projects/A.md', 'Planned', '2026-09-30', ['A', 'B']);
+    const target = project('Projects/B.md', 'Active', '2026-09-20', ['C']);
+    const board = settings({ groupBy: 'property:Owners' });
+    const input = planInput(source, [source, target], board);
+    input.source = captureProjectKanbanDropSource({
+      project: source,
+      fields,
+      settings: board,
+      statusProperty: 'status',
+      statusKey: 'id:planned',
+      group: { key: 'value:a', value: 'A', sourcePath: source.path },
+    });
+    input.fields = fields.map((field) =>
+      field.id === 'property:Owners' ? { ...field, type: 'text' as const } : field,
+    );
+    input.target.group = { key: 'value:c', value: 'C', sourcePath: target.path };
+
+    const result = planProjectKanbanDrop(input);
+
+    expect(result.allowed).toBe(false);
+    expect(result.message).toContain('capability changed');
+  });
+
   it('supports manual same-column placement and clearing a grouped list value', () => {
     const a = project('Projects/A.md', 'Planned', '2026-09-30', ['A']);
     const b = project('Projects/B.md', 'Planned', '2026-09-20', ['B']);

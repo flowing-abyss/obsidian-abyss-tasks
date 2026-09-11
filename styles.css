@@ -8012,6 +8012,7 @@ table.abyss-project-table {
 }
 
 .abyss-project-kanban-column-body {
+  position: relative;
   overflow-y: auto;
   min-width: 0;
   min-height: 0;
@@ -8039,8 +8040,13 @@ table.abyss-project-table {
 }
 
 .abyss-project-kanban-insertion-line {
+  position: absolute;
+  z-index: 3;
+  top: var(--abyss-project-kanban-insertion-top, 0);
+  right: 0;
+  left: 0;
   height: 2px;
-  margin: 3px 0;
+  margin: 0;
   border-radius: 1px;
   background: var(--interactive-accent);
   pointer-events: none;
@@ -8087,6 +8093,7 @@ table.abyss-project-table {
 }
 
 .abyss-project-kanban-hover-group {
+  position: relative;
   padding: 4px;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -8147,6 +8154,7 @@ table.abyss-project-table {
 }
 
 .abyss-project-kanban-group-body {
+  position: relative;
   display: grid;
   min-width: 0;
   grid-template-columns: minmax(0, 1fr);

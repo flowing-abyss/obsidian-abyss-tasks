@@ -278,13 +278,36 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     });
   }
 
+  private destinationCard_abyssPrivate(
+    path: string,
+    landing: { readonly statusKey: string; readonly groupKey: string } | undefined,
+  ): ProjectKanbanOccurrenceContext<TCell> | undefined {
+    const cards = [...this.cards_abyssPrivate.values()];
+    if (landing !== undefined) {
+      const exact = cards.find(
+        (candidate) =>
+          candidate.project.path === path &&
+          candidate.statusKey === landing.statusKey &&
+          candidate.groupKey === landing.groupKey,
+      );
+      if (exact !== undefined) return exact;
+      const status = cards.find(
+        (candidate) => candidate.project.path === path && candidate.statusKey === landing.statusKey,
+      );
+      if (status !== undefined) return status;
+    }
+    return cards.find((candidate) => candidate.project.path === path);
+  }
+
   private async commitDrop_abyssPrivate(
     source: ProjectKanbanDropSource,
     target: ProjectKanbanDropTarget,
   ): Promise<void> {
+    let landing: { readonly statusKey: string; readonly groupKey: string } | undefined;
     const result = await this.context_abyssPrivate.commitDrop(() => {
       const plan = this.dropPlan_abyssPrivate(source, target);
       if (!plan.allowed) throw new Error(plan.message);
+      landing = { statusKey: target.status.key, groupKey: plan.insertion.groupKey };
       const manualOrder = plan.manualOrder;
       return {
         changes: plan.changes,
@@ -304,9 +327,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     const focus = this.dragFocus_abyssPrivate;
     this.dragFocus_abyssPrivate = undefined;
     if (focus?.path !== source.projectPath) return;
-    const card = [...this.cards_abyssPrivate.values()].find(
-      (candidate) => candidate.project.path === source.projectPath,
-    );
+    const card = this.destinationCard_abyssPrivate(source.projectPath, landing);
     const element =
       focus.fieldId === undefined ? card?.element : card?.cells.get(focus.fieldId)?.element;
     element?.focus({ preventScroll: true });

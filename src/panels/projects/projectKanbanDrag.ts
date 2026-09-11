@@ -1,3 +1,4 @@
+import type { ProjectTableGroup } from '../../projects/projectTableModel';
 import type {
   ProjectKanbanDropPlan,
   ProjectKanbanDropSource,
@@ -29,6 +30,8 @@ interface ActivePreview {
   readonly elements: readonly HTMLElement[];
   readonly line?: HTMLElement;
 }
+
+type AllowedDropPlan = Extract<ProjectKanbanDropPlan, { allowed: true }>;
 
 function protectedTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
@@ -119,6 +122,7 @@ function targetFromElement(
   const card = element.closest<HTMLElement>(
     '[data-project-path].abyss-project-kanban-card, [data-project-path].abyss-project-kanban-hover-card',
   );
+  const groupTarget = targetGroup(group);
   let beforePath: string | undefined;
   if (card !== null) {
     const rect = card.getBoundingClientRect();
@@ -129,19 +133,46 @@ function targetFromElement(
   }
   return {
     status: { key: statusKey, value: column.dataset['statusValue'] ?? null },
-    ...(group?.dataset['groupKey'] === undefined
-      ? {}
-      : {
-          group: {
-            key: group.dataset['groupKey'],
-            value: Reflect.get(group, '__abyssGroupValue'),
-            ...(group.dataset['sourcePath'] === undefined
-              ? {}
-              : { sourcePath: group.dataset['sourcePath'] }),
-          },
-        }),
+    ...(groupTarget === undefined ? {} : { group: groupTarget }),
     ...(beforePath === undefined ? {} : { beforePath }),
   };
+}
+
+function targetGroup(
+  group: HTMLElement | null,
+): NonNullable<ProjectKanbanDropTarget['group']> | undefined {
+  const key = group?.dataset['groupKey'];
+  if (group === null || key === undefined) return undefined;
+  return {
+    key,
+    value: Reflect.get(group, '__abyssGroupValue'),
+    ...(group.dataset['projected'] === 'true' ? { projected: true } : {}),
+    ...(group.dataset['sourcePath'] === undefined
+      ? {}
+      : { sourcePath: group.dataset['sourcePath'] }),
+  };
+}
+
+function insertionBeforeGroup(host: HTMLElement, plan: AllowedDropPlan): HTMLElement | null {
+  const key = plan.insertion.kind === 'none' ? undefined : plan.insertion.beforeGroupKey;
+  return key === undefined
+    ? null
+    : host.querySelector<HTMLElement>(`[data-group-key="${CSS.escape(key)}"]`);
+}
+
+function insertionLineTop(
+  host: HTMLElement,
+  card: HTMLElement | null,
+  beforeGroup: HTMLElement | null,
+  afterCard: boolean,
+): number {
+  const hostTop = host.getBoundingClientRect().top;
+  const cardRect = card?.getBoundingClientRect();
+  if (cardRect !== undefined) {
+    return (afterCard ? cardRect.bottom : cardRect.top) - hostTop + host.scrollTop;
+  }
+  const groupRect = beforeGroup?.getBoundingClientRect();
+  return groupRect === undefined ? host.scrollHeight : groupRect.top - hostTop + host.scrollTop;
 }
 
 /** Owns the native board drag lifecycle, visual forecast, hover overlay, and scrolling cleanup. */
@@ -195,6 +226,7 @@ export class ProjectKanbanDragController {
   }
 
   private readonly pointerDown_abyssPrivate = (event: Event): void => {
+    this.suppressClickPath_abyssPrivate = undefined;
     const target = event.target;
     const card = cardFromEvent(event);
     this.pointerCard_abyssPrivate =
@@ -235,10 +267,11 @@ export class ProjectKanbanDragController {
     event.preventDefault();
     const transfer = asDataTransfer(event);
     if (transfer !== undefined) transfer.dropEffect = plan.allowed ? 'move' : 'none';
-    this.showPlan_abyssPrivate(event.target, plan);
+    const column = event.target.closest<HTMLElement>('.abyss-project-kanban-column');
+    const visualTarget = this.visualTarget_abyssPrivate(event.target, column);
+    this.showPlan_abyssPrivate(visualTarget, plan);
     this.point_abyssPrivate = { x: mouse.clientX, y: mouse.clientY };
     this.startAutoScroll_abyssPrivate(event.target);
-    const column = event.target.closest<HTMLElement>('.abyss-project-kanban-column');
     if (column?.matches('.is-collapsed, .is-compact-empty') === true) {
       this.scheduleOverlay_abyssPrivate(column, plan);
     } else if (this.overlay_abyssPrivate?.contains(event.target) !== true) {
@@ -246,13 +279,22 @@ export class ProjectKanbanDragController {
     }
   };
 
-  private insertionCard_abyssPrivate(
-    zone: HTMLElement,
-    plan: Extract<ProjectKanbanDropPlan, { allowed: true }>,
-  ): HTMLElement | null {
+  private visualTarget_abyssPrivate(target: Element, column: HTMLElement | null): Element {
+    if (
+      column !== null &&
+      this.overlay_abyssPrivate !== undefined &&
+      this.hoverColumn_abyssPrivate === column
+    ) {
+      return this.overlay_abyssPrivate;
+    }
+    return target;
+  }
+
+  private insertionCard_abyssPrivate(zone: HTMLElement, plan: AllowedDropPlan): HTMLElement | null {
     let path: string | undefined;
     if (plan.insertion.kind === 'before') path = plan.insertion.beforePath;
     else if (plan.insertion.kind === 'after') path = plan.insertion.afterPath;
+    else if (plan.insertion.kind === 'empty') path = plan.proposedProject.path;
     return path === undefined
       ? null
       : zone.querySelector<HTMLElement>(`[data-project-path="${CSS.escape(path)}"]`);
@@ -261,7 +303,7 @@ export class ProjectKanbanDragController {
   private insertionLine_abyssPrivate(
     zone: HTMLElement,
     group: HTMLElement | null,
-    plan: Extract<ProjectKanbanDropPlan, { allowed: true }>,
+    plan: AllowedDropPlan,
   ): HTMLElement {
     const projectedGroup = zone.querySelector<HTMLElement>(
       `[data-group-key="${CSS.escape(plan.insertion.groupKey)}"]`,
@@ -281,9 +323,12 @@ export class ProjectKanbanDragController {
     host: HTMLElement,
     line: HTMLElement,
     card: HTMLElement | null,
-    plan: Extract<ProjectKanbanDropPlan, { allowed: true }>,
+    plan: AllowedDropPlan,
   ): void {
-    if (plan.insertion.kind === 'before' && card !== null) {
+    const beforeGroup = insertionBeforeGroup(host, plan);
+    const top = insertionLineTop(host, card, beforeGroup, plan.insertion.kind === 'after');
+    line.setCssProps({ '--abyss-project-kanban-insertion-top': `${Math.max(0, top)}px` });
+    if ((plan.insertion.kind === 'before' || plan.insertion.kind === 'empty') && card !== null) {
       card.before(line);
       return;
     }
@@ -292,11 +337,7 @@ export class ProjectKanbanDragController {
       return;
     }
     if (plan.insertion.kind === 'none') return;
-    const beforeGroupKey = plan.insertion.beforeGroupKey;
-    if (beforeGroupKey === undefined) return;
-    host
-      .querySelector<HTMLElement>(`[data-group-key="${CSS.escape(beforeGroupKey)}"]`)
-      ?.before(line);
+    beforeGroup?.before(line);
   }
 
   private showPlan_abyssPrivate(target: Element, plan: ProjectKanbanDropPlan): void {
@@ -342,10 +383,7 @@ export class ProjectKanbanDragController {
     }, 450);
   }
 
-  private openOverlay_abyssPrivate(
-    column: HTMLElement,
-    plan: Extract<ProjectKanbanDropPlan, { allowed: true }>,
-  ): void {
+  private openOverlay_abyssPrivate(column: HTMLElement, plan: AllowedDropPlan): void {
     const projected = plan.model.columns.find(
       ({ status }) => status.key === column.dataset['statusKey'],
     );
@@ -358,26 +396,44 @@ export class ProjectKanbanDragController {
     overlay.createDiv({ cls: 'abyss-project-kanban-hover-title', text: projected.status.label });
     const body = overlay.createDiv({ cls: 'abyss-project-kanban-hover-body' });
     for (const group of projected.groups) {
-      const groupElement = body.createDiv({ cls: 'abyss-project-kanban-hover-group' });
-      groupElement.dataset['groupKey'] = group.key;
-      if (group.sourcePath !== undefined) groupElement.dataset['sourcePath'] = group.sourcePath;
-      Reflect.set(groupElement, '__abyssGroupValue', group.value);
-      if (group.label.length > 0)
-        groupElement.createDiv({
-          cls: 'abyss-project-kanban-hover-group-title',
-          text: group.label,
-        });
-      for (const project of group.projects) {
-        groupElement.createDiv({
-          cls: 'abyss-project-kanban-hover-card',
-          text: project.name,
-          attr: { 'data-project-path': project.path },
-        });
-      }
+      this.renderOverlayGroup_abyssPrivate(column, body, group);
     }
     this.overlay_abyssPrivate = overlay;
     this.positionOverlay_abyssPrivate(column, overlay);
     this.showPlan_abyssPrivate(overlay, plan);
+  }
+
+  private renderOverlayGroup_abyssPrivate(
+    column: HTMLElement,
+    body: HTMLElement,
+    group: ProjectTableGroup,
+  ): void {
+    const groupElement = body.createDiv({ cls: 'abyss-project-kanban-hover-group' });
+    groupElement.dataset['groupKey'] = group.key;
+    const currentGroup = column.querySelector<HTMLElement>(
+      `[data-group-key="${CSS.escape(group.key)}"]`,
+    );
+    if (currentGroup === null) groupElement.dataset['projected'] = 'true';
+    const sourcePath = currentGroup?.dataset['sourcePath'] ?? group.sourcePath;
+    if (sourcePath !== undefined) groupElement.dataset['sourcePath'] = sourcePath;
+    Reflect.set(
+      groupElement,
+      '__abyssGroupValue',
+      currentGroup === null ? group.value : Reflect.get(currentGroup, '__abyssGroupValue'),
+    );
+    if (group.label.length > 0) {
+      groupElement.createDiv({
+        cls: 'abyss-project-kanban-hover-group-title',
+        text: group.label,
+      });
+    }
+    for (const project of group.projects) {
+      groupElement.createDiv({
+        cls: 'abyss-project-kanban-hover-card',
+        text: project.name,
+        attr: { 'data-project-path': project.path },
+      });
+    }
   }
 
   private positionOverlay_abyssPrivate(column: HTMLElement, overlay: HTMLElement): void {

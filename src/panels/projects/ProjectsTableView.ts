@@ -1094,7 +1094,10 @@ export class ProjectsTableView {
       }
       if (result.failed.length === 0 && result.applied.length === planned.changes.length) {
         planned.afterApplied?.();
-        if (planned.afterApplied !== undefined) this.persistSettings_abyssPrivate();
+        if (planned.afterApplied !== undefined) {
+          this.renderTable_abyssPrivate();
+          this.persistSettings_abyssPrivate();
+        }
       }
       return result;
     });
