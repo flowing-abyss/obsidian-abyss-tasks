@@ -9,7 +9,14 @@ interface ProjectKanbanOptionsContext {
   readonly settings: ProjectKanbanSettings;
   readonly tableSettings: Parameters<typeof buildDefaultProjectKanbanSettings>[0];
   readonly fields: readonly ProjectFieldCatalogItem[];
-  readonly onChange: () => void;
+  readonly onChange: (mutation: () => void) => Promise<boolean>;
+}
+
+async function applyMutation(
+  context: ProjectKanbanOptionsContext,
+  mutation: () => void,
+): Promise<void> {
+  await context.onChange(mutation);
 }
 
 function labelFor(
@@ -53,7 +60,8 @@ function toggleField(
     });
     return;
   }
-  settings.fields.splice(index, 1);
+  const configured = settings.fields[index];
+  if (configured !== undefined) configured.visible = !configured.visible;
 }
 
 function moveField(
@@ -86,22 +94,22 @@ function fieldOptions(
 }
 
 function cardFieldsRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
-  const selected = selectedFieldIds(context.settings);
+  const selectedCount = selectedFieldIds(context.settings).length;
   return {
     kind: 'multi',
     icon: 'list-plus',
     label: 'Card fields',
-    displayValue: selected.length === 0 ? 'None' : `${selected.length} shown`,
-    selected,
+    displayValue: selectedCount === 0 ? 'None' : `${selectedCount} shown`,
+    selected: () => selectedFieldIds(context.settings),
     options: fieldOptions(context),
-    onToggle: (fieldId) => {
-      toggleField(context.settings, context.tableSettings, fieldId);
-      context.onChange();
-    },
-    onMove: (fieldId, direction) => {
-      moveField(context.settings, fieldId, direction);
-      context.onChange();
-    },
+    onToggle: (fieldId) =>
+      applyMutation(context, () => {
+        toggleField(context.settings, context.tableSettings, fieldId);
+      }),
+    onMove: (fieldId, direction) =>
+      applyMutation(context, () => {
+        moveField(context.settings, fieldId, direction);
+      }),
   };
 }
 
@@ -128,10 +136,10 @@ function descriptionRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
       { value: '1', label: '1 line', isDefault: true },
       { value: '2', label: '2 lines' },
     ],
-    onSelect: (value) => {
-      context.settings.descriptionLines = descriptionLines(value);
-      context.onChange();
-    },
+    onSelect: (value) =>
+      applyMutation(context, () => {
+        context.settings.descriptionLines = descriptionLines(value);
+      }),
   };
 }
 
@@ -152,10 +160,10 @@ function progressRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
       { value: 'bar', label: 'Bars' },
       { value: 'full', label: 'Bars and numbers', isDefault: true },
     ],
-    onSelect: (value) => {
-      context.settings.progress = value === 'bar' || value === 'hidden' ? value : 'full';
-      context.onChange();
-    },
+    onSelect: (value) =>
+      applyMutation(context, () => {
+        context.settings.progress = value === 'bar' || value === 'hidden' ? value : 'full';
+      }),
   };
 }
 
@@ -176,10 +184,10 @@ function booleanRow(
       { value: 'hide', label: 'Hide', isDefault: true },
       { value: 'show', label: 'Show' },
     ],
-    onSelect: (value) => {
-      setBoolean(context.settings, key, value);
-      context.onChange();
-    },
+    onSelect: (value) =>
+      applyMutation(context, () => {
+        setBoolean(context.settings, key, value);
+      }),
   };
 }
 
@@ -194,10 +202,10 @@ function emptyColumnsRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
       { value: 'compact', label: 'Compact', isDefault: true },
       { value: 'expanded', label: 'Expanded' },
     ],
-    onSelect: (value) => {
-      context.settings.emptyColumns = value === 'expanded' ? 'expanded' : 'compact';
-      context.onChange();
-    },
+    onSelect: (value) =>
+      applyMutation(context, () => {
+        context.settings.emptyColumns = value === 'expanded' ? 'expanded' : 'compact';
+      }),
   };
 }
 
@@ -218,10 +226,10 @@ function groupRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
       { value: 'status', label: 'Status columns', isDefault: true },
       ...fieldOptions(context),
     ],
-    onSelect: (value) => {
-      settings.groupBy = value;
-      context.onChange();
-    },
+    onSelect: (value) =>
+      applyMutation(context, () => {
+        settings.groupBy = value;
+      }),
   };
 }
 
@@ -254,10 +262,10 @@ function sortRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
         label: labelFor(fields, settings, tableSettings, field.id),
       })),
     ],
-    onSelect: (value) => {
-      updateSort(settings, value);
-      context.onChange();
-    },
+    onSelect: (value) =>
+      applyMutation(context, () => {
+        updateSort(settings, value);
+      }),
   };
 }
 

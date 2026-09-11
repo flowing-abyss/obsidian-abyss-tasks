@@ -18,16 +18,16 @@ export interface ViewOptionsSingleRow extends ViewOptionsRowBase {
   readonly kind: 'single';
   readonly activeValue: string;
   readonly options: readonly ViewOption[];
-  readonly onSelect: (value: string) => void;
+  readonly onSelect: (value: string) => void | Promise<void>;
 }
 
 export interface ViewOptionsMultiRow extends ViewOptionsRowBase {
   readonly kind: 'multi';
-  readonly selected: readonly string[];
+  readonly selected: readonly string[] | (() => readonly string[]);
   readonly options: readonly ViewOption[];
   readonly presets?: ReadonlyArray<{ label: string; active?: boolean; onSelect: () => void }>;
-  readonly onToggle: (value: string) => void;
-  readonly onMove?: (value: string, direction: 'up' | 'down') => void;
+  readonly onToggle: (value: string) => void | Promise<void>;
+  readonly onMove?: (value: string, direction: 'up' | 'down') => void | Promise<void>;
 }
 
 export type ViewOptionsRow = ViewOptionsSingleRow | ViewOptionsMultiRow;
@@ -63,6 +63,75 @@ function optionButton(host: HTMLElement, label: string, active: boolean): HTMLBu
   return button;
 }
 
+interface RenderedMultiOption {
+  readonly option: ViewOption;
+  readonly row: HTMLElement;
+  readonly button: HTMLButtonElement;
+  readonly check: HTMLElement;
+  readonly moveButtons: readonly HTMLButtonElement[];
+}
+
+function selectedValues(spec: ViewOptionsMultiRow): readonly string[] {
+  return typeof spec.selected === 'function' ? spec.selected() : spec.selected;
+}
+
+function compareMultiOptions(
+  left: RenderedMultiOption,
+  right: RenderedMultiOption,
+  rank: ReadonlyMap<string, number>,
+  rows: readonly RenderedMultiOption[],
+): number {
+  const leftRank = rank.get(left.option.value);
+  const rightRank = rank.get(right.option.value);
+  if (leftRank !== undefined && rightRank !== undefined) return leftRank - rightRank;
+  if (leftRank !== undefined) return -1;
+  if (rightRank !== undefined) return 1;
+  return rows.indexOf(left) - rows.indexOf(right);
+}
+
+function syncMultiOption(rendered: RenderedMultiOption, active: boolean): void {
+  rendered.button.setAttribute('aria-pressed', String(active));
+  rendered.check.empty();
+  if (active) setIcon(rendered.check, 'check');
+  for (const move of rendered.moveButtons) {
+    move.hidden = !active;
+    move.disabled = false;
+  }
+}
+
+function reportOptionError(error: unknown): void {
+  console.error('[abyss-tasks] Could not update view options', error);
+}
+
+function runOptionAction(action: () => void | Promise<void>, onSettled?: () => void): void {
+  let result: void | Promise<void>;
+  try {
+    result = action();
+  } catch (error) {
+    reportOptionError(error);
+    return;
+  }
+  Promise.resolve(result).then(onSettled).catch(reportOptionError);
+}
+
+function syncMultiOptions(
+  host: HTMLElement,
+  spec: ViewOptionsMultiRow,
+  rows: RenderedMultiOption[],
+): void {
+  const selected = selectedValues(spec);
+  const rank = new Map(selected.map((value, index) => [value, index]));
+  const focused = host.ownerDocument.activeElement;
+  const ordered = [...rows].sort((left, right) => compareMultiOptions(left, right, rank, rows));
+  for (const rendered of ordered) host.append(rendered.row);
+  for (const rendered of rows) {
+    syncMultiOption(rendered, rank.has(rendered.option.value));
+  }
+  if (focused instanceof HTMLElement && focused.isConnected && host.contains(focused)) {
+    focused.focus({ preventScroll: true });
+  }
+}
+
 function renderMultiOptions(sublist: HTMLElement, spec: ViewOptionsMultiRow): void {
   for (const preset of spec.presets ?? []) {
     optionButton(sublist, preset.label, preset.active === true).addEventListener('click', () => {
@@ -72,31 +141,35 @@ function renderMultiOptions(sublist: HTMLElement, spec: ViewOptionsMultiRow): vo
   if ((spec.presets?.length ?? 0) > 0) {
     sublist.createDiv({ cls: 'abyss-view-state-sublist-divider' });
   }
+  const optionsHost = sublist.createDiv({ cls: 'abyss-view-state-options' });
+  const renderedRows: RenderedMultiOption[] = [];
+  const sync = (): void => {
+    syncMultiOptions(optionsHost, spec, renderedRows);
+  };
   for (const option of spec.options) {
-    const row = sublist.createDiv({ cls: 'abyss-view-state-option-row' });
-    optionButton(row, option.label, spec.selected.includes(option.value)).addEventListener(
-      'click',
-      () => {
-        spec.onToggle(option.value);
-      },
-    );
-    renderMoveButtons(row, option, spec);
-  }
-}
-
-function renderMoveButtons(row: HTMLElement, option: ViewOption, spec: ViewOptionsMultiRow): void {
-  const onMove = spec.onMove;
-  if (onMove === undefined || !spec.selected.includes(option.value)) return;
-  for (const direction of ['up', 'down'] as const) {
-    const move = row.createEl('button', {
-      cls: 'abyss-view-state-option-move',
-      attr: { type: 'button', 'aria-label': `Move ${option.label} ${direction}` },
+    const row = optionsHost.createDiv({ cls: 'abyss-view-state-option-row' });
+    const button = optionButton(row, option.label, false);
+    const check = button.querySelector<HTMLElement>('.abyss-view-state-option-check');
+    if (check === null) continue;
+    button.addEventListener('click', () => {
+      runOptionAction(() => spec.onToggle(option.value), sync);
     });
-    setIcon(move, direction === 'up' ? 'chevron-up' : 'chevron-down');
-    move.addEventListener('click', () => {
-      onMove(option.value, direction);
+    const moveButtons = (['up', 'down'] as const).flatMap((direction) => {
+      const onMove = spec.onMove;
+      if (onMove === undefined) return [];
+      const move = row.createEl('button', {
+        cls: 'abyss-view-state-option-move',
+        attr: { type: 'button', 'aria-label': `Move ${option.label} ${direction}` },
+      });
+      setIcon(move, direction === 'up' ? 'chevron-up' : 'chevron-down');
+      move.addEventListener('click', () => {
+        runOptionAction(() => onMove(option.value, direction), sync);
+      });
+      return [move];
     });
+    renderedRows.push({ option, row, button, check, moveButtons });
   }
+  sync();
 }
 
 function renderSingleOptions(
@@ -111,7 +184,7 @@ function renderSingleOptions(
     }
     button.addEventListener('click', () => {
       close();
-      spec.onSelect(option.value);
+      runOptionAction(() => spec.onSelect(option.value));
     });
   }
 }

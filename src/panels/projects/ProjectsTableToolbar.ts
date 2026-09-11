@@ -21,7 +21,7 @@ export interface ProjectsTableToolbarOptions {
   readonly onSortBy: (field: string) => void;
   readonly onReset: () => void;
   readonly onOverviewMode: (mode: ProjectOverviewMode) => void;
-  readonly onViewOptionChange: () => void;
+  readonly onViewOptionChange: (mutation: () => void) => Promise<boolean>;
 }
 
 function fieldLabel(
@@ -108,37 +108,75 @@ export class ProjectsTableToolbar {
   }
 
   update(statuses: readonly StatusGroup[]): void {
-    const settings = this.options_abyssPrivate.settings();
-    const hidden = new Set(settings.hiddenStatuses);
+    const hidden = new Set(this.options_abyssPrivate.settings().hiddenStatuses);
     const retained = new Set<string>();
+    const desiredButtons: HTMLButtonElement[] = [];
+    const focused = this.badges_abyssPrivate.ownerDocument.activeElement;
     for (const status of statuses) {
       retained.add(status.key);
-      const disabled = hidden.has(status.key);
-      let button = this.statusButtons_abyssPrivate.get(status.key);
-      if (button === undefined) {
-        button = this.badges_abyssPrivate.createEl('button', {
-          cls: 'abyss-project-status-filter',
-          attr: { type: 'button', 'data-status-key': status.key },
-        });
-        button.addEventListener('click', () => {
-          this.options_abyssPrivate.onStatusToggle(status.key);
-        });
-        this.statusButtons_abyssPrivate.set(status.key, button);
-      }
-      button.setText(status.label);
-      button.toggleClass('is-disabled', disabled);
-      button.setAttribute('aria-pressed', String(!disabled));
-      button.style.removeProperty('--abyss-project-status-color');
-      if (status.color !== undefined && status.color.length > 0) {
-        button.style.setProperty('--abyss-project-status-color', status.color);
-      }
+      const button = this.statusButton_abyssPrivate(status.key);
+      this.patchStatusButton_abyssPrivate(button, status, hidden.has(status.key));
+      desiredButtons.push(button);
     }
+    this.removeMissingStatusButtons_abyssPrivate(retained);
+    this.reconcileStatusButtonOrder_abyssPrivate(desiredButtons);
+    this.restoreStatusButtonFocus_abyssPrivate(focused);
+    this.sync();
+  }
+
+  private statusButton_abyssPrivate(key: string): HTMLButtonElement {
+    const existing = this.statusButtons_abyssPrivate.get(key);
+    if (existing !== undefined) return existing;
+    const button = this.badges_abyssPrivate.createEl('button', {
+      cls: 'abyss-project-status-filter',
+      attr: { type: 'button', 'data-status-key': key },
+    });
+    button.addEventListener('click', () => {
+      this.options_abyssPrivate.onStatusToggle(key);
+    });
+    this.statusButtons_abyssPrivate.set(key, button);
+    return button;
+  }
+
+  private patchStatusButton_abyssPrivate(
+    button: HTMLButtonElement,
+    status: StatusGroup,
+    disabled: boolean,
+  ): void {
+    button.setText(status.label);
+    button.toggleClass('is-disabled', disabled);
+    button.setAttribute('aria-pressed', String(!disabled));
+    button.style.removeProperty('--abyss-project-status-color');
+    if (status.color !== undefined && status.color.length > 0) {
+      button.style.setProperty('--abyss-project-status-color', status.color);
+    }
+  }
+
+  private removeMissingStatusButtons_abyssPrivate(retained: ReadonlySet<string>): void {
     for (const [key, button] of this.statusButtons_abyssPrivate) {
       if (retained.has(key)) continue;
       button.remove();
       this.statusButtons_abyssPrivate.delete(key);
     }
-    this.sync();
+  }
+
+  private reconcileStatusButtonOrder_abyssPrivate(buttons: readonly HTMLButtonElement[]): void {
+    let cursor = this.badges_abyssPrivate.firstChild;
+    for (const button of buttons) {
+      if (button === cursor) cursor = cursor.nextSibling;
+      else this.badges_abyssPrivate.insertBefore(button, cursor);
+    }
+  }
+
+  private restoreStatusButtonFocus_abyssPrivate(focused: Element | null): void {
+    if (
+      focused instanceof HTMLElement &&
+      focused.isConnected &&
+      this.badges_abyssPrivate.contains(focused) &&
+      this.badges_abyssPrivate.ownerDocument.activeElement !== focused
+    ) {
+      focused.focus({ preventScroll: true });
+    }
   }
 
   setSearchValue(value: string): void {

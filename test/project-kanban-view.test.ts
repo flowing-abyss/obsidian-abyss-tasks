@@ -1,4 +1,4 @@
-import { App } from 'obsidian';
+import { App, MarkdownRenderer } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
@@ -43,13 +43,16 @@ function project(over: Partial<Project> = {}): Project {
   };
 }
 
-function catalog(): ProjectPropertyCatalog {
+function catalog(
+  extra: ReadonlyArray<{ name: string; type: 'text' | 'number' | 'checkbox' | 'date' }> = [],
+): ProjectPropertyCatalog {
   const properties = [
     { name: 'start', type: 'date' as const },
     { name: 'end', type: 'date' as const },
     { name: 'description', type: 'text' as const },
     { name: 'Budget', type: 'number' as const },
     { name: 'Flag', type: 'checkbox' as const },
+    ...extra,
   ];
   return {
     list: () => properties,
@@ -127,6 +130,14 @@ function chooseViewOption(host: HTMLElement, rowLabel: string, optionLabel: stri
   ).click();
 }
 
+function viewOptionRow(host: HTMLElement, label: string): HTMLElement {
+  return expectDefined(
+    Array.from(host.querySelectorAll<HTMLElement>('.abyss-view-state-row')).find(
+      (row) => row.querySelector('.abyss-view-state-row-label')?.textContent === label,
+    ),
+  );
+}
+
 describe('project Kanban overview', () => {
   it('switches after Sort & group, retains the table node, and keeps independent searches', () => {
     const { host } = mountView();
@@ -201,6 +212,17 @@ describe('project Kanban overview', () => {
     expect(kanban.sortBy).toEqual({ field: 'end', dir: 'asc' });
     expect(settings.projects.table.groupBy).toBe(tableGroup);
     expect(settings.projects.table.sortBy).toEqual(tableSort);
+  });
+
+  it('mounts the New project input outside the hidden table surface while on the board', () => {
+    const { host } = mountView();
+    clickView(host, 'Kanban');
+
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+
+    const input = expectDefined(host.querySelector<HTMLInputElement>('.abyss-projects-new-input'));
+    expect(input.closest('[hidden]')).toBeNull();
+    expect(activeDocument.activeElement).toBe(input);
   });
 
   it('renders ordered compact card fields with shared progress and edits through the session', async () => {
@@ -285,6 +307,72 @@ describe('project Kanban overview', () => {
     expect(positionedTop + 34).toBeLessThanOrEqual(292);
   });
 
+  it('keeps metadata selection on the clicked field and derives capture from keyboard movement', () => {
+    const a = project();
+    const b = project({ path: 'Projects/B.md', name: 'B project' });
+    const { host, view } = mountView([a, b]);
+    clickView(host, 'Kanban');
+    const aStart = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"] [data-column-id="start"]',
+      ),
+    );
+    const aName = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"] [data-column-id="name"]',
+      ),
+    );
+
+    aStart.click();
+
+    expect(aStart.getAttribute('aria-selected')).toBe('true');
+    expect(aName.getAttribute('aria-selected')).toBe('false');
+
+    const board = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
+    const body = expectDefined(aStart.closest<HTMLElement>('.abyss-project-kanban-column-body'));
+    const header = expectDefined(
+      aStart
+        .closest<HTMLElement>('.abyss-project-kanban-column')
+        ?.querySelector<HTMLElement>('.abyss-project-kanban-column-header'),
+    );
+    const bStart = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/B.md"] [data-column-id="start"]',
+      ),
+    );
+    Object.defineProperties(board, {
+      clientHeight: { configurable: true, value: 200 },
+      clientWidth: { configurable: true, value: 300 },
+    });
+    Object.defineProperties(body, {
+      clientHeight: { configurable: true, value: 160 },
+      clientWidth: { configurable: true, value: 272 },
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this === board) return rectangle(40, 100, 340, 300);
+      if (this === body) return rectangle(40, 140, 312, 300);
+      if (this === header) return rectangle(40, 100, 312, 140);
+      if (this === aStart) return rectangle(80, 170, 240, 204);
+      if (this === bStart) return rectangle(80, 330, 240, 364);
+      return rectangle(0, 0, 0, 0);
+    });
+    board.scrollTop = 7;
+    body.scrollTop = 11;
+    aStart.focus();
+
+    aStart.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+
+    expect(activeDocument.activeElement).toBe(bStart);
+    expect(view.selectedProjectPath()).toBe('Projects/B.md');
+    expect(bStart.closest('.abyss-project-kanban-card')?.classList.contains('is-selected')).toBe(
+      true,
+    );
+    expect(body.scrollTop).toBeGreaterThan(11);
+    expect(board.scrollTop).toBe(7);
+  });
+
   it('uses a selected card as the capture project and restores the table selection separately', () => {
     const { host, view } = mountView([
       project(),
@@ -330,6 +418,112 @@ describe('project Kanban overview', () => {
     );
     expect(moved).toBe(card);
     expect(activeDocument.activeElement).toBe(focusedCell);
+  });
+
+  it('guards group collapse and board option mutations behind a rejected editor', async () => {
+    const rejected: ProjectEditResult = {
+      applied: [],
+      failed: [{ path: 'Projects/A.md', message: 'Source changed' }],
+    };
+    const applyEdits = vi.fn().mockResolvedValue(rejected);
+    const { host, settings } = mountView(undefined, {
+      applyEdits,
+      history: new ProjectEditHistory(applyEdits),
+    });
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.groupBy = 'property:Budget';
+    clickView(host, 'Kanban');
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-kanban [data-column-id="start"]'),
+    );
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
+    input.value = '2026-10-02';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const groupHeader = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-kanban-group-header'),
+    );
+    const groupBody = expectDefined(groupHeader.nextElementSibling as HTMLElement | null);
+
+    groupHeader.click();
+    chooseViewOption(host, 'Description', '2 lines');
+    await flushMicrotasks();
+
+    expect(groupBody.hidden).toBe(false);
+    expect(settings.projects.kanban.descriptionLines).toBe(1);
+    expect(input.isConnected).toBe(true);
+  });
+
+  it('excludes collapsed group cells from selection and renders structured group content', async () => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+      const anchor = holder.createEl('a', { cls: 'internal-link', text: markdown });
+      anchor.setAttribute('data-href', 'People/Owner');
+    });
+    const a = project({
+      frontmatter: {
+        start: '2026-09-01',
+        end: '2026-09-30',
+        description: 'A concise project description',
+        Budget: 42,
+        Lead: '[[People/Owner]]',
+      },
+    });
+    const { host, view, settings } = mountView([a], {
+      catalog: catalog([{ name: 'Lead', type: 'text' }]),
+    });
+    settings.projects.propertyDefinitions['property:Lead'] = {
+      type: 'text',
+      presets: [
+        {
+          value: '[[People/Owner]]',
+          displayName: 'Lead alias',
+          display: 'dot',
+          color: '#123456',
+        },
+      ],
+    };
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.groupBy = 'property:Lead';
+    clickView(host, 'Kanban');
+    await flushMicrotasks();
+    const header = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-kanban-group-header'),
+    );
+    const label = expectDefined(header.querySelector<HTMLElement>('.abyss-projects-group-label'));
+    expect(label.querySelector('a.internal-link')?.textContent).toBe('Lead alias');
+    expect(header.querySelector('.abyss-projects-group-count')?.textContent).toBe('1');
+    expect(header.querySelectorAll('.abyss-status-dot')).toHaveLength(1);
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-kanban [data-column-id="start"]'),
+    );
+    start.focus();
+    expect(view.selectedProjectPath()).toBe('Projects/A.md');
+
+    header.click();
+    await flushMicrotasks();
+
+    expect(expectDefined(header.nextElementSibling as HTMLElement | null).hidden).toBe(true);
+    expect(view.selectedProjectPath()).toBeUndefined();
+  });
+
+  it('excludes retained cells from selection when their status column is collapsed', async () => {
+    const { host, view } = mountView();
+    clickView(host, 'Kanban');
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-kanban [data-column-id="start"]'),
+    );
+    const column = expectDefined(start.closest<HTMLElement>('.abyss-project-kanban-column'));
+    start.focus();
+    expect(view.selectedProjectPath()).toBe('Projects/A.md');
+
+    expectDefined(
+      column.querySelector<HTMLButtonElement>('.abyss-project-kanban-column-toggle'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(column.classList.contains('is-collapsed')).toBe(true);
+    expect(start.isConnected).toBe(true);
+    expect(view.selectedProjectPath()).toBeUndefined();
   });
 
   it('keeps a rejected table editor and blocks a requested view switch', async () => {
@@ -441,6 +635,64 @@ describe('project Kanban overview', () => {
         textContent.trim(),
       ),
     ).toEqual(['Flag', 'Budget']);
+  });
+
+  it('updates open card-field controls and retains detached presentation while hidden', async () => {
+    const { host, settings } = mountView();
+    settings.projects.table.columns.push({
+      id: 'property:Budget',
+      label: 'Table cost',
+      visible: false,
+    });
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.fields = [
+      { id: 'start', visible: true },
+      { id: 'end', visible: true },
+      { id: 'property:Budget', label: 'Board cost', visible: true },
+    ];
+    clickView(host, 'Kanban');
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const row = viewOptionRow(host, 'Card fields');
+    expectDefined(row.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+    const budget = expectDefined(
+      Array.from(row.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option')).find(
+        (button) =>
+          button.querySelector('.abyss-view-state-option-label')?.textContent === 'Board cost',
+      ),
+    );
+
+    budget.click();
+    await flushMicrotasks();
+
+    expect(budget.getAttribute('aria-pressed')).toBe('false');
+    const configured = expectDefined(
+      settings.projects.kanban.fields.find(({ id }) => id === 'property:Budget'),
+    );
+    expect(configured).toMatchObject({ label: 'Board cost', visible: false });
+    expectDefined(
+      settings.projects.table.columns.find(({ id }) => id === 'property:Budget'),
+    ).label = 'Updated table cost';
+
+    budget.click();
+    await flushMicrotasks();
+
+    expect(budget.getAttribute('aria-pressed')).toBe('true');
+    expect(configured).toMatchObject({ label: 'Board cost', visible: true });
+    const moveEnd = expectDefined(
+      row.querySelector<HTMLButtonElement>('[aria-label="Move End up"]'),
+    );
+    moveEnd.focus();
+    moveEnd.click();
+    await flushMicrotasks();
+    const selectedLabels = Array.from(
+      row.querySelectorAll<HTMLElement>('.abyss-view-state-option-row'),
+    ).flatMap((optionRow) =>
+      optionRow.querySelector('.abyss-view-state-option')?.getAttribute('aria-pressed') === 'true'
+        ? [optionRow.querySelector('.abyss-view-state-option-label')?.textContent]
+        : [],
+    );
+    expect(selectedLabels.slice(0, 3)).toEqual(['End', 'Start', 'Board cost']);
+    expect(activeDocument.activeElement?.getAttribute('aria-label')).toBe('Move End up');
   });
 
   it('treats an all-cancelled project as empty progress until empty progress is enabled', () => {

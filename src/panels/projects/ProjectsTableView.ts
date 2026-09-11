@@ -47,6 +47,7 @@ import {
   buildProjectTableModel,
   projectProgressDisplayValue,
   projectTableGroupLinkIdentity,
+  type ProjectTableGroup,
   type ProjectTableModel,
   type ProjectTableModelInput,
 } from '../../projects/projectTableModel';
@@ -215,6 +216,8 @@ export interface RenderedCellContext {
   contentSignature: string;
   editorBoundary?: HTMLElement;
   stickyHeader?: HTMLElement;
+  horizontalScroll?: HTMLElement;
+  verticalScroll?: HTMLElement;
 }
 
 interface RenderedGroupContext extends ProjectTableDragGroup {
@@ -608,11 +611,7 @@ export class ProjectsTableView {
       onOverviewMode: (mode) => {
         this.switchOverviewMode_abyssPrivate(mode);
       },
-      onViewOptionChange: () => {
-        this.finishEditorBeforeAction(() => {
-          this.persistAndRender_abyssPrivate();
-        });
-      },
+      onViewOptionChange: (mutation) => this.requestViewChange_abyssPrivate(mutation),
     });
   }
 
@@ -683,9 +682,6 @@ export class ProjectsTableView {
   }
 
   selectedProjectPath(): string | undefined {
-    if (this.overviewMode_abyssPrivate === 'kanban') {
-      return this.kanbanView_abyssPrivate?.selectedProjectPath();
-    }
     const focused = this.selection_abyssPrivate.focus;
     if (focused === undefined) return undefined;
     return this.renderedCell_abyssPrivate(focused)?.project.path;
@@ -863,6 +859,20 @@ export class ProjectsTableView {
     this.persistSettings_abyssPrivate();
   }
 
+  private requestViewChange_abyssPrivate(mutation: () => void): Promise<boolean> {
+    if (this.activeEditor_abyssPrivate === undefined) {
+      mutation();
+      this.persistAndRender_abyssPrivate();
+      return Promise.resolve(true);
+    }
+    return this.requestFinishActiveEditor().then((finished) => {
+      if (!finished) return false;
+      mutation();
+      this.persistAndRender_abyssPrivate();
+      return true;
+    });
+  }
+
   private persistSettings_abyssPrivate(): void {
     this.feedback_abyssPrivate.empty();
     saveSettingsDraft({
@@ -880,18 +890,18 @@ export class ProjectsTableView {
   }
 
   private showNewProjectInput_abyssPrivate(): void {
-    const existing = this.scroll_abyssPrivate.querySelector<HTMLInputElement>(
+    const existing = this.root_abyssPrivate.querySelector<HTMLInputElement>(
       '.abyss-projects-new-input',
     );
     if (existing !== null) {
       existing.focus();
       return;
     }
-    const input = this.scroll_abyssPrivate.createEl('input', {
+    const input = this.root_abyssPrivate.createEl('input', {
       cls: 'abyss-projects-new-input',
       attr: { type: 'text', placeholder: 'Project name…', 'aria-label': 'Project name' },
     });
-    this.scroll_abyssPrivate.insertBefore(input, this.tableHost_abyssPrivate);
+    this.feedback_abyssPrivate.after(input);
     let finished = false;
     const finish = (create: boolean): void => {
       if (finished) return;
@@ -1025,8 +1035,9 @@ export class ProjectsTableView {
       selectCell: (cell) => {
         this.selectCell_abyssPrivate(cell, false);
       },
-      saveViewState: () => {
-        this.persistAndRender_abyssPrivate();
+      requestViewChange: (mutation) => this.requestViewChange_abyssPrivate(mutation),
+      renderGroupContent: (marker, label, group) => {
+        this.renderGroupContent_abyssPrivate(marker, label, group, group.presentation?.color);
       },
       applyChanges: (changes) => this.applyBoardChanges_abyssPrivate(changes),
       projectSnapshot: (path) =>
@@ -1079,15 +1090,7 @@ export class ProjectsTableView {
     rendered.project = options.project;
     rendered.field = field;
     rendered.ownedClear = ownedClear;
-    const editorBoundary = this.kanbanView_abyssPrivate?.scroll;
-    if (editorBoundary === undefined) delete rendered.editorBoundary;
-    else rendered.editorBoundary = editorBoundary;
-    const stickyHeader =
-      options.host
-        .closest<HTMLElement>('.abyss-project-kanban-column')
-        ?.querySelector<HTMLElement>('.abyss-project-kanban-column-header') ?? undefined;
-    if (stickyHeader === undefined) delete rendered.stickyHeader;
-    else rendered.stickyHeader = stickyHeader;
+    this.assignKanbanCellViewport_abyssPrivate(rendered, options.host);
     options.host.addClass('abyss-project-table-cell', 'abyss-project-kanban-cell');
     options.host.tabIndex = 0;
     options.host.dataset['columnId'] = field.id;
@@ -1112,6 +1115,26 @@ export class ProjectsTableView {
       this.renderProjectCellContent_abyssPrivate(content, rendered, options.column, false);
     }
     return rendered;
+  }
+
+  private assignKanbanCellViewport_abyssPrivate(
+    rendered: RenderedCellContext,
+    host: HTMLElement,
+  ): void {
+    const editorBoundary = this.kanbanView_abyssPrivate?.scroll;
+    if (editorBoundary === undefined) delete rendered.editorBoundary;
+    else rendered.editorBoundary = editorBoundary;
+    if (editorBoundary === undefined) delete rendered.horizontalScroll;
+    else rendered.horizontalScroll = editorBoundary;
+    const verticalScroll = host.closest<HTMLElement>('.abyss-project-kanban-column-body');
+    if (verticalScroll === null) delete rendered.verticalScroll;
+    else rendered.verticalScroll = verticalScroll;
+    const stickyHeader =
+      host
+        .closest<HTMLElement>('.abyss-project-kanban-column')
+        ?.querySelector<HTMLElement>('.abyss-project-kanban-column-header') ?? undefined;
+    if (stickyHeader === undefined) delete rendered.stickyHeader;
+    else rendered.stickyHeader = stickyHeader;
   }
 
   private projectPropertyDefinition_abyssPrivate(
@@ -1407,16 +1430,25 @@ export class ProjectsTableView {
     signature: string,
   ): void {
     rendered.contentSignature = signature;
-    rendered.statusDot.hidden = color === undefined && options.presentation?.display !== 'dot';
-    rendered.statusDot.style.background = color ?? '';
-    rendered.label.empty();
-    rendered.label.style.color = options.presentation?.display === 'text' ? (color ?? '') : '';
-    const { value, sourcePath, label } = options;
+    this.renderGroupContent_abyssPrivate(rendered.statusDot, rendered.label, options, color);
+  }
+
+  private renderGroupContent_abyssPrivate(
+    marker: HTMLElement,
+    host: HTMLElement,
+    group: Pick<ProjectTableGroup, 'label' | 'value' | 'sourcePath' | 'presentation'>,
+    color: string | undefined,
+  ): void {
+    marker.hidden = color === undefined && group.presentation?.display !== 'dot';
+    marker.style.background = color ?? '';
+    host.empty();
+    host.style.color = group.presentation?.display === 'text' ? (color ?? '') : '';
+    const { value, sourcePath, label } = group;
     if (typeof value !== 'string' || sourcePath === undefined || parseLinks(value).length === 0) {
-      rendered.label.setText(label);
+      host.setText(label);
       return;
     }
-    renderTaskText(rendered.label, value, {
+    renderTaskText(host, value, {
       app: this.context_abyssPrivate.app,
       sourcePath,
       component: this.markdown_abyssPrivate,
@@ -2121,6 +2153,11 @@ export class ProjectsTableView {
         .map(({ occurrenceId, columnId }) => `${occurrenceId}\u0000${columnId}`),
     );
     const focus = this.selection_abyssPrivate.focus;
+    if (this.overviewMode_abyssPrivate === 'kanban') {
+      const selectedProject =
+        focus === undefined ? undefined : this.renderedCell_abyssPrivate(focus)?.project.path;
+      this.kanbanView_abyssPrivate?.syncSelectedProjectPath(selectedProject);
+    }
     const active = this.tableHost_abyssPrivate.ownerDocument.activeElement;
     for (const cell of this.renderedCells_abyssPrivate) {
       const key = `${cell.identity.occurrenceId}\u0000${cell.identity.columnId}`;
@@ -2284,24 +2321,8 @@ export class ProjectsTableView {
 
   private revealSelectionCell_abyssPrivate(cell: HTMLElement): void {
     const rendered = this.renderedCells_abyssPrivate.find(({ element }) => element === cell);
-    if (rendered?.editorBoundary !== undefined) {
-      const boundary = rendered.editorBoundary;
-      const viewport = boundary.getBoundingClientRect();
-      const target = cell.getBoundingClientRect();
-      const usableTop = Math.max(
-        viewport.top,
-        rendered.stickyHeader?.getBoundingClientRect().bottom ?? viewport.top,
-      );
-      boundary.scrollLeft = Math.max(
-        0,
-        boundary.scrollLeft +
-          nearestViewportDelta(target.left, target.right, viewport.left, viewport.right),
-      );
-      boundary.scrollTop = Math.max(
-        0,
-        boundary.scrollTop +
-          nearestViewportDelta(target.top, target.bottom, usableTop, viewport.bottom),
-      );
+    if (rendered?.horizontalScroll !== undefined && rendered.verticalScroll !== undefined) {
+      this.revealKanbanCell_abyssPrivate(cell, rendered);
       return;
     }
     const viewport = this.scroll_abyssPrivate.getBoundingClientRect();
@@ -2327,6 +2348,34 @@ export class ProjectsTableView {
       this.scroll_abyssPrivate.scrollLeft + horizontal,
     );
     this.scroll_abyssPrivate.scrollTop = Math.max(0, this.scroll_abyssPrivate.scrollTop + vertical);
+  }
+
+  private revealKanbanCell_abyssPrivate(cell: HTMLElement, rendered: RenderedCellContext): void {
+    const horizontalScroll = rendered.horizontalScroll;
+    const verticalScroll = rendered.verticalScroll;
+    if (horizontalScroll === undefined || verticalScroll === undefined) return;
+    const horizontalViewport = horizontalScroll.getBoundingClientRect();
+    const verticalViewport = verticalScroll.getBoundingClientRect();
+    const target = cell.getBoundingClientRect();
+    const usableTop = Math.max(
+      verticalViewport.top,
+      rendered.stickyHeader?.getBoundingClientRect().bottom ?? verticalViewport.top,
+    );
+    horizontalScroll.scrollLeft = Math.max(
+      0,
+      horizontalScroll.scrollLeft +
+        nearestViewportDelta(
+          target.left,
+          target.right,
+          horizontalViewport.left,
+          horizontalViewport.right,
+        ),
+    );
+    verticalScroll.scrollTop = Math.max(
+      0,
+      verticalScroll.scrollTop +
+        nearestViewportDelta(target.top, target.bottom, usableTop, verticalViewport.bottom),
+    );
   }
 
   private handleSelectionAction_abyssPrivate(

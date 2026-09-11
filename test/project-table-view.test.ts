@@ -1108,7 +1108,7 @@ describe('ProjectsTableView', () => {
   });
 
   it('patches available status badges in place while toggling their persisted filters', async () => {
-    const { host, config, saveSettings } = mount([
+    const { host, view, config, saveSettings } = mount([
       project({}),
       project({ path: 'Projects/U.md', name: 'Unknown', statusId: null, rawStatus: 'waiting' }),
       project({ path: 'Projects/N.md', name: 'None', statusId: null, rawStatus: null }),
@@ -1139,6 +1139,24 @@ describe('ProjectsTableView', () => {
     expect(config.projects.table.hiddenStatuses).not.toContain(`id:${active.id}`);
     expect(saveSettings).toHaveBeenCalledTimes(2);
     expect(button.textContent).toBe(active.displayName ?? active.name);
+
+    const originalButtons = new Map(
+      Array.from(
+        host.querySelectorAll<HTMLButtonElement>('.abyss-project-status-filter'),
+        (item) => [item.dataset['statusKey'], item],
+      ),
+    );
+    config.projects.statuses.reverse();
+    view.refreshFields();
+    const reordered = Array.from(
+      host.querySelectorAll<HTMLButtonElement>('.abyss-project-status-filter'),
+    );
+    expect(
+      reordered.slice(0, config.projects.statuses.length).map((item) => item.dataset['statusKey']),
+    ).toEqual(config.projects.statuses.map((status) => `id:${status.id}`));
+    for (const item of reordered) {
+      expect(item).toBe(originalButtons.get(item.dataset['statusKey']));
+    }
   });
 
   it('renders the configured status as editable when the native catalog is unavailable', () => {

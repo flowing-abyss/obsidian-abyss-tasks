@@ -12,7 +12,7 @@ import {
   type ProjectKanbanModelInput,
 } from '../../projects/projectKanbanModel';
 import type { ProjectKanbanSettings } from '../../projects/projectKanbanSettings';
-import { projectProgress } from '../../projects/projectTableModel';
+import { projectProgress, type ProjectTableGroup } from '../../projects/projectTableModel';
 import type { Project } from '../../projects/types';
 import {
   projectKanbanCardFields,
@@ -47,6 +47,11 @@ export interface ProjectKanbanGroupContext<TCell extends ProjectKanbanCellContex
   readonly key: string;
   readonly element: HTMLElement;
   readonly body: HTMLElement;
+  readonly header: HTMLButtonElement;
+  readonly chevron: HTMLElement;
+  readonly marker: HTMLElement;
+  readonly label: HTMLElement;
+  readonly count: HTMLElement;
   readonly cards: Map<string, ProjectKanbanOccurrenceContext<TCell>>;
   statusKey: string;
   groupKey: string;
@@ -76,7 +81,12 @@ export interface ProjectsKanbanViewContext<TCell extends ProjectKanbanCellContex
     readonly existing?: TCell;
   }) => TCell;
   readonly selectCell: (cell: TCell) => void;
-  readonly saveViewState: () => void;
+  readonly requestViewChange: (mutation: () => void) => Promise<boolean>;
+  readonly renderGroupContent: (
+    marker: HTMLElement,
+    label: HTMLElement,
+    group: ProjectTableGroup,
+  ) => void;
   readonly applyChanges: (changes: readonly ProjectCellChange[]) => Promise<ProjectEditResult>;
   readonly projectSnapshot: (path: string) => Project | undefined;
 }
@@ -91,6 +101,7 @@ interface RenderedCard<
 > extends ProjectKanbanOccurrenceContext<TCell> {
   readonly title: HTMLElement;
   readonly description: HTMLElement;
+  readonly descriptionContent: HTMLElement;
   readonly fields: HTMLElement;
   readonly progress: HTMLElement;
 }
@@ -109,6 +120,14 @@ interface PatchCardContext<TCell extends ProjectKanbanCellContext> {
   readonly settings: ProjectKanbanSettings;
   readonly retained: Set<string>;
   readonly visibleCells: TCell[];
+}
+
+interface ReconcileCardsOptions<TCell extends ProjectKanbanCellContext> {
+  readonly group: ProjectKanbanGroupContext<TCell>;
+  readonly projects: readonly Project[];
+  readonly retainedCards: Set<string>;
+  readonly visibleCells: TCell[];
+  readonly collectVisible: boolean;
 }
 
 export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
@@ -156,6 +175,11 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
 
   selectedProjectPath(): string | undefined {
     return this.selectedPath_abyssPrivate;
+  }
+
+  syncSelectedProjectPath(path: string | undefined): void {
+    this.selectedPath_abyssPrivate = path;
+    this.syncSelectedCards_abyssPrivate();
   }
 
   visibleCells(): readonly TCell[] {
@@ -319,11 +343,16 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
   }
 
   private toggleColumn_abyssPrivate(column: RenderedColumn<TCell>): void {
-    const collapsed = this.context_abyssPrivate.settings().collapsedColumns;
-    const index = collapsed.indexOf(column.key);
-    if (index < 0) collapsed.push(column.key);
-    else collapsed.splice(index, 1);
-    this.context_abyssPrivate.saveViewState();
+    this.context_abyssPrivate
+      .requestViewChange(() => {
+        const collapsed = this.context_abyssPrivate.settings().collapsedColumns;
+        const index = collapsed.indexOf(column.key);
+        if (index < 0) collapsed.push(column.key);
+        else collapsed.splice(index, 1);
+      })
+      .catch((error: unknown) => {
+        console.error('[abyss-tasks] Could not change project board view', error);
+      });
   }
 
   private reconcileColumnGroups_abyssPrivate(
@@ -341,44 +370,22 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
       const key = `${column.key}\u0000${modelGroup.key}`;
       retainedGroups.add(key);
       let group = column.groups.get(key);
-      if (group === undefined) {
-        const element = column.body.createDiv({ cls: 'abyss-project-kanban-group' });
-        const header = element.createEl('button', {
-          cls: 'abyss-project-kanban-group-header',
-          attr: { type: 'button' },
-        });
-        const body = element.createDiv({ cls: 'abyss-project-kanban-group-body' });
-        group = {
-          key,
-          element,
-          body,
-          cards: new Map(),
-          statusKey: column.key,
-          groupKey: modelGroup.key,
-          value: modelGroup.value,
-        };
-        header.addEventListener('click', () => {
-          if (this.collapsedGroups_abyssPrivate.has(key))
-            this.collapsedGroups_abyssPrivate.delete(key);
-          else this.collapsedGroups_abyssPrivate.add(key);
-          this.render_abyssPrivate();
-        });
-        column.groups.set(key, group);
-      }
+      group ??= this.createGroup_abyssPrivate(column, key, modelGroup);
       group.statusKey = column.key;
       group.groupKey = modelGroup.key;
       group.value = modelGroup.value;
-      const header = group.element.querySelector<HTMLButtonElement>(
-        '.abyss-project-kanban-group-header',
-      );
-      if (header !== null) {
-        header.setText(`${modelGroup.label} ${modelGroup.projects.length}`);
-        header.hidden = !grouped;
-        header.setAttribute('aria-expanded', String(!this.collapsedGroups_abyssPrivate.has(key)));
-      }
-      group.body.hidden = this.collapsedGroups_abyssPrivate.has(key);
+      const collapsed = this.patchGroup_abyssPrivate(group, modelGroup, grouped);
       desiredGroups.push(group.element);
-      this.reconcileCards_abyssPrivate(group, modelGroup.projects, retainedCards, visibleCells);
+      this.reconcileCards_abyssPrivate({
+        group,
+        projects: modelGroup.projects,
+        retainedCards,
+        visibleCells,
+        collectVisible:
+          !collapsed &&
+          !column.element.classList.contains('is-collapsed') &&
+          !column.element.classList.contains('is-compact-empty'),
+      });
     }
     for (const [key, group] of column.groups) {
       if (retainedGroups.has(key)) continue;
@@ -388,13 +395,70 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     this.reconcileOrder_abyssPrivate(column.body, desiredGroups);
   }
 
-  private reconcileCards_abyssPrivate(
+  private createGroup_abyssPrivate(
+    column: RenderedColumn<TCell>,
+    key: string,
+    model: ProjectTableGroup,
+  ): ProjectKanbanGroupContext<TCell> {
+    const element = column.body.createDiv({ cls: 'abyss-project-kanban-group' });
+    const header = element.createEl('button', {
+      cls: 'abyss-project-kanban-group-header',
+      attr: { type: 'button' },
+    });
+    const group: ProjectKanbanGroupContext<TCell> = {
+      key,
+      element,
+      header,
+      chevron: header.createSpan({ cls: 'abyss-project-kanban-group-chevron' }),
+      marker: header.createSpan({ cls: 'abyss-status-dot' }),
+      label: header.createSpan({ cls: 'abyss-projects-group-label' }),
+      count: header.createSpan({ cls: 'abyss-projects-group-count' }),
+      body: element.createDiv({ cls: 'abyss-project-kanban-group-body' }),
+      cards: new Map(),
+      statusKey: column.key,
+      groupKey: model.key,
+      value: model.value,
+    };
+    header.addEventListener('click', (event) => {
+      this.toggleGroup_abyssPrivate(event, key);
+    });
+    column.groups.set(key, group);
+    return group;
+  }
+
+  private toggleGroup_abyssPrivate(event: MouseEvent, key: string): void {
+    if (event.target instanceof Element && event.target.closest('a') !== null) return;
+    this.context_abyssPrivate
+      .requestViewChange(() => {
+        if (this.collapsedGroups_abyssPrivate.has(key))
+          this.collapsedGroups_abyssPrivate.delete(key);
+        else this.collapsedGroups_abyssPrivate.add(key);
+      })
+      .catch((error: unknown) => {
+        console.error('[abyss-tasks] Could not change project board view', error);
+      });
+  }
+
+  private patchGroup_abyssPrivate(
     group: ProjectKanbanGroupContext<TCell>,
-    projects: readonly Project[],
-    retainedCards: Set<string>,
-    visibleCells: TCell[],
-  ): void {
+    model: ProjectTableGroup,
+    grouped: boolean,
+  ): boolean {
+    const collapsed = this.collapsedGroups_abyssPrivate.has(group.key);
+    group.header.hidden = !grouped;
+    group.header.setAttribute('aria-expanded', String(!collapsed));
+    group.chevron.empty();
+    setIcon(group.chevron, collapsed ? 'chevron-right' : 'chevron-down');
+    this.context_abyssPrivate.renderGroupContent(group.marker, group.label, model);
+    group.count.setText(String(model.projects.length));
+    group.body.hidden = collapsed;
+    return collapsed;
+  }
+
+  private reconcileCards_abyssPrivate(options: ReconcileCardsOptions<TCell>): void {
+    const { group, projects, retainedCards, visibleCells, collectVisible } = options;
     const desiredCards: HTMLElement[] = [];
+    const collectedCells = collectVisible ? visibleCells : [];
     for (const project of projects) {
       const cardKey = projectKanbanCardKey(group.groupKey, project.path);
       retainedCards.add(cardKey);
@@ -409,7 +473,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
       card.occurrenceId = projectKanbanOccurrenceId(group.statusKey, group.groupKey, project.path);
       card.element.dataset['projectPath'] = project.path;
       card.element.dataset['occurrenceId'] = card.occurrenceId;
-      this.patchCard_abyssPrivate(card, visibleCells);
+      this.patchCard_abyssPrivate(card, collectedCells);
       group.cards.set(cardKey, card);
       desiredCards.push(card.element);
     }
@@ -425,11 +489,17 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
       cls: 'abyss-project-kanban-card',
       attr: { tabindex: '0' },
     });
+    const title = element.createDiv({ cls: 'abyss-project-kanban-title' });
+    const description = element.createDiv({ cls: 'abyss-project-kanban-description' });
+    const descriptionContent = description.createDiv({
+      cls: 'abyss-project-kanban-description-content',
+    });
     const card: RenderedCard<TCell> = {
       key,
       element,
-      title: element.createDiv({ cls: 'abyss-project-kanban-title' }),
-      description: element.createDiv({ cls: 'abyss-project-kanban-description' }),
+      title,
+      description,
+      descriptionContent,
       fields: element.createDiv({ cls: 'abyss-project-kanban-fields' }),
       progress: element.createDiv({ cls: 'abyss-project-kanban-progress' }),
       cells: new Map(),
@@ -441,8 +511,9 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     element.addEventListener('click', (event) => {
       if (
         event.target instanceof Element &&
-        event.target.closest('a, button, input, textarea, select, .abyss-project-cell-editor') !==
-          null
+        event.target.closest(
+          'a, button, input, textarea, select, .abyss-project-cell-editor, .abyss-project-kanban-cell',
+        ) !== null
       )
         return;
       this.selectCard_abyssPrivate(card);
@@ -506,7 +577,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
       context.retained.add('description');
       const cell = this.reconcileCell_abyssPrivate(
         card,
-        card.description,
+        card.descriptionContent,
         descriptionField,
         undefined,
       );
