@@ -8009,6 +8009,10 @@ table.abyss-project-table {
   margin-top: 6px;
 }
 
+.abyss-project-value-add + .setting-item {
+  margin-top: 8px;
+}
+
 @media (width <= 900px) {
   .abyss-project-value-row,
   .abyss-project-value-row.has-left-panel {

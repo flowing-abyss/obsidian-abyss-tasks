@@ -1121,42 +1121,21 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const projects = this.plugin_abyssPrivate.settings.projects;
     const current = projects[key];
     const setting = new Setting(containerEl).setName(name).setDesc(description);
-    setting.addDropdown((dropdown) => {
+    setting.addText((text) => {
       const siblingKeys = (['statusProperty', 'startProperty', 'endProperty'] as const).filter(
         (candidate) => candidate !== key,
       );
-      const options =
-        this.projectProperties_abyssPrivate
-          .list()
-          ?.filter(
-            ({ name: property }) =>
-              !this.sameProperty_abyssPrivate(property, 'tags') &&
-              !this.sameProperty_abyssPrivate(property, 'description') &&
-              !siblingKeys.some((candidate) =>
-                this.sameProperty_abyssPrivate(projects[candidate], property),
-              ),
-          )
-          .map(({ name: property }) => property) ?? [];
-      const matching = options.find((property) =>
-        this.sameProperty_abyssPrivate(property, current),
-      );
-      const selected = matching ?? current;
-      if (current.length > 0 && matching === undefined) {
-        dropdown.addOption(current, `${current} (current)`);
-      }
-      for (const property of options) {
-        const customDefinition = Object.keys(projects.propertyDefinitions).some(
-          (fieldId) =>
-            fieldId.startsWith('property:') &&
-            this.sameProperty_abyssPrivate(fieldId.slice('property:'.length), property),
-        );
-        dropdown.addOption(
-          property,
-          customDefinition ? `${property} (suspends custom column)` : property,
-        );
-      }
-      dropdown.setValue(selected).onChange(async (property) => {
+      const input = text.setValue(current).inputEl;
+      input.setAttribute('aria-label', name);
+      const commit = async (): Promise<void> => {
+        const property = input.value.trim();
+        if (property !== '' && this.sameProperty_abyssPrivate(property, current)) {
+          input.value = current;
+          return;
+        }
         if (
+          property === '' ||
+          this.sameProperty_abyssPrivate(property, 'tags') ||
           this.sameProperty_abyssPrivate(property, 'description') ||
           siblingKeys.some((candidate) =>
             this.sameProperty_abyssPrivate(projects[candidate], property),
@@ -1169,6 +1148,14 @@ export class CalendarSettingsTab extends PluginSettingTab {
         projects[key] = property;
         await this.plugin_abyssPrivate.saveSettings();
         this.render_abyssPrivate();
+      };
+      input.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        input.blur();
+      });
+      input.addEventListener('blur', () => {
+        runAsyncAction(commit(), `Could not save ${name.toLowerCase()}`);
       });
     });
   }

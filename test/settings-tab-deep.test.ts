@@ -1248,10 +1248,8 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
         '.abyss-project-value-raw',
       ),
     );
-    const statusSource = findDropdown(tab.containerEl, 'Status property');
-    expect(Array.from(expectDefined(statusSource).options).map(({ value }) => value)).toContain(
-      'Phase',
-    );
+    const statusSource = expectDefined(findInput(tab.containerEl, 'Status property'));
+    expect(statusSource.value).toBe('status');
     expect(scroller.scrollTop).toBe(513);
     expect(activeDocument.activeElement).toBe(replacement);
     expect(replacement.value).toBe('catalog draft');
@@ -1660,7 +1658,10 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
       (b) => b.textContent,
     );
     expect(badges).toEqual([]);
-    expect(findDropdown(body, 'Status property')?.value).toBe('status');
+    const statusProperty = expectDefined(findInput(body, 'Status property'));
+    expect(statusProperty.value).toBe('status');
+    expect(statusProperty.getAttribute('aria-label')).toBe('Status property');
+    expect(findDropdown(body, 'Status property')).toBeNull();
     expect(body.textContent).not.toContain('Defined by');
     expect(projectStatusRowNamed(body, 'active')).toBeDefined();
   });
@@ -1694,7 +1695,7 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
     expect(text.indexOf('End property')).toBeGreaterThan(text.indexOf('Table columns'));
   });
 
-  it('offers nonreserved sources independent of native type and omits curated collisions', () => {
+  it('keeps the status text source independent of curated date-source choices', () => {
     const projects = structuredClone(DEFAULT_SETTINGS.projects);
     projects.statusProperty = 'Статус';
     projects.startProperty = 'Начало';
@@ -1718,13 +1719,9 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
     };
     const { tab, plugin } = makeTab({ projects }, { projectProperties });
     const body = openSection(tab, 5);
-    const status = expectDefined(findDropdown(body, 'Status property'));
+    const status = expectDefined(findInput(body, 'Status property'));
     const start = expectDefined(findDropdown(body, 'Start property'));
-    expect(Array.from(status.options).map(({ value }) => value)).toEqual([
-      'Статус',
-      'Фаза',
-      'Wrong type',
-    ]);
+    expect(status.value).toBe('Статус');
     expect(Array.from(start.options).map(({ value }) => value)).toEqual([
       'Фаза',
       'Начало',
@@ -1735,24 +1732,92 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
     expect(plugin.saveSettings).not.toHaveBeenCalled();
   });
 
-  it('selects the native Status spelling for a case-insensitive saved source', () => {
-    const projects = structuredClone(DEFAULT_SETTINGS.projects);
-    projects.statusProperty = 'status';
-    const projectProperties: ProjectPropertyCatalog = {
-      list: () => [{ name: 'Status', type: 'text' }],
-      inspect: () => ({
-        kind: 'available',
-        property: { name: 'Status', type: 'text' },
-        assignment: { kind: 'none' },
-      }),
-      values: () => [],
-      onChange: () => () => {},
-    };
+  it.each(['blur', 'Enter'] as const)(
+    'commits a trimmed status property absent from the vault only on %s',
+    async (commitEvent) => {
+      const projects = structuredClone(DEFAULT_SETTINGS.projects);
+      projects.statusProperty = 'status';
+      const projectProperties: ProjectPropertyCatalog = {
+        list: () => [{ name: 'Status', type: 'text' }],
+        inspect: () => ({
+          kind: 'available',
+          property: { name: 'Status', type: 'text' },
+          assignment: { kind: 'none' },
+        }),
+        values: () => [],
+        onChange: () => () => {},
+      };
 
-    const { tab } = makeTab({ projects }, { projectProperties });
+      const { tab, plugin } = makeTab({ projects }, { projectProperties });
+      const body = openSection(tab, 5);
+      if (commitEvent === 'Enter') attachSettingsScroller(tab, 513);
+      const input = expectDefined(findInput(body, 'Status property'));
+
+      input.value = '  Workflow state  ';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+
+      expect(plugin.settings.projects.statusProperty).toBe('status');
+      expect(plugin.saveSettings).not.toHaveBeenCalled();
+
+      if (commitEvent === 'blur') {
+        input.dispatchEvent(new Event('blur'));
+      } else {
+        input.focus();
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+        );
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(plugin.settings.projects.statusProperty).toBe('Workflow state');
+      expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    { draft: '   ', label: 'blank' },
+    { draft: 'TaGs', label: 'reserved tags' },
+    { draft: 'DESCRIPTION', label: 'reserved description' },
+    { draft: 'START', label: 'start-property conflict' },
+    { draft: 'EnD', label: 'end-property conflict' },
+  ])('rejects a $label status property and resets the draft', ({ draft }) => {
+    vi.mocked(Notice).mockClear();
+    const { tab, plugin } = makeTab();
     const body = openSection(tab, 5);
+    const input = expectDefined(findInput(body, 'Status property'));
 
-    expect(findDropdown(body, 'Status property')?.value).toBe('Status');
+    input.value = draft;
+    input.dispatchEvent(new Event('blur'));
+
+    expect(plugin.settings.projects.statusProperty).toBe('status');
+    expect(plugin.saveSettings).not.toHaveBeenCalled();
+    expect(findInput(tab.containerEl, 'Status property')?.value).toBe('status');
+    expect(Notice).toHaveBeenCalledOnce();
+  });
+
+  it('does not save the existing trimmed status property on Enter', async () => {
+    const { tab, plugin } = makeTab();
+    const body = openSection(tab, 5);
+    const scroller = attachSettingsScroller(tab, 513);
+    const input = expectDefined(findInput(body, 'Status property'));
+    input.value = '  STATUS  ';
+    input.focus();
+
+    const enter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(enter);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(input.value).toBe('status');
+    expect(plugin.settings.projects.statusProperty).toBe('status');
+    expect(plugin.saveSettings).not.toHaveBeenCalled();
+    expect(scroller.scrollTop).toBe(513);
   });
 
   it('shows recoverable legacy binding evidence until a source is selected', async () => {
