@@ -67,7 +67,7 @@ export function reorderProjectPaths(
 function tableSettings(settings: ProjectKanbanSettings): ProjectTableSettings {
   return {
     columns: settings.fields.map((field) => ({ ...field })),
-    showDescription: settings.descriptionLines > 0,
+    showDescription: settings.descriptionLines !== 0,
     groupBy: settings.groupBy === 'status' ? 'none' : settings.groupBy,
     sortBy: { ...settings.sortBy },
     hiddenStatuses: [],

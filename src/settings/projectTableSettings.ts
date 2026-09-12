@@ -131,7 +131,7 @@ export function setProjectColumnLabel(
   return true;
 }
 
-function setProjectColumnVisibility(
+export function setProjectColumnVisibility(
   settings: ProjectTableSettings,
   columnId: string,
   visible: boolean,
@@ -157,7 +157,7 @@ export function setProjectColumnWidth(
   return true;
 }
 
-function moveProjectColumn(
+export function moveProjectColumn(
   settings: ProjectTableSettings,
   columnId: string,
   targetId: string,

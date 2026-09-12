@@ -130,4 +130,11 @@ describe('project Kanban settings', () => {
       ).fields,
     ).toEqual([{ id: 'start', visible: true }]);
   });
+
+  it('normalizes and validates the additive full description mode', () => {
+    const normalized = normalizeProjectKanbanSettings({ descriptionLines: 'full' }, table());
+
+    expect(normalized.descriptionLines).toBe('full');
+    expect(isMalformedProjectKanbanSettings({ descriptionLines: 'full' })).toBe(false);
+  });
 });

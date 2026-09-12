@@ -114,7 +114,7 @@ describe('SettingsPersistenceCoordinator migration', () => {
     expect(loaded.settings.projects.overviewView).toBe('kanban');
     expect(loaded.settings.projects.kanban).toEqual(kanban);
     if (loaded.settings.projects.kanban === undefined) throw new Error('Expected Kanban state.');
-    loaded.settings.projects.kanban.descriptionLines = 2;
+    loaded.settings.projects.kanban.descriptionLines = 'full';
     await coordinator.saveViewState(loaded.settings);
 
     const saved = JSON.parse(port.stateText ?? '') as {
@@ -130,7 +130,7 @@ describe('SettingsPersistenceCoordinator migration', () => {
     };
     expect(saved.views.projects.overviewView).toBe('kanban');
     expect(saved.views.projects.kanban).toMatchObject({
-      descriptionLines: 2,
+      descriptionLines: 'full',
       futureBoardOption: { retained: true },
     });
     expect(saved.views.projects.kanban.fields[0]).toEqual({
@@ -143,6 +143,9 @@ describe('SettingsPersistenceCoordinator migration', () => {
       dir: 'asc',
       futureSortOption: 7,
     });
+
+    const reloaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(reloaded.settings.projects.kanban?.descriptionLines).toBe('full');
   });
 
   it('moves legacy static Kanban preferences into version-1 view state', async () => {

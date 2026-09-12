@@ -735,10 +735,15 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     const descriptionField = findProjectFieldById(context.fields, 'description');
     const description = projectKanbanDescription(card.project, descriptionField);
     card.description.hidden = settings.descriptionLines === 0 || description.length === 0;
-    card.description.style.setProperty(
-      '--abyss-project-description-lines',
-      String(settings.descriptionLines),
-    );
+    card.description.toggleClass('is-full', settings.descriptionLines === 'full');
+    if (settings.descriptionLines === 'full') {
+      card.description.style.removeProperty('--abyss-project-description-lines');
+    } else {
+      card.description.style.setProperty(
+        '--abyss-project-description-lines',
+        String(settings.descriptionLines),
+      );
+    }
     if (!card.description.hidden && descriptionField !== undefined) {
       context.retained.add('description');
       const cell = this.reconcileCell_abyssPrivate(

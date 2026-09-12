@@ -169,6 +169,11 @@ export interface ProjectDateDisplayMenuOptions {
   readonly onSelect: (display: ProjectDateDisplay) => void;
 }
 
+export function projectDateDisplayLabel(display: ProjectDateDisplay): string {
+  if (display === 'raw') return 'Raw';
+  return display === 'relative' ? 'Relative' : 'Pretty';
+}
+
 /** Adds shared project-date presentation choices to a native menu. */
 export function configureProjectDateDisplayMenu(
   menu: Menu,

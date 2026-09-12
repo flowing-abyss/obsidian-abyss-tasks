@@ -1,9 +1,12 @@
-import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
+import { Menu } from 'obsidian';
+import type { ProjectDateDisplay, ProjectFieldCatalogItem } from '../../projects/projectFields';
 import {
   buildDefaultProjectKanbanSettings,
   type ProjectKanbanSettings,
 } from '../../projects/projectKanbanSettings';
-import type { ViewOptionsRow } from '../../ui/ViewOptionsPopover';
+import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import type { ViewOption, ViewOptionAction, ViewOptionsRow } from '../../ui/ViewOptionsPopover';
+import { configureProjectDateDisplayMenu, projectDateDisplayLabel } from './projectColumnMenu';
 
 interface ProjectKanbanOptionsContext {
   readonly settings: ProjectKanbanSettings;
@@ -46,6 +49,67 @@ function selectedFieldIds(settings: ProjectKanbanSettings): string[] {
   return settings.fields.filter(({ visible }) => visible).map(({ id }) => id);
 }
 
+function setFieldDateDisplay(
+  context: ProjectKanbanOptionsContext,
+  fieldId: string,
+  display: ProjectDateDisplay,
+): void {
+  let configured = context.settings.fields.find(({ id }) => id === fieldId);
+  if (configured === undefined) {
+    configured = {
+      ...(context.tableSettings.columns.find(({ id }) => id === fieldId) ?? { id: fieldId }),
+      id: fieldId,
+      visible: false,
+    };
+    context.settings.fields.push(configured);
+  }
+  configured.dateDisplay = display;
+}
+
+function applyFieldDateDisplay(
+  context: ProjectKanbanOptionsContext,
+  fieldId: string,
+  display: ProjectDateDisplay,
+): Promise<void> {
+  return applyMutation(context, () => {
+    setFieldDateDisplay(context, fieldId, display);
+  });
+}
+
+function fieldDateAction(
+  context: ProjectKanbanOptionsContext,
+  field: ProjectFieldCatalogItem,
+): ViewOptionAction | undefined {
+  if (field.type !== 'date' && field.type !== 'datetime') return undefined;
+  const active = (): ProjectDateDisplay =>
+    context.settings.fields.find(({ id }) => id === field.id)?.dateDisplay ?? 'pretty';
+  return {
+    label: () => projectDateDisplayLabel(active()),
+    ariaLabel: `Date display for ${labelFor(
+      context.fields,
+      context.settings,
+      context.tableSettings,
+      field.id,
+    )}`,
+    onSelect: (event, run) => {
+      const trigger = event.currentTarget;
+      const menu = new Menu();
+      configureProjectDateDisplayMenu(menu, {
+        active: active(),
+        onSelect: (display) => {
+          run(() => applyFieldDateDisplay(context, field.id, display));
+        },
+      });
+      menu.onHide(() => {
+        if (trigger instanceof HTMLElement && trigger.isConnected) {
+          trigger.focus({ preventScroll: true });
+        }
+      });
+      showMenuAtMouseEventWithFocus(menu, event);
+    },
+  };
+}
+
 function toggleField(
   settings: ProjectKanbanSettings,
   tableSettings: ProjectKanbanOptionsContext['tableSettings'],
@@ -84,13 +148,15 @@ function setBoolean(
   settings[key] = value === 'show';
 }
 
-function fieldOptions(
-  context: ProjectKanbanOptionsContext,
-): Array<{ value: string; label: string }> {
-  return selectableCardFields(context.fields).map((field) => ({
-    value: field.id,
-    label: labelFor(context.fields, context.settings, context.tableSettings, field.id),
-  }));
+function fieldOptions(context: ProjectKanbanOptionsContext): ViewOption[] {
+  return selectableCardFields(context.fields).map((field) => {
+    const option = {
+      value: field.id,
+      label: labelFor(context.fields, context.settings, context.tableSettings, field.id),
+    };
+    const action = fieldDateAction(context, field);
+    return action === undefined ? option : { ...option, action };
+  });
 }
 
 function groupFieldOptions(
@@ -126,15 +192,19 @@ function cardFieldsRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
   };
 }
 
-function descriptionLines(value: string): 0 | 1 | 2 {
-  if (value === '2') return 2;
-  if (value === '1') return 1;
-  return 0;
+function descriptionLines(value: string): ProjectKanbanSettings['descriptionLines'] {
+  const values: Readonly<Record<string, ProjectKanbanSettings['descriptionLines']>> = {
+    '1': 1,
+    '2': 2,
+    full: 'full',
+  };
+  return values[value] ?? 0;
 }
 
-function descriptionDisplay(lines: 0 | 1 | 2): string {
+function descriptionDisplay(lines: ProjectKanbanSettings['descriptionLines']): string {
   if (lines === 0) return 'Hidden';
-  return lines === 1 ? '1 line' : '2 lines';
+  if (lines === 1) return '1 line';
+  return lines === 2 ? '2 lines' : 'Full';
 }
 
 function descriptionRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
@@ -148,6 +218,7 @@ function descriptionRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
       { value: '0', label: 'Hidden' },
       { value: '1', label: '1 line', isDefault: true },
       { value: '2', label: '2 lines' },
+      { value: 'full', label: 'Full' },
     ],
     onSelect: (value) =>
       applyMutation(context, () => {
@@ -285,14 +356,22 @@ function sortRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
 /** Builds the board-specific rows inside the existing project view-options surface. */
 export function projectKanbanOptionsRows(context: ProjectKanbanOptionsContext): ViewOptionsRow[] {
   return [
-    cardFieldsRow(context),
-    descriptionRow(context),
-    progressRow(context),
-    booleanRow(context, 'showEmptyFields', 'Empty fields', 'rows-3'),
-    booleanRow(context, 'showEmptyProgress', 'Progress without tasks', 'circle-slash-2'),
-    emptyColumnsRow(context),
     groupRow(context),
     sortRow(context),
+    {
+      kind: 'group',
+      icon: 'columns-3',
+      label: 'Kanban',
+      displayValue: '6 options',
+      rows: [
+        cardFieldsRow(context),
+        descriptionRow(context),
+        progressRow(context),
+        booleanRow(context, 'showEmptyFields', 'Empty fields', 'rows-3'),
+        booleanRow(context, 'showEmptyProgress', 'Progress without tasks', 'circle-slash-2'),
+        emptyColumnsRow(context),
+      ],
+    },
   ];
 }
 

@@ -10,7 +10,7 @@ export type ProjectOverviewMode = 'table' | 'kanban';
 export interface ProjectKanbanSettings {
   fields: ProjectColumn[];
   showEmptyFields: boolean;
-  descriptionLines: 0 | 1 | 2;
+  descriptionLines: 0 | 1 | 2 | 'full';
   progress: 'hidden' | 'bar' | 'full';
   showEmptyProgress: boolean;
   emptyColumns: 'expanded' | 'compact';
@@ -85,7 +85,7 @@ function normalizedDescriptionLines(
   value: unknown,
   fallback: ProjectKanbanSettings['descriptionLines'],
 ): ProjectKanbanSettings['descriptionLines'] {
-  return value === 0 || value === 1 || value === 2 ? value : fallback;
+  return value === 0 || value === 1 || value === 2 || value === 'full' ? value : fallback;
 }
 
 function normalizedProgress(
@@ -200,7 +200,10 @@ export function isMalformedProjectKanbanSettings(raw: unknown): boolean {
   return ![
     validOptional(raw['fields'], isValidFields),
     validOptional(raw['showEmptyFields'], (value) => typeof value === 'boolean'),
-    validOptional(raw['descriptionLines'], (value) => value === 0 || value === 1 || value === 2),
+    validOptional(
+      raw['descriptionLines'],
+      (value) => value === 0 || value === 1 || value === 2 || value === 'full',
+    ),
     validOptional(
       raw['progress'],
       (value) => value === 'hidden' || value === 'bar' || value === 'full',

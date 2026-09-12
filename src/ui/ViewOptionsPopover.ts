@@ -1,10 +1,22 @@
 import { setIcon } from 'obsidian';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 
-interface ViewOption {
+export interface ViewOptionAction {
+  readonly label: string | (() => string);
+  readonly ariaLabel: string;
+  readonly onSelect: (
+    event: MouseEvent,
+    run: (action: () => void | Promise<void>) => void,
+  ) => void | Promise<void>;
+}
+
+export interface ViewOption {
   readonly label: string;
   readonly value: string;
   readonly isDefault?: boolean;
+  readonly disabled?: boolean;
+  readonly required?: boolean;
+  readonly action?: ViewOptionAction;
 }
 
 interface ViewOptionsRowBase {
@@ -30,7 +42,12 @@ export interface ViewOptionsMultiRow extends ViewOptionsRowBase {
   readonly onMove?: (value: string, direction: 'up' | 'down') => void | Promise<void>;
 }
 
-export type ViewOptionsRow = ViewOptionsSingleRow | ViewOptionsMultiRow;
+export interface ViewOptionsGroupRow extends ViewOptionsRowBase {
+  readonly kind: 'group';
+  readonly rows: readonly ViewOptionsRow[];
+}
+
+export type ViewOptionsRow = ViewOptionsSingleRow | ViewOptionsMultiRow | ViewOptionsGroupRow;
 
 export interface OpenViewOptionsPopoverOptions {
   readonly host: HTMLElement;
@@ -42,14 +59,26 @@ export interface OpenViewOptionsPopoverOptions {
   readonly onClose?: () => void;
 }
 
-function closeSublists(popover: HTMLElement): void {
-  popover.querySelectorAll<HTMLElement>('.abyss-view-state-sublist').forEach((element) => {
+function closeRow(row: HTMLElement): void {
+  row.querySelectorAll<HTMLElement>('.abyss-view-state-sublist').forEach((element) => {
     element.addClass('abyss-hidden');
   });
-  popover.querySelectorAll<HTMLElement>('.abyss-view-state-row-main').forEach((element) => {
+  row.querySelectorAll<HTMLElement>('.abyss-view-state-row-main').forEach((element) => {
     element.removeClass('is-open');
     element.setAttribute('aria-expanded', 'false');
   });
+}
+
+function closeSiblingRows(host: HTMLElement, retained: HTMLElement): void {
+  for (const child of host.children) {
+    if (
+      child !== retained &&
+      child.instanceOf(HTMLElement) &&
+      child.hasClass('abyss-view-state-row')
+    ) {
+      closeRow(child);
+    }
+  }
 }
 
 function optionButton(host: HTMLElement, label: string, active: boolean): HTMLButtonElement {
@@ -69,6 +98,7 @@ interface RenderedMultiOption {
   readonly button: HTMLButtonElement;
   readonly check: HTMLElement;
   readonly moveButtons: readonly HTMLButtonElement[];
+  readonly actionButton?: HTMLButtonElement;
 }
 
 function selectedValues(spec: ViewOptionsMultiRow): readonly string[] {
@@ -77,6 +107,10 @@ function selectedValues(spec: ViewOptionsMultiRow): readonly string[] {
 
 function currentDisplayValue(spec: ViewOptionsRow): string {
   return typeof spec.displayValue === 'function' ? spec.displayValue() : spec.displayValue;
+}
+
+function currentActionLabel(action: ViewOptionAction): string {
+  return typeof action.label === 'function' ? action.label() : action.label;
 }
 
 function compareMultiOptions(
@@ -99,7 +133,9 @@ function syncMultiOption(rendered: RenderedMultiOption, active: boolean): void {
   if (active) setIcon(rendered.check, 'check');
   for (const move of rendered.moveButtons) {
     move.hidden = !active;
-    move.disabled = false;
+  }
+  if (rendered.actionButton !== undefined && rendered.option.action !== undefined) {
+    rendered.actionButton.setText(currentActionLabel(rendered.option.action));
   }
 }
 
@@ -133,16 +169,12 @@ function syncMultiOptions(
     syncMultiOption(rendered, rank.has(rendered.option.value));
   }
   summary.setText(currentDisplayValue(spec));
-  if (focused instanceof HTMLElement && focused.isConnected && host.contains(focused)) {
+  if (focused?.instanceOf(HTMLElement) === true && focused.isConnected && host.contains(focused)) {
     focused.focus({ preventScroll: true });
   }
 }
 
-function renderMultiOptions(
-  sublist: HTMLElement,
-  spec: ViewOptionsMultiRow,
-  summary: HTMLElement,
-): void {
+function renderMultiPresets(sublist: HTMLElement, spec: ViewOptionsMultiRow): void {
   for (const preset of spec.presets ?? []) {
     optionButton(sublist, preset.label, preset.active === true).addEventListener('click', () => {
       preset.onSelect();
@@ -151,33 +183,92 @@ function renderMultiOptions(
   if ((spec.presets?.length ?? 0) > 0) {
     sublist.createDiv({ cls: 'abyss-view-state-sublist-divider' });
   }
+}
+
+function renderOptionAction(
+  row: HTMLElement,
+  option: ViewOption,
+  sync: () => void,
+): HTMLButtonElement | undefined {
+  if (option.action === undefined) return undefined;
+  const action = option.action;
+  const button = row.createEl('button', {
+    cls: 'abyss-view-state-option-action',
+    text: currentActionLabel(action),
+    attr: { type: 'button', 'aria-label': action.ariaLabel },
+  });
+  button.addEventListener('click', (event) => {
+    runOptionAction(() =>
+      action.onSelect(event, (callback) => {
+        runOptionAction(callback, sync);
+      }),
+    );
+  });
+  return button;
+}
+
+function renderMoveButtons(
+  row: HTMLElement,
+  option: ViewOption,
+  spec: ViewOptionsMultiRow,
+  sync: () => void,
+): HTMLButtonElement[] {
+  const onMove = spec.onMove;
+  if (onMove === undefined || option.disabled === true || option.required === true) return [];
+  return (['up', 'down'] as const).map((direction) => {
+    const move = row.createEl('button', {
+      cls: 'abyss-view-state-option-move',
+      attr: { type: 'button', 'aria-label': `Move ${option.label} ${direction}` },
+    });
+    setIcon(move, direction === 'up' ? 'chevron-up' : 'chevron-down');
+    move.addEventListener('click', () => {
+      runOptionAction(() => onMove(option.value, direction), sync);
+    });
+    return move;
+  });
+}
+
+function renderMultiOption(
+  host: HTMLElement,
+  option: ViewOption,
+  spec: ViewOptionsMultiRow,
+  sync: () => void,
+): RenderedMultiOption {
+  const row = host.createDiv({ cls: 'abyss-view-state-option-row' });
+  const button = optionButton(row, option.label, false);
+  button.disabled = option.disabled === true;
+  if (option.required === true) {
+    button.createSpan({ cls: 'abyss-view-state-option-required', text: 'Required' });
+  }
+  const check = button.querySelector<HTMLElement>('.abyss-view-state-option-check');
+  if (check === null) throw new Error('View option check marker was not rendered.');
+  button.addEventListener('click', () => {
+    runOptionAction(() => spec.onToggle(option.value), sync);
+  });
+  const actionButton = renderOptionAction(row, option, sync);
+  return {
+    option,
+    row,
+    button,
+    check,
+    moveButtons: renderMoveButtons(row, option, spec, sync),
+    ...(actionButton === undefined ? {} : { actionButton }),
+  };
+}
+
+function renderMultiOptions(
+  sublist: HTMLElement,
+  spec: ViewOptionsMultiRow,
+  summary: HTMLElement,
+): void {
+  renderMultiPresets(sublist, spec);
   const optionsHost = sublist.createDiv({ cls: 'abyss-view-state-options' });
   const renderedRows: RenderedMultiOption[] = [];
   const sync = (): void => {
     syncMultiOptions(optionsHost, spec, renderedRows, summary);
   };
   for (const option of spec.options) {
-    const row = optionsHost.createDiv({ cls: 'abyss-view-state-option-row' });
-    const button = optionButton(row, option.label, false);
-    const check = button.querySelector<HTMLElement>('.abyss-view-state-option-check');
-    if (check === null) continue;
-    button.addEventListener('click', () => {
-      runOptionAction(() => spec.onToggle(option.value), sync);
-    });
-    const moveButtons = (['up', 'down'] as const).flatMap((direction) => {
-      const onMove = spec.onMove;
-      if (onMove === undefined) return [];
-      const move = row.createEl('button', {
-        cls: 'abyss-view-state-option-move',
-        attr: { type: 'button', 'aria-label': `Move ${option.label} ${direction}` },
-      });
-      setIcon(move, direction === 'up' ? 'chevron-up' : 'chevron-down');
-      move.addEventListener('click', () => {
-        runOptionAction(() => onMove(option.value, direction), sync);
-      });
-      return [move];
-    });
-    renderedRows.push({ option, row, button, check, moveButtons });
+    renderedRows.push(renderMultiOption(optionsHost, option, spec, sync));
   }
   sync();
 }
@@ -189,6 +280,7 @@ function renderSingleOptions(
 ): void {
   for (const option of spec.options) {
     const button = optionButton(sublist, option.label, option.value === spec.activeValue);
+    button.disabled = option.disabled === true;
     if (option.isDefault === true) {
       button.createSpan({ cls: 'abyss-view-state-option-default', text: 'Default' });
     }
@@ -199,8 +291,8 @@ function renderSingleOptions(
   }
 }
 
-function renderRow(popover: HTMLElement, spec: ViewOptionsRow, close: () => void): void {
-  const row = popover.createDiv({ cls: 'abyss-view-state-row' });
+function renderRow(host: HTMLElement, spec: ViewOptionsRow, close: () => void): void {
+  const row = host.createDiv({ cls: 'abyss-view-state-row' });
   const initiallyOpen = spec.initiallyOpen === true;
   const main = row.createEl('button', {
     cls: `abyss-view-state-row-main${initiallyOpen ? ' is-open' : ''}`,
@@ -220,17 +312,20 @@ function renderRow(popover: HTMLElement, spec: ViewOptionsRow, close: () => void
   });
   const toggle = (): void => {
     const open = sublist.hasClass('abyss-hidden');
-    closeSublists(popover);
+    closeSiblingRows(host, row);
     if (open) {
       sublist.removeClass('abyss-hidden');
       main.addClass('is-open');
       main.setAttribute('aria-expanded', 'true');
+    } else {
+      closeRow(row);
     }
   };
   main.addEventListener('click', toggle);
 
   if (spec.kind === 'multi') renderMultiOptions(sublist, spec, summary);
-  else renderSingleOptions(sublist, spec, close);
+  else if (spec.kind === 'single') renderSingleOptions(sublist, spec, close);
+  else for (const child of spec.rows) renderRow(sublist, child, close);
 }
 
 /** Opens the shared task/project sort and grouping surface and returns idempotent cleanup. */

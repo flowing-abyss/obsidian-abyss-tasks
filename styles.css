@@ -6603,6 +6603,11 @@ body.abyss-modal-open .popover.hover-popover {
   padding: 4px 0;
 }
 
+.abyss-view-state-sublist > .abyss-view-state-row {
+  margin-inline-start: 8px;
+  border-inline-start: 1px solid var(--background-modifier-border-hover);
+}
+
 .abyss-view-state-option {
   display: flex;
   align-items: center;
@@ -6645,6 +6650,13 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-faint);
   margin-left: auto;
   padding-left: 8px;
+}
+
+.abyss-view-state-option-required {
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--text-faint);
+  font-size: 10px;
 }
 
 .abyss-view-state-sublist-divider {
@@ -6924,37 +6936,44 @@ body.abyss-modal-open .popover.hover-popover {
   border-radius: 8px;
 }
 
-.abyss-project-table-controls .abyss-view-state-btn {
+.abyss-project-table-controls :is(.abyss-view-state-btn, .abyss-project-overview-mode) {
   width: 30px;
   height: 30px;
-  border-radius: 6px;
-}
-
-.abyss-projects-table button.abyss-project-overview-mode {
-  width: 28px;
-  height: 30px;
+  min-width: 30px;
   padding: 5px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 0;
-  background: var(--background-primary);
+  border-radius: 6px;
+  background: var(--interactive-normal);
   box-shadow: none;
   color: var(--text-muted);
 }
 
+.abyss-projects-table button.abyss-project-overview-mode {
+  width: 30px;
+  height: 30px;
+  padding: 5px;
+  border-radius: 6px;
+}
+
 .abyss-projects-table button.abyss-project-overview-mode--table {
-  margin-right: -8px;
-  border-radius: 6px 0 0 6px;
+  margin-right: 0;
 }
 
 .abyss-projects-table button.abyss-project-overview-mode--kanban {
-  border-radius: 0 6px 6px 0;
+  border-radius: 6px;
 }
 
 .abyss-projects-table button.abyss-project-overview-mode.is-active {
   z-index: 1;
   border-color: var(--interactive-accent);
-  background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
-  color: var(--text-normal);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.abyss-project-table-controls
+  :is(.abyss-view-state-btn, .abyss-project-overview-mode):focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
 }
 
 .abyss-project-table-feedback {
@@ -8236,6 +8255,14 @@ table.abyss-project-table {
   line-clamp: var(--abyss-project-description-lines, 1);
 }
 
+.abyss-project-kanban-description.is-full
+  .abyss-project-kanban-description-content:not(.is-editing) {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+}
+
 .abyss-project-kanban-description-content:not(.is-editing) > * {
   overflow: hidden;
   max-width: 100%;
@@ -8296,6 +8323,24 @@ table.abyss-project-table {
   height: 26px;
   flex: 0 0 auto;
   padding: 5px;
+}
+
+.abyss-view-state-option-action {
+  min-width: 52px;
+  height: 24px;
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--interactive-normal);
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-view-state-option-action:hover {
+  background: var(--interactive-hover);
+  color: var(--text-normal);
 }
 
 .abyss-view-state-option-move[hidden] {

@@ -208,7 +208,9 @@ view. Missing Kanban state leaves existing installations on the table and is ini
 current table filters, grouping, and sorting only when requested. `projectKanbanModel` partitions
 projects by the shared status-group identity, then delegates search, typed sorting, and inner
 grouping to `projectTableModel`; configured statuses remain ordered even when empty, while synthetic
-raw and No status columns exist only for source values that are present.
+raw and No status columns exist only for source values that are present. Card descriptions persist
+as hidden, one line, two lines, or full; the additive full value removes the visual line clamp, while
+older binaries retain it in recovery and fall back to their existing default.
 
 `ProjectsPanel` owns one long-lived project-overview controller and the vault property-catalog
 subscription. Ordinary project-store refreshes update that controller instead of reconstructing
@@ -219,6 +221,11 @@ positions; switching hides the inactive surface without destroying its nodes. Bo
 metadata and progress through the shared project-cell renderer and send edits through the same
 `ProjectManager.applyEdits` coordinator. Switching to a project dashboard temporarily detaches the
 overview surface, and returning reattaches the same session and active overview mode.
+
+The project toolbar composes the shared recursive `ViewOptionsPopover` as Group by, Sort by, and one
+active-view group. Nested disclosures close only siblings at their own level. Table column and
+Kanban card-field visibility, order, and temporal presentation actions stay inside the existing
+guarded view-state mutation path; the required Name column remains first and visible.
 
 `ProjectsKanbanView` projects ordered status columns and optional inner groups from
 `projectKanbanModel`. It reconciles columns by status key, cards by grouped project occurrence, and

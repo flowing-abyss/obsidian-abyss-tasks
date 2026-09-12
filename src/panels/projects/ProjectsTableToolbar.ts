@@ -1,12 +1,29 @@
-import { setIcon } from 'obsidian';
-import type { ProjectFieldCatalogItem, ProjectTableSettings } from '../../projects/projectFields';
+import { Menu, setIcon } from 'obsidian';
+import type {
+  ProjectColumn,
+  ProjectDateDisplay,
+  ProjectFieldCatalogItem,
+  ProjectTableSettings,
+} from '../../projects/projectFields';
 import type {
   ProjectKanbanSettings,
   ProjectOverviewMode,
 } from '../../projects/projectKanbanSettings';
 import { buildDefaultProjectTableSettings } from '../../projects/projectTableSettings';
 import type { StatusGroup } from '../../projects/status';
-import { openViewOptionsPopover, type ViewOptionsRow } from '../../ui/ViewOptionsPopover';
+import {
+  moveProjectColumn,
+  setProjectColumnDateDisplay,
+  setProjectColumnVisibility,
+} from '../../settings/projectTableSettings';
+import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import {
+  openViewOptionsPopover,
+  type ViewOption,
+  type ViewOptionAction,
+  type ViewOptionsRow,
+} from '../../ui/ViewOptionsPopover';
+import { configureProjectDateDisplayMenu, projectDateDisplayLabel } from './projectColumnMenu';
 import { isProjectKanbanCustomized, projectKanbanOptionsRows } from './ProjectKanbanOptions';
 
 export interface ProjectsTableToolbarOptions {
@@ -287,6 +304,121 @@ export class ProjectsTableToolbar {
           this.options_abyssPrivate.onSortBy(value);
         },
       },
+      {
+        kind: 'group',
+        icon: 'table-2',
+        label: 'Table',
+        displayValue: '2 options',
+        rows: [
+          this.tableColumnsRow_abyssPrivate(settings, fields),
+          this.tableDescriptionRow_abyssPrivate(settings),
+        ],
+      },
     ];
+  }
+
+  private tableColumnsRow_abyssPrivate(
+    settings: ProjectTableSettings,
+    fields: readonly ProjectFieldCatalogItem[],
+  ): ViewOptionsRow {
+    const selected = (): string[] =>
+      settings.columns.filter(({ visible }) => visible).map(({ id }) => id);
+    const options: ViewOption[] = settings.columns.map((column) => {
+      const label = fieldLabel(fields, settings, column.id);
+      const field = fields.find(({ id }) => id === column.id);
+      const action =
+        field === undefined
+          ? undefined
+          : this.tableDateAction_abyssPrivate(settings, column, field, label);
+      return {
+        value: column.id,
+        label,
+        ...(column.id === 'name' ? { disabled: true, required: true } : {}),
+        ...(action === undefined ? {} : { action }),
+      };
+    });
+    return {
+      kind: 'multi',
+      icon: 'columns-3',
+      label: 'Columns',
+      displayValue: () => `${selected().length} shown`,
+      selected,
+      options,
+      onToggle: (columnId) =>
+        this.applyViewMutation_abyssPrivate(() => {
+          const column = settings.columns.find(({ id }) => id === columnId);
+          if (column !== undefined) {
+            setProjectColumnVisibility(settings, columnId, !column.visible);
+          }
+        }),
+      onMove: (columnId, direction) =>
+        this.applyViewMutation_abyssPrivate(() => {
+          const index = settings.columns.findIndex(({ id }) => id === columnId);
+          const target = settings.columns[index + (direction === 'up' ? -1 : 1)];
+          if (target !== undefined) moveProjectColumn(settings, columnId, target.id);
+        }),
+    };
+  }
+
+  private tableDescriptionRow_abyssPrivate(settings: ProjectTableSettings): ViewOptionsRow {
+    return {
+      kind: 'single',
+      icon: 'text',
+      label: 'Description',
+      displayValue: settings.showDescription ? 'Show' : 'Hide',
+      activeValue: settings.showDescription ? 'show' : 'hide',
+      options: [
+        { value: 'hide', label: 'Hide' },
+        { value: 'show', label: 'Show', isDefault: true },
+      ],
+      onSelect: (value) =>
+        this.applyViewMutation_abyssPrivate(() => {
+          settings.showDescription = value === 'show';
+        }),
+    };
+  }
+
+  private tableDateAction_abyssPrivate(
+    settings: ProjectTableSettings,
+    column: ProjectColumn,
+    field: ProjectFieldCatalogItem,
+    label: string,
+  ): ViewOptionAction | undefined {
+    if (field.type !== 'date' && field.type !== 'datetime') return undefined;
+    const active = (): ProjectDateDisplay => column.dateDisplay ?? 'pretty';
+    return {
+      label: () => projectDateDisplayLabel(active()),
+      ariaLabel: `Date display for ${label}`,
+      onSelect: (event, run) => {
+        const trigger = event.currentTarget;
+        const menu = new Menu();
+        configureProjectDateDisplayMenu(menu, {
+          active: active(),
+          onSelect: (display) => {
+            run(() => this.setTableDateDisplay_abyssPrivate(settings, column.id, display));
+          },
+        });
+        menu.onHide(() => {
+          if (trigger instanceof HTMLElement && trigger.isConnected) {
+            trigger.focus({ preventScroll: true });
+          }
+        });
+        showMenuAtMouseEventWithFocus(menu, event);
+      },
+    };
+  }
+
+  private async applyViewMutation_abyssPrivate(mutation: () => void): Promise<void> {
+    await this.options_abyssPrivate.onViewOptionChange(mutation);
+  }
+
+  private setTableDateDisplay_abyssPrivate(
+    settings: ProjectTableSettings,
+    columnId: string,
+    display: ProjectDateDisplay,
+  ): Promise<void> {
+    return this.applyViewMutation_abyssPrivate(() => {
+      setProjectColumnDateDisplay(settings, columnId, display);
+    });
   }
 }
