@@ -4440,6 +4440,12 @@ describe('ProjectsTableView', () => {
     expect(
       host.querySelector('[data-project-path="Projects/After editor.md"]')?.classList,
     ).toContain('is-just-created');
+    expect(
+      activeDocument.activeElement?.closest<HTMLElement>('[data-project-path]')?.dataset[
+        'projectPath'
+      ],
+    ).toBe(created.path);
+    expect(view.selectedProjectPath()).toBe(created.path);
     expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
   });
 

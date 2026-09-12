@@ -1,6 +1,7 @@
 import type { Project } from '../../projects/types';
 
 const PRESENTATION_TIMEOUT_MS = 3_000;
+const RESOLVED_PRESENTATION_TIMEOUT_MS = 30_000;
 const NORMAL_HIGHLIGHT_MS = 1_100;
 const REDUCED_HIGHLIGHT_MS = 800;
 
@@ -73,8 +74,11 @@ export class ProjectCreationPresentation {
     if (project === undefined) return;
     if (!entry.membershipResolved) {
       entry.membershipResolved = true;
+      entry.expiresAt = this.options_abyssPrivate.now() + RESOLVED_PRESENTATION_TIMEOUT_MS;
       this.clearTimeout_abyssPrivate(entry.timeout);
-      entry.timeout = 0;
+      entry.timeout = this.setTimeout_abyssPrivate(() => {
+        this.expire_abyssPrivate(entry);
+      }, RESOLVED_PRESENTATION_TIMEOUT_MS);
     }
     const previous = entry.element;
     const focus = entry.highlightUntil === undefined && entry.ownsFocus();

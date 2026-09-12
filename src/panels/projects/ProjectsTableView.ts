@@ -501,6 +501,8 @@ export class ProjectsTableView {
   private readonly creationPresentation_abyssPrivate: ProjectCreationPresentation;
   private creationInteractionRevision_abyssPrivate = 0;
   private creationInteractionToken_abyssPrivate: number | undefined;
+  private creationInteractionSettling_abyssPrivate = false;
+  private creationReconciliationPending_abyssPrivate = false;
   private notifyingCreationReconciliation_abyssPrivate = false;
   private kanbanView_abyssPrivate: ProjectsKanbanView<RenderedCellContext> | undefined;
   private readonly markdown_abyssPrivate = new Component();
@@ -1203,12 +1205,29 @@ export class ProjectsTableView {
   }
 
   private notifyCreationReconciled_abyssPrivate(): void {
+    if (this.creationInteractionSettling_abyssPrivate) {
+      this.creationReconciliationPending_abyssPrivate = true;
+      return;
+    }
     if (this.notifyingCreationReconciliation_abyssPrivate) return;
     this.notifyingCreationReconciliation_abyssPrivate = true;
     try {
       this.creationPresentation_abyssPrivate.update();
     } finally {
       this.notifyingCreationReconciliation_abyssPrivate = false;
+    }
+  }
+
+  private runSettledCreationInteraction_abyssPrivate(action: () => void): void {
+    this.creationInteractionSettling_abyssPrivate = true;
+    try {
+      action();
+    } finally {
+      this.creationInteractionSettling_abyssPrivate = false;
+      if (this.creationReconciliationPending_abyssPrivate) {
+        this.creationReconciliationPending_abyssPrivate = false;
+        this.notifyCreationReconciled_abyssPrivate();
+      }
     }
   }
 
@@ -3534,28 +3553,28 @@ export class ProjectsTableView {
       sourcePath: project.path,
       save: (value) => this.saveEditorValue_abyssPrivate(project, field, editorState, value),
       onClose: (_result, closeContext) => {
-        const destination = this.editorCloseDestination_abyssPrivate(
-          edited,
-          closeContext.navigation,
-          closeContext.focusTarget,
-          cell,
-        );
-        positionCleanup();
-        editorHost.remove();
-        anchor.removeClass('is-editor-anchor');
-        if (anchor.hasClass('abyss-project-description-editor-anchor')) anchor.remove();
-        cell.removeClass('is-editing');
-        this.activeEditor_abyssPrivate = undefined;
-        this.renderTable_abyssPrivate();
-        const pendingAction = this.pendingAction_abyssPrivate !== undefined;
-        this.runPendingAction_abyssPrivate();
-        if (!pendingAction && !destination.preservesExternalFocus) {
-          this.finishEditorNavigation_abyssPrivate(
+        this.runSettledCreationInteraction_abyssPrivate(() => {
+          const destination = this.editorCloseDestination_abyssPrivate(
             edited,
             closeContext.navigation,
-            destination.cell,
+            closeContext.focusTarget,
+            cell,
           );
-        }
+          positionCleanup();
+          editorHost.remove();
+          this.clearEditorAnchor_abyssPrivate(anchor, cell);
+          this.activeEditor_abyssPrivate = undefined;
+          this.renderTable_abyssPrivate();
+          const pendingAction = this.pendingAction_abyssPrivate !== undefined;
+          this.runPendingAction_abyssPrivate();
+          if (!pendingAction && !destination.preservesExternalFocus) {
+            this.finishEditorNavigation_abyssPrivate(
+              edited,
+              closeContext.navigation,
+              destination.cell,
+            );
+          }
+        });
       },
       restoreFocus: () => {},
     });
@@ -3574,6 +3593,12 @@ export class ProjectsTableView {
       positionCleanup,
     };
     handle.focus();
+  }
+
+  private clearEditorAnchor_abyssPrivate(anchor: HTMLElement, cell: HTMLElement): void {
+    anchor.removeClass('is-editor-anchor');
+    if (anchor.hasClass('abyss-project-description-editor-anchor')) anchor.remove();
+    cell.removeClass('is-editing');
   }
 
   private async saveEditorValue_abyssPrivate(

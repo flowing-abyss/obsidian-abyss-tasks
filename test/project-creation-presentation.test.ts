@@ -155,4 +155,24 @@ describe('ProjectCreationPresentation', () => {
     expect(h.present).toHaveBeenLastCalledWith(expect.anything(), true);
     expect(expectDefined(h.elements.get('Projects/New.md')).classList).toContain('is-just-created');
   });
+
+  it('silently expires unresolved DOM presentation at one fixed resolved deadline', () => {
+    vi.useFakeTimers();
+    const h = harness([project()]);
+    h.setPresentable(false);
+    h.controller.enqueue({ path: 'Projects/New.md', expectedStatus: 'active' });
+    vi.advanceTimersByTime(20_000);
+    h.controller.update();
+    vi.advanceTimersByTime(9_999);
+    h.controller.update();
+    const attemptsBeforeExpiry = h.present.mock.calls.length;
+
+    vi.advanceTimersByTime(1);
+    h.setPresentable(true);
+    h.controller.update();
+
+    expect(h.present).toHaveBeenCalledTimes(attemptsBeforeExpiry);
+    expect(h.elements.get('Projects/New.md')).toBeUndefined();
+    expect(h.inaccessible).not.toHaveBeenCalled();
+  });
 });

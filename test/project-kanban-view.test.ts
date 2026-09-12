@@ -1967,6 +1967,66 @@ describe('project Kanban overview', () => {
     expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
   });
 
+  it('settles editor navigation before focusing creation in Kanban', async () => {
+    let finishCreate: ((path: string) => void) | undefined;
+    const createProject = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishCreate = resolve;
+        }),
+    );
+    const finalStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const intermediateStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const existing = project();
+    const intermediate = project({
+      path: 'Projects/Kanban editor.md',
+      name: 'Kanban editor',
+      statusId: intermediateStatus.id,
+    });
+    const created = { ...intermediate, statusId: finalStatus.id };
+    const { host, view, settings } = mountView([existing], { createProject });
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    clickView(host, 'Kanban');
+    expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${finalStatus.id}"] .abyss-project-kanban-column-create`,
+      ),
+    ).click();
+    const composer = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    composer.value = created.name;
+    composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    view.update([existing, intermediate]);
+    const start = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"] [data-column-id="start"]',
+      ),
+    );
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const editor = expectDefined(
+      start.querySelector<HTMLInputElement>('.abyss-project-editor-input'),
+    );
+    view.update([existing, created]);
+    finishCreate?.(created.path);
+    await flushMicrotasks();
+    expect(host.querySelector('.is-just-created')).toBeNull();
+
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(
+      activeDocument.activeElement?.closest<HTMLElement>('.abyss-project-kanban-card')?.dataset[
+        'projectPath'
+      ],
+    ).toBe(created.path);
+    expect(view.selectedProjectPath()).toBe(created.path);
+    expect(
+      host.querySelector(
+        '.abyss-project-kanban-card[data-project-path="Projects/Kanban editor.md"]',
+      )?.classList,
+    ).toContain('is-just-created');
+  });
+
   it('moves board focus to a surviving card and then the board when projects disappear', () => {
     const first = project();
     const second = project({ path: 'Projects/B.md', name: 'B project' });
