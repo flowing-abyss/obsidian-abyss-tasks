@@ -7918,6 +7918,10 @@ table.abyss-project-table {
   opacity: 0;
 }
 
+.abyss-projects-table button.abyss-project-value-picker-edit[hidden] {
+  display: none;
+}
+
 .abyss-project-value-picker-option:hover .abyss-project-value-picker-edit,
 .abyss-project-value-picker-edit:focus-visible {
   opacity: 1;

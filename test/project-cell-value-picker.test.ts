@@ -337,6 +337,33 @@ describe('project cell value picker', () => {
     expect(numberSave).toHaveBeenCalledWith(3.5);
   });
 
+  it('filters number preset labels quietly and validates only explicit literal submission', () => {
+    const container = freshContainer();
+    const save = vi.fn().mockResolvedValue(undefined);
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Estimate', property: 'Estimate', label: 'Estimate', type: 'number' },
+      value: 2,
+      catalog: catalog([], 'number'),
+      presets: [{ value: 8, label: 'High' }],
+      save,
+      onClose: vi.fn(),
+    });
+    const input = pickerInput(container);
+
+    inputEvent(input, 'Hi');
+
+    expect(option(container, '8').textContent).toContain('High');
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('');
+    expect(save).not.toHaveBeenCalled();
+
+    keydown(input, 'Enter');
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('finite number');
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it('suppresses equivalent tag and resolved-link literals', () => {
     const app = new App();
     vi.spyOn(app.metadataCache, 'getFirstLinkpathDest').mockImplementation((target) => {

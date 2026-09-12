@@ -274,19 +274,19 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     this.publish_abyssPrivate();
   }
 
-  private literalValue_abyssPrivate(): string | number | undefined {
+  private literalValue_abyssPrivate(reportInvalid: boolean): string | number | undefined {
     const query = this.focusTarget.value.trim();
     if (query.length === 0) return undefined;
     try {
       return this.options_abyssPrivate.literal(query);
     } catch (error) {
-      this.options_abyssPrivate.onInvalid(errorMessage(error));
+      if (reportInvalid) this.options_abyssPrivate.onInvalid(errorMessage(error));
       return undefined;
     }
   }
 
-  private actionableLiteral_abyssPrivate(): string | number | undefined {
-    const literal = this.literalValue_abyssPrivate();
+  private actionableLiteral_abyssPrivate(reportInvalid = false): string | number | undefined {
+    const literal = this.literalValue_abyssPrivate(reportInvalid);
     if (literal === undefined) return undefined;
     const editIndex = this.editIndex_abyssPrivate;
     if (editIndex !== undefined) {
@@ -298,7 +298,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
   }
 
   private readonly submitLiteral_abyssPrivate = (): void => {
-    const literal = this.actionableLiteral_abyssPrivate();
+    const literal = this.actionableLiteral_abyssPrivate(true);
     if (literal !== undefined) this.mutate_abyssPrivate(literal, true);
   };
 
