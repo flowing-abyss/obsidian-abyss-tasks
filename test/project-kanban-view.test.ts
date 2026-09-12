@@ -179,16 +179,48 @@ interface TestMenuItem {
   readonly onClick__: ((event: MouseEvent | KeyboardEvent) => void) | null;
 }
 
+interface MenuShowSpy {
+  readonly mock: { readonly instances: readonly unknown[] };
+}
+
 function menuItems(menu: Menu): readonly TestMenuItem[] {
   return (menu as unknown as { readonly menuItems__: readonly TestMenuItem[] }).menuItems__;
 }
 
-function activateMenuItem(menu: Menu, title: string): void {
-  const item = expectDefined(menuItems(menu).find(({ title__: candidate }) => candidate === title));
-  expectDefined(item.onClick__)(new MouseEvent('click'));
+function menuDom(menu: Menu): HTMLElement {
+  return (menu as unknown as { readonly dom: HTMLElement }).dom;
 }
 
-function lastShownMenu(spy: { readonly mock: { readonly instances: readonly unknown[] } }): Menu {
+function renderShownMenuInDocument(): MenuShowSpy {
+  const spy = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+    this: Menu,
+  ) {
+    const dom = menuDom(this);
+    dom.empty();
+    dom.addClass('menu');
+    for (const item of menuItems(this)) {
+      const button = dom.createEl('button', { cls: 'menu-item', text: item.title__ });
+      button.addEventListener('click', (event) => {
+        item.onClick__?.(event);
+        this.close();
+        dom.remove();
+      });
+    }
+    activeDocument.body.append(dom);
+    return this;
+  });
+  return spy;
+}
+
+function clickRenderedMenuItem(menu: Menu, title: string): void {
+  expectDefined(
+    Array.from(menuDom(menu).querySelectorAll<HTMLButtonElement>('.menu-item')).find(
+      ({ textContent }) => textContent === title,
+    ),
+  ).click();
+}
+
+function lastShownMenu(spy: MenuShowSpy): Menu {
   return expectDefined(spy.mock.instances[spy.mock.instances.length - 1]) as Menu;
 }
 
@@ -1492,6 +1524,60 @@ describe('project Kanban overview', () => {
     ).toEqual(['Flag', 'Budget']);
   });
 
+  it('moves table and Kanban fields through adjacent visible rows while retaining hidden fields', async () => {
+    const { host, settings } = mountView();
+    const hiddenStart = expectDefined(
+      settings.projects.table.columns.find(({ id }) => id === 'start'),
+    );
+    hiddenStart.visible = false;
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const table = expectDefined(directViewOptionRows(host)[2]);
+    expectDefined(
+      table.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+    ).click();
+    const columns = viewOptionRow(table, 'Columns');
+    expectDefined(
+      columns.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+    ).click();
+    expectDefined(
+      columns.querySelector<HTMLButtonElement>('[aria-label="Move Progress down"]'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(
+      settings.projects.table.columns.filter(({ visible }) => visible).map(({ id }) => id),
+    ).toEqual(['name', 'status', 'end', 'progress']);
+    expect(hiddenStart.visible).toBe(false);
+
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    settings.projects.kanban.fields = [
+      { id: 'property:Budget', visible: true },
+      { id: 'start', visible: false },
+      { id: 'property:Flag', visible: true },
+    ];
+    clickView(host, 'Kanban');
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const kanban = expectDefined(directViewOptionRows(host)[2]);
+    expectDefined(
+      kanban.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+    ).click();
+    const cardFields = viewOptionRow(kanban, 'Card fields');
+    expectDefined(
+      cardFields.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+    ).click();
+    expectDefined(
+      cardFields.querySelector<HTMLButtonElement>('[aria-label="Move Budget down"]'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(
+      settings.projects.kanban.fields.filter(({ visible }) => visible).map(({ id }) => id),
+    ).toEqual(['property:Flag', 'property:Budget']);
+    expect(settings.projects.kanban.fields.find(({ id }) => id === 'start')?.visible).toBe(false);
+  });
+
   it('keeps table Name mandatory while toggling and reordering columns in place', async () => {
     const { host, settings } = mountView();
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
@@ -1540,12 +1626,14 @@ describe('project Kanban overview', () => {
     expect(activeDocument.activeElement?.getAttribute('aria-label')).toBe('Move End up');
   });
 
-  it('opens per-field date actions without toggling visibility and keeps view modes independent', async () => {
+  it('keeps nested date menus owned through DOM selection, cancellation, and dismissal', async () => {
     const { host, settings } = mountView();
     settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
-    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    const show = renderShownMenuInDocument();
+    const closeMenus = vi.spyOn(Menu.prototype, 'close');
 
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    await flushMicrotasks();
     const table = expectDefined(directViewOptionRows(host)[2]);
     expectDefined(
       table.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
@@ -1562,23 +1650,44 @@ describe('project Kanban overview', () => {
       tableStart.querySelector<HTMLButtonElement>('.abyss-view-state-option-action'),
     );
 
-    expect(tableStartAction.textContent).toBe('Pretty');
-    tableStartAction.click();
     expect(tableStartToggle.getAttribute('aria-pressed')).toBe('true');
-    let menu = lastShownMenu(show);
-    expect(menuItems(menu).map(({ title__ }) => title__)).toEqual(['Pretty', 'Raw', 'Relative']);
-    activateMenuItem(menu, 'Raw');
-    await flushMicrotasks();
-    expect(settings.projects.table.columns.find(({ id }) => id === 'start')?.dateDisplay).toBe(
-      'raw',
-    );
+    for (const [label, display] of [
+      ['Raw', 'raw'],
+      ['Relative', 'relative'],
+      ['Pretty', 'pretty'],
+    ] as const) {
+      tableStartAction.click();
+      const menu = lastShownMenu(show);
+      expect(menuItems(menu).map(({ title__ }) => title__)).toEqual(['Pretty', 'Raw', 'Relative']);
+      clickRenderedMenuItem(menu, label);
+      await flushMicrotasks();
+      expect(settings.projects.table.columns.find(({ id }) => id === 'start')?.dateDisplay).toBe(
+        display,
+      );
+      expect(host.querySelector('.abyss-view-state-popover')).not.toBeNull();
+      expect(
+        table.querySelector(':scope > .abyss-view-state-row-main')?.getAttribute('aria-expanded'),
+      ).toBe('true');
+      expect(
+        columns.querySelector(':scope > .abyss-view-state-row-main')?.getAttribute('aria-expanded'),
+      ).toBe('true');
+      expect(activeDocument.activeElement).toBe(tableStartAction);
+    }
     expect(
       settings.projects.kanban.fields.find(({ id }) => id === 'start')?.dateDisplay,
     ).toBeUndefined();
 
-    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    tableStartAction.click();
+    let menu = lastShownMenu(show);
+    menu.close();
+    menuDom(menu).remove();
+    expect(activeDocument.activeElement).toBe(tableStartAction);
+    activeDocument.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.querySelector('.abyss-view-state-popover')).toBeNull();
+
     clickView(host, 'Kanban');
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    await flushMicrotasks();
     const kanban = expectDefined(directViewOptionRows(host)[2]);
     expectDefined(
       kanban.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
@@ -1594,18 +1703,62 @@ describe('project Kanban overview', () => {
     const boardStartAction = expectDefined(
       boardStart.querySelector<HTMLButtonElement>('.abyss-view-state-option-action'),
     );
-    boardStartAction.click();
     expect(boardStartToggle.getAttribute('aria-pressed')).toBe('true');
-    menu = lastShownMenu(show);
-    expect(menuItems(menu).find(({ title__ }) => title__ === 'Pretty')?.checked).toBe(true);
-    activateMenuItem(menu, 'Relative');
-    await flushMicrotasks();
-    expect(settings.projects.kanban.fields.find(({ id }) => id === 'start')?.dateDisplay).toBe(
-      'relative',
-    );
+    for (const [label, display] of [
+      ['Raw', 'raw'],
+      ['Relative', 'relative'],
+      ['Pretty', 'pretty'],
+    ] as const) {
+      boardStartAction.click();
+      menu = lastShownMenu(show);
+      clickRenderedMenuItem(menu, label);
+      await flushMicrotasks();
+      expect(settings.projects.kanban.fields.find(({ id }) => id === 'start')?.dateDisplay).toBe(
+        display,
+      );
+      expect(host.querySelector('.abyss-view-state-popover')).not.toBeNull();
+      expect(activeDocument.activeElement).toBe(boardStartAction);
+    }
     expect(settings.projects.table.columns.find(({ id }) => id === 'start')?.dateDisplay).toBe(
-      'raw',
+      'pretty',
     );
+
+    boardStartAction.click();
+    menu = lastShownMenu(show);
+    menu.close();
+    menuDom(menu).remove();
+    expect(activeDocument.activeElement).toBe(boardStartAction);
+    expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover')).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    expect(host.querySelector('.abyss-view-state-popover')).toBeNull();
+    expect(activeDocument.activeElement).toBe(
+      host.querySelector<HTMLButtonElement>('.abyss-view-state-btn'),
+    );
+
+    const viewOptions = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-view-state-btn'),
+    );
+    viewOptions.click();
+    const reopenedKanban = expectDefined(directViewOptionRows(host)[2]);
+    expectDefined(
+      reopenedKanban.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+    ).click();
+    const reopenedFields = viewOptionRow(reopenedKanban, 'Card fields');
+    expectDefined(
+      reopenedFields.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+    ).click();
+    expectDefined(
+      optionRow(reopenedFields, 'Start').querySelector<HTMLButtonElement>(
+        '.abyss-view-state-option-action',
+      ),
+    ).click();
+    const closesBeforeParentTeardown = closeMenus.mock.calls.length;
+
+    viewOptions.click();
+
+    expect(host.querySelector('.abyss-view-state-popover')).toBeNull();
+    expect(closeMenus).toHaveBeenCalledTimes(closesBeforeParentTeardown + 1);
   });
 
   it('shows the full description without retaining a line clamp', async () => {

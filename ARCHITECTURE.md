@@ -225,7 +225,11 @@ overview surface, and returning reattaches the same session and active overview 
 The project toolbar composes the shared recursive `ViewOptionsPopover` as Group by, Sort by, and one
 active-view group. Nested disclosures close only siblings at their own level. Table column and
 Kanban card-field visibility, order, and temporal presentation actions stay inside the existing
-guarded view-state mutation path; the required Name column remains first and visible.
+guarded view-state mutation path; reorder controls target the neighboring visible row while hidden
+configuration stays in place, and the required Name column remains first and visible. An auxiliary
+native menu registers its exact DOM surface as a child of the popover, so that menu retains the
+popover's shortcut ownership and disclosure state until it closes; parent teardown closes any
+registered child.
 
 `ProjectsKanbanView` projects ordered status columns and optional inner groups from
 `projectKanbanModel`. It reconciles columns by status key, cards by grouped project occurrence, and

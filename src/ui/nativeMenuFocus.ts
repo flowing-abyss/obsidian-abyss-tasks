@@ -5,7 +5,10 @@ import type { Menu } from 'obsidian';
  * actionable row. Obsidian's desktop Menu renders rows as non-focusable divs,
  * so callers must establish focus ownership explicitly for keyboard cleanup.
  */
-export function showMenuAtMouseEventWithFocus(menu: Menu, event: MouseEvent): Menu {
+export function showMenuAtMouseEventWithFocus(
+  menu: Menu,
+  event: MouseEvent,
+): HTMLElement | undefined {
   const eventTarget = event.currentTarget ?? event.target;
   const targetDocument =
     eventTarget != null && 'ownerDocument' in eventTarget
@@ -24,5 +27,5 @@ export function showMenuAtMouseEventWithFocus(menu: Menu, event: MouseEvent): Me
     firstItem.tabIndex = 0;
     firstItem.focus({ preventScroll: true });
   }
-  return menu;
+  return surface;
 }

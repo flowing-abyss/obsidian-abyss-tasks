@@ -351,11 +351,9 @@ export class ProjectsTableToolbar {
             setProjectColumnVisibility(settings, columnId, !column.visible);
           }
         }),
-      onMove: (columnId, direction) =>
+      onMove: (columnId, _direction, targetColumnId) =>
         this.applyViewMutation_abyssPrivate(() => {
-          const index = settings.columns.findIndex(({ id }) => id === columnId);
-          const target = settings.columns[index + (direction === 'up' ? -1 : 1)];
-          if (target !== undefined) moveProjectColumn(settings, columnId, target.id);
+          moveProjectColumn(settings, columnId, targetColumnId);
         }),
     };
   }
@@ -389,8 +387,8 @@ export class ProjectsTableToolbar {
     return {
       label: () => projectDateDisplayLabel(active()),
       ariaLabel: `Date display for ${label}`,
-      onSelect: (event, run) => {
-        const trigger = event.currentTarget;
+      onSelect: (event, run, ownChild) => {
+        const trigger = event.currentTarget as HTMLElement | null;
         const menu = new Menu();
         configureProjectDateDisplayMenu(menu, {
           active: active(),
@@ -398,12 +396,19 @@ export class ProjectsTableToolbar {
             run(() => this.setTableDateDisplay_abyssPrivate(settings, column.id, display));
           },
         });
+        let releaseChild = (): void => undefined;
         menu.onHide(() => {
-          if (trigger instanceof HTMLElement && trigger.isConnected) {
+          releaseChild();
+          if (trigger?.instanceOf(HTMLElement) === true && trigger.isConnected) {
             trigger.focus({ preventScroll: true });
           }
         });
-        showMenuAtMouseEventWithFocus(menu, event);
+        const surface = showMenuAtMouseEventWithFocus(menu, event);
+        if (surface !== undefined) {
+          releaseChild = ownChild(surface, () => {
+            menu.close();
+          });
+        }
       },
     };
   }

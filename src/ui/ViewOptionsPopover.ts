@@ -7,6 +7,7 @@ export interface ViewOptionAction {
   readonly onSelect: (
     event: MouseEvent,
     run: (action: () => void | Promise<void>) => void,
+    ownChild: (element: HTMLElement, close: () => void) => () => void,
   ) => void | Promise<void>;
 }
 
@@ -39,7 +40,11 @@ export interface ViewOptionsMultiRow extends ViewOptionsRowBase {
   readonly options: readonly ViewOption[];
   readonly presets?: ReadonlyArray<{ label: string; active?: boolean; onSelect: () => void }>;
   readonly onToggle: (value: string) => void | Promise<void>;
-  readonly onMove?: (value: string, direction: 'up' | 'down') => void | Promise<void>;
+  readonly onMove?: (
+    value: string,
+    direction: 'up' | 'down',
+    targetValue: string,
+  ) => void | Promise<void>;
 }
 
 export interface ViewOptionsGroupRow extends ViewOptionsRowBase {
@@ -99,6 +104,13 @@ interface RenderedMultiOption {
   readonly check: HTMLElement;
   readonly moveButtons: readonly HTMLButtonElement[];
   readonly actionButton?: HTMLButtonElement;
+}
+
+type OwnChild = (element: HTMLElement, close: () => void) => () => void;
+
+interface MultiOptionRuntime {
+  readonly sync: () => void;
+  readonly ownChild: OwnChild;
 }
 
 function selectedValues(spec: ViewOptionsMultiRow): readonly string[] {
@@ -189,6 +201,7 @@ function renderOptionAction(
   row: HTMLElement,
   option: ViewOption,
   sync: () => void,
+  ownChild: OwnChild,
 ): HTMLButtonElement | undefined {
   if (option.action === undefined) return undefined;
   const action = option.action;
@@ -199,9 +212,13 @@ function renderOptionAction(
   });
   button.addEventListener('click', (event) => {
     runOptionAction(() =>
-      action.onSelect(event, (callback) => {
-        runOptionAction(callback, sync);
-      }),
+      action.onSelect(
+        event,
+        (callback) => {
+          runOptionAction(callback, sync);
+        },
+        ownChild,
+      ),
     );
   });
   return button;
@@ -222,7 +239,12 @@ function renderMoveButtons(
     });
     setIcon(move, direction === 'up' ? 'chevron-up' : 'chevron-down');
     move.addEventListener('click', () => {
-      runOptionAction(() => onMove(option.value, direction), sync);
+      const selected = selectedValues(spec);
+      const index = selected.indexOf(option.value);
+      const targetValue = selected[index + (direction === 'up' ? -1 : 1)];
+      if (targetValue !== undefined) {
+        runOptionAction(() => onMove(option.value, direction, targetValue), sync);
+      }
     });
     return move;
   });
@@ -232,7 +254,7 @@ function renderMultiOption(
   host: HTMLElement,
   option: ViewOption,
   spec: ViewOptionsMultiRow,
-  sync: () => void,
+  runtime: MultiOptionRuntime,
 ): RenderedMultiOption {
   const row = host.createDiv({ cls: 'abyss-view-state-option-row' });
   const button = optionButton(row, option.label, false);
@@ -243,15 +265,15 @@ function renderMultiOption(
   const check = button.querySelector<HTMLElement>('.abyss-view-state-option-check');
   if (check === null) throw new Error('View option check marker was not rendered.');
   button.addEventListener('click', () => {
-    runOptionAction(() => spec.onToggle(option.value), sync);
+    runOptionAction(() => spec.onToggle(option.value), runtime.sync);
   });
-  const actionButton = renderOptionAction(row, option, sync);
+  const actionButton = renderOptionAction(row, option, runtime.sync, runtime.ownChild);
   return {
     option,
     row,
     button,
     check,
-    moveButtons: renderMoveButtons(row, option, spec, sync),
+    moveButtons: renderMoveButtons(row, option, spec, runtime.sync),
     ...(actionButton === undefined ? {} : { actionButton }),
   };
 }
@@ -260,6 +282,7 @@ function renderMultiOptions(
   sublist: HTMLElement,
   spec: ViewOptionsMultiRow,
   summary: HTMLElement,
+  ownChild: OwnChild,
 ): void {
   renderMultiPresets(sublist, spec);
   const optionsHost = sublist.createDiv({ cls: 'abyss-view-state-options' });
@@ -268,7 +291,7 @@ function renderMultiOptions(
     syncMultiOptions(optionsHost, spec, renderedRows, summary);
   };
   for (const option of spec.options) {
-    renderedRows.push(renderMultiOption(optionsHost, option, spec, sync));
+    renderedRows.push(renderMultiOption(optionsHost, option, spec, { sync, ownChild }));
   }
   sync();
 }
@@ -291,7 +314,12 @@ function renderSingleOptions(
   }
 }
 
-function renderRow(host: HTMLElement, spec: ViewOptionsRow, close: () => void): void {
+function renderRow(
+  host: HTMLElement,
+  spec: ViewOptionsRow,
+  close: () => void,
+  ownChild: OwnChild,
+): void {
   const row = host.createDiv({ cls: 'abyss-view-state-row' });
   const initiallyOpen = spec.initiallyOpen === true;
   const main = row.createEl('button', {
@@ -323,9 +351,9 @@ function renderRow(host: HTMLElement, spec: ViewOptionsRow, close: () => void): 
   };
   main.addEventListener('click', toggle);
 
-  if (spec.kind === 'multi') renderMultiOptions(sublist, spec, summary);
+  if (spec.kind === 'multi') renderMultiOptions(sublist, spec, summary, ownChild);
   else if (spec.kind === 'single') renderSingleOptions(sublist, spec, close);
-  else for (const child of spec.rows) renderRow(sublist, child, close);
+  else for (const child of spec.rows) renderRow(sublist, child, close, ownChild);
 }
 
 /** Opens the shared task/project sort and grouping surface and returns idempotent cleanup. */
@@ -341,18 +369,33 @@ export function openViewOptionsPopover(options: OpenViewOptionsPopoverOptions): 
   let timer: number | undefined;
   let listening = false;
   let closed = false;
+  const ownedChildren = new Map<HTMLElement, () => void>();
   const close = (restoreFocus = false): void => {
     if (closed) return;
     closed = true;
     if (timer !== undefined) window.clearTimeout(timer);
     if (listening) ownerDocument.removeEventListener('click', dismiss, true);
     popover.remove();
+    const childCleanups = [...ownedChildren.values()];
+    ownedChildren.clear();
+    for (const cleanup of childCleanups) cleanup();
     ownership.release();
     options.onClose?.();
     if (restoreFocus && options.anchor.isConnected) options.anchor.focus();
   };
   const dismiss = (event: MouseEvent): void => {
-    if (!popover.contains(event.target as Node) && event.target !== options.anchor) close();
+    const target = event.target as Node;
+    if (popover.contains(target) || event.target === options.anchor) return;
+    for (const child of ownedChildren.keys()) {
+      if (child.contains(target)) return;
+    }
+    close();
+  };
+  const ownChild = (element: HTMLElement, closeChild: () => void): (() => void) => {
+    ownedChildren.set(element, closeChild);
+    return (): void => {
+      if (ownedChildren.get(element) === closeChild) ownedChildren.delete(element);
+    };
   };
   popover.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
@@ -360,7 +403,7 @@ export function openViewOptionsPopover(options: OpenViewOptionsPopoverOptions): 
     event.stopPropagation();
     close(true);
   });
-  for (const row of options.rows) renderRow(popover, row, close);
+  for (const row of options.rows) renderRow(popover, row, close, ownChild);
   if (options.showReset === true && options.onReset !== undefined) {
     const reset = popover.createDiv({ cls: 'abyss-view-state-reset' }).createEl('button', {
       cls: 'abyss-view-state-reset-btn',

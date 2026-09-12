@@ -91,8 +91,8 @@ function fieldDateAction(
       context.tableSettings,
       field.id,
     )}`,
-    onSelect: (event, run) => {
-      const trigger = event.currentTarget;
+    onSelect: (event, run, ownChild) => {
+      const trigger = event.currentTarget as HTMLElement | null;
       const menu = new Menu();
       configureProjectDateDisplayMenu(menu, {
         active: active(),
@@ -100,12 +100,19 @@ function fieldDateAction(
           run(() => applyFieldDateDisplay(context, field.id, display));
         },
       });
+      let releaseChild = (): void => undefined;
       menu.onHide(() => {
-        if (trigger instanceof HTMLElement && trigger.isConnected) {
+        releaseChild();
+        if (trigger?.instanceOf(HTMLElement) === true && trigger.isConnected) {
           trigger.focus({ preventScroll: true });
         }
       });
-      showMenuAtMouseEventWithFocus(menu, event);
+      const surface = showMenuAtMouseEventWithFocus(menu, event);
+      if (surface !== undefined) {
+        releaseChild = ownChild(surface, () => {
+          menu.close();
+        });
+      }
     },
   };
 }
@@ -128,13 +135,9 @@ function toggleField(
   if (configured !== undefined) configured.visible = !configured.visible;
 }
 
-function moveField(
-  settings: ProjectKanbanSettings,
-  fieldId: string,
-  direction: 'up' | 'down',
-): void {
+function moveField(settings: ProjectKanbanSettings, fieldId: string, targetId: string): void {
   const index = settings.fields.findIndex(({ id }) => id === fieldId);
-  const target = direction === 'up' ? index - 1 : index + 1;
+  const target = settings.fields.findIndex(({ id }) => id === targetId);
   if (index < 0 || target < 0 || target >= settings.fields.length) return;
   const [field] = settings.fields.splice(index, 1);
   if (field !== undefined) settings.fields.splice(target, 0, field);
@@ -185,9 +188,9 @@ function cardFieldsRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
       applyMutation(context, () => {
         toggleField(context.settings, context.tableSettings, fieldId);
       }),
-    onMove: (fieldId, direction) =>
+    onMove: (fieldId, _direction, targetId) =>
       applyMutation(context, () => {
-        moveField(context.settings, fieldId, direction);
+        moveField(context.settings, fieldId, targetId);
       }),
   };
 }

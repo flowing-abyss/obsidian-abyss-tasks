@@ -6555,7 +6555,7 @@ body.abyss-modal-open .popover.hover-popover {
   border-bottom: none;
 }
 
-.abyss-view-state-row-main {
+.tasksCalendar .abyss-view-state-popover button.abyss-view-state-row-main {
   display: flex;
   width: 100%;
   align-items: center;
@@ -6570,7 +6570,7 @@ body.abyss-modal-open .popover.hover-popover {
   text-align: left;
 }
 
-.abyss-view-state-row-main:hover {
+.tasksCalendar .abyss-view-state-popover button.abyss-view-state-row-main:hover {
   background: var(--background-modifier-hover);
 }
 
@@ -6608,7 +6608,7 @@ body.abyss-modal-open .popover.hover-popover {
   border-inline-start: 1px solid var(--background-modifier-border-hover);
 }
 
-.abyss-view-state-option {
+.tasksCalendar .abyss-view-state-popover button.abyss-view-state-option {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -6622,7 +6622,7 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-normal);
 }
 
-.abyss-view-state-option:hover {
+.tasksCalendar .abyss-view-state-popover button.abyss-view-state-option:hover {
   background: var(--background-modifier-hover);
 }
 
@@ -8318,14 +8318,22 @@ table.abyss-project-table {
   flex: 1 1 auto;
 }
 
-.abyss-view-state-option-move {
+.tasksCalendar .abyss-view-state-popover button.abyss-view-state-option-move {
   width: 26px;
   height: 26px;
   flex: 0 0 auto;
   padding: 5px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
 }
 
-.abyss-view-state-option-action {
+.tasksCalendar .abyss-view-state-popover button.abyss-view-state-option-move:hover {
+  background: var(--background-modifier-hover);
+}
+
+.tasksCalendar .abyss-view-state-popover button.abyss-view-state-option-action {
   min-width: 52px;
   height: 24px;
   flex: 0 0 auto;
@@ -8338,7 +8346,7 @@ table.abyss-project-table {
   font-size: var(--font-ui-smaller);
 }
 
-.abyss-view-state-option-action:hover {
+.tasksCalendar .abyss-view-state-popover button.abyss-view-state-option-action:hover {
   background: var(--interactive-hover);
   color: var(--text-normal);
 }
