@@ -2,19 +2,21 @@ import { Menu, setIcon } from 'obsidian';
 import type {
   ProjectDateDisplay,
   ProjectFieldCatalogItem,
+  ProjectTableProgressDisplay,
   ProjectTableSettings,
 } from '../../projects/projectFields';
 import type {
   ProjectKanbanSettings,
   ProjectOverviewMode,
 } from '../../projects/projectKanbanSettings';
-import { buildDefaultProjectTableSettings } from '../../projects/projectTableSettings';
-import type { StatusGroup } from '../../projects/status';
 import {
-  moveProjectColumn,
-  setProjectColumnDateDisplay,
-  setProjectColumnVisibility,
-} from '../../settings/projectTableSettings';
+  applyProjectTableDateDisplay,
+  buildDefaultProjectTableSettings,
+  effectiveProjectTableDateDisplay,
+  setProjectTableColumnDateDisplay,
+} from '../../projects/projectTableSettings';
+import type { StatusGroup } from '../../projects/status';
+import { moveProjectColumn, setProjectColumnVisibility } from '../../settings/projectTableSettings';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import {
   openViewOptionsPopover,
@@ -66,8 +68,19 @@ function isCustomized(settings: ProjectTableSettings): boolean {
     settings.sortBy.field !== defaults.sortBy.field ||
     settings.sortBy.dir !== defaults.sortBy.dir ||
     settings.showDescription !== defaults.showDescription ||
-    settings.hiddenStatuses.length > 0
+    settings.hiddenStatuses.length > 0 ||
+    (settings.progress ?? 'full') !== 'full' ||
+    settings.dateDisplay !== undefined ||
+    settings.columns.some(({ dateDisplay }) => dateDisplay !== undefined)
   );
+}
+
+function tableProgressLabel(display: ProjectTableProgressDisplay): string {
+  return display === 'bar' ? 'Bars' : 'Bars and numbers';
+}
+
+function tableDateDisplayLabel(display: ProjectDateDisplay | undefined): string {
+  return display === undefined ? 'Custom' : projectDateDisplayLabel(display);
 }
 
 export class ProjectsTableToolbar {
@@ -312,10 +325,12 @@ export class ProjectsTableToolbar {
         kind: 'group',
         icon: 'table-2',
         label: 'Table',
-        displayValue: '2 options',
+        displayValue: '4 options',
         rows: [
           this.tableColumnsRow_abyssPrivate(settings, fields),
           this.tableDescriptionRow_abyssPrivate(),
+          this.tableProgressRow_abyssPrivate(),
+          this.tableDateDisplayRow_abyssPrivate(),
         ],
       },
     ];
@@ -391,6 +406,52 @@ export class ProjectsTableToolbar {
     };
   }
 
+  private tableProgressRow_abyssPrivate(): ViewOptionsRow {
+    const active = (): ProjectTableProgressDisplay =>
+      this.options_abyssPrivate.tableSettings().progress ?? 'full';
+    return {
+      kind: 'single',
+      icon: 'percent',
+      label: 'Progress',
+      displayValue: () => tableProgressLabel(active()),
+      activeValue: active,
+      options: [
+        { value: 'bar', label: 'Bars' },
+        { value: 'full', label: 'Bars and numbers', isDefault: true },
+      ],
+      onSelect: (value) =>
+        this.applyViewMutation_abyssPrivate(() => {
+          this.options_abyssPrivate.tableSettings().progress = value === 'bar' ? 'bar' : 'full';
+        }),
+    };
+  }
+
+  private tableDateDisplayRow_abyssPrivate(): ViewOptionsRow {
+    const active = (): ProjectDateDisplay | undefined =>
+      this.options_abyssPrivate.tableSettings().dateDisplay;
+    return {
+      kind: 'single',
+      icon: 'calendar',
+      label: 'Date display',
+      displayValue: () => tableDateDisplayLabel(active()),
+      activeValue: () => active() ?? 'custom',
+      options: [
+        { value: 'custom', label: 'Custom', isDefault: true },
+        { value: 'pretty', label: 'Pretty' },
+        { value: 'raw', label: 'Raw' },
+        { value: 'relative', label: 'Relative' },
+      ],
+      onSelect: (value) =>
+        this.applyViewMutation_abyssPrivate(() => {
+          applyProjectTableDateDisplay(
+            this.options_abyssPrivate.tableSettings(),
+            this.options_abyssPrivate.fields(),
+            value === 'custom' ? undefined : (value as ProjectDateDisplay),
+          );
+        }),
+    };
+  }
+
   private tableDateAction_abyssPrivate(
     columnId: string,
     field: ProjectFieldCatalogItem,
@@ -398,8 +459,10 @@ export class ProjectsTableToolbar {
   ): ViewOptionAction | undefined {
     if (field.type !== 'date' && field.type !== 'datetime') return undefined;
     const active = (): ProjectDateDisplay =>
-      this.options_abyssPrivate.tableSettings().columns.find(({ id }) => id === columnId)
-        ?.dateDisplay ?? 'pretty';
+      effectiveProjectTableDateDisplay(
+        this.options_abyssPrivate.tableSettings(),
+        this.options_abyssPrivate.tableSettings().columns.find(({ id }) => id === columnId),
+      );
     return {
       label: () => projectDateDisplayLabel(active()),
       ariaLabel: `Date display for ${label}`,
@@ -438,7 +501,12 @@ export class ProjectsTableToolbar {
     display: ProjectDateDisplay,
   ): Promise<void> {
     return this.applyViewMutation_abyssPrivate(() => {
-      setProjectColumnDateDisplay(this.options_abyssPrivate.tableSettings(), columnId, display);
+      setProjectTableColumnDateDisplay(
+        this.options_abyssPrivate.tableSettings(),
+        this.options_abyssPrivate.fields(),
+        columnId,
+        display,
+      );
     });
   }
 }

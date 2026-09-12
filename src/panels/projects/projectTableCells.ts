@@ -1,5 +1,9 @@
 import type { App, Component } from 'obsidian';
-import type { ProjectDateDisplay, ProjectFieldCatalogItem } from '../../projects/projectFields';
+import type {
+  ProjectDateDisplay,
+  ProjectFieldCatalogItem,
+  ProjectTableProgressDisplay,
+} from '../../projects/projectFields';
 import { isProjectStatusField, projectFieldValue } from '../../projects/projectFields';
 import type { ProjectValuePresentation } from '../../projects/projectPropertyDefinitions';
 import {
@@ -38,7 +42,11 @@ function statusDisplayClass(display: ProjectStatus['display']): string {
   return '';
 }
 
-function renderProgress(cell: HTMLElement, project: Project): void {
+function renderProgress(
+  cell: HTMLElement,
+  project: Project,
+  display: ProjectTableProgressDisplay,
+): void {
   const progress = projectProgress(project.stats);
   const root = cell.createDiv({
     cls: `abyss-project-table-progress is-${progressBand(progress.percent)}`,
@@ -59,6 +67,7 @@ function renderProgress(cell: HTMLElement, project: Project): void {
       cls: `abyss-project-progress-segment${index < filled ? ' is-filled' : ''}`,
     });
   }
+  if (display === 'bar') return;
   const value = root.createSpan({ cls: 'abyss-project-progress-value' });
   if (progress.percent === null) value.setText('—');
   else {
@@ -108,6 +117,7 @@ interface RenderProjectTableCellOptions {
   readonly onRemoveListValue: (index: number) => void;
   readonly onToggleCheckbox: (value: boolean, input: HTMLInputElement) => void;
   readonly dateDisplay?: ProjectDateDisplay;
+  readonly progressDisplay?: ProjectTableProgressDisplay;
   readonly now?: Date;
   readonly locale?: string;
   readonly description?: {
@@ -471,7 +481,7 @@ export function renderProjectTableCell(
     return;
   }
   if (field.type === 'progress') {
-    renderProgress(cell, project);
+    renderProgress(cell, project, options.progressDisplay ?? 'full');
     return;
   }
   renderPropertyValue(cell, project, field, options);

@@ -221,6 +221,24 @@ function lastShownMenu(spy: { readonly mock: { readonly instances: readonly unkn
   return expectDefined(spy.mock.instances[spy.mock.instances.length - 1]) as Menu;
 }
 
+function viewOptionsRow(host: HTMLElement, label: string): HTMLElement {
+  return expectDefined(
+    Array.from(host.querySelectorAll<HTMLElement>('.abyss-view-state-row')).find(
+      (row) =>
+        row.querySelector(':scope > .abyss-view-state-row-main .abyss-view-state-row-label')
+          ?.textContent === label,
+    ),
+  );
+}
+
+function viewOption(row: HTMLElement, label: string): HTMLButtonElement {
+  return expectDefined(
+    Array.from(row.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option')).find(
+      (button) => button.querySelector('.abyss-view-state-option-label')?.textContent === label,
+    ),
+  );
+}
+
 describe('ProjectsTableView', () => {
   it('defaults valid dates to Pretty while preserving raw display, tooltip, and copy text', () => {
     const config = settings();
@@ -245,6 +263,235 @@ describe('ProjectsTableView', () => {
     const copied = transfer();
     start.dispatchEvent(clipboardEvent('copy', copied));
     expect(copied.getData('text/plain')).toBe(startRaw);
+  });
+
+  it('keeps progress segments and accessible stats in Bars mode without rendering numbers', async () => {
+    const config = settings();
+    config.projects.table.progress = 'bar';
+    const { host } = mount(
+      [
+        project({
+          stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+        }),
+        project({ path: 'Projects/B.md', name: 'B' }),
+      ],
+      { settings: config },
+    );
+    const progressCell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="progress"]'),
+    );
+    const nameCell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="name"]'),
+    );
+    const progress = expectDefined(
+      progressCell.querySelector<HTMLElement>('.abyss-project-table-progress'),
+    );
+
+    expect(progress.getAttribute('aria-label')).toBe('No included tasks');
+    expect(progress.querySelectorAll('.abyss-project-progress-segment')).toHaveLength(10);
+    expect(progress.querySelector('.abyss-project-progress-value')).toBeNull();
+    const included = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/B.md"] .abyss-project-table-progress',
+      ),
+    );
+    expect(included.getAttribute('aria-label')).toBe('60% (6/10)');
+    expect(included.querySelector('.abyss-project-progress-value')).toBeNull();
+
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
+    expectDefined(
+      viewOptionsRow(host, 'Table').querySelector<HTMLButtonElement>(
+        ':scope > .abyss-view-state-row-main',
+      ),
+    ).click();
+    const progressRow = viewOptionsRow(host, 'Progress');
+    expectDefined(
+      progressRow.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+    ).click();
+    viewOption(progressRow, 'Bars and numbers').click();
+    await flushMicrotasks();
+
+    expect(config.projects.table.progress).toBe('full');
+    expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
+    expect(host.querySelector('.abyss-project-table-cell[data-column-id="name"]')).toBe(nameCell);
+    expect(host.querySelector('.abyss-project-table-cell[data-column-id="progress"]')).toBe(
+      progressCell,
+    );
+    expect(progressCell.querySelector('.abyss-project-progress-value')?.textContent).toBe('—');
+  });
+
+  it('applies global table date modes to hidden columns and new temporal columns in place', async () => {
+    vi.useFakeTimers({ now: new Date(2026, 8, 10, 12, 0, 0).getTime() });
+    vi.spyOn(HTMLElement.prototype, 'isShown').mockReturnValue(true);
+    const config = settings();
+    config.projects.table.columns.push({
+      id: 'property:Review',
+      visible: false,
+      dateDisplay: 'raw',
+    });
+    config.projects.propertyDefinitions['property:Review'] = { type: 'date' };
+    config.projects.propertyDefinitions['property:Later'] = { type: 'datetime' };
+    config.projects.kanban = buildDefaultProjectKanbanSettings(config.projects.table);
+    const { host, view } = mount(
+      [
+        project({
+          frontmatter: {
+            start: '2026-09-11',
+            end: '2026-09-12',
+            Review: '2026-09-13',
+            Later: '2026-09-14T09:30:00',
+          },
+        }),
+      ],
+      {
+        settings: config,
+        catalog: catalog([
+          { name: 'Review', type: 'date' },
+          { name: 'Later', type: 'datetime' },
+        ]),
+      },
+    );
+    const kanbanBefore = structuredClone(config.projects.kanban);
+    const nameCell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="name"]'),
+    );
+    const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+    scroll.scrollLeft = 73;
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
+    const tableRow = viewOptionsRow(host, 'Table');
+    expect(tableRow.querySelector('.abyss-view-state-row-value')?.textContent).toBe('4 options');
+    expectDefined(
+      tableRow.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+    ).click();
+    const dateRow = viewOptionsRow(host, 'Date display');
+    expectDefined(
+      dateRow.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+    ).click();
+
+    viewOption(dateRow, 'Raw').click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(config.projects.table.dateDisplay).toBe('raw');
+    expect(
+      config.projects.table.columns.find(({ id }) => id === 'property:Review')?.dateDisplay,
+    ).toBe('raw');
+    expect(
+      host.querySelector('.abyss-project-table-cell[data-column-id="start"]')?.textContent,
+    ).toContain('2026-09-11');
+
+    viewOption(dateRow, 'Relative').click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(config.projects.table.dateDisplay).toBe('relative');
+    expect(
+      host.querySelector(
+        '.abyss-project-table-cell[data-column-id="start"] .abyss-project-relative-date',
+      ),
+    ).not.toBeNull();
+
+    viewOption(dateRow, 'Pretty').click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(config.projects.table.dateDisplay).toBe('pretty');
+    expect(
+      host.querySelector(
+        '.abyss-project-table-cell[data-column-id="start"] .abyss-project-pretty-date',
+      ),
+    ).not.toBeNull();
+    config.projects.table.columns.push({ id: 'property:Later', visible: true });
+    view.refreshFields();
+
+    expect(
+      config.projects.table.columns.find(({ id }) => id === 'property:Later'),
+    ).not.toHaveProperty('dateDisplay');
+    expect(
+      host.querySelector(
+        '.abyss-project-table-cell[data-column-id="property:Later"] .abyss-project-pretty-date',
+      ),
+    ).not.toBeNull();
+    expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
+    expect(host.querySelector('.abyss-project-table-cell[data-column-id="name"]')).toBe(nameCell);
+    expect(scroll.scrollLeft).toBe(73);
+    expect(config.projects.kanban).toEqual(kanbanBefore);
+  });
+
+  it('switches global dates to Custom from toolbar and header column choices', async () => {
+    const config = settings();
+    config.projects.table.columns.push({
+      id: 'property:Review',
+      visible: false,
+      dateDisplay: 'relative',
+    });
+    config.projects.propertyDefinitions['property:Review'] = { type: 'date' };
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    const { host } = mount([project({})], {
+      settings: config,
+      catalog: catalog([{ name: 'Review', type: 'date' }]),
+    });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
+    expectDefined(
+      viewOptionsRow(host, 'Table').querySelector<HTMLButtonElement>(
+        ':scope > .abyss-view-state-row-main',
+      ),
+    ).click();
+    const dateRow = viewOptionsRow(host, 'Date display');
+    expectDefined(
+      dateRow.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+    ).click();
+    viewOption(dateRow, 'Pretty').click();
+    await flushMicrotasks();
+    const columnsRow = viewOptionsRow(host, 'Columns');
+    expectDefined(
+      columnsRow.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+    ).click();
+    expectDefined(
+      columnsRow.querySelector<HTMLButtonElement>('[aria-label="Date display for Start"]'),
+    ).click();
+    const startDisplay = lastShownMenu(show);
+    expect(menuItem(startDisplay, 'Pretty').checked).toBe(true);
+    activateMenuItem(startDisplay, 'Raw');
+    startDisplay.close();
+    await flushMicrotasks();
+
+    expect(config.projects.table.dateDisplay).toBeUndefined();
+    expect(config.projects.table.columns.find(({ id }) => id === 'start')?.dateDisplay).toBe('raw');
+    expect(config.projects.table.columns.find(({ id }) => id === 'end')?.dateDisplay).toBe(
+      'pretty',
+    );
+    expect(
+      config.projects.table.columns.find(({ id }) => id === 'property:Review')?.dateDisplay,
+    ).toBe('pretty');
+    expect(dateRow.querySelector('.abyss-view-state-row-value')?.textContent).toBe('Custom');
+    expect(viewOption(dateRow, 'Custom').getAttribute('aria-pressed')).toBe('true');
+    expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
+
+    const endHeader = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-header-cell[data-column-id="end"]'),
+    );
+    endHeader.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const endDisplay = submenu(lastShownMenu(show), 'Date display');
+    expect(menuItem(endDisplay, 'Pretty').checked).toBe(true);
+    activateMenuItem(endDisplay, 'Relative');
+    await flushMicrotasks();
+    expect(config.projects.table.dateDisplay).toBeUndefined();
+    expect(config.projects.table.columns.find(({ id }) => id === 'start')?.dateDisplay).toBe('raw');
+    expect(config.projects.table.columns.find(({ id }) => id === 'end')?.dateDisplay).toBe(
+      'relative',
+    );
+
+    viewOption(dateRow, 'Relative').click();
+    await flushMicrotasks();
+    viewOption(dateRow, 'Custom').click();
+    await flushMicrotasks();
+    expect(config.projects.table.dateDisplay).toBeUndefined();
+    expect(
+      config.projects.table.columns
+        .filter(({ id }) => ['start', 'end', 'property:Review'].includes(id))
+        .map(({ dateDisplay }) => dateDisplay),
+    ).toEqual(['relative', 'relative', 'relative']);
   });
 
   it('refreshes relative date text in place and stops its one view timer on destroy', () => {
@@ -1860,7 +2107,7 @@ describe('ProjectsTableView', () => {
     expect(saveProperty).not.toHaveBeenCalled();
   });
 
-  it('reset restores grouping, sorting, and filters while preserving configured columns', async () => {
+  it('reset restores grouping, sorting, filters, and table presentation', async () => {
     const config = settings();
     config.projects.table.columns.push({
       id: 'property:creator',
@@ -1871,7 +2118,15 @@ describe('ProjectsTableView', () => {
     config.projects.table.groupBy = 'property:creator';
     config.projects.table.sortBy = { field: 'name', dir: 'desc' };
     config.projects.table.hiddenStatuses = [`id:${active.id}`];
-    const before = structuredClone(config.projects.table.columns);
+    config.projects.table.progress = 'bar';
+    config.projects.table.dateDisplay = 'relative';
+    expectDefined(config.projects.table.columns.find(({ id }) => id === 'start')).dateDisplay =
+      'relative';
+    const before = structuredClone(config.projects.table.columns).map((column) => {
+      const copy = { ...column };
+      delete copy.dateDisplay;
+      return copy;
+    });
     const { host } = mount([project({ frontmatter: { creator: 'Ada' } })], {
       settings: config,
       catalog: catalog([{ name: 'creator', type: 'text' }]),
@@ -1890,6 +2145,8 @@ describe('ProjectsTableView', () => {
     expect(config.projects.table.groupBy).toBe('status');
     expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
     expect(config.projects.table.hiddenStatuses).toEqual([]);
+    expect(config.projects.table.progress).toBeUndefined();
+    expect(config.projects.table.dateDisplay).toBeUndefined();
     expect(host.querySelector('.abyss-view-state-reset-btn')).toBeNull();
   });
 

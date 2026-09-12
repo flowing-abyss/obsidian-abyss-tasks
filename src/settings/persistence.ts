@@ -200,6 +200,7 @@ function decodeSectionCollapse(
 
 const COLUMN_ALIGNMENTS = new Set<unknown>(['left', 'center', 'right']);
 const PROJECT_DATE_DISPLAYS = new Set<unknown>(['raw', 'relative', 'pretty']);
+const PROJECT_TABLE_PROGRESS_DISPLAYS = new Set<unknown>(['bar', 'full']);
 
 function malformedOptional(value: unknown, type: 'boolean' | 'string'): boolean {
   return value !== undefined && typeof value !== type;
@@ -254,11 +255,19 @@ function isMalformedHiddenStatuses(value: unknown): boolean {
   );
 }
 
+function hasMalformedProjectTablePresentation(value: Record<string, unknown>): boolean {
+  return (
+    (value['progress'] !== undefined && !PROJECT_TABLE_PROGRESS_DISPLAYS.has(value['progress'])) ||
+    (value['dateDisplay'] !== undefined && !PROJECT_DATE_DISPLAYS.has(value['dateDisplay']))
+  );
+}
+
 function isMalformedProjectTable(value: unknown): boolean {
   if (!isRecord(value)) return value !== undefined;
   return (
     (value['columns'] !== undefined && !Array.isArray(value['columns'])) ||
     (value['showDescription'] !== undefined && typeof value['showDescription'] !== 'boolean') ||
+    hasMalformedProjectTablePresentation(value) ||
     (value['groupBy'] !== undefined && typeof value['groupBy'] !== 'string') ||
     isMalformedProjectTableSort(value['sortBy']) ||
     isMalformedHiddenStatuses(value['hiddenStatuses'])
@@ -490,6 +499,10 @@ function mergeProjectTable(
   const table = detached(raw);
   table['columns'] = mergeColumns(raw['columns'], current.columns);
   table['showDescription'] = current.showDescription;
+  if (current.progress === undefined) delete table['progress'];
+  else table['progress'] = current.progress;
+  if (current.dateDisplay === undefined) delete table['dateDisplay'];
+  else table['dateDisplay'] = current.dateDisplay;
   table['groupBy'] = current.groupBy;
   table['sortBy'] = detached(current.sortBy);
   table['hiddenStatuses'] = detached(current.hiddenStatuses);

@@ -9,6 +9,8 @@ export type ProjectColumnAlignment = 'left' | 'center' | 'right';
 
 export type ProjectDateDisplay = 'raw' | 'relative' | 'pretty';
 
+export type ProjectTableProgressDisplay = 'bar' | 'full';
+
 export interface ProjectField {
   id: string;
   property?: string;
@@ -33,6 +35,8 @@ export interface ProjectColumn {
 export interface ProjectTableSettings {
   columns: ProjectColumn[];
   showDescription: boolean;
+  progress?: ProjectTableProgressDisplay;
+  dateDisplay?: ProjectDateDisplay;
   groupBy: string;
   sortBy: { field: string; dir: 'asc' | 'desc' };
   hiddenStatuses: string[];

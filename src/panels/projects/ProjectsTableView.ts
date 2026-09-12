@@ -25,6 +25,7 @@ import {
   type ProjectField,
   type ProjectFieldCatalogItem,
   type ProjectPropertyType,
+  type ProjectTableProgressDisplay,
   type ProjectTableSettings,
 } from '../../projects/projectFields';
 import { buildProjectKanbanModel } from '../../projects/projectKanbanModel';
@@ -55,13 +56,16 @@ import {
   type ProjectTableModel,
   type ProjectTableModelInput,
 } from '../../projects/projectTableModel';
-import { buildDefaultProjectTableSettings } from '../../projects/projectTableSettings';
+import {
+  buildDefaultProjectTableSettings,
+  effectiveProjectTableDateDisplay,
+  setProjectTableColumnDateDisplay,
+} from '../../projects/projectTableSettings';
 import { projectStatusDisplayName, resolveStatus } from '../../projects/status';
 import type { Project } from '../../projects/types';
 import {
   enforceProjectTableColumnInvariants,
   setProjectColumnAlignment,
-  setProjectColumnDateDisplay,
   setProjectColumnLabel,
   setProjectColumnWidth,
 } from '../../settings/projectTableSettings';
@@ -380,6 +384,17 @@ interface ReconcileProjectCellOptions {
   readonly occurrenceId: string;
   readonly groupKey: string;
   readonly grouped: boolean;
+}
+
+interface RenderProjectCellContentOptions {
+  readonly preferredColumn?: ProjectColumn;
+  readonly showNameDescription?: boolean;
+  readonly presentation?: ProjectOverviewMode;
+}
+
+interface ProjectCellPresentation {
+  readonly dateDisplay: ProjectDateDisplay;
+  readonly progressDisplay?: ProjectTableProgressDisplay;
 }
 
 function editableField(field: ProjectFieldCatalogItem): field is ProjectField {
@@ -713,6 +728,9 @@ export class ProjectsTableView {
     table.sortBy = defaults.sortBy;
     table.hiddenStatuses = defaults.hiddenStatuses;
     table.showDescription = defaults.showDescription;
+    delete table.progress;
+    delete table.dateDisplay;
+    for (const column of table.columns) delete column.dateDisplay;
     this.persistAndRender_abyssPrivate();
   }
 
@@ -1172,7 +1190,7 @@ export class ProjectsTableView {
     const tableSettings = this.context_abyssPrivate.settings.projects.table;
     enforceProjectTableColumnInvariants(tableSettings);
     const columns = visibleColumns(this.context_abyssPrivate.settings, this.fields_abyssPrivate);
-    this.syncRelativeDateTimer_abyssPrivate(columns);
+    this.syncRelativeDateTimer_abyssPrivate(columns, tableSettings.dateDisplay);
     this.compiledPresets_abyssPrivate = new Map(
       columns.map(({ field }) => [
         field.id,
@@ -1439,7 +1457,11 @@ export class ProjectsTableView {
         field.type === 'name'
           ? options.host.createDiv({ cls: 'abyss-project-table-name-content' })
           : options.host;
-      this.renderProjectCellContent_abyssPrivate(content, rendered, options.column, false);
+      this.renderProjectCellContent_abyssPrivate(content, rendered, {
+        ...(options.column === undefined ? {} : { preferredColumn: options.column }),
+        showNameDescription: false,
+        presentation: 'kanban',
+      });
     }
     return rendered;
   }
@@ -1507,7 +1529,6 @@ export class ProjectsTableView {
         width: projectTableColumnWidth(column, field),
         type: field.type,
         alignment: column.alignment ?? 'left',
-        dateDisplay: column.dateDisplay ?? 'pretty',
       })),
       sort: tableSettings.sortBy,
     });
@@ -1537,6 +1558,7 @@ export class ProjectsTableView {
       onAlignment: (columnId, alignment) => {
         this.setColumnAlignment_abyssPrivate(columnId, alignment);
       },
+      dateDisplay: (column) => effectiveProjectTableDateDisplay(tableSettings, column),
       onDateDisplay: (columnId, display) => {
         this.setColumnDateDisplay_abyssPrivate(columnId, display);
       },
@@ -1586,7 +1608,9 @@ export class ProjectsTableView {
 
   private setColumnDateDisplay_abyssPrivate(columnId: string, display: ProjectDateDisplay): void {
     const table = this.context_abyssPrivate.settings.projects.table;
-    if (setProjectColumnDateDisplay(table, columnId, display)) this.persistAndRender_abyssPrivate();
+    if (setProjectTableColumnDateDisplay(table, this.fields_abyssPrivate, columnId, display)) {
+      this.persistAndRender_abyssPrivate();
+    }
   }
 
   private renderTableBody_abyssPrivate(
@@ -2092,7 +2116,7 @@ export class ProjectsTableView {
     cell.empty();
     const content =
       field.type === 'name' ? cell.createDiv({ cls: 'abyss-project-table-name-content' }) : cell;
-    this.renderProjectCellContent_abyssPrivate(content, rendered);
+    this.renderProjectCellContent_abyssPrivate(content, rendered, {});
     if (invalidRange) {
       cell.createSpan({
         cls: 'abyss-project-table-range-warning',
@@ -2149,15 +2173,25 @@ export class ProjectsTableView {
       statusId: project.statusId,
       rawStatus: project.rawStatus,
       stats: field.type === 'progress' ? project.stats : undefined,
+      progressDisplay:
+        field.type === 'progress'
+          ? (this.context_abyssPrivate.settings.projects.table.progress ?? 'full')
+          : undefined,
       statuses:
         field.type === 'status' ? this.context_abyssPrivate.settings.projects.statuses : undefined,
       definition: this.projectPropertyDefinition_abyssPrivate(field.id),
       invalidRange,
       ownedClear: rendered.ownedClear,
       grouped,
-      dateDisplay: this.context_abyssPrivate.settings.projects.table.columns.find(
-        ({ id }) => id === rendered.identity.columnId,
-      )?.dateDisplay,
+      dateDisplay:
+        field.type === 'date' || field.type === 'datetime'
+          ? effectiveProjectTableDateDisplay(
+              this.context_abyssPrivate.settings.projects.table,
+              this.context_abyssPrivate.settings.projects.table.columns.find(
+                ({ id }) => id === rendered.identity.columnId,
+              ),
+            )
+          : undefined,
       description:
         descriptionField === undefined
           ? undefined
@@ -2172,9 +2206,9 @@ export class ProjectsTableView {
   private renderProjectCellContent_abyssPrivate(
     content: HTMLElement,
     rendered: RenderedCellContext,
-    preferredColumn?: ProjectColumn,
-    showNameDescription = true,
+    options: RenderProjectCellContentOptions,
   ): void {
+    const { preferredColumn, showNameDescription = true, presentation = 'table' } = options;
     const descriptionField = findProjectFieldById(this.fields_abyssPrivate, 'description');
     const effectiveDescription =
       descriptionField === undefined
@@ -2186,6 +2220,7 @@ export class ProjectsTableView {
       this.context_abyssPrivate.settings.projects.table.columns.find(
         ({ id }) => id === rendered.identity.columnId,
       );
+    const cellPresentation = this.projectCellPresentation_abyssPrivate(column, presentation);
     renderProjectTableCell(content, rendered.project, {
       field: rendered.field,
       statuses: this.context_abyssPrivate.settings.projects.statuses,
@@ -2209,7 +2244,7 @@ export class ProjectsTableView {
       onToggleCheckbox: (value, input) => {
         this.requestToggleCheckbox_abyssPrivate(rendered, value, input);
       },
-      ...(column?.dateDisplay === undefined ? {} : { dateDisplay: column.dateDisplay }),
+      ...cellPresentation,
       now: new Date(),
       locale: moment.locale(),
       ...(rendered.field.type !== 'name' ||
@@ -2223,6 +2258,18 @@ export class ProjectsTableView {
             },
           }),
     });
+  }
+
+  private projectCellPresentation_abyssPrivate(
+    column: ProjectColumn | undefined,
+    presentation: ProjectOverviewMode,
+  ): ProjectCellPresentation {
+    if (presentation === 'kanban') return { dateDisplay: column?.dateDisplay ?? 'pretty' };
+    const table = this.context_abyssPrivate.settings.projects.table;
+    return {
+      dateDisplay: effectiveProjectTableDateDisplay(table, column),
+      progressDisplay: table.progress ?? 'full',
+    };
   }
 
   private readonly refreshRelativeDates_abyssPrivate = (): void => {
@@ -2246,10 +2293,14 @@ export class ProjectsTableView {
     }
   };
 
-  private syncRelativeDateTimer_abyssPrivate(columns: readonly VisibleProjectColumn[]): void {
+  private syncRelativeDateTimer_abyssPrivate(
+    columns: readonly VisibleProjectColumn[],
+    globalDisplay?: ProjectDateDisplay,
+  ): void {
     const needed = columns.some(
       ({ column, field }) =>
-        column.dateDisplay === 'relative' && (field.type === 'date' || field.type === 'datetime'),
+        (globalDisplay ?? column.dateDisplay ?? 'pretty') === 'relative' &&
+        (field.type === 'date' || field.type === 'datetime'),
     );
     if (!needed) {
       this.stopRelativeDateTimer_abyssPrivate();

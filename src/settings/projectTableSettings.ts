@@ -3,7 +3,6 @@ import type { ProjectPropertyCatalog } from '../projects/ObsidianProjectProperti
 import type {
   ProjectColumn,
   ProjectColumnAlignment,
-  ProjectDateDisplay,
   ProjectPropertyInfo,
   ProjectTableSettings,
 } from '../projects/projectFields';
@@ -82,17 +81,6 @@ export function setProjectColumnAlignment(
   if (column === undefined) return false;
   if (alignment === undefined || alignment === 'left') delete column.alignment;
   else column.alignment = alignment;
-  return true;
-}
-
-export function setProjectColumnDateDisplay(
-  settings: ProjectTableSettings,
-  columnId: string,
-  display: ProjectDateDisplay,
-): boolean {
-  const column = settings.columns.find(({ id }) => id === columnId);
-  if (column === undefined) return false;
-  column.dateDisplay = display;
   return true;
 }
 

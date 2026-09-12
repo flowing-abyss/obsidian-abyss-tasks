@@ -334,6 +334,61 @@ describe('SettingsPersistenceCoordinator migration', () => {
     ]);
   });
 
+  it('roundtrips table presentation and removes cleared optional keys without losing extensions', async () => {
+    const table = structuredClone(DEFAULT_SETTINGS.projects.table) as unknown as Record<
+      string,
+      unknown
+    >;
+    table['progress'] = 'bar';
+    table['dateDisplay'] = 'relative';
+    table['futurePresentation'] = { retained: true };
+    const port = memoryPort(markedStatic(), stateEnvelope({ projects: { table } }));
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+
+    expect(loaded.settings.projects.table.progress).toBe('bar');
+    expect(loaded.settings.projects.table.dateDisplay).toBe('relative');
+    delete loaded.settings.projects.table.progress;
+    delete loaded.settings.projects.table.dateDisplay;
+    await coordinator.saveViewState(loaded.settings);
+
+    const saved = JSON.parse(port.stateText ?? '') as {
+      views: { projects: { table: Record<string, unknown> } };
+    };
+    expect(saved.views.projects.table).not.toHaveProperty('progress');
+    expect(saved.views.projects.table).not.toHaveProperty('dateDisplay');
+    expect(saved.views.projects.table['futurePresentation']).toEqual({ retained: true });
+  });
+
+  it('recovers malformed table presentation while loading safe defaults', async () => {
+    const malformedTable = {
+      ...structuredClone(DEFAULT_SETTINGS.projects.table),
+      progress: 'hidden',
+      dateDisplay: 'timezone',
+      futurePresentation: 'keep',
+    };
+    const port = memoryPort(markedStatic(), stateEnvelope({ projects: { table: malformedTable } }));
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    await coordinator.saveViewState(loaded.settings);
+
+    expect(loaded.notices).toContain(
+      'Saved view preferences contained invalid values. Safe defaults were used and the original values were retained for recovery.',
+    );
+    expect(loaded.settings.projects.table.progress).toBeUndefined();
+    expect(loaded.settings.projects.table.dateDisplay).toBeUndefined();
+    const saved = JSON.parse(port.stateText ?? '') as {
+      views: { projects: { table: Record<string, unknown> } };
+      recovery: { malformedViews: { projectTable: unknown } };
+    };
+    expect(saved.views.projects.table).not.toHaveProperty('progress');
+    expect(saved.views.projects.table).not.toHaveProperty('dateDisplay');
+    expect(saved.views.projects.table['futurePresentation']).toBe('keep');
+    expect(saved.recovery.malformedViews.projectTable).toEqual(malformedTable);
+  });
+
   it('loads extensions roundtripped by the cc84b5d serializer without losing raw values', async () => {
     expect(priorSerializerFixture.provenance.serializerCommit).toBe(
       'cc84b5d879d6085c505e12313ed5b073f43a5eb2',

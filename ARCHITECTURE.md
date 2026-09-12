@@ -200,9 +200,14 @@ path escaping only for native lookup; absolute external Markdown targets instead
 source-independent identity. It also owns the shared progress calculation: completed top-level
 tasks divided by all non-cancelled top-level tasks. `projectTableSettings` owns defaults and
 normalization for saved column order, aliases, widths, alignment, visibility, raw, relative, or
-pretty date presentation, under-name description display, grouping, sorting, and hidden statuses.
-Missing date presentation adopts Pretty while explicit modes roundtrip through table and Kanban
-view state. An
+pretty date presentation, bar or full progress presentation, under-name description display,
+grouping, sorting, and hidden statuses. Table progress defaults to bars and numbers. An absent table
+date override is Custom: each column uses its saved mode or Pretty. A global table mode applies to
+every known temporal column and remains effective for later temporal columns; changing one column
+or choosing Custom first materializes that global mode across current temporal columns, then clears
+the global override. Reset clears these table presentation overrides while preserving column order,
+visibility, aliases, widths, and alignment. Explicit modes roundtrip through table and Kanban view
+state, while Kanban retains its independent field and progress presentation. An
 explicit `none` sort preserves incoming project order. A legacy custom description column becomes the under-name
 display preference while valid grouping and sorting references are remapped to the curated field.
 These preferences live under `projects.table`; project metadata remains in Markdown.
@@ -233,13 +238,14 @@ metadata and progress through the shared project-cell renderer and send edits th
 overview surface, and returning reattaches the same session and active overview mode.
 
 The project toolbar composes the shared recursive `ViewOptionsPopover` as Group by, Sort by, and one
-active-view group. Nested disclosures close only siblings at their own level. Table column and
-Kanban card-field visibility, order, and temporal presentation actions stay inside the existing
-guarded view-state mutation path; reorder controls target the neighboring visible row while hidden
-configuration stays in place, and the required Name column remains first and visible. An auxiliary
-native menu registers its exact DOM surface as a child of the popover, so that menu retains the
-popover's shortcut ownership and disclosure state until it closes; parent teardown closes any
-registered child.
+active-view group. Nested disclosures close only siblings at their own level. The Table group owns
+column, description, progress, and date-display controls; its date row shows Custom whenever no
+global date override is active. Table column and Kanban card-field visibility, order, and temporal
+presentation actions stay inside the existing guarded view-state mutation path; reorder controls
+target the neighboring visible row while hidden configuration stays in place, and the required Name
+column remains first and visible. An auxiliary native menu registers its exact DOM surface as a
+child of the popover, so that menu retains the popover's shortcut ownership and disclosure state
+until it closes; parent teardown closes any registered child.
 
 `ProjectsKanbanView` projects ordered status columns and optional inner groups from
 `projectKanbanModel`. It reconciles columns by status key, cards by grouped project occurrence, and
@@ -284,9 +290,10 @@ session, and use the composition root's static settings save callback with curre
 Pretty and Relative project dates share the strict parser in the pure `projectDatePresentation`
 formatter. Pretty preserves date-only calendar values and converts offset datetimes to the system
 timezone; invalid values fall back to their authored text. `ProjectsTableView` owns one minute timer
-for all visible relative temporal columns and refreshes only their text spans on ticks and
-foreground resume. It stops the timer at teardown and leaves table nodes, selection, editors,
-source values, tooltips, clipboard values, and persistence untouched.
+for all visible temporal columns whose effective table or independent Kanban field mode is Relative,
+and refreshes only their text spans on ticks and foreground resume. It stops the timer at teardown
+and leaves table nodes, selection, editors, source values, tooltips, clipboard values, and
+persistence untouched.
 
 `ProjectsTableView` owns spreadsheet selection as an occurrence-and-column range over the current
 visible projection. Repeated list-group occurrences remain distinct in that transient range, while

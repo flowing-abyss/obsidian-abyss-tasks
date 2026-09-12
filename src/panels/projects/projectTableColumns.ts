@@ -21,6 +21,7 @@ export interface ProjectTableColumnOptions {
   readonly onRename: (columnId: string, label: string) => void;
   readonly beforeAction: (action: () => void) => void;
   readonly onAlignment: (columnId: string, alignment: ProjectColumnAlignment) => void;
+  readonly dateDisplay: (column: ProjectColumn) => ProjectDateDisplay;
   readonly onDateDisplay: (columnId: string, display: ProjectDateDisplay) => void;
   readonly typeChoices: (columnId: string) => readonly ProjectPropertyType[];
   readonly onType: (columnId: string, type: ProjectPropertyType) => void;
@@ -177,6 +178,7 @@ function bindColumnMenu(
       trigger: button,
       column,
       field,
+      dateDisplay: options.dateDisplay(column),
       sort: options.sort,
       beforeAction: options.beforeAction,
       onSort: (direction) => {

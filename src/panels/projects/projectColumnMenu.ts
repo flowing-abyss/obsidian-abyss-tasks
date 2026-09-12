@@ -34,6 +34,7 @@ export interface ProjectColumnMenuOptions {
   readonly trigger: HTMLButtonElement;
   readonly column: ProjectColumn;
   readonly field: ProjectFieldCatalogItem;
+  readonly dateDisplay: ProjectDateDisplay;
   readonly sort: { readonly field: string; readonly dir: 'asc' | 'desc' };
   readonly beforeAction: (action: () => void) => void;
   readonly onSort: (direction: 'asc' | 'desc' | 'none') => void;
@@ -198,7 +199,7 @@ export function configureProjectDateDisplayMenu(
 
 function configureColumnDateDisplayMenu(menu: Menu, options: ProjectColumnMenuOptions): void {
   configureProjectDateDisplayMenu(menu, {
-    active: options.column.dateDisplay ?? 'pretty',
+    active: options.dateDisplay,
     onSelect: (display) => {
       run(options, () => {
         options.onDateDisplay(display);
