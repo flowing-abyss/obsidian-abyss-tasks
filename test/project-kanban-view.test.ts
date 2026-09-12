@@ -542,7 +542,8 @@ describe('project Kanban overview', () => {
   });
 
   it('arms over an old range and accepts a bubbling text-node dragstart', () => {
-    const { host } = mountView();
+    const openProject = vi.fn();
+    const { host } = mountView(undefined, { openProject });
     clickView(host, 'Kanban');
     const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
     const start = expectDefined(
@@ -550,6 +551,8 @@ describe('project Kanban overview', () => {
     );
     const text = expectDefined(start.firstChild);
     const selection = expectDefined(activeDocument.defaultView?.getSelection());
+    start.click();
+    expect(start.classList.contains('is-selected')).toBe(true);
     selection.removeAllRanges();
     const range = activeDocument.createRange();
     range.selectNodeContents(start);
@@ -565,13 +568,20 @@ describe('project Kanban overview', () => {
 
     expect(pointerdown.defaultPrevented).toBe(false);
     expect(selection.toString()).toBe('');
+    expect(start.classList.contains('is-selected')).toBe(true);
     expect(card.classList.contains('is-drag-armed')).toBe(true);
+    const thresholdRange = activeDocument.createRange();
+    thresholdRange.selectNodeContents(start);
+    selection.addRange(thresholdRange);
+    expect(selection.toString().length).toBeGreaterThan(0);
     const data = transfer();
     const drag = dragEvent('dragstart', data);
     text.dispatchEvent(drag);
 
     expect(drag.defaultPrevented).toBe(false);
     expect(data.types).toEqual(['application/x-abyss-project-kanban-card']);
+    expect(selection.toString()).toBe('');
+    expect(card.querySelector('.is-selected')).toBeNull();
     expect(card.classList.contains('is-drag-armed')).toBe(false);
     expect(card.classList.contains('is-dragging')).toBe(true);
     expect(
@@ -581,6 +591,20 @@ describe('project Kanban overview', () => {
       new PointerEvent('pointercancel', { bubbles: true, pointerId: 7 }),
     );
     expect(card.classList.contains('is-dragging')).toBe(true);
+
+    activeDocument.defaultView?.dispatchEvent(new Event('blur'));
+    expect(card.classList.contains('is-dragging')).toBe(false);
+    expect(
+      host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
+    ).toBe(false);
+    expect(activeDocument.querySelector('.abyss-project-kanban-drag-image')).toBeNull();
+    const title = expectDefined(card.querySelector<HTMLButtonElement>('.abyss-project-table-name'));
+    title.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 8 }),
+    );
+    activeDocument.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 8 }));
+    title.click();
+    expect(openProject).toHaveBeenCalledOnce();
 
     card.dispatchEvent(dragEvent('dragend', data));
     expect(host.querySelector('.is-dragging, .is-drop-target')).toBeNull();
@@ -628,6 +652,34 @@ describe('project Kanban overview', () => {
     expect(staleAfterBlur.defaultPrevented).toBe(true);
   });
 
+  it('keeps label and padding gestures from retargeting focus through the card', () => {
+    const { host } = mountView();
+    clickView(host, 'Kanban');
+    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const label = expectDefined(
+      card.querySelector<HTMLElement>('.abyss-project-kanban-field-label'),
+    );
+
+    expect(card.getAttribute('tabindex')).toBe('0');
+    label.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 14 }),
+    );
+    expect(card.hasAttribute('tabindex')).toBe(false);
+    activeDocument.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 14 }));
+    expect(card.getAttribute('tabindex')).toBe('0');
+    label.click();
+    expect(card.classList.contains('is-selected')).toBe(true);
+
+    card.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 15 }),
+    );
+    expect(card.hasAttribute('tabindex')).toBe(false);
+    const data = transfer();
+    card.dispatchEvent(dragEvent('dragstart', data));
+    expect(card.getAttribute('tabindex')).toBe('0');
+    card.dispatchEvent(dragEvent('dragend', data));
+  });
+
   it('leaves protected links and editors alone while preserving plain title and metadata clicks', () => {
     const openProject = vi.fn();
     const { host } = mountView(undefined, { openProject });
@@ -636,6 +688,9 @@ describe('project Kanban overview', () => {
     const title = expectDefined(card.querySelector<HTMLButtonElement>('.abyss-project-table-name'));
     const start = expectDefined(
       card.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const end = expectDefined(
+      card.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
     );
     const selection = expectDefined(activeDocument.defaultView?.getSelection());
     const range = activeDocument.createRange();
@@ -686,6 +741,12 @@ describe('project Kanban overview', () => {
     start.click();
     expect(start.classList.contains('is-selected')).toBe(true);
     expect(card.classList.contains('is-selected')).toBe(true);
+    end.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+    expect(start.classList.contains('is-selected')).toBe(true);
+    expect(end.classList.contains('is-selected')).toBe(true);
+    expect(checkbox.checked).toBe(false);
+    checkbox.click();
+    expect(checkbox.checked).toBe(true);
   });
 
   it('releases provisional state on missing transfer, capture failure, Escape, and destroy', () => {
@@ -705,6 +766,7 @@ describe('project Kanban overview', () => {
     text.dispatchEvent(missingTransfer);
     expect(missingTransfer.defaultPrevented).toBe(true);
     expect(card.classList.contains('is-drag-armed')).toBe(false);
+    expect(card.getAttribute('tabindex')).toBe('0');
 
     card.dataset['projectPath'] = 'Projects/Stale.md';
     start.dispatchEvent(
@@ -716,21 +778,39 @@ describe('project Kanban overview', () => {
     expect(card.classList.contains('is-drag-armed')).toBe(false);
     expect(card.classList.contains('is-dragging')).toBe(false);
     expect(activeDocument.querySelector('.abyss-project-kanban-drag-image')).toBeNull();
+    expect(card.getAttribute('tabindex')).toBe('0');
 
     card.dataset['projectPath'] = 'Projects/A.md';
+    const setupFailureData = transfer();
+    setupFailureData.setDragImage = vi.fn(() => {
+      throw new Error('Could not install drag image');
+    });
     start.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 33 }),
     );
-    activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    const setupFailure = dragEvent('dragstart', setupFailureData);
+    text.dispatchEvent(setupFailure);
+    expect(setupFailure.defaultPrevented).toBe(true);
     expect(card.classList.contains('is-drag-armed')).toBe(false);
+    expect(card.classList.contains('is-dragging')).toBe(false);
+    expect(activeDocument.querySelector('.abyss-project-kanban-drag-image')).toBeNull();
+    expect(card.getAttribute('tabindex')).toBe('0');
 
     start.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 34 }),
+    );
+    activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(card.classList.contains('is-drag-armed')).toBe(false);
+    expect(card.getAttribute('tabindex')).toBe('0');
+
+    start.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 35 }),
     );
     expect(card.classList.contains('is-drag-armed')).toBe(true);
     view.destroy();
     mounted.delete(view);
     expect(card.classList.contains('is-drag-armed')).toBe(false);
+    expect(card.getAttribute('tabindex')).toBe('0');
   });
 
   it('keeps a re-entered collapsed target through an ambiguous stale leave and drops there', async () => {

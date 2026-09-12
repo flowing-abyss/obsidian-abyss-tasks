@@ -180,6 +180,7 @@ function insertionLineTop(
 export class ProjectKanbanDragController {
   private readonly window_abyssPrivate: Window;
   private provisional_abyssPrivate: ProvisionalGesture | undefined;
+  private provisionalTabIndex_abyssPrivate: string | null | undefined;
   private active_abyssPrivate: ActiveDrag | undefined;
   private preview_abyssPrivate: ActivePreview | undefined;
   private hoverTimer_abyssPrivate: number | undefined;
@@ -209,6 +210,7 @@ export class ProjectKanbanDragController {
       this.documentDragOver_abyssPrivate,
       true,
     );
+    this.window_abyssPrivate.addEventListener('blur', this.windowBlur_abyssPrivate);
   }
 
   destroy(): void {
@@ -230,6 +232,7 @@ export class ProjectKanbanDragController {
       this.documentDragOver_abyssPrivate,
       true,
     );
+    this.window_abyssPrivate.removeEventListener('blur', this.windowBlur_abyssPrivate);
   }
 
   clearPreview(): void {
@@ -248,12 +251,13 @@ export class ProjectKanbanDragController {
       origin: event.target,
       pointerId: pointer.pointerId,
     };
+    this.provisionalTabIndex_abyssPrivate = card.getAttribute('tabindex');
+    card.removeAttribute('tabindex');
     card.ownerDocument.defaultView?.getSelection()?.removeAllRanges();
     card.addClass('is-drag-armed');
     const ownerDocument = card.ownerDocument;
     ownerDocument.addEventListener('pointerup', this.provisionalPointerEnd_abyssPrivate, true);
     ownerDocument.addEventListener('pointercancel', this.provisionalPointerEnd_abyssPrivate, true);
-    this.window_abyssPrivate.addEventListener('blur', this.provisionalBlur_abyssPrivate);
   };
 
   private readonly dragStart_abyssPrivate = (event: Event): void => {
@@ -307,14 +311,20 @@ export class ProjectKanbanDragController {
     this.releaseProvisional_abyssPrivate();
   };
 
-  private readonly provisionalBlur_abyssPrivate = (): void => {
-    this.releaseProvisional_abyssPrivate();
+  private readonly windowBlur_abyssPrivate = (): void => {
+    this.cleanup_abyssPrivate(false);
   };
 
   private releaseProvisional_abyssPrivate(): void {
     const provisional = this.provisional_abyssPrivate;
+    const tabIndex = this.provisionalTabIndex_abyssPrivate;
     this.provisional_abyssPrivate = undefined;
-    provisional?.card.removeClass('is-drag-armed');
+    this.provisionalTabIndex_abyssPrivate = undefined;
+    if (provisional !== undefined) {
+      provisional.card.removeClass('is-drag-armed');
+      if (tabIndex === null) provisional.card.removeAttribute('tabindex');
+      else if (tabIndex !== undefined) provisional.card.setAttribute('tabindex', tabIndex);
+    }
     const ownerDocument = this.root_abyssPrivate.ownerDocument;
     ownerDocument.removeEventListener('pointerup', this.provisionalPointerEnd_abyssPrivate, true);
     ownerDocument.removeEventListener(
@@ -322,7 +332,6 @@ export class ProjectKanbanDragController {
       this.provisionalPointerEnd_abyssPrivate,
       true,
     );
-    this.window_abyssPrivate.removeEventListener('blur', this.provisionalBlur_abyssPrivate);
   }
 
   private readonly dragOver_abyssPrivate = (event: Event): void => {
