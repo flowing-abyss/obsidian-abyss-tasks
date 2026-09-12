@@ -7940,7 +7940,7 @@ table.abyss-project-table {
 }
 
 .abyss-project-value-picker-option:hover .abyss-project-value-picker-edit,
-.abyss-project-value-picker-edit:focus-visible {
+.abyss-projects-table button.abyss-project-value-picker-edit:focus-visible {
   opacity: 1;
 }
 

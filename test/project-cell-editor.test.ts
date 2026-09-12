@@ -583,6 +583,118 @@ describe('mountProjectCellEditor', () => {
     expect(save).toHaveBeenCalledWith('[Anna](People/Anna-Jones.md)');
   });
 
+  it('offers and assigns a scalar catalog link with a new alias for the same note', async () => {
+    const app = new App();
+    vi.spyOn(app.metadataCache, 'getFirstLinkpathDest').mockImplementation((target) => {
+      if (target !== 'People/Anna') return null;
+      const candidate: unknown = Object.assign(Object.create(TFile.prototype), {
+        path: 'People/Anna.md',
+      });
+      return candidate instanceof TFile ? candidate : null;
+    });
+    const container = freshContainer();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const replacement = '[[People/Anna|New alias]]';
+    mountProjectCellEditor({
+      app,
+      container,
+      field: { id: 'property:Owner', property: 'Owner', label: 'Owner', type: 'text' },
+      value: '[[People/Anna|Old alias]]',
+      catalog: catalog([replacement]),
+      sourcePath: 'Projects/Current.md',
+      save,
+      onClose: vi.fn(),
+    });
+
+    pickerOption(container, replacement).click();
+    await settle();
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith(replacement);
+  });
+
+  it('replaces a scalar link heading when the resolved note is unchanged', async () => {
+    const app = new App();
+    vi.spyOn(app.metadataCache, 'getFirstLinkpathDest').mockImplementation((target) => {
+      if (target !== 'People/Anna') return null;
+      const candidate: unknown = Object.assign(Object.create(TFile.prototype), {
+        path: 'People/Anna.md',
+      });
+      return candidate instanceof TFile ? candidate : null;
+    });
+    const container = freshContainer();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const current = '[[People/Anna#Old section]]';
+    const replacement = '[[People/Anna#New section]]';
+    mountProjectCellEditor({
+      app,
+      container,
+      field: { id: 'property:Owner', property: 'Owner', label: 'Owner', type: 'text' },
+      value: current,
+      catalog: catalog([current]),
+      sourcePath: 'Projects/Current.md',
+      save,
+      onClose: vi.fn(),
+    });
+    expectDefined(
+      pickerOption(container, current).querySelector<HTMLButtonElement>(
+        '.abyss-project-value-picker-edit',
+      ),
+    ).click();
+    const input = pickerInput(container);
+    input.value = replacement;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    keydown(input, 'Enter');
+    await settle();
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith(replacement);
+  });
+
+  it('replaces one list-link alias while keeping an equivalent raw addition blocked', async () => {
+    const app = new App();
+    vi.spyOn(app.metadataCache, 'getFirstLinkpathDest').mockImplementation((target) => {
+      if (target !== 'People/Anna' && target !== 'People/Anna.md') return null;
+      const candidate: unknown = Object.assign(Object.create(TFile.prototype), {
+        path: 'People/Anna.md',
+      });
+      return candidate instanceof TFile ? candidate : null;
+    });
+    const current = '[[People/Anna|Old alias]]';
+    const replacement = '[[People/Anna|New alias]]';
+    const container = freshContainer();
+    const save = vi.fn().mockResolvedValue(undefined);
+    mountProjectCellEditor({
+      app,
+      container,
+      field: { id: 'property:Owners', property: 'Owners', label: 'Owners', type: 'list' },
+      value: [current, 'Celia'],
+      catalog: catalog([], 'list'),
+      sourcePath: 'Projects/Current.md',
+      save,
+      onClose: vi.fn(),
+    });
+    expectDefined(
+      pickerOption(container, current).querySelector<HTMLButtonElement>(
+        '[aria-label="Edit Old alias"]',
+      ),
+    ).click();
+    const input = pickerInput(container);
+    input.value = replacement;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    keydown(input, 'Enter');
+    await settle();
+    expect(save).toHaveBeenLastCalledWith([replacement, 'Celia']);
+
+    input.value = '[Another alias](People/Anna.md)';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(container.querySelector('.abyss-project-value-picker-action')).toBeNull();
+    keydown(input, 'Enter');
+    await settle();
+
+    expect(save).toHaveBeenCalledOnce();
+  });
+
   it('shows a selected raw link with readable details in the vertical picker', async () => {
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);

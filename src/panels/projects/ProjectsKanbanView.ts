@@ -200,6 +200,8 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
         this.context_abyssPrivate.reportDropFailure(error);
       },
     });
+    this.root.addEventListener('pointerdown', this.handleBoardInteraction_abyssPrivate, true);
+    this.root.addEventListener('keydown', this.handleBoardInteraction_abyssPrivate, true);
     this.root.ownerDocument.addEventListener('focusin', this.handleDocumentFocusIn_abyssPrivate);
   }
 
@@ -217,6 +219,8 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
   destroy(): void {
     this.mounted_abyssPrivate = false;
     this.dragFocusRevision_abyssPrivate += 1;
+    this.root.removeEventListener('pointerdown', this.handleBoardInteraction_abyssPrivate, true);
+    this.root.removeEventListener('keydown', this.handleBoardInteraction_abyssPrivate, true);
     this.root.ownerDocument.removeEventListener('focusin', this.handleDocumentFocusIn_abyssPrivate);
     this.columns_abyssPrivate.clear();
     this.cards_abyssPrivate.clear();
@@ -277,6 +281,10 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     if (event.target instanceof Node && !this.root.contains(event.target)) {
       this.dragFocusRevision_abyssPrivate += 1;
     }
+  };
+
+  private readonly handleBoardInteraction_abyssPrivate = (): void => {
+    this.dragFocusRevision_abyssPrivate += 1;
   };
 
   private dropPlan_abyssPrivate(

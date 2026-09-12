@@ -167,9 +167,9 @@ function renderPresetRow(context: PresetRowContext): void {
   };
   const controls = createPresetRowControls(context);
   context.labelers.set(id, controls.updateLabel);
-  const commitValue = (): void => {
+  const commitValue = (): boolean => {
     const index = currentIndex();
-    if (index < 0) return;
+    if (index < 0) return true;
     const nextValue =
       definition.type === 'number' ? controls.value.valueAsNumber : controls.value.value;
     const next = { ...(currentRecord() ?? {}), value: nextValue };
@@ -179,9 +179,10 @@ function renderPresetRow(context: PresetRowContext): void {
       rawPresets.filter((_candidate, candidateIndex) => candidateIndex !== index),
     );
     controls.error.setText(issue ?? '');
-    if (issue !== undefined) return;
+    if (issue !== undefined) return false;
     rawPresets[index] = next;
     options.onDefinitionChange();
+    return true;
   };
   const commitDisplayName = (): void => {
     const index = currentIndex();

@@ -1659,6 +1659,73 @@ describe('project Kanban overview', () => {
     expect(activeDocument.activeElement).toBe(external);
   });
 
+  it('retains a newer board cell selection while a dropped card write is pending', async () => {
+    let finishWrite: (() => void) | undefined;
+    const applyEdits = vi.fn(
+      (changes: readonly ProjectCellChange[]) =>
+        new Promise<ProjectEditResult>((resolve) => {
+          finishWrite = () => {
+            resolve(appliedResult(changes));
+          };
+        }),
+    );
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const history = new ProjectEditHistory(applyEdits);
+    const { host, settings, view } = mountView(
+      [
+        project({
+          path: 'Projects/A.md',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+        project({
+          path: 'Projects/B.md',
+          name: 'B',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+      ],
+      { applyEdits, history },
+    );
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    view.refreshFields();
+    clickView(host, 'Kanban');
+    const source = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"]',
+      ),
+    );
+    const target = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
+      ),
+    );
+    const newerSelection = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/B.md"] [data-column-id="name"]',
+      ),
+    );
+    source.focus();
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+
+    newerSelection.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    newerSelection.click();
+    expect(activeDocument.activeElement).toBe(newerSelection);
+    expect(view.selectedProjectPath()).toBe('Projects/B.md');
+    finishWrite?.();
+    await flushMicrotasks();
+
+    expect(activeDocument.activeElement).toBe(newerSelection);
+    expect(view.selectedProjectPath()).toBe('Projects/B.md');
+    expect(newerSelection.getAttribute('aria-selected')).toBe('true');
+  });
+
   it('lets a later drag own focus while an earlier card write is pending', async () => {
     const finishWrites: Array<() => void> = [];
     const applyEdits = vi.fn(

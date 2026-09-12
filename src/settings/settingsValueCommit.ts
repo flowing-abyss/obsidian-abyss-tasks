@@ -1,10 +1,10 @@
 export interface SettingsValueCommitRegistrar {
-  register(control: HTMLInputElement, commit: () => void): void;
+  register(control: HTMLInputElement, commit: () => boolean | void): void;
 }
 
 interface RegisteredValueCommit {
   readonly control: HTMLInputElement;
-  readonly commit: () => void;
+  readonly commit: () => boolean | void;
   committedValue: string;
 }
 
@@ -25,7 +25,7 @@ export class SettingsValueCommit implements SettingsValueCommitRegistrar, EventL
     this.ownerWindow_abyssPrivate?.addEventListener('blur', this.flushWindow_abyssPrivate);
   }
 
-  register(control: HTMLInputElement, commit: () => void): void {
+  register(control: HTMLInputElement, commit: () => boolean | void): void {
     this.registrations_abyssPrivate.set(control, {
       control,
       commit,
@@ -64,8 +64,9 @@ export class SettingsValueCommit implements SettingsValueCommitRegistrar, EventL
 
   private commit_abyssPrivate(registration: RegisteredValueCommit): void {
     if (registration.control.value === registration.committedValue) return;
+    const committedValue = registration.committedValue;
     registration.committedValue = registration.control.value;
-    registration.commit();
-    registration.committedValue = registration.control.value;
+    const accepted = registration.commit();
+    registration.committedValue = accepted === false ? committedValue : registration.control.value;
   }
 }

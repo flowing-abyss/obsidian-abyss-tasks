@@ -185,15 +185,19 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     );
   }
 
-  private choiceFor_abyssPrivate(value: unknown): PickerChoice | undefined {
-    return this.choices_abyssPrivate.find((choice) =>
-      this.options_abyssPrivate.equivalent(choice.value, value),
+  private findExactSelected_abyssPrivate(value: unknown, ignoredIndex?: number): number {
+    return this.selected_abyssPrivate.findIndex(
+      (candidate, index) => index !== ignoredIndex && Object.is(candidate, value),
     );
+  }
+
+  private choiceFor_abyssPrivate(value: unknown): PickerChoice | undefined {
+    return this.choices_abyssPrivate.find((choice) => Object.is(choice.value, value));
   }
 
   private suggestionFor_abyssPrivate(value: unknown): ProjectPropertySuggestion {
     const configured = this.options_abyssPrivate.suggestions.find((suggestion) =>
-      this.options_abyssPrivate.equivalent(suggestion.value, value),
+      Object.is(suggestion.value, value),
     );
     if (configured === undefined) {
       return genericSuggestion(value, this.options_abyssPrivate.appearance);
@@ -220,12 +224,16 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
   }
 
   private selectedIndex_abyssPrivate(choice: PickerChoice): number {
-    return this.findSelected_abyssPrivate(choice.value);
+    return this.findExactSelected_abyssPrivate(choice.value);
   }
 
   private visibleChoices_abyssPrivate(): PickerChoice[] {
-    const matching = this.choices_abyssPrivate.filter((choice) =>
-      matches(choice, this.focusTarget.value),
+    const matching = this.choices_abyssPrivate.filter(
+      (choice) =>
+        matches(choice, this.focusTarget.value) &&
+        (!this.options_abyssPrivate.multiple ||
+          this.selectedIndex_abyssPrivate(choice) >= 0 ||
+          this.findSelected_abyssPrivate(choice.value) < 0),
     );
     return [
       ...matching.filter((choice) => this.selectedIndex_abyssPrivate(choice) >= 0),
@@ -253,9 +261,12 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
   }
 
   private toggle_abyssPrivate(value: unknown): void {
-    const index = this.findSelected_abyssPrivate(value);
-    if (index >= 0) this.selected_abyssPrivate.splice(index, 1);
-    else this.selected_abyssPrivate.push(value);
+    const exact = this.findExactSelected_abyssPrivate(value);
+    if (exact >= 0) {
+      this.selected_abyssPrivate.splice(exact, 1);
+      return;
+    }
+    if (this.findSelected_abyssPrivate(value) < 0) this.selected_abyssPrivate.push(value);
   }
 
   private mutate_abyssPrivate(value: unknown, clearAfter: boolean): void {
@@ -264,7 +275,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
       this.replaceEdited_abyssPrivate(value);
     } else if (this.options_abyssPrivate.multiple) {
       this.toggle_abyssPrivate(value);
-    } else if (this.findSelected_abyssPrivate(value) >= 0) {
+    } else if (this.findExactSelected_abyssPrivate(value) >= 0) {
       this.selected_abyssPrivate.splice(0);
     } else {
       this.selected_abyssPrivate.splice(0, this.selected_abyssPrivate.length, value);
@@ -290,11 +301,12 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     if (literal === undefined) return undefined;
     const editIndex = this.editIndex_abyssPrivate;
     if (editIndex !== undefined) {
-      return this.options_abyssPrivate.equivalent(this.selected_abyssPrivate[editIndex], literal)
-        ? undefined
-        : literal;
+      return Object.is(this.selected_abyssPrivate[editIndex], literal) ? undefined : literal;
     }
-    return this.findSelected_abyssPrivate(literal) >= 0 ? undefined : literal;
+    const selected = this.options_abyssPrivate.multiple
+      ? this.findSelected_abyssPrivate(literal)
+      : this.findExactSelected_abyssPrivate(literal);
+    return selected >= 0 ? undefined : literal;
   }
 
   private readonly submitLiteral_abyssPrivate = (): void => {
