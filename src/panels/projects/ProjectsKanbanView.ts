@@ -157,6 +157,12 @@ interface ReconcileCardsOptions<TCell extends ProjectKanbanCellContext> {
   readonly collectVisible: boolean;
 }
 
+interface DragFocusOwnership {
+  readonly revision: number;
+  readonly path: string;
+  readonly fieldId?: string;
+}
+
 export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
   readonly root: HTMLElement;
   readonly scroll: HTMLElement;
@@ -170,7 +176,11 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
   private visibleCells_abyssPrivate: TCell[] = [];
   private model_abyssPrivate: ProjectKanbanModel | undefined;
   private readonly drag_abyssPrivate: ProjectKanbanDragController;
-  private dragFocus_abyssPrivate: { readonly path: string; readonly fieldId?: string } | undefined;
+  private readonly dragFocus_abyssPrivate = new WeakMap<
+    ProjectKanbanDropSource,
+    DragFocusOwnership
+  >();
+  private dragFocusRevision_abyssPrivate = 0;
 
   constructor(
     host: HTMLElement,
@@ -190,6 +200,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
         this.context_abyssPrivate.reportDropFailure(error);
       },
     });
+    this.root.ownerDocument.addEventListener('focusin', this.handleDocumentFocusIn_abyssPrivate);
   }
 
   mount(projects: readonly Project[], search: string): void {
@@ -205,6 +216,8 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
 
   destroy(): void {
     this.mounted_abyssPrivate = false;
+    this.dragFocusRevision_abyssPrivate += 1;
+    this.root.ownerDocument.removeEventListener('focusin', this.handleDocumentFocusIn_abyssPrivate);
     this.columns_abyssPrivate.clear();
     this.cards_abyssPrivate.clear();
     this.visibleCells_abyssPrivate = [];
@@ -235,14 +248,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
       active instanceof HTMLElement
         ? active.closest<HTMLElement>('[data-column-id]')?.dataset['columnId']
         : undefined;
-    this.dragFocus_abyssPrivate =
-      active instanceof HTMLElement && card.element.contains(active)
-        ? {
-            path: card.project.path,
-            ...(focusedFieldId === undefined ? {} : { fieldId: focusedFieldId }),
-          }
-        : undefined;
-    return captureProjectKanbanDropSource({
+    const source = captureProjectKanbanDropSource({
       project: card.project,
       fields: this.context_abyssPrivate.modelInput().fields,
       settings: this.context_abyssPrivate.settings(),
@@ -256,7 +262,22 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
           : { sourcePath: group.element.dataset['sourcePath'] }),
       },
     });
+    const revision = (this.dragFocusRevision_abyssPrivate += 1);
+    if (active instanceof HTMLElement && card.element.contains(active)) {
+      this.dragFocus_abyssPrivate.set(source, {
+        revision,
+        path: card.project.path,
+        ...(focusedFieldId === undefined ? {} : { fieldId: focusedFieldId }),
+      });
+    }
+    return source;
   }
+
+  private readonly handleDocumentFocusIn_abyssPrivate = (event: FocusEvent): void => {
+    if (event.target instanceof Node && !this.root.contains(event.target)) {
+      this.dragFocusRevision_abyssPrivate += 1;
+    }
+  };
 
   private dropPlan_abyssPrivate(
     source: ProjectKanbanDropSource,
@@ -307,34 +328,50 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     source: ProjectKanbanDropSource,
     target: ProjectKanbanDropTarget,
   ): Promise<void> {
+    const focus = this.dragFocus_abyssPrivate.get(source);
     let landing: { readonly statusKey: string; readonly groupKey: string } | undefined;
-    const result = await this.context_abyssPrivate.commitDrop(() => {
-      const plan = this.dropPlan_abyssPrivate(source, target);
-      if (!plan.allowed) throw new Error(plan.message);
-      landing = { statusKey: target.status.key, groupKey: plan.insertion.groupKey };
-      const manualOrder = plan.manualOrder;
-      return {
-        changes: plan.changes,
-        ...(manualOrder === undefined
-          ? {}
-          : {
-              afterApplied: () => {
-                this.context_abyssPrivate.settings().manualOrder[manualOrder.statusKey] = [
-                  ...manualOrder.paths,
-                ];
-              },
-            }),
-      };
-    });
-    const failure = result.failed[0];
-    if (failure !== undefined) throw new Error(failure.message);
-    const focus = this.dragFocus_abyssPrivate;
-    this.dragFocus_abyssPrivate = undefined;
-    if (focus?.path !== source.projectPath) return;
-    const card = this.destinationCard_abyssPrivate(source.projectPath, landing);
-    const element =
-      focus.fieldId === undefined ? card?.element : card?.cells.get(focus.fieldId)?.element;
-    element?.focus({ preventScroll: true });
+    try {
+      const result = await this.context_abyssPrivate.commitDrop(() => {
+        const plan = this.dropPlan_abyssPrivate(source, target);
+        if (!plan.allowed) throw new Error(plan.message);
+        landing = { statusKey: target.status.key, groupKey: plan.insertion.groupKey };
+        const manualOrder = plan.manualOrder;
+        return {
+          changes: plan.changes,
+          ...(manualOrder === undefined
+            ? {}
+            : {
+                afterApplied: () => {
+                  this.context_abyssPrivate.settings().manualOrder[manualOrder.statusKey] = [
+                    ...manualOrder.paths,
+                  ];
+                },
+              }),
+        };
+      });
+      const failure = result.failed[0];
+      if (failure !== undefined) throw new Error(failure.message);
+      if (!this.ownsDragFocus_abyssPrivate(source, focus)) return;
+      const card = this.destinationCard_abyssPrivate(source.projectPath, landing);
+      const element =
+        focus.fieldId === undefined ? card?.element : card?.cells.get(focus.fieldId)?.element;
+      element?.focus({ preventScroll: true });
+    } finally {
+      this.dragFocus_abyssPrivate.delete(source);
+    }
+  }
+
+  private ownsDragFocus_abyssPrivate(
+    source: ProjectKanbanDropSource,
+    focus: DragFocusOwnership | undefined,
+  ): focus is DragFocusOwnership {
+    return (
+      focus?.path === source.projectPath &&
+      focus.revision === this.dragFocusRevision_abyssPrivate &&
+      this.mounted_abyssPrivate &&
+      this.root.isConnected &&
+      !this.root.hidden
+    );
   }
 
   selectedProjectPath(): string | undefined {

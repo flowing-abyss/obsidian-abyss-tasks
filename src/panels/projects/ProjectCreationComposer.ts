@@ -113,14 +113,16 @@ export class ProjectCreationComposer {
     error.hidden = this.draft_abyssPrivate.error === undefined;
     this.renderActions_abyssPrivate(surface, input);
     surface.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        this.close_abyssPrivate(true);
-      } else if (event.key === 'Enter' && event.target === input) {
+      if (event.key === 'Enter' && event.target === input) {
         event.preventDefault();
         this.submit_abyssPrivate(input);
       }
     });
+    surface.ownerDocument.addEventListener(
+      'keydown',
+      this.handleDocumentKeyDown_abyssPrivate,
+      true,
+    );
     surface.ownerDocument.addEventListener(
       'pointerdown',
       this.handlePointerDown_abyssPrivate,
@@ -196,11 +198,27 @@ export class ProjectCreationComposer {
     this.close_abyssPrivate(false);
   };
 
+  private readonly handleDocumentKeyDown_abyssPrivate = (event: KeyboardEvent): void => {
+    const surface = this.surface_abyssPrivate;
+    if (event.key !== 'Escape' || surface === undefined) return;
+    const active = surface.ownerDocument.activeElement;
+    const restoreFocus =
+      active === surface.ownerDocument.body || (active instanceof Node && surface.contains(active));
+    event.preventDefault();
+    event.stopPropagation();
+    this.close_abyssPrivate(restoreFocus);
+  };
+
   private close_abyssPrivate(restoreFocus: boolean): void {
     const surface = this.surface_abyssPrivate;
     if (surface === undefined) return;
     const input = surface.querySelector<HTMLInputElement>('.abyss-project-creation-name');
     if (input !== null) this.draft_abyssPrivate.name = input.value;
+    surface.ownerDocument.removeEventListener(
+      'keydown',
+      this.handleDocumentKeyDown_abyssPrivate,
+      true,
+    );
     surface.ownerDocument.removeEventListener(
       'pointerdown',
       this.handlePointerDown_abyssPrivate,
@@ -261,6 +279,7 @@ export class ProjectCreationComposer {
   private patchSurface_abyssPrivate(): void {
     const surface = this.surface_abyssPrivate;
     if (surface === undefined) return;
+    this.patchStatus_abyssPrivate(surface);
     const blocked = this.draft_abyssPrivate.blockedPath !== undefined;
     surface.setAttribute('aria-busy', String(this.submitting_abyssPrivate));
     const input = surface.querySelector<HTMLInputElement>('.abyss-project-creation-name');
@@ -279,6 +298,21 @@ export class ProjectCreationComposer {
     if (open !== null) open.hidden = !blocked;
     const another = surface.querySelector<HTMLButtonElement>('.abyss-project-creation-another');
     if (another !== null) another.hidden = !blocked;
+  }
+
+  private patchStatus_abyssPrivate(surface: HTMLElement): void {
+    const label = this.draft_abyssPrivate.statusLabel;
+    let status = surface.querySelector<HTMLElement>('.abyss-project-creation-status');
+    if (label === undefined) {
+      status?.remove();
+      return;
+    }
+    if (status === null) {
+      status = surface.createDiv({ cls: 'abyss-project-creation-status' });
+      const input = surface.querySelector('.abyss-project-creation-name');
+      if (input !== null) surface.insertBefore(status, input);
+    }
+    status.setText(`Status: ${label}`);
   }
 
   private submitLabel_abyssPrivate(): string {

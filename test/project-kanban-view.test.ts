@@ -153,6 +153,21 @@ function rectangle(left: number, top: number, right: number, bottom: number): DO
   return { left, top, right, bottom, width: right - left, height: bottom - top } as DOMRect;
 }
 
+function appliedResult(changes: readonly ProjectCellChange[]): ProjectEditResult {
+  return {
+    applied: changes.map((change): AppliedProjectCellChange => ({
+      ...change,
+      sourceProperty: change.field.property ?? DEFAULT_SETTINGS.projects.statusProperty,
+      sourceKey:
+        change.sourceKey ?? change.field.property ?? DEFAULT_SETTINGS.projects.statusProperty,
+      previousValue: change.expectedValue,
+      previousExists: change.expectedExists ?? change.expectedValue !== undefined,
+      appliedExists: change.value !== undefined && change.value !== '',
+    })),
+    failed: [],
+  };
+}
+
 function prettyDateTextNode(cell: HTMLElement): Text {
   const text = cell.querySelector('.abyss-project-pretty-date')?.firstChild;
   expect(text?.nodeType).toBe(Node.TEXT_NODE);
@@ -1600,6 +1615,136 @@ describe('project Kanban overview', () => {
     expect(
       activeDocument.activeElement?.closest('[data-group-key]')?.getAttribute('data-group-key'),
     ).toBe('value:c');
+  });
+
+  it('retains deliberate external focus while a dropped card write is pending', async () => {
+    let finishWrite: (() => void) | undefined;
+    const applyEdits = vi.fn(
+      (changes: readonly ProjectCellChange[]) =>
+        new Promise<ProjectEditResult>((resolve) => {
+          finishWrite = () => {
+            resolve(appliedResult(changes));
+          };
+        }),
+    );
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const history = new ProjectEditHistory(applyEdits);
+    const { host, settings, view } = mountView(
+      [project({ statusId: sourceStatus.id, frontmatter: { status: sourceStatus.name } })],
+      { applyEdits, history },
+    );
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    view.refreshFields();
+    const external = activeDocument.body.createEl('button', { text: 'Outside overview' });
+    clickView(host, 'Kanban');
+    const source = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const target = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
+      ),
+    );
+    source.focus();
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+
+    external.focus();
+    finishWrite?.();
+    await flushMicrotasks();
+
+    expect(activeDocument.activeElement).toBe(external);
+  });
+
+  it('lets a later drag own focus while an earlier card write is pending', async () => {
+    const finishWrites: Array<() => void> = [];
+    const applyEdits = vi.fn(
+      (changes: readonly ProjectCellChange[]) =>
+        new Promise<ProjectEditResult>((resolve) => {
+          finishWrites.push(() => {
+            resolve(appliedResult(changes));
+          });
+        }),
+    );
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const firstTargetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const secondTargetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[2]);
+    const history = new ProjectEditHistory(applyEdits);
+    const { host, settings, view } = mountView(
+      [
+        project({
+          path: 'Projects/A.md',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+        project({
+          path: 'Projects/B.md',
+          name: 'B',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+      ],
+      { applyEdits, history },
+    );
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    view.refreshFields();
+    clickView(host, 'Kanban');
+    const first = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"]',
+      ),
+    );
+    const second = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/B.md"]',
+      ),
+    );
+    const firstTarget = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${firstTargetStatus.id}"]`,
+      ),
+    );
+    const secondTarget = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${secondTargetStatus.id}"]`,
+      ),
+    );
+
+    first.focus();
+    const firstData = transfer();
+    first.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    first.dispatchEvent(dragEvent('dragstart', firstData));
+    firstTarget.dispatchEvent(dragEvent('drop', firstData));
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+
+    second.focus();
+    const secondData = transfer();
+    second.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    second.dispatchEvent(dragEvent('dragstart', secondData));
+    secondTarget.dispatchEvent(dragEvent('drop', secondData));
+    expect(
+      activeDocument.activeElement?.closest<HTMLElement>('[data-project-path]')?.dataset,
+    ).toHaveProperty('projectPath', 'Projects/B.md');
+
+    expectDefined(finishWrites[0])();
+    await flushMicrotasks();
+    expect(
+      activeDocument.activeElement?.closest<HTMLElement>('[data-project-path]')?.dataset,
+    ).toHaveProperty('projectPath', 'Projects/B.md');
+    expect(applyEdits).toHaveBeenCalledTimes(2);
+
+    expectDefined(finishWrites[1])();
+    await flushMicrotasks();
+    expect(
+      activeDocument.activeElement?.closest<HTMLElement>('[data-project-path]')?.dataset,
+    ).toHaveProperty('projectPath', 'Projects/B.md');
+    expect(
+      activeDocument.activeElement?.closest('[data-status-key]')?.getAttribute('data-status-key'),
+    ).toBe(`id:${secondTargetStatus.id}`);
   });
 
   it('forecasts a new inner group at its actual group boundary', () => {

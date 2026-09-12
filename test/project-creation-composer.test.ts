@@ -106,6 +106,12 @@ describe('ProjectCreationComposer', () => {
     submit(h.host, 'New');
     await flushMicrotasks();
 
+    const anchor = h.anchor;
+    expect(
+      expectDefined(h.host.querySelector<HTMLElement>('.abyss-project-creation-status'))
+        .textContent,
+    ).toBe('Status: Done');
+
     expect(
       expectDefined(h.host.querySelector<HTMLButtonElement>('.abyss-project-creation-submit'))
         .disabled,
@@ -117,6 +123,9 @@ describe('ProjectCreationComposer', () => {
       h.host.querySelector<HTMLButtonElement>('.abyss-project-creation-cancel'),
     ).click();
     h.composer.open({ anchor: h.anchor, statusId: 'planned', statusLabel: 'Planned' });
+    const input = expectDefined(
+      h.host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
     expect(
       expectDefined(h.host.querySelector<HTMLButtonElement>('.abyss-project-creation-submit'))
         .disabled,
@@ -131,9 +140,46 @@ describe('ProjectCreationComposer', () => {
     expect(
       expectDefined(h.host.querySelector<HTMLInputElement>('.abyss-project-creation-name')).value,
     ).toBe('');
+    expect(h.host.querySelector('.abyss-project-creation-name')).toBe(input);
+    expect(h.anchor).toBe(anchor);
+    expect(
+      expectDefined(h.host.querySelector<HTMLElement>('.abyss-project-creation-status'))
+        .textContent,
+    ).toBe('Status: Planned');
     submit(h.host, 'Different');
     await flushMicrotasks();
     expect(create).toHaveBeenLastCalledWith({ name: 'Different', statusId: 'planned' });
+  });
+
+  it('removes a retained recovery status label for a fresh draft without status context', async () => {
+    const create = vi.fn().mockRejectedValue(
+      new ProjectCreationError('template failed', {
+        createdPath: 'Projects/New.md',
+        phase: 'template',
+        cause: new Error('Templater failed'),
+      }),
+    );
+    const h = harness(create);
+    h.composer.open({ anchor: h.anchor, statusId: 'done', statusLabel: 'Done' });
+    submit(h.host, 'New');
+    await flushMicrotasks();
+    expect(h.host.querySelector('.abyss-project-creation-status')?.textContent).toBe(
+      'Status: Done',
+    );
+
+    expectDefined(
+      h.host.querySelector<HTMLButtonElement>('.abyss-project-creation-cancel'),
+    ).click();
+    h.composer.open({ anchor: h.anchor });
+    const input = expectDefined(
+      h.host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    expectDefined(
+      h.host.querySelector<HTMLButtonElement>('.abyss-project-creation-another'),
+    ).click();
+
+    expect(h.host.querySelector('.abyss-project-creation-status')).toBeNull();
+    expect(h.host.querySelector('.abyss-project-creation-name')).toBe(input);
   });
 
   it('closes on Escape and restores the trigger without cancelling pending ownership', async () => {
@@ -157,6 +203,35 @@ describe('ProjectCreationComposer', () => {
     resolve?.('Projects/New.md');
     await flushMicrotasks();
     expect(h.created).toHaveBeenCalledWith('Projects/New.md', 'active');
+  });
+
+  it('owns document Escape after focus falls back without reclaiming deliberate external focus', async () => {
+    const create = vi.fn().mockRejectedValue(
+      new ProjectCreationError('template failed', {
+        createdPath: 'Projects/New.md',
+        phase: 'template',
+        cause: new Error('Templater failed'),
+      }),
+    );
+    const h = harness(create);
+    h.composer.open({ anchor: h.anchor, statusId: 'done', statusLabel: 'Done' });
+    submit(h.host, 'New');
+    await flushMicrotasks();
+    expectDefined(h.host.querySelector<HTMLInputElement>('.abyss-project-creation-name')).blur();
+    expect(activeDocument.activeElement).toBe(activeDocument.body);
+
+    activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(h.host.querySelector('.abyss-project-creation-composer')).toBeNull();
+    expect(activeDocument.activeElement).toBe(h.anchor);
+
+    h.composer.open({ anchor: h.anchor, statusId: 'planned', statusLabel: 'Planned' });
+    const external = activeDocument.body.createEl('button', { text: 'Outside composer' });
+    external.focus();
+    activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(h.host.querySelector('.abyss-project-creation-composer')).toBeNull();
+    expect(activeDocument.activeElement).toBe(external);
   });
 
   it('clamps a preferred-width composer inside a narrow overview without moving layout children', () => {
