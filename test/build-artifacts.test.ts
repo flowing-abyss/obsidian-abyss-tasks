@@ -50,6 +50,7 @@ const privateOwners = new Set([
   'ObsidianProjectProperties',
   'ProjectPropertySuggest',
   'ProjectCellEditorLifecycle',
+  'ProjectCellValuePicker',
   'ProjectCreationComposer',
   'ProjectCreationPresentation',
   'ProjectKanbanDragController',

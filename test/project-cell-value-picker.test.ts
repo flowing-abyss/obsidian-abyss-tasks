@@ -82,7 +82,7 @@ describe('project cell value picker', () => {
     expect(input.value).toBe('Beta');
   });
 
-  it('adds a Unicode literal only through the explicit action and never on blur or Tab', async () => {
+  it('adds a Unicode literal only through the explicit action and never on blur', async () => {
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
     const onClose = vi.fn();
@@ -128,6 +128,29 @@ describe('project cell value picker', () => {
     expect(secondSave).toHaveBeenCalledWith(['Alpha', '新規 🚀']);
   });
 
+  it('does not assign a search query when Tab closes the picker', async () => {
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Team', property: 'Team', label: 'Team', type: 'list' },
+      value: ['Alpha'],
+      catalog: catalog(['Alpha']),
+      save,
+      onClose,
+    });
+    const input = pickerInput(container);
+    inputEvent(input, 'Unsubmitted');
+
+    keydown(input, 'Tab');
+    await settle();
+
+    expect(save).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledWith('committed', { navigation: 'tab-forward' });
+  });
+
   it('edits one selected list item in place and avoids a duplicate replacement', async () => {
     const container = freshContainer();
     const save = vi.fn().mockResolvedValue(undefined);
@@ -145,18 +168,43 @@ describe('project cell value picker', () => {
     ).click();
     const input = pickerInput(container);
     expect(input.value).toBe('Beta');
-    inputEvent(input, 'Delta');
+    inputEvent(input, 'Be');
     keydown(input, 'Enter');
     await settle();
-    expect(save).toHaveBeenLastCalledWith(['Alpha', 'Delta', 'Gamma']);
+    expect(save).toHaveBeenLastCalledWith(['Alpha', 'Be', 'Gamma']);
 
     expectDefined(
-      option(container, 'Delta').querySelector<HTMLButtonElement>('[aria-label="Edit Delta"]'),
+      option(container, 'Be').querySelector<HTMLButtonElement>('[aria-label="Edit Be"]'),
     ).click();
     inputEvent(input, 'Alpha');
     keydown(input, 'Enter');
     await settle();
     expect(save).toHaveBeenLastCalledWith(['Alpha', 'Gamma']);
+  });
+
+  it('opens the selected active row for editing from the keyboard', async () => {
+    const container = freshContainer();
+    const save = vi.fn().mockResolvedValue(undefined);
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Team', property: 'Team', label: 'Team', type: 'list' },
+      value: ['Alpha'],
+      catalog: catalog(['Alpha', 'Beta']),
+      save,
+      onClose: vi.fn(),
+    });
+    const input = pickerInput(container);
+    keydown(input, 'ArrowDown');
+
+    keydown(input, 'F2');
+
+    expect(input.value).toBe('Alpha');
+    expect(input.getAttribute('aria-keyshortcuts')).toBe('F2');
+    inputEvent(input, 'Al');
+    keydown(input, 'Enter');
+    await settle();
+    expect(save).toHaveBeenCalledWith(['Al']);
   });
 
   it('keeps an out-of-catalog value available for remove and re-add in the same session', async () => {
@@ -184,24 +232,28 @@ describe('project cell value picker', () => {
     expect(pickerInput(container)).toBe(input);
   });
 
-  it('keeps the raw identity of a malformed selected value when removing it', async () => {
+  it('keeps the raw identity of a nested malformed selected value when removing it', async () => {
     const container = freshContainer();
     const malformed = { legacy: true };
+    const nested = ['nested'];
     const save = vi.fn().mockResolvedValue(undefined);
     mountProjectCellEditor({
       app: new App(),
       container,
       field: { id: 'property:Team', property: 'Team', label: 'Team', type: 'list' },
-      value: [malformed, true],
+      value: [malformed, nested, true],
       catalog: catalog(),
       save,
       onClose: vi.fn(),
     });
 
-    option(container, '[object Object]').click();
+    const nestedOption = option(container, 'nested');
+    expect(nestedOption.getAttribute('aria-selected')).toBe('true');
+    nestedOption.click();
     await settle();
 
-    expect(save).toHaveBeenCalledWith([true]);
+    expect(save).toHaveBeenCalledWith([malformed, true]);
+    expect(option(container, 'nested').getAttribute('aria-selected')).toBe('false');
   });
 
   it('moves keyboard activity in the displayed selected-then-available order', () => {
@@ -379,6 +431,73 @@ describe('project cell value picker', () => {
     option(container, 'Beta').click();
     await settle();
     expect(save).toHaveBeenLastCalledWith(['Alpha', 'Beta']);
+  });
+
+  it('flushes explicit toggles queued behind a save before Escape closes', async () => {
+    let release: (() => void) | undefined;
+    const firstSave = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const container = document.body.createDiv();
+    const save = vi.fn().mockReturnValueOnce(firstSave).mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Team', property: 'Team', label: 'Team', type: 'list' },
+      value: [],
+      catalog: catalog(['Alpha', 'Beta']),
+      save,
+      onClose,
+    });
+    option(container, 'Alpha').click();
+    option(container, 'Beta').click();
+    const input = pickerInput(container);
+    inputEvent(input, 'Unsubmitted');
+
+    keydown(input, 'Escape');
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(input.isConnected).toBe(true);
+    expectDefined(release)();
+    await settle();
+    await settle();
+    expect(save.mock.calls).toEqual([[['Alpha']], [['Alpha', 'Beta']]]);
+    expect(onClose).toHaveBeenCalledWith('cancelled', { navigation: 'restore-current' });
+  });
+
+  it('retains queued explicit toggles when an in-flight save fails after Escape', async () => {
+    let reject: ((error: Error) => void) | undefined;
+    const firstSave = new Promise<void>((_resolve, rejectSave) => {
+      reject = rejectSave;
+    });
+    const container = document.body.createDiv();
+    const save = vi.fn().mockReturnValue(firstSave);
+    const onClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Team', property: 'Team', label: 'Team', type: 'list' },
+      value: [],
+      catalog: catalog(['Alpha', 'Beta']),
+      save,
+      onClose,
+    });
+    option(container, 'Alpha').click();
+    option(container, 'Beta').click();
+    const input = pickerInput(container);
+    keydown(input, 'Escape');
+
+    expectDefined(reject)(new ProjectEditValidationError('Source changed'));
+    await settle();
+    await settle();
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(input.isConnected).toBe(true);
+    expect(option(container, 'Alpha').getAttribute('aria-selected')).toBe('true');
+    expect(option(container, 'Beta').getAttribute('aria-selected')).toBe('true');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Source changed');
   });
 
   it('closes from a pointer on a nonfocusable outside surface without assigning the query', async () => {

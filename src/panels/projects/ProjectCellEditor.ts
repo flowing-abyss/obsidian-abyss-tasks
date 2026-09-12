@@ -56,6 +56,7 @@ interface EditorControl {
   readonly focusTarget?: HTMLElement;
   readonly preferredWidth?: number;
   value(): unknown;
+  discardUnsubmitted?(): void;
   destroy?(): void;
 }
 
@@ -113,6 +114,16 @@ function initialControlValue(control: EditorControl | undefined, source: unknown
   } catch {
     return copyValue(source);
   }
+}
+
+function editorKeyboardNavigation(event: KeyboardEvent): ProjectCellEditorNavigation | undefined {
+  if (event.defaultPrevented) return undefined;
+  if (event.key === 'Tab') return event.shiftKey ? 'tab-backward' : 'tab-forward';
+  if (event.key !== 'Enter') return undefined;
+  if (event.target instanceof HTMLButtonElement || event.target instanceof HTMLTextAreaElement) {
+    return undefined;
+  }
+  return 'restore-current';
 }
 
 function appendSuggestion(
@@ -498,6 +509,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   private closeRequested_abyssPrivate = false;
   private closeNavigation_abyssPrivate: ProjectCellEditorNavigation = 'restore-current';
   private closeFocusTarget_abyssPrivate: HTMLElement | undefined;
+  private closeResult_abyssPrivate: ProjectCellEditorResult = 'committed';
   private ownedPointerActive_abyssPrivate = false;
   private ownedPointerCleanup_abyssPrivate: (() => void) | undefined;
   private closed_abyssPrivate = false;
@@ -558,7 +570,13 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   }
 
   cancel(): void {
-    this.finish_abyssPrivate('cancelled');
+    if (this.control_abyssPrivate?.discardUnsubmitted === undefined) {
+      this.finish_abyssPrivate('cancelled');
+      return;
+    }
+    this.control_abyssPrivate.discardUnsubmitted();
+    this.closeResult_abyssPrivate = 'cancelled';
+    this.requestCommit_abyssPrivate(true, 'restore-current');
   }
 
   focus(): void {
@@ -590,21 +608,21 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   }
 
   private readonly onKeyDown_abyssPrivate = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      this.cancel();
-      return;
-    }
-    if (event.defaultPrevented) return;
-    if (event.key === 'Enter' && event.target instanceof HTMLTextAreaElement) return;
-    if (event.key !== 'Enter' && event.key !== 'Tab') return;
+    if (this.handleEscape_abyssPrivate(event)) return;
+    const navigation = editorKeyboardNavigation(event);
+    if (navigation === undefined) return;
     event.preventDefault();
     event.stopPropagation();
-    let navigation: ProjectCellEditorNavigation = 'restore-current';
-    if (event.key === 'Tab') navigation = event.shiftKey ? 'tab-backward' : 'tab-forward';
     this.requestCommit_abyssPrivate(true, navigation);
   };
+
+  private handleEscape_abyssPrivate(event: KeyboardEvent): boolean {
+    if (event.key !== 'Escape') return false;
+    event.preventDefault();
+    event.stopPropagation();
+    this.cancel();
+    return true;
+  }
 
   private readonly onFocusOut_abyssPrivate = (event: FocusEvent): void => {
     const next = event.relatedTarget;
@@ -757,7 +775,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
 
   private finishUnchanged_abyssPrivate(): void {
     if (this.closeRequested_abyssPrivate) {
-      this.finish_abyssPrivate('committed', this.closeNavigation_abyssPrivate);
+      this.finish_abyssPrivate(this.closeResult_abyssPrivate, this.closeNavigation_abyssPrivate);
     } else {
       this.focus();
     }

@@ -24,6 +24,7 @@ export interface ProjectCellValuePickerControl {
   readonly focusTarget: HTMLInputElement;
   readonly preferredWidth: number;
   value(): unknown;
+  discardUnsubmitted(): void;
   destroy(): void;
 }
 
@@ -138,6 +139,12 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
       : copyValue(this.selected_abyssPrivate[0] ?? '');
   }
 
+  discardUnsubmitted(): void {
+    this.clearQuery_abyssPrivate();
+    this.activeKey_abyssPrivate = undefined;
+    this.render_abyssPrivate();
+  }
+
   destroy(): void {
     this.picker_abyssPrivate.remove();
   }
@@ -151,6 +158,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
         'aria-label': `Search ${this.options_abyssPrivate.label}`,
         'aria-autocomplete': 'list',
         'aria-expanded': 'true',
+        'aria-keyshortcuts': 'F2',
         autocomplete: 'off',
         placeholder: 'Search or add value',
       },
@@ -204,7 +212,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     if (existing !== undefined) return existing;
     const choice = {
       key: `choice-${String(++this.choiceSequence_abyssPrivate)}`,
-      value: copyValue(value),
+      value,
       suggestion: preferred ?? this.suggestionFor_abyssPrivate(value),
     };
     this.choices_abyssPrivate.push(choice);
@@ -299,7 +307,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     if (index < 0) return;
     this.editIndex_abyssPrivate = index;
     this.focusTarget.value = String(this.selected_abyssPrivate[index]);
-    this.activeKey_abyssPrivate = choice.key;
+    this.activeKey_abyssPrivate = undefined;
     this.render_abyssPrivate();
     this.focusTarget.focus({ preventScroll: true });
     this.focusTarget.select();
@@ -321,7 +329,12 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     renderProjectPropertySuggestion(choice.suggestion, presentation);
     const edit = element.createEl('button', {
       cls: 'abyss-project-value-picker-edit',
-      attr: { type: 'button', 'aria-label': `Edit ${choice.suggestion.label}` },
+      attr: {
+        type: 'button',
+        title: `Edit ${choice.suggestion.label} (F2)`,
+        'aria-label': `Edit ${choice.suggestion.label}`,
+        'aria-keyshortcuts': 'F2',
+      },
     });
     setIcon(edit, 'pencil');
     element.addEventListener('click', () => {
@@ -434,6 +447,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
       if (event.key === 'Enter') event.stopPropagation();
       return;
     }
+    if (this.handleEditShortcut_abyssPrivate(event)) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       event.stopPropagation();
@@ -447,6 +461,17 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     if (active === undefined) this.submitLiteral_abyssPrivate();
     else this.mutate_abyssPrivate(active.value, this.editIndex_abyssPrivate !== undefined);
   };
+
+  private handleEditShortcut_abyssPrivate(event: KeyboardEvent): boolean {
+    if (event.key !== 'F2') return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const active = this.activeChoice_abyssPrivate();
+    if (active !== undefined && this.selectedIndex_abyssPrivate(active) >= 0) {
+      this.editChoice_abyssPrivate(active);
+    }
+    return true;
+  }
 
   private activeChoice_abyssPrivate(): PickerChoice | undefined {
     const activeKey = this.activeKey_abyssPrivate;

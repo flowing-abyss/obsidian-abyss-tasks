@@ -653,8 +653,10 @@ describe('mountProjectCellEditor', () => {
     input.dispatchEvent(new InputEvent('input', { bubbles: true }));
 
     keydown(input, 'Escape');
+    await settle();
+    await settle();
 
-    expect(close).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledWith('cancelled', { navigation: 'restore-current' });
     expect(save).toHaveBeenCalledWith(['Celia', 'Mina']);
     expect(save).not.toHaveBeenCalledWith(['Celia', 'Mina', 'Anna']);
   });
