@@ -1849,6 +1849,31 @@ describe('project Kanban overview', () => {
     expect(budget.textContent).toContain('84');
   });
 
+  it('refreshes a retained Kanban status cell when its status presentation changes', () => {
+    const { host, view, settings } = mountView();
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.fields = [{ id: 'status', visible: true }];
+    settings.projects.overviewView = 'kanban';
+    view.refreshFields();
+    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const statusCell = expectDefined(card.querySelector<HTMLElement>('[data-column-id="status"]'));
+    const status = expectDefined(settings.projects.statuses[0]);
+
+    status.displayName = 'Current work';
+    status.color = '#28b8a5';
+    status.display = 'dot';
+    view.refreshFields();
+
+    expect(host.querySelector('.abyss-project-kanban-card')).toBe(card);
+    expect(card.querySelector('[data-column-id="status"]')).toBe(statusCell);
+    const pill = expectDefined(
+      statusCell.querySelector<HTMLElement>('.abyss-project-table-status-pill'),
+    );
+    expect(pill.textContent).toBe('Current work');
+    expect(pill.classList).toContain('is-dot');
+    expect(pill.style.getPropertyValue('--abyss-project-status-color')).toBe('#28b8a5');
+  });
+
   it('reuses a hidden description cell with the latest immutable project snapshot', async () => {
     const initial = project({
       frontmatter: {

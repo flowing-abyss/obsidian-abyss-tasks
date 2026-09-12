@@ -405,11 +405,19 @@ mounted `PanelView` to refresh its existing table controller after the state wri
 status settings rebuild the shared `StatusCatalog`, `StatusRegistry`, and the
 indexer's interpretation of task symbols together.
 
+Each `CalendarSettingsTab` render owns one project-value commit lifecycle bound to that render's
+native owner window. Project text drafts commit on change, blur, Enter, window deactivation, and
+settings hide; color inputs commit on their native input event. A settings rebuild transfers a
+focused draft and its focus into the replacement control, whose next natural boundary commits it.
+The lifecycle removes its control and window listeners at teardown and deduplicates later boundaries
+without changing the static settings save and failure-retry path.
+
 `ProjectStore.refreshSettings()` compares only membership and status-resolution inputs before it
 rescans projects or recomputes task statistics. Type, preset, alias, color, alignment, and sidebar
 presentation changes reuse the existing project snapshots. `PanelView` then reconciles the current
-project table once and asks `LeftPanel` to replace only its project section, so a presentation save
-does not query the task-wide list. The settings UI uses one shared expandable-card primitive for tag,
+project table and Kanban cells once, patches a mounted dashboard status in place, and asks `LeftPanel`
+to replace only its project section, so a presentation save does not query the task-wide list. The
+settings UI uses one shared expandable-card primitive for tag,
 task-status, and project-property rows. Project statuses and custom-property presets use one shared
 compact value-row primitive inside their expanded property cards; adapters retain domain validation
 and persistence while the row owns native value, display-name, color, appearance, drag, and remove

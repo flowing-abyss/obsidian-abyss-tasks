@@ -63,202 +63,222 @@ function metadataMayContainTasks(data: string, cache: CachedMetadata): boolean {
  * would be missed.
  */
 export class ProjectStore {
-  private cache: Project[] = [];
-  private byPath = new Map<string, Project>();
-  private listeners: Array<() => void> = [];
-  private sourceListeners: Array<(observation: ProjectSourceObservation) => void> = [];
-  private eventUnsubs: Array<() => void> = [];
-  private queryUnsub: (() => void) | undefined;
-  private reconciliationUnsub: (() => void) | undefined;
-  private debounce: number | undefined;
-  private readonly waitingPaths = new Set<string>();
-  private readonly readyPaths = new Set<string>();
-  private readyFull = false;
-  private readonly pendingCreates = new Set<string>();
-  private readonly pendingSourceObservations = new Map<string, PendingSourceObservation>();
-  private readonly publishedSourceObservations = new Map<string, PublishedSourceObservation>();
-  private sourceRevision = 0;
-  private settingsSignature = '';
+  private cache_abyssPrivate: Project[] = [];
+  private byPath_abyssPrivate = new Map<string, Project>();
+  private listeners_abyssPrivate: Array<() => void> = [];
+  private sourceListeners_abyssPrivate: Array<(observation: ProjectSourceObservation) => void> = [];
+  private eventUnsubs_abyssPrivate: Array<() => void> = [];
+  private queryUnsub_abyssPrivate: (() => void) | undefined;
+  private reconciliationUnsub_abyssPrivate: (() => void) | undefined;
+  private debounce_abyssPrivate: number | undefined;
+  private readonly waitingPaths_abyssPrivate = new Set<string>();
+  private readonly readyPaths_abyssPrivate = new Set<string>();
+  private readyFull_abyssPrivate = false;
+  private readonly pendingCreates_abyssPrivate = new Set<string>();
+  private readonly pendingSourceObservations_abyssPrivate = new Map<
+    string,
+    PendingSourceObservation
+  >();
+  private readonly publishedSourceObservations_abyssPrivate = new Map<
+    string,
+    PublishedSourceObservation
+  >();
+  private sourceRevision_abyssPrivate = 0;
+  private settingsSignature_abyssPrivate = '';
 
   constructor(
-    private readonly app: App,
-    private readonly queries: TaskQueryApi,
-    private readonly settings: CalendarSettings,
+    private readonly app_abyssPrivate: App,
+    private readonly queries_abyssPrivate: TaskQueryApi,
+    private readonly settings_abyssPrivate: CalendarSettings,
   ) {}
 
   initialize(): void {
-    this.recomputeAll();
-    this.settingsSignature = this.projectEntrySettingsSignature();
+    this.recomputeAll_abyssPrivate();
+    this.settingsSignature_abyssPrivate = this.projectEntrySettingsSignature_abyssPrivate();
     // A single note edit re-evaluates only that note (O(1) note + its tasks).
     // Create/delete/rename change the membership set → full rescan (rare events).
-    const metadataRef = this.app.metadataCache.on('changed', (file, data, cache) => {
-      if (file.extension === 'md' && this.app.vault.getAbstractFileByPath(file.path) === file) {
-        this.recordSourceObservation(file.path, data, cache);
-        if (this.pendingCreates.has(file.path)) {
-          if (!metadataMayContainTasks(data, cache) && !this.hasIndexedTasks(file.path)) {
-            this.pendingCreates.delete(file.path);
-            this.releasePath(file.path);
+    const metadataRef = this.app_abyssPrivate.metadataCache.on('changed', (file, data, cache) => {
+      if (
+        file.extension === 'md' &&
+        this.app_abyssPrivate.vault.getAbstractFileByPath(file.path) === file
+      ) {
+        this.recordSourceObservation_abyssPrivate(file.path, data, cache);
+        if (this.pendingCreates_abyssPrivate.has(file.path)) {
+          if (
+            !metadataMayContainTasks(data, cache) &&
+            !this.hasIndexedTasks_abyssPrivate(file.path)
+          ) {
+            this.pendingCreates_abyssPrivate.delete(file.path);
+            this.releasePath_abyssPrivate(file.path);
             return;
           }
         }
-        this.awaitBarrier(file.path);
+        this.awaitBarrier_abyssPrivate(file.path);
       }
     });
-    this.eventUnsubs.push(() => {
-      this.app.metadataCache.offref(metadataRef);
+    this.eventUnsubs_abyssPrivate.push(() => {
+      this.app_abyssPrivate.metadataCache.offref(metadataRef);
     });
-    const createRef = this.app.vault.on('create', (file) => {
-      if (isMarkdownFile(file)) this.pendingCreates.add(file.path);
+    const createRef = this.app_abyssPrivate.vault.on('create', (file) => {
+      if (isMarkdownFile(file)) this.pendingCreates_abyssPrivate.add(file.path);
     });
-    const deleteRef = this.app.vault.on('delete', (file) => {
+    const deleteRef = this.app_abyssPrivate.vault.on('delete', (file) => {
       if (!isMarkdownFile(file)) return;
-      this.pendingCreates.delete(file.path);
-      this.recordSourceObservation(file.path, undefined, undefined);
-      const project = this.byPath.get(file.path);
-      if (project?.stats.total === 0 && !this.hasIndexedTasks(file.path)) {
-        this.releasePath(file.path);
+      this.pendingCreates_abyssPrivate.delete(file.path);
+      this.recordSourceObservation_abyssPrivate(file.path, undefined, undefined);
+      const project = this.byPath_abyssPrivate.get(file.path);
+      if (project?.stats.total === 0 && !this.hasIndexedTasks_abyssPrivate(file.path)) {
+        this.releasePath_abyssPrivate(file.path);
       } else {
-        this.awaitBarrier(file.path);
+        this.awaitBarrier_abyssPrivate(file.path);
       }
     });
-    const renameRef = this.app.vault.on('rename', (file, oldPath) => {
+    const renameRef = this.app_abyssPrivate.vault.on('rename', (file, oldPath) => {
       if (file instanceof TFile && (file.extension === 'md' || wasMarkdown(oldPath))) {
-        this.pendingCreates.delete(oldPath);
-        this.recordSourceObservation(oldPath, undefined, undefined);
-        const project = this.byPath.get(oldPath);
+        this.pendingCreates_abyssPrivate.delete(oldPath);
+        this.recordSourceObservation_abyssPrivate(oldPath, undefined, undefined);
+        const project = this.byPath_abyssPrivate.get(oldPath);
         if (
           (project === undefined || project.stats.total === 0) &&
-          !this.hasIndexedTasks(oldPath, file.path)
+          !this.hasIndexedTasks_abyssPrivate(oldPath, file.path)
         ) {
-          this.releasePath(oldPath, file.path);
+          this.releasePath_abyssPrivate(oldPath, file.path);
         } else {
-          this.awaitBarrier(oldPath, file.path);
+          this.awaitBarrier_abyssPrivate(oldPath, file.path);
         }
       }
     });
-    this.eventUnsubs.push(
+    this.eventUnsubs_abyssPrivate.push(
       () => {
-        this.app.vault.offref(createRef);
+        this.app_abyssPrivate.vault.offref(createRef);
       },
       () => {
-        this.app.vault.offref(deleteRef);
+        this.app_abyssPrivate.vault.offref(deleteRef);
       },
       () => {
-        this.app.vault.offref(renameRef);
+        this.app_abyssPrivate.vault.offref(renameRef);
       },
     );
-    this.queryUnsub = this.queries.subscribe((event) => {
-      this.onTaskIndexEvent(event);
+    this.queryUnsub_abyssPrivate = this.queries_abyssPrivate.subscribe((event) => {
+      this.onTaskIndexEvent_abyssPrivate(event);
     });
-    this.reconciliationUnsub = this.queries.subscribeReconciled((files) => {
-      this.releaseChangedPaths(files);
-    });
+    this.reconciliationUnsub_abyssPrivate = this.queries_abyssPrivate.subscribeReconciled(
+      (files) => {
+        this.releaseChangedPaths_abyssPrivate(files);
+      },
+    );
   }
 
-  private onTaskIndexEvent(event: TaskIndexEvent): void {
+  private onTaskIndexEvent_abyssPrivate(event: TaskIndexEvent): void {
     if (event.type === 'changed') {
-      this.releaseChangedPaths(event.files);
+      this.releaseChangedPaths_abyssPrivate(event.files);
     } else if (event.type === 'initialized') {
-      this.releaseFull();
+      this.releaseFull_abyssPrivate();
     } else if (event.type === 'renamed') {
-      this.pendingCreates.delete(event.oldPath);
-      this.pendingCreates.delete(event.newPath);
-      this.releasePath(event.oldPath, event.newPath);
+      this.pendingCreates_abyssPrivate.delete(event.oldPath);
+      this.pendingCreates_abyssPrivate.delete(event.newPath);
+      this.releasePath_abyssPrivate(event.oldPath, event.newPath);
     } else {
-      this.pendingCreates.delete(event.path);
-      this.releasePath(event.path);
+      this.pendingCreates_abyssPrivate.delete(event.path);
+      this.releasePath_abyssPrivate(event.path);
     }
   }
 
-  private releaseChangedPaths(files: readonly string[]): void {
+  private releaseChangedPaths_abyssPrivate(files: readonly string[]): void {
     for (const path of files) {
-      this.pendingCreates.delete(path);
-      this.releasePath(path);
+      this.pendingCreates_abyssPrivate.delete(path);
+      this.releasePath_abyssPrivate(path);
     }
   }
 
-  private awaitBarrier(...paths: string[]): void {
-    if (this.readyFull) return;
+  private awaitBarrier_abyssPrivate(...paths: string[]): void {
+    if (this.readyFull_abyssPrivate) return;
     for (const path of paths) {
-      if (!this.readyPaths.has(path)) this.waitingPaths.add(path);
+      if (!this.readyPaths_abyssPrivate.has(path)) this.waitingPaths_abyssPrivate.add(path);
     }
   }
 
-  private releasePath(...paths: string[]): void {
+  private releasePath_abyssPrivate(...paths: string[]): void {
     for (const path of paths) {
-      this.waitingPaths.delete(path);
-      this.readyPaths.add(path);
+      this.waitingPaths_abyssPrivate.delete(path);
+      this.readyPaths_abyssPrivate.add(path);
     }
-    this.scheduleFlush();
+    this.scheduleFlush_abyssPrivate();
   }
 
-  private releaseFull(): void {
-    this.waitingPaths.clear();
-    this.readyFull = true;
-    this.scheduleFlush();
+  private releaseFull_abyssPrivate(): void {
+    this.waitingPaths_abyssPrivate.clear();
+    this.readyFull_abyssPrivate = true;
+    this.scheduleFlush_abyssPrivate();
   }
 
-  private scheduleFlush(): void {
-    if (this.debounce !== undefined) window.clearTimeout(this.debounce);
-    this.debounce = window.setTimeout(() => {
-      this.flush();
+  private scheduleFlush_abyssPrivate(): void {
+    if (this.debounce_abyssPrivate !== undefined) window.clearTimeout(this.debounce_abyssPrivate);
+    this.debounce_abyssPrivate = window.setTimeout(() => {
+      this.flush_abyssPrivate();
     }, 150);
   }
 
-  private flush(): void {
-    const before = this.cacheSignature();
-    const observedPaths = new Set(this.readyPaths);
-    if (this.readyFull) {
-      this.recomputeAll();
-      for (const path of this.pendingSourceObservations.keys()) observedPaths.add(path);
-    } else if (this.readyPaths.size > 0) {
-      for (const path of this.readyPaths) this.updateOne(path);
-      this.rebuildCache();
+  private flush_abyssPrivate(): void {
+    const before = this.cacheSignature_abyssPrivate();
+    const observedPaths = new Set(this.readyPaths_abyssPrivate);
+    if (this.readyFull_abyssPrivate) {
+      this.recomputeAll_abyssPrivate();
+      for (const path of this.pendingSourceObservations_abyssPrivate.keys())
+        observedPaths.add(path);
+    } else if (this.readyPaths_abyssPrivate.size > 0) {
+      for (const path of this.readyPaths_abyssPrivate) this.updateOne_abyssPrivate(path);
+      this.rebuildCache_abyssPrivate();
     }
-    this.readyFull = false;
-    this.readyPaths.clear();
-    this.notifyIfChanged(before);
-    for (const path of observedPaths) this.reconcileSourceObservation(path);
+    this.readyFull_abyssPrivate = false;
+    this.readyPaths_abyssPrivate.clear();
+    this.notifyIfChanged_abyssPrivate(before);
+    for (const path of observedPaths) this.reconcileSourceObservation_abyssPrivate(path);
   }
 
-  private recordSourceObservation(
+  private recordSourceObservation_abyssPrivate(
     path: string,
     data: string | undefined,
     cache: CachedMetadata | undefined,
   ): void {
-    this.pendingSourceObservations.set(path, {
-      revision: ++this.sourceRevision,
+    this.pendingSourceObservations_abyssPrivate.set(path, {
+      revision: ++this.sourceRevision_abyssPrivate,
       data,
       cache,
     });
   }
 
-  private reconcileSourceObservation(path: string): void {
-    const pending = this.pendingSourceObservations.get(path);
+  private reconcileSourceObservation_abyssPrivate(path: string): void {
+    const pending = this.pendingSourceObservations_abyssPrivate.get(path);
     if (pending === undefined) return;
-    if (this.sourceListeners.length === 0) {
-      this.pendingSourceObservations.delete(path);
+    if (this.sourceListeners_abyssPrivate.length === 0) {
+      this.pendingSourceObservations_abyssPrivate.delete(path);
       return;
     }
     const project =
       pending.cache === undefined
         ? undefined
-        : (this.makeEntry(path, pending.cache, this.queries.list({ filePath: path })) ?? undefined);
+        : (this.makeEntry_abyssPrivate(
+            path,
+            pending.cache,
+            this.queries_abyssPrivate.list({ filePath: path }),
+          ) ?? undefined);
     if (pending.data === undefined) {
-      this.publishSourceObservation(path, pending, project);
+      this.publishSourceObservation_abyssPrivate(path, pending, project);
       return;
     }
-    const file = this.app.vault.getAbstractFileByPath(path);
+    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile) || file.extension !== 'md') {
-      this.publishSourceObservation(path, pending, project);
+      this.publishSourceObservation_abyssPrivate(path, pending, project);
       return;
     }
-    void this.app.vault.read(file).then(
+    void this.app_abyssPrivate.vault.read(file).then(
       (currentData) => {
-        if (currentData === pending.data) this.publishSourceObservation(path, pending, project);
+        if (currentData === pending.data)
+          this.publishSourceObservation_abyssPrivate(path, pending, project);
       },
       (error: unknown) => {
-        if (this.pendingSourceObservations.get(path) !== pending) return;
+        if (this.pendingSourceObservations_abyssPrivate.get(path) !== pending) return;
         console.error('[abyss-tasks] Could not reconcile project source observation', {
           path,
           cause: error,
@@ -267,71 +287,72 @@ export class ProjectStore {
     );
   }
 
-  private publishSourceObservation(
+  private publishSourceObservation_abyssPrivate(
     path: string,
     pending: PendingSourceObservation,
     project: Project | undefined,
   ): void {
-    if (this.pendingSourceObservations.get(path) !== pending) return;
-    this.pendingSourceObservations.delete(path);
+    if (this.pendingSourceObservations_abyssPrivate.get(path) !== pending) return;
+    this.pendingSourceObservations_abyssPrivate.delete(path);
     const observation: ProjectSourceObservation = {
       path,
       revision: pending.revision,
       project,
     };
-    this.publishedSourceObservations.set(path, { pending, observation });
-    for (const listener of this.sourceListeners) listener(observation);
+    this.publishedSourceObservations_abyssPrivate.set(path, { pending, observation });
+    for (const listener of this.sourceListeners_abyssPrivate) listener(observation);
   }
 
-  private hasIndexedTasks(...paths: string[]): boolean {
-    return paths.some((path) => this.queries.list({ filePath: path }).length > 0);
+  private hasIndexedTasks_abyssPrivate(...paths: string[]): boolean {
+    return paths.some((path) => this.queries_abyssPrivate.list({ filePath: path }).length > 0);
   }
 
-  private cacheSignature(): string {
-    return JSON.stringify(this.cache);
+  private cacheSignature_abyssPrivate(): string {
+    return JSON.stringify(this.cache_abyssPrivate);
   }
 
-  private notifyIfChanged(before: string): void {
-    if (this.cacheSignature() === before) return;
-    for (const cb of this.listeners) cb();
+  private notifyIfChanged_abyssPrivate(before: string): void {
+    if (this.cacheSignature_abyssPrivate() === before) return;
+    for (const cb of this.listeners_abyssPrivate) cb();
   }
 
   /** Full O(N + T) rescan of every markdown file. Used on init, create/delete/rename, refresh(). */
-  private recomputeAll(): void {
-    const tasksByPath = this.groupTasksByPath();
-    this.byPath = new Map();
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      const cache = this.app.metadataCache.getFileCache(file);
-      const entry = this.makeEntry(file.path, cache, tasksByPath.get(file.path) ?? []);
-      if (entry != null) this.byPath.set(file.path, entry);
+  private recomputeAll_abyssPrivate(): void {
+    const tasksByPath = this.groupTasksByPath_abyssPrivate();
+    this.byPath_abyssPrivate = new Map();
+    for (const file of this.app_abyssPrivate.vault.getMarkdownFiles()) {
+      const cache = this.app_abyssPrivate.metadataCache.getFileCache(file);
+      const entry = this.makeEntry_abyssPrivate(file.path, cache, tasksByPath.get(file.path) ?? []);
+      if (entry != null) this.byPath_abyssPrivate.set(file.path, entry);
     }
-    this.rebuildCache();
+    this.rebuildCache_abyssPrivate();
   }
 
   /** Re-evaluate a single note in place — O(1 note + T for its task filter). */
-  private updateOne(path: string): void {
+  private updateOne_abyssPrivate(path: string): void {
     // Only markdown files are projects; folders/non-md drop out.
-    const file = this.app.vault.getAbstractFileByPath(path);
+    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile) || file.extension !== 'md') {
-      this.byPath.delete(path);
+      this.byPath_abyssPrivate.delete(path);
       return;
     }
-    const cache = this.app.metadataCache.getFileCache(file);
-    const tasks = this.queries.list({ filePath: path });
-    const entry = this.makeEntry(path, cache, tasks);
-    if (entry != null) this.byPath.set(path, entry);
-    else this.byPath.delete(path);
+    const cache = this.app_abyssPrivate.metadataCache.getFileCache(file);
+    const tasks = this.queries_abyssPrivate.list({ filePath: path });
+    const entry = this.makeEntry_abyssPrivate(path, cache, tasks);
+    if (entry != null) this.byPath_abyssPrivate.set(path, entry);
+    else this.byPath_abyssPrivate.delete(path);
   }
 
-  private makeEntry(
+  private makeEntry_abyssPrivate(
     path: string,
     cache: CachedMetadata | null,
     tasks: readonly TaskSnapshot[],
   ): Project | null {
     const fm = (cache?.frontmatter ?? {}) as Record<string, unknown>;
     const tags = (cache != null ? (getAllTags(cache) ?? []) : []).map((tag) => tag.toLowerCase());
-    if (!evaluateQuery(this.settings.projects.membershipQuery, path, tags, fm)) return null;
-    const { statusId, rawStatus } = resolveStatus(this.settings.projects, fm);
+    if (!evaluateQuery(this.settings_abyssPrivate.projects.membershipQuery, path, tags, fm))
+      return null;
+    const { statusId, rawStatus } = resolveStatus(this.settings_abyssPrivate.projects, fm);
     return {
       path,
       name: basename(path),
@@ -343,9 +364,9 @@ export class ProjectStore {
     };
   }
 
-  private groupTasksByPath(): Map<string, TaskSnapshot[]> {
+  private groupTasksByPath_abyssPrivate(): Map<string, TaskSnapshot[]> {
     const map = new Map<string, TaskSnapshot[]>();
-    for (const t of this.queries.list()) {
+    for (const t of this.queries_abyssPrivate.list()) {
       const arr = map.get(t.source.filePath) ?? [];
       arr.push(t);
       map.set(t.source.filePath, arr);
@@ -353,35 +374,35 @@ export class ProjectStore {
     return map;
   }
 
-  private rebuildCache(): void {
-    this.cache = Array.from(this.byPath.values()).sort((a, b) =>
+  private rebuildCache_abyssPrivate(): void {
+    this.cache_abyssPrivate = Array.from(this.byPath_abyssPrivate.values()).sort((a, b) =>
       a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
     );
   }
 
   list(): Project[] {
-    return this.cache;
+    return this.cache_abyssPrivate;
   }
 
   get(path: string): Project | undefined {
-    return this.byPath.get(path);
+    return this.byPath_abyssPrivate.get(path);
   }
 
   activeForLeftPanel(): Project[] {
     const onPanel = new Set(
-      this.settings.projects.statuses.filter((s) => s.onLeftPanel).map((s) => s.id),
+      this.settings_abyssPrivate.projects.statuses.filter((s) => s.onLeftPanel).map((s) => s.id),
     );
-    return this.cache.filter((p) => p.statusId !== null && onPanel.has(p.statusId));
+    return this.cache_abyssPrivate.filter((p) => p.statusId !== null && onPanel.has(p.statusId));
   }
 
   refresh(): void {
-    this.recomputeAll();
-    this.settingsSignature = this.projectEntrySettingsSignature();
-    for (const cb of this.listeners) cb();
+    this.recomputeAll_abyssPrivate();
+    this.settingsSignature_abyssPrivate = this.projectEntrySettingsSignature_abyssPrivate();
+    for (const cb of this.listeners_abyssPrivate) cb();
   }
 
-  private projectEntrySettingsSignature(): string {
-    const projects = this.settings.projects;
+  private projectEntrySettingsSignature_abyssPrivate(): string {
+    const projects = this.settings_abyssPrivate.projects;
     return JSON.stringify({
       membershipQuery: projects.membershipQuery,
       statusProperty: projects.statusProperty,
@@ -391,45 +412,47 @@ export class ProjectStore {
 
   /** Refreshes settings without rescanning unless project membership or raw status identity changed. */
   refreshSettings(): 'rescanned' | 'presentation' {
-    const signature = this.projectEntrySettingsSignature();
-    if (signature !== this.settingsSignature) {
-      this.recomputeAll();
-      this.settingsSignature = signature;
-      for (const cb of this.listeners) cb();
+    const signature = this.projectEntrySettingsSignature_abyssPrivate();
+    if (signature !== this.settingsSignature_abyssPrivate) {
+      this.recomputeAll_abyssPrivate();
+      this.settingsSignature_abyssPrivate = signature;
+      for (const cb of this.listeners_abyssPrivate) cb();
       return 'rescanned';
     }
     return 'presentation';
   }
 
   onUpdate(cb: () => void): () => void {
-    this.listeners.push(cb);
+    this.listeners_abyssPrivate.push(cb);
     return () => {
-      this.listeners = this.listeners.filter((l) => l !== cb);
+      this.listeners_abyssPrivate = this.listeners_abyssPrivate.filter((l) => l !== cb);
     };
   }
 
   /** Subscribes only to verified native source observations, never task/settings refreshes. */
   onSourceObservation(cb: (observation: ProjectSourceObservation) => void): () => void {
-    this.sourceListeners.push(cb);
+    this.sourceListeners_abyssPrivate.push(cb);
     return () => {
-      this.sourceListeners = this.sourceListeners.filter((listener) => listener !== cb);
+      this.sourceListeners_abyssPrivate = this.sourceListeners_abyssPrivate.filter(
+        (listener) => listener !== cb,
+      );
     };
   }
 
   /** Rechecks that a previously published native observation still describes the current source. */
   async revalidateSourceObservation(observation: ProjectSourceObservation): Promise<boolean> {
-    const published = this.publishedSourceObservations.get(observation.path);
+    const published = this.publishedSourceObservations_abyssPrivate.get(observation.path);
     if (published?.observation !== observation) return false;
     const { pending } = published;
     if (pending.data === undefined) {
-      return this.app.vault.getAbstractFileByPath(observation.path) === null;
+      return this.app_abyssPrivate.vault.getAbstractFileByPath(observation.path) === null;
     }
-    const file = this.app.vault.getAbstractFileByPath(observation.path);
+    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(observation.path);
     if (!(file instanceof TFile) || file.extension !== 'md') return false;
     try {
-      const currentData = await this.app.vault.read(file);
+      const currentData = await this.app_abyssPrivate.vault.read(file);
       return (
-        this.publishedSourceObservations.get(observation.path) === published &&
+        this.publishedSourceObservations_abyssPrivate.get(observation.path) === published &&
         currentData === pending.data
       );
     } catch (error) {
@@ -442,19 +465,19 @@ export class ProjectStore {
   }
 
   destroy(): void {
-    if (this.debounce !== undefined) window.clearTimeout(this.debounce);
-    this.queryUnsub?.();
-    this.queryUnsub = undefined;
-    this.reconciliationUnsub?.();
-    this.reconciliationUnsub = undefined;
-    for (const unsubscribe of this.eventUnsubs) unsubscribe();
-    this.eventUnsubs = [];
-    this.waitingPaths.clear();
-    this.readyPaths.clear();
-    this.pendingCreates.clear();
-    this.pendingSourceObservations.clear();
-    this.publishedSourceObservations.clear();
-    this.listeners = [];
-    this.sourceListeners = [];
+    if (this.debounce_abyssPrivate !== undefined) window.clearTimeout(this.debounce_abyssPrivate);
+    this.queryUnsub_abyssPrivate?.();
+    this.queryUnsub_abyssPrivate = undefined;
+    this.reconciliationUnsub_abyssPrivate?.();
+    this.reconciliationUnsub_abyssPrivate = undefined;
+    for (const unsubscribe of this.eventUnsubs_abyssPrivate) unsubscribe();
+    this.eventUnsubs_abyssPrivate = [];
+    this.waitingPaths_abyssPrivate.clear();
+    this.readyPaths_abyssPrivate.clear();
+    this.pendingCreates_abyssPrivate.clear();
+    this.pendingSourceObservations_abyssPrivate.clear();
+    this.publishedSourceObservations_abyssPrivate.clear();
+    this.listeners_abyssPrivate = [];
+    this.sourceListeners_abyssPrivate = [];
   }
 }

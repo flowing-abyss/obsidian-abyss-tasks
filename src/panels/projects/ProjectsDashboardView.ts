@@ -40,15 +40,13 @@ function renderProjectDetails(
   const header = container.createDiv({ cls: 'abyss-project-dashboard-header' });
   header.createEl('h2', { cls: 'abyss-project-dashboard-title', text: project.name });
 
-  const pill = header.createEl('button', { cls: 'abyss-status-pill' });
-  const statusColor = status?.color;
-  if (statusColor !== undefined && statusColor.length > 0) pill.style.background = statusColor;
-  pill.setText(
-    status === undefined ? (project.rawStatus ?? 'No status') : projectStatusDisplayName(status),
-  );
+  const pill = header.createEl('button', {
+    cls: 'abyss-status-pill abyss-project-table-status-pill',
+  });
+  patchProjectDashboardStatus(pill, project, status);
   pill.addEventListener('click', (e) => {
     const menu = new Menu();
-    for (const s of statuses) {
+    for (const s of ctx.settings.projects.statuses) {
       menu.addItem((item) =>
         item
           .setTitle(projectStatusDisplayName(s))
@@ -83,9 +81,38 @@ function renderProjectDetails(
   ctx.renderTasks(taskHost, project.path);
 }
 
+/** Refreshes the dashboard's status presentation without replacing its retained content. */
+export function refreshProjectDashboardStatus(
+  container: HTMLElement,
+  project: Project | undefined,
+  statuses: readonly ProjectStatus[],
+): void {
+  if (project === undefined) return;
+  const pill = container.querySelector<HTMLElement>('.abyss-status-pill');
+  if (pill === null) return;
+  patchProjectDashboardStatus(pill, project, projectStatus(project, statuses));
+}
+
+function patchProjectDashboardStatus(
+  pill: HTMLElement,
+  project: Project,
+  status: ProjectStatus | undefined,
+): void {
+  pill.toggleClass('is-text', status?.display === 'text');
+  pill.toggleClass('is-dot', status?.display === 'dot');
+  pill.style.removeProperty('--abyss-project-status-color');
+  const statusColor = status?.color;
+  if (statusColor !== undefined && statusColor.length > 0) {
+    pill.style.setProperty('--abyss-project-status-color', statusColor);
+  }
+  pill.setText(
+    status === undefined ? (project.rawStatus ?? 'No status') : projectStatusDisplayName(status),
+  );
+}
+
 function projectStatus(
   project: Project,
-  statuses: ProjectsDashboardContext['settings']['projects']['statuses'],
+  statuses: readonly ProjectStatus[],
 ): ProjectStatus | undefined {
   if (project.statusId === null || project.statusId.length === 0) return undefined;
   return statuses.find((status) => status.id === project.statusId);

@@ -8885,11 +8885,6 @@ table.abyss-project-table {
 }
 
 .abyss-status-pill {
-  padding: 2px 10px;
-  border-radius: var(--radius-l);
-  color: var(--text-on-accent);
-  font-size: var(--font-ui-smaller);
-  border: none;
   cursor: pointer;
 }
 

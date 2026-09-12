@@ -16,6 +16,7 @@ import { ProjectPropertySuggest } from '../ui/ProjectPropertySuggest';
 import { renderProjectPropertyOptions } from './projectPropertyOptions';
 import { renderSettingsCard } from './settingsCard';
 import { saveSettingsDraft } from './settingsSaveFailure';
+import type { SettingsValueCommitRegistrar } from './settingsValueCommit';
 import type { ProjectsSettings } from './types';
 
 export interface RenderProjectTableSettingsOptions {
@@ -28,6 +29,7 @@ export interface RenderProjectTableSettingsOptions {
   readonly renderStatusSettings?: (container: HTMLElement) => void;
   readonly expandedCards?: Set<string>;
   readonly refresh: (focusCardId?: string) => void;
+  readonly valueCommit?: SettingsValueCommitRegistrar;
 }
 
 const CURATED_LABELS: Readonly<Record<string, string>> = {
@@ -237,9 +239,17 @@ function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext)
     attr: { type: 'text', 'aria-label': `Display name for ${display}`, placeholder: display },
   });
   label.value = column.label ?? '';
-  label.addEventListener('change', () => {
-    if (setProjectColumnLabel(options.projects.table, column.id, label.value)) persist();
-  });
+  const commitLabel = (): void => {
+    const previous = column.label;
+    if (
+      setProjectColumnLabel(options.projects.table, column.id, label.value) &&
+      column.label !== previous
+    ) {
+      persist();
+    }
+  };
+  if (options.valueCommit === undefined) label.addEventListener('change', commitLabel);
+  else options.valueCommit.register(label, commitLabel);
   const visible = summary.createEl('input', {
     cls: 'abyss-project-column-visible',
     attr: { type: 'checkbox', 'aria-label': `Show ${source}` },
@@ -330,6 +340,7 @@ function renderColumnBody(body: HTMLElement, context: ColumnRenderContext): void
       persistStatic();
     },
     refresh: options.refresh,
+    ...(options.valueCommit === undefined ? {} : { valueCommit: options.valueCommit }),
   });
   renderCuratedColumnSettings(body, context);
 }

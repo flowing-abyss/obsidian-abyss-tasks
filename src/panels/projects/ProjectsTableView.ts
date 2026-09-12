@@ -1482,6 +1482,8 @@ export class ProjectsTableView {
       field,
       value: projectFieldValue(options.project, field),
       project: options.project,
+      statuses:
+        field.type === 'status' ? this.context_abyssPrivate.settings.projects.statuses : undefined,
       definition: this.projectPropertyDefinition_abyssPrivate(field.id),
       column: options.column,
       ownedClear,

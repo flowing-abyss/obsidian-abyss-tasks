@@ -142,6 +142,39 @@ describe('ProjectsPanel dispatch', () => {
     expect(el.querySelector('.abyss-projects-dashboard')).toBeTruthy();
   });
 
+  it('refreshes mounted dashboard status presentation without remounting its session or tasks', () => {
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
+      projectProperties,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    try {
+      const dashboard = expectDefined(
+        el.querySelector<HTMLElement>('.abyss-project-dashboard-session'),
+      );
+      const pill = expectDefined(dashboard.querySelector<HTMLButtonElement>('.abyss-status-pill'));
+      const tasks = expectDefined(dashboard.querySelector<HTMLElement>('.abyss-project-tasks'));
+      const status = expectDefined(settings.projects.statuses[0]);
+
+      status.displayName = 'Current work';
+      status.color = '#28b8a5';
+      status.display = 'dot';
+      panel.refreshTableSettings();
+
+      expect(el.querySelector('.abyss-project-dashboard-session')).toBe(dashboard);
+      expect(dashboard.querySelector('.abyss-status-pill')).toBe(pill);
+      expect(dashboard.querySelector('.abyss-project-tasks')).toBe(tasks);
+      expect(pill.textContent).toBe('Current work');
+      expect(pill.classList).toContain('is-dot');
+      expect(pill.style.getPropertyValue('--abyss-project-status-color')).toBe('#28b8a5');
+    } finally {
+      panel.destroy();
+    }
+  });
+
   it('keeps the table query and scroll position when returning from a dashboard', () => {
     const state = new AppState();
     const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {

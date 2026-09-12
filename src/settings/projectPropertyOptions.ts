@@ -7,6 +7,7 @@ import type {
 import { projectPropertyTypeChoices } from '../projects/projectPropertyDefinitions';
 import { projectPropertyPresetIssue } from '../projects/projectPropertyPresets';
 import { renderProjectValueRow, type ProjectValueRowControls } from './projectValueRow';
+import type { SettingsValueCommitRegistrar } from './settingsValueCommit';
 
 const PROPERTY_TYPE_LABELS: Readonly<Record<ProjectPropertyType, string>> = {
   text: 'Text',
@@ -35,6 +36,7 @@ interface RenderProjectPropertyOptions {
   readonly onAlignmentChange: (alignment: ProjectColumnAlignment | undefined) => void;
   readonly onDefinitionChange: () => void;
   readonly refresh: () => void;
+  readonly valueCommit?: SettingsValueCommitRegistrar;
 }
 
 function fixedTypeLabel(type: RenderProjectPropertyOptions['type']): string {
@@ -165,7 +167,7 @@ function renderPresetRow(context: PresetRowContext): void {
   };
   const controls = createPresetRowControls(context);
   context.labelers.set(id, controls.updateLabel);
-  controls.value.addEventListener('change', () => {
+  const commitValue = (): void => {
     const index = currentIndex();
     if (index < 0) return;
     const nextValue =
@@ -180,8 +182,8 @@ function renderPresetRow(context: PresetRowContext): void {
     if (issue !== undefined) return;
     rawPresets[index] = next;
     options.onDefinitionChange();
-  });
-  controls.displayName.addEventListener('change', () => {
+  };
+  const commitDisplayName = (): void => {
     const index = currentIndex();
     if (index < 0) return;
     const record = currentRecord();
@@ -191,8 +193,8 @@ function renderPresetRow(context: PresetRowContext): void {
     else next['displayName'] = controls.displayName.value;
     rawPresets[index] = next;
     options.onDefinitionChange();
-  });
-  controls.color.addEventListener('change', () => {
+  };
+  const commitColor = (): void => {
     const index = currentIndex();
     if (index < 0) return;
     const record = currentRecord();
@@ -201,7 +203,16 @@ function renderPresetRow(context: PresetRowContext): void {
     next['color'] = controls.color.value;
     rawPresets[index] = next;
     options.onDefinitionChange();
-  });
+  };
+  if (options.valueCommit === undefined) {
+    controls.value.addEventListener('change', commitValue);
+    controls.displayName.addEventListener('change', commitDisplayName);
+    controls.color.addEventListener('change', commitColor);
+  } else {
+    options.valueCommit.register(controls.value, commitValue);
+    options.valueCommit.register(controls.displayName, commitDisplayName);
+    options.valueCommit.register(controls.color, commitColor);
+  }
   controls.appearance.addEventListener('change', () => {
     const index = currentIndex();
     if (index < 0) return;
