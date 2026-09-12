@@ -496,6 +496,7 @@ describe('project Kanban overview', () => {
     title.dispatchEvent(blocked);
     expect(blocked.defaultPrevented).toBe(true);
     expect(blockedData.types).toEqual([]);
+    expect(selection.toString()).toContain('A planning project');
 
     selection.removeAllRanges();
     const data = transfer();
@@ -509,6 +510,127 @@ describe('project Kanban overview', () => {
     card.dispatchEvent(dragEvent('dragstart', data));
     card.dispatchEvent(dragEvent('dragend', data));
     expect(host.querySelector('.is-dragging, .is-drop-target')).toBeNull();
+  });
+
+  it('accepts text selected after pointerdown and clears only the accepted drag selection', () => {
+    const { host } = mountView();
+    clickView(host, 'Kanban');
+    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const start = expectDefined(
+      card.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const selection = expectDefined(activeDocument.defaultView?.getSelection());
+    start.click();
+    expect(start.classList.contains('is-selected')).toBe(true);
+    expect(card.classList.contains('is-selected')).toBe(true);
+
+    start.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    selection.removeAllRanges();
+    const range = activeDocument.createRange();
+    range.selectNodeContents(start);
+    selection.addRange(range);
+    expect(selection.toString().length).toBeGreaterThan(0);
+    const data = transfer();
+    const drag = dragEvent('dragstart', data);
+    start.dispatchEvent(drag);
+
+    expect(drag.defaultPrevented).toBe(false);
+    expect(data.types).toContain('application/x-abyss-project-kanban-card');
+    expect(selection.toString()).toBe('');
+    expect(host.querySelector('.abyss-project-kanban-card.is-selected')).toBeNull();
+    expect(host.querySelector('.abyss-project-kanban-card .is-selected')).toBeNull();
+    expect(
+      host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
+    ).toBe(true);
+
+    card.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(
+      host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
+    ).toBe(false);
+    start.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    start.click();
+    expect(start.classList.contains('is-selected')).toBe(true);
+    expect(card.classList.contains('is-selected')).toBe(true);
+  });
+
+  it('keeps a re-entered collapsed target through an ambiguous stale leave and drops there', async () => {
+    vi.useFakeTimers();
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const collapsedStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const expandedStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[2]);
+    const { host, settings, applyEdits } = mountView([
+      project({
+        statusId: sourceStatus.id,
+        frontmatter: { status: sourceStatus.name },
+      }),
+    ]);
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.collapsedColumns = [`id:${collapsedStatus.id}`];
+    clickView(host, 'Kanban');
+    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const collapsed = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${collapsedStatus.id}"]`,
+      ),
+    );
+    const expanded = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${expandedStatus.id}"]`,
+      ),
+    );
+    const data = transfer();
+    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    card.dispatchEvent(dragEvent('dragstart', data));
+    collapsed.dispatchEvent(dragEvent('dragover', data));
+    vi.advanceTimersByTime(450);
+    expect(host.querySelector('.abyss-project-kanban-hover-preview')).not.toBeNull();
+
+    expanded.dispatchEvent(dragEvent('dragover', data));
+    collapsed.dispatchEvent(dragEvent('dragover', data));
+    expect(collapsed.classList.contains('is-drop-target')).toBe(true);
+    const staleLeave = dragEvent('dragleave', data);
+    Object.defineProperty(staleLeave, 'relatedTarget', { value: null });
+    expanded.dispatchEvent(staleLeave);
+
+    expect(collapsed.classList.contains('is-drop-target')).toBe(true);
+    vi.advanceTimersByTime(450);
+    const overlay = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-kanban-hover-preview'),
+    );
+    overlay.dispatchEvent(dragEvent('drop', data));
+    await vi.runAllTimersAsync();
+
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(applyEdits.mock.calls[0]?.[0]).toMatchObject([
+      { path: 'Projects/A.md', value: collapsedStatus.name, expectedValue: sourceStatus.name },
+    ]);
+  });
+
+  it('clears an ambiguous leave only after the document proves the drag is outside the board', () => {
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const { host } = mountView([
+      project({ statusId: sourceStatus.id, frontmatter: { status: sourceStatus.name } }),
+    ]);
+    clickView(host, 'Kanban');
+    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const target = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
+      ),
+    );
+    const data = transfer();
+    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    card.dispatchEvent(dragEvent('dragstart', data));
+    target.dispatchEvent(dragEvent('dragover', data));
+    const ambiguousLeave = dragEvent('dragleave', data);
+    Object.defineProperty(ambiguousLeave, 'relatedTarget', { value: null });
+    target.dispatchEvent(ambiguousLeave);
+    expect(target.classList.contains('is-drop-target')).toBe(true);
+
+    activeDocument.body.dispatchEvent(dragEvent('dragover', data));
+
+    expect(target.classList.contains('is-drop-target')).toBe(false);
   });
 
   it('places a lower-half card drop immediately after that card', () => {

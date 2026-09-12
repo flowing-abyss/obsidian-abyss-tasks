@@ -8,6 +8,7 @@ import type {
 const PROJECT_KANBAN_DRAG_TYPE = 'application/x-abyss-project-kanban-card';
 
 export interface ProjectKanbanDragAdapter {
+  readonly begin: () => () => void;
   readonly capture: (card: HTMLElement) => ProjectKanbanDropSource;
   readonly preview: (
     source: ProjectKanbanDropSource,
@@ -24,6 +25,7 @@ interface ActiveDrag {
   readonly card: HTMLElement;
   readonly source: ProjectKanbanDropSource;
   readonly image?: HTMLElement;
+  readonly release: () => void;
 }
 
 interface ActivePreview {
@@ -50,7 +52,7 @@ function selectedTextInside(card: HTMLElement): boolean {
 }
 
 function asDataTransfer(event: Event): DataTransfer | undefined {
-  return Reflect.get(event, 'dataTransfer') as DataTransfer | undefined;
+  return (Reflect.get(event, 'dataTransfer') as DataTransfer | null | undefined) ?? undefined;
 }
 
 function cardFromEvent(event: Event): HTMLElement | null {
@@ -64,12 +66,7 @@ function validDragStart(
   card: HTMLElement | null,
   pointerCard: HTMLElement | undefined,
 ): boolean {
-  return (
-    card !== null &&
-    pointerCard === card &&
-    !protectedTarget(event.target) &&
-    !selectedTextInside(card)
-  );
+  return card !== null && pointerCard === card && !protectedTarget(event.target);
 }
 
 function validInternalTransfer(event: Event, source: ProjectKanbanDropSource): boolean {
@@ -203,6 +200,11 @@ export class ProjectKanbanDragController {
     root_abyssPrivate.addEventListener('dragend', this.dragEnd_abyssPrivate);
     root_abyssPrivate.addEventListener('click', this.click_abyssPrivate, true);
     root_abyssPrivate.ownerDocument.addEventListener('keydown', this.keydown_abyssPrivate, true);
+    root_abyssPrivate.ownerDocument.addEventListener(
+      'dragover',
+      this.documentDragOver_abyssPrivate,
+      true,
+    );
   }
 
   destroy(): void {
@@ -217,6 +219,11 @@ export class ProjectKanbanDragController {
     this.root_abyssPrivate.ownerDocument.removeEventListener(
       'keydown',
       this.keydown_abyssPrivate,
+      true,
+    );
+    this.root_abyssPrivate.ownerDocument.removeEventListener(
+      'dragover',
+      this.documentDragOver_abyssPrivate,
       true,
     );
   }
@@ -241,16 +248,21 @@ export class ProjectKanbanDragController {
     }
     if (card === null) return;
     try {
-      const source = this.adapter_abyssPrivate.capture(card);
       const transfer = asDataTransfer(event);
-      transfer?.setData(PROJECT_KANBAN_DRAG_TYPE, JSON.stringify({ path: source.projectPath }));
-      if (transfer !== undefined) transfer.effectAllowed = 'move';
+      if (transfer === undefined) {
+        event.preventDefault();
+        return;
+      }
+      const source = this.adapter_abyssPrivate.capture(card);
+      transfer.setData(PROJECT_KANBAN_DRAG_TYPE, JSON.stringify({ path: source.projectPath }));
+      transfer.effectAllowed = 'move';
       const image = card.cloneNode(true) as HTMLElement;
       image.className = 'abyss-project-kanban-card abyss-project-kanban-drag-image';
       this.root_abyssPrivate.ownerDocument.body.append(image);
-      transfer?.setDragImage(image, 18, 18);
+      transfer.setDragImage(image, 18, 18);
+      const release = this.adapter_abyssPrivate.begin();
       card.addClass('is-dragging');
-      this.active_abyssPrivate = { card, source, image };
+      this.active_abyssPrivate = { card, source, image, release };
     } catch (error) {
       event.preventDefault();
       this.adapter_abyssPrivate.reportFailure(error);
@@ -457,8 +469,19 @@ export class ProjectKanbanDragController {
 
   private readonly dragLeave_abyssPrivate = (event: Event): void => {
     const related = (event as DragEvent).relatedTarget;
+    if (related === null) return;
     if (related instanceof Node && this.root_abyssPrivate.contains(related)) return;
     this.clearVisuals_abyssPrivate();
+  };
+
+  private readonly documentDragOver_abyssPrivate = (event: Event): void => {
+    if (
+      this.active_abyssPrivate !== undefined &&
+      event.target instanceof Node &&
+      !this.root_abyssPrivate.contains(event.target)
+    ) {
+      this.clearVisuals_abyssPrivate();
+    }
   };
 
   private readonly drop_abyssPrivate = (event: Event): void => {
@@ -562,6 +585,7 @@ export class ProjectKanbanDragController {
     if (suppressClick) this.suppressClickPath_abyssPrivate = active?.source.projectPath;
     active?.card.removeClass('is-dragging');
     active?.image?.remove();
+    active?.release();
     this.pointerCard_abyssPrivate = undefined;
     this.clearVisuals_abyssPrivate();
   }

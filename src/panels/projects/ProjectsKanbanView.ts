@@ -77,6 +77,7 @@ export interface ProjectKanbanColumnContext<TCell extends ProjectKanbanCellConte
 }
 
 export interface ProjectsKanbanViewContext<TCell extends ProjectKanbanCellContext> {
+  readonly beginDrag: () => () => void;
   readonly settings: () => ProjectKanbanSettings;
   readonly modelInput: () => Omit<ProjectKanbanModelInput, 'projects' | 'settings' | 'search'>;
   readonly renderCell: (options: {
@@ -179,6 +180,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
       attr: { 'aria-label': 'Project Kanban board', tabindex: '0' },
     });
     this.drag_abyssPrivate = new ProjectKanbanDragController(this.root, this.scroll, {
+      begin: () => this.context_abyssPrivate.beginDrag(),
       capture: (card) => this.captureDragSource_abyssPrivate(card),
       preview: (source, target) => this.dropPlan_abyssPrivate(source, target),
       commit: (source, target) => this.commitDrop_abyssPrivate(source, target),

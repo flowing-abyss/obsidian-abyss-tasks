@@ -4110,6 +4110,53 @@ describe('ProjectsTableView', () => {
     ]);
   });
 
+  it('clears native and table selection only after a row drag is accepted', () => {
+    vi.useFakeTimers();
+    const { host } = mount([project({})]);
+    const row = expectDefined(host.querySelector<HTMLTableRowElement>('.abyss-project-table-row'));
+    const start = expectDefined(
+      row.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const selection = expectDefined(activeDocument.defaultView?.getSelection());
+    start.click();
+    selection.removeAllRanges();
+    const range = activeDocument.createRange();
+    range.selectNodeContents(start);
+    selection.addRange(range);
+    expect(selection.toString().length).toBeGreaterThan(0);
+    expect(start.classList.contains('is-selected')).toBe(true);
+
+    const rejectedData = transfer();
+    const protectedControl = row.createEl('button', { attr: { type: 'button' } });
+    protectedControl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    const rejected = dragEvent('dragstart', rejectedData);
+    row.dispatchEvent(rejected);
+    expect(rejected.defaultPrevented).toBe(true);
+    expect(selection.toString().length).toBeGreaterThan(0);
+    expect(start.classList.contains('is-selected')).toBe(true);
+
+    start.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    const data = transfer();
+    start.dispatchEvent(dragEvent('dragstart', data));
+
+    expect(data.types).toContain('application/x-abyss-project-table-row');
+    expect(row.classList.contains('is-dragging')).toBe(true);
+    expect(selection.toString()).toBe('');
+    expect(host.querySelectorAll('.abyss-project-table-cell.is-selected')).toHaveLength(0);
+    expect(
+      host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
+    ).toBe(true);
+
+    row.dispatchEvent(dragEvent('dragend', data));
+    vi.runAllTimers();
+    expect(
+      host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
+    ).toBe(false);
+    start.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    start.click();
+    expect(start.classList.contains('is-selected')).toBe(true);
+  });
+
   it('routes a row drop through an expanded group body', async () => {
     const config = settings();
     config.projects.table.groupBy = 'property:Owners';

@@ -7237,6 +7237,10 @@ table.abyss-project-table {
   cursor: grab;
 }
 
+.abyss-projects-table.is-project-dragging {
+  user-select: none;
+}
+
 .abyss-project-table-row.is-dragging {
   cursor: grabbing;
   opacity: 0.55;

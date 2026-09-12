@@ -1023,6 +1023,7 @@ export class ProjectsTableView {
 
   private createKanbanView_abyssPrivate(): ProjectsKanbanView<RenderedCellContext> {
     const board = new ProjectsKanbanView<RenderedCellContext>(this.root_abyssPrivate, {
+      beginDrag: () => this.beginProjectDrag_abyssPrivate(),
       settings: () => this.ensureKanbanSettings_abyssPrivate(),
       modelInput: () => ({
         fields: this.fields_abyssPrivate,
@@ -2743,6 +2744,7 @@ export class ProjectsTableView {
   private bindProjectRowDrag_abyssPrivate(rendered: RenderedProjectRow): () => void {
     const row = rendered.element;
     let suppressClick = false;
+    let releaseDrag: (() => void) | undefined;
     let gestureTarget: EventTarget | null = null;
     let gestureCleanup: (() => void) | undefined;
     const clearGesture = (): void => {
@@ -2781,12 +2783,15 @@ export class ProjectsTableView {
       };
       dataTransfer.setData(PROJECT_TABLE_ROW_DRAG_TYPE, JSON.stringify(payload));
       dataTransfer.effectAllowed = 'move';
+      releaseDrag = this.beginProjectDrag_abyssPrivate();
       this.activeRowDrag_abyssPrivate = payload;
       row.addClass('is-dragging');
       suppressClick = true;
     };
     const finishDrag = (): void => {
       clearGesture();
+      releaseDrag?.();
+      releaseDrag = undefined;
       row.removeClass('is-dragging');
       this.activeRowDrag_abyssPrivate = undefined;
       this.clearGroupDropStates_abyssPrivate();
@@ -2806,11 +2811,24 @@ export class ProjectsTableView {
     row.addEventListener('click', suppressDraggedClick, true);
     return () => {
       clearGesture();
+      releaseDrag?.();
+      releaseDrag = undefined;
+      row.removeClass('is-dragging');
       dropCleanup();
       row.removeEventListener('pointerdown', rememberGesture, true);
       row.removeEventListener('dragstart', startDrag);
       row.removeEventListener('dragend', finishDrag);
       row.removeEventListener('click', suppressDraggedClick, true);
+    };
+  }
+
+  private beginProjectDrag_abyssPrivate(): () => void {
+    this.root_abyssPrivate.ownerDocument.defaultView?.getSelection()?.removeAllRanges();
+    this.selection_abyssPrivate.clear();
+    this.syncSelection_abyssPrivate();
+    this.root_abyssPrivate.addClass('is-project-dragging');
+    return () => {
+      this.root_abyssPrivate.removeClass('is-project-dragging');
     };
   }
 
