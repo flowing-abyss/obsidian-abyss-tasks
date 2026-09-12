@@ -319,15 +319,18 @@ reusing `projectTableModel`; the drop still rebuilds its guarded plan before wri
 and `ProjectManager` share `projectEdits` value/presence normalization, while unreliable tag-query,
 filtered, collapsed, self, and already-present occurrences deliberately omit the insertion edge.
 
-`ProjectCellEditor` owns typed drafts, suggestion-popup lifetime, validation, and autosave. Its
-async commit handle remains mounted on failure and coalesces a newer draft while a save is pending.
-The table mounts that handle without focus, positions its bounded out-of-flow surface against the
-edited cell or description region, registers the active handle, and then focuses it, so editing does
-not change row height and native suggestions measure the final input position. List chips and their
-entry share one horizontally bounded band. Suggestions come only from the edited property's native
-value catalog; they do not enumerate vault notes. Scalar editors browse those values on a fresh
-focus without clearing the raw draft, then filter readable link labels and exact raw values after
-typing. Escape closes the editor in one action even when the suggestion popup is open.
+`ProjectCellEditor` owns typed drafts, validation, and autosave. Its async commit handle remains
+mounted on failure and coalesces a newer draft while a save is pending. List, tag, and status cells,
+plus scalar text or number cells with meaningful choices, use one retained anchored value picker.
+The picker keeps search separate from assignment, groups selected values before available values,
+and autosaves only explicit toggle, add, or replace actions without closing. Its session catalog
+combines current-cell values, configured presets or statuses, and the edited property's native value
+catalog; it does not enumerate vault notes or edit global definitions. The table mounts editors
+without focus, positions their bounded out-of-flow surface, registers the active handle, and then
+focuses it. Picker surfaces use the overview root as their positioning container so table sticky
+cells and Kanban column scrolling do not clip them; minimal date, description, checkbox, and
+choice-free scalar editors retain their existing cell-local surface. Escape closes an editor and
+discards only unsubmitted search or replacement text.
 On close it reports restore-current, forward Tab, backward Tab, or preserve-focus intent;
 `ProjectsTableView` resolves that intent against the post-commit visible occurrence projection and
 uses the same selection, focus, and reveal path as ordinary keyboard navigation.

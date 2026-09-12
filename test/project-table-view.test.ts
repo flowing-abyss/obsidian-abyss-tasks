@@ -18,7 +18,6 @@ import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanban
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
-import { ProjectPropertySuggest } from '../src/ui/ProjectPropertySuggest';
 import { expectDefined, flushMicrotasks, freshContainer, loadPluginStyles } from './helpers';
 
 interface TestTransfer {
@@ -70,6 +69,14 @@ function cappedStylePixels(value: string, natural: number, offset = 0): number {
 function positiveStylePixels(value: string, fallback: number): number {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function pickerOption(host: HTMLElement, value: string | number): HTMLElement {
+  return expectDefined(
+    Array.from(host.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (option) => option.dataset['value'] === String(value),
+    ),
+  );
 }
 
 const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
@@ -779,7 +786,7 @@ describe('ProjectsTableView', () => {
       presetsEnabled: true,
       presets: [{ value: 'qa', displayName: '#Quality', color: '#123456', display: 'dot' }],
     };
-    const { host, view } = mount([project({ frontmatter: { Tags: ['qa'] } })], {
+    const { host } = mount([project({ frontmatter: { Tags: ['qa'] } })], {
       settings: config,
       catalog: catalog([{ name: 'Tags', type: 'tags' }]),
     });
@@ -800,18 +807,10 @@ describe('ProjectsTableView', () => {
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Tags"]'),
     );
     cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-    const editor = view as unknown as {
-      readonly activeEditor_abyssPrivate?: {
-        readonly handle: {
-          readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
-        };
-      };
-    };
-    expectDefined(cell.querySelector<HTMLButtonElement>('[aria-label="Remove #Quality"]')).click();
-    const suggestion = expectDefined(
-      editor.activeEditor_abyssPrivate?.handle.control_abyssPrivate.suggest,
-    ).getSuggestions('Quality')[0];
-    expect(suggestion).toMatchObject({ value: 'qa', label: '#Quality', appearance: 'tag' });
+    const option = pickerOption(host, 'qa');
+    const editorTag = expectDefined(option.querySelector<HTMLElement>('.tag'));
+    expect(editorTag.textContent).toBe('#Quality');
+    expect(editorTag.style.getPropertyValue('--abyss-project-property-color')).toBe('#123456');
   });
 
   it('uses native link and tag labels for dot preset editor chips without display names', async () => {
@@ -859,7 +858,9 @@ describe('ProjectsTableView', () => {
     creator.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
 
     const creatorChip = expectDefined(
-      creator.querySelector<HTMLElement>('.abyss-project-list-value-text'),
+      pickerOption(host, '[[People Demo/Анна Смирнова|Анна]]').querySelector<HTMLElement>(
+        '.abyss-suggest-title',
+      ),
     );
     expect(creatorChip.textContent).toBe('Анна');
     expect(creatorChip.classList.contains('is-dot')).toBe(true);
@@ -869,9 +870,7 @@ describe('ProjectsTableView', () => {
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="property:Tags"]'),
     );
     tags.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-    const tagChip = expectDefined(
-      tags.querySelector<HTMLElement>('.abyss-project-list-value-text.tag'),
-    );
+    const tagChip = expectDefined(pickerOption(host, 'demo').querySelector<HTMLElement>('.tag'));
     expect(tagChip.textContent).toBe('#demo');
     expect(tagChip.classList.contains('is-dot')).toBe(true);
   });
@@ -883,7 +882,7 @@ describe('ProjectsTableView', () => {
       type: 'list',
       presets: [{ value: 'high', displayName: 'High' }],
     };
-    const { host, view } = mount([project({ frontmatter: { Priority: [] } })], {
+    const { host } = mount([project({ frontmatter: { Priority: [] } })], {
       settings: config,
       catalog: catalog([{ name: 'Priority', type: 'list' }]),
     });
@@ -893,22 +892,8 @@ describe('ProjectsTableView', () => {
       ),
     );
     cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-    const editor = view as unknown as {
-      readonly activeEditor_abyssPrivate?: {
-        readonly handle: {
-          readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
-        };
-      };
-    };
-    const suggest = expectDefined(
-      editor.activeEditor_abyssPrivate?.handle.control_abyssPrivate.suggest,
-    );
-    const high = expectDefined(suggest.getSuggestions('').find(({ value }) => value === 'high'));
-    const rendered = document.body.createDiv();
-    suggest.renderSuggestion(high, rendered);
-
     expect(
-      rendered
+      pickerOption(host, 'high')
         .querySelector<HTMLElement>('.abyss-suggest-title')
         ?.classList.contains('abyss-project-preset-suggestion'),
     ).toBe(true);
@@ -1024,7 +1009,6 @@ describe('ProjectsTableView', () => {
   });
 
   it('opens status choices directly from a pointer context action', () => {
-    const open = vi.spyOn(ProjectPropertySuggest.prototype, 'open');
     const { host } = mount([project({})]);
     const status = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
@@ -1033,13 +1017,12 @@ describe('ProjectsTableView', () => {
     status.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 
     expect(status.querySelector('select')).toBeNull();
-    expect(status.querySelector<HTMLInputElement>('.abyss-project-editor-status')).not.toBeNull();
-    expect(open).toHaveBeenCalledOnce();
-    const suggest = expectDefined(open.mock.instances[0]) as ProjectPropertySuggest;
-    expect(suggest.getSuggestions('').map(({ label }) => label)).toEqual([
-      'No status',
-      ...DEFAULT_SETTINGS.projects.statuses.map(({ name }) => name),
-    ]);
+    expect(host.querySelector<HTMLInputElement>('[role="combobox"]')).not.toBeNull();
+    expect(
+      Array.from(host.querySelectorAll<HTMLElement>('[role="option"]')).map(
+        (option) => option.querySelector('.abyss-suggest-title')?.textContent,
+      ),
+    ).toEqual(DEFAULT_SETTINGS.projects.statuses.map(({ name }) => name));
   });
 
   it('suppresses table focus while the native description menu owns keys and restores it on hide', () => {
@@ -2569,7 +2552,6 @@ describe('ProjectsTableView', () => {
   });
 
   it('keeps a bottom-right long-list editor within the visible pane and releases positioning', () => {
-    const suggestionClose = vi.spyOn(ProjectPropertySuggest.prototype, 'close');
     const resizeObservers: Array<{
       readonly targets: Element[];
       readonly disconnect: ReturnType<typeof vi.fn>;
@@ -2638,21 +2620,21 @@ describe('ProjectsTableView', () => {
     cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 
     const editorHost = expectDefined(
-      cell.querySelector<HTMLElement>('.abyss-project-cell-editor-host'),
+      host.querySelector<HTMLElement>('.abyss-project-cell-editor-host'),
     );
     const positionObserver = expectDefined(
       resizeObservers.find(({ targets }) => targets.includes(editorHost)),
     );
     positionObserver.trigger();
     expect(editorHost.dataset['side']).toBe('aligned');
-    expect(suggestionClose).not.toHaveBeenCalled();
-    expect(editorHost.style.width).toBe('220px');
+    expect(editorHost.parentElement?.classList.contains('abyss-projects-table')).toBe(true);
+    expect(editorHost.style.width).toBe('320px');
     expect(editorHost.style.maxHeight).toBe('407px');
     expect(editorHost.style.getPropertyValue('--abyss-project-editor-content-max-height')).toBe(
       '407px',
     );
-    const positionedLeft = cellLeft + Number.parseFloat(editorHost.style.left);
-    const positionedTop = 557 + Number.parseFloat(editorHost.style.top);
+    const positionedLeft = Number.parseFloat(editorHost.style.left);
+    const positionedTop = Number.parseFloat(editorHost.style.top);
     expect(positionedLeft).toBeGreaterThanOrEqual(48 + 8);
     expect(positionedLeft + Number.parseFloat(editorHost.style.width)).toBeLessThanOrEqual(
       48 + paneClientWidth - 8,
@@ -2673,9 +2655,8 @@ describe('ProjectsTableView', () => {
     cellLeft = 100;
     cellRight = 140;
     activeWindow.dispatchEvent(new Event('resize'));
-    expect(editorHost.style.width).toBe('40px');
-    expect(suggestionClose).toHaveBeenCalledOnce();
-    const constrainedLeft = cellLeft + Number.parseFloat(editorHost.style.left);
+    expect(editorHost.style.width).toBe('61px');
+    const constrainedLeft = Number.parseFloat(editorHost.style.left);
     expect(constrainedLeft).toBeGreaterThanOrEqual(48 + 8);
     expect(constrainedLeft + Number.parseFloat(editorHost.style.width)).toBeLessThanOrEqual(
       48 + paneClientWidth - 8,
@@ -3125,10 +3106,10 @@ describe('ProjectsTableView', () => {
       ),
     );
     cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-    expectDefined(cell.querySelector<HTMLButtonElement>('[aria-label="Remove Celia"]')).click();
+    pickerOption(host, 'Celia').click();
     await flushMicrotasks();
     const input = expectDefined(
-      cell.querySelector<HTMLInputElement>('.abyss-project-list-input'),
+      host.querySelector<HTMLInputElement>('[role="combobox"]'),
       cell.outerHTML,
     );
     input.value = 'Mina';
@@ -3145,7 +3126,7 @@ describe('ProjectsTableView', () => {
       expectedExists: false,
       ownedClear,
     });
-    expect(input.isConnected).toBe(false);
+    expect(input.isConnected).toBe(true);
   });
 
   it('guards a coalesced draft with the canonical normalized receipt value', async () => {
@@ -3250,27 +3231,13 @@ describe('ProjectsTableView', () => {
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
     );
     cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-    const input = expectDefined(
-      cell.querySelector<HTMLInputElement>('.abyss-project-editor-status'),
-    );
-    const editor = view as unknown as {
-      readonly activeEditor_abyssPrivate?: {
-        readonly handle: {
-          readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
-        };
-      };
-    };
+    const input = expectDefined(host.querySelector<HTMLInputElement>('[role="combobox"]'));
     const externalStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
     item.statusId = externalStatus.id;
     item.frontmatter['status'] = externalStatus.name;
     view.update([item]);
     expect(input.isConnected).toBe(true);
-    const suggest = expectDefined(
-      editor.activeEditor_abyssPrivate?.handle.control_abyssPrivate.suggest,
-    );
-    suggest.selectSuggestion(
-      expectDefined(suggest.getSuggestions('').find(({ value }) => value === done.name)),
-    );
+    pickerOption(host, done.name).click();
     await flushMicrotasks();
 
     expect(saveStatus).toHaveBeenCalledWith('Projects/A.md', done.name, active.name);
@@ -3501,7 +3468,7 @@ describe('ProjectsTableView', () => {
     renderedDestination.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
     );
-    expect(renderedDestination.querySelector('.abyss-project-editor-status')).not.toBeNull();
+    expect(host.querySelector('[role="combobox"]')).not.toBeNull();
   });
 
   it('keeps the latest clicked table cell while an earlier blur save is pending', async () => {
@@ -3662,30 +3629,22 @@ describe('ProjectsTableView', () => {
     status.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
     );
-    expect(status.querySelector('.abyss-project-cell-editor')).not.toBeNull();
+    expect(host.querySelector('.abyss-project-cell-editor')).not.toBeNull();
   });
 
   it('restores selected-cell keyboard ownership after editor blur to the owning panel surface', async () => {
-    const { host, view } = mount([project({})]);
+    const { host } = mount([project({})]);
     host.tabIndex = 0;
     const status = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
     );
     status.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    expect(status.querySelector('.abyss-project-cell-editor')).not.toBeNull();
+    expect(host.querySelector('.abyss-project-cell-editor')).not.toBeNull();
 
     host.focus();
-    const editor = view as unknown as {
-      readonly activeEditor_abyssPrivate?: {
-        readonly handle: {
-          readonly control_abyssPrivate: { readonly suggest?: ProjectPropertySuggest };
-        };
-      };
-    };
-    editor.activeEditor_abyssPrivate?.handle.control_abyssPrivate.suggest?.close();
     await flushMicrotasks();
 
-    expect(status.querySelector('.abyss-project-cell-editor')).toBeNull();
+    expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
     expect(activeDocument.activeElement).toBe(status);
     status.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),

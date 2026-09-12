@@ -324,6 +324,43 @@ interface EditCellOptions {
   readonly anchor?: HTMLElement;
 }
 
+interface EditorPositionRequest {
+  readonly anchor: HTMLElement;
+  readonly host: HTMLElement;
+  readonly onMove: () => void;
+  readonly avoid?: HTMLElement;
+  readonly preferredWidth?: number;
+}
+
+interface MountedEditorRequest {
+  readonly project: Project;
+  readonly field: ProjectField;
+  readonly cell: HTMLElement;
+  readonly anchor: HTMLElement;
+  readonly host: HTMLElement;
+  readonly handle: ProjectCellEditorHandle;
+}
+
+function containsEditorAnchor(element: HTMLElement, anchor: HTMLElement): boolean {
+  return element === anchor || element.contains(anchor) || anchor.contains(element);
+}
+
+function optionalEditorPositionFields(
+  avoid: HTMLElement | undefined,
+  preferredWidth: number | undefined,
+  stickyHeader: HTMLElement | undefined,
+): {
+  readonly avoid?: HTMLElement;
+  readonly preferredWidth?: number;
+  readonly stickyHeader?: HTMLElement;
+} {
+  return {
+    ...(avoid === undefined ? {} : { avoid }),
+    ...(preferredWidth === undefined ? {} : { preferredWidth }),
+    ...(stickyHeader === undefined ? {} : { stickyHeader }),
+  };
+}
+
 interface EditorCloseDestination {
   readonly cell: ProjectTableSelectableCell | undefined;
   readonly preservesExternalFocus: boolean;
@@ -3545,24 +3582,45 @@ export class ProjectsTableView {
     );
   }
 
-  private positionEditorHost_abyssPrivate(
-    anchor: HTMLElement,
-    host: HTMLElement,
-    onMove: () => void,
-    avoid?: HTMLElement,
-  ): () => void {
-    const rendered = this.renderedCells_abyssPrivate.find(
-      ({ element }) => element === anchor || element.contains(anchor) || anchor.contains(element),
+  private positionEditorHost_abyssPrivate(request: EditorPositionRequest): () => void {
+    const { anchor, host, onMove, avoid, preferredWidth } = request;
+    const rendered = this.renderedCells_abyssPrivate.find(({ element }) =>
+      containsEditorAnchor(element, anchor),
     );
     const stickyHeader = rendered?.stickyHeader ?? this.table_abyssPrivate?.tHead ?? undefined;
     return mountProjectCellEditorPosition({
       anchor,
       host,
       boundary: rendered?.editorBoundary ?? this.scroll_abyssPrivate,
+      positioningContainer: preferredWidth === undefined ? anchor : this.root_abyssPrivate,
       onMove,
-      ...(avoid === undefined ? {} : { avoid }),
-      ...(stickyHeader === undefined ? {} : { stickyHeader }),
+      ...optionalEditorPositionFields(avoid, preferredWidth, stickyHeader),
     });
+  }
+
+  private activateEditor_abyssPrivate(request: MountedEditorRequest): () => void {
+    const { project, field, cell, anchor, host, handle } = request;
+    if (handle.preferredWidth !== undefined) {
+      host.addClass('is-picker');
+      this.root_abyssPrivate.appendChild(host);
+    }
+    const positionCleanup = this.positionEditorHost_abyssPrivate({
+      anchor,
+      host,
+      onMove: () => {
+        handle.closeSuggestion();
+      },
+      ...(field.id === 'description' ? { avoid: cell } : {}),
+      ...(handle.preferredWidth === undefined ? {} : { preferredWidth: handle.preferredWidth }),
+    });
+    this.activeEditor_abyssPrivate = {
+      projectPath: project.path,
+      columnId: field.id,
+      handle,
+      positionCleanup,
+    };
+    handle.focus();
+    return positionCleanup;
   }
 
   private editCell_abyssPrivate(
@@ -3629,21 +3687,14 @@ export class ProjectsTableView {
       },
       restoreFocus: () => {},
     });
-    positionCleanup = this.positionEditorHost_abyssPrivate(
+    positionCleanup = this.activateEditor_abyssPrivate({
+      project,
+      field,
+      cell,
       anchor,
-      editorHost,
-      () => {
-        handle.closeSuggestion();
-      },
-      field.id === 'description' ? cell : undefined,
-    );
-    this.activeEditor_abyssPrivate = {
-      projectPath: project.path,
-      columnId: field.id,
+      host: editorHost,
       handle,
-      positionCleanup,
-    };
-    handle.focus();
+    });
   }
 
   private clearEditorAnchor_abyssPrivate(anchor: HTMLElement, cell: HTMLElement): void {

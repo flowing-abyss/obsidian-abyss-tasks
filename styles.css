@@ -7483,7 +7483,6 @@ table.abyss-project-table {
   .abyss-project-table-status-pill,
   .abyss-project-property-value,
   .abyss-suggest-title,
-  .abyss-project-list-value-text.tag,
   .abyss-project-table-tag-link.tag,
   .abyss-suggest-title > .tag
 ).is-dot {
@@ -7496,7 +7495,6 @@ table.abyss-project-table {
     .abyss-project-table-status-pill,
     .abyss-project-property-value,
     .abyss-suggest-title,
-    .abyss-project-list-value-text.tag,
     .abyss-project-table-tag-link.tag,
     .abyss-suggest-title > .tag
   ).is-dot::before {
@@ -7642,7 +7640,6 @@ table.abyss-project-table {
 }
 
 .abyss-project-table-value-text.is-link,
-.abyss-project-list-value-text.is-link,
 .abyss-suggest-title.is-link {
   color: var(--link-color);
 }
@@ -7794,6 +7791,13 @@ table.abyss-project-table {
   padding-block: 0;
 }
 
+.abyss-project-cell-editor-host.is-picker {
+  z-index: var(--layer-popover, 30);
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .abyss-project-editor-input,
 .abyss-project-editor-status {
   width: 100%;
@@ -7817,34 +7821,125 @@ table.abyss-project-table {
   white-space: pre-wrap;
 }
 
-.abyss-project-list-control {
+.abyss-project-value-picker.abyss-popover {
+  position: static;
+  box-sizing: border-box;
   display: flex;
-  overflow: visible;
+  overflow: hidden;
   width: 100%;
-  min-width: 0;
-  align-items: center;
-  gap: 4px;
+  max-height: var(--abyss-project-editor-content-max-height, none);
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--font-ui-small);
 }
 
-.abyss-project-list-entry {
-  display: flex;
-  min-width: 0;
-  max-width: 100%;
-  flex: 0 0 96px;
-  align-items: center;
-  gap: 3px;
+.abyss-project-value-picker-search {
+  flex: 0 0 auto;
 }
 
-.abyss-project-list-input {
-  width: 0;
-  flex: 1 1 auto;
+.abyss-project-value-picker-results {
+  overflow-y: auto;
+  min-height: 0;
+  max-height: min(300px, calc(var(--abyss-project-editor-content-max-height, 372px) - 72px));
+  overscroll-behavior: contain;
 }
 
-.abyss-project-list-entry button,
-.abyss-project-list-value button {
-  min-height: 20px;
-  padding: 1px 5px;
+.abyss-project-value-picker-group[hidden] {
+  display: none;
+}
+
+.abyss-project-value-picker-group + .abyss-project-value-picker-group {
+  margin-top: 6px;
+}
+
+.abyss-project-value-picker-heading {
+  padding: 3px 6px;
+  color: var(--text-muted);
   font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+}
+
+.abyss-project-value-picker-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.abyss-project-value-picker-option {
+  display: grid;
+  box-sizing: border-box;
+  min-height: 30px;
+  align-items: center;
+  padding: 2px 4px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  grid-template-columns: 18px minmax(0, 1fr) 24px;
+}
+
+.abyss-project-value-picker-option:is(:hover, .is-active) {
+  background: var(--background-modifier-hover);
+}
+
+.abyss-project-value-picker-option.is-active {
+  box-shadow: inset 0 0 0 1px var(--interactive-accent);
+}
+
+.abyss-project-value-picker-indicator {
+  color: var(--interactive-accent);
+  opacity: 0;
+}
+
+.abyss-project-value-picker-option.is-selected .abyss-project-value-picker-indicator {
+  opacity: 1;
+}
+
+.abyss-project-value-picker-presentation {
+  overflow: hidden;
+  min-width: 0;
+}
+
+.abyss-project-value-picker-presentation .abyss-suggest-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-projects-table button.abyss-project-value-picker-edit {
+  display: inline-flex;
+  width: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  opacity: 0;
+}
+
+.abyss-project-value-picker-option:hover .abyss-project-value-picker-edit,
+.abyss-project-value-picker-edit:focus-visible {
+  opacity: 1;
+}
+
+.abyss-project-value-picker-action-host:empty {
+  display: none;
+}
+
+.abyss-projects-table button.abyss-project-value-picker-action {
+  overflow: hidden;
+  width: 100%;
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 0;
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .abyss-project-editor-error {
@@ -7855,57 +7950,6 @@ table.abyss-project-table {
 
 .abyss-project-editor-error:empty {
   display: none;
-}
-
-.abyss-project-list-values {
-  display: flex;
-  overflow-x: auto;
-  min-height: 0;
-  min-width: 0;
-  flex: 0 1 auto;
-  flex-wrap: nowrap;
-  gap: 4px;
-  scrollbar-width: none;
-}
-
-.abyss-project-list-values:empty {
-  display: none;
-}
-
-.abyss-project-list-values:empty + .abyss-project-list-entry {
-  flex: 1 1 100%;
-}
-
-.abyss-project-list-value {
-  display: inline-flex;
-  overflow: hidden;
-  max-width: 160px;
-  flex: 0 0 auto;
-  align-items: center;
-  padding-left: 6px;
-  border-radius: var(--radius-s);
-  background: var(--background-secondary);
-  font-size: var(--font-ui-smaller);
-}
-
-.abyss-project-list-value.is-tag {
-  padding: 0;
-  background: transparent;
-}
-
-.abyss-project-list-value-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.abyss-projects-table button.abyss-project-list-remove {
-  display: inline-flex;
-  width: 18px;
-  min-width: 18px;
-  align-items: center;
-  justify-content: center;
-  opacity: 1;
 }
 
 .abyss-project-table-footer {
