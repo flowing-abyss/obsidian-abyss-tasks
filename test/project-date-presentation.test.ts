@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { formatProjectRelativeDate } from '../src/panels/projects/projectDatePresentation';
+import {
+  formatProjectPrettyDate,
+  formatProjectRelativeDate,
+} from '../src/panels/projects/projectDatePresentation';
 
 describe('formatProjectRelativeDate', () => {
   const now = new Date(2026, 8, 10, 23, 0, 0);
@@ -50,5 +53,29 @@ describe('formatProjectRelativeDate', () => {
     expect(formatProjectRelativeDate('2026-03-09', new Date(2026, 2, 8, 23, 30), 'en')).toBe(
       'tomorrow',
     );
+  });
+});
+
+describe('formatProjectPrettyDate', () => {
+  it('rejects impossible and whitespace-padded dates', () => {
+    expect(formatProjectPrettyDate('2026-02-30', 'en-US')).toBeUndefined();
+    expect(formatProjectPrettyDate(' 2026-09-10 ', 'en-US')).toBeUndefined();
+  });
+
+  it('formats a date-only value as the authored local calendar date', () => {
+    expect(formatProjectPrettyDate('2026-09-10', 'en-US')).toBe('Sep 10, 2026');
+  });
+
+  it('converts an offset datetime to the system timezone', () => {
+    const value = '2026-09-11T00:30:00-10:00';
+    const expected = new Intl.DateTimeFormat('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(value));
+
+    expect(formatProjectPrettyDate(value, 'en-US')).toBe(expected);
   });
 });

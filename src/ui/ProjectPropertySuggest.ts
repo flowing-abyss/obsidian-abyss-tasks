@@ -74,6 +74,26 @@ function suggestionsForValues(
   }));
 }
 
+/** Renders the shared project-property value presentation into one suggestion row. */
+export function renderProjectPropertySuggestion(
+  suggestion: ProjectPropertySuggestion,
+  element: HTMLElement,
+): void {
+  const presentation = projectPropertyValuePresentation(String(suggestion.value));
+  const isTag = suggestion.appearance === 'tag';
+  const isDot = suggestion.display === 'dot';
+  const title = element.createDiv({
+    cls: suggestionTitleClass(suggestion, presentation.link !== undefined, isTag),
+  });
+  const valueElement = isTag ? title.createSpan({ cls: 'tag', text: suggestion.label }) : title;
+  if (!isTag) title.setText(suggestion.label);
+  if (isDot) valueElement.addClass('is-dot');
+  applySuggestionColor(valueElement, suggestion, isDot);
+  if (suggestion.detail !== undefined) {
+    element.createDiv({ cls: 'abyss-suggest-path', text: suggestion.detail });
+  }
+}
+
 /** Keyboard-aware suggestions from values already used by the edited property. */
 export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectPropertySuggestion> {
   private readonly suggestions_abyssPrivate: readonly ProjectPropertySuggestion[];
@@ -136,19 +156,7 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
   }
 
   renderSuggestion(suggestion: ProjectPropertySuggestion, element: HTMLElement): void {
-    const presentation = projectPropertyValuePresentation(String(suggestion.value));
-    const isTag = suggestion.appearance === 'tag';
-    const isDot = suggestion.display === 'dot';
-    const title = element.createDiv({
-      cls: suggestionTitleClass(suggestion, presentation.link !== undefined, isTag),
-    });
-    const valueElement = isTag ? title.createSpan({ cls: 'tag', text: suggestion.label }) : title;
-    if (!isTag) title.setText(suggestion.label);
-    if (isDot) valueElement.addClass('is-dot');
-    applySuggestionColor(valueElement, suggestion, isDot);
-    if (suggestion.detail !== undefined) {
-      element.createDiv({ cls: 'abyss-suggest-path', text: suggestion.detail });
-    }
+    renderProjectPropertySuggestion(suggestion, element);
   }
 
   override selectSuggestion(

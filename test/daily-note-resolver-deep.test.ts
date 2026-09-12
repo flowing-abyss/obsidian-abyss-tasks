@@ -1,6 +1,6 @@
 import { moment, TFile, type App } from 'obsidian';
-import { describe, expect, it } from 'vitest';
-import { DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
+import { describe, expect, it, vi } from 'vitest';
+import { CreatedNoteTemplateError, DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { createAppWithFiles, useRealMoment } from './helpers';
 
@@ -18,6 +18,29 @@ const manualSettings = {
 };
 
 describe('DailyNoteResolver deep — createNoteWithTemplate', () => {
+  it('exposes the resolver-owned file when Templater fails after creation', async () => {
+    const app = await createAppWithFiles({ 'Templates/project.md': '# template\n' });
+    Object.defineProperty(app, 'plugins', {
+      configurable: true,
+      value: {
+        getPlugin: () => ({
+          templater: { write_template_to_file: vi.fn().mockRejectedValue(new Error('boom')) },
+        }),
+      },
+    });
+    const resolver = new DailyNoteResolver(app, manualSettings);
+
+    const error = await resolver
+      .createNoteFromTemplate('Projects/Owned.md', 'Templates/project.md', 'Owned')
+      .catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(CreatedNoteTemplateError);
+    if (!(error instanceof CreatedNoteTemplateError)) throw new Error('expected owned failure');
+    expect(error.createdPath).toBe('Projects/Owned.md');
+    expect(error.cause).toBeInstanceOf(Error);
+    expect((error.cause as Error).message).toBe('boom');
+    expect(app.vault.getAbstractFileByPath('Projects/Owned.md')).toBeInstanceOf(TFile);
+  });
   it('creates note with templater when plugin available + templatePath set (L101)', async () => {
     const app = await createAppWithFiles({ 'template.md': '# Template\n\n## Tasks\n' });
     // Mock templater plugin + core daily-notes plugin supplying a template path

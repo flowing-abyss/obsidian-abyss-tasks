@@ -7,6 +7,10 @@ export type ProjectPropertyType =
 
 export type ProjectColumnAlignment = 'left' | 'center' | 'right';
 
+export type ProjectDateDisplay = 'raw' | 'relative' | 'pretty';
+
+export type ProjectTableProgressDisplay = 'bar' | 'full';
+
 export interface ProjectField {
   id: string;
   property?: string;
@@ -24,13 +28,15 @@ export interface ProjectColumn {
   label?: string;
   width?: number;
   alignment?: ProjectColumnAlignment;
-  dateDisplay?: 'relative';
+  dateDisplay?: ProjectDateDisplay;
   visible: boolean;
 }
 
 export interface ProjectTableSettings {
   columns: ProjectColumn[];
   showDescription: boolean;
+  progress?: ProjectTableProgressDisplay;
+  dateDisplay?: ProjectDateDisplay;
   groupBy: string;
   sortBy: { field: string; dir: 'asc' | 'desc' };
   hiddenStatuses: string[];
@@ -81,6 +87,10 @@ function customFieldIds(
     ...settings.table.columns.map(({ id }) => id),
     settings.table.groupBy,
     settings.table.sortBy.field,
+    ...(settings.kanban?.fields.map(({ id }) => id) ?? []),
+    ...(settings.kanban === undefined
+      ? []
+      : [settings.kanban.groupBy, settings.kanban.sortBy.field]),
     ...definitionIds,
     ...properties.map(({ name }) => `property:${name}`),
   ];

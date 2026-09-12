@@ -1,18 +1,45 @@
-import { setIcon } from 'obsidian';
-import type { ProjectFieldCatalogItem, ProjectTableSettings } from '../../projects/projectFields';
-import { buildDefaultProjectTableSettings } from '../../projects/projectTableSettings';
+import { Menu, setIcon } from 'obsidian';
+import type {
+  ProjectDateDisplay,
+  ProjectFieldCatalogItem,
+  ProjectTableProgressDisplay,
+  ProjectTableSettings,
+} from '../../projects/projectFields';
+import type {
+  ProjectKanbanSettings,
+  ProjectOverviewMode,
+} from '../../projects/projectKanbanSettings';
+import {
+  applyProjectTableDateDisplay,
+  buildDefaultProjectTableSettings,
+  effectiveProjectTableDateDisplay,
+  setProjectTableColumnDateDisplay,
+} from '../../projects/projectTableSettings';
 import type { StatusGroup } from '../../projects/status';
-import { openViewOptionsPopover, type ViewOptionsRow } from '../../ui/ViewOptionsPopover';
+import { moveProjectColumn, setProjectColumnVisibility } from '../../settings/projectTableSettings';
+import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import {
+  openViewOptionsPopover,
+  type ViewOption,
+  type ViewOptionAction,
+  type ViewOptionsRow,
+} from '../../ui/ViewOptionsPopover';
+import { configureProjectDateDisplayMenu, projectDateDisplayLabel } from './projectColumnMenu';
+import { isProjectKanbanCustomized, projectKanbanOptionsRows } from './ProjectKanbanOptions';
 
 export interface ProjectsTableToolbarOptions {
   readonly host: HTMLElement;
-  readonly settings: ProjectTableSettings;
+  readonly settings: () => ProjectTableSettings | ProjectKanbanSettings;
+  readonly tableSettings: () => ProjectTableSettings;
+  readonly mode: () => ProjectOverviewMode;
   readonly fields: () => readonly ProjectFieldCatalogItem[];
   readonly onSearch: (query: string) => void;
   readonly onStatusToggle: (key: string) => void;
-  readonly onGroupBy: (field: string) => void;
-  readonly onSortBy: (field: string) => void;
+  readonly onGroupBy: (field: string) => Promise<boolean>;
+  readonly onSortBy: (field: string) => Promise<boolean>;
   readonly onReset: () => void;
+  readonly onOverviewMode: (mode: ProjectOverviewMode) => void;
+  readonly onViewOptionChange: (mutation: () => void) => Promise<boolean>;
 }
 
 function fieldLabel(
@@ -28,6 +55,12 @@ function fieldLabel(
   );
 }
 
+function isTableSettings(
+  settings: ProjectTableSettings | ProjectKanbanSettings,
+): settings is ProjectTableSettings {
+  return 'columns' in settings;
+}
+
 function isCustomized(settings: ProjectTableSettings): boolean {
   const defaults = buildDefaultProjectTableSettings();
   return (
@@ -35,14 +68,27 @@ function isCustomized(settings: ProjectTableSettings): boolean {
     settings.sortBy.field !== defaults.sortBy.field ||
     settings.sortBy.dir !== defaults.sortBy.dir ||
     settings.showDescription !== defaults.showDescription ||
-    settings.hiddenStatuses.length > 0
+    settings.hiddenStatuses.length > 0 ||
+    (settings.progress ?? 'full') !== 'full' ||
+    settings.dateDisplay !== undefined ||
+    settings.columns.some(({ dateDisplay }) => dateDisplay !== undefined)
   );
+}
+
+function tableProgressLabel(display: ProjectTableProgressDisplay): string {
+  return display === 'bar' ? 'Bars' : 'Bars and numbers';
+}
+
+function tableDateDisplayLabel(display: ProjectDateDisplay | undefined): string {
+  return display === undefined ? 'Custom' : projectDateDisplayLabel(display);
 }
 
 export class ProjectsTableToolbar {
   readonly searchInput: HTMLInputElement;
   private readonly badges_abyssPrivate: HTMLElement;
   private readonly viewButton_abyssPrivate: HTMLButtonElement;
+  private readonly modeButtons_abyssPrivate = new Map<ProjectOverviewMode, HTMLButtonElement>();
+  private readonly statusButtons_abyssPrivate = new Map<string, HTMLButtonElement>();
   private popoverCleanup_abyssPrivate: (() => void) | undefined;
 
   constructor(private readonly options_abyssPrivate: ProjectsTableToolbarOptions) {
@@ -66,6 +112,20 @@ export class ProjectsTableToolbar {
     this.viewButton_abyssPrivate.addEventListener('click', () => {
       this.togglePopover_abyssPrivate();
     });
+    for (const [mode, label, icon] of [
+      ['table', 'Table view', 'table-2'],
+      ['kanban', 'Kanban view', 'columns-3'],
+    ] as const) {
+      const button = controls.createEl('button', {
+        cls: `abyss-project-overview-mode abyss-project-overview-mode--${mode}`,
+        attr: { type: 'button', 'aria-label': label, 'aria-pressed': 'false' },
+      });
+      setIcon(button, icon);
+      button.addEventListener('click', () => {
+        options_abyssPrivate.onOverviewMode(mode);
+      });
+      this.modeButtons_abyssPrivate.set(mode, button);
+    }
     this.searchInput = controls.createEl('input', {
       cls: 'abyss-center-search',
       attr: { type: 'text', placeholder: 'Filter…', 'aria-label': 'Filter projects' },
@@ -73,31 +133,83 @@ export class ProjectsTableToolbar {
     this.searchInput.addEventListener('input', () => {
       options_abyssPrivate.onSearch(this.searchInput.value);
     });
-    this.syncViewButton();
+    this.sync();
   }
 
   update(statuses: readonly StatusGroup[]): void {
-    this.badges_abyssPrivate.empty();
-    const hidden = new Set(this.options_abyssPrivate.settings.hiddenStatuses);
+    const hidden = new Set(this.options_abyssPrivate.settings().hiddenStatuses);
+    const retained = new Set<string>();
+    const desiredButtons: HTMLButtonElement[] = [];
+    const focused = this.badges_abyssPrivate.ownerDocument.activeElement;
     for (const status of statuses) {
-      const disabled = hidden.has(status.key);
-      const button = this.badges_abyssPrivate.createEl('button', {
-        cls: `abyss-project-status-filter${disabled ? ' is-disabled' : ''}`,
-        text: status.label,
-        attr: {
-          type: 'button',
-          'aria-pressed': String(!disabled),
-          'data-status-key': status.key,
-        },
-      });
-      if (status.color !== undefined && status.color.length > 0) {
-        button.style.setProperty('--abyss-project-status-color', status.color);
-      }
-      button.addEventListener('click', () => {
-        this.options_abyssPrivate.onStatusToggle(status.key);
-      });
+      retained.add(status.key);
+      const button = this.statusButton_abyssPrivate(status.key);
+      this.patchStatusButton_abyssPrivate(button, status, hidden.has(status.key));
+      desiredButtons.push(button);
     }
-    this.syncViewButton();
+    this.removeMissingStatusButtons_abyssPrivate(retained);
+    this.reconcileStatusButtonOrder_abyssPrivate(desiredButtons);
+    this.restoreStatusButtonFocus_abyssPrivate(focused);
+    this.sync();
+  }
+
+  private statusButton_abyssPrivate(key: string): HTMLButtonElement {
+    const existing = this.statusButtons_abyssPrivate.get(key);
+    if (existing !== undefined) return existing;
+    const button = this.badges_abyssPrivate.createEl('button', {
+      cls: 'abyss-project-status-filter',
+      attr: { type: 'button', 'data-status-key': key },
+    });
+    button.addEventListener('click', () => {
+      this.options_abyssPrivate.onStatusToggle(key);
+    });
+    this.statusButtons_abyssPrivate.set(key, button);
+    return button;
+  }
+
+  private patchStatusButton_abyssPrivate(
+    button: HTMLButtonElement,
+    status: StatusGroup,
+    disabled: boolean,
+  ): void {
+    button.setText(status.label);
+    button.toggleClass('is-disabled', disabled);
+    button.setAttribute('aria-pressed', String(!disabled));
+    button.style.removeProperty('--abyss-project-status-color');
+    if (status.color !== undefined && status.color.length > 0) {
+      button.style.setProperty('--abyss-project-status-color', status.color);
+    }
+  }
+
+  private removeMissingStatusButtons_abyssPrivate(retained: ReadonlySet<string>): void {
+    for (const [key, button] of this.statusButtons_abyssPrivate) {
+      if (retained.has(key)) continue;
+      button.remove();
+      this.statusButtons_abyssPrivate.delete(key);
+    }
+  }
+
+  private reconcileStatusButtonOrder_abyssPrivate(buttons: readonly HTMLButtonElement[]): void {
+    let cursor = this.badges_abyssPrivate.firstChild;
+    for (const button of buttons) {
+      if (button === cursor) cursor = cursor.nextSibling;
+      else this.badges_abyssPrivate.insertBefore(button, cursor);
+    }
+  }
+
+  private restoreStatusButtonFocus_abyssPrivate(focused: Element | null): void {
+    if (
+      focused instanceof HTMLElement &&
+      focused.isConnected &&
+      this.badges_abyssPrivate.contains(focused) &&
+      this.badges_abyssPrivate.ownerDocument.activeElement !== focused
+    ) {
+      focused.focus({ preventScroll: true });
+    }
+  }
+
+  setSearchValue(value: string): void {
+    if (this.searchInput.value !== value) this.searchInput.value = value;
   }
 
   destroy(): void {
@@ -105,11 +217,24 @@ export class ProjectsTableToolbar {
     this.popoverCleanup_abyssPrivate = undefined;
   }
 
-  private syncViewButton(): void {
+  private sync(): void {
+    const mode = this.options_abyssPrivate.mode();
+    for (const [candidate, button] of this.modeButtons_abyssPrivate) {
+      const active = candidate === mode;
+      button.toggleClass('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
     this.viewButton_abyssPrivate.classList.toggle(
       'abyss-view-state-btn--active',
-      isCustomized(this.options_abyssPrivate.settings),
+      this.isCustomized_abyssPrivate(),
     );
+  }
+
+  private isCustomized_abyssPrivate(): boolean {
+    const settings = this.options_abyssPrivate.settings();
+    return isTableSettings(settings)
+      ? isCustomized(settings)
+      : isProjectKanbanCustomized(settings, this.options_abyssPrivate.tableSettings());
   }
 
   private togglePopover_abyssPrivate(): void {
@@ -117,62 +242,25 @@ export class ProjectsTableToolbar {
       this.popoverCleanup_abyssPrivate();
       return;
     }
-    const { settings } = this.options_abyssPrivate;
+    const settings = this.options_abyssPrivate.settings();
     const fields = this.options_abyssPrivate.fields();
-    const configured = new Set(settings.columns.map(({ id }) => id));
-    configured.add(settings.groupBy);
-    configured.add(settings.sortBy.field);
-    const selectable = fields.filter((field) => configured.has(field.id));
-    const arrow = settings.sortBy.dir === 'asc' ? '↑' : '↓';
-    const sortDisplay =
-      settings.sortBy.field === 'none'
-        ? 'None'
-        : `${fieldLabel(fields, settings, settings.sortBy.field)} ${arrow}`;
-    const defaultSortField = buildDefaultProjectTableSettings().sortBy.field;
-    const rows: ViewOptionsRow[] = [
-      {
-        kind: 'single',
-        icon: 'layout-list',
-        label: 'Group by',
-        displayValue: fieldLabel(fields, settings, settings.groupBy),
-        activeValue: settings.groupBy,
-        options: [
-          { value: 'none', label: 'None' },
-          ...selectable.map((field) => ({
-            value: field.id,
-            label: fieldLabel(fields, settings, field.id),
-            isDefault: field.id === 'status',
-          })),
-        ],
-        onSelect: (value) => {
-          this.options_abyssPrivate.onGroupBy(value);
-        },
-      },
-      {
-        kind: 'single',
-        icon: 'arrow-up-down',
-        label: 'Sort by',
-        displayValue: sortDisplay,
-        activeValue: settings.sortBy.field,
-        options: [
-          { value: 'none', label: 'None' },
-          ...selectable.map((field) => ({
-            value: field.id,
-            label:
-              `${fieldLabel(fields, settings, field.id)} ${settings.sortBy.field === field.id ? arrow : ''}`.trim(),
-            isDefault: field.id === defaultSortField,
-          })),
-        ],
-        onSelect: (value) => {
-          this.options_abyssPrivate.onSortBy(value);
-        },
-      },
-    ];
+    const rows = isTableSettings(settings)
+      ? this.tableRows_abyssPrivate(settings, fields)
+      : projectKanbanOptionsRows({
+          settings: () => {
+            const current = this.options_abyssPrivate.settings();
+            return isTableSettings(current) ? settings : current;
+          },
+          tableSettings: this.options_abyssPrivate.tableSettings,
+          fields: this.options_abyssPrivate.fields,
+          onChange: this.options_abyssPrivate.onViewOptionChange,
+        });
     const close = openViewOptionsPopover({
       host: this.options_abyssPrivate.host,
       anchor: this.viewButton_abyssPrivate,
       rows,
-      showReset: isCustomized(settings),
+      showReset: () =>
+        this.options_abyssPrivate.mode() === 'kanban' || this.isCustomized_abyssPrivate(),
       onReset: this.options_abyssPrivate.onReset,
       onClose: () => {
         if (this.popoverCleanup_abyssPrivate === close) {
@@ -181,5 +269,244 @@ export class ProjectsTableToolbar {
       },
     });
     this.popoverCleanup_abyssPrivate = close;
+  }
+
+  private tableRows_abyssPrivate(
+    settings: ProjectTableSettings,
+    fields: readonly ProjectFieldCatalogItem[],
+  ): ViewOptionsRow[] {
+    const current = this.options_abyssPrivate.tableSettings;
+    const currentFields = this.options_abyssPrivate.fields;
+    const configured = new Set(settings.columns.map(({ id }) => id));
+    configured.add(settings.groupBy);
+    configured.add(settings.sortBy.field);
+    const selectable = fields.filter((field) => configured.has(field.id));
+    const sortArrow = (): string => (current().sortBy.dir === 'asc' ? '↑' : '↓');
+    const sortDisplay = (): string =>
+      current().sortBy.field === 'none'
+        ? 'None'
+        : `${fieldLabel(currentFields(), current(), current().sortBy.field)} ${sortArrow()}`;
+    const defaultSortField = buildDefaultProjectTableSettings().sortBy.field;
+    return [
+      {
+        kind: 'single',
+        icon: 'layout-list',
+        label: 'Group by',
+        displayValue: () => fieldLabel(currentFields(), current(), current().groupBy),
+        activeValue: () => current().groupBy,
+        options: [
+          { value: 'none', label: 'None' },
+          ...selectable.map((field) => ({
+            value: field.id,
+            label: () => fieldLabel(currentFields(), current(), field.id),
+            isDefault: field.id === 'status',
+          })),
+        ],
+        onSelect: (value) => this.options_abyssPrivate.onGroupBy(value).then(() => undefined),
+      },
+      {
+        kind: 'single',
+        icon: 'arrow-up-down',
+        label: 'Sort by',
+        displayValue: sortDisplay,
+        activeValue: () => current().sortBy.field,
+        options: [
+          { value: 'none', label: 'None' },
+          ...selectable.map((field) => ({
+            value: field.id,
+            label: () =>
+              `${fieldLabel(currentFields(), current(), field.id)} ${current().sortBy.field === field.id ? sortArrow() : ''}`.trim(),
+            isDefault: field.id === defaultSortField,
+          })),
+        ],
+        onSelect: (value) => this.options_abyssPrivate.onSortBy(value).then(() => undefined),
+      },
+      {
+        kind: 'group',
+        icon: 'table-2',
+        label: 'Table',
+        displayValue: '4 options',
+        rows: [
+          this.tableColumnsRow_abyssPrivate(settings, fields),
+          this.tableDescriptionRow_abyssPrivate(),
+          this.tableProgressRow_abyssPrivate(),
+          this.tableDateDisplayRow_abyssPrivate(),
+        ],
+      },
+    ];
+  }
+
+  private tableColumnsRow_abyssPrivate(
+    settings: ProjectTableSettings,
+    fields: readonly ProjectFieldCatalogItem[],
+  ): ViewOptionsRow {
+    const selected = (): string[] =>
+      this.options_abyssPrivate
+        .tableSettings()
+        .columns.filter(({ visible }) => visible)
+        .map(({ id }) => id);
+    const options: ViewOption[] = settings.columns.map((column) => {
+      const label = (): string =>
+        fieldLabel(
+          this.options_abyssPrivate.fields(),
+          this.options_abyssPrivate.tableSettings(),
+          column.id,
+        );
+      const field = fields.find(({ id }) => id === column.id);
+      const action =
+        field === undefined
+          ? undefined
+          : this.tableDateAction_abyssPrivate(column.id, field, label());
+      return {
+        value: column.id,
+        label,
+        ...(column.id === 'name' ? { disabled: true, required: true } : {}),
+        ...(action === undefined ? {} : { action }),
+      };
+    });
+    return {
+      kind: 'multi',
+      icon: 'columns-3',
+      label: 'Columns',
+      displayValue: () => `${selected().length} shown`,
+      selected,
+      options,
+      onToggle: (columnId) =>
+        this.applyViewMutation_abyssPrivate(() => {
+          const current = this.options_abyssPrivate.tableSettings();
+          const column = current.columns.find(({ id }) => id === columnId);
+          if (column !== undefined) {
+            setProjectColumnVisibility(current, columnId, !column.visible);
+          }
+        }),
+      onMove: (columnId, _direction, targetColumnId) =>
+        this.applyViewMutation_abyssPrivate(() => {
+          moveProjectColumn(this.options_abyssPrivate.tableSettings(), columnId, targetColumnId);
+        }),
+    };
+  }
+
+  private tableDescriptionRow_abyssPrivate(): ViewOptionsRow {
+    return {
+      kind: 'single',
+      icon: 'text',
+      label: 'Description',
+      displayValue: () =>
+        this.options_abyssPrivate.tableSettings().showDescription ? 'Show' : 'Hide',
+      activeValue: () =>
+        this.options_abyssPrivate.tableSettings().showDescription ? 'show' : 'hide',
+      options: [
+        { value: 'hide', label: 'Hide' },
+        { value: 'show', label: 'Show', isDefault: true },
+      ],
+      onSelect: (value) =>
+        this.applyViewMutation_abyssPrivate(() => {
+          this.options_abyssPrivate.tableSettings().showDescription = value === 'show';
+        }),
+    };
+  }
+
+  private tableProgressRow_abyssPrivate(): ViewOptionsRow {
+    const active = (): ProjectTableProgressDisplay =>
+      this.options_abyssPrivate.tableSettings().progress ?? 'full';
+    return {
+      kind: 'single',
+      icon: 'percent',
+      label: 'Progress',
+      displayValue: () => tableProgressLabel(active()),
+      activeValue: active,
+      options: [
+        { value: 'bar', label: 'Bars' },
+        { value: 'full', label: 'Bars and numbers', isDefault: true },
+      ],
+      onSelect: (value) =>
+        this.applyViewMutation_abyssPrivate(() => {
+          this.options_abyssPrivate.tableSettings().progress = value === 'bar' ? 'bar' : 'full';
+        }),
+    };
+  }
+
+  private tableDateDisplayRow_abyssPrivate(): ViewOptionsRow {
+    const active = (): ProjectDateDisplay | undefined =>
+      this.options_abyssPrivate.tableSettings().dateDisplay;
+    return {
+      kind: 'single',
+      icon: 'calendar',
+      label: 'Date display',
+      displayValue: () => tableDateDisplayLabel(active()),
+      activeValue: () => active() ?? 'custom',
+      options: [
+        { value: 'custom', label: 'Custom', isDefault: true },
+        { value: 'pretty', label: 'Pretty' },
+        { value: 'raw', label: 'Raw' },
+        { value: 'relative', label: 'Relative' },
+      ],
+      onSelect: (value) =>
+        this.applyViewMutation_abyssPrivate(() => {
+          applyProjectTableDateDisplay(
+            this.options_abyssPrivate.tableSettings(),
+            this.options_abyssPrivate.fields(),
+            value === 'custom' ? undefined : (value as ProjectDateDisplay),
+          );
+        }),
+    };
+  }
+
+  private tableDateAction_abyssPrivate(
+    columnId: string,
+    field: ProjectFieldCatalogItem,
+    label: string,
+  ): ViewOptionAction | undefined {
+    if (field.type !== 'date' && field.type !== 'datetime') return undefined;
+    const active = (): ProjectDateDisplay =>
+      effectiveProjectTableDateDisplay(
+        this.options_abyssPrivate.tableSettings(),
+        this.options_abyssPrivate.tableSettings().columns.find(({ id }) => id === columnId),
+      );
+    return {
+      label: () => projectDateDisplayLabel(active()),
+      ariaLabel: `Date display for ${label}`,
+      onSelect: (event, run, ownChild) => {
+        const trigger = event.currentTarget as HTMLElement | null;
+        const menu = new Menu();
+        configureProjectDateDisplayMenu(menu, {
+          active: active(),
+          onSelect: (display) => {
+            run(() => this.setTableDateDisplay_abyssPrivate(columnId, display));
+          },
+        });
+        let releaseChild = (): void => undefined;
+        menu.onHide(() => {
+          releaseChild();
+          if (trigger?.instanceOf(HTMLElement) === true && trigger.isConnected) {
+            trigger.focus({ preventScroll: true });
+          }
+        });
+        const surface = showMenuAtMouseEventWithFocus(menu, event);
+        if (surface !== undefined) {
+          releaseChild = ownChild(surface, () => {
+            menu.close();
+          });
+        }
+      },
+    };
+  }
+
+  private async applyViewMutation_abyssPrivate(mutation: () => void): Promise<void> {
+    await this.options_abyssPrivate.onViewOptionChange(mutation);
+  }
+
+  private setTableDateDisplay_abyssPrivate(
+    columnId: string,
+    display: ProjectDateDisplay,
+  ): Promise<void> {
+    return this.applyViewMutation_abyssPrivate(() => {
+      setProjectTableColumnDateDisplay(
+        this.options_abyssPrivate.tableSettings(),
+        this.options_abyssPrivate.fields(),
+        columnId,
+        display,
+      );
+    });
   }
 }

@@ -3,9 +3,11 @@ import { AppState } from '../src/app/AppState';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
+import { ProjectCreationError } from '../src/projects/projectCreation';
+import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { expectDefined, freshContainer } from './helpers';
+import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
 
 const ACTIVE_ID = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]).id;
 
@@ -140,6 +142,39 @@ describe('ProjectsPanel dispatch', () => {
     expect(el.querySelector('.abyss-projects-dashboard')).toBeTruthy();
   });
 
+  it('refreshes mounted dashboard status presentation without remounting its session or tasks', () => {
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
+      projectProperties,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    try {
+      const dashboard = expectDefined(
+        el.querySelector<HTMLElement>('.abyss-project-dashboard-session'),
+      );
+      const pill = expectDefined(dashboard.querySelector<HTMLButtonElement>('.abyss-status-pill'));
+      const tasks = expectDefined(dashboard.querySelector<HTMLElement>('.abyss-project-tasks'));
+      const status = expectDefined(settings.projects.statuses[0]);
+
+      status.displayName = 'Current work';
+      status.color = '#28b8a5';
+      status.display = 'dot';
+      panel.refreshTableSettings();
+
+      expect(el.querySelector('.abyss-project-dashboard-session')).toBe(dashboard);
+      expect(dashboard.querySelector('.abyss-status-pill')).toBe(pill);
+      expect(dashboard.querySelector('.abyss-project-tasks')).toBe(tasks);
+      expect(pill.textContent).toBe('Current work');
+      expect(pill.classList).toContain('is-dot');
+      expect(pill.style.getPropertyValue('--abyss-project-status-color')).toBe('#28b8a5');
+    } finally {
+      panel.destroy();
+    }
+  });
+
   it('keeps the table query and scroll position when returning from a dashboard', () => {
     const state = new AppState();
     const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
@@ -160,6 +195,36 @@ describe('ProjectsPanel dispatch', () => {
     expect(el.querySelector<HTMLInputElement>('.abyss-center-search')).toBe(search);
     expect(search.value).toBe('A');
     expect(scroll.scrollTop).toBe(33);
+  });
+
+  it('keeps the selected Kanban card and board scroll positions when returning from a dashboard', () => {
+    const state = new AppState();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.overviewView = 'kanban';
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
+      projectProperties,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    const board = expectDefined(el.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
+    const column = expectDefined(
+      el.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+    );
+    const card = expectDefined(el.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    board.scrollLeft = 47;
+    column.scrollTop = 31;
+    card.click();
+    expect(panel.selectedProjectPath()).toBe('Projects/A.md');
+
+    expectDefined(card.querySelector<HTMLButtonElement>('.abyss-project-table-name')).click();
+    expect(el.querySelector('.abyss-projects-dashboard')).not.toBeNull();
+    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-back')).click();
+
+    expect(el.querySelector<HTMLElement>('.abyss-project-kanban-scroll')).toBe(board);
+    expect(board.scrollLeft).toBe(47);
+    expect(column.scrollTop).toBe(31);
+    expect(panel.selectedProjectPath()).toBe('Projects/A.md');
   });
 
   it('repaints column settings without a project-data change and defers safely for an active draft', () => {
@@ -217,6 +282,59 @@ describe('ProjectsPanel dispatch', () => {
         button.textContent.trim(),
       ),
     ).toContain('Approved budget');
+    panel.destroy();
+    el.remove();
+  });
+
+  it('retries only the owned status write after partial project creation', async () => {
+    const state = new AppState();
+    const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const create = vi.fn().mockRejectedValueOnce(
+      new ProjectCreationError('status failed', {
+        createdPath: 'Projects/Owned.md',
+        phase: 'status',
+        statusId: status.id,
+        cause: new Error('disk full'),
+      }),
+    );
+    const setStatus = vi.fn().mockResolvedValue(undefined);
+    const refresh = vi.fn();
+    const store = {
+      list: () => [proj({})],
+      get: () => proj({}),
+      activeForLeftPanel: () => [],
+      onUpdate: () => () => {},
+      onSourceObservation: () => () => {},
+      refresh,
+    };
+    const manager = {
+      create,
+      setStatus,
+      setProperty: vi.fn().mockResolvedValue(undefined),
+      applyEdits: vi.fn().mockResolvedValue({ applied: [], failed: [] }),
+    };
+    const panel = new ProjectsPanel(
+      state,
+      store as never,
+      manager as never,
+      structuredClone(DEFAULT_SETTINGS),
+      null as never,
+      { projectProperties },
+    );
+    const el = freshContainer();
+    el.ownerDocument.body.append(el);
+    panel.mount(el);
+    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+    const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-project-creation-name'));
+    input.value = 'Owned';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-creation-submit')).click();
+    await flushMicrotasks();
+
+    expect(create).toHaveBeenCalledOnce();
+    expect(setStatus).toHaveBeenCalledWith('Projects/Owned.md', status.id);
+    expect(refresh).toHaveBeenCalledOnce();
     panel.destroy();
     el.remove();
   });

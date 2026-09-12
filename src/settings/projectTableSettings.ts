@@ -16,6 +16,7 @@ import { ProjectPropertySuggest } from '../ui/ProjectPropertySuggest';
 import { renderProjectPropertyOptions } from './projectPropertyOptions';
 import { renderSettingsCard } from './settingsCard';
 import { saveSettingsDraft } from './settingsSaveFailure';
+import type { SettingsValueCommitRegistrar } from './settingsValueCommit';
 import type { ProjectsSettings } from './types';
 
 export interface RenderProjectTableSettingsOptions {
@@ -28,6 +29,7 @@ export interface RenderProjectTableSettingsOptions {
   readonly renderStatusSettings?: (container: HTMLElement) => void;
   readonly expandedCards?: Set<string>;
   readonly refresh: (focusCardId?: string) => void;
+  readonly valueCommit?: SettingsValueCommitRegistrar;
 }
 
 const CURATED_LABELS: Readonly<Record<string, string>> = {
@@ -84,18 +86,6 @@ export function setProjectColumnAlignment(
   return true;
 }
 
-export function setProjectColumnDateDisplay(
-  settings: ProjectTableSettings,
-  columnId: string,
-  display: 'absolute' | 'relative',
-): boolean {
-  const column = settings.columns.find(({ id }) => id === columnId);
-  if (column === undefined) return false;
-  if (display === 'relative') column.dateDisplay = 'relative';
-  else delete column.dateDisplay;
-  return true;
-}
-
 function projectColumnSourceLabel(projects: ProjectsSettings, column: ProjectColumn): string {
   if (column.id === 'name') return 'Filename';
   if (column.id === 'progress') return 'Tasks';
@@ -131,7 +121,7 @@ export function setProjectColumnLabel(
   return true;
 }
 
-function setProjectColumnVisibility(
+export function setProjectColumnVisibility(
   settings: ProjectTableSettings,
   columnId: string,
   visible: boolean,
@@ -157,7 +147,7 @@ export function setProjectColumnWidth(
   return true;
 }
 
-function moveProjectColumn(
+export function moveProjectColumn(
   settings: ProjectTableSettings,
   columnId: string,
   targetId: string,
@@ -249,9 +239,17 @@ function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext)
     attr: { type: 'text', 'aria-label': `Display name for ${display}`, placeholder: display },
   });
   label.value = column.label ?? '';
-  label.addEventListener('change', () => {
-    if (setProjectColumnLabel(options.projects.table, column.id, label.value)) persist();
-  });
+  const commitLabel = (): void => {
+    const previous = column.label;
+    if (
+      setProjectColumnLabel(options.projects.table, column.id, label.value) &&
+      column.label !== previous
+    ) {
+      persist();
+    }
+  };
+  if (options.valueCommit === undefined) label.addEventListener('change', commitLabel);
+  else options.valueCommit.register(label, commitLabel);
   const visible = summary.createEl('input', {
     cls: 'abyss-project-column-visible',
     attr: { type: 'checkbox', 'aria-label': `Show ${source}` },
@@ -260,21 +258,6 @@ function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext)
   visible.disabled = column.id === 'name';
   visible.addEventListener('change', () => {
     if (setProjectColumnVisibility(options.projects.table, column.id, visible.checked)) persist();
-  });
-  const width = summary.createEl('input', {
-    cls: 'abyss-project-column-width',
-    attr: {
-      type: 'number',
-      min: '60',
-      step: '10',
-      'aria-label': `Width for ${source}`,
-      placeholder: 'Auto',
-    },
-  });
-  width.value = column.width === undefined ? '' : String(column.width);
-  width.addEventListener('change', () => {
-    const next = width.value === '' ? undefined : width.valueAsNumber;
-    if (setProjectColumnWidth(options.projects.table, column.id, next)) persist();
   });
   if (!column.id.startsWith('property:')) {
     summary.createSpan({
@@ -357,6 +340,7 @@ function renderColumnBody(body: HTMLElement, context: ColumnRenderContext): void
       persistStatic();
     },
     refresh: options.refresh,
+    ...(options.valueCommit === undefined ? {} : { valueCommit: options.valueCommit }),
   });
   renderCuratedColumnSettings(body, context);
 }
@@ -577,7 +561,7 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
 
   const rows = section.createDiv({ cls: 'abyss-project-column-settings' });
   const headings = rows.createDiv({ cls: 'abyss-project-column-settings-header' });
-  for (const label of ['', 'Source', 'Display name', 'Show', 'Width', '', '']) {
+  for (const label of ['', 'Source', 'Display name', 'Show', '', '']) {
     headings.createSpan({ text: label, attr: label.length === 0 ? { 'aria-hidden': 'true' } : {} });
   }
   options.projects.table.columns.forEach((column) => {

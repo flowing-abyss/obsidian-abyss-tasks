@@ -241,6 +241,38 @@ describe('project property definitions', () => {
 });
 
 describe('captureMissingProjectPropertyDefinitions', () => {
+  it('captures custom fields referenced only by initialized Kanban settings', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.kanban = {
+      fields: [{ id: 'property:Effort', visible: true }],
+      showEmptyFields: false,
+      descriptionLines: 1,
+      progress: 'full',
+      showEmptyProgress: false,
+      emptyColumns: 'compact',
+      groupBy: 'property:Owner',
+      sortBy: { field: 'property:Rank', dir: 'asc' },
+      hiddenStatuses: [],
+      collapsedColumns: [],
+      manualOrder: {},
+    };
+
+    expect(
+      captureMissingProjectPropertyDefinitions(
+        projects,
+        catalog([
+          { name: 'Effort', type: 'number' },
+          { name: 'Owner', type: 'list' },
+          { name: 'Rank', type: 'date' },
+        ]),
+      ),
+    ).toEqual({
+      'property:Effort': { type: 'number' },
+      'property:Owner': { type: 'list' },
+      'property:Rank': { type: 'date' },
+    });
+  });
+
   it('captures custom columns plus hidden grouping and sorting fields once', () => {
     const projects = buildDefaultProjectsSettings();
     projects.table.columns.push({ id: 'property:Effort', visible: true });

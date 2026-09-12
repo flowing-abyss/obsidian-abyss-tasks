@@ -1,14 +1,16 @@
 import {
+  getAllTags,
   getFrontMatterInfo,
   normalizePath,
   parseFrontMatterTags,
   parseYaml,
   stringifyYaml,
   TFile,
+  TFolder,
   type App,
 } from 'obsidian';
 import { evaluateQuery } from '../query/evaluateQuery';
-import type { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
+import { CreatedNoteTemplateError, type DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import type { CalendarSettings, ProjectStatus } from '../settings/types';
 import { normalizeTag, transformMarkdownTags } from '../tags/markdownTagRename';
 import type { TaskApplicationApi, TaskCommandResult, TaskRef } from '../tasks';
@@ -16,7 +18,8 @@ import {
   ObsidianProjectProperties,
   type ProjectPropertyCatalog,
 } from './ObsidianProjectProperties';
-import { ProjectEditValidationError } from './projectEditError';
+import { ProjectCreationError, type ProjectCreateOptions } from './projectCreation';
+import { isProjectEditValidationError, ProjectEditValidationError } from './projectEditError';
 import {
   createOwnedInferredPropertyClear,
   isOwnedInferredPropertyClear,
@@ -220,17 +223,23 @@ function samePropertyName(left: string, right: string): boolean {
   return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
 }
 
-function parseProjectSource(source: string): ParsedProjectSource {
+function projectFrontmatterSubject(path: string | undefined): string {
+  return path === undefined ? 'Project frontmatter' : `Project frontmatter in ${path}`;
+}
+
+function parseProjectSource(source: string, path?: string): ParsedProjectSource {
   const info = getFrontMatterInfo(source);
   if (!info.exists) return { frontmatter: {}, prefix: '---\n', delimiter: '\n---\n', body: source };
   let parsed: unknown;
   try {
     parsed = parseYaml(info.frontmatter);
   } catch {
-    throw new ProjectEditValidationError('Project frontmatter is not valid YAML.');
+    throw new ProjectEditValidationError(`${projectFrontmatterSubject(path)} is not valid YAML.`);
   }
   if (parsed !== null && (typeof parsed !== 'object' || Array.isArray(parsed))) {
-    throw new ProjectEditValidationError('Project frontmatter must be a YAML object.');
+    throw new ProjectEditValidationError(
+      `${projectFrontmatterSubject(path)} must be a YAML object.`,
+    );
   }
   return {
     frontmatter: (parsed ?? {}) as Record<string, unknown>,
@@ -307,6 +316,31 @@ function isProject(
   projects: CalendarSettings['projects'],
 ): boolean {
   return evaluateQuery(projects.membershipQuery, path, projectTags(parsed), parsed.frontmatter);
+}
+
+function isCachedProject(
+  path: string,
+  cache: ReturnType<App['metadataCache']['getFileCache']>,
+  projects: CalendarSettings['projects'],
+): boolean {
+  const frontmatter = (cache?.frontmatter ?? {}) as Record<string, unknown>;
+  const tags = (cache === null ? [] : (getAllTags(cache) ?? [])).map((tag) => tag.toLowerCase());
+  return evaluateQuery(projects.membershipQuery, path, tags, frontmatter);
+}
+
+function parseStatusRenameCandidate(
+  source: string,
+  file: TFile,
+  cache: ReturnType<App['metadataCache']['getFileCache']>,
+  projects: CalendarSettings['projects'],
+): ParsedProjectSource | null {
+  try {
+    return parseProjectSource(source, file.path);
+  } catch (error) {
+    if (!isProjectEditValidationError(error)) throw error;
+    if (!isCachedProject(file.path, cache, projects)) return null;
+    throw error;
+  }
 }
 
 interface StatusRenameWrite {
@@ -893,7 +927,14 @@ export class ProjectManager {
     const projects = this.settings.projects;
     const candidates: TFile[] = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
-      const parsed = parseProjectSource(await this.app.vault.read(file));
+      const source = await this.app.vault.read(file);
+      const parsed = parseStatusRenameCandidate(
+        source,
+        file,
+        this.app.metadataCache.getFileCache(file),
+        projects,
+      );
+      if (parsed === null) continue;
       if (!isProject(file.path, parsed, projects)) continue;
       const current = uniqueFrontmatterProperty(parsed.frontmatter, context.property);
       if (current !== undefined && String(current.value) === context.expectedName) {
@@ -907,7 +948,7 @@ export class ProjectManager {
     let changed: boolean | undefined;
     await this.app.vault.process(file, (source) => {
       this.assertConfiguredStatusProperty(context.property);
-      const parsed = parseProjectSource(source);
+      const parsed = parseProjectSource(source, file.path);
       if (!isProject(file.path, parsed, this.settings.projects)) return source;
       const current = uniqueFrontmatterProperty(parsed.frontmatter, context.property);
       if (current === undefined || String(current.value) !== context.expectedName) return source;
@@ -986,33 +1027,83 @@ export class ProjectManager {
     });
   }
 
-  async create(name: string): Promise<TFile | null> {
+  async create(name: string, options: ProjectCreateOptions = {}): Promise<TFile | null> {
     const folder = this.settings.projects.createFolder.trim();
     const clean = name.trim().replace(/[\\/:*?"<>|]/g, '-');
     if (clean.length === 0) return null;
+    const targetStatusId = this.creationStatusId(options);
+    this.validateCreationStatus(targetStatusId);
     await this.ensureFolder(folder);
     const path = this.uniqueProjectPath(folder, clean);
-    const file = await this.resolver.createNoteFromTemplate(
-      path,
-      this.settings.projects.templatePath,
-      clean,
-    );
-    const configuredDefault = this.settings.projects.defaultStatusId;
-    const defaultId =
-      configuredDefault.length > 0 ? configuredDefault : this.settings.projects.statuses[0]?.id;
-    if (defaultId !== undefined && defaultId.length > 0) {
-      await this.setStatus(file.path, defaultId);
-    }
-    await this.app.workspace.getLeaf(false).openFile(file);
+    const file = await this.createProjectFile(path, clean);
+    await this.applyCreationStatus(file, targetStatusId);
+    if (options.openFile !== false) await this.app.workspace.getLeaf(false).openFile(file);
     return file;
+  }
+
+  private creationStatusId(options: ProjectCreateOptions): string | undefined {
+    const configuredDefault = this.settings.projects.defaultStatusId;
+    return (
+      options.statusId ??
+      (configuredDefault.length > 0 ? configuredDefault : this.settings.projects.statuses[0]?.id)
+    );
+  }
+
+  private validateCreationStatus(targetStatusId: string | undefined): void {
+    if (targetStatusId !== undefined && targetStatusId.length > 0) {
+      if (!this.settings.projects.statuses.some(({ id }) => id === targetStatusId)) {
+        throw new ProjectEditValidationError(`Unknown project status: ${targetStatusId}`);
+      }
+      const property = this.settings.projects.statusProperty.trim();
+      if (property.length === 0) {
+        throw new ProjectEditValidationError(
+          'Choose a project Status property in settings before creating a project with a status.',
+        );
+      }
+      this.assertConfiguredStatusProperty(property);
+    }
+  }
+
+  private async createProjectFile(path: string, cleanName: string): Promise<TFile> {
+    try {
+      return await this.resolver.createNoteFromTemplate(
+        path,
+        this.settings.projects.templatePath,
+        cleanName,
+      );
+    } catch (cause) {
+      if (cause instanceof CreatedNoteTemplateError) {
+        throw new ProjectCreationError(cause.message, {
+          createdPath: cause.createdPath,
+          phase: 'template',
+          cause: cause.cause,
+        });
+      }
+      throw cause;
+    }
+  }
+
+  private async applyCreationStatus(file: TFile, statusId: string | undefined): Promise<void> {
+    if (statusId === undefined || statusId.length === 0) return;
+    try {
+      await this.setStatus(file.path, statusId);
+    } catch (cause) {
+      throw new ProjectCreationError(`Could not set the status for ${file.path}.`, {
+        createdPath: file.path,
+        phase: 'status',
+        statusId,
+        cause,
+      });
+    }
   }
 
   private async ensureFolder(folder: string): Promise<void> {
     if (folder.length === 0 || this.app.vault.getAbstractFileByPath(folder) != null) return;
     try {
       await this.app.vault.createFolder(folder);
-    } catch {
+    } catch (cause) {
       // Another writer may have created the folder after the existence check.
+      if (!(this.app.vault.getAbstractFileByPath(folder) instanceof TFolder)) throw cause;
     }
   }
 

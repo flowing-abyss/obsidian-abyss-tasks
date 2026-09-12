@@ -1,6 +1,6 @@
 import type * as ObsidianModule from 'obsidian';
 import { App, Notice, Setting } from 'obsidian';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
@@ -34,11 +34,11 @@ function declarationsFor(selector: string): string {
 interface StubPlugin {
   app: App;
   settings: CalendarSettings;
-  saveSettings: ReturnType<typeof vi.fn>;
-  saveViewState: ReturnType<typeof vi.fn>;
-  refreshProjectTableSettings: ReturnType<typeof vi.fn>;
-  renameProjectStatus: ReturnType<typeof vi.fn>;
-  rebuildTaskStatusSemantics: ReturnType<typeof vi.fn>;
+  saveSettings: Mock<() => Promise<void>>;
+  saveViewState: Mock<() => Promise<void>>;
+  refreshProjectTableSettings: Mock<() => void>;
+  renameProjectStatus: Mock<(id: string, name: string, expectedName: string) => Promise<void>>;
+  rebuildTaskStatusSemantics: Mock<() => void>;
 }
 
 function expandAllSettingsCards(settings: CalendarSettings, expanded: Set<string>): void {
@@ -119,17 +119,19 @@ function makeTab(
     getPluginById: () => null,
   };
   const settings = { ...structuredClone(DEFAULT_SETTINGS), ...settingsOverrides };
-  const saveSettings = opts.saveSettings ?? vi.fn().mockResolvedValue(undefined);
-  const saveViewState = opts.saveViewState ?? vi.fn().mockResolvedValue(undefined);
-  const refreshProjectTableSettings = vi.fn();
-  const renameProjectStatus = vi.fn(
-    async (id: string, name: string, expectedName: string): Promise<void> => {
-      const status = settings.projects.statuses.find((candidate) => candidate.id === id);
-      if (status?.name !== expectedName) throw new Error('status changed externally');
-      status.name = name.trim();
-      await (saveSettings as unknown as () => Promise<void>)();
-    },
-  );
+  const saveSettings =
+    opts.saveSettings ?? vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+  const saveViewState =
+    opts.saveViewState ?? vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+  const refreshProjectTableSettings = vi.fn<() => void>();
+  const renameProjectStatus = vi.fn<
+    (id: string, name: string, expectedName: string) => Promise<void>
+  >(async (id: string, name: string, expectedName: string): Promise<void> => {
+    const status = settings.projects.statuses.find((candidate) => candidate.id === id);
+    if (status?.name !== expectedName) throw new Error('status changed externally');
+    status.name = name.trim();
+    await saveSettings();
+  });
   const plugin: StubPlugin = {
     app,
     settings,
@@ -137,7 +139,7 @@ function makeTab(
     saveViewState,
     refreshProjectTableSettings,
     renameProjectStatus,
-    rebuildTaskStatusSemantics: vi.fn(),
+    rebuildTaskStatusSemantics: vi.fn<() => void>(),
   };
   const captured: CapturedComp[] = [];
   const restore = patchSetting(captured);
@@ -318,6 +320,607 @@ function projectStatusOrder(tab: CalendarSettingsTab): string[] {
     (row) => row.dataset['settingsItemId'] ?? '',
   );
 }
+
+describe('CalendarSettingsTab project value commits', () => {
+  it('commits a focused status alias when its owner window deactivates and deduplicates later boundaries', async () => {
+    const { tab, plugin } = makeTab();
+    document.body.append(tab.containerEl);
+    try {
+      const body = openSection(tab, 5);
+      const status = expectDefined(plugin.settings.projects.statuses[0]);
+      const row = projectStatusRowNamed(body, status.name);
+      const alias = expectDefined(
+        row.querySelector<HTMLInputElement>('.abyss-project-value-alias'),
+      );
+      const defaultStatus = expectDefined(findDropdown(body, 'Default status'));
+      const savedSettings: CalendarSettings[] = [];
+      plugin.saveSettings.mockImplementation(async () => {
+        savedSettings.push(structuredClone(plugin.settings));
+      });
+
+      alias.focus();
+      alias.value = 'Current work';
+      alias.dispatchEvent(new Event('input', { bubbles: true }));
+      const ownerWindow = expectDefined(tab.containerEl.ownerDocument.defaultView);
+      ownerWindow.dispatchEvent(new Event('blur'));
+      await flushMicrotasks();
+
+      expect(tab.containerEl.ownerDocument.activeElement).toBe(alias);
+      expect(status.displayName).toBe('Current work');
+      expect(savedSettings).toHaveLength(1);
+      expect(savedSettings[0]?.projects.statuses[0]?.displayName).toBe('Current work');
+      expect(defaultStatus.selectedOptions[0]?.textContent).toBe('Current work');
+
+      alias.dispatchEvent(new Event('change', { bubbles: true }));
+      alias.dispatchEvent(new FocusEvent('blur'));
+      ownerWindow.dispatchEvent(new Event('blur'));
+      await flushMicrotasks();
+
+      expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    } finally {
+      tab.hide();
+      tab.containerEl.remove();
+    }
+  });
+
+  it('commits the first and subsequent preset raw drafts on owner-window deactivation', async () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.table.columns.push({ id: 'property:Priority', visible: true });
+    projects.propertyDefinitions['property:Priority'] = {
+      type: 'text',
+      presets: [{ value: 'low' }],
+    };
+    const { tab, plugin } = makeTab(
+      { projects },
+      {
+        projectProperties: {
+          list: () => [{ name: 'Priority', type: 'text' }],
+          inspect: () => ({
+            kind: 'available',
+            property: { name: 'Priority', type: 'text' },
+            assignment: { kind: 'none' },
+          }),
+          values: () => [],
+          onChange: () => () => {},
+        },
+      },
+    );
+    document.body.append(tab.containerEl);
+    try {
+      const body = openSection(tab, 5);
+      const raw = expectDefined(
+        body.querySelector<HTMLInputElement>(
+          '[data-column-id="property:Priority"] .abyss-project-value-raw',
+        ),
+      );
+      const definition = expectDefined(
+        plugin.settings.projects.propertyDefinitions['property:Priority'],
+      );
+      const ownerWindow = expectDefined(tab.containerEl.ownerDocument.defaultView);
+
+      raw.focus();
+      raw.value = 'high';
+      raw.dispatchEvent(new Event('input', { bubbles: true }));
+      ownerWindow.dispatchEvent(new Event('blur'));
+      await flushMicrotasks();
+      expect(definition.presets).toEqual([{ value: 'high' }]);
+
+      raw.value = 'urgent';
+      raw.dispatchEvent(new Event('input', { bubbles: true }));
+      ownerWindow.dispatchEvent(new Event('blur'));
+      await flushMicrotasks();
+
+      expect(definition.presets).toEqual([{ value: 'urgent' }]);
+      expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+    } finally {
+      tab.hide();
+      tab.containerEl.remove();
+    }
+  });
+
+  it('retries an unchanged rejected preset after its duplicate conflict is removed', async () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.table.columns.push({ id: 'property:Priority', visible: true });
+    projects.propertyDefinitions['property:Priority'] = {
+      type: 'text',
+      presets: [{ value: '🔺' }, { value: '⏫' }],
+    };
+    const { tab, plugin } = makeTab(
+      { projects },
+      {
+        projectProperties: {
+          list: () => [{ name: 'Priority', type: 'text' }],
+          inspect: () => ({
+            kind: 'available',
+            property: { name: 'Priority', type: 'text' },
+            assignment: { kind: 'none' },
+          }),
+          values: () => [],
+          onChange: () => () => {},
+        },
+      },
+    );
+    document.body.append(tab.containerEl);
+    try {
+      const body = openSection(tab, 5);
+      const rows = Array.from(
+        body.querySelectorAll<HTMLElement>(
+          '[data-column-id="property:Priority"] .abyss-project-value-row',
+        ),
+      );
+      const first = expectDefined(
+        expectDefined(rows[0]).querySelector<HTMLInputElement>('.abyss-project-value-raw'),
+      );
+      const second = expectDefined(
+        expectDefined(rows[1]).querySelector<HTMLInputElement>('.abyss-project-value-raw'),
+      );
+      const definition = expectDefined(
+        plugin.settings.projects.propertyDefinitions['property:Priority'],
+      );
+
+      first.value = '⏫';
+      first.dispatchEvent(new Event('input', { bubbles: true }));
+      first.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+
+      expect(definition.presets).toEqual([{ value: '🔺' }, { value: '⏫' }]);
+      expect(plugin.saveSettings).not.toHaveBeenCalled();
+      expect(expectDefined(rows[0]).querySelector('[role="status"]')?.textContent).not.toBe('');
+
+      second.value = 'QA freed';
+      second.dispatchEvent(new Event('input', { bubbles: true }));
+      second.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+      expect(definition.presets).toEqual([{ value: '🔺' }, { value: 'QA freed' }]);
+
+      first.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+
+      expect(definition.presets).toEqual([{ value: '⏫' }, { value: 'QA freed' }]);
+      expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+      expect(expectDefined(rows[0]).querySelector('[role="status"]')?.textContent).toBe('');
+    } finally {
+      tab.hide();
+      tab.containerEl.remove();
+    }
+  });
+
+  it('clears a rejected preset error when its draft returns to the accepted value', async () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.table.columns.push({ id: 'property:Priority', visible: true });
+    projects.propertyDefinitions['property:Priority'] = {
+      type: 'text',
+      presets: [{ value: '🔺' }, { value: '⏫' }],
+    };
+    const { tab, plugin } = makeTab(
+      { projects },
+      {
+        projectProperties: {
+          list: () => [{ name: 'Priority', type: 'text' }],
+          inspect: () => ({
+            kind: 'available',
+            property: { name: 'Priority', type: 'text' },
+            assignment: { kind: 'none' },
+          }),
+          values: () => [],
+          onChange: () => () => {},
+        },
+      },
+    );
+    document.body.append(tab.containerEl);
+    try {
+      const body = openSection(tab, 5);
+      const firstRow = expectDefined(
+        body.querySelector<HTMLElement>(
+          '[data-column-id="property:Priority"] .abyss-project-value-row',
+        ),
+      );
+      const first = expectDefined(
+        firstRow.querySelector<HTMLInputElement>('.abyss-project-value-raw'),
+      );
+      const error = expectDefined(firstRow.querySelector<HTMLElement>('[role="status"]'));
+      const definition = expectDefined(
+        plugin.settings.projects.propertyDefinitions['property:Priority'],
+      );
+
+      first.value = '⏫';
+      first.dispatchEvent(new Event('input', { bubbles: true }));
+      first.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+      expect(error.textContent).not.toBe('');
+
+      first.value = '🔺';
+      first.dispatchEvent(new Event('input', { bubbles: true }));
+      first.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+
+      expect(error.textContent).toBe('');
+      expect(definition.presets).toEqual([{ value: '🔺' }, { value: '⏫' }]);
+      expect(plugin.saveSettings).not.toHaveBeenCalled();
+
+      first.dispatchEvent(new Event('change', { bubbles: true }));
+      first.dispatchEvent(new FocusEvent('blur'));
+      expectDefined(tab.containerEl.ownerDocument.defaultView).dispatchEvent(new Event('blur'));
+      await flushMicrotasks();
+      expect(plugin.saveSettings).not.toHaveBeenCalled();
+    } finally {
+      tab.hide();
+      tab.containerEl.remove();
+    }
+  });
+
+  it('commits the first added preset through raw, alias, and appearance controls without another add', async () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.table.columns.push({ id: 'property:Priority', visible: true });
+    projects.propertyDefinitions['property:Priority'] = { type: 'text', presets: [] };
+    const { tab, plugin } = makeTab(
+      { projects },
+      {
+        projectProperties: {
+          list: () => [{ name: 'Priority', type: 'text' }],
+          inspect: () => ({
+            kind: 'available',
+            property: { name: 'Priority', type: 'text' },
+            assignment: { kind: 'none' },
+          }),
+          values: () => [],
+          onChange: () => () => {},
+        },
+      },
+    );
+    document.body.append(tab.containerEl);
+    try {
+      let body = openSection(tab, 5);
+      expectDefined(
+        body.querySelector<HTMLButtonElement>(
+          '[data-column-id="property:Priority"] .abyss-project-preset-add',
+        ),
+      ).click();
+      await flushMicrotasks();
+
+      body = expectDefined(
+        Array.from(tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section'))
+          .find((section) => section.dataset['sectionTitle'] === 'Projects')
+          ?.querySelector<HTMLElement>('.abyss-settings-section-body'),
+      );
+      const row = expectDefined(
+        body.querySelector<HTMLElement>(
+          '[data-column-id="property:Priority"] .abyss-project-value-row',
+        ),
+      );
+      const raw = expectDefined(row.querySelector<HTMLInputElement>('.abyss-project-value-raw'));
+      const alias = expectDefined(
+        row.querySelector<HTMLInputElement>('.abyss-project-value-alias'),
+      );
+      const appearance = expectDefined(
+        row.querySelector<HTMLSelectElement>('.abyss-project-value-appearance'),
+      );
+      const ownerWindow = expectDefined(tab.containerEl.ownerDocument.defaultView);
+
+      raw.focus();
+      raw.value = 'urgent';
+      raw.dispatchEvent(new Event('input', { bubbles: true }));
+      ownerWindow.dispatchEvent(new Event('blur'));
+      alias.focus();
+      alias.value = 'Urgent';
+      alias.dispatchEvent(new Event('input', { bubbles: true }));
+      ownerWindow.dispatchEvent(new Event('blur'));
+      appearance.value = 'dot';
+      appearance.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushMicrotasks();
+
+      (tab as unknown as { display(): void }).display();
+      expect(plugin.settings.projects.propertyDefinitions['property:Priority']?.presets).toEqual([
+        { value: 'urgent', displayName: 'Urgent', display: 'dot' },
+      ]);
+      expect(
+        tab.containerEl.querySelectorAll(
+          '[data-column-id="property:Priority"] .abyss-project-value-row',
+        ),
+      ).toHaveLength(1);
+      expect(plugin.saveSettings).toHaveBeenCalledTimes(4);
+    } finally {
+      tab.hide();
+      tab.containerEl.remove();
+    }
+  });
+
+  it('keeps invalid and duplicate number drafts visible until a valid owner-window commit', async () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.table.columns.push({ id: 'property:Budget', visible: true });
+    projects.propertyDefinitions['property:Budget'] = {
+      type: 'number',
+      presets: [{ value: 1 }, { value: 2 }],
+    };
+    const { tab, plugin } = makeTab({ projects });
+    document.body.append(tab.containerEl);
+    try {
+      const body = openSection(tab, 5);
+      const input = expectDefined(
+        body.querySelector<HTMLInputElement>(
+          '[data-column-id="property:Budget"] .abyss-project-value-raw',
+        ),
+      );
+      const definition = expectDefined(
+        plugin.settings.projects.propertyDefinitions['property:Budget'],
+      );
+      const ownerWindow = expectDefined(tab.containerEl.ownerDocument.defaultView);
+
+      input.focus();
+      input.value = '2';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      ownerWindow.dispatchEvent(new Event('blur'));
+      await flushMicrotasks();
+      expect(definition.presets).toEqual([{ value: 1 }, { value: 2 }]);
+      expect(input.value).toBe('2');
+      expect(plugin.saveSettings).not.toHaveBeenCalled();
+
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      ownerWindow.dispatchEvent(new Event('blur'));
+      await flushMicrotasks();
+      expect(definition.presets).toEqual([{ value: 1 }, { value: 2 }]);
+      expect(input.value).toBe('');
+      expect(plugin.saveSettings).not.toHaveBeenCalled();
+
+      input.value = '3';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      ownerWindow.dispatchEvent(new Event('blur'));
+      await flushMicrotasks();
+      expect(definition.presets).toEqual([{ value: 3 }, { value: 2 }]);
+      expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    } finally {
+      tab.hide();
+      tab.containerEl.remove();
+    }
+  });
+
+  it('flushes a pending preset alias on hide and removes its owner-window listener', async () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.table.columns.push({ id: 'property:Priority', visible: true });
+    projects.propertyDefinitions['property:Priority'] = {
+      type: 'text',
+      presets: [{ value: 'high' }],
+    };
+    const { tab, plugin } = makeTab(
+      { projects },
+      {
+        projectProperties: {
+          list: () => [{ name: 'Priority', type: 'text' }],
+          inspect: () => ({
+            kind: 'available',
+            property: { name: 'Priority', type: 'text' },
+            assignment: { kind: 'none' },
+          }),
+          values: () => [],
+          onChange: () => () => {},
+        },
+      },
+    );
+    document.body.append(tab.containerEl);
+    let hidden = false;
+    try {
+      const alias = expectDefined(
+        tab.containerEl.querySelector<HTMLInputElement>(
+          '[data-column-id="property:Priority"] .abyss-project-value-alias',
+        ),
+      );
+      const ownerWindow = expectDefined(tab.containerEl.ownerDocument.defaultView);
+      alias.value = 'High priority';
+      alias.dispatchEvent(new Event('input', { bubbles: true }));
+
+      tab.hide();
+      hidden = true;
+      await flushMicrotasks();
+
+      expect(plugin.settings.projects.propertyDefinitions['property:Priority']?.presets).toEqual([
+        { value: 'high', displayName: 'High priority' },
+      ]);
+      expect(plugin.saveSettings).toHaveBeenCalledOnce();
+
+      alias.value = 'Detached draft';
+      alias.dispatchEvent(new Event('input', { bubbles: true }));
+      ownerWindow.dispatchEvent(new Event('blur'));
+      await flushMicrotasks();
+      expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    } finally {
+      if (!hidden) tab.hide();
+      tab.containerEl.remove();
+    }
+  });
+
+  it('commits native preset color input once and deduplicates its following change event', async () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.table.columns.push({ id: 'property:Priority', visible: true });
+    projects.propertyDefinitions['property:Priority'] = {
+      type: 'text',
+      presets: [{ value: 'high', color: '#c74848' }],
+    };
+    const { tab, plugin } = makeTab(
+      { projects },
+      {
+        projectProperties: {
+          list: () => [{ name: 'Priority', type: 'text' }],
+          inspect: () => ({
+            kind: 'available',
+            property: { name: 'Priority', type: 'text' },
+            assignment: { kind: 'none' },
+          }),
+          values: () => [],
+          onChange: () => () => {},
+        },
+      },
+    );
+    try {
+      const body = openSection(tab, 5);
+      const color = expectDefined(
+        body.querySelector<HTMLInputElement>(
+          '[data-column-id="property:Priority"] .abyss-project-value-color',
+        ),
+      );
+
+      color.value = '#28b8a5';
+      color.dispatchEvent(new Event('input', { bubbles: true }));
+      await flushMicrotasks();
+
+      expect(plugin.settings.projects.propertyDefinitions['property:Priority']?.presets).toEqual([
+        { value: 'high', color: '#28b8a5' },
+      ]);
+      expect(plugin.saveSettings).toHaveBeenCalledOnce();
+
+      color.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushMicrotasks();
+      expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    } finally {
+      tab.hide();
+    }
+  });
+
+  it('runs a status rename once when the owner window deactivates with its raw input focused', async () => {
+    const { tab, plugin } = makeTab();
+    document.body.append(tab.containerEl);
+    try {
+      const body = openSection(tab, 5);
+      const input = expectDefined(
+        projectStatusRowNamed(body, 'active').querySelector<HTMLInputElement>(
+          '.abyss-project-value-raw',
+        ),
+      );
+      input.focus();
+      input.value = 'running';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+
+      expectDefined(tab.containerEl.ownerDocument.defaultView).dispatchEvent(new Event('blur'));
+      await flushMicrotasks();
+
+      expect(plugin.renameProjectStatus).toHaveBeenCalledWith('status-1', 'running', 'active');
+      expect(plugin.renameProjectStatus).toHaveBeenCalledOnce();
+
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.dispatchEvent(new FocusEvent('blur'));
+      await flushMicrotasks();
+      expect(plugin.renameProjectStatus).toHaveBeenCalledOnce();
+    } finally {
+      tab.hide();
+      tab.containerEl.remove();
+    }
+  });
+
+  it('does not recreate a settings window listener when a raw status rename settles after hide', async () => {
+    const { tab, plugin } = makeTab();
+    document.body.append(tab.containerEl);
+    const ownerWindow = expectDefined(tab.containerEl.ownerDocument.defaultView);
+    const addWindowListener = vi.spyOn(ownerWindow, 'addEventListener');
+    const pendingRename = deferred<void>();
+    plugin.renameProjectStatus.mockImplementation(() => pendingRename.promise);
+    let hidden = false;
+    try {
+      const body = openSection(tab, 5);
+      const input = expectDefined(
+        projectStatusRowNamed(body, 'active').querySelector<HTMLInputElement>(
+          '.abyss-project-value-raw',
+        ),
+      );
+      input.value = 'running';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+
+      tab.hide();
+      hidden = true;
+      expect(plugin.renameProjectStatus).toHaveBeenCalledOnce();
+      addWindowListener.mockClear();
+
+      pendingRename.resolve();
+      await flushMicrotasks();
+
+      expect(addWindowListener).not.toHaveBeenCalled();
+    } finally {
+      if (!hidden) tab.hide();
+      addWindowListener.mockRestore();
+      tab.containerEl.remove();
+    }
+  });
+
+  it('does not repeat a pending raw status rename after an intervening settings rebuild', async () => {
+    const { tab, plugin } = makeTab();
+    document.body.append(tab.containerEl);
+    const status = expectDefined(plugin.settings.projects.statuses[0]);
+    const pendingRename = deferred<void>();
+    plugin.renameProjectStatus.mockImplementation(async (_id, name) => {
+      await pendingRename.promise;
+      status.name = name;
+    });
+    try {
+      const body = openSection(tab, 5);
+      const input = expectDefined(
+        projectStatusRowNamed(body, 'active').querySelector<HTMLInputElement>(
+          '.abyss-project-value-raw',
+        ),
+      );
+      input.focus();
+      input.value = 'running';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      expectDefined(tab.containerEl.ownerDocument.defaultView).dispatchEvent(new Event('blur'));
+      expect(plugin.renameProjectStatus).toHaveBeenCalledOnce();
+
+      (tab as unknown as { display(): void }).display();
+      pendingRename.resolve();
+      await flushMicrotasks();
+
+      expect(plugin.renameProjectStatus).toHaveBeenCalledOnce();
+    } finally {
+      tab.hide();
+      tab.containerEl.remove();
+    }
+  });
+
+  it('restores the current raw status control when a pending rename fails after a rebuild', async () => {
+    let rejectRename!: (error: Error) => void;
+    const pendingRename = new Promise<void>((_resolve, reject) => {
+      rejectRename = reject;
+    });
+    const { tab, plugin } = makeTab();
+    document.body.append(tab.containerEl);
+    plugin.renameProjectStatus.mockImplementation(() => pendingRename);
+    try {
+      const body = openSection(tab, 5);
+      const input = expectDefined(
+        projectStatusRowNamed(body, 'active').querySelector<HTMLInputElement>(
+          '.abyss-project-value-raw',
+        ),
+      );
+      input.focus();
+      input.value = 'running';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      expectDefined(tab.containerEl.ownerDocument.defaultView).dispatchEvent(new Event('blur'));
+      (tab as unknown as { display(): void }).display();
+
+      rejectRename(new Error('status changed externally'));
+      await flushMicrotasks();
+
+      const current = expectDefined(
+        projectStatusRow(tab.containerEl, 'status-1').querySelector<HTMLInputElement>(
+          '.abyss-project-value-raw',
+        ),
+      );
+      expect(current.value).toBe('active');
+      expect(current.disabled).toBe(false);
+      expect(plugin.renameProjectStatus).toHaveBeenCalledOnce();
+    } finally {
+      tab.hide();
+      tab.containerEl.remove();
+    }
+  });
+});
 
 describe('CalendarSettingsTab renderGeneralSettings', () => {
   it('task prefix input reflects setting and saves on change', () => {
@@ -1167,28 +1770,19 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(restored.selectionEnd).toBe(11);
   });
 
-  it('preserves a focused project-column width draft through display', () => {
-    const { tab } = makeTab();
+  it('omits project-column width inputs while retaining saved widths', () => {
+    const { tab, plugin } = makeTab();
+    expectDefined(
+      plugin.settings.projects.table.columns.find(({ id }) => id === 'progress'),
+    ).width = 260;
     openSection(tab, 5);
-    const scroller = attachSettingsScroller(tab, 513);
-    const before = expectDefined(
-      tab.containerEl.querySelector<HTMLInputElement>(
-        '[data-column-id="progress"] .abyss-project-column-width',
-      ),
-    );
-    before.value = '260';
-    before.focus();
 
     (tab as unknown as { display(): void }).display();
 
-    const after = expectDefined(
-      tab.containerEl.querySelector<HTMLInputElement>(
-        '[data-column-id="progress"] .abyss-project-column-width',
-      ),
+    expect(tab.containerEl.querySelector('.abyss-project-column-width')).toBeNull();
+    expect(plugin.settings.projects.table.columns.find(({ id }) => id === 'progress')?.width).toBe(
+      260,
     );
-    expect(after.value).toBe('260');
-    expect(activeDocument.activeElement).toBe(after);
-    expect(scroller.scrollTop).toBe(513);
   });
 
   it('expands one card without replacing an unrelated focused settings control', () => {
@@ -1462,13 +2056,16 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(plugin.refreshProjectTableSettings).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps the project toolbar in the shared compact row at constrained widths', () => {
+  it('keeps the project toolbar contained at constrained panel widths', () => {
     expect(css).toContain('--abyss-center-toolbar-height: 60px');
     expect(css).toMatch(
       /\.abyss-center-header,\s*\.abyss-cal-nav\s*\{[^}]*min-height: var\(--abyss-center-toolbar-height\)/u,
     );
     expect(css).toMatch(
-      /@media \(width <= 720px\)[\s\S]*?\.abyss-projects-toolbar\s*\{[^}]*flex-wrap: nowrap/u,
+      /@container abyss-panel-layout \(max-width: 45rem\)[\s\S]*?\.abyss-projects-toolbar\s*\{(?=[^}]*display: grid)(?=[^}]*grid-template-columns: max-content minmax\(0, 1fr\))/u,
+    );
+    expect(css).toMatch(
+      /@container abyss-panel-layout \(max-width: 45rem\)[\s\S]*?\.abyss-project-status-filters\s*\{(?=[^}]*grid-row: 2)(?=[^}]*max-width: none)/u,
     );
     expect(css).toMatch(
       /@container abyss-task-list \(max-width: 30rem\)[\s\S]*?\.abyss-cal-nav\s*\{(?=[^}]*flex-wrap: nowrap)(?=[^}]*overflow-x: auto)/u,

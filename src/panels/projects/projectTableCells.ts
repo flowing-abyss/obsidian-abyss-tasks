@@ -1,5 +1,9 @@
 import type { App, Component } from 'obsidian';
-import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
+import type {
+  ProjectDateDisplay,
+  ProjectFieldCatalogItem,
+  ProjectTableProgressDisplay,
+} from '../../projects/projectFields';
 import { isProjectStatusField, projectFieldValue } from '../../projects/projectFields';
 import type { ProjectValuePresentation } from '../../projects/projectPropertyDefinitions';
 import {
@@ -15,7 +19,7 @@ import {
 } from '../../ui/projectPropertyValuePresentation';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { runAsyncAction } from '../../ui/runAsyncAction';
-import { formatProjectRelativeDate } from './projectDatePresentation';
+import { formatProjectPrettyDate, formatProjectRelativeDate } from './projectDatePresentation';
 
 function statusFor(
   project: Project,
@@ -38,7 +42,11 @@ function statusDisplayClass(display: ProjectStatus['display']): string {
   return '';
 }
 
-function renderProgress(cell: HTMLElement, project: Project): void {
+function renderProgress(
+  cell: HTMLElement,
+  project: Project,
+  display: ProjectTableProgressDisplay,
+): void {
   const progress = projectProgress(project.stats);
   const root = cell.createDiv({
     cls: `abyss-project-table-progress is-${progressBand(progress.percent)}`,
@@ -59,6 +67,7 @@ function renderProgress(cell: HTMLElement, project: Project): void {
       cls: `abyss-project-progress-segment${index < filled ? ' is-filled' : ''}`,
     });
   }
+  if (display === 'bar') return;
   const value = root.createSpan({ cls: 'abyss-project-progress-value' });
   if (progress.percent === null) value.setText('—');
   else {
@@ -107,7 +116,8 @@ interface RenderProjectTableCellOptions {
   readonly openProject: (path: string) => void;
   readonly onRemoveListValue: (index: number) => void;
   readonly onToggleCheckbox: (value: boolean, input: HTMLInputElement) => void;
-  readonly dateDisplay?: 'relative';
+  readonly dateDisplay?: ProjectDateDisplay;
+  readonly progressDisplay?: ProjectTableProgressDisplay;
   readonly now?: Date;
   readonly locale?: string;
   readonly description?: {
@@ -346,29 +356,42 @@ interface RenderScalarValueOptions {
   readonly displayed: string;
 }
 
-function renderRelativeDate(
+function isTemporalProjectField(field: ProjectFieldCatalogItem): boolean {
+  return field.type === 'date' || field.type === 'datetime';
+}
+
+function formattedProjectDate(
+  value: unknown,
+  display: Exclude<ProjectDateDisplay, 'raw'>,
+  now: Date,
+  locale: string,
+): string | undefined {
+  return display === 'relative'
+    ? formatProjectRelativeDate(value, now, locale)
+    : formatProjectPrettyDate(value, locale);
+}
+
+function projectDateClass(display: Exclude<ProjectDateDisplay, 'raw'>): string {
+  return display === 'relative' ? 'abyss-project-relative-date' : 'abyss-project-pretty-date';
+}
+
+function renderDate(
   valueOptions: RenderScalarValueOptions,
   options: RenderProjectTableCellOptions,
 ): boolean {
-  if (
-    options.dateDisplay !== 'relative' ||
-    (options.field.type !== 'date' && options.field.type !== 'datetime')
-  ) {
-    return false;
-  }
+  if (!isTemporalProjectField(options.field)) return false;
   const { cell, value } = valueOptions;
-  const relative = formatProjectRelativeDate(
-    value,
-    options.now ?? new Date(),
-    options.locale ?? 'en',
-  );
-  if (relative === undefined || typeof value !== 'string') return false;
+  const display = options.dateDisplay ?? 'pretty';
+  if (display === 'raw') return false;
+  const locale = options.locale ?? 'en';
+  const displayed = formattedProjectDate(value, display, options.now ?? new Date(), locale);
+  if (displayed === undefined || typeof value !== 'string') return false;
   const text = cell.createSpan({
-    cls: 'abyss-project-relative-date',
-    text: relative,
+    cls: projectDateClass(display),
+    text: displayed,
     attr: { title: value },
   });
-  text.dataset['relativeDateValue'] = value;
+  if (display === 'relative') text.dataset['relativeDateValue'] = value;
   return true;
 }
 
@@ -377,7 +400,7 @@ function renderScalarValue(
   options: RenderProjectTableCellOptions,
 ): void {
   const { cell, project, value, displayed } = valueOptions;
-  if (renderRelativeDate(valueOptions, options)) return;
+  if (renderDate(valueOptions, options)) return;
   const empty = value === null || value === undefined || value === '';
   const text = cell.createSpan({ cls: empty ? 'abyss-project-table-empty-value' : '' });
   const presentation = compiledProjectPropertyPresentation(options.compiledPresets, value);
@@ -458,7 +481,7 @@ export function renderProjectTableCell(
     return;
   }
   if (field.type === 'progress') {
-    renderProgress(cell, project);
+    renderProgress(cell, project, options.progressDisplay ?? 'full');
     return;
   }
   renderPropertyValue(cell, project, field, options);

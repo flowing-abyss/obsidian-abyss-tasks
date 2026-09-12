@@ -22,6 +22,19 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   manual: 'Manual',
 };
 
+/** Signals that note creation succeeded but applying its Templater template did not. */
+export class CreatedNoteTemplateError extends Error {
+  readonly createdPath: string;
+  readonly cause: unknown;
+
+  constructor(createdPath: string, cause: unknown) {
+    super(`Could not apply the template to ${createdPath}.`);
+    this.name = 'CreatedNoteTemplateError';
+    this.createdPath = createdPath;
+    this.cause = cause;
+  }
+}
+
 function fallbackAdapter(): DailyNoteAdapter {
   const adapter = ADAPTER_CHAIN[ADAPTER_CHAIN.length - 1];
   if (adapter === undefined) throw new Error('Daily note adapter chain is empty');
@@ -132,11 +145,15 @@ export class DailyNoteResolver {
       const newFile = await this.app.vault.create(filePath, '');
       const templateTFile = this.app.metadataCache.getFirstLinkpathDest(templatePath, '');
       if (templateTFile instanceof TFile) {
-        await (
-          templater as {
-            templater: { write_template_to_file(t: TFile, f: TFile): Promise<void> };
-          }
-        ).templater.write_template_to_file(templateTFile, newFile);
+        try {
+          await (
+            templater as {
+              templater: { write_template_to_file(t: TFile, f: TFile): Promise<void> };
+            }
+          ).templater.write_template_to_file(templateTFile, newFile);
+        } catch (cause) {
+          throw new CreatedNoteTemplateError(newFile.path, cause);
+        }
       }
       return newFile;
     }

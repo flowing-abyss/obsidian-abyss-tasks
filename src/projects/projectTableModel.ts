@@ -26,7 +26,7 @@ export interface ProjectProgress {
   percent: number | null;
 }
 
-interface ProjectTableGroup {
+export interface ProjectTableGroup {
   key: string;
   label: string;
   value: unknown;
@@ -75,7 +75,7 @@ export function projectProgress(stats: ProjectStats): ProjectProgress {
   };
 }
 
-function statusGroupKey(project: Project): string {
+export function statusGroupKey(project: Project): string {
   if (project.statusId !== null && project.statusId.length > 0) return `id:${project.statusId}`;
   if (project.rawStatus !== null && project.rawStatus.length > 0) return `raw:${project.rawStatus}`;
   return 'none';

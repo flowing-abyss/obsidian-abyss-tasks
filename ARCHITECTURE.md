@@ -40,7 +40,7 @@ The plugin has several kinds of state, but they do not have equal authority.
 | Tasks and task metadata                         | Markdown files in the Obsidian vault                                                             | `TaskIndex` snapshots and calendar projections |
 | Projects and project status                     | Project Markdown plus membership query, one configured status property, and literal status names | `ProjectStore` entries and task statistics     |
 | Static plugin preferences                       | Obsidian plugin `data.json`                                                                      | Composed runtime `CalendarSettings`            |
-| Saved list, section, and project-table views    | Versioned plugin `state.json`                                                                    | Composed runtime `CalendarSettings`            |
+| Saved list, section, and project overview views | Versioned plugin `state.json`                                                                    | Composed runtime `CalendarSettings`            |
 | Current mode, selection, search, and drag state | `AppState` or the owning view controller for the current panel session                           | Rendered panel DOM                             |
 
 `TaskIndex` and `ProjectStore` are read models, not secondary databases. They may be rebuilt from the
@@ -148,6 +148,11 @@ presentation. Active blockers disable completion in the interface, while the app
 enforces the same rule for pointer, keyboard, menu, and retry paths. Presentation state such as
 search drafts, drag state, disclosure, history, and Undo remains local and transient.
 
+Within one task-list context, `CenterPanel` retains the task header, options anchor, scroll surface,
+and add-task bar while rebuilding the list contents. View-option changes therefore update the live
+list without replacing the open popover; changing list context or mode tears down that retained
+surface through the normal panel lifecycle.
+
 ### Projects
 
 [`src/projects/`](src/projects/) treats qualifying Markdown notes as projects. `ProjectStore`
@@ -194,18 +199,73 @@ rendering and later edits. A shared link-target helper strips note subpaths and 
 path escaping only for native lookup; absolute external Markdown targets instead keep their exact,
 source-independent identity. It also owns the shared progress calculation: completed top-level
 tasks divided by all non-cancelled top-level tasks. `projectTableSettings` owns defaults and
-normalization for saved column order, aliases, widths, alignment, visibility, absolute or relative
-date presentation, under-name description display, grouping, sorting, and hidden statuses. An
+normalization for saved column order, aliases, widths, alignment, visibility, raw, relative, or
+pretty date presentation, bar or full progress presentation, under-name description display,
+grouping, sorting, and hidden statuses. Table progress defaults to bars and numbers. An absent table
+date override is Custom: each column uses its saved mode or Pretty. A global table mode applies to
+every known temporal column and remains effective for later temporal columns; changing one column
+or choosing Custom first materializes that global mode across current temporal columns, then clears
+the global override. Reset clears these table presentation overrides while preserving column order,
+visibility, aliases, widths, and alignment. Explicit modes roundtrip through table and Kanban view
+state, while Kanban retains its independent field and progress presentation. An
 explicit `none` sort preserves incoming project order. A legacy custom description column becomes the under-name
 display preference while valid grouping and sorting references are remapped to the curated field.
 These preferences live under `projects.table`; project metadata remains in Markdown.
 
-`ProjectsPanel` owns the long-lived project-table controller and the vault property-catalog
+`projectKanbanSettings` owns the optional saved card fields, presentation, independent grouping,
+sorting and status filters, collapsed columns, and path-based manual order for the project Kanban
+view. Missing Kanban state leaves existing installations on the table and is initialized from the
+current table filters, grouping, and sorting only when requested. `projectKanbanModel` partitions
+projects by the shared status-group identity, then delegates search, typed sorting, and inner
+grouping to `projectTableModel`; configured statuses remain ordered even when empty, while synthetic
+raw and No status columns exist only for source values that are present. Card descriptions persist
+as hidden, one line, two lines, or full; the additive full value removes the visual line clamp, while
+older binaries retain it in recovery and fall back to their existing default.
+
+The overview controller initializes each status column's manual path sequence from its first complete
+project snapshot and appends newly observed paths even while a field sort, search, or status filter
+hides their manual projection. Missing and filtered paths keep their remembered ranks. These
+state-only changes use the existing saved-view persistence and Retry boundary.
+
+`ProjectsPanel` owns one long-lived project-overview controller and the vault property-catalog
 subscription. Ordinary project-store refreshes update that controller instead of reconstructing
-it, so search text, collapsed groups, scroll position, focused cells, and active editor drafts remain
-session state. The controller renders the table through the shared view-options primitive and sends
-all edits through `ProjectManager`; it does not write Markdown or frontmatter itself. Switching to a
-project dashboard temporarily detaches the table surface, and returning reattaches the same session.
+it. The controller keeps the shared toolbar, editor boundary, mutation queue, receipt projection,
+source observations, and edit history while delegating keyed board DOM to `ProjectsKanbanView`.
+Table and Kanban retain separate searches, selections, filters, sorting, grouping, and viewport
+positions; switching hides the inactive surface without destroying its nodes. Both surfaces render
+metadata and progress through the shared project-cell renderer and send edits through the same
+`ProjectManager.applyEdits` coordinator. Switching to a project dashboard temporarily detaches the
+overview surface, and returning reattaches the same session and active overview mode.
+
+The project toolbar composes the shared recursive `ViewOptionsPopover` as Group by, Sort by, and one
+active-view group. Nested disclosures close only siblings at their own level. The Table group owns
+column, description, progress, and date-display controls; its date row shows Custom whenever no
+global date override is active. Table column and Kanban card-field visibility, order, and temporal
+presentation actions stay inside the existing guarded view-state mutation path; reorder controls
+target the neighboring visible row while hidden configuration stays in place, and the required Name
+column remains first and visible. An auxiliary native menu registers its exact DOM surface as a
+child of the popover, so that menu retains the popover's shortcut ownership and disclosure state
+until it closes; parent teardown closes any registered child.
+
+`ProjectsKanbanView` projects ordered status columns and optional inner groups from
+`projectKanbanModel`. It reconciles columns by status key, cards by grouped project occurrence, and
+fields by catalog id, moving surviving card elements between columns. Its context contains only
+rendering, selection, and view-state callbacks from the overview controller; it does not construct a
+manager, history, receipt cache, or Markdown writer. Exposed column, group, card, and cell contexts
+are the native drag-and-drop adapter seam.
+
+`projectKanbanDrop` captures exact status and grouping source capabilities at native drag start and
+revalidates them, the source occurrence, visible target column, explicit target-group meaning, and
+active group/sort settings against the fresh session projection inside the shared mutation queue.
+It combines status and editable group assignments into one guarded note batch, applies the
+normalized assignments to one detached project, and rebuilds `projectKanbanModel` for the actual
+sorted/grouped landing occurrence. Manual rank is state-only and is changed after the note batch
+succeeds; its destination seed includes saved paths plus every current destination-column path, so
+filters do not discard hidden ranks. Unknown status columns and impossible inner-group assignments
+remain readable targets only. `projectKanbanDrag` owns native payload, drag image, target decoration,
+collapsed-column hover forecast, insertion line, edge scrolling, click suppression, and complete
+Escape/drop/dragend teardown; it delegates plans and commits through `ProjectsKanbanView` and never
+writes metadata or settings itself.
 
 `ProjectsTableView` also owns a long-lived table element and reconciles its body by group key,
 project path, and field id. Projection changes patch changed cell contents, insert or remove affected
@@ -227,11 +287,13 @@ through its selection identity. Presentation choices use the view-state save pat
 changes mutate the shared static definition, preserve its preset payload, refresh the current table
 session, and use the composition root's static settings save callback with current-draft retry.
 
-Relative project dates are derived from authored strict date strings by the pure
-`projectDatePresentation` formatter. `ProjectsTableView` owns one minute timer for all visible
-relative temporal columns and refreshes only their text spans on ticks and foreground resume. It
-stops the timer at teardown and leaves table nodes, selection, editors, source values, and persistence
-untouched.
+Pretty and Relative project dates share the strict parser in the pure `projectDatePresentation`
+formatter. Pretty preserves date-only calendar values and converts offset datetimes to the system
+timezone; invalid values fall back to their authored text. `ProjectsTableView` owns one minute timer
+for all visible temporal columns whose effective table or independent Kanban field mode is Relative,
+and refreshes only their text spans on ticks and foreground resume. It stops the timer at teardown
+and leaves table nodes, selection, editors, source values, tooltips, clipboard values, and
+persistence untouched.
 
 `ProjectsTableView` owns spreadsheet selection as an occurrence-and-column range over the current
 visible projection. Repeated list-group occurrences remain distinct in that transient range, while
@@ -257,15 +319,18 @@ reusing `projectTableModel`; the drop still rebuilds its guarded plan before wri
 and `ProjectManager` share `projectEdits` value/presence normalization, while unreliable tag-query,
 filtered, collapsed, self, and already-present occurrences deliberately omit the insertion edge.
 
-`ProjectCellEditor` owns typed drafts, suggestion-popup lifetime, validation, and autosave. Its
-async commit handle remains mounted on failure and coalesces a newer draft while a save is pending.
-The table mounts that handle without focus, positions its bounded out-of-flow surface against the
-edited cell or description region, registers the active handle, and then focuses it, so editing does
-not change row height and native suggestions measure the final input position. List chips and their
-entry share one horizontally bounded band. Suggestions come only from the edited property's native
-value catalog; they do not enumerate vault notes. Scalar editors browse those values on a fresh
-focus without clearing the raw draft, then filter readable link labels and exact raw values after
-typing. Escape closes the editor in one action even when the suggestion popup is open.
+`ProjectCellEditor` owns typed drafts, validation, and autosave. Its async commit handle remains
+mounted on failure and coalesces a newer draft while a save is pending. List, tag, and status cells,
+plus scalar text or number cells with meaningful choices, use one retained anchored value picker.
+The picker keeps search separate from assignment, groups selected values before available values,
+and autosaves only explicit toggle, add, or replace actions without closing. Its session catalog
+combines current-cell values, configured presets or statuses, and the edited property's native value
+catalog; it does not enumerate vault notes or edit global definitions. The table mounts editors
+without focus, positions their bounded out-of-flow surface, registers the active handle, and then
+focuses it. Picker surfaces use the overview root as their positioning container so table sticky
+cells and Kanban column scrolling do not clip them; minimal date, description, checkbox, and
+choice-free scalar editors retain their existing cell-local surface. Escape closes an editor and
+discards only unsubmitted search or replacement text.
 On close it reports restore-current, forward Tab, backward Tab, or preserve-focus intent;
 `ProjectsTableView` resolves that intent against the post-commit visible occurrence projection and
 uses the same selection, focus, and reveal path as ordinary keyboard navigation.
@@ -311,7 +376,8 @@ type write is created.
 [`src/settings/`](src/settings/) defines defaults, persisted settings, migrations, and the settings
 interface. `SettingsPersistenceCoordinator` serializes two documents through Obsidian's public
 vault adapter: `data.json` contains static configuration, while adjacent `state.json` contains
-`listViewStates`, `sectionCollapse`, and the complete `projects.table` preference. A single
+`listViewStates`, `sectionCollapse`, the complete `projects.table` preference, and optional
+`projects.kanban` and `projects.overviewView` preferences. A single
 `CalendarSettings` object remains the runtime authority; the persistence boundary partitions and
 recomposes it instead of giving panels independent settings copies.
 
@@ -339,11 +405,19 @@ mounted `PanelView` to refresh its existing table controller after the state wri
 status settings rebuild the shared `StatusCatalog`, `StatusRegistry`, and the
 indexer's interpretation of task symbols together.
 
+Each `CalendarSettingsTab` render owns one project-value commit lifecycle bound to that render's
+native owner window. Project text drafts commit on change, blur, Enter, window deactivation, and
+settings hide; color inputs commit on their native input event. A settings rebuild transfers a
+focused draft and its focus into the replacement control, whose next natural boundary commits it.
+The lifecycle removes its control and window listeners at teardown and deduplicates later boundaries
+without changing the static settings save and failure-retry path.
+
 `ProjectStore.refreshSettings()` compares only membership and status-resolution inputs before it
 rescans projects or recomputes task statistics. Type, preset, alias, color, alignment, and sidebar
 presentation changes reuse the existing project snapshots. `PanelView` then reconciles the current
-project table once and asks `LeftPanel` to replace only its project section, so a presentation save
-does not query the task-wide list. The settings UI uses one shared expandable-card primitive for tag,
+project table and Kanban cells once, patches a mounted dashboard status in place, and asks `LeftPanel`
+to replace only its project section, so a presentation save does not query the task-wide list. The
+settings UI uses one shared expandable-card primitive for tag,
 task-status, and project-property rows. Project statuses and custom-property presets use one shared
 compact value-row primitive inside their expanded property cards; adapters retain domain validation
 and persistence while the row owns native value, display-name, color, appearance, drag, and remove
@@ -438,8 +512,8 @@ for same-file metadata changes.
 
 1. The interface chooses and freezes a capture context before asking `TaskCaptureApplicationApi` to
    plan a destination.
-2. For the project table, `PanelView` delegates through `CenterPanel` and `ProjectsPanel` to the
-   table's active visible occurrence; an absent selection retains the default projects context.
+2. For the project overview, `PanelView` delegates through `CenterPanel` and `ProjectsPanel` to the
+   active table row or Kanban card; an absent selection retains the default projects context.
 3. The destination provider resolves today's note or the configured file, while project contexts
    use the selected note and the existing project insertion policy.
 4. The ready creation session sends the create command through the application service and
@@ -479,6 +553,22 @@ across files and settings and does not claim crash atomicity.
 
 Moving a task into a project uses the standard task move command, so it retains the same validation,
 recovery, and reindexing behavior as other task moves.
+
+Project creation from the overview is a background command owned by the retained table/Kanban
+session. The composer freezes the selected configured status, then `ProjectsPanel` asks
+`ProjectManager` to create without opening a workspace leaf. The manager validates the requested
+status and its writable property before creating anything, creates the note through the shared
+`DailyNoteResolver` template path, awaits Templater as the readiness barrier, and applies the final
+status through the serialized metadata command. `ProjectStore` publication remains the source of
+the visible project snapshot; the overview presentation matches the owned path and expected final
+status against an already-published or later snapshot, selectively relaxes only obstructing active
+filters, expands the destination, and reuses the existing selection and reveal behavior.
+
+If template application fails after the resolver owns a file, or the final status write fails,
+`ProjectCreationError` carries the exact created path and phase to the single overview error
+boundary. Status recovery writes only that owned file. Template recovery offers the owned note and
+requires an explicit fresh draft before another create, so neither path collision nor retry can
+silently duplicate the project.
 
 ## Enforced dependency rules
 

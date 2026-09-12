@@ -307,10 +307,16 @@ export class CenterPanel {
   private selectionFocusKey_abyssPrivate: string | null = null;
   private filterDebounce_abyssPrivate = 0;
   private refocusSearch_abyssPrivate = false;
-  // Set true while a status-group toggle click is in flight, so that the
-  // full re-render triggered by updateViewState re-opens the popover with
-  // the "Status group" row still expanded (multi-select shouldn't close on pick).
-  private reopenStatusGroupPopover_abyssPrivate = false;
+  private taskShell_abyssPrivate: {
+    readonly key: string;
+    readonly header: HTMLElement;
+    readonly title: HTMLElement;
+    readonly chips: HTMLElement;
+    readonly viewButton: HTMLButtonElement;
+    readonly filterInput: HTMLInputElement;
+    readonly scroll: HTMLElement;
+    readonly addBar: HTMLElement;
+  } | null = null;
   private readonly onSaveViewState_abyssPrivate: () => Promise<void>;
   private readonly onSaveSettings_abyssPrivate: (() => Promise<void>) | undefined;
   private md_abyssPrivate = new Component();
@@ -860,13 +866,14 @@ export class CenterPanel {
   private render_abyssPrivate(): void {
     const mode = this.state_abyssPrivate.get('mode');
     if (this.refreshMountedProjects_abyssPrivate(mode)) return;
-    this.prepareRender_abyssPrivate(mode);
+    const retainTaskShell = this.canRetainTaskShell_abyssPrivate(mode);
+    this.prepareRender_abyssPrivate(mode, retainTaskShell);
     if (mode !== 'projects') this.destroyProjectsPanel_abyssPrivate();
     if (mode === 'calendar') {
       this.renderCalendarRoot_abyssPrivate();
       return;
     }
-    this.prepareNonCalendarRoot_abyssPrivate();
+    this.prepareNonCalendarRoot_abyssPrivate(retainTaskShell);
     if (mode === 'search') {
       this.renderSearch_abyssPrivate();
       return;
@@ -888,11 +895,22 @@ export class CenterPanel {
     return true;
   }
 
-  private prepareRender_abyssPrivate(mode: string): void {
+  private canRetainTaskShell_abyssPrivate(mode: string): boolean {
+    const shell = this.taskShell_abyssPrivate;
+    return (
+      mode === 'tasks' &&
+      shell?.key === this.activeListKey_abyssPrivate() &&
+      shell.header.isConnected &&
+      shell.scroll.isConnected &&
+      shell.addBar.isConnected
+    );
+  }
+
+  private prepareRender_abyssPrivate(mode: string, retainTaskShell = false): void {
     this.unmountActiveCapture_abyssPrivate();
     this.clearTaskDatePicker_abyssPrivate();
     this.dismissRecurrenceEditor_abyssPrivate();
-    this.viewStatePopoverCleanup_abyssPrivate?.();
+    if (!retainTaskShell) this.viewStatePopoverCleanup_abyssPrivate?.();
     this.clearSearchShell_abyssPrivate();
     if (mode === 'search') return;
     this.md_abyssPrivate.unload();
@@ -911,10 +929,13 @@ export class CenterPanel {
     this.renderCalendarMode_abyssPrivate();
   }
 
-  private prepareNonCalendarRoot_abyssPrivate(): void {
+  private prepareNonCalendarRoot_abyssPrivate(retainTaskShell = false): void {
     this.el.removeClass('abyss-center--calendar');
     this.destroyCalendarView_abyssPrivate();
-    this.el.empty();
+    if (!retainTaskShell) {
+      this.clearTaskShell_abyssPrivate();
+      this.el.empty();
+    }
   }
 
   private renderProjectsMode_abyssPrivate(): void {
@@ -948,23 +969,83 @@ export class CenterPanel {
 
   private renderTasksMode_abyssPrivate(): void {
     this.el.removeClass('abyss-center--projects');
-    const header = this.el.createDiv({ cls: 'abyss-center-header' });
-    header.createEl('h2', { cls: 'abyss-center-title', text: this.getTitle_abyssPrivate() });
-    const controls = header.createDiv({ cls: 'abyss-center-controls' });
-    this.renderPropertyChips_abyssPrivate(controls);
-    this.renderViewStateButton_abyssPrivate(controls);
-    this.renderTaskFilterInput_abyssPrivate(controls);
+    const shell = this.ensureTaskShell_abyssPrivate();
+    this.syncTaskHeader_abyssPrivate(shell);
+    const { scroll, addBar } = shell;
+    const scrollTop = scroll.scrollTop;
+    const scrollLeft = scroll.scrollLeft;
+    scroll.empty();
     const tasks = this.getFilteredTasks_abyssPrivate();
-    const scroll = this.el.createDiv({ cls: 'abyss-center-scroll' });
     if (tasks.length === 0) scroll.createDiv({ cls: 'abyss-center-empty', text: 'No tasks' });
     else this.renderWithGrouping_abyssPrivate(scroll, tasks);
-    this.renderAddTaskBar_abyssPrivate();
+    scroll.scrollTop = Math.min(scrollTop, Math.max(0, scroll.scrollHeight - scroll.clientHeight));
+    scroll.scrollLeft = Math.min(scrollLeft, Math.max(0, scroll.scrollWidth - scroll.clientWidth));
+    addBar.empty();
+    this.renderCaptureHost_abyssPrivate(addBar, {
+      type: 'list',
+      selectionKey: listSelectionToKey(this.state_abyssPrivate.get('selectedList')),
+    });
     this.reconcileTaskSelection_abyssPrivate(this.visibleTaskKeys_abyssPrivate());
     this.updateSelectionVisuals_abyssPrivate();
     this.completeTaskCardRender_abyssPrivate();
   }
 
-  private renderTaskFilterInput_abyssPrivate(controls: HTMLElement): void {
+  private ensureTaskShell_abyssPrivate(): NonNullable<CenterPanel['taskShell_abyssPrivate']> {
+    if (this.canRetainTaskShell_abyssPrivate('tasks')) {
+      return this.taskShell_abyssPrivate as NonNullable<CenterPanel['taskShell_abyssPrivate']>;
+    }
+    this.clearTaskShell_abyssPrivate();
+    const header = this.el.createDiv({ cls: 'abyss-center-header' });
+    const title = header.createEl('h2', { cls: 'abyss-center-title' });
+    const controls = header.createDiv({ cls: 'abyss-center-controls' });
+    const chips = controls.createSpan({ cls: 'abyss-task-filter-chips' });
+    const viewButton = this.renderViewStateButton_abyssPrivate(controls);
+    const filterInput = this.renderTaskFilterInput_abyssPrivate(controls);
+    const scroll = this.el.createDiv({ cls: 'abyss-center-scroll' });
+    const addBar = this.el.createDiv({ cls: 'abyss-add-task-bar' });
+    const shell = {
+      key: this.activeListKey_abyssPrivate(),
+      header,
+      title,
+      chips,
+      viewButton,
+      filterInput,
+      scroll,
+      addBar,
+    };
+    this.taskShell_abyssPrivate = shell;
+    return shell;
+  }
+
+  private syncTaskHeader_abyssPrivate(
+    shell: NonNullable<CenterPanel['taskShell_abyssPrivate']>,
+  ): void {
+    shell.title.setText(this.getTitle_abyssPrivate());
+    shell.chips.empty();
+    this.renderPropertyChips_abyssPrivate(shell.chips);
+    const viewState = this.state_abyssPrivate.get('centerListViewState');
+    shell.viewButton.toggleClass(
+      'abyss-view-state-btn--active',
+      isListViewCustomized(viewState, this.activeListKey_abyssPrivate()),
+    );
+    const { filterInput } = shell;
+    const filter = this.state_abyssPrivate.get('centerFilter');
+    if (filterInput.value !== filter) filterInput.value = filter;
+    if (this.refocusSearch_abyssPrivate) {
+      this.refocusSearch_abyssPrivate = false;
+      window.setTimeout(() => {
+        if (!filterInput.isConnected) return;
+        filterInput.focus();
+        filterInput.setSelectionRange(filterInput.value.length, filterInput.value.length);
+      }, 0);
+    }
+  }
+
+  private clearTaskShell_abyssPrivate(): void {
+    this.taskShell_abyssPrivate = null;
+  }
+
+  private renderTaskFilterInput_abyssPrivate(controls: HTMLElement): HTMLInputElement {
     const searchInput = controls.createEl('input', {
       cls: 'abyss-center-search',
       attr: { type: 'text', placeholder: 'Filter…', 'aria-label': 'Filter tasks' },
@@ -984,6 +1065,7 @@ export class CenterPanel {
         this.state_abyssPrivate.set('centerFilter', searchInput.value);
       }, 150);
     });
+    return searchInput;
   }
 
   private renderCalendarMode_abyssPrivate(): void {
@@ -3124,7 +3206,7 @@ export class CenterPanel {
     return listSelectionToKey(this.state_abyssPrivate.get('selectedList'));
   }
 
-  private renderViewStateButton_abyssPrivate(container: HTMLElement): void {
+  private renderViewStateButton_abyssPrivate(container: HTMLElement): HTMLButtonElement {
     const vs = this.state_abyssPrivate.get('centerListViewState');
     const defaults = getListViewDefaults(this.activeListKey_abyssPrivate());
     const isNonDefault =
@@ -3141,33 +3223,29 @@ export class CenterPanel {
     btn.addEventListener('click', () => {
       this.showViewStatePopover_abyssPrivate(btn);
     });
-
-    if (this.reopenStatusGroupPopover_abyssPrivate) {
-      this.reopenStatusGroupPopover_abyssPrivate = false;
-      this.showViewStatePopover_abyssPrivate(btn, true);
-    }
+    return btn;
   }
 
-  private showViewStatePopover_abyssPrivate(
-    anchor: HTMLElement,
-    autoOpenStatusGroupRow = false,
-  ): void {
+  private showViewStatePopover_abyssPrivate(anchor: HTMLElement): void {
     if (this.viewStatePopoverCleanup_abyssPrivate != null) {
       this.viewStatePopoverCleanup_abyssPrivate(true);
       return;
     }
 
-    const viewState = this.state_abyssPrivate.get('centerListViewState');
     const defaults = getListViewDefaults(this.activeListKey_abyssPrivate());
     const close = openViewOptionsPopover({
       host: this.el,
       anchor,
       rows: [
-        this.groupByRowSpec_abyssPrivate(viewState, defaults),
-        this.sortByRowSpec_abyssPrivate(viewState, defaults),
-        this.statusGroupsRowSpec_abyssPrivate(viewState, autoOpenStatusGroupRow),
+        this.groupByRowSpec_abyssPrivate(defaults),
+        this.sortByRowSpec_abyssPrivate(defaults),
+        this.statusGroupsRowSpec_abyssPrivate(),
       ],
-      showReset: isListViewCustomized(viewState, this.activeListKey_abyssPrivate()),
+      showReset: () =>
+        isListViewCustomized(
+          this.state_abyssPrivate.get('centerListViewState'),
+          this.activeListKey_abyssPrivate(),
+        ),
       onReset: () => {
         this.updateViewState_abyssPrivate(getListViewDefaults(this.activeListKey_abyssPrivate()));
       },
@@ -3181,10 +3259,7 @@ export class CenterPanel {
     this.viewStatePopoverCleanup_abyssPrivate = close;
   }
 
-  private groupByRowSpec_abyssPrivate(
-    viewState: ListViewState,
-    defaults: ListViewState,
-  ): ViewOptionsSingleRow {
+  private groupByRowSpec_abyssPrivate(defaults: ListViewState): ViewOptionsSingleRow {
     const labels: Record<string, string> = {
       none: 'None',
       date: 'Date',
@@ -3196,14 +3271,18 @@ export class CenterPanel {
       kind: 'single',
       icon: 'layout-list',
       label: 'Group by',
-      displayValue: labels[viewState.groupBy] ?? viewState.groupBy,
-      activeValue: viewState.groupBy,
+      displayValue: () => {
+        const groupBy = this.state_abyssPrivate.get('centerListViewState').groupBy;
+        return labels[groupBy] ?? groupBy;
+      },
+      activeValue: () => this.state_abyssPrivate.get('centerListViewState').groupBy,
       options: Object.entries(labels).map(([value, label]) => ({
         label,
         value,
         isDefault: value === defaults.groupBy,
       })),
       onSelect: (value) => {
+        const viewState = this.state_abyssPrivate.get('centerListViewState');
         this.updateViewState_abyssPrivate({
           ...viewState,
           groupBy: value as ListViewState['groupBy'],
@@ -3212,11 +3291,7 @@ export class CenterPanel {
     };
   }
 
-  private sortByRowSpec_abyssPrivate(
-    viewState: ListViewState,
-    defaults: ListViewState,
-  ): ViewOptionsSingleRow {
-    const arrow = viewState.sortBy.dir === 'asc' ? '↑' : '↓';
+  private sortByRowSpec_abyssPrivate(defaults: ListViewState): ViewOptionsSingleRow {
     const fields: Array<ListViewState['sortBy']['field']> = [
       'date',
       'priority',
@@ -3228,15 +3303,22 @@ export class CenterPanel {
       kind: 'single',
       icon: 'arrow-up-down',
       label: 'Sort by',
-      displayValue: `${this.capitalize_abyssPrivate(viewState.sortBy.field)} ${arrow}`,
-      activeValue: viewState.sortBy.field,
+      displayValue: () => {
+        const { sortBy } = this.state_abyssPrivate.get('centerListViewState');
+        return `${this.capitalize_abyssPrivate(sortBy.field)} ${sortBy.dir === 'asc' ? '↑' : '↓'}`;
+      },
+      activeValue: () => this.state_abyssPrivate.get('centerListViewState').sortBy.field,
       options: fields.map((field) => ({
-        label:
-          `${this.capitalize_abyssPrivate(field)} ${viewState.sortBy.field === field ? arrow : ''}`.trim(),
+        label: () => {
+          const { sortBy } = this.state_abyssPrivate.get('centerListViewState');
+          const arrow = sortBy.dir === 'asc' ? '↑' : '↓';
+          return `${this.capitalize_abyssPrivate(field)} ${sortBy.field === field ? arrow : ''}`.trim();
+        },
         value: field,
         isDefault: field === defaults.sortBy.field,
       })),
       onSelect: (value) => {
+        const viewState = this.state_abyssPrivate.get('centerListViewState');
         const field = value as ListViewState['sortBy']['field'];
         const dir =
           viewState.sortBy.field === field && viewState.sortBy.dir === 'asc' ? 'desc' : 'asc';
@@ -3249,43 +3331,51 @@ export class CenterPanel {
     return value.charAt(0).toUpperCase() + value.slice(1);
   }
 
-  private statusGroupsRowSpec_abyssPrivate(
-    viewState: ListViewState,
-    initiallyOpen: boolean,
-  ): ViewOptionsMultiRow {
+  private statusGroupsRowSpec_abyssPrivate(): ViewOptionsMultiRow {
     const apply = (groups: TaskStatusType[] | undefined): void => {
-      this.applyStatusGroupsChange_abyssPrivate(viewState, groups);
+      this.applyStatusGroupsChange_abyssPrivate(groups);
     };
     return {
       kind: 'multi',
       icon: 'eye',
       label: 'Show',
-      displayValue: this.statusGroupsLabel_abyssPrivate(viewState.statusGroups),
-      selected: viewState.statusGroups ?? ALL_STATUS_GROUPS,
+      displayValue: () =>
+        this.statusGroupsLabel_abyssPrivate(
+          this.state_abyssPrivate.get('centerListViewState').statusGroups,
+        ),
+      selected: () =>
+        this.state_abyssPrivate.get('centerListViewState').statusGroups ?? ALL_STATUS_GROUPS,
       options: ALL_STATUS_GROUPS.map((value) => ({ label: TYPE_LABELS[value], value })),
       onToggle: (rawValue) => {
         const value = rawValue as TaskStatusType;
+        const viewState = this.state_abyssPrivate.get('centerListViewState');
         const current = viewState.statusGroups ?? ALL_STATUS_GROUPS;
         const next = current.includes(value)
           ? current.filter((group) => group !== value)
           : [...current, value];
         apply(next.length === 0 || next.length >= 4 ? undefined : next);
       },
-      initiallyOpen,
       presets: [
         {
           label: 'Active',
           onSelect: () => {
             apply(ACTIVE_STATUS_GROUPS);
           },
-          active: statusGroupsEqual(viewState.statusGroups, ACTIVE_STATUS_GROUPS),
+          active: () =>
+            statusGroupsEqual(
+              this.state_abyssPrivate.get('centerListViewState').statusGroups,
+              ACTIVE_STATUS_GROUPS,
+            ),
         },
         {
           label: 'All',
           onSelect: () => {
             apply(undefined);
           },
-          active: normalizeStatusGroups(viewState.statusGroups) === undefined,
+          active: () =>
+            normalizeStatusGroups(
+              this.state_abyssPrivate.get('centerListViewState').statusGroups,
+            ) === undefined,
         },
       ],
     };
@@ -3298,12 +3388,8 @@ export class CenterPanel {
     return `${effective.length} selected`;
   }
 
-  private applyStatusGroupsChange_abyssPrivate(
-    viewState: ListViewState,
-    groups: TaskStatusType[] | undefined,
-  ): void {
-    this.reopenStatusGroupPopover_abyssPrivate = true;
-    this.viewStatePopoverCleanup_abyssPrivate?.();
+  private applyStatusGroupsChange_abyssPrivate(groups: TaskStatusType[] | undefined): void {
+    const viewState = this.state_abyssPrivate.get('centerListViewState');
     const withoutStatusGroups = { ...viewState };
     delete withoutStatusGroups.statusGroups;
     this.updateViewState_abyssPrivate(
@@ -3334,14 +3420,6 @@ export class CenterPanel {
         ? { type: 'calendar-month', date }
         : { type: 'calendar-all-day', date };
     this.openCapture_abyssPrivate(placement, { type: 'default', source: 'calendar' });
-  }
-
-  private renderAddTaskBar_abyssPrivate(): void {
-    const bar = this.el.createDiv({ cls: 'abyss-add-task-bar' });
-    this.renderCaptureHost_abyssPrivate(bar, {
-      type: 'list',
-      selectionKey: listSelectionToKey(this.state_abyssPrivate.get('selectedList')),
-    });
   }
 
   private renderCaptureHost_abyssPrivate(host: HTMLElement, placement: BarCapturePlacement): void {

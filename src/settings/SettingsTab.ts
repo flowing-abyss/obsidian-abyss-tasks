@@ -26,6 +26,7 @@ import { type ProjectValueRowControls, renderProjectValueRow } from './projectVa
 import { renderSettingsCard } from './settingsCard';
 import { captureSettingsRenderContext, restoreSettingsRenderContext } from './settingsRenderState';
 import { saveSettingsDraft } from './settingsSaveFailure';
+import { SettingsValueCommit } from './settingsValueCommit';
 import {
   type ParsedShortcutAlternative,
   SHORTCUT_ACTION_IDS,
@@ -118,6 +119,11 @@ interface ProjectMetadataSourceSetting {
   readonly name: string;
 }
 
+interface PendingProjectStatusRename {
+  readonly expectedName: string;
+  readonly requestedName: string;
+}
+
 let nextSettingsTabScope = 0;
 
 /** Returns an error message if `symbol` is invalid for a status, else null. */
@@ -192,6 +198,12 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private readonly openSections_abyssPrivate = new Set<string>();
   private readonly sectionScope_abyssPrivate = ++nextSettingsTabScope;
   private projectSettingsCleanup_abyssPrivate: (() => void) | undefined = undefined;
+  private settingsValueCommit_abyssPrivate: SettingsValueCommit | undefined = undefined;
+  private settingsVisible_abyssPrivate = false;
+  private readonly pendingProjectStatusRenames_abyssPrivate = new Map<
+    string,
+    PendingProjectStatusRename
+  >();
   private propertyCatalogCleanup_abyssPrivate: (() => void) | undefined = undefined;
   private propertyCatalogSignature_abyssPrivate: string | undefined = undefined;
 
@@ -289,6 +301,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   override display(): void {
+    this.settingsVisible_abyssPrivate = true;
     this.propertyCatalogSignature_abyssPrivate = this.projectCatalogSignature_abyssPrivate();
     this.propertyCatalogCleanup_abyssPrivate ??= this.projectProperties_abyssPrivate.onChange(
       () => {
@@ -302,6 +315,11 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   override hide(): void {
+    this.settingsVisible_abyssPrivate = false;
+    const valueCommit = this.settingsValueCommit_abyssPrivate;
+    this.settingsValueCommit_abyssPrivate = undefined;
+    valueCommit?.flush();
+    valueCommit?.dispose();
     this.projectSettingsCleanup_abyssPrivate?.();
     this.projectSettingsCleanup_abyssPrivate = undefined;
     this.propertyCatalogCleanup_abyssPrivate?.();
@@ -310,12 +328,18 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   private render_abyssPrivate(focus?: () => HTMLElement | null): void {
+    if (!this.settingsVisible_abyssPrivate) return;
     const { containerEl } = this;
     const renderContext = captureSettingsRenderContext(containerEl);
+    const previousValueCommit = this.settingsValueCommit_abyssPrivate;
+    this.settingsValueCommit_abyssPrivate = undefined;
+    previousValueCommit?.dispose();
     const previousCleanup = this.projectSettingsCleanup_abyssPrivate;
     this.projectSettingsCleanup_abyssPrivate = undefined;
     this.statusHeaderPreviewEls_abyssPrivate.clear();
     const nextContainer = containerEl.ownerDocument.adoptNode(createFragment().createDiv());
+    const valueCommit = new SettingsValueCommit(containerEl);
+    this.settingsValueCommit_abyssPrivate = valueCommit;
 
     this.addSection_abyssPrivate(nextContainer, 'General', 'sliders-horizontal', (body) => {
       this.renderGeneralSettings_abyssPrivate(body);
@@ -979,6 +1003,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private renderProjectsSettings_abyssPrivate(containerEl: HTMLElement): void {
     this.renderProjectDefinitionSettings_abyssPrivate(containerEl);
     this.renderProjectTaskInsertionSettings_abyssPrivate(containerEl);
+    const valueCommit = this.settingsValueCommit_abyssPrivate;
     this.projectSettingsCleanup_abyssPrivate = renderProjectTableSettings({
       app: this.app,
       container: containerEl,
@@ -1003,6 +1028,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
                   ?.querySelector<HTMLButtonElement>('.abyss-project-property-toggle') ?? null,
         );
       },
+      ...(valueCommit === undefined ? {} : { valueCommit }),
     });
   }
 
@@ -1149,12 +1175,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
         await this.plugin_abyssPrivate.saveSettings();
         this.render_abyssPrivate();
       };
-      input.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter') return;
-        event.preventDefault();
-        input.blur();
-      });
-      input.addEventListener('blur', () => {
+      this.settingsValueCommit_abyssPrivate?.register(input, () => {
         runAsyncAction(commit(), `Could not save ${name.toLowerCase()}`);
       });
     });
@@ -1224,6 +1245,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .setName('Default status')
       .setDesc('Applied to newly created projects.')
       .addDropdown((dropdown) => {
+        dropdown.selectEl.setAttribute('aria-label', 'Default status');
         for (const status of projects.statuses) {
           dropdown.addOption(status.id, projectStatusDisplayName(status));
         }
@@ -1262,7 +1284,12 @@ export class CalendarSettingsTab extends PluginSettingTab {
           'reorder project statuses',
         ]),
     });
-    const expectedName = status.name;
+    const pendingRename = this.pendingProjectStatusRenames_abyssPrivate.get(status.id);
+    if (pendingRename !== undefined) {
+      controls.value.value = pendingRename.requestedName;
+      controls.value.disabled = true;
+    }
+    const expectedName = pendingRename?.expectedName ?? status.name;
     this.registerProjectStatusName_abyssPrivate(status, controls, expectedName);
     this.registerProjectStatusPresentation_abyssPrivate(status, controls);
     controls.remove.addEventListener('click', () => {
@@ -1283,15 +1310,23 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const commitName = (): void => {
       if (controls.value.value === expectedName || controls.value.disabled) return;
       const requestedName = controls.value.value;
+      const pendingRename = { expectedName, requestedName };
+      this.pendingProjectStatusRenames_abyssPrivate.set(status.id, pendingRename);
       controls.value.disabled = true;
       runAsyncAction(
         this.plugin_abyssPrivate.renameProjectStatus(status.id, requestedName, expectedName).then(
           () => {
+            if (this.pendingProjectStatusRenames_abyssPrivate.get(status.id) !== pendingRename) {
+              return;
+            }
+            this.pendingProjectStatusRenames_abyssPrivate.delete(status.id);
             this.render_abyssPrivate();
           },
           (error: unknown) => {
-            controls.value.value = expectedName;
-            controls.value.disabled = false;
+            if (this.pendingProjectStatusRenames_abyssPrivate.get(status.id) === pendingRename) {
+              this.pendingProjectStatusRenames_abyssPrivate.delete(status.id);
+              this.render_abyssPrivate();
+            }
             const message = error instanceof Error ? error.message : String(error);
             console.error('[abyss-tasks] Could not rename project status', {
               statusId: status.id,
@@ -1304,40 +1339,50 @@ export class CalendarSettingsTab extends PluginSettingTab {
         ),
       );
     };
-    controls.value.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter') return;
-      event.preventDefault();
-      controls.value.blur();
-    });
-    controls.value.addEventListener('blur', commitName);
+    this.settingsValueCommit_abyssPrivate?.register(controls.value, commitName);
   }
 
   private registerProjectStatusPresentation_abyssPrivate(
     status: ProjectStatus,
     controls: ProjectValueRowControls,
   ): void {
-    controls.displayName.addEventListener('change', () => {
+    const commitDisplayName = (): void => {
       const displayName = controls.displayName.value.trim();
+      if (displayName === (status.displayName?.trim() ?? '')) return;
       if (displayName === '') delete status.displayName;
       else status.displayName = displayName;
-      controls.updateLabel(projectStatusDisplayName(status));
+      const label = projectStatusDisplayName(status);
+      controls.updateLabel(label);
+      const statusCard = controls.row.closest<HTMLElement>('[data-column-id="status"]');
+      const defaultStatus = statusCard?.querySelector<HTMLSelectElement>(
+        'select[aria-label="Default status"]',
+      );
+      const defaultOption = Array.from(defaultStatus?.options ?? []).find(
+        (option) => option.value === status.id,
+      );
+      if (defaultOption !== undefined) defaultOption.textContent = label;
       saveSettingsDraft({
         action: 'save project status display name',
         save: () => this.plugin_abyssPrivate.saveSettings(),
       });
-    });
-    controls.color.addEventListener('change', () => {
+    };
+    const commitColor = (): void => {
+      if (status.color === controls.color.value) return;
       status.color = controls.color.value;
       saveSettingsDraft({
         action: 'save project status color',
         save: () => this.plugin_abyssPrivate.saveSettings(),
       });
-    });
+    };
+    this.settingsValueCommit_abyssPrivate?.register(controls.displayName, commitDisplayName);
+    this.settingsValueCommit_abyssPrivate?.register(controls.color, commitColor);
     controls.appearance.addEventListener('change', () => {
-      status.display =
+      const display =
         controls.appearance.value === 'text' || controls.appearance.value === 'dot'
           ? controls.appearance.value
           : 'badge';
+      if ((status.display ?? 'badge') === display) return;
+      status.display = display;
       saveSettingsDraft({
         action: 'save project status appearance',
         save: () => this.plugin_abyssPrivate.saveSettings(),

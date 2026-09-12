@@ -4,7 +4,12 @@ import {
   projectFieldValue,
   type ProjectPropertyInfo,
 } from '../src/projects/projectFields';
-import { normalizeProjectTableSettings } from '../src/projects/projectTableSettings';
+import {
+  applyProjectTableDateDisplay,
+  effectiveProjectTableDateDisplay,
+  normalizeProjectTableSettings,
+  setProjectTableColumnDateDisplay,
+} from '../src/projects/projectTableSettings';
 import { buildDefaultProjectsSettings } from '../src/settings/defaults';
 
 describe('buildProjectFieldCatalog', () => {
@@ -78,6 +83,31 @@ describe('buildProjectFieldCatalog', () => {
       label: 'Legacy Key',
       type: null,
     });
+  });
+
+  it('keeps custom fields referenced only by initialized Kanban settings', () => {
+    const settings = buildDefaultProjectsSettings();
+    settings.kanban = {
+      fields: [{ id: 'property:Card only', visible: true }],
+      showEmptyFields: false,
+      descriptionLines: 1,
+      progress: 'full',
+      showEmptyProgress: false,
+      emptyColumns: 'compact',
+      groupBy: 'property:Kanban group',
+      sortBy: { field: 'property:Kanban sort', dir: 'asc' },
+      hiddenStatuses: [],
+      collapsedColumns: [],
+      manualOrder: {},
+    };
+
+    const fields = buildProjectFieldCatalog(settings, []);
+
+    expect(fields.filter(({ id }) => id.startsWith('property:')).map(({ id }) => id)).toEqual([
+      'property:Card only',
+      'property:Kanban group',
+      'property:Kanban sort',
+    ]);
   });
 
   it('keeps saved field identity when a configured definition differs only by case', () => {
@@ -239,21 +269,33 @@ describe('projectFieldValue', () => {
 });
 
 describe('normalizeProjectTableSettings', () => {
-  it('normalizes relative date display and explicit no-sort without rewriting old columns', () => {
+  it('normalizes every date display mode and explicit no-sort without rewriting old columns', () => {
     const result = normalizeProjectTableSettings({
+      progress: 'bar',
+      dateDisplay: 'relative',
       columns: [
         { id: 'name', visible: true },
         { id: 'start', visible: true, dateDisplay: 'relative' },
-        { id: 'end', visible: true, dateDisplay: 'future-mode' },
+        { id: 'end', visible: true, dateDisplay: 'raw' },
+        { id: 'property:Review', visible: true, dateDisplay: 'pretty' },
+        { id: 'property:Invalid', visible: true, dateDisplay: 'future-mode' },
       ],
       sortBy: { field: 'none', dir: 'asc' },
     });
 
     expect(result.sortBy).toEqual({ field: 'none', dir: 'asc' });
+    expect(result.progress).toBe('bar');
+    expect(result.dateDisplay).toBe('relative');
     expect(result.columns.find(({ id }) => id === 'start')).toMatchObject({
       dateDisplay: 'relative',
     });
-    expect(result.columns.find(({ id }) => id === 'end')).not.toHaveProperty('dateDisplay');
+    expect(result.columns.find(({ id }) => id === 'end')).toMatchObject({ dateDisplay: 'raw' });
+    expect(result.columns.find(({ id }) => id === 'property:Review')).toMatchObject({
+      dateDisplay: 'pretty',
+    });
+    expect(result.columns.find(({ id }) => id === 'property:Invalid')).not.toHaveProperty(
+      'dateDisplay',
+    );
     expect(normalizeProjectTableSettings(undefined).columns).toEqual([
       { id: 'name', visible: true },
       { id: 'status', visible: true },
@@ -261,6 +303,62 @@ describe('normalizeProjectTableSettings', () => {
       { id: 'start', visible: true },
       { id: 'end', visible: true },
     ]);
+    expect(normalizeProjectTableSettings(undefined)).not.toHaveProperty('progress');
+    expect(normalizeProjectTableSettings(undefined)).not.toHaveProperty('dateDisplay');
+    const malformed = normalizeProjectTableSettings({
+      progress: 'hidden',
+      dateDisplay: 'future-mode',
+    });
+    expect(malformed).not.toHaveProperty('progress');
+    expect(malformed).not.toHaveProperty('dateDisplay');
+  });
+
+  it('materializes global date modes before entering Custom or changing one column', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.table.columns.push(
+      { id: 'property:Review', visible: false, dateDisplay: 'raw' },
+      { id: 'property:Later', visible: true },
+    );
+    projects.propertyDefinitions['property:Review'] = { type: 'date' };
+    projects.propertyDefinitions['property:Later'] = { type: 'datetime' };
+    const fields = buildProjectFieldCatalog(projects, [
+      { name: 'Review', type: 'date' },
+      { name: 'Later', type: 'datetime' },
+    ]);
+
+    expect(applyProjectTableDateDisplay(projects.table, fields, 'pretty')).toBe(true);
+    expect(projects.table.dateDisplay).toBe('pretty');
+    expect(
+      projects.table.columns
+        .filter(({ id }) => ['start', 'end', 'property:Review'].includes(id))
+        .map(({ dateDisplay }) => dateDisplay),
+    ).toEqual(['pretty', 'pretty', 'pretty']);
+    expect(
+      effectiveProjectTableDateDisplay(
+        projects.table,
+        projects.table.columns.find(({ id }) => id === 'property:Later'),
+      ),
+    ).toBe('pretty');
+
+    expect(setProjectTableColumnDateDisplay(projects.table, fields, 'start', 'raw')).toBe(true);
+    expect(projects.table.dateDisplay).toBeUndefined();
+    expect(projects.table.columns.find(({ id }) => id === 'start')?.dateDisplay).toBe('raw');
+    expect(projects.table.columns.find(({ id }) => id === 'end')?.dateDisplay).toBe('pretty');
+    expect(projects.table.columns.find(({ id }) => id === 'property:Review')?.dateDisplay).toBe(
+      'pretty',
+    );
+    expect(projects.table.columns.find(({ id }) => id === 'property:Later')?.dateDisplay).toBe(
+      'pretty',
+    );
+
+    expect(applyProjectTableDateDisplay(projects.table, fields, 'relative')).toBe(true);
+    expect(applyProjectTableDateDisplay(projects.table, fields, undefined)).toBe(true);
+    expect(projects.table.dateDisplay).toBeUndefined();
+    expect(
+      projects.table.columns
+        .filter(({ id }) => ['start', 'end', 'property:Review', 'property:Later'].includes(id))
+        .map(({ dateDisplay }) => dateDisplay),
+    ).toEqual(['relative', 'relative', 'relative', 'relative']);
   });
   it('defaults description on and migrates a legacy description column into under-name state', () => {
     expect(normalizeProjectTableSettings(undefined).showDescription).toBe(true);

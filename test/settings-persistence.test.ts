@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import {
   SAVED_VIEW_STATE_SCHEMA_VERSION,
@@ -73,6 +74,152 @@ function stateEnvelope(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe('SettingsPersistenceCoordinator migration', () => {
+  it('loads a legacy version-1 envelope without initializing Kanban preferences', async () => {
+    const port = memoryPort(markedStatic(), stateEnvelope());
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    await coordinator.saveViewState(loaded.settings);
+
+    expect(loaded.settings.projects.kanban).toBeUndefined();
+    expect(loaded.settings.projects.overviewView).toBeUndefined();
+    const saved = JSON.parse(port.stateText ?? '') as {
+      schemaVersion: number;
+      views: { projects: Record<string, unknown> };
+    };
+    expect(saved.schemaVersion).toBe(1);
+    expect(saved.views.projects).not.toHaveProperty('kanban');
+    expect(saved.views.projects).not.toHaveProperty('overviewView');
+  });
+
+  it('roundtrips initialized Kanban preferences and unknown nested keys', async () => {
+    const kanban = buildDefaultProjectKanbanSettings(DEFAULT_SETTINGS.projects.table);
+    kanban.fields = [{ id: 'start', visible: true }];
+    const state = stateEnvelope({
+      projects: {
+        table: structuredClone(DEFAULT_SETTINGS.projects.table),
+        overviewView: 'kanban',
+        kanban: {
+          ...kanban,
+          futureBoardOption: { retained: true },
+          fields: [{ ...kanban.fields[0], futureFieldOption: 'keep' }],
+          sortBy: { ...kanban.sortBy, futureSortOption: 7 },
+        },
+      },
+    });
+    const port = memoryPort(markedStatic(), state);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(loaded.settings.projects.overviewView).toBe('kanban');
+    expect(loaded.settings.projects.kanban).toEqual(kanban);
+    if (loaded.settings.projects.kanban === undefined) throw new Error('Expected Kanban state.');
+    loaded.settings.projects.kanban.descriptionLines = 'full';
+    await coordinator.saveViewState(loaded.settings);
+
+    const saved = JSON.parse(port.stateText ?? '') as {
+      views: {
+        projects: {
+          overviewView: string;
+          kanban: Record<string, unknown> & {
+            fields: Array<Record<string, unknown>>;
+            sortBy: Record<string, unknown>;
+          };
+        };
+      };
+    };
+    expect(saved.views.projects.overviewView).toBe('kanban');
+    expect(saved.views.projects.kanban).toMatchObject({
+      descriptionLines: 'full',
+      futureBoardOption: { retained: true },
+    });
+    expect(saved.views.projects.kanban.fields[0]).toEqual({
+      id: 'start',
+      visible: true,
+      futureFieldOption: 'keep',
+    });
+    expect(saved.views.projects.kanban.sortBy).toEqual({
+      field: 'start',
+      dir: 'asc',
+      futureSortOption: 7,
+    });
+
+    const reloaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(reloaded.settings.projects.kanban?.descriptionLines).toBe('full');
+  });
+
+  it('moves legacy static Kanban preferences into version-1 view state', async () => {
+    const raw = legacySettings();
+    const projects = raw['projects'] as Record<string, unknown>;
+    projects['overviewView'] = 'kanban';
+    projects['kanban'] = buildDefaultProjectKanbanSettings(DEFAULT_SETTINGS.projects.table);
+    const port = memoryPort(raw, undefined);
+
+    const loaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+
+    expect(loaded.settings.projects.overviewView).toBe('kanban');
+    expect(loaded.settings.projects.kanban).toEqual(
+      buildDefaultProjectKanbanSettings(DEFAULT_SETTINGS.projects.table),
+    );
+    expect((port.staticData as { projects: Record<string, unknown> }).projects).not.toHaveProperty(
+      'kanban',
+    );
+    const saved = JSON.parse(port.stateText ?? '') as {
+      schemaVersion: number;
+      views: { projects: Record<string, unknown> };
+    };
+    expect(saved.schemaVersion).toBe(1);
+    expect(saved.views.projects).toMatchObject({ overviewView: 'kanban', kanban: {} });
+  });
+
+  it('retains malformed Kanban payloads in recovery while using safe runtime values', async () => {
+    const malformedKanban = {
+      fields: [null, { id: 'start', visible: 'yes', future: 'keep' }],
+      showEmptyFields: 'sometimes',
+      descriptionLines: 7,
+      progress: 'circle',
+      showEmptyProgress: null,
+      emptyColumns: 'hidden',
+      groupBy: 42,
+      sortBy: { field: 42, dir: 'sideways' },
+      hiddenStatuses: ['id:done', 9],
+      collapsedColumns: 'planned',
+      manualOrder: { 'id:planned': 'not paths' },
+    };
+    const state = stateEnvelope({
+      projects: {
+        table: structuredClone(DEFAULT_SETTINGS.projects.table),
+        overviewView: 'cards',
+        kanban: malformedKanban,
+      },
+    });
+    const port = memoryPort(markedStatic(), state);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    await coordinator.saveViewState(loaded.settings);
+
+    expect(loaded.notices).toContain(
+      'Saved view preferences contained invalid values. Safe defaults were used and the original values were retained for recovery.',
+    );
+    expect(loaded.settings.projects.overviewView).toBeUndefined();
+    expect(loaded.settings.projects.kanban).toEqual({
+      ...buildDefaultProjectKanbanSettings(DEFAULT_SETTINGS.projects.table),
+      fields: [{ id: 'start', visible: true }],
+      hiddenStatuses: ['id:done'],
+    });
+    const saved = JSON.parse(port.stateText ?? '') as {
+      recovery: {
+        malformedViews: {
+          projectKanban: unknown;
+          projectOverviewView: unknown;
+        };
+      };
+    };
+    expect(saved.recovery.malformedViews.projectKanban).toEqual(malformedKanban);
+    expect(saved.recovery.malformedViews.projectOverviewView).toBe('cards');
+  });
+
   it('loads column alignment and removes its saved key when reset to left', async () => {
     const state = stateEnvelope();
     const views = state['views'] as Record<string, unknown>;
@@ -101,7 +248,7 @@ describe('SettingsPersistenceCoordinator migration', () => {
     ).toEqual({ id: 'status', visible: true, futureColumnOption: 'keep' });
   });
 
-  it('roundtrips relative date display and explicitly removes it when restored to absolute', async () => {
+  it('roundtrips the old relative date display and preserves a missing Pretty default', async () => {
     const state = stateEnvelope();
     const views = state['views'] as Record<string, unknown>;
     const projects = views['projects'] as Record<string, unknown>;
@@ -127,6 +274,119 @@ describe('SettingsPersistenceCoordinator migration', () => {
     expect(
       expectDefined(saved.views.projects.table.columns.find(({ id }) => id === 'start')),
     ).toEqual({ id: 'start', visible: true, futureColumnOption: 'keep' });
+  });
+
+  it('roundtrips explicit Pretty and Raw modes for table columns and Kanban fields', async () => {
+    const table = structuredClone(DEFAULT_SETTINGS.projects.table) as unknown as Record<
+      string,
+      unknown
+    >;
+    const columns = table['columns'] as Array<Record<string, unknown>>;
+    expectDefined(columns.find(({ id }) => id === 'start'))['dateDisplay'] = 'pretty';
+    expectDefined(columns.find(({ id }) => id === 'end'))['dateDisplay'] = 'raw';
+    const kanban = buildDefaultProjectKanbanSettings(DEFAULT_SETTINGS.projects.table);
+    const state = stateEnvelope({
+      projects: {
+        table,
+        kanban: {
+          ...kanban,
+          fields: [
+            { id: 'start', visible: true, dateDisplay: 'raw' },
+            { id: 'end', visible: true, dateDisplay: 'pretty' },
+          ],
+        },
+      },
+    });
+    const port = memoryPort(markedStatic(), state);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+
+    expect(loaded.settings.projects.table.columns.find(({ id }) => id === 'start')).toMatchObject({
+      dateDisplay: 'pretty',
+    });
+    expect(loaded.settings.projects.table.columns.find(({ id }) => id === 'end')).toMatchObject({
+      dateDisplay: 'raw',
+    });
+    expect(loaded.settings.projects.kanban?.fields).toEqual([
+      { id: 'start', visible: true, dateDisplay: 'raw' },
+      { id: 'end', visible: true, dateDisplay: 'pretty' },
+    ]);
+    await coordinator.saveViewState(loaded.settings);
+
+    const saved = JSON.parse(port.stateText ?? '') as {
+      views: {
+        projects: {
+          table: { columns: Array<Record<string, unknown>> };
+          kanban: { fields: Array<Record<string, unknown>> };
+        };
+      };
+    };
+    expect(saved.views.projects.table.columns.find(({ id }) => id === 'start')).toMatchObject({
+      dateDisplay: 'pretty',
+    });
+    expect(saved.views.projects.table.columns.find(({ id }) => id === 'end')).toMatchObject({
+      dateDisplay: 'raw',
+    });
+    expect(saved.views.projects.kanban.fields).toEqual([
+      { id: 'start', visible: true, dateDisplay: 'raw' },
+      { id: 'end', visible: true, dateDisplay: 'pretty' },
+    ]);
+  });
+
+  it('roundtrips table presentation and removes cleared optional keys without losing extensions', async () => {
+    const table = structuredClone(DEFAULT_SETTINGS.projects.table) as unknown as Record<
+      string,
+      unknown
+    >;
+    table['progress'] = 'bar';
+    table['dateDisplay'] = 'relative';
+    table['futurePresentation'] = { retained: true };
+    const port = memoryPort(markedStatic(), stateEnvelope({ projects: { table } }));
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+
+    expect(loaded.settings.projects.table.progress).toBe('bar');
+    expect(loaded.settings.projects.table.dateDisplay).toBe('relative');
+    delete loaded.settings.projects.table.progress;
+    delete loaded.settings.projects.table.dateDisplay;
+    await coordinator.saveViewState(loaded.settings);
+
+    const saved = JSON.parse(port.stateText ?? '') as {
+      views: { projects: { table: Record<string, unknown> } };
+    };
+    expect(saved.views.projects.table).not.toHaveProperty('progress');
+    expect(saved.views.projects.table).not.toHaveProperty('dateDisplay');
+    expect(saved.views.projects.table['futurePresentation']).toEqual({ retained: true });
+  });
+
+  it('recovers malformed table presentation while loading safe defaults', async () => {
+    const malformedTable = {
+      ...structuredClone(DEFAULT_SETTINGS.projects.table),
+      progress: 'hidden',
+      dateDisplay: 'timezone',
+      futurePresentation: 'keep',
+    };
+    const port = memoryPort(markedStatic(), stateEnvelope({ projects: { table: malformedTable } }));
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    await coordinator.saveViewState(loaded.settings);
+
+    expect(loaded.notices).toContain(
+      'Saved view preferences contained invalid values. Safe defaults were used and the original values were retained for recovery.',
+    );
+    expect(loaded.settings.projects.table.progress).toBeUndefined();
+    expect(loaded.settings.projects.table.dateDisplay).toBeUndefined();
+    const saved = JSON.parse(port.stateText ?? '') as {
+      views: { projects: { table: Record<string, unknown> } };
+      recovery: { malformedViews: { projectTable: unknown } };
+    };
+    expect(saved.views.projects.table).not.toHaveProperty('progress');
+    expect(saved.views.projects.table).not.toHaveProperty('dateDisplay');
+    expect(saved.views.projects.table['futurePresentation']).toBe('keep');
+    expect(saved.recovery.malformedViews.projectTable).toEqual(malformedTable);
   });
 
   it('loads extensions roundtripped by the cc84b5d serializer without losing raw values', async () => {

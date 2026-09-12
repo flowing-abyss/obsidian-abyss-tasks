@@ -1028,14 +1028,14 @@ describe('renderProjectTableSettings', () => {
       Array.from(container.querySelectorAll('.abyss-project-column-settings-header > *')).map(
         (element) => element.textContent,
       ),
-    ).toEqual(['', 'Source', 'Display name', 'Show', 'Width', '', '']);
+    ).toEqual(['', 'Source', 'Display name', 'Show', '', '']);
     const rows = Array.from(
       container.querySelectorAll<HTMLElement>('.abyss-project-column-setting'),
     );
     expect(
       rows.every(
         (row) =>
-          expectDefined(row.querySelector('.abyss-settings-card-header')).children.length === 7,
+          expectDefined(row.querySelector('.abyss-settings-card-header')).children.length === 6,
       ),
     ).toBe(true);
     expect(
@@ -1062,6 +1062,7 @@ describe('renderProjectTableSettings', () => {
       ),
     ).toEqual(['Name', 'Status', 'Progress', 'Start', 'End']);
     expect(container.querySelectorAll('.abyss-project-column-required')).toHaveLength(5);
+    expect(container.querySelector('.abyss-project-column-width')).toBeNull();
     expect(
       container.querySelector('[data-column-id="progress"] .abyss-project-column-auto')
         ?.textContent,

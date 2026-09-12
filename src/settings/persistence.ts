@@ -1,3 +1,7 @@
+import {
+  isMalformedProjectKanbanSettings,
+  normalizeProjectKanbanSettings,
+} from '../projects/projectKanbanSettings';
 import { normalizeProjectTableSettings } from '../projects/projectTableSettings';
 import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
 import type { TaskStatusType } from '../tasks/domain/types';
@@ -73,6 +77,10 @@ const MALFORMED_VIEW_NOTICE =
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
 }
 
 function detached<T>(value: T): T {
@@ -191,6 +199,8 @@ function decodeSectionCollapse(
 }
 
 const COLUMN_ALIGNMENTS = new Set<unknown>(['left', 'center', 'right']);
+const PROJECT_DATE_DISPLAYS = new Set<unknown>(['raw', 'relative', 'pretty']);
+const PROJECT_TABLE_PROGRESS_DISPLAYS = new Set<unknown>(['bar', 'full']);
 
 function malformedOptional(value: unknown, type: 'boolean' | 'string'): boolean {
   return value !== undefined && typeof value !== type;
@@ -207,7 +217,7 @@ function hasMalformedColumnPresentation(value: Record<string, unknown>): boolean
   return (
     malformedOptional(value['visible'], 'boolean') ||
     malformedOptional(value['label'], 'string') ||
-    (value['dateDisplay'] !== undefined && value['dateDisplay'] !== 'relative') ||
+    (value['dateDisplay'] !== undefined && !PROJECT_DATE_DISPLAYS.has(value['dateDisplay'])) ||
     !validAlignment ||
     malformedColumnWidth(value['width'])
   );
@@ -245,11 +255,19 @@ function isMalformedHiddenStatuses(value: unknown): boolean {
   );
 }
 
+function hasMalformedProjectTablePresentation(value: Record<string, unknown>): boolean {
+  return (
+    (value['progress'] !== undefined && !PROJECT_TABLE_PROGRESS_DISPLAYS.has(value['progress'])) ||
+    (value['dateDisplay'] !== undefined && !PROJECT_DATE_DISPLAYS.has(value['dateDisplay']))
+  );
+}
+
 function isMalformedProjectTable(value: unknown): boolean {
   if (!isRecord(value)) return value !== undefined;
   return (
     (value['columns'] !== undefined && !Array.isArray(value['columns'])) ||
     (value['showDescription'] !== undefined && typeof value['showDescription'] !== 'boolean') ||
+    hasMalformedProjectTablePresentation(value) ||
     (value['groupBy'] !== undefined && typeof value['groupBy'] !== 'string') ||
     isMalformedProjectTableSort(value['sortBy']) ||
     isMalformedHiddenStatuses(value['hiddenStatuses'])
@@ -284,7 +302,48 @@ function collectMalformedViews(
     malformed.projectTable = detached(projects['table']);
   }
   if (badColumns !== undefined) malformed.projectTableColumns = badColumns;
+  Object.assign(malformed, collectMalformedProjectViews(projects));
   return Object.keys(malformed).length === 0 ? undefined : malformed;
+}
+
+function collectMalformedProjectViews(
+  projects: Record<string, unknown>,
+): Pick<
+  NonNullable<SavedViewStateRecovery['malformedViews']>,
+  'projectKanban' | 'projectOverviewView'
+> {
+  const malformed: Pick<
+    NonNullable<SavedViewStateRecovery['malformedViews']>,
+    'projectKanban' | 'projectOverviewView'
+  > = {};
+  if (hasOwn(projects, 'kanban') && isMalformedProjectKanbanSettings(projects['kanban'])) {
+    malformed.projectKanban = detached(projects['kanban']);
+  }
+  if (
+    hasOwn(projects, 'overviewView') &&
+    projects['overviewView'] !== 'table' &&
+    projects['overviewView'] !== 'kanban'
+  ) {
+    malformed.projectOverviewView = detached(projects['overviewView']);
+  }
+  return malformed;
+}
+
+function decodeProjectViews(projects: Record<string, unknown>): SavedViewState['projects'] {
+  const table: Record<string, unknown> = isRecord(projects['table']) ? projects['table'] : {};
+  const normalizedTable = normalizeProjectTableSettings(table);
+  const kanban = hasOwn(projects, 'kanban')
+    ? normalizeProjectKanbanSettings(projects['kanban'], normalizedTable)
+    : undefined;
+  const overviewView =
+    projects['overviewView'] === 'table' || projects['overviewView'] === 'kanban'
+      ? projects['overviewView']
+      : undefined;
+  return {
+    table: normalizedTable,
+    ...(kanban === undefined ? {} : { kanban }),
+    ...(overviewView === undefined ? {} : { overviewView }),
+  };
 }
 
 function decodeViews(raw: unknown, defaults: CalendarSettings): DecodedViews {
@@ -298,7 +357,7 @@ function decodeViews(raw: unknown, defaults: CalendarSettings): DecodedViews {
     views: {
       ...(list.states === undefined ? {} : { listViewStates: list.states }),
       sectionCollapse: decodeSectionCollapse(views['sectionCollapse'], defaults.sectionCollapse),
-      projects: { table: normalizeProjectTableSettings(table) },
+      projects: decodeProjectViews(projects),
     },
     recovery: malformedViews === undefined ? undefined : { malformedViews },
   };
@@ -315,6 +374,10 @@ function movedViewSource(raw: Record<string, unknown>): Record<string, unknown> 
       : { sectionCollapse: detached(raw['sectionCollapse']) }),
     projects: {
       ...(projects['table'] === undefined ? {} : { table: detached(projects['table']) }),
+      ...(hasOwn(projects, 'kanban') ? { kanban: detached(projects['kanban']) } : {}),
+      ...(hasOwn(projects, 'overviewView')
+        ? { overviewView: detached(projects['overviewView']) }
+        : {}),
     },
   };
 }
@@ -324,13 +387,18 @@ function stripMovedFields(raw: Record<string, unknown>): void {
   delete raw['sectionCollapse'];
   if (!isRecord(raw['projects'])) return;
   delete raw['projects']['table'];
+  delete raw['projects']['kanban'];
+  delete raw['projects']['overviewView'];
 }
 
 function hasMovedFields(raw: Record<string, unknown>): boolean {
   return (
     'listViewStates' in raw ||
     'sectionCollapse' in raw ||
-    (isRecord(raw['projects']) && 'table' in raw['projects'])
+    (isRecord(raw['projects']) &&
+      (hasOwn(raw['projects'], 'table') ||
+        hasOwn(raw['projects'], 'kanban') ||
+        hasOwn(raw['projects'], 'overviewView')))
   );
 }
 
@@ -347,6 +415,10 @@ function composeSettings(
   else settings.listViewStates = decoded.views.listViewStates;
   settings.sectionCollapse = decoded.views.sectionCollapse;
   settings.projects.table = decoded.views.projects.table;
+  if (decoded.views.projects.kanban === undefined) delete settings.projects.kanban;
+  else settings.projects.kanban = decoded.views.projects.kanban;
+  if (decoded.views.projects.overviewView === undefined) delete settings.projects.overviewView;
+  else settings.projects.overviewView = decoded.views.projects.overviewView;
   const notices =
     decoded.recovery?.malformedViews === undefined
       ? migration.notices
@@ -398,6 +470,76 @@ function mergeColumns(
   });
 }
 
+function mergeProjectKanban(
+  raw: unknown,
+  current: NonNullable<CalendarSettings['projects']['kanban']>,
+): Record<string, unknown> {
+  const base = isRecord(raw) ? detached(raw) : {};
+  base['fields'] = mergeColumns(base['fields'], current.fields);
+  base['showEmptyFields'] = current.showEmptyFields;
+  base['descriptionLines'] = current.descriptionLines;
+  base['progress'] = current.progress;
+  base['showEmptyProgress'] = current.showEmptyProgress;
+  base['emptyColumns'] = current.emptyColumns;
+  base['groupBy'] = current.groupBy;
+  const rawSort = isRecord(base['sortBy']) ? detached(base['sortBy']) : {};
+  rawSort['field'] = current.sortBy.field;
+  rawSort['dir'] = current.sortBy.dir;
+  base['sortBy'] = rawSort;
+  base['hiddenStatuses'] = detached(current.hiddenStatuses);
+  base['collapsedColumns'] = detached(current.collapsedColumns);
+  base['manualOrder'] = detached(current.manualOrder);
+  return base;
+}
+
+function mergeProjectTable(
+  raw: Record<string, unknown>,
+  current: CalendarSettings['projects']['table'],
+): Record<string, unknown> {
+  const table = detached(raw);
+  table['columns'] = mergeColumns(raw['columns'], current.columns);
+  table['showDescription'] = current.showDescription;
+  if (current.progress === undefined) delete table['progress'];
+  else table['progress'] = current.progress;
+  if (current.dateDisplay === undefined) delete table['dateDisplay'];
+  else table['dateDisplay'] = current.dateDisplay;
+  table['groupBy'] = current.groupBy;
+  table['sortBy'] = detached(current.sortBy);
+  table['hiddenStatuses'] = detached(current.hiddenStatuses);
+  return table;
+}
+
+function mergeProjectViews(
+  raw: Record<string, unknown>,
+  current: CalendarSettings['projects'],
+): Record<string, unknown> {
+  const projects = detached(raw);
+  const rawTable = isRecord(raw['table']) ? raw['table'] : {};
+  projects['table'] = mergeProjectTable(rawTable, current.table);
+  if (current.kanban === undefined) delete projects['kanban'];
+  else projects['kanban'] = mergeProjectKanban(raw['kanban'], current.kanban);
+  if (current.overviewView === undefined) delete projects['overviewView'];
+  else projects['overviewView'] = current.overviewView;
+  return projects;
+}
+
+function mergeViews(
+  raw: Record<string, unknown>,
+  settings: CalendarSettings,
+): Record<string, unknown> {
+  const views = detached(raw);
+  const listViewStates = mergeListViewStates(raw['listViewStates'], settings.listViewStates);
+  if (listViewStates === undefined) delete views['listViewStates'];
+  else views['listViewStates'] = listViewStates;
+  views['sectionCollapse'] = {
+    ...(isRecord(raw['sectionCollapse']) ? detached(raw['sectionCollapse']) : {}),
+    ...detached(settings.sectionCollapse),
+  };
+  const rawProjects = isRecord(raw['projects']) ? raw['projects'] : {};
+  views['projects'] = mergeProjectViews(rawProjects, settings.projects);
+  return views;
+}
+
 function createStateEnvelope(
   settings: CalendarSettings,
   rawBase: Record<string, unknown> | undefined,
@@ -405,27 +547,8 @@ function createStateEnvelope(
 ): Record<string, unknown> {
   const envelope = rawBase === undefined ? {} : detached(rawBase);
   const rawViews = isRecord(envelope['views']) ? envelope['views'] : {};
-  const rawProjects = isRecord(rawViews['projects']) ? rawViews['projects'] : {};
-  const rawTable = isRecord(rawProjects['table']) ? rawProjects['table'] : {};
-  const listViewStates = mergeListViewStates(rawViews['listViewStates'], settings.listViewStates);
-  const table = detached(rawTable);
-  table['columns'] = mergeColumns(rawTable['columns'], settings.projects.table.columns);
-  table['showDescription'] = settings.projects.table.showDescription;
-  table['groupBy'] = settings.projects.table.groupBy;
-  table['sortBy'] = detached(settings.projects.table.sortBy);
-  table['hiddenStatuses'] = detached(settings.projects.table.hiddenStatuses);
-  const projects = detached(rawProjects);
-  projects['table'] = table;
-  const views = detached(rawViews);
-  if (listViewStates === undefined) delete views['listViewStates'];
-  else views['listViewStates'] = listViewStates;
-  views['sectionCollapse'] = {
-    ...(isRecord(rawViews['sectionCollapse']) ? detached(rawViews['sectionCollapse']) : {}),
-    ...detached(settings.sectionCollapse),
-  };
-  views['projects'] = projects;
   envelope['schemaVersion'] = SAVED_VIEW_STATE_SCHEMA_VERSION;
-  envelope['views'] = views;
+  envelope['views'] = mergeViews(rawViews, settings);
   const recovery = mergeRecovery(envelope['recovery'], recoveryAdditions);
   if (recovery === undefined) delete envelope['recovery'];
   else envelope['recovery'] = recovery;
@@ -439,6 +562,21 @@ function createStaticDocument(settings: CalendarSettings): Record<string, unknow
   return data;
 }
 
+function restoreLegacyProjectViews(
+  data: Record<string, unknown>,
+  legacy: Record<string, unknown>,
+): void {
+  const legacyProjects = isRecord(legacy['projects']) ? legacy['projects'] : undefined;
+  if (legacyProjects === undefined) return;
+  const keys = ['table', 'kanban', 'overviewView'] as const;
+  if (!keys.some((key) => hasOwn(legacyProjects, key))) return;
+  const projects = isRecord(data['projects']) ? data['projects'] : {};
+  for (const key of keys) {
+    if (hasOwn(legacyProjects, key)) projects[key] = detached(legacyProjects[key]);
+  }
+  data['projects'] = projects;
+}
+
 function restoreLegacyViewFields(
   data: Record<string, unknown>,
   legacy: Record<string, unknown>,
@@ -446,12 +584,7 @@ function restoreLegacyViewFields(
   for (const key of ['listViewStates', 'sectionCollapse'] as const) {
     if (key in legacy) data[key] = detached(legacy[key]);
   }
-  const legacyProjects = isRecord(legacy['projects']) ? legacy['projects'] : undefined;
-  if (legacyProjects !== undefined && 'table' in legacyProjects) {
-    const projects = isRecord(data['projects']) ? data['projects'] : {};
-    projects['table'] = detached(legacyProjects['table']);
-    data['projects'] = projects;
-  }
+  restoreLegacyProjectViews(data, legacy);
   if (STATIC_SAVED_VIEW_STATE_MARKER in legacy) {
     data[STATIC_SAVED_VIEW_STATE_MARKER] = detached(legacy[STATIC_SAVED_VIEW_STATE_MARKER]);
   } else {

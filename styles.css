@@ -6461,6 +6461,10 @@ body.abyss-modal-open .popover.hover-popover {
   position: relative;
 }
 
+.abyss-task-filter-chips {
+  display: contents;
+}
+
 /* ── Property filter chips ──────────────────────────────────── */
 .abyss-filter-chip {
   display: inline-flex;
@@ -6555,7 +6559,7 @@ body.abyss-modal-open .popover.hover-popover {
   border-bottom: none;
 }
 
-.abyss-view-state-row-main {
+.abyss-view-state-popover button.abyss-view-state-row-main {
   display: flex;
   width: 100%;
   align-items: center;
@@ -6570,7 +6574,7 @@ body.abyss-modal-open .popover.hover-popover {
   text-align: left;
 }
 
-.abyss-view-state-row-main:hover {
+.abyss-view-state-popover button.abyss-view-state-row-main:hover {
   background: var(--background-modifier-hover);
 }
 
@@ -6603,7 +6607,12 @@ body.abyss-modal-open .popover.hover-popover {
   padding: 4px 0;
 }
 
-.abyss-view-state-option {
+.abyss-view-state-sublist > .abyss-view-state-row {
+  margin-inline-start: 8px;
+  border-inline-start: 1px solid var(--background-modifier-border-hover);
+}
+
+.abyss-view-state-popover button.abyss-view-state-option {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -6617,7 +6626,7 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-normal);
 }
 
-.abyss-view-state-option:hover {
+.abyss-view-state-popover button.abyss-view-state-option:hover {
   background: var(--background-modifier-hover);
 }
 
@@ -6645,6 +6654,13 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-faint);
   margin-left: auto;
   padding-left: 8px;
+}
+
+.abyss-view-state-option-required {
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--text-faint);
+  font-size: 10px;
 }
 
 .abyss-view-state-sublist-divider {
@@ -6860,6 +6876,10 @@ body.abyss-modal-open .popover.hover-popover {
   min-height: 0;
 }
 
+.abyss-projects-table {
+  position: relative;
+}
+
 .abyss-projects-toolbar {
   display: flex;
   flex: 0 0 auto;
@@ -6924,10 +6944,44 @@ body.abyss-modal-open .popover.hover-popover {
   border-radius: 8px;
 }
 
-.abyss-project-table-controls .abyss-view-state-btn {
+.abyss-project-table-controls :is(.abyss-view-state-btn, .abyss-project-overview-mode) {
   width: 30px;
   height: 30px;
+  min-width: 30px;
+  padding: 5px;
+  border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
+  background: var(--interactive-normal);
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+.abyss-projects-table button.abyss-project-overview-mode {
+  width: 30px;
+  height: 30px;
+  padding: 5px;
+  border-radius: 6px;
+}
+
+.abyss-projects-table button.abyss-project-overview-mode--table {
+  margin-right: 0;
+}
+
+.abyss-projects-table button.abyss-project-overview-mode--kanban {
+  border-radius: 6px;
+}
+
+.abyss-projects-table button.abyss-project-overview-mode.is-active {
+  z-index: 1;
+  border-color: var(--interactive-accent);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.abyss-project-table-controls
+  :is(.abyss-view-state-btn, .abyss-project-overview-mode):focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
 }
 
 .abyss-project-table-feedback {
@@ -6994,7 +7048,7 @@ table.abyss-project-table {
   position: relative;
   height: 34px;
   background: var(--background-secondary);
-  color: var(--text-muted);
+  color: var(--text-normal);
   font-size: var(--font-ui-smaller);
   font-weight: var(--font-semibold);
 }
@@ -7191,6 +7245,10 @@ table.abyss-project-table {
   cursor: grab;
 }
 
+.abyss-projects-table.is-project-dragging {
+  user-select: none;
+}
+
 .abyss-project-table-row.is-dragging {
   cursor: grabbing;
   opacity: 0.55;
@@ -7308,7 +7366,7 @@ table.abyss-project-table {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  color: var(--text-muted);
+  color: var(--text-normal);
   font-size: var(--font-ui-smaller);
   font-weight: var(--font-semibold);
   justify-content: flex-start;
@@ -7425,7 +7483,6 @@ table.abyss-project-table {
   .abyss-project-table-status-pill,
   .abyss-project-property-value,
   .abyss-suggest-title,
-  .abyss-project-list-value-text.tag,
   .abyss-project-table-tag-link.tag,
   .abyss-suggest-title > .tag
 ).is-dot {
@@ -7438,7 +7495,6 @@ table.abyss-project-table {
     .abyss-project-table-status-pill,
     .abyss-project-property-value,
     .abyss-suggest-title,
-    .abyss-project-list-value-text.tag,
     .abyss-project-table-tag-link.tag,
     .abyss-suggest-title > .tag
   ).is-dot::before {
@@ -7584,7 +7640,6 @@ table.abyss-project-table {
 }
 
 .abyss-project-table-value-text.is-link,
-.abyss-project-list-value-text.is-link,
 .abyss-suggest-title.is-link {
   color: var(--link-color);
 }
@@ -7736,6 +7791,13 @@ table.abyss-project-table {
   padding-block: 0;
 }
 
+.abyss-project-cell-editor-host.is-picker {
+  z-index: var(--layer-popover, 30);
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .abyss-project-editor-input,
 .abyss-project-editor-status {
   width: 100%;
@@ -7759,34 +7821,172 @@ table.abyss-project-table {
   white-space: pre-wrap;
 }
 
-.abyss-project-list-control {
+.abyss-project-value-picker.abyss-popover {
+  position: static;
+  box-sizing: border-box;
   display: flex;
-  overflow: visible;
+  overflow: hidden;
   width: 100%;
-  min-width: 0;
-  align-items: center;
+  max-height: var(--abyss-project-editor-content-max-height, none);
+  flex-direction: column;
   gap: 4px;
+  padding: 6px;
+  box-shadow: none;
+  font-size: var(--font-ui-small);
 }
 
-.abyss-project-list-entry {
+.abyss-project-value-picker input.abyss-project-value-picker-search {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  height: 28px;
+  font: inherit;
+}
+
+.abyss-project-value-picker-results {
+  flex-shrink: 1;
+  overflow-y: auto;
+  min-height: 0;
+  max-height: 220px;
+  overscroll-behavior: contain;
+}
+
+.abyss-project-value-picker-group[hidden] {
+  display: none;
+}
+
+.abyss-project-value-picker-group:not([hidden]) + .abyss-project-value-picker-group:not([hidden]) {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.abyss-project-value-picker-rows {
   display: flex;
-  min-width: 0;
-  max-width: 100%;
-  flex: 0 0 96px;
+  flex-direction: column;
+}
+
+.abyss-project-value-picker-option {
+  display: grid;
+  box-sizing: border-box;
+  height: 26px;
+  min-height: 26px;
   align-items: center;
-  gap: 3px;
+  padding: 1px 4px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  grid-template-columns: 18px minmax(0, 1fr) 22px;
 }
 
-.abyss-project-list-input {
-  width: 0;
-  flex: 1 1 auto;
+.abyss-project-value-picker-option:is(:hover, .is-active) {
+  background: var(--background-modifier-hover);
 }
 
-.abyss-project-list-entry button,
-.abyss-project-list-value button {
-  min-height: 20px;
-  padding: 1px 5px;
+.abyss-project-value-picker-option.is-active {
+  box-shadow: inset 0 0 0 1px var(--interactive-accent);
+}
+
+.abyss-project-value-picker-indicator {
+  color: var(--interactive-accent);
+  opacity: 0;
+}
+
+.abyss-project-value-picker-option.is-selected .abyss-project-value-picker-indicator {
+  opacity: 1;
+}
+
+.abyss-project-value-picker-presentation {
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.abyss-project-value-picker-presentation > .abyss-suggest-title {
+  overflow: hidden;
+  min-width: 0;
+  flex: 0 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-project-value-picker-presentation .abyss-suggest-path {
+  overflow: hidden;
+  min-width: 0;
+  flex: 0 1 45%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-projects-table button.abyss-project-value-picker-edit {
+  display: inline-flex;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  opacity: 0;
+}
+
+.abyss-projects-table button.abyss-project-value-picker-edit[hidden] {
+  display: none;
+}
+
+.abyss-project-value-picker-option:hover .abyss-project-value-picker-edit,
+.abyss-projects-table button.abyss-project-value-picker-edit:focus-visible {
+  opacity: 1;
+}
+
+.abyss-project-value-picker-action-host:empty {
+  display: none;
+}
+
+.abyss-projects-table button.abyss-project-value-picker-action {
+  display: flex;
+  overflow: hidden;
+  width: 100%;
+  height: 22px;
+  min-height: 22px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font: inherit;
   font-size: var(--font-ui-smaller);
+  text-align: left;
+}
+
+.abyss-projects-table button.abyss-project-value-picker-action:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.abyss-project-value-picker-action-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.abyss-project-value-picker-action-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.abyss-project-value-picker-action-label {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .abyss-project-editor-error {
@@ -7797,57 +7997,6 @@ table.abyss-project-table {
 
 .abyss-project-editor-error:empty {
   display: none;
-}
-
-.abyss-project-list-values {
-  display: flex;
-  overflow-x: auto;
-  min-height: 0;
-  min-width: 0;
-  flex: 0 1 auto;
-  flex-wrap: nowrap;
-  gap: 4px;
-  scrollbar-width: none;
-}
-
-.abyss-project-list-values:empty {
-  display: none;
-}
-
-.abyss-project-list-values:empty + .abyss-project-list-entry {
-  flex: 1 1 100%;
-}
-
-.abyss-project-list-value {
-  display: inline-flex;
-  overflow: hidden;
-  max-width: 160px;
-  flex: 0 0 auto;
-  align-items: center;
-  padding-left: 6px;
-  border-radius: var(--radius-s);
-  background: var(--background-secondary);
-  font-size: var(--font-ui-smaller);
-}
-
-.abyss-project-list-value.is-tag {
-  padding: 0;
-  background: transparent;
-}
-
-.abyss-project-list-value-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.abyss-projects-table button.abyss-project-list-remove {
-  display: inline-flex;
-  width: 18px;
-  min-width: 18px;
-  align-items: center;
-  justify-content: center;
-  opacity: 1;
 }
 
 .abyss-project-table-footer {
@@ -7878,12 +8027,507 @@ table.abyss-project-table {
   font-size: var(--font-ui-smaller);
 }
 
+.abyss-project-creation-composer {
+  position: absolute;
+  z-index: var(--layer-popover, 30);
+  display: grid;
+  box-sizing: border-box;
+  gap: var(--size-4-2, 8px);
+  padding: var(--size-4-3, 12px);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  box-shadow: var(--shadow-l);
+  color: var(--text-normal);
+}
+
+.abyss-project-creation-title {
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+}
+
+.abyss-project-creation-status,
+.abyss-project-creation-error {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-project-creation-error {
+  color: var(--text-error);
+}
+
+.abyss-project-creation-error[hidden],
+.abyss-project-creation-actions > button[hidden] {
+  display: none;
+}
+
+.abyss-project-creation-name {
+  width: 100%;
+  min-width: 0;
+}
+
+.abyss-project-creation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--size-4-2, 8px);
+}
+
+/* Project Kanban shares the table session, cell renderers, and toolbar. */
+.abyss-project-kanban {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  background: var(--background-primary);
+}
+
+.abyss-project-kanban[hidden],
+.abyss-project-kanban-description[hidden],
+.abyss-project-kanban-progress[hidden] {
+  display: none;
+}
+
+.abyss-project-kanban-scroll {
+  display: flex;
+  overflow-x: auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.abyss-project-kanban-column {
+  display: flex;
+  width: 272px;
+  min-width: 272px;
+  min-height: 0;
+  flex: 0 0 272px;
+  flex-direction: column;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+
+.abyss-project-kanban-column:is(.is-collapsed, .is-compact-empty) {
+  width: 44px;
+  min-width: 44px;
+  flex-basis: 44px;
+}
+
+.abyss-project-kanban-column-header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: flex;
+  min-height: 38px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.abyss-project-kanban-column-label {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-project-kanban-column-count {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+
+.abyss-projects-table button.abyss-project-kanban-column-toggle {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  padding: 4px;
+  color: var(--text-muted);
+}
+
+.abyss-projects-table button.abyss-project-kanban-column-create {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  padding: 4px;
+  color: var(--text-muted);
+}
+
+.abyss-projects-table button.abyss-project-kanban-column-create[hidden] {
+  display: none;
+}
+
+.abyss-project-kanban-column:is(.is-collapsed, .is-compact-empty)
+  .abyss-project-kanban-column-header {
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  padding: 8px 5px;
+  border-bottom: 0;
+}
+
+.abyss-project-kanban-column:is(.is-collapsed, .is-compact-empty)
+  .abyss-project-kanban-column-label {
+  flex: 1 1 auto;
+  writing-mode: vertical-rl;
+  text-overflow: clip;
+}
+
+.abyss-project-kanban-column:is(.is-collapsed, .is-compact-empty)
+  .abyss-project-kanban-column-body {
+  display: none;
+}
+
+.abyss-project-kanban-column-body {
+  position: relative;
+  overflow-y: auto;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 8px;
+  scrollbar-gutter: stable;
+}
+
+.abyss-status-dot[hidden] {
+  display: none;
+}
+
+.abyss-project-kanban-column.is-drop-target,
+.abyss-project-kanban-group.is-drop-target,
+.abyss-project-kanban-hover-group.is-drop-target {
+  border-color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
+}
+
+.abyss-project-kanban-column.is-drop-disabled,
+.abyss-project-kanban-group.is-drop-disabled,
+.abyss-project-kanban-hover-group.is-drop-disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.abyss-project-kanban-insertion-line {
+  position: absolute;
+  z-index: 3;
+  top: var(--abyss-project-kanban-insertion-top, 0);
+  right: 0;
+  left: 0;
+  height: 2px;
+  margin: 0;
+  border-radius: 1px;
+  background: var(--interactive-accent);
+  pointer-events: none;
+}
+
+.abyss-project-kanban-card.is-dragging {
+  opacity: 0.46;
+}
+
+.abyss-project-kanban-card.is-drag-armed,
+.abyss-project-kanban-card.is-drag-armed * {
+  user-select: none;
+}
+
+.abyss-project-kanban-drag-image {
+  position: fixed;
+  z-index: -1;
+  top: -10000px;
+  left: -10000px;
+  width: 252px;
+  pointer-events: none;
+}
+
+.abyss-project-kanban-hover-preview {
+  position: absolute;
+  z-index: var(--layer-popover, 30);
+  display: flex;
+  overflow: hidden;
+  width: 272px;
+  max-height: calc(100% - 16px);
+  flex-direction: column;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+}
+
+.abyss-project-kanban-hover-title,
+.abyss-project-kanban-hover-group-title {
+  padding: 8px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
+}
+
+.abyss-project-kanban-hover-body {
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+
+.abyss-project-kanban-hover-group {
+  position: relative;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+.abyss-project-kanban-hover-card {
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+
+.abyss-project-kanban-group + .abyss-project-kanban-group {
+  margin-top: 8px;
+}
+
+.abyss-project-kanban-group {
+  min-width: 0;
+}
+
+.abyss-projects-table button.abyss-project-kanban-group-header {
+  display: flex;
+  overflow: hidden;
+  width: 100%;
+  min-height: 24px;
+  margin-bottom: 5px;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.abyss-projects-table button.abyss-project-kanban-group-header[hidden],
+.abyss-project-kanban-group-body[hidden] {
+  display: none;
+}
+
+.abyss-project-kanban-group-header .abyss-projects-group-label {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 auto;
+  text-overflow: ellipsis;
+}
+
+.abyss-project-kanban-group-chevron {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.abyss-project-kanban-group-body {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.abyss-project-kanban-card {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  background: var(--background-primary);
+}
+
+.abyss-project-kanban-card > * {
+  min-width: 0;
+}
+
+.abyss-project-kanban-card.is-selected {
+  border-color: color-mix(
+    in srgb,
+    var(--interactive-accent) 62%,
+    var(--background-modifier-border)
+  );
+}
+
+.abyss-project-kanban-card:focus-visible,
+.abyss-project-kanban-cell:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+.abyss-project-kanban-cell.abyss-project-table-cell {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+}
+
+.abyss-project-kanban-title {
+  min-width: 0;
+}
+
+.abyss-project-kanban-title .abyss-project-table-name-content {
+  min-width: 0;
+  height: auto;
+  padding: 0;
+}
+
+.abyss-project-kanban-title button.abyss-project-table-name {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  width: 100%;
+  min-width: 0;
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
+  line-height: 1.3;
+  white-space: normal;
+}
+
+.abyss-project-kanban-description {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.35;
+}
+
+.abyss-project-kanban-description-content:not(.is-editing) {
+  display: -webkit-box;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--abyss-project-description-lines, 1);
+  line-clamp: var(--abyss-project-description-lines, 1);
+}
+
+.abyss-project-kanban-description.is-full
+  .abyss-project-kanban-description-content:not(.is-editing) {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+}
+
+.abyss-project-kanban-description-content:not(.is-editing) > * {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: normal;
+}
+
+.abyss-project-kanban-fields {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+}
+
+.abyss-project-kanban-field {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(52px, 0.42fr) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 7px;
+}
+
+.abyss-project-kanban-field-label {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-project-kanban-field-value {
+  min-width: 0;
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-project-kanban-progress .abyss-project-table-progress {
+  min-width: 0;
+  max-width: 100%;
+  justify-content: space-between;
+}
+
+.abyss-project-kanban-progress.is-bar-only .abyss-project-progress-value {
+  display: none;
+}
+
+.abyss-view-state-option-row {
+  display: flex;
+  align-items: center;
+}
+
+.abyss-view-state-option-row > .abyss-view-state-option {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.abyss-view-state-popover button.abyss-view-state-option-move {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  padding: 5px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+}
+
+.abyss-view-state-popover button.abyss-view-state-option-move:hover {
+  background: var(--background-modifier-hover);
+}
+
+.abyss-view-state-popover button.abyss-view-state-option-action {
+  min-width: 52px;
+  height: 24px;
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--interactive-normal);
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-view-state-popover button.abyss-view-state-option-action:hover {
+  background: var(--interactive-hover);
+  color: var(--text-normal);
+}
+
+.abyss-view-state-option-move[hidden] {
+  display: none;
+}
+
 .abyss-projects-new-input {
   position: sticky;
   left: 0;
   width: min(320px, calc(100% - 24px));
   margin: 8px 12px;
   font-size: var(--font-ui-small);
+  flex: 0 0 auto;
 }
 
 /* Project table settings */
@@ -7906,9 +8550,7 @@ table.abyss-project-table {
 .abyss-project-property-card > .abyss-settings-card-header,
 .abyss-project-column-settings-header {
   display: grid;
-  grid-template-columns:
-    38px minmax(60px, 1fr) minmax(80px, 1.2fr) 38px minmax(60px, 0.6fr)
-    28px 28px;
+  grid-template-columns: 38px minmax(60px, 1fr) minmax(80px, 1.2fr) 38px 28px 28px;
   align-items: center;
   gap: 6px;
 }
@@ -8083,8 +8725,7 @@ table.abyss-project-table {
   font-size: var(--font-ui-smaller);
 }
 
-.abyss-project-column-label,
-.abyss-project-column-width {
+.abyss-project-column-label {
   width: 100%;
   min-width: 0;
 }
@@ -8124,13 +8765,16 @@ table.abyss-project-table {
   display: none;
 }
 
-@media (width <= 720px) {
+@container abyss-panel-layout (max-width: 45rem) {
   .abyss-projects-toolbar {
-    flex-wrap: nowrap;
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 7px 10px;
   }
 
   .abyss-project-status-filters {
-    flex: 1 1 auto;
+    grid-column: 1 / -1;
+    grid-row: 2;
     min-width: 0;
     max-width: none;
   }
@@ -8140,14 +8784,15 @@ table.abyss-project-table {
   }
 
   .abyss-project-table-controls {
-    flex: 0 1 auto;
+    min-width: 0;
+    justify-self: end;
   }
+}
 
+@media (width <= 720px) {
   .abyss-project-property-card > .abyss-settings-card-header,
   .abyss-project-column-settings-header {
-    grid-template-columns:
-      28px minmax(0, 0.8fr) minmax(0, 1.2fr) 28px minmax(48px, 0.7fr)
-      28px 28px;
+    grid-template-columns: 28px minmax(0, 0.8fr) minmax(0, 1.2fr) 28px 28px 28px;
     gap: 4px;
   }
 
@@ -8177,10 +8822,6 @@ table.abyss-project-table {
     min-width: var(--checkbox-size, 15px);
     max-width: var(--checkbox-size, 15px);
     flex: 0 0 var(--checkbox-size, 15px);
-  }
-
-  .abyss-project-column-settings-header > :nth-child(6) {
-    display: none;
   }
 }
 
@@ -8244,11 +8885,6 @@ table.abyss-project-table {
 }
 
 .abyss-status-pill {
-  padding: 2px 10px;
-  border-radius: var(--radius-l);
-  color: var(--text-on-accent);
-  font-size: var(--font-ui-smaller);
-  border: none;
   cursor: pointer;
 }
 

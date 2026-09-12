@@ -1,4 +1,4 @@
-import { TFile } from 'obsidian';
+import { getFrontMatterInfo, parseYaml, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { ProjectManager } from '../src/projects/ProjectManager';
@@ -16,9 +16,10 @@ async function frontmatterValue(
 ): Promise<unknown> {
   const file = expectDefined(app.vault.getAbstractFileByPath(path));
   if (!(file instanceof TFile)) throw new Error(`${path} is not a file`);
-  const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter as
-    Record<string, unknown> | undefined;
-  return frontmatter?.['status'];
+  const source = await app.vault.read(file);
+  const info = getFrontMatterInfo(source);
+  const frontmatter = parseYaml(info.frontmatter) as Record<string, unknown>;
+  return frontmatter['status'];
 }
 
 function manager(app: Awaited<ReturnType<typeof createAppWithFiles>>, settings: CalendarSettings) {
@@ -36,6 +37,147 @@ function manager(app: Awaited<ReturnType<typeof createAppWithFiles>>, settings: 
 }
 
 describe('ProjectManager.renameStatusDefinition', () => {
+  it.each(['📘', '🟦', '👩🏽‍💻', '#done', 'a: b', '[done]', '"quoted"'])(
+    'roundtrips the status literal %s through serialized project YAML',
+    async (literal) => {
+      const app = await createAppWithFiles({
+        'Projects/A.md': '---\nstatus: active\n---\n',
+      });
+      const settings = clone();
+      const active = expectDefined(settings.projects.statuses[0]);
+
+      await manager(app, settings).renameStatusDefinition(
+        active.id,
+        literal,
+        'active',
+        vi.fn().mockResolvedValue(undefined),
+      );
+
+      expect(active.name).toBe(literal);
+      expect(await frontmatterValue(app, 'Projects/A.md')).toBe(literal);
+    },
+  );
+
+  it('skips invalid YAML outside project membership while renaming valid projects', async () => {
+    const malformed = '---\nbroken: [unterminated\n---\n';
+    const app = await createAppWithFiles({
+      'Projects/A.md': '---\nstatus: active\n---\n',
+      'Notes/Broken.md': 'valid before the cached projection\n',
+    });
+    await app.vault.adapter.write('Notes/Broken.md', malformed);
+    const settings = clone();
+    const active = expectDefined(settings.projects.statuses[0]);
+    const persist = vi.fn().mockResolvedValue(undefined);
+
+    await manager(app, settings).renameStatusDefinition(active.id, '📘', 'active', persist);
+
+    expect(active.name).toBe('📘');
+    expect(await frontmatterValue(app, 'Projects/A.md')).toBe('📘');
+    expect(await app.vault.adapter.read('Notes/Broken.md')).toBe(malformed);
+    expect(persist).toHaveBeenCalledOnce();
+  });
+
+  it('rejects invalid YAML in a recognized project before writing and names its path', async () => {
+    const malformed = '---\nbroken: [unterminated\n---\n';
+    const app = await createAppWithFiles({
+      'Projects/A.md': '---\nstatus: active\n---\n',
+      'Projects/Broken.md': 'valid before the cached projection\n',
+    });
+    await app.vault.adapter.write('Projects/Broken.md', malformed);
+    const settings = clone();
+    const active = expectDefined(settings.projects.statuses[0]);
+    const persist = vi.fn().mockResolvedValue(undefined);
+    const process = vi.spyOn(app.vault, 'process');
+
+    await expect(
+      manager(app, settings).renameStatusDefinition(active.id, 'running', 'active', persist),
+    ).rejects.toThrow(/Project frontmatter in Projects\/Broken\.md is not valid YAML/u);
+
+    expect(active.name).toBe('active');
+    expect(await frontmatterValue(app, 'Projects/A.md')).toBe('active');
+    expect(await app.vault.adapter.read('Projects/Broken.md')).toBe(malformed);
+    expect(process).not.toHaveBeenCalled();
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: 'cached tags',
+      membershipQuery: '#project',
+      source: '---\nstatus: active\ntags: [project]\n---\n',
+    },
+    {
+      label: 'cached frontmatter properties',
+      membershipQuery: 'kind=project',
+      source: '---\nstatus: active\nkind: project\n---\n',
+    },
+  ])('uses $label to classify malformed project source', async ({ membershipQuery, source }) => {
+    const malformed = '---\nbroken: [unterminated\n---\n';
+    const app = await createAppWithFiles({ 'Notes/Cached.md': source });
+    await app.vault.adapter.write('Notes/Cached.md', malformed);
+    const settings = clone();
+    settings.projects.membershipQuery = membershipQuery;
+    const active = expectDefined(settings.projects.statuses[0]);
+    const persist = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      manager(app, settings).renameStatusDefinition(active.id, 'running', 'active', persist),
+    ).rejects.toThrow(/Project frontmatter in Notes\/Cached\.md is not valid YAML/u);
+
+    expect(active.name).toBe('active');
+    expect(await app.vault.adapter.read('Notes/Cached.md')).toBe(malformed);
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it('uses valid fresh membership instead of a stale cached projection', async () => {
+    const app = await createAppWithFiles({
+      'Notes/WasProject.md': '---\nstatus: active\nkind: project\n---\n',
+      'Notes/BecameProject.md': '---\nstatus: active\nkind: reference\n---\n',
+    });
+    await app.vault.adapter.write(
+      'Notes/WasProject.md',
+      '---\nstatus: active\nkind: reference\n---\n',
+    );
+    await app.vault.adapter.write(
+      'Notes/BecameProject.md',
+      '---\nstatus: active\nkind: project\n---\n',
+    );
+    const settings = clone();
+    settings.projects.membershipQuery = 'kind=project';
+    const active = expectDefined(settings.projects.statuses[0]);
+
+    await manager(app, settings).renameStatusDefinition(
+      active.id,
+      'running',
+      'active',
+      vi.fn().mockResolvedValue(undefined),
+    );
+
+    expect(await frontmatterValue(app, 'Notes/WasProject.md')).toBe('active');
+    expect(await frontmatterValue(app, 'Notes/BecameProject.md')).toBe('running');
+  });
+
+  it('names the project whose YAML becomes invalid during write revalidation', async () => {
+    const malformed = '---\nbroken: [unterminated\n---\n';
+    const app = await createAppWithFiles({
+      'Projects/A.md': '---\nstatus: active\n---\n',
+    });
+    const settings = clone();
+    const active = expectDefined(settings.projects.statuses[0]);
+    const persist = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(app.vault, 'process').mockImplementation(async (_file, callback) => {
+      return callback(malformed);
+    });
+
+    await expect(
+      manager(app, settings).renameStatusDefinition(active.id, 'running', 'active', persist),
+    ).rejects.toThrow(/Project frontmatter in Projects\/A\.md is not valid YAML/u);
+
+    expect(active.name).toBe('active');
+    expect(await frontmatterValue(app, 'Projects/A.md')).toBe('active');
+    expect(persist).not.toHaveBeenCalled();
+  });
+
   it('renames fresh assigned projects while leaving nonprojects and externally changed values alone', async () => {
     const app = await createAppWithFiles({
       'Projects/A.md': '---\nstatus: active\n---\n',

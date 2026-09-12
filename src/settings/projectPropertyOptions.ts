@@ -7,6 +7,7 @@ import type {
 import { projectPropertyTypeChoices } from '../projects/projectPropertyDefinitions';
 import { projectPropertyPresetIssue } from '../projects/projectPropertyPresets';
 import { renderProjectValueRow, type ProjectValueRowControls } from './projectValueRow';
+import type { SettingsValueCommitRegistrar } from './settingsValueCommit';
 
 const PROPERTY_TYPE_LABELS: Readonly<Record<ProjectPropertyType, string>> = {
   text: 'Text',
@@ -35,6 +36,7 @@ interface RenderProjectPropertyOptions {
   readonly onAlignmentChange: (alignment: ProjectColumnAlignment | undefined) => void;
   readonly onDefinitionChange: () => void;
   readonly refresh: () => void;
+  readonly valueCommit?: SettingsValueCommitRegistrar;
 }
 
 function fixedTypeLabel(type: RenderProjectPropertyOptions['type']): string {
@@ -165,23 +167,26 @@ function renderPresetRow(context: PresetRowContext): void {
   };
   const controls = createPresetRowControls(context);
   context.labelers.set(id, controls.updateLabel);
-  controls.value.addEventListener('change', () => {
+  const commitValue = (): boolean => {
     const index = currentIndex();
-    if (index < 0) return;
+    if (index < 0) return true;
+    const current = currentRecord();
     const nextValue =
       definition.type === 'number' ? controls.value.valueAsNumber : controls.value.value;
-    const next = { ...(currentRecord() ?? {}), value: nextValue };
+    const next = { ...(current ?? {}), value: nextValue };
     const issue = projectPropertyPresetIssue(
       definition.type,
       next,
       rawPresets.filter((_candidate, candidateIndex) => candidateIndex !== index),
     );
     controls.error.setText(issue ?? '');
-    if (issue !== undefined) return;
+    if (issue !== undefined) return false;
+    if (current !== undefined && Object.is(current['value'], nextValue)) return true;
     rawPresets[index] = next;
     options.onDefinitionChange();
-  });
-  controls.displayName.addEventListener('change', () => {
+    return true;
+  };
+  const commitDisplayName = (): void => {
     const index = currentIndex();
     if (index < 0) return;
     const record = currentRecord();
@@ -191,8 +196,8 @@ function renderPresetRow(context: PresetRowContext): void {
     else next['displayName'] = controls.displayName.value;
     rawPresets[index] = next;
     options.onDefinitionChange();
-  });
-  controls.color.addEventListener('change', () => {
+  };
+  const commitColor = (): void => {
     const index = currentIndex();
     if (index < 0) return;
     const record = currentRecord();
@@ -201,7 +206,16 @@ function renderPresetRow(context: PresetRowContext): void {
     next['color'] = controls.color.value;
     rawPresets[index] = next;
     options.onDefinitionChange();
-  });
+  };
+  if (options.valueCommit === undefined) {
+    controls.value.addEventListener('change', commitValue);
+    controls.displayName.addEventListener('change', commitDisplayName);
+    controls.color.addEventListener('change', commitColor);
+  } else {
+    options.valueCommit.register(controls.value, commitValue);
+    options.valueCommit.register(controls.displayName, commitDisplayName);
+    options.valueCommit.register(controls.color, commitColor);
+  }
   controls.appearance.addEventListener('change', () => {
     const index = currentIndex();
     if (index < 0) return;

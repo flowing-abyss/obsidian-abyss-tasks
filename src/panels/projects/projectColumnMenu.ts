@@ -1,6 +1,7 @@
 import { Menu, type MenuItem } from 'obsidian';
 import type {
   ProjectColumn,
+  ProjectDateDisplay,
   ProjectFieldCatalogItem,
   ProjectPropertyType,
 } from '../../projects/projectFields';
@@ -33,11 +34,12 @@ export interface ProjectColumnMenuOptions {
   readonly trigger: HTMLButtonElement;
   readonly column: ProjectColumn;
   readonly field: ProjectFieldCatalogItem;
+  readonly dateDisplay: ProjectDateDisplay;
   readonly sort: { readonly field: string; readonly dir: 'asc' | 'desc' };
   readonly beforeAction: (action: () => void) => void;
   readonly onSort: (direction: 'asc' | 'desc' | 'none') => void;
   readonly onAlignment: (alignment: 'left' | 'center' | 'right') => void;
-  readonly onDateDisplay: (display: 'absolute' | 'relative') => void;
+  readonly onDateDisplay: (display: ProjectDateDisplay) => void;
   readonly typeChoices: readonly ProjectPropertyType[];
   readonly onType: (type: ProjectPropertyType) => void;
   readonly onRename: () => void;
@@ -163,24 +165,47 @@ function addTypes(menu: Menu, options: ProjectColumnMenuOptions, restoreFocus: (
   });
 }
 
-function configureDateDisplay(submenu: Menu, options: ProjectColumnMenuOptions): void {
+export interface ProjectDateDisplayMenuOptions {
+  readonly active: ProjectDateDisplay;
+  readonly onSelect: (display: ProjectDateDisplay) => void;
+}
+
+export function projectDateDisplayLabel(display: ProjectDateDisplay): string {
+  if (display === 'raw') return 'Raw';
+  return display === 'relative' ? 'Relative' : 'Pretty';
+}
+
+/** Adds shared project-date presentation choices to a native menu. */
+export function configureProjectDateDisplayMenu(
+  menu: Menu,
+  options: ProjectDateDisplayMenuOptions,
+): void {
   for (const [display, title, icon] of [
-    ['absolute', 'Absolute', 'calendar-days'],
+    ['pretty', 'Pretty', 'calendar-days'],
+    ['raw', 'Raw', 'braces'],
     ['relative', 'Relative', 'clock'],
   ] as const) {
-    const select = (): void => {
-      options.onDateDisplay(display);
-    };
-    submenu.addItem((choice) =>
+    menu.addItem((choice) =>
       choice
         .setTitle(title)
         .setIcon(icon)
-        .setChecked((options.column.dateDisplay ?? 'absolute') === display)
+        .setChecked(options.active === display)
         .onClick(() => {
-          run(options, select);
+          options.onSelect(display);
         }),
     );
   }
+}
+
+function configureColumnDateDisplayMenu(menu: Menu, options: ProjectColumnMenuOptions): void {
+  configureProjectDateDisplayMenu(menu, {
+    active: options.dateDisplay,
+    onSelect: (display) => {
+      run(options, () => {
+        options.onDateDisplay(display);
+      });
+    },
+  });
 }
 
 function addDateDisplay(
@@ -196,7 +221,7 @@ function addDateDisplay(
       owner: options,
       restoreFocus,
       configure: (submenu) => {
-        configureDateDisplay(submenu, options);
+        configureColumnDateDisplayMenu(submenu, options);
       },
     });
   });
