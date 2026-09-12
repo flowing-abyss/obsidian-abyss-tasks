@@ -541,77 +541,196 @@ describe('project Kanban overview', () => {
     expect(openProject).toHaveBeenCalledOnce();
   });
 
-  it('does not start from selected text and tears down Escape and dragend state', () => {
-    const { host } = mountView();
-    clickView(host, 'Kanban');
-    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
-    const title = expectDefined(card.querySelector<HTMLElement>('.abyss-project-table-name'));
-    const selection = expectDefined(activeDocument.defaultView?.getSelection());
-    selection.removeAllRanges();
-    const range = activeDocument.createRange();
-    range.selectNodeContents(title);
-    selection.addRange(range);
-    const blockedData = transfer();
-    title.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-    const blocked = dragEvent('dragstart', blockedData);
-    title.dispatchEvent(blocked);
-    expect(blocked.defaultPrevented).toBe(true);
-    expect(blockedData.types).toEqual([]);
-    expect(selection.toString()).toContain('A planning project');
-
-    selection.removeAllRanges();
-    const data = transfer();
-    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-    card.dispatchEvent(dragEvent('dragstart', data));
-    expect(card.classList.contains('is-dragging')).toBe(true);
-    card.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    expect(card.classList.contains('is-dragging')).toBe(false);
-
-    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-    card.dispatchEvent(dragEvent('dragstart', data));
-    card.dispatchEvent(dragEvent('dragend', data));
-    expect(host.querySelector('.is-dragging, .is-drop-target')).toBeNull();
-  });
-
-  it('accepts text selected after pointerdown and clears only the accepted drag selection', () => {
+  it('arms over an old range and accepts a bubbling text-node dragstart', () => {
     const { host } = mountView();
     clickView(host, 'Kanban');
     const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
     const start = expectDefined(
       card.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
     );
+    const text = expectDefined(start.firstChild);
     const selection = expectDefined(activeDocument.defaultView?.getSelection());
-    start.click();
-    expect(start.classList.contains('is-selected')).toBe(true);
-    expect(card.classList.contains('is-selected')).toBe(true);
-
-    start.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     selection.removeAllRanges();
     const range = activeDocument.createRange();
     range.selectNodeContents(start);
     selection.addRange(range);
     expect(selection.toString().length).toBeGreaterThan(0);
+
+    const pointerdown = new PointerEvent('pointerdown', {
+      bubbles: true,
+      button: 0,
+      pointerId: 7,
+    });
+    start.dispatchEvent(pointerdown);
+
+    expect(pointerdown.defaultPrevented).toBe(false);
+    expect(selection.toString()).toBe('');
+    expect(card.classList.contains('is-drag-armed')).toBe(true);
     const data = transfer();
     const drag = dragEvent('dragstart', data);
-    start.dispatchEvent(drag);
+    text.dispatchEvent(drag);
 
     expect(drag.defaultPrevented).toBe(false);
-    expect(data.types).toContain('application/x-abyss-project-kanban-card');
-    expect(selection.toString()).toBe('');
-    expect(host.querySelector('.abyss-project-kanban-card.is-selected')).toBeNull();
-    expect(host.querySelector('.abyss-project-kanban-card .is-selected')).toBeNull();
+    expect(data.types).toEqual(['application/x-abyss-project-kanban-card']);
+    expect(card.classList.contains('is-drag-armed')).toBe(false);
+    expect(card.classList.contains('is-dragging')).toBe(true);
     expect(
       host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
     ).toBe(true);
+    activeDocument.dispatchEvent(
+      new PointerEvent('pointercancel', { bubbles: true, pointerId: 7 }),
+    );
+    expect(card.classList.contains('is-dragging')).toBe(true);
 
-    card.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    expect(
-      host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
-    ).toBe(false);
-    start.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    card.dispatchEvent(dragEvent('dragend', data));
+    expect(host.querySelector('.is-dragging, .is-drop-target')).toBeNull();
+  });
+
+  it('disarms a provisional gesture on pointerup, pointercancel, and window blur', () => {
+    const { host } = mountView();
+    clickView(host, 'Kanban');
+    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const start = expectDefined(
+      card.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const text = expectDefined(start.firstChild);
+
+    start.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 11 }),
+    );
+    expect(card.classList.contains('is-drag-armed')).toBe(true);
+    activeDocument.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 99 }));
+    expect(card.classList.contains('is-drag-armed')).toBe(true);
+    activeDocument.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 11 }));
+    expect(card.classList.contains('is-drag-armed')).toBe(false);
+    const staleAfterUp = dragEvent('dragstart', transfer());
+    text.dispatchEvent(staleAfterUp);
+    expect(staleAfterUp.defaultPrevented).toBe(true);
+
+    start.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 12 }),
+    );
+    activeDocument.dispatchEvent(
+      new PointerEvent('pointercancel', { bubbles: true, pointerId: 12 }),
+    );
+    expect(card.classList.contains('is-drag-armed')).toBe(false);
+    const staleAfterCancel = dragEvent('dragstart', transfer());
+    text.dispatchEvent(staleAfterCancel);
+    expect(staleAfterCancel.defaultPrevented).toBe(true);
+
+    start.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 13 }),
+    );
+    activeDocument.defaultView?.dispatchEvent(new Event('blur'));
+    expect(card.classList.contains('is-drag-armed')).toBe(false);
+    const staleAfterBlur = dragEvent('dragstart', transfer());
+    text.dispatchEvent(staleAfterBlur);
+    expect(staleAfterBlur.defaultPrevented).toBe(true);
+  });
+
+  it('leaves protected links and editors alone while preserving plain title and metadata clicks', () => {
+    const openProject = vi.fn();
+    const { host } = mountView(undefined, { openProject });
+    clickView(host, 'Kanban');
+    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const title = expectDefined(card.querySelector<HTMLButtonElement>('.abyss-project-table-name'));
+    const start = expectDefined(
+      card.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const selection = expectDefined(activeDocument.defaultView?.getSelection());
+    const range = activeDocument.createRange();
+    range.selectNodeContents(start);
+    selection.addRange(range);
+    const selectedText = selection.toString();
+    const anchor = card.createEl('a', { text: 'Reference', href: '#reference' });
+    const checkbox = card.createEl('input', { attr: { type: 'checkbox' } });
+    const remove = card.createEl('button', { attr: { type: 'button' }, text: 'Remove' });
+    const select = card.createEl('select');
+    select.createEl('option', { text: 'Option' });
+    const textarea = card.createEl('textarea');
+    const editor = card.createDiv({ cls: 'abyss-project-cell-editor' });
+    const editorSurface = editor.createDiv({ text: 'Editor surface' });
+
+    anchor.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 20 }),
+    );
+    expect(selection.toString()).toBe(selectedText);
+    expect(card.classList.contains('is-drag-armed')).toBe(false);
+    const anchorDrag = dragEvent('dragstart', transfer());
+    anchor.dispatchEvent(anchorDrag);
+    expect(anchorDrag.defaultPrevented).toBe(true);
+
+    selection.removeAllRanges();
+    for (const protectedSurface of [checkbox, remove, select, textarea, editorSurface]) {
+      protectedSurface.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 21 }),
+      );
+      expect(card.classList.contains('is-drag-armed')).toBe(false);
+      const protectedDrag = dragEvent('dragstart', transfer());
+      protectedSurface.dispatchEvent(protectedDrag);
+      expect(protectedDrag.defaultPrevented).toBe(true);
+    }
+
+    title.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 22 }),
+    );
+    activeDocument.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 22 }));
+    title.click();
+    expect(openProject).toHaveBeenCalledOnce();
+    expect(card.classList.contains('is-drag-armed')).toBe(false);
+
+    start.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 23 }),
+    );
+    activeDocument.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 23 }));
     start.click();
     expect(start.classList.contains('is-selected')).toBe(true);
     expect(card.classList.contains('is-selected')).toBe(true);
+  });
+
+  it('releases provisional state on missing transfer, capture failure, Escape, and destroy', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { host, view } = mountView();
+    clickView(host, 'Kanban');
+    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const start = expectDefined(
+      card.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const text = expectDefined(start.firstChild);
+
+    start.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 31 }),
+    );
+    const missingTransfer = new MouseEvent('dragstart', { bubbles: true, cancelable: true });
+    text.dispatchEvent(missingTransfer);
+    expect(missingTransfer.defaultPrevented).toBe(true);
+    expect(card.classList.contains('is-drag-armed')).toBe(false);
+
+    card.dataset['projectPath'] = 'Projects/Stale.md';
+    start.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 32 }),
+    );
+    const captureFailure = dragEvent('dragstart', transfer());
+    text.dispatchEvent(captureFailure);
+    expect(captureFailure.defaultPrevented).toBe(true);
+    expect(card.classList.contains('is-drag-armed')).toBe(false);
+    expect(card.classList.contains('is-dragging')).toBe(false);
+    expect(activeDocument.querySelector('.abyss-project-kanban-drag-image')).toBeNull();
+
+    card.dataset['projectPath'] = 'Projects/A.md';
+    start.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 33 }),
+    );
+    activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(card.classList.contains('is-drag-armed')).toBe(false);
+
+    start.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 34 }),
+    );
+    expect(card.classList.contains('is-drag-armed')).toBe(true);
+    view.destroy();
+    mounted.delete(view);
+    expect(card.classList.contains('is-drag-armed')).toBe(false);
   });
 
   it('keeps a re-entered collapsed target through an ambiguous stale leave and drops there', async () => {

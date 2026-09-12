@@ -8083,6 +8083,11 @@ table.abyss-project-table {
   opacity: 0.46;
 }
 
+.abyss-project-kanban-card.is-drag-armed,
+.abyss-project-kanban-card.is-drag-armed * {
+  user-select: none;
+}
+
 .abyss-project-kanban-drag-image {
   position: fixed;
   z-index: -1;
