@@ -1,4 +1,5 @@
 import {
+  getAllTags,
   getFrontMatterInfo,
   normalizePath,
   parseFrontMatterTags,
@@ -16,7 +17,7 @@ import {
   ObsidianProjectProperties,
   type ProjectPropertyCatalog,
 } from './ObsidianProjectProperties';
-import { ProjectEditValidationError } from './projectEditError';
+import { isProjectEditValidationError, ProjectEditValidationError } from './projectEditError';
 import {
   createOwnedInferredPropertyClear,
   isOwnedInferredPropertyClear,
@@ -220,17 +221,23 @@ function samePropertyName(left: string, right: string): boolean {
   return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
 }
 
-function parseProjectSource(source: string): ParsedProjectSource {
+function projectFrontmatterSubject(path: string | undefined): string {
+  return path === undefined ? 'Project frontmatter' : `Project frontmatter in ${path}`;
+}
+
+function parseProjectSource(source: string, path?: string): ParsedProjectSource {
   const info = getFrontMatterInfo(source);
   if (!info.exists) return { frontmatter: {}, prefix: '---\n', delimiter: '\n---\n', body: source };
   let parsed: unknown;
   try {
     parsed = parseYaml(info.frontmatter);
   } catch {
-    throw new ProjectEditValidationError('Project frontmatter is not valid YAML.');
+    throw new ProjectEditValidationError(`${projectFrontmatterSubject(path)} is not valid YAML.`);
   }
   if (parsed !== null && (typeof parsed !== 'object' || Array.isArray(parsed))) {
-    throw new ProjectEditValidationError('Project frontmatter must be a YAML object.');
+    throw new ProjectEditValidationError(
+      `${projectFrontmatterSubject(path)} must be a YAML object.`,
+    );
   }
   return {
     frontmatter: (parsed ?? {}) as Record<string, unknown>,
@@ -307,6 +314,31 @@ function isProject(
   projects: CalendarSettings['projects'],
 ): boolean {
   return evaluateQuery(projects.membershipQuery, path, projectTags(parsed), parsed.frontmatter);
+}
+
+function isCachedProject(
+  path: string,
+  cache: ReturnType<App['metadataCache']['getFileCache']>,
+  projects: CalendarSettings['projects'],
+): boolean {
+  const frontmatter = (cache?.frontmatter ?? {}) as Record<string, unknown>;
+  const tags = (cache === null ? [] : (getAllTags(cache) ?? [])).map((tag) => tag.toLowerCase());
+  return evaluateQuery(projects.membershipQuery, path, tags, frontmatter);
+}
+
+function parseStatusRenameCandidate(
+  source: string,
+  file: TFile,
+  cache: ReturnType<App['metadataCache']['getFileCache']>,
+  projects: CalendarSettings['projects'],
+): ParsedProjectSource | null {
+  try {
+    return parseProjectSource(source, file.path);
+  } catch (error) {
+    if (!isProjectEditValidationError(error)) throw error;
+    if (!isCachedProject(file.path, cache, projects)) return null;
+    throw error;
+  }
 }
 
 interface StatusRenameWrite {
@@ -893,7 +925,14 @@ export class ProjectManager {
     const projects = this.settings.projects;
     const candidates: TFile[] = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
-      const parsed = parseProjectSource(await this.app.vault.read(file));
+      const source = await this.app.vault.read(file);
+      const parsed = parseStatusRenameCandidate(
+        source,
+        file,
+        this.app.metadataCache.getFileCache(file),
+        projects,
+      );
+      if (parsed === null) continue;
       if (!isProject(file.path, parsed, projects)) continue;
       const current = uniqueFrontmatterProperty(parsed.frontmatter, context.property);
       if (current !== undefined && String(current.value) === context.expectedName) {
@@ -907,7 +946,7 @@ export class ProjectManager {
     let changed: boolean | undefined;
     await this.app.vault.process(file, (source) => {
       this.assertConfiguredStatusProperty(context.property);
-      const parsed = parseProjectSource(source);
+      const parsed = parseProjectSource(source, file.path);
       if (!isProject(file.path, parsed, this.settings.projects)) return source;
       const current = uniqueFrontmatterProperty(parsed.frontmatter, context.property);
       if (current === undefined || String(current.value) !== context.expectedName) return source;
