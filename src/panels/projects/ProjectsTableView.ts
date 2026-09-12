@@ -625,12 +625,7 @@ export class ProjectsTableView {
         }),
       onSortBy: (field) =>
         this.requestViewChange_abyssPrivate(() => {
-          const table = this.context_abyssPrivate.settings.projects.table;
-          if (field === 'none') {
-            table.sortBy = { field: 'none', dir: 'asc' };
-          } else if (table.sortBy.field !== field) table.sortBy = { field, dir: 'asc' };
-          else if (table.sortBy.dir === 'asc') table.sortBy = { field, dir: 'desc' };
-          else table.sortBy = { field: 'none', dir: 'asc' };
+          this.transitionTableSort_abyssPrivate(field);
         }),
       onReset: () => {
         this.finishEditorBeforeAction(() => {
@@ -1696,11 +1691,16 @@ export class ProjectsTableView {
   }
 
   private sortByColumn_abyssPrivate(field: string): void {
+    this.transitionTableSort_abyssPrivate(field);
+    this.persistAndRender_abyssPrivate();
+  }
+
+  private transitionTableSort_abyssPrivate(field: string): void {
     const table = this.context_abyssPrivate.settings.projects.table;
-    if (table.sortBy.field !== field) table.sortBy = { field, dir: 'asc' };
+    if (field === 'none') table.sortBy = { field: 'none', dir: 'asc' };
+    else if (table.sortBy.field !== field) table.sortBy = { field, dir: 'asc' };
     else if (table.sortBy.dir === 'asc') table.sortBy = { field, dir: 'desc' };
     else table.sortBy = { field: 'none', dir: 'asc' };
-    this.persistAndRender_abyssPrivate();
   }
 
   private projectColumnTypeChoices_abyssPrivate(columnId: string): readonly ProjectPropertyType[] {
