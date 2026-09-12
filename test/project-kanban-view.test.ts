@@ -9,7 +9,10 @@ import type {
   ProjectCellChange,
   ProjectEditResult,
 } from '../src/projects/projectEdits';
-import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
+import {
+  buildDefaultProjectKanbanSettings,
+  normalizeProjectKanbanSettings,
+} from '../src/projects/projectKanbanSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
@@ -718,6 +721,182 @@ describe('project Kanban overview', () => {
     ).toEqual(['Projects/B.md', 'Projects/A.md', 'Projects/C.md']);
   });
 
+  it('captures the first Manual sequence and appends later observations without repeat saves', async () => {
+    const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const b = project({ path: 'Projects/B.md', name: 'B' });
+    const c = project({ path: 'Projects/C.md', name: 'C' });
+    const a = project({ path: 'Projects/A.md', name: 'A' });
+    const saveViewState = vi.fn().mockResolvedValue(undefined);
+    const { host, view, settings } = mountView([b, c], { saveViewState });
+    settings.projects.table.sortBy = { field: 'none', dir: 'asc' };
+
+    clickView(host, 'Kanban');
+    await flushMicrotasks();
+    expect(settings.projects.kanban?.manualOrder[`id:${status.id}`]).toEqual([
+      'Projects/B.md',
+      'Projects/C.md',
+    ]);
+    saveViewState.mockClear();
+
+    view.update([a, b, c]);
+    await flushMicrotasks();
+
+    expect(settings.projects.kanban?.manualOrder[`id:${status.id}`]).toEqual([
+      'Projects/B.md',
+      'Projects/C.md',
+      'Projects/A.md',
+    ]);
+    expect(
+      Array.from(
+        host.querySelectorAll<HTMLElement>('.abyss-project-kanban-card'),
+        (card) => card.dataset['projectPath'],
+      ),
+    ).toEqual(['Projects/B.md', 'Projects/C.md', 'Projects/A.md']);
+    expect(saveViewState).toHaveBeenCalledOnce();
+
+    saveViewState.mockClear();
+    view.update([a, b, c]);
+    await flushMicrotasks();
+    expect(saveViewState).not.toHaveBeenCalled();
+  });
+
+  it('records hidden newcomers during field sorting and preserves their Manual order on reload', async () => {
+    const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const b = project({ path: 'Projects/B.md', name: 'B' });
+    const c = project({ path: 'Projects/C.md', name: 'C' });
+    const a = project({ path: 'Projects/A.md', name: 'A' });
+    const aa = project({ path: 'Projects/AA.md', name: 'AA' });
+    const { host, view, settings } = mountView([b, c]);
+    settings.projects.table.sortBy = { field: 'name', dir: 'asc' };
+    clickView(host, 'Kanban');
+    const kanban = expectDefined(settings.projects.kanban);
+    kanban.hiddenStatuses = [`id:${status.id}`];
+
+    view.update([a, b, c]);
+    view.update([a, aa, b, c]);
+
+    expect(kanban.manualOrder[`id:${status.id}`]).toEqual([
+      'Projects/B.md',
+      'Projects/C.md',
+      'Projects/A.md',
+      'Projects/AA.md',
+    ]);
+    expect(host.querySelectorAll('.abyss-project-kanban-card')).toHaveLength(0);
+
+    kanban.hiddenStatuses = [];
+    kanban.sortBy = { field: 'none', dir: 'asc' };
+    view.refreshFields();
+    expect(
+      Array.from(
+        host.querySelectorAll<HTMLElement>('.abyss-project-kanban-card'),
+        (card) => card.dataset['projectPath'],
+      ),
+    ).toEqual(['Projects/B.md', 'Projects/C.md', 'Projects/A.md', 'Projects/AA.md']);
+
+    const restored = structuredClone(settings);
+    restored.projects.overviewView = 'kanban';
+    restored.projects.kanban = normalizeProjectKanbanSettings(
+      restored.projects.kanban,
+      restored.projects.table,
+    );
+    const saveViewState = vi.fn().mockResolvedValue(undefined);
+    const reloaded = mountView([a, aa, b, c], { settings: restored, saveViewState });
+    await flushMicrotasks();
+
+    expect(
+      Array.from(
+        reloaded.host.querySelectorAll<HTMLElement>('.abyss-project-kanban-card'),
+        (card) => card.dataset['projectPath'],
+      ),
+    ).toEqual(['Projects/B.md', 'Projects/C.md', 'Projects/A.md', 'Projects/AA.md']);
+    expect(saveViewState).not.toHaveBeenCalled();
+  });
+
+  it('retains an active source through an external grouping edit and reconciles after dragend', () => {
+    const initial = project();
+    const { host, view, settings } = mountView([initial]);
+    settings.projects.table.groupBy = 'property:Budget';
+    clickView(host, 'Kanban');
+    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const initialGroup = card.closest<HTMLElement>('[data-group-key]');
+    const data = transfer();
+    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    card.dispatchEvent(dragEvent('dragstart', data));
+
+    view.update([{ ...initial, frontmatter: { ...initial.frontmatter, Budget: 99 } }]);
+
+    expect(card.isConnected).toBe(true);
+    expect(card.closest('[data-group-key]')).toBe(initialGroup);
+    card.dispatchEvent(dragEvent('dragend', data));
+
+    const reconciled = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"]',
+      ),
+    );
+    expect(card.isConnected).toBe(false);
+    expect(reconciled.closest<HTMLElement>('[data-group-key]')?.dataset['groupKey']).toBe(
+      'value:99',
+    );
+    expect(activeDocument.querySelectorAll('.abyss-project-kanban-drag-image')).toHaveLength(0);
+    expect(
+      host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
+    ).toBe(false);
+  });
+
+  it('retains an active source through membership loss and removes it after cancellation', () => {
+    const { host, view } = mountView();
+    clickView(host, 'Kanban');
+    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const data = transfer();
+    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    card.dispatchEvent(dragEvent('dragstart', data));
+
+    view.update([]);
+
+    expect(card.isConnected).toBe(true);
+    card.dispatchEvent(dragEvent('dragend', data));
+    expect(card.isConnected).toBe(false);
+    expect(host.querySelector('.abyss-project-kanban-card')).toBeNull();
+    expect(activeDocument.querySelectorAll('.abyss-project-kanban-drag-image')).toHaveLength(0);
+    expect(
+      host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
+    ).toBe(false);
+  });
+
+  it('rejects a stale drop after a deferred external grouping change', async () => {
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const initial = project({
+      statusId: sourceStatus.id,
+      frontmatter: { status: sourceStatus.name, Budget: 42 },
+    });
+    const { host, view, settings, applyEdits } = mountView([initial]);
+    settings.projects.table.groupBy = 'property:Budget';
+    clickView(host, 'Kanban');
+    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const target = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
+      ),
+    );
+    const data = transfer();
+    card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    card.dispatchEvent(dragEvent('dragstart', data));
+
+    view.update([{ ...initial, frontmatter: { ...initial.frontmatter, Budget: 99 } }]);
+    expect(card.isConnected).toBe(true);
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+
+    expect(applyEdits).not.toHaveBeenCalled();
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain('changed');
+    expect(activeDocument.querySelectorAll('.abyss-project-kanban-drag-image')).toHaveLength(0);
+    expect(
+      host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
+    ).toBe(false);
+  });
+
   it('revalidates the captured source inside the queued drop', async () => {
     const planned = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
     const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
@@ -743,6 +922,7 @@ describe('project Kanban overview', () => {
         rawStatus: 'Externally changed',
       }),
     ]);
+    expect(card.isConnected).toBe(true);
     const target = expectDefined(
       host.querySelector<HTMLElement>(
         `.abyss-project-kanban-column[data-status-key="id:${active.id}"]`,
@@ -754,6 +934,10 @@ describe('project Kanban overview', () => {
 
     expect(applyEdits).not.toHaveBeenCalled();
     expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain('changed');
+    expect(activeDocument.querySelectorAll('.abyss-project-kanban-drag-image')).toHaveLength(0);
+    expect(
+      host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
+    ).toBe(false);
   });
 
   it('keeps committed manual order and offers Retry when its settings save fails', async () => {
@@ -1359,6 +1543,63 @@ describe('project Kanban overview', () => {
     );
     expect(moved).toBe(card);
     expect(activeDocument.activeElement).toBe(focusedCell);
+  });
+
+  it('moves board focus to a surviving card and then the board when projects disappear', () => {
+    const first = project();
+    const second = project({ path: 'Projects/B.md', name: 'B project' });
+    const { host, view } = mountView([first, second]);
+    clickView(host, 'Kanban');
+    const firstCard = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"]',
+      ),
+    );
+    firstCard.focus();
+
+    view.update([second]);
+
+    expect(
+      activeDocument.activeElement?.closest<HTMLElement>('.abyss-project-kanban-card')?.dataset[
+        'projectPath'
+      ],
+    ).toBe('Projects/B.md');
+
+    view.update([]);
+
+    const board = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban'));
+    expect(board.contains(activeDocument.activeElement)).toBe(true);
+    expect(activeDocument.activeElement).toBe(
+      host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'),
+    );
+  });
+
+  it('returns collapsed card focus to the board without stealing search or external focus', () => {
+    const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const { host, view, settings } = mountView();
+    clickView(host, 'Kanban');
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-kanban-card [data-column-id="start"]'),
+    );
+    start.focus();
+    const kanban = expectDefined(settings.projects.kanban);
+    kanban.collapsedColumns = [`id:${status.id}`];
+
+    view.refreshFields();
+
+    expect(activeDocument.activeElement).toBe(
+      host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'),
+    );
+
+    const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
+    search.focus();
+    view.update([]);
+    expect(activeDocument.activeElement).toBe(search);
+
+    const outside = activeDocument.body.createEl('button', { attr: { type: 'button' } });
+    outside.focus();
+    view.update([project()]);
+    expect(activeDocument.activeElement).toBe(outside);
   });
 
   it('reveals a moved card through its destination column on the first update', () => {

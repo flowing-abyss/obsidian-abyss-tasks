@@ -585,9 +585,9 @@ export class ProjectKanbanDragController {
     if (suppressClick) this.suppressClickPath_abyssPrivate = active?.source.projectPath;
     active?.card.removeClass('is-dragging');
     active?.image?.remove();
-    active?.release();
     this.pointerCard_abyssPrivate = undefined;
     this.clearVisuals_abyssPrivate();
+    active?.release();
   }
 }
 

@@ -414,13 +414,41 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
   }
 
   private restoreFocusedDescendant_abyssPrivate(focused: HTMLElement | undefined): void {
-    if (
-      focused === undefined ||
-      !focused.isConnected ||
-      this.root.ownerDocument.activeElement === focused
-    )
+    if (focused === undefined) return;
+    const active = this.root.ownerDocument.activeElement;
+    if (this.focusMovedOutsideBoard_abyssPrivate(active)) return;
+    if (this.focusedCardVisible_abyssPrivate(focused)) {
+      if (active !== focused) focused.focus({ preventScroll: true });
       return;
-    focused.focus({ preventScroll: true });
+    }
+    this.focusFallback_abyssPrivate().focus({ preventScroll: true });
+  }
+
+  private focusMovedOutsideBoard_abyssPrivate(active: Element | null): boolean {
+    return (
+      active instanceof HTMLElement &&
+      active !== this.root.ownerDocument.body &&
+      !this.root.contains(active)
+    );
+  }
+
+  private focusedCardVisible_abyssPrivate(focused: HTMLElement): boolean {
+    const card = focused.closest<HTMLElement>('.abyss-project-kanban-card');
+    return (
+      focused.isConnected &&
+      (card === null ||
+        this.visibleCells_abyssPrivate.some(({ element }) => card.contains(element)))
+    );
+  }
+
+  private focusFallback_abyssPrivate(): HTMLElement {
+    const selected = this.selectedPath_abyssPrivate;
+    return (
+      this.visibleCells_abyssPrivate.find(({ identity }) => identity.projectPath === selected)
+        ?.element ??
+      this.visibleCells_abyssPrivate[0]?.element ??
+      this.scroll
+    );
   }
 
   private removeMissingColumns_abyssPrivate(retained: ReadonlySet<string>): void {

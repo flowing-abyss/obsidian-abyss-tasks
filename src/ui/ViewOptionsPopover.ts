@@ -47,7 +47,7 @@ export interface ViewOptionsMultiRow extends ViewOptionsRowBase {
   ) => void | Promise<void>;
 }
 
-export interface ViewOptionsGroupRow extends ViewOptionsRowBase {
+interface ViewOptionsGroupRow extends ViewOptionsRowBase {
   readonly kind: 'group';
   readonly rows: readonly ViewOptionsRow[];
 }

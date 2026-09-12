@@ -212,6 +212,11 @@ raw and No status columns exist only for source values that are present. Card de
 as hidden, one line, two lines, or full; the additive full value removes the visual line clamp, while
 older binaries retain it in recovery and fall back to their existing default.
 
+The overview controller initializes each status column's manual path sequence from its first complete
+project snapshot and appends newly observed paths even while a field sort, search, or status filter
+hides their manual projection. Missing and filtered paths keep their remembered ranks. These
+state-only changes use the existing saved-view persistence and Retry boundary.
+
 `ProjectsPanel` owns one long-lived project-overview controller and the vault property-catalog
 subscription. Ordinary project-store refreshes update that controller instead of reconstructing
 it. The controller keeps the shared toolbar, editor boundary, mutation queue, receipt projection,

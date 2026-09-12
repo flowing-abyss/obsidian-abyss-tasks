@@ -110,6 +110,37 @@ import {
 
 const PROJECT_TABLE_ROW_DRAG_TYPE = 'application/x-abyss-project-table-row';
 
+function projectManualOrderStatusKey(project: Project): string {
+  if (project.statusId !== null && project.statusId.length > 0) return `id:${project.statusId}`;
+  if (project.rawStatus !== null && project.rawStatus.length > 0) return `raw:${project.rawStatus}`;
+  return 'none';
+}
+
+function projectPathsByStatus(projects: readonly Project[]): ReadonlyMap<string, string[]> {
+  const observed = new Map<string, string[]>();
+  for (const project of projects) {
+    const key = projectManualOrderStatusKey(project);
+    const paths = observed.get(key) ?? [];
+    paths.push(project.path);
+    observed.set(key, paths);
+  }
+  return observed;
+}
+
+function appendUnrankedProjectPaths(
+  existing: readonly string[],
+  observed: readonly string[],
+): string[] {
+  const sequence = [...existing];
+  const known = new Set(existing);
+  for (const path of observed) {
+    if (known.has(path)) continue;
+    known.add(path);
+    sequence.push(path);
+  }
+  return sequence;
+}
+
 function exactGroupLinkLabel(value: string, label: string): string | undefined {
   return exactLinkToken(value) === undefined ? undefined : label;
 }
@@ -464,6 +495,7 @@ export class ProjectsTableView {
   private readonly markdown_abyssPrivate = new Component();
   private readonly ownerWindow_abyssPrivate: Window | undefined;
   private activeEditor_abyssPrivate: ActiveEditor | undefined;
+  private projectDragActive_abyssPrivate = false;
   private activeRowDrag_abyssPrivate: ProjectRowDragPayload | undefined;
   private groupDropPreview_abyssPrivate: GroupDropPreview | undefined;
   private groupDropRevision_abyssPrivate = 0;
@@ -640,6 +672,7 @@ export class ProjectsTableView {
       this.context_abyssPrivate.settings.projects.kanban = buildDefaultProjectKanbanSettings(
         this.context_abyssPrivate.settings.projects.table,
       );
+      this.prepareKanbanManualOrder_abyssPrivate(false);
       this.persistAndRender_abyssPrivate();
       return;
     }
@@ -671,10 +704,27 @@ export class ProjectsTableView {
     return projects.kanban;
   }
 
+  private prepareKanbanManualOrder_abyssPrivate(create: boolean): boolean {
+    const projectsSettings = this.context_abyssPrivate.settings.projects;
+    const created = create && projectsSettings.kanban === undefined;
+    if (created) this.ensureKanbanSettings_abyssPrivate();
+    const settings = projectsSettings.kanban;
+    if (settings === undefined) return false;
+    let changed = created;
+    for (const [key, paths] of projectPathsByStatus(this.projects_abyssPrivate)) {
+      const existing = settings.manualOrder[key] ?? [];
+      const sequence = appendUnrankedProjectPaths(existing, paths);
+      if (sequence.length === existing.length && settings.manualOrder[key] !== undefined) continue;
+      settings.manualOrder[key] = sequence;
+      changed = true;
+    }
+    return changed;
+  }
+
   private switchOverviewMode_abyssPrivate(mode: ProjectOverviewMode): void {
     if (mode === this.overviewMode_abyssPrivate) return;
     this.finishEditorBeforeAction(() => {
-      if (mode === 'kanban') this.ensureKanbanSettings_abyssPrivate();
+      if (mode === 'kanban') this.prepareKanbanManualOrder_abyssPrivate(true);
       this.overviewMode_abyssPrivate = mode;
       this.context_abyssPrivate.settings.projects.overviewView = mode;
       this.toolbar_abyssPrivate.setSearchValue(this.searches_abyssPrivate[mode]);
@@ -697,7 +747,11 @@ export class ProjectsTableView {
 
   update(projects: readonly Project[]): void {
     this.projects_abyssPrivate = projects;
+    const manualOrderChanged = this.prepareKanbanManualOrder_abyssPrivate(
+      this.overviewMode_abyssPrivate === 'kanban',
+    );
     this.renderTable_abyssPrivate();
+    if (manualOrderChanged) this.persistSettings_abyssPrivate();
   }
 
   refreshFields(): void {
@@ -707,7 +761,11 @@ export class ProjectsTableView {
       this.context_abyssPrivate.settings.projects,
       this.context_abyssPrivate.catalog.list(),
     );
+    const manualOrderChanged = this.prepareKanbanManualOrder_abyssPrivate(
+      this.overviewMode_abyssPrivate === 'kanban',
+    );
     this.renderTable_abyssPrivate();
+    if (manualOrderChanged) this.persistSettings_abyssPrivate();
   }
 
   destroy(): void {
@@ -933,7 +991,11 @@ export class ProjectsTableView {
     if (!this.mounted_abyssPrivate) return;
     this.clearGroupDropStates_abyssPrivate();
     this.groupDropRevision_abyssPrivate++;
-    if (this.mutationActive_abyssPrivate || this.activeEditor_abyssPrivate !== undefined) {
+    if (
+      this.mutationActive_abyssPrivate ||
+      this.activeEditor_abyssPrivate !== undefined ||
+      this.projectDragActive_abyssPrivate
+    ) {
       this.renderPending_abyssPrivate = true;
       return;
     }
@@ -2790,11 +2852,11 @@ export class ProjectsTableView {
     };
     const finishDrag = (): void => {
       clearGesture();
-      releaseDrag?.();
-      releaseDrag = undefined;
       row.removeClass('is-dragging');
       this.activeRowDrag_abyssPrivate = undefined;
       this.clearGroupDropStates_abyssPrivate();
+      releaseDrag?.();
+      releaseDrag = undefined;
       window.setTimeout(() => {
         suppressClick = false;
       }, 0);
@@ -2811,14 +2873,14 @@ export class ProjectsTableView {
     row.addEventListener('click', suppressDraggedClick, true);
     return () => {
       clearGesture();
-      releaseDrag?.();
-      releaseDrag = undefined;
       row.removeClass('is-dragging');
       dropCleanup();
       row.removeEventListener('pointerdown', rememberGesture, true);
       row.removeEventListener('dragstart', startDrag);
       row.removeEventListener('dragend', finishDrag);
       row.removeEventListener('click', suppressDraggedClick, true);
+      releaseDrag?.();
+      releaseDrag = undefined;
     };
   }
 
@@ -2826,9 +2888,15 @@ export class ProjectsTableView {
     this.root_abyssPrivate.ownerDocument.defaultView?.getSelection()?.removeAllRanges();
     this.selection_abyssPrivate.clear();
     this.syncSelection_abyssPrivate();
+    this.projectDragActive_abyssPrivate = true;
     this.root_abyssPrivate.addClass('is-project-dragging');
+    let released = false;
     return () => {
+      if (released) return;
+      released = true;
+      this.projectDragActive_abyssPrivate = false;
       this.root_abyssPrivate.removeClass('is-project-dragging');
+      if (this.renderPending_abyssPrivate) this.renderTable_abyssPrivate();
     };
   }
 
