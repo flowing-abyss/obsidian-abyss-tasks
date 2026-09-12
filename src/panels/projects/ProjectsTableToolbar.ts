@@ -246,7 +246,8 @@ export class ProjectsTableToolbar {
       host: this.options_abyssPrivate.host,
       anchor: this.viewButton_abyssPrivate,
       rows,
-      showReset: () => this.isCustomized_abyssPrivate(),
+      showReset: () =>
+        this.options_abyssPrivate.mode() === 'kanban' || this.isCustomized_abyssPrivate(),
       onReset: this.options_abyssPrivate.onReset,
       onClose: () => {
         if (this.popoverCleanup_abyssPrivate === close) {

@@ -1,6 +1,7 @@
 import { App, MarkdownRenderer, Menu, Notice } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import { isProjectKanbanCustomized } from '../src/panels/projects/ProjectKanbanOptions';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
@@ -261,6 +262,18 @@ function viewOptionRow(host: HTMLElement, label: string): HTMLElement {
 }
 
 describe('project Kanban overview', () => {
+  it('compares Kanban preferences while ignoring populated manual ranks', () => {
+    const table = structuredClone(DEFAULT_SETTINGS.projects.table);
+    const defaults = buildDefaultProjectKanbanSettings(table);
+    const ranked = {
+      ...defaults,
+      manualOrder: { 'id:planned': ['Projects/B.md', 'Projects/A.md'] },
+    };
+
+    expect(isProjectKanbanCustomized(ranked, table)).toBe(false);
+    expect(isProjectKanbanCustomized({ ...ranked, descriptionLines: 2 }, table)).toBe(true);
+  });
+
   it('keeps three root rows and closes nested siblings without closing their parent', () => {
     const { host } = mountView();
     clickView(host, 'Kanban');
@@ -450,6 +463,38 @@ describe('project Kanban overview', () => {
 
     expect(host.querySelector('.abyss-view-state-popover')).toBeNull();
     expect(settings.projects.table.groupBy).toBe('status');
+  });
+
+  it('offers Kanban reset without a customization dot and restores seeded Manual order', () => {
+    const planned = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const a = project({ path: 'Projects/A.md', name: 'A' });
+    const b = project({ path: 'Projects/B.md', name: 'B' });
+    const { host, view, settings } = mountView([a, b]);
+    settings.projects.table.sortBy = { field: 'none', dir: 'asc' };
+    clickView(host, 'Kanban');
+    const kanban = expectDefined(settings.projects.kanban);
+    kanban.manualOrder[`id:${planned.id}`] = ['Projects/B.md', 'Projects/A.md'];
+    view.refreshFields();
+    const viewOptions = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-view-state-btn'),
+    );
+
+    expect(viewOptions.classList.contains('abyss-view-state-btn--active')).toBe(false);
+    viewOptions.click();
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-reset-btn')).click();
+
+    expect(settings.projects.kanban?.sortBy).toEqual({ field: 'none', dir: 'asc' });
+    expect(settings.projects.kanban?.manualOrder[`id:${planned.id}`]).toEqual([
+      'Projects/A.md',
+      'Projects/B.md',
+    ]);
+    expect(
+      Array.from(
+        host.querySelectorAll<HTMLElement>('.abyss-project-kanban-card'),
+        (card) => card.dataset['projectPath'],
+      ),
+    ).toEqual(['Projects/A.md', 'Projects/B.md']);
+    expect(viewOptions.classList.contains('abyss-view-state-btn--active')).toBe(false);
   });
 
   it('drags the full card and title, excludes protected controls, and retains card identity', async () => {

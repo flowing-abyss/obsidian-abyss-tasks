@@ -376,7 +376,14 @@ export function isProjectKanbanCustomized(
   settings: ProjectKanbanSettings,
   tableSettings: Parameters<typeof buildDefaultProjectKanbanSettings>[0],
 ): boolean {
-  return (
-    JSON.stringify(settings) !== JSON.stringify(buildDefaultProjectKanbanSettings(tableSettings))
-  );
+  const preferences = projectKanbanPreferences(settings);
+  const defaults = projectKanbanPreferences(buildDefaultProjectKanbanSettings(tableSettings));
+  return JSON.stringify(preferences) !== JSON.stringify(defaults);
+}
+
+function projectKanbanPreferences({
+  manualOrder: _manualOrder,
+  ...preferences
+}: ProjectKanbanSettings): Omit<ProjectKanbanSettings, 'manualOrder'> {
+  return preferences;
 }
