@@ -7048,7 +7048,7 @@ table.abyss-project-table {
   position: relative;
   height: 34px;
   background: var(--background-secondary);
-  color: var(--text-muted);
+  color: var(--text-normal);
   font-size: var(--font-ui-smaller);
   font-weight: var(--font-semibold);
 }
@@ -7366,7 +7366,7 @@ table.abyss-project-table {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  color: var(--text-muted);
+  color: var(--text-normal);
   font-size: var(--font-ui-smaller);
   font-weight: var(--font-semibold);
   justify-content: flex-start;
