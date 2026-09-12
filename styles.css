@@ -7829,18 +7829,24 @@ table.abyss-project-table {
   width: 100%;
   max-height: var(--abyss-project-editor-content-max-height, none);
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  padding: 6px;
+  box-shadow: none;
   font-size: var(--font-ui-small);
 }
 
 .abyss-project-value-picker-search {
   flex: 0 0 auto;
+  box-sizing: border-box;
+  height: 28px;
+  font: inherit;
 }
 
 .abyss-project-value-picker-results {
+  flex-shrink: 1;
   overflow-y: auto;
   min-height: 0;
-  max-height: min(300px, calc(var(--abyss-project-editor-content-max-height, 372px) - 72px));
+  max-height: 220px;
   overscroll-behavior: contain;
 }
 
@@ -7848,15 +7854,10 @@ table.abyss-project-table {
   display: none;
 }
 
-.abyss-project-value-picker-group + .abyss-project-value-picker-group {
-  margin-top: 6px;
-}
-
-.abyss-project-value-picker-heading {
-  padding: 3px 6px;
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-  font-weight: var(--font-semibold);
+.abyss-project-value-picker-group:not([hidden]) + .abyss-project-value-picker-group:not([hidden]) {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--background-modifier-border);
 }
 
 .abyss-project-value-picker-rows {
@@ -7867,12 +7868,13 @@ table.abyss-project-table {
 .abyss-project-value-picker-option {
   display: grid;
   box-sizing: border-box;
-  min-height: 30px;
+  height: 26px;
+  min-height: 26px;
   align-items: center;
-  padding: 2px 4px;
+  padding: 1px 4px;
   border-radius: var(--radius-s);
   cursor: pointer;
-  grid-template-columns: 18px minmax(0, 1fr) 24px;
+  grid-template-columns: 18px minmax(0, 1fr) 22px;
 }
 
 .abyss-project-value-picker-option:is(:hover, .is-active) {
@@ -7893,21 +7895,36 @@ table.abyss-project-table {
 }
 
 .abyss-project-value-picker-presentation {
+  display: flex;
   overflow: hidden;
   min-width: 0;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.abyss-project-value-picker-presentation > .abyss-suggest-title {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .abyss-project-value-picker-presentation .abyss-suggest-path {
   overflow: hidden;
+  min-width: 0;
+  flex: 0 1 45%;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .abyss-projects-table button.abyss-project-value-picker-edit {
   display: inline-flex;
-  width: 24px;
-  min-width: 24px;
-  min-height: 24px;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
   align-items: center;
   justify-content: center;
   padding: 0;
@@ -7932,16 +7949,42 @@ table.abyss-project-table {
 }
 
 .abyss-projects-table button.abyss-project-value-picker-action {
+  display: flex;
   overflow: hidden;
   width: 100%;
-  min-height: 28px;
-  padding: 3px 8px;
+  height: 22px;
+  min-height: 22px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 0 6px;
   border: 0;
-  background: var(--background-modifier-hover);
+  background: transparent;
   box-shadow: none;
-  color: var(--text-normal);
-  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-ui-smaller);
   text-align: left;
+}
+
+.abyss-projects-table button.abyss-project-value-picker-action:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.abyss-project-value-picker-action-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.abyss-project-value-picker-action-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.abyss-project-value-picker-action-label {
+  overflow: hidden;
+  min-width: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

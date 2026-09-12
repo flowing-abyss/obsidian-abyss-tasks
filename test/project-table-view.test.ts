@@ -2628,7 +2628,7 @@ describe('ProjectsTableView', () => {
     positionObserver.trigger();
     expect(editorHost.dataset['side']).toBe('aligned');
     expect(editorHost.parentElement?.classList.contains('abyss-projects-table')).toBe(true);
-    expect(editorHost.style.width).toBe('320px');
+    expect(editorHost.style.width).toBe('264px');
     expect(editorHost.style.maxHeight).toBe('407px');
     expect(editorHost.style.getPropertyValue('--abyss-project-editor-content-max-height')).toBe(
       '407px',

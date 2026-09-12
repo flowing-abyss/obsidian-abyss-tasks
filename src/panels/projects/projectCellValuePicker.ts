@@ -86,7 +86,7 @@ function isCompositionKey(event: KeyboardEvent): boolean {
 
 class ProjectCellValuePicker implements ProjectCellValuePickerControl {
   readonly focusTarget: HTMLInputElement;
-  readonly preferredWidth = 320;
+  readonly preferredWidth = 264;
   private readonly selected_abyssPrivate: unknown[];
   private readonly choices_abyssPrivate: PickerChoice[] = [];
   private readonly rows_abyssPrivate = new Map<string, PickerRow>();
@@ -115,6 +115,9 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
       cls: 'abyss-project-value-picker abyss-popover',
     });
     this.focusTarget = this.createSearch_abyssPrivate();
+    this.actionHost_abyssPrivate = this.picker_abyssPrivate.createDiv({
+      cls: 'abyss-project-value-picker-action-host',
+    });
     this.results_abyssPrivate = this.picker_abyssPrivate.createDiv({
       cls: 'abyss-project-value-picker-results',
       attr: { role: 'listbox', 'aria-label': `${options_abyssPrivate.label} values` },
@@ -127,9 +130,6 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     const availableGroup = this.createGroup_abyssPrivate('Available');
     this.availableGroup_abyssPrivate = availableGroup[0];
     this.availableRows_abyssPrivate = availableGroup[1];
-    this.actionHost_abyssPrivate = this.picker_abyssPrivate.createDiv({
-      cls: 'abyss-project-value-picker-action-host',
-    });
     this.render_abyssPrivate();
   }
 
@@ -173,8 +173,8 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
   private createGroup_abyssPrivate(label: string): [HTMLElement, HTMLElement] {
     const group = this.results_abyssPrivate.createDiv({
       cls: 'abyss-project-value-picker-group',
+      attr: { role: 'group', 'aria-label': label },
     });
-    group.createDiv({ cls: 'abyss-project-value-picker-heading', text: label });
     return [group, group.createDiv({ cls: 'abyss-project-value-picker-rows' })];
   }
 
@@ -361,11 +361,17 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     const literal = this.actionableLiteral_abyssPrivate();
     if (literal === undefined) return;
     const verb = this.editIndex_abyssPrivate === undefined ? 'Add' : 'Apply';
+    const label = `${verb} ${String(literal)}`;
     const action = this.actionHost_abyssPrivate.createEl('button', {
       cls: 'abyss-project-value-picker-action',
-      text: `${verb} ${String(literal)}`,
-      attr: { type: 'button' },
+      attr: { type: 'button', title: label, 'aria-label': label },
     });
+    const icon = action.createSpan({
+      cls: 'abyss-project-value-picker-action-icon',
+      attr: { 'aria-hidden': 'true' },
+    });
+    setIcon(icon, verb === 'Add' ? 'plus' : 'pencil');
+    action.createSpan({ cls: 'abyss-project-value-picker-action-label', text: label });
     action.addEventListener('click', this.submitLiteral_abyssPrivate);
   }
 
