@@ -1,10 +1,11 @@
 import { TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { joinSerializedFrontmatter, ProjectManager } from '../src/projects/ProjectManager';
+import { ProjectCreationError } from '../src/projects/projectCreation';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
 import type { ProjectField } from '../src/projects/projectFields';
-import { DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
+import { CreatedNoteTemplateError, DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import type { TaskApplicationApi, TaskCommandResult } from '../src/tasks';
@@ -561,5 +562,118 @@ describe('ProjectManager.create', () => {
     const app = await createAppWithFiles({});
     const pm = new ProjectManager(app, clone(), {} as never, {} as never);
     expect(await pm.create('   ')).toBeNull();
+  });
+
+  it('waits for template completion before overriding status and stays in the background', async () => {
+    const app = await createAppWithFiles({
+      'Projects/Template target.md': '---\nstatus: planned\n---\n',
+    });
+    const settings = clone();
+    const done = expectDefined(settings.projects.statuses[2]);
+    const file = expectDefined(app.vault.getAbstractFileByPath('Projects/Template target.md'));
+    if (!(file instanceof TFile)) throw new Error('missing project file');
+    let finishTemplate: ((file: TFile) => void) | undefined;
+    const resolver = {
+      createNoteFromTemplate: vi.fn(
+        () =>
+          new Promise<TFile>((resolve) => {
+            finishTemplate = resolve;
+          }),
+      ),
+    };
+    const openFile = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(app.workspace, 'getLeaf').mockReturnValue({ openFile } as never);
+    const pm = new ProjectManager(app, settings, resolver as never, {} as never);
+
+    const creating = pm.create('Template target', { statusId: done.id, openFile: false });
+    await flushMicrotasks();
+    expect((await readFm(app, file.path))['status']).toBe('planned');
+    expect(openFile).not.toHaveBeenCalled();
+
+    finishTemplate?.(file);
+    await expect(creating).resolves.toBe(file);
+    expect((await readFm(app, file.path))['status']).toBe(done.name);
+    expect(openFile).not.toHaveBeenCalled();
+  });
+
+  it('reports the owned path and requested status when the post-create status write fails', async () => {
+    const app = await createAppWithFiles({});
+    const settings = clone();
+    const done = expectDefined(settings.projects.statuses[2]);
+    const resolver = new DailyNoteResolver(app, settings);
+    const pm = new ProjectManager(app, settings, resolver, {} as never);
+    vi.spyOn(pm, 'setStatus').mockRejectedValueOnce(new Error('disk full'));
+
+    const error = await pm
+      .create('Owned project', { statusId: done.id, openFile: false })
+      .catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(ProjectCreationError);
+    if (!(error instanceof ProjectCreationError)) throw new Error('expected project failure');
+    expect(error.createdPath).toBe('Projects/Owned project.md');
+    expect(error.phase).toBe('status');
+    expect(error.statusId).toBe(done.id);
+    expect(error.cause).toBeInstanceOf(Error);
+    expect((error.cause as Error).message).toBe('disk full');
+    expect(app.vault.getAbstractFileByPath('Projects/Owned project.md')).toBeInstanceOf(TFile);
+  });
+
+  it('translates resolver-owned template failure without attempting status or open', async () => {
+    const app = await createAppWithFiles({});
+    const settings = clone();
+    const templateCause = new Error('Templater stopped');
+    const resolver = {
+      createNoteFromTemplate: vi
+        .fn()
+        .mockRejectedValue(
+          new CreatedNoteTemplateError('Projects/Owned template.md', templateCause),
+        ),
+    };
+    const openFile = vi.fn();
+    vi.spyOn(app.workspace, 'getLeaf').mockReturnValue({ openFile } as never);
+    const pm = new ProjectManager(app, settings, resolver as never, {} as never);
+    const setStatus = vi.spyOn(pm, 'setStatus');
+
+    const error = await pm.create('Owned template').catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(ProjectCreationError);
+    if (!(error instanceof ProjectCreationError)) throw new Error('expected project failure');
+    expect(error.createdPath).toBe('Projects/Owned template.md');
+    expect(error.phase).toBe('template');
+    expect(error.cause).toBe(templateCause);
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(openFile).not.toHaveBeenCalled();
+  });
+
+  it('validates an explicit status and writable status property before creating a note', async () => {
+    const app = await createAppWithFiles({});
+    const settings = clone();
+    const create = vi.spyOn(app.vault, 'create');
+    const pm = new ProjectManager(app, settings, new DailyNoteResolver(app, settings), {} as never);
+
+    await expect(pm.create('Invalid', { statusId: 'missing', openFile: false })).rejects.toThrow(
+      /Unknown project status/u,
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('does not swallow folder creation failure unless the concurrent result is a folder', async () => {
+    const app = await createAppWithFiles({ 'Collision.md': '# file\n' });
+    const settings = clone();
+    const collision = expectDefined(app.vault.getAbstractFileByPath('Collision.md'));
+    const originalLookup = app.vault.getAbstractFileByPath.bind(app.vault);
+    let projectFolderLookups = 0;
+    vi.spyOn(app.vault, 'getAbstractFileByPath').mockImplementation((path) => {
+      if (path !== 'Projects') return originalLookup(path);
+      projectFolderLookups++;
+      return projectFolderLookups === 1 ? null : collision;
+    });
+    const folderFailure = new Error('permission denied');
+    vi.spyOn(app.vault, 'createFolder').mockRejectedValue(folderFailure);
+    const createNoteFromTemplate = vi.fn();
+    const pm = new ProjectManager(app, settings, { createNoteFromTemplate } as never, {} as never);
+
+    await expect(pm.create('Blocked')).rejects.toBe(folderFailure);
+    expect(createNoteFromTemplate).not.toHaveBeenCalled();
   });
 });

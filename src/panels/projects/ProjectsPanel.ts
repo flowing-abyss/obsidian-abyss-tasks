@@ -6,6 +6,7 @@ import {
 } from '../../projects/ObsidianProjectProperties';
 import type { ExpectedProjectStatus, ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
+import type { ProjectCreateRequest } from '../../projects/projectCreation';
 import { ProjectEditHistory } from '../../projects/projectEditHistory';
 import type { ProjectCellChange, ProjectEditResult } from '../../projects/projectEdits';
 import type { CalendarSettings } from '../../settings/types';
@@ -67,9 +68,12 @@ export class ProjectsPanel {
       ...(this.saveStatic === undefined ? {} : { saveStatic: this.saveStatic }),
       applyEdits: (changes) => this.applyProjectEdits(changes),
       history: this.editHistory,
-      createProject: (name) => this.createProject(name),
+      createProject: (request) => this.createProject(request),
       openProject: (path) => {
         this.state.set('projectsPanel', { view: 'dashboard', path });
+      },
+      openNote: (path) => {
+        this.openNote(path);
       },
       revalidateSourceObservation: (observation) =>
         this.projectStore.revalidateSourceObservation(observation),
@@ -126,9 +130,21 @@ export class ProjectsPanel {
     this.el = null;
   }
 
-  private async createProject(name: string): Promise<void> {
-    await this.projectManager.create(name);
+  private async createProject(request: ProjectCreateRequest): Promise<string | null> {
+    if (request.recoveryPath !== undefined) {
+      if (request.statusId === undefined) {
+        throw new Error('A project status is required to recover project creation.');
+      }
+      await this.projectManager.setStatus(request.recoveryPath, request.statusId);
+      this.projectStore.refresh();
+      return request.recoveryPath;
+    }
+    const file = await this.projectManager.create(request.name, {
+      ...(request.statusId === undefined ? {} : { statusId: request.statusId }),
+      openFile: false,
+    });
     this.projectStore.refresh();
+    return file?.path ?? null;
   }
 
   private async saveStatus(

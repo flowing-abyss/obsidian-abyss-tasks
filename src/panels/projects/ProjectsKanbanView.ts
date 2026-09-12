@@ -114,6 +114,7 @@ export interface ProjectsKanbanViewContext<TCell extends ProjectKanbanCellContex
     },
   ) => Promise<ProjectEditResult>;
   readonly reportDropFailure: (error: unknown) => void;
+  readonly createProject: (anchor: HTMLElement, statusId: string) => void;
 }
 
 export interface ProjectKanbanViewportState {
@@ -137,6 +138,7 @@ interface RenderedColumn<
   readonly marker: HTMLElement;
   readonly label: HTMLElement;
   readonly count: HTMLElement;
+  readonly create: HTMLButtonElement;
   readonly collapse: HTMLButtonElement;
 }
 
@@ -360,6 +362,27 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     return [...this.cards_abyssPrivate.values()];
   }
 
+  revealProject(path: string): void {
+    const card = Array.from(this.cards_abyssPrivate.values()).find(
+      ({ project }) => project.path === path,
+    );
+    if (card === undefined) return;
+    const settings = this.context_abyssPrivate.settings();
+    const collapsedColumn = settings.collapsedColumns.indexOf(card.statusKey);
+    if (collapsedColumn >= 0) {
+      void this.context_abyssPrivate
+        .requestViewChange(() => {
+          const current = settings.collapsedColumns.indexOf(card.statusKey);
+          if (current >= 0) settings.collapsedColumns.splice(current, 1);
+        })
+        .catch((error: unknown) => {
+          console.error('[abyss-tasks] Could not reveal created project column', error);
+        });
+    }
+    this.collapsedGroups_abyssPrivate.delete(`${card.statusKey}\u0000${card.groupKey}`);
+    this.render_abyssPrivate();
+  }
+
   /** Guarded metadata seam used by the native drag adapter. */
   applyChanges(changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> {
     return this.context_abyssPrivate.applyChanges(changes);
@@ -480,33 +503,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     const key = model.status.key;
     let column = this.columns_abyssPrivate.get(key);
     if (column === undefined) {
-      const element = this.scroll.createDiv({ cls: 'abyss-project-kanban-column' });
-      const header = element.createDiv({ cls: 'abyss-project-kanban-column-header' });
-      const marker = header.createSpan({ cls: 'abyss-status-dot' });
-      const label = header.createSpan({ cls: 'abyss-project-kanban-column-label' });
-      const count = header.createSpan({ cls: 'abyss-project-kanban-column-count' });
-      const collapse = header.createEl('button', {
-        cls: 'clickable-icon abyss-project-kanban-column-toggle',
-        attr: { type: 'button' },
-      });
-      const body = element.createDiv({ cls: 'abyss-project-kanban-column-body' });
-      column = {
-        key,
-        element,
-        header,
-        marker,
-        label,
-        count,
-        collapse,
-        body,
-        groups: new Map(),
-        statusKey: key,
-        value: model.status.statusId,
-      };
-      const created = column;
-      collapse.addEventListener('click', () => {
-        this.toggleColumn_abyssPrivate(created);
-      });
+      column = this.createColumn_abyssPrivate(model);
       this.columns_abyssPrivate.set(key, column);
     }
     column.statusKey = key;
@@ -515,6 +512,8 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     column.element.dataset['statusValue'] = model.status.statusId ?? '';
     column.label.setText(model.status.label);
     column.count.setText(String(model.uniqueVisibleCount));
+    column.create.hidden = model.status.statusId === null;
+    column.create.setAttribute('aria-label', `Create project in ${model.status.label}`);
     column.marker.style.removeProperty('background-color');
     if (model.status.color !== undefined) column.marker.style.backgroundColor = model.status.color;
     const collapsed = this.context_abyssPrivate.settings().collapsedColumns.includes(key);
@@ -531,6 +530,60 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     column.collapse.empty();
     setIcon(column.collapse, collapsed ? 'chevron-right' : 'chevron-left');
     return column;
+  }
+
+  private createColumn_abyssPrivate(model: ProjectKanbanColumn): RenderedColumn<TCell> {
+    const key = model.status.key;
+    const element = this.scroll.createDiv({ cls: 'abyss-project-kanban-column' });
+    const header = element.createDiv({ cls: 'abyss-project-kanban-column-header' });
+    const marker = header.createSpan({ cls: 'abyss-status-dot' });
+    const label = header.createSpan({ cls: 'abyss-project-kanban-column-label' });
+    const count = header.createSpan({ cls: 'abyss-project-kanban-column-count' });
+    const create = header.createEl('button', {
+      cls: 'clickable-icon abyss-project-kanban-column-create',
+      attr: { type: 'button' },
+    });
+    setIcon(create, 'plus');
+    const collapse = header.createEl('button', {
+      cls: 'clickable-icon abyss-project-kanban-column-toggle',
+      attr: { type: 'button' },
+    });
+    const column: RenderedColumn<TCell> = {
+      key,
+      element,
+      header,
+      marker,
+      label,
+      count,
+      create,
+      collapse,
+      body: element.createDiv({ cls: 'abyss-project-kanban-column-body' }),
+      groups: new Map(),
+      statusKey: key,
+      value: model.status.statusId,
+    };
+    this.bindColumnActions_abyssPrivate(column);
+    return column;
+  }
+
+  private bindColumnActions_abyssPrivate(column: RenderedColumn<TCell>): void {
+    column.collapse.addEventListener('click', () => {
+      this.toggleColumn_abyssPrivate(column);
+    });
+    column.create.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+    });
+    column.create.addEventListener('dragstart', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    column.create.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const statusId = column.value;
+      if (typeof statusId === 'string') {
+        this.context_abyssPrivate.createProject(column.create, statusId);
+      }
+    });
   }
 
   private toggleColumn_abyssPrivate(column: RenderedColumn<TCell>): void {

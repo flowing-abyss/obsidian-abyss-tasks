@@ -1654,7 +1654,9 @@ describe('project Kanban overview', () => {
 
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
 
-    const input = expectDefined(host.querySelector<HTMLInputElement>('.abyss-projects-new-input'));
+    const input = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
     expect(input.closest('[hidden]')).toBeNull();
     expect(activeDocument.activeElement).toBe(input);
   });
@@ -2689,5 +2691,99 @@ describe('project Kanban overview', () => {
     expect(expectDefined(kanban.fields.find(({ id }) => id === 'property:Budget')).label).toBe(
       'Cost',
     );
+  });
+
+  it('offers a creation plus for every configured status without changing board layout', () => {
+    const createProject = vi.fn().mockResolvedValue('Projects/New.md');
+    const { host } = mountView([project()], { createProject });
+    clickView(host, 'Kanban');
+    const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
+    const columns = Array.from(
+      scroll.querySelectorAll<HTMLElement>('.abyss-project-kanban-column'),
+    );
+    const children = Array.from(scroll.children);
+    const pluses = Array.from(
+      host.querySelectorAll<HTMLButtonElement>('.abyss-project-kanban-column-create'),
+    );
+
+    expect(pluses.filter(({ hidden }) => !hidden)).toHaveLength(
+      DEFAULT_SETTINGS.projects.statuses.length,
+    );
+    pluses[0]?.click();
+
+    expect(Array.from(scroll.children)).toEqual(children);
+    expect(
+      Array.from(scroll.querySelectorAll<HTMLElement>('.abyss-project-kanban-column')),
+    ).toEqual(columns);
+    expect(host.querySelector('.abyss-project-creation-composer')).not.toBeNull();
+    expect(pluses[0]?.getAttribute('aria-label')).toContain('Create project in');
+  });
+
+  it('reveals only the created project column and exact transient group', () => {
+    const config = structuredClone(DEFAULT_SETTINGS);
+    config.projects.kanban = buildDefaultProjectKanbanSettings(config.projects.table);
+    config.projects.kanban.groupBy = 'start';
+    config.projects.overviewView = 'kanban';
+    const done = expectDefined(config.projects.statuses[2]);
+    const activeStatus = expectDefined(config.projects.statuses[0]);
+    const target = project({ path: 'Projects/New.md', frontmatter: { start: '2026-09-01' } });
+    const otherGroup = project({
+      path: 'Projects/Other.md',
+      frontmatter: { start: '2026-10-01' },
+    });
+    const otherColumn = project({
+      path: 'Projects/Done.md',
+      statusId: done.id,
+      frontmatter: { start: '2026-11-01' },
+    });
+    const { host, view } = mountView([target, otherGroup, otherColumn], { settings: config });
+    const targetHeader = expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        '[data-group-key="value:2026-09-01"] .abyss-project-kanban-group-header',
+      ),
+    );
+    const unrelatedHeader = expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        '[data-group-key="value:2026-10-01"] .abyss-project-kanban-group-header',
+      ),
+    );
+    targetHeader.click();
+    unrelatedHeader.click();
+    const activeColumn = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${activeStatus.id}"]`,
+      ),
+    );
+    const doneColumn = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${done.id}"]`,
+      ),
+    );
+    expectDefined(
+      activeColumn.querySelector<HTMLButtonElement>('.abyss-project-kanban-column-toggle'),
+    ).click();
+    expectDefined(
+      doneColumn.querySelector<HTMLButtonElement>('.abyss-project-kanban-column-toggle'),
+    ).click();
+    const board = (
+      view as unknown as {
+        kanbanView_abyssPrivate: { revealProject(path: string): void };
+      }
+    ).kanbanView_abyssPrivate;
+
+    board.revealProject(target.path);
+
+    expect(activeColumn.classList).not.toContain('is-collapsed');
+    expect(doneColumn.classList).toContain('is-collapsed');
+    expect(
+      targetHeader
+        .closest<HTMLElement>('.abyss-project-kanban-group')
+        ?.querySelector<HTMLElement>('.abyss-project-kanban-group-body')?.hidden,
+    ).toBe(false);
+    expect(
+      unrelatedHeader
+        .closest<HTMLElement>('.abyss-project-kanban-group')
+        ?.querySelector<HTMLElement>('.abyss-project-kanban-group-body')?.hidden,
+    ).toBe(true);
   });
 });

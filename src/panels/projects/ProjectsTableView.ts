@@ -2,6 +2,7 @@ import { Component, Menu, moment, Notice, setIcon, TFile, type App } from 'obsid
 import type { AppState } from '../../app/AppState';
 import { exactLinkToken, parseLinks } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
+import { isProjectCreationError, type ProjectCreateRequest } from '../../projects/projectCreation';
 import { isProjectEditValidationError } from '../../projects/projectEditError';
 import type { ProjectEditHistory } from '../../projects/projectEditHistory';
 import {
@@ -26,6 +27,7 @@ import {
   type ProjectPropertyType,
   type ProjectTableSettings,
 } from '../../projects/projectFields';
+import { buildProjectKanbanModel } from '../../projects/projectKanbanModel';
 import {
   buildDefaultProjectKanbanSettings,
   type ProjectKanbanSettings,
@@ -48,12 +50,13 @@ import {
   buildProjectTableModel,
   projectProgressDisplayValue,
   projectTableGroupLinkIdentity,
+  statusGroupKey,
   type ProjectTableGroup,
   type ProjectTableModel,
   type ProjectTableModelInput,
 } from '../../projects/projectTableModel';
 import { buildDefaultProjectTableSettings } from '../../projects/projectTableSettings';
-import { resolveStatus } from '../../projects/status';
+import { projectStatusDisplayName, resolveStatus } from '../../projects/status';
 import type { Project } from '../../projects/types';
 import {
   enforceProjectTableColumnInvariants,
@@ -63,7 +66,7 @@ import {
   setProjectColumnWidth,
 } from '../../settings/projectTableSettings';
 import { saveSettingsDraft } from '../../settings/settingsSaveFailure';
-import type { CalendarSettings } from '../../settings/types';
+import type { CalendarSettings, ProjectStatus } from '../../settings/types';
 import type { ProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
 import {
   projectPropertyValuePresentation,
@@ -76,6 +79,8 @@ import {
   type ProjectCellEditorNavigation,
 } from './ProjectCellEditor';
 import { mountProjectCellEditorPosition } from './projectCellEditorPosition';
+import { ProjectCreationComposer } from './ProjectCreationComposer';
+import { ProjectCreationPresentation } from './ProjectCreationPresentation';
 import { formatProjectRelativeDate } from './projectDatePresentation';
 import { forecastProjectGroupDrop, type ProjectGroupDropForecast } from './projectGroupDropPreview';
 import { ProjectsKanbanView } from './ProjectsKanbanView';
@@ -187,8 +192,9 @@ export interface ProjectsTableViewContext {
   readonly saveStatic?: () => Promise<void>;
   readonly applyEdits: (changes: readonly ProjectCellChange[]) => Promise<ProjectEditResult>;
   readonly history: ProjectEditHistory;
-  readonly createProject: (name: string) => Promise<void>;
+  readonly createProject: (request: ProjectCreateRequest) => Promise<string | null>;
   readonly openProject: (path: string) => void;
+  readonly openNote?: (path: string) => void;
   readonly revalidateSourceObservation: (observation: ProjectSourceObservation) => Promise<boolean>;
 }
 
@@ -491,6 +497,8 @@ export class ProjectsTableView {
   private readonly feedback_abyssPrivate: HTMLElement;
   private readonly count_abyssPrivate: HTMLElement;
   private readonly toolbar_abyssPrivate: ProjectsTableToolbar;
+  private readonly creationComposer_abyssPrivate: ProjectCreationComposer;
+  private readonly creationPresentation_abyssPrivate: ProjectCreationPresentation;
   private kanbanView_abyssPrivate: ProjectsKanbanView<RenderedCellContext> | undefined;
   private readonly markdown_abyssPrivate = new Component();
   private readonly ownerWindow_abyssPrivate: Window | undefined;
@@ -578,10 +586,39 @@ export class ProjectsTableView {
     });
     create.addEventListener('click', () => {
       this.finishEditorBeforeAction(() => {
-        this.showNewProjectInput_abyssPrivate();
+        this.showProjectComposer_abyssPrivate(create);
       });
     });
     this.count_abyssPrivate = footer.createSpan({ cls: 'abyss-project-table-count' });
+    this.creationComposer_abyssPrivate = new ProjectCreationComposer({
+      host: this.root_abyssPrivate,
+      boundary: this.root_abyssPrivate,
+      create: (request) => this.context_abyssPrivate.createProject(request),
+      created: (path, statusId) => {
+        this.creationPresentation_abyssPrivate.enqueue({
+          path,
+          ...(statusId === undefined ? {} : { expectedStatus: statusId }),
+        });
+      },
+      failed: (error) => {
+        this.reportProjectCreationFailure_abyssPrivate(error);
+      },
+      openProject: (path) => {
+        (this.context_abyssPrivate.openNote ?? this.context_abyssPrivate.openProject)(path);
+      },
+    });
+    this.creationPresentation_abyssPrivate = new ProjectCreationPresentation({
+      host: this.root_abyssPrivate,
+      projects: () => this.projects_abyssPrivate,
+      present: (project, focus) => this.presentCreatedProject_abyssPrivate(project, focus),
+      inaccessible: (path) => {
+        this.showExcludedCreatedProject_abyssPrivate(path);
+      },
+      reducedMotion: () =>
+        typeof this.ownerWindow_abyssPrivate?.matchMedia === 'function' &&
+        this.ownerWindow_abyssPrivate.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      now: () => Date.now(),
+    });
   }
 
   private get selection_abyssPrivate(): ProjectTableSelection {
@@ -742,6 +779,7 @@ export class ProjectsTableView {
       this.overviewMode_abyssPrivate === 'kanban',
     );
     this.renderTable_abyssPrivate();
+    this.creationPresentation_abyssPrivate.update();
     if (manualOrderChanged) this.persistSettings_abyssPrivate();
   }
 
@@ -780,6 +818,8 @@ export class ProjectsTableView {
     this.columnCleanup_abyssPrivate?.();
     this.columnCleanup_abyssPrivate = undefined;
     this.toolbar_abyssPrivate.destroy();
+    this.creationComposer_abyssPrivate.destroy();
+    this.creationPresentation_abyssPrivate.destroy();
     this.kanbanView_abyssPrivate?.destroy();
     this.kanbanView_abyssPrivate = undefined;
     this.resizeObserver_abyssPrivate?.disconnect();
@@ -939,43 +979,144 @@ export class ProjectsTableView {
     this.persistAndRender_abyssPrivate();
   }
 
-  private showNewProjectInput_abyssPrivate(): void {
-    const existing = this.root_abyssPrivate.querySelector<HTMLInputElement>(
-      '.abyss-projects-new-input',
+  private showProjectComposer_abyssPrivate(anchor: HTMLElement, statusId?: string): void {
+    const status =
+      statusId === undefined
+        ? this.defaultCreationStatus_abyssPrivate()
+        : this.context_abyssPrivate.settings.projects.statuses.find(({ id }) => id === statusId);
+    this.creationComposer_abyssPrivate.open({
+      anchor,
+      ...(status === undefined
+        ? {}
+        : { statusId: status.id, statusLabel: projectStatusDisplayName(status) }),
+    });
+  }
+
+  private defaultCreationStatus_abyssPrivate(): ProjectStatus | undefined {
+    const projects = this.context_abyssPrivate.settings.projects;
+    return (
+      projects.statuses.find(({ id }) => id === projects.defaultStatusId) ?? projects.statuses[0]
     );
-    if (existing !== null) {
-      existing.focus();
-      return;
+  }
+
+  private reportProjectCreationFailure_abyssPrivate(error: unknown): void {
+    const cause = isProjectCreationError(error) ? error.cause : error;
+    const message = cause instanceof Error ? cause.message : String(cause);
+    console.error('[abyss-tasks] Could not create project', { cause, error });
+    new Notice(`Could not create project: ${message}`);
+  }
+
+  private showExcludedCreatedProject_abyssPrivate(path: string): void {
+    this.feedback_abyssPrivate.empty();
+    this.feedback_abyssPrivate.createSpan({
+      text: `Created ${path}, but it is outside the current project query. `,
+    });
+    const open = this.feedback_abyssPrivate.createEl('button', {
+      text: 'Open note',
+      attr: { type: 'button' },
+    });
+    open.addEventListener('click', () => {
+      (this.context_abyssPrivate.openNote ?? this.context_abyssPrivate.openProject)(path);
+    });
+  }
+
+  private presentCreatedProject_abyssPrivate(project: Project, focus: boolean): HTMLElement | null {
+    if (
+      !this.mounted_abyssPrivate ||
+      !this.root_abyssPrivate.isConnected ||
+      this.root_abyssPrivate.hidden ||
+      this.context_abyssPrivate.state.get('projectsPanel').view !== 'table'
+    ) {
+      return null;
     }
-    const input = this.root_abyssPrivate.createEl('input', {
-      cls: 'abyss-projects-new-input',
-      attr: { type: 'text', placeholder: 'Project name…', 'aria-label': 'Project name' },
-    });
-    this.feedback_abyssPrivate.after(input);
-    let finished = false;
-    const finish = (create: boolean): void => {
-      if (finished) return;
-      finished = true;
-      const name = input.value.trim();
-      input.remove();
-      if (!create || name.length === 0) return;
-      void this.context_abyssPrivate.createProject(name).catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.feedback_abyssPrivate.setText(`Could not create project: ${message}`);
-        console.error('[abyss-tasks] Could not create project', error);
-        new Notice(`Could not create project: ${message}`);
-      });
+    if (focus) this.relaxCreationProjection_abyssPrivate(project);
+    return this.overviewMode_abyssPrivate === 'kanban'
+      ? this.presentCreatedKanbanProject_abyssPrivate(project, focus)
+      : this.presentCreatedTableProject_abyssPrivate(project, focus);
+  }
+
+  private presentCreatedKanbanProject_abyssPrivate(
+    project: Project,
+    focus: boolean,
+  ): HTMLElement | null {
+    const board = this.kanbanView_abyssPrivate;
+    if (board === undefined) return null;
+    if (focus) {
+      board.revealProject(project.path);
+      this.kanbanRenderedCells_abyssPrivate = [...board.visibleCells()];
+      this.kanbanSelection_abyssPrivate.reconcile(this.selectableCells_abyssPrivate());
+    }
+    const cell = this.kanbanRenderedCells_abyssPrivate.find(
+      ({ project: candidate, field }) => candidate.path === project.path && field.id === 'name',
+    );
+    if (cell === undefined) return null;
+    if (focus) this.selectAndRevealCreationCell_abyssPrivate(cell);
+    return cell.element.closest<HTMLElement>('.abyss-project-kanban-card') ?? cell.element;
+  }
+
+  private presentCreatedTableProject_abyssPrivate(
+    project: Project,
+    focus: boolean,
+  ): HTMLElement | null {
+    const model = buildProjectTableModel(this.projectTableModelInput_abyssPrivate());
+    const group = model.groups.find(({ projects }) =>
+      projects.some(({ path }) => path === project.path),
+    );
+    if (focus && group !== undefined && this.collapsedGroups_abyssPrivate.delete(group.key)) {
+      this.renderTable_abyssPrivate();
+    }
+    const cell = this.tableRenderedCells_abyssPrivate.find(
+      ({ project: candidate, field }) => candidate.path === project.path && field.id === 'name',
+    );
+    if (cell === undefined) return null;
+    if (focus) this.selectAndRevealCreationCell_abyssPrivate(cell);
+    return cell.element.closest<HTMLElement>('.abyss-project-table-row') ?? cell.element;
+  }
+
+  private selectAndRevealCreationCell_abyssPrivate(cell: RenderedCellContext): void {
+    this.selectCell_abyssPrivate(cell, false);
+    this.revealSelectionCell_abyssPrivate(cell.element);
+  }
+
+  private relaxCreationProjection_abyssPrivate(project: Project): void {
+    const settings = this.activeViewSettings_abyssPrivate();
+    const statusKey = statusGroupKey(project);
+    let changed = false;
+    const hiddenIndex = settings.hiddenStatuses.indexOf(statusKey);
+    if (hiddenIndex >= 0) {
+      settings.hiddenStatuses.splice(hiddenIndex, 1);
+      changed = true;
+    }
+    const search = this.searches_abyssPrivate[this.overviewMode_abyssPrivate];
+    if (search.length > 0 && !this.singletonVisible_abyssPrivate(project, search)) {
+      this.searches_abyssPrivate[this.overviewMode_abyssPrivate] = '';
+      this.toolbar_abyssPrivate.setSearchValue('');
+      changed = true;
+    }
+    if (!changed) return;
+    this.renderTable_abyssPrivate();
+    this.persistSettings_abyssPrivate();
+  }
+
+  private singletonVisible_abyssPrivate(project: Project, search: string): boolean {
+    const common = {
+      projects: [project],
+      fields: this.fields_abyssPrivate,
+      statuses: this.context_abyssPrivate.settings.projects.statuses,
+      propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,
+      search,
+      resolveLink: (target: string, sourcePath: string) =>
+        this.context_abyssPrivate.app.metadataCache.getFirstLinkpathDest(target, sourcePath)?.path,
     };
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        finish(true);
-      } else if (event.key === 'Escape') {
-        event.preventDefault();
-        finish(false);
-      }
-    });
-    input.focus();
+    return this.overviewMode_abyssPrivate === 'kanban'
+      ? buildProjectKanbanModel({
+          ...common,
+          settings: this.ensureKanbanSettings_abyssPrivate(),
+        }).uniqueVisibleCount > 0
+      : buildProjectTableModel({
+          ...common,
+          settings: this.context_abyssPrivate.settings.projects.table,
+        }).uniqueVisibleCount > 0;
   }
 
   private renderTable_abyssPrivate(): void {
@@ -1111,6 +1252,11 @@ export class ProjectsTableView {
       commitDrop: (build) => this.commitBoardDrop_abyssPrivate(build),
       reportDropFailure: (error) => {
         this.reportBoardDropFailure_abyssPrivate(error);
+      },
+      createProject: (anchor, statusId) => {
+        this.finishEditorBeforeAction(() => {
+          this.showProjectComposer_abyssPrivate(anchor, statusId);
+        });
       },
     });
     this.scroll_abyssPrivate.after(board.root);

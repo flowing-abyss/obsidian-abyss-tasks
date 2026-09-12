@@ -536,6 +536,22 @@ across files and settings and does not claim crash atomicity.
 Moving a task into a project uses the standard task move command, so it retains the same validation,
 recovery, and reindexing behavior as other task moves.
 
+Project creation from the overview is a background command owned by the retained table/Kanban
+session. The composer freezes the selected configured status, then `ProjectsPanel` asks
+`ProjectManager` to create without opening a workspace leaf. The manager validates the requested
+status and its writable property before creating anything, creates the note through the shared
+`DailyNoteResolver` template path, awaits Templater as the readiness barrier, and applies the final
+status through the serialized metadata command. `ProjectStore` publication remains the source of
+the visible project snapshot; the overview presentation matches the owned path and expected final
+status against an already-published or later snapshot, selectively relaxes only obstructing active
+filters, expands the destination, and reuses the existing selection and reveal behavior.
+
+If template application fails after the resolver owns a file, or the final status write fails,
+`ProjectCreationError` carries the exact created path and phase to the single overview error
+boundary. Status recovery writes only that owned file. Template recovery offers the owned note and
+requires an explicit fresh draft before another create, so neither path collision nor retry can
+silently duplicate the project.
+
 ## Enforced dependency rules
 
 [`dependency-cruiser.config.cjs`](dependency-cruiser.config.cjs) is authoritative for exact import

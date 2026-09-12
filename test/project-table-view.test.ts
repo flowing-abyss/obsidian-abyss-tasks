@@ -4,6 +4,7 @@ import { AppState } from '../src/app/AppState';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
 import { mountProjectCellEditorPosition } from '../src/panels/projects/projectCellEditorPosition';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
+import { ProjectCreationError } from '../src/projects/projectCreation';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
 import type {
@@ -13,6 +14,7 @@ import type {
 } from '../src/projects/projectEdits';
 import { createOwnedInferredPropertyClear } from '../src/projects/projectEdits';
 import type { ProjectFieldCatalogItem } from '../src/projects/projectFields';
+import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
@@ -2154,16 +2156,43 @@ describe('ProjectsTableView', () => {
   });
 
   it('creates a project from the inline footer control', async () => {
-    const createProject = vi.fn().mockResolvedValue(undefined);
+    const createProject = vi.fn().mockResolvedValue('Projects/Fresh project.md');
     const { host } = mount([project({})], { createProject });
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
-    const input = expectDefined(host.querySelector<HTMLInputElement>('.abyss-projects-new-input'));
+    const input = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
     input.value = 'Fresh project';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks();
 
-    expect(createProject).toHaveBeenCalledWith('Fresh project');
-    expect(host.querySelector('.abyss-projects-new-input')).toBeNull();
+    expect(createProject).toHaveBeenCalledWith({
+      name: 'Fresh project',
+      statusId: active.id,
+    });
+    expect(host.querySelector('.abyss-project-creation-composer')).toBeNull();
+  });
+
+  it('keeps creation failure feedback inside the absolute composer', async () => {
+    const createProject = vi.fn().mockRejectedValue(
+      new ProjectCreationError('status failed', {
+        createdPath: 'Projects/Fresh project.md',
+        phase: 'status',
+        statusId: active.id,
+        cause: new Error('disk full'),
+      }),
+    );
+    const { host } = mount([project({})], { createProject });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+    const input = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    input.value = 'Fresh project';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
+    expect(host.querySelector('.abyss-project-creation-error')?.textContent).toBe('disk full');
   });
 
   it('opens a typed editor, saves with the captured value, and rerenders after commit', async () => {
@@ -4305,5 +4334,64 @@ describe('ProjectsTableView', () => {
     destroyMountedView(view);
     expect(targetGroup.classList.contains('is-drop-disabled')).toBe(false);
     expect(targetRows.some((row) => row.classList.contains('is-drop-disabled'))).toBe(false);
+  });
+
+  it('presents a project published before the background create promise resolves', async () => {
+    let finishCreate: ((path: string) => void) | undefined;
+    const createProject = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishCreate = resolve;
+        }),
+    );
+    const { host, view } = mount([], { createProject });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+    const input = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    input.value = 'Published early';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const created = project({ path: 'Projects/Published early.md', name: 'Published early' });
+
+    view.update([created]);
+    expect(host.querySelector('.is-just-created')).toBeNull();
+    finishCreate?.(created.path);
+    await flushMicrotasks();
+
+    const row = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/Published early.md"]'),
+    );
+    expect(row.classList).toContain('is-just-created');
+    expect(activeDocument.activeElement?.getAttribute('data-column-id')).toBe('name');
+  });
+
+  it('clears only active restrictions that obstruct the created project', async () => {
+    const config = settings();
+    const planned = expectDefined(config.projects.statuses[1]);
+    const done = expectDefined(config.projects.statuses[2]);
+    config.projects.table.hiddenStatuses = [`id:${active.id}`, `id:${done.id}`];
+    config.projects.kanban = {
+      ...buildDefaultProjectKanbanSettings(config.projects.table),
+      hiddenStatuses: [`id:${planned.id}`],
+    };
+    const createProject = vi.fn().mockResolvedValue('Projects/Needle.md');
+    const { host, view } = mount([], { settings: config, createProject });
+    const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
+    search.value = 'does not match';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+    const input = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    input.value = 'Needle';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    view.update([project({ path: 'Projects/Needle.md', name: 'Needle' })]);
+
+    expect(config.projects.table.hiddenStatuses).toEqual([`id:${done.id}`]);
+    expect(config.projects.kanban.hiddenStatuses).toEqual([`id:${planned.id}`]);
+    expect(search.value).toBe('');
+    expect(host.querySelector('[data-project-path="Projects/Needle.md"]')).not.toBeNull();
   });
 });

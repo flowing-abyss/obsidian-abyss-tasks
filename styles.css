@@ -6876,6 +6876,10 @@ body.abyss-modal-open .popover.hover-popover {
   min-height: 0;
 }
 
+.abyss-projects-table {
+  position: relative;
+}
+
 .abyss-projects-toolbar {
   display: flex;
   flex: 0 0 auto;
@@ -7932,6 +7936,52 @@ table.abyss-project-table {
   font-size: var(--font-ui-smaller);
 }
 
+.abyss-project-creation-composer {
+  position: absolute;
+  z-index: var(--layer-popover, 30);
+  display: grid;
+  box-sizing: border-box;
+  gap: var(--size-4-2, 8px);
+  padding: var(--size-4-3, 12px);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  box-shadow: var(--shadow-l);
+  color: var(--text-normal);
+}
+
+.abyss-project-creation-title {
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+}
+
+.abyss-project-creation-status,
+.abyss-project-creation-error {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-project-creation-error {
+  color: var(--text-error);
+}
+
+.abyss-project-creation-error[hidden],
+.abyss-project-creation-actions > button[hidden] {
+  display: none;
+}
+
+.abyss-project-creation-name {
+  width: 100%;
+  min-width: 0;
+}
+
+.abyss-project-creation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--size-4-2, 8px);
+}
+
 /* Project Kanban shares the table session, cell renderers, and toolbar. */
 .abyss-project-kanban {
   position: relative;
@@ -8015,6 +8065,18 @@ table.abyss-project-table {
   flex: 0 0 auto;
   padding: 4px;
   color: var(--text-muted);
+}
+
+.abyss-projects-table button.abyss-project-kanban-column-create {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  padding: 4px;
+  color: var(--text-muted);
+}
+
+.abyss-projects-table button.abyss-project-kanban-column-create[hidden] {
+  display: none;
 }
 
 .abyss-project-kanban-column:is(.is-collapsed, .is-compact-empty)
