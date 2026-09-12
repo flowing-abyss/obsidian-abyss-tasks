@@ -1167,28 +1167,19 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(restored.selectionEnd).toBe(11);
   });
 
-  it('preserves a focused project-column width draft through display', () => {
-    const { tab } = makeTab();
+  it('omits project-column width inputs while retaining saved widths', () => {
+    const { tab, plugin } = makeTab();
+    expectDefined(
+      plugin.settings.projects.table.columns.find(({ id }) => id === 'progress'),
+    ).width = 260;
     openSection(tab, 5);
-    const scroller = attachSettingsScroller(tab, 513);
-    const before = expectDefined(
-      tab.containerEl.querySelector<HTMLInputElement>(
-        '[data-column-id="progress"] .abyss-project-column-width',
-      ),
-    );
-    before.value = '260';
-    before.focus();
 
     (tab as unknown as { display(): void }).display();
 
-    const after = expectDefined(
-      tab.containerEl.querySelector<HTMLInputElement>(
-        '[data-column-id="progress"] .abyss-project-column-width',
-      ),
+    expect(tab.containerEl.querySelector('.abyss-project-column-width')).toBeNull();
+    expect(plugin.settings.projects.table.columns.find(({ id }) => id === 'progress')?.width).toBe(
+      260,
     );
-    expect(after.value).toBe('260');
-    expect(activeDocument.activeElement).toBe(after);
-    expect(scroller.scrollTop).toBe(513);
   });
 
   it('expands one card without replacing an unrelated focused settings control', () => {

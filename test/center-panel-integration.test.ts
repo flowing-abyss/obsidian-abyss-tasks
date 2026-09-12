@@ -589,7 +589,7 @@ describe('CenterPanel interaction ownership', () => {
   ];
 
   it.each(cases)(
-    'blocks semantic navigation in the $category popover and releases on full rerender',
+    'blocks semantic navigation in the $category popover and releases when its context is replaced',
     ({ mode, open, focus }) => {
       const registry = new InteractionRegistry<'navigate'>();
       const state = new AppState();
@@ -612,6 +612,7 @@ describe('CenterPanel interaction ownership', () => {
         expect(navigate).not.toHaveBeenCalled();
 
         panel.refresh();
+        if (mode === 'tasks') state.set('selectedList', 'upcoming');
         activeDocument.body.dispatchEvent(
           new KeyboardEvent('keydown', { key: 'n', bubbles: true }),
         );
@@ -746,7 +747,7 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     }
   });
 
-  it('removes its registered outside-click listener on trigger toggle, rerender, and destroy', () => {
+  it('retains its registered outside-click listener on a same-list refresh and removes it on navigation', () => {
     vi.useFakeTimers();
     const addListener = vi.spyOn(activeDocument, 'addEventListener');
     const removeListener = vi.spyOn(activeDocument, 'removeEventListener');
@@ -778,9 +779,17 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       expectDefined(container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
       expect(removeListener).toHaveBeenCalledWith('click', toggledListener, true);
 
-      const rerenderedListener = openAndRegisteredListener();
+      const retainedListener = openAndRegisteredListener();
+      const retainedPopover = expectDefined(
+        container.querySelector<HTMLElement>('.abyss-view-state-popover'),
+      );
       panel.refresh();
-      expect(removeListener).toHaveBeenCalledWith('click', rerenderedListener, true);
+      expect(container.querySelector('.abyss-view-state-popover')).toBe(retainedPopover);
+      expect(removeListener).not.toHaveBeenCalledWith('click', retainedListener, true);
+
+      state.set('selectedList', 'upcoming');
+      expect(container.querySelector('.abyss-view-state-popover')).toBeNull();
+      expect(removeListener).toHaveBeenCalledWith('click', retainedListener, true);
 
       const destroyedListener = openAndRegisteredListener();
       panel.destroy();
@@ -869,7 +878,7 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     }
   });
 
-  it('exposes selected group, sort, preset, and status-toggle state through aria-pressed', () => {
+  it('keeps one task header and popover while synchronizing successive group, sort, and show changes', async () => {
     const settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
     const state = new AppState();
     state.set('selectedList', 'today');
@@ -899,35 +908,88 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     try {
       panel.mount(container);
 
-      let popover = open();
+      const header = expectDefined(container.querySelector<HTMLElement>('.abyss-center-header'));
+      const popover = open();
       expect(option(popover, 'Group by', 'Date').getAttribute('aria-pressed')).toBe('true');
       expect(option(popover, 'Group by', 'None').getAttribute('aria-pressed')).toBe('false');
       option(popover, 'Group by', 'None').click();
+      await flushMicrotasks();
 
-      popover = open();
+      expect(container.querySelector('.abyss-center-header')).toBe(header);
+      expect(container.querySelector('.abyss-view-state-popover')).toBe(popover);
       expect(option(popover, 'Group by', 'None').getAttribute('aria-pressed')).toBe('true');
       expect(option(popover, 'Group by', 'Date').getAttribute('aria-pressed')).toBe('false');
       expect(option(popover, 'Sort by', 'Date ↑').getAttribute('aria-pressed')).toBe('true');
       option(popover, 'Sort by', 'Priority').click();
+      await flushMicrotasks();
 
-      popover = open();
+      expect(container.querySelector('.abyss-center-header')).toBe(header);
+      expect(container.querySelector('.abyss-view-state-popover')).toBe(popover);
       expect(option(popover, 'Sort by', 'Priority ↑').getAttribute('aria-pressed')).toBe('true');
       expect(option(popover, 'Sort by', 'Date').getAttribute('aria-pressed')).toBe('false');
+      option(popover, 'Sort by', 'Priority ↑').click();
+      await flushMicrotasks();
+      expect(option(popover, 'Sort by', 'Priority ↓').getAttribute('aria-pressed')).toBe('true');
+      expect(
+        row(popover, 'Sort by').querySelector('.abyss-view-state-row-value')?.textContent,
+      ).toBe('Priority ↓');
       expect(option(popover, 'Show', 'Active').getAttribute('aria-pressed')).toBe('true');
       expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('false');
       option(popover, 'Show', 'All').click();
+      await flushMicrotasks();
 
-      popover = expectDefined(container.querySelector<HTMLElement>('.abyss-view-state-popover'));
+      expect(container.querySelector('.abyss-center-header')).toBe(header);
+      expect(container.querySelector('.abyss-view-state-popover')).toBe(popover);
       expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('true');
       expect(option(popover, 'Show', 'Active').getAttribute('aria-pressed')).toBe('false');
       expect(option(popover, 'Show', 'Done').getAttribute('aria-pressed')).toBe('true');
       option(popover, 'Show', 'Done').click();
+      await flushMicrotasks();
 
-      popover = expectDefined(container.querySelector<HTMLElement>('.abyss-view-state-popover'));
+      expect(container.querySelector('.abyss-view-state-popover')).toBe(popover);
       expect(option(popover, 'Show', 'Done').getAttribute('aria-pressed')).toBe('false');
       expect(option(popover, 'Show', 'To do').getAttribute('aria-pressed')).toBe('true');
       expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('false');
       expect(option(popover, 'Show', 'Active').getAttribute('aria-pressed')).toBe('false');
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('retains task-list scroll while refreshing content under an open options popover', () => {
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const panel = makeStaticPanel(
+      state,
+      [task({ title: 'Keep the task list viewport', planning: { due: TODAY } })],
+      DEFAULT_SETTINGS,
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+
+    try {
+      panel.mount(container);
+      const scroll = expectDefined(container.querySelector<HTMLElement>('.abyss-center-scroll'));
+      Object.defineProperties(scroll, {
+        scrollHeight: { configurable: true, value: 900 },
+        clientHeight: { configurable: true, value: 300 },
+        scrollWidth: { configurable: true, value: 700 },
+        clientWidth: { configurable: true, value: 400 },
+      });
+      scroll.scrollTop = 180;
+      scroll.scrollLeft = 35;
+      expectDefined(container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+      const popover = expectDefined(
+        container.querySelector<HTMLElement>('.abyss-view-state-popover'),
+      );
+
+      panel.refresh();
+
+      expect(container.querySelector('.abyss-center-scroll')).toBe(scroll);
+      expect(scroll.scrollTop).toBe(180);
+      expect(scroll.scrollLeft).toBe(35);
+      expect(container.querySelector('.abyss-view-state-popover')).toBe(popover);
     } finally {
       panel.destroy();
       container.remove();

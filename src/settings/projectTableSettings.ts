@@ -261,21 +261,6 @@ function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext)
   visible.addEventListener('change', () => {
     if (setProjectColumnVisibility(options.projects.table, column.id, visible.checked)) persist();
   });
-  const width = summary.createEl('input', {
-    cls: 'abyss-project-column-width',
-    attr: {
-      type: 'number',
-      min: '60',
-      step: '10',
-      'aria-label': `Width for ${source}`,
-      placeholder: 'Auto',
-    },
-  });
-  width.value = column.width === undefined ? '' : String(column.width);
-  width.addEventListener('change', () => {
-    const next = width.value === '' ? undefined : width.valueAsNumber;
-    if (setProjectColumnWidth(options.projects.table, column.id, next)) persist();
-  });
   if (!column.id.startsWith('property:')) {
     summary.createSpan({
       cls: 'abyss-project-column-action-placeholder',
@@ -577,7 +562,7 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
 
   const rows = section.createDiv({ cls: 'abyss-project-column-settings' });
   const headings = rows.createDiv({ cls: 'abyss-project-column-settings-header' });
-  for (const label of ['', 'Source', 'Display name', 'Show', 'Width', '', '']) {
+  for (const label of ['', 'Source', 'Display name', 'Show', '', '']) {
     headings.createSpan({ text: label, attr: label.length === 0 ? { 'aria-hidden': 'true' } : {} });
   }
   options.projects.table.columns.forEach((column) => {

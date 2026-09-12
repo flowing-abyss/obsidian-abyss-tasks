@@ -9,9 +9,9 @@ import type { ViewOption, ViewOptionAction, ViewOptionsRow } from '../../ui/View
 import { configureProjectDateDisplayMenu, projectDateDisplayLabel } from './projectColumnMenu';
 
 interface ProjectKanbanOptionsContext {
-  readonly settings: ProjectKanbanSettings;
-  readonly tableSettings: Parameters<typeof buildDefaultProjectKanbanSettings>[0];
-  readonly fields: readonly ProjectFieldCatalogItem[];
+  readonly settings: () => ProjectKanbanSettings;
+  readonly tableSettings: () => Parameters<typeof buildDefaultProjectKanbanSettings>[0];
+  readonly fields: () => readonly ProjectFieldCatalogItem[];
   readonly onChange: (mutation: () => void) => Promise<boolean>;
 }
 
@@ -22,17 +22,12 @@ async function applyMutation(
   await context.onChange(mutation);
 }
 
-function labelFor(
-  fields: readonly ProjectFieldCatalogItem[],
-  settings: ProjectKanbanSettings,
-  tableSettings: ProjectKanbanOptionsContext['tableSettings'],
-  fieldId: string,
-): string {
+function labelFor(context: ProjectKanbanOptionsContext, fieldId: string): string {
   if (fieldId === 'none') return 'None';
   return (
-    settings.fields.find(({ id }) => id === fieldId)?.label ??
-    tableSettings.columns.find(({ id }) => id === fieldId)?.label ??
-    fields.find(({ id }) => id === fieldId)?.label ??
+    context.settings().fields.find(({ id }) => id === fieldId)?.label ??
+    context.tableSettings().columns.find(({ id }) => id === fieldId)?.label ??
+    context.fields().find(({ id }) => id === fieldId)?.label ??
     fieldId
   );
 }
@@ -54,14 +49,15 @@ function setFieldDateDisplay(
   fieldId: string,
   display: ProjectDateDisplay,
 ): void {
-  let configured = context.settings.fields.find(({ id }) => id === fieldId);
+  const settings = context.settings();
+  let configured = settings.fields.find(({ id }) => id === fieldId);
   if (configured === undefined) {
     configured = {
-      ...(context.tableSettings.columns.find(({ id }) => id === fieldId) ?? { id: fieldId }),
+      ...(context.tableSettings().columns.find(({ id }) => id === fieldId) ?? { id: fieldId }),
       id: fieldId,
       visible: false,
     };
-    context.settings.fields.push(configured);
+    settings.fields.push(configured);
   }
   configured.dateDisplay = display;
 }
@@ -82,15 +78,10 @@ function fieldDateAction(
 ): ViewOptionAction | undefined {
   if (field.type !== 'date' && field.type !== 'datetime') return undefined;
   const active = (): ProjectDateDisplay =>
-    context.settings.fields.find(({ id }) => id === field.id)?.dateDisplay ?? 'pretty';
+    context.settings().fields.find(({ id }) => id === field.id)?.dateDisplay ?? 'pretty';
   return {
     label: () => projectDateDisplayLabel(active()),
-    ariaLabel: `Date display for ${labelFor(
-      context.fields,
-      context.settings,
-      context.tableSettings,
-      field.id,
-    )}`,
+    ariaLabel: `Date display for ${labelFor(context, field.id)}`,
     onSelect: (event, run, ownChild) => {
       const trigger = event.currentTarget as HTMLElement | null;
       const menu = new Menu();
@@ -119,7 +110,7 @@ function fieldDateAction(
 
 function toggleField(
   settings: ProjectKanbanSettings,
-  tableSettings: ProjectKanbanOptionsContext['tableSettings'],
+  tableSettings: ReturnType<ProjectKanbanOptionsContext['tableSettings']>,
   fieldId: string,
 ): void {
   const index = settings.fields.findIndex(({ id }) => id === fieldId);
@@ -152,24 +143,23 @@ function setBoolean(
 }
 
 function fieldOptions(context: ProjectKanbanOptionsContext): ViewOption[] {
-  return selectableCardFields(context.fields).map((field) => {
+  return selectableCardFields(context.fields()).map((field) => {
     const option = {
       value: field.id,
-      label: labelFor(context.fields, context.settings, context.tableSettings, field.id),
+      label: () => labelFor(context, field.id),
     };
     const action = fieldDateAction(context, field);
     return action === undefined ? option : { ...option, action };
   });
 }
 
-function groupFieldOptions(
-  context: ProjectKanbanOptionsContext,
-): Array<{ value: string; label: string }> {
-  return context.fields
+function groupFieldOptions(context: ProjectKanbanOptionsContext): ViewOption[] {
+  return context
+    .fields()
     .filter(({ id }) => id !== 'status')
     .map((field) => ({
       value: field.id,
-      label: labelFor(context.fields, context.settings, context.tableSettings, field.id),
+      label: () => labelFor(context, field.id),
     }));
 }
 
@@ -179,18 +169,18 @@ function cardFieldsRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
     icon: 'list-plus',
     label: 'Card fields',
     displayValue: () => {
-      const selectedCount = selectedFieldIds(context.settings).length;
+      const selectedCount = selectedFieldIds(context.settings()).length;
       return selectedCount === 0 ? 'None' : `${selectedCount} shown`;
     },
-    selected: () => selectedFieldIds(context.settings),
+    selected: () => selectedFieldIds(context.settings()),
     options: fieldOptions(context),
     onToggle: (fieldId) =>
       applyMutation(context, () => {
-        toggleField(context.settings, context.tableSettings, fieldId);
+        toggleField(context.settings(), context.tableSettings(), fieldId);
       }),
     onMove: (fieldId, _direction, targetId) =>
       applyMutation(context, () => {
-        moveField(context.settings, fieldId, targetId);
+        moveField(context.settings(), fieldId, targetId);
       }),
   };
 }
@@ -215,8 +205,8 @@ function descriptionRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
     kind: 'single',
     icon: 'text',
     label: 'Description',
-    displayValue: descriptionDisplay(context.settings.descriptionLines),
-    activeValue: String(context.settings.descriptionLines),
+    displayValue: () => descriptionDisplay(context.settings().descriptionLines),
+    activeValue: () => String(context.settings().descriptionLines),
     options: [
       { value: '0', label: 'Hidden' },
       { value: '1', label: '1 line', isDefault: true },
@@ -225,7 +215,7 @@ function descriptionRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
     ],
     onSelect: (value) =>
       applyMutation(context, () => {
-        context.settings.descriptionLines = descriptionLines(value);
+        context.settings().descriptionLines = descriptionLines(value);
       }),
   };
 }
@@ -240,8 +230,8 @@ function progressRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
     kind: 'single',
     icon: 'chart-no-axes-column-increasing',
     label: 'Progress',
-    displayValue: progressDisplay(context.settings.progress),
-    activeValue: context.settings.progress,
+    displayValue: () => progressDisplay(context.settings().progress),
+    activeValue: () => context.settings().progress,
     options: [
       { value: 'hidden', label: 'Hidden' },
       { value: 'bar', label: 'Bars' },
@@ -249,7 +239,7 @@ function progressRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
     ],
     onSelect: (value) =>
       applyMutation(context, () => {
-        context.settings.progress = value === 'bar' || value === 'hidden' ? value : 'full';
+        context.settings().progress = value === 'bar' || value === 'hidden' ? value : 'full';
       }),
   };
 }
@@ -260,20 +250,19 @@ function booleanRow(
   label: string,
   icon: string,
 ): ViewOptionsRow {
-  const shown = context.settings[key];
   return {
     kind: 'single',
     icon,
     label,
-    displayValue: shown ? 'Show' : 'Hide',
-    activeValue: shown ? 'show' : 'hide',
+    displayValue: () => (context.settings()[key] ? 'Show' : 'Hide'),
+    activeValue: () => (context.settings()[key] ? 'show' : 'hide'),
     options: [
       { value: 'hide', label: 'Hide', isDefault: true },
       { value: 'show', label: 'Show' },
     ],
     onSelect: (value) =>
       applyMutation(context, () => {
-        setBoolean(context.settings, key, value);
+        setBoolean(context.settings(), key, value);
       }),
   };
 }
@@ -283,31 +272,29 @@ function emptyColumnsRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
     kind: 'single',
     icon: 'columns-3',
     label: 'Empty columns',
-    displayValue: context.settings.emptyColumns === 'compact' ? 'Compact' : 'Expanded',
-    activeValue: context.settings.emptyColumns,
+    displayValue: () => (context.settings().emptyColumns === 'compact' ? 'Compact' : 'Expanded'),
+    activeValue: () => context.settings().emptyColumns,
     options: [
       { value: 'compact', label: 'Compact', isDefault: true },
       { value: 'expanded', label: 'Expanded' },
     ],
     onSelect: (value) =>
       applyMutation(context, () => {
-        context.settings.emptyColumns = value === 'expanded' ? 'expanded' : 'compact';
+        context.settings().emptyColumns = value === 'expanded' ? 'expanded' : 'compact';
       }),
   };
 }
 
 function groupRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
-  const { settings, fields, tableSettings } = context;
-  const displayValue =
-    settings.groupBy === 'status'
-      ? 'Status columns'
-      : labelFor(fields, settings, tableSettings, settings.groupBy);
   return {
     kind: 'single',
     icon: 'layout-list',
     label: 'Group by',
-    displayValue,
-    activeValue: settings.groupBy,
+    displayValue: () =>
+      context.settings().groupBy === 'status'
+        ? 'Status columns'
+        : labelFor(context, context.settings().groupBy),
+    activeValue: () => context.settings().groupBy,
     options: [
       { value: 'none', label: 'None' },
       { value: 'status', label: 'Status columns', isDefault: true },
@@ -315,7 +302,7 @@ function groupRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
     ],
     onSelect: (value) =>
       applyMutation(context, () => {
-        settings.groupBy = value;
+        context.settings().groupBy = value;
       }),
   };
 }
@@ -333,25 +320,32 @@ function updateSort(settings: ProjectKanbanSettings, field: string): void {
 }
 
 function sortRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
-  const { settings, fields, tableSettings } = context;
-  const label = labelFor(fields, settings, tableSettings, settings.sortBy.field);
-  const arrow = settings.sortBy.dir === 'asc' ? '↑' : '↓';
   return {
     kind: 'single',
     icon: 'arrow-up-down',
     label: 'Sort by',
-    displayValue: settings.sortBy.field === 'none' ? 'Manual' : `${label} ${arrow}`,
-    activeValue: settings.sortBy.field,
+    displayValue: () => {
+      const settings = context.settings();
+      const label = labelFor(context, settings.sortBy.field);
+      const arrow = settings.sortBy.dir === 'asc' ? '↑' : '↓';
+      return settings.sortBy.field === 'none' ? 'Manual' : `${label} ${arrow}`;
+    },
+    activeValue: () => context.settings().sortBy.field,
     options: [
       { value: 'none', label: 'Manual' },
-      ...fields.map((field) => ({
+      ...context.fields().map((field) => ({
         value: field.id,
-        label: labelFor(fields, settings, tableSettings, field.id),
+        label: () => {
+          const settings = context.settings();
+          const label = labelFor(context, field.id);
+          const arrow = settings.sortBy.dir === 'asc' ? '↑' : '↓';
+          return `${label} ${settings.sortBy.field === field.id ? arrow : ''}`.trim();
+        },
       })),
     ],
     onSelect: (value) =>
       applyMutation(context, () => {
-        updateSort(settings, value);
+        updateSort(context.settings(), value);
       }),
   };
 }

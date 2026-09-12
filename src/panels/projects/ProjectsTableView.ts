@@ -619,23 +619,19 @@ export class ProjectsTableView {
           this.toggleStatus_abyssPrivate(key);
         });
       },
-      onGroupBy: (field) => {
-        this.finishEditorBeforeAction(() => {
+      onGroupBy: (field) =>
+        this.requestViewChange_abyssPrivate(() => {
           this.context_abyssPrivate.settings.projects.table.groupBy = field;
-          this.persistAndRender_abyssPrivate();
-        });
-      },
-      onSortBy: (field) => {
-        this.finishEditorBeforeAction(() => {
+        }),
+      onSortBy: (field) =>
+        this.requestViewChange_abyssPrivate(() => {
+          const table = this.context_abyssPrivate.settings.projects.table;
           if (field === 'none') {
-            this.context_abyssPrivate.settings.projects.table.sortBy = {
-              field: 'none',
-              dir: 'asc',
-            };
-            this.persistAndRender_abyssPrivate();
-          } else this.sortByColumn_abyssPrivate(field);
-        });
-      },
+            table.sortBy = { field: 'none', dir: 'asc' };
+          } else if (table.sortBy.field !== field) table.sortBy = { field, dir: 'asc' };
+          else if (table.sortBy.dir === 'asc') table.sortBy = { field, dir: 'desc' };
+          else table.sortBy = { field: 'none', dir: 'asc' };
+        }),
       onReset: () => {
         this.finishEditorBeforeAction(() => {
           this.resetViewState_abyssPrivate();

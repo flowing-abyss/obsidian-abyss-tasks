@@ -1,6 +1,5 @@
 import { Menu, setIcon } from 'obsidian';
 import type {
-  ProjectColumn,
   ProjectDateDisplay,
   ProjectFieldCatalogItem,
   ProjectTableSettings,
@@ -34,8 +33,8 @@ export interface ProjectsTableToolbarOptions {
   readonly fields: () => readonly ProjectFieldCatalogItem[];
   readonly onSearch: (query: string) => void;
   readonly onStatusToggle: (key: string) => void;
-  readonly onGroupBy: (field: string) => void;
-  readonly onSortBy: (field: string) => void;
+  readonly onGroupBy: (field: string) => Promise<boolean>;
+  readonly onSortBy: (field: string) => Promise<boolean>;
   readonly onReset: () => void;
   readonly onOverviewMode: (mode: ProjectOverviewMode) => void;
   readonly onViewOptionChange: (mutation: () => void) => Promise<boolean>;
@@ -229,9 +228,12 @@ export class ProjectsTableToolbar {
     const rows = isTableSettings(settings)
       ? this.tableRows_abyssPrivate(settings, fields)
       : projectKanbanOptionsRows({
-          settings,
-          tableSettings: this.options_abyssPrivate.tableSettings(),
-          fields,
+          settings: () => {
+            const current = this.options_abyssPrivate.settings();
+            return isTableSettings(current) ? settings : current;
+          },
+          tableSettings: this.options_abyssPrivate.tableSettings,
+          fields: this.options_abyssPrivate.fields,
           onChange: this.options_abyssPrivate.onViewOptionChange,
         });
     const customized = isTableSettings(settings)
@@ -256,53 +258,51 @@ export class ProjectsTableToolbar {
     settings: ProjectTableSettings,
     fields: readonly ProjectFieldCatalogItem[],
   ): ViewOptionsRow[] {
+    const current = this.options_abyssPrivate.tableSettings;
+    const currentFields = this.options_abyssPrivate.fields;
     const configured = new Set(settings.columns.map(({ id }) => id));
     configured.add(settings.groupBy);
     configured.add(settings.sortBy.field);
     const selectable = fields.filter((field) => configured.has(field.id));
-    const arrow = settings.sortBy.dir === 'asc' ? '↑' : '↓';
-    const sortDisplay =
-      settings.sortBy.field === 'none'
+    const sortArrow = (): string => (current().sortBy.dir === 'asc' ? '↑' : '↓');
+    const sortDisplay = (): string =>
+      current().sortBy.field === 'none'
         ? 'None'
-        : `${fieldLabel(fields, settings, settings.sortBy.field)} ${arrow}`;
+        : `${fieldLabel(currentFields(), current(), current().sortBy.field)} ${sortArrow()}`;
     const defaultSortField = buildDefaultProjectTableSettings().sortBy.field;
     return [
       {
         kind: 'single',
         icon: 'layout-list',
         label: 'Group by',
-        displayValue: fieldLabel(fields, settings, settings.groupBy),
-        activeValue: settings.groupBy,
+        displayValue: () => fieldLabel(currentFields(), current(), current().groupBy),
+        activeValue: () => current().groupBy,
         options: [
           { value: 'none', label: 'None' },
           ...selectable.map((field) => ({
             value: field.id,
-            label: fieldLabel(fields, settings, field.id),
+            label: () => fieldLabel(currentFields(), current(), field.id),
             isDefault: field.id === 'status',
           })),
         ],
-        onSelect: (value) => {
-          this.options_abyssPrivate.onGroupBy(value);
-        },
+        onSelect: (value) => this.options_abyssPrivate.onGroupBy(value).then(() => undefined),
       },
       {
         kind: 'single',
         icon: 'arrow-up-down',
         label: 'Sort by',
         displayValue: sortDisplay,
-        activeValue: settings.sortBy.field,
+        activeValue: () => current().sortBy.field,
         options: [
           { value: 'none', label: 'None' },
           ...selectable.map((field) => ({
             value: field.id,
-            label:
-              `${fieldLabel(fields, settings, field.id)} ${settings.sortBy.field === field.id ? arrow : ''}`.trim(),
+            label: () =>
+              `${fieldLabel(currentFields(), current(), field.id)} ${current().sortBy.field === field.id ? sortArrow() : ''}`.trim(),
             isDefault: field.id === defaultSortField,
           })),
         ],
-        onSelect: (value) => {
-          this.options_abyssPrivate.onSortBy(value);
-        },
+        onSelect: (value) => this.options_abyssPrivate.onSortBy(value).then(() => undefined),
       },
       {
         kind: 'group',
@@ -311,7 +311,7 @@ export class ProjectsTableToolbar {
         displayValue: '2 options',
         rows: [
           this.tableColumnsRow_abyssPrivate(settings, fields),
-          this.tableDescriptionRow_abyssPrivate(settings),
+          this.tableDescriptionRow_abyssPrivate(),
         ],
       },
     ];
@@ -322,14 +322,22 @@ export class ProjectsTableToolbar {
     fields: readonly ProjectFieldCatalogItem[],
   ): ViewOptionsRow {
     const selected = (): string[] =>
-      settings.columns.filter(({ visible }) => visible).map(({ id }) => id);
+      this.options_abyssPrivate
+        .tableSettings()
+        .columns.filter(({ visible }) => visible)
+        .map(({ id }) => id);
     const options: ViewOption[] = settings.columns.map((column) => {
-      const label = fieldLabel(fields, settings, column.id);
+      const label = (): string =>
+        fieldLabel(
+          this.options_abyssPrivate.fields(),
+          this.options_abyssPrivate.tableSettings(),
+          column.id,
+        );
       const field = fields.find(({ id }) => id === column.id);
       const action =
         field === undefined
           ? undefined
-          : this.tableDateAction_abyssPrivate(settings, column, field, label);
+          : this.tableDateAction_abyssPrivate(column.id, field, label());
       return {
         value: column.id,
         label,
@@ -346,44 +354,48 @@ export class ProjectsTableToolbar {
       options,
       onToggle: (columnId) =>
         this.applyViewMutation_abyssPrivate(() => {
-          const column = settings.columns.find(({ id }) => id === columnId);
+          const current = this.options_abyssPrivate.tableSettings();
+          const column = current.columns.find(({ id }) => id === columnId);
           if (column !== undefined) {
-            setProjectColumnVisibility(settings, columnId, !column.visible);
+            setProjectColumnVisibility(current, columnId, !column.visible);
           }
         }),
       onMove: (columnId, _direction, targetColumnId) =>
         this.applyViewMutation_abyssPrivate(() => {
-          moveProjectColumn(settings, columnId, targetColumnId);
+          moveProjectColumn(this.options_abyssPrivate.tableSettings(), columnId, targetColumnId);
         }),
     };
   }
 
-  private tableDescriptionRow_abyssPrivate(settings: ProjectTableSettings): ViewOptionsRow {
+  private tableDescriptionRow_abyssPrivate(): ViewOptionsRow {
     return {
       kind: 'single',
       icon: 'text',
       label: 'Description',
-      displayValue: settings.showDescription ? 'Show' : 'Hide',
-      activeValue: settings.showDescription ? 'show' : 'hide',
+      displayValue: () =>
+        this.options_abyssPrivate.tableSettings().showDescription ? 'Show' : 'Hide',
+      activeValue: () =>
+        this.options_abyssPrivate.tableSettings().showDescription ? 'show' : 'hide',
       options: [
         { value: 'hide', label: 'Hide' },
         { value: 'show', label: 'Show', isDefault: true },
       ],
       onSelect: (value) =>
         this.applyViewMutation_abyssPrivate(() => {
-          settings.showDescription = value === 'show';
+          this.options_abyssPrivate.tableSettings().showDescription = value === 'show';
         }),
     };
   }
 
   private tableDateAction_abyssPrivate(
-    settings: ProjectTableSettings,
-    column: ProjectColumn,
+    columnId: string,
     field: ProjectFieldCatalogItem,
     label: string,
   ): ViewOptionAction | undefined {
     if (field.type !== 'date' && field.type !== 'datetime') return undefined;
-    const active = (): ProjectDateDisplay => column.dateDisplay ?? 'pretty';
+    const active = (): ProjectDateDisplay =>
+      this.options_abyssPrivate.tableSettings().columns.find(({ id }) => id === columnId)
+        ?.dateDisplay ?? 'pretty';
     return {
       label: () => projectDateDisplayLabel(active()),
       ariaLabel: `Date display for ${label}`,
@@ -393,7 +405,7 @@ export class ProjectsTableToolbar {
         configureProjectDateDisplayMenu(menu, {
           active: active(),
           onSelect: (display) => {
-            run(() => this.setTableDateDisplay_abyssPrivate(settings, column.id, display));
+            run(() => this.setTableDateDisplay_abyssPrivate(columnId, display));
           },
         });
         let releaseChild = (): void => undefined;
@@ -418,12 +430,11 @@ export class ProjectsTableToolbar {
   }
 
   private setTableDateDisplay_abyssPrivate(
-    settings: ProjectTableSettings,
     columnId: string,
     display: ProjectDateDisplay,
   ): Promise<void> {
     return this.applyViewMutation_abyssPrivate(() => {
-      setProjectColumnDateDisplay(settings, columnId, display);
+      setProjectColumnDateDisplay(this.options_abyssPrivate.tableSettings(), columnId, display);
     });
   }
 }

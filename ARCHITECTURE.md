@@ -148,6 +148,11 @@ presentation. Active blockers disable completion in the interface, while the app
 enforces the same rule for pointer, keyboard, menu, and retry paths. Presentation state such as
 search drafts, drag state, disclosure, history, and Undo remains local and transient.
 
+Within one task-list context, `CenterPanel` retains the task header, options anchor, scroll surface,
+and add-task bar while rebuilding the list contents. View-option changes therefore update the live
+list without replacing the open popover; changing list context or mode tears down that retained
+surface through the normal panel lifecycle.
+
 ### Projects
 
 [`src/projects/`](src/projects/) treats qualifying Markdown notes as projects. `ProjectStore`

@@ -6461,6 +6461,10 @@ body.abyss-modal-open .popover.hover-popover {
   position: relative;
 }
 
+.abyss-task-filter-chips {
+  display: contents;
+}
+
 /* ── Property filter chips ──────────────────────────────────── */
 .abyss-filter-chip {
   display: inline-flex;
@@ -8388,9 +8392,7 @@ table.abyss-project-table {
 .abyss-project-property-card > .abyss-settings-card-header,
 .abyss-project-column-settings-header {
   display: grid;
-  grid-template-columns:
-    38px minmax(60px, 1fr) minmax(80px, 1.2fr) 38px minmax(60px, 0.6fr)
-    28px 28px;
+  grid-template-columns: 38px minmax(60px, 1fr) minmax(80px, 1.2fr) 38px 28px 28px;
   align-items: center;
   gap: 6px;
 }
@@ -8565,8 +8567,7 @@ table.abyss-project-table {
   font-size: var(--font-ui-smaller);
 }
 
-.abyss-project-column-label,
-.abyss-project-column-width {
+.abyss-project-column-label {
   width: 100%;
   min-width: 0;
 }
@@ -8633,9 +8634,7 @@ table.abyss-project-table {
 @media (width <= 720px) {
   .abyss-project-property-card > .abyss-settings-card-header,
   .abyss-project-column-settings-header {
-    grid-template-columns:
-      28px minmax(0, 0.8fr) minmax(0, 1.2fr) 28px minmax(48px, 0.7fr)
-      28px 28px;
+    grid-template-columns: 28px minmax(0, 0.8fr) minmax(0, 1.2fr) 28px 28px 28px;
     gap: 4px;
   }
 
@@ -8665,10 +8664,6 @@ table.abyss-project-table {
     min-width: var(--checkbox-size, 15px);
     max-width: var(--checkbox-size, 15px);
     flex: 0 0 var(--checkbox-size, 15px);
-  }
-
-  .abyss-project-column-settings-header > :nth-child(6) {
-    display: none;
   }
 }
 

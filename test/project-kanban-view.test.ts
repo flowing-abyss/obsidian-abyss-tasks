@@ -153,7 +153,9 @@ function rectangle(left: number, top: number, right: number, bottom: number): DO
 }
 
 function chooseViewOption(host: HTMLElement, rowLabel: string, optionLabel: string): void {
-  expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+  if (host.querySelector('.abyss-view-state-popover') === null) {
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+  }
   const row = expectDefined(
     Array.from(host.querySelectorAll<HTMLElement>('.abyss-view-state-row')).find(
       (candidate) =>
@@ -353,18 +355,39 @@ describe('project Kanban overview', () => {
     expect(settings.projects.table.hiddenStatuses).not.toContain(`id:${other.id}`);
   });
 
-  it('updates board grouping and sorting without changing table preferences', () => {
+  it('updates successive board grouping and sort direction choices in one popover', async () => {
     const { host, settings } = mountView();
     const tableGroup = settings.projects.table.groupBy;
     const tableSort = { ...settings.projects.table.sortBy };
     clickView(host, 'Kanban');
 
+    const trigger = expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn'));
+    trigger.click();
+    const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
     chooseViewOption(host, 'Group by', 'Budget');
+    await flushMicrotasks();
+    expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
+    expect(
+      viewOptionRow(popover, 'Group by').querySelector('.abyss-view-state-row-value')?.textContent,
+    ).toBe('Budget');
+    const openedKanban = expectDefined(settings.projects.kanban);
+    settings.projects.kanban = structuredClone(openedKanban);
     chooseViewOption(host, 'Sort by', 'End');
+    await flushMicrotasks();
+    expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
+    expect(
+      viewOptionRow(popover, 'Sort by').querySelector('.abyss-view-state-row-value')?.textContent,
+    ).toBe('End ↑');
+    chooseViewOption(host, 'Sort by', 'End ↑');
+    await flushMicrotasks();
 
     const kanban = expectDefined(settings.projects.kanban);
     expect(kanban.groupBy).toBe('property:Budget');
-    expect(kanban.sortBy).toEqual({ field: 'end', dir: 'asc' });
+    expect(kanban.sortBy).toEqual({ field: 'end', dir: 'desc' });
+    expect(openedKanban.sortBy).toEqual({ field: 'start', dir: 'asc' });
+    expect(
+      viewOptionRow(popover, 'Sort by').querySelector('.abyss-view-state-row-value')?.textContent,
+    ).toBe('End ↓');
     expect(settings.projects.table.groupBy).toBe(tableGroup);
     expect(settings.projects.table.sortBy).toEqual(tableSort);
   });
@@ -385,6 +408,41 @@ describe('project Kanban overview', () => {
     expect(labels).toEqual(
       expect.arrayContaining(['Name', 'Progress', 'Description', 'Budget', 'Status columns']),
     );
+  });
+
+  it('synchronizes an open table menu from the current replaced view state', async () => {
+    const { host, settings } = mountView();
+    settings.projects.table.columns.push({ id: 'property:Budget', visible: true });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
+    const openedTable = settings.projects.table;
+    settings.projects.table = structuredClone(openedTable);
+
+    chooseViewOption(host, 'Group by', 'Budget');
+    await flushMicrotasks();
+
+    expect(settings.projects.table.groupBy).toBe('property:Budget');
+    expect(openedTable.groupBy).toBe('status');
+    expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
+    expect(
+      viewOptionRow(popover, 'Group by').querySelector('.abyss-view-state-row-value')?.textContent,
+    ).toBe('Budget');
+    expect(
+      optionRow(viewOptionRow(popover, 'Columns'), 'Budget')
+        .querySelector<HTMLButtonElement>('.abyss-view-state-option')
+        ?.getAttribute('aria-pressed'),
+    ).toBe('true');
+  });
+
+  it('closes the options popover when resetting a customized view', () => {
+    const { host, settings } = mountView();
+    settings.projects.table.groupBy = 'none';
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-reset-btn')).click();
+
+    expect(host.querySelector('.abyss-view-state-popover')).toBeNull();
+    expect(settings.projects.table.groupBy).toBe('status');
   });
 
   it('drags the full card and title, excludes protected controls, and retains card identity', async () => {
@@ -1696,12 +1754,27 @@ describe('project Kanban overview', () => {
     const groupBody = expectDefined(groupHeader.nextElementSibling as HTMLElement | null);
 
     groupHeader.click();
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
     chooseViewOption(host, 'Description', '2 lines');
     await flushMicrotasks();
 
     expect(groupBody.hidden).toBe(false);
     expect(settings.projects.kanban.descriptionLines).toBe(1);
     expect(input.isConnected).toBe(true);
+    expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
+    expect(
+      Array.from(
+        viewOptionRow(popover, 'Description').querySelectorAll<HTMLButtonElement>(
+          '.abyss-view-state-option',
+        ),
+      )
+        .find(
+          (button) =>
+            button.querySelector('.abyss-view-state-option-label')?.textContent === '1 line',
+        )
+        ?.getAttribute('aria-pressed'),
+    ).toBe('true');
   });
 
   it('excludes collapsed group cells from selection and renders structured group content', async () => {
@@ -1976,6 +2049,14 @@ describe('project Kanban overview', () => {
     const moveEnd = expectDefined(
       columns.querySelector<HTMLButtonElement>('[aria-label="Move End up"]'),
     );
+    const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
+    popover.scrollTop = 180;
+    const optionsHost = expectDefined(moveEnd.closest<HTMLElement>('.abyss-view-state-options'));
+    const nativeAppend = optionsHost.append.bind(optionsHost);
+    vi.spyOn(optionsHost, 'append').mockImplementation((...nodes: Array<Node | string>) => {
+      if (nodes.some((node) => node instanceof Node && node.isConnected)) popover.scrollTop = 0;
+      nativeAppend(...nodes);
+    });
     moveEnd.focus();
     moveEnd.click();
     await flushMicrotasks();
@@ -1986,6 +2067,8 @@ describe('project Kanban overview', () => {
       'end',
       'start',
     ]);
+    expect(popover.scrollTop).toBe(180);
+    expect(activeDocument.activeElement).toBe(moveEnd);
     expect(activeDocument.activeElement?.getAttribute('aria-label')).toBe('Move End up');
   });
 
