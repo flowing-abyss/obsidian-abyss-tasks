@@ -6555,7 +6555,7 @@ body.abyss-modal-open .popover.hover-popover {
   border-bottom: none;
 }
 
-.tasksCalendar .abyss-view-state-popover button.abyss-view-state-row-main {
+.abyss-view-state-popover button.abyss-view-state-row-main {
   display: flex;
   width: 100%;
   align-items: center;
@@ -6570,7 +6570,7 @@ body.abyss-modal-open .popover.hover-popover {
   text-align: left;
 }
 
-.tasksCalendar .abyss-view-state-popover button.abyss-view-state-row-main:hover {
+.abyss-view-state-popover button.abyss-view-state-row-main:hover {
   background: var(--background-modifier-hover);
 }
 
@@ -6608,7 +6608,7 @@ body.abyss-modal-open .popover.hover-popover {
   border-inline-start: 1px solid var(--background-modifier-border-hover);
 }
 
-.tasksCalendar .abyss-view-state-popover button.abyss-view-state-option {
+.abyss-view-state-popover button.abyss-view-state-option {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -6622,7 +6622,7 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-normal);
 }
 
-.tasksCalendar .abyss-view-state-popover button.abyss-view-state-option:hover {
+.abyss-view-state-popover button.abyss-view-state-option:hover {
   background: var(--background-modifier-hover);
 }
 
@@ -8318,7 +8318,7 @@ table.abyss-project-table {
   flex: 1 1 auto;
 }
 
-.tasksCalendar .abyss-view-state-popover button.abyss-view-state-option-move {
+.abyss-view-state-popover button.abyss-view-state-option-move {
   width: 26px;
   height: 26px;
   flex: 0 0 auto;
@@ -8329,11 +8329,11 @@ table.abyss-project-table {
   box-shadow: none;
 }
 
-.tasksCalendar .abyss-view-state-popover button.abyss-view-state-option-move:hover {
+.abyss-view-state-popover button.abyss-view-state-option-move:hover {
   background: var(--background-modifier-hover);
 }
 
-.tasksCalendar .abyss-view-state-popover button.abyss-view-state-option-action {
+.abyss-view-state-popover button.abyss-view-state-option-action {
   min-width: 52px;
   height: 24px;
   flex: 0 0 auto;
@@ -8346,7 +8346,7 @@ table.abyss-project-table {
   font-size: var(--font-ui-smaller);
 }
 
-.tasksCalendar .abyss-view-state-popover button.abyss-view-state-option-action:hover {
+.abyss-view-state-popover button.abyss-view-state-option-action:hover {
   background: var(--interactive-hover);
   color: var(--text-normal);
 }
