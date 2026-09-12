@@ -197,10 +197,17 @@ describe('project cell value picker', () => {
     const input = pickerInput(container);
     keydown(input, 'ArrowDown');
 
-    keydown(input, 'F2');
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
 
     expect(input.value).toBe('Alpha');
-    expect(input.getAttribute('aria-keyshortcuts')).toBe('F2');
+    expect(input.getAttribute('aria-keyshortcuts')).toBe('Shift+Enter');
     inputEvent(input, 'Al');
     keydown(input, 'Enter');
     await settle();

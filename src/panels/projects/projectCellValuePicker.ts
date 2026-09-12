@@ -158,7 +158,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
         'aria-label': `Search ${this.options_abyssPrivate.label}`,
         'aria-autocomplete': 'list',
         'aria-expanded': 'true',
-        'aria-keyshortcuts': 'F2',
+        'aria-keyshortcuts': 'Shift+Enter',
         autocomplete: 'off',
         placeholder: 'Search or add value',
       },
@@ -331,9 +331,9 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
       cls: 'abyss-project-value-picker-edit',
       attr: {
         type: 'button',
-        title: `Edit ${choice.suggestion.label} (F2)`,
+        title: `Edit ${choice.suggestion.label} (Shift+Enter)`,
         'aria-label': `Edit ${choice.suggestion.label}`,
-        'aria-keyshortcuts': 'F2',
+        'aria-keyshortcuts': 'Shift+Enter',
       },
     });
     setIcon(edit, 'pencil');
@@ -463,7 +463,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
   };
 
   private handleEditShortcut_abyssPrivate(event: KeyboardEvent): boolean {
-    if (event.key !== 'F2') return false;
+    if (event.key !== 'Enter' || !event.shiftKey) return false;
     event.preventDefault();
     event.stopPropagation();
     const active = this.activeChoice_abyssPrivate();
