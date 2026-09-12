@@ -152,6 +152,12 @@ function rectangle(left: number, top: number, right: number, bottom: number): DO
   return { left, top, right, bottom, width: right - left, height: bottom - top } as DOMRect;
 }
 
+function prettyDateTextNode(cell: HTMLElement): Text {
+  const text = cell.querySelector('.abyss-project-pretty-date')?.firstChild;
+  expect(text?.nodeType).toBe(Node.TEXT_NODE);
+  return text as Text;
+}
+
 function chooseViewOption(host: HTMLElement, rowLabel: string, optionLabel: string): void {
   if (host.querySelector('.abyss-view-state-popover') === null) {
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
@@ -432,6 +438,7 @@ describe('project Kanban overview', () => {
         .querySelector<HTMLButtonElement>('.abyss-view-state-option')
         ?.getAttribute('aria-pressed'),
     ).toBe('true');
+    expect(popover.querySelector('.abyss-view-state-reset-btn')).not.toBeNull();
   });
 
   it('closes the options popover when resetting a customized view', () => {
@@ -549,7 +556,7 @@ describe('project Kanban overview', () => {
     const start = expectDefined(
       card.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
     );
-    const text = expectDefined(start.firstChild);
+    const text = prettyDateTextNode(start);
     const selection = expectDefined(activeDocument.defaultView?.getSelection());
     start.click();
     expect(start.classList.contains('is-selected')).toBe(true);
@@ -617,7 +624,7 @@ describe('project Kanban overview', () => {
     const start = expectDefined(
       card.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
     );
-    const text = expectDefined(start.firstChild);
+    const text = prettyDateTextNode(start);
 
     start.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 11 }),
@@ -757,7 +764,7 @@ describe('project Kanban overview', () => {
     const start = expectDefined(
       card.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
     );
-    const text = expectDefined(start.firstChild);
+    const text = prettyDateTextNode(start);
 
     start.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 31 }),
@@ -1648,6 +1655,61 @@ describe('project Kanban overview', () => {
       expectedValue: 42,
     });
     expect(budget.textContent).toContain('84');
+  });
+
+  it('reuses a hidden description cell with the latest immutable project snapshot', async () => {
+    const initial = project({
+      frontmatter: {
+        start: '2026-09-01',
+        end: '2026-09-30',
+        description: 'Original description',
+      },
+    });
+    const { host, view, settings, applyEdits } = mountView([initial]);
+    const kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban = kanban;
+    settings.projects.overviewView = 'kanban';
+    view.refreshFields();
+    const description = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-kanban-description'),
+    );
+    const content = expectDefined(
+      description.querySelector<HTMLElement>('.abyss-project-kanban-description-content'),
+    );
+
+    kanban.descriptionLines = 0;
+    view.refreshFields();
+    expect(description.hidden).toBe(true);
+    expect(content.isConnected).toBe(true);
+
+    const updated = {
+      ...initial,
+      frontmatter: { ...initial.frontmatter, description: 'Current description' },
+    };
+    view.update([updated]);
+    kanban.descriptionLines = 'full';
+    view.refreshFields();
+    expect(description.hidden).toBe(false);
+    expect(description.querySelector('.abyss-project-kanban-description-content')).toBe(content);
+    expect(content.textContent).toContain('Current description');
+
+    const dblclick = new MouseEvent('dblclick', { bubbles: true });
+    const preventDefault = vi.spyOn(dblclick, 'preventDefault');
+    content.dispatchEvent(dblclick);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    const textarea = expectDefined(content.querySelector<HTMLTextAreaElement>('textarea'));
+    expect(textarea.value).toBe('Current description');
+    textarea.value = 'Edited current description';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(expectDefined(applyEdits.mock.calls[0])[0][0]).toMatchObject({
+      path: 'Projects/A.md',
+      value: 'Edited current description',
+      expectedValue: 'Current description',
+    });
   });
 
   it('positions a bottom-right card editor within the board viewport and sticky header', () => {

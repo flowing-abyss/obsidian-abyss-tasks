@@ -835,6 +835,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
   ): void {
     for (const [fieldId, cell] of card.cells) {
       if (retained.has(fieldId)) continue;
+      if (cell.element === card.descriptionContent || cell.element === card.progress) continue;
       const row = cell.element.closest('.abyss-project-kanban-field');
       if (row !== null) row.remove();
       else cell.element.empty();

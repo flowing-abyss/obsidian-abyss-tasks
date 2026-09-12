@@ -62,7 +62,7 @@ export interface OpenViewOptionsPopoverOptions {
   readonly host: HTMLElement;
   readonly anchor: HTMLElement;
   readonly rows: readonly ViewOptionsRow[];
-  readonly showReset?: boolean;
+  readonly showReset?: boolean | (() => boolean);
   readonly onReset?: () => void;
   readonly interactionOwnership?: InteractionOwnershipPort;
   readonly onClose?: () => void;
@@ -472,6 +472,34 @@ function renderRow(host: HTMLElement, spec: ViewOptionsRow, runtime: ViewOptions
   }
 }
 
+function resetControlSync(
+  popover: HTMLElement,
+  options: Pick<OpenViewOptionsPopoverOptions, 'showReset' | 'onReset'>,
+  close: () => void,
+): () => void {
+  let reset: HTMLElement | undefined;
+  return (): void => {
+    const visible =
+      typeof options.showReset === 'function' ? options.showReset() : options.showReset === true;
+    if (!visible || options.onReset === undefined) {
+      reset?.remove();
+      reset = undefined;
+      return;
+    }
+    if (reset !== undefined) return;
+    reset = popover.createDiv({ cls: 'abyss-view-state-reset' });
+    const button = reset.createEl('button', {
+      cls: 'abyss-view-state-reset-btn',
+      text: 'Reset to defaults',
+      attr: { type: 'button' },
+    });
+    button.addEventListener('click', () => {
+      close();
+      options.onReset?.();
+    });
+  };
+}
+
 /** Opens the shared task/project sort and grouping surface and returns idempotent cleanup. */
 export function openViewOptionsPopover(options: OpenViewOptionsPopoverOptions): () => void {
   const popover = options.host.createDiv({
@@ -525,16 +553,10 @@ export function openViewOptionsPopover(options: OpenViewOptionsPopoverOptions): 
     close(true);
   });
   for (const row of options.rows) renderRow(popover, row, runtime);
-  if (options.showReset === true && options.onReset !== undefined) {
-    const reset = popover.createDiv({ cls: 'abyss-view-state-reset' }).createEl('button', {
-      cls: 'abyss-view-state-reset-btn',
-      text: 'Reset to defaults',
-      attr: { type: 'button' },
-    });
-    reset.addEventListener('click', () => {
-      close();
-      options.onReset?.();
-    });
+  if (options.showReset !== undefined) {
+    const syncReset = resetControlSync(popover, options, close);
+    syncRows.push(syncReset);
+    syncReset();
   }
   options.anchor.after(popover);
   popover.querySelector<HTMLElement>('.abyss-view-state-row-main')?.focus();

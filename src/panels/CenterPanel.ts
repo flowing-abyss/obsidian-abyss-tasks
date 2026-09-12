@@ -3241,10 +3241,11 @@ export class CenterPanel {
         this.sortByRowSpec_abyssPrivate(defaults),
         this.statusGroupsRowSpec_abyssPrivate(),
       ],
-      showReset: isListViewCustomized(
-        this.state_abyssPrivate.get('centerListViewState'),
-        this.activeListKey_abyssPrivate(),
-      ),
+      showReset: () =>
+        isListViewCustomized(
+          this.state_abyssPrivate.get('centerListViewState'),
+          this.activeListKey_abyssPrivate(),
+        ),
       onReset: () => {
         this.updateViewState_abyssPrivate(getListViewDefaults(this.activeListKey_abyssPrivate()));
       },

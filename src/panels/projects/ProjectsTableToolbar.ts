@@ -211,11 +211,17 @@ export class ProjectsTableToolbar {
       button.toggleClass('is-active', active);
       button.setAttribute('aria-pressed', String(active));
     }
+    this.viewButton_abyssPrivate.classList.toggle(
+      'abyss-view-state-btn--active',
+      this.isCustomized_abyssPrivate(),
+    );
+  }
+
+  private isCustomized_abyssPrivate(): boolean {
     const settings = this.options_abyssPrivate.settings();
-    const customized = isTableSettings(settings)
+    return isTableSettings(settings)
       ? isCustomized(settings)
       : isProjectKanbanCustomized(settings, this.options_abyssPrivate.tableSettings());
-    this.viewButton_abyssPrivate.classList.toggle('abyss-view-state-btn--active', customized);
   }
 
   private togglePopover_abyssPrivate(): void {
@@ -236,14 +242,11 @@ export class ProjectsTableToolbar {
           fields: this.options_abyssPrivate.fields,
           onChange: this.options_abyssPrivate.onViewOptionChange,
         });
-    const customized = isTableSettings(settings)
-      ? isCustomized(settings)
-      : isProjectKanbanCustomized(settings, this.options_abyssPrivate.tableSettings());
     const close = openViewOptionsPopover({
       host: this.options_abyssPrivate.host,
       anchor: this.viewButton_abyssPrivate,
       rows,
-      showReset: customized,
+      showReset: () => this.isCustomized_abyssPrivate(),
       onReset: this.options_abyssPrivate.onReset,
       onClose: () => {
         if (this.popoverCleanup_abyssPrivate === close) {

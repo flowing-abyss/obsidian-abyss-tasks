@@ -100,6 +100,63 @@ describe('ProjectManager.renameStatusDefinition', () => {
     expect(persist).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      label: 'cached tags',
+      membershipQuery: '#project',
+      source: '---\nstatus: active\ntags: [project]\n---\n',
+    },
+    {
+      label: 'cached frontmatter properties',
+      membershipQuery: 'kind=project',
+      source: '---\nstatus: active\nkind: project\n---\n',
+    },
+  ])('uses $label to classify malformed project source', async ({ membershipQuery, source }) => {
+    const malformed = '---\nbroken: [unterminated\n---\n';
+    const app = await createAppWithFiles({ 'Notes/Cached.md': source });
+    await app.vault.adapter.write('Notes/Cached.md', malformed);
+    const settings = clone();
+    settings.projects.membershipQuery = membershipQuery;
+    const active = expectDefined(settings.projects.statuses[0]);
+    const persist = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      manager(app, settings).renameStatusDefinition(active.id, 'running', 'active', persist),
+    ).rejects.toThrow(/Project frontmatter in Notes\/Cached\.md is not valid YAML/u);
+
+    expect(active.name).toBe('active');
+    expect(await app.vault.adapter.read('Notes/Cached.md')).toBe(malformed);
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it('uses valid fresh membership instead of a stale cached projection', async () => {
+    const app = await createAppWithFiles({
+      'Notes/WasProject.md': '---\nstatus: active\nkind: project\n---\n',
+      'Notes/BecameProject.md': '---\nstatus: active\nkind: reference\n---\n',
+    });
+    await app.vault.adapter.write(
+      'Notes/WasProject.md',
+      '---\nstatus: active\nkind: reference\n---\n',
+    );
+    await app.vault.adapter.write(
+      'Notes/BecameProject.md',
+      '---\nstatus: active\nkind: project\n---\n',
+    );
+    const settings = clone();
+    settings.projects.membershipQuery = 'kind=project';
+    const active = expectDefined(settings.projects.statuses[0]);
+
+    await manager(app, settings).renameStatusDefinition(
+      active.id,
+      'running',
+      'active',
+      vi.fn().mockResolvedValue(undefined),
+    );
+
+    expect(await frontmatterValue(app, 'Notes/WasProject.md')).toBe('active');
+    expect(await frontmatterValue(app, 'Notes/BecameProject.md')).toBe('running');
+  });
+
   it('names the project whose YAML becomes invalid during write revalidation', async () => {
     const malformed = '---\nbroken: [unterminated\n---\n';
     const app = await createAppWithFiles({
