@@ -7,7 +7,9 @@ const REDUCED_HIGHLIGHT_MS = 800;
 interface PendingProjectPresentation {
   readonly path: string;
   readonly expectedStatus: string | undefined;
+  readonly ownsFocus: () => boolean;
   expiresAt: number;
+  membershipResolved: boolean;
   highlightUntil: number | undefined;
   element: HTMLElement | undefined;
   timeout: number;
@@ -29,12 +31,18 @@ export class ProjectCreationPresentation {
 
   constructor(private readonly options_abyssPrivate: ProjectCreationPresentationOptions) {}
 
-  enqueue(request: { readonly path: string; readonly expectedStatus?: string }): void {
+  enqueue(request: {
+    readonly path: string;
+    readonly expectedStatus?: string;
+    readonly ownsFocus?: () => boolean;
+  }): void {
     if (this.destroyed_abyssPrivate) return;
     const entry: PendingProjectPresentation = {
       path: request.path,
       expectedStatus: request.expectedStatus,
+      ownsFocus: request.ownsFocus ?? (() => true),
       expiresAt: this.options_abyssPrivate.now() + PRESENTATION_TIMEOUT_MS,
+      membershipResolved: false,
       highlightUntil: undefined,
       element: undefined,
       timeout: 0,
@@ -63,8 +71,13 @@ export class ProjectCreationPresentation {
           (entry.expectedStatus === undefined || candidate.statusId === entry.expectedStatus),
       );
     if (project === undefined) return;
+    if (!entry.membershipResolved) {
+      entry.membershipResolved = true;
+      this.clearTimeout_abyssPrivate(entry.timeout);
+      entry.timeout = 0;
+    }
     const previous = entry.element;
-    const focus = entry.highlightUntil === undefined;
+    const focus = entry.highlightUntil === undefined && entry.ownsFocus();
     const element = this.options_abyssPrivate.present(project, focus);
     if (element === null) return;
     if (previous !== element) {
@@ -105,7 +118,12 @@ export class ProjectCreationPresentation {
       }, remaining);
       return;
     }
-    if (entry.highlightUntil === undefined && this.options_abyssPrivate.host.isConnected) {
+    if (
+      entry.highlightUntil === undefined &&
+      !entry.membershipResolved &&
+      entry.ownsFocus() &&
+      this.options_abyssPrivate.host.isConnected
+    ) {
       this.options_abyssPrivate.inaccessible(entry.path);
     }
     this.finish_abyssPrivate(entry);

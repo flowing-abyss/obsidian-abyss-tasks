@@ -1911,6 +1911,62 @@ describe('project Kanban overview', () => {
     expect(activeDocument.activeElement).toBe(focusedCell);
   });
 
+  it('presents creation after a card drag releases deferred reconciliation', async () => {
+    let finishCreate: ((path: string) => void) | undefined;
+    const createProject = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishCreate = resolve;
+        }),
+    );
+    const finalStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const intermediateStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const existing = project();
+    const intermediate = project({
+      path: 'Projects/After drag.md',
+      name: 'After drag',
+      statusId: intermediateStatus.id,
+    });
+    const created = { ...intermediate, statusId: finalStatus.id };
+    const { host, view, settings } = mountView([existing], { createProject });
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    clickView(host, 'Kanban');
+    const create = expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${finalStatus.id}"] .abyss-project-kanban-column-create`,
+      ),
+    );
+    create.click();
+    const composer = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    composer.value = created.name;
+    composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    view.update([existing, intermediate]);
+    const card = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"]',
+      ),
+    );
+    const title = expectDefined(card.querySelector<HTMLButtonElement>('.abyss-project-table-name'));
+    const data = transfer();
+    title.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    title.dispatchEvent(dragEvent('dragstart', data));
+    view.update([existing, created]);
+    finishCreate?.(created.path);
+    await flushMicrotasks();
+    expect(host.querySelector('[data-project-path="Projects/After drag.md"]')).not.toBeNull();
+    expect(host.querySelector('.is-just-created')).toBeNull();
+    expect(card.classList).toContain('is-dragging');
+
+    card.dispatchEvent(dragEvent('dragend', data));
+
+    expect(host.querySelector('[data-project-path="Projects/After drag.md"]')?.classList).toContain(
+      'is-just-created',
+    );
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
+  });
+
   it('moves board focus to a surviving card and then the board when projects disappear', () => {
     const first = project();
     const second = project({ path: 'Projects/B.md', name: 'B project' });

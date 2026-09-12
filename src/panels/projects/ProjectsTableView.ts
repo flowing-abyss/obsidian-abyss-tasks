@@ -499,6 +499,9 @@ export class ProjectsTableView {
   private readonly toolbar_abyssPrivate: ProjectsTableToolbar;
   private readonly creationComposer_abyssPrivate: ProjectCreationComposer;
   private readonly creationPresentation_abyssPrivate: ProjectCreationPresentation;
+  private creationInteractionRevision_abyssPrivate = 0;
+  private creationInteractionToken_abyssPrivate: number | undefined;
+  private notifyingCreationReconciliation_abyssPrivate = false;
   private kanbanView_abyssPrivate: ProjectsKanbanView<RenderedCellContext> | undefined;
   private readonly markdown_abyssPrivate = new Component();
   private readonly ownerWindow_abyssPrivate: Window | undefined;
@@ -593,14 +596,12 @@ export class ProjectsTableView {
     this.creationComposer_abyssPrivate = new ProjectCreationComposer({
       host: this.root_abyssPrivate,
       boundary: this.root_abyssPrivate,
-      create: (request) => this.context_abyssPrivate.createProject(request),
+      create: (request) => this.startProjectCreation_abyssPrivate(request),
       created: (path, statusId) => {
-        this.creationPresentation_abyssPrivate.enqueue({
-          path,
-          ...(statusId === undefined ? {} : { expectedStatus: statusId }),
-        });
+        this.enqueueCreatedProject_abyssPrivate(path, statusId);
       },
       failed: (error) => {
+        this.creationInteractionToken_abyssPrivate = undefined;
         this.reportProjectCreationFailure_abyssPrivate(error);
       },
       openProject: (path) => {
@@ -779,7 +780,6 @@ export class ProjectsTableView {
       this.overviewMode_abyssPrivate === 'kanban',
     );
     this.renderTable_abyssPrivate();
-    this.creationPresentation_abyssPrivate.update();
     if (manualOrderChanged) this.persistSettings_abyssPrivate();
   }
 
@@ -799,6 +799,8 @@ export class ProjectsTableView {
 
   destroy(): void {
     this.mounted_abyssPrivate = false;
+    this.creationInteractionRevision_abyssPrivate++;
+    this.creationInteractionToken_abyssPrivate = undefined;
     this.clearGroupDropStates_abyssPrivate();
     this.pendingAction_abyssPrivate?.replace?.();
     this.pendingAction_abyssPrivate = undefined;
@@ -999,6 +1001,23 @@ export class ProjectsTableView {
     );
   }
 
+  private startProjectCreation_abyssPrivate(request: ProjectCreateRequest): Promise<string | null> {
+    this.creationInteractionToken_abyssPrivate = ++this.creationInteractionRevision_abyssPrivate;
+    return this.context_abyssPrivate.createProject(request);
+  }
+
+  private enqueueCreatedProject_abyssPrivate(path: string, statusId: string | undefined): void {
+    const interactionToken = this.creationInteractionToken_abyssPrivate;
+    this.creationInteractionToken_abyssPrivate = undefined;
+    this.creationPresentation_abyssPrivate.enqueue({
+      path,
+      ...(statusId === undefined ? {} : { expectedStatus: statusId }),
+      ownsFocus: () =>
+        interactionToken !== undefined &&
+        interactionToken === this.creationInteractionRevision_abyssPrivate,
+    });
+  }
+
   private reportProjectCreationFailure_abyssPrivate(error: unknown): void {
     const cause = isProjectCreationError(error) ? error.cause : error;
     const message = cause instanceof Error ? cause.message : String(cause);
@@ -1021,18 +1040,24 @@ export class ProjectsTableView {
   }
 
   private presentCreatedProject_abyssPrivate(project: Project, focus: boolean): HTMLElement | null {
-    if (
-      !this.mounted_abyssPrivate ||
-      !this.root_abyssPrivate.isConnected ||
-      this.root_abyssPrivate.hidden ||
-      this.context_abyssPrivate.state.get('projectsPanel').view !== 'table'
-    ) {
-      return null;
-    }
+    if (!this.creationPresentationReady_abyssPrivate()) return null;
     if (focus) this.relaxCreationProjection_abyssPrivate(project);
     return this.overviewMode_abyssPrivate === 'kanban'
       ? this.presentCreatedKanbanProject_abyssPrivate(project, focus)
       : this.presentCreatedTableProject_abyssPrivate(project, focus);
+  }
+
+  private creationPresentationReady_abyssPrivate(): boolean {
+    return (
+      this.mounted_abyssPrivate &&
+      this.root_abyssPrivate.isConnected &&
+      !this.root_abyssPrivate.hidden &&
+      this.context_abyssPrivate.state.get('projectsPanel').view === 'table' &&
+      !this.mutationActive_abyssPrivate &&
+      this.activeEditor_abyssPrivate === undefined &&
+      !this.projectDragActive_abyssPrivate &&
+      !this.renderPending_abyssPrivate
+    );
   }
 
   private presentCreatedKanbanProject_abyssPrivate(
@@ -1134,6 +1159,7 @@ export class ProjectsTableView {
     this.renderPending_abyssPrivate = false;
     if (this.overviewMode_abyssPrivate === 'kanban') {
       this.renderKanban_abyssPrivate();
+      this.notifyCreationReconciled_abyssPrivate();
       return;
     }
     this.showTableSurface_abyssPrivate();
@@ -1162,9 +1188,28 @@ export class ProjectsTableView {
     this.renderTableBody_abyssPrivate(table, model, columns);
     this.applyTableWidth_abyssPrivate();
     this.updateResponsiveNamePinning_abyssPrivate();
+    this.finishTableReconciliation_abyssPrivate(scrollTop, scrollLeft, focusedIdentity);
+  }
+
+  private finishTableReconciliation_abyssPrivate(
+    scrollTop: number,
+    scrollLeft: number,
+    focusedIdentity: FocusedCellIdentity | undefined,
+  ): void {
     this.selection_abyssPrivate.reconcile(this.selectableCells_abyssPrivate());
     this.syncSelection_abyssPrivate();
     this.restoreTablePosition_abyssPrivate(scrollTop, scrollLeft, focusedIdentity);
+    this.notifyCreationReconciled_abyssPrivate();
+  }
+
+  private notifyCreationReconciled_abyssPrivate(): void {
+    if (this.notifyingCreationReconciliation_abyssPrivate) return;
+    this.notifyingCreationReconciliation_abyssPrivate = true;
+    try {
+      this.creationPresentation_abyssPrivate.update();
+    } finally {
+      this.notifyingCreationReconciliation_abyssPrivate = false;
+    }
   }
 
   private showTableSurface_abyssPrivate(): void {
@@ -2529,6 +2574,10 @@ export class ProjectsTableView {
   }
 
   private readonly handleDocumentFocusIn_abyssPrivate = (event: FocusEvent): void => {
+    if (event.target instanceof Node && !this.root_abyssPrivate.contains(event.target)) {
+      this.creationInteractionRevision_abyssPrivate++;
+      this.creationInteractionToken_abyssPrivate = undefined;
+    }
     const cell = this.keydownCell_abyssPrivate(event.target);
     if (cell !== undefined && !this.isTextEditingTarget_abyssPrivate(event.target)) {
       if (!this.sameCell_abyssPrivate(this.selection_abyssPrivate.focus, cell.identity)) {

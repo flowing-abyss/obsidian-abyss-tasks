@@ -4365,6 +4365,131 @@ describe('ProjectsTableView', () => {
     expect(activeDocument.activeElement?.getAttribute('data-column-id')).toBe('name');
   });
 
+  it('keeps external focus when delayed creation finishes in a connected overview', async () => {
+    let finishCreate: ((path: string) => void) | undefined;
+    const createProject = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishCreate = resolve;
+        }),
+    );
+    const { host, view } = mount([], { createProject });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+    const input = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    input.value = 'External focus';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const outside = activeDocument.body.createEl('button', { attr: { type: 'button' } });
+    outside.focus();
+    const created = project({ path: 'Projects/External focus.md', name: 'External focus' });
+    view.update([created]);
+
+    finishCreate?.(created.path);
+    await flushMicrotasks();
+
+    expect(activeDocument.activeElement).toBe(outside);
+    expect(
+      host.querySelector('[data-project-path="Projects/External focus.md"]')?.classList,
+    ).toContain('is-just-created');
+  });
+
+  it('presents after an editor releases deferred reconciliation without a later store event', async () => {
+    let finishCreate: ((path: string) => void) | undefined;
+    const createProject = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishCreate = resolve;
+        }),
+    );
+    const existing = project({ path: 'Projects/Existing.md', name: 'Existing' });
+    const finalStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const intermediateStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const intermediate = project({
+      path: 'Projects/After editor.md',
+      name: 'After editor',
+      statusId: intermediateStatus.id,
+    });
+    const created = { ...intermediate, statusId: finalStatus.id };
+    const { host, view } = mount([existing], { createProject });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+    const composer = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    composer.value = created.name;
+    composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    view.update([existing, intermediate]);
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/Existing.md"] [data-column-id="start"]',
+      ),
+    );
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const editor = expectDefined(
+      cell.querySelector<HTMLInputElement>('.abyss-project-editor-input'),
+    );
+    view.update([existing, created]);
+    finishCreate?.(created.path);
+    await flushMicrotasks();
+    expect(host.querySelector('[data-project-path="Projects/After editor.md"]')).not.toBeNull();
+    expect(host.querySelector('.is-just-created')).toBeNull();
+    expect(host.querySelector('.abyss-project-cell-editor')).not.toBeNull();
+
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(
+      host.querySelector('[data-project-path="Projects/After editor.md"]')?.classList,
+    ).toContain('is-just-created');
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
+  });
+
+  it('presents after a table-session mutation releases deferred reconciliation', async () => {
+    let finishCreate: ((path: string) => void) | undefined;
+    const createProject = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishCreate = resolve;
+        }),
+    );
+    let finishMutation: (() => void) | undefined;
+    const finalStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const intermediateStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const existing = project({ path: 'Projects/Existing.md', name: 'Existing' });
+    const intermediate = project({
+      path: 'Projects/After mutation.md',
+      name: 'After mutation',
+      statusId: intermediateStatus.id,
+    });
+    const created = { ...intermediate, statusId: finalStatus.id };
+    const { host, view } = mount([existing], { createProject });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+    const composer = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    composer.value = created.name;
+    composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    view.update([existing, intermediate]);
+    const mutation = view.runTableSessionMutation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishMutation = resolve;
+        }),
+    );
+    await flushMicrotasks();
+    view.update([existing, created]);
+    finishCreate?.(created.path);
+    await flushMicrotasks();
+    expect(host.querySelector('[data-project-path="Projects/After mutation.md"]')).not.toBeNull();
+    expect(host.querySelector('.is-just-created')).toBeNull();
+
+    expectDefined(finishMutation)();
+    await mutation;
+
+    expect(
+      host.querySelector('[data-project-path="Projects/After mutation.md"]')?.classList,
+    ).toContain('is-just-created');
+  });
+
   it('clears only active restrictions that obstruct the created project', async () => {
     const config = settings();
     const planned = expectDefined(config.projects.statuses[1]);

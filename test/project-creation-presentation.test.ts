@@ -25,10 +25,13 @@ function harness(initial: readonly Project[] = []) {
   activeDocument.body.append(host);
   const elements = new Map<string, HTMLElement>();
   let projects = initial;
+  let presentable = true;
   const present = vi.fn((candidate: Project, focus: boolean) => {
+    if (!presentable) return null;
     let element = elements.get(candidate.path);
     if (element?.isConnected !== true) {
       element = host.createDiv({ attr: { 'data-path': candidate.path } });
+      element.tabIndex = -1;
       elements.set(candidate.path, element);
     }
     if (focus) element.focus({ preventScroll: true });
@@ -50,6 +53,7 @@ function harness(initial: readonly Project[] = []) {
     inaccessible,
     elements,
     setProjects: (next: Project[]) => (projects = next),
+    setPresentable: (value: boolean) => (presentable = value),
   };
 }
 
@@ -100,5 +104,55 @@ describe('ProjectCreationPresentation', () => {
     vi.advanceTimersByTime(3_000);
 
     expect(h.inaccessible).toHaveBeenCalledWith('Projects/New.md');
+  });
+
+  it('does not reclaim focus after the creation interaction loses ownership', () => {
+    const h = harness();
+    let ownsFocus = true;
+    h.controller.enqueue({
+      path: 'Projects/New.md',
+      expectedStatus: 'active',
+      ownsFocus: () => ownsFocus,
+    });
+    const outside = activeDocument.body.createEl('button');
+    outside.focus();
+    ownsFocus = false;
+
+    h.setProjects([project()]);
+    h.controller.update();
+
+    expect(h.present).toHaveBeenCalledWith(expect.anything(), false);
+    expect(activeDocument.activeElement).toBe(outside);
+  });
+
+  it('does not report a query exclusion after focus ownership is abandoned', () => {
+    vi.useFakeTimers();
+    const h = harness();
+    let ownsFocus = true;
+    h.controller.enqueue({
+      path: 'Projects/New.md',
+      expectedStatus: 'active',
+      ownsFocus: () => ownsFocus,
+    });
+    ownsFocus = false;
+
+    vi.advanceTimersByTime(3_000);
+
+    expect(h.inaccessible).not.toHaveBeenCalled();
+  });
+
+  it('waits past the lookup timeout once membership resolves before reconciliation', () => {
+    vi.useFakeTimers();
+    const h = harness([project()]);
+    h.setPresentable(false);
+    h.controller.enqueue({ path: 'Projects/New.md', expectedStatus: 'active' });
+
+    vi.advanceTimersByTime(3_000);
+    expect(h.inaccessible).not.toHaveBeenCalled();
+
+    h.setPresentable(true);
+    h.controller.update();
+    expect(h.present).toHaveBeenLastCalledWith(expect.anything(), true);
+    expect(expectDefined(h.elements.get('Projects/New.md')).classList).toContain('is-just-created');
   });
 });
