@@ -7835,7 +7835,7 @@ table.abyss-project-table {
   font-size: var(--font-ui-small);
 }
 
-.abyss-project-value-picker-search {
+.abyss-project-value-picker input.abyss-project-value-picker-search {
   flex: 0 0 auto;
   box-sizing: border-box;
   height: 28px;
@@ -7906,7 +7906,7 @@ table.abyss-project-table {
 .abyss-project-value-picker-presentation > .abyss-suggest-title {
   overflow: hidden;
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
