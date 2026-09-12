@@ -27,6 +27,7 @@ useRealMoment();
 
 const root = process.cwd();
 const suffix = '_abyssPrivate';
+const TYPESCRIPT_COLD_START_TIMEOUT_MS = 30_000;
 const privateOwners = new Set([
   'AsyncEditLifecycle',
   'CenterPanel',
@@ -137,7 +138,7 @@ describe('production private member boundary', () => {
     const options = ts.parseJsonConfigFileContent(config.config, ts.sys, root).options;
     program = ts.createProgram(files, options);
     checker = program.getTypeChecker();
-  });
+  }, TYPESCRIPT_COLD_START_TIMEOUT_MS);
 
   it('reserves the mangling suffix for explicit private declarations in audited owners', () => {
     const foundOwners = new Set<string>();
