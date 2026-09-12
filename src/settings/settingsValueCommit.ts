@@ -6,6 +6,7 @@ interface RegisteredValueCommit {
   readonly control: HTMLInputElement;
   readonly commit: () => boolean | void;
   committedValue: string;
+  validationPending: boolean;
 }
 
 /** Owns delegated natural commit boundaries for the editable values in one settings render. */
@@ -30,6 +31,7 @@ export class SettingsValueCommit implements SettingsValueCommitRegistrar, EventL
       control,
       commit,
       committedValue: control.value,
+      validationPending: false,
     });
   }
 
@@ -63,10 +65,20 @@ export class SettingsValueCommit implements SettingsValueCommitRegistrar, EventL
   }
 
   private commit_abyssPrivate(registration: RegisteredValueCommit): void {
-    if (registration.control.value === registration.committedValue) return;
+    if (
+      registration.control.value === registration.committedValue &&
+      !registration.validationPending
+    )
+      return;
     const committedValue = registration.committedValue;
     registration.committedValue = registration.control.value;
+    registration.validationPending = false;
     const accepted = registration.commit();
-    registration.committedValue = accepted === false ? committedValue : registration.control.value;
+    if (accepted === false) {
+      registration.committedValue = committedValue;
+      registration.validationPending = true;
+    } else {
+      registration.committedValue = registration.control.value;
+    }
   }
 }

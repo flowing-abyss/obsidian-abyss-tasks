@@ -170,9 +170,10 @@ function renderPresetRow(context: PresetRowContext): void {
   const commitValue = (): boolean => {
     const index = currentIndex();
     if (index < 0) return true;
+    const current = currentRecord();
     const nextValue =
       definition.type === 'number' ? controls.value.valueAsNumber : controls.value.value;
-    const next = { ...(currentRecord() ?? {}), value: nextValue };
+    const next = { ...(current ?? {}), value: nextValue };
     const issue = projectPropertyPresetIssue(
       definition.type,
       next,
@@ -180,6 +181,7 @@ function renderPresetRow(context: PresetRowContext): void {
     );
     controls.error.setText(issue ?? '');
     if (issue !== undefined) return false;
+    if (current !== undefined && Object.is(current['value'], nextValue)) return true;
     rawPresets[index] = next;
     options.onDefinitionChange();
     return true;

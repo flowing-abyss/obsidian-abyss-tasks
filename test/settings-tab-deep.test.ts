@@ -491,6 +491,74 @@ describe('CalendarSettingsTab project value commits', () => {
     }
   });
 
+  it('clears a rejected preset error when its draft returns to the accepted value', async () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.table.columns.push({ id: 'property:Priority', visible: true });
+    projects.propertyDefinitions['property:Priority'] = {
+      type: 'text',
+      presets: [{ value: '🔺' }, { value: '⏫' }],
+    };
+    const { tab, plugin } = makeTab(
+      { projects },
+      {
+        projectProperties: {
+          list: () => [{ name: 'Priority', type: 'text' }],
+          inspect: () => ({
+            kind: 'available',
+            property: { name: 'Priority', type: 'text' },
+            assignment: { kind: 'none' },
+          }),
+          values: () => [],
+          onChange: () => () => {},
+        },
+      },
+    );
+    document.body.append(tab.containerEl);
+    try {
+      const body = openSection(tab, 5);
+      const firstRow = expectDefined(
+        body.querySelector<HTMLElement>(
+          '[data-column-id="property:Priority"] .abyss-project-value-row',
+        ),
+      );
+      const first = expectDefined(
+        firstRow.querySelector<HTMLInputElement>('.abyss-project-value-raw'),
+      );
+      const error = expectDefined(firstRow.querySelector<HTMLElement>('[role="status"]'));
+      const definition = expectDefined(
+        plugin.settings.projects.propertyDefinitions['property:Priority'],
+      );
+
+      first.value = '⏫';
+      first.dispatchEvent(new Event('input', { bubbles: true }));
+      first.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+      expect(error.textContent).not.toBe('');
+
+      first.value = '🔺';
+      first.dispatchEvent(new Event('input', { bubbles: true }));
+      first.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+
+      expect(error.textContent).toBe('');
+      expect(definition.presets).toEqual([{ value: '🔺' }, { value: '⏫' }]);
+      expect(plugin.saveSettings).not.toHaveBeenCalled();
+
+      first.dispatchEvent(new Event('change', { bubbles: true }));
+      first.dispatchEvent(new FocusEvent('blur'));
+      expectDefined(tab.containerEl.ownerDocument.defaultView).dispatchEvent(new Event('blur'));
+      await flushMicrotasks();
+      expect(plugin.saveSettings).not.toHaveBeenCalled();
+    } finally {
+      tab.hide();
+      tab.containerEl.remove();
+    }
+  });
+
   it('commits the first added preset through raw, alias, and appearance controls without another add', async () => {
     const projects = structuredClone(DEFAULT_SETTINGS.projects);
     projects.table.columns.push({ id: 'property:Priority', visible: true });
