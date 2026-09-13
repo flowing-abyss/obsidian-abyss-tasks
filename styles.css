@@ -8473,8 +8473,9 @@ button.abyss-project-table-status-pill {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  flex-direction: column;
-  align-items: stretch;
+  min-height: 48px;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 2px;
   padding: 4px;
   container-type: inline-size;
@@ -8484,8 +8485,7 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-timeline-range-navigation {
   display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
+  flex: 1 0 auto;
   align-items: center;
   justify-content: center;
   gap: 2px;
@@ -8494,6 +8494,7 @@ button.abyss-project-table-status-pill {
 .abyss-project-timeline-scale-control {
   display: grid;
   min-width: 0;
+  flex: 1 1 16.5em;
   grid-template-columns: 1fr 1.5fr 1.3fr 1.5fr 1fr;
 }
 
