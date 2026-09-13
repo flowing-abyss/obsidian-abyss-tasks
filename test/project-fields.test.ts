@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildProjectFieldCatalog,
+  findFrontmatterProperty,
+  findProjectFieldById,
   projectFieldValue,
   type ProjectPropertyInfo,
 } from '../src/projects/projectFields';
@@ -240,6 +242,37 @@ describe('projectFieldValue', () => {
         { id: 'property:Budget', property: 'Budget', label: 'Budget', type: 'number' },
       ),
     ).toBe(12);
+  });
+
+  it('keeps accent sensitivity, canonical equivalence and first-match source spelling', () => {
+    const decomposed = 'Re\u0301sume\u0301';
+    const frontmatter = {
+      Resume: 'unaccented',
+      RÉSUMÉ: 'first equivalent',
+      [decomposed]: 'second equivalent',
+    };
+
+    expect(findFrontmatterProperty(frontmatter, 'résumé')).toEqual({
+      key: 'RÉSUMÉ',
+      value: 'first equivalent',
+    });
+    expect(findFrontmatterProperty(frontmatter, 'resume')).toEqual({
+      key: 'Resume',
+      value: 'unaccented',
+    });
+  });
+
+  it('avoids repeated localeCompare option setup during repeated field lookup', () => {
+    const localeCompare = vi.spyOn(String.prototype, 'localeCompare');
+    const fields = [
+      { id: 'property:Статус', property: 'Статус', label: 'Статус', type: 'text' as const },
+    ];
+
+    for (let index = 0; index < 20; index += 1) {
+      expect(findProjectFieldById(fields, 'property:СТАТУС')).toBe(fields[0]);
+    }
+
+    expect(localeCompare).not.toHaveBeenCalled();
   });
 
   it.each([

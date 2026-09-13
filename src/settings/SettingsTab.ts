@@ -13,6 +13,7 @@ import {
   ObsidianProjectProperties,
   type ProjectPropertyCatalog,
 } from '../projects/ObsidianProjectProperties';
+import { sameProjectPropertyName } from '../projects/projectPropertyNames';
 import { projectStatusDisplayName } from '../projects/status';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import { StatusRegistry } from '../status/StatusRegistry';
@@ -1182,7 +1183,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   private sameProperty_abyssPrivate(left: string, right: string): boolean {
-    return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
+    return sameProjectPropertyName(left, right);
   }
 
   private renderProjectStatusesSettings_abyssPrivate(

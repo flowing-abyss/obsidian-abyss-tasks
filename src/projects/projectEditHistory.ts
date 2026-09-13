@@ -6,6 +6,7 @@ import type {
 } from './projectEdits';
 import { copyOwnedInferredPropertyClear } from './projectEdits';
 import type { ProjectFieldCatalogItem } from './projectFields';
+import { sameProjectPropertyName } from './projectPropertyNames';
 
 const MAX_HISTORY_OPERATIONS = 50;
 
@@ -171,10 +172,6 @@ export class ProjectEditHistory {
   }
 }
 
-function samePropertyName(left: string, right: string): boolean {
-  return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
-}
-
 function sameCell(
   edit: AppliedProjectCellChange,
   path: string,
@@ -184,7 +181,7 @@ function sameCell(
     edit.path === path &&
     edit.field.id === field.id &&
     field.property !== undefined &&
-    samePropertyName(edit.sourceProperty, field.property)
+    sameProjectPropertyName(edit.sourceProperty, field.property)
   );
 }
 
@@ -192,6 +189,6 @@ function sameReceiptCell(left: AppliedProjectCellChange, right: AppliedProjectCe
   return (
     left.path === right.path &&
     left.field.id === right.field.id &&
-    samePropertyName(left.sourceProperty, right.sourceProperty)
+    sameProjectPropertyName(left.sourceProperty, right.sourceProperty)
   );
 }

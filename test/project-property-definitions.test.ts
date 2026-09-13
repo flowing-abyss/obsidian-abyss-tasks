@@ -80,6 +80,23 @@ describe('project property definitions', () => {
     expect(setProjectPropertyDefinitionType(projects, 'property:priority', 'date')).toBe(false);
     expect(setProjectPropertyDefinitionType(projects, 'property:Tags', 'text')).toBe(false);
   });
+
+  it('keeps canonical-equivalent definitions ambiguous and accent-distinct definitions separate', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.propertyDefinitions = {
+      'property:RÉSUMÉ': { type: 'text' },
+      'property:Re\u0301sume\u0301': { type: 'number' },
+      'property:Resume': { type: 'date' },
+    };
+
+    expect(resolveConfiguredProjectField(projects, 'property:résumé')).toMatchObject({
+      type: null,
+    });
+    expect(resolveConfiguredProjectField(projects, 'property:resume')).toMatchObject({
+      property: 'resume',
+      type: 'date',
+    });
+  });
   it('resolves curated fields from configured sources without consulting native types', () => {
     const projects = buildDefaultProjectsSettings();
     projects.startProperty = 'Begins';

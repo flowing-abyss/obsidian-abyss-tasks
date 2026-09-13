@@ -120,6 +120,37 @@ describe('ObsidianProjectProperties', () => {
     ).toEqual({ kind: 'unavailable' });
   });
 
+  it('treats canonical-equivalent case variants as ambiguous while keeping accents distinct', () => {
+    const assignments: string[] = [];
+    const manager = {
+      getAllProperties: () => ({
+        first: { name: 'RÉSUMÉ' },
+        second: { name: 'Re\u0301sume\u0301' },
+        third: { name: 'Resume' },
+      }),
+      getTypeInfo: () => ({ expected: { type: 'text' } }),
+      getAssignedWidget: (name: string) => {
+        assignments.push(name);
+        return null;
+      },
+      ...eventSource(),
+    };
+    const app = {
+      metadataTypeManager: manager,
+      vault: { getMarkdownFiles: () => [] },
+      metadataCache: { getFileCache: () => null, ...eventSource() },
+    } as unknown as App;
+    const catalog = new ObsidianProjectProperties(app);
+
+    expect(catalog.inspect('résumé')).toEqual({ kind: 'unavailable' });
+    expect(catalog.inspect('resume')).toEqual({
+      kind: 'available',
+      property: { name: 'Resume', type: 'text' },
+      assignment: { kind: 'none' },
+    });
+    expect(assignments).toEqual(['Resume']);
+  });
+
   it('uses getTypeInfo(name).expected.type and maps every supported native type', () => {
     const nativeTypes = new Map([
       ['Title', 'text'],

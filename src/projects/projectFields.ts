@@ -1,5 +1,6 @@
 import type { ProjectsSettings } from '../settings/types';
 import { resolveConfiguredProjectField } from './projectPropertyDefinitions';
+import { sameProjectPropertyName } from './projectPropertyNames';
 import type { Project } from './types';
 
 export type ProjectPropertyType =
@@ -55,13 +56,9 @@ const NAME_FIELD: ProjectField = { id: 'name', label: 'Name', type: 'name' };
 const PROGRESS_FIELD: ProjectField = { id: 'progress', label: 'Progress', type: 'progress' };
 const DESCRIPTION_PROPERTY = 'description';
 
-function sameProperty(left: string, right: string): boolean {
-  return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
-}
-
 /** Finds the exact vault/frontmatter spelling for a case-insensitive property name. */
 function findProjectPropertyName(names: readonly string[], property: string): string | undefined {
-  return names.find((name) => sameProperty(name, property));
+  return names.find((name) => sameProjectPropertyName(name, property));
 }
 
 /** True when a property is owned by one of the configured curated fields. */
@@ -71,7 +68,7 @@ export function isReservedProjectProperty(settings: ProjectsSettings, property: 
     settings.statusProperty,
     settings.startProperty,
     settings.endProperty,
-  ].some((configured) => configured.length > 0 && sameProperty(configured, property));
+  ].some((configured) => configured.length > 0 && sameProjectPropertyName(configured, property));
 }
 
 function customFieldIds(
@@ -184,7 +181,7 @@ export function findProjectFieldById(
     (field) =>
       field.property !== undefined &&
       field.id.startsWith('property:') &&
-      sameProperty(field.property, property),
+      sameProjectPropertyName(field.property, property),
   );
 }
 

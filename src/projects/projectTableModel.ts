@@ -11,6 +11,7 @@ import type {
   ProjectPropertyDefinition,
   ProjectValuePresentation,
 } from './projectPropertyDefinitions';
+import { sameProjectPropertyName } from './projectPropertyNames';
 import {
   compileProjectPropertyPresets,
   compiledProjectPropertyPresentation,
@@ -378,8 +379,8 @@ function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
   if (groupField === undefined || groupField.id === 'none') {
     return [{ key: 'all', label: '', value: null, projects: [...sortedProjects] }];
   }
-  const definition = Object.entries(propertyDefinitions ?? {}).find(
-    ([id]) => id.localeCompare(groupField.id, undefined, { sensitivity: 'accent' }) === 0,
+  const definition = Object.entries(propertyDefinitions ?? {}).find(([id]) =>
+    sameProjectPropertyName(id, groupField.id),
   )?.[1];
   const compiledPresets = compileProjectPropertyPresets(definition);
   const byKey = new Map<string, ProjectTableGroup>();

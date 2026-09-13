@@ -12,6 +12,7 @@ import {
   isProjectPropertyDefinition,
   setProjectPropertyDefinitionType,
 } from '../projects/projectPropertyDefinitions';
+import { sameProjectPropertyName } from '../projects/projectPropertyNames';
 import { ProjectPropertySuggest } from '../ui/ProjectPropertySuggest';
 import { renderProjectPropertyOptions } from './projectPropertyOptions';
 import { renderSettingsCard } from './settingsCard';
@@ -40,10 +41,6 @@ const CURATED_LABELS: Readonly<Record<string, string>> = {
   end: 'End',
 };
 
-function sameProperty(left: string, right: string): boolean {
-  return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
-}
-
 function sourceProperty(column: ProjectColumn): string | undefined {
   return column.id.startsWith('property:') ? column.id.slice('property:'.length) : undefined;
 }
@@ -67,7 +64,7 @@ function definitionEntry(
   fieldId: string,
 ): { key: string; value: ProjectPropertyDefinition } | undefined {
   const key = Object.keys(projects.propertyDefinitions).find((candidate) =>
-    sameProperty(candidate, fieldId),
+    sameProjectPropertyName(candidate, fieldId),
   );
   if (key === undefined) return undefined;
   const value: unknown = projects.propertyDefinitions[key];
@@ -165,7 +162,7 @@ export function moveProjectColumn(
 function selectedProperty(settings: ProjectTableSettings, property: string): boolean {
   return settings.columns.some((column) => {
     const source = sourceProperty(column);
-    return source !== undefined && sameProperty(source, property);
+    return source !== undefined && sameProjectPropertyName(source, property);
   });
 }
 
@@ -174,13 +171,13 @@ export function addProjectPropertyColumn(
   properties: readonly ProjectPropertyInfo[],
   property: string,
 ): 'added' | 'duplicate' | 'reserved' | 'unsupported' | 'missing' {
-  const info = properties.find(({ name }) => sameProperty(name, property.trim()));
+  const info = properties.find(({ name }) => sameProjectPropertyName(name, property.trim()));
   if (info === undefined) return 'missing';
   if (isReservedProjectProperty(projects, info.name)) return 'reserved';
   if (selectedProperty(projects.table, info.name)) return 'duplicate';
   const fieldId = `property:${info.name}`;
   if (definitionEntry(projects, fieldId) === undefined) {
-    const type = sameProperty(info.name, 'tags') ? 'tags' : (info.type ?? 'text');
+    const type = sameProjectPropertyName(info.name, 'tags') ? 'tags' : (info.type ?? 'text');
     projects.propertyDefinitions[fieldId] = { type };
   }
   projects.table.columns.push({ id: fieldId, visible: true });
@@ -275,9 +272,9 @@ function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext)
 }
 
 function reservedOwner(projects: ProjectsSettings, property: string): string {
-  if (sameProperty(property, projects.statusProperty)) return 'Status';
-  if (sameProperty(property, projects.startProperty)) return 'Start';
-  if (sameProperty(property, projects.endProperty)) return 'End';
+  if (sameProjectPropertyName(property, projects.statusProperty)) return 'Status';
+  if (sameProjectPropertyName(property, projects.startProperty)) return 'Start';
+  if (sameProjectPropertyName(property, projects.endProperty)) return 'End';
   return 'Description';
 }
 
@@ -411,12 +408,14 @@ function renderCuratedDateSource(
           .list()
           ?.filter(
             ({ name: property }) =>
-              !sameProperty(property, 'tags') &&
-              !sameProperty(property, 'description') &&
-              !siblingKeys.some((candidate) => sameProperty(options.projects[candidate], property)),
+              !sameProjectPropertyName(property, 'tags') &&
+              !sameProjectPropertyName(property, 'description') &&
+              !siblingKeys.some((candidate) =>
+                sameProjectPropertyName(options.projects[candidate], property),
+              ),
           )
           .map(({ name: property }) => property) ?? [];
-      const matching = properties.find((property) => sameProperty(property, current));
+      const matching = properties.find((property) => sameProjectPropertyName(property, current));
       const selected = matching ?? current;
       if (matching === undefined) {
         dropdown.addOption(current, `${current} (current)`);
@@ -427,8 +426,10 @@ function renderCuratedDateSource(
       }
       dropdown.setValue(selected).onChange((property) => {
         if (
-          sameProperty(property, 'description') ||
-          siblingKeys.some((candidate) => sameProperty(options.projects[candidate], property))
+          sameProjectPropertyName(property, 'description') ||
+          siblingKeys.some((candidate) =>
+            sameProjectPropertyName(options.projects[candidate], property),
+          )
         ) {
           dropdown.selectEl.value = selected;
           new Notice(`${name} must use a different property from the other curated fields.`);
@@ -466,7 +467,7 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
   });
   const choose = (property: string): void => {
     feedback.empty();
-    const selected = available.find(({ name }) => sameProperty(name, property.trim()));
+    const selected = available.find(({ name }) => sameProjectPropertyName(name, property.trim()));
     const result = addProjectPropertyColumn(options.projects, available, property);
     if (result === 'added') {
       suggest.close();
@@ -583,7 +584,7 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
   );
   const available = [...catalogProperties];
   for (const configured of configuredProperties) {
-    if (!available.some(({ name }) => sameProperty(name, configured.name)))
+    if (!available.some(({ name }) => sameProjectPropertyName(name, configured.name)))
       available.push(configured);
   }
 

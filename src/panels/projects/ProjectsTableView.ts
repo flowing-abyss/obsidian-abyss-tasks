@@ -44,6 +44,7 @@ import {
   setProjectPropertyDefinitionType,
   type ProjectPropertyDefinition,
 } from '../../projects/projectPropertyDefinitions';
+import { sameProjectPropertyName } from '../../projects/projectPropertyNames';
 import {
   compatibleProjectPropertyPresets,
   compileProjectPropertyPresets,
@@ -604,10 +605,9 @@ function timelineDateField(
 }
 
 function sameTimelineProperty(left: ProjectField, right: ProjectField): boolean {
-  return (
-    expectProjectFieldProperty(left).localeCompare(expectProjectFieldProperty(right), undefined, {
-      sensitivity: 'accent',
-    }) === 0
+  return sameProjectPropertyName(
+    expectProjectFieldProperty(left),
+    expectProjectFieldProperty(right),
   );
 }
 
@@ -618,11 +618,35 @@ function ambiguousTimelineSource(
   return fields.find((field) => {
     const property = expectProjectFieldProperty(field);
     return (
-      Object.keys(project.frontmatter).filter(
-        (key) => key.localeCompare(property, undefined, { sensitivity: 'accent' }) === 0,
-      ).length > 1
+      Object.keys(project.frontmatter).filter((key) => sameProjectPropertyName(key, property))
+        .length > 1
     );
   });
+}
+
+function patchElementAttribute(
+  element: HTMLElement,
+  name: string,
+  value: string | undefined,
+): void {
+  if (value === undefined) {
+    if (element.hasAttribute(name)) element.removeAttribute(name);
+  } else if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+}
+
+function patchElementClass(element: HTMLElement, name: string, active: boolean): void {
+  if (element.classList.contains(name) !== active) element.toggleClass(name, active);
+}
+
+function patchElementIcon(element: HTMLElement, icon: string): void {
+  if (element.dataset['icon'] === icon) return;
+  element.empty();
+  patchElementAttribute(element, 'data-icon', icon);
+  setIcon(element, icon);
+}
+
+function patchElementText(element: HTMLElement, text: string): void {
+  if (element.textContent !== text) element.setText(text);
 }
 
 export class ProjectsTableView {
@@ -1479,7 +1503,7 @@ export class ProjectsTableView {
     this.reconcileTableHeader_abyssPrivate(table, columns);
     this.applyTableWidth_abyssPrivate(availableWidth);
     this.renderTableBody_abyssPrivate(table, model, columns);
-    this.updateResponsiveNamePinning_abyssPrivate();
+    this.updateResponsiveNamePinning_abyssPrivate(availableWidth);
     this.finishTableReconciliation_abyssPrivate(scrollTop, scrollLeft, focusedIdentity);
   }
 
@@ -2112,7 +2136,7 @@ export class ProjectsTableView {
     fieldId: string,
   ): ProjectPropertyDefinition | undefined {
     return Object.entries(this.context_abyssPrivate.settings.projects.propertyDefinitions).find(
-      ([candidate]) => candidate.localeCompare(fieldId, undefined, { sensitivity: 'accent' }) === 0,
+      ([candidate]) => sameProjectPropertyName(candidate, fieldId),
     )?.[1];
   }
 
@@ -2349,22 +2373,21 @@ export class ProjectsTableView {
     const rendered =
       this.renderedGroupRows_abyssPrivate.get(key) ?? this.createGroupRow_abyssPrivate(options);
     rendered.context = { key, label, value, ...(sourcePath === undefined ? {} : { sourcePath }) };
-    rendered.element.dataset['groupKey'] = key;
-    rendered.cell.colSpan = Math.max(1, columnCount);
-    rendered.button.dataset['groupKey'] = key;
+    patchElementAttribute(rendered.element, 'data-group-key', key);
+    const colSpan = Math.max(1, columnCount);
+    if (rendered.cell.colSpan !== colSpan) rendered.cell.colSpan = colSpan;
+    patchElementAttribute(rendered.button, 'data-group-key', key);
     const collapsed = this.collapsedGroups_abyssPrivate.has(key);
-    rendered.element.toggleClass('is-collapsed', collapsed);
-    rendered.button.setAttribute('aria-expanded', String(!collapsed));
-    rendered.chevron.empty();
+    patchElementClass(rendered.element, 'is-collapsed', collapsed);
+    patchElementAttribute(rendered.button, 'aria-expanded', String(!collapsed));
     const chevronIcon = collapsed ? 'chevron-right' : 'chevron-down';
-    rendered.chevron.dataset['icon'] = chevronIcon;
-    setIcon(rendered.chevron, chevronIcon);
+    patchElementIcon(rendered.chevron, chevronIcon);
     const status = statuses.find((candidate) => candidate.key === key);
     const color = status?.color ?? presentation?.color;
     const signature = JSON.stringify([label, value, sourcePath, color, presentation?.display]);
     if (signature !== rendered.contentSignature)
       this.patchGroupContent_abyssPrivate(rendered, options, color, signature);
-    rendered.count.setText(String(count));
+    patchElementText(rendered.count, String(count));
     return rendered.element;
   }
 
@@ -2581,9 +2604,7 @@ export class ProjectsTableView {
     if (isReservedProjectProperty(this.context_abyssPrivate.settings.projects, property)) return [];
     const matches = Object.keys(
       this.context_abyssPrivate.settings.projects.propertyDefinitions,
-    ).filter(
-      (candidate) => candidate.localeCompare(columnId, undefined, { sensitivity: 'accent' }) === 0,
-    );
+    ).filter((candidate) => sameProjectPropertyName(candidate, columnId));
     return matches.length > 1 ? [] : projectPropertyTypeChoices(property);
   }
 
@@ -2634,8 +2655,9 @@ export class ProjectsTableView {
     if (changed) this.persistAndRender_abyssPrivate();
   }
 
-  private updateResponsiveNamePinning_abyssPrivate(): void {
-    const available = this.scroll_abyssPrivate.clientWidth;
+  private updateResponsiveNamePinning_abyssPrivate(
+    available = this.scroll_abyssPrivate.clientWidth,
+  ): void {
     const nameColumn = this.tableHost_abyssPrivate.querySelector<HTMLElement>(
       'col[data-column-id="name"]',
     );
@@ -2654,10 +2676,10 @@ export class ProjectsTableView {
     renderedRow.groupKey = group.key;
     renderedRow.occurrenceId = occurrenceId;
     const row = renderedRow.element;
-    row.dataset['projectPath'] = project.path;
-    row.dataset['occurrenceId'] = occurrenceId;
-    row.dataset['groupKey'] = group.key;
-    row.draggable = grouped;
+    patchElementAttribute(row, 'data-project-path', project.path);
+    patchElementAttribute(row, 'data-occurrence-id', occurrenceId);
+    patchElementAttribute(row, 'data-group-key', group.key);
+    if (row.draggable !== grouped) row.draggable = grouped;
     this.reconcileProjectCells_abyssPrivate(renderedRow, options, occurrenceId);
     return renderedRow;
   }
@@ -2768,26 +2790,36 @@ export class ProjectsTableView {
       this.context_abyssPrivate.settings.projects.table.columns.find(
         ({ id }) => id === rendered.identity.columnId,
       )?.alignment ?? 'left';
-    cell.className = `abyss-project-table-cell is-align-${alignment}${field.type === 'name' ? ' abyss-project-table-name-cell' : ''}`;
-    cell.tabIndex = 0;
-    cell.dataset['columnId'] = rendered.identity.columnId;
-    cell.setAttribute('aria-label', `${field.label} for ${project.name}`);
-    if (field.type === 'name') {
-      cell.setAttribute('aria-description', 'Use the context menu to add or edit the description');
-      cell.setAttribute('aria-keyshortcuts', 'Shift+F10');
+    patchElementClass(cell, 'abyss-project-table-cell', true);
+    for (const option of ['left', 'center', 'right']) {
+      patchElementClass(cell, `is-align-${option}`, alignment === option);
     }
+    patchElementClass(cell, 'abyss-project-table-name-cell', field.type === 'name');
+    patchElementAttribute(cell, 'tabindex', '0');
+    patchElementAttribute(cell, 'data-column-id', rendered.identity.columnId);
+    patchElementAttribute(cell, 'aria-label', `${field.label} for ${project.name}`);
+    patchElementAttribute(
+      cell,
+      'aria-description',
+      field.type === 'name' ? 'Use the context menu to add or edit the description' : undefined,
+    );
+    patchElementAttribute(
+      cell,
+      'aria-keyshortcuts',
+      field.type === 'name' ? 'Shift+F10' : undefined,
+    );
     const invalidRange =
       (field.id === 'start' || field.id === 'end') &&
       this.projectHasInvalidRange_abyssPrivate(project);
-    cell.toggleClass('is-invalid-range', invalidRange);
+    patchElementClass(cell, 'is-invalid-range', invalidRange);
     if (invalidRange) {
-      cell.setAttribute('aria-invalid', 'true');
-      cell.setAttribute('title', 'Project start is after its end date');
+      patchElementAttribute(cell, 'aria-invalid', 'true');
+      patchElementAttribute(cell, 'title', 'Project start is after its end date');
     } else {
-      cell.removeAttribute('aria-invalid');
-      cell.removeAttribute('title');
+      patchElementAttribute(cell, 'aria-invalid', undefined);
+      patchElementAttribute(cell, 'title', undefined);
     }
-    if (editableField(field)) cell.addClass('is-editable');
+    patchElementClass(cell, 'is-editable', editableField(field));
     return invalidRange;
   }
 
@@ -3199,15 +3231,16 @@ export class ProjectsTableView {
     const active = this.tableHost_abyssPrivate.ownerDocument.activeElement;
     for (const cell of this.renderedCells_abyssPrivate) {
       const key = `${cell.identity.occurrenceId}\u0000${cell.identity.columnId}`;
-      cell.element.toggleClass('is-selected', selected.has(key));
-      cell.element.toggleClass(
+      patchElementClass(cell.element, 'is-selected', selected.has(key));
+      patchElementClass(
+        cell.element,
         'is-selection-focus',
         focus?.occurrenceId === cell.identity.occurrenceId &&
           focus.columnId === cell.identity.columnId &&
           active === cell.element &&
           !this.nativeMenuOpen_abyssPrivate,
       );
-      cell.element.setAttribute('aria-selected', String(selected.has(key)));
+      patchElementAttribute(cell.element, 'aria-selected', String(selected.has(key)));
     }
   }
 

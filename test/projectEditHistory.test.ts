@@ -208,6 +208,43 @@ describe('ProjectEditHistory', () => {
     expect(history.ownedClear('A.md', field)).toBeUndefined();
   });
 
+  it('matches canonical-equivalent receipt spelling but rejects an accent-distinct cell', () => {
+    const canonicalField: ProjectField = {
+      id: 'property:résumé',
+      property: 're\u0301sume\u0301',
+      label: 'Résumé',
+      type: 'text',
+    };
+    const history = new ProjectEditHistory(async (changes) => successful(changes));
+    history.record({
+      applied: [
+        {
+          ...applied('A.md', undefined, 'old'),
+          field: canonicalField,
+          sourceProperty: 'RÉSUMÉ',
+          sourceKey: 'RÉSUMÉ',
+          appliedExists: false,
+          ownedClear: createOwnedInferredPropertyClear({
+            path: 'A.md',
+            fieldId: canonicalField.id,
+            sourceProperty: 'RÉSUMÉ',
+            sourceKey: 'RÉSUMÉ',
+            type: 'text',
+          }),
+        },
+      ],
+      failed: [],
+    });
+
+    expect(history.ownedClear('A.md', canonicalField)?.sourceKey).toBe('RÉSUMÉ');
+    expect(
+      history.ownedClear('A.md', {
+        ...canonicalField,
+        property: 'resume',
+      }),
+    ).toBeUndefined();
+  });
+
   it('tracks a final-occurrence clear created by Undo and forwards it to Redo', async () => {
     const apply = vi.fn(
       async (changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> => ({

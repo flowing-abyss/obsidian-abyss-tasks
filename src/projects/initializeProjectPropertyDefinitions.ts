@@ -1,6 +1,7 @@
 import type { ProjectsSettings } from '../settings/types';
 import type { ProjectPropertyCatalog } from './ObsidianProjectProperties';
 import { captureMissingProjectPropertyDefinitions } from './projectPropertyDefinitions';
+import { sameProjectPropertyName } from './projectPropertyNames';
 
 interface InitializeProjectPropertyDefinitionsOptions {
   readonly projects: ProjectsSettings;
@@ -13,9 +14,7 @@ function hasDefinition(projects: ProjectsSettings, fieldId: string): boolean {
   if (definitions === null || typeof definitions !== 'object' || Array.isArray(definitions)) {
     return false;
   }
-  return Object.keys(definitions).some(
-    (key) => key.localeCompare(fieldId, undefined, { sensitivity: 'accent' }) === 0,
-  );
+  return Object.keys(definitions).some((key) => sameProjectPropertyName(key, fieldId));
 }
 
 /** Merges into the shared draft before its first await, then persists that current object. */

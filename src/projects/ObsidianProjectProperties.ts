@@ -1,6 +1,7 @@
 import { getAllTags, type App, type EventRef } from 'obsidian';
 import type { ProjectPropertyInfo, ProjectPropertyType } from './projectFields';
 import { findFrontmatterProperty } from './projectFields';
+import { sameProjectPropertyName } from './projectPropertyNames';
 
 export interface ProjectPropertyCatalog {
   list(): readonly ProjectPropertyInfo[] | null;
@@ -78,10 +79,6 @@ function propertyNames(properties: unknown): string[] | undefined {
     names.push(value['name']);
   }
   return names;
-}
-
-function sameProperty(left: string, right: string): boolean {
-  return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
 }
 
 type NativeAssignment = Extract<ProjectNativePropertySnapshot, { kind: 'available' }>['assignment'];
@@ -162,7 +159,7 @@ export class ObsidianProjectProperties implements ProjectPropertyCatalog {
       }
       const names = propertyNames(manager.getAllProperties());
       if (names === undefined) return { kind: 'unavailable' };
-      const matches = names.filter((name) => sameProperty(name, property));
+      const matches = names.filter((name) => sameProjectPropertyName(name, property));
       if (matches.length > 1) return { kind: 'unavailable' };
       const name = matches[0];
       const assignment = nativeAssignment(manager, name ?? property);

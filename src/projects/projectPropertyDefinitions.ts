@@ -1,6 +1,7 @@
 import type { ProjectsSettings } from '../settings/types';
 import type { ProjectPropertyCatalog } from './ObsidianProjectProperties';
 import type { ProjectFieldCatalogItem, ProjectPropertyType } from './projectFields';
+import { sameProjectPropertyName } from './projectPropertyNames';
 
 export interface ProjectValuePresentation {
   displayName?: string;
@@ -31,13 +32,9 @@ const PROPERTY_TYPES = new Set<ProjectPropertyType>([
 ]);
 
 export function projectPropertyTypeChoices(property: string): readonly ProjectPropertyType[] {
-  return sameIdentifier(property, 'tags')
+  return sameProjectPropertyName(property, 'tags')
     ? ['tags']
     : ['text', 'list', 'number', 'checkbox', 'date', 'datetime'];
-}
-
-function sameIdentifier(left: string, right: string): boolean {
-  return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -124,7 +121,7 @@ function hasCuratedSourceCollision(projects: ProjectsSettings, property: string)
     projects.endProperty,
     'description',
   ];
-  return sources.filter((source) => sameIdentifier(source, property)).length > 1;
+  return sources.filter((source) => sameProjectPropertyName(source, property)).length > 1;
 }
 
 function curatedField(
@@ -137,7 +134,7 @@ function curatedField(
   if (property === undefined) return field;
   if (
     property.length === 0 ||
-    sameIdentifier(property, 'tags') ||
+    sameProjectPropertyName(property, 'tags') ||
     hasCuratedSourceCollision(projects, property)
   ) {
     return { id: field.id, property, label: field.label, type: null };
@@ -160,7 +157,9 @@ export function setProjectPropertyDefinitionType(
   const property = fieldId.slice(PROPERTY_PREFIX.length);
   if (!projectPropertyTypeChoices(property).includes(type)) return false;
   if (isConfiguredProjectPropertySourceReserved(projects, property)) return false;
-  const matches = definitionEntries(projects).filter(([key]) => sameIdentifier(key, fieldId));
+  const matches = definitionEntries(projects).filter(([key]) =>
+    sameProjectPropertyName(key, fieldId),
+  );
   if (matches.length > 1) return false;
   const key = matches[0]?.[0] ?? fieldId;
   const current = projects.propertyDefinitions[key] as unknown;
@@ -180,7 +179,7 @@ function isConfiguredProjectPropertySourceReserved(
     projects.startProperty,
     projects.endProperty,
     'description',
-  ].some((source) => source.length > 0 && sameIdentifier(source, property));
+  ].some((source) => source.length > 0 && sameProjectPropertyName(source, property));
 }
 
 function isConfiguredCustomSourceCompatible(
@@ -191,7 +190,7 @@ function isConfiguredCustomSourceCompatible(
   if (property.length === 0 || isConfiguredProjectPropertySourceReserved(projects, property)) {
     return false;
   }
-  if (sameIdentifier(property, 'tags')) return type === 'tags';
+  if (sameProjectPropertyName(property, 'tags')) return type === 'tags';
   return type !== 'tags';
 }
 
@@ -201,7 +200,9 @@ export function resolveConfiguredProjectField(
   fieldId: string,
 ): ProjectFieldCatalogItem | undefined {
   if (!fieldId.startsWith(PROPERTY_PREFIX)) return curatedField(projects, fieldId);
-  const matches = definitionEntries(projects).filter(([key]) => sameIdentifier(key, fieldId));
+  const matches = definitionEntries(projects).filter(([key]) =>
+    sameProjectPropertyName(key, fieldId),
+  );
   if (matches.length !== 1) return unavailableCustomField(fieldId);
   const [savedId, definition] = matches[0] ?? [];
   if (savedId?.startsWith(PROPERTY_PREFIX) !== true) return unavailableCustomField(fieldId);
@@ -256,7 +257,9 @@ function savedCustomFieldIds(projects: ProjectsSettings): string[] {
 }
 
 function alreadyDefined(projects: ProjectsSettings, fieldId: string): boolean {
-  if (definitionEntries(projects).some(([key]) => sameIdentifier(key, fieldId))) return true;
+  if (definitionEntries(projects).some(([key]) => sameProjectPropertyName(key, fieldId))) {
+    return true;
+  }
   const migration = (projects as unknown as Record<string, unknown>)['propertyDefinitionMigration'];
   return (
     isRecord(migration) &&
@@ -276,7 +279,7 @@ function capturedType(
   }
   const properties = catalog.list();
   if (properties === null) return undefined;
-  const matches = properties.filter(({ name }) => sameIdentifier(name, property));
+  const matches = properties.filter(({ name }) => sameProjectPropertyName(name, property));
   return matches.length === 1 ? (matches[0]?.type ?? undefined) : undefined;
 }
 
@@ -293,8 +296,8 @@ export function captureMissingProjectPropertyDefinitions(
     if (
       type === undefined ||
       isConfiguredProjectPropertySourceReserved(projects, property) ||
-      (type === 'tags' && !sameIdentifier(property, 'tags')) ||
-      (sameIdentifier(property, 'tags') && type !== 'tags')
+      (type === 'tags' && !sameProjectPropertyName(property, 'tags')) ||
+      (sameProjectPropertyName(property, 'tags') && type !== 'tags')
     ) {
       continue;
     }

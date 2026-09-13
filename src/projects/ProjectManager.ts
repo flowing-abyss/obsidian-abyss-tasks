@@ -35,6 +35,7 @@ import {
   type ProjectPropertyType,
 } from './projectFields';
 import { resolveConfiguredProjectField } from './projectPropertyDefinitions';
+import { sameProjectPropertyName } from './projectPropertyNames';
 import { resolveStatus } from './status';
 
 export interface ExpectedProjectStatus {
@@ -183,7 +184,7 @@ function absentEditSourceKey(
     change.restoreSourceValue === true &&
     change.expectedExists === false &&
     change.sourceKey !== undefined &&
-    samePropertyName(change.sourceKey, property)
+    sameProjectPropertyName(change.sourceKey, property)
   ) {
     return change.sourceKey;
   }
@@ -217,10 +218,6 @@ interface ParsedProjectSource {
   readonly prefix: string;
   readonly delimiter: string;
   body: string;
-}
-
-function samePropertyName(left: string, right: string): boolean {
-  return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
 }
 
 function projectFrontmatterSubject(path: string | undefined): string {
@@ -286,7 +283,7 @@ function matchingFrontmatterProperties(
   property: string,
 ): Array<{ key: string; value: unknown }> {
   return Object.keys(frontmatter)
-    .filter((key) => key.localeCompare(property, undefined, { sensitivity: 'accent' }) === 0)
+    .filter((key) => sameProjectPropertyName(key, property))
     .map((key) => ({ key, value: frontmatter[key] }));
 }
 
@@ -654,16 +651,16 @@ export class ProjectManager {
   private curatedSourceBindingChanged(field: ProjectField): boolean {
     if (field.property === undefined) return true;
     if (field.type === 'status') {
-      return !samePropertyName(field.property, this.settings.projects.statusProperty.trim());
+      return !sameProjectPropertyName(field.property, this.settings.projects.statusProperty.trim());
     }
     if (field.id === 'start') {
-      return !samePropertyName(field.property, this.settings.projects.startProperty);
+      return !sameProjectPropertyName(field.property, this.settings.projects.startProperty);
     }
     if (field.id === 'end') {
-      return !samePropertyName(field.property, this.settings.projects.endProperty);
+      return !sameProjectPropertyName(field.property, this.settings.projects.endProperty);
     }
     if (field.id === 'description') {
-      return !samePropertyName(field.property, 'description');
+      return !sameProjectPropertyName(field.property, 'description');
     }
     return false;
   }
@@ -673,7 +670,7 @@ export class ProjectManager {
     right: PreparedProjectCellChange,
   ): boolean {
     return (
-      samePropertyName(left.property, right.property) &&
+      sameProjectPropertyName(left.property, right.property) &&
       left.sourceKey === right.sourceKey &&
       left.valueExists === right.valueExists &&
       left.expectedExists === right.expectedExists &&
@@ -692,7 +689,7 @@ export class ProjectManager {
       configured.id !== field.id ||
       configured.type !== field.type ||
       field.property === undefined ||
-      !samePropertyName(configured.property, field.property)
+      !sameProjectPropertyName(configured.property, field.property)
     ) {
       throw new ProjectEditValidationError(
         `${field.label} no longer matches its configured project field. Reload the project and try again.`,
@@ -723,7 +720,7 @@ export class ProjectManager {
         change.expectedExists === false,
         owned.path === change.path && owned.fieldId === change.field.id,
         owned.sourceProperty === property,
-        samePropertyName(owned.sourceKey, property),
+        sameProjectPropertyName(owned.sourceKey, property),
         owned.type === change.field.type,
         change.sourceProperty === undefined || change.sourceProperty === owned.sourceProperty,
         change.sourceKey === undefined || change.sourceKey === owned.sourceKey,

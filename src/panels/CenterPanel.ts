@@ -979,8 +979,18 @@ export class CenterPanel {
     if (tasks.length === 0) staging.createDiv({ cls: 'abyss-center-empty', text: 'No tasks' });
     else this.renderWithGrouping_abyssPrivate(staging, tasks);
     scroll.replaceChildren(...staging.childNodes);
-    scroll.scrollTop = Math.min(scrollTop, Math.max(0, scroll.scrollHeight - scroll.clientHeight));
-    scroll.scrollLeft = Math.min(scrollLeft, Math.max(0, scroll.scrollWidth - scroll.clientWidth));
+    if (scrollTop !== 0) {
+      scroll.scrollTop = Math.min(
+        scrollTop,
+        Math.max(0, scroll.scrollHeight - scroll.clientHeight),
+      );
+    }
+    if (scrollLeft !== 0) {
+      scroll.scrollLeft = Math.min(
+        scrollLeft,
+        Math.max(0, scroll.scrollWidth - scroll.clientWidth),
+      );
+    }
     addBar.empty();
     this.renderCaptureHost_abyssPrivate(addBar, {
       type: 'list',

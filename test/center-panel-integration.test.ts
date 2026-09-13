@@ -1016,6 +1016,84 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     }
   });
 
+  it('does not read task-list dimensions when refreshing at the scroll origin', () => {
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const panel = makeStaticPanel(
+      state,
+      [task({ title: 'Origin task', planning: { due: TODAY } })],
+      DEFAULT_SETTINGS,
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+
+    try {
+      panel.mount(container);
+      const scroll = expectDefined(container.querySelector<HTMLElement>('.abyss-center-scroll'));
+      const reads = { height: 0, width: 0 };
+      Object.defineProperties(scroll, {
+        scrollHeight: {
+          configurable: true,
+          get: () => {
+            reads.height += 1;
+            return 900;
+          },
+        },
+        clientHeight: { configurable: true, value: 300 },
+        scrollWidth: {
+          configurable: true,
+          get: () => {
+            reads.width += 1;
+            return 700;
+          },
+        },
+        clientWidth: { configurable: true, value: 400 },
+      });
+
+      panel.refresh();
+
+      expect(scroll.scrollTop).toBe(0);
+      expect(scroll.scrollLeft).toBe(0);
+      expect(reads).toEqual({ height: 0, width: 0 });
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('clamps retained task-list offsets after refreshed content shrinks', () => {
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const panel = makeStaticPanel(
+      state,
+      [task({ title: 'Clamped task', planning: { due: TODAY } })],
+      DEFAULT_SETTINGS,
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+
+    try {
+      panel.mount(container);
+      const scroll = expectDefined(container.querySelector<HTMLElement>('.abyss-center-scroll'));
+      Object.defineProperties(scroll, {
+        scrollHeight: { configurable: true, value: 420 },
+        clientHeight: { configurable: true, value: 300 },
+        scrollWidth: { configurable: true, value: 510 },
+        clientWidth: { configurable: true, value: 400 },
+      });
+      scroll.scrollTop = 380;
+      scroll.scrollLeft = 260;
+
+      panel.refresh();
+
+      expect(scroll.scrollTop).toBe(120);
+      expect(scroll.scrollLeft).toBe(110);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   it('installs a complete interactive grouped list with bounded attached-list mutations', () => {
     vi.useFakeTimers();
     vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {

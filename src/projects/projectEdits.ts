@@ -8,6 +8,7 @@ import {
   type ProjectFieldCatalogItem,
   type ProjectPropertyType,
 } from './projectFields';
+import { sameProjectPropertyName } from './projectPropertyNames';
 import type { Project } from './types';
 
 const ownedInferredPropertyClear = Symbol('OwnedInferredPropertyClear');
@@ -96,10 +97,6 @@ export function projectCellSourceValue(
   return findFrontmatterProperty(project.frontmatter, property)?.value;
 }
 
-function samePropertyName(left: string, right: string): boolean {
-  return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
-}
-
 /** Restores the editor type only for the exact absent cell owned by a clear receipt. */
 export function projectFieldWithOwnedClear(
   project: Project,
@@ -114,8 +111,8 @@ export function projectFieldWithOwnedClear(
     native.assignment.kind !== 'none',
     ownedClear.path !== project.path,
     ownedClear.fieldId !== field.id,
-    !samePropertyName(ownedClear.sourceProperty, field.property),
-    !samePropertyName(ownedClear.sourceKey, field.property),
+    !sameProjectPropertyName(ownedClear.sourceProperty, field.property),
+    !sameProjectPropertyName(ownedClear.sourceKey, field.property),
     findFrontmatterProperty(project.frontmatter, field.property) !== undefined,
   ].some(Boolean);
   if (invalid) return field;

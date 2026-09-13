@@ -2860,7 +2860,7 @@ describe('ProjectsTableView', () => {
 
     view.update([alpha, beta]);
 
-    expect(rowsAtWidthRead[0]).toBe(2);
+    expect(rowsAtWidthRead).toEqual([2]);
     expect(widthsWhenRowsAttach).toEqual(['560px']);
     expect(name.style.width).toBe('560px');
     expect(expectDefined(host.querySelector<HTMLTableElement>('table')).style.width).toBe('1200px');
@@ -2892,6 +2892,117 @@ describe('ProjectsTableView', () => {
     view.update([item]);
 
     expect(widthWrites).toBe(0);
+  });
+
+  it('retains unchanged table DOM, selection and focus without observable table mutations', () => {
+    const item = project({});
+    const { host, view } = mount([item]);
+    const table = expectDefined(host.querySelector<HTMLTableElement>('.abyss-project-table'));
+    const row = expectDefined(table.querySelector<HTMLTableRowElement>('.abyss-project-table-row'));
+    const cell = expectDefined(row.querySelector<HTMLTableCellElement>('[data-column-id="name"]'));
+    const content = expectDefined(cell.firstElementChild);
+    cell.addClass('external-cell-state');
+    cell.click();
+    expect(activeDocument.activeElement).toBe(cell);
+
+    const observer = new MutationObserver(() => {});
+    observer.observe(table, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+    });
+    view.update([item]);
+    const mutations = observer.takeRecords();
+    observer.disconnect();
+
+    expect(host.querySelector('.abyss-project-table-row')).toBe(row);
+    expect(row.querySelector('[data-column-id="name"]')).toBe(cell);
+    expect(cell.firstElementChild).toBe(content);
+    expect(cell.hasClass('external-cell-state')).toBe(true);
+    expect(cell.hasClass('is-selected')).toBe(true);
+    expect(cell.getAttribute('aria-selected')).toBe('true');
+    expect(activeDocument.activeElement).toBe(cell);
+    expect(
+      mutations.map((mutation) => ({
+        type: mutation.type,
+        target: (mutation.target as HTMLElement).className,
+        attribute: mutation.attributeName,
+      })),
+    ).toEqual([]);
+
+    const start = expectDefined(row.querySelector<HTMLElement>('[data-column-id="start"]'));
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const editor = expectDefined(start.querySelector<HTMLInputElement>('input'));
+    editor.value = '2026-12-24';
+    editor.focus();
+    view.update([item]);
+    expect(start.querySelector('input')).toBe(editor);
+    expect(editor.value).toBe('2026-12-24');
+    expect(activeDocument.activeElement).toBe(editor);
+  });
+
+  it('patches retained cell presentation when column, type and range inputs change', () => {
+    const config = settings();
+    config.projects.table.columns.push({
+      id: 'property:Budget',
+      label: 'Score',
+      alignment: 'right',
+      visible: true,
+    });
+    const item = project({
+      frontmatter: { start: '2026-10-10', end: '2026-09-01', Budget: 12 },
+    });
+    const { host, view } = mount([item], {
+      settings: config,
+      catalog: catalog([{ name: 'Budget', type: 'number' }]),
+    });
+    const row = expectDefined(host.querySelector<HTMLTableRowElement>('.abyss-project-table-row'));
+    const name = expectDefined(row.querySelector<HTMLElement>('[data-column-id="name"]'));
+    const start = expectDefined(row.querySelector<HTMLElement>('[data-column-id="start"]'));
+    const budget = expectDefined(
+      row.querySelector<HTMLElement>('[data-column-id="property:Budget"]'),
+    );
+    const budgetContent = budget.firstChild;
+
+    expect(budget.hasClass('is-align-right')).toBe(true);
+    expect(budget.hasClass('is-editable')).toBe(true);
+    expect(start.getAttribute('title')).toBe('Project start is after its end date');
+
+    const budgetColumn = expectDefined(
+      config.projects.table.columns.find(({ id }) => id === 'property:Budget'),
+    );
+    budgetColumn.label = 'Amount';
+    budgetColumn.alignment = 'center';
+    delete config.projects.propertyDefinitions['property:Budget'];
+    view.update([project({ frontmatter: { start: '2026-09-01', end: '2026-10-10', Budget: 12 } })]);
+    view.refreshFields();
+
+    expect(host.querySelector('.abyss-project-table-row')).toBe(row);
+    expect(row.querySelector('[data-column-id="name"]')).toBe(name);
+    expect(row.querySelector('[data-column-id="property:Budget"]')).toBe(budget);
+    expect(name.hasClass('abyss-project-table-name-cell')).toBe(true);
+    expect(budget.hasClass('abyss-project-table-cell')).toBe(true);
+    expect(budget.hasClass('is-align-right')).toBe(false);
+    expect(budget.hasClass('is-align-center')).toBe(true);
+    expect(budget.hasClass('is-editable')).toBe(false);
+    expect(budget.tabIndex).toBe(0);
+    expect(budget.dataset['columnId']).toBe('property:Budget');
+    expect(budget.firstChild).not.toBe(budgetContent);
+    expect(
+      host.querySelector('[data-column-id="property:Budget"] .abyss-project-table-unavailable')
+        ?.textContent,
+    ).toBe('Type unavailable');
+    expect(budget.getAttribute('aria-label')).toBe('Budget for A');
+    expect(budget.getAttribute('aria-description')).toBeNull();
+    expect(start.hasClass('is-invalid-range')).toBe(false);
+    expect(start.getAttribute('aria-invalid')).toBeNull();
+    expect(start.getAttribute('title')).toBeNull();
+    expect(
+      host.querySelector(
+        '.abyss-project-table-header-cell[data-column-id="property:Budget"] .abyss-project-table-column-label',
+      )?.textContent,
+    ).toBe('Amount');
   });
 
   it('keeps a full-width Name resize visible by transferring width to its neighbor', async () => {

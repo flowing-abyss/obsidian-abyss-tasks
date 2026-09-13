@@ -3,6 +3,7 @@ import {
   hasMalformedProjectPropertyDefinitionPresentation,
   isProjectPropertyDefinition,
 } from '../projects/projectPropertyDefinitions';
+import { sameProjectPropertyName } from '../projects/projectPropertyNames';
 import { normalizeProjectTableSettings } from '../projects/projectTableSettings';
 import { normalizeProjectTimelineSettings } from '../projects/projectTimelineSettings';
 import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
@@ -76,10 +77,6 @@ function hasOwn(record: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(record, key);
 }
 
-function sameProperty(left: string, right: string): boolean {
-  return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
-}
-
 function isNewProjectStatus(value: unknown): value is { id: string; name: string } {
   return (
     isRecord(value) &&
@@ -132,7 +129,7 @@ function analyzeLegacyProjectStatuses(
   });
   const removedTagCount = rawStatuses.filter(isLegacyTagStatus).length;
   const propertyCandidates = propertyStatuses.reduce<string[]>((candidates, status) => {
-    if (!candidates.some((candidate) => sameProperty(candidate, status.property))) {
+    if (!candidates.some((candidate) => sameProjectPropertyName(candidate, status.property))) {
       candidates.push(status.property);
     }
     return candidates;
@@ -209,7 +206,7 @@ function propertyDefinitionIsInvalid(key: string, definition: unknown): boolean 
   if (property.length === 0) return true;
   if (!isProjectPropertyDefinition(definition)) return true;
   if (hasMalformedProjectPropertyDefinitionPresentation(definition)) return true;
-  if (sameProperty(property, 'tags')) return definition.type !== 'tags';
+  if (sameProjectPropertyName(property, 'tags')) return definition.type !== 'tags';
   return definition.type === 'tags';
 }
 
@@ -217,7 +214,7 @@ function ambiguousPropertyDefinitionKeys(definitions: Record<string, unknown>): 
   const groups: string[][] = [];
   for (const key of Object.keys(definitions)) {
     const group = groups.find(
-      (candidate) => candidate[0] !== undefined && sameProperty(candidate[0], key),
+      (candidate) => candidate[0] !== undefined && sameProjectPropertyName(candidate[0], key),
     );
     if (group === undefined) groups.push([key]);
     else group.push(key);
