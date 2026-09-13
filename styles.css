@@ -6538,17 +6538,16 @@ body.abyss-modal-open .popover.hover-popover {
 /* ── View-state popover ─────────────────────────────────────── */
 .abyss-view-state-popover {
   position: absolute;
-  top: 100%;
-  right: 0;
+  box-sizing: border-box;
   z-index: 100;
-  min-width: 240px;
-  max-height: 420px;
+  min-width: min(240px, var(--abyss-view-state-max-width));
+  max-width: var(--abyss-view-state-max-width);
+  max-height: min(420px, var(--abyss-view-state-max-height));
   overflow-y: auto;
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
   box-shadow: var(--shadow-s);
-  margin-top: 4px;
 }
 
 .abyss-view-state-row {
