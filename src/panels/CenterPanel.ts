@@ -974,9 +974,7 @@ export class CenterPanel {
     const { scroll, addBar } = shell;
     const scrollTop = scroll.scrollTop;
     const scrollLeft = scroll.scrollLeft;
-    const staging = (
-      scroll.ownerDocument.win as Window & { createDiv(): HTMLDivElement }
-    ).createDiv();
+    const staging = scroll.cloneNode(false) as HTMLElement;
     const tasks = this.getFilteredTasks_abyssPrivate();
     if (tasks.length === 0) staging.createDiv({ cls: 'abyss-center-empty', text: 'No tasks' });
     else this.renderWithGrouping_abyssPrivate(staging, tasks);
