@@ -3,6 +3,10 @@ import {
   normalizeProjectKanbanSettings,
 } from '../projects/projectKanbanSettings';
 import { normalizeProjectTableSettings } from '../projects/projectTableSettings';
+import {
+  isMalformedProjectTimelineSettings,
+  normalizeProjectTimelineSettings,
+} from '../projects/projectTimelineSettings';
 import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
 import type { TaskStatusType } from '../tasks/domain/types';
 import { getListViewDefaults } from './defaults';
@@ -310,19 +314,23 @@ function collectMalformedProjectViews(
   projects: Record<string, unknown>,
 ): Pick<
   NonNullable<SavedViewStateRecovery['malformedViews']>,
-  'projectKanban' | 'projectOverviewView'
+  'projectKanban' | 'projectTimeline' | 'projectOverviewView'
 > {
   const malformed: Pick<
     NonNullable<SavedViewStateRecovery['malformedViews']>,
-    'projectKanban' | 'projectOverviewView'
+    'projectKanban' | 'projectTimeline' | 'projectOverviewView'
   > = {};
   if (hasOwn(projects, 'kanban') && isMalformedProjectKanbanSettings(projects['kanban'])) {
     malformed.projectKanban = detached(projects['kanban']);
   }
+  if (hasOwn(projects, 'timeline') && isMalformedProjectTimelineSettings(projects['timeline'])) {
+    malformed.projectTimeline = detached(projects['timeline']);
+  }
   if (
     hasOwn(projects, 'overviewView') &&
     projects['overviewView'] !== 'table' &&
-    projects['overviewView'] !== 'kanban'
+    projects['overviewView'] !== 'kanban' &&
+    projects['overviewView'] !== 'timeline'
   ) {
     malformed.projectOverviewView = detached(projects['overviewView']);
   }
@@ -335,13 +343,19 @@ function decodeProjectViews(projects: Record<string, unknown>): SavedViewState['
   const kanban = hasOwn(projects, 'kanban')
     ? normalizeProjectKanbanSettings(projects['kanban'], normalizedTable)
     : undefined;
+  const timeline = hasOwn(projects, 'timeline')
+    ? normalizeProjectTimelineSettings(projects['timeline'], normalizedTable)
+    : undefined;
   const overviewView =
-    projects['overviewView'] === 'table' || projects['overviewView'] === 'kanban'
+    projects['overviewView'] === 'table' ||
+    projects['overviewView'] === 'kanban' ||
+    projects['overviewView'] === 'timeline'
       ? projects['overviewView']
       : undefined;
   return {
     table: normalizedTable,
     ...(kanban === undefined ? {} : { kanban }),
+    ...(timeline === undefined ? {} : { timeline }),
     ...(overviewView === undefined ? {} : { overviewView }),
   };
 }
@@ -375,6 +389,7 @@ function movedViewSource(raw: Record<string, unknown>): Record<string, unknown> 
     projects: {
       ...(projects['table'] === undefined ? {} : { table: detached(projects['table']) }),
       ...(hasOwn(projects, 'kanban') ? { kanban: detached(projects['kanban']) } : {}),
+      ...(hasOwn(projects, 'timeline') ? { timeline: detached(projects['timeline']) } : {}),
       ...(hasOwn(projects, 'overviewView')
         ? { overviewView: detached(projects['overviewView']) }
         : {}),
@@ -388,6 +403,7 @@ function stripMovedFields(raw: Record<string, unknown>): void {
   if (!isRecord(raw['projects'])) return;
   delete raw['projects']['table'];
   delete raw['projects']['kanban'];
+  delete raw['projects']['timeline'];
   delete raw['projects']['overviewView'];
 }
 
@@ -398,6 +414,7 @@ function hasMovedFields(raw: Record<string, unknown>): boolean {
     (isRecord(raw['projects']) &&
       (hasOwn(raw['projects'], 'table') ||
         hasOwn(raw['projects'], 'kanban') ||
+        hasOwn(raw['projects'], 'timeline') ||
         hasOwn(raw['projects'], 'overviewView')))
   );
 }
@@ -417,6 +434,8 @@ function composeSettings(
   settings.projects.table = decoded.views.projects.table;
   if (decoded.views.projects.kanban === undefined) delete settings.projects.kanban;
   else settings.projects.kanban = decoded.views.projects.kanban;
+  if (decoded.views.projects.timeline === undefined) delete settings.projects.timeline;
+  else settings.projects.timeline = decoded.views.projects.timeline;
   if (decoded.views.projects.overviewView === undefined) delete settings.projects.overviewView;
   else settings.projects.overviewView = decoded.views.projects.overviewView;
   const notices =
@@ -492,6 +511,24 @@ function mergeProjectKanban(
   return base;
 }
 
+function mergeProjectTimeline(
+  raw: unknown,
+  current: NonNullable<CalendarSettings['projects']['timeline']>,
+): Record<string, unknown> {
+  const base = isRecord(raw) ? detached(raw) : {};
+  base['groupBy'] = current.groupBy;
+  const rawSort = isRecord(base['sortBy']) ? detached(base['sortBy']) : {};
+  rawSort['field'] = current.sortBy.field;
+  rawSort['dir'] = current.sortBy.dir;
+  base['sortBy'] = rawSort;
+  base['hiddenStatuses'] = detached(current.hiddenStatuses);
+  base['scale'] = current.scale;
+  base['showMetadata'] = current.showMetadata;
+  base['progress'] = current.progress;
+  base['showUnscheduled'] = current.showUnscheduled;
+  return base;
+}
+
 function mergeProjectTable(
   raw: Record<string, unknown>,
   current: CalendarSettings['projects']['table'],
@@ -518,6 +555,8 @@ function mergeProjectViews(
   projects['table'] = mergeProjectTable(rawTable, current.table);
   if (current.kanban === undefined) delete projects['kanban'];
   else projects['kanban'] = mergeProjectKanban(raw['kanban'], current.kanban);
+  if (current.timeline === undefined) delete projects['timeline'];
+  else projects['timeline'] = mergeProjectTimeline(raw['timeline'], current.timeline);
   if (current.overviewView === undefined) delete projects['overviewView'];
   else projects['overviewView'] = current.overviewView;
   return projects;
@@ -568,7 +607,7 @@ function restoreLegacyProjectViews(
 ): void {
   const legacyProjects = isRecord(legacy['projects']) ? legacy['projects'] : undefined;
   if (legacyProjects === undefined) return;
-  const keys = ['table', 'kanban', 'overviewView'] as const;
+  const keys = ['table', 'kanban', 'timeline', 'overviewView'] as const;
   if (!keys.some((key) => hasOwn(legacyProjects, key))) return;
   const projects = isRecord(data['projects']) ? data['projects'] : {};
   for (const key of keys) {

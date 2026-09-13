@@ -5,7 +5,7 @@ import type {
   ProjectTableSettings,
 } from './projectFields';
 
-export type ProjectOverviewMode = 'table' | 'kanban';
+export type ProjectOverviewMode = 'table' | 'kanban' | 'timeline';
 
 export interface ProjectKanbanSettings {
   fields: ProjectColumn[];

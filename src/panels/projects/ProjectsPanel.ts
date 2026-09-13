@@ -198,6 +198,7 @@ export class ProjectsPanel {
       this.tableView_abyssPrivate?.update(this.projectStore_abyssPrivate.list());
       return;
     }
+    this.tableView_abyssPrivate?.captureViewportBeforeHide();
     tableHost.remove();
     this.renderDashboard_abyssPrivate(view.path);
   }

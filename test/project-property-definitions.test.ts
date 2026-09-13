@@ -9,6 +9,7 @@ import {
   resolveConfiguredProjectField,
   setProjectPropertyDefinitionType,
 } from '../src/projects/projectPropertyDefinitions';
+import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import { buildDefaultProjectsSettings } from '../src/settings/defaults';
 import { migrateSettings } from '../src/settings/migration';
 
@@ -268,6 +269,26 @@ describe('captureMissingProjectPropertyDefinitions', () => {
       ),
     ).toEqual({
       'property:Effort': { type: 'number' },
+      'property:Owner': { type: 'list' },
+      'property:Rank': { type: 'date' },
+    });
+  });
+
+  it('captures grouping and sorting fields referenced only by Timeline settings', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.timeline = buildDefaultProjectTimelineSettings(projects.table);
+    projects.timeline.groupBy = 'property:Owner';
+    projects.timeline.sortBy = { field: 'property:Rank', dir: 'asc' };
+
+    expect(
+      captureMissingProjectPropertyDefinitions(
+        projects,
+        catalog([
+          { name: 'Owner', type: 'list' },
+          { name: 'Rank', type: 'date' },
+        ]),
+      ),
+    ).toEqual({
       'property:Owner': { type: 'list' },
       'property:Rank': { type: 'date' },
     });

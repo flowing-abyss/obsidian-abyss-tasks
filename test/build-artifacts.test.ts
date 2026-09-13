@@ -59,6 +59,7 @@ const privateOwners = new Set([
   'ProjectKanbanDragController',
   'ProjectsPanel',
   'ProjectsKanbanView',
+  'ProjectsTimelineView',
   'ProjectsTableToolbar',
   'ProjectsTableView',
   'TagPickerModal',

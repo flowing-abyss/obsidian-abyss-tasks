@@ -4,6 +4,7 @@ import {
   isProjectPropertyDefinition,
 } from '../projects/projectPropertyDefinitions';
 import { normalizeProjectTableSettings } from '../projects/projectTableSettings';
+import { normalizeProjectTimelineSettings } from '../projects/projectTimelineSettings';
 import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
 import { buildDefaultProjectsSettings, buildDefaultTaskStatuses } from './defaults';
 import { migrateShortcuts } from './shortcuts';
@@ -46,6 +47,7 @@ interface MigratedProjectSettings {
   taskInsertionSection?: string;
   table?: unknown;
   kanban?: unknown;
+  timeline?: unknown;
   overviewView?: unknown;
 }
 
@@ -293,7 +295,14 @@ function normalizeProjectSettings(
   if (hasOwn(projects, 'kanban')) {
     projects.kanban = normalizeProjectKanbanSettings(projects.kanban, table);
   }
-  if (projects.overviewView !== 'table' && projects.overviewView !== 'kanban') {
+  if (hasOwn(projects, 'timeline')) {
+    projects.timeline = normalizeProjectTimelineSettings(projects.timeline, table);
+  }
+  if (
+    projects.overviewView !== 'table' &&
+    projects.overviewView !== 'kanban' &&
+    projects.overviewView !== 'timeline'
+  ) {
     delete projects.overviewView;
   }
 }
