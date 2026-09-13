@@ -321,6 +321,15 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     return this.model_abyssPrivate;
   }
 
+  visibleRow(occurrenceId: string): ProjectTimelineRow | undefined {
+    for (const group of this.model_abyssPrivate?.groups ?? []) {
+      if (this.collapsedGroups_abyssPrivate.has(group.key)) continue;
+      const row = group.rows.find((candidate) => candidate.occurrenceId === occurrenceId);
+      if (row !== undefined) return row;
+    }
+    return undefined;
+  }
+
   selectedProjectPath(): string | undefined {
     return this.selectedPath_abyssPrivate;
   }

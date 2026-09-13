@@ -253,6 +253,33 @@ describe('ProjectsTimelineView', () => {
     ).toBe(false);
   });
 
+  it('reserves a usable body move target between both minimum-width handles', async () => {
+    const styles = await loadPluginStyles();
+    const sheet = createEl('style');
+    sheet.textContent = styles;
+    activeDocument.head.append(sheet);
+    const { host } = mount(
+      [project('Projects/Short.md', '2026-09-10', '2026-09-10')],
+      new Date(2026, 8, 13),
+      'year',
+    );
+    const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    const start = expectDefined(
+      bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-start'),
+    );
+    const end = expectDefined(
+      bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-end'),
+    );
+    const barStyle = activeWindow.getComputedStyle(bar);
+    const minimumBodyAndBorderWidth =
+      Number.parseFloat(barStyle.minWidth) -
+      Number.parseFloat(activeWindow.getComputedStyle(start).width) -
+      Number.parseFloat(activeWindow.getComputedStyle(end).width);
+
+    expect(minimumBodyAndBorderWidth).toBeGreaterThanOrEqual(10);
+    sheet.remove();
+  });
+
   it('reveals a project outside the current window and keeps ticks bounded', () => {
     const { host, view } = mount([project('Projects/Future.md', '2045-06-28', '2045-06-29')]);
     expect(

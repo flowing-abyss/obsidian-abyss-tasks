@@ -239,7 +239,9 @@ pointer intents or relative keyboard intents and never writes Markdown or record
 `ProjectsTimelineView` retains keyed tracks, bars, endpoint handles, cursor, and tooltip nodes so
 focus and preview ownership survive ordinary receipt refreshes. Resize handles appear only for
 actual endpoints inside the visible window; minimum visual bar width and clipped geometry do not
-change the calendar-day coordinate system.
+change the calendar-day coordinate system. The view is also the visibility authority for retained
+range occurrences: collapsed groups remain mounted but cannot capture queued commands or retain an
+active gesture.
 
 The overview controller initializes each status column's manual path sequence from its first complete
 project snapshot and appends newly observed paths even while a field sort, search, or status filter
@@ -257,8 +259,10 @@ metadata and progress through the shared project-cell renderer and send edits th
 `ProjectManager.applyEdits` coordinator. Switching to a project dashboard temporarily detaches the
 overview surface, and returning reattaches the same session and active overview mode.
 
-Timeline range edits enter the overview controller's existing ordered session mutation path. A
-pointer gesture freezes occurrence, path, field binding, exact source key, raw value, existence,
+Timeline range edits reserve their place in the overview controller's existing ordered session
+mutation path when submitted, before a later Undo or Redo can enter it. Active-editor settlement is
+started before that reservation, so the editor's own queued save completes first without a nested
+queue wait. A pointer gesture freezes occurrence, path, field binding, exact source key, raw value, existence,
 and projected range at capture; the controller rejects any mismatch before planning the write.
 Keyboard arrows freeze the target binding at submission but resolve their relative move or End
 adjustment from the latest receipt-projected range when their queue turn begins. A real edit sends

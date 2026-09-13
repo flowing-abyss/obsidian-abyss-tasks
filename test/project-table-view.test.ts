@@ -377,6 +377,117 @@ describe('ProjectsTableView', () => {
     });
   });
 
+  it('reserves rapid Timeline edits before a later Undo in the shared mutation queue', async () => {
+    const config = settings();
+    config.projects.overviewView = 'timeline';
+    let releaseFirst: (() => void) | undefined;
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let calls = 0;
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => {
+      calls += 1;
+      if (calls === 1) await firstHeld;
+      return {
+        applied: changes.map((change): AppliedProjectCellChange => ({
+          ...change,
+          sourceProperty: change.sourceProperty ?? expectDefined(change.field.property),
+          sourceKey: change.sourceKey ?? expectDefined(change.field.property),
+          previousValue: change.expectedValue,
+          previousExists: change.expectedExists ?? false,
+          appliedExists: change.valueExists ?? true,
+        })),
+        failed: [],
+      };
+    });
+    const history = new ProjectEditHistory(applyEdits);
+    const { host } = mount(
+      [project({ frontmatter: { status: 'active', start: '2026-09-01', end: '2026-09-30' } })],
+      { settings: config, applyEdits, history },
+    );
+    const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+
+    pressTimelineArrow(bar);
+    pressTimelineArrow(bar, true);
+    bar.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'z',
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+
+    releaseFirst?.();
+    await flushMicrotasks();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledTimes(3);
+    expect(applyEdits.mock.calls[0]?.[0]).toMatchObject([
+      { field: { id: 'start' }, expectedValue: '2026-09-01', value: '2026-09-02' },
+      { field: { id: 'end' }, expectedValue: '2026-09-30', value: '2026-10-01' },
+    ]);
+    expect(applyEdits.mock.calls[1]?.[0]).toMatchObject([
+      { field: { id: 'start' }, expectedValue: '2026-09-02', value: '2026-09-02' },
+      { field: { id: 'end' }, expectedValue: '2026-10-01', value: '2026-10-02' },
+    ]);
+    expect(applyEdits.mock.calls[2]?.[0]).toMatchObject([
+      { field: { id: 'start' }, expectedValue: '2026-09-02', value: '2026-09-02' },
+      { field: { id: 'end' }, expectedValue: '2026-10-02', value: '2026-10-01' },
+    ]);
+    expect(history.canUndo).toBe(true);
+    expect(history.canRedo).toBe(true);
+    expect(
+      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar')).getAttribute(
+        'aria-label',
+      ),
+    ).toContain('2026-09-02 through 2026-10-01');
+  });
+
+  it('queues an active editor save before its Timeline range request without nesting', async () => {
+    const config = settings();
+    config.projects.overviewView = 'timeline';
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => ({
+      applied: changes.map((change): AppliedProjectCellChange => ({
+        ...change,
+        sourceProperty: change.sourceProperty ?? expectDefined(change.field.property),
+        sourceKey: change.sourceKey ?? expectDefined(change.field.property),
+        previousValue: change.expectedValue,
+        previousExists: change.expectedExists ?? false,
+        appliedExists: change.valueExists ?? true,
+      })),
+      failed: [],
+    }));
+    const { host } = mount(
+      [project({ frontmatter: { status: 'active', start: '2026-09-01', end: '2026-09-30' } })],
+      { settings: config, applyEdits },
+    );
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
+    input.value = '2026-09-05';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    pressTimelineArrow(bar);
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledTimes(2);
+    expect(applyEdits.mock.calls[0]?.[0]).toMatchObject([
+      { field: { id: 'start' }, expectedValue: '2026-09-01', value: '2026-09-05' },
+    ]);
+    expect(applyEdits.mock.calls[1]?.[0]).toMatchObject([
+      { field: { id: 'start' }, expectedValue: '2026-09-05', value: '2026-09-06' },
+      { field: { id: 'end' }, expectedValue: '2026-09-30', value: '2026-10-01' },
+    ]);
+  });
+
   it('skips a clamped Timeline endpoint no-op without applying or recording history', async () => {
     const config = settings();
     config.projects.overviewView = 'timeline';
@@ -494,6 +605,62 @@ describe('ProjectsTableView', () => {
     );
   });
 
+  it('rejects a queued Timeline edit after its retained group collapses', async () => {
+    const config = settings();
+    config.projects.overviewView = 'timeline';
+    config.projects.table.groupBy = 'status';
+    let releaseFirst: (() => void) | undefined;
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let calls = 0;
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => {
+      calls += 1;
+      if (calls === 1) await firstHeld;
+      return {
+        applied: changes.map((change): AppliedProjectCellChange => ({
+          ...change,
+          sourceProperty: expectDefined(change.sourceProperty),
+          sourceKey: expectDefined(change.sourceKey),
+          previousValue: change.expectedValue,
+          previousExists: change.expectedExists ?? false,
+          appliedExists: true,
+        })),
+        failed: [],
+      };
+    });
+    const history = new ProjectEditHistory(applyEdits);
+    const { host } = mount(
+      [project({ frontmatter: { status: 'active', start: '2026-09-01', end: '2026-09-30' } })],
+      { settings: config, applyEdits, history },
+    );
+    const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    pressTimelineArrow(bar);
+    pressTimelineArrow(bar);
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+
+    expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-timeline-group-header'),
+    ).click();
+    await flushMicrotasks();
+    releaseFirst?.();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(
+      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-group-body')).hidden,
+    ).toBe(true);
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain(
+      'no longer visible',
+    );
+    expect(history.canUndo).toBe(true);
+    await history.undo();
+    expect(history.canUndo).toBe(false);
+    expect(history.canRedo).toBe(true);
+  });
+
   it('rejects a frozen pointer edit when the opposite endpoint changes before release', async () => {
     const config = settings();
     config.projects.overviewView = 'timeline';
@@ -551,6 +718,44 @@ describe('ProjectsTableView', () => {
     track.dispatchEvent(timelinePointerEvent('pointerup', 40));
     await flushMicrotasks();
     expect(applyEdits).toHaveBeenCalledOnce();
+  });
+
+  it('cancels an active Timeline gesture when its retained group collapses', async () => {
+    const config = settings();
+    config.projects.overviewView = 'timeline';
+    config.projects.table.groupBy = 'status';
+    const applyEdits = vi.fn(async () => ({ applied: [], failed: [] }));
+    const { host } = mount(
+      [project({ frontmatter: { status: 'active', start: '2026-09-01', end: '2026-09-30' } })],
+      { settings: config, applyEdits },
+    );
+    const track = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track'));
+    const bar = expectDefined(track.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    const releasePointerCapture = vi.fn();
+    Object.assign(track, {
+      setPointerCapture: vi.fn(),
+      hasPointerCapture: () => true,
+      releasePointerCapture,
+    });
+    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 100, 30));
+    bar.dispatchEvent(timelinePointerEvent('pointerdown', 20));
+    await flushMicrotasks();
+    track.dispatchEvent(timelinePointerEvent('pointermove', 30));
+    expect(bar.classList).toContain('is-previewing');
+
+    expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-timeline-group-header'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(releasePointerCapture).toHaveBeenCalledWith(1);
+    expect(bar.classList).not.toContain('is-previewing');
+    expect(
+      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-tooltip')).hidden,
+    ).toBe(true);
+    track.dispatchEvent(timelinePointerEvent('pointerup', 40));
+    await flushMicrotasks();
+    expect(applyEdits).not.toHaveBeenCalled();
   });
 
   it('keeps datetime ranges readable while disabling lossy gesture editing', () => {
