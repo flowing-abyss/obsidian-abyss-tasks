@@ -322,7 +322,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
         this.moveAnchor_abyssPrivate(-1);
       });
     });
-    this.addTextButton_abyssPrivate(navigation, 'Today', () => {
+    const todayButton = this.addTextButton_abyssPrivate(navigation, 'Today', () => {
       this.context_abyssPrivate.requestNavigation(() => {
         const today = new Date((this.context_abyssPrivate.now ?? (() => new Date()))());
         this.anchor_abyssPrivate = today;
@@ -331,13 +331,14 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
         this.render_abyssPrivate(true);
       });
     });
+    todayButton.addClass('abyss-cal-nav-today');
     this.addNavigationButton_abyssPrivate(navigation, 'Next range', 'chevron-right', () => {
       this.context_abyssPrivate.requestNavigation(() => {
         this.moveAnchor_abyssPrivate(1);
       });
     });
     const scaleControl = navigation.createDiv({
-      cls: 'abyss-project-timeline-scale-control',
+      cls: 'abyss-project-timeline-scale-control abyss-cal-view-switcher',
       attr: { role: 'group', 'aria-label': 'Timeline scale' },
     });
     for (const [scale, label] of TIMELINE_SCALES) {
@@ -346,7 +347,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
           console.error('[abyss-tasks] Could not change project Timeline scale', error);
         });
       });
-      button.addClass('abyss-project-timeline-scale');
+      button.addClass('abyss-cal-view-btn');
       this.scaleButtons_abyssPrivate.set(scale, button);
     }
     this.scroll = this.root.createDiv({
@@ -502,7 +503,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     action: () => void,
   ): void {
     const button = host.createEl('button', {
-      cls: 'clickable-icon',
+      cls: 'clickable-icon abyss-cal-nav-btn',
       attr: { type: 'button', 'aria-label': label },
     });
     setIcon(button, icon);
@@ -522,7 +523,9 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   private syncScaleButtons_abyssPrivate(): void {
     const scale = this.context_abyssPrivate.settings().scale;
     for (const [candidate, button] of this.scaleButtons_abyssPrivate) {
-      button.setAttribute('aria-pressed', String(candidate === scale));
+      const active = candidate === scale;
+      button.setAttribute('aria-pressed', String(active));
+      button.toggleClass('is-active', active);
     }
   }
 

@@ -576,10 +576,13 @@ describe('ProjectsTimelineView', () => {
     );
     expect(hierarchy.dataset).toMatchObject({
       startDay: '2026-09-07',
-      endDay: '2026-09-20',
+      endDay: '2026-09-13',
     });
-    expect(Number.parseFloat(label.style.left)).toBeCloseTo((84.5 / 448) * 100);
-    expect(label.textContent).toBe('Sep2026');
+    const hierarchyLeft = Number.parseFloat(hierarchy.style.left);
+    const hierarchyWidth = Number.parseFloat(hierarchy.style.width);
+    const labelLeft = Number.parseFloat(label.style.left);
+    expect(hierarchyLeft + (labelLeft / 100) * hierarchyWidth).toBeCloseTo((84.5 / 448) * 100);
+    expect(label.textContent).toBe('W37· Sep 7–13, 2026');
   });
 
   it('uses readable muted or normal colors for ordinary and hierarchy labels', async () => {
@@ -591,14 +594,68 @@ describe('ProjectsTimelineView', () => {
     const cell = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-timeline-axis-cell:not(.is-today)'),
     );
-    const hierarchyYear = expectDefined(
+    const hierarchyContext = expectDefined(
       host.querySelector<HTMLElement>(
-        '.abyss-project-timeline-axis-hierarchy-cell .abyss-project-timeline-axis-secondary-label',
+        '.abyss-project-timeline-axis-hierarchy-cell:not(.is-today) .abyss-project-timeline-axis-secondary-label',
       ),
     );
 
     expect(activeWindow.getComputedStyle(cell).color).toBe('var(--text-muted)');
-    expect(activeWindow.getComputedStyle(hierarchyYear).color).toBe('var(--text-muted)');
+    expect(activeWindow.getComputedStyle(hierarchyContext).color).toBe('var(--text-muted)');
+    sheet.remove();
+  });
+
+  it('uses semantic theme tokens for current periods and range controls', async () => {
+    const styles = await loadPluginStyles();
+    const sheet = createEl('style');
+    sheet.textContent = styles;
+    activeDocument.head.append(sheet);
+    const { host } = mount(
+      [project('Projects/A.md', '2026-09-10', '2026-09-14')],
+      new Date(2026, 8, 13),
+      'day',
+    );
+    expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-axis-cell.is-today'));
+    const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    expectDefined(bar.querySelector<HTMLElement>('.abyss-project-timeline-grip'));
+
+    expect(
+      Array.from(sheet.sheet?.cssRules ?? []).some(
+        (rule) =>
+          rule instanceof CSSStyleRule &&
+          rule.selectorText.includes('button.abyss-project-timeline-scale'),
+      ),
+    ).toBe(false);
+    const currentPeriodRule = expectDefined(
+      Array.from(sheet.sheet?.cssRules ?? []).find(
+        (rule): rule is CSSStyleRule =>
+          rule instanceof CSSStyleRule &&
+          rule.selectorText.includes('.abyss-project-timeline-axis-cell.is-today'),
+      ),
+    );
+    const barRule = expectDefined(
+      Array.from(sheet.sheet?.cssRules ?? []).find(
+        (rule): rule is CSSStyleRule =>
+          rule instanceof CSSStyleRule && rule.selectorText === '.abyss-project-timeline-bar',
+      ),
+    );
+    const gripRule = expectDefined(
+      Array.from(sheet.sheet?.cssRules ?? []).find(
+        (rule): rule is CSSStyleRule =>
+          rule instanceof CSSStyleRule && rule.selectorText === '.abyss-project-timeline-grip',
+      ),
+    );
+    expect(currentPeriodRule.style.background).toContain('var(--abyss-event-fill-strength)');
+    expect(currentPeriodRule.style.background).toContain('var(--interactive-accent)');
+    expect(currentPeriodRule.style.background).not.toContain('var(--text-error)');
+    expect(barRule.style.border).not.toContain('black');
+    expect(barRule.style.border).toContain('var(--abyss-preview-border-tag-strength)');
+    expect(barRule.style.border).toContain('var(--text-normal)');
+    expect(barRule.style.background).toContain('var(--abyss-event-fill-strength)');
+    expect(gripRule.style.boxShadow).toBe('none');
+    expect(gripRule.style.background).toContain('var(--abyss-project-status-color');
+    expect(gripRule.style.background).toContain('var(--abyss-preview-border-tag-strength)');
+    expect(gripRule.style.background).toContain('var(--text-normal)');
     sheet.remove();
   });
 
@@ -680,7 +737,17 @@ describe('ProjectsTimelineView', () => {
     const scaleButtons = Array.from(
       host.querySelectorAll<HTMLButtonElement>('.abyss-project-timeline-scale-control button'),
     );
+    const scaleControl = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline-scale-control'),
+    );
+    const today = expectDefined(
+      Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(
+        ({ textContent }) => textContent === 'Today',
+      ),
+    );
 
+    expect(scaleControl.classList).toContain('abyss-cal-view-switcher');
+    expect(today.classList).toContain('abyss-cal-nav-today');
     expect(scaleButtons.map(({ textContent }) => textContent)).toEqual([
       'Day',
       'Week',
@@ -688,6 +755,9 @@ describe('ProjectsTimelineView', () => {
       'Quarter',
       'Year',
     ]);
+    expect(scaleButtons.every((button) => button.classList.contains('abyss-cal-view-btn'))).toBe(
+      true,
+    );
     const expectedBounds = [
       '2026-09-10 – 2026-09-20',
       '2026-09-07 – 2026-09-20',
@@ -701,6 +771,10 @@ describe('ProjectsTimelineView', () => {
         expectedBounds[index],
       );
       expect(button.getAttribute('aria-pressed')).toBe('true');
+      expect(button.classList).toContain('is-active');
+      expect(scaleButtons.filter((candidate) => candidate.classList.contains('is-active'))).toEqual(
+        [button],
+      );
       if (button.textContent === 'Month') {
         const interiorGridLines = Array.from(
           host.querySelectorAll<HTMLElement>('.abyss-project-timeline-gridline'),

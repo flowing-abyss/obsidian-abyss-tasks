@@ -161,17 +161,31 @@ function intervalLabels(
 }
 
 function hierarchyScale(scale: ProjectTimelineScale): ProjectTimelineScale | undefined {
-  if (scale === 'day' || scale === 'week') return 'month';
+  if (scale === 'day') return 'week';
+  if (scale === 'week') return 'month';
   if (scale === 'month') return 'quarter';
   return scale === 'quarter' ? 'year' : undefined;
 }
 
 function hierarchyLabel(
   ordinalValue: number,
-  scale: Exclude<ProjectTimelineScale, 'day' | 'week'>,
+  scale: Exclude<ProjectTimelineScale, 'day'>,
 ): Pick<ProjectTimelineAxisCell, 'label' | 'secondaryLabel'> {
   const value = date(ordinalValue);
   const year = String(value.getUTCFullYear()).padStart(4, '0');
+  if (scale === 'week') {
+    const end = date(ordinalValue + 6);
+    const endYear = String(end.getUTCFullYear()).padStart(4, '0');
+    const startDate = `${MONTHS[value.getUTCMonth()]} ${String(value.getUTCDate())}`;
+    const endMonth =
+      value.getUTCMonth() === end.getUTCMonth() ? '' : `${MONTHS[end.getUTCMonth()]} `;
+    const endDate = `${endMonth}${String(end.getUTCDate())}`;
+    const rangeYear = year === endYear ? year : `${year}/${endYear}`;
+    return {
+      label: `W${String(isoWeekNumber(ordinalValue)).padStart(2, '0')}`,
+      secondaryLabel: `· ${startDate}–${endDate}, ${rangeYear}`,
+    };
+  }
   if (scale === 'month') {
     return { label: MONTHS[value.getUTCMonth()] as string, secondaryLabel: year };
   }
@@ -222,7 +236,7 @@ function buildCell(
   const startOrdinal = Math.max(bounds.windowStart, unitStart);
   const endOrdinal = Math.min(bounds.windowEnd, nextIntervalStart(unitStart, scale) - 1);
   const labels = hierarchy
-    ? hierarchyLabel(unitStart, scale as Exclude<ProjectTimelineScale, 'day' | 'week'>)
+    ? hierarchyLabel(unitStart, scale as Exclude<ProjectTimelineScale, 'day'>)
     : intervalLabels(unitStart, scale);
   const leftPercent = ((startOrdinal - bounds.windowStart) / bounds.windowDayCount) * 100;
   const rightPercent = ((endOrdinal + 1 - bounds.windowStart) / bounds.windowDayCount) * 100;

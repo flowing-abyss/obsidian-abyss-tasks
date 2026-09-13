@@ -36,10 +36,19 @@ describe('project Timeline calendar axis', () => {
     ]);
     expect(layout.cells[0]?.rightPercent).toBe(layout.cells[1]?.leftPercent);
     expect(
-      layout.hierarchyCells.map(({ label, secondaryLabel }) => [label, secondaryLabel]),
+      layout.hierarchyCells.map(({ startDay, endDay, label, secondaryLabel }) => ({
+        startDay,
+        endDay,
+        label,
+        secondaryLabel,
+      })),
     ).toEqual([
-      ['Jan', '2024'],
-      ['Feb', '2024'],
+      {
+        startDay: '2024-01-31',
+        endDay: '2024-02-01',
+        label: 'W05',
+        secondaryLabel: '· Jan 29–Feb 4, 2024',
+      },
     ]);
   });
 
@@ -80,6 +89,66 @@ describe('project Timeline calendar axis', () => {
     expect(layout.cells.map(({ startDay, endDay }) => [startDay, endDay])).toEqual([
       ['2020-12-28', '2021-01-03'],
       ['2021-01-04', '2021-01-10'],
+    ]);
+    expect(
+      layout.hierarchyCells.map(({ label, secondaryLabel }) => [label, secondaryLabel]),
+    ).toEqual([
+      ['Dec', '2020'],
+      ['Jan', '2021'],
+    ]);
+  });
+
+  it('groups Day cells under ISO weeks across the 2020 to 2021 transition', () => {
+    const window = projectTimelineWindowForRange('2020-12-28', '2021-01-10', 'day');
+
+    const layout = projectTimelineAxisLayout(window, {
+      visibleStartDay: window.startDay,
+      visibleEndDay: window.endDay,
+      todayDay: '2021-01-01',
+    });
+
+    expect(layout.cells.map(({ startDay, endDay }) => [startDay, endDay])).toEqual([
+      ['2020-12-28', '2020-12-28'],
+      ['2020-12-29', '2020-12-29'],
+      ['2020-12-30', '2020-12-30'],
+      ['2020-12-31', '2020-12-31'],
+      ['2021-01-01', '2021-01-01'],
+      ['2021-01-02', '2021-01-02'],
+      ['2021-01-03', '2021-01-03'],
+      ['2021-01-04', '2021-01-04'],
+      ['2021-01-05', '2021-01-05'],
+      ['2021-01-06', '2021-01-06'],
+      ['2021-01-07', '2021-01-07'],
+      ['2021-01-08', '2021-01-08'],
+      ['2021-01-09', '2021-01-09'],
+      ['2021-01-10', '2021-01-10'],
+    ]);
+    expect(
+      layout.hierarchyCells.map(({ startDay, endDay, label, secondaryLabel, isToday }) => ({
+        startDay,
+        endDay,
+        label,
+        secondaryLabel,
+        isToday,
+      })),
+    ).toEqual([
+      {
+        startDay: '2020-12-28',
+        endDay: '2021-01-03',
+        label: 'W53',
+        secondaryLabel: '· Dec 28–Jan 3, 2020/2021',
+        isToday: true,
+      },
+      {
+        startDay: '2021-01-04',
+        endDay: '2021-01-10',
+        label: 'W01',
+        secondaryLabel: '· Jan 4–10, 2021',
+        isToday: false,
+      },
+    ]);
+    expect(layout.cells.filter(({ isToday }) => isToday).map(({ startDay }) => startDay)).toEqual([
+      '2021-01-01',
     ]);
   });
 
@@ -194,11 +263,11 @@ describe('project Timeline calendar axis', () => {
       overscanCells: 1,
     });
 
-    expect(layout.hierarchyCells[0]).toMatchObject({
-      startDay: '2024-09-01',
-      endDay: '2024-09-30',
-      leftPercent: 0,
-      rightPercent: 100,
+    expect(layout.hierarchyCells[1]).toMatchObject({
+      startDay: '2024-09-09',
+      endDay: '2024-09-15',
+      leftPercent: (8 / 30) * 100,
+      rightPercent: (15 / 30) * 100,
       labelPercent: 27.5,
     });
   });

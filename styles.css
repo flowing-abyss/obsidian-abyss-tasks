@@ -8507,37 +8507,10 @@ table.abyss-project-table {
   background: var(--background-secondary);
 }
 
-.abyss-projects-table .abyss-project-timeline-navigation button {
-  min-height: 24px;
-  padding: 2px 7px;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-}
-
 .abyss-project-timeline-scale-control {
   position: static;
-  display: flex;
   flex: 0 0 auto;
   margin-left: 4px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s);
-  background: var(--background-primary);
-}
-
-.abyss-projects-table .abyss-project-timeline-navigation button.abyss-project-timeline-scale {
-  min-width: 0;
-  border-radius: 0;
-  color: var(--text-normal);
-}
-
-.abyss-projects-table
-  .abyss-project-timeline-scale-control
-  button.abyss-project-timeline-scale[aria-pressed='true'] {
-  background: var(--background-modifier-hover);
-  color: var(--text-accent);
 }
 
 .abyss-project-timeline-scroll {
@@ -8672,8 +8645,20 @@ table.abyss-project-table {
 
 .abyss-project-timeline-axis-cell.is-today,
 .abyss-project-timeline-axis-hierarchy-cell.is-today {
-  background: color-mix(in srgb, var(--text-error) 9%, transparent);
-  color: var(--text-normal);
+  background: color-mix(
+    in srgb,
+    var(--interactive-accent) var(--abyss-event-fill-strength),
+    var(--background-primary)
+  );
+  color: var(--text-accent);
+}
+
+:is(
+    .abyss-project-timeline-axis-cell.is-today,
+    .abyss-project-timeline-axis-hierarchy-cell.is-today
+  )
+  .abyss-project-timeline-axis-secondary-label {
+  color: var(--text-accent);
 }
 
 .abyss-project-timeline-group-header {
@@ -8895,12 +8880,17 @@ table.abyss-project-table {
   min-width: 40px;
   height: 16px;
   border: 1px solid
-    color-mix(in srgb, var(--abyss-project-status-color, var(--interactive-accent)) 72%, black);
-  border-radius: 4px;
+    color-mix(
+      in srgb,
+      var(--abyss-project-status-color, var(--interactive-accent))
+        var(--abyss-preview-border-tag-strength),
+      var(--text-normal)
+    );
+  border-radius: var(--abyss-calendar-item-radius);
   background: color-mix(
     in srgb,
-    var(--abyss-project-status-color, var(--interactive-accent)) 68%,
-    transparent
+    var(--abyss-project-status-color, var(--interactive-accent)) var(--abyss-event-fill-strength),
+    var(--background-primary)
   );
   cursor: grab;
   touch-action: none;
@@ -8939,12 +8929,16 @@ table.abyss-project-table {
 }
 
 .abyss-project-timeline-grip {
-  width: 2px;
+  width: 3px;
   height: 10px;
-  border-radius: 1px;
-  background: color-mix(in srgb, var(--text-on-accent) 82%, transparent);
-  box-shadow: 0 0 0 1px
-    color-mix(in srgb, var(--abyss-project-status-color, var(--interactive-accent)) 52%, black);
+  border-radius: var(--radius-s);
+  background: color-mix(
+    in srgb,
+    var(--abyss-project-status-color, var(--interactive-accent))
+      var(--abyss-preview-border-tag-strength),
+    var(--text-normal)
+  );
+  box-shadow: none;
   pointer-events: none;
 }
 
