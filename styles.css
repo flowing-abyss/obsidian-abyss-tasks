@@ -4355,7 +4355,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 2px;
 }
 
-:is(.abyss-cal-view-btn, .abyss-project-overview-mode) {
+:is(button.abyss-cal-view-btn, button.abyss-project-overview-mode) {
   padding: 4px 10px;
   border-radius: 6px;
   border: none;
@@ -7399,7 +7399,8 @@ table.abyss-project-table {
   padding: 24px;
 }
 
-.abyss-project-table-status-pill {
+.abyss-project-table-status-pill,
+button.abyss-project-table-status-pill {
   display: inline-flex;
   overflow: hidden;
   max-width: 100%;
