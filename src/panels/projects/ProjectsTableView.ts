@@ -1590,7 +1590,14 @@ export class ProjectsTableView {
     const timeline = (this.timelineView_abyssPrivate ??= this.createTimelineView_abyssPrivate());
     timeline.root.hidden = false;
     const timelineSettings = this.ensureTimelineSettings_abyssPrivate();
-    const relativeColumns = projectTimelineFields(timelineSettings).flatMap((column) => {
+    const timelineFields = projectTimelineFields(timelineSettings);
+    this.compiledPresets_abyssPrivate = new Map(
+      timelineFields.map(({ id }) => [
+        id,
+        compileProjectPropertyPresets(this.projectPropertyDefinition_abyssPrivate(id)),
+      ]),
+    );
+    const relativeColumns = timelineFields.flatMap((column) => {
       const field = findProjectFieldById(this.fields_abyssPrivate, column.id);
       return field === undefined ? [] : [{ column, field }];
     });

@@ -698,6 +698,66 @@ describe('project Kanban overview', () => {
     ).toContain('2026-09-07');
   });
 
+  it('initializes and refreshes custom preset presentation in a retained Timeline', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.overviewView = 'timeline';
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    settings.projects.timeline.fields = [{ id: 'property:Budget', visible: true }];
+    settings.projects.propertyDefinitions['property:Budget'] = {
+      type: 'number',
+      presets: [
+        {
+          value: 42,
+          displayName: 'Estimated budget',
+          color: '#28b8a5',
+          display: 'dot',
+        },
+      ],
+    };
+    const { host, view } = mountView([project()], { settings });
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="property:Budget"]'),
+    );
+    let value = expectDefined(cell.querySelector<HTMLElement>('.abyss-project-property-value'));
+
+    expect(value.textContent).toBe('Estimated budget');
+    expect(value.classList).toContain('is-dot');
+    expect(value.style.getPropertyValue('--abyss-project-property-color')).toBe('#28b8a5');
+
+    cell.focus();
+    settings.projects.propertyDefinitions['property:Budget'] = {
+      type: 'number',
+      presets: [
+        {
+          value: 42,
+          displayName: 'Approved budget',
+          color: '#965fd4',
+          display: 'text',
+        },
+      ],
+    };
+    view.refreshFields();
+
+    expect(host.querySelector('.abyss-project-timeline [data-column-id="property:Budget"]')).toBe(
+      cell,
+    );
+    expect(activeDocument.activeElement).toBe(cell);
+    value = expectDefined(cell.querySelector<HTMLElement>('.abyss-project-property-value'));
+    expect(value.textContent).toBe('Approved budget');
+    expect(value.classList).not.toContain('is-dot');
+    expect(value.style.getPropertyValue('--abyss-project-property-color')).toBe('#965fd4');
+
+    settings.projects.propertyDefinitions['property:Budget'] = { type: 'number' };
+    view.refreshFields();
+
+    expect(host.querySelector('.abyss-project-timeline [data-column-id="property:Budget"]')).toBe(
+      cell,
+    );
+    expect(activeDocument.activeElement).toBe(cell);
+    expect(cell.textContent).toBe('42');
+    expect(cell.querySelector('.abyss-project-property-value')).toBeNull();
+  });
+
   it('keeps a Timeline metadata editor in its single value cell through validation and save', async () => {
     const applyEdits = vi
       .fn<(changes: readonly ProjectCellChange[]) => Promise<ProjectEditResult>>()
