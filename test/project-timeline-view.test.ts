@@ -722,7 +722,7 @@ describe('ProjectsTimelineView', () => {
     expect(currentPeriodRule.style.background).toContain('var(--background-secondary)');
     expect(currentPeriodRule.style.background).not.toContain('var(--text-error)');
     expect(currentPeriodRule.style.color).toBe('var(--text-normal)');
-    expect(currentPeriodRule.style.boxShadow).toBe('inset 0 -2px 0 var(--interactive-accent)');
+    expect(currentPeriodRule.style.boxShadow).toBe('inset 0 2px 0 var(--interactive-accent)');
     expect(barRule.style.border).not.toContain('black');
     expect(barRule.style.border).toContain('var(--abyss-preview-border-tag-strength)');
     expect(barRule.style.border).toContain('var(--text-normal)');
