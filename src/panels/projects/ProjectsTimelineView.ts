@@ -251,17 +251,11 @@ function exactRangeEventTarget(
   return undefined;
 }
 
-function calendarWindowYears(scale: ProjectTimelineSettings['scale']): number {
-  if (scale === 'month') return 1;
-  if (scale === 'quarter') return 3;
-  return 5;
-}
-
 function fallbackAxisDayCount(scale: ProjectTimelineSettings['scale']): number {
   if (scale === 'day') return 31;
   if (scale === 'week') return 140;
   if (scale === 'month') return 732;
-  return scale === 'quarter' ? 2_922 : 11_688;
+  return 2_922;
 }
 
 function reconcileOrder(parent: HTMLElement, desired: readonly HTMLElement[]): void {
@@ -592,6 +586,10 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
 
   private moveAnchor_abyssPrivate(direction: -1 | 1): void {
     const scale = this.context_abyssPrivate.settings().scale;
+    if (scale === 'year') {
+      this.moveYearAnchor_abyssPrivate(direction);
+      return;
+    }
     if (this.fittedWindow_abyssPrivate !== undefined) {
       const context =
         dayOrdinal(this.fittedWindow_abyssPrivate.startDay) +
@@ -605,7 +603,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
         dayFromOrdinal(dayOrdinal(localDay(this.anchor_abyssPrivate)) + span * direction),
       );
     } else {
-      const years = calendarWindowYears(scale);
+      const years = scale === 'month' ? 1 : 3;
       const current = this.anchor_abyssPrivate;
       const shifted = new Date(0);
       shifted.setFullYear(current.getFullYear() + years * direction, current.getMonth(), 1);
@@ -615,6 +613,15 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       shifted.setHours(0, 0, 0, 0);
       this.anchor_abyssPrivate = shifted;
     }
+    this.render_abyssPrivate(true);
+  }
+
+  private moveYearAnchor_abyssPrivate(direction: -1 | 1): void {
+    const window = this.currentWindow_abyssPrivate();
+    const anchor = dayDate(direction === 1 ? window.endDay : window.startDay);
+    anchor.setFullYear(anchor.getFullYear() + (direction === 1 ? 2 : -3), 0, 1);
+    this.anchor_abyssPrivate = anchor;
+    this.fittedWindow_abyssPrivate = undefined;
     this.render_abyssPrivate(true);
   }
 
@@ -825,10 +832,6 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       this.axisLayout_abyssPrivate.cells,
       `abyss-project-timeline-axis-cell${window.scale === 'day' ? ' is-day' : ''}`,
       false,
-    );
-    this.axisDates_abyssPrivate.toggleClass(
-      'is-single-tier',
-      this.axisLayout_abyssPrivate.hierarchyCells.length === 0,
     );
     for (const marker of this.axisDates_abyssPrivate.querySelectorAll(
       ':scope > .abyss-project-timeline-today',

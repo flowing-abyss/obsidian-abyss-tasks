@@ -8610,10 +8610,6 @@ button.abyss-project-table-status-pill {
   bottom: 0;
 }
 
-.abyss-project-timeline-axis-dates.is-single-tier .abyss-project-timeline-axis-cells {
-  top: 0;
-}
-
 .abyss-project-timeline-axis-cell,
 .abyss-project-timeline-axis-hierarchy-cell {
   position: absolute;

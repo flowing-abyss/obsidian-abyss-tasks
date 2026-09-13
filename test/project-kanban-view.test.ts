@@ -554,7 +554,7 @@ describe('project Kanban overview', () => {
     expect(year.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('fits the filtered Timeline range from options while retaining the popover', async () => {
+  it('refits Year from options, including reselection, while retaining the popover', async () => {
     const { host, settings } = mountView([
       project({
         path: 'Projects/Future.md',
@@ -565,14 +565,32 @@ describe('project Kanban overview', () => {
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
     const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
 
-    chooseViewOption(host, 'Scale', 'Month');
+    chooseViewOption(host, 'Scale', 'Year');
     await flushMicrotasks();
 
-    expect(settings.projects.timeline?.scale).toBe('month');
+    expect(settings.projects.timeline?.scale).toBe('year');
     expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
-      '2045-06-01 – 2045-07-31',
+      '2044-01-01 – 2047-12-31',
     );
     expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
+
+    expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Next range"]')).click();
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
+      '2048-01-01 – 2051-12-31',
+    );
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const reopenedPopover = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-view-state-popover'),
+    );
+
+    chooseViewOption(host, 'Scale', 'Year');
+    await flushMicrotasks();
+
+    expect(settings.projects.timeline?.scale).toBe('year');
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
+      '2044-01-01 – 2047-12-31',
+    );
+    expect(host.querySelector('.abyss-view-state-popover')).toBe(reopenedPopover);
   });
 
   it('leaves the Timeline scale and window unchanged when an editor guard rejects', async () => {

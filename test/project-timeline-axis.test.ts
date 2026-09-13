@@ -177,8 +177,12 @@ describe('project Timeline calendar axis', () => {
       scale: 'year',
       startDay: '2023-01-01',
       endDay: '2025-12-31',
-      labels: ['2023', '2024', '2025'],
-      hierarchy: [],
+      labels: ['Q1', 'Q2', 'Q3', 'Q4', 'Q1', 'Q2', 'Q3', 'Q4', 'Q1', 'Q2', 'Q3', 'Q4'],
+      hierarchy: [
+        ['2023', undefined],
+        ['2024', undefined],
+        ['2025', undefined],
+      ],
     },
   ] as const)(
     'builds bounded $scale cells and their calendar hierarchy',
@@ -199,20 +203,86 @@ describe('project Timeline calendar axis', () => {
     },
   );
 
-  it('uses subtle quarter grid boundaries within the Year scale', () => {
-    const window = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'year');
+  it('renders four Year calendar years as aligned quarter cells with current context', () => {
+    const window = projectTimelineWindowForRange('2023-01-01', '2026-12-31', 'year');
 
     const layout = projectTimelineAxisLayout(window, {
       visibleStartDay: window.startDay,
       visibleEndDay: window.endDay,
+      todayDay: '2024-02-29',
     });
 
-    expect(layout.gridBoundaries.map(({ day, weight }) => [day, weight])).toEqual([
-      ['2024-01-01', 'major'],
-      ['2024-04-01', 'minor'],
-      ['2024-07-01', 'minor'],
-      ['2024-10-01', 'minor'],
+    expect(layout.cells).toHaveLength(16);
+    expect(layout.cells.map(({ startDay, endDay, label }) => [startDay, endDay, label])).toEqual([
+      ['2023-01-01', '2023-03-31', 'Q1'],
+      ['2023-04-01', '2023-06-30', 'Q2'],
+      ['2023-07-01', '2023-09-30', 'Q3'],
+      ['2023-10-01', '2023-12-31', 'Q4'],
+      ['2024-01-01', '2024-03-31', 'Q1'],
+      ['2024-04-01', '2024-06-30', 'Q2'],
+      ['2024-07-01', '2024-09-30', 'Q3'],
+      ['2024-10-01', '2024-12-31', 'Q4'],
+      ['2025-01-01', '2025-03-31', 'Q1'],
+      ['2025-04-01', '2025-06-30', 'Q2'],
+      ['2025-07-01', '2025-09-30', 'Q3'],
+      ['2025-10-01', '2025-12-31', 'Q4'],
+      ['2026-01-01', '2026-03-31', 'Q1'],
+      ['2026-04-01', '2026-06-30', 'Q2'],
+      ['2026-07-01', '2026-09-30', 'Q3'],
+      ['2026-10-01', '2026-12-31', 'Q4'],
     ]);
+    expect(
+      layout.hierarchyCells.map(({ startDay, endDay, label }) => [startDay, endDay, label]),
+    ).toEqual([
+      ['2023-01-01', '2023-12-31', '2023'],
+      ['2024-01-01', '2024-12-31', '2024'],
+      ['2025-01-01', '2025-12-31', '2025'],
+      ['2026-01-01', '2026-12-31', '2026'],
+    ]);
+    expect(layout.cells.filter(({ isToday }) => isToday).map(({ label }) => label)).toEqual(['Q1']);
+    expect(
+      layout.hierarchyCells.filter(({ isToday }) => isToday).map(({ label }) => label),
+    ).toEqual(['2024']);
+    expect(
+      layout.gridBoundaries.filter(({ weight }) => weight === 'major').map(({ day }) => day),
+    ).toEqual(['2023-01-01', '2024-01-01', '2025-01-01', '2026-01-01']);
+    expect(
+      layout.gridBoundaries.filter(({ weight }) => weight === 'minor').map(({ day }) => day),
+    ).toEqual([
+      '2023-04-01',
+      '2023-07-01',
+      '2023-10-01',
+      '2024-04-01',
+      '2024-07-01',
+      '2024-10-01',
+      '2025-04-01',
+      '2025-07-01',
+      '2025-10-01',
+      '2026-04-01',
+      '2026-07-01',
+      '2026-10-01',
+    ]);
+  });
+
+  it('bounds a Year viewport slice by quarter cells and its parent year', () => {
+    const window = projectTimelineWindowForRange('0100-01-01', '9999-12-31', 'year');
+
+    const layout = projectTimelineAxisLayout(window, {
+      visibleStartDay: '2024-05-15',
+      visibleEndDay: '2024-08-02',
+      overscanCells: 1,
+    });
+
+    expect(layout.cells.map(({ startDay, endDay, label }) => [startDay, endDay, label])).toEqual([
+      ['2024-01-01', '2024-03-31', 'Q1'],
+      ['2024-04-01', '2024-06-30', 'Q2'],
+      ['2024-07-01', '2024-09-30', 'Q3'],
+      ['2024-10-01', '2024-12-31', 'Q4'],
+    ]);
+    expect(
+      layout.hierarchyCells.map(({ startDay, endDay, label }) => [startDay, endDay, label]),
+    ).toEqual([['2024-01-01', '2024-12-31', '2024']]);
+    expect(layout.gridBoundaries).toHaveLength(4);
   });
 
   it('keeps a multi-year Day layout viewport-bounded and caps pathological physical width', () => {
@@ -278,6 +348,7 @@ describe('project Timeline calendar axis', () => {
     const month = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'month');
     const quarter = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'quarter');
     const year = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'year');
+    const fourYears = projectTimelineWindowForRange('2023-01-01', '2026-12-31', 'year');
 
     expect(projectTimelineTrackWidth(day, 0)).toBe(14 * 32);
     expect(projectTimelineTrackWidth(day, 700)).toBe(700);
@@ -285,6 +356,7 @@ describe('project Timeline calendar axis', () => {
     expect(projectTimelineTrackWidth(month, 0)).toBeGreaterThanOrEqual(12 * 120);
     expect(projectTimelineTrackWidth(quarter, 0)).toBeGreaterThanOrEqual(4 * 144);
     expect(projectTimelineTrackWidth(year, 0)).toBeGreaterThanOrEqual(200);
+    expect(projectTimelineTrackWidth(fourYears, 0)).toBeGreaterThanOrEqual(4 * 200);
     expect(projectTimelineTrackWidth(day, 900)).toBe(900);
   });
 });

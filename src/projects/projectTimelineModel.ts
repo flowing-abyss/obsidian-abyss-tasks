@@ -181,11 +181,6 @@ const FIXED_WINDOW_SPECS = {
   week: { weekOffset: -35, dayCount: 84 },
 } as const;
 
-function calendarYearRadius(scale: 'month' | 'quarter' | 'year'): number {
-  if (scale === 'month') return 0;
-  return scale === 'quarter' ? 1 : 2;
-}
-
 export function projectTimelineWindow(
   anchor: Date,
   scale: ProjectTimelineScale,
@@ -201,9 +196,10 @@ export function projectTimelineWindow(
     first = weekStart + spec.weekOffset;
     last = first + spec.dayCount - 1;
   } else {
-    const yearRadius = calendarYearRadius(scale);
-    first = dayOrdinal(`${String(year - yearRadius).padStart(4, '0')}-01-01`);
-    last = dayOrdinal(`${String(year + yearRadius).padStart(4, '0')}-12-31`);
+    const before = scale === 'month' ? 0 : 1;
+    const after = scale === 'year' ? 2 : before;
+    first = dayOrdinal(`${String(year - before).padStart(4, '0')}-01-01`);
+    last = dayOrdinal(`${String(year + after).padStart(4, '0')}-12-31`);
   }
   return projectTimelineWindowForRange(dayString(first), dayString(last), scale);
 }
@@ -250,8 +246,10 @@ export function projectTimelineFitWindow(
       firstValue.setUTCFullYear(firstValue.getUTCFullYear(), firstQuarter, 1);
       lastValue.setUTCFullYear(lastValue.getUTCFullYear(), lastQuarter + 3, 0);
     } else {
-      firstValue.setUTCFullYear(firstValue.getUTCFullYear(), 0, 1);
-      lastValue.setUTCFullYear(lastValue.getUTCFullYear(), 12, 0);
+      const firstYear = firstValue.getUTCFullYear();
+      const lastYear = Math.max(firstYear + 2, lastValue.getUTCFullYear());
+      firstValue.setUTCFullYear(firstYear - 1, 0, 1);
+      lastValue.setUTCFullYear(lastYear, 12, 0);
     }
     first = Math.floor(firstValue.getTime() / DAY_MS);
     last = Math.floor(lastValue.getTime() / DAY_MS);

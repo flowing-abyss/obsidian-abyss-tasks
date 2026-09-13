@@ -128,6 +128,32 @@ describe('project Timeline model', () => {
     });
   });
 
+  it('fits a Year window to four complete calendar years around a leap-year project', () => {
+    expect(projectTimelineFitWindow('2024-02-29', '2024-02-29', 'year')).toMatchObject({
+      startDay: '2023-01-01',
+      endDay: '2026-12-31',
+      dayCount: 1461,
+      scale: 'year',
+    });
+  });
+
+  it('extends a fitted Year window through a distant final project', () => {
+    expect(projectTimelineFitWindow('2024-06-15', '2032-10-20', 'year')).toMatchObject({
+      startDay: '2023-01-01',
+      endDay: '2032-12-31',
+      scale: 'year',
+    });
+  });
+
+  it('preserves padded years below 100 in a fitted Year window', () => {
+    expect(projectTimelineFitWindow('0099-12-31', '0100-01-01', 'year')).toMatchObject({
+      startDay: '0098-01-01',
+      endDay: '0101-12-31',
+      dayCount: 1460,
+      scale: 'year',
+    });
+  });
+
   it('renders open ranges as one-day anchored points', () => {
     const window = projectTimelineWindow(new Date(2026, 8, 13), 'day');
 
@@ -158,7 +184,7 @@ describe('project Timeline model', () => {
     },
     {
       scale: 'year',
-      window: { startDay: '2026-01-01', endDay: '2030-12-31', dayCount: 1826 },
+      window: { startDay: '2027-01-01', endDay: '2030-12-31', dayCount: 1461 },
     },
   ] as const)(
     'uses a useful $scale viewport with readable major labels',
@@ -247,10 +273,10 @@ describe('project Timeline model', () => {
     },
     {
       scale: 'year',
-      startDay: '0097-01-01',
+      startDay: '0098-01-01',
       endDay: '0101-12-31',
-      dayCount: 1825,
-      dayOffset: 1094,
+      dayCount: 1460,
+      dayOffset: 729,
       visibleDays: 2,
     },
   ] as const)(

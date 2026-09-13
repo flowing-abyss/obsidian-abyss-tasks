@@ -229,9 +229,13 @@ current Table organization only when requested; older saved Timeline state resol
 and End as its field set without eagerly rewriting storage. `projectTimelineModel` reuses the
 DOM-free table projection for search, typed sorting, grouping, and status visibility, then
 classifies strict start and end values as closed, open, unscheduled, or malformed calendar ranges.
-Its day, week, month, quarter, and year windows use inclusive day geometry. `projectTimelineAxis`
-converts those windows into scale-density track widths, viewport-bounded calendar and hierarchy
-cells, and major or minor ordinal grid boundaries without importing Obsidian presentation code.
+Its day, week, month, quarter, and year windows use inclusive day geometry. Year defaults to the
+calendar year before the anchor through the following two years; fitting starts one year before the
+first valid project bound and ends at the later of two years after that bound or the final project
+year. `projectTimelineAxis` converts those windows into scale-density track widths,
+viewport-bounded calendar and hierarchy cells, and major or minor ordinal grid boundaries without
+importing Obsidian presentation code. Year renders quarter cells beneath parent year labels, retains
+quarter and year grid boundaries, and reserves at least 200 pixels per calendar year.
 Physical width is capped below browser layout limits for pathological spans while the logical
 percentage coordinate system remains based on the complete inclusive window.
 
@@ -307,8 +311,11 @@ independent description lines, metadata and empty-field switches, progress, and 
 presentation. Previous, Today, and Next recenter the retained Timeline window. Direct and options
 scale activation share the controller's guarded mutation path; every accepted activation, including
 reselection, fits the filtered valid project bounds outward to the selected calendar unit, with the
-selected scale's today window as the empty fallback. Internal project reveal can still recenter or
-expand the window without exposing a separate Fit or Show range action. The shared controller keeps
+selected scale's today window as the empty fallback. Year navigation uses the actual range edges:
+Next opens the four years after the current end year, while Previous opens the four years before the
+current start year, so fitted spans and leap-year alignment cannot shift an adjacent page. Internal
+project reveal can still recenter or expand the window without exposing a separate Fit or Show range
+action. The shared controller keeps
 selection, editors, clipboard actions, creation receipts, and history on the same project session.
 
 `ProjectsKanbanView` projects ordered status columns and optional inner groups from

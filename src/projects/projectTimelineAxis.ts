@@ -160,11 +160,13 @@ function intervalLabels(
   return { label: String(value.getUTCFullYear()).padStart(4, '0') };
 }
 
-function hierarchyScale(scale: ProjectTimelineScale): ProjectTimelineScale | undefined {
+function hierarchyScale(
+  scale: Exclude<ProjectTimelineScale, 'year'>,
+): Exclude<ProjectTimelineScale, 'day'> {
   if (scale === 'day') return 'week';
   if (scale === 'week') return 'month';
   if (scale === 'month') return 'quarter';
-  return scale === 'quarter' ? 'year' : undefined;
+  return 'year';
 }
 
 function hierarchyLabel(
@@ -322,7 +324,8 @@ export function projectTimelineAxisLayout(
 ): ProjectTimelineAxisLayout {
   const windowStart = ordinal(window.startDay);
   const windowEnd = ordinal(window.endDay);
-  const [firstVisible, lastVisible] = expandedSlice(windowStart, windowEnd, slice, window.scale);
+  const cellScale = window.scale === 'year' ? 'quarter' : window.scale;
+  const [firstVisible, lastVisible] = expandedSlice(windowStart, windowEnd, slice, cellScale);
   const todayOrdinal = slice.todayDay === undefined ? undefined : ordinal(slice.todayDay);
   const visibleStartOrdinal = Math.max(
     windowStart,
@@ -344,12 +347,11 @@ export function projectTimelineAxisLayout(
     visibleStartPercent,
     todayOrdinal,
   };
-  const cells = buildCells(bounds, window.scale, false);
-  const parentScale = hierarchyScale(window.scale);
-  const hierarchyCells = parentScale === undefined ? [] : buildCells(bounds, parentScale, true);
+  const cells = buildCells(bounds, cellScale, false);
+  const parentScale = hierarchyScale(cellScale);
   return {
     cells,
-    hierarchyCells,
+    hierarchyCells: buildCells(bounds, parentScale, true),
     gridBoundaries: buildGridBoundaries(bounds, window.scale),
   };
 }
