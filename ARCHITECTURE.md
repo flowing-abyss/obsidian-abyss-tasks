@@ -298,10 +298,14 @@ until it closes; parent teardown closes any registered child.
 
 Kanban and Timeline use `projectCardFields` for the same field projection and field-selector menu,
 including visibility, ordering, labels, date presentation, and empty-value semantics. The Timeline
-group additionally owns scale, independent description lines, metadata and empty-field switches,
-progress, and unscheduled-row presentation. Its Previous, Today, Next, and Fit controls recenter the
-retained Timeline window while the shared controller keeps selection, editors, clipboard actions,
-creation receipts, and history on the same project session.
+group additionally owns direct Day, Week, Month, Quarter, and Year controls, matching scale options,
+independent description lines, metadata and empty-field switches, progress, and unscheduled-row
+presentation. Previous, Today, and Next recenter the retained Timeline window. Direct and options
+scale activation share the controller's guarded mutation path; every accepted activation, including
+reselection, fits the filtered valid project bounds outward to the selected calendar unit, with the
+selected scale's today window as the empty fallback. Internal project reveal can still recenter or
+expand the window without exposing a separate Fit or Show range action. The shared controller keeps
+selection, editors, clipboard actions, creation receipts, and history on the same project session.
 
 `ProjectsKanbanView` projects ordered status columns and optional inner groups from
 `projectKanbanModel`. It reconciles columns by status key, cards by grouped project occurrence, and
