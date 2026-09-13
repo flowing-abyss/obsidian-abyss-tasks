@@ -1,5 +1,9 @@
 import { setIcon } from 'obsidian';
 import {
+  projectCalendarDayFromOrdinal,
+  projectCalendarDayOrdinal,
+} from '../../projects/projectDateValue';
+import {
   findProjectFieldById,
   type ProjectColumn,
   type ProjectFieldCatalogItem,
@@ -10,6 +14,7 @@ import {
   projectTimelineBarGeometry,
   projectTimelineWindow,
   projectTimelineWindowForRange,
+  type ProjectTimelineBarGeometry,
   type ProjectTimelineGroup,
   type ProjectTimelineModel,
   type ProjectTimelineModelInput,
@@ -24,6 +29,11 @@ import {
 } from '../../projects/projectTimelineSettings';
 import type { Project } from '../../projects/types';
 import { projectCardFields } from './projectCardFields';
+import {
+  freezeProjectTimelineRangeBinding,
+  ProjectTimelinePointerInteraction,
+  type ProjectTimelineRangeCommitter,
+} from './projectTimelineInteraction';
 
 export interface ProjectTimelineCellContext {
   readonly element: HTMLElement;
@@ -34,7 +44,9 @@ export interface ProjectTimelineCellContext {
   };
 }
 
-export interface ProjectsTimelineViewContext<TCell extends ProjectTimelineCellContext> {
+export interface ProjectsTimelineViewContext<
+  TCell extends ProjectTimelineCellContext,
+> extends ProjectTimelineRangeCommitter {
   readonly settings: () => ProjectTimelineSettings;
   readonly modelInput: () => Omit<ProjectTimelineModelInput, 'projects' | 'settings' | 'search'>;
   readonly renderCell: (options: {
@@ -56,6 +68,8 @@ export interface ProjectsTimelineViewContext<TCell extends ProjectTimelineCellCo
     group: ProjectTableGroup,
   ) => void;
   readonly statusColor: (project: Project) => string | undefined;
+  readonly openRangeMenu: (occurrenceId: string, event: MouseEvent | KeyboardEvent) => void;
+  readonly finishEditor: () => Promise<boolean>;
   readonly now?: () => Date;
 }
 
@@ -72,6 +86,11 @@ interface RenderedRow<TCell extends ProjectTimelineCellContext> {
   readonly metadata: HTMLElement;
   readonly progress: HTMLElement;
   readonly track: HTMLElement;
+  readonly bar: HTMLElement;
+  readonly startHandle: HTMLElement;
+  readonly endHandle: HTMLElement;
+  readonly state: HTMLElement;
+  readonly showRange: HTMLButtonElement;
   readonly cells: Map<string, TCell>;
   project: Project;
   range: ProjectTimelineRange;
@@ -101,16 +120,17 @@ interface TimelineAxisGeometry {
   readonly viewportWidth: number;
 }
 
+interface TimelineFocusIdentity {
+  readonly projectPath: string;
+  readonly part: 'bar' | 'track';
+}
+
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
 function dayOrdinal(day: string): number {
-  const [year, month, date] = day.split('-').map(Number) as [number, number, number];
-  const value = new Date(0);
-  value.setUTCHours(0, 0, 0, 0);
-  value.setUTCFullYear(year, month - 1, date);
-  return Math.floor(value.getTime() / 86_400_000);
+  return projectCalendarDayOrdinal(day) as number;
 }
 
 function dayDate(day: string): Date {
@@ -122,11 +142,7 @@ function dayDate(day: string): Date {
 }
 
 function dayFromOrdinal(ordinal: number): string {
-  const value = new Date(ordinal * 86_400_000);
-  const year = String(value.getUTCFullYear()).padStart(4, '0');
-  const month = String(value.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(value.getUTCDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return projectCalendarDayFromOrdinal(ordinal) as string;
 }
 
 function localDay(date: Date): string {
@@ -145,6 +161,46 @@ function rangeBounds(range: ProjectTimelineRange): readonly string[] {
   if (range.kind === 'closed') return [range.startDay, range.endDay];
   const anchor = rangeAnchor(range);
   return anchor === undefined ? [] : [anchor];
+}
+
+function timelineRangeLabel(range: ProjectTimelineRange): string {
+  if (range.kind === 'open-start') {
+    return `No start date, ends ${range.endDay}. Arrow keys move; Shift plus Arrow adjusts End.`;
+  }
+  if (range.kind === 'open-end') {
+    return `Starts ${range.startDay}, no end date. Arrow keys move; Shift plus Arrow sets End.`;
+  }
+  if (range.kind === 'closed') {
+    return `${range.startDay} through ${range.endDay}. Arrow keys move; Shift plus Arrow adjusts End.`;
+  }
+  return 'Timeline date range';
+}
+
+function rangeEndpoint(range: ProjectTimelineRange, endpoint: 'start' | 'end'): string | undefined {
+  if (endpoint === 'start' && (range.kind === 'closed' || range.kind === 'open-end')) {
+    return range.startDay;
+  }
+  if (endpoint === 'end' && (range.kind === 'closed' || range.kind === 'open-start')) {
+    return range.endDay;
+  }
+  return undefined;
+}
+
+function endpointVisible(day: string | undefined, window: ProjectTimelineWindow): boolean {
+  if (day === undefined) return false;
+  const value = dayOrdinal(day);
+  return value >= dayOrdinal(window.startDay) && value <= dayOrdinal(window.endDay);
+}
+
+function requestsRangeMenu(event: KeyboardEvent): boolean {
+  if (event.altKey || event.ctrlKey || event.metaKey) return false;
+  return event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey);
+}
+
+function rangeArrowDelta(event: KeyboardEvent): -1 | 1 | undefined {
+  if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return undefined;
+  if (event.key === 'ArrowLeft') return -1;
+  return event.key === 'ArrowRight' ? 1 : undefined;
 }
 
 function calendarWindowYears(scale: ProjectTimelineSettings['scale']): number {
@@ -180,6 +236,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   private selectedPath_abyssPrivate: string | undefined;
   private hiddenScrollPosition_abyssPrivate: TimelineScrollPosition | undefined;
   private readonly scaleButton_abyssPrivate: HTMLButtonElement;
+  private readonly interaction_abyssPrivate: ProjectTimelinePointerInteraction;
 
   constructor(
     host: HTMLElement,
@@ -220,6 +277,21 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     });
     this.axis_abyssPrivate = this.scroll.createDiv({ cls: 'abyss-project-timeline-axis' });
     this.groupsHost_abyssPrivate = this.scroll.createDiv({ cls: 'abyss-project-timeline-groups' });
+    this.scroll.addEventListener('scroll', this.syncRangeStateOffset_abyssPrivate);
+    this.syncRangeStateOffset_abyssPrivate();
+    this.interaction_abyssPrivate = new ProjectTimelinePointerInteraction({
+      root: this.root,
+      scroll: this.scroll,
+      window: () => this.currentWindow_abyssPrivate(),
+      captureRangeSource: context_abyssPrivate.captureRangeSource,
+      commitRangeEdit: context_abyssPrivate.commitRangeEdit,
+      reportRangeFailure: context_abyssPrivate.reportRangeFailure,
+      finishEditor: context_abyssPrivate.finishEditor,
+      selectRange: (occurrenceId, focus) => {
+        const row = this.findRowByOccurrence_abyssPrivate(occurrenceId);
+        if (row !== undefined) this.selectRange_abyssPrivate(row, focus);
+      },
+    });
   }
 
   mount(projects: readonly Project[], search: string): void {
@@ -234,6 +306,8 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   }
 
   destroy(): void {
+    this.interaction_abyssPrivate.destroy();
+    this.scroll.removeEventListener('scroll', this.syncRangeStateOffset_abyssPrivate);
     this.groups_abyssPrivate.clear();
     this.visibleCells_abyssPrivate = [];
     this.root.remove();
@@ -265,10 +339,15 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   }
 
   captureViewportBeforeHide(): void {
+    this.interaction_abyssPrivate.cancelActive();
     this.hiddenScrollPosition_abyssPrivate = {
       left: this.scroll.scrollLeft,
       top: this.scroll.scrollTop,
     };
+  }
+
+  cancelInteraction(): void {
+    this.interaction_abyssPrivate.cancelActive();
   }
 
   prepareScaleChange(): void {
@@ -478,6 +557,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   private render_abyssPrivate(navigation: boolean): void {
     this.syncScaleButton_abyssPrivate();
     const focused = this.focusedDescendant_abyssPrivate();
+    const focusedRange = this.focusedRangeIdentity_abyssPrivate(focused);
     const hiddenPosition = this.hiddenScrollPosition_abyssPrivate;
     const left = hiddenPosition?.left ?? this.scroll.scrollLeft;
     const top = hiddenPosition?.top ?? this.scroll.scrollTop;
@@ -493,7 +573,18 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     const window = this.currentWindow_abyssPrivate();
     this.renderAxis_abyssPrivate(window);
     this.reconcileGroups_abyssPrivate(model.groups, window);
+    this.interaction_abyssPrivate.reconcileAfterRender();
     this.syncSelectedRows_abyssPrivate();
+    this.restoreScroll_abyssPrivate(navigation, window, left, top);
+    this.restoreFocus_abyssPrivate(focused, focusedRange);
+  }
+
+  private restoreScroll_abyssPrivate(
+    navigation: boolean,
+    window: ProjectTimelineWindow,
+    left: number,
+    top: number,
+  ): void {
     if (this.scaleContextOrdinal_abyssPrivate !== undefined) {
       this.scroll.scrollLeft = this.scaleScrollLeft_abyssPrivate(
         window,
@@ -506,9 +597,31 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       this.scroll.scrollLeft = left;
       this.scroll.scrollTop = top;
     }
+    this.syncRangeStateOffset_abyssPrivate();
+  }
+
+  private readonly syncRangeStateOffset_abyssPrivate = (): void => {
+    this.root.style.setProperty(
+      '--abyss-project-timeline-range-state-left',
+      `${this.scroll.scrollLeft + 10}px`,
+    );
+  };
+
+  private restoreFocus_abyssPrivate(
+    focused: HTMLElement | undefined,
+    focusedRange: TimelineFocusIdentity | undefined,
+  ): void {
     if (focused?.isConnected === true && this.root.ownerDocument.activeElement !== focused) {
       focused.focus({ preventScroll: true });
+      return;
     }
+    if (focused === undefined || focused.isConnected || focusedRange === undefined) return;
+    const row = this.findRow_abyssPrivate(focusedRange.projectPath);
+    let replacement = this.root;
+    if (row !== undefined) {
+      replacement = focusedRange.part === 'bar' && !row.bar.hidden ? row.bar : row.track;
+    }
+    replacement.focus({ preventScroll: true });
   }
 
   private renderAxis_abyssPrivate(window: ProjectTimelineWindow): void {
@@ -621,6 +734,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       row.groupKey = model.key;
       row.element.dataset['projectPath'] = item.project.path;
       row.element.dataset['occurrenceId'] = item.occurrenceId;
+      row.track.dataset['occurrenceId'] = item.occurrenceId;
       this.patchRow_abyssPrivate(row, item, visibleCells, window);
       desired.push(row.element);
     }
@@ -639,22 +753,64 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   ): RenderedRow<TCell> {
     const element = group.body.createDiv({ cls: 'abyss-project-timeline-row' });
     const summary = element.createDiv({ cls: 'abyss-project-timeline-summary' });
+    const track = element.createDiv({
+      cls: 'abyss-project-timeline-track',
+      attr: { tabindex: '0', role: 'button', 'data-timeline-part': 'track' },
+    });
+    const bar = track.createDiv({
+      cls: 'abyss-project-timeline-bar',
+      attr: {
+        tabindex: '0',
+        role: 'button',
+        'data-timeline-part': 'bar',
+        'aria-keyshortcuts': 'ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight',
+      },
+    });
     const row: RenderedRow<TCell> = {
       element,
       summary,
       name: summary.createDiv({ cls: 'abyss-project-timeline-name' }),
       metadata: summary.createDiv({ cls: 'abyss-project-timeline-metadata' }),
       progress: summary.createDiv({ cls: 'abyss-project-timeline-progress' }),
-      track: element.createDiv({ cls: 'abyss-project-timeline-track' }),
+      track,
+      bar,
+      startHandle: bar.createSpan({
+        cls: 'abyss-project-timeline-handle is-start',
+        attr: { 'data-timeline-part': 'start', 'aria-hidden': 'true' },
+      }),
+      endHandle: bar.createSpan({
+        cls: 'abyss-project-timeline-handle is-end',
+        attr: { 'data-timeline-part': 'end', 'aria-hidden': 'true' },
+      }),
+      state: track.createSpan({ cls: 'abyss-project-timeline-state' }),
+      showRange: track.createEl('button', {
+        cls: 'abyss-project-timeline-show-range',
+        text: 'Show range',
+        attr: { type: 'button' },
+      }),
       cells: new Map(),
       project: item.project,
       range: item.range,
       groupKey,
     };
+    bar.addEventListener('keydown', (event) => {
+      this.handleRangeKeydown_abyssPrivate(row, event);
+    });
+    bar.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      this.selectRange_abyssPrivate(row, bar);
+      this.context_abyssPrivate.openRangeMenu(row.element.dataset['occurrenceId'] ?? '', event);
+    });
+    row.showRange.addEventListener('click', () => {
+      this.context_abyssPrivate.requestNavigation(() => {
+        this.revealProject(row.project.path);
+      });
+    });
     element.addEventListener('click', (event) => {
       if (
         event.target instanceof Element &&
-        event.target.closest('.abyss-project-table-cell') !== null
+        (event.target.closest('.abyss-project-table-cell') !== null ||
+          event.target.closest('[data-timeline-part]') !== null)
       )
         return;
       this.selectedPath_abyssPrivate = row.project.path;
@@ -823,25 +979,61 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     range: ProjectTimelineRange,
     window: ProjectTimelineWindow,
   ): void {
-    row.track.empty();
+    for (const marker of row.track.querySelectorAll(':scope > .abyss-project-timeline-today')) {
+      marker.remove();
+    }
     this.addTodayMarker_abyssPrivate(row.track, window);
+    this.patchRangeEditability_abyssPrivate(row);
     const geometry = projectTimelineBarGeometry(range, window);
     if (geometry === undefined) {
+      row.bar.hidden = true;
       this.renderMissingRange_abyssPrivate(row, range);
       return;
     }
-    const bar = row.track.createDiv({ cls: `abyss-project-timeline-bar is-${range.kind}` });
+    this.patchVisibleRange_abyssPrivate(row, range, window, geometry);
+  }
+
+  private patchRangeEditability_abyssPrivate(row: RenderedRow<TCell>): void {
+    const capture = this.context_abyssPrivate.captureRangeSource(
+      row.element.dataset['occurrenceId'] ?? '',
+    );
+    const editReason = capture.kind === 'rejected' ? capture.reason : undefined;
+    row.track.setAttribute('aria-disabled', String(editReason !== undefined));
+    row.bar.setAttribute('aria-disabled', String(editReason !== undefined));
+    row.track.setAttribute(
+      'aria-label',
+      editReason === undefined
+        ? `Timeline dates for ${row.project.name}. Click to set a missing date or drag to draw a range.`
+        : `Timeline dates for ${row.project.name}. ${editReason}`,
+    );
+    if (editReason === undefined) {
+      row.track.removeAttribute('title');
+      row.bar.removeAttribute('title');
+    } else {
+      row.track.setAttribute('title', editReason);
+      row.bar.setAttribute('title', editReason);
+    }
+  }
+
+  private patchVisibleRange_abyssPrivate(
+    row: RenderedRow<TCell>,
+    range: ProjectTimelineRange,
+    window: ProjectTimelineWindow,
+    geometry: ProjectTimelineBarGeometry,
+  ): void {
+    row.state.hidden = true;
+    row.showRange.hidden = true;
+    const bar = row.bar;
+    bar.hidden = false;
+    bar.className = `abyss-project-timeline-bar is-${range.kind}`;
     bar.style.left = `${geometry.leftPercent}%`;
     bar.style.width = `${geometry.widthPercent}%`;
     const color = this.context_abyssPrivate.statusColor(row.project);
     if (color !== undefined) bar.style.setProperty('--abyss-project-status-color', color);
-    if (range.kind === 'open-start')
-      bar.setAttribute('aria-label', `Starts before range, ends ${range.endDay}`);
-    else if (range.kind === 'open-end')
-      bar.setAttribute('aria-label', `Starts ${range.startDay}, no end date`);
-    else if (range.kind === 'closed') {
-      bar.setAttribute('aria-label', `${range.startDay} through ${range.endDay}`);
-    }
+    else bar.style.removeProperty('--abyss-project-status-color');
+    bar.setAttribute('aria-label', timelineRangeLabel(range));
+    row.startHandle.hidden = !endpointVisible(rangeEndpoint(range, 'start'), window);
+    row.endHandle.hidden = !endpointVisible(rangeEndpoint(range, 'end'), window);
   }
 
   private renderMissingRange_abyssPrivate(
@@ -849,22 +1041,59 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     range: ProjectTimelineRange,
   ): void {
     if (range.kind === 'unscheduled' || range.kind === 'malformed') {
-      row.track.createSpan({
-        cls: `abyss-project-timeline-state is-${range.kind}`,
-        text: range.kind === 'unscheduled' ? 'Unscheduled' : 'Invalid date range',
-      });
+      row.state.hidden = false;
+      row.state.className = `abyss-project-timeline-state is-${range.kind}`;
+      row.state.setText(range.kind === 'unscheduled' ? 'Unscheduled' : 'Invalid date range');
+      row.showRange.hidden = true;
       return;
     }
-    const show = row.track.createEl('button', {
-      cls: 'abyss-project-timeline-show-range',
-      text: 'Show range',
-      attr: { type: 'button', 'aria-label': `Show date range for ${row.project.name}` },
-    });
-    show.addEventListener('click', () => {
-      this.context_abyssPrivate.requestNavigation(() => {
-        this.revealProject(row.project.path);
-      });
-    });
+    row.state.hidden = true;
+    row.showRange.hidden = false;
+    row.showRange.setAttribute('aria-label', `Show date range for ${row.project.name}`);
+  }
+
+  private selectRange_abyssPrivate(row: RenderedRow<TCell>, focus: HTMLElement): void {
+    this.selectedPath_abyssPrivate = row.project.path;
+    const cell = row.cells.get('name') ?? row.cells.values().next().value;
+    if (cell !== undefined) this.context_abyssPrivate.selectCell(cell);
+    focus.focus({ preventScroll: true });
+    this.syncSelectedRows_abyssPrivate();
+  }
+
+  private handleRangeKeydown_abyssPrivate(row: RenderedRow<TCell>, event: KeyboardEvent): void {
+    if (requestsRangeMenu(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.selectRange_abyssPrivate(row, row.bar);
+      this.context_abyssPrivate.openRangeMenu(row.element.dataset['occurrenceId'] ?? '', event);
+      return;
+    }
+    const deltaDays = rangeArrowDelta(event);
+    if (deltaDays === undefined) return;
+    const occurrenceId = row.element.dataset['occurrenceId'];
+    if (occurrenceId === undefined) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.selectRange_abyssPrivate(row, row.bar);
+    const captured = this.context_abyssPrivate.captureRangeSource(occurrenceId);
+    if (captured.kind === 'rejected') {
+      this.context_abyssPrivate.reportRangeFailure(captured.reason);
+      return;
+    }
+    void this.context_abyssPrivate
+      .commitRangeEdit({
+        kind: 'keyboard',
+        target: freezeProjectTimelineRangeBinding(captured.source),
+        intent: event.shiftKey ? { type: 'adjustEnd', deltaDays } : { type: 'move', deltaDays },
+      })
+      .then(
+        (result) => {
+          if (result.failed.length > 0) this.context_abyssPrivate.reportRangeFailure(result);
+        },
+        (error: unknown) => {
+          this.context_abyssPrivate.reportRangeFailure(error);
+        },
+      );
   }
 
   private focusedDescendant_abyssPrivate(): HTMLElement | undefined {
@@ -872,8 +1101,26 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     return active instanceof HTMLElement && this.root.contains(active) ? active : undefined;
   }
 
+  private focusedRangeIdentity_abyssPrivate(
+    focused: HTMLElement | undefined,
+  ): TimelineFocusIdentity | undefined {
+    if (focused === undefined) return undefined;
+    const part = focused.dataset['timelinePart'];
+    if (part !== 'bar' && part !== 'track') return undefined;
+    const projectPath = focused.closest<HTMLElement>('[data-project-path]')?.dataset['projectPath'];
+    return projectPath === undefined ? undefined : { projectPath, part };
+  }
+
   private findRow_abyssPrivate(path: string): RenderedRow<TCell> | undefined {
     return this.findLocatedRow_abyssPrivate(path)?.row;
+  }
+
+  private findRowByOccurrence_abyssPrivate(occurrenceId: string): RenderedRow<TCell> | undefined {
+    for (const group of this.groups_abyssPrivate.values()) {
+      const row = group.rows.get(occurrenceId);
+      if (row !== undefined) return row;
+    }
+    return undefined;
   }
 
   private findLocatedRow_abyssPrivate(

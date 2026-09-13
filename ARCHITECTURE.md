@@ -232,6 +232,15 @@ classifies strict start and end values as closed, open, unscheduled, or malforme
 Its day, week, month, quarter, and year windows use inclusive day geometry and bounded,
 scale-specific axis ticks independent from Obsidian presentation code.
 
+`projectTimelineEdits` owns pure, bounded calendar-day planning for range moves, endpoint
+resizing, missing-endpoint creation, and range drawing. `projectTimelineInteraction` owns native
+pointer capture, preview DOM, hover dates, edge scrolling, and cancellation; it emits frozen
+pointer intents or relative keyboard intents and never writes Markdown or records history.
+`ProjectsTimelineView` retains keyed tracks, bars, endpoint handles, cursor, and tooltip nodes so
+focus and preview ownership survive ordinary receipt refreshes. Resize handles appear only for
+actual endpoints inside the visible window; minimum visual bar width and clipped geometry do not
+change the calendar-day coordinate system.
+
 The overview controller initializes each status column's manual path sequence from its first complete
 project snapshot and appends newly observed paths even while a field sort, search, or status filter
 hides their manual projection. Missing and filtered paths keep their remembered ranks. These
@@ -247,6 +256,16 @@ without destroying its nodes. All three surfaces render
 metadata and progress through the shared project-cell renderer and send edits through the same
 `ProjectManager.applyEdits` coordinator. Switching to a project dashboard temporarily detaches the
 overview surface, and returning reattaches the same session and active overview mode.
+
+Timeline range edits enter the overview controller's existing ordered session mutation path. A
+pointer gesture freezes occurrence, path, field binding, exact source key, raw value, existence,
+and projected range at capture; the controller rejects any mismatch before planning the write.
+Keyboard arrows freeze the target binding at submission but resolve their relative move or End
+adjustment from the latest receipt-projected range when their queue turn begins. A real edit sends
+both endpoints in one `applyEdits` batch: the unchanged endpoint is an exact companion guard with
+raw-value restoration, preserving missing, null, empty, and authored source spelling. No-op plans
+skip the manager and history. Successful receipts use the common projection, history, Undo/Redo,
+and single failure-reporting boundary.
 
 The project toolbar composes the shared recursive `ViewOptionsPopover` as Group by, Sort by, and one
 active-view group. Nested disclosures close only siblings at their own level. The Table group owns

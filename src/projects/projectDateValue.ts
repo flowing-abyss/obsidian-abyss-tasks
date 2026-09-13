@@ -1,5 +1,9 @@
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/u;
 const ISO_TIME = /^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:\d{2})?$/u;
+const DAY_MS = 86_400_000;
+
+export const MIN_PROJECT_CALENDAR_YEAR = 100;
+export const MAX_PROJECT_CALENDAR_YEAR = 9999;
 
 function validDateParts(year: number, month: number, day: number): boolean {
   const value = new Date(year, month - 1, day);
@@ -11,6 +15,44 @@ function parseDateParts(value: string): readonly [number, number, number] | unde
   if (match === null) return undefined;
   const parts = [Number(match[1]), Number(match[2]), Number(match[3])] as const;
   return validDateParts(...parts) ? parts : undefined;
+}
+
+function parseCalendarDayParts(value: unknown): readonly [number, number, number] | undefined {
+  if (typeof value !== 'string') return undefined;
+  const match = /^(\d{4,6})-(\d{2})-(\d{2})$/u.exec(value);
+  if (match === null) return undefined;
+  const parts = [Number(match[1]), Number(match[2]), Number(match[3])] as const;
+  const [year, month, day] = parts;
+  const date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(year, month - 1, day);
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+    ? parts
+    : undefined;
+}
+
+/** Converts a calendar-day string used by Timeline geometry to its UTC day ordinal. */
+export function projectCalendarDayOrdinal(value: unknown): number | undefined {
+  const parts = parseCalendarDayParts(value);
+  if (parts === undefined) return undefined;
+  const [year, month, day] = parts;
+  const date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(year, month - 1, day);
+  return Math.floor(date.getTime() / DAY_MS);
+}
+
+/** Converts a Timeline geometry ordinal back to a calendar-day string. */
+export function projectCalendarDayFromOrdinal(ordinal: number): string | undefined {
+  if (!Number.isSafeInteger(ordinal)) return undefined;
+  const date = new Date(ordinal * DAY_MS);
+  if (!Number.isFinite(date.getTime())) return undefined;
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${String(year).padStart(4, '0')}-${month}-${day}`;
 }
 
 function matchesLocalParts(

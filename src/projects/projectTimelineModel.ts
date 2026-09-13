@@ -1,6 +1,8 @@
 import {
   parseProjectDate,
+  projectCalendarDayFromOrdinal,
   projectCalendarDayFromParsed,
+  projectCalendarDayOrdinal,
   type ParsedProjectDate,
 } from './projectDateValue';
 import {
@@ -67,19 +69,11 @@ export interface ProjectTimelineBarGeometry {
 const DAY_MS = 86_400_000;
 
 function dayOrdinal(day: string): number {
-  const [year, month, date] = day.split('-').map(Number) as [number, number, number];
-  const value = new Date(0);
-  value.setUTCHours(0, 0, 0, 0);
-  value.setUTCFullYear(year, month - 1, date);
-  return Math.floor(value.getTime() / DAY_MS);
+  return projectCalendarDayOrdinal(day) as number;
 }
 
 function dayString(ordinal: number): string {
-  const value = new Date(ordinal * DAY_MS);
-  const year = String(value.getUTCFullYear()).padStart(4, '0');
-  const month = String(value.getUTCMonth() + 1).padStart(2, '0');
-  const date = String(value.getUTCDate()).padStart(2, '0');
-  return `${year}-${month}-${date}`;
+  return projectCalendarDayFromOrdinal(ordinal) as string;
 }
 
 function localDay(date: Date): string {
@@ -106,7 +100,7 @@ const MONTHS = [
 ] as const;
 
 function tickLabel(ordinal: number, scale: ProjectTimelineScale): string {
-  const value = new Date(ordinal * DAY_MS);
+  const value = new Date(ordinal * 86_400_000);
   const year = value.getUTCFullYear();
   const month = value.getUTCMonth();
   const date = value.getUTCDate();
@@ -120,12 +114,12 @@ function tickLabel(ordinal: number, scale: ProjectTimelineScale): string {
 function nextTickOrdinal(ordinal: number, scale: ProjectTimelineScale): number {
   if (scale === 'day') return ordinal + 1;
   if (scale === 'week') return ordinal + 7;
-  const value = new Date(ordinal * DAY_MS);
+  const value = new Date(ordinal * 86_400_000);
   if (scale === 'month') value.setUTCFullYear(value.getUTCFullYear(), value.getUTCMonth() + 1, 1);
   else if (scale === 'quarter') {
     value.setUTCFullYear(value.getUTCFullYear(), value.getUTCMonth() + 3, 1);
   } else value.setUTCFullYear(value.getUTCFullYear() + 1, 0, 1);
-  return Math.floor(value.getTime() / DAY_MS);
+  return Math.floor(value.getTime() / 86_400_000);
 }
 
 function firstWeekTick(first: number, value: Date): number {
@@ -137,7 +131,7 @@ function firstMonthTick(value: Date): number {
   if (value.getUTCDate() > 1) {
     value.setUTCFullYear(value.getUTCFullYear(), value.getUTCMonth() + 1, 1);
   }
-  return Math.floor(value.getTime() / DAY_MS);
+  return Math.floor(value.getTime() / 86_400_000);
 }
 
 function firstQuarterTick(value: Date): number {
@@ -145,14 +139,14 @@ function firstQuarterTick(value: Date): number {
   const quarterMonth = Math.floor(month / 3) * 3;
   const onQuarterStart = month === quarterMonth && value.getUTCDate() === 1;
   value.setUTCFullYear(value.getUTCFullYear(), onQuarterStart ? quarterMonth : quarterMonth + 3, 1);
-  return Math.floor(value.getTime() / DAY_MS);
+  return Math.floor(value.getTime() / 86_400_000);
 }
 
 function firstYearTick(value: Date): number {
   if (value.getUTCMonth() !== 0 || value.getUTCDate() !== 1) {
     value.setUTCFullYear(value.getUTCFullYear() + 1, 0, 1);
   }
-  return Math.floor(value.getTime() / DAY_MS);
+  return Math.floor(value.getTime() / 86_400_000);
 }
 
 function firstTickOrdinal(first: number, scale: ProjectTimelineScale): number {
@@ -340,8 +334,8 @@ export function projectTimelineBarGeometry(
   if (range.kind === 'unscheduled' || range.kind === 'malformed') return undefined;
   const windowStart = dayOrdinal(window.startDay);
   const windowEnd = dayOrdinal(window.endDay);
-  const start = range.kind === 'open-start' ? windowStart : dayOrdinal(range.startDay);
-  const end = range.kind === 'open-end' ? windowEnd : dayOrdinal(range.endDay);
+  const start = range.kind === 'open-start' ? dayOrdinal(range.endDay) : dayOrdinal(range.startDay);
+  const end = range.kind === 'open-end' ? dayOrdinal(range.startDay) : dayOrdinal(range.endDay);
   const visibleStart = Math.max(windowStart, start);
   const visibleEnd = Math.min(windowEnd, end);
   if (visibleStart > visibleEnd) return undefined;

@@ -3,7 +3,10 @@ import type { AppState } from '../../app/AppState';
 import { exactLinkToken, parseLinks } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
 import { isProjectCreationError, type ProjectCreateRequest } from '../../projects/projectCreation';
-import { isProjectEditValidationError } from '../../projects/projectEditError';
+import {
+  isProjectEditValidationError,
+  ProjectEditValidationError,
+} from '../../projects/projectEditError';
 import type { ProjectEditHistory } from '../../projects/projectEditHistory';
 import {
   projectCellSourceValue,
@@ -61,7 +64,16 @@ import {
   effectiveProjectTableDateDisplay,
   setProjectTableColumnDateDisplay,
 } from '../../projects/projectTableSettings';
-import { buildProjectTimelineModel } from '../../projects/projectTimelineModel';
+import {
+  planProjectTimelineEdit,
+  PROJECT_TIMELINE_INVALID_RANGE_REASON,
+  projectTimelineRawEditEligibility,
+  type ProjectTimelineEditPlan,
+} from '../../projects/projectTimelineEdits';
+import {
+  buildProjectTimelineModel,
+  type ProjectTimelineRow,
+} from '../../projects/projectTimelineModel';
 import {
   buildDefaultProjectTimelineSettings,
   projectTimelineDescriptionLines,
@@ -124,6 +136,14 @@ import {
   type ProjectTableSelectableCell,
   type ProjectTableSelectionDirection,
 } from './projectTableSelection';
+import {
+  sameProjectTimelineRangeBinding,
+  sameProjectTimelineRangeSource,
+  type FrozenProjectTimelineRangeSource,
+  type ProjectTimelineEndpointEvidence,
+  type ProjectTimelineRangeCapture,
+  type ProjectTimelineRangeEditRequest,
+} from './projectTimelineInteraction';
 
 const PROJECT_TABLE_ROW_DRAG_TYPE = 'application/x-abyss-project-table-row';
 
@@ -564,6 +584,47 @@ function projectCellEditorState(
   };
 }
 
+function expectProjectFieldProperty(field: ProjectField): string {
+  if (field.property === undefined || field.property.length === 0) {
+    throw new ProjectEditValidationError(`${field.label} has no configured source property.`);
+  }
+  return field.property;
+}
+
+function timelineDateField(
+  fields: readonly ProjectFieldCatalogItem[],
+  id: 'start' | 'end',
+): ProjectField | undefined {
+  const field = findProjectFieldById(fields, id);
+  if (field === undefined || !isAvailableProjectField(field)) return undefined;
+  if (field.type !== 'date' || field.property === undefined || field.property.length === 0) {
+    return undefined;
+  }
+  return field;
+}
+
+function sameTimelineProperty(left: ProjectField, right: ProjectField): boolean {
+  return (
+    expectProjectFieldProperty(left).localeCompare(expectProjectFieldProperty(right), undefined, {
+      sensitivity: 'accent',
+    }) === 0
+  );
+}
+
+function ambiguousTimelineSource(
+  project: Project,
+  fields: readonly ProjectField[],
+): ProjectField | undefined {
+  return fields.find((field) => {
+    const property = expectProjectFieldProperty(field);
+    return (
+      Object.keys(project.frontmatter).filter(
+        (key) => key.localeCompare(property, undefined, { sensitivity: 'accent' }) === 0,
+      ).length > 1
+    );
+  });
+}
+
 export class ProjectsTableView {
   private projects_abyssPrivate: readonly Project[] = [];
   private fields_abyssPrivate: readonly ProjectFieldCatalogItem[] = [];
@@ -625,6 +686,7 @@ export class ProjectsTableView {
   private readonly resizeObserver_abyssPrivate: ResizeObserver | undefined;
   private nativeMenuOpen_abyssPrivate = false;
   private relativeDateInterval_abyssPrivate: number | undefined;
+  private timelineRangeTail_abyssPrivate: Promise<void> = Promise.resolve();
 
   constructor(
     host: HTMLElement,
@@ -1418,8 +1480,10 @@ export class ProjectsTableView {
   private showTableSurface_abyssPrivate(): void {
     this.scroll_abyssPrivate.hidden = false;
     if (this.kanbanView_abyssPrivate !== undefined) this.kanbanView_abyssPrivate.root.hidden = true;
-    if (this.timelineView_abyssPrivate !== undefined)
+    if (this.timelineView_abyssPrivate !== undefined) {
+      this.timelineView_abyssPrivate.cancelInteraction();
       this.timelineView_abyssPrivate.root.hidden = true;
+    }
   }
 
   private projectTableModelInput_abyssPrivate(): ProjectTableModelInput {
@@ -1437,8 +1501,10 @@ export class ProjectsTableView {
 
   private renderKanban_abyssPrivate(): void {
     this.scroll_abyssPrivate.hidden = true;
-    if (this.timelineView_abyssPrivate !== undefined)
+    if (this.timelineView_abyssPrivate !== undefined) {
+      this.timelineView_abyssPrivate.cancelInteraction();
       this.timelineView_abyssPrivate.root.hidden = true;
+    }
     const board = (this.kanbanView_abyssPrivate ??= this.createKanbanView_abyssPrivate());
     board.root.hidden = false;
     const settings = this.ensureKanbanSettings_abyssPrivate();
@@ -1522,6 +1588,21 @@ export class ProjectsTableView {
         this.context_abyssPrivate.settings.projects.statuses.find(
           ({ id }) => id === project.statusId,
         )?.color,
+      captureRangeSource: (occurrenceId) =>
+        this.captureTimelineRangeSource_abyssPrivate(occurrenceId),
+      commitRangeEdit: (request) => this.commitTimelineRangeEdit_abyssPrivate(request),
+      reportRangeFailure: (failure) => {
+        this.reportTimelineRangeFailure_abyssPrivate(failure);
+      },
+      finishEditor: () => this.requestFinishActiveEditor(),
+      openRangeMenu: (occurrenceId, event) => {
+        const rendered = this.timelineRenderedCells_abyssPrivate.find(
+          ({ identity }) => identity.occurrenceId === occurrenceId && identity.columnId === 'name',
+        );
+        if (rendered === undefined) return;
+        this.selectCell_abyssPrivate(rendered, false);
+        this.showDescriptionMenu_abyssPrivate(rendered, event);
+      },
     });
     this.scroll_abyssPrivate.after(timeline.root);
     return timeline;
@@ -1622,6 +1703,200 @@ export class ProjectsTableView {
     if (isProjectEditValidationError(error)) return;
     console.error('[abyss-tasks] Could not move project card', { cause: error });
     new Notice(`Could not move project card: ${message}`);
+  }
+
+  private captureTimelineEndpoint_abyssPrivate(
+    project: Project,
+    field: ProjectField,
+  ): ProjectTimelineEndpointEvidence {
+    const sourceProperty = expectProjectFieldProperty(field);
+    const source = findFrontmatterProperty(project.frontmatter, sourceProperty);
+    return {
+      field: { ...field },
+      sourceProperty,
+      sourceKey: source?.key ?? sourceProperty,
+      expectedExists: source !== undefined,
+      expectedValue: copyProjectedValue(source?.value),
+    };
+  }
+
+  private visibleTimelineRow_abyssPrivate(occurrenceId: string): ProjectTimelineRow | undefined {
+    if (
+      !this.mounted_abyssPrivate ||
+      this.overviewMode_abyssPrivate !== 'timeline' ||
+      this.timelineView_abyssPrivate?.root.hidden === true
+    ) {
+      return undefined;
+    }
+    return this.timelineView_abyssPrivate
+      ?.currentModel()
+      ?.groups.flatMap(({ rows }) => rows)
+      .find((candidate) => candidate.occurrenceId === occurrenceId);
+  }
+
+  private captureTimelineRangeSource_abyssPrivate(
+    occurrenceId: string,
+  ): ProjectTimelineRangeCapture {
+    const row = this.visibleTimelineRow_abyssPrivate(occurrenceId);
+    if (row === undefined) {
+      return { kind: 'rejected', reason: 'This project range is no longer visible.' };
+    }
+    if (row.range.kind === 'malformed') {
+      return { kind: 'rejected', reason: PROJECT_TIMELINE_INVALID_RANGE_REASON };
+    }
+    const start = timelineDateField(this.fields_abyssPrivate, 'start');
+    const end = timelineDateField(this.fields_abyssPrivate, 'end');
+    if (start === undefined || end === undefined || sameTimelineProperty(start, end)) {
+      return {
+        kind: 'rejected',
+        reason:
+          'Configure distinct available date properties for Start and End before Timeline editing.',
+      };
+    }
+    const ambiguous = ambiguousTimelineSource(row.project, [start, end]);
+    if (ambiguous !== undefined) {
+      return {
+        kind: 'rejected',
+        reason: `${ambiguous.label} has ambiguous source spelling. Repair the duplicate properties before Timeline editing.`,
+      };
+    }
+    const source: FrozenProjectTimelineRangeSource = {
+      occurrenceId,
+      path: row.project.path,
+      start: this.captureTimelineEndpoint_abyssPrivate(row.project, start),
+      end: this.captureTimelineEndpoint_abyssPrivate(row.project, end),
+      range: { ...row.range },
+    };
+    const eligibility = projectTimelineRawEditEligibility(
+      { exists: source.start.expectedExists, value: source.start.expectedValue },
+      { exists: source.end.expectedExists, value: source.end.expectedValue },
+    );
+    return eligibility.kind === 'eligible'
+      ? { kind: 'ready', source }
+      : { kind: 'rejected', reason: eligibility.reason };
+  }
+
+  private timelineChangesForPlan_abyssPrivate(
+    source: FrozenProjectTimelineRangeSource,
+    plan: Extract<ProjectTimelineEditPlan, { readonly kind: 'ready' }>,
+  ): readonly ProjectCellChange[] {
+    const endpoint = (
+      evidence: ProjectTimelineEndpointEvidence,
+      desiredDay: string | undefined,
+    ): {
+      readonly changed: boolean;
+      readonly change: ProjectCellChange;
+    } => {
+      const desiredExists = desiredDay === undefined ? evidence.expectedExists : true;
+      const desiredValue = desiredDay ?? copyProjectedValue(evidence.expectedValue);
+      const changed =
+        desiredExists !== evidence.expectedExists ||
+        !Object.is(desiredValue, evidence.expectedValue);
+      return {
+        changed,
+        change: {
+          path: source.path,
+          field: { ...evidence.field },
+          value: desiredValue,
+          expectedValue: copyProjectedValue(evidence.expectedValue),
+          expectedExists: evidence.expectedExists,
+          sourceProperty: evidence.sourceProperty,
+          sourceKey: evidence.sourceKey,
+        },
+      };
+    };
+    const start = endpoint(source.start, plan.startDay);
+    const end = endpoint(source.end, plan.endDay);
+    if (!start.changed && !end.changed) return [];
+    return [
+      start.changed
+        ? start.change
+        : {
+            ...start.change,
+            valueExists: source.start.expectedExists,
+            restoreSourceValue: true,
+          },
+      end.changed
+        ? end.change
+        : {
+            ...end.change,
+            valueExists: source.end.expectedExists,
+            restoreSourceValue: true,
+          },
+    ];
+  }
+
+  private commitTimelineRangeEdit_abyssPrivate(
+    request: ProjectTimelineRangeEditRequest,
+  ): Promise<ProjectEditResult> {
+    const run = async (): Promise<ProjectEditResult> => {
+      if (!(await this.requestFinishActiveEditor())) {
+        throw new ProjectEditValidationError(
+          'The active project edit must finish before changing Timeline dates.',
+        );
+      }
+      return this.runTableSessionMutation(async () => {
+        const capture = this.captureTimelineRangeSource_abyssPrivate(
+          request.kind === 'pointer' ? request.source.occurrenceId : request.target.occurrenceId,
+        );
+        if (capture.kind === 'rejected') throw new ProjectEditValidationError(capture.reason);
+        const current = capture.source;
+        if (
+          request.kind === 'pointer'
+            ? !sameProjectTimelineRangeSource(request.source, current)
+            : !sameProjectTimelineRangeBinding(request.target, current)
+        ) {
+          throw new ProjectEditValidationError(
+            'The project dates changed after this Timeline edit started. Reload and try again.',
+          );
+        }
+        const plan = planProjectTimelineEdit(
+          request.kind === 'pointer' ? request.source.range : current.range,
+          request.intent,
+        );
+        if (plan.kind === 'rejected') throw new ProjectEditValidationError(plan.reason);
+        const changes = this.timelineChangesForPlan_abyssPrivate(current, plan);
+        if (changes.length === 0) return { applied: [], failed: [] };
+        const result = await this.context_abyssPrivate.applyEdits(changes);
+        if (result.applied.length > 0) {
+          this.context_abyssPrivate.history.record(result);
+          this.publishAppliedReceipts(result.applied);
+        }
+        return result;
+      });
+    };
+    const result = this.timelineRangeTail_abyssPrivate.then(run, run);
+    this.timelineRangeTail_abyssPrivate = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private reportTimelineRangeFailure_abyssPrivate(failure: unknown): void {
+    const label = 'Could not update project Timeline dates';
+    if (
+      typeof failure === 'object' &&
+      failure !== null &&
+      'failed' in failure &&
+      Array.isArray((failure as ProjectEditResult).failed)
+    ) {
+      const result = failure as ProjectEditResult;
+      if (result.failed.length === 0) return;
+      const first = result.failed[0];
+      const detail = first === undefined ? '' : `: ${first.message}`;
+      const message = `${result.applied.length} updated; ${result.failed.length} failed${detail}`;
+      this.feedback_abyssPrivate.setText(message);
+      console.error(`[abyss-tasks] ${label}`, { result });
+      new Notice(`${label}: ${message}`);
+      return;
+    }
+    const message = failure instanceof Error ? failure.message : String(failure);
+    this.feedback_abyssPrivate.setText(message);
+    if (typeof failure === 'string') return;
+    if (isProjectEditValidationError(failure)) return;
+    console.error(`[abyss-tasks] ${label}`, { cause: failure });
+    new Notice(`${label}: ${message}`);
   }
 
   private boardTagsReliable_abyssPrivate(path: string, fieldId: string): boolean {

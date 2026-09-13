@@ -8,7 +8,7 @@ import { buildDefaultProjectTableSettings } from '../src/projects/projectTableSe
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { expectDefined, freshContainer } from './helpers';
+import { expectDefined, freshContainer, loadPluginStyles } from './helpers';
 
 interface Cell extends ProjectTimelineCellContext {
   project: Project;
@@ -98,6 +98,11 @@ function mount(
       label.setText(group.label);
     },
     statusColor: () => '#336699',
+    captureRangeSource: () => ({ kind: 'rejected', reason: 'Test capture unavailable' }),
+    commitRangeEdit: vi.fn().mockResolvedValue({ applied: [], failed: [] }),
+    reportRangeFailure: vi.fn(),
+    finishEditor: async () => true,
+    openRangeMenu: vi.fn(),
     now: () => new Date(now),
   });
   mountedView.current = view;
@@ -198,11 +203,65 @@ describe('ProjectsTimelineView', () => {
     ).toContain('Unscheduled');
   });
 
+  it('forces retained hidden range controls out of layout', async () => {
+    const styles = await loadPluginStyles();
+    const sheet = createEl('style');
+    sheet.textContent = styles;
+    activeDocument.head.append(sheet);
+    const { host } = mount([project('Projects/Unscheduled.md')]);
+    const showRange = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline-show-range'),
+    );
+    const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+
+    expect(showRange.hidden).toBe(true);
+    expect(activeWindow.getComputedStyle(showRange).display).toBe('none');
+    expect(activeWindow.getComputedStyle(bar).display).toBe('none');
+    sheet.remove();
+  });
+
+  it('keeps range recovery controls aligned with the exposed date viewport while scrolling', () => {
+    const { host, view } = mount([
+      project('Projects/Invalid.md', '2026-09-20', '2026-09-10'),
+      project('Projects/Future.md', undefined, '2032-01-03'),
+    ]);
+
+    view.scroll.scrollLeft = 173.5;
+    view.scroll.dispatchEvent(new Event('scroll'));
+
+    expect(view.root.style.getPropertyValue('--abyss-project-timeline-range-state-left')).toBe(
+      '183.5px',
+    );
+    expect(host.querySelector('.abyss-project-timeline-state')).not.toBeNull();
+    expect(host.querySelector('.abyss-project-timeline-show-range')).not.toBeNull();
+  });
+
+  it('shows resize handles only for actual endpoints inside the visible window', () => {
+    const { host } = mount([project('Projects/Clipped.md', '2025-12-30', '2026-01-03')]);
+    const bar = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/Clipped.md"] .abyss-project-timeline-bar',
+      ),
+    );
+
+    expect(
+      expectDefined(bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-start'))
+        .hidden,
+    ).toBe(true);
+    expect(
+      expectDefined(bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-end')).hidden,
+    ).toBe(false);
+  });
+
   it('reveals a project outside the current window and keeps ticks bounded', () => {
     const { host, view } = mount([project('Projects/Future.md', '2045-06-28', '2045-06-29')]);
     expect(
-      host.querySelector('[data-project-path="Projects/Future.md"] .abyss-project-timeline-bar'),
-    ).toBeNull();
+      expectDefined(
+        host.querySelector<HTMLElement>(
+          '[data-project-path="Projects/Future.md"] .abyss-project-timeline-bar',
+        ),
+      ).hidden,
+    ).toBe(true);
 
     const show = expectDefined(
       host.querySelector<HTMLButtonElement>(
@@ -230,8 +289,33 @@ describe('ProjectsTimelineView', () => {
         trackWidth;
     expect(barCenter).toBeGreaterThanOrEqual(view.scroll.scrollLeft + 210);
     expect(barCenter).toBeLessThanOrEqual(view.scroll.scrollLeft + 400);
-    expect(host.querySelector('.abyss-project-timeline-show-range')).toBeNull();
+    expect(
+      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-show-range')).hidden,
+    ).toBe(true);
     expect(host.querySelectorAll('.abyss-project-timeline-tick').length).toBeLessThanOrEqual(15);
+  });
+
+  it('restores focused range identity when a date edit regroups its row', () => {
+    const item = project('Projects/A.md', '2026-09-01', '2026-09-03');
+    const { host, view, settings } = mount([item]);
+    settings.groupBy = 'start';
+    view.update([item], '');
+    const originalBar = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/A.md"] .abyss-project-timeline-bar',
+      ),
+    );
+    originalBar.focus();
+
+    view.update([project('Projects/A.md', '2026-09-02', '2026-09-04')], '');
+
+    const regroupedBar = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/A.md"] .abyss-project-timeline-bar',
+      ),
+    );
+    expect(regroupedBar).not.toBe(originalBar);
+    expect(activeDocument.activeElement).toBe(regroupedBar);
   });
 
   it('expands the owning group when revealing a project', async () => {

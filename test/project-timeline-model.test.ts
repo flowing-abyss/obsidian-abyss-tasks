@@ -109,6 +109,17 @@ describe('project Timeline model', () => {
     expect(geometry).toEqual({ leftPercent: 21.428571428571427, widthPercent: 21.428571428571427 });
   });
 
+  it('renders open ranges as one-day anchored points', () => {
+    const window = projectTimelineWindow(new Date(2026, 8, 13), 'day');
+
+    expect(
+      projectTimelineBarGeometry({ kind: 'open-end', startDay: '2026-09-13' }, window),
+    ).toEqual({ leftPercent: 42.857142857142854, widthPercent: 7.142857142857142 });
+    expect(
+      projectTimelineBarGeometry({ kind: 'open-start', endDay: '2026-09-13' }, window),
+    ).toEqual({ leftPercent: 42.857142857142854, widthPercent: 7.142857142857142 });
+  });
+
   it.each([
     {
       scale: 'day',
