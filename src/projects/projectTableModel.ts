@@ -349,6 +349,22 @@ interface MakeGroupsInput {
   propertyDefinitions?: ProjectTableModelInput['propertyDefinitions'];
 }
 
+function orderGroupProjects(
+  groups: Iterable<ProjectTableGroup>,
+  sortedProjects: readonly Project[],
+): void {
+  const groupsByPath = new Map<string, Set<ProjectTableGroup>>();
+  for (const group of groups) {
+    for (const { path } of group.projects) {
+      groupsByPath.get(path)?.add(group) ?? groupsByPath.set(path, new Set([group]));
+    }
+    group.projects = [];
+  }
+  for (const project of sortedProjects) {
+    for (const group of groupsByPath.get(project.path) ?? []) group.projects.push(project);
+  }
+}
+
 function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
   const {
     projects,
@@ -380,10 +396,7 @@ function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
       byKey.set(group.key, current);
     }
   }
-  for (const group of byKey.values()) {
-    const paths = new Set(group.projects.map(({ path }) => path));
-    group.projects = sortedProjects.filter(({ path }) => paths.has(path));
-  }
+  orderGroupProjects(byKey.values(), sortedProjects);
   if (isProjectStatusField(groupField)) {
     return availableStatuses
       .map(({ key, label, statusId }) => {

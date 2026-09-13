@@ -433,11 +433,9 @@ function projectionSettings(input: ProjectKanbanDropInput): {
   readonly manualOrder?: { readonly statusKey: string; readonly paths: readonly string[] };
 } {
   if (input.settings.sortBy.field !== 'none') return { settings: input.settings };
-  const paths = reorderProjectPaths(
-    destinationOrder(input),
-    input.project.path,
-    input.target.beforePath,
-  );
+  const current = destinationOrder(input);
+  const paths = reorderProjectPaths(current, input.project.path, input.target.beforePath);
+  if (equalValue(paths, current)) return { settings: input.settings };
   const manualOrder = { statusKey: input.target.status.key, paths };
   return {
     manualOrder,

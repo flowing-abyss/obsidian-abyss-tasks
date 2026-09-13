@@ -127,9 +127,10 @@ function targetFromElement(
   let beforePath: string | undefined;
   if (card !== null) {
     const rect = card.getBoundingClientRect();
+    const path = card.dataset['projectPath'];
     beforePath =
-      clientY < rect.top + rect.height / 2
-        ? card.dataset['projectPath']
+      path === sourcePath || clientY < rect.top + rect.height / 2
+        ? path
         : nextVisibleCardPath(card, sourcePath);
   }
   return {

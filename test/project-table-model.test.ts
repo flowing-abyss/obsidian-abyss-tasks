@@ -295,6 +295,34 @@ describe('buildProjectTableModel', () => {
     expect(result.groups[0]?.projects.map(({ name }) => name)).toEqual(['Alpha', 'Zulu']);
   });
 
+  it('orders many groups in one sorted-project pass while preserving path duplicates', () => {
+    let pathReads = 0;
+    const projects = Array.from({ length: 200 }, (_, index) => {
+      const item = project(`Project ${String(index).padStart(3, '0')}`, {
+        frontmatter: { owners: [`Group ${index}`, 'Shared'] },
+      });
+      Object.defineProperty(item, 'path', {
+        configurable: true,
+        get: () => {
+          pathReads += 1;
+          return `Projects/${index % 199}.md`;
+        },
+      });
+      return item;
+    });
+
+    const result = model(
+      projects,
+      table({ groupBy: 'property:owners', sortBy: { field: 'name', dir: 'desc' } }),
+    );
+
+    expect(pathReads).toBeLessThan(2_000);
+    expect(
+      result.groups.find(({ label }) => label === 'Group 0')?.projects.map(({ name }) => name),
+    ).toEqual(['Project 199', 'Project 000']);
+    expect(result.groups.find(({ label }) => label === 'Shared')?.projects).toHaveLength(200);
+  });
+
   it('normalizes internal resolver inputs while preserving raw representative links', () => {
     const resolverInputs: Array<readonly [string, string]> = [];
     const result = buildProjectTableModel({

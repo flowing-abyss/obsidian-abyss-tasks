@@ -172,6 +172,71 @@ describe('project Kanban drop planning', () => {
     });
   });
 
+  it('keeps an exact self-card target at its effective rank without persistence work', () => {
+    const a = project('Projects/A.md', 'Planned', '2026-09-01');
+    const moving = project('Projects/B.md', 'Planned', '2026-09-02');
+    const c = project('Projects/C.md', 'Planned', '2026-09-03');
+    const board = settings({
+      manualOrder: {
+        'id:planned': [a.path, moving.path, 'Projects/Hidden.md', c.path],
+      },
+    });
+    const input = planInput(moving, [a, moving, c], board);
+    input.target.status = { key: 'id:planned', value: 'planned' };
+    input.target.beforePath = moving.path;
+
+    const result = planProjectKanbanDrop(input);
+
+    expect(result.allowed).toBe(true);
+    if (!result.allowed) return;
+    expect(result.changes).toEqual([]);
+    expect(result).not.toHaveProperty('manualOrder');
+    expect(
+      result.model.columns
+        .find(({ status }) => status.key === 'id:planned')
+        ?.groups[0]?.projects.map(({ path }) => path),
+    ).toEqual([a.path, moving.path, c.path]);
+  });
+
+  it('persists adjacent and end rank changes through grouped filtered projections', () => {
+    const a = project('Projects/A.md', 'Planned', 'match', ['Team']);
+    const b = project('Projects/B.md', 'Planned', 'hidden', ['Team']);
+    const moving = project('Projects/C.md', 'Planned', 'match', ['Team']);
+    const d = project('Projects/D.md', 'Planned', 'hidden', ['Team']);
+    const projects = [a, b, moving, d];
+    const board = settings({
+      groupBy: 'property:Owners',
+      manualOrder: { 'id:planned': projects.map(({ path }) => path) },
+    });
+    const input = planInput(moving, projects, board);
+    input.source = captureProjectKanbanDropSource({
+      project: moving,
+      fields,
+      settings: board,
+      statusProperty: 'status',
+      statusKey: 'id:planned',
+      group: { key: 'value:team', value: 'Team', sourcePath: a.path },
+    });
+    input.target = {
+      status: { key: 'id:planned', value: 'planned' },
+      group: { key: 'value:team', value: 'Team', sourcePath: a.path },
+      beforePath: a.path,
+    };
+    input.search = 'match';
+
+    const adjacent = planProjectKanbanDrop(input);
+    expect(adjacent.allowed && adjacent.manualOrder?.paths).toEqual([
+      moving.path,
+      a.path,
+      b.path,
+      d.path,
+    ]);
+
+    delete input.target.beforePath;
+    const end = planProjectKanbanDrop(input);
+    expect(end.allowed && end.manualOrder?.paths).toEqual([a.path, b.path, d.path, moving.path]);
+  });
+
   it('rejects raw targets, read-only grouping, and sorted same-column no-ops', () => {
     const a = project('Projects/A.md', 'Planned', '2026-09-30');
     const raw = planInput(a, [a]);
@@ -304,7 +369,7 @@ describe('project Kanban drop planning', () => {
     expect(reordered.allowed).toBe(true);
     if (!reordered.allowed) return;
     expect(reordered.changes).toEqual([]);
-    expect(reordered.manualOrder?.paths).toEqual(['Projects/A.md', 'Projects/B.md']);
+    expect(reordered).not.toHaveProperty('manualOrder');
 
     const groupedSettings = settings({ groupBy: 'property:Owners' });
     const empty = project('Projects/Empty.md', 'Planned', '2026-09-10');

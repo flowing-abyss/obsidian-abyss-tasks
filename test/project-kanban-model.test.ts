@@ -216,7 +216,11 @@ describe('project path ordering', () => {
       'a.md',
     ]);
     expect(reorderProjectPaths(['a.md', 'a.md', 'b.md'], 'c.md')).toEqual(['a.md', 'b.md', 'c.md']);
-    expect(reorderProjectPaths(['a.md', 'b.md'], 'a.md', 'a.md')).toEqual(['b.md', 'a.md']);
+    expect(reorderProjectPaths(['a.md', 'hidden.md', 'b.md'], 'a.md', 'a.md')).toEqual([
+      'a.md',
+      'hidden.md',
+      'b.md',
+    ]);
   });
 
   it('applies saved ranks and appends incoming projects deterministically', () => {

@@ -1565,6 +1565,81 @@ describe('project Kanban overview', () => {
     ).toEqual(['Projects/B.md', 'Projects/A.md', 'Projects/C.md']);
   });
 
+  it.each([
+    ['upper', 10],
+    ['lower', 90],
+  ] as const)(
+    'returns a card from its %s half without changing hidden ranks or recording work',
+    async (_half, clientY) => {
+      const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+      const projects = ['A', 'B', 'C'].map((name) =>
+        project({
+          path: `Projects/${name}.md`,
+          name,
+          statusId: status.id,
+          frontmatter: { status: status.name },
+        }),
+      );
+      const saveViewState = vi.fn().mockResolvedValue(undefined);
+      const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) =>
+        appliedResult(changes),
+      );
+      const history = new ProjectEditHistory(applyEdits);
+      const openProject = vi.fn();
+      const { host, settings } = mountView(projects, {
+        saveViewState,
+        applyEdits,
+        history,
+        openProject,
+      });
+      settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+      settings.projects.kanban.sortBy = { field: 'none', dir: 'asc' };
+      settings.projects.kanban.manualOrder[`id:${status.id}`] = [
+        'Projects/A.md',
+        'Projects/B.md',
+        'Projects/Hidden.md',
+        'Projects/C.md',
+      ];
+      clickView(host, 'Kanban');
+      saveViewState.mockClear();
+      const card = expectDefined(
+        host.querySelector<HTMLElement>(
+          '.abyss-project-kanban-card[data-project-path="Projects/B.md"]',
+        ),
+      );
+      const title = expectDefined(
+        card.querySelector<HTMLButtonElement>('.abyss-project-table-name'),
+      );
+      const nameCell = expectDefined(title.closest<HTMLElement>('[data-column-id="name"]'));
+      vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 240, 100));
+      nameCell.focus();
+      const data = transfer();
+      card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      card.dispatchEvent(dragEvent('dragstart', data));
+
+      card.dispatchEvent(dragEvent('drop', data, { clientX: 120, clientY }));
+      title.click();
+      await flushMicrotasks();
+
+      expect(settings.projects.kanban.manualOrder[`id:${status.id}`]).toEqual([
+        'Projects/A.md',
+        'Projects/B.md',
+        'Projects/Hidden.md',
+        'Projects/C.md',
+      ]);
+      expect(applyEdits).not.toHaveBeenCalled();
+      expect(history.canUndo).toBe(false);
+      expect(saveViewState).not.toHaveBeenCalled();
+      expect(openProject).not.toHaveBeenCalled();
+      expect(activeDocument.activeElement).toBe(nameCell);
+      expect(host.querySelector('.is-dragging, .is-drop-target')).toBeNull();
+      expect(activeDocument.querySelector('.abyss-project-kanban-drag-image')).toBeNull();
+      title.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      title.click();
+      expect(openProject).toHaveBeenCalledOnce();
+    },
+  );
+
   it('captures the first Manual sequence and appends later observations without repeat saves', async () => {
     const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
     const b = project({ path: 'Projects/B.md', name: 'B' });
@@ -1783,6 +1858,54 @@ describe('project Kanban overview', () => {
       host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
     ).toBe(false);
   });
+
+  it.each(['settings', 'status field'] as const)(
+    'revalidates stale %s for a queued self-drop without recording work',
+    async (stale) => {
+      let releaseQueue: (() => void) | undefined;
+      const queued = new Promise<void>((resolve) => {
+        releaseQueue = resolve;
+      });
+      const saveViewState = vi.fn().mockResolvedValue(undefined);
+      const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) =>
+        appliedResult(changes),
+      );
+      const history = new ProjectEditHistory(applyEdits);
+      const { host, view, settings } = mountView(undefined, {
+        saveViewState,
+        applyEdits,
+        history,
+      });
+      settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+      settings.projects.kanban.sortBy = { field: 'none', dir: 'asc' };
+      view.refreshFields();
+      const held = view.runTableSessionMutation(async () => queued);
+      clickView(host, 'Kanban');
+      saveViewState.mockClear();
+      const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+      vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 240, 100));
+      const data = transfer();
+      card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      card.dispatchEvent(dragEvent('dragstart', data));
+      card.dispatchEvent(dragEvent('drop', data, { clientX: 120, clientY: 10 }));
+
+      if (stale === 'settings') settings.projects.kanban.sortBy = { field: 'name', dir: 'asc' };
+      else {
+        settings.projects.statusProperty = 'phase';
+        view.refreshFields();
+      }
+      releaseQueue?.();
+      await held;
+      await flushMicrotasks();
+
+      expect(applyEdits).not.toHaveBeenCalled();
+      expect(history.canUndo).toBe(false);
+      expect(saveViewState).not.toHaveBeenCalled();
+      expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain('changed');
+      expect(host.querySelector('.is-dragging, .is-drop-target')).toBeNull();
+      expect(activeDocument.querySelector('.abyss-project-kanban-drag-image')).toBeNull();
+    },
+  );
 
   it('keeps committed manual order and offers Retry when its settings save fails', async () => {
     const planned = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);

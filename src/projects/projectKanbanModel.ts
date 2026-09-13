@@ -56,9 +56,10 @@ export function reorderProjectPaths(
   movingPath: string,
   beforePath?: string,
 ): string[] {
-  const unique = [...new Set(paths)].filter((path) => path !== movingPath);
-  const targetIndex =
-    beforePath === undefined || beforePath === movingPath ? -1 : unique.indexOf(beforePath);
+  const ranked = [...new Set(paths)];
+  if (beforePath === movingPath) return ranked;
+  const unique = ranked.filter((path) => path !== movingPath);
+  const targetIndex = unique.indexOf(beforePath ?? movingPath);
   if (targetIndex < 0) unique.push(movingPath);
   else unique.splice(targetIndex, 0, movingPath);
   return unique;
