@@ -8496,6 +8496,7 @@ table.abyss-project-table {
 }
 
 .abyss-project-timeline-navigation {
+  position: relative;
   display: flex;
   min-height: 34px;
   flex: 0 0 auto;
@@ -8517,7 +8518,7 @@ table.abyss-project-table {
 }
 
 .abyss-project-timeline-scale-control {
-  position: relative;
+  position: static;
   display: flex;
   margin-left: 4px;
 }
@@ -8532,8 +8533,11 @@ table.abyss-project-table {
 
 .abyss-project-timeline-scale-control > .abyss-view-state-popover {
   right: auto;
-  left: 0;
-  width: min(274px, calc(100vw - 16px));
+  left: 8px;
+  box-sizing: border-box;
+  width: 274px;
+  min-width: min(240px, calc(100% - 16px));
+  max-width: calc(100% - 16px);
   max-height: min(420px, calc(100vh - 200px));
 }
 
