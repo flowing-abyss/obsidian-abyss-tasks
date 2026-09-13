@@ -171,6 +171,22 @@ describe('ProjectsPanel dispatch', () => {
       expect(pill.textContent).toBe('Current work');
       expect(pill.classList).toContain('is-dot');
       expect(pill.style.getPropertyValue('--abyss-project-status-color')).toBe('#28b8a5');
+
+      status.display = 'text';
+      status.color = '#965fd4';
+      panel.refreshTableSettings();
+      expect(dashboard.querySelector('.abyss-status-pill')).toBe(pill);
+      expect(pill.classList).toContain('is-text');
+      expect(pill.classList).not.toContain('is-dot');
+      expect(pill.style.getPropertyValue('--abyss-project-status-color')).toBe('#965fd4');
+
+      delete status.display;
+      delete status.color;
+      panel.refreshTableSettings();
+      expect(dashboard.querySelector('.abyss-status-pill')).toBe(pill);
+      expect(pill.classList).not.toContain('is-text');
+      expect(pill.classList).not.toContain('is-dot');
+      expect(pill.style.getPropertyValue('--abyss-project-status-color')).toBe('');
     } finally {
       panel.destroy();
     }

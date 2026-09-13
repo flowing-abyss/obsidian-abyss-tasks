@@ -338,17 +338,37 @@ describe('project Kanban overview', () => {
     const controls = expectDefined(host.querySelector('.abyss-project-table-controls'));
     expect(Array.from(controls.children).map((child) => child.getAttribute('aria-label'))).toEqual([
       'Sort & group options',
+      'Project view',
+      'Filter projects',
+    ]);
+    const switcher = expectDefined(
+      controls.querySelector<HTMLElement>('.abyss-project-overview-switcher'),
+    );
+    expect(switcher.getAttribute('role')).toBe('group');
+    const modeButtons = Array.from(
+      switcher.querySelectorAll<HTMLButtonElement>('.abyss-project-overview-mode'),
+    );
+    expect(modeButtons.map((button) => button.getAttribute('aria-label'))).toEqual([
       'Table view',
       'Kanban view',
       'Timeline view',
-      'Filter projects',
+    ]);
+    expect(modeButtons.filter((button) => button.getAttribute('aria-pressed') === 'true')).toEqual([
+      modeButtons[0],
     ]);
     const tableNode = host.querySelector('table');
     const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
     search.value = 'table query';
     search.dispatchEvent(new Event('input', { bubbles: true }));
 
+    const kanbanButton = expectDefined(modeButtons[1]);
+    kanbanButton.focus();
     clickView(host, 'Kanban');
+    expect(activeDocument.activeElement).toBe(kanbanButton);
+    expect(host.querySelector('[aria-label="Kanban view"]')).toBe(kanbanButton);
+    expect(modeButtons.filter((button) => button.getAttribute('aria-pressed') === 'true')).toEqual([
+      kanbanButton,
+    ]);
     expect(search.value).toBe('');
     expect(host.querySelector('.abyss-project-kanban')).not.toBeNull();
     expect(host.querySelector('.abyss-project-table-scroll')?.hasAttribute('hidden')).toBe(true);
@@ -360,6 +380,89 @@ describe('project Kanban overview', () => {
     expect(host.querySelector('table')).toBe(tableNode);
     clickView(host, 'Kanban');
     expect(search.value).toBe('kanban query');
+  });
+
+  it('keeps configured status presentation consistent across retained overview modes', () => {
+    const { host, view, settings } = mountView();
+    const status = expectDefined(settings.projects.statuses[0]);
+    status.displayName = 'Current work';
+    status.display = 'dot';
+    status.color = '#28b8a5';
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.fields = [{ id: 'status', visible: true }];
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    settings.projects.timeline.fields = [{ id: 'status', visible: true }];
+    view.refreshFields();
+
+    const button = expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        `.abyss-project-status-filter[data-status-key="id:${status.id}"]`,
+      ),
+    );
+    const expectDot = (pill: HTMLElement): void => {
+      expect(pill.textContent).toBe('Current work');
+      expect(pill.classList).toContain('abyss-project-table-status-pill');
+      expect(pill.classList).toContain('is-dot');
+      expect(pill.style.getPropertyValue('--abyss-project-status-color')).toBe('#28b8a5');
+    };
+    expectDot(button);
+    expectDot(
+      expectDefined(
+        host.querySelector<HTMLElement>(
+          '.abyss-project-table-cell[data-column-id="status"] .abyss-project-table-status-pill',
+        ),
+      ),
+    );
+
+    clickView(host, 'Kanban');
+    expect(host.querySelector(`[data-status-key="id:${status.id}"]`)).toBe(button);
+    expectDot(
+      expectDefined(
+        host.querySelector<HTMLElement>(
+          '.abyss-project-kanban [data-column-id="status"] .abyss-project-table-status-pill',
+        ),
+      ),
+    );
+
+    clickView(host, 'Timeline');
+    expect(host.querySelector(`[data-status-key="id:${status.id}"]`)).toBe(button);
+    const timelinePill = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-timeline [data-column-id="status"] .abyss-project-table-status-pill',
+      ),
+    );
+    expectDot(timelinePill);
+
+    status.display = 'text';
+    status.color = '#965fd4';
+    view.refreshFields();
+    expect(button.classList).toContain('is-text');
+    expect(button.classList).not.toContain('is-dot');
+    expect(button.style.getPropertyValue('--abyss-project-status-color')).toBe('#965fd4');
+    const refreshedTimelinePill = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-timeline [data-column-id="status"] .abyss-project-table-status-pill',
+      ),
+    );
+    expect(refreshedTimelinePill.classList).toContain('is-text');
+    expect(refreshedTimelinePill.style.getPropertyValue('--abyss-project-status-color')).toBe(
+      '#965fd4',
+    );
+
+    delete status.display;
+    delete status.color;
+    view.refreshFields();
+    expect(button.classList).not.toContain('is-text');
+    expect(button.classList).not.toContain('is-dot');
+    expect(button.style.getPropertyValue('--abyss-project-status-color')).toBe('');
+    const defaultTimelinePill = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-timeline [data-column-id="status"] .abyss-project-table-status-pill',
+      ),
+    );
+    expect(defaultTimelinePill.classList).not.toContain('is-text');
+    expect(defaultTimelinePill.classList).not.toContain('is-dot');
+    expect(defaultTimelinePill.style.getPropertyValue('--abyss-project-status-color')).toBe('');
   });
 
   it('keeps Timeline search and settings independent while options update in place', async () => {

@@ -27,6 +27,7 @@ import {
 } from '../../ui/ViewOptionsPopover';
 import { configureProjectDateDisplayMenu, projectDateDisplayLabel } from './projectColumnMenu';
 import { isProjectKanbanCustomized, projectKanbanOptionsRows } from './ProjectKanbanOptions';
+import { applyProjectStatusPresentation } from './projectStatusPresentation';
 import { isProjectTimelineCustomized, projectTimelineOptionsRows } from './ProjectTimelineOptions';
 
 export interface ProjectsTableToolbarOptions {
@@ -121,12 +122,16 @@ export class ProjectsTableToolbar {
     this.viewButton_abyssPrivate.addEventListener('click', () => {
       this.togglePopover_abyssPrivate();
     });
+    const modeSwitcher = controls.createDiv({
+      cls: 'abyss-project-overview-switcher',
+      attr: { role: 'group', 'aria-label': 'Project view' },
+    });
     for (const [mode, label, icon] of [
       ['table', 'Table view', 'table-2'],
       ['kanban', 'Kanban view', 'columns-3'],
       ['timeline', 'Timeline view', 'gantt-chart'],
     ] as const) {
-      const button = controls.createEl('button', {
+      const button = modeSwitcher.createEl('button', {
         cls: `abyss-project-overview-mode abyss-project-overview-mode--${mode}`,
         attr: { type: 'button', 'aria-label': label, 'aria-pressed': 'false' },
       });
@@ -185,10 +190,7 @@ export class ProjectsTableToolbar {
     button.setText(status.label);
     button.toggleClass('is-disabled', disabled);
     button.setAttribute('aria-pressed', String(!disabled));
-    button.style.removeProperty('--abyss-project-status-color');
-    if (status.color !== undefined && status.color.length > 0) {
-      button.style.setProperty('--abyss-project-status-color', status.color);
-    }
+    applyProjectStatusPresentation(button, status);
   }
 
   private removeMissingStatusButtons_abyssPrivate(retained: ReadonlySet<string>): void {

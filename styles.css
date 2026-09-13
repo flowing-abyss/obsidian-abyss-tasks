@@ -4347,7 +4347,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-normal);
 }
 
-.abyss-cal-view-switcher {
+:is(.abyss-cal-view-switcher, .abyss-project-overview-switcher) {
   display: flex;
   gap: 2px;
   background: var(--background-modifier-border);
@@ -4355,7 +4355,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 2px;
 }
 
-.abyss-cal-view-btn {
+:is(.abyss-cal-view-btn, .abyss-project-overview-mode) {
   padding: 4px 10px;
   border-radius: 6px;
   border: none;
@@ -4368,12 +4368,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     color 0.1s;
 }
 
-.abyss-cal-view-btn:hover {
+:is(.abyss-cal-view-btn, .abyss-project-overview-mode):hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
-.abyss-cal-view-btn.is-active {
+:is(.abyss-cal-view-btn, .abyss-project-overview-mode).is-active {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   font-weight: 500;
@@ -6911,19 +6911,7 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-projects-table button.abyss-project-status-filter {
   flex: 0 0 auto;
   min-height: 24px;
-  padding: 1px 8px;
-  border: 1px solid
-    color-mix(in srgb, var(--abyss-project-status-color, var(--text-faint)) 45%, transparent);
-  border-radius: 6px;
-  background: color-mix(
-    in srgb,
-    var(--abyss-project-status-color, var(--background-modifier-border)) 16%,
-    transparent
-  );
   box-shadow: none;
-  color: var(--text-normal);
-  font-size: var(--font-ui-smaller);
-  line-height: 1.2;
   white-space: nowrap;
 }
 
@@ -6943,7 +6931,7 @@ body.abyss-modal-open .popover.hover-popover {
   border-radius: 8px;
 }
 
-.abyss-project-table-controls :is(.abyss-view-state-btn, .abyss-project-overview-mode) {
+.abyss-project-table-controls .abyss-view-state-btn {
   width: 30px;
   height: 30px;
   min-width: 30px;
@@ -6958,23 +6946,8 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-projects-table button.abyss-project-overview-mode {
   width: 30px;
   height: 30px;
+  min-width: 30px;
   padding: 5px;
-  border-radius: 6px;
-}
-
-.abyss-projects-table button.abyss-project-overview-mode--table {
-  margin-right: 0;
-}
-
-.abyss-projects-table button.abyss-project-overview-mode--kanban {
-  border-radius: 6px;
-}
-
-.abyss-projects-table button.abyss-project-overview-mode.is-active {
-  z-index: 1;
-  border-color: var(--interactive-accent);
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
 }
 
 .abyss-project-table-controls

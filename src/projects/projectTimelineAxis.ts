@@ -171,21 +171,9 @@ function hierarchyLabel(
   ordinalValue: number,
   scale: Exclude<ProjectTimelineScale, 'day'>,
 ): Pick<ProjectTimelineAxisCell, 'label' | 'secondaryLabel'> {
+  if (scale === 'week') return intervalLabels(ordinalValue, 'week');
   const value = date(ordinalValue);
   const year = String(value.getUTCFullYear()).padStart(4, '0');
-  if (scale === 'week') {
-    const end = date(ordinalValue + 6);
-    const endYear = String(end.getUTCFullYear()).padStart(4, '0');
-    const startDate = `${MONTHS[value.getUTCMonth()]} ${String(value.getUTCDate())}`;
-    const endMonth =
-      value.getUTCMonth() === end.getUTCMonth() ? '' : `${MONTHS[end.getUTCMonth()]} `;
-    const endDate = `${endMonth}${String(end.getUTCDate())}`;
-    const rangeYear = year === endYear ? year : `${year}/${endYear}`;
-    return {
-      label: `W${String(isoWeekNumber(ordinalValue)).padStart(2, '0')}`,
-      secondaryLabel: `· ${startDate}–${endDate}, ${rangeYear}`,
-    };
-  }
   if (scale === 'month') {
     return { label: MONTHS[value.getUTCMonth()] as string, secondaryLabel: year };
   }

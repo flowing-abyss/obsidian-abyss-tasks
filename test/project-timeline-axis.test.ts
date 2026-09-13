@@ -47,7 +47,7 @@ describe('project Timeline calendar axis', () => {
         startDay: '2024-01-31',
         endDay: '2024-02-01',
         label: 'W05',
-        secondaryLabel: '· Jan 29–Feb 4, 2024',
+        secondaryLabel: undefined,
       },
     ]);
   });
@@ -136,14 +136,14 @@ describe('project Timeline calendar axis', () => {
         startDay: '2020-12-28',
         endDay: '2021-01-03',
         label: 'W53',
-        secondaryLabel: '· Dec 28–Jan 3, 2020/2021',
+        secondaryLabel: undefined,
         isToday: true,
       },
       {
         startDay: '2021-01-04',
         endDay: '2021-01-10',
         label: 'W01',
-        secondaryLabel: '· Jan 4–10, 2021',
+        secondaryLabel: undefined,
         isToday: false,
       },
     ]);

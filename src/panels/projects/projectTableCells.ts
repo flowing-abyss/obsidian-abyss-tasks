@@ -20,6 +20,7 @@ import {
 import { renderTaskText } from '../../ui/renderTaskText';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { formatProjectPrettyDate, formatProjectRelativeDate } from './projectDatePresentation';
+import { applyProjectStatusPresentation } from './projectStatusPresentation';
 
 function statusFor(
   project: Project,
@@ -34,12 +35,6 @@ function progressBand(percent: number | null): 'empty' | 'low' | 'quarter' | 'ha
   if (percent < 50) return 'quarter';
   if (percent < 75) return 'half';
   return 'high';
-}
-
-function statusDisplayClass(display: ProjectStatus['display']): string {
-  if (display === 'text') return ' is-text';
-  if (display === 'dot') return ' is-dot';
-  return '';
 }
 
 function renderProgress(
@@ -87,12 +82,9 @@ function renderStatus(
 ): void {
   const status = statusFor(project, statuses);
   const pill = cell.createSpan({
-    cls: `abyss-project-table-status-pill${statusDisplayClass(status?.display)}`,
     text: projectTableDisplayValues(project, field, statuses)[0] ?? 'No status',
   });
-  if (status?.color !== undefined && status.color.length > 0) {
-    pill.style.setProperty('--abyss-project-status-color', status.color);
-  }
+  applyProjectStatusPresentation(pill, status);
   renderUnavailableType(cell, field);
 }
 

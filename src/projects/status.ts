@@ -2,10 +2,9 @@ import type { ProjectsSettings, ProjectStatus } from '../settings/types';
 import { findFrontmatterProperty } from './projectFields';
 import type { Project } from './types';
 
-export interface StatusGroup {
+export interface StatusGroup extends Pick<ProjectStatus, 'color' | 'display'> {
   key: string;
   label: string;
-  color?: string;
   statusId: string | null; // null for discovered/none groups
 }
 
@@ -40,6 +39,7 @@ export function orderedGroups(statuses: ProjectStatus[], projects: Project[]): S
     key: `id:${s.id}`,
     label: projectStatusDisplayName(s),
     ...(s.color !== undefined && { color: s.color }),
+    ...(s.display !== undefined && { display: s.display }),
     statusId: s.id,
   }));
   const discovered = new Set<string>();

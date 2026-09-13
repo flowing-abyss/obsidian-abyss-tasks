@@ -2385,16 +2385,26 @@ describe('ProjectsTableView', () => {
   });
 
   it('patches available status badges in place while toggling their persisted filters', async () => {
-    const { host, view, config, saveSettings } = mount([
-      project({}),
-      project({ path: 'Projects/U.md', name: 'Unknown', statusId: null, rawStatus: 'waiting' }),
-      project({ path: 'Projects/N.md', name: 'None', statusId: null, rawStatus: null }),
-    ]);
+    const config = settings();
+    const configured = expectDefined(config.projects.statuses[0]);
+    configured.display = 'text';
+    configured.color = '#28b8a5';
+    const { host, view, saveSettings } = mount(
+      [
+        project({}),
+        project({ path: 'Projects/U.md', name: 'Unknown', statusId: null, rawStatus: 'waiting' }),
+        project({ path: 'Projects/N.md', name: 'None', statusId: null, rawStatus: null }),
+      ],
+      { settings: config },
+    );
     const button = expectDefined(
       host.querySelector<HTMLButtonElement>(
         `.abyss-project-status-filter[data-status-key="id:${active.id}"]`,
       ),
     );
+    expect(button.classList).toContain('abyss-project-table-status-pill');
+    expect(button.classList).toContain('is-text');
+    expect(button.style.getPropertyValue('--abyss-project-status-color')).toBe('#28b8a5');
 
     button.focus();
     button.click();
@@ -2411,10 +2421,12 @@ describe('ProjectsTableView', () => {
     expect(
       host.querySelector(`[data-status-key="id:${active.id}"]`)?.classList.contains('is-disabled'),
     ).toBe(true);
+    expect(button.getAttribute('aria-pressed')).toBe('false');
     button.click();
     await flushMicrotasks();
     expect(config.projects.table.hiddenStatuses).not.toContain(`id:${active.id}`);
     expect(saveSettings).toHaveBeenCalledTimes(2);
+    expect(button.getAttribute('aria-pressed')).toBe('true');
     expect(button.textContent).toBe(active.displayName ?? active.name);
 
     const originalButtons = new Map(
@@ -2434,6 +2446,16 @@ describe('ProjectsTableView', () => {
     for (const item of reordered) {
       expect(item).toBe(originalButtons.get(item.dataset['statusKey']));
     }
+
+    delete configured.display;
+    delete configured.color;
+    button.focus();
+    view.refreshFields();
+    expect(host.querySelector(`[data-status-key="id:${active.id}"]`)).toBe(button);
+    expect(button.ownerDocument.activeElement).toBe(button);
+    expect(button.classList).not.toContain('is-text');
+    expect(button.classList).not.toContain('is-dot');
+    expect(button.style.getPropertyValue('--abyss-project-status-color')).toBe('');
   });
 
   it('renders the configured status as editable when the native catalog is unavailable', () => {

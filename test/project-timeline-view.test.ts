@@ -582,7 +582,7 @@ describe('ProjectsTimelineView', () => {
     const hierarchyWidth = Number.parseFloat(hierarchy.style.width);
     const labelLeft = Number.parseFloat(label.style.left);
     expect(hierarchyLeft + (labelLeft / 100) * hierarchyWidth).toBeCloseTo((84.5 / 448) * 100);
-    expect(label.textContent).toBe('W37· Sep 7–13, 2026');
+    expect(label.textContent).toBe('W37');
   });
 
   it('uses readable muted or normal colors for ordinary and hierarchy labels', async () => {
@@ -595,9 +595,7 @@ describe('ProjectsTimelineView', () => {
       host.querySelector<HTMLElement>('.abyss-project-timeline-axis-cell:not(.is-today)'),
     );
     const hierarchyContext = expectDefined(
-      host.querySelector<HTMLElement>(
-        '.abyss-project-timeline-axis-hierarchy-cell:not(.is-today) .abyss-project-timeline-axis-secondary-label',
-      ),
+      host.querySelector<HTMLElement>('.abyss-project-timeline-axis-hierarchy-cell:not(.is-today)'),
     );
 
     expect(activeWindow.getComputedStyle(cell).color).toBe('var(--text-muted)');
