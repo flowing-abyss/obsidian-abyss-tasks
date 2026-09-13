@@ -8671,7 +8671,7 @@ button.abyss-project-table-status-pill {
 .abyss-project-timeline-axis-cell.is-today,
 .abyss-project-timeline-axis-hierarchy-cell.is-today {
   background: color-mix(in srgb, var(--text-normal) 12%, var(--background-secondary));
-  box-shadow: inset 0 -2px 0 var(--interactive-accent);
+  box-shadow: inset 0 2px 0 var(--interactive-accent);
   color: var(--text-normal);
 }
 
