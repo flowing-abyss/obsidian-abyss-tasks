@@ -495,14 +495,14 @@ describe('project Kanban overview', () => {
       host.querySelectorAll<HTMLButtonElement>('.abyss-project-timeline-scale-control button'),
     ).find(({ textContent }) => textContent === 'Month');
     expectDefined(month).click();
-    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
       '2026-09-01 – 2026-09-30',
     );
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
     const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
     chooseViewOption(host, 'Scale', 'Month');
     await flushMicrotasks();
-    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
       '2026-09-01 – 2026-09-30',
     );
     chooseViewOption(host, 'Scale', 'Quarter');
@@ -569,7 +569,7 @@ describe('project Kanban overview', () => {
     await flushMicrotasks();
 
     expect(settings.projects.timeline?.scale).toBe('month');
-    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
       '2045-06-01 – 2045-07-31',
     );
     expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
@@ -586,7 +586,7 @@ describe('project Kanban overview', () => {
       history: new ProjectEditHistory(applyEdits),
     });
     clickView(host, 'Timeline');
-    const before = host.querySelector('.abyss-project-timeline-axis-summary')?.textContent;
+    const before = host.querySelector('.abyss-project-timeline-axis-range')?.textContent;
     const start = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="start"]'),
     );
@@ -604,7 +604,7 @@ describe('project Kanban overview', () => {
     await flushMicrotasks();
 
     expect(settings.projects.timeline?.scale).toBe('month');
-    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(before);
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(before);
     expect(input.isConnected).toBe(true);
   });
 

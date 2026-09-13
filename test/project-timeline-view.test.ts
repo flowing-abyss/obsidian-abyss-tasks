@@ -171,6 +171,81 @@ function mockTimelineGeometry(
 }
 
 describe('ProjectsTimelineView', () => {
+  it('retains all navigation controls inside the sticky axis corner as its range changes', () => {
+    const projects = [
+      project('Projects/Early.md', '2026-09-10', '2026-09-10'),
+      project('Projects/Late.md', '2026-09-19', '2026-09-20'),
+    ];
+    const { host, view } = mount(projects);
+    const root = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline'));
+    const axisSummary = expectDefined(
+      root.querySelector<HTMLElement>('.abyss-project-timeline-axis-summary'),
+    );
+    const navigation = expectDefined(
+      axisSummary.querySelector<HTMLElement>('.abyss-project-timeline-navigation'),
+    );
+    const rangeNavigation = expectDefined(
+      navigation.querySelector<HTMLElement>('.abyss-project-timeline-range-navigation'),
+    );
+    const scaleControl = expectDefined(
+      navigation.querySelector<HTMLElement>('.abyss-project-timeline-scale-control'),
+    );
+    const range = expectDefined(
+      axisSummary.querySelector<HTMLElement>('.abyss-project-timeline-axis-range'),
+    );
+    const descriptionId = expectDefined(view.scroll.getAttribute('aria-describedby'));
+    const rangeButtons = Array.from(rangeNavigation.querySelectorAll<HTMLButtonElement>('button'));
+    const scaleButtons = Array.from(scaleControl.querySelectorAll<HTMLButtonElement>('button'));
+    const buttons = [...rangeButtons, ...scaleButtons];
+
+    expect(navigation.parentElement).toBe(axisSummary);
+    expect(root.querySelector(':scope > .abyss-project-timeline-navigation')).toBeNull();
+    expect(Array.from(navigation.children)).toEqual([rangeNavigation, scaleControl]);
+    expect(range.classList).toContain('abyss-sr-only');
+    expect(range.id).toBe(descriptionId);
+    expect(root.querySelector(`#${descriptionId}`)).toBe(range);
+    expect(rangeButtons.map(({ ariaLabel, textContent }) => [ariaLabel, textContent])).toEqual([
+      ['Previous range', ''],
+      [null, 'Today'],
+      ['Next range', ''],
+    ]);
+    expect(scaleButtons.map(({ textContent }) => textContent)).toEqual([
+      'Day',
+      'Week',
+      'Month',
+      'Quarter',
+      'Year',
+    ]);
+    expect(buttons).toHaveLength(8);
+
+    rangeButtons[0]?.click();
+    expect(range.textContent).toBe('2025-01-01 – 2025-12-31');
+    rangeButtons[1]?.click();
+    expect(range.textContent).toBe('2026-01-01 – 2026-12-31');
+    rangeButtons[2]?.click();
+    expect(range.textContent).toBe('2027-01-01 – 2027-12-31');
+
+    const expectedBounds = [
+      '2026-09-10 – 2026-09-20',
+      '2026-09-07 – 2026-09-20',
+      '2026-09-01 – 2026-09-30',
+      '2026-07-01 – 2026-09-30',
+      '2026-01-01 – 2026-12-31',
+    ];
+    for (const [index, button] of scaleButtons.entries()) {
+      button.focus();
+      button.click();
+      expect(range.textContent).toBe(expectedBounds[index]);
+      expect(activeDocument.activeElement).toBe(button);
+    }
+
+    view.update(projects, '');
+
+    expect(axisSummary.querySelector('.abyss-project-timeline-axis-range')).toBe(range);
+    expect(Array.from(navigation.querySelectorAll('button'))).toEqual(buttons);
+    expect(view.scroll.getAttribute('aria-describedby')).toBe(descriptionId);
+  });
+
   it('retains a keyed row, focused date cell, and scroll during an ordinary update', () => {
     const item = project('Projects/A.md', '2026-09-01', '2026-09-30');
     const { host, view } = mount([item]);
@@ -517,7 +592,7 @@ describe('ProjectsTimelineView', () => {
     await Promise.resolve();
 
     expect(view.scroll.scrollLeft).toBe(0);
-    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
       '2024-01-01 – 2024-12-31',
     );
   });
@@ -767,7 +842,7 @@ describe('ProjectsTimelineView', () => {
     ];
     for (const [index, button] of scaleButtons.entries()) {
       button.click();
-      expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+      expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
         expectedBounds[index],
       );
       expect(button.getAttribute('aria-pressed')).toBe('true');
@@ -793,12 +868,12 @@ describe('ProjectsTimelineView', () => {
         ({ textContent }) => textContent === 'Today',
       ),
     ).click();
-    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
       '2026-01-01 – 2026-12-31',
     );
 
     month.click();
-    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
       '2026-09-01 – 2026-09-30',
     );
   });
@@ -813,7 +888,7 @@ describe('ProjectsTimelineView', () => {
 
     month.click();
 
-    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
       '2026-01-01 – 2026-12-31',
     );
   });
@@ -875,9 +950,7 @@ describe('ProjectsTimelineView', () => {
 
       expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Next range"]')).click();
 
-      expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
-        expected,
-      );
+      expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(expected);
     },
   );
 
@@ -897,7 +970,7 @@ describe('ProjectsTimelineView', () => {
 
     expectDefined(host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)).click();
 
-    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(expected);
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(expected);
   });
 
   it('exposes Today after returning from a horizontally scrolled range', () => {

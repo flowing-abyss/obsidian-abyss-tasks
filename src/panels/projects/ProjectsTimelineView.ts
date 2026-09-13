@@ -279,6 +279,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   readonly scroll: HTMLElement;
   private readonly axis_abyssPrivate: HTMLElement;
   private readonly axisSummary_abyssPrivate: HTMLElement;
+  private readonly axisRange_abyssPrivate: HTMLElement;
   private readonly axisDates_abyssPrivate: HTMLElement;
   private readonly axisHierarchy_abyssPrivate: HTMLElement;
   private readonly axisCells_abyssPrivate: HTMLElement;
@@ -316,40 +317,6 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     this.anchor_abyssPrivate = new Date((context_abyssPrivate.now ?? (() => new Date()))());
     this.renderedScale_abyssPrivate = context_abyssPrivate.settings().scale;
     this.root = host.createDiv({ cls: 'abyss-project-timeline', attr: { tabindex: '-1' } });
-    const navigation = this.root.createDiv({ cls: 'abyss-project-timeline-navigation' });
-    this.addNavigationButton_abyssPrivate(navigation, 'Previous range', 'chevron-left', () => {
-      this.context_abyssPrivate.requestNavigation(() => {
-        this.moveAnchor_abyssPrivate(-1);
-      });
-    });
-    const todayButton = this.addTextButton_abyssPrivate(navigation, 'Today', () => {
-      this.context_abyssPrivate.requestNavigation(() => {
-        const today = new Date((this.context_abyssPrivate.now ?? (() => new Date()))());
-        this.anchor_abyssPrivate = today;
-        this.fittedWindow_abyssPrivate = undefined;
-        this.scaleContextOrdinal_abyssPrivate = dayOrdinal(localDay(today));
-        this.render_abyssPrivate(true);
-      });
-    });
-    todayButton.addClass('abyss-cal-nav-today');
-    this.addNavigationButton_abyssPrivate(navigation, 'Next range', 'chevron-right', () => {
-      this.context_abyssPrivate.requestNavigation(() => {
-        this.moveAnchor_abyssPrivate(1);
-      });
-    });
-    const scaleControl = navigation.createDiv({
-      cls: 'abyss-project-timeline-scale-control abyss-cal-view-switcher',
-      attr: { role: 'group', 'aria-label': 'Timeline scale' },
-    });
-    for (const [scale, label] of TIMELINE_SCALES) {
-      const button = this.addTextButton_abyssPrivate(scaleControl, label, () => {
-        void this.context_abyssPrivate.requestScaleChange(scale).catch((error: unknown) => {
-          console.error('[abyss-tasks] Could not change project Timeline scale', error);
-        });
-      });
-      button.addClass('abyss-cal-view-btn');
-      this.scaleButtons_abyssPrivate.set(scale, button);
-    }
     this.scroll = this.root.createDiv({
       cls: 'abyss-project-timeline-scroll',
       attr: { tabindex: '0', 'aria-label': 'Project Timeline' },
@@ -358,6 +325,12 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     this.axisSummary_abyssPrivate = this.axis_abyssPrivate.createDiv({
       cls: 'abyss-project-timeline-axis-summary',
     });
+    this.axisRange_abyssPrivate = this.axisSummary_abyssPrivate.createSpan({
+      cls: 'abyss-project-timeline-axis-range abyss-sr-only',
+    });
+    this.axisRange_abyssPrivate.id = `abyss-project-timeline-axis-range-${String(++timelineRangeAccessibilitySequence)}`;
+    this.scroll.setAttribute('aria-describedby', this.axisRange_abyssPrivate.id);
+    this.createNavigation_abyssPrivate();
     this.axisDates_abyssPrivate = this.axis_abyssPrivate.createDiv({
       cls: 'abyss-project-timeline-axis-dates',
     });
@@ -387,6 +360,48 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
         if (row !== undefined) this.selectRange_abyssPrivate(row, focus);
       },
     });
+  }
+
+  private createNavigation_abyssPrivate(): void {
+    const navigation = this.axisSummary_abyssPrivate.createDiv({
+      cls: 'abyss-project-timeline-navigation',
+    });
+    const rangeNavigation = navigation.createDiv({
+      cls: 'abyss-project-timeline-range-navigation',
+    });
+    this.addNavigationButton_abyssPrivate(rangeNavigation, 'Previous range', 'chevron-left', () => {
+      this.context_abyssPrivate.requestNavigation(() => {
+        this.moveAnchor_abyssPrivate(-1);
+      });
+    });
+    const todayButton = this.addTextButton_abyssPrivate(rangeNavigation, 'Today', () => {
+      this.context_abyssPrivate.requestNavigation(() => {
+        const today = new Date((this.context_abyssPrivate.now ?? (() => new Date()))());
+        this.anchor_abyssPrivate = today;
+        this.fittedWindow_abyssPrivate = undefined;
+        this.scaleContextOrdinal_abyssPrivate = dayOrdinal(localDay(today));
+        this.render_abyssPrivate(true);
+      });
+    });
+    todayButton.addClass('abyss-cal-nav-today');
+    this.addNavigationButton_abyssPrivate(rangeNavigation, 'Next range', 'chevron-right', () => {
+      this.context_abyssPrivate.requestNavigation(() => {
+        this.moveAnchor_abyssPrivate(1);
+      });
+    });
+    const scaleControl = navigation.createDiv({
+      cls: 'abyss-project-timeline-scale-control abyss-cal-view-switcher',
+      attr: { role: 'group', 'aria-label': 'Timeline scale' },
+    });
+    for (const [scale, label] of TIMELINE_SCALES) {
+      const button = this.addTextButton_abyssPrivate(scaleControl, label, () => {
+        void this.context_abyssPrivate.requestScaleChange(scale).catch((error: unknown) => {
+          console.error('[abyss-tasks] Could not change project Timeline scale', error);
+        });
+      });
+      button.addClass('abyss-cal-view-btn');
+      this.scaleButtons_abyssPrivate.set(scale, button);
+    }
   }
 
   mount(projects: readonly Project[], search: string): void {
@@ -798,7 +813,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       overscanCells: 1,
       todayDay: today,
     });
-    this.axisSummary_abyssPrivate.setText(`${window.startDay} – ${window.endDay}`);
+    this.axisRange_abyssPrivate.setText(`${window.startDay} – ${window.endDay}`);
     this.patchAxisCells_abyssPrivate(
       this.axisHierarchy_abyssPrivate,
       this.axisLayout_abyssPrivate.hierarchyCells,

@@ -8469,22 +8469,58 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-timeline-navigation {
-  position: relative;
   display: flex;
-  min-height: 34px;
-  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px;
+}
+
+.abyss-project-timeline-range-navigation {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  overflow-x: auto;
-  padding: 4px 10px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
+  justify-content: center;
+  gap: 2px;
 }
 
 .abyss-project-timeline-scale-control {
   position: static;
+  min-width: 0;
   flex: 0 0 auto;
-  margin-left: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.abyss-project-timeline-range-navigation .abyss-cal-nav-btn {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+}
+
+.abyss-project-timeline-range-navigation .abyss-cal-nav-btn .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.abyss-project-timeline-range-navigation .abyss-cal-nav-today,
+.abyss-project-timeline-scale-control button.abyss-cal-view-btn {
+  box-sizing: border-box;
+  min-width: 24px;
+  min-height: 24px;
+  height: auto;
+  padding: 2px 3px;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.2;
+}
+
+.abyss-project-timeline-scale-control button.abyss-cal-view-btn {
+  flex: 0 1 auto;
 }
 
 .abyss-project-timeline-scroll {
@@ -8510,7 +8546,6 @@ button.abyss-project-table-status-pill {
   position: sticky;
   z-index: 5;
   top: 0;
-  min-height: 52px;
   border-bottom: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
   color: var(--text-muted);
@@ -8530,8 +8565,7 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-timeline-axis-summary {
   display: flex;
-  align-items: center;
-  padding: 0 10px;
+  align-items: stretch;
   background: var(--background-secondary);
   font-variant-numeric: tabular-nums;
 }
@@ -8555,12 +8589,12 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-timeline-axis-cells {
+  top: 20px;
   bottom: 0;
-  height: 32px;
 }
 
 .abyss-project-timeline-axis-dates.is-single-tier .abyss-project-timeline-axis-cells {
-  height: 100%;
+  top: 0;
 }
 
 .abyss-project-timeline-axis-cell,
