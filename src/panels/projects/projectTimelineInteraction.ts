@@ -525,7 +525,7 @@ export class ProjectTimelinePointerInteraction {
           return;
         }
         active.prepared = true;
-        if (this.shouldPreview_abyssPrivate(active)) this.preview_abyssPrivate(active);
+        this.preview_abyssPrivate(active);
       },
       (error: unknown) => {
         if (this.active_abyssPrivate === active) this.cancelGesture_abyssPrivate(true);
@@ -548,9 +548,7 @@ export class ProjectTimelinePointerInteraction {
     active.lastDay = day;
     active.moved ||= Math.abs(event.clientX - active.startClientX) >= MOVEMENT_THRESHOLD_PX;
     this.updateEdgeScroll_abyssPrivate(event.clientX);
-    if (active.prepared && this.shouldPreview_abyssPrivate(active)) {
-      this.preview_abyssPrivate(active);
-    }
+    if (active.prepared) this.preview_abyssPrivate(active);
   };
 
   private readonly pointerUp_abyssPrivate = (event: PointerEvent): void => {
@@ -646,6 +644,7 @@ export class ProjectTimelinePointerInteraction {
   }
 
   private preview_abyssPrivate(active: ActivePointerGesture): void {
+    if (!this.shouldPreview_abyssPrivate(active)) return;
     const intent = this.intent_abyssPrivate(active);
     if (intent === undefined) return;
     const plan = planProjectTimelineEdit(active.source.range, intent);
@@ -767,7 +766,7 @@ export class ProjectTimelinePointerInteraction {
       this.edgeDirection_abyssPrivate * EDGE_SCROLL_STEP_PX;
     const day = this.dayAtClientX_abyssPrivate(active.target.track, active.lastClientX);
     if (day !== undefined) active.lastDay = day;
-    if (this.shouldPreview_abyssPrivate(active)) this.preview_abyssPrivate(active);
+    this.preview_abyssPrivate(active);
     this.edgeFrame_abyssPrivate = this.ownerWindow_abyssPrivate?.requestAnimationFrame(
       this.edgeScrollFrame_abyssPrivate,
     );

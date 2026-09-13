@@ -278,6 +278,7 @@ describe('ProjectTimelinePointerInteraction', () => {
 
     endHandle?.dispatchEvent(pointerEvent('pointerdown', 77));
     await flushMicrotasks();
+    mounted.interaction.reconcileAfterRender();
 
     expect(mounted.bar.className).toBe('abyss-project-timeline-bar is-open-end is-one-date');
     expect(mounted.bar.style.left).toBe('66.849315%');
