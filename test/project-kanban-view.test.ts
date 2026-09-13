@@ -4,6 +4,7 @@ import { AppState } from '../src/app/AppState';
 import { isProjectKanbanCustomized } from '../src/panels/projects/ProjectKanbanOptions';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
+import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
 import type {
   AppliedProjectCellChange,
@@ -545,6 +546,53 @@ describe('project Kanban overview', () => {
       host.querySelector('.abyss-project-timeline [data-column-id="property:Deadline"]')
         ?.textContent,
     ).toContain('2026-09-07');
+  });
+
+  it('keeps a Timeline metadata editor in its single value cell through validation and save', async () => {
+    const applyEdits = vi
+      .fn<(changes: readonly ProjectCellChange[]) => Promise<ProjectEditResult>>()
+      .mockRejectedValueOnce(new ProjectEditValidationError('Start conflicts with End'))
+      .mockImplementation(async (changes) => appliedResult(changes));
+    const { host, settings } = mountView(undefined, {
+      applyEdits,
+      history: new ProjectEditHistory(applyEdits),
+    });
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    clickView(host, 'Timeline');
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="start"]'),
+    );
+    const field = expectDefined(start.closest<HTMLElement>('.abyss-project-timeline-field'));
+
+    expect(field.querySelectorAll('.abyss-project-timeline-field-value')).toHaveLength(1);
+    expect(start.parentElement).toBe(field);
+
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
+    expect(start.classList).toContain('is-editing');
+    input.value = '2026-10-02';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(start.querySelector('.abyss-project-editor-error')?.textContent).toBe(
+      'Start conflicts with End',
+    );
+    expect(input.isConnected).toBe(true);
+
+    input.value = '2026-09-02';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledTimes(2);
+    expect(expectDefined(applyEdits.mock.calls[1])[0][0]).toMatchObject({
+      path: 'Projects/A.md',
+      value: '2026-09-02',
+      expectedValue: '2026-09-01',
+    });
+    expect(start.classList).not.toContain('is-editing');
+    expect(start.querySelector('.abyss-project-cell-editor')).toBeNull();
   });
 
   it('edits a visible Timeline description without changing the Table preference', async () => {

@@ -430,6 +430,10 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
 
   private moveAnchor_abyssPrivate(direction: -1 | 1): void {
     const scale = this.context_abyssPrivate.settings().scale;
+    if (this.fittedWindow_abyssPrivate !== undefined) {
+      const context = this.visibleContextOrdinal_abyssPrivate(this.fittedWindow_abyssPrivate);
+      this.anchor_abyssPrivate = dayDate(dayFromOrdinal(context));
+    }
     this.fittedWindow_abyssPrivate = undefined;
     if (scale === 'day' || scale === 'week') {
       const span = scale === 'day' ? 14 : 84;
@@ -757,15 +761,13 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       let label = fieldRow.querySelector<HTMLElement>('.abyss-project-timeline-field-label');
       label ??= fieldRow.createSpan({ cls: 'abyss-project-timeline-field-label' });
       label.setText(metadataItem.label);
-      let value = fieldRow.querySelector<HTMLElement>('.abyss-project-timeline-field-value');
-      value ??= fieldRow.createDiv({ cls: 'abyss-project-timeline-field-value' });
       this.renderRowCell_abyssPrivate({
         row,
         item,
         visibleCells,
         retained,
         field: metadataItem.field,
-        parent: value,
+        parent: fieldRow,
         className: 'abyss-project-timeline-field-value',
         selectable: settings.showMetadata,
         column: metadataItem.column,

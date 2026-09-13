@@ -274,6 +274,25 @@ describe('ProjectsTimelineView', () => {
     },
   );
 
+  it.each([
+    ['Previous range', '2031-01-01 – 2031-12-31'],
+    ['Next range', '2033-01-01 – 2033-12-31'],
+  ] as const)('moves %s from a fitted remote date context', (label, expected) => {
+    const projects = [
+      project('Projects/Early.md', '2032-03-04', '2032-03-05'),
+      project('Projects/Late.md', '2032-10-20', '2032-10-21'),
+    ];
+    const { host } = mount(projects, new Date(2026, 8, 13), 'month');
+    const fit = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(
+      ({ textContent }) => textContent === 'Fit',
+    );
+    expectDefined(fit).click();
+
+    expectDefined(host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)).click();
+
+    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(expected);
+  });
+
   it('exposes Today after returning from a horizontally scrolled range', () => {
     const { host, view } = mount([project('Projects/A.md', '2026-09-13')]);
     expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Next range"]')).click();

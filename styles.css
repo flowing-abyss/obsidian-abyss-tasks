@@ -8731,6 +8731,10 @@ table.abyss-project-table {
   line-height: 1.2;
 }
 
+.abyss-project-timeline-field-value.is-editing {
+  overflow: visible;
+}
+
 .abyss-project-timeline-name-cell .abyss-project-description {
   overflow: visible;
   align-items: flex-start;
