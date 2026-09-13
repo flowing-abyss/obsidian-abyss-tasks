@@ -175,6 +175,10 @@ const EDGE_SCROLL_ZONE_PX = 32;
 const EDGE_SCROLL_STEP_PX = 12;
 const NESTED_CONTROL_SELECTOR = 'button, input, select, textarea, a, [contenteditable="true"]';
 
+function setRangeLeft(bar: HTMLElement, left: string): void {
+  bar.style.setProperty('--abyss-project-timeline-range-left', left);
+}
+
 function pointerPart(element: HTMLElement): TimelinePointerPart | undefined {
   const part = element.dataset['timelinePart'];
   return part === 'track' || part === 'bar' || part === 'start' || part === 'end'
@@ -210,7 +214,7 @@ function isOneDateRange(range: ProjectTimelineRange): boolean {
   );
 }
 
-/** Applies exact calendar geometry while allowing CSS to compact one-date presentation. */
+/** Applies exact calendar geometry while allowing CSS to contain compact presentation. */
 export function applyProjectTimelineBarGeometry(
   bar: HTMLElement,
   range: ProjectTimelineRange,
@@ -219,6 +223,7 @@ export function applyProjectTimelineBarGeometry(
   bar.className = `abyss-project-timeline-bar is-${range.kind}`;
   bar.style.left = `${geometry.leftPercent}%`;
   bar.style.width = `${geometry.widthPercent}%`;
+  setRangeLeft(bar, bar.style.left);
   const oneDate = isOneDateRange(range);
   bar.toggleClass('is-one-date', oneDate);
   if (oneDate) {
@@ -387,6 +392,7 @@ export class ProjectTimelinePointerInteraction {
       bar.hidden = active.barSnapshot.hidden;
       bar.style.left = active.barSnapshot.left;
       bar.style.width = active.barSnapshot.width;
+      setRangeLeft(bar, active.barSnapshot.left);
       if (active.barSnapshot.oneDateCenter === '') {
         bar.style.removeProperty('--abyss-project-timeline-one-date-center');
       } else {
@@ -421,6 +427,7 @@ export class ProjectTimelinePointerInteraction {
     bar.hidden = snapshot.hidden;
     bar.style.left = snapshot.left;
     bar.style.width = snapshot.width;
+    setRangeLeft(bar, snapshot.left);
     if (snapshot.oneDateCenter === '') {
       bar.style.removeProperty('--abyss-project-timeline-one-date-center');
     } else {

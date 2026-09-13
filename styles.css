@@ -8828,6 +8828,10 @@ table.abyss-project-table {
   transform: translateY(-50%);
 }
 
+.abyss-project-timeline-bar:not(.is-one-date) {
+  left: max(0px, min(var(--abyss-project-timeline-range-left), calc(100% - 40px))) !important;
+}
+
 .abyss-project-timeline-bar.is-one-date {
   left: clamp(
     0px,

@@ -322,6 +322,50 @@ describe('ProjectsTimelineView', () => {
     sheet.remove();
   });
 
+  it('keeps a compact multi-day range inside the fitted right boundary', async () => {
+    const styles = await loadPluginStyles();
+    const sheet = createEl('style');
+    sheet.textContent = styles;
+    activeDocument.head.append(sheet);
+    const { host } = mount([project('Projects/Year end.md', '2026-12-30', '2026-12-31')]);
+    const year = expectDefined(
+      Array.from(
+        host.querySelectorAll<HTMLButtonElement>('.abyss-project-timeline-scale-control button'),
+      ).find(({ textContent }) => textContent === 'Year'),
+    );
+
+    year.click();
+
+    const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    expect(bar.classList).not.toContain('is-one-date');
+    expect(Number.parseFloat(bar.style.left)).toBeCloseTo((363 / 365) * 100);
+    expect(Number.parseFloat(bar.style.width)).toBeCloseTo((2 / 365) * 100);
+    expect(bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(bar.style.left);
+    const compactRule = expectDefined(
+      Array.from(sheet.sheet?.cssRules ?? []).find(
+        (rule): rule is CSSStyleRule =>
+          rule instanceof CSSStyleRule &&
+          rule.selectorText === '.abyss-project-timeline-bar:not(.is-one-date)',
+      ),
+    );
+    expect(compactRule.style.left.replace(/\s+/gu, ' ')).toBe(
+      'max(0px, min(var(--abyss-project-timeline-range-left), calc(100% - 40px)))',
+    );
+    const trackWidth = 640;
+    const sourceLeft = (Number.parseFloat(bar.style.left) / 100) * trackWidth;
+    const visualLeft = Math.max(0, Math.min(sourceLeft, trackWidth - 40));
+    expect(visualLeft).toBe(600);
+    expect(visualLeft + 40).toBe(trackWidth);
+    expect(
+      expectDefined(bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-start'))
+        .hidden,
+    ).toBe(false);
+    expect(
+      expectDefined(bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-end')).hidden,
+    ).toBe(false);
+    sheet.remove();
+  });
+
   it('keeps range control names accessible without visible or native hover text', async () => {
     const styles = await loadPluginStyles();
     const sheet = createEl('style');

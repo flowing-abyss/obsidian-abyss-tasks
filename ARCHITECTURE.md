@@ -242,8 +242,8 @@ source is still current; rejection, source replacement, hiding, destruction, and
 gestures clear it, while an older settlement cannot alter a newer preview.
 `ProjectsTimelineView` retains keyed tracks, bars, endpoint handles, cursor, and tooltip nodes so
 focus and preview ownership survive ordinary receipt refreshes. Tick-bounded row grid lines reuse
-the axis interval positions. Both edge targets remain reachable for open and one-date ranges;
-compact one-date presentation and minimum handle geometry do not change the calendar-day
+the axis interval positions. Both edge targets remain reachable for open and compact scheduled
+ranges; bounded minimum-width presentation and handle geometry do not change the calendar-day
 coordinate system. Range controls use labelled and described screen-reader text while the custom
 date bubble remains the pointer hint. The focusable track and bar share one range keyboard and
 context-menu path, including handle-originated menus, leaving nested controls and shared overview

@@ -150,6 +150,9 @@ describe('ProjectTimelinePointerInteraction', () => {
 
     expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
     expect(mounted.bar.classList).toContain('is-previewing');
+    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
+      mounted.bar.style.left,
+    );
     expect(mounted.root.querySelector('.abyss-project-timeline-tooltip')?.textContent).toBe(
       '2026-09-04',
     );
@@ -175,6 +178,9 @@ describe('ProjectTimelinePointerInteraction', () => {
     mounted.track.dispatchEvent(pointerEvent('pointermove', 45));
     const desiredLeft = mounted.bar.style.left;
     const desiredWidth = mounted.bar.style.width;
+    const desiredRangeLeft = mounted.bar.style.getPropertyValue(
+      '--abyss-project-timeline-range-left',
+    );
 
     mounted.track.dispatchEvent(pointerEvent('pointerup', 45));
 
@@ -183,15 +189,23 @@ describe('ProjectTimelinePointerInteraction', () => {
     expect(mounted.bar.classList).toContain('is-previewing');
 
     mounted.bar.className = 'abyss-project-timeline-bar is-closed';
-    mounted.bar.setCssProps({ left: '10%', width: '30%' });
+    mounted.bar.setCssProps({
+      left: '10%',
+      width: '30%',
+      '--abyss-project-timeline-range-left': '10%',
+    });
     mounted.interaction.reconcileAfterRender();
 
     expect(mounted.bar.style.left).toBe(desiredLeft);
     expect(mounted.bar.style.width).toBe(desiredWidth);
+    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
+      desiredRangeLeft,
+    );
     held.resolve({ applied: [], failed: [] });
     await flushMicrotasks();
     expect(mounted.bar.style.left).toBe('10%');
     expect(mounted.bar.style.width).toBe('30%');
+    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe('10%');
   });
 
   it('rolls a rejected command back and reports it once', async () => {
@@ -208,6 +222,7 @@ describe('ProjectTimelinePointerInteraction', () => {
 
     expect(mounted.bar.style.left).toBe('');
     expect(mounted.bar.style.width).toBe('');
+    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe('');
     expect(mounted.bar.classList).not.toContain('is-previewing');
     expect(mounted.reportRangeFailure).toHaveBeenCalledOnce();
   });
@@ -431,6 +446,7 @@ describe('ProjectTimelinePointerInteraction', () => {
     mounted.track.dispatchEvent(pointerEvent(type, 45));
 
     expect(mounted.bar.classList).not.toContain('is-previewing');
+    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe('');
     expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
     mounted.interaction.destroy();
   });
