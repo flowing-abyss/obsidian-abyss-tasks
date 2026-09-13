@@ -11,6 +11,7 @@ import type {
 import { planProjectTimelineEdit } from '../../projects/projectTimelineEdits';
 import {
   projectTimelineBarGeometry,
+  type ProjectTimelineBarGeometry,
   type ProjectTimelineRange,
   type ProjectTimelineWindow,
 } from '../../projects/projectTimelineModel';
@@ -157,7 +158,16 @@ interface ActivePointerGesture {
     readonly hidden: boolean;
     readonly left: string;
     readonly width: string;
+    readonly oneDateCenter: string;
   };
+}
+
+interface PendingPointerPreview {
+  readonly id: number;
+  readonly target: TimelinePointerTarget;
+  readonly source: FrozenProjectTimelineRangeSource;
+  readonly range: ProjectTimelineRange;
+  barSnapshot?: ActivePointerGesture['barSnapshot'];
 }
 
 const MOVEMENT_THRESHOLD_PX = 4;
@@ -188,7 +198,37 @@ function barSnapshot(bar: HTMLElement | null): ActivePointerGesture['barSnapshot
         hidden: bar.hidden,
         left: bar.style.left,
         width: bar.style.width,
+        oneDateCenter: bar.style.getPropertyValue('--abyss-project-timeline-one-date-center'),
       };
+}
+
+function isOneDateRange(range: ProjectTimelineRange): boolean {
+  return (
+    range.kind === 'open-start' ||
+    range.kind === 'open-end' ||
+    (range.kind === 'closed' && range.startDay === range.endDay)
+  );
+}
+
+/** Applies exact calendar geometry while allowing CSS to compact one-date presentation. */
+export function applyProjectTimelineBarGeometry(
+  bar: HTMLElement,
+  range: ProjectTimelineRange,
+  geometry: ProjectTimelineBarGeometry,
+): void {
+  bar.className = `abyss-project-timeline-bar is-${range.kind}`;
+  bar.style.left = `${geometry.leftPercent}%`;
+  bar.style.width = `${geometry.widthPercent}%`;
+  const oneDate = isOneDateRange(range);
+  bar.toggleClass('is-one-date', oneDate);
+  if (oneDate) {
+    bar.style.setProperty(
+      '--abyss-project-timeline-one-date-center',
+      `${geometry.leftPercent + geometry.widthPercent / 2}%`,
+    );
+  } else {
+    bar.style.removeProperty('--abyss-project-timeline-one-date-center');
+  }
 }
 
 function resizedDay(sourceDay: string, deltaDays: number): string | undefined {
@@ -243,6 +283,8 @@ function timelineRangeFromPlan(
 /** Owns Timeline pointer capture, preview, cancellation, hover, and edge scrolling. */
 export class ProjectTimelinePointerInteraction {
   private active_abyssPrivate: ActivePointerGesture | undefined;
+  private readonly pending_abyssPrivate = new Map<string, PendingPointerPreview>();
+  private previewSequence_abyssPrivate = 0;
   private destroyed_abyssPrivate = false;
   private suppressClickOccurrence_abyssPrivate: string | undefined;
   private edgeDirection_abyssPrivate: -1 | 0 | 1 = 0;
@@ -294,25 +336,40 @@ export class ProjectTimelinePointerInteraction {
   }
 
   cancelActive(): void {
-    this.cancelActive_abyssPrivate(true);
+    this.cancelGesture_abyssPrivate(true);
+    this.clearPendingPreviews_abyssPrivate(true);
   }
 
   reconcileAfterRender(): void {
     const active = this.active_abyssPrivate;
-    if (active === undefined) return;
-    const current = this.context_abyssPrivate.captureRangeSource(active.target.occurrenceId);
-    if (
-      !active.target.track.isConnected ||
-      current.kind === 'rejected' ||
-      !sameProjectTimelineRangeSource(active.source, current.source)
-    ) {
-      this.cancelActive_abyssPrivate(false);
-      return;
+    if (active !== undefined) {
+      const current = this.context_abyssPrivate.captureRangeSource(active.target.occurrenceId);
+      if (
+        !active.target.track.isConnected ||
+        current.kind === 'rejected' ||
+        !sameProjectTimelineRangeSource(active.source, current.source)
+      ) {
+        this.cancelGesture_abyssPrivate(false);
+      } else if (active.prepared) {
+        this.preview_abyssPrivate(active);
+      }
     }
-    if (active.prepared) this.preview_abyssPrivate(active);
+    for (const [occurrenceId, pending] of this.pending_abyssPrivate) {
+      const current = this.context_abyssPrivate.captureRangeSource(occurrenceId);
+      if (
+        !pending.target.track.isConnected ||
+        current.kind === 'rejected' ||
+        !sameProjectTimelineRangeSource(pending.source, current.source)
+      ) {
+        this.pending_abyssPrivate.delete(occurrenceId);
+        continue;
+      }
+      pending.barSnapshot = barSnapshot(pending.target.bar);
+      this.applyPreview_abyssPrivate(pending.target.bar, pending.range);
+    }
   }
 
-  private cancelActive_abyssPrivate(restorePreview: boolean): void {
+  private cancelGesture_abyssPrivate(restorePreview: boolean): void {
     const active = this.active_abyssPrivate;
     this.active_abyssPrivate = undefined;
     this.stopEdgeScroll_abyssPrivate();
@@ -323,8 +380,45 @@ export class ProjectTimelinePointerInteraction {
       bar.hidden = active.barSnapshot.hidden;
       bar.style.left = active.barSnapshot.left;
       bar.style.width = active.barSnapshot.width;
+      if (active.barSnapshot.oneDateCenter === '') {
+        bar.style.removeProperty('--abyss-project-timeline-one-date-center');
+      } else {
+        bar.style.setProperty(
+          '--abyss-project-timeline-one-date-center',
+          active.barSnapshot.oneDateCenter,
+        );
+      }
     }
     if (active !== undefined) this.releasePointerCapture_abyssPrivate(active);
+  }
+
+  private clearPendingPreviews_abyssPrivate(restorePreview: boolean): void {
+    for (const pending of this.pending_abyssPrivate.values()) {
+      if (restorePreview) this.restorePendingPreview_abyssPrivate(pending);
+    }
+    this.pending_abyssPrivate.clear();
+  }
+
+  private cancelPendingOccurrence_abyssPrivate(occurrenceId: string): void {
+    const pending = this.pending_abyssPrivate.get(occurrenceId);
+    if (pending === undefined) return;
+    this.pending_abyssPrivate.delete(occurrenceId);
+    this.restorePendingPreview_abyssPrivate(pending);
+  }
+
+  private restorePendingPreview_abyssPrivate(pending: PendingPointerPreview): void {
+    const snapshot = pending.barSnapshot;
+    const bar = pending.target.bar;
+    if (snapshot === undefined || bar?.isConnected !== true) return;
+    bar.className = snapshot.className;
+    bar.hidden = snapshot.hidden;
+    bar.style.left = snapshot.left;
+    bar.style.width = snapshot.width;
+    if (snapshot.oneDateCenter === '') {
+      bar.style.removeProperty('--abyss-project-timeline-one-date-center');
+    } else {
+      bar.style.setProperty('--abyss-project-timeline-one-date-center', snapshot.oneDateCenter);
+    }
   }
 
   private releasePointerCapture_abyssPrivate(active: ActivePointerGesture): void {
@@ -371,7 +465,7 @@ export class ProjectTimelinePointerInteraction {
       track.setPointerCapture(active.pointerId);
       return true;
     } catch (error) {
-      this.cancelActive();
+      this.cancelGesture_abyssPrivate(true);
       this.context_abyssPrivate.reportRangeFailure(error);
       return false;
     }
@@ -399,7 +493,8 @@ export class ProjectTimelinePointerInteraction {
     }
     event.preventDefault();
     this.context_abyssPrivate.selectRange(target.occurrenceId, target.focus);
-    this.cancelActive();
+    this.cancelGesture_abyssPrivate(true);
+    this.cancelPendingOccurrence_abyssPrivate(target.occurrenceId);
     const snapshot = barSnapshot(target.bar);
     const active: ActivePointerGesture = {
       pointerId: event.pointerId,
@@ -419,14 +514,14 @@ export class ProjectTimelinePointerInteraction {
     void this.context_abyssPrivate.finishEditor().then(
       (finished) => {
         if (!finished || this.active_abyssPrivate !== active || active.released) {
-          if (this.active_abyssPrivate === active) this.cancelActive();
+          if (this.active_abyssPrivate === active) this.cancelGesture_abyssPrivate(true);
           return;
         }
         active.prepared = true;
         this.preview_abyssPrivate(active);
       },
       (error: unknown) => {
-        if (this.active_abyssPrivate === active) this.cancelActive();
+        if (this.active_abyssPrivate === active) this.cancelGesture_abyssPrivate(true);
         this.context_abyssPrivate.reportRangeFailure(error);
       },
     );
@@ -453,25 +548,74 @@ export class ProjectTimelinePointerInteraction {
     const active = this.active_abyssPrivate;
     if (active?.pointerId !== event.pointerId) return;
     active.released = true;
-    const ready = active.prepared;
-    const intent = ready ? this.intent_abyssPrivate(active) : undefined;
-    const request =
-      intent === undefined
-        ? undefined
-        : { kind: 'pointer' as const, source: active.source, intent };
-    const completed = intent !== undefined && (active.moved || active.target.part === 'track');
-    this.cancelActive();
-    if (!completed || request === undefined) return;
-    this.suppressClickOccurrence_abyssPrivate = active.target.occurrenceId;
+    const submission = this.pointerSubmission_abyssPrivate(active);
+    if (submission === undefined) {
+      this.cancelGesture_abyssPrivate(true);
+      return;
+    }
+    const { pending, request } = submission;
+    this.retainPendingPreview_abyssPrivate(active, pending);
     void this.context_abyssPrivate.commitRangeEdit(request).then(
       (result) => {
-        if (result.failed.length > 0) this.context_abyssPrivate.reportRangeFailure(result);
+        if (result.failed.length > 0) {
+          this.settlePending_abyssPrivate(pending, true);
+          this.context_abyssPrivate.reportRangeFailure(result);
+        } else if (result.applied.length === 0) {
+          this.settlePending_abyssPrivate(pending, true);
+        }
       },
       (error: unknown) => {
+        this.settlePending_abyssPrivate(pending, true);
         this.context_abyssPrivate.reportRangeFailure(error);
       },
     );
   };
+
+  private pointerSubmission_abyssPrivate(active: ActivePointerGesture):
+    | {
+        readonly pending: PendingPointerPreview;
+        readonly request: Extract<ProjectTimelineRangeEditRequest, { readonly kind: 'pointer' }>;
+      }
+    | undefined {
+    if (!active.prepared || (!active.moved && active.target.part !== 'track')) return undefined;
+    const intent = this.intent_abyssPrivate(active);
+    if (intent === undefined) return undefined;
+    const plan = planProjectTimelineEdit(active.source.range, intent);
+    if (plan.kind !== 'ready') return undefined;
+    const pending: PendingPointerPreview = {
+      id: ++this.previewSequence_abyssPrivate,
+      target: active.target,
+      source: active.source,
+      range: timelineRangeFromPlan(plan),
+      ...(active.barSnapshot === undefined ? {} : { barSnapshot: active.barSnapshot }),
+    };
+    return {
+      pending,
+      request: { kind: 'pointer', source: active.source, intent },
+    };
+  }
+
+  private retainPendingPreview_abyssPrivate(
+    active: ActivePointerGesture,
+    pending: PendingPointerPreview,
+  ): void {
+    this.active_abyssPrivate = undefined;
+    this.stopEdgeScroll_abyssPrivate();
+    this.hideOverlays_abyssPrivate();
+    this.releasePointerCapture_abyssPrivate(active);
+    this.pending_abyssPrivate.set(active.target.occurrenceId, pending);
+    this.applyPreview_abyssPrivate(active.target.bar, pending.range);
+    this.suppressClickOccurrence_abyssPrivate = active.target.occurrenceId;
+  }
+
+  private settlePending_abyssPrivate(
+    pending: PendingPointerPreview,
+    restorePreview: boolean,
+  ): void {
+    if (this.pending_abyssPrivate.get(pending.target.occurrenceId)?.id !== pending.id) return;
+    this.pending_abyssPrivate.delete(pending.target.occurrenceId);
+    if (restorePreview) this.restorePendingPreview_abyssPrivate(pending);
+  }
 
   private intent_abyssPrivate(active: ActivePointerGesture): ProjectTimelineEditIntent | undefined {
     const first = projectCalendarDayOrdinal(active.startDay);
@@ -480,12 +624,12 @@ export class ProjectTimelinePointerInteraction {
     const deltaDays = last - first;
     if (active.target.part === 'bar') return { type: 'move', deltaDays };
     if (active.target.part === 'start') {
-      const sourceDay = rangeResizeSource(active.source.range, 'start', active.lastDay);
+      const sourceDay = rangeResizeSource(active.source.range, 'start', active.startDay);
       const day = resizedDay(sourceDay, deltaDays);
       return day === undefined ? undefined : { type: 'resizeStart', day };
     }
     if (active.target.part === 'end') {
-      const sourceDay = rangeResizeSource(active.source.range, 'end', active.lastDay);
+      const sourceDay = rangeResizeSource(active.source.range, 'end', active.startDay);
       const day = resizedDay(sourceDay, deltaDays);
       return day === undefined ? undefined : { type: 'resizeEnd', day };
     }
@@ -502,19 +646,22 @@ export class ProjectTimelinePointerInteraction {
       return;
     }
     const previewRange = timelineRangeFromPlan(plan);
-    const geometry = projectTimelineBarGeometry(previewRange, this.context_abyssPrivate.window());
-    const bar = active.target.bar;
-    if (bar !== null && geometry !== undefined) {
-      bar.hidden = false;
-      bar.addClass('is-previewing');
-      bar.style.left = `${geometry.leftPercent}%`;
-      bar.style.width = `${geometry.widthPercent}%`;
-    }
+    this.applyPreview_abyssPrivate(active.target.bar, previewRange);
     this.showCursor_abyssPrivate(active.target.track, active.lastClientX);
-    this.tooltip_abyssPrivate.setText(
-      `${active.lastDay} · ${plan.startDay ?? 'No Start'} – ${plan.endDay ?? 'No End'}`,
-    );
+    let activeEndpoint = active.lastDay;
+    if (active.target.part === 'start') activeEndpoint = plan.startDay ?? active.lastDay;
+    else if (active.target.part === 'end') activeEndpoint = plan.endDay ?? active.lastDay;
+    this.tooltip_abyssPrivate.setText(activeEndpoint);
     this.showTooltip_abyssPrivate(active.lastClientX, active.target.track);
+  }
+
+  private applyPreview_abyssPrivate(bar: HTMLElement | null, range: ProjectTimelineRange): void {
+    if (bar === null) return;
+    const geometry = projectTimelineBarGeometry(range, this.context_abyssPrivate.window());
+    if (geometry === undefined) return;
+    bar.hidden = false;
+    applyProjectTimelineBarGeometry(bar, range, geometry);
+    bar.addClass('is-previewing');
   }
 
   private showCursor_abyssPrivate(track: HTMLElement, clientX: number): void {

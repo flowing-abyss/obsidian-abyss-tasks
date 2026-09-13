@@ -15,6 +15,7 @@ import type {
 import { createOwnedInferredPropertyClear } from '../src/projects/projectEdits';
 import type { ProjectFieldCatalogItem } from '../src/projects/projectFields';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
+import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
@@ -78,6 +79,11 @@ function pressTimelineArrow(bar: HTMLElement, shiftKey = false): void {
       cancelable: true,
     }),
   );
+}
+
+function labelledText(element: HTMLElement): string {
+  const id = expectDefined(element.getAttribute('aria-labelledby'));
+  return expectDefined(element.ownerDocument.getElementById(id)).textContent;
 }
 
 function rectangle(left: number, top: number, right: number, bottom: number): DOMRect {
@@ -441,9 +447,7 @@ describe('ProjectsTableView', () => {
     expect(history.canUndo).toBe(true);
     expect(history.canRedo).toBe(true);
     expect(
-      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar')).getAttribute(
-        'aria-label',
-      ),
+      labelledText(expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'))),
     ).toContain('2026-09-02 through 2026-10-01');
     expect(activeDocument.activeElement).toBe(track);
   });
@@ -894,9 +898,7 @@ describe('ProjectsTableView', () => {
       'no longer visible',
     );
     expect(
-      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar')).getAttribute(
-        'aria-label',
-      ),
+      labelledText(expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'))),
     ).toContain('2026-09-02 through 2026-10-01');
     pressTimelineArrow(track);
     await flushMicrotasks();
@@ -1058,6 +1060,103 @@ describe('ProjectsTableView', () => {
     track.dispatchEvent(timelinePointerEvent('pointerup', 40));
     await flushMicrotasks();
     expect(applyEdits).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a held Start resize visible and reorders its focused row on the receipt', async () => {
+    const config = settings();
+    config.projects.overviewView = 'timeline';
+    config.projects.table.sortBy = { field: 'start', dir: 'asc' };
+    config.projects.timeline = buildDefaultProjectTimelineSettings(config.projects.table);
+    config.projects.timeline.scale = 'day';
+    let releaseWrite: (() => void) | undefined;
+    const heldWrite = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => {
+      await heldWrite;
+      return {
+        applied: changes.map((change): AppliedProjectCellChange => ({
+          ...change,
+          sourceProperty: expectDefined(change.sourceProperty),
+          sourceKey: expectDefined(change.sourceKey),
+          previousValue: change.expectedValue,
+          previousExists: change.expectedExists ?? false,
+          appliedExists: change.valueExists ?? true,
+        })),
+        failed: [],
+      };
+    });
+    const history = new ProjectEditHistory(applyEdits);
+    const items = [
+      project({
+        path: 'Projects/A.md',
+        name: 'A',
+        frontmatter: { status: 'active', start: '2026-09-10', end: '2026-09-18' },
+      }),
+      project({
+        path: 'Projects/B.md',
+        name: 'B',
+        frontmatter: { status: 'active', start: '2026-09-12', end: '2026-09-16' },
+      }),
+    ];
+    const { host } = mount(items, { settings: config, applyEdits, history });
+    const row = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/A.md"]'),
+    );
+    const track = expectDefined(row.querySelector<HTMLElement>('.abyss-project-timeline-track'));
+    const bar = expectDefined(track.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    const start = expectDefined(
+      bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-start'),
+    );
+    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 140, 30));
+
+    start.dispatchEvent(timelinePointerEvent('pointerdown', 35));
+    await flushMicrotasks();
+    track.dispatchEvent(timelinePointerEvent('pointermove', 65));
+    const desiredWidth = bar.style.width;
+    track.dispatchEvent(timelinePointerEvent('pointerup', 65));
+    await flushMicrotasks();
+
+    expect(bar.style.width).toBe(desiredWidth);
+    expect(bar.classList).toContain('is-previewing');
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(applyEdits.mock.calls[0]?.[0]).toMatchObject([
+      {
+        field: { id: 'start' },
+        expectedValue: '2026-09-10',
+        value: '2026-09-13',
+      },
+      {
+        field: { id: 'end' },
+        expectedValue: '2026-09-18',
+        value: '2026-09-18',
+        restoreSourceValue: true,
+      },
+    ]);
+
+    releaseWrite?.();
+    await flushMicrotasks();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    const orderedPaths = Array.from(
+      host.querySelectorAll<HTMLElement>('.abyss-project-timeline-row'),
+      ({ dataset }) => dataset['projectPath'],
+    );
+    const updatedBar = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/A.md"] .abyss-project-timeline-bar',
+      ),
+    );
+    expect(orderedPaths).toEqual(['Projects/B.md', 'Projects/A.md']);
+    expect(labelledText(updatedBar)).toContain('2026-09-13 through 2026-09-18');
+    expect(updatedBar.hasAttribute('aria-label')).toBe(false);
+    const descriptionId = expectDefined(updatedBar.getAttribute('aria-describedby'));
+    expect(expectDefined(activeDocument.getElementById(descriptionId)).textContent).toContain(
+      'Arrow keys move. Shift plus Arrow adjusts End.',
+    );
+    expect(activeDocument.activeElement).toBe(updatedBar);
+    expect(history.canUndo).toBe(true);
   });
 
   it('cancels an active Timeline gesture when its retained group collapses', async () => {

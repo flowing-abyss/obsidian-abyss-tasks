@@ -59,6 +59,7 @@ function mount(
   const settings = buildDefaultProjectTimelineSettings(buildDefaultProjectTableSettings());
   if (scale !== undefined) settings.scale = scale;
   const selected: Cell[] = [];
+  const openRangeMenu = vi.fn();
   const mountedView: { current?: ProjectsTimelineView<Cell> } = {};
   const view = new ProjectsTimelineView<Cell>(host, {
     settings: () => settings,
@@ -102,13 +103,13 @@ function mount(
     commitRangeEdit: vi.fn().mockResolvedValue({ applied: [], failed: [] }),
     reportRangeFailure: vi.fn(),
     finishEditor: async () => true,
-    openRangeMenu: vi.fn(),
+    openRangeMenu,
     now: () => new Date(now),
   });
   mountedView.current = view;
   mounted.add(view);
   view.mount(projects, '');
-  return { host, view, settings, selected };
+  return { host, view, settings, selected, openRangeMenu };
 }
 
 function geometry(left: number, width: number): DOMRect {
@@ -253,7 +254,7 @@ describe('ProjectsTimelineView', () => {
     expect(host.querySelector('.abyss-project-timeline-show-range')).not.toBeNull();
   });
 
-  it('shows resize handles only for actual endpoints inside the visible window', () => {
+  it('shows clipped endpoint handles only when their calendar day is visible', () => {
     const { host } = mount([project('Projects/Clipped.md', '2025-12-30', '2026-01-03')]);
     const bar = expectDefined(
       host.querySelector<HTMLElement>(
@@ -268,6 +269,100 @@ describe('ProjectsTimelineView', () => {
     expect(
       expectDefined(bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-end')).hidden,
     ).toBe(false);
+  });
+
+  it.each([
+    ['open-start', project('Projects/Open start.md', undefined, '2026-09-08')],
+    ['open-end', project('Projects/Open end.md', '2026-09-08')],
+  ] as const)('keeps both endpoint handles reachable for an %s range', (_kind, item) => {
+    const { host } = mount([item]);
+    const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+
+    expect(
+      expectDefined(bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-start'))
+        .hidden,
+    ).toBe(false);
+    expect(
+      expectDefined(bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-end')).hidden,
+    ).toBe(false);
+  });
+
+  it('uses a compact bounded marker for a one-date range', async () => {
+    const styles = await loadPluginStyles();
+    const sheet = createEl('style');
+    sheet.textContent = styles;
+    activeDocument.head.append(sheet);
+    const { host } = mount(
+      [project('Projects/One date.md', '2026-09-10', '2026-09-10')],
+      new Date(2026, 8, 13),
+      'day',
+    );
+    const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    const start = expectDefined(
+      bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-start'),
+    );
+    const end = expectDefined(
+      bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-end'),
+    );
+
+    expect(bar.classList).toContain('is-one-date');
+    expect(bar.style.getPropertyValue('--abyss-project-timeline-one-date-center')).toBe('25%');
+    expect(Number.parseFloat(activeWindow.getComputedStyle(bar).minWidth)).toBe(40);
+    expect(Number.parseFloat(activeWindow.getComputedStyle(start).width)).toBeGreaterThanOrEqual(
+      14,
+    );
+    expect(Number.parseFloat(activeWindow.getComputedStyle(end).width)).toBeGreaterThanOrEqual(14);
+    expect(start.querySelector('.abyss-project-timeline-grip')).not.toBeNull();
+    expect(end.querySelector('.abyss-project-timeline-grip')).not.toBeNull();
+    sheet.remove();
+  });
+
+  it('names range controls accessibly without aria-label hover text', () => {
+    const { host } = mount([project('Projects/A.md', '2026-09-01', '2026-09-03')]);
+    const track = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track'));
+    const bar = expectDefined(track.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    const nameId = expectDefined(bar.getAttribute('aria-labelledby'));
+    const descriptionId = expectDefined(bar.getAttribute('aria-describedby'));
+
+    expect(bar.hasAttribute('aria-label')).toBe(false);
+    expect(track.hasAttribute('aria-label')).toBe(false);
+    expect(expectDefined(host.querySelector<HTMLElement>(`#${nameId}`)).textContent).toBe(
+      'Timeline dates for A: 2026-09-01 through 2026-09-03',
+    );
+    expect(expectDefined(host.querySelector<HTMLElement>(`#${descriptionId}`)).textContent).toBe(
+      'Test capture unavailable',
+    );
+  });
+
+  it('routes a handle context menu through the shared range menu', () => {
+    const { host, openRangeMenu } = mount([project('Projects/A.md', '2026-09-01', '2026-09-03')]);
+    const handle = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-start'),
+    );
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+
+    handle.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(openRangeMenu).toHaveBeenCalledOnce();
+  });
+
+  it('aligns a bounded row grid to the axis tick intervals', () => {
+    const { host } = mount([project('Projects/A.md', '2026-09-01', '2026-09-03')]);
+    const ticks = Array.from(
+      host.querySelectorAll<HTMLElement>(
+        '.abyss-project-timeline-axis .abyss-project-timeline-tick',
+      ),
+    );
+    const lines = Array.from(
+      host.querySelectorAll<HTMLElement>(
+        '.abyss-project-timeline-track .abyss-project-timeline-gridline',
+      ),
+    );
+
+    expect(lines).toHaveLength(ticks.length);
+    expect(lines.length).toBeLessThanOrEqual(15);
+    expect(lines.map(({ style }) => style.left)).toEqual(ticks.map(({ style }) => style.left));
   });
 
   it('reserves a usable body move target between both minimum-width handles', async () => {

@@ -30,6 +30,7 @@ import {
 import type { Project } from '../../projects/types';
 import { projectCardFields } from './projectCardFields';
 import {
+  applyProjectTimelineBarGeometry,
   freezeProjectTimelineRangeBinding,
   ProjectTimelinePointerInteraction,
   type ProjectTimelineRangeCommitter,
@@ -86,11 +87,14 @@ interface RenderedRow<TCell extends ProjectTimelineCellContext> {
   readonly metadata: HTMLElement;
   readonly progress: HTMLElement;
   readonly track: HTMLElement;
+  readonly grid: HTMLElement;
   readonly bar: HTMLElement;
   readonly startHandle: HTMLElement;
   readonly endHandle: HTMLElement;
   readonly state: HTMLElement;
   readonly showRange: HTMLButtonElement;
+  readonly rangeName: HTMLElement;
+  readonly rangeDescription: HTMLElement;
   readonly cells: Map<string, TCell>;
   project: Project;
   range: ProjectTimelineRange;
@@ -165,15 +169,21 @@ function rangeBounds(range: ProjectTimelineRange): readonly string[] {
 
 function timelineRangeLabel(range: ProjectTimelineRange): string {
   if (range.kind === 'open-start') {
-    return `No start date, ends ${range.endDay}. Arrow keys move; Shift plus Arrow adjusts End.`;
+    return `No start date, ends ${range.endDay}`;
   }
   if (range.kind === 'open-end') {
-    return `Starts ${range.startDay}, no end date. Arrow keys move; Shift plus Arrow sets End.`;
+    return `Starts ${range.startDay}, no end date`;
   }
   if (range.kind === 'closed') {
-    return `${range.startDay} through ${range.endDay}. Arrow keys move; Shift plus Arrow adjusts End.`;
+    return `${range.startDay} through ${range.endDay}`;
   }
   return 'Timeline date range';
+}
+
+function timelineRangeInstructions(range: ProjectTimelineRange): string {
+  return range.kind === 'open-end'
+    ? 'Arrow keys move. Shift plus Arrow sets End.'
+    : 'Arrow keys move. Shift plus Arrow adjusts End.';
 }
 
 function rangeEndpoint(range: ProjectTimelineRange, endpoint: 'start' | 'end'): string | undefined {
@@ -219,6 +229,12 @@ function exactRangeEventTarget(
 ): HTMLElement | undefined {
   if (event.target === track) return track;
   if (event.target === bar) return bar;
+  if (
+    event.target instanceof Element &&
+    event.target.closest('.abyss-project-timeline-handle')?.parentElement === bar
+  ) {
+    return bar;
+  }
   return undefined;
 }
 
@@ -235,6 +251,8 @@ function reconcileOrder(parent: HTMLElement, desired: readonly HTMLElement[]): v
     else parent.insertBefore(element, cursor);
   }
 }
+
+let timelineRangeAccessibilitySequence = 0;
 
 export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   readonly root: HTMLElement;
@@ -774,6 +792,35 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     reconcileOrder(group.body, desired);
   }
 
+  private createRangeAccessibility_abyssPrivate(track: HTMLElement): {
+    readonly name: HTMLElement;
+    readonly description: HTMLElement;
+    readonly attributes: Record<string, string>;
+  } {
+    const name = track.createSpan({ cls: 'mod-screen-reader-only' });
+    const description = track.createSpan({ cls: 'mod-screen-reader-only' });
+    const accessibleId = `abyss-project-timeline-range-${String(++timelineRangeAccessibilitySequence)}`;
+    name.id = `${accessibleId}-name`;
+    description.id = `${accessibleId}-description`;
+    const attributes = {
+      'aria-labelledby': name.id,
+      'aria-describedby': description.id,
+    };
+    for (const [attribute, value] of Object.entries(attributes)) {
+      track.setAttribute(attribute, value);
+    }
+    return { name, description, attributes };
+  }
+
+  private createRangeHandle_abyssPrivate(bar: HTMLElement, endpoint: 'start' | 'end'): HTMLElement {
+    const handle = bar.createSpan({
+      cls: `abyss-project-timeline-handle is-${endpoint}`,
+      attr: { 'data-timeline-part': endpoint, 'aria-hidden': 'true' },
+    });
+    handle.createSpan({ cls: 'abyss-project-timeline-grip' });
+    return handle;
+  }
+
   private createRow_abyssPrivate(
     group: RenderedGroup<TCell>,
     item: ProjectTimelineRow,
@@ -785,10 +832,17 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       cls: 'abyss-project-timeline-track',
       attr: rangeTargetAttributes('track'),
     });
+    const accessibility = this.createRangeAccessibility_abyssPrivate(track);
+    const grid = track.createDiv({
+      cls: 'abyss-project-timeline-grid',
+      attr: { 'aria-hidden': 'true' },
+    });
     const bar = track.createDiv({
       cls: 'abyss-project-timeline-bar',
-      attr: rangeTargetAttributes('bar'),
+      attr: { ...rangeTargetAttributes('bar'), ...accessibility.attributes },
     });
+    const startHandle = this.createRangeHandle_abyssPrivate(bar, 'start');
+    const endHandle = this.createRangeHandle_abyssPrivate(bar, 'end');
     const row: RenderedRow<TCell> = {
       element,
       summary,
@@ -796,21 +850,18 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       metadata: summary.createDiv({ cls: 'abyss-project-timeline-metadata' }),
       progress: summary.createDiv({ cls: 'abyss-project-timeline-progress' }),
       track,
+      grid,
       bar,
-      startHandle: bar.createSpan({
-        cls: 'abyss-project-timeline-handle is-start',
-        attr: { 'data-timeline-part': 'start', 'aria-hidden': 'true' },
-      }),
-      endHandle: bar.createSpan({
-        cls: 'abyss-project-timeline-handle is-end',
-        attr: { 'data-timeline-part': 'end', 'aria-hidden': 'true' },
-      }),
+      startHandle,
+      endHandle,
       state: track.createSpan({ cls: 'abyss-project-timeline-state' }),
       showRange: track.createEl('button', {
         cls: 'abyss-project-timeline-show-range',
         text: 'Show range',
         attr: { type: 'button' },
       }),
+      rangeName: accessibility.name,
+      rangeDescription: accessibility.description,
       cells: new Map(),
       project: item.project,
       range: item.range,
@@ -1010,6 +1061,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       marker.remove();
     }
     this.addTodayMarker_abyssPrivate(row.track, window);
+    this.patchGrid_abyssPrivate(row.grid, window);
     this.patchRangeEditability_abyssPrivate(row);
     const geometry = projectTimelineBarGeometry(range, window);
     if (geometry === undefined) {
@@ -1027,12 +1079,15 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     const editReason = capture.kind === 'rejected' ? capture.reason : undefined;
     row.track.setAttribute('aria-disabled', String(editReason !== undefined));
     row.bar.setAttribute('aria-disabled', String(editReason !== undefined));
-    row.track.setAttribute(
-      'aria-label',
-      editReason === undefined
-        ? `Timeline dates for ${row.project.name}. Click to set a missing date or drag to draw a range.`
-        : `Timeline dates for ${row.project.name}. ${editReason}`,
+    row.rangeName.setText(
+      `Timeline dates for ${row.project.name}: ${timelineRangeLabel(row.range)}`,
     );
+    row.rangeDescription.setText(
+      editReason ??
+        `${timelineRangeInstructions(row.range)} Click to set a missing date or drag to draw a range.`,
+    );
+    row.track.removeAttribute('aria-label');
+    row.bar.removeAttribute('aria-label');
     if (editReason === undefined) {
       row.track.removeAttribute('title');
       row.bar.removeAttribute('title');
@@ -1052,15 +1107,29 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     row.showRange.hidden = true;
     const bar = row.bar;
     bar.hidden = false;
-    bar.className = `abyss-project-timeline-bar is-${range.kind}`;
-    bar.style.left = `${geometry.leftPercent}%`;
-    bar.style.width = `${geometry.widthPercent}%`;
+    applyProjectTimelineBarGeometry(bar, range, geometry);
     const color = this.context_abyssPrivate.statusColor(row.project);
     if (color !== undefined) bar.style.setProperty('--abyss-project-status-color', color);
     else bar.style.removeProperty('--abyss-project-status-color');
-    bar.setAttribute('aria-label', timelineRangeLabel(range));
-    row.startHandle.hidden = !endpointVisible(rangeEndpoint(range, 'start'), window);
-    row.endHandle.hidden = !endpointVisible(rangeEndpoint(range, 'end'), window);
+    row.startHandle.hidden = !(
+      range.kind === 'open-start' || endpointVisible(rangeEndpoint(range, 'start'), window)
+    );
+    row.endHandle.hidden = !(
+      range.kind === 'open-end' || endpointVisible(rangeEndpoint(range, 'end'), window)
+    );
+  }
+
+  private patchGrid_abyssPrivate(grid: HTMLElement, window: ProjectTimelineWindow): void {
+    while (grid.children.length > window.ticks.length) grid.lastElementChild?.remove();
+    while (grid.children.length < window.ticks.length) {
+      grid.createSpan({ cls: 'abyss-project-timeline-gridline' });
+    }
+    const first = dayOrdinal(window.startDay);
+    for (const [index, tick] of window.ticks.entries()) {
+      const line = grid.children.item(index);
+      if (!(line instanceof HTMLElement)) continue;
+      line.style.left = `${((dayOrdinal(tick.day) - first) / window.dayCount) * 100}%`;
+    }
   }
 
   private renderMissingRange_abyssPrivate(

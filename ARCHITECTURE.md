@@ -235,14 +235,21 @@ scale-specific axis ticks independent from Obsidian presentation code.
 `projectTimelineEdits` owns pure, bounded calendar-day planning for range moves, endpoint
 resizing, missing-endpoint creation, and range drawing. `projectTimelineInteraction` owns native
 pointer capture, preview DOM, hover dates, edge scrolling, and cancellation; it emits frozen
-pointer intents or relative keyboard intents and never writes Markdown or records history.
+pointer intents or relative keyboard intents and never writes Markdown or records history. A
+released pointer request retains a tokened presentation-only preview until the existing receipt
+projection renders an authoritative range. Ordinary renders reapply only a preview whose frozen
+source is still current; rejection, source replacement, hiding, destruction, and superseding
+gestures clear it, while an older settlement cannot alter a newer preview.
 `ProjectsTimelineView` retains keyed tracks, bars, endpoint handles, cursor, and tooltip nodes so
-focus and preview ownership survive ordinary receipt refreshes. Resize handles appear only for
-actual endpoints inside the visible window; minimum visual bar width and clipped geometry do not
-change the calendar-day coordinate system. The focusable track and bar share one exact-target range
-keyboard and context-menu path, leaving nested controls and shared overview shortcuts to their
-existing owners. The view is also the visibility authority for retained range occurrences:
-collapsed groups remain mounted but cannot capture queued commands or retain an active gesture.
+focus and preview ownership survive ordinary receipt refreshes. Tick-bounded row grid lines reuse
+the axis interval positions. Both edge targets remain reachable for open and one-date ranges;
+compact one-date presentation and minimum handle geometry do not change the calendar-day
+coordinate system. Range controls use labelled and described screen-reader text while the custom
+date bubble remains the pointer hint. The focusable track and bar share one range keyboard and
+context-menu path, including handle-originated menus, leaving nested controls and shared overview
+shortcuts to their existing owners. The view is also the visibility authority for retained range
+occurrences: collapsed groups remain mounted but cannot capture queued commands or retain an active
+gesture or pending preview.
 
 The overview controller initializes each status column's manual path sequence from its first complete
 project snapshot and appends newly observed paths even while a field sort, search, or status filter

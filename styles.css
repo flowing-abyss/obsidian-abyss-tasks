@@ -8781,6 +8781,20 @@ table.abyss-project-table {
   touch-action: none;
 }
 
+.abyss-project-timeline-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.abyss-project-timeline-gridline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--background-modifier-border) 48%, transparent);
+}
+
 .abyss-project-timeline-track:focus-visible,
 .abyss-project-timeline-bar:focus-visible {
   outline: 2px solid var(--interactive-accent);
@@ -8800,7 +8814,7 @@ table.abyss-project-table {
   z-index: 1;
   top: 50%;
   box-sizing: border-box;
-  min-width: 26px;
+  min-width: 40px;
   height: 16px;
   border: 1px solid
     color-mix(in srgb, var(--abyss-project-status-color, var(--interactive-accent)) 72%, black);
@@ -8815,6 +8829,16 @@ table.abyss-project-table {
   transform: translateY(-50%);
 }
 
+.abyss-project-timeline-bar.is-one-date {
+  left: clamp(
+    0px,
+    calc(var(--abyss-project-timeline-one-date-center) - 20px),
+    calc(100% - 40px)
+  ) !important;
+  width: 0 !important;
+  border-inline-style: dashed;
+}
+
 .abyss-project-timeline-bar.is-previewing {
   opacity: 0.75;
 }
@@ -8822,10 +8846,23 @@ table.abyss-project-table {
 .abyss-project-timeline-handle {
   position: absolute;
   z-index: 2;
-  top: -2px;
-  bottom: -2px;
-  width: 8px;
+  top: -4px;
+  bottom: -4px;
+  display: flex;
+  width: 14px;
+  align-items: center;
+  justify-content: center;
   cursor: ew-resize;
+}
+
+.abyss-project-timeline-grip {
+  width: 2px;
+  height: 10px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--text-on-accent) 82%, transparent);
+  box-shadow: 0 0 0 1px
+    color-mix(in srgb, var(--abyss-project-status-color, var(--interactive-accent)) 52%, black);
+  pointer-events: none;
 }
 
 .abyss-project-timeline-handle.is-start {

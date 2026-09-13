@@ -3,6 +3,7 @@ import {
   ProjectTimelinePointerInteraction,
   type FrozenProjectTimelineRangeSource,
 } from '../src/panels/projects/projectTimelineInteraction';
+import type { ProjectEditResult } from '../src/projects/projectEdits';
 import { flushMicrotasks, freshContainer } from './helpers';
 
 function pointerEvent(type: string, clientX: number, pointerId = 1): Event {
@@ -110,6 +111,24 @@ function mount(range: FrozenProjectTimelineRangeSource['range'] = source().range
   return { root, scroll, track, bar, interaction, commitRangeEdit, reportRangeFailure, selected };
 }
 
+function deferredResult(): {
+  readonly promise: Promise<ProjectEditResult>;
+  readonly resolve: (result: ProjectEditResult) => void;
+  readonly reject: (error: unknown) => void;
+} {
+  let resolve: ((result: ProjectEditResult) => void) | undefined;
+  let reject: ((error: unknown) => void) | undefined;
+  const promise = new Promise<ProjectEditResult>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return {
+    promise,
+    resolve: (result) => resolve?.(result),
+    reject: (error) => reject?.(error),
+  };
+}
+
 afterEach(() => {
   activeDocument.body.empty();
   vi.restoreAllMocks();
@@ -125,7 +144,7 @@ describe('ProjectTimelinePointerInteraction', () => {
 
     expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
     expect(mounted.bar.classList).toContain('is-previewing');
-    expect(mounted.root.querySelector('.abyss-project-timeline-tooltip')?.textContent).toContain(
+    expect(mounted.root.querySelector('.abyss-project-timeline-tooltip')?.textContent).toBe(
       '2026-09-04',
     );
 
@@ -139,6 +158,104 @@ describe('ProjectTimelinePointerInteraction', () => {
     });
     expect(mounted.bar.classList).not.toContain('is-previewing');
   });
+
+  it('retains released geometry through a held command and a benign render', async () => {
+    const mounted = mount();
+    const held = deferredResult();
+    mounted.commitRangeEdit.mockReturnValueOnce(held.promise);
+
+    mounted.bar.dispatchEvent(pointerEvent('pointerdown', 25));
+    await flushMicrotasks();
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 45));
+    const desiredLeft = mounted.bar.style.left;
+    const desiredWidth = mounted.bar.style.width;
+
+    mounted.track.dispatchEvent(pointerEvent('pointerup', 45));
+
+    expect(mounted.bar.style.left).toBe(desiredLeft);
+    expect(mounted.bar.style.width).toBe(desiredWidth);
+    expect(mounted.bar.classList).toContain('is-previewing');
+
+    mounted.bar.className = 'abyss-project-timeline-bar is-closed';
+    mounted.bar.setCssProps({ left: '10%', width: '30%' });
+    mounted.interaction.reconcileAfterRender();
+
+    expect(mounted.bar.style.left).toBe(desiredLeft);
+    expect(mounted.bar.style.width).toBe(desiredWidth);
+    held.resolve({ applied: [], failed: [] });
+    await flushMicrotasks();
+    expect(mounted.bar.style.left).toBe('10%');
+    expect(mounted.bar.style.width).toBe('30%');
+  });
+
+  it('rolls a rejected command back and reports it once', async () => {
+    const mounted = mount();
+    const held = deferredResult();
+    mounted.commitRangeEdit.mockReturnValueOnce(held.promise);
+
+    mounted.bar.dispatchEvent(pointerEvent('pointerdown', 25));
+    await flushMicrotasks();
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 45));
+    mounted.track.dispatchEvent(pointerEvent('pointerup', 45));
+    held.resolve({ applied: [], failed: [{ path: 'Projects/A.md', message: 'Conflict' }] });
+    await flushMicrotasks();
+
+    expect(mounted.bar.style.left).toBe('');
+    expect(mounted.bar.style.width).toBe('');
+    expect(mounted.bar.classList).not.toContain('is-previewing');
+    expect(mounted.reportRangeFailure).toHaveBeenCalledOnce();
+  });
+
+  it('does not let an older command settlement undo a newer preview', async () => {
+    const mounted = mount();
+    const first = deferredResult();
+    const second = deferredResult();
+    mounted.commitRangeEdit.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+    mounted.bar.dispatchEvent(pointerEvent('pointerdown', 25));
+    await flushMicrotasks();
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 35));
+    mounted.track.dispatchEvent(pointerEvent('pointerup', 35));
+
+    mounted.bar.dispatchEvent(pointerEvent('pointerdown', 35, 2));
+    await flushMicrotasks();
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 55, 2));
+    mounted.track.dispatchEvent(pointerEvent('pointerup', 55, 2));
+    const newestLeft = mounted.bar.style.left;
+    const newestWidth = mounted.bar.style.width;
+
+    first.resolve({ applied: [], failed: [] });
+    await flushMicrotasks();
+
+    expect(mounted.bar.style.left).toBe(newestLeft);
+    expect(mounted.bar.style.width).toBe(newestWidth);
+    expect(mounted.bar.classList).toContain('is-previewing');
+    second.resolve({ applied: [], failed: [] });
+    await flushMicrotasks();
+  });
+
+  it.each([
+    ['start', { kind: 'open-start', endDay: '2026-09-08' }, '2026-09-04', 'resizeStart'],
+    ['end', { kind: 'open-end', startDay: '2026-09-02' }, '2026-09-04', 'resizeEnd'],
+  ] as const)(
+    'sets an absent %s endpoint from the dragged pointer day',
+    async (part, range, expectedDay, type) => {
+      const mounted = mount(range);
+      const handle = mounted.bar.querySelector<HTMLElement>(`[data-timeline-part="${part}"]`);
+
+      handle?.dispatchEvent(pointerEvent('pointerdown', 25));
+      await flushMicrotasks();
+      mounted.track.dispatchEvent(pointerEvent('pointermove', 45));
+      mounted.track.dispatchEvent(pointerEvent('pointerup', 45));
+      await flushMicrotasks();
+
+      expect(mounted.commitRangeEdit).toHaveBeenCalledWith({
+        kind: 'pointer',
+        source: source(range),
+        intent: { type, day: expectedDay },
+      });
+    },
+  );
 
   it('normalizes a reverse draw and keeps a click as Start-only intent', async () => {
     const mounted = mount({ kind: 'unscheduled' });
