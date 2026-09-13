@@ -1640,6 +1640,83 @@ describe('project Kanban overview', () => {
     },
   );
 
+  it.each([
+    ['upper', 'historical', 10, ['Projects/A.md', 'Projects/B.md', 'Projects/C.md']],
+    ['lower', 'historical', 90, ['Projects/A.md', 'Projects/B.md', 'Projects/C.md']],
+    ['upper', 'unranked', 10, ['Projects/B.md', 'Projects/C.md']],
+    ['lower', 'unranked', 90, ['Projects/B.md', 'Projects/C.md']],
+  ] as const)(
+    'commits the %s half of a collapsed forecast card from a %s destination at its previewed rank',
+    async (_half, _rankState, clientY, initialRanks) => {
+      vi.useFakeTimers();
+      const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+      const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+      const moving = project({
+        path: 'Projects/A.md',
+        name: 'A',
+        statusId: sourceStatus.id,
+        frontmatter: { status: sourceStatus.name },
+      });
+      const peers = ['B', 'C'].map((name) =>
+        project({
+          path: `Projects/${name}.md`,
+          name,
+          statusId: targetStatus.id,
+          frontmatter: { status: targetStatus.name },
+        }),
+      );
+      const { host, settings, applyEdits } = mountView([moving, ...peers]);
+      settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+      settings.projects.kanban.sortBy = { field: 'none', dir: 'asc' };
+      settings.projects.kanban.collapsedColumns = [`id:${targetStatus.id}`];
+      settings.projects.kanban.manualOrder[`id:${targetStatus.id}`] = [...initialRanks];
+      clickView(host, 'Kanban');
+      const source = expectDefined(
+        host.querySelector<HTMLElement>(
+          '.abyss-project-kanban-card[data-project-path="Projects/A.md"]',
+        ),
+      );
+      const target = expectDefined(
+        host.querySelector<HTMLElement>(
+          `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
+        ),
+      );
+      const data = transfer();
+      source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      source.dispatchEvent(dragEvent('dragstart', data));
+      target.dispatchEvent(dragEvent('dragover', data));
+      vi.advanceTimersByTime(450);
+      const overlay = expectDefined(
+        host.querySelector<HTMLElement>('.abyss-project-kanban-hover-preview'),
+      );
+      expect(
+        Array.from(
+          overlay.querySelectorAll<HTMLElement>('.abyss-project-kanban-hover-card'),
+          (card) => card.dataset['projectPath'],
+        ),
+      ).toEqual(['Projects/B.md', 'Projects/C.md', 'Projects/A.md']);
+      const forecast = expectDefined(
+        overlay.querySelector<HTMLElement>(
+          '.abyss-project-kanban-hover-card[data-project-path="Projects/A.md"]',
+        ),
+      );
+      vi.spyOn(forecast, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 240, 100));
+
+      forecast.dispatchEvent(dragEvent('drop', data, { clientX: 120, clientY }));
+      await vi.runAllTimersAsync();
+
+      expect(applyEdits).toHaveBeenCalledOnce();
+      expect(applyEdits.mock.calls[0]?.[0]).toMatchObject([
+        { path: 'Projects/A.md', value: targetStatus.name },
+      ]);
+      expect(settings.projects.kanban.manualOrder[`id:${targetStatus.id}`]).toEqual([
+        'Projects/B.md',
+        'Projects/C.md',
+        'Projects/A.md',
+      ]);
+    },
+  );
+
   it('captures the first Manual sequence and appends later observations without repeat saves', async () => {
     const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
     const b = project({ path: 'Projects/B.md', name: 'B' });

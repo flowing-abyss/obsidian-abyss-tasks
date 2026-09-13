@@ -106,10 +106,25 @@ function nextVisibleCardPath(card: HTMLElement, sourcePath: string): string | un
   return undefined;
 }
 
+function cardBeforePath(
+  card: HTMLElement,
+  clientY: number,
+  sourcePath: string,
+  sourceCard: HTMLElement,
+): string | undefined {
+  const path = card.dataset['projectPath'];
+  if (card === sourceCard) return path;
+  if (path === sourcePath) return nextVisibleCardPath(card, sourcePath);
+  const rect = card.getBoundingClientRect();
+  if (clientY < rect.top + rect.height / 2) return path;
+  return nextVisibleCardPath(card, sourcePath);
+}
+
 function targetFromElement(
   element: Element,
   clientY: number,
   sourcePath: string,
+  sourceCard: HTMLElement,
 ): ProjectKanbanDropTarget | undefined {
   const column = element.closest<HTMLElement>(
     '[data-status-key].abyss-project-kanban-column, [data-status-key].abyss-project-kanban-hover-preview',
@@ -124,15 +139,8 @@ function targetFromElement(
     '[data-project-path].abyss-project-kanban-card, [data-project-path].abyss-project-kanban-hover-card',
   );
   const groupTarget = targetGroup(group);
-  let beforePath: string | undefined;
-  if (card !== null) {
-    const rect = card.getBoundingClientRect();
-    const path = card.dataset['projectPath'];
-    beforePath =
-      path === sourcePath || clientY < rect.top + rect.height / 2
-        ? path
-        : nextVisibleCardPath(card, sourcePath);
-  }
+  const beforePath =
+    card === null ? undefined : cardBeforePath(card, clientY, sourcePath, sourceCard);
   return {
     status: { key: statusKey, value: column.dataset['statusValue'] ?? null },
     ...(groupTarget === undefined ? {} : { group: groupTarget }),
@@ -339,7 +347,12 @@ export class ProjectKanbanDragController {
     const active = this.active_abyssPrivate;
     if (active === undefined || !(event.target instanceof Element)) return;
     const mouse = event as MouseEvent;
-    const target = targetFromElement(event.target, mouse.clientY, active.source.projectPath);
+    const target = targetFromElement(
+      event.target,
+      mouse.clientY,
+      active.source.projectPath,
+      active.card,
+    );
     if (target === undefined) return;
     const plan = this.adapter_abyssPrivate.preview(active.source, target);
     event.preventDefault();
@@ -562,6 +575,7 @@ export class ProjectKanbanDragController {
       event.target,
       (event as MouseEvent).clientY,
       active.source.projectPath,
+      active.card,
     );
     if (target === undefined) return;
     event.preventDefault();
