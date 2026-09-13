@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { projectCalendarDayOrdinal } from '../src/projects/projectDateValue';
+import {
+  projectCalendarDayFromOrdinal,
+  projectCalendarDayOrdinal,
+} from '../src/projects/projectDateValue';
 import {
   PROJECT_TIMELINE_MAX_TRACK_WIDTH,
   projectTimelineAxisLayout,
@@ -158,6 +161,46 @@ describe('project Timeline calendar axis', () => {
     expect(layout.gridBoundaries.length).toBeLessThanOrEqual(33);
     expect(projectTimelineTrackWidth(window, 700)).toBe(PROJECT_TIMELINE_MAX_TRACK_WIDTH);
     expect(Number.isFinite(projectTimelineTrackWidth(window, 700))).toBe(true);
+  });
+
+  it('covers the pixel-derived visible tail when capped density exposes more than 512 days', () => {
+    const window = projectTimelineWindowForRange('0100-01-01', '9999-12-31', 'day');
+    const trackWidth = projectTimelineTrackWidth(window, 2_560);
+    const visibleStartOrdinal = ordinal('2024-01-01');
+    const visibleDayCount = Math.ceil((2_560 / trackWidth) * window.dayCount);
+    const visibleEndOrdinal = visibleStartOrdinal + visibleDayCount - 1;
+    const visibleEndDay = projectCalendarDayFromOrdinal(visibleEndOrdinal) as string;
+
+    const layout = projectTimelineAxisLayout(window, {
+      visibleStartDay: '2024-01-01',
+      visibleEndDay,
+      overscanCells: 1,
+    });
+
+    expect(layout.cells.length).toBeGreaterThan(512);
+    expect(layout.cells[layout.cells.length - 1]?.endOrdinal).toBeGreaterThanOrEqual(
+      visibleEndOrdinal,
+    );
+    expect(layout.gridBoundaries.some(({ ordinal }) => ordinal === visibleEndOrdinal)).toBe(true);
+  });
+
+  it('keeps hierarchy boundaries exact while clamping its label to the visible fraction', () => {
+    const window = projectTimelineWindowForRange('2024-09-01', '2024-09-30', 'day');
+
+    const layout = projectTimelineAxisLayout(window, {
+      visibleStartDay: '2024-09-08',
+      visibleEndDay: '2024-09-20',
+      visibleStartPercent: 27.5,
+      overscanCells: 1,
+    });
+
+    expect(layout.hierarchyCells[0]).toMatchObject({
+      startDay: '2024-09-01',
+      endDay: '2024-09-30',
+      leftPercent: 0,
+      rightPercent: 100,
+      labelPercent: 27.5,
+    });
   });
 
   it('honors each scale density and expands short ranges to the visible track', () => {

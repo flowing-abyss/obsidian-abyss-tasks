@@ -551,6 +551,57 @@ describe('ProjectsTimelineView', () => {
     ).toBe('Today, 2024-02-29');
   });
 
+  it('keeps hierarchy context anchored past the sticky summary while scrolling', async () => {
+    vi.useFakeTimers();
+    const { host, view } = mount(
+      [project('Projects/A.md', '2026-09-07', '2026-09-20')],
+      new Date(2026, 8, 13),
+      'day',
+    );
+    mockTimelineGeometry(host, view, {
+      summaryWidth: 210,
+      trackWidth: 448,
+      viewportWidth: 520,
+    });
+    view.scroll.scrollLeft = 84.5;
+
+    view.scroll.dispatchEvent(new Event('scroll'));
+    await vi.runAllTimersAsync();
+
+    const hierarchy = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline-axis-hierarchy-cell'),
+    );
+    const label = expectDefined(
+      hierarchy.querySelector<HTMLElement>('.abyss-project-timeline-axis-hierarchy-label'),
+    );
+    expect(hierarchy.dataset).toMatchObject({
+      startDay: '2026-09-07',
+      endDay: '2026-09-20',
+    });
+    expect(Number.parseFloat(label.style.left)).toBeCloseTo((84.5 / 448) * 100);
+    expect(label.textContent).toBe('Sep2026');
+  });
+
+  it('uses readable muted or normal colors for ordinary and hierarchy labels', async () => {
+    const styles = await loadPluginStyles();
+    const sheet = createEl('style');
+    sheet.textContent = styles;
+    activeDocument.head.append(sheet);
+    const { host } = mount([project('Projects/A.md')], new Date(2026, 8, 13), 'day');
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline-axis-cell:not(.is-today)'),
+    );
+    const hierarchyYear = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-timeline-axis-hierarchy-cell .abyss-project-timeline-axis-secondary-label',
+      ),
+    );
+
+    expect(activeWindow.getComputedStyle(cell).color).toBe('var(--text-muted)');
+    expect(activeWindow.getComputedStyle(hierarchyYear).color).toBe('var(--text-muted)');
+    sheet.remove();
+  });
+
   it('reserves a usable body move target between both minimum-width handles', async () => {
     const styles = await loadPluginStyles();
     const sheet = createEl('style');

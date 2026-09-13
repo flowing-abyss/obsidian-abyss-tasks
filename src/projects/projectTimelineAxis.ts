@@ -4,7 +4,6 @@ import type { ProjectTimelineScale } from './projectTimelineSettings';
 export const PROJECT_TIMELINE_MAX_TRACK_WIDTH = 16_000_000;
 
 const DAY_MS = 86_400_000;
-const MAX_MOUNTED_AXIS_CELLS = 512;
 const DEFAULT_OVERSCAN_CELLS = 0;
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 const MONTHS = [
@@ -46,6 +45,7 @@ export interface ProjectTimelineAxisCell {
   readonly secondaryLabel?: string;
   readonly leftPercent: number;
   readonly rightPercent: number;
+  readonly labelPercent: number;
   readonly isToday: boolean;
 }
 
@@ -65,6 +65,7 @@ export interface ProjectTimelineAxisLayout {
 export interface ProjectTimelineAxisSlice {
   readonly visibleStartDay: string;
   readonly visibleEndDay: string;
+  readonly visibleStartPercent?: number;
   readonly overscanCells?: number;
   readonly todayDay?: string;
 }
@@ -75,6 +76,7 @@ interface AxisLayoutBounds {
   readonly firstVisible: number;
   readonly lastVisible: number;
   readonly windowDayCount: number;
+  readonly visibleStartPercent: number;
   readonly todayOrdinal: number | undefined;
 }
 
@@ -202,33 +204,44 @@ function buildCells(
   scale: ProjectTimelineScale,
   hierarchy: boolean,
 ): ProjectTimelineAxisCell[] {
-  const { windowStart, windowEnd, firstVisible, lastVisible, windowDayCount, todayOrdinal } =
-    bounds;
   const cells: ProjectTimelineAxisCell[] = [];
-  let unitStart = intervalStart(firstVisible, scale);
-  while (unitStart <= lastVisible && cells.length < MAX_MOUNTED_AXIS_CELLS) {
-    const nextStart = nextIntervalStart(unitStart, scale);
-    const startOrdinal = Math.max(windowStart, unitStart);
-    const endOrdinal = Math.min(windowEnd, nextStart - 1);
-    if (endOrdinal >= firstVisible && startOrdinal <= lastVisible) {
-      const labels = hierarchy
-        ? hierarchyLabel(unitStart, scale as Exclude<ProjectTimelineScale, 'day' | 'week'>)
-        : intervalLabels(unitStart, scale);
-      cells.push({
-        startDay: day(startOrdinal),
-        endDay: day(endOrdinal),
-        startOrdinal,
-        endOrdinal,
-        ...labels,
-        leftPercent: ((startOrdinal - windowStart) / windowDayCount) * 100,
-        rightPercent: ((endOrdinal + 1 - windowStart) / windowDayCount) * 100,
-        isToday:
-          todayOrdinal !== undefined && todayOrdinal >= startOrdinal && todayOrdinal <= endOrdinal,
-      });
-    }
-    unitStart = nextStart;
+  let unitStart = intervalStart(bounds.firstVisible, scale);
+  while (unitStart <= bounds.lastVisible) {
+    cells.push(buildCell(bounds, scale, hierarchy, unitStart));
+    unitStart = nextIntervalStart(unitStart, scale);
   }
   return cells;
+}
+
+function buildCell(
+  bounds: AxisLayoutBounds,
+  scale: ProjectTimelineScale,
+  hierarchy: boolean,
+  unitStart: number,
+): ProjectTimelineAxisCell {
+  const startOrdinal = Math.max(bounds.windowStart, unitStart);
+  const endOrdinal = Math.min(bounds.windowEnd, nextIntervalStart(unitStart, scale) - 1);
+  const labels = hierarchy
+    ? hierarchyLabel(unitStart, scale as Exclude<ProjectTimelineScale, 'day' | 'week'>)
+    : intervalLabels(unitStart, scale);
+  const leftPercent = ((startOrdinal - bounds.windowStart) / bounds.windowDayCount) * 100;
+  const rightPercent = ((endOrdinal + 1 - bounds.windowStart) / bounds.windowDayCount) * 100;
+  return {
+    startDay: day(startOrdinal),
+    endDay: day(endOrdinal),
+    startOrdinal,
+    endOrdinal,
+    ...labels,
+    leftPercent,
+    rightPercent,
+    labelPercent: hierarchy
+      ? Math.max(leftPercent, Math.min(rightPercent, bounds.visibleStartPercent))
+      : leftPercent,
+    isToday:
+      bounds.todayOrdinal !== undefined &&
+      bounds.todayOrdinal >= startOrdinal &&
+      bounds.todayOrdinal <= endOrdinal,
+  };
 }
 
 function boundaryScales(scale: ProjectTimelineScale): ReadonlyArray<{
@@ -292,7 +305,7 @@ function addGridBoundaries(
   },
 ): void {
   let current = intervalStart(bounds.firstVisible, spec.scale);
-  while (current <= bounds.lastVisible && boundaries.size < MAX_MOUNTED_AXIS_CELLS * 2) {
+  while (current <= bounds.lastVisible) {
     if (current >= bounds.windowStart) {
       const previous = boundaries.get(current);
       if (previous !== 'major') boundaries.set(current, spec.weight);
@@ -309,12 +322,24 @@ export function projectTimelineAxisLayout(
   const windowEnd = ordinal(window.endDay);
   const [firstVisible, lastVisible] = expandedSlice(windowStart, windowEnd, slice, window.scale);
   const todayOrdinal = slice.todayDay === undefined ? undefined : ordinal(slice.todayDay);
+  const visibleStartOrdinal = Math.max(
+    windowStart,
+    Math.min(windowEnd, ordinal(slice.visibleStartDay)),
+  );
+  const visibleStartPercent = Math.max(
+    0,
+    Math.min(
+      100,
+      slice.visibleStartPercent ?? ((visibleStartOrdinal - windowStart) / window.dayCount) * 100,
+    ),
+  );
   const bounds: AxisLayoutBounds = {
     windowStart,
     windowEnd,
     firstVisible,
     lastVisible,
     windowDayCount: window.dayCount,
+    visibleStartPercent,
     todayOrdinal,
   };
   const cells = buildCells(bounds, window.scale, false);

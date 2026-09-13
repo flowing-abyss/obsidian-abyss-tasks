@@ -749,6 +749,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   private visibleAxisSlice_abyssPrivate(window: ProjectTimelineWindow): {
     readonly visibleStartDay: string;
     readonly visibleEndDay: string;
+    readonly visibleStartPercent: number;
   } {
     const geometry = this.axisGeometry_abyssPrivate();
     const first = dayOrdinal(window.startDay);
@@ -759,6 +760,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
         visibleEndDay: dayFromOrdinal(
           Math.min(last, first + fallbackAxisDayCount(window.scale) - 1),
         ),
+        visibleStartPercent: 0,
       };
     }
     const visibleLeft = clamp(
@@ -782,6 +784,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     return {
       visibleStartDay: dayFromOrdinal(first + startOffset),
       visibleEndDay: dayFromOrdinal(first + endOffset),
+      visibleStartPercent: (visibleLeft / geometry.trackWidth) * 100,
     };
   }
 
@@ -797,11 +800,13 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       this.axisHierarchy_abyssPrivate,
       this.axisLayout_abyssPrivate.hierarchyCells,
       'abyss-project-timeline-axis-hierarchy-cell',
+      true,
     );
     this.patchAxisCells_abyssPrivate(
       this.axisCells_abyssPrivate,
       this.axisLayout_abyssPrivate.cells,
       `abyss-project-timeline-axis-cell${window.scale === 'day' ? ' is-day' : ''}`,
+      false,
     );
     this.axisDates_abyssPrivate.toggleClass(
       'is-single-tier',
@@ -819,6 +824,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     host: HTMLElement,
     cells: readonly ProjectTimelineAxisCell[],
     className: string,
+    clampLabel: boolean,
   ): void {
     host.empty();
     for (const cell of cells) {
@@ -828,9 +834,18 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       element.style.left = `${String(cell.leftPercent)}%`;
       element.style.width = `${String(cell.rightPercent - cell.leftPercent)}%`;
       element.toggleClass('is-today', cell.isToday);
-      element.createSpan({ cls: 'abyss-project-timeline-axis-label', text: cell.label });
+      const labelHost = clampLabel
+        ? element.createSpan({ cls: 'abyss-project-timeline-axis-hierarchy-label' })
+        : element;
+      if (clampLabel) {
+        const cellWidth = Math.max(Number.EPSILON, cell.rightPercent - cell.leftPercent);
+        labelHost.style.left = `${String(
+          ((cell.labelPercent - cell.leftPercent) / cellWidth) * 100,
+        )}%`;
+      }
+      labelHost.createSpan({ cls: 'abyss-project-timeline-axis-label', text: cell.label });
       if (cell.secondaryLabel !== undefined) {
-        element.createSpan({
+        labelHost.createSpan({
           cls: 'abyss-project-timeline-axis-secondary-label',
           text: cell.secondaryLabel,
         });

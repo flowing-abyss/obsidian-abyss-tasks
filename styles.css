@@ -8628,19 +8628,31 @@ table.abyss-project-table {
   gap: 4px;
   padding: 0 5px;
   border-left: 1px solid var(--background-modifier-border);
-  color: var(--text-faint);
+  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .abyss-project-timeline-axis-hierarchy-cell {
+  padding: 0;
   background: color-mix(in srgb, var(--background-secondary) 88%, var(--background-primary));
   color: var(--text-muted);
   font-weight: var(--font-medium);
 }
 
+.abyss-project-timeline-axis-hierarchy-label {
+  position: absolute;
+  right: 0;
+  display: flex;
+  overflow: hidden;
+  height: 100%;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px;
+}
+
 .abyss-project-timeline-axis-secondary-label {
-  color: var(--text-faint);
+  color: var(--text-muted);
   font-weight: var(--font-normal);
 }
 
