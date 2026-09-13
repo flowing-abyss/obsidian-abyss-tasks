@@ -673,6 +673,7 @@ export class ProjectsTableView {
   };
   private overviewMode_abyssPrivate: ProjectOverviewMode;
   private mounted_abyssPrivate = false;
+  private timelineInteractionRevision_abyssPrivate = 0;
   private tableActionTail_abyssPrivate: Promise<void> = Promise.resolve();
   private mutationTail_abyssPrivate: Promise<void> = Promise.resolve();
   private mutationActive_abyssPrivate = false;
@@ -926,6 +927,9 @@ export class ProjectsTableView {
     if (mode === this.overviewMode_abyssPrivate) return;
     this.finishEditorBeforeAction(() => {
       if (mode === 'kanban') this.prepareKanbanManualOrder_abyssPrivate(true);
+      if (this.overviewMode_abyssPrivate === 'timeline') {
+        this.timelineInteractionRevision_abyssPrivate++;
+      }
       this.overviewMode_abyssPrivate = mode;
       this.context_abyssPrivate.settings.projects.overviewView = mode;
       this.toolbar_abyssPrivate.setSearchValue(this.searches_abyssPrivate[mode]);
@@ -940,6 +944,7 @@ export class ProjectsTableView {
   }
 
   captureViewportBeforeHide(): void {
+    this.timelineInteractionRevision_abyssPrivate++;
     this.timelineView_abyssPrivate?.captureViewportBeforeHide();
   }
 
@@ -975,6 +980,7 @@ export class ProjectsTableView {
 
   destroy(): void {
     this.mounted_abyssPrivate = false;
+    this.timelineInteractionRevision_abyssPrivate++;
     this.creationInteractionRevision_abyssPrivate++;
     this.creationInteractionToken_abyssPrivate = undefined;
     this.clearGroupDropStates_abyssPrivate();
@@ -1763,6 +1769,9 @@ export class ProjectsTableView {
   private visibleTimelineRow_abyssPrivate(occurrenceId: string): ProjectTimelineRow | undefined {
     if (
       !this.mounted_abyssPrivate ||
+      !this.root_abyssPrivate.isConnected ||
+      this.root_abyssPrivate.hidden ||
+      this.context_abyssPrivate.state.get('projectsPanel').view !== 'table' ||
       this.overviewMode_abyssPrivate !== 'timeline' ||
       this.timelineView_abyssPrivate?.root.hidden === true
     ) {
@@ -1866,6 +1875,7 @@ export class ProjectsTableView {
   private commitTimelineRangeEdit_abyssPrivate(
     request: ProjectTimelineRangeEditRequest,
   ): Promise<ProjectEditResult> {
+    const interactionRevision = this.timelineInteractionRevision_abyssPrivate;
     return this.runTableActionInOrder_abyssPrivate(async () => {
       const finished = await this.finishEditorForTableAction_abyssPrivate();
       if (!finished) {
@@ -1874,6 +1884,9 @@ export class ProjectsTableView {
         );
       }
       return this.runTableSessionMutation(async () => {
+        if (interactionRevision !== this.timelineInteractionRevision_abyssPrivate) {
+          throw new ProjectEditValidationError('This project range is no longer visible.');
+        }
         const capture = this.captureTimelineRangeSource_abyssPrivate(
           request.kind === 'pointer' ? request.source.occurrenceId : request.target.occurrenceId,
         );

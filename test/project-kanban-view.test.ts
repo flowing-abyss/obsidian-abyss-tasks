@@ -2901,7 +2901,13 @@ describe('project Kanban overview', () => {
     expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toContain(
       '2045',
     );
-    expect(host.querySelector('.abyss-project-timeline-show-range')).toBeNull();
+    expect(
+      expectDefined(host.querySelector<HTMLButtonElement>('.abyss-project-timeline-show-range'))
+        .hidden,
+    ).toBe(true);
+    expect(
+      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar')).hidden,
+    ).toBe(false);
   });
 
   it('keeps a rejected Timeline editor visible when Show range is requested', async () => {

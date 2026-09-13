@@ -239,9 +239,10 @@ pointer intents or relative keyboard intents and never writes Markdown or record
 `ProjectsTimelineView` retains keyed tracks, bars, endpoint handles, cursor, and tooltip nodes so
 focus and preview ownership survive ordinary receipt refreshes. Resize handles appear only for
 actual endpoints inside the visible window; minimum visual bar width and clipped geometry do not
-change the calendar-day coordinate system. The view is also the visibility authority for retained
-range occurrences: collapsed groups remain mounted but cannot capture queued commands or retain an
-active gesture.
+change the calendar-day coordinate system. The focusable track and bar share one exact-target range
+keyboard and context-menu path, leaving nested controls and shared overview shortcuts to their
+existing owners. The view is also the visibility authority for retained range occurrences:
+collapsed groups remain mounted but cannot capture queued commands or retain an active gesture.
 
 The overview controller initializes each status column's manual path sequence from its first complete
 project snapshot and appends newly observed paths even while a field sort, search, or status filter
@@ -257,7 +258,10 @@ selections, filters, sorting, grouping, and viewport positions; switching hides 
 without destroying its nodes. All three surfaces render
 metadata and progress through the shared project-cell renderer and send edits through the same
 `ProjectManager.applyEdits` coordinator. Switching to a project dashboard temporarily detaches the
-overview surface, and returning reattaches the same session and active overview mode.
+overview surface, invalidates its Timeline interaction lifetime, and cancels any active range
+gesture. Returning reattaches the same session and active overview mode with its focus, viewport,
+receipt projection, and history retained; a queued range command from the prior lifetime cannot
+become valid again after reattachment.
 
 The overview controller's table-action submission tail orders Timeline range commands with shared
 actions such as Undo and Redo when the user submits them. This is distinct from the sole metadata

@@ -57,6 +57,7 @@ const privateOwners = new Set([
   'ProjectCreationComposer',
   'ProjectCreationPresentation',
   'ProjectKanbanDragController',
+  'ProjectTimelinePointerInteraction',
   'ProjectsPanel',
   'ProjectsKanbanView',
   'ProjectsTimelineView',

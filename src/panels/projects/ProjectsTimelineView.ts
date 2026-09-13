@@ -203,6 +203,25 @@ function rangeArrowDelta(event: KeyboardEvent): -1 | 1 | undefined {
   return event.key === 'ArrowRight' ? 1 : undefined;
 }
 
+function rangeTargetAttributes(part: 'track' | 'bar'): Record<string, string> {
+  return {
+    tabindex: '0',
+    role: 'button',
+    'data-timeline-part': part,
+    'aria-keyshortcuts': 'ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight',
+  };
+}
+
+function exactRangeEventTarget(
+  event: Event,
+  track: HTMLElement,
+  bar: HTMLElement,
+): HTMLElement | undefined {
+  if (event.target === track) return track;
+  if (event.target === bar) return bar;
+  return undefined;
+}
+
 function calendarWindowYears(scale: ProjectTimelineSettings['scale']): number {
   if (scale === 'month') return 1;
   if (scale === 'quarter') return 3;
@@ -764,16 +783,11 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     const summary = element.createDiv({ cls: 'abyss-project-timeline-summary' });
     const track = element.createDiv({
       cls: 'abyss-project-timeline-track',
-      attr: { tabindex: '0', role: 'button', 'data-timeline-part': 'track' },
+      attr: rangeTargetAttributes('track'),
     });
     const bar = track.createDiv({
       cls: 'abyss-project-timeline-bar',
-      attr: {
-        tabindex: '0',
-        role: 'button',
-        'data-timeline-part': 'bar',
-        'aria-keyshortcuts': 'ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight',
-      },
+      attr: rangeTargetAttributes('bar'),
     });
     const row: RenderedRow<TCell> = {
       element,
@@ -802,12 +816,16 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       range: item.range,
       groupKey,
     };
-    bar.addEventListener('keydown', (event) => {
-      this.handleRangeKeydown_abyssPrivate(row, event);
+    track.addEventListener('keydown', (event) => {
+      const focus = exactRangeEventTarget(event, track, bar);
+      if (focus === undefined) return;
+      this.handleRangeKeydown_abyssPrivate(row, event, focus);
     });
-    bar.addEventListener('contextmenu', (event) => {
+    track.addEventListener('contextmenu', (event) => {
+      const focus = exactRangeEventTarget(event, track, bar);
+      if (focus === undefined) return;
       event.preventDefault();
-      this.selectRange_abyssPrivate(row, bar);
+      this.selectRange_abyssPrivate(row, focus);
       this.context_abyssPrivate.openRangeMenu(row.element.dataset['occurrenceId'] ?? '', event);
     });
     row.showRange.addEventListener('click', () => {
@@ -1069,11 +1087,15 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     this.syncSelectedRows_abyssPrivate();
   }
 
-  private handleRangeKeydown_abyssPrivate(row: RenderedRow<TCell>, event: KeyboardEvent): void {
+  private handleRangeKeydown_abyssPrivate(
+    row: RenderedRow<TCell>,
+    event: KeyboardEvent,
+    focus: HTMLElement,
+  ): void {
     if (requestsRangeMenu(event)) {
       event.preventDefault();
       event.stopPropagation();
-      this.selectRange_abyssPrivate(row, row.bar);
+      this.selectRange_abyssPrivate(row, focus);
       this.context_abyssPrivate.openRangeMenu(row.element.dataset['occurrenceId'] ?? '', event);
       return;
     }
@@ -1083,7 +1105,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     if (occurrenceId === undefined) return;
     event.preventDefault();
     event.stopPropagation();
-    this.selectRange_abyssPrivate(row, row.bar);
+    this.selectRange_abyssPrivate(row, focus);
     const captured = this.context_abyssPrivate.captureRangeSource(occurrenceId);
     if (captured.kind === 'rejected') {
       this.context_abyssPrivate.reportRangeFailure(captured.reason);
