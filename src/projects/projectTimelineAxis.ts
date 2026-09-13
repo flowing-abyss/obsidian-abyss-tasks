@@ -49,7 +49,7 @@ export interface ProjectTimelineAxisCell {
   readonly isToday: boolean;
 }
 
-export interface ProjectTimelineGridBoundary {
+interface ProjectTimelineGridBoundary {
   readonly day: string;
   readonly ordinal: number;
   readonly leftPercent: number;
