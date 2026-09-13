@@ -3,8 +3,7 @@
 // fixtures. Checks objective, mechanically-verifiable properties only:
 // broken links, dangling formal skill references, and the specific hook
 // registrations this template actually depends on. It does not generally
-// check Markdown prose, workflow explanations, or hardcoded skill lists —
-// externally owned, byte-exact integration blocks are the sole exception.
+// check Markdown prose, workflow explanations, or hardcoded skill lists.
 
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
@@ -87,18 +86,6 @@ test('CodeGraph is wired exactly as its local installer expects for every config
   const claudeSettings = JSON.parse(
     readFileSync(path.join(configsRoot, '.claude', 'settings.json'), 'utf8'),
   );
-  const agents = readFileSync(path.join(configsRoot, 'AGENTS.md'), 'utf8');
-  const expectedInstructions = `<!-- CODEGRAPH_START -->
-## CodeGraph
-
-In repositories indexed by CodeGraph (a \`.codegraph/\` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
-
-- **MCP tool** (when available): \`codegraph_explore\` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
-- **Shell** (always works): \`codegraph explore "<symbol names or question>"\` prints the same output.
-
-If there is no \`.codegraph/\` directory, skip CodeGraph entirely — indexing is the user's decision.
-<!-- CODEGRAPH_END -->`;
-
   assert.match(
     codex,
     /\[mcp_servers\.codegraph\]\ncommand = "codegraph"\nargs = \["serve", "--mcp"\]/,
@@ -118,8 +105,6 @@ If there is no \`.codegraph/\` directory, skip CodeGraph entirely — indexing i
       entry.hooks?.some((hook) => hook.command === 'codegraph prompt-hook'),
     ),
   );
-  const markerSections = agents.match(/<!-- CODEGRAPH_START -->[\s\S]*?<!-- CODEGRAPH_END -->/gu);
-  assert.deepEqual(markerSections, [expectedInstructions]);
 });
 
 test('every Codex command hook has a commandWindows counterpart', () => {

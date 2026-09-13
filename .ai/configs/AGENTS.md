@@ -71,13 +71,17 @@ Typical loop: `pnpm dev` → `obsidian plugin:reload id=abyss-tasks`.
 
 - API docs: https://docs.obsidian.md
 
-<!-- CODEGRAPH_START -->
 ## CodeGraph
 
-In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
+Prefer CodeGraph for dependency discovery, blast-radius analysis, unfamiliar code,
+and cross-module refactoring. For obvious local changes, prefer ordinary Read/Search.
 
-- **MCP tool** (when available): `codegraph_explore` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
-- **Shell** (always works): `codegraph explore "<symbol names or question>"` prints the same output.
-
-If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
-<!-- CODEGRAPH_END -->
+Step 2 of `using-git-worktrees` automatically initializes/syncs each checkout's own
+ignored `.codegraph/` as best effort, including the main checkout. Before a batch
+of graph queries, check for `.codegraph/codegraph.db` at the current checkout root
+and run `codegraph sync` there; repeat after edits. Always pass that absolute root
+(`git rev-parse --show-toplevel`) as MCP `codegraph_explore.projectPath`, or run
+`codegraph explore` from that root. MCP can discover a new index without restarting,
+but cross-project queries do not start a watcher. If the local index is missing,
+sync fails, or results report another worktree/stale files, use Read/Search.
+This project policy takes precedence over CodeGraph's generic agent guidance.

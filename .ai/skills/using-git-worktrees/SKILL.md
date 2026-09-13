@@ -141,6 +141,40 @@ if [ -f go.mod ]; then go mod download; fi
 `--frozen-lockfile`; use whichever the detected Yarn version actually
 supports.
 
+### CodeGraph (best effort)
+
+Run this after dependency setup in the **current checkout**, including an
+existing worktree or the main checkout, even when dependencies were already
+installed. This repository authorizes automatic local indexing. Each checkout
+owns its ignored `.codegraph/`; never copy or symlink another checkout's index.
+
+```bash
+codegraph_root=$(git rev-parse --show-toplevel)
+if command -v codegraph >/dev/null 2>&1; then
+  if { [ -f "$codegraph_root/.codegraph/codegraph.db" ] || codegraph init --yes "$codegraph_root"; } &&
+    [ -f "$codegraph_root/.codegraph/codegraph.db" ] && codegraph sync "$codegraph_root"; then
+    :
+  else
+    printf '%s\n' 'CodeGraph setup failed; continue with Read/Search in this checkout.' >&2
+  fi
+else
+  printf '%s\n' 'CodeGraph unavailable; continue with Read/Search in this checkout.' >&2
+fi
+```
+
+Verified with CodeGraph 1.6.0: `init --yes` builds a missing index without prompts;
+an existing index needs `sync`, including after an interrupted initial build.
+Check the local DB file, not `codegraph status`: path lookup can fall back to a
+parent checkout's index. Failure is non-blocking; do not install/upgrade CodeGraph
+or restart the agent/MCP as part of setup.
+
+For MCP queries always pass this absolute checkout root as `projectPath`.
+The running server discovers a newly initialized local index on the next call.
+Cross-project `projectPath` queries have no watcher in 1.6.0: before a batch of
+structural queries, run `codegraph sync` in that checkout (again after edits).
+If the local DB is absent, sync fails, or results warn of another worktree or
+stale files, use Read/Search rather than relying on that graph.
+
 ## Step 3: Verify Clean Baseline
 
 Run tests using the same package manager detected in Step 2 (`pnpm test`,
