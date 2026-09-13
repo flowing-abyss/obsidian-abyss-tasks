@@ -8477,6 +8477,9 @@ button.abyss-project-table-status-pill {
   align-items: stretch;
   gap: 2px;
   padding: 4px;
+  container-type: inline-size;
+  container-name: abyss-timeline-nav;
+  font-size: var(--font-ui-smaller);
 }
 
 .abyss-project-timeline-range-navigation {
@@ -8489,11 +8492,9 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-timeline-scale-control {
-  position: static;
+  display: grid;
   min-width: 0;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-  justify-content: center;
+  grid-template-columns: 1fr 1.5fr 1.3fr 1.5fr 1fr;
 }
 
 .abyss-project-timeline-range-navigation .abyss-cal-nav-btn {
@@ -8520,7 +8521,22 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-timeline-scale-control button.abyss-cal-view-btn {
-  flex: 0 1 auto;
+  padding-inline: 0;
+}
+
+@container abyss-timeline-nav (width < 16.5em) {
+  .abyss-project-timeline-scale-control {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .abyss-project-timeline-scale-control .abyss-cal-view-btn:nth-child(2) {
+    grid-area: 2 / 1;
+  }
+
+  .abyss-project-timeline-scale-control .abyss-cal-view-btn:nth-child(3) {
+    grid-area: 1 / 2 / 3;
+    align-self: center;
+  }
 }
 
 .abyss-project-timeline-scroll {
