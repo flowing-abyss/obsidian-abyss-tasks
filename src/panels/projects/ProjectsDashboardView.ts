@@ -4,6 +4,7 @@ import type { Project } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { renderProgressBar } from './progressBar';
+import { applyProjectStatusPresentation } from './projectStatusPresentation';
 import type { ProjectsDashboardContext } from './viewContext';
 
 /** Detail view for a single project: header, stats, description, its tasks. */
@@ -41,7 +42,7 @@ function renderProjectDetails(
   header.createEl('h2', { cls: 'abyss-project-dashboard-title', text: project.name });
 
   const pill = header.createEl('button', {
-    cls: 'abyss-status-pill abyss-project-table-status-pill',
+    cls: 'abyss-status-pill',
   });
   patchProjectDashboardStatus(pill, project, status);
   pill.addEventListener('click', (e) => {
@@ -98,13 +99,7 @@ function patchProjectDashboardStatus(
   project: Project,
   status: ProjectStatus | undefined,
 ): void {
-  pill.toggleClass('is-text', status?.display === 'text');
-  pill.toggleClass('is-dot', status?.display === 'dot');
-  pill.style.removeProperty('--abyss-project-status-color');
-  const statusColor = status?.color;
-  if (statusColor !== undefined && statusColor.length > 0) {
-    pill.style.setProperty('--abyss-project-status-color', statusColor);
-  }
+  applyProjectStatusPresentation(pill, status);
   pill.setText(
     status === undefined ? (project.rawStatus ?? 'No status') : projectStatusDisplayName(status),
   );

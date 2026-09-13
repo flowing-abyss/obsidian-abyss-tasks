@@ -20,6 +20,7 @@ import {
 import { renderTaskText } from '../../ui/renderTaskText';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { formatProjectPrettyDate, formatProjectRelativeDate } from './projectDatePresentation';
+import { applyProjectStatusPresentation } from './projectStatusPresentation';
 
 function statusFor(
   project: Project,
@@ -34,12 +35,6 @@ function progressBand(percent: number | null): 'empty' | 'low' | 'quarter' | 'ha
   if (percent < 50) return 'quarter';
   if (percent < 75) return 'half';
   return 'high';
-}
-
-function statusDisplayClass(display: ProjectStatus['display']): string {
-  if (display === 'text') return ' is-text';
-  if (display === 'dot') return ' is-dot';
-  return '';
 }
 
 function renderProgress(
@@ -87,12 +82,9 @@ function renderStatus(
 ): void {
   const status = statusFor(project, statuses);
   const pill = cell.createSpan({
-    cls: `abyss-project-table-status-pill${statusDisplayClass(status?.display)}`,
     text: projectTableDisplayValues(project, field, statuses)[0] ?? 'No status',
   });
-  if (status?.color !== undefined && status.color.length > 0) {
-    pill.style.setProperty('--abyss-project-status-color', status.color);
-  }
+  applyProjectStatusPresentation(pill, status);
   renderUnavailableType(cell, field);
 }
 
@@ -123,6 +115,7 @@ interface RenderProjectTableCellOptions {
   readonly description?: {
     readonly field: ProjectFieldCatalogItem;
     readonly show: boolean;
+    readonly preserveNewlines?: boolean;
   };
 }
 
@@ -437,6 +430,11 @@ function renderPropertyValue(
   renderUnavailableType(cell, field);
 }
 
+function renderedDescription(raw: unknown, preserveNewlines: boolean): string {
+  if (typeof raw !== 'string') return '';
+  return preserveNewlines ? raw : (raw.split('\n', 1)[0] ?? '');
+}
+
 function renderName(
   cell: HTMLElement,
   project: Project,
@@ -453,7 +451,7 @@ function renderName(
   const description = options.description;
   if (description?.show !== true) return;
   const raw = projectFieldValue(project, description.field);
-  const value = typeof raw === 'string' ? (raw.split('\n', 1)[0] ?? '') : '';
+  const value = renderedDescription(raw, description.preserveNewlines === true);
   if (value.length === 0) return;
   const detail = cell.createDiv({ cls: 'abyss-project-description' });
   if (description.field.type !== 'text') {

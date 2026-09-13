@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
+import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import {
   SAVED_VIEW_STATE_SCHEMA_VERSION,
@@ -82,6 +83,7 @@ describe('SettingsPersistenceCoordinator migration', () => {
     await coordinator.saveViewState(loaded.settings);
 
     expect(loaded.settings.projects.kanban).toBeUndefined();
+    expect(loaded.settings.projects.timeline).toBeUndefined();
     expect(loaded.settings.projects.overviewView).toBeUndefined();
     const saved = JSON.parse(port.stateText ?? '') as {
       schemaVersion: number;
@@ -89,7 +91,103 @@ describe('SettingsPersistenceCoordinator migration', () => {
     };
     expect(saved.schemaVersion).toBe(1);
     expect(saved.views.projects).not.toHaveProperty('kanban');
+    expect(saved.views.projects).not.toHaveProperty('timeline');
     expect(saved.views.projects).not.toHaveProperty('overviewView');
+  });
+
+  it('roundtrips independent Timeline preferences and unknown nested keys', async () => {
+    const timeline = buildDefaultProjectTimelineSettings(DEFAULT_SETTINGS.projects.table);
+    timeline.fields = [
+      { id: 'property:Priority', label: 'Urgency', visible: true, dateDisplay: 'relative' },
+      { id: 'start', visible: false },
+    ];
+    timeline.showEmptyFields = false;
+    timeline.descriptionLines = 2;
+    const state = stateEnvelope({
+      projects: {
+        table: structuredClone(DEFAULT_SETTINGS.projects.table),
+        overviewView: 'timeline',
+        timeline: {
+          ...timeline,
+          scale: 'quarter',
+          fields: timeline.fields.map((field, index) => ({
+            ...field,
+            ...(index === 0 ? { futureFieldOption: 'keep' } : {}),
+          })),
+          futureTimelineOption: { retained: true },
+          sortBy: { ...timeline.sortBy, futureSortOption: 9 },
+        },
+      },
+    });
+    const port = memoryPort(markedStatic(), state);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(loaded.settings.projects.overviewView).toBe('timeline');
+    expect(loaded.settings.projects.timeline).toEqual({ ...timeline, scale: 'quarter' });
+    if (loaded.settings.projects.timeline === undefined)
+      throw new Error('Expected Timeline state.');
+    loaded.settings.projects.timeline.progress = 'bar';
+    await coordinator.saveViewState(loaded.settings);
+
+    const saved = JSON.parse(port.stateText ?? '') as {
+      views: { projects: { timeline: Record<string, unknown>; table: Record<string, unknown> } };
+    };
+    expect(saved.views.projects.timeline).toMatchObject({
+      scale: 'quarter',
+      progress: 'bar',
+      fields: [
+        {
+          id: 'property:Priority',
+          label: 'Urgency',
+          visible: true,
+          dateDisplay: 'relative',
+          futureFieldOption: 'keep',
+        },
+        { id: 'start', visible: false },
+      ],
+      showEmptyFields: false,
+      descriptionLines: 2,
+      futureTimelineOption: { retained: true },
+      sortBy: { field: 'start', dir: 'asc', futureSortOption: 9 },
+    });
+    expect(saved.views.projects.table).toEqual(DEFAULT_SETTINGS.projects.table);
+  });
+
+  it('retains malformed Timeline state for recovery while using safe values', async () => {
+    const malformedTimeline = {
+      scale: 'century',
+      fields: [{ id: '', visible: true }],
+      showEmptyFields: 'sometimes',
+      descriptionLines: 3,
+      showMetadata: 'sometimes',
+      progress: 'circle',
+      showUnscheduled: null,
+      groupBy: 42,
+      sortBy: { field: 42, dir: 'sideways' },
+      hiddenStatuses: ['id:done', 9],
+    };
+    const state = stateEnvelope({
+      projects: {
+        table: structuredClone(DEFAULT_SETTINGS.projects.table),
+        overviewView: 'timeline',
+        timeline: malformedTimeline,
+      },
+    });
+    const port = memoryPort(markedStatic(), state);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    await coordinator.saveViewState(loaded.settings);
+
+    expect(loaded.settings.projects.timeline).toEqual({
+      ...buildDefaultProjectTimelineSettings(DEFAULT_SETTINGS.projects.table),
+      hiddenStatuses: ['id:done'],
+    });
+    const saved = JSON.parse(port.stateText ?? '') as {
+      recovery: { malformedViews: { projectTimeline: unknown } };
+    };
+    expect(saved.recovery.malformedViews.projectTimeline).toEqual(malformedTimeline);
   });
 
   it('roundtrips initialized Kanban preferences and unknown nested keys', async () => {

@@ -4,6 +4,7 @@ import type {
   ProjectPropertyDefinition,
   ProjectValuePresentation,
 } from '../projects/projectPropertyDefinitions';
+import type { ProjectTimelineSettings } from '../projects/projectTimelineSettings';
 import type { TaskPriority, TaskStatusType } from '../tasks/domain/types';
 import type { ShortcutSettings } from './shortcuts';
 
@@ -82,6 +83,7 @@ export interface ProjectsSettings {
   taskInsertionSection: string;
   table: ProjectTableSettings;
   kanban?: ProjectKanbanSettings;
+  timeline?: ProjectTimelineSettings;
   overviewView?: ProjectOverviewMode;
 }
 
@@ -122,6 +124,7 @@ export interface SavedViewState {
   projects: {
     table: ProjectTableSettings;
     kanban?: ProjectKanbanSettings;
+    timeline?: ProjectTimelineSettings;
     overviewView?: ProjectOverviewMode;
   };
 }
@@ -136,6 +139,7 @@ export interface SavedViewStateRecovery {
     projectTable?: unknown;
     projectTableColumns?: unknown[];
     projectKanban?: unknown;
+    projectTimeline?: unknown;
     projectOverviewView?: unknown;
   };
 }

@@ -1,4 +1,5 @@
 import { setIcon } from 'obsidian';
+import { anchoredPlacement } from './anchoredPlacement';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 
 export interface ViewOptionAction {
@@ -137,6 +138,120 @@ interface ViewOptionsRuntime {
 interface ScrollPosition {
   readonly element: HTMLElement;
   readonly top: number;
+}
+
+function visibleHostBoundary(host: HTMLElement, ownerWindow: Window | null): DOMRect {
+  const hostRect = host.getBoundingClientRect();
+  const left = Math.max(0, hostRect.left);
+  const top = Math.max(0, hostRect.top);
+  const right = Math.min(ownerWindow?.innerWidth ?? Infinity, hostRect.right);
+  const bottom = Math.min(ownerWindow?.innerHeight ?? Infinity, hostRect.bottom);
+  return new DOMRect(left, top, Math.max(0, right - left), Math.max(0, bottom - top));
+}
+
+function setPopoverVariable(popover: HTMLElement, name: string, value: number): void {
+  popover.style.setProperty(name, `${value}px`);
+}
+
+type ResizeObserverConstructor = new (callback: ResizeObserverCallback) => ResizeObserver;
+
+function isResizeObserverConstructor(value: unknown): value is ResizeObserverConstructor {
+  return typeof value === 'function';
+}
+
+function placeViewOptionsPopover(
+  popover: HTMLElement,
+  options: Pick<OpenViewOptionsPopoverOptions, 'anchor' | 'host'>,
+  ownerWindow: Window | null,
+): void {
+  const boundary = visibleHostBoundary(options.host, ownerWindow);
+  setPopoverVariable(popover, '--abyss-view-state-max-width', Math.max(0, boundary.width - 16));
+  setPopoverVariable(popover, '--abyss-view-state-max-height', Math.max(0, boundary.height - 16));
+  const floating = popover.getBoundingClientRect();
+  const placement = anchoredPlacement({
+    anchor: options.anchor.getBoundingClientRect(),
+    floating: {
+      width: floating.width !== 0 ? floating.width : popover.offsetWidth,
+      height: floating.height !== 0 ? floating.height : popover.offsetHeight,
+    },
+    boundary,
+    gap: 4,
+    edgeGap: 8,
+    preferred: 'below-end',
+  });
+  const offsetParent = popover.offsetParent ?? options.host;
+  const offsetParentRect = offsetParent.getBoundingClientRect();
+  setPopoverVariable(
+    popover,
+    '--abyss-pop-top',
+    placement.top - offsetParentRect.top - offsetParent.clientTop + offsetParent.scrollTop,
+  );
+  setPopoverVariable(
+    popover,
+    '--abyss-pop-left',
+    placement.left - offsetParentRect.left - offsetParent.clientLeft + offsetParent.scrollLeft,
+  );
+  popover.dataset['side'] = placement.side;
+}
+
+class ViewOptionsPositioner {
+  private readonly ownerDocument_abyssPrivate: Document;
+  private readonly ownerWindow_abyssPrivate: Window | null;
+  private observer_abyssPrivate: ResizeObserver | undefined;
+  private listening_abyssPrivate = false;
+  private disposed_abyssPrivate = false;
+
+  constructor(
+    private readonly popover_abyssPrivate: HTMLElement,
+    private readonly options_abyssPrivate: Pick<OpenViewOptionsPopoverOptions, 'anchor' | 'host'>,
+  ) {
+    this.ownerDocument_abyssPrivate = popover_abyssPrivate.ownerDocument;
+    this.ownerWindow_abyssPrivate = this.ownerDocument_abyssPrivate.defaultView;
+  }
+
+  mount(): void {
+    this.position_abyssPrivate();
+    this.listen_abyssPrivate('addEventListener');
+    this.listening_abyssPrivate = true;
+    const candidate: unknown =
+      this.ownerWindow_abyssPrivate === null
+        ? undefined
+        : Reflect.get(this.ownerWindow_abyssPrivate, 'ResizeObserver');
+    this.observer_abyssPrivate = isResizeObserverConstructor(candidate)
+      ? new candidate(this.position_abyssPrivate)
+      : undefined;
+    for (const element of new Set([
+      this.popover_abyssPrivate,
+      this.options_abyssPrivate.anchor,
+      this.options_abyssPrivate.host,
+      this.popover_abyssPrivate.offsetParent,
+      ...this.popover_abyssPrivate.children,
+    ])) {
+      if (element !== null) this.observer_abyssPrivate?.observe(element);
+    }
+  }
+
+  readonly cleanup = (): void => {
+    if (this.disposed_abyssPrivate) return;
+    this.disposed_abyssPrivate = true;
+    this.observer_abyssPrivate?.disconnect();
+    if (this.listening_abyssPrivate) this.listen_abyssPrivate('removeEventListener');
+  };
+
+  private readonly position_abyssPrivate = (): void => {
+    if (this.disposed_abyssPrivate || !this.popover_abyssPrivate.isConnected) return;
+    placeViewOptionsPopover(
+      this.popover_abyssPrivate,
+      this.options_abyssPrivate,
+      this.ownerWindow_abyssPrivate,
+    );
+  };
+
+  private listen_abyssPrivate(method: 'addEventListener' | 'removeEventListener'): void {
+    this.ownerWindow_abyssPrivate?.[method]('resize', this.position_abyssPrivate);
+    this.ownerWindow_abyssPrivate?.[method]('scroll', this.position_abyssPrivate);
+    this.ownerDocument_abyssPrivate[method]('scroll', this.position_abyssPrivate, true);
+  }
 }
 
 function selectedValues(spec: ViewOptionsMultiRow): readonly string[] {
@@ -503,16 +618,18 @@ function resetControlSync(
 /** Opens the shared task/project sort and grouping surface and returns idempotent cleanup. */
 export function openViewOptionsPopover(options: OpenViewOptionsPopoverOptions): () => void {
   const popover = options.host.createDiv({
-    cls: 'abyss-view-state-popover abyss-popover',
+    cls: 'abyss-view-state-popover abyss-popover abyss-popover-anchored',
     attr: { role: 'dialog', 'aria-label': 'Sort and group options' },
   });
   const ownerDocument = popover.ownerDocument;
+  const timerWindow = ownerDocument.defaultView ?? window;
   const ownership = (options.interactionOwnership ?? noInteractionOwnership).acquire({
     blocksShortcuts: true,
   });
   let timer: number | undefined;
   let listening = false;
   let closed = false;
+  const positioner = new ViewOptionsPositioner(popover, options);
   const ownedChildren = new Map<HTMLElement, () => void>();
   const syncRows: Array<() => void> = [];
   const syncAll = (): void => {
@@ -521,8 +638,9 @@ export function openViewOptionsPopover(options: OpenViewOptionsPopoverOptions): 
   const close = (restoreFocus = false): void => {
     if (closed) return;
     closed = true;
-    if (timer !== undefined) window.clearTimeout(timer);
+    if (timer !== undefined) timerWindow.clearTimeout(timer);
     if (listening) ownerDocument.removeEventListener('click', dismiss, true);
+    positioner.cleanup();
     popover.remove();
     const childCleanups = [...ownedChildren.values()];
     ownedChildren.clear();
@@ -559,8 +677,9 @@ export function openViewOptionsPopover(options: OpenViewOptionsPopoverOptions): 
     syncReset();
   }
   options.anchor.after(popover);
+  positioner.mount();
   popover.querySelector<HTMLElement>('.abyss-view-state-row-main')?.focus();
-  timer = window.setTimeout(() => {
+  timer = timerWindow.setTimeout(() => {
     timer = undefined;
     if (!popover.isConnected) return;
     ownerDocument.addEventListener('click', dismiss, true);

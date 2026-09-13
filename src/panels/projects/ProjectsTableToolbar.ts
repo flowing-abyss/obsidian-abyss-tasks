@@ -15,6 +15,7 @@ import {
   effectiveProjectTableDateDisplay,
   setProjectTableColumnDateDisplay,
 } from '../../projects/projectTableSettings';
+import type { ProjectTimelineSettings } from '../../projects/projectTimelineSettings';
 import type { StatusGroup } from '../../projects/status';
 import { moveProjectColumn, setProjectColumnVisibility } from '../../settings/projectTableSettings';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
@@ -26,10 +27,12 @@ import {
 } from '../../ui/ViewOptionsPopover';
 import { configureProjectDateDisplayMenu, projectDateDisplayLabel } from './projectColumnMenu';
 import { isProjectKanbanCustomized, projectKanbanOptionsRows } from './ProjectKanbanOptions';
+import { applyProjectStatusPresentation } from './projectStatusPresentation';
+import { isProjectTimelineCustomized, projectTimelineOptionsRows } from './ProjectTimelineOptions';
 
 export interface ProjectsTableToolbarOptions {
   readonly host: HTMLElement;
-  readonly settings: () => ProjectTableSettings | ProjectKanbanSettings;
+  readonly settings: () => ProjectTableSettings | ProjectKanbanSettings | ProjectTimelineSettings;
   readonly tableSettings: () => ProjectTableSettings;
   readonly mode: () => ProjectOverviewMode;
   readonly fields: () => readonly ProjectFieldCatalogItem[];
@@ -40,6 +43,7 @@ export interface ProjectsTableToolbarOptions {
   readonly onReset: () => void;
   readonly onOverviewMode: (mode: ProjectOverviewMode) => void;
   readonly onViewOptionChange: (mutation: () => void) => Promise<boolean>;
+  readonly onTimelineScaleChange: (scale: ProjectTimelineSettings['scale']) => Promise<boolean>;
 }
 
 function fieldLabel(
@@ -56,9 +60,15 @@ function fieldLabel(
 }
 
 function isTableSettings(
-  settings: ProjectTableSettings | ProjectKanbanSettings,
+  settings: ProjectTableSettings | ProjectKanbanSettings | ProjectTimelineSettings,
 ): settings is ProjectTableSettings {
   return 'columns' in settings;
+}
+
+function isTimelineSettings(
+  settings: ProjectKanbanSettings | ProjectTimelineSettings,
+): settings is ProjectTimelineSettings {
+  return 'scale' in settings;
 }
 
 function isCustomized(settings: ProjectTableSettings): boolean {
@@ -112,11 +122,16 @@ export class ProjectsTableToolbar {
     this.viewButton_abyssPrivate.addEventListener('click', () => {
       this.togglePopover_abyssPrivate();
     });
+    const modeSwitcher = controls.createDiv({
+      cls: 'abyss-project-overview-switcher',
+      attr: { role: 'group', 'aria-label': 'Project view' },
+    });
     for (const [mode, label, icon] of [
       ['table', 'Table view', 'table-2'],
       ['kanban', 'Kanban view', 'columns-3'],
+      ['timeline', 'Timeline view', 'gantt-chart'],
     ] as const) {
-      const button = controls.createEl('button', {
+      const button = modeSwitcher.createEl('button', {
         cls: `abyss-project-overview-mode abyss-project-overview-mode--${mode}`,
         attr: { type: 'button', 'aria-label': label, 'aria-pressed': 'false' },
       });
@@ -175,10 +190,7 @@ export class ProjectsTableToolbar {
     button.setText(status.label);
     button.toggleClass('is-disabled', disabled);
     button.setAttribute('aria-pressed', String(!disabled));
-    button.style.removeProperty('--abyss-project-status-color');
-    if (status.color !== undefined && status.color.length > 0) {
-      button.style.setProperty('--abyss-project-status-color', status.color);
-    }
+    applyProjectStatusPresentation(button, status);
   }
 
   private removeMissingStatusButtons_abyssPrivate(retained: ReadonlySet<string>): void {
@@ -232,9 +244,11 @@ export class ProjectsTableToolbar {
 
   private isCustomized_abyssPrivate(): boolean {
     const settings = this.options_abyssPrivate.settings();
-    return isTableSettings(settings)
-      ? isCustomized(settings)
-      : isProjectKanbanCustomized(settings, this.options_abyssPrivate.tableSettings());
+    if (isTableSettings(settings)) return isCustomized(settings);
+    if (isTimelineSettings(settings)) {
+      return isProjectTimelineCustomized(settings, this.options_abyssPrivate.tableSettings());
+    }
+    return isProjectKanbanCustomized(settings, this.options_abyssPrivate.tableSettings());
   }
 
   private togglePopover_abyssPrivate(): void {
@@ -242,25 +256,42 @@ export class ProjectsTableToolbar {
       this.popoverCleanup_abyssPrivate();
       return;
     }
+    this.openPopover_abyssPrivate(this.viewButton_abyssPrivate);
+  }
+
+  private openPopover_abyssPrivate(anchor: HTMLElement): void {
     const settings = this.options_abyssPrivate.settings();
     const fields = this.options_abyssPrivate.fields();
-    const rows = isTableSettings(settings)
-      ? this.tableRows_abyssPrivate(settings, fields)
-      : projectKanbanOptionsRows({
-          settings: () => {
-            const current = this.options_abyssPrivate.settings();
-            return isTableSettings(current) ? settings : current;
-          },
-          tableSettings: this.options_abyssPrivate.tableSettings,
-          fields: this.options_abyssPrivate.fields,
-          onChange: this.options_abyssPrivate.onViewOptionChange,
-        });
+    let rows: ViewOptionsRow[];
+    if (isTableSettings(settings)) rows = this.tableRows_abyssPrivate(settings, fields);
+    else if (isTimelineSettings(settings)) {
+      rows = projectTimelineOptionsRows({
+        settings: () => {
+          const current = this.options_abyssPrivate.settings();
+          return !isTableSettings(current) && isTimelineSettings(current) ? current : settings;
+        },
+        tableSettings: this.options_abyssPrivate.tableSettings,
+        fields: this.options_abyssPrivate.fields,
+        onChange: this.options_abyssPrivate.onViewOptionChange,
+        onScaleChange: this.options_abyssPrivate.onTimelineScaleChange,
+      });
+    } else {
+      rows = projectKanbanOptionsRows({
+        settings: () => {
+          const current = this.options_abyssPrivate.settings();
+          return !isTableSettings(current) && !isTimelineSettings(current) ? current : settings;
+        },
+        tableSettings: this.options_abyssPrivate.tableSettings,
+        fields: this.options_abyssPrivate.fields,
+        onChange: this.options_abyssPrivate.onViewOptionChange,
+      });
+    }
     const close = openViewOptionsPopover({
       host: this.options_abyssPrivate.host,
-      anchor: this.viewButton_abyssPrivate,
+      anchor,
       rows,
       showReset: () =>
-        this.options_abyssPrivate.mode() === 'kanban' || this.isCustomized_abyssPrivate(),
+        this.options_abyssPrivate.mode() !== 'table' || this.isCustomized_abyssPrivate(),
       onReset: this.options_abyssPrivate.onReset,
       onClose: () => {
         if (this.popoverCleanup_abyssPrivate === close) {

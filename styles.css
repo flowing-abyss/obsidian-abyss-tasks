@@ -4347,7 +4347,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-normal);
 }
 
-.abyss-cal-view-switcher {
+:is(.abyss-cal-view-switcher, .abyss-project-overview-switcher) {
   display: flex;
   gap: 2px;
   background: var(--background-modifier-border);
@@ -4355,7 +4355,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 2px;
 }
 
-.abyss-cal-view-btn {
+:is(button.abyss-cal-view-btn, button.abyss-project-overview-mode) {
   padding: 4px 10px;
   border-radius: 6px;
   border: none;
@@ -4368,12 +4368,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     color 0.1s;
 }
 
-.abyss-cal-view-btn:hover {
+:is(.abyss-cal-view-btn, .abyss-project-overview-mode):hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
-.abyss-cal-view-btn.is-active {
+:is(.abyss-cal-view-btn, .abyss-project-overview-mode).is-active {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   font-weight: 500;
@@ -6538,17 +6538,16 @@ body.abyss-modal-open .popover.hover-popover {
 /* ── View-state popover ─────────────────────────────────────── */
 .abyss-view-state-popover {
   position: absolute;
-  top: 100%;
-  right: 0;
+  box-sizing: border-box;
   z-index: 100;
-  min-width: 240px;
-  max-height: 420px;
+  min-width: min(240px, var(--abyss-view-state-max-width));
+  max-width: var(--abyss-view-state-max-width);
+  max-height: min(420px, var(--abyss-view-state-max-height));
   overflow-y: auto;
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
   box-shadow: var(--shadow-s);
-  margin-top: 4px;
 }
 
 .abyss-view-state-row {
@@ -6912,19 +6911,7 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-projects-table button.abyss-project-status-filter {
   flex: 0 0 auto;
   min-height: 24px;
-  padding: 1px 8px;
-  border: 1px solid
-    color-mix(in srgb, var(--abyss-project-status-color, var(--text-faint)) 45%, transparent);
-  border-radius: 6px;
-  background: color-mix(
-    in srgb,
-    var(--abyss-project-status-color, var(--background-modifier-border)) 16%,
-    transparent
-  );
   box-shadow: none;
-  color: var(--text-normal);
-  font-size: var(--font-ui-smaller);
-  line-height: 1.2;
   white-space: nowrap;
 }
 
@@ -6944,7 +6931,7 @@ body.abyss-modal-open .popover.hover-popover {
   border-radius: 8px;
 }
 
-.abyss-project-table-controls :is(.abyss-view-state-btn, .abyss-project-overview-mode) {
+.abyss-project-table-controls .abyss-view-state-btn {
   width: 30px;
   height: 30px;
   min-width: 30px;
@@ -6959,23 +6946,8 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-projects-table button.abyss-project-overview-mode {
   width: 30px;
   height: 30px;
+  min-width: 30px;
   padding: 5px;
-  border-radius: 6px;
-}
-
-.abyss-projects-table button.abyss-project-overview-mode--table {
-  margin-right: 0;
-}
-
-.abyss-projects-table button.abyss-project-overview-mode--kanban {
-  border-radius: 6px;
-}
-
-.abyss-projects-table button.abyss-project-overview-mode.is-active {
-  z-index: 1;
-  border-color: var(--interactive-accent);
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
 }
 
 .abyss-project-table-controls
@@ -7427,7 +7399,8 @@ table.abyss-project-table {
   padding: 24px;
 }
 
-.abyss-project-table-status-pill {
+.abyss-project-table-status-pill,
+button.abyss-project-table-status-pill {
   display: inline-flex;
   overflow: hidden;
   max-width: 100%;
@@ -8472,6 +8445,619 @@ table.abyss-project-table {
 
 .abyss-project-kanban-progress.is-bar-only .abyss-project-progress-value {
   display: none;
+}
+
+/* Timeline keeps project summaries pinned while the calendar axis scrolls. */
+.abyss-project-timeline {
+  --abyss-project-timeline-summary-width: clamp(220px, 34vw, 340px);
+
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  background: var(--background-primary);
+}
+
+.abyss-project-timeline[hidden],
+.abyss-project-timeline-metadata[hidden],
+.abyss-project-timeline-progress[hidden],
+.abyss-project-timeline-group-header[hidden],
+.abyss-project-timeline-group-body[hidden] {
+  display: none;
+}
+
+.abyss-project-timeline-navigation {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+}
+
+.abyss-project-timeline-range-navigation {
+  display: flex;
+  flex: none;
+}
+
+.abyss-project-timeline-scale-control {
+  display: grid;
+  min-width: 0;
+  flex: 1 16.5em;
+  grid-template-columns: 1fr 1.5fr 1.3fr 1.5fr 1fr;
+  gap: 0;
+  padding: 0;
+  border-left: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.abyss-project-timeline-axis .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.abyss-project-timeline-axis button {
+  min-width: 28px;
+  min-height: 28px;
+  height: 100%;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: inherit;
+  line-height: 1.2;
+}
+
+.abyss-project-timeline-axis .abyss-cal-nav-today {
+  padding: 0 6px;
+}
+
+.abyss-project-timeline-axis button + button {
+  border-left: 1px solid var(--background-modifier-border);
+}
+
+@container abyss-timeline-nav (width < 24.5em) {
+  .abyss-project-timeline-navigation {
+    display: block;
+  }
+
+  .abyss-project-timeline-range-navigation {
+    display: grid;
+    grid-template-columns: 28px 1fr 28px;
+  }
+
+  .abyss-project-timeline-scale-control {
+    border-top: 1px solid var(--background-modifier-border);
+    border-left: 0;
+  }
+}
+
+@container abyss-timeline-nav (width < 16.5em) {
+  .abyss-project-timeline-scale-control {
+    grid-template: repeat(2, 1fr) / repeat(3, 1fr);
+  }
+
+  .abyss-cal-view-btn:nth-child(2) {
+    grid-area: 2 / 1;
+    border-left: 0;
+  }
+
+  .abyss-cal-view-btn:nth-child(3) {
+    grid-area: 1 / 2 / 3;
+  }
+}
+
+.abyss-project-timeline-scroll {
+  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.abyss-project-timeline-axis,
+.abyss-project-timeline-row {
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+  grid-template-columns:
+    var(--abyss-project-timeline-summary-width)
+    var(--abyss-project-timeline-track-width, 700px);
+}
+
+.abyss-project-timeline-axis {
+  position: sticky;
+  z-index: 5;
+  top: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-project-timeline-axis-summary,
+.abyss-project-timeline-summary {
+  position: sticky;
+  z-index: 3;
+  left: 0;
+  box-sizing: border-box;
+  min-width: 0;
+  border-right: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+
+.abyss-project-timeline-axis-summary {
+  display: flex;
+  align-items: stretch;
+  container: abyss-timeline-nav / inline-size;
+  background: var(--background-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.abyss-project-timeline-axis-dates,
+.abyss-project-timeline-track {
+  position: relative;
+  min-width: 0;
+}
+
+.abyss-project-timeline-axis-hierarchy,
+.abyss-project-timeline-axis-cells {
+  position: absolute;
+  right: 0;
+  left: 0;
+}
+
+.abyss-project-timeline-axis-hierarchy {
+  top: 0;
+  height: 20px;
+}
+
+.abyss-project-timeline-axis-cells {
+  top: 20px;
+  bottom: 0;
+}
+
+.abyss-project-timeline-axis-cell,
+.abyss-project-timeline-axis-hierarchy-cell {
+  position: absolute;
+  display: flex;
+  overflow: hidden;
+  box-sizing: border-box;
+  height: 100%;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px;
+  border-left: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.abyss-project-timeline-axis-hierarchy-cell {
+  padding: 0;
+  background: color-mix(in srgb, var(--background-secondary) 88%, var(--background-primary));
+  font-weight: var(--font-medium);
+}
+
+.abyss-project-timeline-axis-hierarchy-label {
+  position: absolute;
+  right: 0;
+  display: flex;
+  overflow: hidden;
+  height: 100%;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px;
+}
+
+.abyss-project-timeline-axis-secondary-label {
+  color: var(--text-muted);
+  font-weight: var(--font-normal);
+}
+
+.abyss-project-timeline-axis-cell.is-day {
+  flex-direction: column;
+  justify-content: center;
+  gap: 0;
+  padding: 1px 0;
+  line-height: 1.05;
+  text-align: center;
+}
+
+.abyss-project-timeline-axis-cell.is-day .abyss-project-timeline-axis-secondary-label {
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+}
+
+.abyss-project-timeline-axis :is(.is-today, .is-active) {
+  background: color-mix(in srgb, var(--text-normal) 12%, var(--background-secondary));
+  box-shadow: inset 0 2px 0 var(--interactive-accent);
+  color: var(--text-normal);
+}
+
+:is(
+    .abyss-project-timeline-axis-cell.is-today,
+    .abyss-project-timeline-axis-hierarchy-cell.is-today
+  )
+  .abyss-project-timeline-axis-secondary-label {
+  color: var(--text-normal);
+}
+
+.abyss-project-timeline-group-header {
+  position: sticky;
+  z-index: 4;
+  left: 0;
+  display: flex;
+  width: var(--abyss-project-timeline-summary-width);
+  min-height: 30px;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  border: 0;
+  border-right: 1px solid var(--background-modifier-border);
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  background: var(--background-secondary-alt);
+  box-shadow: none;
+  color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  text-align: left;
+}
+
+.abyss-project-timeline-row {
+  min-height: 35px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.abyss-project-timeline-row:hover,
+.abyss-project-timeline-row.is-selected {
+  background: var(--background-modifier-hover);
+}
+
+.abyss-project-timeline-summary {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 5px 9px;
+}
+
+.abyss-project-timeline-row:hover .abyss-project-timeline-summary,
+.abyss-project-timeline-row.is-selected .abyss-project-timeline-summary {
+  background-color: var(--background-primary);
+  background-image: linear-gradient(
+    var(--background-modifier-hover),
+    var(--background-modifier-hover)
+  );
+}
+
+.abyss-project-timeline-cell.abyss-project-table-cell {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+}
+
+.abyss-project-timeline-row:has(.abyss-project-timeline-cell.is-editing) {
+  position: relative;
+  z-index: 6;
+}
+
+.abyss-project-timeline-summary:has(.abyss-project-timeline-cell.is-editing) {
+  z-index: 7;
+  overflow: visible;
+}
+
+.abyss-project-timeline-cell.is-editing .abyss-project-cell-editor-host {
+  width: min(220px, calc(var(--abyss-project-timeline-summary-width) - 18px));
+  min-width: min(220px, calc(var(--abyss-project-timeline-summary-width) - 18px));
+}
+
+.abyss-project-timeline-name,
+.abyss-project-timeline-name-cell,
+.abyss-project-timeline-name-cell .abyss-project-table-name-content {
+  overflow: visible;
+  min-width: 0;
+}
+
+.abyss-project-timeline-name-cell .abyss-project-table-name-content {
+  height: auto;
+}
+
+.abyss-project-timeline-name-cell button.abyss-project-table-name {
+  overflow: hidden;
+  width: 100%;
+  padding: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-project-timeline-metadata {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 3px 8px;
+  flex-wrap: wrap;
+}
+
+.abyss-project-timeline-field {
+  display: flex;
+  overflow: visible;
+  min-width: 0;
+  max-width: 100%;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.abyss-project-timeline-field-label {
+  overflow: hidden;
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-project-timeline-field-value,
+.abyss-project-timeline-progress-cell {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-project-timeline-field-value {
+  flex: 1 1 auto;
+  line-height: 1.2;
+}
+
+.abyss-project-timeline-field-value.is-editing {
+  overflow: visible;
+}
+
+.abyss-project-timeline-name-cell .abyss-project-description {
+  overflow: visible;
+  align-items: flex-start;
+  white-space: normal;
+}
+
+.abyss-project-timeline-name-cell .abyss-project-description-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--abyss-project-description-lines, 1);
+  line-clamp: var(--abyss-project-description-lines, 1);
+  white-space: pre-wrap;
+}
+
+.abyss-project-timeline-name.is-full-description .abyss-project-description-text {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  white-space: pre-wrap;
+}
+
+.abyss-project-timeline-name-cell .abyss-project-description.is-editor-anchor,
+.abyss-project-timeline-name-cell .abyss-project-description-editor-anchor {
+  overflow: visible;
+}
+
+.abyss-project-timeline-progress .abyss-project-table-progress {
+  gap: 6px;
+}
+
+.abyss-project-timeline-progress:has(.abyss-project-progress-value:only-child) {
+  display: none;
+}
+
+.abyss-project-timeline-track {
+  overflow: hidden;
+  min-height: 34px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.abyss-project-timeline-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.abyss-project-timeline-gridline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--background-modifier-border) 48%, transparent);
+}
+
+.abyss-project-timeline-gridline.is-minor {
+  background: color-mix(in srgb, var(--background-modifier-border) 30%, transparent);
+}
+
+.abyss-project-timeline-gridline.is-major {
+  background: color-mix(in srgb, var(--background-modifier-border) 74%, transparent);
+}
+
+.abyss-project-timeline-axis button:focus-visible,
+.abyss-project-timeline-track:focus-visible,
+.abyss-project-timeline-bar:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.abyss-project-timeline-bar[hidden],
+.abyss-project-timeline-state[hidden],
+.abyss-project-timeline-cursor[hidden],
+.abyss-project-timeline-tooltip[hidden] {
+  display: none;
+}
+
+.abyss-project-timeline-bar {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  box-sizing: border-box;
+  min-width: 40px;
+  height: 16px;
+  border: 1px solid
+    color-mix(
+      in srgb,
+      var(--abyss-project-status-color, var(--interactive-accent))
+        var(--abyss-preview-border-tag-strength),
+      var(--text-normal)
+    );
+  border-radius: var(--abyss-calendar-item-radius);
+  background: color-mix(
+    in srgb,
+    var(--abyss-project-status-color, var(--interactive-accent)) var(--abyss-event-fill-strength),
+    var(--background-primary)
+  );
+  cursor: grab;
+  touch-action: none;
+  transform: translateY(-50%);
+}
+
+.abyss-project-timeline-bar:not(.is-one-date) {
+  left: max(0px, min(var(--abyss-project-timeline-range-left), calc(100% - 40px))) !important;
+}
+
+.abyss-project-timeline-bar.is-one-date {
+  left: clamp(
+    0px,
+    calc(var(--abyss-project-timeline-one-date-center) - 20px),
+    calc(100% - 40px)
+  ) !important;
+  width: 0 !important;
+  border-inline-style: dashed;
+}
+
+.abyss-project-timeline-bar.is-previewing {
+  opacity: 0.75;
+}
+
+.abyss-project-timeline-handle {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  display: flex;
+  width: 14px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  transform: translateY(-50%);
+}
+
+.abyss-project-timeline-grip {
+  width: 3px;
+  height: 10px;
+  border-radius: var(--radius-s);
+  background: color-mix(
+    in srgb,
+    var(--abyss-project-status-color, var(--interactive-accent))
+      var(--abyss-preview-border-tag-strength),
+    var(--text-normal)
+  );
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.abyss-project-timeline-handle.is-start {
+  left: 0;
+}
+
+.abyss-project-timeline-handle.is-end {
+  right: 0;
+}
+
+.abyss-project-timeline-handle[hidden] {
+  display: none;
+}
+
+.abyss-project-timeline-cursor {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--text-accent);
+  pointer-events: none;
+}
+
+.abyss-project-timeline-tooltip {
+  position: fixed;
+  z-index: var(--layer-popover);
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 4px 7px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary-alt);
+  box-shadow: var(--shadow-s);
+  color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.abyss-project-timeline-bar.is-open-start {
+  border-left-style: dashed;
+  border-radius: 0 4px 4px 0;
+}
+
+.abyss-project-timeline-bar.is-open-end {
+  border-right-style: dashed;
+  border-radius: 4px 0 0 4px;
+}
+
+.abyss-project-timeline-state {
+  position: absolute;
+  top: 50%;
+  left: var(--abyss-project-timeline-range-state-left, 10px);
+  transform: translateY(-50%);
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-project-timeline-state.is-malformed {
+  color: var(--text-error);
+}
+
+.abyss-project-timeline-boundary-marker {
+  font-size: var(--font-ui-medium);
+}
+
+.abyss-project-timeline-boundary-marker.is-after {
+  right: var(--abyss-project-timeline-range-state-right, 10px);
+  left: auto;
+}
+
+.abyss-project-timeline-today {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--text-error);
+  pointer-events: none;
+}
+
+@media (width <= 520px) {
+  .abyss-project-timeline {
+    --abyss-project-timeline-summary-width: 210px;
+  }
+
+  .abyss-project-timeline-axis,
+  .abyss-project-timeline-row {
+    grid-template-columns:
+      var(--abyss-project-timeline-summary-width)
+      var(--abyss-project-timeline-track-width, 640px);
+  }
 }
 
 .abyss-view-state-option-row {

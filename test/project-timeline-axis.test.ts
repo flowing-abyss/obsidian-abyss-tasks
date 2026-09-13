@@ -1,0 +1,362 @@
+import { describe, expect, it } from 'vitest';
+import {
+  projectCalendarDayFromOrdinal,
+  projectCalendarDayOrdinal,
+} from '../src/projects/projectDateValue';
+import {
+  PROJECT_TIMELINE_MAX_TRACK_WIDTH,
+  projectTimelineAxisLayout,
+  projectTimelineTrackWidth,
+} from '../src/projects/projectTimelineAxis';
+import { projectTimelineWindowForRange } from '../src/projects/projectTimelineModel';
+
+function ordinal(day: string): number {
+  return projectCalendarDayOrdinal(day) as number;
+}
+
+describe('project Timeline calendar axis', () => {
+  it('keeps consecutive day cells contiguous across a month boundary', () => {
+    const window = projectTimelineWindowForRange('2024-01-31', '2024-02-01', 'day');
+
+    const layout = projectTimelineAxisLayout(window, {
+      visibleStartDay: '2024-01-31',
+      visibleEndDay: '2024-02-01',
+    });
+
+    expect(
+      layout.cells.map(({ startDay, endDay, label, secondaryLabel }) => ({
+        startDay,
+        endDay,
+        label,
+        secondaryLabel,
+      })),
+    ).toEqual([
+      { startDay: '2024-01-31', endDay: '2024-01-31', label: 'Wed', secondaryLabel: '31' },
+      { startDay: '2024-02-01', endDay: '2024-02-01', label: 'Thu', secondaryLabel: '1' },
+    ]);
+    expect(layout.cells[0]?.rightPercent).toBe(layout.cells[1]?.leftPercent);
+    expect(
+      layout.hierarchyCells.map(({ startDay, endDay, label, secondaryLabel }) => ({
+        startDay,
+        endDay,
+        label,
+        secondaryLabel,
+      })),
+    ).toEqual([
+      {
+        startDay: '2024-01-31',
+        endDay: '2024-02-01',
+        label: 'W05',
+        secondaryLabel: undefined,
+      },
+    ]);
+  });
+
+  it('includes leap day with exact ordinal boundaries', () => {
+    const window = projectTimelineWindowForRange('2024-02-28', '2024-03-01', 'day');
+
+    const layout = projectTimelineAxisLayout(window, {
+      visibleStartDay: '2024-02-28',
+      visibleEndDay: '2024-03-01',
+    });
+
+    expect(layout.cells.map(({ startDay }) => startDay)).toEqual([
+      '2024-02-28',
+      '2024-02-29',
+      '2024-03-01',
+    ]);
+    expect(layout.cells[1]).toMatchObject({
+      label: 'Thu',
+      secondaryLabel: '29',
+      startOrdinal: ordinal('2024-02-29'),
+    });
+    expect(layout.gridBoundaries.find(({ day }) => day === '2024-03-01')).toMatchObject({
+      ordinal: ordinal('2024-03-01'),
+      weight: 'major',
+      leftPercent: (2 / 3) * 100,
+    });
+  });
+
+  it('labels ISO weeks across the 2020 to 2021 transition', () => {
+    const window = projectTimelineWindowForRange('2020-12-28', '2021-01-10', 'week');
+
+    const layout = projectTimelineAxisLayout(window, {
+      visibleStartDay: window.startDay,
+      visibleEndDay: window.endDay,
+    });
+
+    expect(layout.cells.map(({ label }) => label)).toEqual(['W53', 'W01']);
+    expect(layout.cells.map(({ startDay, endDay }) => [startDay, endDay])).toEqual([
+      ['2020-12-28', '2021-01-03'],
+      ['2021-01-04', '2021-01-10'],
+    ]);
+    expect(
+      layout.hierarchyCells.map(({ label, secondaryLabel }) => [label, secondaryLabel]),
+    ).toEqual([
+      ['Dec', '2020'],
+      ['Jan', '2021'],
+    ]);
+  });
+
+  it('groups Day cells under ISO weeks across the 2020 to 2021 transition', () => {
+    const window = projectTimelineWindowForRange('2020-12-28', '2021-01-10', 'day');
+
+    const layout = projectTimelineAxisLayout(window, {
+      visibleStartDay: window.startDay,
+      visibleEndDay: window.endDay,
+      todayDay: '2021-01-01',
+    });
+
+    expect(layout.cells.map(({ startDay, endDay }) => [startDay, endDay])).toEqual([
+      ['2020-12-28', '2020-12-28'],
+      ['2020-12-29', '2020-12-29'],
+      ['2020-12-30', '2020-12-30'],
+      ['2020-12-31', '2020-12-31'],
+      ['2021-01-01', '2021-01-01'],
+      ['2021-01-02', '2021-01-02'],
+      ['2021-01-03', '2021-01-03'],
+      ['2021-01-04', '2021-01-04'],
+      ['2021-01-05', '2021-01-05'],
+      ['2021-01-06', '2021-01-06'],
+      ['2021-01-07', '2021-01-07'],
+      ['2021-01-08', '2021-01-08'],
+      ['2021-01-09', '2021-01-09'],
+      ['2021-01-10', '2021-01-10'],
+    ]);
+    expect(
+      layout.hierarchyCells.map(({ startDay, endDay, label, secondaryLabel, isToday }) => ({
+        startDay,
+        endDay,
+        label,
+        secondaryLabel,
+        isToday,
+      })),
+    ).toEqual([
+      {
+        startDay: '2020-12-28',
+        endDay: '2021-01-03',
+        label: 'W53',
+        secondaryLabel: undefined,
+        isToday: true,
+      },
+      {
+        startDay: '2021-01-04',
+        endDay: '2021-01-10',
+        label: 'W01',
+        secondaryLabel: undefined,
+        isToday: false,
+      },
+    ]);
+    expect(layout.cells.filter(({ isToday }) => isToday).map(({ startDay }) => startDay)).toEqual([
+      '2021-01-01',
+    ]);
+  });
+
+  it.each([
+    {
+      scale: 'month',
+      startDay: '2024-01-01',
+      endDay: '2024-06-30',
+      labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+      hierarchy: [
+        ['Q1', '2024'],
+        ['Q2', '2024'],
+      ],
+    },
+    {
+      scale: 'quarter',
+      startDay: '2023-10-01',
+      endDay: '2024-06-30',
+      labels: ['Q4', 'Q1', 'Q2'],
+      hierarchy: [
+        ['2023', undefined],
+        ['2024', undefined],
+      ],
+    },
+    {
+      scale: 'year',
+      startDay: '2023-01-01',
+      endDay: '2025-12-31',
+      labels: ['Q1', 'Q2', 'Q3', 'Q4', 'Q1', 'Q2', 'Q3', 'Q4', 'Q1', 'Q2', 'Q3', 'Q4'],
+      hierarchy: [
+        ['2023', undefined],
+        ['2024', undefined],
+        ['2025', undefined],
+      ],
+    },
+  ] as const)(
+    'builds bounded $scale cells and their calendar hierarchy',
+    ({ scale, startDay, endDay, labels, hierarchy }) => {
+      const window = projectTimelineWindowForRange(startDay, endDay, scale);
+
+      const layout = projectTimelineAxisLayout(window, {
+        visibleStartDay: startDay,
+        visibleEndDay: endDay,
+      });
+
+      expect(layout.cells.map(({ label }) => label)).toEqual(labels);
+      expect(
+        layout.hierarchyCells.map(({ label, secondaryLabel }) => [label, secondaryLabel]),
+      ).toEqual(hierarchy);
+      expect(layout.cells[0]?.startOrdinal).toBe(ordinal(startDay));
+      expect(layout.cells[layout.cells.length - 1]?.endOrdinal).toBe(ordinal(endDay));
+    },
+  );
+
+  it('renders four Year calendar years as aligned quarter cells with current context', () => {
+    const window = projectTimelineWindowForRange('2023-01-01', '2026-12-31', 'year');
+
+    const layout = projectTimelineAxisLayout(window, {
+      visibleStartDay: window.startDay,
+      visibleEndDay: window.endDay,
+      todayDay: '2024-02-29',
+    });
+
+    expect(layout.cells).toHaveLength(16);
+    expect(layout.cells.map(({ startDay, endDay, label }) => [startDay, endDay, label])).toEqual([
+      ['2023-01-01', '2023-03-31', 'Q1'],
+      ['2023-04-01', '2023-06-30', 'Q2'],
+      ['2023-07-01', '2023-09-30', 'Q3'],
+      ['2023-10-01', '2023-12-31', 'Q4'],
+      ['2024-01-01', '2024-03-31', 'Q1'],
+      ['2024-04-01', '2024-06-30', 'Q2'],
+      ['2024-07-01', '2024-09-30', 'Q3'],
+      ['2024-10-01', '2024-12-31', 'Q4'],
+      ['2025-01-01', '2025-03-31', 'Q1'],
+      ['2025-04-01', '2025-06-30', 'Q2'],
+      ['2025-07-01', '2025-09-30', 'Q3'],
+      ['2025-10-01', '2025-12-31', 'Q4'],
+      ['2026-01-01', '2026-03-31', 'Q1'],
+      ['2026-04-01', '2026-06-30', 'Q2'],
+      ['2026-07-01', '2026-09-30', 'Q3'],
+      ['2026-10-01', '2026-12-31', 'Q4'],
+    ]);
+    expect(
+      layout.hierarchyCells.map(({ startDay, endDay, label }) => [startDay, endDay, label]),
+    ).toEqual([
+      ['2023-01-01', '2023-12-31', '2023'],
+      ['2024-01-01', '2024-12-31', '2024'],
+      ['2025-01-01', '2025-12-31', '2025'],
+      ['2026-01-01', '2026-12-31', '2026'],
+    ]);
+    expect(layout.cells.filter(({ isToday }) => isToday).map(({ label }) => label)).toEqual(['Q1']);
+    expect(
+      layout.hierarchyCells.filter(({ isToday }) => isToday).map(({ label }) => label),
+    ).toEqual(['2024']);
+    expect(
+      layout.gridBoundaries.filter(({ weight }) => weight === 'major').map(({ day }) => day),
+    ).toEqual(['2023-01-01', '2024-01-01', '2025-01-01', '2026-01-01']);
+    expect(
+      layout.gridBoundaries.filter(({ weight }) => weight === 'minor').map(({ day }) => day),
+    ).toEqual([
+      '2023-04-01',
+      '2023-07-01',
+      '2023-10-01',
+      '2024-04-01',
+      '2024-07-01',
+      '2024-10-01',
+      '2025-04-01',
+      '2025-07-01',
+      '2025-10-01',
+      '2026-04-01',
+      '2026-07-01',
+      '2026-10-01',
+    ]);
+  });
+
+  it('bounds a Year viewport slice by quarter cells and its parent year', () => {
+    const window = projectTimelineWindowForRange('0100-01-01', '9999-12-31', 'year');
+
+    const layout = projectTimelineAxisLayout(window, {
+      visibleStartDay: '2024-05-15',
+      visibleEndDay: '2024-08-02',
+      overscanCells: 1,
+    });
+
+    expect(layout.cells.map(({ startDay, endDay, label }) => [startDay, endDay, label])).toEqual([
+      ['2024-01-01', '2024-03-31', 'Q1'],
+      ['2024-04-01', '2024-06-30', 'Q2'],
+      ['2024-07-01', '2024-09-30', 'Q3'],
+      ['2024-10-01', '2024-12-31', 'Q4'],
+    ]);
+    expect(
+      layout.hierarchyCells.map(({ startDay, endDay, label }) => [startDay, endDay, label]),
+    ).toEqual([['2024-01-01', '2024-12-31', '2024']]);
+    expect(layout.gridBoundaries).toHaveLength(4);
+  });
+
+  it('keeps a multi-year Day layout viewport-bounded and caps pathological physical width', () => {
+    const window = projectTimelineWindowForRange('0100-01-01', '9999-12-31', 'day');
+
+    const layout = projectTimelineAxisLayout(window, {
+      visibleStartDay: '2024-02-01',
+      visibleEndDay: '2024-02-29',
+      overscanCells: 1,
+    });
+
+    expect(layout.cells).toHaveLength(31);
+    expect(layout.cells[0]?.startDay).toBe('2024-01-31');
+    expect(layout.cells[layout.cells.length - 1]?.endDay).toBe('2024-03-01');
+    expect(layout.gridBoundaries.length).toBeLessThanOrEqual(33);
+    expect(projectTimelineTrackWidth(window, 700)).toBe(PROJECT_TIMELINE_MAX_TRACK_WIDTH);
+    expect(Number.isFinite(projectTimelineTrackWidth(window, 700))).toBe(true);
+  });
+
+  it('covers the pixel-derived visible tail when capped density exposes more than 512 days', () => {
+    const window = projectTimelineWindowForRange('0100-01-01', '9999-12-31', 'day');
+    const trackWidth = projectTimelineTrackWidth(window, 2_560);
+    const visibleStartOrdinal = ordinal('2024-01-01');
+    const visibleDayCount = Math.ceil((2_560 / trackWidth) * window.dayCount);
+    const visibleEndOrdinal = visibleStartOrdinal + visibleDayCount - 1;
+    const visibleEndDay = projectCalendarDayFromOrdinal(visibleEndOrdinal) as string;
+
+    const layout = projectTimelineAxisLayout(window, {
+      visibleStartDay: '2024-01-01',
+      visibleEndDay,
+      overscanCells: 1,
+    });
+
+    expect(layout.cells.length).toBeGreaterThan(512);
+    expect(layout.cells[layout.cells.length - 1]?.endOrdinal).toBeGreaterThanOrEqual(
+      visibleEndOrdinal,
+    );
+    expect(layout.gridBoundaries.some(({ ordinal }) => ordinal === visibleEndOrdinal)).toBe(true);
+  });
+
+  it('keeps hierarchy boundaries exact while clamping its label to the visible fraction', () => {
+    const window = projectTimelineWindowForRange('2024-09-01', '2024-09-30', 'day');
+
+    const layout = projectTimelineAxisLayout(window, {
+      visibleStartDay: '2024-09-08',
+      visibleEndDay: '2024-09-20',
+      visibleStartPercent: 27.5,
+      overscanCells: 1,
+    });
+
+    expect(layout.hierarchyCells[1]).toMatchObject({
+      startDay: '2024-09-09',
+      endDay: '2024-09-15',
+      leftPercent: (8 / 30) * 100,
+      rightPercent: (15 / 30) * 100,
+      labelPercent: 27.5,
+    });
+  });
+
+  it('honors each scale density and expands short ranges to the visible track', () => {
+    const day = projectTimelineWindowForRange('2024-01-01', '2024-01-14', 'day');
+    const week = projectTimelineWindowForRange('2024-01-01', '2024-03-24', 'week');
+    const month = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'month');
+    const quarter = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'quarter');
+    const year = projectTimelineWindowForRange('2024-01-01', '2024-12-31', 'year');
+    const fourYears = projectTimelineWindowForRange('2023-01-01', '2026-12-31', 'year');
+
+    expect(projectTimelineTrackWidth(day, 0)).toBe(14 * 32);
+    expect(projectTimelineTrackWidth(day, 700)).toBe(700);
+    expect(projectTimelineTrackWidth(week, 0)).toBe(84 * 12);
+    expect(projectTimelineTrackWidth(month, 0)).toBeGreaterThanOrEqual(12 * 120);
+    expect(projectTimelineTrackWidth(quarter, 0)).toBeGreaterThanOrEqual(4 * 144);
+    expect(projectTimelineTrackWidth(year, 0)).toBeGreaterThanOrEqual(200);
+    expect(projectTimelineTrackWidth(fourYears, 0)).toBeGreaterThanOrEqual(4 * 200);
+    expect(projectTimelineTrackWidth(day, 900)).toBe(900);
+  });
+});

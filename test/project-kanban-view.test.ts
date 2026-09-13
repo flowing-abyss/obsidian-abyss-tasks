@@ -2,8 +2,10 @@ import { App, MarkdownRenderer, Menu, Notice } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { isProjectKanbanCustomized } from '../src/panels/projects/ProjectKanbanOptions';
+import { projectTimelineOptionsRows } from '../src/panels/projects/ProjectTimelineOptions';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
+import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
 import type {
   AppliedProjectCellChange,
@@ -14,6 +16,7 @@ import {
   buildDefaultProjectKanbanSettings,
   normalizeProjectKanbanSettings,
 } from '../src/projects/projectKanbanSettings';
+import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
@@ -145,7 +148,7 @@ function mountView(
   return { host, view, settings, applyEdits };
 }
 
-function clickView(host: HTMLElement, mode: 'Table' | 'Kanban'): void {
+function clickView(host: HTMLElement, mode: 'Table' | 'Kanban' | 'Timeline'): void {
   expectDefined(host.querySelector<HTMLButtonElement>(`[aria-label="${mode} view"]`)).click();
 }
 
@@ -335,16 +338,37 @@ describe('project Kanban overview', () => {
     const controls = expectDefined(host.querySelector('.abyss-project-table-controls'));
     expect(Array.from(controls.children).map((child) => child.getAttribute('aria-label'))).toEqual([
       'Sort & group options',
+      'Project view',
+      'Filter projects',
+    ]);
+    const switcher = expectDefined(
+      controls.querySelector<HTMLElement>('.abyss-project-overview-switcher'),
+    );
+    expect(switcher.getAttribute('role')).toBe('group');
+    const modeButtons = Array.from(
+      switcher.querySelectorAll<HTMLButtonElement>('.abyss-project-overview-mode'),
+    );
+    expect(modeButtons.map((button) => button.getAttribute('aria-label'))).toEqual([
       'Table view',
       'Kanban view',
-      'Filter projects',
+      'Timeline view',
+    ]);
+    expect(modeButtons.filter((button) => button.getAttribute('aria-pressed') === 'true')).toEqual([
+      modeButtons[0],
     ]);
     const tableNode = host.querySelector('table');
     const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
     search.value = 'table query';
     search.dispatchEvent(new Event('input', { bubbles: true }));
 
+    const kanbanButton = expectDefined(modeButtons[1]);
+    kanbanButton.focus();
     clickView(host, 'Kanban');
+    expect(activeDocument.activeElement).toBe(kanbanButton);
+    expect(host.querySelector('[aria-label="Kanban view"]')).toBe(kanbanButton);
+    expect(modeButtons.filter((button) => button.getAttribute('aria-pressed') === 'true')).toEqual([
+      kanbanButton,
+    ]);
     expect(search.value).toBe('');
     expect(host.querySelector('.abyss-project-kanban')).not.toBeNull();
     expect(host.querySelector('.abyss-project-table-scroll')?.hasAttribute('hidden')).toBe(true);
@@ -356,6 +380,502 @@ describe('project Kanban overview', () => {
     expect(host.querySelector('table')).toBe(tableNode);
     clickView(host, 'Kanban');
     expect(search.value).toBe('kanban query');
+  });
+
+  it('keeps configured status presentation consistent across retained overview modes', () => {
+    const { host, view, settings } = mountView();
+    const status = expectDefined(settings.projects.statuses[0]);
+    status.displayName = 'Current work';
+    status.display = 'dot';
+    status.color = '#28b8a5';
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.fields = [{ id: 'status', visible: true }];
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    settings.projects.timeline.fields = [{ id: 'status', visible: true }];
+    view.refreshFields();
+
+    const button = expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        `.abyss-project-status-filter[data-status-key="id:${status.id}"]`,
+      ),
+    );
+    const expectDot = (pill: HTMLElement): void => {
+      expect(pill.textContent).toBe('Current work');
+      expect(pill.classList).toContain('abyss-project-table-status-pill');
+      expect(pill.classList).toContain('is-dot');
+      expect(pill.style.getPropertyValue('--abyss-project-status-color')).toBe('#28b8a5');
+    };
+    expectDot(button);
+    expectDot(
+      expectDefined(
+        host.querySelector<HTMLElement>(
+          '.abyss-project-table-cell[data-column-id="status"] .abyss-project-table-status-pill',
+        ),
+      ),
+    );
+
+    clickView(host, 'Kanban');
+    expect(host.querySelector(`[data-status-key="id:${status.id}"]`)).toBe(button);
+    expectDot(
+      expectDefined(
+        host.querySelector<HTMLElement>(
+          '.abyss-project-kanban [data-column-id="status"] .abyss-project-table-status-pill',
+        ),
+      ),
+    );
+
+    clickView(host, 'Timeline');
+    expect(host.querySelector(`[data-status-key="id:${status.id}"]`)).toBe(button);
+    const timelinePill = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-timeline [data-column-id="status"] .abyss-project-table-status-pill',
+      ),
+    );
+    expectDot(timelinePill);
+
+    status.display = 'text';
+    status.color = '#965fd4';
+    view.refreshFields();
+    expect(button.classList).toContain('is-text');
+    expect(button.classList).not.toContain('is-dot');
+    expect(button.style.getPropertyValue('--abyss-project-status-color')).toBe('#965fd4');
+    const refreshedTimelinePill = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-timeline [data-column-id="status"] .abyss-project-table-status-pill',
+      ),
+    );
+    expect(refreshedTimelinePill.classList).toContain('is-text');
+    expect(refreshedTimelinePill.style.getPropertyValue('--abyss-project-status-color')).toBe(
+      '#965fd4',
+    );
+
+    delete status.display;
+    delete status.color;
+    view.refreshFields();
+    expect(button.classList).not.toContain('is-text');
+    expect(button.classList).not.toContain('is-dot');
+    expect(button.style.getPropertyValue('--abyss-project-status-color')).toBe('');
+    const defaultTimelinePill = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-timeline [data-column-id="status"] .abyss-project-table-status-pill',
+      ),
+    );
+    expect(defaultTimelinePill.classList).not.toContain('is-text');
+    expect(defaultTimelinePill.classList).not.toContain('is-dot');
+    expect(defaultTimelinePill.style.getPropertyValue('--abyss-project-status-color')).toBe('');
+  });
+
+  it('keeps Timeline search and settings independent while options update in place', async () => {
+    const base = project();
+    const item = project({
+      frontmatter: { ...base.frontmatter, start: '2026-09-05', end: '2026-09-10' },
+    });
+    const { host, settings } = mountView([item]);
+    const tableSearch = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
+    tableSearch.value = 'table query';
+    tableSearch.dispatchEvent(new Event('input', { bubbles: true }));
+
+    clickView(host, 'Timeline');
+    expect(tableSearch.value).toBe('');
+    expect(host.querySelector('.abyss-project-timeline')).not.toBeNull();
+    const groupHeader = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline-group-header'),
+    );
+    expect(
+      groupHeader.querySelector<HTMLElement>('.abyss-project-table-group-chevron')?.dataset['icon'],
+    ).toBe('chevron-down');
+    expect(groupHeader.querySelector<HTMLElement>('.abyss-status-dot')?.hidden).toBe(false);
+    expect(settings.projects.timeline).toEqual(
+      expect.objectContaining({ scale: 'month', progress: 'full', showUnscheduled: true }),
+    );
+    const timeline = expectDefined(settings.projects.timeline);
+    expect(timeline.hiddenStatuses).not.toBe(settings.projects.table.hiddenStatuses);
+
+    const month = Array.from(
+      host.querySelectorAll<HTMLButtonElement>('.abyss-project-timeline-scale-control button'),
+    ).find(({ textContent }) => textContent === 'Month');
+    expectDefined(month).click();
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
+      '2026-09-01 – 2026-09-30',
+    );
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
+    chooseViewOption(host, 'Scale', 'Month');
+    await flushMicrotasks();
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
+      '2026-09-01 – 2026-09-30',
+    );
+    chooseViewOption(host, 'Scale', 'Quarter');
+    await flushMicrotasks();
+    expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
+    expect(
+      host.querySelector('.abyss-project-timeline-progress-cell .abyss-project-progress-value'),
+    ).not.toBeNull();
+    chooseViewOption(host, 'Progress', 'Bars');
+    await flushMicrotasks();
+    expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
+    expect(timeline.scale).toBe('quarter');
+    expect(timeline.progress).toBe('bar');
+    expect(
+      host.querySelector('.abyss-project-timeline-progress-cell .abyss-project-progress-value'),
+    ).toBeNull();
+    tableSearch.value = 'timeline query';
+    tableSearch.dispatchEvent(new Event('input', { bubbles: true }));
+
+    clickView(host, 'Table');
+    expect(tableSearch.value).toBe('table query');
+    clickView(host, 'Timeline');
+    expect(tableSearch.value).toBe('timeline query');
+  });
+
+  it('keeps the selected scale option focused while offering all five scales', async () => {
+    const { host, settings } = mountView();
+    clickView(host, 'Timeline');
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const scale = viewOptionRow(host, 'Scale');
+    expectDefined(scale.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+    const labels = Array.from(
+      scale.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option'),
+      (button) => button.querySelector('.abyss-view-state-option-label')?.textContent,
+    );
+    const year = expectDefined(
+      Array.from(scale.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option')).find(
+        (button) => button.querySelector('.abyss-view-state-option-label')?.textContent === 'Year',
+      ),
+    );
+    year.focus();
+
+    year.click();
+    await flushMicrotasks();
+
+    expect(labels).toEqual(['Day', 'Week', 'Month', 'Quarter', 'Year']);
+    expect(settings.projects.timeline?.scale).toBe('year');
+    expect(activeDocument.activeElement).toBe(year);
+    expect(year.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('refits Year from options, including reselection, while retaining the popover', async () => {
+    const { host, settings } = mountView([
+      project({
+        path: 'Projects/Future.md',
+        frontmatter: { start: '2045-06-28', end: '2045-07-04' },
+      }),
+    ]);
+    clickView(host, 'Timeline');
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
+
+    chooseViewOption(host, 'Scale', 'Year');
+    await flushMicrotasks();
+
+    expect(settings.projects.timeline?.scale).toBe('year');
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
+      '2044-01-01 – 2047-12-31',
+    );
+    expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
+
+    expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Next range"]')).click();
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
+      '2048-01-01 – 2051-12-31',
+    );
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const reopenedPopover = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-view-state-popover'),
+    );
+
+    chooseViewOption(host, 'Scale', 'Year');
+    await flushMicrotasks();
+
+    expect(settings.projects.timeline?.scale).toBe('year');
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(
+      '2044-01-01 – 2047-12-31',
+    );
+    expect(host.querySelector('.abyss-view-state-popover')).toBe(reopenedPopover);
+  });
+
+  it('leaves the Timeline scale and window unchanged when an editor guard rejects', async () => {
+    const rejected: ProjectEditResult = {
+      applied: [],
+      failed: [{ path: 'Projects/A.md', message: 'Source changed' }],
+    };
+    const applyEdits = vi.fn().mockResolvedValue(rejected);
+    const { host, settings } = mountView(undefined, {
+      applyEdits,
+      history: new ProjectEditHistory(applyEdits),
+    });
+    clickView(host, 'Timeline');
+    const before = host.querySelector('.abyss-project-timeline-axis-range')?.textContent;
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="start"]'),
+    );
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
+    input.value = '2026-10-02';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const day = expectDefined(
+      Array.from(
+        host.querySelectorAll<HTMLButtonElement>('.abyss-project-timeline-scale-control button'),
+      ).find(({ textContent }) => textContent === 'Day'),
+    );
+
+    day.click();
+    await flushMicrotasks();
+
+    expect(settings.projects.timeline?.scale).toBe('month');
+    expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(before);
+    expect(input.isConnected).toBe(true);
+  });
+
+  it('labels the Timeline option Unscheduled with a supported calendar icon', () => {
+    const { host, settings } = mountView();
+    clickView(host, 'Timeline');
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const row = viewOptionRow(host, 'Unscheduled');
+    const timelineSettings = expectDefined(settings.projects.timeline);
+    const timelineGroup = expectDefined(
+      projectTimelineOptionsRows({
+        settings: () => timelineSettings,
+        tableSettings: () => settings.projects.table,
+        fields: () => [],
+        onChange: async () => true,
+        onScaleChange: async () => true,
+      }).find(({ label }) => label === 'Timeline'),
+    );
+    expect(timelineGroup.kind).toBe('group');
+    if (timelineGroup.kind !== 'group') throw new Error('Expected Timeline options group');
+    const unscheduled = expectDefined(
+      timelineGroup.rows.find(({ label }) => label === 'Unscheduled'),
+    );
+
+    expect(row.querySelector('.abyss-view-state-row-icon')).not.toBeNull();
+    expect(unscheduled.icon).toBe('calendar-days');
+    expect(host.textContent).not.toContain('Unscheduled projects');
+  });
+
+  it('configures Timeline fields through the shared reorder and date-display menu', async () => {
+    const { host, settings } = mountView();
+    clickView(host, 'Timeline');
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const timeline = expectDefined(directViewOptionRows(host)[2]);
+    expectDefined(
+      timeline.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+    ).click();
+    const fields = viewOptionRow(timeline, 'Metadata fields');
+    expectDefined(fields.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+    const budget = optionRow(fields, 'Budget');
+
+    expectDefined(budget.querySelector<HTMLButtonElement>('.abyss-view-state-option')).click();
+    await flushMicrotasks();
+    const moveBudget = expectDefined(
+      fields.querySelector<HTMLButtonElement>('[aria-label="Move Budget up"]'),
+    );
+    moveBudget.click();
+    await flushMicrotasks();
+
+    expect(settings.projects.timeline?.fields?.map(({ id, visible }) => ({ id, visible }))).toEqual(
+      [
+        { id: 'status', visible: true },
+        { id: 'start', visible: true },
+        { id: 'property:Budget', visible: true },
+        { id: 'end', visible: true },
+      ],
+    );
+  });
+
+  it('renders independent ordered Timeline fields with aliases and date display', () => {
+    const item = project({ frontmatter: { Priority: '', Deadline: '2026-09-07' } });
+    const { host, settings } = mountView([item], {
+      catalog: catalog([
+        { name: 'Priority', type: 'text' },
+        { name: 'Deadline', type: 'date' },
+      ]),
+    });
+    settings.projects.propertyDefinitions['property:Priority'] = { type: 'text' };
+    settings.projects.propertyDefinitions['property:Deadline'] = { type: 'date' };
+    const timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    timeline.fields = [
+      { id: 'property:Priority', label: 'Urgency', visible: true },
+      { id: 'property:Deadline', label: 'Due', visible: true, dateDisplay: 'raw' },
+    ];
+    timeline.showEmptyFields = true;
+    settings.projects.timeline = timeline;
+
+    clickView(host, 'Timeline');
+
+    expect(
+      Array.from(host.querySelectorAll('.abyss-project-timeline-field-label'), ({ textContent }) =>
+        textContent.trim(),
+      ),
+    ).toEqual(['Urgency', 'Due']);
+    expect(
+      host.querySelector('.abyss-project-timeline [data-column-id="property:Priority"]'),
+    ).not.toBeNull();
+    expect(
+      host.querySelector('.abyss-project-timeline [data-column-id="property:Deadline"]')
+        ?.textContent,
+    ).toContain('2026-09-07');
+  });
+
+  it('initializes and refreshes custom preset presentation in a retained Timeline', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.overviewView = 'timeline';
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    settings.projects.timeline.fields = [{ id: 'property:Budget', visible: true }];
+    settings.projects.propertyDefinitions['property:Budget'] = {
+      type: 'number',
+      presets: [
+        {
+          value: 42,
+          displayName: 'Estimated budget',
+          color: '#28b8a5',
+          display: 'dot',
+        },
+      ],
+    };
+    const { host, view } = mountView([project()], { settings });
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="property:Budget"]'),
+    );
+    let value = expectDefined(cell.querySelector<HTMLElement>('.abyss-project-property-value'));
+
+    expect(value.textContent).toBe('Estimated budget');
+    expect(value.classList).toContain('is-dot');
+    expect(value.style.getPropertyValue('--abyss-project-property-color')).toBe('#28b8a5');
+
+    cell.focus();
+    settings.projects.propertyDefinitions['property:Budget'] = {
+      type: 'number',
+      presets: [
+        {
+          value: 42,
+          displayName: 'Approved budget',
+          color: '#965fd4',
+          display: 'text',
+        },
+      ],
+    };
+    view.refreshFields();
+
+    expect(host.querySelector('.abyss-project-timeline [data-column-id="property:Budget"]')).toBe(
+      cell,
+    );
+    expect(activeDocument.activeElement).toBe(cell);
+    value = expectDefined(cell.querySelector<HTMLElement>('.abyss-project-property-value'));
+    expect(value.textContent).toBe('Approved budget');
+    expect(value.classList).not.toContain('is-dot');
+    expect(value.style.getPropertyValue('--abyss-project-property-color')).toBe('#965fd4');
+
+    settings.projects.propertyDefinitions['property:Budget'] = { type: 'number' };
+    view.refreshFields();
+
+    expect(host.querySelector('.abyss-project-timeline [data-column-id="property:Budget"]')).toBe(
+      cell,
+    );
+    expect(activeDocument.activeElement).toBe(cell);
+    expect(cell.textContent).toBe('42');
+    expect(cell.querySelector('.abyss-project-property-value')).toBeNull();
+  });
+
+  it('keeps a Timeline metadata editor in its single value cell through validation and save', async () => {
+    const applyEdits = vi
+      .fn<(changes: readonly ProjectCellChange[]) => Promise<ProjectEditResult>>()
+      .mockRejectedValueOnce(new ProjectEditValidationError('Start conflicts with End'))
+      .mockImplementation(async (changes) => appliedResult(changes));
+    const { host, settings } = mountView(undefined, {
+      applyEdits,
+      history: new ProjectEditHistory(applyEdits),
+    });
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    clickView(host, 'Timeline');
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="start"]'),
+    );
+    const field = expectDefined(start.closest<HTMLElement>('.abyss-project-timeline-field'));
+
+    expect(field.querySelectorAll('.abyss-project-timeline-field-value')).toHaveLength(1);
+    expect(start.parentElement).toBe(field);
+
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
+    expect(start.classList).toContain('is-editing');
+    input.value = '2026-10-02';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(start.querySelector('.abyss-project-editor-error')?.textContent).toBe(
+      'Start conflicts with End',
+    );
+    expect(input.isConnected).toBe(true);
+
+    input.value = '2026-09-02';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledTimes(2);
+    expect(expectDefined(applyEdits.mock.calls[1])[0][0]).toMatchObject({
+      path: 'Projects/A.md',
+      value: '2026-09-02',
+      expectedValue: '2026-09-01',
+    });
+    expect(start.classList).not.toContain('is-editing');
+    expect(start.querySelector('.abyss-project-cell-editor')).toBeNull();
+  });
+
+  it('edits a visible Timeline description without changing the Table preference', async () => {
+    const initial = project({ frontmatter: { description: 'Current description' } });
+    const { host, settings, applyEdits } = mountView([initial]);
+    settings.projects.table.showDescription = false;
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    settings.projects.timeline.descriptionLines = 2;
+    clickView(host, 'Timeline');
+    const description = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline .abyss-project-description-text'),
+    );
+
+    description.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const textarea = expectDefined(
+      host.querySelector<HTMLTextAreaElement>('.abyss-project-timeline textarea'),
+    );
+    textarea.value = 'Edited Timeline description';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(expectDefined(applyEdits.mock.calls[0])[0][0]).toMatchObject({
+      path: 'Projects/A.md',
+      value: 'Edited Timeline description',
+      expectedValue: 'Current description',
+    });
+    expect(settings.projects.table.showDescription).toBe(false);
+    expect(settings.projects.timeline.descriptionLines).toBe(2);
+  });
+
+  it('keeps complete multiline Timeline descriptions for two-line and full display', () => {
+    const value = 'Timeline QA description\nSecond line\nThird line';
+    const initial = project({ frontmatter: { description: value } });
+    const { host, view, settings } = mountView([initial]);
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    settings.projects.timeline.descriptionLines = 2;
+    clickView(host, 'Timeline');
+
+    const name = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-name'));
+    expect(name.style.getPropertyValue('--abyss-project-description-lines')).toBe('2');
+    expect(
+      host.querySelector<HTMLElement>('.abyss-project-timeline .abyss-project-description-text')
+        ?.textContent,
+    ).toBe(value);
+
+    settings.projects.timeline.descriptionLines = 'full';
+    view.refreshFields();
+
+    expect(name.classList).toContain('is-full-description');
+    expect(
+      host.querySelector<HTMLElement>('.abyss-project-timeline .abyss-project-description-text')
+        ?.textContent,
+    ).toBe(value);
   });
 
   it('initializes independent Kanban filters and omits empty synthetic columns', () => {
@@ -2264,6 +2784,50 @@ describe('project Kanban overview', () => {
     ).toContain('is-just-created');
   });
 
+  it('reveals an unscheduled Timeline creation inside its collapsed group', async () => {
+    let finishCreate: ((path: string) => void) | undefined;
+    const createProject = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishCreate = resolve;
+        }),
+    );
+    const config = structuredClone(DEFAULT_SETTINGS);
+    config.projects.overviewView = 'timeline';
+    config.projects.timeline = buildDefaultProjectTimelineSettings(config.projects.table);
+    config.projects.timeline.groupBy = 'status';
+    config.projects.timeline.showUnscheduled = false;
+    const existing = project();
+    const created = project({
+      path: 'Projects/Timeline creation.md',
+      name: 'Timeline creation',
+      frontmatter: {},
+    });
+    const { host, view } = mountView([existing], { createProject, settings: config });
+    const header = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-timeline-group-header'),
+    );
+    header.click();
+    await flushMicrotasks();
+    expect(header.getAttribute('aria-expanded')).toBe('false');
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+    const composer = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    composer.value = created.name;
+    composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    view.update([existing, created]);
+    finishCreate?.(created.path);
+    await flushMicrotasks();
+
+    expect(config.projects.timeline.showUnscheduled).toBe(true);
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+    expect(
+      host.querySelector('[data-project-path="Projects/Timeline creation.md"]')?.classList,
+    ).toContain('is-just-created');
+    expect(view.selectedProjectPath()).toBe(created.path);
+  });
+
   it('moves board focus to a surviving card and then the board when projects disappear', () => {
     const first = project();
     const second = project({ path: 'Projects/B.md', name: 'B project' });
@@ -2510,31 +3074,116 @@ describe('project Kanban overview', () => {
     expect(view.selectedProjectPath()).toBeUndefined();
   });
 
-  it('keeps a rejected table editor and blocks a requested view switch', async () => {
+  it('reconciles Timeline selection after collapsing and expanding a group', async () => {
+    const { host, view } = mountView();
+    clickView(host, 'Timeline');
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="start"]'),
+    );
+    start.click();
+    expect(view.selectedProjectPath()).toBe('Projects/A.md');
+    const header = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-timeline-group-header'),
+    );
+
+    header.click();
+    await flushMicrotasks();
+    expect(header.getAttribute('aria-expanded')).toBe('false');
+    expect(view.selectedProjectPath()).toBeUndefined();
+
+    header.click();
+    await flushMicrotasks();
+    start.click();
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+    expect(view.selectedProjectPath()).toBe('Projects/A.md');
+  });
+
+  it('does not offer a Show date range action for an offscreen Timeline row', () => {
+    const future = project({
+      frontmatter: { start: '2045-06-28', end: '2045-06-29' },
+    });
+    const showMenu = vi.spyOn(Menu.prototype, 'showAtPosition');
+    const { host, settings } = mountView([future]);
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    clickView(host, 'Timeline');
+    const name = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="name"]'),
+    );
+    name.focus();
+    const event = new KeyboardEvent('keydown', {
+      key: 'F10',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    name.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(showMenu).toHaveBeenCalledOnce();
+    const menu = expectDefined(showMenu.mock.instances[0]) as Menu;
+    expect(menuItems(menu).some(({ title__ }) => title__ === 'Show date range')).toBe(false);
+    expect(host.querySelector('.abyss-project-timeline-boundary-marker')).not.toBeNull();
+  });
+
+  it('keeps a rejected Timeline editor visible when group collapse is requested', async () => {
     const rejected: ProjectEditResult = {
       applied: [],
       failed: [{ path: 'Projects/A.md', message: 'Source changed' }],
     };
     const applyEdits = vi.fn().mockResolvedValue(rejected);
-    const { host, settings } = mountView(undefined, {
+    const { host } = mountView(undefined, {
       applyEdits,
       history: new ProjectEditHistory(applyEdits),
     });
-    const end = expectDefined(
-      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
+    clickView(host, 'Timeline');
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="start"]'),
     );
-    end.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-    const input = expectDefined(end.querySelector<HTMLInputElement>('input[type="date"]'));
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
     input.value = '2026-10-02';
     input.dispatchEvent(new Event('input', { bubbles: true }));
-    clickView(host, 'Kanban');
+    const header = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-timeline-group-header'),
+    );
+
+    header.click();
     await flushMicrotasks();
 
-    expect(settings.projects.overviewView).not.toBe('kanban');
-    expect(host.querySelector('.abyss-project-kanban')).toBeNull();
-    expect(end.contains(input)).toBe(true);
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+    expect(start.contains(input)).toBe(true);
     expect(input.value).toBe('2026-10-02');
   });
+
+  it.each(['Kanban', 'Timeline'] as const)(
+    'keeps a rejected table editor and blocks a requested %s switch',
+    async (mode) => {
+      const rejected: ProjectEditResult = {
+        applied: [],
+        failed: [{ path: 'Projects/A.md', message: 'Source changed' }],
+      };
+      const applyEdits = vi.fn().mockResolvedValue(rejected);
+      const { host, settings } = mountView(undefined, {
+        applyEdits,
+        history: new ProjectEditHistory(applyEdits),
+      });
+      const end = expectDefined(
+        host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="end"]'),
+      );
+      end.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const input = expectDefined(end.querySelector<HTMLInputElement>('input[type="date"]'));
+      input.value = '2026-10-02';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      clickView(host, mode);
+      await flushMicrotasks();
+
+      expect(settings.projects.overviewView).not.toBe(mode.toLocaleLowerCase());
+      expect(host.querySelector(`.abyss-project-${mode.toLocaleLowerCase()}`)).toBeNull();
+      expect(end.contains(input)).toBe(true);
+      expect(input.value).toBe('2026-10-02');
+    },
+  );
 
   it('keeps board receipts in the shared projection across a view switch and Undo', async () => {
     const { host, settings, applyEdits } = mountView();

@@ -5,6 +5,7 @@ import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
 import { ProjectCreationError } from '../src/projects/projectCreation';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
+import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
@@ -170,6 +171,22 @@ describe('ProjectsPanel dispatch', () => {
       expect(pill.textContent).toBe('Current work');
       expect(pill.classList).toContain('is-dot');
       expect(pill.style.getPropertyValue('--abyss-project-status-color')).toBe('#28b8a5');
+
+      status.display = 'text';
+      status.color = '#965fd4';
+      panel.refreshTableSettings();
+      expect(dashboard.querySelector('.abyss-status-pill')).toBe(pill);
+      expect(pill.classList).toContain('is-text');
+      expect(pill.classList).not.toContain('is-dot');
+      expect(pill.style.getPropertyValue('--abyss-project-status-color')).toBe('#965fd4');
+
+      delete status.display;
+      delete status.color;
+      panel.refreshTableSettings();
+      expect(dashboard.querySelector('.abyss-status-pill')).toBe(pill);
+      expect(pill.classList).not.toContain('is-text');
+      expect(pill.classList).not.toContain('is-dot');
+      expect(pill.style.getPropertyValue('--abyss-project-status-color')).toBe('');
     } finally {
       panel.destroy();
     }
@@ -225,6 +242,28 @@ describe('ProjectsPanel dispatch', () => {
     expect(board.scrollLeft).toBe(47);
     expect(column.scrollTop).toBe(31);
     expect(panel.selectedProjectPath()).toBe('Projects/A.md');
+  });
+
+  it('keeps the Timeline scroll position when returning from a dashboard', () => {
+    const state = new AppState();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    settings.projects.overviewView = 'timeline';
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
+      projectProperties,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-project-timeline-scroll'));
+    scroll.scrollLeft = 47;
+
+    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-table-name')).click();
+    expect(el.querySelector('.abyss-projects-dashboard')).not.toBeNull();
+    scroll.scrollLeft = 0;
+    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-back')).click();
+
+    expect(el.querySelector<HTMLElement>('.abyss-project-timeline-scroll')).toBe(scroll);
+    expect(scroll.scrollLeft).toBe(47);
   });
 
   it('repaints column settings without a project-data change and defers safely for an active draft', () => {

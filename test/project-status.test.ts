@@ -57,6 +57,27 @@ describe('resolveStatus', () => {
 });
 
 describe('orderedGroups', () => {
+  it('projects configured status presentation while discovered and empty groups stay default', () => {
+    const statuses: ProjectStatus[] = [
+      { id: 'active', name: 'active', color: '#28b8a5', display: 'text', onLeftPanel: true },
+      { id: 'done', name: 'done', display: 'dot', onLeftPanel: false },
+    ];
+    const projects = [proj({ rawStatus: 'waiting' }), proj({ rawStatus: null })];
+
+    expect(orderedGroups(statuses, projects)).toEqual([
+      {
+        key: 'id:active',
+        label: 'active',
+        color: '#28b8a5',
+        display: 'text',
+        statusId: 'active',
+      },
+      { key: 'id:done', label: 'done', display: 'dot', statusId: 'done' },
+      { key: 'raw:waiting', label: 'waiting', statusId: null },
+      { key: 'none', label: 'No status', statusId: null },
+    ]);
+  });
+
   it('uses literal names in defined order, then discovered values, then No status', () => {
     const projects = [
       proj({ statusId: 'a' }),

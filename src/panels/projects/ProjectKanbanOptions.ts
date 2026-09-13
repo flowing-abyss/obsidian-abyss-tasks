@@ -1,12 +1,10 @@
-import { Menu } from 'obsidian';
-import type { ProjectDateDisplay, ProjectFieldCatalogItem } from '../../projects/projectFields';
+import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
 import {
   buildDefaultProjectKanbanSettings,
   type ProjectKanbanSettings,
 } from '../../projects/projectKanbanSettings';
-import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
-import type { ViewOption, ViewOptionAction, ViewOptionsRow } from '../../ui/ViewOptionsPopover';
-import { configureProjectDateDisplayMenu, projectDateDisplayLabel } from './projectColumnMenu';
+import type { ViewOption, ViewOptionsRow } from '../../ui/ViewOptionsPopover';
+import { projectCardFieldsOptionsRow } from './projectCardFields';
 
 interface ProjectKanbanOptionsContext {
   readonly settings: () => ProjectKanbanSettings;
@@ -32,125 +30,12 @@ function labelFor(context: ProjectKanbanOptionsContext, fieldId: string): string
   );
 }
 
-function selectableCardFields(
-  fields: readonly ProjectFieldCatalogItem[],
-): readonly ProjectFieldCatalogItem[] {
-  return fields.filter(
-    ({ id, type }) => type !== 'name' && id !== 'description' && type !== 'progress',
-  );
-}
-
-function selectedFieldIds(settings: ProjectKanbanSettings): string[] {
-  return settings.fields.filter(({ visible }) => visible).map(({ id }) => id);
-}
-
-function setFieldDateDisplay(
-  context: ProjectKanbanOptionsContext,
-  fieldId: string,
-  display: ProjectDateDisplay,
-): void {
-  const settings = context.settings();
-  let configured = settings.fields.find(({ id }) => id === fieldId);
-  if (configured === undefined) {
-    configured = {
-      ...(context.tableSettings().columns.find(({ id }) => id === fieldId) ?? { id: fieldId }),
-      id: fieldId,
-      visible: false,
-    };
-    settings.fields.push(configured);
-  }
-  configured.dateDisplay = display;
-}
-
-function applyFieldDateDisplay(
-  context: ProjectKanbanOptionsContext,
-  fieldId: string,
-  display: ProjectDateDisplay,
-): Promise<void> {
-  return applyMutation(context, () => {
-    setFieldDateDisplay(context, fieldId, display);
-  });
-}
-
-function fieldDateAction(
-  context: ProjectKanbanOptionsContext,
-  field: ProjectFieldCatalogItem,
-): ViewOptionAction | undefined {
-  if (field.type !== 'date' && field.type !== 'datetime') return undefined;
-  const active = (): ProjectDateDisplay =>
-    context.settings().fields.find(({ id }) => id === field.id)?.dateDisplay ?? 'pretty';
-  return {
-    label: () => projectDateDisplayLabel(active()),
-    ariaLabel: `Date display for ${labelFor(context, field.id)}`,
-    onSelect: (event, run, ownChild) => {
-      const trigger = event.currentTarget as HTMLElement | null;
-      const menu = new Menu();
-      configureProjectDateDisplayMenu(menu, {
-        active: active(),
-        onSelect: (display) => {
-          run(() => applyFieldDateDisplay(context, field.id, display));
-        },
-      });
-      let releaseChild = (): void => undefined;
-      menu.onHide(() => {
-        releaseChild();
-        if (trigger?.instanceOf(HTMLElement) === true && trigger.isConnected) {
-          trigger.focus({ preventScroll: true });
-        }
-      });
-      const surface = showMenuAtMouseEventWithFocus(menu, event);
-      if (surface !== undefined) {
-        releaseChild = ownChild(surface, () => {
-          menu.close();
-        });
-      }
-    },
-  };
-}
-
-function toggleField(
-  settings: ProjectKanbanSettings,
-  tableSettings: ReturnType<ProjectKanbanOptionsContext['tableSettings']>,
-  fieldId: string,
-): void {
-  const index = settings.fields.findIndex(({ id }) => id === fieldId);
-  if (index < 0) {
-    settings.fields.push({
-      ...(tableSettings.columns.find(({ id }) => id === fieldId) ?? { id: fieldId }),
-      id: fieldId,
-      visible: true,
-    });
-    return;
-  }
-  const configured = settings.fields[index];
-  if (configured !== undefined) configured.visible = !configured.visible;
-}
-
-function moveField(settings: ProjectKanbanSettings, fieldId: string, targetId: string): void {
-  const index = settings.fields.findIndex(({ id }) => id === fieldId);
-  const target = settings.fields.findIndex(({ id }) => id === targetId);
-  if (index < 0 || target < 0 || target >= settings.fields.length) return;
-  const [field] = settings.fields.splice(index, 1);
-  if (field !== undefined) settings.fields.splice(target, 0, field);
-}
-
 function setBoolean(
   settings: ProjectKanbanSettings,
   key: 'showEmptyFields' | 'showEmptyProgress',
   value: string,
 ): void {
   settings[key] = value === 'show';
-}
-
-function fieldOptions(context: ProjectKanbanOptionsContext): ViewOption[] {
-  return selectableCardFields(context.fields()).map((field) => {
-    const option = {
-      value: field.id,
-      label: () => labelFor(context, field.id),
-    };
-    const action = fieldDateAction(context, field);
-    return action === undefined ? option : { ...option, action };
-  });
 }
 
 function groupFieldOptions(context: ProjectKanbanOptionsContext): ViewOption[] {
@@ -161,28 +46,6 @@ function groupFieldOptions(context: ProjectKanbanOptionsContext): ViewOption[] {
       value: field.id,
       label: () => labelFor(context, field.id),
     }));
-}
-
-function cardFieldsRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
-  return {
-    kind: 'multi',
-    icon: 'list-plus',
-    label: 'Card fields',
-    displayValue: () => {
-      const selectedCount = selectedFieldIds(context.settings()).length;
-      return selectedCount === 0 ? 'None' : `${selectedCount} shown`;
-    },
-    selected: () => selectedFieldIds(context.settings()),
-    options: fieldOptions(context),
-    onToggle: (fieldId) =>
-      applyMutation(context, () => {
-        toggleField(context.settings(), context.tableSettings(), fieldId);
-      }),
-    onMove: (fieldId, _direction, targetId) =>
-      applyMutation(context, () => {
-        moveField(context.settings(), fieldId, targetId);
-      }),
-  };
 }
 
 function descriptionLines(value: string): ProjectKanbanSettings['descriptionLines'] {
@@ -361,7 +224,7 @@ export function projectKanbanOptionsRows(context: ProjectKanbanOptionsContext): 
       label: 'Kanban',
       displayValue: '6 options',
       rows: [
-        cardFieldsRow(context),
+        projectCardFieldsOptionsRow(context, { label: 'Card fields' }),
         descriptionRow(context),
         progressRow(context),
         booleanRow(context, 'showEmptyFields', 'Empty fields', 'rows-3'),

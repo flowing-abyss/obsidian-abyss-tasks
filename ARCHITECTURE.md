@@ -206,8 +206,8 @@ date override is Custom: each column uses its saved mode or Pretty. A global tab
 every known temporal column and remains effective for later temporal columns; changing one column
 or choosing Custom first materializes that global mode across current temporal columns, then clears
 the global override. Reset clears these table presentation overrides while preserving column order,
-visibility, aliases, widths, and alignment. Explicit modes roundtrip through table and Kanban view
-state, while Kanban retains its independent field and progress presentation. An
+visibility, aliases, widths, and alignment. Explicit modes roundtrip through Table, Kanban, and
+Timeline view state, while Kanban retains its independent field and progress presentation. An
 explicit `none` sort preserves incoming project order. A legacy custom description column becomes the under-name
 display preference while valid grouping and sorting references are remapped to the curated field.
 These preferences live under `projects.table`; project metadata remains in Markdown.
@@ -222,6 +222,43 @@ raw and No status columns exist only for source values that are present. Card de
 as hidden, one line, two lines, or full; the additive full value removes the visual line clamp, while
 older binaries retain it in recovery and fall back to their existing default.
 
+`projectTimelineSettings` owns independent grouping, sorting, status filters, scale, ordered
+metadata fields, field aliases and date presentation, empty-field visibility, description lines,
+progress, and unscheduled-row presentation. Missing Timeline state is initialized lazily from the
+current Table organization only when requested; older saved Timeline state resolves Status, Start,
+and End as its field set without eagerly rewriting storage. `projectTimelineModel` reuses the
+DOM-free table projection for search, typed sorting, grouping, and status visibility, then
+classifies strict start and end values as closed, open, unscheduled, or malformed calendar ranges.
+Its day, week, month, quarter, and year windows use inclusive day geometry. Year defaults to the
+calendar year before the anchor through the following two years; fitting starts one year before the
+first valid project bound and ends at the later of two years after that bound or the final project
+year. `projectTimelineAxis` converts those windows into scale-density track widths,
+viewport-bounded calendar and hierarchy cells, and major or minor ordinal grid boundaries without
+importing Obsidian presentation code. Year renders quarter cells beneath parent year labels, retains
+quarter and year grid boundaries, and reserves at least 200 pixels per calendar year.
+Physical width is capped below browser layout limits for pathological spans while the logical
+percentage coordinate system remains based on the complete inclusive window.
+
+`projectTimelineEdits` owns pure, bounded calendar-day planning for range moves, endpoint
+resizing, missing-endpoint creation, and range drawing. `projectTimelineInteraction` owns native
+pointer capture, preview DOM, hover dates, edge scrolling, and cancellation; it emits frozen
+pointer intents or relative keyboard intents and never writes Markdown or records history. A
+released pointer request retains a tokened presentation-only preview until the existing receipt
+projection renders an authoritative range. Ordinary renders reapply only a preview whose frozen
+source is still current; rejection, source replacement, hiding, destruction, and superseding
+gestures clear it, while an older settlement cannot alter a newer preview.
+`ProjectsTimelineView` retains keyed tracks, bars, endpoint handles, cursor, and tooltip nodes so
+focus and preview ownership survive ordinary receipt refreshes. Its native scroll and resize paths
+patch only the visible axis slice and matching row-grid boundaries through a disposable animation
+frame, leaving retained range nodes and focus intact. Both edge targets remain reachable for open and compact scheduled
+ranges; bounded minimum-width presentation and handle geometry do not change the calendar-day
+coordinate system. Range controls use labelled and described screen-reader text while the custom
+date bubble remains the pointer hint. The focusable track and bar share one range keyboard and
+context-menu path, including handle-originated menus, leaving nested controls and shared overview
+shortcuts to their existing owners. The view is also the visibility authority for retained range
+occurrences: collapsed groups remain mounted but cannot capture queued commands or retain an active
+gesture or pending preview.
+
 The overview controller initializes each status column's manual path sequence from its first complete
 project snapshot and appends newly observed paths even while a field sort, search, or status filter
 hides their manual projection. Missing and filtered paths keep their remembered ranks. These
@@ -230,12 +267,32 @@ state-only changes use the existing saved-view persistence and Retry boundary.
 `ProjectsPanel` owns one long-lived project-overview controller and the vault property-catalog
 subscription. Ordinary project-store refreshes update that controller instead of reconstructing
 it. The controller keeps the shared toolbar, editor boundary, mutation queue, receipt projection,
-source observations, and edit history while delegating keyed board DOM to `ProjectsKanbanView`.
-Table and Kanban retain separate searches, selections, filters, sorting, grouping, and viewport
-positions; switching hides the inactive surface without destroying its nodes. Both surfaces render
+source observations, and edit history while delegating keyed board DOM to `ProjectsKanbanView` and
+keyed range DOM to `ProjectsTimelineView`. Table, Kanban, and Timeline retain separate searches,
+selections, filters, sorting, grouping, and viewport positions; switching hides the inactive surface
+without destroying its nodes. All three surfaces render
 metadata and progress through the shared project-cell renderer and send edits through the same
 `ProjectManager.applyEdits` coordinator. Switching to a project dashboard temporarily detaches the
-overview surface, and returning reattaches the same session and active overview mode.
+overview surface, invalidates its Timeline interaction lifetime, and cancels any active range
+gesture. Returning reattaches the same session and active overview mode with its focus, viewport,
+receipt projection, and history retained; a queued range command from the prior lifetime cannot
+become valid again after reattachment.
+
+The overview controller's table-action submission tail orders Timeline range commands with shared
+actions such as Undo and Redo when the user submits them. This is distinct from the sole metadata
+mutation tail: a Timeline command awaits one active-editor commit attempt outside the mutation tail,
+so a corrected retry or newer editor draft can persist without waiting behind the range. A failed
+editor attempt cancels that range command. After editor readiness, the command enters the metadata
+tail and captures its fresh source projection. Closing an editor for the submitted action preserves
+focus on that action's target while a newer explicit Tab navigation still wins. A pointer gesture
+freezes occurrence, path, field binding, exact source key, raw value, existence, and projected range
+at capture; the controller rejects any mismatch before planning the write.
+Keyboard arrows freeze the target binding at submission but resolve their relative move or End
+adjustment from the latest receipt-projected range when their queue turn begins. A real edit sends
+both endpoints in one `applyEdits` batch: the unchanged endpoint is an exact companion guard with
+raw-value restoration, preserving missing, null, empty, and authored source spelling. No-op plans
+skip the manager and history. Successful receipts use the common projection, history, Undo/Redo,
+and single failure-reporting boundary.
 
 The project toolbar composes the shared recursive `ViewOptionsPopover` as Group by, Sort by, and one
 active-view group. Nested disclosures close only siblings at their own level. The Table group owns
@@ -246,6 +303,20 @@ target the neighboring visible row while hidden configuration stays in place, an
 column remains first and visible. An auxiliary native menu registers its exact DOM surface as a
 child of the popover, so that menu retains the popover's shortcut ownership and disclosure state
 until it closes; parent teardown closes any registered child.
+
+Kanban and Timeline use `projectCardFields` for the same field projection and field-selector menu,
+including visibility, ordering, labels, date presentation, and empty-value semantics. The Timeline
+group additionally owns direct Day, Week, Month, Quarter, and Year controls, matching scale options,
+independent description lines, metadata and empty-field switches, progress, and unscheduled-row
+presentation. Previous, Today, and Next recenter the retained Timeline window. Direct and options
+scale activation share the controller's guarded mutation path; every accepted activation, including
+reselection, fits the filtered valid project bounds outward to the selected calendar unit, with the
+selected scale's today window as the empty fallback. Year navigation uses the actual range edges:
+Next opens the four years after the current end year, while Previous opens the four years before the
+current start year, so fitted spans and leap-year alignment cannot shift an adjacent page. Internal
+project reveal can still recenter or expand the window without exposing a separate Fit or Show range
+action. The shared controller keeps
+selection, editors, clipboard actions, creation receipts, and history on the same project session.
 
 `ProjectsKanbanView` projects ordered status columns and optional inner groups from
 `projectKanbanModel`. It reconciles columns by status key, cards by grouped project occurrence, and
@@ -377,7 +448,7 @@ type write is created.
 interface. `SettingsPersistenceCoordinator` serializes two documents through Obsidian's public
 vault adapter: `data.json` contains static configuration, while adjacent `state.json` contains
 `listViewStates`, `sectionCollapse`, the complete `projects.table` preference, and optional
-`projects.kanban` and `projects.overviewView` preferences. A single
+`projects.kanban`, `projects.timeline`, and `projects.overviewView` preferences. A single
 `CalendarSettings` object remains the runtime authority; the persistence boundary partitions and
 recomposes it instead of giving panels independent settings copies.
 
@@ -415,7 +486,7 @@ without changing the static settings save and failure-retry path.
 `ProjectStore.refreshSettings()` compares only membership and status-resolution inputs before it
 rescans projects or recomputes task statistics. Type, preset, alias, color, alignment, and sidebar
 presentation changes reuse the existing project snapshots. `PanelView` then reconciles the current
-project table and Kanban cells once, patches a mounted dashboard status in place, and asks `LeftPanel`
+project Table, Kanban, and Timeline cells once, patches a mounted dashboard status in place, and asks `LeftPanel`
 to replace only its project section, so a presentation save does not query the task-wide list. The
 settings UI uses one shared expandable-card primitive for tag,
 task-status, and project-property rows. Project statuses and custom-property presets use one shared
@@ -513,7 +584,8 @@ for same-file metadata changes.
 1. The interface chooses and freezes a capture context before asking `TaskCaptureApplicationApi` to
    plan a destination.
 2. For the project overview, `PanelView` delegates through `CenterPanel` and `ProjectsPanel` to the
-   active table row or Kanban card; an absent selection retains the default projects context.
+   active Table row, Kanban card, or Timeline row; an absent selection retains the default projects
+   context.
 3. The destination provider resolves today's note or the configured file, while project contexts
    use the selected note and the existing project insertion policy.
 4. The ready creation session sends the create command through the application service and
@@ -554,7 +626,7 @@ across files and settings and does not claim crash atomicity.
 Moving a task into a project uses the standard task move command, so it retains the same validation,
 recovery, and reindexing behavior as other task moves.
 
-Project creation from the overview is a background command owned by the retained table/Kanban
+Project creation from the overview is a background command owned by the retained Table/Kanban/Timeline
 session. The composer freezes the selected configured status, then `ProjectsPanel` asks
 `ProjectManager` to create without opening a workspace leaf. The manager validates the requested
 status and its writable property before creating anything, creates the note through the shared

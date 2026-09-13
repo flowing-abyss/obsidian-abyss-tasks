@@ -3,7 +3,10 @@ import type { AppState } from '../../app/AppState';
 import { exactLinkToken, parseLinks } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
 import { isProjectCreationError, type ProjectCreateRequest } from '../../projects/projectCreation';
-import { isProjectEditValidationError } from '../../projects/projectEditError';
+import {
+  isProjectEditValidationError,
+  ProjectEditValidationError,
+} from '../../projects/projectEditError';
 import type { ProjectEditHistory } from '../../projects/projectEditHistory';
 import {
   projectCellSourceValue,
@@ -61,6 +64,22 @@ import {
   effectiveProjectTableDateDisplay,
   setProjectTableColumnDateDisplay,
 } from '../../projects/projectTableSettings';
+import {
+  planProjectTimelineEdit,
+  PROJECT_TIMELINE_INVALID_RANGE_REASON,
+  projectTimelineRawEditEligibility,
+  type ProjectTimelineEditPlan,
+} from '../../projects/projectTimelineEdits';
+import {
+  buildProjectTimelineModel,
+  type ProjectTimelineRow,
+} from '../../projects/projectTimelineModel';
+import {
+  buildDefaultProjectTimelineSettings,
+  projectTimelineDescriptionLines,
+  projectTimelineFields,
+  type ProjectTimelineSettings,
+} from '../../projects/projectTimelineSettings';
 import { projectStatusDisplayName, resolveStatus } from '../../projects/status';
 import type { Project } from '../../projects/types';
 import {
@@ -89,6 +108,7 @@ import { formatProjectRelativeDate } from './projectDatePresentation';
 import { forecastProjectGroupDrop, type ProjectGroupDropForecast } from './projectGroupDropPreview';
 import { ProjectsKanbanView } from './ProjectsKanbanView';
 import { ProjectsTableToolbar } from './ProjectsTableToolbar';
+import { ProjectsTimelineView } from './ProjectsTimelineView';
 import { renderProjectTableCell } from './projectTableCells';
 import {
   clipboardPayloadFromText,
@@ -116,6 +136,14 @@ import {
   type ProjectTableSelectableCell,
   type ProjectTableSelectionDirection,
 } from './projectTableSelection';
+import {
+  sameProjectTimelineRangeBinding,
+  sameProjectTimelineRangeSource,
+  type FrozenProjectTimelineRangeSource,
+  type ProjectTimelineEndpointEvidence,
+  type ProjectTimelineRangeCapture,
+  type ProjectTimelineRangeEditRequest,
+} from './projectTimelineInteraction';
 
 const PROJECT_TABLE_ROW_DRAG_TYPE = 'application/x-abyss-project-table-row';
 
@@ -245,6 +273,22 @@ interface GroupDropPreview {
   readonly rows: readonly HTMLTableRowElement[];
   readonly forecast?: ProjectGroupDropForecast;
   readonly line?: HTMLTableRowElement;
+}
+
+function overviewDescriptionLines(
+  presentation: 'kanban' | 'timeline',
+  field: ProjectFieldCatalogItem,
+  settings: () => ProjectTimelineSettings,
+): ReturnType<typeof projectTimelineDescriptionLines> | undefined {
+  if (presentation !== 'timeline' || field.type !== 'name') return undefined;
+  return projectTimelineDescriptionLines(settings());
+}
+
+function showOverviewNameDescription(
+  presentation: 'kanban' | 'timeline',
+  lines: ReturnType<typeof projectTimelineDescriptionLines> | undefined,
+): boolean {
+  return presentation === 'timeline' && lines !== undefined && lines !== 0;
 }
 
 type ResizeObserverConstructor = new (callback: ResizeObserverCallback) => ResizeObserver;
@@ -540,6 +584,47 @@ function projectCellEditorState(
   };
 }
 
+function expectProjectFieldProperty(field: ProjectField): string {
+  if (field.property === undefined || field.property.length === 0) {
+    throw new ProjectEditValidationError(`${field.label} has no configured source property.`);
+  }
+  return field.property;
+}
+
+function timelineDateField(
+  fields: readonly ProjectFieldCatalogItem[],
+  id: 'start' | 'end',
+): ProjectField | undefined {
+  const field = findProjectFieldById(fields, id);
+  if (field === undefined || !isAvailableProjectField(field)) return undefined;
+  if (field.type !== 'date' || field.property === undefined || field.property.length === 0) {
+    return undefined;
+  }
+  return field;
+}
+
+function sameTimelineProperty(left: ProjectField, right: ProjectField): boolean {
+  return (
+    expectProjectFieldProperty(left).localeCompare(expectProjectFieldProperty(right), undefined, {
+      sensitivity: 'accent',
+    }) === 0
+  );
+}
+
+function ambiguousTimelineSource(
+  project: Project,
+  fields: readonly ProjectField[],
+): ProjectField | undefined {
+  return fields.find((field) => {
+    const property = expectProjectFieldProperty(field);
+    return (
+      Object.keys(project.frontmatter).filter(
+        (key) => key.localeCompare(property, undefined, { sensitivity: 'accent' }) === 0,
+      ).length > 1
+    );
+  });
+}
+
 export class ProjectsTableView {
   private projects_abyssPrivate: readonly Project[] = [];
   private fields_abyssPrivate: readonly ProjectFieldCatalogItem[] = [];
@@ -557,6 +642,7 @@ export class ProjectsTableView {
   private creationReconciliationPending_abyssPrivate = false;
   private notifyingCreationReconciliation_abyssPrivate = false;
   private kanbanView_abyssPrivate: ProjectsKanbanView<RenderedCellContext> | undefined;
+  private timelineView_abyssPrivate: ProjectsTimelineView<RenderedCellContext> | undefined;
   private readonly markdown_abyssPrivate = new Component();
   private readonly ownerWindow_abyssPrivate: Window | undefined;
   private activeEditor_abyssPrivate: ActiveEditor | undefined;
@@ -569,8 +655,10 @@ export class ProjectsTableView {
   private readonly collapsedGroups_abyssPrivate = new Set<string>();
   private readonly tableSelection_abyssPrivate = new ProjectTableSelection();
   private readonly kanbanSelection_abyssPrivate = new ProjectTableSelection();
+  private readonly timelineSelection_abyssPrivate = new ProjectTableSelection();
   private tableRenderedCells_abyssPrivate: RenderedCellContext[] = [];
   private kanbanRenderedCells_abyssPrivate: RenderedCellContext[] = [];
+  private timelineRenderedCells_abyssPrivate: RenderedCellContext[] = [];
   private readonly renderedGroups_abyssPrivate = new Map<string, RenderedGroupContext>();
   private readonly renderedProjectRows_abyssPrivate = new Map<string, RenderedProjectRow>();
   private readonly renderedGroupRows_abyssPrivate = new Map<string, RenderedGroupRow>();
@@ -581,9 +669,12 @@ export class ProjectsTableView {
   private readonly searches_abyssPrivate: Record<ProjectOverviewMode, string> = {
     table: '',
     kanban: '',
+    timeline: '',
   };
   private overviewMode_abyssPrivate: ProjectOverviewMode;
   private mounted_abyssPrivate = false;
+  private timelineInteractionRevision_abyssPrivate = 0;
+  private tableActionTail_abyssPrivate: Promise<void> = Promise.resolve();
   private mutationTail_abyssPrivate: Promise<void> = Promise.resolve();
   private mutationActive_abyssPrivate = false;
   private renderPending_abyssPrivate = false;
@@ -593,7 +684,8 @@ export class ProjectsTableView {
   private nextReceiptOrdinal_abyssPrivate = 0;
   private pendingAction_abyssPrivate:
     { readonly run: () => void; readonly replace?: () => void } | undefined;
-  private finishingEditor_abyssPrivate: Promise<void> | undefined;
+  private finishingEditor_abyssPrivate: Promise<boolean> | undefined;
+  private preserveSubmittedActionFocus_abyssPrivate = false;
   private readonly resizeObserver_abyssPrivate: ResizeObserver | undefined;
   private nativeMenuOpen_abyssPrivate = false;
   private relativeDateInterval_abyssPrivate: number | undefined;
@@ -677,19 +769,22 @@ export class ProjectsTableView {
   }
 
   private get selection_abyssPrivate(): ProjectTableSelection {
-    return this.overviewMode_abyssPrivate === 'kanban'
-      ? this.kanbanSelection_abyssPrivate
-      : this.tableSelection_abyssPrivate;
+    if (this.overviewMode_abyssPrivate === 'kanban') return this.kanbanSelection_abyssPrivate;
+    if (this.overviewMode_abyssPrivate === 'timeline') return this.timelineSelection_abyssPrivate;
+    return this.tableSelection_abyssPrivate;
   }
 
   private get renderedCells_abyssPrivate(): RenderedCellContext[] {
-    return this.overviewMode_abyssPrivate === 'kanban'
-      ? this.kanbanRenderedCells_abyssPrivate
-      : this.tableRenderedCells_abyssPrivate;
+    if (this.overviewMode_abyssPrivate === 'kanban') return this.kanbanRenderedCells_abyssPrivate;
+    if (this.overviewMode_abyssPrivate === 'timeline')
+      return this.timelineRenderedCells_abyssPrivate;
+    return this.tableRenderedCells_abyssPrivate;
   }
 
   private set renderedCells_abyssPrivate(cells: RenderedCellContext[]) {
     if (this.overviewMode_abyssPrivate === 'kanban') this.kanbanRenderedCells_abyssPrivate = cells;
+    else if (this.overviewMode_abyssPrivate === 'timeline')
+      this.timelineRenderedCells_abyssPrivate = cells;
     else this.tableRenderedCells_abyssPrivate = cells;
   }
 
@@ -728,6 +823,7 @@ export class ProjectsTableView {
         this.switchOverviewMode_abyssPrivate(mode);
       },
       onViewOptionChange: (mutation) => this.requestViewChange_abyssPrivate(mutation),
+      onTimelineScaleChange: (scale) => this.requestTimelineScaleChange_abyssPrivate(scale),
     });
   }
 
@@ -759,6 +855,13 @@ export class ProjectsTableView {
       this.persistAndRender_abyssPrivate();
       return;
     }
+    if (this.overviewMode_abyssPrivate === 'timeline') {
+      this.context_abyssPrivate.settings.projects.timeline = buildDefaultProjectTimelineSettings(
+        this.context_abyssPrivate.settings.projects.table,
+      );
+      this.persistAndRender_abyssPrivate();
+      return;
+    }
     const defaults = buildDefaultProjectTableSettings();
     const table = this.context_abyssPrivate.settings.projects.table;
     table.groupBy = defaults.groupBy;
@@ -777,17 +880,26 @@ export class ProjectsTableView {
     this.updateResponsiveNamePinning_abyssPrivate();
   }
 
-  private activeViewSettings_abyssPrivate(): ProjectTableSettings | ProjectKanbanSettings {
+  private activeViewSettings_abyssPrivate():
+    ProjectTableSettings | ProjectKanbanSettings | ProjectTimelineSettings {
     if (this.overviewMode_abyssPrivate === 'table') {
       return this.context_abyssPrivate.settings.projects.table;
     }
-    return this.ensureKanbanSettings_abyssPrivate();
+    return this.overviewMode_abyssPrivate === 'kanban'
+      ? this.ensureKanbanSettings_abyssPrivate()
+      : this.ensureTimelineSettings_abyssPrivate();
   }
 
   private ensureKanbanSettings_abyssPrivate(): ProjectKanbanSettings {
     const projects = this.context_abyssPrivate.settings.projects;
     projects.kanban ??= buildDefaultProjectKanbanSettings(projects.table);
     return projects.kanban;
+  }
+
+  private ensureTimelineSettings_abyssPrivate(): ProjectTimelineSettings {
+    const projects = this.context_abyssPrivate.settings.projects;
+    projects.timeline ??= buildDefaultProjectTimelineSettings(projects.table);
+    return projects.timeline;
   }
 
   private prepareKanbanManualOrder_abyssPrivate(create: boolean): boolean {
@@ -811,6 +923,9 @@ export class ProjectsTableView {
     if (mode === this.overviewMode_abyssPrivate) return;
     this.finishEditorBeforeAction(() => {
       if (mode === 'kanban') this.prepareKanbanManualOrder_abyssPrivate(true);
+      if (this.overviewMode_abyssPrivate === 'timeline') {
+        this.timelineInteractionRevision_abyssPrivate++;
+      }
       this.overviewMode_abyssPrivate = mode;
       this.context_abyssPrivate.settings.projects.overviewView = mode;
       this.toolbar_abyssPrivate.setSearchValue(this.searches_abyssPrivate[mode]);
@@ -822,6 +937,11 @@ export class ProjectsTableView {
     const focused = this.selection_abyssPrivate.focus;
     if (focused === undefined) return undefined;
     return this.renderedCell_abyssPrivate(focused)?.project.path;
+  }
+
+  captureViewportBeforeHide(): void {
+    this.timelineInteractionRevision_abyssPrivate++;
+    this.timelineView_abyssPrivate?.captureViewportBeforeHide();
   }
 
   mount(projects: readonly Project[]): void {
@@ -856,6 +976,7 @@ export class ProjectsTableView {
 
   destroy(): void {
     this.mounted_abyssPrivate = false;
+    this.timelineInteractionRevision_abyssPrivate++;
     this.creationInteractionRevision_abyssPrivate++;
     this.creationInteractionToken_abyssPrivate = undefined;
     this.clearGroupDropStates_abyssPrivate();
@@ -865,11 +986,7 @@ export class ProjectsTableView {
     this.activeEditor_abyssPrivate?.handle.destroy();
     this.activeEditor_abyssPrivate = undefined;
     this.activeRowDrag_abyssPrivate = undefined;
-    this.selection_abyssPrivate.clear();
-    this.tableSelection_abyssPrivate.clear();
-    this.kanbanSelection_abyssPrivate.clear();
-    this.tableRenderedCells_abyssPrivate = [];
-    this.kanbanRenderedCells_abyssPrivate = [];
+    this.clearOverviewState_abyssPrivate();
     this.renderedGroups_abyssPrivate.clear();
     for (const row of this.renderedProjectRows_abyssPrivate.values()) row.dragCleanup?.();
     this.renderedProjectRows_abyssPrivate.clear();
@@ -879,12 +996,28 @@ export class ProjectsTableView {
     this.toolbar_abyssPrivate.destroy();
     this.creationComposer_abyssPrivate.destroy();
     this.creationPresentation_abyssPrivate.destroy();
-    this.kanbanView_abyssPrivate?.destroy();
-    this.kanbanView_abyssPrivate = undefined;
+    this.destroyOverviewSurfaces_abyssPrivate();
     this.resizeObserver_abyssPrivate?.disconnect();
     this.stopListening_abyssPrivate();
     this.markdown_abyssPrivate.unload();
     this.root_abyssPrivate.remove();
+  }
+
+  private clearOverviewState_abyssPrivate(): void {
+    this.selection_abyssPrivate.clear();
+    this.tableSelection_abyssPrivate.clear();
+    this.kanbanSelection_abyssPrivate.clear();
+    this.timelineSelection_abyssPrivate.clear();
+    this.tableRenderedCells_abyssPrivate = [];
+    this.kanbanRenderedCells_abyssPrivate = [];
+    this.timelineRenderedCells_abyssPrivate = [];
+  }
+
+  private destroyOverviewSurfaces_abyssPrivate(): void {
+    this.kanbanView_abyssPrivate?.destroy();
+    this.kanbanView_abyssPrivate = undefined;
+    this.timelineView_abyssPrivate?.destroy();
+    this.timelineView_abyssPrivate = undefined;
   }
 
   private stopListening_abyssPrivate(): void {
@@ -937,6 +1070,16 @@ export class ProjectsTableView {
     return result;
   }
 
+  /** Orders user-submitted actions before they enter the metadata mutation queue. */
+  private runTableActionInOrder_abyssPrivate<T>(action: () => Promise<T>): Promise<T> {
+    const result = this.tableActionTail_abyssPrivate.then(action, action);
+    this.tableActionTail_abyssPrivate = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
   /** Reconciles receipt projections only from ProjectStore's verified per-path source stream. */
   observeProjectSource(observation: ProjectSourceObservation): void {
     const current = this.sourceObservations_abyssPrivate.get(observation.path);
@@ -959,7 +1102,10 @@ export class ProjectsTableView {
   finishEditorBeforeAction(action: () => void): void {
     this.pendingAction_abyssPrivate?.replace?.();
     this.pendingAction_abyssPrivate = { run: action };
-    this.finishActiveEditor_abyssPrivate();
+    this.finishActiveEditor_abyssPrivate().then(
+      () => undefined,
+      () => undefined,
+    );
   }
 
   /** Resolves only when the current pending navigation may proceed. */
@@ -975,18 +1121,23 @@ export class ProjectsTableView {
           resolve(false);
         },
       };
-      this.finishActiveEditor_abyssPrivate();
+      this.finishActiveEditor_abyssPrivate().then(
+        () => undefined,
+        () => undefined,
+      );
     });
   }
 
-  private finishActiveEditor_abyssPrivate(): void {
-    if (this.finishingEditor_abyssPrivate !== undefined) return;
+  private finishActiveEditor_abyssPrivate(): Promise<boolean> {
+    if (this.finishingEditor_abyssPrivate !== undefined) {
+      return this.finishingEditor_abyssPrivate;
+    }
     const editor = this.activeEditor_abyssPrivate;
     if (editor === undefined) {
       this.runPendingAction_abyssPrivate();
-      return;
+      return Promise.resolve(true);
     }
-    const finishing = editor.handle.commit().then(() => undefined);
+    const finishing = editor.handle.commit();
     this.finishingEditor_abyssPrivate = finishing;
     const settle = (): void => {
       if (this.finishingEditor_abyssPrivate === finishing) {
@@ -995,6 +1146,27 @@ export class ProjectsTableView {
       if (this.activeEditor_abyssPrivate === undefined) this.runPendingAction_abyssPrivate();
     };
     finishing.then(settle, settle);
+    return finishing;
+  }
+
+  private async finishEditorForTableAction_abyssPrivate(): Promise<boolean> {
+    if (this.activeEditor_abyssPrivate === undefined) return true;
+    this.preserveSubmittedActionFocus_abyssPrivate = true;
+    try {
+      const finished = await this.finishActiveEditor_abyssPrivate();
+      if (!finished) this.preserveSubmittedActionFocus_abyssPrivate = false;
+      return finished;
+    } catch (error) {
+      this.preserveSubmittedActionFocus_abyssPrivate = false;
+      throw error;
+    }
+  }
+
+  private takeSubmittedActionFocus_abyssPrivate(navigation: ProjectCellEditorNavigation): boolean {
+    const preserve =
+      this.preserveSubmittedActionFocus_abyssPrivate && navigation === 'restore-current';
+    this.preserveSubmittedActionFocus_abyssPrivate = false;
+    return preserve;
   }
 
   private runPendingAction_abyssPrivate(): void {
@@ -1019,6 +1191,15 @@ export class ProjectsTableView {
       mutation();
       this.persistAndRender_abyssPrivate();
       return true;
+    });
+  }
+
+  private requestTimelineScaleChange_abyssPrivate(
+    scale: ProjectTimelineSettings['scale'],
+  ): Promise<boolean> {
+    return this.requestViewChange_abyssPrivate(() => {
+      this.timelineView_abyssPrivate?.prepareScaleChange();
+      this.ensureTimelineSettings_abyssPrivate().scale = scale;
     });
   }
 
@@ -1099,9 +1280,13 @@ export class ProjectsTableView {
   private presentCreatedProject_abyssPrivate(project: Project, focus: boolean): HTMLElement | null {
     if (!this.creationPresentationReady_abyssPrivate()) return null;
     if (focus) this.relaxCreationProjection_abyssPrivate(project);
-    return this.overviewMode_abyssPrivate === 'kanban'
-      ? this.presentCreatedKanbanProject_abyssPrivate(project, focus)
-      : this.presentCreatedTableProject_abyssPrivate(project, focus);
+    if (this.overviewMode_abyssPrivate === 'kanban') {
+      return this.presentCreatedKanbanProject_abyssPrivate(project, focus);
+    }
+    if (this.overviewMode_abyssPrivate === 'timeline') {
+      return this.presentCreatedTimelineProject_abyssPrivate(project, focus);
+    }
+    return this.presentCreatedTableProject_abyssPrivate(project, focus);
   }
 
   private creationPresentationReady_abyssPrivate(): boolean {
@@ -1155,6 +1340,25 @@ export class ProjectsTableView {
     return cell.element.closest<HTMLElement>('.abyss-project-table-row') ?? cell.element;
   }
 
+  private presentCreatedTimelineProject_abyssPrivate(
+    project: Project,
+    focus: boolean,
+  ): HTMLElement | null {
+    const timeline = this.timelineView_abyssPrivate;
+    if (timeline === undefined) return null;
+    if (focus) {
+      timeline.revealProject(project.path);
+      this.timelineRenderedCells_abyssPrivate = [...timeline.visibleCells()];
+      this.timelineSelection_abyssPrivate.reconcile(this.selectableCells_abyssPrivate());
+    }
+    const cell = this.timelineRenderedCells_abyssPrivate.find(
+      ({ project: candidate, field }) => candidate.path === project.path && field.id === 'name',
+    );
+    if (cell === undefined) return null;
+    if (focus) this.selectAndRevealCreationCell_abyssPrivate(cell);
+    return cell.element.closest<HTMLElement>('.abyss-project-timeline-row') ?? cell.element;
+  }
+
   private selectAndRevealCreationCell_abyssPrivate(cell: RenderedCellContext): void {
     this.selectCell_abyssPrivate(cell, false);
     this.revealSelectionCell_abyssPrivate(cell.element);
@@ -1169,6 +1373,14 @@ export class ProjectsTableView {
       settings.hiddenStatuses.splice(hiddenIndex, 1);
       changed = true;
     }
+    if (
+      this.overviewMode_abyssPrivate === 'timeline' &&
+      this.ensureTimelineSettings_abyssPrivate().showUnscheduled === false &&
+      this.timelineProjectIsUnscheduled_abyssPrivate(project)
+    ) {
+      this.ensureTimelineSettings_abyssPrivate().showUnscheduled = true;
+      changed = true;
+    }
     const search = this.searches_abyssPrivate[this.overviewMode_abyssPrivate];
     if (search.length > 0 && !this.singletonVisible_abyssPrivate(project, search)) {
       this.searches_abyssPrivate[this.overviewMode_abyssPrivate] = '';
@@ -1178,6 +1390,18 @@ export class ProjectsTableView {
     if (!changed) return;
     this.renderTable_abyssPrivate();
     this.persistSettings_abyssPrivate();
+  }
+
+  private timelineProjectIsUnscheduled_abyssPrivate(project: Project): boolean {
+    const timeline = this.ensureTimelineSettings_abyssPrivate();
+    const model = buildProjectTimelineModel({
+      ...this.projectTableModelInput_abyssPrivate(),
+      projects: [project],
+      search: '',
+      settings: { ...timeline, hiddenStatuses: [], showUnscheduled: true },
+      tableSettings: this.context_abyssPrivate.settings.projects.table,
+    });
+    return model.groups.some(({ rows }) => rows.some(({ range }) => range.kind === 'unscheduled'));
   }
 
   private singletonVisible_abyssPrivate(project: Project, search: string): boolean {
@@ -1190,15 +1414,29 @@ export class ProjectsTableView {
       resolveLink: (target: string, sourcePath: string) =>
         this.context_abyssPrivate.app.metadataCache.getFirstLinkpathDest(target, sourcePath)?.path,
     };
-    return this.overviewMode_abyssPrivate === 'kanban'
-      ? buildProjectKanbanModel({
+    if (this.overviewMode_abyssPrivate === 'kanban') {
+      return (
+        buildProjectKanbanModel({
           ...common,
           settings: this.ensureKanbanSettings_abyssPrivate(),
         }).uniqueVisibleCount > 0
-      : buildProjectTableModel({
+      );
+    }
+    if (this.overviewMode_abyssPrivate === 'timeline') {
+      return (
+        buildProjectTimelineModel({
           ...common,
-          settings: this.context_abyssPrivate.settings.projects.table,
-        }).uniqueVisibleCount > 0;
+          settings: this.ensureTimelineSettings_abyssPrivate(),
+          tableSettings: this.context_abyssPrivate.settings.projects.table,
+        }).uniqueVisibleCount > 0
+      );
+    }
+    return (
+      buildProjectTableModel({
+        ...common,
+        settings: this.context_abyssPrivate.settings.projects.table,
+      }).uniqueVisibleCount > 0
+    );
   }
 
   private renderTable_abyssPrivate(): void {
@@ -1214,11 +1452,7 @@ export class ProjectsTableView {
       return;
     }
     this.renderPending_abyssPrivate = false;
-    if (this.overviewMode_abyssPrivate === 'kanban') {
-      this.renderKanban_abyssPrivate();
-      this.notifyCreationReconciled_abyssPrivate();
-      return;
-    }
+    if (this.renderAlternativeSurface_abyssPrivate()) return;
     this.showTableSurface_abyssPrivate();
     const scrollTop = this.scroll_abyssPrivate.scrollTop;
     const scrollLeft = this.scroll_abyssPrivate.scrollLeft;
@@ -1246,6 +1480,14 @@ export class ProjectsTableView {
     this.applyTableWidth_abyssPrivate();
     this.updateResponsiveNamePinning_abyssPrivate();
     this.finishTableReconciliation_abyssPrivate(scrollTop, scrollLeft, focusedIdentity);
+  }
+
+  private renderAlternativeSurface_abyssPrivate(): boolean {
+    if (this.overviewMode_abyssPrivate === 'table') return false;
+    if (this.overviewMode_abyssPrivate === 'kanban') this.renderKanban_abyssPrivate();
+    else this.renderTimeline_abyssPrivate();
+    this.notifyCreationReconciled_abyssPrivate();
+    return true;
   }
 
   private finishTableReconciliation_abyssPrivate(
@@ -1289,6 +1531,10 @@ export class ProjectsTableView {
   private showTableSurface_abyssPrivate(): void {
     this.scroll_abyssPrivate.hidden = false;
     if (this.kanbanView_abyssPrivate !== undefined) this.kanbanView_abyssPrivate.root.hidden = true;
+    if (this.timelineView_abyssPrivate !== undefined) {
+      this.timelineView_abyssPrivate.cancelInteraction();
+      this.timelineView_abyssPrivate.root.hidden = true;
+    }
   }
 
   private projectTableModelInput_abyssPrivate(): ProjectTableModelInput {
@@ -1306,6 +1552,10 @@ export class ProjectsTableView {
 
   private renderKanban_abyssPrivate(): void {
     this.scroll_abyssPrivate.hidden = true;
+    if (this.timelineView_abyssPrivate !== undefined) {
+      this.timelineView_abyssPrivate.cancelInteraction();
+      this.timelineView_abyssPrivate.root.hidden = true;
+    }
     const board = (this.kanbanView_abyssPrivate ??= this.createKanbanView_abyssPrivate());
     board.root.hidden = false;
     const settings = this.ensureKanbanSettings_abyssPrivate();
@@ -1332,6 +1582,86 @@ export class ProjectsTableView {
     this.count_abyssPrivate.setText(`${count} ${count === 1 ? 'project' : 'projects'}`);
     this.selection_abyssPrivate.reconcile(this.selectableCells_abyssPrivate());
     this.syncSelection_abyssPrivate();
+  }
+
+  private renderTimeline_abyssPrivate(): void {
+    this.scroll_abyssPrivate.hidden = true;
+    if (this.kanbanView_abyssPrivate !== undefined) this.kanbanView_abyssPrivate.root.hidden = true;
+    const timeline = (this.timelineView_abyssPrivate ??= this.createTimelineView_abyssPrivate());
+    timeline.root.hidden = false;
+    const timelineSettings = this.ensureTimelineSettings_abyssPrivate();
+    const timelineFields = projectTimelineFields(timelineSettings);
+    this.compiledPresets_abyssPrivate = new Map(
+      timelineFields.map(({ id }) => [
+        id,
+        compileProjectPropertyPresets(this.projectPropertyDefinition_abyssPrivate(id)),
+      ]),
+    );
+    const relativeColumns = timelineFields.flatMap((column) => {
+      const field = findProjectFieldById(this.fields_abyssPrivate, column.id);
+      return field === undefined ? [] : [{ column, field }];
+    });
+    this.syncRelativeDateTimer_abyssPrivate(relativeColumns);
+    if (timeline.currentModel() === undefined) {
+      timeline.mount(this.projectedProjects_abyssPrivate(), this.searches_abyssPrivate.timeline);
+    } else {
+      timeline.update(this.projectedProjects_abyssPrivate(), this.searches_abyssPrivate.timeline);
+    }
+    const model = timeline.currentModel();
+    this.renderedCells_abyssPrivate = [...timeline.visibleCells()];
+    this.toolbar_abyssPrivate.update(model?.availableStatusGroups ?? []);
+    const count = model?.uniqueVisibleCount ?? 0;
+    this.count_abyssPrivate.setText(`${count} ${count === 1 ? 'project' : 'projects'}`);
+    this.selection_abyssPrivate.reconcile(this.selectableCells_abyssPrivate());
+    this.syncSelection_abyssPrivate();
+  }
+
+  private createTimelineView_abyssPrivate(): ProjectsTimelineView<RenderedCellContext> {
+    const timeline = new ProjectsTimelineView<RenderedCellContext>(this.root_abyssPrivate, {
+      settings: () => this.ensureTimelineSettings_abyssPrivate(),
+      modelInput: () => ({
+        fields: this.fields_abyssPrivate,
+        statuses: this.context_abyssPrivate.settings.projects.statuses,
+        propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,
+        tableSettings: this.context_abyssPrivate.settings.projects.table,
+        resolveLink: (target, sourcePath) =>
+          this.context_abyssPrivate.app.metadataCache.getFirstLinkpathDest(target, sourcePath)
+            ?.path,
+      }),
+      renderCell: (options) => this.renderTimelineCell_abyssPrivate(options),
+      selectCell: (cell) => {
+        this.selectCell_abyssPrivate(cell, false);
+      },
+      requestViewChange: (mutation) => this.requestViewChange_abyssPrivate(mutation),
+      requestNavigation: (action) => {
+        this.finishEditorBeforeAction(action);
+      },
+      requestScaleChange: (scale) => this.requestTimelineScaleChange_abyssPrivate(scale),
+      renderGroupContent: (marker, label, group) => {
+        this.renderGroupContent_abyssPrivate(marker, label, group, group.presentation?.color);
+      },
+      statusColor: (project) =>
+        this.context_abyssPrivate.settings.projects.statuses.find(
+          ({ id }) => id === project.statusId,
+        )?.color,
+      captureRangeSource: (occurrenceId) =>
+        this.captureTimelineRangeSource_abyssPrivate(occurrenceId),
+      commitRangeEdit: (request) => this.commitTimelineRangeEdit_abyssPrivate(request),
+      reportRangeFailure: (failure) => {
+        this.reportTimelineRangeFailure_abyssPrivate(failure);
+      },
+      finishEditor: () => this.requestFinishActiveEditor(),
+      openRangeMenu: (occurrenceId, event) => {
+        const rendered = this.timelineRenderedCells_abyssPrivate.find(
+          ({ identity }) => identity.occurrenceId === occurrenceId && identity.columnId === 'name',
+        );
+        if (rendered === undefined) return;
+        this.selectCell_abyssPrivate(rendered, false);
+        this.showDescriptionMenu_abyssPrivate(rendered, event);
+      },
+    });
+    this.scroll_abyssPrivate.after(timeline.root);
+    return timeline;
   }
 
   private createKanbanView_abyssPrivate(): ProjectsKanbanView<RenderedCellContext> {
@@ -1431,6 +1761,199 @@ export class ProjectsTableView {
     new Notice(`Could not move project card: ${message}`);
   }
 
+  private captureTimelineEndpoint_abyssPrivate(
+    project: Project,
+    field: ProjectField,
+  ): ProjectTimelineEndpointEvidence {
+    const sourceProperty = expectProjectFieldProperty(field);
+    const source = findFrontmatterProperty(project.frontmatter, sourceProperty);
+    return {
+      field: { ...field },
+      sourceProperty,
+      sourceKey: source?.key ?? sourceProperty,
+      expectedExists: source !== undefined,
+      expectedValue: copyProjectedValue(source?.value),
+    };
+  }
+
+  private visibleTimelineRow_abyssPrivate(occurrenceId: string): ProjectTimelineRow | undefined {
+    if (
+      !this.mounted_abyssPrivate ||
+      !this.root_abyssPrivate.isConnected ||
+      this.root_abyssPrivate.hidden ||
+      this.context_abyssPrivate.state.get('projectsPanel').view !== 'table' ||
+      this.overviewMode_abyssPrivate !== 'timeline' ||
+      this.timelineView_abyssPrivate?.root.hidden === true
+    ) {
+      return undefined;
+    }
+    return this.timelineView_abyssPrivate?.visibleRow(occurrenceId);
+  }
+
+  private captureTimelineRangeSource_abyssPrivate(
+    occurrenceId: string,
+  ): ProjectTimelineRangeCapture {
+    const row = this.visibleTimelineRow_abyssPrivate(occurrenceId);
+    if (row === undefined) {
+      return { kind: 'rejected', reason: 'This project range is no longer visible.' };
+    }
+    if (row.range.kind === 'malformed') {
+      return { kind: 'rejected', reason: PROJECT_TIMELINE_INVALID_RANGE_REASON };
+    }
+    const start = timelineDateField(this.fields_abyssPrivate, 'start');
+    const end = timelineDateField(this.fields_abyssPrivate, 'end');
+    if (start === undefined || end === undefined || sameTimelineProperty(start, end)) {
+      return {
+        kind: 'rejected',
+        reason:
+          'Configure distinct available date properties for Start and End before Timeline editing.',
+      };
+    }
+    const ambiguous = ambiguousTimelineSource(row.project, [start, end]);
+    if (ambiguous !== undefined) {
+      return {
+        kind: 'rejected',
+        reason: `${ambiguous.label} has ambiguous source spelling. Repair the duplicate properties before Timeline editing.`,
+      };
+    }
+    const source: FrozenProjectTimelineRangeSource = {
+      occurrenceId,
+      path: row.project.path,
+      start: this.captureTimelineEndpoint_abyssPrivate(row.project, start),
+      end: this.captureTimelineEndpoint_abyssPrivate(row.project, end),
+      range: { ...row.range },
+    };
+    const eligibility = projectTimelineRawEditEligibility(
+      { exists: source.start.expectedExists, value: source.start.expectedValue },
+      { exists: source.end.expectedExists, value: source.end.expectedValue },
+    );
+    return eligibility.kind === 'eligible'
+      ? { kind: 'ready', source }
+      : { kind: 'rejected', reason: eligibility.reason };
+  }
+
+  private timelineChangesForPlan_abyssPrivate(
+    source: FrozenProjectTimelineRangeSource,
+    plan: Extract<ProjectTimelineEditPlan, { readonly kind: 'ready' }>,
+  ): readonly ProjectCellChange[] {
+    const endpoint = (
+      evidence: ProjectTimelineEndpointEvidence,
+      desiredDay: string | undefined,
+    ): {
+      readonly changed: boolean;
+      readonly change: ProjectCellChange;
+    } => {
+      const desiredExists = desiredDay === undefined ? evidence.expectedExists : true;
+      const desiredValue = desiredDay ?? copyProjectedValue(evidence.expectedValue);
+      const changed =
+        desiredExists !== evidence.expectedExists ||
+        !Object.is(desiredValue, evidence.expectedValue);
+      return {
+        changed,
+        change: {
+          path: source.path,
+          field: { ...evidence.field },
+          value: desiredValue,
+          expectedValue: copyProjectedValue(evidence.expectedValue),
+          expectedExists: evidence.expectedExists,
+          sourceProperty: evidence.sourceProperty,
+          sourceKey: evidence.sourceKey,
+        },
+      };
+    };
+    const start = endpoint(source.start, plan.startDay);
+    const end = endpoint(source.end, plan.endDay);
+    if (!start.changed && !end.changed) return [];
+    return [
+      start.changed
+        ? start.change
+        : {
+            ...start.change,
+            valueExists: source.start.expectedExists,
+            restoreSourceValue: true,
+          },
+      end.changed
+        ? end.change
+        : {
+            ...end.change,
+            valueExists: source.end.expectedExists,
+            restoreSourceValue: true,
+          },
+    ];
+  }
+
+  private commitTimelineRangeEdit_abyssPrivate(
+    request: ProjectTimelineRangeEditRequest,
+  ): Promise<ProjectEditResult> {
+    const interactionRevision = this.timelineInteractionRevision_abyssPrivate;
+    return this.runTableActionInOrder_abyssPrivate(async () => {
+      const finished = await this.finishEditorForTableAction_abyssPrivate();
+      if (!finished) {
+        throw new ProjectEditValidationError(
+          'The active project edit must finish before changing Timeline dates.',
+        );
+      }
+      return this.runTableSessionMutation(async () => {
+        if (interactionRevision !== this.timelineInteractionRevision_abyssPrivate) {
+          throw new ProjectEditValidationError('This project range is no longer visible.');
+        }
+        const capture = this.captureTimelineRangeSource_abyssPrivate(
+          request.kind === 'pointer' ? request.source.occurrenceId : request.target.occurrenceId,
+        );
+        if (capture.kind === 'rejected') throw new ProjectEditValidationError(capture.reason);
+        const current = capture.source;
+        if (
+          request.kind === 'pointer'
+            ? !sameProjectTimelineRangeSource(request.source, current)
+            : !sameProjectTimelineRangeBinding(request.target, current)
+        ) {
+          throw new ProjectEditValidationError(
+            'The project dates changed after this Timeline edit started. Reload and try again.',
+          );
+        }
+        const plan = planProjectTimelineEdit(
+          request.kind === 'pointer' ? request.source.range : current.range,
+          request.intent,
+        );
+        if (plan.kind === 'rejected') throw new ProjectEditValidationError(plan.reason);
+        const changes = this.timelineChangesForPlan_abyssPrivate(current, plan);
+        if (changes.length === 0) return { applied: [], failed: [] };
+        const result = await this.context_abyssPrivate.applyEdits(changes);
+        if (result.applied.length > 0) {
+          this.context_abyssPrivate.history.record(result);
+          this.publishAppliedReceipts(result.applied);
+        }
+        return result;
+      });
+    });
+  }
+
+  private reportTimelineRangeFailure_abyssPrivate(failure: unknown): void {
+    const label = 'Could not update project Timeline dates';
+    if (
+      typeof failure === 'object' &&
+      failure !== null &&
+      'failed' in failure &&
+      Array.isArray((failure as ProjectEditResult).failed)
+    ) {
+      const result = failure as ProjectEditResult;
+      if (result.failed.length === 0) return;
+      const first = result.failed[0];
+      const detail = first === undefined ? '' : `: ${first.message}`;
+      const message = `${result.applied.length} updated; ${result.failed.length} failed${detail}`;
+      this.feedback_abyssPrivate.setText(message);
+      console.error(`[abyss-tasks] ${label}`, { result });
+      new Notice(`${label}: ${message}`);
+      return;
+    }
+    const message = failure instanceof Error ? failure.message : String(failure);
+    this.feedback_abyssPrivate.setText(message);
+    if (typeof failure === 'string') return;
+    if (isProjectEditValidationError(failure)) return;
+    console.error(`[abyss-tasks] ${label}`, { cause: failure });
+    new Notice(`${label}: ${message}`);
+  }
+
   private boardTagsReliable_abyssPrivate(path: string, fieldId: string): boolean {
     const field = findProjectFieldById(this.fields_abyssPrivate, fieldId);
     const property = field?.property;
@@ -1449,6 +1972,33 @@ export class ProjectsTableView {
     readonly groupKey: string;
     readonly existing?: RenderedCellContext;
   }): RenderedCellContext {
+    return this.renderOverviewCell_abyssPrivate(options, 'kanban');
+  }
+
+  private renderTimelineCell_abyssPrivate(options: {
+    readonly host: HTMLElement;
+    readonly project: Project;
+    readonly field: ProjectFieldCatalogItem;
+    readonly column?: ProjectColumn;
+    readonly occurrenceId: string;
+    readonly groupKey: string;
+    readonly existing?: RenderedCellContext;
+  }): RenderedCellContext {
+    return this.renderOverviewCell_abyssPrivate(options, 'timeline');
+  }
+
+  private renderOverviewCell_abyssPrivate(
+    options: {
+      readonly host: HTMLElement;
+      readonly project: Project;
+      readonly field: ProjectFieldCatalogItem;
+      readonly column?: ProjectColumn | undefined;
+      readonly occurrenceId: string;
+      readonly groupKey: string;
+      readonly existing?: RenderedCellContext;
+    },
+    presentation: 'kanban' | 'timeline',
+  ): RenderedCellContext {
     const { field, ownedClear } = this.effectiveField_abyssPrivate(options.project, options.field);
     const rendered = options.existing ?? {
       identity: {
@@ -1472,12 +2022,15 @@ export class ProjectsTableView {
     rendered.project = options.project;
     rendered.field = field;
     rendered.ownedClear = ownedClear;
-    this.assignKanbanCellViewport_abyssPrivate(rendered, options.host);
-    options.host.addClass('abyss-project-table-cell', 'abyss-project-kanban-cell');
+    this.assignOverviewCellViewport_abyssPrivate(rendered, options.host, presentation);
+    options.host.addClass('abyss-project-table-cell', `abyss-project-${presentation}-cell`);
     options.host.tabIndex = 0;
     options.host.dataset['columnId'] = field.id;
     options.host.setAttribute('aria-label', `${field.label} for ${options.project.name}`);
     options.host.toggleClass('is-editable', editableField(field));
+    const descriptionLines = overviewDescriptionLines(presentation, field, () =>
+      this.ensureTimelineSettings_abyssPrivate(),
+    );
     const signature = JSON.stringify({
       field,
       value: projectFieldValue(options.project, field),
@@ -1487,6 +2040,9 @@ export class ProjectsTableView {
       definition: this.projectPropertyDefinition_abyssPrivate(field.id),
       column: options.column,
       ownedClear,
+      presentation,
+      display: this.projectCellPresentation_abyssPrivate(options.column, presentation),
+      descriptionLines,
     });
     if (options.existing === undefined) this.decorateProjectCell_abyssPrivate(rendered);
     if (signature !== rendered.contentSignature) {
@@ -1498,11 +2054,37 @@ export class ProjectsTableView {
           : options.host;
       this.renderProjectCellContent_abyssPrivate(content, rendered, {
         ...(options.column === undefined ? {} : { preferredColumn: options.column }),
-        showNameDescription: false,
-        presentation: 'kanban',
+        showNameDescription: showOverviewNameDescription(presentation, descriptionLines),
+        presentation,
       });
     }
     return rendered;
+  }
+
+  private assignOverviewCellViewport_abyssPrivate(
+    rendered: RenderedCellContext,
+    host: HTMLElement,
+    presentation: 'kanban' | 'timeline',
+  ): void {
+    if (presentation === 'kanban') {
+      this.assignKanbanCellViewport_abyssPrivate(rendered, host);
+      return;
+    }
+    const scroll = this.timelineView_abyssPrivate?.scroll;
+    if (scroll === undefined) {
+      delete rendered.editorBoundary;
+      delete rendered.horizontalScroll;
+      delete rendered.verticalScroll;
+    } else {
+      rendered.editorBoundary = scroll;
+      rendered.horizontalScroll = scroll;
+      rendered.verticalScroll = scroll;
+    }
+    const stickyHeader = this.timelineView_abyssPrivate?.root.querySelector<HTMLElement>(
+      '.abyss-project-timeline-axis',
+    );
+    if (stickyHeader === null || stickyHeader === undefined) delete rendered.stickyHeader;
+    else rendered.stickyHeader = stickyHeader;
   }
 
   private assignKanbanCellViewport_abyssPrivate(
@@ -1823,13 +2405,14 @@ export class ProjectsTableView {
   private renderGroupContent_abyssPrivate(
     marker: HTMLElement,
     host: HTMLElement,
-    group: Pick<ProjectTableGroup, 'label' | 'value' | 'sourcePath' | 'presentation'>,
+    group: Pick<ProjectTableGroup, 'key' | 'label' | 'value' | 'sourcePath' | 'presentation'>,
     color: string | undefined,
   ): void {
-    marker.hidden = color === undefined && group.presentation?.display !== 'dot';
-    marker.style.background = color ?? '';
+    const resolvedColor = this.groupColor_abyssPrivate(group.key, color);
+    marker.hidden = resolvedColor === undefined && group.presentation?.display !== 'dot';
+    marker.style.background = resolvedColor ?? '';
     host.empty();
-    host.style.color = group.presentation?.display === 'text' ? (color ?? '') : '';
+    host.style.color = group.presentation?.display === 'text' ? (resolvedColor ?? '') : '';
     const { value, sourcePath, label } = group;
     if (typeof value !== 'string' || sourcePath === undefined || parseLinks(value).length === 0) {
       host.setText(label);
@@ -1842,6 +2425,13 @@ export class ProjectsTableView {
       beforeOpenLink: () => this.requestFinishActiveEditor(),
       exactLinkLabel: exactGroupLinkLabel(value, label),
     });
+  }
+
+  private groupColor_abyssPrivate(key: string, fallback: string | undefined): string | undefined {
+    return (
+      this.context_abyssPrivate.settings.projects.statuses.find(({ id }) => key === `id:${id}`)
+        ?.color ?? fallback
+    );
   }
 
   private bindGroupRow_abyssPrivate(rendered: RenderedGroupRow): void {
@@ -2247,7 +2837,8 @@ export class ProjectsTableView {
     rendered: RenderedCellContext,
     options: RenderProjectCellContentOptions,
   ): void {
-    const { preferredColumn, showNameDescription = true, presentation = 'table' } = options;
+    const { preferredColumn, showNameDescription, presentation = 'table' } = options;
+    const includeNameDescription = showNameDescription ?? true;
     const descriptionField = findProjectFieldById(this.fields_abyssPrivate, 'description');
     const effectiveDescription =
       descriptionField === undefined
@@ -2288,12 +2879,15 @@ export class ProjectsTableView {
       locale: moment.locale(),
       ...(rendered.field.type !== 'name' ||
       effectiveDescription === undefined ||
-      !showNameDescription
+      !includeNameDescription
         ? {}
         : {
             description: {
               field: effectiveDescription.field,
-              show: this.context_abyssPrivate.settings.projects.table.showDescription,
+              show:
+                showNameDescription === true ||
+                this.context_abyssPrivate.settings.projects.table.showDescription,
+              preserveNewlines: presentation === 'timeline',
             },
           }),
     });
@@ -2304,6 +2898,13 @@ export class ProjectsTableView {
     presentation: ProjectOverviewMode,
   ): ProjectCellPresentation {
     if (presentation === 'kanban') return { dateDisplay: column?.dateDisplay ?? 'pretty' };
+    if (presentation === 'timeline') {
+      const progress = this.ensureTimelineSettings_abyssPrivate().progress;
+      return {
+        dateDisplay: column?.dateDisplay ?? 'pretty',
+        ...(progress === 'hidden' ? {} : { progressDisplay: progress }),
+      };
+    }
     const table = this.context_abyssPrivate.settings.projects.table;
     return {
       dateDisplay: effectiveProjectTableDateDisplay(table, column),
@@ -2385,13 +2986,21 @@ export class ProjectsTableView {
     rendered: RenderedCellContext,
     event: MouseEvent | KeyboardEvent,
   ): boolean {
+    if (rendered.field.type !== 'name') return false;
+    const menu = new Menu();
+    const descriptionAdded = this.addDescriptionMenuItem_abyssPrivate(menu, rendered);
+    if (!descriptionAdded) return false;
+    this.showCellMenu_abyssPrivate(menu, rendered, event);
+    return true;
+  }
+
+  private addDescriptionMenuItem_abyssPrivate(menu: Menu, rendered: RenderedCellContext): boolean {
     const description = findProjectFieldById(this.fields_abyssPrivate, 'description');
-    if (rendered.field.type !== 'name' || description === undefined) return false;
+    if (description === undefined) return false;
     const effective = this.effectiveField_abyssPrivate(rendered.project, description);
     if (!editableField(effective.field)) return false;
     const value = projectFieldValue(rendered.project, effective.field);
     const hasDescription = typeof value === 'string' && value.length > 0;
-    const menu = new Menu();
     menu.addItem((item) => {
       item
         .setTitle(hasDescription ? 'Edit description' : 'Add description')
@@ -2400,6 +3009,14 @@ export class ProjectsTableView {
           this.editDescription_abyssPrivate(rendered, effective.field, effective.ownedClear);
         });
     });
+    return true;
+  }
+
+  private showCellMenu_abyssPrivate(
+    menu: Menu,
+    rendered: RenderedCellContext,
+    event: MouseEvent | KeyboardEvent,
+  ): void {
     this.nativeMenuOpen_abyssPrivate = true;
     this.syncSelection_abyssPrivate();
     menu.onHide(() => {
@@ -2419,7 +3036,6 @@ export class ProjectsTableView {
       const bounds = rendered.element.getBoundingClientRect();
       menu.showAtPosition({ x: bounds.left + 8, y: bounds.bottom }, rendered.element.ownerDocument);
     }
-    return true;
   }
 
   private requestToggleCheckbox_abyssPrivate(
@@ -2572,11 +3188,7 @@ export class ProjectsTableView {
         .map(({ occurrenceId, columnId }) => `${occurrenceId}\u0000${columnId}`),
     );
     const focus = this.selection_abyssPrivate.focus;
-    if (this.overviewMode_abyssPrivate === 'kanban') {
-      const selectedProject =
-        focus === undefined ? undefined : this.renderedCell_abyssPrivate(focus)?.project.path;
-      this.kanbanView_abyssPrivate?.syncSelectedProjectPath(selectedProject);
-    }
+    this.syncOverviewSelectedProject_abyssPrivate(focus);
     const active = this.tableHost_abyssPrivate.ownerDocument.activeElement;
     for (const cell of this.renderedCells_abyssPrivate) {
       const key = `${cell.identity.occurrenceId}\u0000${cell.identity.columnId}`;
@@ -2589,6 +3201,19 @@ export class ProjectsTableView {
           !this.nativeMenuOpen_abyssPrivate,
       );
       cell.element.setAttribute('aria-selected', String(selected.has(key)));
+    }
+  }
+
+  private syncOverviewSelectedProject_abyssPrivate(
+    focus: ProjectTableSelectableCell | undefined,
+  ): void {
+    if (this.overviewMode_abyssPrivate === 'table') return;
+    const path =
+      focus === undefined ? undefined : this.renderedCell_abyssPrivate(focus)?.project.path;
+    if (this.overviewMode_abyssPrivate === 'kanban') {
+      this.kanbanView_abyssPrivate?.syncSelectedProjectPath(path);
+    } else {
+      this.timelineView_abyssPrivate?.syncSelectedProjectPath(path);
     }
   }
 
@@ -3078,7 +3703,7 @@ export class ProjectsTableView {
     mutation: () => Promise<ProjectEditResult>,
   ): void {
     this.feedback_abyssPrivate.empty();
-    void this.runTableSessionMutation(mutation).then(
+    void this.runTableActionInOrder_abyssPrivate(() => this.runTableSessionMutation(mutation)).then(
       (result) => {
         if (result.failed.length === 0) return;
         const first = result.failed[0];
@@ -3676,9 +4301,12 @@ export class ProjectsTableView {
           this.clearEditorAnchor_abyssPrivate(anchor, cell);
           this.activeEditor_abyssPrivate = undefined;
           this.renderTable_abyssPrivate();
+          const preserveActionFocus = this.takeSubmittedActionFocus_abyssPrivate(
+            closeContext.navigation,
+          );
           const pendingAction = this.pendingAction_abyssPrivate !== undefined;
           this.runPendingAction_abyssPrivate();
-          if (!pendingAction && !destination.preservesExternalFocus) {
+          if (!pendingAction && !preserveActionFocus && !destination.preservesExternalFocus) {
             this.finishEditorNavigation_abyssPrivate(
               edited,
               closeContext.navigation,
