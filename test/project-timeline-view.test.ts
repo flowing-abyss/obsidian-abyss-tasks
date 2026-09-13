@@ -47,6 +47,7 @@ afterEach(() => {
   mounted.clear();
   activeDocument.body.empty();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 function mount(
@@ -407,22 +408,147 @@ describe('ProjectsTimelineView', () => {
     expect(openRangeMenu).toHaveBeenCalledOnce();
   });
 
-  it('aligns a bounded row grid to the axis tick intervals', () => {
+  it('aligns a bounded row grid to the visible calendar boundaries', () => {
     const { host } = mount([project('Projects/A.md', '2026-09-01', '2026-09-03')]);
-    const ticks = Array.from(
+    const cells = Array.from(
       host.querySelectorAll<HTMLElement>(
-        '.abyss-project-timeline-axis .abyss-project-timeline-tick',
+        '.abyss-project-timeline-axis .abyss-project-timeline-axis-cell',
       ),
+    );
+    const firstGrid = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline-track .abyss-project-timeline-grid'),
     );
     const lines = Array.from(
-      host.querySelectorAll<HTMLElement>(
-        '.abyss-project-timeline-track .abyss-project-timeline-gridline',
-      ),
+      firstGrid.querySelectorAll<HTMLElement>('.abyss-project-timeline-gridline'),
     );
 
-    expect(lines).toHaveLength(ticks.length);
-    expect(lines.length).toBeLessThanOrEqual(15);
-    expect(lines.map(({ style }) => style.left)).toEqual(ticks.map(({ style }) => style.left));
+    expect(cells.length).toBeGreaterThan(0);
+    expect(lines.length).toBeLessThanOrEqual(80);
+    expect(lines.map(({ dataset }) => dataset['day'])).toContain(cells[0]?.dataset['startDay']);
+    expect(lines.every(({ style }) => Number.isFinite(Number.parseFloat(style.left)))).toBe(true);
+  });
+
+  it('patches only visible axis and grid cells while a long Day range scrolls', async () => {
+    vi.useFakeTimers();
+    const projects = [
+      project('Projects/Early.md', '2024-01-01', '2024-01-02'),
+      project('Projects/Late.md', '2024-12-30', '2024-12-31'),
+    ];
+    const { host, view } = mount(projects, new Date(2024, 1, 29), 'month');
+    const dayButton = expectDefined(
+      Array.from(
+        host.querySelectorAll<HTMLButtonElement>('.abyss-project-timeline-scale-control button'),
+      ).find(({ textContent }) => textContent === 'Day'),
+    );
+    dayButton.click();
+    await Promise.resolve();
+    const bar = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/Early.md"] .abyss-project-timeline-bar',
+      ),
+    );
+    const trackWidth = 366 * 32;
+    mockTimelineGeometry(host, view, {
+      summaryWidth: 210,
+      trackWidth,
+      viewportWidth: 610,
+    });
+    const firstBefore = host.querySelector<HTMLElement>(
+      '.abyss-project-timeline-axis-cell[data-start-day]',
+    )?.dataset['startDay'];
+
+    view.scroll.scrollLeft = 180 * 32;
+    view.scroll.dispatchEvent(new Event('scroll'));
+    await vi.runAllTimersAsync();
+
+    const visibleCells = Array.from(
+      host.querySelectorAll<HTMLElement>('.abyss-project-timeline-axis-cell'),
+    );
+    expect(visibleCells[0]?.dataset['startDay']).not.toBe(firstBefore);
+    expect(visibleCells.length).toBeLessThanOrEqual(16);
+    expect(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/Early.md"] .abyss-project-timeline-bar',
+      ),
+    ).toBe(bar);
+    expect(
+      Math.max(
+        ...Array.from(
+          host.querySelectorAll<HTMLElement>('.abyss-project-timeline-grid'),
+          (grid) => grid.querySelectorAll('.abyss-project-timeline-gridline').length,
+        ),
+      ),
+    ).toBeLessThanOrEqual(20);
+  });
+
+  it('uses distinct physical density for Day and Week scales', () => {
+    const day = mount([project('Projects/Day.md')], new Date(2026, 8, 13), 'day');
+    const week = mount([project('Projects/Week.md')], new Date(2026, 8, 13), 'week');
+    const dayDates = expectDefined(
+      day.host.querySelector<HTMLElement>('.abyss-project-timeline-axis-dates'),
+    );
+    const weekDates = expectDefined(
+      week.host.querySelector<HTMLElement>('.abyss-project-timeline-axis-dates'),
+    );
+
+    expect(Number(dayDates.dataset['trackWidth'])).toBe(14 * 32);
+    expect(Number(weekDates.dataset['trackWidth'])).toBe(84 * 12);
+  });
+
+  it('reveals the fitted beginning after a direct scale activation', async () => {
+    const projects = [
+      project('Projects/Early.md', '2024-01-01', '2024-01-02'),
+      project('Projects/Late.md', '2024-12-30', '2024-12-31'),
+    ];
+    const { host, view } = mount(projects, new Date(2024, 1, 29), 'month');
+    mockTimelineGeometry(host, view, {
+      summaryWidth: 210,
+      trackWidth: 366 * 32,
+      viewportWidth: 610,
+    });
+    view.scroll.scrollLeft = 800;
+    const dayButton = expectDefined(
+      Array.from(
+        host.querySelectorAll<HTMLButtonElement>('.abyss-project-timeline-scale-control button'),
+      ).find(({ textContent }) => textContent === 'Day'),
+    );
+
+    dayButton.click();
+    await Promise.resolve();
+
+    expect(view.scroll.scrollLeft).toBe(0);
+    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+      '2024-01-01 – 2024-12-31',
+    );
+  });
+
+  it('highlights the visible current-date label alongside the Today line', () => {
+    const { host } = mount(
+      [project('Projects/A.md', '2024-02-28', '2024-03-01')],
+      new Date(2024, 1, 29),
+      'day',
+    );
+
+    const todayCell = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-timeline-axis-cell.is-today[data-start-day="2024-02-29"]',
+      ),
+    );
+    expect(
+      Array.from(todayCell.children, ({ className, textContent }) => ({
+        className,
+        text: textContent,
+      })),
+    ).toEqual([
+      { className: 'abyss-project-timeline-axis-label', text: 'Thu' },
+      { className: 'abyss-project-timeline-axis-secondary-label', text: '29' },
+    ]);
+    expect(todayCell.classList).toContain('is-day');
+    expect(
+      host
+        .querySelector<HTMLElement>('.abyss-project-timeline-axis .abyss-project-timeline-today')
+        ?.getAttribute('aria-label'),
+    ).toBe('Today, 2024-02-29');
   });
 
   it('reserves a usable body move target between both minimum-width handles', async () => {
@@ -490,7 +616,9 @@ describe('ProjectsTimelineView', () => {
       ),
     );
     expect(bar.hidden).toBe(false);
-    expect(host.querySelectorAll('.abyss-project-timeline-tick').length).toBeLessThanOrEqual(15);
+    expect(host.querySelectorAll('.abyss-project-timeline-axis-cell').length).toBeLessThanOrEqual(
+      15,
+    );
   });
 
   it('offers all five direct scales and refits the active scale after Today', () => {

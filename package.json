@@ -49,8 +49,8 @@
     ]
   },
   "release": {
-    "mainJsBudgetBytes": 1005568,
-    "stylesCssBudgetBytes": 169984
+    "mainJsBudgetBytes": 1010688,
+    "stylesCssBudgetBytes": 171008
   },
   "keywords": [
     "obsidian",

@@ -10,11 +10,16 @@ import {
 } from '../../projects/projectFields';
 import type { ProjectTableGroup } from '../../projects/projectTableModel';
 import {
+  projectTimelineAxisLayout,
+  projectTimelineTrackWidth,
+  type ProjectTimelineAxisCell,
+  type ProjectTimelineAxisLayout,
+} from '../../projects/projectTimelineAxis';
+import {
   buildProjectTimelineModel,
   projectTimelineBarGeometry,
   projectTimelineFitWindow,
   projectTimelineWindow,
-  projectTimelineWindowForRange,
   type ProjectTimelineBarGeometry,
   type ProjectTimelineGroup,
   type ProjectTimelineModel,
@@ -252,13 +257,11 @@ function calendarWindowYears(scale: ProjectTimelineSettings['scale']): number {
   return 5;
 }
 
-function finerGridScale(
-  scale: ProjectTimelineSettings['scale'],
-): ProjectTimelineSettings['scale'] | undefined {
-  if (scale === 'year') return 'quarter';
-  if (scale === 'quarter') return 'month';
-  if (scale === 'month') return 'week';
-  return scale === 'week' ? 'day' : undefined;
+function fallbackAxisDayCount(scale: ProjectTimelineSettings['scale']): number {
+  if (scale === 'day') return 31;
+  if (scale === 'week') return 140;
+  if (scale === 'month') return 732;
+  return scale === 'quarter' ? 2_922 : 11_688;
 }
 
 function reconcileOrder(parent: HTMLElement, desired: readonly HTMLElement[]): void {
@@ -275,6 +278,10 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   readonly root: HTMLElement;
   readonly scroll: HTMLElement;
   private readonly axis_abyssPrivate: HTMLElement;
+  private readonly axisSummary_abyssPrivate: HTMLElement;
+  private readonly axisDates_abyssPrivate: HTMLElement;
+  private readonly axisHierarchy_abyssPrivate: HTMLElement;
+  private readonly axisCells_abyssPrivate: HTMLElement;
   private readonly groupsHost_abyssPrivate: HTMLElement;
   private readonly groups_abyssPrivate = new Map<string, RenderedGroup<TCell>>();
   private readonly collapsedGroups_abyssPrivate = new Set<string>();
@@ -294,6 +301,13 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     HTMLButtonElement
   >();
   private readonly interaction_abyssPrivate: ProjectTimelinePointerInteraction;
+  private readonly resizeObserver_abyssPrivate: ResizeObserver | undefined;
+  private axisFrame_abyssPrivate: number | undefined;
+  private axisLayout_abyssPrivate: ProjectTimelineAxisLayout = {
+    cells: [],
+    hierarchyCells: [],
+    gridBoundaries: [],
+  };
 
   constructor(
     host: HTMLElement,
@@ -340,9 +354,25 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       attr: { tabindex: '0', 'aria-label': 'Project Timeline' },
     });
     this.axis_abyssPrivate = this.scroll.createDiv({ cls: 'abyss-project-timeline-axis' });
+    this.axisSummary_abyssPrivate = this.axis_abyssPrivate.createDiv({
+      cls: 'abyss-project-timeline-axis-summary',
+    });
+    this.axisDates_abyssPrivate = this.axis_abyssPrivate.createDiv({
+      cls: 'abyss-project-timeline-axis-dates',
+    });
+    this.axisHierarchy_abyssPrivate = this.axisDates_abyssPrivate.createDiv({
+      cls: 'abyss-project-timeline-axis-hierarchy',
+      attr: { 'aria-hidden': 'true' },
+    });
+    this.axisCells_abyssPrivate = this.axisDates_abyssPrivate.createDiv({
+      cls: 'abyss-project-timeline-axis-cells',
+      attr: { 'aria-hidden': 'true' },
+    });
     this.groupsHost_abyssPrivate = this.scroll.createDiv({ cls: 'abyss-project-timeline-groups' });
-    this.scroll.addEventListener('scroll', this.syncRangeStateOffset_abyssPrivate);
+    this.scroll.addEventListener('scroll', this.handleScroll_abyssPrivate);
     this.syncRangeStateOffset_abyssPrivate();
+    this.resizeObserver_abyssPrivate = this.createResizeObserver_abyssPrivate();
+    this.resizeObserver_abyssPrivate?.observe(this.scroll);
     this.interaction_abyssPrivate = new ProjectTimelinePointerInteraction({
       root: this.root,
       scroll: this.scroll,
@@ -371,7 +401,13 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
 
   destroy(): void {
     this.interaction_abyssPrivate.destroy();
-    this.scroll.removeEventListener('scroll', this.syncRangeStateOffset_abyssPrivate);
+    this.scroll.removeEventListener('scroll', this.handleScroll_abyssPrivate);
+    this.resizeObserver_abyssPrivate?.disconnect();
+    const ownerWindow = this.root.ownerDocument.defaultView;
+    if (this.axisFrame_abyssPrivate !== undefined && ownerWindow !== null) {
+      ownerWindow.cancelAnimationFrame(this.axisFrame_abyssPrivate);
+    }
+    this.axisFrame_abyssPrivate = undefined;
     this.groups_abyssPrivate.clear();
     this.visibleCells_abyssPrivate = [];
     this.root.remove();
@@ -612,17 +648,17 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
         );
         this.scaleContextOrdinal_abyssPrivate = dayOrdinal(localDay(this.anchor_abyssPrivate));
       } else {
-        this.scaleContextOrdinal_abyssPrivate =
-          dayOrdinal(this.fittedWindow_abyssPrivate.startDay) +
-          Math.floor((this.fittedWindow_abyssPrivate.dayCount - 1) / 2);
+        this.scaleContextOrdinal_abyssPrivate = dayOrdinal(this.fittedWindow_abyssPrivate.startDay);
       }
     }
     const window = this.currentWindow_abyssPrivate();
-    this.renderAxis_abyssPrivate(window);
+    this.syncTrackWidth_abyssPrivate(window);
+    this.patchAxis_abyssPrivate(window);
     this.reconcileGroups_abyssPrivate(model.groups, window);
     this.interaction_abyssPrivate.reconcileAfterRender();
     this.syncSelectedRows_abyssPrivate();
     this.restoreScroll_abyssPrivate(navigation, window, left, top);
+    this.patchVisibleCalendar_abyssPrivate(window);
     this.restoreFocus_abyssPrivate(focused, focusedRange);
   }
 
@@ -645,6 +681,33 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       this.scroll.scrollTop = top;
     }
     this.syncRangeStateOffset_abyssPrivate();
+  }
+
+  private readonly handleScroll_abyssPrivate = (): void => {
+    this.syncRangeStateOffset_abyssPrivate();
+    this.scheduleAxisPatch_abyssPrivate();
+  };
+
+  private readonly scheduleAxisPatch_abyssPrivate = (): void => {
+    if (this.axisFrame_abyssPrivate !== undefined) return;
+    const ownerWindow = this.root.ownerDocument.defaultView;
+    if (ownerWindow === null || typeof ownerWindow.requestAnimationFrame !== 'function') {
+      this.patchVisibleCalendar_abyssPrivate(this.currentWindow_abyssPrivate());
+      return;
+    }
+    this.axisFrame_abyssPrivate = ownerWindow.requestAnimationFrame(() => {
+      this.axisFrame_abyssPrivate = undefined;
+      const window = this.currentWindow_abyssPrivate();
+      this.syncTrackWidth_abyssPrivate(window);
+      this.patchVisibleCalendar_abyssPrivate(window);
+    });
+  };
+
+  private createResizeObserver_abyssPrivate(): ResizeObserver | undefined {
+    const ResizeObserverClass = this.root.ownerDocument.defaultView?.ResizeObserver;
+    return ResizeObserverClass === undefined
+      ? undefined
+      : new ResizeObserverClass(this.scheduleAxisPatch_abyssPrivate);
   }
 
   private readonly syncRangeStateOffset_abyssPrivate = (): void => {
@@ -675,21 +738,113 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     replacement.focus({ preventScroll: true });
   }
 
-  private renderAxis_abyssPrivate(window: ProjectTimelineWindow): void {
-    this.axis_abyssPrivate.empty();
-    const summary = this.axis_abyssPrivate.createDiv({
-      cls: 'abyss-project-timeline-axis-summary',
-    });
-    summary.setText(`${window.startDay} – ${window.endDay}`);
-    const dates = this.axis_abyssPrivate.createDiv({ cls: 'abyss-project-timeline-axis-dates' });
-    for (const tick of window.ticks) {
-      const element = dates.createSpan({
-        cls: 'abyss-project-timeline-tick',
-        text: tick.label,
-      });
-      element.style.left = `${((dayOrdinal(tick.day) - dayOrdinal(window.startDay)) / window.dayCount) * 100}%`;
+  private syncTrackWidth_abyssPrivate(window: ProjectTimelineWindow): void {
+    const summaryWidth = this.axisSummary_abyssPrivate.getBoundingClientRect().width;
+    const viewportWidth = Math.max(0, this.scroll.clientWidth - summaryWidth);
+    const trackWidth = projectTimelineTrackWidth(window, viewportWidth);
+    this.root.style.setProperty('--abyss-project-timeline-track-width', `${String(trackWidth)}px`);
+    this.axisDates_abyssPrivate.dataset['trackWidth'] = String(trackWidth);
+  }
+
+  private visibleAxisSlice_abyssPrivate(window: ProjectTimelineWindow): {
+    readonly visibleStartDay: string;
+    readonly visibleEndDay: string;
+  } {
+    const geometry = this.axisGeometry_abyssPrivate();
+    const first = dayOrdinal(window.startDay);
+    const last = dayOrdinal(window.endDay);
+    if (geometry === undefined) {
+      return {
+        visibleStartDay: window.startDay,
+        visibleEndDay: dayFromOrdinal(
+          Math.min(last, first + fallbackAxisDayCount(window.scale) - 1),
+        ),
+      };
     }
-    this.addTodayMarker_abyssPrivate(dates, window);
+    const visibleLeft = clamp(
+      this.scroll.scrollLeft + geometry.summaryWidth - geometry.trackStart,
+      0,
+      geometry.trackWidth,
+    );
+    const visibleRight = clamp(
+      this.scroll.scrollLeft + geometry.viewportWidth - geometry.trackStart,
+      visibleLeft,
+      geometry.trackWidth,
+    );
+    const startOffset = Math.min(
+      window.dayCount - 1,
+      Math.floor((visibleLeft / geometry.trackWidth) * window.dayCount),
+    );
+    const endOffset = Math.min(
+      window.dayCount - 1,
+      Math.max(startOffset, Math.ceil((visibleRight / geometry.trackWidth) * window.dayCount) - 1),
+    );
+    return {
+      visibleStartDay: dayFromOrdinal(first + startOffset),
+      visibleEndDay: dayFromOrdinal(first + endOffset),
+    };
+  }
+
+  private patchAxis_abyssPrivate(window: ProjectTimelineWindow): void {
+    const today = localDay((this.context_abyssPrivate.now ?? (() => new Date()))());
+    this.axisLayout_abyssPrivate = projectTimelineAxisLayout(window, {
+      ...this.visibleAxisSlice_abyssPrivate(window),
+      overscanCells: 1,
+      todayDay: today,
+    });
+    this.axisSummary_abyssPrivate.setText(`${window.startDay} – ${window.endDay}`);
+    this.patchAxisCells_abyssPrivate(
+      this.axisHierarchy_abyssPrivate,
+      this.axisLayout_abyssPrivate.hierarchyCells,
+      'abyss-project-timeline-axis-hierarchy-cell',
+    );
+    this.patchAxisCells_abyssPrivate(
+      this.axisCells_abyssPrivate,
+      this.axisLayout_abyssPrivate.cells,
+      `abyss-project-timeline-axis-cell${window.scale === 'day' ? ' is-day' : ''}`,
+    );
+    this.axisDates_abyssPrivate.toggleClass(
+      'is-single-tier',
+      this.axisLayout_abyssPrivate.hierarchyCells.length === 0,
+    );
+    for (const marker of this.axisDates_abyssPrivate.querySelectorAll(
+      ':scope > .abyss-project-timeline-today',
+    )) {
+      marker.remove();
+    }
+    this.addTodayMarker_abyssPrivate(this.axisDates_abyssPrivate, window);
+  }
+
+  private patchAxisCells_abyssPrivate(
+    host: HTMLElement,
+    cells: readonly ProjectTimelineAxisCell[],
+    className: string,
+  ): void {
+    host.empty();
+    for (const cell of cells) {
+      const element = host.createSpan({ cls: className });
+      element.dataset['startDay'] = cell.startDay;
+      element.dataset['endDay'] = cell.endDay;
+      element.style.left = `${String(cell.leftPercent)}%`;
+      element.style.width = `${String(cell.rightPercent - cell.leftPercent)}%`;
+      element.toggleClass('is-today', cell.isToday);
+      element.createSpan({ cls: 'abyss-project-timeline-axis-label', text: cell.label });
+      if (cell.secondaryLabel !== undefined) {
+        element.createSpan({
+          cls: 'abyss-project-timeline-axis-secondary-label',
+          text: cell.secondaryLabel,
+        });
+      }
+    }
+  }
+
+  private patchVisibleCalendar_abyssPrivate(window: ProjectTimelineWindow): void {
+    this.patchAxis_abyssPrivate(window);
+    for (const group of this.groups_abyssPrivate.values()) {
+      for (const row of group.rows.values()) {
+        this.patchGrid_abyssPrivate(row.grid);
+      }
+    }
   }
 
   private addTodayMarker_abyssPrivate(host: HTMLElement, window: ProjectTimelineWindow): void {
@@ -1056,7 +1211,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       marker.remove();
     }
     this.addTodayMarker_abyssPrivate(row.track, window);
-    this.patchGrid_abyssPrivate(row.grid, window);
+    this.patchGrid_abyssPrivate(row.grid);
     this.patchRangeEditability_abyssPrivate(row);
     const geometry = projectTimelineBarGeometry(range, window);
     if (geometry === undefined) {
@@ -1110,21 +1265,18 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     );
   }
 
-  private patchGrid_abyssPrivate(grid: HTMLElement, window: ProjectTimelineWindow): void {
-    const finerScale = window.ticks.length < 2 ? finerGridScale(window.scale) : undefined;
-    const ticks =
-      finerScale === undefined
-        ? window.ticks
-        : projectTimelineWindowForRange(window.startDay, window.endDay, finerScale).ticks;
-    while (grid.children.length > ticks.length) grid.lastElementChild?.remove();
-    while (grid.children.length < ticks.length) {
+  private patchGrid_abyssPrivate(grid: HTMLElement): void {
+    const boundaries = this.axisLayout_abyssPrivate.gridBoundaries;
+    while (grid.children.length > boundaries.length) grid.lastElementChild?.remove();
+    while (grid.children.length < boundaries.length) {
       grid.createSpan({ cls: 'abyss-project-timeline-gridline' });
     }
-    const first = dayOrdinal(window.startDay);
-    for (const [index, tick] of ticks.entries()) {
+    for (const [index, boundary] of boundaries.entries()) {
       const line = grid.children.item(index);
       if (!(line instanceof HTMLElement)) continue;
-      line.style.left = `${((dayOrdinal(tick.day) - first) / window.dayCount) * 100}%`;
+      line.dataset['day'] = boundary.day;
+      line.className = `abyss-project-timeline-gridline is-${boundary.weight}`;
+      line.style.left = `${String(boundary.leftPercent)}%`;
     }
   }
 

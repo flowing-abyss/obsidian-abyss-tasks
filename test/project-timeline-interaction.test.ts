@@ -68,7 +68,6 @@ const defaultWindow: ProjectTimelineWindow = {
   endDay: '2026-09-10',
   dayCount: 10,
   scale: 'day',
-  ticks: [],
 };
 
 function mount(
@@ -285,7 +284,6 @@ describe('ProjectTimelinePointerInteraction', () => {
       endDay: '2026-12-31',
       dayCount: 365,
       scale: 'year',
-      ticks: [],
     });
     const endHandle = mounted.bar.querySelector<HTMLElement>('[data-timeline-part="end"]');
     mounted.bar.className = 'abyss-project-timeline-bar is-open-end is-one-date';
@@ -418,7 +416,6 @@ describe('ProjectTimelinePointerInteraction', () => {
         endDay: '2026-09-10',
         dayCount: 10,
         scale: 'day',
-        ticks: [],
       }),
       captureRangeSource: () => ({ kind: 'ready', source: source() }),
       commitRangeEdit: mounted.commitRangeEdit,

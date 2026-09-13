@@ -229,8 +229,11 @@ current Table organization only when requested; older saved Timeline state resol
 and End as its field set without eagerly rewriting storage. `projectTimelineModel` reuses the
 DOM-free table projection for search, typed sorting, grouping, and status visibility, then
 classifies strict start and end values as closed, open, unscheduled, or malformed calendar ranges.
-Its day, week, month, quarter, and year windows use inclusive day geometry and bounded,
-scale-specific axis ticks independent from Obsidian presentation code.
+Its day, week, month, quarter, and year windows use inclusive day geometry. `projectTimelineAxis`
+converts those windows into scale-density track widths, viewport-bounded calendar and hierarchy
+cells, and major or minor ordinal grid boundaries without importing Obsidian presentation code.
+Physical width is capped below browser layout limits for pathological spans while the logical
+percentage coordinate system remains based on the complete inclusive window.
 
 `projectTimelineEdits` owns pure, bounded calendar-day planning for range moves, endpoint
 resizing, missing-endpoint creation, and range drawing. `projectTimelineInteraction` owns native
@@ -241,8 +244,9 @@ projection renders an authoritative range. Ordinary renders reapply only a previ
 source is still current; rejection, source replacement, hiding, destruction, and superseding
 gestures clear it, while an older settlement cannot alter a newer preview.
 `ProjectsTimelineView` retains keyed tracks, bars, endpoint handles, cursor, and tooltip nodes so
-focus and preview ownership survive ordinary receipt refreshes. Tick-bounded row grid lines reuse
-the axis interval positions. Both edge targets remain reachable for open and compact scheduled
+focus and preview ownership survive ordinary receipt refreshes. Its native scroll and resize paths
+patch only the visible axis slice and matching row-grid boundaries through a disposable animation
+frame, leaving retained range nodes and focus intact. Both edge targets remain reachable for open and compact scheduled
 ranges; bounded minimum-width presentation and handle geometry do not change the calendar-day
 coordinate system. Range controls use labelled and described screen-reader text while the custom
 date bubble remains the pointer hint. The focusable track and bar share one range keyboard and

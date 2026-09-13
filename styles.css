@@ -8553,16 +8553,18 @@ table.abyss-project-table {
 .abyss-project-timeline-axis,
 .abyss-project-timeline-row {
   display: grid;
-  width: 100%;
-  min-width: 940px;
-  grid-template-columns: var(--abyss-project-timeline-summary-width) minmax(700px, 1fr);
+  width: max-content;
+  min-width: 100%;
+  grid-template-columns:
+    var(--abyss-project-timeline-summary-width)
+    var(--abyss-project-timeline-track-width, 700px);
 }
 
 .abyss-project-timeline-axis {
   position: sticky;
   z-index: 5;
   top: 0;
-  min-height: 34px;
+  min-height: 52px;
   border-bottom: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
   color: var(--text-muted);
@@ -8594,15 +8596,73 @@ table.abyss-project-table {
   min-width: 0;
 }
 
-.abyss-project-timeline-tick {
+.abyss-project-timeline-axis-hierarchy,
+.abyss-project-timeline-axis-cells {
   position: absolute;
-  top: 50%;
-  padding-left: 5px;
+  right: 0;
+  left: 0;
+}
+
+.abyss-project-timeline-axis-hierarchy {
+  top: 0;
+  height: 20px;
+}
+
+.abyss-project-timeline-axis-cells {
+  bottom: 0;
+  height: 32px;
+}
+
+.abyss-project-timeline-axis-dates.is-single-tier .abyss-project-timeline-axis-cells {
+  height: 100%;
+}
+
+.abyss-project-timeline-axis-cell,
+.abyss-project-timeline-axis-hierarchy-cell {
+  position: absolute;
+  display: flex;
+  overflow: hidden;
+  box-sizing: border-box;
+  height: 100%;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px;
   border-left: 1px solid var(--background-modifier-border);
-  transform: translateY(-50%);
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.abyss-project-timeline-axis-hierarchy-cell {
+  background: color-mix(in srgb, var(--background-secondary) 88%, var(--background-primary));
+  color: var(--text-muted);
+  font-weight: var(--font-medium);
+}
+
+.abyss-project-timeline-axis-secondary-label {
+  color: var(--text-faint);
+  font-weight: var(--font-normal);
+}
+
+.abyss-project-timeline-axis-cell.is-day {
+  flex-direction: column;
+  justify-content: center;
+  gap: 0;
+  padding: 1px 0;
+  line-height: 1.05;
+  text-align: center;
+}
+
+.abyss-project-timeline-axis-cell.is-day .abyss-project-timeline-axis-secondary-label {
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+}
+
+.abyss-project-timeline-axis-cell.is-today,
+.abyss-project-timeline-axis-hierarchy-cell.is-today {
+  background: color-mix(in srgb, var(--text-error) 9%, transparent);
+  color: var(--text-normal);
 }
 
 .abyss-project-timeline-group-header {
@@ -8795,6 +8855,14 @@ table.abyss-project-table {
   background: color-mix(in srgb, var(--background-modifier-border) 48%, transparent);
 }
 
+.abyss-project-timeline-gridline.is-minor {
+  background: color-mix(in srgb, var(--background-modifier-border) 30%, transparent);
+}
+
+.abyss-project-timeline-gridline.is-major {
+  background: color-mix(in srgb, var(--background-modifier-border) 74%, transparent);
+}
+
 .abyss-project-timeline-track:focus-visible,
 .abyss-project-timeline-bar:focus-visible {
   outline: 2px solid var(--interactive-accent);
@@ -8956,8 +9024,9 @@ table.abyss-project-table {
 
   .abyss-project-timeline-axis,
   .abyss-project-timeline-row {
-    min-width: 850px;
-    grid-template-columns: var(--abyss-project-timeline-summary-width) minmax(640px, 1fr);
+    grid-template-columns:
+      var(--abyss-project-timeline-summary-width)
+      var(--abyss-project-timeline-track-width, 640px);
   }
 }
 

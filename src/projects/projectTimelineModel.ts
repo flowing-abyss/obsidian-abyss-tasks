@@ -53,12 +53,6 @@ export interface ProjectTimelineWindow {
   readonly endDay: string;
   readonly dayCount: number;
   readonly scale: ProjectTimelineScale;
-  readonly ticks: readonly ProjectTimelineTick[];
-}
-
-interface ProjectTimelineTick {
-  readonly day: string;
-  readonly label: string;
 }
 
 export interface ProjectTimelineBarGeometry {
@@ -81,101 +75,6 @@ function localDay(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
-}
-
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
-const MONTHS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-] as const;
-
-function tickLabel(ordinal: number, scale: ProjectTimelineScale): string {
-  const value = new Date(ordinal * 86_400_000);
-  const year = value.getUTCFullYear();
-  const month = value.getUTCMonth();
-  const date = value.getUTCDate();
-  if (scale === 'day') return `${WEEKDAYS[value.getUTCDay()]} ${date}`;
-  if (scale === 'week') return `${MONTHS[month]} ${date}`;
-  if (scale === 'month') return MONTHS[month] as string;
-  if (scale === 'quarter') return `Q${Math.floor(month / 3) + 1} ${year}`;
-  return String(year).padStart(4, '0');
-}
-
-function nextTickOrdinal(ordinal: number, scale: ProjectTimelineScale): number {
-  if (scale === 'day') return ordinal + 1;
-  if (scale === 'week') return ordinal + 7;
-  const value = new Date(ordinal * 86_400_000);
-  if (scale === 'month') value.setUTCFullYear(value.getUTCFullYear(), value.getUTCMonth() + 1, 1);
-  else if (scale === 'quarter') {
-    value.setUTCFullYear(value.getUTCFullYear(), value.getUTCMonth() + 3, 1);
-  } else value.setUTCFullYear(value.getUTCFullYear() + 1, 0, 1);
-  return Math.floor(value.getTime() / 86_400_000);
-}
-
-function firstWeekTick(first: number, value: Date): number {
-  const offset = (value.getUTCDay() + 6) % 7;
-  return first + (offset === 0 ? 0 : 7 - offset);
-}
-
-function firstMonthTick(value: Date): number {
-  if (value.getUTCDate() > 1) {
-    value.setUTCFullYear(value.getUTCFullYear(), value.getUTCMonth() + 1, 1);
-  }
-  return Math.floor(value.getTime() / 86_400_000);
-}
-
-function firstQuarterTick(value: Date): number {
-  const month = value.getUTCMonth();
-  const quarterMonth = Math.floor(month / 3) * 3;
-  const onQuarterStart = month === quarterMonth && value.getUTCDate() === 1;
-  value.setUTCFullYear(value.getUTCFullYear(), onQuarterStart ? quarterMonth : quarterMonth + 3, 1);
-  return Math.floor(value.getTime() / 86_400_000);
-}
-
-function firstYearTick(value: Date): number {
-  if (value.getUTCMonth() !== 0 || value.getUTCDate() !== 1) {
-    value.setUTCFullYear(value.getUTCFullYear() + 1, 0, 1);
-  }
-  return Math.floor(value.getTime() / 86_400_000);
-}
-
-function firstTickOrdinal(first: number, scale: ProjectTimelineScale): number {
-  if (scale === 'day') return first;
-  const value = new Date(first * DAY_MS);
-  if (scale === 'week') return firstWeekTick(first, value);
-  if (scale === 'month') return firstMonthTick(value);
-  if (scale === 'quarter') return firstQuarterTick(value);
-  return firstYearTick(value);
-}
-
-function timelineTicks(
-  first: number,
-  last: number,
-  scale: ProjectTimelineScale,
-): ProjectTimelineTick[] {
-  const ordinals: number[] = [];
-  for (
-    let ordinal = firstTickOrdinal(first, scale);
-    ordinal <= last;
-    ordinal = nextTickOrdinal(ordinal, scale)
-  ) {
-    ordinals.push(ordinal);
-  }
-  if (ordinals.length === 0) ordinals.push(first);
-  const stride = Math.max(1, Math.ceil(ordinals.length / 14));
-  return ordinals
-    .filter((_ordinal, index) => index % stride === 0)
-    .map((ordinal) => ({ day: dayString(ordinal), label: tickLabel(ordinal, scale) }));
 }
 
 function missingDate(value: unknown): boolean {
@@ -309,7 +208,7 @@ export function projectTimelineWindow(
   return projectTimelineWindowForRange(dayString(first), dayString(last), scale);
 }
 
-/** Builds an inclusive range window with a bounded axis tick count. */
+/** Builds an inclusive range window for scale-aware calendar geometry. */
 export function projectTimelineWindowForRange(
   startDay: string,
   endDay: string,
@@ -323,7 +222,6 @@ export function projectTimelineWindowForRange(
     endDay: dayString(last),
     dayCount,
     scale,
-    ticks: timelineTicks(first, last, scale),
   };
 }
 
