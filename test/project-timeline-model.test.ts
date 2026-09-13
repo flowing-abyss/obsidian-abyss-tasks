@@ -97,17 +97,54 @@ describe('project Timeline model', () => {
   });
 
   it('uses inclusive calendar days across leap days and DST-sized local intervals', () => {
-    const window = projectTimelineWindow(new Date(2024, 1, 29), 'week');
+    const window = projectTimelineWindow(new Date(2024, 1, 29), 'day');
     const geometry = projectTimelineBarGeometry(
       { kind: 'closed', startDay: '2024-02-29', endDay: '2024-03-02' },
       window,
     );
 
     expect(window.startDay).toBe('2024-02-26');
-    expect(window.endDay).toBe('2024-03-03');
-    expect(window.dayCount).toBe(7);
-    expect(geometry).toEqual({ leftPercent: 42.857142857142854, widthPercent: 42.857142857142854 });
+    expect(window.endDay).toBe('2024-03-10');
+    expect(window.dayCount).toBe(14);
+    expect(geometry).toEqual({ leftPercent: 21.428571428571427, widthPercent: 21.428571428571427 });
   });
+
+  it.each([
+    {
+      scale: 'day',
+      window: { startDay: '2028-06-05', endDay: '2028-06-18', dayCount: 14 },
+      firstLabels: ['Mon 5', 'Tue 6'],
+    },
+    {
+      scale: 'week',
+      window: { startDay: '2028-05-01', endDay: '2028-07-23', dayCount: 84 },
+      firstLabels: ['May 1', 'May 8'],
+    },
+    {
+      scale: 'month',
+      window: { startDay: '2028-01-01', endDay: '2028-12-31', dayCount: 366 },
+      firstLabels: ['Jan', 'Feb'],
+    },
+    {
+      scale: 'quarter',
+      window: { startDay: '2027-01-01', endDay: '2029-12-31', dayCount: 1096 },
+      firstLabels: ['Q1 2027', 'Q2 2027'],
+    },
+    {
+      scale: 'year',
+      window: { startDay: '2026-01-01', endDay: '2030-12-31', dayCount: 1826 },
+      firstLabels: ['2026', '2027'],
+    },
+  ] as const)(
+    'uses a useful $scale viewport with readable major labels',
+    ({ scale, window: expected, firstLabels }) => {
+      const window = projectTimelineWindow(new Date(2028, 5, 10), scale);
+
+      expect(window).toMatchObject({ ...expected, scale });
+      expect(window.ticks.slice(0, 2).map(({ label }) => label)).toEqual(firstLabels);
+      expect(window.ticks.length).toBeLessThanOrEqual(14);
+    },
+  );
 
   it('marks reversed same-day local and offset datetimes malformed before day projection', () => {
     const model = buildProjectTimelineModel(
@@ -147,43 +184,51 @@ describe('project Timeline model', () => {
     const window = projectTimelineWindow(anchor, 'week');
 
     expect(window).toMatchObject({
-      startDay: '9999-12-27',
-      endDay: '10000-01-02',
-      dayCount: 7,
+      startDay: '9999-11-22',
+      endDay: '10000-02-13',
+      dayCount: 84,
     });
     expect(
       projectTimelineBarGeometry(
         { kind: 'closed', startDay: '9999-12-31', endDay: '10000-01-01' },
         window,
       ),
-    ).toEqual({ leftPercent: 57.14285714285714, widthPercent: 28.57142857142857 });
+    ).toEqual({ leftPercent: 46.42857142857143, widthPercent: 2.380952380952381 });
     expect(projectCalendarDay('0100-01-01T00:00:00+14:00')).toBe('0099-12-31');
   });
 
   it.each([
     {
       scale: 'week',
-      startDay: '0099-12-28',
-      endDay: '0100-01-03',
-      dayCount: 7,
-      dayOffset: 3,
+      startDay: '0099-11-23',
+      endDay: '0100-02-14',
+      dayCount: 84,
+      dayOffset: 38,
       visibleDays: 2,
     },
     {
       scale: 'month',
-      startDay: '0099-12-01',
+      startDay: '0099-01-01',
       endDay: '0099-12-31',
-      dayCount: 31,
-      dayOffset: 30,
+      dayCount: 365,
+      dayOffset: 364,
       visibleDays: 1,
     },
     {
       scale: 'quarter',
-      startDay: '0099-10-01',
-      endDay: '0099-12-31',
-      dayCount: 92,
-      dayOffset: 91,
-      visibleDays: 1,
+      startDay: '0098-01-01',
+      endDay: '0100-12-31',
+      dayCount: 1095,
+      dayOffset: 729,
+      visibleDays: 2,
+    },
+    {
+      scale: 'year',
+      startDay: '0097-01-01',
+      endDay: '0101-12-31',
+      dayCount: 1825,
+      dayOffset: 1094,
+      visibleDays: 2,
     },
   ] as const)(
     'preserves projected years below 100 for the $scale window',

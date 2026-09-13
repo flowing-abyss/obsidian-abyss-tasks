@@ -64,6 +64,8 @@ import {
 import { buildProjectTimelineModel } from '../../projects/projectTimelineModel';
 import {
   buildDefaultProjectTimelineSettings,
+  projectTimelineDescriptionLines,
+  projectTimelineFields,
   type ProjectTimelineSettings,
 } from '../../projects/projectTimelineSettings';
 import { projectStatusDisplayName, resolveStatus } from '../../projects/status';
@@ -251,6 +253,22 @@ interface GroupDropPreview {
   readonly rows: readonly HTMLTableRowElement[];
   readonly forecast?: ProjectGroupDropForecast;
   readonly line?: HTMLTableRowElement;
+}
+
+function overviewDescriptionLines(
+  presentation: 'kanban' | 'timeline',
+  field: ProjectFieldCatalogItem,
+  settings: () => ProjectTimelineSettings,
+): ReturnType<typeof projectTimelineDescriptionLines> | undefined {
+  if (presentation !== 'timeline' || field.type !== 'name') return undefined;
+  return projectTimelineDescriptionLines(settings());
+}
+
+function showOverviewNameDescription(
+  presentation: 'kanban' | 'timeline',
+  lines: ReturnType<typeof projectTimelineDescriptionLines> | undefined,
+): boolean {
+  return presentation === 'timeline' && lines !== undefined && lines !== 0;
 }
 
 type ResizeObserverConstructor = new (callback: ResizeObserverCallback) => ResizeObserver;
@@ -1454,6 +1472,12 @@ export class ProjectsTableView {
     if (this.kanbanView_abyssPrivate !== undefined) this.kanbanView_abyssPrivate.root.hidden = true;
     const timeline = (this.timelineView_abyssPrivate ??= this.createTimelineView_abyssPrivate());
     timeline.root.hidden = false;
+    const timelineSettings = this.ensureTimelineSettings_abyssPrivate();
+    const relativeColumns = projectTimelineFields(timelineSettings).flatMap((column) => {
+      const field = findProjectFieldById(this.fields_abyssPrivate, column.id);
+      return field === undefined ? [] : [{ column, field }];
+    });
+    this.syncRelativeDateTimer_abyssPrivate(relativeColumns);
     if (timeline.currentModel() === undefined) {
       timeline.mount(this.projectedProjects_abyssPrivate(), this.searches_abyssPrivate.timeline);
     } else {
@@ -1487,6 +1511,9 @@ export class ProjectsTableView {
       requestViewChange: (mutation) => this.requestViewChange_abyssPrivate(mutation),
       requestNavigation: (action) => {
         this.finishEditorBeforeAction(action);
+      },
+      openScaleOptions: (anchor) => {
+        this.toolbar_abyssPrivate.openTimelineScaleOptions(anchor);
       },
       renderGroupContent: (marker, label, group) => {
         this.renderGroupContent_abyssPrivate(marker, label, group, group.presentation?.color);
@@ -1622,6 +1649,7 @@ export class ProjectsTableView {
     readonly host: HTMLElement;
     readonly project: Project;
     readonly field: ProjectFieldCatalogItem;
+    readonly column?: ProjectColumn;
     readonly occurrenceId: string;
     readonly groupKey: string;
     readonly existing?: RenderedCellContext;
@@ -1670,6 +1698,9 @@ export class ProjectsTableView {
     options.host.dataset['columnId'] = field.id;
     options.host.setAttribute('aria-label', `${field.label} for ${options.project.name}`);
     options.host.toggleClass('is-editable', editableField(field));
+    const descriptionLines = overviewDescriptionLines(presentation, field, () =>
+      this.ensureTimelineSettings_abyssPrivate(),
+    );
     const signature = JSON.stringify({
       field,
       value: projectFieldValue(options.project, field),
@@ -1681,6 +1712,7 @@ export class ProjectsTableView {
       ownedClear,
       presentation,
       display: this.projectCellPresentation_abyssPrivate(options.column, presentation),
+      descriptionLines,
     });
     if (options.existing === undefined) this.decorateProjectCell_abyssPrivate(rendered);
     if (signature !== rendered.contentSignature) {
@@ -1692,7 +1724,7 @@ export class ProjectsTableView {
           : options.host;
       this.renderProjectCellContent_abyssPrivate(content, rendered, {
         ...(options.column === undefined ? {} : { preferredColumn: options.column }),
-        showNameDescription: false,
+        showNameDescription: showOverviewNameDescription(presentation, descriptionLines),
         presentation,
       });
     }
@@ -2475,7 +2507,8 @@ export class ProjectsTableView {
     rendered: RenderedCellContext,
     options: RenderProjectCellContentOptions,
   ): void {
-    const { preferredColumn, showNameDescription = true, presentation = 'table' } = options;
+    const { preferredColumn, showNameDescription, presentation = 'table' } = options;
+    const includeNameDescription = showNameDescription ?? true;
     const descriptionField = findProjectFieldById(this.fields_abyssPrivate, 'description');
     const effectiveDescription =
       descriptionField === undefined
@@ -2516,12 +2549,15 @@ export class ProjectsTableView {
       locale: moment.locale(),
       ...(rendered.field.type !== 'name' ||
       effectiveDescription === undefined ||
-      !showNameDescription
+      !includeNameDescription
         ? {}
         : {
             description: {
               field: effectiveDescription.field,
-              show: this.context_abyssPrivate.settings.projects.table.showDescription,
+              show:
+                showNameDescription === true ||
+                this.context_abyssPrivate.settings.projects.table.showDescription,
+              preserveNewlines: presentation === 'timeline',
             },
           }),
     });
@@ -2535,7 +2571,7 @@ export class ProjectsTableView {
     if (presentation === 'timeline') {
       const progress = this.ensureTimelineSettings_abyssPrivate().progress;
       return {
-        dateDisplay: 'pretty',
+        dateDisplay: column?.dateDisplay ?? 'pretty',
         ...(progress === 'hidden' ? {} : { progressDisplay: progress }),
       };
     }

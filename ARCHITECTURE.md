@@ -222,12 +222,15 @@ raw and No status columns exist only for source values that are present. Card de
 as hidden, one line, two lines, or full; the additive full value removes the visual line clamp, while
 older binaries retain it in recovery and fall back to their existing default.
 
-`projectTimelineSettings` owns independent grouping, sorting, status filters, scale, metadata,
+`projectTimelineSettings` owns independent grouping, sorting, status filters, scale, ordered
+metadata fields, field aliases and date presentation, empty-field visibility, description lines,
 progress, and unscheduled-row presentation. Missing Timeline state is initialized lazily from the
-current Table organization only when requested. `projectTimelineModel` reuses the DOM-free table
-projection for search, typed sorting, grouping, and status visibility, then classifies strict start
-and end values as closed, open, unscheduled, or malformed calendar ranges. Its inclusive day
-geometry and bounded axis ticks remain independent from Obsidian presentation code.
+current Table organization only when requested; older saved Timeline state resolves Status, Start,
+and End as its field set without eagerly rewriting storage. `projectTimelineModel` reuses the
+DOM-free table projection for search, typed sorting, grouping, and status visibility, then
+classifies strict start and end values as closed, open, unscheduled, or malformed calendar ranges.
+Its day, week, month, quarter, and year windows use inclusive day geometry and bounded,
+scale-specific axis ticks independent from Obsidian presentation code.
 
 The overview controller initializes each status column's manual path sequence from its first complete
 project snapshot and appends newly observed paths even while a field sort, search, or status filter
@@ -255,9 +258,12 @@ column remains first and visible. An auxiliary native menu registers its exact D
 child of the popover, so that menu retains the popover's shortcut ownership and disclosure state
 until it closes; parent teardown closes any registered child.
 
-The Timeline group owns scale, metadata, progress, and unscheduled-row presentation. Its Previous,
-Today, Next, and Fit controls recenter the retained Timeline window while the shared controller keeps
-selection, editors, clipboard actions, creation receipts, and history on the same project session.
+Kanban and Timeline use `projectCardFields` for the same field projection and field-selector menu,
+including visibility, ordering, labels, date presentation, and empty-value semantics. The Timeline
+group additionally owns scale, independent description lines, metadata and empty-field switches,
+progress, and unscheduled-row presentation. Its Previous, Today, Next, and Fit controls recenter the
+retained Timeline window while the shared controller keeps selection, editors, clipboard actions,
+creation receipts, and history on the same project session.
 
 `ProjectsKanbanView` projects ordered status columns and optional inner groups from
 `projectKanbanModel`. It reconciles columns by status key, cards by grouped project occurrence, and

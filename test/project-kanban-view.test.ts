@@ -398,7 +398,7 @@ describe('project Kanban overview', () => {
     chooseViewOption(host, 'Scale', 'Month');
     await flushMicrotasks();
     expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
-      '2026-09-01 – 2026-09-30',
+      '2026-01-01 – 2026-12-31',
     );
     chooseViewOption(host, 'Scale', 'Quarter');
     await flushMicrotasks();
@@ -421,6 +421,185 @@ describe('project Kanban overview', () => {
     expect(tableSearch.value).toBe('table query');
     clickView(host, 'Timeline');
     expect(tableSearch.value).toBe('timeline query');
+  });
+
+  it('keeps the selected scale option focused while offering all five scales', async () => {
+    const { host, settings } = mountView();
+    clickView(host, 'Timeline');
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const scale = viewOptionRow(host, 'Scale');
+    expectDefined(scale.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+    const labels = Array.from(
+      scale.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option'),
+      (button) => button.querySelector('.abyss-view-state-option-label')?.textContent,
+    );
+    const year = expectDefined(
+      Array.from(scale.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option')).find(
+        (button) => button.querySelector('.abyss-view-state-option-label')?.textContent === 'Year',
+      ),
+    );
+    year.focus();
+
+    year.click();
+    await flushMicrotasks();
+
+    expect(labels).toEqual(['Day', 'Week', 'Month', 'Quarter', 'Year']);
+    expect(settings.projects.timeline?.scale).toBe('year');
+    expect(activeDocument.activeElement).toBe(year);
+    expect(year.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('opens the shared Timeline scale row from the visible current-scale control', async () => {
+    const { host, settings } = mountView();
+    clickView(host, 'Timeline');
+    const scaleControl = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-timeline-scale'),
+    );
+
+    expect(scaleControl.textContent).toBe('Month');
+    scaleControl.click();
+
+    const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
+    expect(scaleControl.parentElement?.classList).toContain('abyss-project-timeline-scale-control');
+    expect(popover.parentElement).toBe(scaleControl.parentElement);
+    const timeline = expectDefined(directViewOptionRows(host)[2]);
+    const scale = viewOptionRow(timeline, 'Scale');
+    expect(
+      timeline
+        .querySelector<HTMLElement>(':scope > .abyss-view-state-row-main')
+        ?.getAttribute('aria-expanded'),
+    ).toBe('true');
+    expect(
+      scale
+        .querySelector<HTMLElement>(':scope > .abyss-view-state-row-main')
+        ?.getAttribute('aria-expanded'),
+    ).toBe('true');
+
+    chooseViewOption(host, 'Scale', 'Year');
+    await flushMicrotasks();
+
+    expect(settings.projects.timeline?.scale).toBe('year');
+    expect(scaleControl.textContent).toBe('Year');
+    expect(host.querySelector('.abyss-view-state-popover')).toBe(popover);
+  });
+
+  it('configures Timeline fields through the shared reorder and date-display menu', async () => {
+    const { host, settings } = mountView();
+    clickView(host, 'Timeline');
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const timeline = expectDefined(directViewOptionRows(host)[2]);
+    expectDefined(
+      timeline.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+    ).click();
+    const fields = viewOptionRow(timeline, 'Metadata fields');
+    expectDefined(fields.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+    const budget = optionRow(fields, 'Budget');
+
+    expectDefined(budget.querySelector<HTMLButtonElement>('.abyss-view-state-option')).click();
+    await flushMicrotasks();
+    const moveBudget = expectDefined(
+      fields.querySelector<HTMLButtonElement>('[aria-label="Move Budget up"]'),
+    );
+    moveBudget.click();
+    await flushMicrotasks();
+
+    expect(settings.projects.timeline?.fields?.map(({ id, visible }) => ({ id, visible }))).toEqual(
+      [
+        { id: 'status', visible: true },
+        { id: 'start', visible: true },
+        { id: 'property:Budget', visible: true },
+        { id: 'end', visible: true },
+      ],
+    );
+  });
+
+  it('renders independent ordered Timeline fields with aliases and date display', () => {
+    const item = project({ frontmatter: { Priority: '', Deadline: '2026-09-07' } });
+    const { host, settings } = mountView([item], {
+      catalog: catalog([
+        { name: 'Priority', type: 'text' },
+        { name: 'Deadline', type: 'date' },
+      ]),
+    });
+    settings.projects.propertyDefinitions['property:Priority'] = { type: 'text' };
+    settings.projects.propertyDefinitions['property:Deadline'] = { type: 'date' };
+    const timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    timeline.fields = [
+      { id: 'property:Priority', label: 'Urgency', visible: true },
+      { id: 'property:Deadline', label: 'Due', visible: true, dateDisplay: 'raw' },
+    ];
+    timeline.showEmptyFields = true;
+    settings.projects.timeline = timeline;
+
+    clickView(host, 'Timeline');
+
+    expect(
+      Array.from(host.querySelectorAll('.abyss-project-timeline-field-label'), ({ textContent }) =>
+        textContent.trim(),
+      ),
+    ).toEqual(['Urgency', 'Due']);
+    expect(
+      host.querySelector('.abyss-project-timeline [data-column-id="property:Priority"]'),
+    ).not.toBeNull();
+    expect(
+      host.querySelector('.abyss-project-timeline [data-column-id="property:Deadline"]')
+        ?.textContent,
+    ).toContain('2026-09-07');
+  });
+
+  it('edits a visible Timeline description without changing the Table preference', async () => {
+    const initial = project({ frontmatter: { description: 'Current description' } });
+    const { host, settings, applyEdits } = mountView([initial]);
+    settings.projects.table.showDescription = false;
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    settings.projects.timeline.descriptionLines = 2;
+    clickView(host, 'Timeline');
+    const description = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline .abyss-project-description-text'),
+    );
+
+    description.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const textarea = expectDefined(
+      host.querySelector<HTMLTextAreaElement>('.abyss-project-timeline textarea'),
+    );
+    textarea.value = 'Edited Timeline description';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(expectDefined(applyEdits.mock.calls[0])[0][0]).toMatchObject({
+      path: 'Projects/A.md',
+      value: 'Edited Timeline description',
+      expectedValue: 'Current description',
+    });
+    expect(settings.projects.table.showDescription).toBe(false);
+    expect(settings.projects.timeline.descriptionLines).toBe(2);
+  });
+
+  it('keeps complete multiline Timeline descriptions for two-line and full display', () => {
+    const value = 'Timeline QA description\nSecond line\nThird line';
+    const initial = project({ frontmatter: { description: value } });
+    const { host, view, settings } = mountView([initial]);
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    settings.projects.timeline.descriptionLines = 2;
+    clickView(host, 'Timeline');
+
+    const name = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-name'));
+    expect(name.style.getPropertyValue('--abyss-project-description-lines')).toBe('2');
+    expect(
+      host.querySelector<HTMLElement>('.abyss-project-timeline .abyss-project-description-text')
+        ?.textContent,
+    ).toBe(value);
+
+    settings.projects.timeline.descriptionLines = 'full';
+    view.refreshFields();
+
+    expect(name.classList).toContain('is-full-description');
+    expect(
+      host.querySelector<HTMLElement>('.abyss-project-timeline .abyss-project-description-text')
+        ?.textContent,
+    ).toBe(value);
   });
 
   it('initializes independent Kanban filters and omits empty synthetic columns', () => {

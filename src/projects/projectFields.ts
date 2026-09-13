@@ -93,7 +93,11 @@ function customFieldIds(
       : [settings.kanban.groupBy, settings.kanban.sortBy.field]),
     ...(settings.timeline === undefined
       ? []
-      : [settings.timeline.groupBy, settings.timeline.sortBy.field]),
+      : [
+          ...(settings.timeline.fields?.map(({ id }) => id) ?? []),
+          settings.timeline.groupBy,
+          settings.timeline.sortBy.field,
+        ]),
     ...definitionIds,
     ...properties.map(({ name }) => `property:${name}`),
   ];

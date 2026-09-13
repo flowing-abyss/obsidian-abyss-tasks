@@ -1,5 +1,9 @@
 import { setIcon } from 'obsidian';
-import { findProjectFieldById, type ProjectFieldCatalogItem } from '../../projects/projectFields';
+import {
+  findProjectFieldById,
+  type ProjectColumn,
+  type ProjectFieldCatalogItem,
+} from '../../projects/projectFields';
 import type { ProjectTableGroup } from '../../projects/projectTableModel';
 import {
   buildProjectTimelineModel,
@@ -13,8 +17,13 @@ import {
   type ProjectTimelineRow,
   type ProjectTimelineWindow,
 } from '../../projects/projectTimelineModel';
-import type { ProjectTimelineSettings } from '../../projects/projectTimelineSettings';
+import {
+  projectTimelineDescriptionLines,
+  projectTimelineFields,
+  type ProjectTimelineSettings,
+} from '../../projects/projectTimelineSettings';
 import type { Project } from '../../projects/types';
+import { projectCardFields } from './projectCardFields';
 
 export interface ProjectTimelineCellContext {
   readonly element: HTMLElement;
@@ -32,6 +41,7 @@ export interface ProjectsTimelineViewContext<TCell extends ProjectTimelineCellCo
     readonly host: HTMLElement;
     readonly project: Project;
     readonly field: ProjectFieldCatalogItem;
+    readonly column?: ProjectColumn;
     readonly occurrenceId: string;
     readonly groupKey: string;
     readonly existing?: TCell;
@@ -39,6 +49,7 @@ export interface ProjectsTimelineViewContext<TCell extends ProjectTimelineCellCo
   readonly selectCell: (cell: TCell) => void;
   readonly requestViewChange: (mutation: () => void) => Promise<boolean>;
   readonly requestNavigation: (action: () => void) => void;
+  readonly openScaleOptions: (anchor: HTMLElement) => void;
   readonly renderGroupContent: (
     marker: HTMLElement,
     label: HTMLElement,
@@ -136,6 +147,12 @@ function rangeBounds(range: ProjectTimelineRange): readonly string[] {
   return anchor === undefined ? [] : [anchor];
 }
 
+function calendarWindowYears(scale: ProjectTimelineSettings['scale']): number {
+  if (scale === 'month') return 1;
+  if (scale === 'quarter') return 3;
+  return 5;
+}
+
 function reconcileOrder(parent: HTMLElement, desired: readonly HTMLElement[]): void {
   let cursor = parent.firstChild;
   for (const element of desired) {
@@ -162,6 +179,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   private fittedWindow_abyssPrivate: ProjectTimelineWindow | undefined;
   private selectedPath_abyssPrivate: string | undefined;
   private hiddenScrollPosition_abyssPrivate: TimelineScrollPosition | undefined;
+  private readonly scaleButton_abyssPrivate: HTMLButtonElement;
 
   constructor(
     host: HTMLElement,
@@ -184,6 +202,15 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     this.addNavigationButton_abyssPrivate(navigation, 'Next range', 'chevron-right', () => {
       this.moveAnchor_abyssPrivate(1);
     });
+    const scaleControl = navigation.createDiv({ cls: 'abyss-project-timeline-scale-control' });
+    this.scaleButton_abyssPrivate = this.addTextButton_abyssPrivate(
+      scaleControl,
+      this.scaleLabel_abyssPrivate(this.renderedScale_abyssPrivate),
+      () => {
+        this.context_abyssPrivate.openScaleOptions(this.scaleButton_abyssPrivate);
+      },
+    );
+    this.scaleButton_abyssPrivate.addClass('abyss-project-timeline-scale');
     this.addTextButton_abyssPrivate(navigation, 'Fit', () => {
       this.fit_abyssPrivate();
     });
@@ -233,7 +260,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     return {
       scrollLeft: this.scroll.scrollLeft,
       scrollTop: this.scroll.scrollTop,
-      anchorDay: projectTimelineWindow(this.anchor_abyssPrivate, 'week').startDay,
+      anchorDay: localDay(this.anchor_abyssPrivate),
     };
   }
 
@@ -307,9 +334,24 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     button.addEventListener('click', action);
   }
 
-  private addTextButton_abyssPrivate(host: HTMLElement, label: string, action: () => void): void {
+  private addTextButton_abyssPrivate(
+    host: HTMLElement,
+    label: string,
+    action: () => void,
+  ): HTMLButtonElement {
     const button = host.createEl('button', { text: label, attr: { type: 'button' } });
     button.addEventListener('click', action);
+    return button;
+  }
+
+  private scaleLabel_abyssPrivate(scale: ProjectTimelineSettings['scale']): string {
+    return { day: 'Day', week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' }[scale];
+  }
+
+  private syncScaleButton_abyssPrivate(): void {
+    const label = this.scaleLabel_abyssPrivate(this.context_abyssPrivate.settings().scale);
+    this.scaleButton_abyssPrivate.setText(label);
+    this.scaleButton_abyssPrivate.setAttribute('aria-label', `Timeline scale: ${label}`);
   }
 
   private handleScaleTransition_abyssPrivate(): void {
@@ -388,11 +430,23 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
 
   private moveAnchor_abyssPrivate(direction: -1 | 1): void {
     const scale = this.context_abyssPrivate.settings().scale;
-    const start = dayDate(this.currentWindow_abyssPrivate().startDay);
     this.fittedWindow_abyssPrivate = undefined;
-    if (scale === 'week') start.setDate(start.getDate() + 7 * direction);
-    else start.setMonth(start.getMonth() + (scale === 'month' ? 1 : 3) * direction);
-    this.anchor_abyssPrivate = start;
+    if (scale === 'day' || scale === 'week') {
+      const span = scale === 'day' ? 14 : 84;
+      this.anchor_abyssPrivate = dayDate(
+        dayFromOrdinal(dayOrdinal(localDay(this.anchor_abyssPrivate)) + span * direction),
+      );
+    } else {
+      const years = calendarWindowYears(scale);
+      const current = this.anchor_abyssPrivate;
+      const shifted = new Date(0);
+      shifted.setFullYear(current.getFullYear() + years * direction, current.getMonth(), 1);
+      const lastDay = new Date(0);
+      lastDay.setFullYear(shifted.getFullYear(), shifted.getMonth() + 1, 0);
+      shifted.setDate(Math.min(current.getDate(), lastDay.getDate()));
+      shifted.setHours(0, 0, 0, 0);
+      this.anchor_abyssPrivate = shifted;
+    }
     this.render_abyssPrivate(true);
   }
 
@@ -405,6 +459,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     this.fittedWindow_abyssPrivate = projectTimelineWindowForRange(
       bounds[0] as string,
       bounds[bounds.length - 1] as string,
+      this.context_abyssPrivate.settings().scale,
     );
     this.render_abyssPrivate(true);
   }
@@ -417,6 +472,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   }
 
   private render_abyssPrivate(navigation: boolean): void {
+    this.syncScaleButton_abyssPrivate();
     const focused = this.focusedDescendant_abyssPrivate();
     const hiddenPosition = this.hiddenScrollPosition_abyssPrivate;
     const left = hiddenPosition?.left ?? this.scroll.scrollLeft;
@@ -461,9 +517,9 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     for (const tick of window.ticks) {
       const element = dates.createSpan({
         cls: 'abyss-project-timeline-tick',
-        text: tick.slice(tick.indexOf('-') + 1),
+        text: tick.label,
       });
-      element.style.left = `${((dayOrdinal(tick) - dayOrdinal(window.startDay)) / window.dayCount) * 100}%`;
+      element.style.left = `${((dayOrdinal(tick.day) - dayOrdinal(window.startDay)) / window.dayCount) * 100}%`;
     }
     this.addTodayMarker_abyssPrivate(dates, window);
   }
@@ -613,49 +669,151 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   ): void {
     const fields = this.context_abyssPrivate.modelInput().fields;
     const retained = new Set<string>();
-    const render = (
-      fieldId: string,
-      parent: HTMLElement,
-      className: string,
-      selectable: boolean,
-    ): void => {
-      const field = findProjectFieldById(fields, fieldId);
-      if (field === undefined) return;
-      retained.add(fieldId);
-      const existing = row.cells.get(fieldId);
-      const host = existing?.element ?? parent.createDiv({ cls: className });
-      const cell = this.context_abyssPrivate.renderCell({
-        host,
-        project: item.project,
-        field,
-        occurrenceId: item.occurrenceId,
-        groupKey: row.groupKey,
-        ...(existing === undefined ? {} : { existing }),
+    const name = findProjectFieldById(fields, 'name');
+    if (name !== undefined) {
+      this.renderRowCell_abyssPrivate({
+        row,
+        item,
+        visibleCells,
+        retained,
+        field: name,
+        parent: row.name,
+        className: 'abyss-project-timeline-name-cell',
+        selectable: true,
       });
-      if (cell.element !== host && cell.element.parentElement !== host) host.append(cell.element);
-      row.cells.set(fieldId, cell);
-      const groupBody = row.element.closest('.abyss-project-timeline-group-body');
-      if (selectable && groupBody !== null && !groupBody.hasAttribute('hidden')) {
-        visibleCells.push(cell);
-      }
-    };
-    render('name', row.name, 'abyss-project-timeline-name-cell', true);
-    const showMetadata = this.context_abyssPrivate.settings().showMetadata;
-    row.metadata.hidden = !showMetadata;
-    for (const fieldId of ['status', 'start', 'end']) {
-      render(fieldId, row.metadata, `abyss-project-timeline-${fieldId}`, showMetadata);
     }
-    const progress = this.context_abyssPrivate.settings().progress;
+    const settings = this.context_abyssPrivate.settings();
+    this.patchDescriptionPresentation_abyssPrivate(row, settings);
+    this.patchMetadata_abyssPrivate({ row, item, visibleCells, retained, fields, settings });
+    this.patchProgress_abyssPrivate({ row, item, visibleCells, retained, fields, settings });
+    this.removeUnusedRowCells_abyssPrivate(row, retained);
+    this.patchRange_abyssPrivate(row, item.range, window);
+  }
+
+  private renderRowCell_abyssPrivate(options: {
+    readonly row: RenderedRow<TCell>;
+    readonly item: ProjectTimelineRow;
+    readonly visibleCells: TCell[];
+    readonly retained: Set<string>;
+    readonly field: ProjectFieldCatalogItem;
+    readonly parent: HTMLElement;
+    readonly className: string;
+    readonly selectable: boolean;
+    readonly column?: ProjectColumn;
+  }): void {
+    const { row, item, field, retained, visibleCells } = options;
+    retained.add(field.id);
+    const existing = row.cells.get(field.id);
+    const host = existing?.element ?? options.parent.createDiv({ cls: options.className });
+    const cell = this.context_abyssPrivate.renderCell({
+      host,
+      project: item.project,
+      field,
+      ...(options.column === undefined ? {} : { column: options.column }),
+      occurrenceId: item.occurrenceId,
+      groupKey: row.groupKey,
+      ...(existing === undefined ? {} : { existing }),
+    });
+    if (cell.element !== host && cell.element.parentElement !== host) host.append(cell.element);
+    row.cells.set(field.id, cell);
+    const groupBody = row.element.closest('.abyss-project-timeline-group-body');
+    if (options.selectable && groupBody !== null && !groupBody.hasAttribute('hidden')) {
+      visibleCells.push(cell);
+    }
+  }
+
+  private patchDescriptionPresentation_abyssPrivate(
+    row: RenderedRow<TCell>,
+    settings: ProjectTimelineSettings,
+  ): void {
+    const lines = projectTimelineDescriptionLines(settings);
+    row.name.toggleClass('has-description', lines !== 0);
+    row.name.toggleClass('is-full-description', lines === 'full');
+    if (lines === 'full') row.name.style.removeProperty('--abyss-project-description-lines');
+    else row.name.style.setProperty('--abyss-project-description-lines', String(lines));
+  }
+
+  private patchMetadata_abyssPrivate(options: {
+    readonly row: RenderedRow<TCell>;
+    readonly item: ProjectTimelineRow;
+    readonly visibleCells: TCell[];
+    readonly retained: Set<string>;
+    readonly fields: readonly ProjectFieldCatalogItem[];
+    readonly settings: ProjectTimelineSettings;
+  }): void {
+    const { row, item, visibleCells, retained, fields, settings } = options;
+    row.metadata.hidden = !settings.showMetadata;
+    const desiredMetadata: HTMLElement[] = [];
+    for (const metadataItem of projectCardFields(
+      item.project,
+      settings,
+      fields,
+      projectTimelineFields(settings),
+    )) {
+      const existing = row.cells.get(metadataItem.field.id);
+      const fieldRow =
+        existing?.element.closest<HTMLElement>('.abyss-project-timeline-field') ??
+        row.metadata.createDiv({ cls: 'abyss-project-timeline-field' });
+      let label = fieldRow.querySelector<HTMLElement>('.abyss-project-timeline-field-label');
+      label ??= fieldRow.createSpan({ cls: 'abyss-project-timeline-field-label' });
+      label.setText(metadataItem.label);
+      let value = fieldRow.querySelector<HTMLElement>('.abyss-project-timeline-field-value');
+      value ??= fieldRow.createDiv({ cls: 'abyss-project-timeline-field-value' });
+      this.renderRowCell_abyssPrivate({
+        row,
+        item,
+        visibleCells,
+        retained,
+        field: metadataItem.field,
+        parent: value,
+        className: 'abyss-project-timeline-field-value',
+        selectable: settings.showMetadata,
+        column: metadataItem.column,
+      });
+      desiredMetadata.push(fieldRow);
+    }
+    reconcileOrder(row.metadata, desiredMetadata);
+  }
+
+  private patchProgress_abyssPrivate(options: {
+    readonly row: RenderedRow<TCell>;
+    readonly item: ProjectTimelineRow;
+    readonly visibleCells: TCell[];
+    readonly retained: Set<string>;
+    readonly fields: readonly ProjectFieldCatalogItem[];
+    readonly settings: ProjectTimelineSettings;
+  }): void {
+    const { row, item, visibleCells, retained, fields, settings } = options;
+    const progress = settings.progress;
     row.progress.hidden = progress === 'hidden';
     if (progress !== 'hidden') {
-      render('progress', row.progress, 'abyss-project-timeline-progress-cell', true);
+      const progressField = findProjectFieldById(fields, 'progress');
+      if (progressField !== undefined) {
+        this.renderRowCell_abyssPrivate({
+          row,
+          item,
+          visibleCells,
+          retained,
+          field: progressField,
+          parent: row.progress,
+          className: 'abyss-project-timeline-progress-cell',
+          selectable: true,
+        });
+      }
     }
+  }
+
+  private removeUnusedRowCells_abyssPrivate(
+    row: RenderedRow<TCell>,
+    retained: ReadonlySet<string>,
+  ): void {
     for (const [fieldId, cell] of row.cells) {
       if (retained.has(fieldId)) continue;
-      cell.element.remove();
+      const fieldRow = cell.element.closest('.abyss-project-timeline-field');
+      if (fieldRow === null) cell.element.remove();
+      else fieldRow.remove();
       row.cells.delete(fieldId);
     }
-    this.patchRange_abyssPrivate(row, item.range, window);
   }
 
   private patchRange_abyssPrivate(

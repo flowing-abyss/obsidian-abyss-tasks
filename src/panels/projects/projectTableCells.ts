@@ -123,6 +123,7 @@ interface RenderProjectTableCellOptions {
   readonly description?: {
     readonly field: ProjectFieldCatalogItem;
     readonly show: boolean;
+    readonly preserveNewlines?: boolean;
   };
 }
 
@@ -437,6 +438,11 @@ function renderPropertyValue(
   renderUnavailableType(cell, field);
 }
 
+function renderedDescription(raw: unknown, preserveNewlines: boolean): string {
+  if (typeof raw !== 'string') return '';
+  return preserveNewlines ? raw : (raw.split('\n', 1)[0] ?? '');
+}
+
 function renderName(
   cell: HTMLElement,
   project: Project,
@@ -453,7 +459,7 @@ function renderName(
   const description = options.description;
   if (description?.show !== true) return;
   const raw = projectFieldValue(project, description.field);
-  const value = typeof raw === 'string' ? (raw.split('\n', 1)[0] ?? '') : '';
+  const value = renderedDescription(raw, description.preserveNewlines === true);
   if (value.length === 0) return;
   const detail = cell.createDiv({ cls: 'abyss-project-description' });
   if (description.field.type !== 'text') {

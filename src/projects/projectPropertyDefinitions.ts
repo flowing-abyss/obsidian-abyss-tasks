@@ -239,7 +239,11 @@ function savedCustomFieldIds(projects: ProjectsSettings): string[] {
       : [projects.kanban.groupBy, projects.kanban.sortBy.field]),
     ...(projects.timeline === undefined
       ? []
-      : [projects.timeline.groupBy, projects.timeline.sortBy.field]),
+      : [
+          ...(projects.timeline.fields?.map(({ id }) => id) ?? []),
+          projects.timeline.groupBy,
+          projects.timeline.sortBy.field,
+        ]),
   ];
   const seen = new Set<string>();
   return ids.filter((id) => {

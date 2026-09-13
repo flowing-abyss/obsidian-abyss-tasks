@@ -523,6 +523,12 @@ function mergeProjectTimeline(
   base['sortBy'] = rawSort;
   base['hiddenStatuses'] = detached(current.hiddenStatuses);
   base['scale'] = current.scale;
+  if (current.fields === undefined) delete base['fields'];
+  else base['fields'] = mergeColumns(base['fields'], current.fields);
+  if (current.showEmptyFields === undefined) delete base['showEmptyFields'];
+  else base['showEmptyFields'] = current.showEmptyFields;
+  if (current.descriptionLines === undefined) delete base['descriptionLines'];
+  else base['descriptionLines'] = current.descriptionLines;
   base['showMetadata'] = current.showMetadata;
   base['progress'] = current.progress;
   base['showUnscheduled'] = current.showUnscheduled;

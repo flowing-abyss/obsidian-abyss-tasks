@@ -3,7 +3,7 @@ import {
   ProjectsTimelineView,
   type ProjectTimelineCellContext,
 } from '../src/panels/projects/ProjectsTimelineView';
-import type { ProjectFieldCatalogItem } from '../src/projects/projectFields';
+import type { ProjectColumn, ProjectFieldCatalogItem } from '../src/projects/projectFields';
 import { buildDefaultProjectTableSettings } from '../src/projects/projectTableSettings';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
@@ -13,6 +13,7 @@ import { expectDefined, freshContainer } from './helpers';
 interface Cell extends ProjectTimelineCellContext {
   project: Project;
   field: ProjectFieldCatalogItem;
+  column?: ProjectColumn;
 }
 
 const fields: ProjectFieldCatalogItem[] = [
@@ -21,6 +22,7 @@ const fields: ProjectFieldCatalogItem[] = [
   { id: 'start', label: 'Start', type: 'date', property: 'start' },
   { id: 'end', label: 'End', type: 'date', property: 'end' },
   { id: 'progress', label: 'Progress', type: 'progress' },
+  { id: 'property:Priority', label: 'Priority', type: 'text', property: 'Priority' },
 ];
 
 function project(path: string, start?: unknown, end?: unknown): Project {
@@ -47,16 +49,21 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mount(projects: Project[], now = new Date(2026, 8, 13)) {
+function mount(
+  projects: Project[],
+  now = new Date(2026, 8, 13),
+  scale?: ReturnType<typeof buildDefaultProjectTimelineSettings>['scale'],
+) {
   const host = freshContainer();
   activeDocument.body.append(host);
   const settings = buildDefaultProjectTimelineSettings(buildDefaultProjectTableSettings());
+  if (scale !== undefined) settings.scale = scale;
   const selected: Cell[] = [];
   const mountedView: { current?: ProjectsTimelineView<Cell> } = {};
   const view = new ProjectsTimelineView<Cell>(host, {
     settings: () => settings,
     modelInput: () => ({ fields, statuses: DEFAULT_SETTINGS.projects.statuses }),
-    renderCell: ({ host: cellHost, project: item, field, occurrenceId, existing }) => {
+    renderCell: ({ host: cellHost, project: item, field, column, occurrenceId, existing }) => {
       const cell = existing ?? {
         element: cellHost,
         identity: { projectPath: item.path, columnId: field.id, occurrenceId },
@@ -65,7 +72,11 @@ function mount(projects: Project[], now = new Date(2026, 8, 13)) {
       };
       cell.project = item;
       cell.field = field;
+      if (column === undefined) delete cell.column;
+      else cell.column = column;
       cell.element.dataset['fieldId'] = field.id;
+      cell.element.dataset['columnLabel'] = column?.label;
+      cell.element.dataset['dateDisplay'] = column?.dateDisplay;
       cell.element.tabIndex = 0;
       const value = item.frontmatter[field.property ?? ''];
       cell.element.setText(typeof value === 'string' ? value : item.name);
@@ -82,6 +93,7 @@ function mount(projects: Project[], now = new Date(2026, 8, 13)) {
     requestNavigation: (action) => {
       action();
     },
+    openScaleOptions: vi.fn(),
     renderGroupContent: (_marker, label, group) => {
       label.setText(group.label);
     },
@@ -244,14 +256,15 @@ describe('ProjectsTimelineView', () => {
   });
 
   it.each([
-    ['month', new Date(2026, 0, 31), '2026-02-01 – 2026-02-28'],
-    ['quarter', new Date(2026, 11, 31), '2027-01-01 – 2027-03-31'],
+    ['day', new Date(2026, 0, 31), '2026-02-09 – 2026-02-22'],
+    ['week', new Date(2026, 0, 31), '2026-03-16 – 2026-06-07'],
+    ['month', new Date(2026, 0, 31), '2027-01-01 – 2027-12-31'],
+    ['quarter', new Date(2026, 11, 31), '2028-01-01 – 2030-12-31'],
+    ['year', new Date(2026, 11, 31), '2029-01-01 – 2033-12-31'],
   ] as const)(
     'advances a %s window from its calendar range instead of overflowing the day',
     (scale, now, expected) => {
-      const { host, view, settings } = mount([project('Projects/A.md')], now);
-      settings.scale = scale;
-      view.update([project('Projects/A.md')], '');
+      const { host } = mount([project('Projects/A.md')], now, scale);
 
       expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Next range"]')).click();
 
@@ -285,9 +298,11 @@ describe('ProjectsTimelineView', () => {
   });
 
   it.each([
-    ['week', 7],
-    ['month', 31],
-    ['quarter', 92],
+    ['day', 14],
+    ['week', 84],
+    ['month', 366],
+    ['quarter', 1096],
+    ['year', 1827],
   ] as const)(
     'leaves Fit for the %s scale while retaining the scroll context',
     (scale, maximumDays) => {
@@ -367,7 +382,7 @@ describe('ProjectsTimelineView', () => {
     view.update(projects, '');
 
     expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
-      '2032-10-01 – 2032-12-31',
+      '2031-01-01 – 2033-12-31',
     );
   });
 
@@ -394,7 +409,48 @@ describe('ProjectsTimelineView', () => {
     view.update(projects, '');
 
     expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
-      '2032-09-01 – 2032-09-30',
+      '2032-01-01 – 2032-12-31',
     );
+  });
+
+  it('renders ordered configured metadata with aliases and empty values', () => {
+    const item = project('Projects/A.md', '2026-09-01', '2026-09-30');
+    item.frontmatter['Priority'] = '';
+    const { host, view, settings } = mount([item]);
+    settings.fields = [
+      { id: 'property:Priority', label: 'Urgency', visible: true },
+      { id: 'start', label: 'Begins', visible: true, dateDisplay: 'raw' },
+      { id: 'end', visible: false },
+    ];
+    settings.showEmptyFields = true;
+
+    view.update([item], '');
+
+    expect(
+      Array.from(host.querySelectorAll('.abyss-project-timeline-field-label'), (label) =>
+        label.textContent.trim(),
+      ),
+    ).toEqual(['Urgency', 'Begins']);
+    expect(
+      host.querySelector<HTMLElement>('[data-field-id="property:Priority"]')?.textContent,
+    ).toBe('');
+    expect(host.querySelector<HTMLElement>('[data-field-id="start"]')?.dataset).toMatchObject({
+      columnLabel: 'Begins',
+      dateDisplay: 'raw',
+    });
+  });
+
+  it('keeps legacy status, start, and end metadata when saved fields are absent', () => {
+    const item = project('Projects/A.md');
+    const { host, view, settings } = mount([item]);
+    delete settings.fields;
+
+    view.update([item], '');
+
+    expect(
+      Array.from(host.querySelectorAll('.abyss-project-timeline-field-label'), (label) =>
+        label.textContent.trim(),
+      ),
+    ).toEqual(['Status', 'Start', 'End']);
   });
 });

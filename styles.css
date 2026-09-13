@@ -8516,6 +8516,27 @@ table.abyss-project-table {
   font-size: var(--font-ui-smaller);
 }
 
+.abyss-project-timeline-scale-control {
+  position: relative;
+  display: flex;
+  margin-left: 4px;
+}
+
+.abyss-projects-table .abyss-project-timeline-navigation button.abyss-project-timeline-scale {
+  min-width: 66px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+
+.abyss-project-timeline-scale-control > .abyss-view-state-popover {
+  right: auto;
+  left: 0;
+  width: min(274px, calc(100vw - 16px));
+  max-height: min(420px, calc(100vh - 200px));
+}
+
 .abyss-project-timeline-scroll {
   overflow: auto;
   min-width: 0;
@@ -8567,19 +8588,13 @@ table.abyss-project-table {
 .abyss-project-timeline-track {
   position: relative;
   min-width: 0;
-  background-image: repeating-linear-gradient(
-    to right,
-    transparent 0,
-    transparent calc(7.1429% - 1px),
-    var(--background-modifier-border) calc(7.1429% - 1px),
-    var(--background-modifier-border) 7.1429%
-  );
 }
 
 .abyss-project-timeline-tick {
   position: absolute;
   top: 50%;
-  padding-left: 4px;
+  padding-left: 5px;
+  border-left: 1px solid var(--background-modifier-border);
   transform: translateY(-50%);
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
@@ -8609,7 +8624,7 @@ table.abyss-project-table {
 }
 
 .abyss-project-timeline-row {
-  min-height: 54px;
+  min-height: 35px;
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
@@ -8654,8 +8669,12 @@ table.abyss-project-table {
 .abyss-project-timeline-name,
 .abyss-project-timeline-name-cell,
 .abyss-project-timeline-name-cell .abyss-project-table-name-content {
-  overflow: hidden;
+  overflow: visible;
   min-width: 0;
+}
+
+.abyss-project-timeline-name-cell .abyss-project-table-name-content {
+  height: auto;
 }
 
 .abyss-project-timeline-name-cell button.abyss-project-table-name {
@@ -8667,14 +8686,33 @@ table.abyss-project-table {
 }
 
 .abyss-project-timeline-metadata {
-  display: grid;
+  display: flex;
   min-width: 0;
   align-items: center;
-  gap: 5px;
-  grid-template-columns: minmax(54px, 0.8fr) minmax(70px, 1fr) minmax(70px, 1fr);
+  gap: 3px 8px;
+  flex-wrap: wrap;
 }
 
-.abyss-project-timeline-metadata > *,
+.abyss-project-timeline-field {
+  display: flex;
+  overflow: visible;
+  min-width: 0;
+  max-width: 100%;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.abyss-project-timeline-field-label {
+  overflow: hidden;
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-project-timeline-field-value,
 .abyss-project-timeline-progress-cell {
   overflow: hidden;
   min-width: 0;
@@ -8682,6 +8720,38 @@ table.abyss-project-table {
   font-size: var(--font-ui-smaller);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.abyss-project-timeline-field-value {
+  flex: 1 1 auto;
+  line-height: 1.2;
+}
+
+.abyss-project-timeline-name-cell .abyss-project-description {
+  overflow: visible;
+  align-items: flex-start;
+  white-space: normal;
+}
+
+.abyss-project-timeline-name-cell .abyss-project-description-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--abyss-project-description-lines, 1);
+  line-clamp: var(--abyss-project-description-lines, 1);
+  white-space: pre-wrap;
+}
+
+.abyss-project-timeline-name.is-full-description .abyss-project-description-text {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  white-space: pre-wrap;
+}
+
+.abyss-project-timeline-name-cell .abyss-project-description.is-editor-anchor,
+.abyss-project-timeline-name-cell .abyss-project-description-editor-anchor {
+  overflow: visible;
 }
 
 .abyss-project-timeline-progress .abyss-project-table-progress {
@@ -8694,7 +8764,7 @@ table.abyss-project-table {
 
 .abyss-project-timeline-track {
   overflow: hidden;
-  min-height: 53px;
+  min-height: 34px;
 }
 
 .abyss-project-timeline-bar {
@@ -8758,7 +8828,7 @@ table.abyss-project-table {
   top: 0;
   bottom: 0;
   width: 1px;
-  background: var(--interactive-accent);
+  background: var(--text-error);
   pointer-events: none;
 }
 

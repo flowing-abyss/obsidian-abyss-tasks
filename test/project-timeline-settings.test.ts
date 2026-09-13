@@ -18,6 +18,13 @@ describe('project Timeline settings', () => {
     timeline.hiddenStatuses.push('none');
 
     expect(timeline).toEqual({
+      fields: [
+        { id: 'status', visible: true },
+        { id: 'start', visible: true },
+        { id: 'end', visible: true },
+      ],
+      showEmptyFields: true,
+      descriptionLines: 0,
       groupBy: 'property:Owner',
       sortBy: { field: 'start', dir: 'desc' },
       hiddenStatuses: ['id:done', 'none'],
@@ -36,7 +43,13 @@ describe('project Timeline settings', () => {
       groupBy: 'status',
       sortBy: { field: 'name', dir: 'desc' },
       hiddenStatuses: ['id:done', 'id:done'],
-      scale: 'quarter',
+      scale: 'year',
+      fields: [
+        { id: 'property:Priority', label: 'Urgency', visible: true },
+        { id: 'start', visible: false, dateDisplay: 'raw' },
+      ],
+      showEmptyFields: false,
+      descriptionLines: 2,
       showMetadata: false,
       progress: 'bar',
       showUnscheduled: false,
@@ -50,7 +63,10 @@ describe('project Timeline settings', () => {
     expect(raw.hiddenStatuses).toEqual(['id:done', 'id:done']);
     expect(normalized).toMatchObject({
       groupBy: 'status',
-      scale: 'quarter',
+      scale: 'year',
+      fields: raw.fields,
+      showEmptyFields: false,
+      descriptionLines: 2,
       showMetadata: false,
       progress: 'bar',
       showUnscheduled: false,
@@ -58,7 +74,10 @@ describe('project Timeline settings', () => {
   });
 
   it('reports malformed known fields while allowing future keys', () => {
-    expect(isMalformedProjectTimelineSettings({ scale: 'year' })).toBe(true);
+    expect(isMalformedProjectTimelineSettings({ scale: 'year' })).toBe(false);
+    expect(isMalformedProjectTimelineSettings({ scale: 'century' })).toBe(true);
+    expect(isMalformedProjectTimelineSettings({ fields: [{ id: '', visible: true }] })).toBe(true);
+    expect(isMalformedProjectTimelineSettings({ descriptionLines: 3 })).toBe(true);
     expect(isMalformedProjectTimelineSettings({ showUnscheduled: 'yes' })).toBe(true);
     expect(isMalformedProjectTimelineSettings({ futureOption: { keep: true } })).toBe(false);
   });

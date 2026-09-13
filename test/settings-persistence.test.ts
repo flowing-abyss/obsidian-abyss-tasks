@@ -97,6 +97,12 @@ describe('SettingsPersistenceCoordinator migration', () => {
 
   it('roundtrips independent Timeline preferences and unknown nested keys', async () => {
     const timeline = buildDefaultProjectTimelineSettings(DEFAULT_SETTINGS.projects.table);
+    timeline.fields = [
+      { id: 'property:Priority', label: 'Urgency', visible: true, dateDisplay: 'relative' },
+      { id: 'start', visible: false },
+    ];
+    timeline.showEmptyFields = false;
+    timeline.descriptionLines = 2;
     const state = stateEnvelope({
       projects: {
         table: structuredClone(DEFAULT_SETTINGS.projects.table),
@@ -104,6 +110,10 @@ describe('SettingsPersistenceCoordinator migration', () => {
         timeline: {
           ...timeline,
           scale: 'quarter',
+          fields: timeline.fields.map((field, index) => ({
+            ...field,
+            ...(index === 0 ? { futureFieldOption: 'keep' } : {}),
+          })),
           futureTimelineOption: { retained: true },
           sortBy: { ...timeline.sortBy, futureSortOption: 9 },
         },
@@ -126,6 +136,18 @@ describe('SettingsPersistenceCoordinator migration', () => {
     expect(saved.views.projects.timeline).toMatchObject({
       scale: 'quarter',
       progress: 'bar',
+      fields: [
+        {
+          id: 'property:Priority',
+          label: 'Urgency',
+          visible: true,
+          dateDisplay: 'relative',
+          futureFieldOption: 'keep',
+        },
+        { id: 'start', visible: false },
+      ],
+      showEmptyFields: false,
+      descriptionLines: 2,
       futureTimelineOption: { retained: true },
       sortBy: { field: 'start', dir: 'asc', futureSortOption: 9 },
     });
@@ -134,7 +156,10 @@ describe('SettingsPersistenceCoordinator migration', () => {
 
   it('retains malformed Timeline state for recovery while using safe values', async () => {
     const malformedTimeline = {
-      scale: 'year',
+      scale: 'century',
+      fields: [{ id: '', visible: true }],
+      showEmptyFields: 'sometimes',
+      descriptionLines: 3,
       showMetadata: 'sometimes',
       progress: 'circle',
       showUnscheduled: null,
