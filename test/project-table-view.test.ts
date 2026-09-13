@@ -487,7 +487,7 @@ describe('ProjectsTableView', () => {
     ]);
   });
 
-  it('opens the range menu only for exact Timeline track and bar targets', () => {
+  it('opens the range menu for the Timeline track and its range handle', () => {
     const config = settings();
     config.projects.overviewView = 'timeline';
     const showMenu = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
@@ -496,16 +496,16 @@ describe('ProjectsTableView', () => {
       { settings: config },
     );
     const track = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track'));
-    const showRange = expectDefined(
-      track.querySelector<HTMLButtonElement>('.abyss-project-timeline-show-range'),
+    const handle = expectDefined(
+      track.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-start'),
     );
     const trackMenu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
 
     track.dispatchEvent(trackMenu);
-    showRange.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    handle.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 
     expect(trackMenu.defaultPrevented).toBe(true);
-    expect(showMenu).toHaveBeenCalledOnce();
+    expect(showMenu).toHaveBeenCalledTimes(2);
   });
 
   it('queues an active editor save before its Timeline range request without nesting', async () => {

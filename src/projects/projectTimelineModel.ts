@@ -327,6 +327,40 @@ export function projectTimelineWindowForRange(
   };
 }
 
+/** Fits literal project bounds outward to complete units for the selected scale. */
+export function projectTimelineFitWindow(
+  startDay: string,
+  endDay: string,
+  scale: ProjectTimelineScale,
+): ProjectTimelineWindow {
+  let first = dayOrdinal(startDay);
+  let last = Math.max(first, dayOrdinal(endDay));
+  if (scale === 'week') {
+    const firstWeekday = (new Date(first * DAY_MS).getUTCDay() + 6) % 7;
+    const lastWeekday = (new Date(last * DAY_MS).getUTCDay() + 6) % 7;
+    first -= firstWeekday;
+    last += 6 - lastWeekday;
+  } else if (scale !== 'day') {
+    const firstValue = new Date(first * DAY_MS);
+    const lastValue = new Date(last * DAY_MS);
+    if (scale === 'month') {
+      firstValue.setUTCDate(1);
+      lastValue.setUTCFullYear(lastValue.getUTCFullYear(), lastValue.getUTCMonth() + 1, 0);
+    } else if (scale === 'quarter') {
+      const firstQuarter = Math.floor(firstValue.getUTCMonth() / 3) * 3;
+      const lastQuarter = Math.floor(lastValue.getUTCMonth() / 3) * 3;
+      firstValue.setUTCFullYear(firstValue.getUTCFullYear(), firstQuarter, 1);
+      lastValue.setUTCFullYear(lastValue.getUTCFullYear(), lastQuarter + 3, 0);
+    } else {
+      firstValue.setUTCFullYear(firstValue.getUTCFullYear(), 0, 1);
+      lastValue.setUTCFullYear(lastValue.getUTCFullYear(), 12, 0);
+    }
+    first = Math.floor(firstValue.getTime() / DAY_MS);
+    last = Math.floor(lastValue.getTime() / DAY_MS);
+  }
+  return projectTimelineWindowForRange(dayString(first), dayString(last), scale);
+}
+
 export function projectTimelineBarGeometry(
   range: ProjectTimelineRange,
   window: ProjectTimelineWindow,

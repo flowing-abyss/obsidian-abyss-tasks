@@ -823,11 +823,7 @@ export class ProjectsTableView {
         this.switchOverviewMode_abyssPrivate(mode);
       },
       onViewOptionChange: (mutation) => this.requestViewChange_abyssPrivate(mutation),
-      onTimelineScaleChange: (scale) =>
-        this.requestViewChange_abyssPrivate(() => {
-          this.timelineView_abyssPrivate?.prepareScaleChange();
-          this.ensureTimelineSettings_abyssPrivate().scale = scale;
-        }),
+      onTimelineScaleChange: (scale) => this.requestTimelineScaleChange_abyssPrivate(scale),
     });
   }
 
@@ -1195,6 +1191,15 @@ export class ProjectsTableView {
       mutation();
       this.persistAndRender_abyssPrivate();
       return true;
+    });
+  }
+
+  private requestTimelineScaleChange_abyssPrivate(
+    scale: ProjectTimelineSettings['scale'],
+  ): Promise<boolean> {
+    return this.requestViewChange_abyssPrivate(() => {
+      this.timelineView_abyssPrivate?.prepareScaleChange();
+      this.ensureTimelineSettings_abyssPrivate().scale = scale;
     });
   }
 
@@ -1624,9 +1629,7 @@ export class ProjectsTableView {
       requestNavigation: (action) => {
         this.finishEditorBeforeAction(action);
       },
-      openScaleOptions: (anchor) => {
-        this.toolbar_abyssPrivate.openTimelineScaleOptions(anchor);
-      },
+      requestScaleChange: (scale) => this.requestTimelineScaleChange_abyssPrivate(scale),
       renderGroupContent: (marker, label, group) => {
         this.renderGroupContent_abyssPrivate(marker, label, group, group.presentation?.color);
       },
@@ -2979,8 +2982,7 @@ export class ProjectsTableView {
     if (rendered.field.type !== 'name') return false;
     const menu = new Menu();
     const descriptionAdded = this.addDescriptionMenuItem_abyssPrivate(menu, rendered);
-    const rangeAdded = this.addTimelineRangeMenuItem_abyssPrivate(menu, rendered);
-    if (!descriptionAdded && !rangeAdded) return false;
+    if (!descriptionAdded) return false;
     this.showCellMenu_abyssPrivate(menu, rendered, event);
     return true;
   }
@@ -2998,30 +3000,6 @@ export class ProjectsTableView {
         .setIcon('pencil')
         .onClick(() => {
           this.editDescription_abyssPrivate(rendered, effective.field, effective.ownedClear);
-        });
-    });
-    return true;
-  }
-
-  private addTimelineRangeMenuItem_abyssPrivate(
-    menu: Menu,
-    rendered: RenderedCellContext,
-  ): boolean {
-    const timeline = this.timelineView_abyssPrivate;
-    if (
-      this.overviewMode_abyssPrivate !== 'timeline' ||
-      timeline?.canRevealProjectRange(rendered.project.path) !== true
-    ) {
-      return false;
-    }
-    menu.addItem((item) => {
-      item
-        .setTitle('Show date range')
-        .setIcon('calendar-range')
-        .onClick(() => {
-          this.finishEditorBeforeAction(() => {
-            timeline.revealProject(rendered.project.path);
-          });
         });
     });
     return true;

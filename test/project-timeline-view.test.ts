@@ -94,7 +94,12 @@ function mount(
     requestNavigation: (action) => {
       action();
     },
-    openScaleOptions: vi.fn(),
+    requestScaleChange: async (nextScale) => {
+      mountedView.current?.prepareScaleChange();
+      settings.scale = nextScale;
+      mountedView.current?.update(projects, '');
+      return true;
+    },
     renderGroupContent: (_marker, label, group) => {
       label.setText(group.label);
     },
@@ -204,19 +209,15 @@ describe('ProjectsTimelineView', () => {
     ).toContain('Unscheduled');
   });
 
-  it('forces retained hidden range controls out of layout', async () => {
+  it('keeps unscheduled ranges out of the timeline geometry', async () => {
     const styles = await loadPluginStyles();
     const sheet = createEl('style');
     sheet.textContent = styles;
     activeDocument.head.append(sheet);
     const { host } = mount([project('Projects/Unscheduled.md')]);
-    const showRange = expectDefined(
-      host.querySelector<HTMLElement>('.abyss-project-timeline-show-range'),
-    );
     const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
 
-    expect(showRange.hidden).toBe(true);
-    expect(activeWindow.getComputedStyle(showRange).display).toBe('none');
+    expect(host.querySelector('.abyss-project-timeline-show-range')).toBeNull();
     expect(activeWindow.getComputedStyle(bar).display).toBe('none');
     sheet.remove();
   });
@@ -238,7 +239,7 @@ describe('ProjectsTimelineView', () => {
     sheet.remove();
   });
 
-  it('keeps range recovery controls aligned with the exposed date viewport while scrolling', () => {
+  it('keeps malformed range state aligned with the exposed date viewport while scrolling', () => {
     const { host, view } = mount([
       project('Projects/Invalid.md', '2026-09-20', '2026-09-10'),
       project('Projects/Future.md', undefined, '2032-01-03'),
@@ -251,7 +252,7 @@ describe('ProjectsTimelineView', () => {
       '183.5px',
     );
     expect(host.querySelector('.abyss-project-timeline-state')).not.toBeNull();
-    expect(host.querySelector('.abyss-project-timeline-show-range')).not.toBeNull();
+    expect(host.querySelector('.abyss-project-timeline-show-range')).toBeNull();
   });
 
   it('shows clipped endpoint handles only when their calendar day is visible', () => {
@@ -407,8 +408,11 @@ describe('ProjectsTimelineView', () => {
     sheet.remove();
   });
 
-  it('reveals a project outside the current window and keeps ticks bounded', () => {
-    const { host, view } = mount([project('Projects/Future.md', '2045-06-28', '2045-06-29')]);
+  it('uses a passive directional marker for an offscreen project without inventing a date', () => {
+    const { host, view } = mount([
+      project('Projects/Past.md', '2005-06-28', '2005-06-29'),
+      project('Projects/Future.md', '2045-06-28', '2045-06-29'),
+    ]);
     expect(
       expectDefined(
         host.querySelector<HTMLElement>(
@@ -417,36 +421,104 @@ describe('ProjectsTimelineView', () => {
       ).hidden,
     ).toBe(true);
 
-    const show = expectDefined(
-      host.querySelector<HTMLButtonElement>(
-        '[data-project-path="Projects/Future.md"] .abyss-project-timeline-show-range',
+    const marker = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/Future.md"] .abyss-project-timeline-boundary-marker',
       ),
     );
-    mockTimelineGeometry(host, view, {
-      summaryWidth: 210,
-      trackWidth: 640,
-      viewportWidth: 400,
-    });
-    show.focus();
-    expect(activeDocument.activeElement).toBe(show);
-    show.click();
+    expect(marker.tagName).toBe('SPAN');
+    expect(marker.dataset['direction']).toBe('after');
+    expect(marker.dataset['date']).toBeUndefined();
+    expect(marker.style.left).toBe('');
+    expect(marker.style.width).toBe('');
+    expect(host.querySelector('.abyss-project-timeline-show-range')).toBeNull();
+    expect(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/Past.md"] .abyss-project-timeline-boundary-marker',
+      )?.dataset['direction'],
+    ).toBe('before');
+
+    view.revealProject('Projects/Future.md');
 
     const bar = expectDefined(
       host.querySelector<HTMLElement>(
         '[data-project-path="Projects/Future.md"] .abyss-project-timeline-bar',
       ),
     );
-    const trackWidth = 640;
-    const barCenter =
-      210 +
-      ((Number.parseFloat(bar.style.left) + Number.parseFloat(bar.style.width) / 2) / 100) *
-        trackWidth;
-    expect(barCenter).toBeGreaterThanOrEqual(view.scroll.scrollLeft + 210);
-    expect(barCenter).toBeLessThanOrEqual(view.scroll.scrollLeft + 400);
-    expect(
-      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-show-range')).hidden,
-    ).toBe(true);
+    expect(bar.hidden).toBe(false);
     expect(host.querySelectorAll('.abyss-project-timeline-tick').length).toBeLessThanOrEqual(15);
+  });
+
+  it('offers all five direct scales and refits the active scale after Today', () => {
+    const { host } = mount([
+      project('Projects/Early.md', '2026-09-10', '2026-09-10'),
+      project('Projects/Late.md', '2026-09-19', '2026-09-20'),
+    ]);
+    const scaleButtons = Array.from(
+      host.querySelectorAll<HTMLButtonElement>('.abyss-project-timeline-scale-control button'),
+    );
+
+    expect(scaleButtons.map(({ textContent }) => textContent)).toEqual([
+      'Day',
+      'Week',
+      'Month',
+      'Quarter',
+      'Year',
+    ]);
+    const expectedBounds = [
+      '2026-09-10 – 2026-09-20',
+      '2026-09-07 – 2026-09-20',
+      '2026-09-01 – 2026-09-30',
+      '2026-07-01 – 2026-09-30',
+      '2026-01-01 – 2026-12-31',
+    ];
+    for (const [index, button] of scaleButtons.entries()) {
+      button.click();
+      expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+        expectedBounds[index],
+      );
+      expect(button.getAttribute('aria-pressed')).toBe('true');
+      if (button.textContent === 'Month') {
+        const interiorGridLines = Array.from(
+          host.querySelectorAll<HTMLElement>('.abyss-project-timeline-gridline'),
+        ).filter(({ style }) => {
+          const left = Number.parseFloat(style.left);
+          return left > 0 && left < 100;
+        });
+        expect(interiorGridLines.length).toBeGreaterThan(0);
+      }
+    }
+    const month = expectDefined(scaleButtons.find(({ textContent }) => textContent === 'Month'));
+    month.click();
+
+    expectDefined(
+      Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(
+        ({ textContent }) => textContent === 'Today',
+      ),
+    ).click();
+    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+      '2026-01-01 – 2026-12-31',
+    );
+
+    month.click();
+    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+      '2026-09-01 – 2026-09-30',
+    );
+  });
+
+  it('fits an empty scale activation around today', () => {
+    const { host } = mount([project('Projects/Unscheduled.md')]);
+    const month = expectDefined(
+      Array.from(
+        host.querySelectorAll<HTMLButtonElement>('.abyss-project-timeline-scale-control button'),
+      ).find(({ textContent }) => textContent === 'Month'),
+    );
+
+    month.click();
+
+    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
+      '2026-01-01 – 2026-12-31',
+    );
   });
 
   it('restores focused range identity when a date edit regroups its row', () => {
@@ -521,10 +593,10 @@ describe('ProjectsTimelineView', () => {
       project('Projects/Late.md', '2032-10-20', '2032-10-21'),
     ];
     const { host } = mount(projects, new Date(2026, 8, 13), 'month');
-    const fit = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(
-      ({ textContent }) => textContent === 'Fit',
-    );
-    expectDefined(fit).click();
+    const month = Array.from(
+      host.querySelectorAll<HTMLButtonElement>('.abyss-project-timeline-scale-control button'),
+    ).find(({ textContent }) => textContent === 'Month');
+    expectDefined(month).click();
 
     expectDefined(host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)).click();
 
@@ -554,120 +626,14 @@ describe('ProjectsTimelineView', () => {
     expect(markerPosition).toBeLessThanOrEqual(view.scroll.scrollLeft + 400);
   });
 
-  it.each([
-    ['day', 14],
-    ['week', 84],
-    ['month', 366],
-    ['quarter', 1096],
-    ['year', 1827],
-  ] as const)(
-    'leaves Fit for the %s scale while retaining the scroll context',
-    (scale, maximumDays) => {
-      const { host, view, settings } = mount([
-        project('Projects/Early.md', '2026-01-01', '2026-01-02'),
-        project('Projects/Late.md', '2026-06-29', '2026-06-30'),
-      ]);
-      if (scale === 'month') {
-        settings.scale = 'week';
-        view.update(
-          [
-            project('Projects/Early.md', '2026-01-01', '2026-01-02'),
-            project('Projects/Late.md', '2026-06-29', '2026-06-30'),
-          ],
-          '',
-        );
-      }
-      const fit = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(
-        ({ textContent }) => textContent === 'Fit',
-      );
-      expectDefined(fit).click();
-      mockTimelineGeometry(host, view, {
-        summaryWidth: 200,
-        trackWidth: 800,
-        viewportWidth: 400,
-      });
-      view.scroll.scrollLeft = 400;
+  it('omits redundant Fit and Show range controls', () => {
+    const { host } = mount([project('Projects/Future.md', '2045-06-28', '2045-06-29')]);
 
-      view.prepareScaleChange();
-      settings.scale = scale;
-      view.update(
-        [
-          project('Projects/Early.md', '2026-01-01', '2026-01-02'),
-          project('Projects/Late.md', '2026-06-29', '2026-06-30'),
-        ],
-        '',
-      );
-
-      const summary = expectDefined(
-        host.querySelector<HTMLElement>('.abyss-project-timeline-axis-summary'),
-      ).textContent;
-      const [start, end] = summary.split(' – ').map((day) => new Date(`${day}T12:00:00`));
-      expect(
-        ((end as Date).getTime() - (start as Date).getTime()) / 86_400_000 + 1,
-      ).toBeLessThanOrEqual(maximumDays);
-      const [startDay, endDay] = summary.split(' – ');
-      expect(expectDefined(startDay) <= '2026-04-24' && expectDefined(endDay) >= '2026-04-24').toBe(
-        true,
-      );
-      const contextOffset =
-        (new Date('2026-04-24T12:00:00').getTime() - (start as Date).getTime()) / 86_400_000;
-      const contextPosition = 200 + ((contextOffset + 0.5) / maximumDays) * 800;
-      expect(contextPosition).toBeGreaterThanOrEqual(view.scroll.scrollLeft + 200);
-      expect(contextPosition).toBeLessThanOrEqual(view.scroll.scrollLeft + 400);
-    },
-  );
-
-  it('anchors zoom to the rendered date track when tick labels overflow the axis', () => {
-    const projects = [
-      project('Projects/Early.md', '2032-01-01', '2032-01-02'),
-      project('Projects/Late.md', '2032-12-30', '2032-12-31'),
-    ];
-    const { host, view, settings } = mount(projects);
-    const fit = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(
-      ({ textContent }) => textContent === 'Fit',
-    );
-    expectDefined(fit).click();
-    mockTimelineGeometry(host, view, {
-      summaryWidth: 210,
-      trackWidth: 640,
-      viewportWidth: 400,
-    });
-    view.scroll.scrollLeft = 391;
-
-    view.prepareScaleChange();
-    settings.scale = 'quarter';
-    view.update(projects, '');
-
-    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
-      '2031-01-01 – 2033-12-31',
-    );
-  });
-
-  it('excludes the scrollbar gutter when choosing the visible zoom date', () => {
-    const projects = [
-      project('Projects/Early.md', '2032-01-01', '2032-01-02'),
-      project('Projects/Late.md', '2032-12-30', '2032-12-31'),
-    ];
-    const { host, view, settings } = mount(projects);
-    const fit = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(
-      ({ textContent }) => textContent === 'Fit',
-    );
-    expectDefined(fit).click();
-    mockTimelineGeometry(host, view, {
-      summaryWidth: 210,
-      trackWidth: 640,
-      viewportWidth: 457,
-      outerViewportWidth: 472,
-    });
-    view.scroll.scrollLeft = 350;
-
-    view.prepareScaleChange();
-    settings.scale = 'month';
-    view.update(projects, '');
-
-    expect(host.querySelector('.abyss-project-timeline-axis-summary')?.textContent).toBe(
-      '2032-01-01 – 2032-12-31',
-    );
+    expect(
+      Array.from(host.querySelectorAll<HTMLButtonElement>('button')).some(
+        ({ textContent }) => textContent === 'Fit' || textContent === 'Show range',
+      ),
+    ).toBe(false);
   });
 
   it('renders ordered configured metadata with aliases and empty values', () => {

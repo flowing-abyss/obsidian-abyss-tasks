@@ -99,7 +99,6 @@ export class ProjectsTableToolbar {
   private readonly modeButtons_abyssPrivate = new Map<ProjectOverviewMode, HTMLButtonElement>();
   private readonly statusButtons_abyssPrivate = new Map<string, HTMLButtonElement>();
   private popoverCleanup_abyssPrivate: (() => void) | undefined;
-  private popoverAnchor_abyssPrivate: HTMLElement | undefined;
 
   constructor(private readonly options_abyssPrivate: ProjectsTableToolbarOptions) {
     const toolbar = options_abyssPrivate.host.createDiv({
@@ -226,15 +225,6 @@ export class ProjectsTableToolbar {
   destroy(): void {
     this.popoverCleanup_abyssPrivate?.();
     this.popoverCleanup_abyssPrivate = undefined;
-    this.popoverAnchor_abyssPrivate = undefined;
-  }
-
-  openTimelineScaleOptions(anchor: HTMLElement): void {
-    const alreadyOpen = this.popoverCleanup_abyssPrivate !== undefined;
-    const sameAnchor = this.popoverAnchor_abyssPrivate === anchor;
-    this.popoverCleanup_abyssPrivate?.();
-    if (alreadyOpen && sameAnchor) return;
-    this.openPopover_abyssPrivate(anchor, true);
   }
 
   private sync(): void {
@@ -264,28 +254,25 @@ export class ProjectsTableToolbar {
       this.popoverCleanup_abyssPrivate();
       return;
     }
-    this.openPopover_abyssPrivate(this.viewButton_abyssPrivate, false);
+    this.openPopover_abyssPrivate(this.viewButton_abyssPrivate);
   }
 
-  private openPopover_abyssPrivate(anchor: HTMLElement, openTimelineScale: boolean): void {
+  private openPopover_abyssPrivate(anchor: HTMLElement): void {
     const settings = this.options_abyssPrivate.settings();
     const fields = this.options_abyssPrivate.fields();
     let rows: ViewOptionsRow[];
     if (isTableSettings(settings)) rows = this.tableRows_abyssPrivate(settings, fields);
     else if (isTimelineSettings(settings)) {
-      rows = projectTimelineOptionsRows(
-        {
-          settings: () => {
-            const current = this.options_abyssPrivate.settings();
-            return !isTableSettings(current) && isTimelineSettings(current) ? current : settings;
-          },
-          tableSettings: this.options_abyssPrivate.tableSettings,
-          fields: this.options_abyssPrivate.fields,
-          onChange: this.options_abyssPrivate.onViewOptionChange,
-          onScaleChange: this.options_abyssPrivate.onTimelineScaleChange,
+      rows = projectTimelineOptionsRows({
+        settings: () => {
+          const current = this.options_abyssPrivate.settings();
+          return !isTableSettings(current) && isTimelineSettings(current) ? current : settings;
         },
-        { openScale: openTimelineScale },
-      );
+        tableSettings: this.options_abyssPrivate.tableSettings,
+        fields: this.options_abyssPrivate.fields,
+        onChange: this.options_abyssPrivate.onViewOptionChange,
+        onScaleChange: this.options_abyssPrivate.onTimelineScaleChange,
+      });
     } else {
       rows = projectKanbanOptionsRows({
         settings: () => {
@@ -307,12 +294,10 @@ export class ProjectsTableToolbar {
       onClose: () => {
         if (this.popoverCleanup_abyssPrivate === close) {
           this.popoverCleanup_abyssPrivate = undefined;
-          this.popoverAnchor_abyssPrivate = undefined;
         }
       },
     });
     this.popoverCleanup_abyssPrivate = close;
-    this.popoverAnchor_abyssPrivate = anchor;
   }
 
   private tableRows_abyssPrivate(

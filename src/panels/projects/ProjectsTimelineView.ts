@@ -12,6 +12,7 @@ import type { ProjectTableGroup } from '../../projects/projectTableModel';
 import {
   buildProjectTimelineModel,
   projectTimelineBarGeometry,
+  projectTimelineFitWindow,
   projectTimelineWindow,
   projectTimelineWindowForRange,
   type ProjectTimelineBarGeometry,
@@ -62,7 +63,7 @@ export interface ProjectsTimelineViewContext<
   readonly selectCell: (cell: TCell) => void;
   readonly requestViewChange: (mutation: () => void) => Promise<boolean>;
   readonly requestNavigation: (action: () => void) => void;
-  readonly openScaleOptions: (anchor: HTMLElement) => void;
+  readonly requestScaleChange: (scale: ProjectTimelineSettings['scale']) => Promise<boolean>;
   readonly renderGroupContent: (
     marker: HTMLElement,
     label: HTMLElement,
@@ -92,7 +93,6 @@ interface RenderedRow<TCell extends ProjectTimelineCellContext> {
   readonly startHandle: HTMLElement;
   readonly endHandle: HTMLElement;
   readonly state: HTMLElement;
-  readonly showRange: HTMLButtonElement;
   readonly rangeName: HTMLElement;
   readonly rangeDescription: HTMLElement;
   readonly cells: Map<string, TCell>;
@@ -123,6 +123,14 @@ interface TimelineAxisGeometry {
   readonly trackWidth: number;
   readonly viewportWidth: number;
 }
+
+const TIMELINE_SCALES = [
+  ['day', 'Day'],
+  ['week', 'Week'],
+  ['month', 'Month'],
+  ['quarter', 'Quarter'],
+  ['year', 'Year'],
+] as const;
 
 interface TimelineFocusIdentity {
   readonly projectPath: string;
@@ -244,6 +252,15 @@ function calendarWindowYears(scale: ProjectTimelineSettings['scale']): number {
   return 5;
 }
 
+function finerGridScale(
+  scale: ProjectTimelineSettings['scale'],
+): ProjectTimelineSettings['scale'] | undefined {
+  if (scale === 'year') return 'quarter';
+  if (scale === 'quarter') return 'month';
+  if (scale === 'month') return 'week';
+  return scale === 'week' ? 'day' : undefined;
+}
+
 function reconcileOrder(parent: HTMLElement, desired: readonly HTMLElement[]): void {
   let cursor = parent.firstChild;
   for (const element of desired) {
@@ -272,7 +289,10 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   private fittedWindow_abyssPrivate: ProjectTimelineWindow | undefined;
   private selectedPath_abyssPrivate: string | undefined;
   private hiddenScrollPosition_abyssPrivate: TimelineScrollPosition | undefined;
-  private readonly scaleButton_abyssPrivate: HTMLButtonElement;
+  private readonly scaleButtons_abyssPrivate = new Map<
+    ProjectTimelineSettings['scale'],
+    HTMLButtonElement
+  >();
   private readonly interaction_abyssPrivate: ProjectTimelinePointerInteraction;
 
   constructor(
@@ -284,30 +304,37 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     this.root = host.createDiv({ cls: 'abyss-project-timeline', attr: { tabindex: '-1' } });
     const navigation = this.root.createDiv({ cls: 'abyss-project-timeline-navigation' });
     this.addNavigationButton_abyssPrivate(navigation, 'Previous range', 'chevron-left', () => {
-      this.moveAnchor_abyssPrivate(-1);
+      this.context_abyssPrivate.requestNavigation(() => {
+        this.moveAnchor_abyssPrivate(-1);
+      });
     });
     this.addTextButton_abyssPrivate(navigation, 'Today', () => {
-      const today = new Date((this.context_abyssPrivate.now ?? (() => new Date()))());
-      this.anchor_abyssPrivate = today;
-      this.fittedWindow_abyssPrivate = undefined;
-      this.scaleContextOrdinal_abyssPrivate = dayOrdinal(localDay(today));
-      this.render_abyssPrivate(true);
+      this.context_abyssPrivate.requestNavigation(() => {
+        const today = new Date((this.context_abyssPrivate.now ?? (() => new Date()))());
+        this.anchor_abyssPrivate = today;
+        this.fittedWindow_abyssPrivate = undefined;
+        this.scaleContextOrdinal_abyssPrivate = dayOrdinal(localDay(today));
+        this.render_abyssPrivate(true);
+      });
     });
     this.addNavigationButton_abyssPrivate(navigation, 'Next range', 'chevron-right', () => {
-      this.moveAnchor_abyssPrivate(1);
+      this.context_abyssPrivate.requestNavigation(() => {
+        this.moveAnchor_abyssPrivate(1);
+      });
     });
-    const scaleControl = navigation.createDiv({ cls: 'abyss-project-timeline-scale-control' });
-    this.scaleButton_abyssPrivate = this.addTextButton_abyssPrivate(
-      scaleControl,
-      this.scaleLabel_abyssPrivate(this.renderedScale_abyssPrivate),
-      () => {
-        this.context_abyssPrivate.openScaleOptions(this.scaleButton_abyssPrivate);
-      },
-    );
-    this.scaleButton_abyssPrivate.addClass('abyss-project-timeline-scale');
-    this.addTextButton_abyssPrivate(navigation, 'Fit', () => {
-      this.fit_abyssPrivate();
+    const scaleControl = navigation.createDiv({
+      cls: 'abyss-project-timeline-scale-control',
+      attr: { role: 'group', 'aria-label': 'Timeline scale' },
     });
+    for (const [scale, label] of TIMELINE_SCALES) {
+      const button = this.addTextButton_abyssPrivate(scaleControl, label, () => {
+        void this.context_abyssPrivate.requestScaleChange(scale).catch((error: unknown) => {
+          console.error('[abyss-tasks] Could not change project Timeline scale', error);
+        });
+      });
+      button.addClass('abyss-project-timeline-scale');
+      this.scaleButtons_abyssPrivate.set(scale, button);
+    }
     this.scroll = this.root.createDiv({
       cls: 'abyss-project-timeline-scroll',
       attr: { tabindex: '0', 'aria-label': 'Project Timeline' },
@@ -397,20 +424,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   }
 
   prepareScaleChange(): void {
-    const context = this.visibleContextOrdinal_abyssPrivate(this.currentWindow_abyssPrivate());
-    this.anchor_abyssPrivate = dayDate(dayFromOrdinal(context));
-    this.fittedWindow_abyssPrivate = undefined;
     this.preparedScaleChange_abyssPrivate = true;
-    this.scaleContextOrdinal_abyssPrivate = context;
-  }
-
-  canRevealProjectRange(path: string): boolean {
-    const row = this.findRow_abyssPrivate(path);
-    return (
-      row !== undefined &&
-      rangeAnchor(row.range) !== undefined &&
-      projectTimelineBarGeometry(row.range, this.currentWindow_abyssPrivate()) === undefined
-    );
   }
 
   revealProject(path: string): void {
@@ -469,49 +483,18 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     return button;
   }
 
-  private scaleLabel_abyssPrivate(scale: ProjectTimelineSettings['scale']): string {
-    return { day: 'Day', week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' }[scale];
-  }
-
-  private syncScaleButton_abyssPrivate(): void {
-    const label = this.scaleLabel_abyssPrivate(this.context_abyssPrivate.settings().scale);
-    this.scaleButton_abyssPrivate.setText(label);
-    this.scaleButton_abyssPrivate.setAttribute('aria-label', `Timeline scale: ${label}`);
+  private syncScaleButtons_abyssPrivate(): void {
+    const scale = this.context_abyssPrivate.settings().scale;
+    for (const [candidate, button] of this.scaleButtons_abyssPrivate) {
+      button.setAttribute('aria-pressed', String(candidate === scale));
+    }
   }
 
   private handleScaleTransition_abyssPrivate(): void {
     const scale = this.context_abyssPrivate.settings().scale;
-    if (this.preparedScaleChange_abyssPrivate) {
-      this.preparedScaleChange_abyssPrivate = false;
-      this.renderedScale_abyssPrivate = scale;
-      return;
-    }
     if (scale === this.renderedScale_abyssPrivate) return;
-    const window =
-      this.fittedWindow_abyssPrivate ??
-      projectTimelineWindow(this.anchor_abyssPrivate, this.renderedScale_abyssPrivate);
-    const center = dayOrdinal(window.startDay) + Math.floor((window.dayCount - 1) / 2);
-    this.anchor_abyssPrivate = dayDate(dayFromOrdinal(center));
     this.fittedWindow_abyssPrivate = undefined;
     this.renderedScale_abyssPrivate = scale;
-  }
-
-  private visibleContextOrdinal_abyssPrivate(window: ProjectTimelineWindow): number {
-    const geometry = this.axisGeometry_abyssPrivate();
-    if (geometry === undefined) {
-      return dayOrdinal(window.startDay) + Math.floor((window.dayCount - 1) / 2);
-    }
-    const { summaryWidth, trackStart, trackWidth, viewportWidth } = geometry;
-    const trackEnd = trackStart + trackWidth;
-    const visibleStart = Math.max(trackStart, this.scroll.scrollLeft + summaryWidth);
-    const visibleEnd = Math.min(trackEnd, this.scroll.scrollLeft + viewportWidth);
-    const viewportCenter = this.scroll.scrollLeft + (summaryWidth + viewportWidth) / 2;
-    const center =
-      visibleStart <= visibleEnd
-        ? (visibleStart + visibleEnd) / 2
-        : clamp(viewportCenter, trackStart, trackEnd);
-    const fraction = clamp((center - trackStart) / trackWidth, 0, 1);
-    return dayOrdinal(window.startDay) + Math.round((window.dayCount - 1) * fraction);
   }
 
   private scaleScrollLeft_abyssPrivate(
@@ -556,7 +539,9 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   private moveAnchor_abyssPrivate(direction: -1 | 1): void {
     const scale = this.context_abyssPrivate.settings().scale;
     if (this.fittedWindow_abyssPrivate !== undefined) {
-      const context = this.visibleContextOrdinal_abyssPrivate(this.fittedWindow_abyssPrivate);
+      const context =
+        dayOrdinal(this.fittedWindow_abyssPrivate.startDay) +
+        Math.floor((this.fittedWindow_abyssPrivate.dayCount - 1) / 2);
       this.anchor_abyssPrivate = dayDate(dayFromOrdinal(context));
     }
     this.fittedWindow_abyssPrivate = undefined;
@@ -579,18 +564,19 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     this.render_abyssPrivate(true);
   }
 
-  private fit_abyssPrivate(): void {
-    const bounds = (this.model_abyssPrivate?.groups ?? []).flatMap(({ rows }) =>
+  private fittedWindowForModel_abyssPrivate(
+    model: ProjectTimelineModel,
+  ): ProjectTimelineWindow | undefined {
+    const bounds = model.groups.flatMap(({ rows }) =>
       rows.flatMap(({ range }) => rangeBounds(range)),
     );
-    if (bounds.length === 0) return;
+    if (bounds.length === 0) return undefined;
     bounds.sort((left, right) => dayOrdinal(left) - dayOrdinal(right));
-    this.fittedWindow_abyssPrivate = projectTimelineWindowForRange(
+    return projectTimelineFitWindow(
       bounds[0] as string,
       bounds[bounds.length - 1] as string,
       this.context_abyssPrivate.settings().scale,
     );
-    this.render_abyssPrivate(true);
   }
 
   private currentWindow_abyssPrivate(): ProjectTimelineWindow {
@@ -601,7 +587,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   }
 
   private render_abyssPrivate(navigation: boolean): void {
-    this.syncScaleButton_abyssPrivate();
+    this.syncScaleButtons_abyssPrivate();
     const focused = this.focusedDescendant_abyssPrivate();
     const focusedRange = this.focusedRangeIdentity_abyssPrivate(focused);
     const hiddenPosition = this.hiddenScrollPosition_abyssPrivate;
@@ -616,6 +602,21 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       search: this.search_abyssPrivate,
     });
     this.model_abyssPrivate = model;
+    if (this.preparedScaleChange_abyssPrivate) {
+      this.preparedScaleChange_abyssPrivate = false;
+      this.renderedScale_abyssPrivate = this.context_abyssPrivate.settings().scale;
+      this.fittedWindow_abyssPrivate = this.fittedWindowForModel_abyssPrivate(model);
+      if (this.fittedWindow_abyssPrivate === undefined) {
+        this.anchor_abyssPrivate = new Date(
+          (this.context_abyssPrivate.now ?? (() => new Date()))(),
+        );
+        this.scaleContextOrdinal_abyssPrivate = dayOrdinal(localDay(this.anchor_abyssPrivate));
+      } else {
+        this.scaleContextOrdinal_abyssPrivate =
+          dayOrdinal(this.fittedWindow_abyssPrivate.startDay) +
+          Math.floor((this.fittedWindow_abyssPrivate.dayCount - 1) / 2);
+      }
+    }
     const window = this.currentWindow_abyssPrivate();
     this.renderAxis_abyssPrivate(window);
     this.reconcileGroups_abyssPrivate(model.groups, window);
@@ -650,6 +651,10 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     this.root.style.setProperty(
       '--abyss-project-timeline-range-state-left',
       `${this.scroll.scrollLeft + 10}px`,
+    );
+    this.root.style.setProperty(
+      '--abyss-project-timeline-range-state-right',
+      `${Math.max(10, this.scroll.scrollWidth - this.scroll.scrollLeft - this.scroll.clientWidth + 10)}px`,
     );
   };
 
@@ -855,11 +860,6 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       startHandle,
       endHandle,
       state: track.createSpan({ cls: 'abyss-project-timeline-state' }),
-      showRange: track.createEl('button', {
-        cls: 'abyss-project-timeline-show-range',
-        text: 'Show range',
-        attr: { type: 'button' },
-      }),
       rangeName: accessibility.name,
       rangeDescription: accessibility.description,
       cells: new Map(),
@@ -878,11 +878,6 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       event.preventDefault();
       this.selectRange_abyssPrivate(row, focus);
       this.context_abyssPrivate.openRangeMenu(row.element.dataset['occurrenceId'] ?? '', event);
-    });
-    row.showRange.addEventListener('click', () => {
-      this.context_abyssPrivate.requestNavigation(() => {
-        this.revealProject(row.project.path);
-      });
     });
     element.addEventListener('click', (event) => {
       if (
@@ -1066,7 +1061,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     const geometry = projectTimelineBarGeometry(range, window);
     if (geometry === undefined) {
       row.bar.hidden = true;
-      this.renderMissingRange_abyssPrivate(row, range);
+      this.renderMissingRange_abyssPrivate(row, range, window);
       return;
     }
     this.patchVisibleRange_abyssPrivate(row, range, window, geometry);
@@ -1099,7 +1094,8 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     geometry: ProjectTimelineBarGeometry,
   ): void {
     row.state.hidden = true;
-    row.showRange.hidden = true;
+    row.state.className = 'abyss-project-timeline-state';
+    delete row.state.dataset['direction'];
     const bar = row.bar;
     bar.hidden = false;
     applyProjectTimelineBarGeometry(bar, range, geometry);
@@ -1115,12 +1111,17 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   }
 
   private patchGrid_abyssPrivate(grid: HTMLElement, window: ProjectTimelineWindow): void {
-    while (grid.children.length > window.ticks.length) grid.lastElementChild?.remove();
-    while (grid.children.length < window.ticks.length) {
+    const finerScale = window.ticks.length < 2 ? finerGridScale(window.scale) : undefined;
+    const ticks =
+      finerScale === undefined
+        ? window.ticks
+        : projectTimelineWindowForRange(window.startDay, window.endDay, finerScale).ticks;
+    while (grid.children.length > ticks.length) grid.lastElementChild?.remove();
+    while (grid.children.length < ticks.length) {
       grid.createSpan({ cls: 'abyss-project-timeline-gridline' });
     }
     const first = dayOrdinal(window.startDay);
-    for (const [index, tick] of window.ticks.entries()) {
+    for (const [index, tick] of ticks.entries()) {
       const line = grid.children.item(index);
       if (!(line instanceof HTMLElement)) continue;
       line.style.left = `${((dayOrdinal(tick.day) - first) / window.dayCount) * 100}%`;
@@ -1130,17 +1131,29 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   private renderMissingRange_abyssPrivate(
     row: RenderedRow<TCell>,
     range: ProjectTimelineRange,
+    window: ProjectTimelineWindow,
   ): void {
     if (range.kind === 'unscheduled' || range.kind === 'malformed') {
       row.state.hidden = false;
       row.state.className = `abyss-project-timeline-state is-${range.kind}`;
+      delete row.state.dataset['direction'];
       row.state.setText(range.kind === 'unscheduled' ? 'Unscheduled' : 'Invalid date range');
-      row.showRange.hidden = true;
       return;
     }
-    row.state.hidden = true;
-    row.showRange.hidden = false;
-    row.showRange.setAttribute('aria-label', `Show date range for ${row.project.name}`);
+    const anchor = rangeAnchor(range) as string;
+    const direction = dayOrdinal(anchor) < dayOrdinal(window.startDay) ? 'before' : 'after';
+    row.state.hidden = false;
+    row.state.className = `abyss-project-timeline-state abyss-project-timeline-boundary-marker is-${direction}`;
+    row.state.dataset['direction'] = direction;
+    row.state.empty();
+    row.state.createSpan({
+      text: direction === 'before' ? '←' : '→',
+      attr: { 'aria-hidden': 'true' },
+    });
+    row.state.createSpan({
+      cls: 'abyss-sr-only',
+      text: `Scheduled ${direction} visible range`,
+    });
   }
 
   private selectRange_abyssPrivate(row: RenderedRow<TCell>, focus: HTMLElement): void {

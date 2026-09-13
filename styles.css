@@ -8502,6 +8502,7 @@ table.abyss-project-table {
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
+  overflow-x: auto;
   padding: 4px 10px;
   border-bottom: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
@@ -8520,25 +8521,24 @@ table.abyss-project-table {
 .abyss-project-timeline-scale-control {
   position: static;
   display: flex;
+  flex: 0 0 auto;
   margin-left: 4px;
-}
-
-.abyss-projects-table .abyss-project-timeline-navigation button.abyss-project-timeline-scale {
-  min-width: 66px;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
   background: var(--background-primary);
+}
+
+.abyss-projects-table .abyss-project-timeline-navigation button.abyss-project-timeline-scale {
+  min-width: 0;
+  border-radius: 0;
   color: var(--text-normal);
 }
 
-.abyss-project-timeline-scale-control > .abyss-view-state-popover {
-  right: auto;
-  left: 8px;
-  box-sizing: border-box;
-  width: 274px;
-  min-width: min(240px, calc(100% - 16px));
-  max-width: calc(100% - 16px);
-  max-height: min(420px, calc(100vh - 200px));
+.abyss-projects-table
+  .abyss-project-timeline-scale-control
+  button.abyss-project-timeline-scale[aria-pressed='true'] {
+  background: var(--background-modifier-hover);
+  color: var(--text-accent);
 }
 
 .abyss-project-timeline-scroll {
@@ -8803,7 +8803,6 @@ table.abyss-project-table {
 
 .abyss-project-timeline-bar[hidden],
 .abyss-project-timeline-state[hidden],
-.abyss-projects-table button.abyss-project-timeline-show-range[hidden],
 .abyss-project-timeline-cursor[hidden],
 .abyss-project-timeline-tooltip[hidden] {
   display: none;
@@ -8927,18 +8926,13 @@ table.abyss-project-table {
   color: var(--text-error);
 }
 
-.abyss-projects-table button.abyss-project-timeline-show-range {
-  position: absolute;
-  top: 50%;
-  left: var(--abyss-project-timeline-range-state-left, 10px);
-  min-height: 24px;
-  padding: 2px 7px;
-  border-color: var(--background-modifier-border);
-  background: var(--background-primary);
-  box-shadow: none;
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-  transform: translateY(-50%);
+.abyss-project-timeline-boundary-marker {
+  font-size: var(--font-ui-medium);
+}
+
+.abyss-project-timeline-boundary-marker.is-after {
+  right: var(--abyss-project-timeline-range-state-right, 10px);
+  left: auto;
 }
 
 .abyss-project-timeline-today {

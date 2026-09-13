@@ -80,12 +80,11 @@ const SCALE_LABELS = {
   year: 'Year',
 } as const;
 
-function scaleRow(context: ProjectTimelineOptionsContext, initiallyOpen: boolean): ViewOptionsRow {
+function scaleRow(context: ProjectTimelineOptionsContext): ViewOptionsRow {
   return {
     kind: 'single',
     icon: 'calendar-range',
     label: 'Scale',
-    initiallyOpen,
     displayValue: () => SCALE_LABELS[context.settings().scale],
     activeValue: () => context.settings().scale,
     options: Object.entries(SCALE_LABELS).map(([value, label]) => ({ value, label })),
@@ -192,8 +191,8 @@ function emptyFieldsRow(context: ProjectTimelineOptionsContext): ViewOptionsRow 
 function unscheduledRow(context: ProjectTimelineOptionsContext): ViewOptionsRow {
   return single(context, {
     kind: 'single',
-    icon: 'calendar-off-2',
-    label: 'Unscheduled projects',
+    icon: 'calendar-days',
+    label: 'Unscheduled',
     displayValue: () => (context.settings().showUnscheduled ? 'Shown' : 'Hidden'),
     activeValue: () => String(context.settings().showUnscheduled),
     options: [
@@ -206,12 +205,9 @@ function unscheduledRow(context: ProjectTimelineOptionsContext): ViewOptionsRow 
   });
 }
 
-function timelinePresentationRows(
-  context: ProjectTimelineOptionsContext,
-  openScale: boolean,
-): ViewOptionsRow[] {
+function timelinePresentationRows(context: ProjectTimelineOptionsContext): ViewOptionsRow[] {
   return [
-    scaleRow(context, openScale),
+    scaleRow(context),
     metadataRow(context),
     projectCardFieldsOptionsRow(context, {
       label: 'Metadata fields',
@@ -227,7 +223,6 @@ function timelinePresentationRows(
 /** Builds Timeline-specific rows in the shared project options popover. */
 export function projectTimelineOptionsRows(
   context: ProjectTimelineOptionsContext,
-  options: { readonly openScale?: boolean } = {},
 ): ViewOptionsRow[] {
   const groupingOptions = groupOptions(context);
   return [
@@ -261,8 +256,7 @@ export function projectTimelineOptionsRows(
       icon: 'gantt-chart',
       label: 'Timeline',
       displayValue: '7 options',
-      initiallyOpen: options.openScale === true,
-      rows: timelinePresentationRows(context, options.openScale === true),
+      rows: timelinePresentationRows(context),
     },
   ];
 }
