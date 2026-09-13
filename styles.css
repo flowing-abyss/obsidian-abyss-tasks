@@ -8846,13 +8846,14 @@ table.abyss-project-table {
 .abyss-project-timeline-handle {
   position: absolute;
   z-index: 2;
-  top: -4px;
-  bottom: -4px;
+  top: 50%;
   display: flex;
   width: 14px;
+  height: 24px;
   align-items: center;
   justify-content: center;
   cursor: ew-resize;
+  transform: translateY(-50%);
 }
 
 .abyss-project-timeline-grip {

@@ -4,6 +4,7 @@ import {
   type FrozenProjectTimelineRangeSource,
 } from '../src/panels/projects/projectTimelineInteraction';
 import type { ProjectEditResult } from '../src/projects/projectEdits';
+import type { ProjectTimelineWindow } from '../src/projects/projectTimelineModel';
 import { flushMicrotasks, freshContainer } from './helpers';
 
 function pointerEvent(type: string, clientX: number, pointerId = 1): Event {
@@ -62,7 +63,18 @@ function geometry(left: number, width: number): DOMRect {
   };
 }
 
-function mount(range: FrozenProjectTimelineRangeSource['range'] = source().range) {
+const defaultWindow: ProjectTimelineWindow = {
+  startDay: '2026-09-01',
+  endDay: '2026-09-10',
+  dayCount: 10,
+  scale: 'day',
+  ticks: [],
+};
+
+function mount(
+  range: FrozenProjectTimelineRangeSource['range'] = source().range,
+  window: ProjectTimelineWindow = defaultWindow,
+) {
   const root = freshContainer();
   activeDocument.body.append(root);
   const scroll = root.createDiv({ cls: 'abyss-project-timeline-scroll' });
@@ -92,13 +104,7 @@ function mount(range: FrozenProjectTimelineRangeSource['range'] = source().range
   const interaction = new ProjectTimelinePointerInteraction({
     root,
     scroll,
-    window: () => ({
-      startDay: '2026-09-01',
-      endDay: '2026-09-10',
-      dayCount: 10,
-      scale: 'day',
-      ticks: [],
-    }),
+    window: () => window,
     captureRangeSource: () => ({ kind: 'ready', source: captured }),
     commitRangeEdit,
     finishEditor: async () => true,
@@ -256,6 +262,40 @@ describe('ProjectTimelinePointerInteraction', () => {
       });
     },
   );
+
+  it('keeps a coarse-scale open marker unchanged until its absent endpoint actually moves', async () => {
+    const range = { kind: 'open-end', startDay: '2026-09-02' } as const;
+    const mounted = mount(range, {
+      startDay: '2026-01-01',
+      endDay: '2026-12-31',
+      dayCount: 365,
+      scale: 'year',
+      ticks: [],
+    });
+    const endHandle = mounted.bar.querySelector<HTMLElement>('[data-timeline-part="end"]');
+    mounted.bar.className = 'abyss-project-timeline-bar is-open-end is-one-date';
+    mounted.bar.setCssProps({ left: '66.849315%', width: '0.273973%' });
+
+    endHandle?.dispatchEvent(pointerEvent('pointerdown', 77));
+    await flushMicrotasks();
+
+    expect(mounted.bar.className).toBe('abyss-project-timeline-bar is-open-end is-one-date');
+    expect(mounted.bar.style.left).toBe('66.849315%');
+    expect(mounted.bar.style.width).toBe('0.273973%');
+
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 79));
+    expect(mounted.bar.className).toBe('abyss-project-timeline-bar is-open-end is-one-date');
+
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 82));
+    mounted.track.dispatchEvent(pointerEvent('pointerup', 82));
+    await flushMicrotasks();
+
+    expect(mounted.commitRangeEdit).toHaveBeenCalledWith({
+      kind: 'pointer',
+      source: source(range),
+      intent: { type: 'resizeEnd', day: '2026-09-20' },
+    });
+  });
 
   it('normalizes a reverse draw and keeps a click as Start-only intent', async () => {
     const mounted = mount({ kind: 'unscheduled' });

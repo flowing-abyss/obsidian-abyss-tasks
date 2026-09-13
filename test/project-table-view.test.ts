@@ -86,6 +86,11 @@ function labelledText(element: HTMLElement): string {
   return expectDefined(element.ownerDocument.getElementById(id)).textContent;
 }
 
+function describedText(element: HTMLElement): string {
+  const id = expectDefined(element.getAttribute('aria-describedby'));
+  return expectDefined(element.ownerDocument.getElementById(id)).textContent;
+}
+
 function rectangle(left: number, top: number, right: number, bottom: number): DOMRect {
   return { left, top, right, bottom, width: right - left, height: bottom - top } as DOMRect;
 }
@@ -1216,7 +1221,8 @@ describe('ProjectsTableView', () => {
     const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
 
     expect(bar.getAttribute('aria-disabled')).toBe('true');
-    expect(bar.getAttribute('title')).toContain('Start contains a date and time');
+    expect(bar.getAttribute('title')).toBeNull();
+    expect(describedText(bar)).toContain('Start contains a date and time');
     expect(host.querySelector('[data-column-id="start"]')).not.toBeNull();
   });
 
@@ -1229,7 +1235,8 @@ describe('ProjectsTableView', () => {
     const track = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track'));
 
     expect(track.getAttribute('aria-disabled')).toBe('true');
-    expect(track.getAttribute('title')).toBe(
+    expect(track.getAttribute('title')).toBeNull();
+    expect(describedText(track)).toBe(
       'Invalid project dates must be repaired in the date fields before Timeline editing.',
     );
     expect(track.textContent).toContain('Invalid date range');
@@ -1255,7 +1262,8 @@ describe('ProjectsTableView', () => {
     const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
 
     expect(bar.getAttribute('aria-disabled')).toBe('true');
-    expect(bar.getAttribute('title')).toContain('ambiguous source spelling');
+    expect(bar.getAttribute('title')).toBeNull();
+    expect(describedText(bar)).toContain('ambiguous source spelling');
     expect(applyEdits).not.toHaveBeenCalled();
   });
 

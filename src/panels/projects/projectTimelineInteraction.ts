@@ -252,6 +252,13 @@ function rangeResizeSource(
   return fallback;
 }
 
+function targetsMissingEndpoint(active: ActivePointerGesture): boolean {
+  const { part } = active.target;
+  const { range } = active.source;
+  if (part === 'start') return range.kind === 'open-start' || range.kind === 'unscheduled';
+  return part === 'end' && (range.kind === 'open-end' || range.kind === 'unscheduled');
+}
+
 function trackIntent(active: ActivePointerGesture): ProjectTimelineEditIntent | undefined {
   const { range } = active.source;
   if (range.kind === 'unscheduled') {
@@ -518,7 +525,7 @@ export class ProjectTimelinePointerInteraction {
           return;
         }
         active.prepared = true;
-        this.preview_abyssPrivate(active);
+        if (this.shouldPreview_abyssPrivate(active)) this.preview_abyssPrivate(active);
       },
       (error: unknown) => {
         if (this.active_abyssPrivate === active) this.cancelGesture_abyssPrivate(true);
@@ -541,7 +548,9 @@ export class ProjectTimelinePointerInteraction {
     active.lastDay = day;
     active.moved ||= Math.abs(event.clientX - active.startClientX) >= MOVEMENT_THRESHOLD_PX;
     this.updateEdgeScroll_abyssPrivate(event.clientX);
-    if (active.prepared) this.preview_abyssPrivate(active);
+    if (active.prepared && this.shouldPreview_abyssPrivate(active)) {
+      this.preview_abyssPrivate(active);
+    }
   };
 
   private readonly pointerUp_abyssPrivate = (event: PointerEvent): void => {
@@ -655,6 +664,10 @@ export class ProjectTimelinePointerInteraction {
     this.showTooltip_abyssPrivate(active.lastClientX, active.target.track);
   }
 
+  private shouldPreview_abyssPrivate(active: ActivePointerGesture): boolean {
+    return active.moved || !targetsMissingEndpoint(active);
+  }
+
   private applyPreview_abyssPrivate(bar: HTMLElement | null, range: ProjectTimelineRange): void {
     if (bar === null) return;
     const geometry = projectTimelineBarGeometry(range, this.context_abyssPrivate.window());
@@ -754,7 +767,7 @@ export class ProjectTimelinePointerInteraction {
       this.edgeDirection_abyssPrivate * EDGE_SCROLL_STEP_PX;
     const day = this.dayAtClientX_abyssPrivate(active.target.track, active.lastClientX);
     if (day !== undefined) active.lastDay = day;
-    this.preview_abyssPrivate(active);
+    if (this.shouldPreview_abyssPrivate(active)) this.preview_abyssPrivate(active);
     this.edgeFrame_abyssPrivate = this.ownerWindow_abyssPrivate?.requestAnimationFrame(
       this.edgeScrollFrame_abyssPrivate,
     );

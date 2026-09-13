@@ -797,8 +797,8 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     readonly description: HTMLElement;
     readonly attributes: Record<string, string>;
   } {
-    const name = track.createSpan({ cls: 'mod-screen-reader-only' });
-    const description = track.createSpan({ cls: 'mod-screen-reader-only' });
+    const name = track.createSpan({ cls: 'abyss-sr-only' });
+    const description = track.createSpan({ cls: 'abyss-sr-only' });
     const accessibleId = `abyss-project-timeline-range-${String(++timelineRangeAccessibilitySequence)}`;
     name.id = `${accessibleId}-name`;
     description.id = `${accessibleId}-description`;
@@ -1088,13 +1088,8 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     );
     row.track.removeAttribute('aria-label');
     row.bar.removeAttribute('aria-label');
-    if (editReason === undefined) {
-      row.track.removeAttribute('title');
-      row.bar.removeAttribute('title');
-    } else {
-      row.track.setAttribute('title', editReason);
-      row.bar.setAttribute('title', editReason);
-    }
+    row.track.removeAttribute('title');
+    row.bar.removeAttribute('title');
   }
 
   private patchVisibleRange_abyssPrivate(

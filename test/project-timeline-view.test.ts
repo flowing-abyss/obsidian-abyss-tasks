@@ -312,12 +312,20 @@ describe('ProjectsTimelineView', () => {
       14,
     );
     expect(Number.parseFloat(activeWindow.getComputedStyle(end).width)).toBeGreaterThanOrEqual(14);
+    expect(Number.parseFloat(activeWindow.getComputedStyle(start).height)).toBeGreaterThanOrEqual(
+      24,
+    );
+    expect(Number.parseFloat(activeWindow.getComputedStyle(end).height)).toBeGreaterThanOrEqual(24);
     expect(start.querySelector('.abyss-project-timeline-grip')).not.toBeNull();
     expect(end.querySelector('.abyss-project-timeline-grip')).not.toBeNull();
     sheet.remove();
   });
 
-  it('names range controls accessibly without aria-label hover text', () => {
+  it('keeps range control names accessible without visible or native hover text', async () => {
+    const styles = await loadPluginStyles();
+    const sheet = createEl('style');
+    sheet.textContent = styles;
+    activeDocument.head.append(sheet);
     const { host } = mount([project('Projects/A.md', '2026-09-01', '2026-09-03')]);
     const track = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track'));
     const bar = expectDefined(track.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
@@ -326,12 +334,19 @@ describe('ProjectsTimelineView', () => {
 
     expect(bar.hasAttribute('aria-label')).toBe(false);
     expect(track.hasAttribute('aria-label')).toBe(false);
-    expect(expectDefined(host.querySelector<HTMLElement>(`#${nameId}`)).textContent).toBe(
-      'Timeline dates for A: 2026-09-01 through 2026-09-03',
-    );
+    expect(bar.getAttribute('title')).toBeNull();
+    expect(track.getAttribute('title')).toBeNull();
+    const name = expectDefined(host.querySelector<HTMLElement>(`#${nameId}`));
+    expect(name.textContent).toBe('Timeline dates for A: 2026-09-01 through 2026-09-03');
     expect(expectDefined(host.querySelector<HTMLElement>(`#${descriptionId}`)).textContent).toBe(
       'Test capture unavailable',
     );
+    const hiddenStyle = activeWindow.getComputedStyle(name);
+    expect(hiddenStyle.position).toBe('absolute');
+    expect(hiddenStyle.width).toBe('1px');
+    expect(hiddenStyle.height).toBe('1px');
+    expect(hiddenStyle.clipPath).toBe('inset(50%)');
+    sheet.remove();
   });
 
   it('routes a handle context menu through the shared range menu', () => {
