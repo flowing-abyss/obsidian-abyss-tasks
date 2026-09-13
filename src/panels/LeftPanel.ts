@@ -115,16 +115,14 @@ export class LeftPanel {
   mount(container: HTMLElement): void {
     this.el_abyssPrivate = container;
     this.offs_abyssPrivate.push(
-      this.state_abyssPrivate.on('selectedList', () => {
-        this.render_abyssPrivate();
-      }),
-      this.state_abyssPrivate.on('mode', () => {
-        this.render_abyssPrivate();
-      }),
-      // Re-render when the active container's view state changes so the
-      // "customized" dot appears/disappears live as filters/sort/group change.
-      this.state_abyssPrivate.on('centerListViewState', () => {
-        this.render_abyssPrivate();
+      this.state_abyssPrivate.onCommit((changed) => {
+        if (
+          changed.has('selectedList') ||
+          changed.has('mode') ||
+          changed.has('centerListViewState')
+        ) {
+          this.render_abyssPrivate();
+        }
       }),
     );
     this.render_abyssPrivate();

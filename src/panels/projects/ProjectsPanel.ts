@@ -95,7 +95,7 @@ export class ProjectsPanel {
         this.tableView_abyssPrivate?.observeProjectSource(observation);
       }),
     );
-    this.syncView_abyssPrivate();
+    this.syncView_abyssPrivate(true);
   }
 
   refresh(): void {
@@ -186,7 +186,7 @@ export class ProjectsPanel {
     );
   }
 
-  private syncView_abyssPrivate(): void {
+  private syncView_abyssPrivate(tableAlreadyCurrent = false): void {
     const el = this.el_abyssPrivate;
     const tableHost = this.tableHost_abyssPrivate;
     if (el === null || tableHost === null) return;
@@ -195,7 +195,9 @@ export class ProjectsPanel {
       this.dashboardHost_abyssPrivate?.remove();
       this.dashboardHost_abyssPrivate = null;
       el.appendChild(tableHost);
-      this.tableView_abyssPrivate?.update(this.projectStore_abyssPrivate.list());
+      if (!tableAlreadyCurrent) {
+        this.tableView_abyssPrivate?.update(this.projectStore_abyssPrivate.list());
+      }
       return;
     }
     this.tableView_abyssPrivate?.captureViewportBeforeHide();

@@ -1,4 +1,4 @@
-import { addIcon, Menu, moment, removeIcon, TFile, type App } from 'obsidian';
+import { addIcon, MarkdownRenderer, Menu, moment, removeIcon, TFile, type App } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
@@ -392,6 +392,26 @@ describe('CenterPanel task-card primary row', () => {
 });
 
 describe('CenterPanel list selection', () => {
+  it('requests the exact tag boundary before applying the existing list selector', () => {
+    const state = new AppState();
+    state.set('selectedList', { type: 'tag', tag: '#work' });
+    const exact = task({ title: 'exact', tags: ['#work'] });
+    const nested = task({
+      title: 'nested',
+      tags: ['#work/next'],
+      source: { filePath: 'nested.md' },
+    });
+    const panel = makeStaticPanel(state, [exact, nested]);
+    const queries = (panel as unknown as { readonly queries_abyssPrivate: TaskQueryApi })
+      .queries_abyssPrivate;
+    const list = vi.spyOn(queries, 'list');
+
+    const selected = call<TaskSnapshot[]>(panel, 'getFilteredTasks') as TaskSnapshot[];
+
+    expect(list).toHaveBeenCalledWith({ tag: '#work' });
+    expect(selected.map(({ title }) => title)).toEqual(['exact']);
+  });
+
   it('excludes a date-less task from today while retaining an explicitly planned task from the same daily note', () => {
     fixedToday(TODAY);
     const state = new AppState();
@@ -990,6 +1010,69 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       expect(scroll.scrollTop).toBe(180);
       expect(scroll.scrollLeft).toBe(35);
       expect(container.querySelector('.abyss-view-state-popover')).toBe(popover);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('installs a complete interactive grouped list with bounded attached-list mutations', () => {
+    vi.useFakeTimers();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+      holder.createEl('p', undefined, (paragraph) => {
+        paragraph.createEl('a', {
+          text: markdown,
+          attr: { class: 'internal-link', 'data-href': 'Note' },
+        });
+      });
+    });
+    const state = new AppState();
+    state.set('selectedList', { type: 'project', path: 'Projects/A.md' });
+    const snapshots = [
+      task({
+        title: 'First task',
+        markdownTitle: 'First task [[Note]]',
+        source: { filePath: 'Projects/A.md', line: 0 },
+      }),
+      task({ title: 'Second task', source: { filePath: 'Projects/A.md', line: 1 } }),
+      task({ title: 'Third task', source: { filePath: 'Projects/A.md', line: 2 } }),
+    ];
+    const panel = makeStaticPanel(state, snapshots);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+
+    try {
+      panel.mount(container);
+      state.set('centerListViewState', {
+        groupBy: 'status',
+        sortBy: { field: 'date', dir: 'asc' },
+        filters: [],
+      });
+      vi.runAllTimers();
+      const scroll = expectDefined(container.querySelector<HTMLElement>('.abyss-center-scroll'));
+      const observer = new MutationObserver(() => {});
+      observer.observe(scroll, { childList: true });
+
+      state.set('centerFilter', 'task');
+
+      const attachedListRecords = observer.takeRecords();
+      expect(attachedListRecords.length).toBeLessThanOrEqual(2);
+      expect(container.querySelector('.abyss-center-scroll')).toBe(scroll);
+      expect(scroll.querySelectorAll(':scope > .abyss-group-header')).toHaveLength(1);
+      const cards = Array.from(scroll.querySelectorAll<HTMLElement>(':scope > .abyss-task-card'));
+      expect(cards.map(({ dataset }) => dataset['line'])).toEqual(['0', '1', '2']);
+      expect(Array.from(scroll.children)).toEqual([
+        expectDefined(scroll.querySelector(':scope > .abyss-group-header')),
+        ...cards,
+      ]);
+      expect(cards.every((card) => card.getAttribute('draggable') === 'true')).toBe(true);
+      const markdownHolder = expectDefined(scroll.querySelector<HTMLElement>('.abyss-md'));
+      expect(markdownHolder.isConnected).toBe(true);
+      vi.runAllTimers();
+      expect(markdownHolder.querySelector(':scope > p')).toBeNull();
+
+      expectDefined(cards[1]).click();
+      expect(state.get('taskStack')).toEqual([snapshots[1]]);
     } finally {
       panel.destroy();
       container.remove();
@@ -2387,9 +2470,11 @@ describe('CenterPanel project selection', () => {
       },
       { path: 'Other.md', items: [{ task: ' ', parent: -1, line: 0 }] },
     ];
-    const { panel, state } = await makePanel(files, DEFAULT_SETTINGS, seeds);
+    const { panel, state, index } = await makePanel(files, DEFAULT_SETTINGS, seeds);
+    const list = vi.spyOn(index, 'list');
     state.set('selectedList', { type: 'project', path: 'Projects/A.md' });
     const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks') as TaskSnapshot[];
+    expect(list).toHaveBeenCalledWith({ filePath: 'Projects/A.md' });
     expect(tasks).toHaveLength(2);
     expect(tasks.every((item) => item.source.filePath === 'Projects/A.md')).toBe(true);
     expect(call<string>(panel, 'getTitle')).toBe('A');

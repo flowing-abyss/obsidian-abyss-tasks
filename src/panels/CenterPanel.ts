@@ -974,10 +974,13 @@ export class CenterPanel {
     const { scroll, addBar } = shell;
     const scrollTop = scroll.scrollTop;
     const scrollLeft = scroll.scrollLeft;
-    scroll.empty();
+    const staging = (
+      scroll.ownerDocument.win as Window & { createDiv(): HTMLDivElement }
+    ).createDiv();
     const tasks = this.getFilteredTasks_abyssPrivate();
-    if (tasks.length === 0) scroll.createDiv({ cls: 'abyss-center-empty', text: 'No tasks' });
-    else this.renderWithGrouping_abyssPrivate(scroll, tasks);
+    if (tasks.length === 0) staging.createDiv({ cls: 'abyss-center-empty', text: 'No tasks' });
+    else this.renderWithGrouping_abyssPrivate(staging, tasks);
+    scroll.replaceChildren(...staging.childNodes);
     scroll.scrollTop = Math.min(scrollTop, Math.max(0, scroll.scrollHeight - scroll.clientHeight));
     scroll.scrollLeft = Math.min(scrollLeft, Math.max(0, scroll.scrollWidth - scroll.clientWidth));
     addBar.empty();
@@ -3796,10 +3799,16 @@ export class CenterPanel {
   }
 
   private getFilteredTasks_abyssPrivate(): TaskSnapshot[] {
+    const selection = this.state_abyssPrivate.get('selectedList');
+    let query: { filePath: string } | { tag: string } | undefined;
+    if (typeof selection === 'object') {
+      if (selection.type === 'project') query = { filePath: selection.path };
+      else if (selection.type === 'tag') query = { tag: selection.tag };
+    }
     return [
       ...selectTaskList({
-        tasks: this.queries_abyssPrivate.list(),
-        selection: this.state_abyssPrivate.get('selectedList'),
+        tasks: this.queries_abyssPrivate.list(query),
+        selection,
         viewState: this.state_abyssPrivate.get('centerListViewState'),
         settings: this.settings_abyssPrivate,
         today: window.moment().format('YYYY-MM-DD') as LocalDate,

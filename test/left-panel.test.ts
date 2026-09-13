@@ -1356,6 +1356,39 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     return { panel, state, el, tm, save, saveViewState, merged, taskList };
   }
 
+  it('renders once for a batched navigation commit and once for a standalone relevant change', () => {
+    const { state, el, taskList } = makeFull({
+      tasks: [task({ tags: ['#work'] })],
+      settings: { pinnedTags: ['#work'] },
+    });
+    taskList.mockClear();
+
+    state.batch(() => {
+      state.set('selectedList', { type: 'tag', tag: '#work' });
+      state.set('mode', 'calendar');
+      state.set('centerListViewState', {
+        groupBy: 'tag',
+        sortBy: { field: 'title', dir: 'asc' },
+        filters: [],
+      });
+    });
+
+    expect(taskList).toHaveBeenCalledOnce();
+    const activePinned = expectDefined(
+      el.querySelector<HTMLElement>('.abyss-pinned-tag.is-active'),
+    );
+    expect(activePinned.querySelector('.abyss-left-count')?.textContent).toBe('1');
+
+    taskList.mockClear();
+    state.set('selectedList', 'upcoming');
+
+    expect(taskList).toHaveBeenCalledOnce();
+    expect(el.querySelector('.abyss-pinned-tag.is-active')).toBeNull();
+    expect(el.querySelector('.abyss-left-item.is-active .abyss-left-label')?.textContent).toBe(
+      'Upcoming',
+    );
+  });
+
   it('renders a chevron span (SVG icon, not a text glyph) on the Tags header', () => {
     const { el } = makeFull({
       settings: { tagGroups: [{ id: 'g', name: 'W', mode: 'manual', tags: ['#w'] }] },

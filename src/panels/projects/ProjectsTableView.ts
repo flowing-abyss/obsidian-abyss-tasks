@@ -1457,6 +1457,7 @@ export class ProjectsTableView {
     const scrollTop = this.scroll_abyssPrivate.scrollTop;
     const scrollLeft = this.scroll_abyssPrivate.scrollLeft;
     const focusedIdentity = this.focusedCellIdentity_abyssPrivate();
+    const availableWidth = this.scroll_abyssPrivate.clientWidth;
 
     const tableSettings = this.context_abyssPrivate.settings.projects.table;
     enforceProjectTableColumnInvariants(tableSettings);
@@ -1476,8 +1477,8 @@ export class ProjectsTableView {
 
     const table = this.table_abyssPrivate ?? this.createTable_abyssPrivate();
     this.reconcileTableHeader_abyssPrivate(table, columns);
+    this.applyTableWidth_abyssPrivate(availableWidth);
     this.renderTableBody_abyssPrivate(table, model, columns);
-    this.applyTableWidth_abyssPrivate();
     this.updateResponsiveNamePinning_abyssPrivate();
     this.finishTableReconciliation_abyssPrivate(scrollTop, scrollLeft, focusedIdentity);
   }
@@ -2522,25 +2523,31 @@ export class ProjectsTableView {
     }
   }
 
-  private applyTableWidth_abyssPrivate(): void {
+  private applyTableWidth_abyssPrivate(
+    availableWidth = this.scroll_abyssPrivate.clientWidth,
+  ): void {
     const table = this.table_abyssPrivate;
     if (table === undefined) return;
     const widths = this.visibleColumns_abyssPrivate.map(({ column, field }) =>
       projectTableColumnWidth(column, field),
     );
     const configuredWidth = widths.reduce((total, width) => total + width, 0);
-    const spare = Math.max(0, this.scroll_abyssPrivate.clientWidth - configuredWidth);
+    const spare = Math.max(0, availableWidth - configuredWidth);
+    const cols = new Map(
+      Array.from(table.querySelectorAll<HTMLElement>('col[data-column-id]'), (col) => [
+        col.dataset['columnId'],
+        col,
+      ]),
+    );
     for (const [index, { column }] of this.visibleColumns_abyssPrivate.entries()) {
-      const col = Array.from(table.querySelectorAll<HTMLElement>('col[data-column-id]')).find(
-        (candidate) => candidate.dataset['columnId'] === column.id,
-      );
-      if (col !== undefined) {
-        col.style.width = `${(widths[index] ?? 150) + (column.id === 'name' ? spare : 0)}px`;
-      }
+      const col = cols.get(column.id);
+      const width = `${(widths[index] ?? 150) + (column.id === 'name' ? spare : 0)}px`;
+      if (col !== undefined && col.style.width !== width) col.style.width = width;
     }
     const renderedWidth = configuredWidth + spare;
-    table.style.width = `${renderedWidth}px`;
-    table.style.minWidth = `${renderedWidth}px`;
+    const width = `${renderedWidth}px`;
+    if (table.style.width !== width) table.style.width = width;
+    if (table.style.minWidth !== width) table.style.minWidth = width;
   }
 
   private focusedCellIdentity_abyssPrivate(): FocusedCellIdentity | undefined {

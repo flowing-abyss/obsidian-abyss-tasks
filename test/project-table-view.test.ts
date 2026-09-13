@@ -2834,6 +2834,66 @@ describe('ProjectsTableView', () => {
     expect(saveSettings).toHaveBeenCalledTimes(2);
   });
 
+  it('reads the viewport and applies widths before attaching reconciled rows', () => {
+    const alpha = project({});
+    const beta = project({ path: 'Projects/B.md', name: 'B' });
+    const { host, view } = mount([alpha]);
+    const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+    const body = expectDefined(host.querySelector<HTMLTableSectionElement>('tbody'));
+    const name = expectDefined(
+      host.querySelector<HTMLTableColElement>('col[data-column-id="name"]'),
+    );
+    const rowsAtWidthRead: number[] = [];
+    Object.defineProperty(scroll, 'clientWidth', {
+      configurable: true,
+      get: () => {
+        rowsAtWidthRead.push(body.querySelectorAll(':scope > tr').length);
+        return 1200;
+      },
+    });
+    const widthsWhenRowsAttach: string[] = [];
+    const appendChild = body.appendChild.bind(body);
+    vi.spyOn(body, 'appendChild').mockImplementation((node) => {
+      if (node.instanceOf(HTMLTableRowElement)) widthsWhenRowsAttach.push(name.style.width);
+      return appendChild(node);
+    });
+
+    view.update([alpha, beta]);
+
+    expect(rowsAtWidthRead[0]).toBe(2);
+    expect(widthsWhenRowsAttach).toEqual(['560px']);
+    expect(name.style.width).toBe('560px');
+    expect(expectDefined(host.querySelector<HTMLTableElement>('table')).style.width).toBe('1200px');
+  });
+
+  it('does not rewrite unchanged table widths during a retained reconciliation', () => {
+    const item = project({});
+    const { host, view } = mount([item]);
+    const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+    Object.defineProperty(scroll, 'clientWidth', { configurable: true, value: 1000 });
+    view.update([item]);
+    const columns = Array.from(host.querySelectorAll<HTMLTableColElement>('col[data-column-id]'));
+    let widthWrites = 0;
+    for (const column of columns) {
+      const style = column.style;
+      const descriptor = expectDefined(
+        Object.getOwnPropertyDescriptor(Object.getPrototypeOf(style) as object, 'width'),
+      ) as TypedPropertyDescriptor<string>;
+      Object.defineProperty(style, 'width', {
+        configurable: true,
+        get: () => descriptor.get?.call(style) ?? '',
+        set: (value: string) => {
+          widthWrites += 1;
+          descriptor.set?.call(style, value);
+        },
+      });
+    }
+
+    view.update([item]);
+
+    expect(widthWrites).toBe(0);
+  });
+
   it('keeps a full-width Name resize visible by transferring width to its neighbor', async () => {
     const { host, view, config, saveSettings } = mount([project({})]);
     const scroll = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll'));

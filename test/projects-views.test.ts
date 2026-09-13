@@ -132,6 +132,28 @@ describe('ProjectsPanel dispatch', () => {
     expect(el.querySelector('.abyss-projects-table')).toBeTruthy();
   });
 
+  it('reconciles the overview once on mount and again when returning from a dashboard', () => {
+    const state = new AppState();
+    const list = vi.fn(() => [proj({})]);
+    const store = Object.assign({}, stubStore, { list });
+    const panel = new ProjectsPanel(state, store, stubMgr, DEFAULT_SETTINGS, null as never, {
+      projectProperties,
+    });
+    const el = freshContainer();
+
+    panel.mount(el);
+
+    expect(list).toHaveBeenCalledOnce();
+    const overview = expectDefined(el.querySelector<HTMLElement>('.abyss-projects-table'));
+    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-table-name')).click();
+    expect(el.querySelector('.abyss-projects-dashboard')).not.toBeNull();
+
+    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-back')).click();
+
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(el.querySelector('.abyss-projects-table')).toBe(overview);
+  });
+
   it('renders the dashboard when projectsPanel is dashboard', () => {
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
