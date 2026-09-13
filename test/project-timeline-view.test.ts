@@ -765,7 +765,7 @@ describe('ProjectsTimelineView', () => {
       Array.from(sheet.sheet?.cssRules ?? []).find(
         (rule): rule is CSSStyleRule =>
           rule instanceof CSSStyleRule &&
-          rule.selectorText.includes('.abyss-project-timeline-axis-cell.is-today'),
+          rule.selectorText.includes('.abyss-project-timeline-axis .is-today'),
       ),
     );
     const barRule = expectDefined(
