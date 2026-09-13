@@ -45,6 +45,7 @@ const privateOwners = new Set([
   'TaskMoveRecoveryModal',
   'DatePickerLifecycle',
   'StatusPopoverLifecycle',
+  'ViewOptionsPositioner',
   'LinkEditModal',
   'NoteSuggest',
   'VaultFileSuggestionSource',
