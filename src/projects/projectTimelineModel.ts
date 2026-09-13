@@ -56,7 +56,7 @@ export interface ProjectTimelineWindow {
   readonly ticks: readonly ProjectTimelineTick[];
 }
 
-export interface ProjectTimelineTick {
+interface ProjectTimelineTick {
   readonly day: string;
   readonly label: string;
 }
