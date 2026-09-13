@@ -673,6 +673,7 @@ export class ProjectsTableView {
   };
   private overviewMode_abyssPrivate: ProjectOverviewMode;
   private mounted_abyssPrivate = false;
+  private tableActionTail_abyssPrivate: Promise<void> = Promise.resolve();
   private mutationTail_abyssPrivate: Promise<void> = Promise.resolve();
   private mutationActive_abyssPrivate = false;
   private renderPending_abyssPrivate = false;
@@ -682,7 +683,8 @@ export class ProjectsTableView {
   private nextReceiptOrdinal_abyssPrivate = 0;
   private pendingAction_abyssPrivate:
     { readonly run: () => void; readonly replace?: () => void } | undefined;
-  private finishingEditor_abyssPrivate: Promise<void> | undefined;
+  private finishingEditor_abyssPrivate: Promise<boolean> | undefined;
+  private preserveSubmittedActionFocus_abyssPrivate = false;
   private readonly resizeObserver_abyssPrivate: ResizeObserver | undefined;
   private nativeMenuOpen_abyssPrivate = false;
   private relativeDateInterval_abyssPrivate: number | undefined;
@@ -1042,15 +1044,7 @@ export class ProjectsTableView {
    * Serializes every table-session metadata mutation. Task 4 Undo/Redo uses this same queue.
    */
   runTableSessionMutation<T>(mutation: () => Promise<T>): Promise<T> {
-    return this.reserveTableSessionMutation_abyssPrivate(Promise.resolve(), () => mutation());
-  }
-
-  private reserveTableSessionMutation_abyssPrivate<TReady, TResult>(
-    ready: Promise<TReady>,
-    mutation: (ready: TReady) => Promise<TResult>,
-  ): Promise<TResult> {
-    const run = async (): Promise<TResult> => {
-      const readyValue = await ready;
+    const run = async (): Promise<T> => {
       this.mutationActive_abyssPrivate = true;
       this.activeMutationSourceRevisions_abyssPrivate = new Map(
         Array.from(this.sourceObservations_abyssPrivate, ([path, observation]) => [
@@ -1059,7 +1053,7 @@ export class ProjectsTableView {
         ]),
       );
       try {
-        return await mutation(readyValue);
+        return await mutation();
       } finally {
         this.activeMutationSourceRevisions_abyssPrivate = undefined;
         this.mutationActive_abyssPrivate = false;
@@ -1068,6 +1062,16 @@ export class ProjectsTableView {
     };
     const result = this.mutationTail_abyssPrivate.then(run, run);
     this.mutationTail_abyssPrivate = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  /** Orders user-submitted actions before they enter the metadata mutation queue. */
+  private runTableActionInOrder_abyssPrivate<T>(action: () => Promise<T>): Promise<T> {
+    const result = this.tableActionTail_abyssPrivate.then(action, action);
+    this.tableActionTail_abyssPrivate = result.then(
       () => undefined,
       () => undefined,
     );
@@ -1096,7 +1100,10 @@ export class ProjectsTableView {
   finishEditorBeforeAction(action: () => void): void {
     this.pendingAction_abyssPrivate?.replace?.();
     this.pendingAction_abyssPrivate = { run: action };
-    this.finishActiveEditor_abyssPrivate();
+    this.finishActiveEditor_abyssPrivate().then(
+      () => undefined,
+      () => undefined,
+    );
   }
 
   /** Resolves only when the current pending navigation may proceed. */
@@ -1112,18 +1119,23 @@ export class ProjectsTableView {
           resolve(false);
         },
       };
-      this.finishActiveEditor_abyssPrivate();
+      this.finishActiveEditor_abyssPrivate().then(
+        () => undefined,
+        () => undefined,
+      );
     });
   }
 
-  private finishActiveEditor_abyssPrivate(): void {
-    if (this.finishingEditor_abyssPrivate !== undefined) return;
+  private finishActiveEditor_abyssPrivate(): Promise<boolean> {
+    if (this.finishingEditor_abyssPrivate !== undefined) {
+      return this.finishingEditor_abyssPrivate;
+    }
     const editor = this.activeEditor_abyssPrivate;
     if (editor === undefined) {
       this.runPendingAction_abyssPrivate();
-      return;
+      return Promise.resolve(true);
     }
-    const finishing = editor.handle.commit().then(() => undefined);
+    const finishing = editor.handle.commit();
     this.finishingEditor_abyssPrivate = finishing;
     const settle = (): void => {
       if (this.finishingEditor_abyssPrivate === finishing) {
@@ -1132,6 +1144,27 @@ export class ProjectsTableView {
       if (this.activeEditor_abyssPrivate === undefined) this.runPendingAction_abyssPrivate();
     };
     finishing.then(settle, settle);
+    return finishing;
+  }
+
+  private async finishEditorForTableAction_abyssPrivate(): Promise<boolean> {
+    if (this.activeEditor_abyssPrivate === undefined) return true;
+    this.preserveSubmittedActionFocus_abyssPrivate = true;
+    try {
+      const finished = await this.finishActiveEditor_abyssPrivate();
+      if (!finished) this.preserveSubmittedActionFocus_abyssPrivate = false;
+      return finished;
+    } catch (error) {
+      this.preserveSubmittedActionFocus_abyssPrivate = false;
+      throw error;
+    }
+  }
+
+  private takeSubmittedActionFocus_abyssPrivate(navigation: ProjectCellEditorNavigation): boolean {
+    const preserve =
+      this.preserveSubmittedActionFocus_abyssPrivate && navigation === 'restore-current';
+    this.preserveSubmittedActionFocus_abyssPrivate = false;
+    return preserve;
   }
 
   private runPendingAction_abyssPrivate(): void {
@@ -1833,40 +1866,42 @@ export class ProjectsTableView {
   private commitTimelineRangeEdit_abyssPrivate(
     request: ProjectTimelineRangeEditRequest,
   ): Promise<ProjectEditResult> {
-    const editorFinished = this.requestFinishActiveEditor();
-    return this.reserveTableSessionMutation_abyssPrivate(editorFinished, async (finished) => {
+    return this.runTableActionInOrder_abyssPrivate(async () => {
+      const finished = await this.finishEditorForTableAction_abyssPrivate();
       if (!finished) {
         throw new ProjectEditValidationError(
           'The active project edit must finish before changing Timeline dates.',
         );
       }
-      const capture = this.captureTimelineRangeSource_abyssPrivate(
-        request.kind === 'pointer' ? request.source.occurrenceId : request.target.occurrenceId,
-      );
-      if (capture.kind === 'rejected') throw new ProjectEditValidationError(capture.reason);
-      const current = capture.source;
-      if (
-        request.kind === 'pointer'
-          ? !sameProjectTimelineRangeSource(request.source, current)
-          : !sameProjectTimelineRangeBinding(request.target, current)
-      ) {
-        throw new ProjectEditValidationError(
-          'The project dates changed after this Timeline edit started. Reload and try again.',
+      return this.runTableSessionMutation(async () => {
+        const capture = this.captureTimelineRangeSource_abyssPrivate(
+          request.kind === 'pointer' ? request.source.occurrenceId : request.target.occurrenceId,
         );
-      }
-      const plan = planProjectTimelineEdit(
-        request.kind === 'pointer' ? request.source.range : current.range,
-        request.intent,
-      );
-      if (plan.kind === 'rejected') throw new ProjectEditValidationError(plan.reason);
-      const changes = this.timelineChangesForPlan_abyssPrivate(current, plan);
-      if (changes.length === 0) return { applied: [], failed: [] };
-      const result = await this.context_abyssPrivate.applyEdits(changes);
-      if (result.applied.length > 0) {
-        this.context_abyssPrivate.history.record(result);
-        this.publishAppliedReceipts(result.applied);
-      }
-      return result;
+        if (capture.kind === 'rejected') throw new ProjectEditValidationError(capture.reason);
+        const current = capture.source;
+        if (
+          request.kind === 'pointer'
+            ? !sameProjectTimelineRangeSource(request.source, current)
+            : !sameProjectTimelineRangeBinding(request.target, current)
+        ) {
+          throw new ProjectEditValidationError(
+            'The project dates changed after this Timeline edit started. Reload and try again.',
+          );
+        }
+        const plan = planProjectTimelineEdit(
+          request.kind === 'pointer' ? request.source.range : current.range,
+          request.intent,
+        );
+        if (plan.kind === 'rejected') throw new ProjectEditValidationError(plan.reason);
+        const changes = this.timelineChangesForPlan_abyssPrivate(current, plan);
+        if (changes.length === 0) return { applied: [], failed: [] };
+        const result = await this.context_abyssPrivate.applyEdits(changes);
+        if (result.applied.length > 0) {
+          this.context_abyssPrivate.history.record(result);
+          this.publishAppliedReceipts(result.applied);
+        }
+        return result;
+      });
     });
   }
 
@@ -3670,7 +3705,7 @@ export class ProjectsTableView {
     mutation: () => Promise<ProjectEditResult>,
   ): void {
     this.feedback_abyssPrivate.empty();
-    void this.runTableSessionMutation(mutation).then(
+    void this.runTableActionInOrder_abyssPrivate(() => this.runTableSessionMutation(mutation)).then(
       (result) => {
         if (result.failed.length === 0) return;
         const first = result.failed[0];
@@ -4268,9 +4303,12 @@ export class ProjectsTableView {
           this.clearEditorAnchor_abyssPrivate(anchor, cell);
           this.activeEditor_abyssPrivate = undefined;
           this.renderTable_abyssPrivate();
+          const preserveActionFocus = this.takeSubmittedActionFocus_abyssPrivate(
+            closeContext.navigation,
+          );
           const pendingAction = this.pendingAction_abyssPrivate !== undefined;
           this.runPendingAction_abyssPrivate();
-          if (!pendingAction && !destination.preservesExternalFocus) {
+          if (!pendingAction && !preserveActionFocus && !destination.preservesExternalFocus) {
             this.finishEditorNavigation_abyssPrivate(
               edited,
               closeContext.navigation,

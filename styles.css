@@ -8646,7 +8646,11 @@ table.abyss-project-table {
 
 .abyss-project-timeline-row:hover .abyss-project-timeline-summary,
 .abyss-project-timeline-row.is-selected .abyss-project-timeline-summary {
-  background: var(--background-modifier-hover);
+  background-color: var(--background-primary);
+  background-image: linear-gradient(
+    var(--background-modifier-hover),
+    var(--background-modifier-hover)
+  );
 }
 
 .abyss-project-timeline-cell.abyss-project-table-cell {

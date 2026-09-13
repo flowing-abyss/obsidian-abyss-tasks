@@ -259,11 +259,15 @@ metadata and progress through the shared project-cell renderer and send edits th
 `ProjectManager.applyEdits` coordinator. Switching to a project dashboard temporarily detaches the
 overview surface, and returning reattaches the same session and active overview mode.
 
-Timeline range edits reserve their place in the overview controller's existing ordered session
-mutation path when submitted, before a later Undo or Redo can enter it. Active-editor settlement is
-started before that reservation, so the editor's own queued save completes first without a nested
-queue wait. A pointer gesture freezes occurrence, path, field binding, exact source key, raw value, existence,
-and projected range at capture; the controller rejects any mismatch before planning the write.
+The overview controller's table-action submission tail orders Timeline range commands with shared
+actions such as Undo and Redo when the user submits them. This is distinct from the sole metadata
+mutation tail: a Timeline command awaits one active-editor commit attempt outside the mutation tail,
+so a corrected retry or newer editor draft can persist without waiting behind the range. A failed
+editor attempt cancels that range command. After editor readiness, the command enters the metadata
+tail and captures its fresh source projection. Closing an editor for the submitted action preserves
+focus on that action's target while a newer explicit Tab navigation still wins. A pointer gesture
+freezes occurrence, path, field binding, exact source key, raw value, existence, and projected range
+at capture; the controller rejects any mismatch before planning the write.
 Keyboard arrows freeze the target binding at submission but resolve their relative move or End
 adjustment from the latest receipt-projected range when their queue turn begins. A real edit sends
 both endpoints in one `applyEdits` batch: the unchanged endpoint is an exact companion guard with

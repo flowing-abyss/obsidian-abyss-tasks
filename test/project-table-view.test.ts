@@ -377,7 +377,7 @@ describe('ProjectsTableView', () => {
     });
   });
 
-  it('reserves rapid Timeline edits before a later Undo in the shared mutation queue', async () => {
+  it('orders rapid Timeline edits before a later Undo at shared action submission', async () => {
     const config = settings();
     config.projects.overviewView = 'timeline';
     let releaseFirst: (() => void) | undefined;
@@ -486,6 +486,188 @@ describe('ProjectsTableView', () => {
       { field: { id: 'start' }, expectedValue: '2026-09-05', value: '2026-09-06' },
       { field: { id: 'end' }, expectedValue: '2026-09-30', value: '2026-10-01' },
     ]);
+  });
+
+  it('cancels a range after a failed editor save and leaves a corrected retry queue live', async () => {
+    const config = settings();
+    config.projects.overviewView = 'timeline';
+    let calls = 0;
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => {
+      calls += 1;
+      if (calls === 1) throw new ProjectEditValidationError('Correct the Start date.');
+      return {
+        applied: changes.map((change): AppliedProjectCellChange => ({
+          ...change,
+          sourceProperty: change.sourceProperty ?? expectDefined(change.field.property),
+          sourceKey: change.sourceKey ?? expectDefined(change.field.property),
+          previousValue: change.expectedValue,
+          previousExists: change.expectedExists ?? false,
+          appliedExists: change.valueExists ?? true,
+        })),
+        failed: [],
+      };
+    });
+    const { host } = mount(
+      [project({ frontmatter: { status: 'active', start: '2026-09-01', end: '2026-09-30' } })],
+      { settings: config, applyEdits },
+    );
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
+    input.value = '2026-09-05';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    pressTimelineArrow(bar);
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain(
+      'active project edit must finish',
+    );
+    expect(input.isConnected).toBe(true);
+
+    input.value = '2026-09-06';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
+
+    pressTimelineArrow(
+      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar')),
+    );
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledTimes(3);
+    expect(applyEdits.mock.calls[1]?.[0]).toMatchObject([
+      { field: { id: 'start' }, expectedValue: '2026-09-01', value: '2026-09-06' },
+    ]);
+    expect(applyEdits.mock.calls[2]?.[0]).toMatchObject([
+      { field: { id: 'start' }, expectedValue: '2026-09-06', value: '2026-09-07' },
+      { field: { id: 'end' }, expectedValue: '2026-09-30', value: '2026-10-01' },
+    ]);
+  });
+
+  it('keeps two Timeline arrows queued behind one held editor save', async () => {
+    const config = settings();
+    config.projects.overviewView = 'timeline';
+    let releaseFirst: (() => void) | undefined;
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let calls = 0;
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => {
+      calls += 1;
+      if (calls === 1) await firstHeld;
+      return {
+        applied: changes.map((change): AppliedProjectCellChange => ({
+          ...change,
+          sourceProperty: change.sourceProperty ?? expectDefined(change.field.property),
+          sourceKey: change.sourceKey ?? expectDefined(change.field.property),
+          previousValue: change.expectedValue,
+          previousExists: change.expectedExists ?? false,
+          appliedExists: change.valueExists ?? true,
+        })),
+        failed: [],
+      };
+    });
+    const { host } = mount(
+      [project({ frontmatter: { status: 'active', start: '2026-09-01', end: '2026-09-30' } })],
+      { settings: config, applyEdits },
+    );
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
+    input.value = '2026-09-05';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    bar.focus();
+    expect(activeDocument.activeElement).toBe(bar);
+    pressTimelineArrow(bar);
+    pressTimelineArrow(bar);
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+    releaseFirst?.();
+    await flushMicrotasks();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledTimes(3);
+    expect(applyEdits.mock.calls[1]?.[0]).toMatchObject([
+      { field: { id: 'start' }, expectedValue: '2026-09-05', value: '2026-09-06' },
+      { field: { id: 'end' }, expectedValue: '2026-09-30', value: '2026-10-01' },
+    ]);
+    expect(applyEdits.mock.calls[2]?.[0]).toMatchObject([
+      { field: { id: 'start' }, expectedValue: '2026-09-06', value: '2026-09-07' },
+      { field: { id: 'end' }, expectedValue: '2026-10-01', value: '2026-10-02' },
+    ]);
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
+    expect(activeDocument.activeElement).toBe(bar);
+  });
+
+  it('lets an editor persist a newer draft before its queued Timeline range runs', async () => {
+    const config = settings();
+    config.projects.overviewView = 'timeline';
+    let releaseFirst: (() => void) | undefined;
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let calls = 0;
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => {
+      calls += 1;
+      if (calls === 1) await firstHeld;
+      return {
+        applied: changes.map((change): AppliedProjectCellChange => ({
+          ...change,
+          sourceProperty: change.sourceProperty ?? expectDefined(change.field.property),
+          sourceKey: change.sourceKey ?? expectDefined(change.field.property),
+          previousValue: change.expectedValue,
+          previousExists: change.expectedExists ?? false,
+          appliedExists: change.valueExists ?? true,
+        })),
+        failed: [],
+      };
+    });
+    const { host } = mount(
+      [project({ frontmatter: { status: 'active', start: '2026-09-01', end: '2026-09-30' } })],
+      { settings: config, applyEdits },
+    );
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
+    input.value = '2026-09-05';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    pressTimelineArrow(bar);
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+
+    input.value = '2026-09-07';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    releaseFirst?.();
+    await flushMicrotasks();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledTimes(3);
+    expect(applyEdits.mock.calls[1]?.[0]).toMatchObject([
+      { field: { id: 'start' }, expectedValue: '2026-09-05', value: '2026-09-07' },
+    ]);
+    expect(applyEdits.mock.calls[2]?.[0]).toMatchObject([
+      { field: { id: 'start' }, expectedValue: '2026-09-07', value: '2026-09-08' },
+      { field: { id: 'end' }, expectedValue: '2026-09-30', value: '2026-10-01' },
+    ]);
+    expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
   });
 
   it('skips a clamped Timeline endpoint no-op without applying or recording history', async () => {

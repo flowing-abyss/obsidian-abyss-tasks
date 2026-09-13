@@ -220,6 +220,23 @@ describe('ProjectsTimelineView', () => {
     sheet.remove();
   });
 
+  it('layers selected sticky summaries over an opaque primary background', async () => {
+    const styles = await loadPluginStyles();
+    const sheet = createEl('style');
+    sheet.textContent = styles;
+    activeDocument.head.append(sheet);
+    const { host } = mount([project('Projects/A.md', '2026-09-01', '2026-09-03')]);
+    const row = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-row'));
+    const summary = expectDefined(
+      row.querySelector<HTMLElement>('.abyss-project-timeline-summary'),
+    );
+    summary.click();
+
+    expect(row.classList).toContain('is-selected');
+    expect(activeWindow.getComputedStyle(summary).backgroundImage).not.toBe('none');
+    sheet.remove();
+  });
+
   it('keeps range recovery controls aligned with the exposed date viewport while scrolling', () => {
     const { host, view } = mount([
       project('Projects/Invalid.md', '2026-09-20', '2026-09-10'),
