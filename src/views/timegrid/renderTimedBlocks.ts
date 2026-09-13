@@ -48,8 +48,7 @@ export type TimedBlockKeyboardIntent =
   | { readonly type: 'move-time'; readonly deltaMinutes: -15 | 15 }
   | { readonly type: 'resize-duration'; readonly deltaMinutes: -5 | 5 }
   | { readonly type: 'shift-schedule'; readonly days: -1 | 1 }
-  | { readonly type: 'extend-start'; readonly days: -1 }
-  | { readonly type: 'extend-due'; readonly days: 1 };
+  | { readonly type: 'extend-due'; readonly days: -1 | 1 };
 
 export interface TimedBlockCallbacks extends ForecastInteractionCallbacks {
   dependenciesFor?: TaskDependencyLookup | undefined;
@@ -593,7 +592,7 @@ const KEYBOARD_INTENTS: Readonly<Record<string, TimedBlockKeyboardIntent>> = {
 const SHIFT_KEYBOARD_INTENTS: Readonly<Record<string, TimedBlockKeyboardIntent>> = {
   ArrowUp: { type: 'resize-duration', deltaMinutes: -5 },
   ArrowDown: { type: 'resize-duration', deltaMinutes: 5 },
-  ArrowLeft: { type: 'extend-start', days: -1 },
+  ArrowLeft: { type: 'extend-due', days: -1 },
   ArrowRight: { type: 'extend-due', days: 1 },
 };
 

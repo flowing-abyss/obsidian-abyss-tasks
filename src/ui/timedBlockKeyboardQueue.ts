@@ -60,39 +60,18 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
-function extendStartCommand(
-  task: TaskSnapshot,
-  intent: Extract<TimedBlockKeyboardIntent, { type: 'extend-start' }>,
-): TaskCommand | undefined {
-  if (task.planning.start != null && task.planning.due != null) {
-    const date = shiftLocalDate(task.planning.start, intent.days);
-    return date != null
-      ? { type: 'set-span-boundary', ref: task.ref, boundary: 'start', date }
-      : undefined;
-  }
-  const anchor = task.planning.scheduled ?? task.planning.due;
-  if (anchor == null) return undefined;
-  const start = shiftLocalDate(anchor, intent.days);
-  return start != null
-    ? {
-        type: 'patch',
-        target: { type: 'task', ref: task.ref },
-        patch: { start: { type: 'set', value: start }, due: { type: 'set', value: anchor } },
-      }
-    : undefined;
-}
-
 function extendDueCommand(
   task: TaskSnapshot,
   intent: Extract<TimedBlockKeyboardIntent, { type: 'extend-due' }>,
 ): TaskCommand | undefined {
-  const base =
-    task.planning.start != null && task.planning.due != null
-      ? task.planning.due
-      : (task.planning.scheduled ?? task.planning.due);
+  const hasSpan = task.planning.start != null && task.planning.due != null;
+  if (intent.days < 0 && !hasSpan) return undefined;
+  const base = hasSpan ? task.planning.due : (task.planning.scheduled ?? task.planning.due);
   if (base == null) return undefined;
   const due = shiftLocalDate(base, intent.days);
-  return due != null ? { type: 'extend-span', ref: task.ref, due } : undefined;
+  const start = task.planning.start ?? base;
+  if (due == null || due < start) return undefined;
+  return { type: 'extend-span', ref: task.ref, due };
 }
 
 function commandFor(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): TaskCommand | undefined {
@@ -123,9 +102,6 @@ function commandFor(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): TaskC
     }
     case 'shift-schedule':
       return { type: 'shift-schedule', ref: task.ref, days: intent.days };
-    case 'extend-start': {
-      return extendStartCommand(task, intent);
-    }
     case 'extend-due': {
       return extendDueCommand(task, intent);
     }
@@ -190,6 +166,10 @@ export class TimedBlockKeyboardQueue {
 
     const command = commandFor(this.activeSnapshot, queued.intent);
     if (command == null) {
+      if (this.pending.some((entry) => entry.sequence === queued.sequence)) {
+        this.processNext();
+        return;
+      }
       this.finishSequence(queued.sequence);
       return;
     }

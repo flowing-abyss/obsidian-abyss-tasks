@@ -2093,7 +2093,7 @@ describe('renderTimedBlocksForDay', () => {
       ['ArrowDown', true, { type: 'resize-duration', deltaMinutes: 5 }],
       ['ArrowLeft', false, { type: 'shift-schedule', days: -1 }],
       ['ArrowRight', false, { type: 'shift-schedule', days: 1 }],
-      ['ArrowLeft', true, { type: 'extend-start', days: -1 }],
+      ['ArrowLeft', true, { type: 'extend-due', days: -1 }],
       ['ArrowRight', true, { type: 'extend-due', days: 1 }],
     ] as const)(
       '%s with shift=%s emits the exact relative intent and prevents default',

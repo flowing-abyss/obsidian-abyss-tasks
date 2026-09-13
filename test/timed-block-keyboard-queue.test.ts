@@ -208,63 +208,34 @@ describe('TimedBlockKeyboardQueue', () => {
     second.resolve(ok(taskAt('09:00', 'revision-3', { due: '2026-07-22' })));
   });
 
-  it('rebases repeated start and due extensions on returned span boundaries', async () => {
-    const results = Array.from({ length: 4 }, () => deferred<TaskCommandResult>());
-    const execute = vi.fn<TaskApplicationApi['execute']>();
-    for (const result of results) execute.mockReturnValueOnce(result.promise);
-    const { queue } = harness(execute);
+  it('shrinks only the due date, stops at start, and preserves a queued right extension', async () => {
+    const source = '- [ ] task 🛫 2026-07-20 📅 2026-07-22 ⏰ 09:00\n';
+    const app = await createAppWithFiles({ 'qa.md': source });
+    seedTaskCache(app, 'qa.md', [{ task: ' ', parent: -1, line: 0 }]);
+    const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+    await application.index.initialize();
+    const hooks = harness().hooks;
+    const queue = new TimedBlockKeyboardQueue(application.tasks, hooks);
+    const original = expectDefined(application.index.list({ filePath: 'qa.md' })[0]);
 
-    const span = taskAt('09:00', 'revision-1', {
+    queue.enqueue(original, { type: 'extend-due', days: -1 });
+    queue.enqueue(original, { type: 'extend-due', days: -1 });
+    queue.enqueue(original, { type: 'extend-due', days: -1 });
+    queue.enqueue(original, { type: 'extend-due', days: 1 });
+    await vi.waitFor(() => {
+      expect(hooks.onSettled).toHaveBeenCalledOnce();
+    });
+
+    expect(hooks.onCommitted.mock.calls.map(([updated]) => updated.planning)).toEqual([
+      expect.objectContaining({ start: '2026-07-20', due: '2026-07-21' }),
+      expect.objectContaining({ start: '2026-07-20', due: '2026-07-20' }),
+      expect.objectContaining({ start: '2026-07-20', due: '2026-07-21' }),
+    ]);
+    expect(application.index.list({ filePath: 'qa.md' })[0]?.planning).toMatchObject({
       start: '2026-07-20',
       due: '2026-07-21',
     });
-    queue.enqueue(span, { type: 'extend-start', days: -1 });
-    queue.enqueue(span, { type: 'extend-start', days: -1 });
-    expect(execute).toHaveBeenNthCalledWith(1, {
-      type: 'set-span-boundary',
-      ref: refMatching({ revision: 'revision-1' }),
-      boundary: 'start',
-      date: '2026-07-19',
-    });
-    expectDefined(results[0]).resolve(
-      ok(taskAt('09:00', 'revision-2', { start: '2026-07-19', due: '2026-07-21' })),
-    );
-    await expectSecondCall(execute);
-    expect(execute).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ boundary: 'start', date: '2026-07-18' }),
-    );
-    expectDefined(results[1]).resolve(
-      ok(taskAt('09:00', 'revision-3', { start: '2026-07-18', due: '2026-07-21' })),
-    );
-    await vi.waitFor(() => {
-      expect(execute).toHaveBeenCalledTimes(2);
-    });
-
-    const dueSpan = taskAt('09:00', 'revision-4', {
-      start: '2026-07-20',
-      due: '2026-07-21',
-    });
-    queue.enqueue(dueSpan, { type: 'extend-due', days: 1 });
-    queue.enqueue(dueSpan, { type: 'extend-due', days: 1 });
-    await vi.waitFor(() => {
-      expect(execute).toHaveBeenCalledTimes(3);
-    });
-    expect(execute).toHaveBeenNthCalledWith(3, {
-      type: 'extend-span',
-      ref: refMatching({ revision: 'revision-4' }),
-      due: '2026-07-22',
-    });
-    expectDefined(results[2]).resolve(
-      ok(taskAt('09:00', 'revision-5', { start: '2026-07-20', due: '2026-07-22' })),
-    );
-    await vi.waitFor(() => {
-      expect(execute).toHaveBeenCalledTimes(4);
-    });
-    expect(execute).toHaveBeenNthCalledWith(4, expect.objectContaining({ due: '2026-07-23' }));
-    expectDefined(results[3]).resolve(
-      ok(taskAt('09:00', 'revision-6', { start: '2026-07-20', due: '2026-07-23' })),
-    );
+    application.index.destroy();
   });
 
   it.each([
@@ -364,31 +335,25 @@ describe('TimedBlockKeyboardQueue', () => {
   );
 
   it.each([
-    ['scheduled-only', null, '2026-07-10'],
-    ['scheduled with an unrelated deadline', '2026-08-30', '2026-07-10'],
-  ] as const)(
-    'extends a %s task left by atomically creating a span around its rendered anchor',
-    (_label, originalDue, scheduled) => {
-      const execute = vi
-        .fn<TaskApplicationApi['execute']>()
-        .mockImplementation(() => new Promise(() => {}));
-      const { queue } = harness(execute);
-
-      queue.enqueue(taskAt('09:00', 'revision-1', { due: originalDue, scheduled }), {
-        type: 'extend-start',
-        days: -1,
-      });
-
-      expect(execute).toHaveBeenCalledWith({
-        type: 'patch',
-        target: { type: 'task', ref: refMatching({ revision: 'revision-1' }) },
-        patch: {
-          start: { type: 'set', value: '2026-07-09' },
-          due: { type: 'set', value: '2026-07-10' },
-        },
-      });
-    },
-  );
+    ['due-only', { due: '2026-07-10' }],
+    ['scheduled-only', { due: null, scheduled: '2026-07-10' }],
+    ['scheduled with an unrelated deadline', { due: '2026-08-30', scheduled: '2026-07-10' }],
+    ['single-day span', { start: '2026-07-10', due: '2026-07-10' }],
+    [
+      'scheduled with an earlier start',
+      { start: '2026-07-08', scheduled: '2026-07-10', due: null },
+    ],
+  ] as const)('does nothing when shrinking a %s task', (_label, planning) => {
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    const { queue, hooks } = harness(execute);
+    queue.enqueue(taskAt('09:00', 'revision-1', planning), { type: 'extend-due', days: -1 });
+    expect(execute).not.toHaveBeenCalled();
+    expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:0', 1, {
+      executed: false,
+      anyChanged: false,
+      sourceChanged: false,
+    });
+  });
 
   it('rebases the active task identity when a returned snapshot moves to another source line', async () => {
     const first = deferred<TaskCommandResult>();
@@ -507,7 +472,7 @@ describe('TimedBlockKeyboardQueue', () => {
   });
 
   it.each([
-    ['lower start', '0000-01-01', { type: 'extend-start', days: -1 }],
+    ['lower due', '0000-01-01', { type: 'extend-due', days: -1 }],
     ['upper due', '9999-12-31', { type: 'extend-due', days: 1 }],
   ] as const)('settles a %s boundary intent without executing', async (_label, due, intent) => {
     const execute = vi.fn<TaskApplicationApi['execute']>();
