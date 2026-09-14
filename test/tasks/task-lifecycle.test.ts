@@ -130,6 +130,40 @@ function applicationFor(app: App, settings: CalendarSettings) {
   );
 }
 
+function installTemplater(
+  app: App,
+  readAndParse: (template: TFile, target: TFile) => Promise<string>,
+): void {
+  Object.defineProperty(app, 'plugins', {
+    configurable: true,
+    value: {
+      getPlugin: (id: string) =>
+        id === 'templater-obsidian'
+          ? {
+              templater: {
+                files_with_pending_templates: new Set<string>(),
+                start_templater_task(path: string) {
+                  this.files_with_pending_templates.add(path);
+                },
+                async end_templater_task(path: string) {
+                  this.files_with_pending_templates.delete(path);
+                },
+                create_running_config(template: TFile, target: TFile) {
+                  return { template_file: template, target_file: target, run_mode: 2 };
+                },
+                async read_and_parse_template(config: {
+                  template_file: TFile;
+                  target_file: TFile;
+                }) {
+                  return await readAndParse(config.template_file, config.target_file);
+                },
+              },
+            }
+          : null,
+    },
+  });
+}
+
 function configuredDestination(settings: CalendarSettings): ConfiguredTaskDestination {
   return {
     taskFilePath: settings.taskFilePath,
@@ -1031,6 +1065,50 @@ describe('TaskApplicationService lifecycle routing', () => {
     expect(behavior).toHaveBeenCalledOnce();
   });
 
+  it('retries an unavailable prepared destination through the same capture session', async () => {
+    const create = vi.fn<TaskRepository['create']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: committedTask },
+      changed: true,
+    });
+    const prepare = vi
+      .fn()
+      .mockResolvedValueOnce({ type: 'unavailable' as const })
+      .mockResolvedValueOnce({ type: 'resolved' as const, destination: appendDestination });
+    const destinationProvider = {
+      planConfiguredDefault: vi.fn().mockResolvedValue({ destination: appendDestination, prepare }),
+      planExplicit: vi.fn(),
+      resolveConfiguredDefault: vi.fn(),
+      prepare: vi.fn(),
+    } satisfies TaskDestinationProvider;
+    const application = new TaskApplicationService(
+      queries,
+      {
+        edit: vi.fn(),
+        editBatch: vi.fn(),
+        createDependencySubtask: vi.fn(),
+        completeRecurrence: vi.fn(),
+        create,
+        move: vi.fn(),
+      },
+      catalog,
+      clock,
+      destinationProvider,
+    );
+
+    const session = await application.planCreate({ type: 'configured-default' });
+
+    await expect(session.execute({ markdownBody: 'retry this draft' })).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'destination-unavailable', field: 'destination' }],
+    });
+    await expect(session.execute({ markdownBody: 'retry this draft' })).resolves.toMatchObject({
+      type: 'ok',
+    });
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledOnce();
+  });
+
   it('returns a frozen executable unavailable session without repository writes', async () => {
     const create = vi.fn<TaskRepository['create']>();
     const destinationProvider = {
@@ -1665,5 +1743,33 @@ describe('configured destination end-to-end lifecycle', () => {
     expect(content).not.toContain('🆔');
     presentTaskCreationResult(result);
     expect(Notice).toHaveBeenCalledWith(`Task added to ${today}.md`);
+  });
+
+  it('retries a rejected template preparation through the same configured capture session', async () => {
+    const app = await createAppWithFiles({ 'templates/task.md': '<% broken %>\n' });
+    let attempt = 0;
+    installTemplater(app, async () => {
+      attempt += 1;
+      if (attempt === 1) throw new Error('parse failed');
+      return '# Prepared\n';
+    });
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      taskFilePath: 'daily/{{YYYY-MM-DD}}.md',
+      taskTemplatePath: 'templates/task.md',
+    };
+    const application = applicationFor(app, settings);
+    const session = await application.planCreate({ type: 'configured-default' });
+
+    await expect(session.execute({ markdownBody: 'retry this draft' })).resolves.toMatchObject({
+      type: 'io-error',
+    });
+    await expect(session.execute({ markdownBody: 'retry this draft' })).resolves.toMatchObject({
+      type: 'ok',
+    });
+
+    const file = fileAt(app, 'daily/2026-07-14.md');
+    expect(await app.vault.cachedRead(file)).toContain('- [ ] retry this draft');
+    expect(attempt).toBe(2);
   });
 });

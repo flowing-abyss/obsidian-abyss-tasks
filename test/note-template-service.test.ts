@@ -14,9 +14,10 @@ function fileAt(app: App, path: string): TFile {
 function installTemplater(
   app: App,
   readAndParse: (template: TFile, target: TFile) => Promise<string>,
-): { readonly starts: string[]; readonly finishes: string[] } {
+): { readonly starts: string[]; readonly finishes: string[]; readonly pending: Set<string> } {
   const starts: string[] = [];
   const finishes: string[] = [];
+  const pending = new Set<string>();
   Object.defineProperty(app, 'plugins', {
     configurable: true,
     value: {
@@ -24,7 +25,7 @@ function installTemplater(
         id === 'templater-obsidian'
           ? {
               templater: {
-                files_with_pending_templates: new Set<string>(),
+                files_with_pending_templates: pending,
                 start_templater_task(path: string) {
                   starts.push(path);
                   this.files_with_pending_templates.add(path);
@@ -47,7 +48,18 @@ function installTemplater(
           : null,
     },
   });
-  return { starts, finishes };
+  return { starts, finishes, pending };
+}
+
+async function runDelayedAutoCreate(
+  app: App,
+  pending: ReadonlySet<string>,
+  path: string,
+  content: string,
+): Promise<void> {
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 300));
+  const file = app.vault.getAbstractFileByPath(path);
+  if (file instanceof TFile && !pending.has(path)) await app.vault.modify(file, content);
 }
 
 describe('NoteTemplateService', () => {
@@ -149,6 +161,55 @@ describe('NoteTemplateService', () => {
     expect(lifecycle.finishes).toEqual(['tasks/templated.md']);
   });
 
+  it('keeps selected-template ownership through Templater delayed auto-create handling', async () => {
+    const app = await createAppWithFiles({ 'templates/task.md': '<% title %>\n' });
+    const lifecycle = installTemplater(app, async () => '# selected\n');
+    const service = new NoteTemplateService(app);
+    const creation = service.ensureNote('tasks/selected.md', 'templates/task.md', 'Selected');
+    await flushMicrotasks();
+    const autoCreate = runDelayedAutoCreate(
+      app,
+      lifecycle.pending,
+      'tasks/selected.md',
+      '# auto\n',
+    );
+
+    const file = await creation;
+    await autoCreate;
+
+    expect(await app.vault.cachedRead(file)).toBe('# selected\n');
+  });
+
+  it('keeps empty selected destinations out of Templater delayed auto-create handling after failure', async () => {
+    const app = await createAppWithFiles({ 'templates/task.md': '<% broken %>\n' });
+    const lifecycle = installTemplater(app, async () => {
+      throw new Error('parse failed');
+    });
+    const service = new NoteTemplateService(app);
+    const creation = service.ensureNote('tasks/failed.md', 'templates/task.md', 'Failed');
+    await flushMicrotasks();
+    const autoCreate = runDelayedAutoCreate(app, lifecycle.pending, 'tasks/failed.md', '# auto\n');
+
+    await expect(creation).rejects.toBeInstanceOf(CreatedNoteTemplateError);
+    await autoCreate;
+
+    expect(await app.vault.cachedRead(fileAt(app, 'tasks/failed.md'))).toBe('');
+  });
+
+  it('keeps empty no-template destinations out of Templater delayed auto-create handling', async () => {
+    const app = await createAppWithFiles({});
+    const lifecycle = installTemplater(app, async () => '# unused\n');
+    const service = new NoteTemplateService(app);
+    const creation = service.ensureNote('tasks/empty.md', '', 'Empty');
+    await flushMicrotasks();
+    const autoCreate = runDelayedAutoCreate(app, lifecycle.pending, 'tasks/empty.md', '# auto\n');
+
+    const file = await creation;
+    await autoCreate;
+
+    expect(await app.vault.cachedRead(file)).toBe('');
+  });
+
   it('retains an owned failed path for retry and does not duplicate the file', async () => {
     const app = await createAppWithFiles({ 'templates/task.md': '<% broken %>\n' });
     let attempt = 0;
@@ -173,7 +234,7 @@ describe('NoteTemplateService', () => {
 
   it('retains a raw-template failure as an owned path that can be retried', async () => {
     const app = await createAppWithFiles({ 'templates/task.md': '# {{title}}\n' });
-    const modify = vi.spyOn(app.vault, 'modify').mockRejectedValueOnce(new Error('disk full'));
+    const process = vi.spyOn(app.vault, 'process').mockRejectedValueOnce(new Error('disk full'));
     const create = vi.spyOn(app.vault, 'create');
     const service = new NoteTemplateService(app);
 
@@ -190,7 +251,7 @@ describe('NoteTemplateService', () => {
     );
     expect(await app.vault.cachedRead(recovered)).toBe('# Retry raw\n');
     expect(create.mock.calls.filter(([path]) => path === 'tasks/retry-raw.md')).toHaveLength(1);
-    expect(modify).toHaveBeenCalledTimes(2);
+    expect(process).toHaveBeenCalledTimes(2);
   });
 
   it('preserves external content written after a failed template attempt', async () => {
@@ -209,6 +270,47 @@ describe('NoteTemplateService', () => {
 
     expect(recovered).toBe(owned);
     expect(await app.vault.cachedRead(recovered)).toBe('external recovery\n');
+  });
+
+  it('does not adopt or overwrite external content changed while a retry is rendering', async () => {
+    const app = await createAppWithFiles({ 'templates/task.md': '<% broken %>\n' });
+    let attempt = 0;
+    let release: ((content: string) => void) | undefined;
+    const rendered = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    installTemplater(app, async () => {
+      attempt += 1;
+      if (attempt === 1) throw new Error('initial parse failed');
+      return await rendered;
+    });
+    const service = new NoteTemplateService(app);
+    await expect(
+      service.ensureNote('tasks/retry-race.md', 'templates/task.md', 'Retry'),
+    ).rejects.toBeInstanceOf(CreatedNoteTemplateError);
+
+    const owned = fileAt(app, 'tasks/retry-race.md');
+    const retry = service.ensureNote('tasks/retry-race.md', 'templates/task.md', 'Retry');
+    await flushMicrotasks();
+    await app.vault.modify(owned, 'external change\n');
+    expectDefined(release)('# rendered\n');
+
+    await expect(retry).rejects.toBeInstanceOf(CreatedNoteTemplateError);
+    expect(await app.vault.cachedRead(owned)).toBe('external change\n');
+    const recovered = await service.ensureNote('tasks/retry-race.md', 'templates/task.md', 'Retry');
+    expect(recovered).toBe(owned);
+    expect(await app.vault.cachedRead(recovered)).toBe('external change\n');
+    expect(attempt).toBe(2);
+  });
+
+  it('reads Templater availability when each note preparation begins', async () => {
+    const app = await createAppWithFiles({ 'templates/task.md': '<% title %>\n' });
+    const service = new NoteTemplateService(app);
+    installTemplater(app, async () => '# dynamic\n');
+
+    const file = await service.ensureNote('tasks/dynamic.md', 'templates/task.md', 'Dynamic');
+
+    expect(await app.vault.cachedRead(file)).toBe('# dynamic\n');
   });
 
   it('keeps project collision ownership with createNoteFromTemplate', async () => {

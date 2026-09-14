@@ -8,6 +8,13 @@ interface TemplaterCore {
   read_and_parse_template(configuration: unknown): Promise<string>;
 }
 
+// Templater 2.20.6 checks this set 300 ms after a note is created.
+const AUTO_CREATE_GUARD_MS = 350;
+
+function waitForAutoCreateCheck(): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, AUTO_CREATE_GUARD_MS));
+}
+
 export interface TemplaterSession {
   render(template: TFile, target: TFile): Promise<string>;
   finish(): Promise<void>;
@@ -56,6 +63,7 @@ export class TemplaterAdapter {
       finish: async () => {
         if (finished) return;
         finished = true;
+        await waitForAutoCreateCheck();
         await this.core.end_templater_task(path);
       },
     };

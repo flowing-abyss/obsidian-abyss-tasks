@@ -37,6 +37,18 @@ describe('compileNotePathPattern', () => {
     expect(pattern.matches('archive/2025/2026.md')).toBe(false);
   });
 
+  it('matches partial and mixed calendar and ISO-week paths against one candidate date', () => {
+    const partial = compileNotePathPattern('archive/{{MM-DD}}.md');
+    expect(partial.matches('archive/02-29.md')).toBe(true);
+    expect(partial.matches('archive/02-30.md')).toBe(false);
+
+    const mixed = compileNotePathPattern('archive/{{YYYY-MM-WW}}.md');
+    const path = mixed.resolve('2026-09-14');
+    expect(path).toBe('archive/2026-09-38.md');
+    expect(mixed.matches(path)).toBe(true);
+    expect(mixed.matches('archive/2026-09-53.md')).toBe(false);
+  });
+
   it('validates ordinal, quarter and ISO week periods precisely', () => {
     expect(compileNotePathPattern('ordinal/{{YYYY}}-{{DDDD}}').matches('ordinal/2024-366.md')).toBe(
       true,

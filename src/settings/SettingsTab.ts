@@ -48,6 +48,16 @@ interface TaskCalendarPlugin extends Plugin {
   renameProjectStatus(id: string, name: string, expectedName: string): Promise<void>;
 }
 
+function dailyNoteFormatDescription(): DocumentFragment {
+  const description = createFragment();
+  description.appendText('Format for calendar links and date parsing, e.g. ');
+  description.createEl('code', {
+    text: ['Y', 'Y', 'Y', 'Y', '-', 'M', 'M', '-', 'D', 'D'].join(''),
+  });
+  description.appendText('.');
+  return description;
+}
+
 interface CardListOptions<T> {
   listKey: string;
   id: (item: T) => string;
@@ -1362,7 +1372,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
 
     new Setting(container)
       .setName('Daily note format')
-      .setDesc('Format for calendar links and date parsing, e.g. Yyyy-mm-dd.')
+      .setDesc(dailyNoteFormatDescription())
       .addText((t) =>
         t.setValue(cfg.dailyNoteFormat).onChange(async (v) => {
           cfg.dailyNoteFormat = v;

@@ -7,6 +7,14 @@ interface FailedPreparation {
   readonly title: string;
 }
 
+interface TemplateApplication {
+  readonly file: TFile;
+  readonly template: TFile;
+  readonly title: string;
+  readonly expectedContent: string;
+  readonly session: TemplaterSession | undefined;
+}
+
 const inFlightByApp = new WeakMap<App, Map<string, Promise<TFile>>>();
 const failedByApp = new WeakMap<App, Map<string, FailedPreparation>>();
 
@@ -64,11 +72,7 @@ function notePath(filePath: string): string {
 }
 
 export class NoteTemplateService {
-  private readonly templater: TemplaterAdapter | undefined;
-
-  constructor(private readonly app: App) {
-    this.templater = TemplaterAdapter.fromApp(app);
-  }
+  constructor(private readonly app: App) {}
 
   ensureNote(filePath: string, templatePath: string, title: string): Promise<TFile> {
     const path = notePath(filePath);
@@ -134,12 +138,11 @@ export class NoteTemplateService {
     }
     const requestedTemplate = templatePath.length > 0 ? templatePath : priorFailure.templatePath;
     const requestedTitle = title.length > 0 ? title : priorFailure.title;
-    return await this.retryTemplate(
-      file,
-      this.resolveTemplate(requestedTemplate),
-      requestedTemplate,
-      requestedTitle,
-    );
+    return await this.retryTemplate(file, this.resolveTemplate(requestedTemplate), {
+      content: priorFailure.content,
+      templatePath: requestedTemplate,
+      title: requestedTitle,
+    });
   }
 
   private resolveTemplate(templatePath: string): TFile | undefined {
@@ -177,18 +180,17 @@ export class NoteTemplateService {
     templatePath: string,
     title: string,
   ): Promise<TFile> {
-    if (template === undefined) return await this.app.vault.create(path, '');
-    const session = this.templater?.begin(path);
+    const session = this.templater()?.begin(path);
     let file: TFile | undefined;
     try {
       file = await this.app.vault.create(path, '');
-      await this.applyTemplate(file, template, title, session);
+      if (template === undefined) return file;
+      await this.applyTemplate({ file, template, title, expectedContent: '', session });
       mapFor(failedByApp, this.app).delete(path);
       return file;
     } catch (cause) {
       if (file !== undefined) {
-        const content = await this.app.vault.cachedRead(file).catch(() => '');
-        mapFor(failedByApp, this.app).set(path, { content, templatePath, title });
+        mapFor(failedByApp, this.app).set(path, { content: '', templatePath, title });
         throw new CreatedNoteTemplateError(path, cause);
       }
       throw cause;
@@ -200,33 +202,42 @@ export class NoteTemplateService {
   private async retryTemplate(
     file: TFile,
     template: TFile | undefined,
-    templatePath: string,
-    title: string,
+    failure: FailedPreparation,
   ): Promise<TFile> {
     if (template === undefined) {
       mapFor(failedByApp, this.app).delete(file.path);
       return file;
     }
-    const session = this.templater?.begin(file.path);
+    const session = this.templater()?.begin(file.path);
     try {
-      await this.applyTemplate(file, template, title, session);
+      await this.applyTemplate({
+        file,
+        template,
+        title: failure.title,
+        expectedContent: failure.content,
+        session,
+      });
       mapFor(failedByApp, this.app).delete(file.path);
       return file;
     } catch (cause) {
-      const content = await this.app.vault.cachedRead(file).catch(() => '');
-      mapFor(failedByApp, this.app).set(file.path, { content, templatePath, title });
+      mapFor(failedByApp, this.app).set(file.path, {
+        content: failure.content,
+        templatePath: failure.templatePath,
+        title: failure.title,
+      });
       throw new CreatedNoteTemplateError(file.path, cause);
     } finally {
       await session?.finish();
     }
   }
 
-  private async applyTemplate(
-    file: TFile,
-    template: TFile,
-    title: string,
-    session: TemplaterSession | undefined,
-  ): Promise<void> {
+  private async applyTemplate({
+    file,
+    template,
+    title,
+    expectedContent,
+    session,
+  }: TemplateApplication): Promise<void> {
     let content: string;
     if (session !== undefined) {
       content = await session.render(template, file);
@@ -238,6 +249,15 @@ export class NoteTemplateService {
         .replace(/\{\{\s*time\s*\}\}/giu, now.format('HH:mm'))
         .replace(/\{\{\s*title\s*\}\}/giu, title);
     }
-    await this.app.vault.modify(file, content);
+    await this.app.vault.process(file, (source) => {
+      if (source !== expectedContent) {
+        throw new Error(`Note content changed while applying the template: ${file.path}`);
+      }
+      return content;
+    });
+  }
+
+  private templater(): TemplaterAdapter | undefined {
+    return TemplaterAdapter.fromApp(this.app);
   }
 }

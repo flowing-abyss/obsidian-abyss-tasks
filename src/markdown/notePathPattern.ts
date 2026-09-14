@@ -8,7 +8,11 @@ export interface NotePathPattern {
 interface Marker {
   readonly format: string;
   readonly matcher: string;
+  readonly tokens: readonly DateToken[];
+  readonly tokenMatcher: RegExp;
 }
+
+type DateToken = (typeof FORMAT_TOKENS)[number];
 
 interface PatternSegment {
   readonly literal: string;
@@ -77,36 +81,40 @@ function bracketLiteral(
 function compiledFormatPart(
   format: string,
   cursor: number,
-): { readonly matcher: string; readonly next: number; readonly hasDateToken: boolean } {
+): { readonly matcher: string; readonly next: number; readonly token: DateToken | undefined } {
   const character = format[cursor];
   if (character === '[') {
     const literal = bracketLiteral(format, cursor);
-    return { matcher: literal.matcher, next: literal.next, hasDateToken: false };
+    return { matcher: literal.matcher, next: literal.next, token: undefined };
   }
   if (character === ']') throw new Error('Note path date format has an unmatched bracket.');
   const tokenRun = tokenAt(format, cursor);
   if (tokenRun === undefined) {
-    return { matcher: escapeRegex(character ?? ''), next: cursor + 1, hasDateToken: false };
+    return { matcher: escapeRegex(character ?? ''), next: cursor + 1, token: undefined };
   }
   const token = FORMAT_TOKENS.find((candidate) => candidate === tokenRun.run);
   if (token === undefined)
     throw new Error(`Unsupported date token in note path format: ${tokenRun.run}`);
-  return { matcher: TOKEN_MATCHERS[token], next: tokenRun.end, hasDateToken: true };
+  return { matcher: TOKEN_MATCHERS[token], next: tokenRun.end, token };
 }
 
 function compileFormat(format: string): Marker {
   if (format.length === 0) throw new Error('Note path date format cannot be empty.');
   let matcher = '';
+  let tokenMatcher = '';
   let cursor = 0;
-  let hasDateToken = false;
+  const tokens: DateToken[] = [];
   while (cursor < format.length) {
     const part = compiledFormatPart(format, cursor);
     matcher += part.matcher;
-    hasDateToken ||= part.hasDateToken;
+    tokenMatcher += part.token === undefined ? part.matcher : `(${part.matcher})`;
+    if (part.token !== undefined) tokens.push(part.token);
     cursor = part.next;
   }
-  if (!hasDateToken) throw new Error('Note path date format must contain a supported date token.');
-  return { format, matcher };
+  if (tokens.length === 0) {
+    throw new Error('Note path date format must contain a supported date token.');
+  }
+  return { format, matcher, tokens, tokenMatcher: new RegExp(`^${tokenMatcher}$`, 'u') };
 }
 
 function normalizedPattern(pattern: string): string {
@@ -166,6 +174,162 @@ function matcherPart(literal: string, marker: Marker | undefined): string {
   return `${escapeRegex(literal)}(${marker.matcher})`;
 }
 
+interface DateFields {
+  readonly calendarYears: readonly number[];
+  readonly isoYears: readonly number[];
+  readonly months: readonly number[];
+  readonly days: readonly number[];
+  readonly ordinals: readonly number[];
+  readonly quarters: readonly number[];
+  readonly isoWeeks: readonly number[];
+}
+
+const FIELD_FOR_TOKEN: Readonly<Record<DateToken, keyof DateFields>> = {
+  GGGG: 'isoYears',
+  YYYY: 'calendarYears',
+  YY: 'calendarYears',
+  M: 'months',
+  MM: 'months',
+  D: 'days',
+  DD: 'days',
+  DDD: 'ordinals',
+  DDDD: 'ordinals',
+  Q: 'quarters',
+  W: 'isoWeeks',
+  WW: 'isoWeeks',
+};
+
+function capturedFields(markers: readonly Marker[], values: readonly string[]): DateFields {
+  const fields: Record<keyof DateFields, number[]> = {
+    calendarYears: [],
+    isoYears: [],
+    months: [],
+    days: [],
+    ordinals: [],
+    quarters: [],
+    isoWeeks: [],
+  };
+  for (const [index, marker] of markers.entries()) {
+    const captures = marker.tokenMatcher.exec(values[index] ?? '')?.slice(1) ?? [];
+    for (const [tokenIndex, token] of marker.tokens.entries()) {
+      const value = captures[tokenIndex];
+      if (value === undefined) continue;
+      fields[FIELD_FOR_TOKEN[token]].push(token === 'YY' ? 2000 + Number(value) : Number(value));
+    }
+  }
+  return fields;
+}
+
+function consecutiveDates(
+  first: ReturnType<typeof moment>,
+  count: number,
+): ReadonlyArray<ReturnType<typeof moment>> {
+  return Array.from({ length: count }, (_value, index) => first.clone().add(index, 'day'));
+}
+
+function datesForMonth(
+  year: number,
+  month: number,
+  searchForIsoYear: boolean,
+): ReadonlyArray<ReturnType<typeof moment>> {
+  const first = moment([year, month - 1, 1]);
+  return searchForIsoYear ? consecutiveDates(first, first.daysInMonth()) : [first];
+}
+
+function datesForQuarter(
+  year: number,
+  quarter: number,
+  searchForIsoYear: boolean,
+): ReadonlyArray<ReturnType<typeof moment>> {
+  const first = moment([year, (quarter - 1) * 3, 1]);
+  return searchForIsoYear
+    ? consecutiveDates(first, first.clone().add(3, 'months').diff(first, 'days'))
+    : [first];
+}
+
+function datesForUnspecifiedCalendar(
+  year: number,
+  searchForIsoYear: boolean,
+): ReadonlyArray<ReturnType<typeof moment>> {
+  const first = moment([year, 0, 1]);
+  if (!searchForIsoYear) return [first];
+  const days = first.isLeapYear() ? 366 : 365;
+  return consecutiveDates(first, days);
+}
+
+function unique(values: readonly number[]): readonly number[] {
+  return [...new Set(values)];
+}
+
+function datesForCalendarYear(
+  year: number,
+  fields: DateFields,
+  searchForIsoYear: boolean,
+): ReadonlyArray<ReturnType<typeof moment>> {
+  const month = fields.months[0];
+  const day = fields.days[0];
+  const ordinal = fields.ordinals[0];
+  const quarter = fields.quarters[0];
+  if (ordinal !== undefined) return [moment([year, 0, 1]).dayOfYear(ordinal)];
+  if (month !== undefined && day !== undefined) return [moment([year, month - 1, day])];
+  if (month !== undefined) return datesForMonth(year, month, searchForIsoYear);
+  if (quarter !== undefined) return datesForQuarter(year, quarter, searchForIsoYear);
+  if (day !== undefined) {
+    return Array.from({ length: 12 }, (_value, index) => moment([year, index, day]));
+  }
+  return datesForUnspecifiedCalendar(year, searchForIsoYear);
+}
+
+function isoCandidateYears(fields: DateFields): readonly number[] {
+  if (fields.isoYears.length > 0) return unique(fields.isoYears);
+  const calendarYears = unique(fields.calendarYears);
+  if (calendarYears.length > 0) {
+    return unique(calendarYears.flatMap((year) => [year - 1, year, year + 1]));
+  }
+  return Array.from({ length: 400 }, (_value, index) => 2000 + index);
+}
+
+function calendarCandidateYears(fields: DateFields): readonly number[] {
+  const calendarYears = unique(fields.calendarYears);
+  if (calendarYears.length > 0) return calendarYears;
+  if (fields.isoYears.length > 0) {
+    return unique(fields.isoYears.flatMap((year) => [year - 1, year, year + 1]));
+  }
+  return [2000];
+}
+
+function candidateDates(fields: DateFields): ReadonlyArray<ReturnType<typeof moment>> {
+  if (fields.isoWeeks.length > 0) {
+    const years = isoCandidateYears(fields);
+    return years.flatMap((year) =>
+      fields.isoWeeks.flatMap((week) =>
+        Array.from({ length: 7 }, (_value, index) =>
+          moment()
+            .isoWeekYear(year)
+            .isoWeek(week)
+            .isoWeekday(index + 1)
+            .startOf('day'),
+        ),
+      ),
+    );
+  }
+  const years = calendarCandidateYears(fields);
+  return years.flatMap((year) => datesForCalendarYear(year, fields, fields.isoYears.length > 0));
+}
+
+function isMatchingDate(
+  candidate: ReturnType<typeof moment>,
+  markers: readonly Marker[],
+  values: readonly string[],
+): boolean {
+  return markers.every((marker, index) => candidate.format(marker.format) === values[index]);
+}
+
+function hasMatchingDate(markers: readonly Marker[], values: readonly string[]): boolean {
+  const fields = capturedFields(markers, values);
+  return candidateDates(fields).some((candidate) => isMatchingDate(candidate, markers, values));
+}
+
 export function compileNotePathPattern(pattern: string): NotePathPattern {
   const source = normalizedPattern(pattern);
   const literals: string[] = [];
@@ -183,7 +347,6 @@ export function compileNotePathPattern(pattern: string): NotePathPattern {
     .map((literal, index) => matcherPart(literal, markers[index]))
     .join('');
   const matcher = new RegExp(`^${matcherSource}$`, 'u');
-  const combinedFormat = markers.map(({ format }) => format).join('[\u0001]');
 
   return {
     resolve(date: string): string {
@@ -202,9 +365,7 @@ export function compileNotePathPattern(pattern: string): NotePathPattern {
       if (match === null) return false;
       if (markers.length === 0) return true;
       const values = match.slice(1);
-      const combinedValue = values.join('\u0001');
-      const parsed = moment(combinedValue, combinedFormat, true);
-      return parsed.isValid() && parsed.format(combinedFormat) === combinedValue;
+      return hasMatchingDate(markers, values);
     },
   };
 }

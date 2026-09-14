@@ -750,8 +750,18 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     };
     let preparation: Promise<TaskDestinationResolution> | undefined;
     const prepareOnce = (): Promise<TaskDestinationResolution> => {
-      preparation ??= Promise.resolve().then(() => plan.prepare());
-      return preparation;
+      if (preparation !== undefined) return preparation;
+      const active = Promise.resolve().then(() => plan.prepare());
+      preparation = active;
+      void active.then(
+        (resolution) => {
+          if (resolution.type !== 'resolved' && preparation === active) preparation = undefined;
+        },
+        () => {
+          if (preparation === active) preparation = undefined;
+        },
+      );
+      return active;
     };
     return {
       type: 'ready',

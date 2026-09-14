@@ -53,9 +53,10 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
     mutation: 'destination provisioning',
     reason: 'Creates the owned destination before applying an optional template.',
   },
-  'src/notes/NoteTemplateService.ts#NoteTemplateService.createPreparedNote#vault.create#2': {
+  'src/notes/NoteTemplateService.ts#NoteTemplateService.applyTemplate#process#1': {
     mutation: 'destination provisioning',
-    reason: 'Creates an empty owned destination when no template is selected.',
+    reason:
+      'Applies template output only while the destination still contains the service-owned preparation snapshot.',
   },
   'src/tags/TagManager.ts#TagManager.applyVaultRenames#process#1': {
     mutation: 'vault-wide tag rename',
