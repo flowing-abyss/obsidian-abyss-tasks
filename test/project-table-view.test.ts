@@ -462,6 +462,24 @@ describe('ProjectsTableView', () => {
     }
   });
 
+  it('keeps the mounted buffer unchanged until scrolling exposes a boundary row', () => {
+    const { host, scroll } = largeTable();
+    const body = expectDefined(host.querySelector('tbody'));
+    const initial = Array.from(host.querySelectorAll('.abyss-project-table-row'));
+    const observer = new MutationObserver(() => {});
+    observer.observe(body, { attributes: true, childList: true, subtree: true });
+    scroll.scrollTop = 100;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(Array.from(host.querySelectorAll('.abyss-project-table-row'))).toEqual(initial);
+    expect(observer.takeRecords()).toHaveLength(0);
+    scroll.scrollTop = 171;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('[data-project-path="Projects/P0005.md"]')).not.toBeNull();
+    expect(host.querySelector('[data-project-path="Projects/P0015.md"]')).not.toBeNull();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    observer.disconnect();
+  });
+
   it('does not mutate an unchanged viewport window or its spacer styles', () => {
     const { host, scroll } = largeTable();
     scroll.scrollTop = 3400;

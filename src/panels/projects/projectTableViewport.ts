@@ -3,6 +3,12 @@ interface TableViewportRow {
   readonly height: number;
 }
 
+interface TableViewportRange {
+  readonly start: number;
+  readonly end: number;
+  readonly height: number;
+}
+
 type TableViewportSegment = { readonly index: number } | { readonly height: number };
 
 function rowBoundary(offsets: readonly number[], value: number): number {
@@ -22,8 +28,10 @@ export class ProjectTableViewport {
   #indices = new Map<string, number>();
   readonly #heights = new Map<string, number>();
   #offsets: number[] = [0];
+  #range: TableViewportRange | undefined;
 
   replace(rows: readonly TableViewportRow[]): void {
+    this.#range = undefined;
     this.#rows = rows;
     this.#indices = new Map(rows.map(({ key }, index) => [key, index]));
     for (const key of this.#heights.keys()) {
@@ -53,6 +61,7 @@ export class ProjectTableViewport {
       if (this.#measureRow(measurement)) changed = true;
     }
     if (!changed) return { scrollTop, changed };
+    this.#range = undefined;
     this.#rebuildOffsets();
     return { scrollTop: scrollTop + (this.#offsets[anchor] ?? 0) - oldOffset, changed };
   }
@@ -90,8 +99,7 @@ export class ProjectTableViewport {
     const height = measuredHeight > 0 ? measuredHeight : 340;
     const total = this.#offsets[count] ?? 0;
     const scrollTop = Math.max(0, Math.min(requestedTop, Math.max(0, total - measuredHeight)));
-    const start = Math.max(0, rowBoundary(this.#offsets, scrollTop - 170) - 1);
-    const end = Math.min(count, rowBoundary(this.#offsets, scrollTop + height + 170));
+    const { start, end } = this.#rangeFor(scrollTop, height);
     const indices = new Set<number>();
     for (let index = start; index < end; index++) indices.add(index);
     for (const key of pinned) {
@@ -99,6 +107,23 @@ export class ProjectTableViewport {
       if (index !== undefined) indices.add(index);
     }
     return { start, end, scrollTop, segments: this.#segments(indices) };
+  }
+
+  #rangeFor(scrollTop: number, height: number): TableViewportRange {
+    const previous = this.#range;
+    const total = this.#offsets[this.#rows.length] ?? 0;
+    const visibleBottom = Math.min(total, scrollTop + height);
+    if (
+      previous?.height === height &&
+      (this.#offsets[previous.start] ?? Infinity) <= scrollTop &&
+      (this.#offsets[previous.end] ?? 0) >= visibleBottom
+    )
+      return previous;
+    // Consume the existing overscan before refilling it. Small scroll steps do not change DOM.
+    const start = Math.max(0, rowBoundary(this.#offsets, scrollTop - 170) - 1);
+    const end = Math.min(this.#rows.length, rowBoundary(this.#offsets, scrollTop + height + 170));
+    this.#range = { start, end, height };
+    return this.#range;
   }
 
   #segments(indices: ReadonlySet<number>): TableViewportSegment[] {

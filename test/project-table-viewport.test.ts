@@ -16,6 +16,60 @@ describe('project table viewport geometry', () => {
     expect(viewport.window(16660, 340, [])).toMatchObject({ scrollTop: 0, start: 0, end: 2 });
   });
 
+  it('reuses the buffer until the visible interval crosses its mounted boundary', () => {
+    const viewport = new ProjectTableViewport();
+    viewport.replace(
+      Array.from({ length: 500 }, (_, index) => ({ key: String(index), height: 34 })),
+    );
+    expect(viewport.window(0, 340, [])).toMatchObject({ start: 0, end: 15 });
+    expect(viewport.window(170, 340, [])).toMatchObject({ start: 0, end: 15 });
+    expect(viewport.window(171, 340, [])).toMatchObject({ start: 0, end: 21 });
+  });
+
+  it('replenishes the buffer on reverse scrolling and large jumps', () => {
+    const viewport = new ProjectTableViewport();
+    viewport.replace(
+      Array.from({ length: 500 }, (_, index) => ({ key: String(index), height: 34 })),
+    );
+    expect(viewport.window(3400, 340, [])).toMatchObject({ start: 94, end: 115 });
+    expect(viewport.window(3196, 340, [])).toMatchObject({ start: 94, end: 115 });
+    expect(viewport.window(3195, 340, [])).toMatchObject({ start: 88, end: 109 });
+    expect(viewport.window(10000, 340, [])).toMatchObject({ start: 289, end: 310 });
+  });
+
+  it('resets the buffer when viewport size or measured row heights change', () => {
+    const viewport = new ProjectTableViewport();
+    viewport.replace(
+      Array.from({ length: 500 }, (_, index) => ({ key: String(index), height: 34 })),
+    );
+    expect(viewport.window(0, 680, [])).toMatchObject({ start: 0, end: 25 });
+    expect(viewport.window(0, 340, [])).toMatchObject({ start: 0, end: 15 });
+    viewport.measure(
+      [
+        { key: '0', height: 60 },
+        { key: '1', height: 60 },
+      ],
+      0,
+    );
+    expect(viewport.window(0, 340, [])).toMatchObject({ start: 0, end: 14 });
+  });
+
+  it('keeps pinned rows separate from buffer coverage and supports unknown viewport height', () => {
+    const viewport = new ProjectTableViewport();
+    viewport.replace(
+      Array.from({ length: 100 }, (_, index) => ({ key: String(index), height: 34 })),
+    );
+    expect(viewport.window(0, 0, ['99'])).toMatchObject({ start: 0, end: 15 });
+    const retained = viewport.window(100, 0, ['99']);
+    expect(retained).toMatchObject({ start: 0, end: 15 });
+    expect(retained.segments[retained.segments.length - 1]).toEqual({ index: 99 });
+    const jumped = viewport.window(1700, 340, ['99']);
+    expect(jumped).toMatchObject({ start: 44, end: 65 });
+    const unpinned = viewport.window(1734, 340, []);
+    expect(unpinned).toMatchObject({ start: 44, end: 65 });
+    expect(unpinned.segments[unpinned.segments.length - 1]).toEqual({ height: 1190 });
+  });
+
   it('retains a valid scroll offset while a detached host has no measured viewport height', () => {
     const viewport = new ProjectTableViewport();
     viewport.replace([
