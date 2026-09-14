@@ -143,31 +143,38 @@ describe('production private member boundary', () => {
     checker = program.getTypeChecker();
   }, TYPESCRIPT_COLD_START_TIMEOUT_MS);
 
-  it('reserves the mangling suffix for explicit private declarations in audited owners', () => {
-    const foundOwners = new Set<string>();
-    const violations: string[] = [];
-    for (const source of program.getSourceFiles().filter((file) => files.includes(file.fileName))) {
-      const file = source.fileName;
-      function visit(node: ts.Node): void {
-        if (reflectedOwners(node, checker)) violations.push(`${file}: reflected private owner`);
-        const text = suffixText(node);
-        if (text !== undefined) {
-          const declarations = suffixSymbol(node, checker)?.getDeclarations() ?? [];
-          if (declarations.length === 0 || !declarations.every(auditedOwner)) {
-            violations.push(`${file}: unresolved, quoted or public private key ${text}`);
+  it(
+    'reserves the mangling suffix for explicit private declarations in audited owners',
+    () => {
+      const foundOwners = new Set<string>();
+      const violations: string[] = [];
+      for (const source of program
+        .getSourceFiles()
+        .filter((file) => files.includes(file.fileName))) {
+        const file = source.fileName;
+        function visit(node: ts.Node): void {
+          if (reflectedOwners(node, checker)) violations.push(`${file}: reflected private owner`);
+          const text = suffixText(node);
+          if (text !== undefined) {
+            const declarations = suffixSymbol(node, checker)?.getDeclarations() ?? [];
+            if (declarations.length === 0 || !declarations.every(auditedOwner)) {
+              violations.push(`${file}: unresolved, quoted or public private key ${text}`);
+            }
+            for (const declaration of declarations) {
+              const owner = privateOwner(declaration);
+              if (owner !== undefined) foundOwners.add(owner);
+            }
           }
-          for (const declaration of declarations) {
-            const owner = privateOwner(declaration);
-            if (owner !== undefined) foundOwners.add(owner);
-          }
+          ts.forEachChild(node, visit);
         }
-        ts.forEachChild(node, visit);
+        visit(source);
       }
-      visit(source);
-    }
-    expect(violations).toEqual([]);
-    expect(foundOwners).toEqual(privateOwners);
-  });
+      expect(violations).toEqual([]);
+      expect(foundOwners).toEqual(privateOwners);
+      // The audit's type queries also trigger lazy TypeScript initialization on cold CI runners.
+    },
+    TYPESCRIPT_COLD_START_TIMEOUT_MS,
+  );
 });
 
 describe('production JavaScript artifact', () => {
