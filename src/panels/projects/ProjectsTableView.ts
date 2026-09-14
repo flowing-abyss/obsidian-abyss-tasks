@@ -686,6 +686,7 @@ export class ProjectsTableView {
   private readonly kanbanSelection_abyssPrivate = new ProjectTableSelection();
   private readonly timelineSelection_abyssPrivate = new ProjectTableSelection();
   private readonly tableViewport_abyssPrivate = new ProjectTableViewport();
+  private tableSpacers_abyssPrivate = new Map<string, HTMLTableRowElement>();
   private tableRowsDirty_abyssPrivate = false;
   private tableModel_abyssPrivate: ProjectTableModel | undefined;
   private tableRows_abyssPrivate: TableModelRow[] = [];
@@ -1050,6 +1051,7 @@ export class ProjectsTableView {
     this.tableLogicalCells_abyssPrivate = [];
     this.tableCellIndex_abyssPrivate.clear();
     this.tableViewport_abyssPrivate.replace([]);
+    this.tableSpacers_abyssPrivate.clear();
     this.renderedProjectRows_abyssPrivate.clear();
     this.renderedGroupRows_abyssPrivate.clear();
   }
@@ -2418,15 +2420,12 @@ export class ProjectsTableView {
       cells: [],
     };
     const mounted: Array<{ key: string; element: HTMLTableRowElement }> = [];
-    for (const segment of segments) {
+    const spacers = new Map<string, HTMLTableRowElement>();
+    for (const [index, segment] of segments.entries()) {
       if ('height' in segment) {
-        const spacer = body.createEl('tr', {
-          cls: 'abyss-project-table-spacer',
-          attr: { 'aria-hidden': 'true' },
-        });
-        spacer.createEl('td', {
-          attr: { colspan: String(Math.max(1, this.visibleColumns_abyssPrivate.length)) },
-        }).style.height = `${segment.height}px`;
+        const key = this.tableSpacerKey_abyssPrivate(segments[index + 1]);
+        const spacer = this.reconcileTableSpacer_abyssPrivate(body, key, segment.height);
+        spacers.set(key, spacer);
         rows.desired.push(spacer);
         continue;
       }
@@ -2446,9 +2445,38 @@ export class ProjectsTableView {
     }
     this.removeMissingRows_abyssPrivate(rows.retainedProjects, rows.retainedGroups);
     this.reconcileRowOrder_abyssPrivate(body, rows.desired);
+    this.tableSpacers_abyssPrivate = spacers;
     this.tableRenderedCells_abyssPrivate = rows.cells;
 
     return mounted;
+  }
+
+  private tableSpacerKey_abyssPrivate(
+    next: ReturnType<ProjectTableViewport['window']>['segments'][number] | undefined,
+  ): string {
+    // A gap stays immediately before the same logical row; the empty key is the trailing gap.
+    return next !== undefined && 'index' in next
+      ? (this.tableRows_abyssPrivate[next.index]?.key ?? '')
+      : '';
+  }
+
+  private reconcileTableSpacer_abyssPrivate(
+    body: HTMLTableSectionElement,
+    key: string,
+    height: number,
+  ): HTMLTableRowElement {
+    const row =
+      this.tableSpacers_abyssPrivate.get(key) ??
+      body.createEl('tr', {
+        cls: 'abyss-project-table-spacer',
+        attr: { 'aria-hidden': 'true' },
+      });
+    const cell = row.cells[0] ?? row.createEl('td');
+    const columnCount = Math.max(1, this.visibleColumns_abyssPrivate.length);
+    if (cell.colSpan !== columnCount) cell.colSpan = columnCount;
+    const heightStyle = `${height}px`;
+    if (cell.style.height !== heightStyle) cell.style.height = heightStyle;
+    return row;
   }
 
   private pinnedTableRows_abyssPrivate(): string[] {
@@ -2693,15 +2721,16 @@ export class ProjectsTableView {
     body: HTMLTableSectionElement,
     desired: readonly HTMLTableRowElement[],
   ): void {
+    // Remove obsolete gaps before ordering so retained rows never move around stale cursors.
+    // Moving a focused/editor/drag row, even within this body, triggers native blur/drag teardown.
+    const retained = new Set<Node>(desired);
+    for (const child of Array.from(body.childNodes)) {
+      if (!retained.has(child)) child.remove();
+    }
     let cursor = body.firstChild;
     for (const row of desired) {
       if (row === cursor) cursor = cursor.nextSibling;
       else body.insertBefore(row, cursor);
-    }
-    while (cursor !== null) {
-      const next = cursor.nextSibling;
-      cursor.remove();
-      cursor = next;
     }
   }
 

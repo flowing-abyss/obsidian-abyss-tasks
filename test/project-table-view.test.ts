@@ -436,6 +436,78 @@ describe('ProjectsTableView', () => {
     expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
   });
 
+  it('keeps keyboard focus through asynchronous scroll reconciliation with a leading spacer', async () => {
+    const { host, scroll } = largeTable();
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/P0100.md"] [data-column-id="name"]',
+      ),
+    ).focus();
+    const ownerWindow = expectDefined(host.ownerDocument.defaultView);
+    for (const path of ['Projects/P0101.md', 'Projects/P0102.md']) {
+      host.ownerDocument.activeElement?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+      );
+      const focused = host.ownerDocument.activeElement;
+      expect(focused?.closest<HTMLElement>('tr')?.dataset['projectPath']).toBe(path);
+      await new Promise<void>((resolve) => {
+        ownerWindow.setTimeout(() => {
+          scroll.dispatchEvent(new Event('scroll'));
+          resolve();
+        }, 0);
+      });
+      expect(host.ownerDocument.activeElement).toBe(focused);
+    }
+  });
+
+  it('does not mutate an unchanged viewport window or its spacer styles', () => {
+    const { host, scroll } = largeTable();
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    const observer = new MutationObserver(() => {});
+    observer.observe(expectDefined(host.querySelector('tbody')), {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(observer.takeRecords()).toHaveLength(0);
+    observer.disconnect();
+  });
+
+  it('keeps a noninitial editor focused without relocating its pinned row as gaps change', async () => {
+    const { host, scroll, saveProperty } = largeTable();
+    scroll.scrollTop = 4250;
+    scroll.dispatchEvent(new Event('scroll'));
+    const row = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/P0125.md"]'),
+    );
+    const cell = expectDefined(row.querySelector<HTMLElement>('[data-column-id="start"]'));
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('input'));
+    input.value = '2026-10-10';
+    expect(host.ownerDocument.activeElement).toBe(input);
+    const observer = new MutationObserver(() => {});
+    observer.observe(expectDefined(row.parentElement), { childList: true });
+    for (const top of [10200, 3400, 10200]) {
+      scroll.scrollTop = top;
+      scroll.dispatchEvent(new Event('scroll'));
+      expect(
+        observer.takeRecords().some((record) => Array.from(record.removedNodes).includes(row)),
+      ).toBe(false);
+      expect(host.ownerDocument.activeElement).toBe(input);
+      expect(input.value).toBe('2026-10-10');
+      await flushMicrotasks();
+      expect(saveProperty).not.toHaveBeenCalled();
+    }
+    observer.disconnect();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flushMicrotasks();
+    expect(saveProperty).not.toHaveBeenCalled();
+  });
+
   it('retains an active editor node while updating the viewport', () => {
     const { host, scroll } = largeTable();
     const cell = expectDefined(
