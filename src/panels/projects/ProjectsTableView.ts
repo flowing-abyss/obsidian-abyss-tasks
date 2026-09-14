@@ -978,7 +978,7 @@ export class ProjectsTableView {
   selectedProjectPath(): string | undefined {
     const focused = this.selection_abyssPrivate.focus;
     if (focused === undefined) return undefined;
-    return this.renderedCell_abyssPrivate(focused)?.project.path;
+    return this.logicalCell_abyssPrivate(focused)?.project.path;
   }
 
   captureViewportBeforeHide(): void {

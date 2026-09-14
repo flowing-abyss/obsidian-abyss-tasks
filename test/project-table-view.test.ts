@@ -407,6 +407,38 @@ describe('ProjectsTableView', () => {
     expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(1);
   });
 
+  it('preserves quick-capture project context after the selected row leaves the viewport', () => {
+    const { host, view, scroll, projects } = largeTable();
+    expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/P0000.md"] [data-column-id="name"]',
+      ),
+    ).click();
+    expect(view.selectedProjectPath()).toBe('Projects/P0000.md');
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).toBeNull();
+    expect(view.selectedProjectPath()).toBe('Projects/P0000.md');
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    view.update(projects.slice(1));
+    expect(view.selectedProjectPath()).toBeUndefined();
+  });
+
+  it('uses the offscreen group focus for quick-capture project context until collapse', async () => {
+    const { host, view } = largeTable(true);
+    const first = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-name-cell'));
+    first.focus();
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+    expect(host.querySelector('[data-project-path="Projects/P0499.md"]')).toBeNull();
+    expect(view.selectedProjectPath()).toBe('Projects/P0499.md');
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    ).click();
+    await flushMicrotasks();
+    expect(view.selectedProjectPath()).toBeUndefined();
+  });
+
   it('copies the complete large group including offscreen cells without mounting them', () => {
     const { host } = largeTable(true);
     const cell = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-name-cell'));
