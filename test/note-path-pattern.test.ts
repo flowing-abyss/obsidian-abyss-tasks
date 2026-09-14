@@ -49,6 +49,42 @@ describe('compileNotePathPattern', () => {
     expect(mixed.matches('archive/2026-09-53.md')).toBe(false);
   });
 
+  it('round-trips quarter-day and two-digit calendar year with an ISO year', () => {
+    const quarterDay = compileNotePathPattern('archive/{{Q-D}}.md');
+    expect(quarterDay.matches(quarterDay.resolve('2026-05-15'))).toBe(true);
+
+    const twoDigitIsoYear = compileNotePathPattern('archive/{{YY-GGGG}}.md');
+    expect(twoDigitIsoYear.matches(twoDigitIsoYear.resolve('1999-06-15'))).toBe(true);
+  });
+
+  it.each([
+    ['{{YYYY-MM-DD}}', '2000-02-29'],
+    ['{{YY-MM-DD}}', '1999-12-31'],
+    ['{{MM-DD}}', '2024-02-29'],
+    ['{{YYYY-DDDD}}', '2000-12-31'],
+    ['{{Q-D}}', '2026-05-15'],
+    ['{{YYYY-Q-DD}}', '2026-05-31'],
+    ['{{GGGG-WW}}', '2015-12-31'],
+    ['{{YYYY-MM-WW}}', '2026-09-14'],
+    ['{{GGGG-MM-DD}}', '2021-01-01'],
+    ['{{YY-GGGG}}', '1999-06-15'],
+  ])('matches its resolved %s path for %s', (format, date) => {
+    const pattern = compileNotePathPattern(`matrix/${format}.md`);
+    expect(pattern.matches(pattern.resolve(date))).toBe(true);
+  });
+
+  it('rejects impossible mixed values while accepting valid candidates', () => {
+    expect(compileNotePathPattern('matrix/{{YY-GGGG}}.md').matches('matrix/99-2000.md')).toBe(
+      false,
+    );
+    expect(compileNotePathPattern('matrix/{{YYYY-MM-WW}}.md').matches('matrix/2026-09-53.md')).toBe(
+      false,
+    );
+    expect(compileNotePathPattern('matrix/{{YYYY-MM-DD}}.md').matches('matrix/1900-02-29.md')).toBe(
+      false,
+    );
+  });
+
   it('validates ordinal, quarter and ISO week periods precisely', () => {
     expect(compileNotePathPattern('ordinal/{{YYYY}}-{{DDDD}}').matches('ordinal/2024-366.md')).toBe(
       true,

@@ -176,6 +176,7 @@ function matcherPart(literal: string, marker: Marker | undefined): string {
 
 interface DateFields {
   readonly calendarYears: readonly number[];
+  readonly twoDigitYears: readonly number[];
   readonly isoYears: readonly number[];
   readonly months: readonly number[];
   readonly days: readonly number[];
@@ -187,7 +188,7 @@ interface DateFields {
 const FIELD_FOR_TOKEN: Readonly<Record<DateToken, keyof DateFields>> = {
   GGGG: 'isoYears',
   YYYY: 'calendarYears',
-  YY: 'calendarYears',
+  YY: 'twoDigitYears',
   M: 'months',
   MM: 'months',
   D: 'days',
@@ -202,6 +203,7 @@ const FIELD_FOR_TOKEN: Readonly<Record<DateToken, keyof DateFields>> = {
 function capturedFields(markers: readonly Marker[], values: readonly string[]): DateFields {
   const fields: Record<keyof DateFields, number[]> = {
     calendarYears: [],
+    twoDigitYears: [],
     isoYears: [],
     months: [],
     days: [],
@@ -214,7 +216,7 @@ function capturedFields(markers: readonly Marker[], values: readonly string[]): 
     for (const [tokenIndex, token] of marker.tokens.entries()) {
       const value = captures[tokenIndex];
       if (value === undefined) continue;
-      fields[FIELD_FOR_TOKEN[token]].push(token === 'YY' ? 2000 + Number(value) : Number(value));
+      fields[FIELD_FOR_TOKEN[token]].push(Number(value));
     }
   }
   return fields;
@@ -239,8 +241,14 @@ function datesForMonth(
 function datesForQuarter(
   year: number,
   quarter: number,
+  day: number | undefined,
   searchForIsoYear: boolean,
 ): ReadonlyArray<ReturnType<typeof moment>> {
+  if (day !== undefined) {
+    return Array.from({ length: 3 }, (_value, index) =>
+      moment([year, (quarter - 1) * 3 + index, day]),
+    );
+  }
   const first = moment([year, (quarter - 1) * 3, 1]);
   return searchForIsoYear
     ? consecutiveDates(first, first.clone().add(3, 'months').diff(first, 'days'))
@@ -273,7 +281,7 @@ function datesForCalendarYear(
   if (ordinal !== undefined) return [moment([year, 0, 1]).dayOfYear(ordinal)];
   if (month !== undefined && day !== undefined) return [moment([year, month - 1, day])];
   if (month !== undefined) return datesForMonth(year, month, searchForIsoYear);
-  if (quarter !== undefined) return datesForQuarter(year, quarter, searchForIsoYear);
+  if (quarter !== undefined) return datesForQuarter(year, quarter, day, searchForIsoYear);
   if (day !== undefined) {
     return Array.from({ length: 12 }, (_value, index) => moment([year, index, day]));
   }
@@ -294,6 +302,9 @@ function calendarCandidateYears(fields: DateFields): readonly number[] {
   if (calendarYears.length > 0) return calendarYears;
   if (fields.isoYears.length > 0) {
     return unique(fields.isoYears.flatMap((year) => [year - 1, year, year + 1]));
+  }
+  if (fields.twoDigitYears.length > 0) {
+    return Array.from({ length: 400 }, (_value, index) => 2000 + index);
   }
   return [2000];
 }
