@@ -6,7 +6,6 @@ import { RailPanel } from '../panels/RailPanel';
 import { RightPanel } from '../panels/RightPanel';
 import { ProjectManager } from '../projects/ProjectManager';
 import { ProjectStore } from '../projects/ProjectStore';
-import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import type { ShortcutActionId } from '../settings/shortcuts';
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
@@ -82,6 +81,7 @@ type PanelViewDependencies = [
   onSaveSettings?: () => Promise<void>,
   commentTimeContext?: CommentTimeContextProvider,
   onSaveViewState?: () => Promise<void>,
+  projectManager?: ProjectManager,
 ];
 
 function hasFinitePositiveBounds(bounds: DOMRect): boolean {
@@ -181,6 +181,7 @@ export class PanelView extends ItemView {
   private readonly onSaveSettings_abyssPrivate: () => Promise<void>;
   private readonly onSaveViewState_abyssPrivate: () => Promise<void>;
   private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
+  private readonly projectManager_abyssPrivate: ProjectManager | undefined;
 
   constructor(leaf: WorkspaceLeaf, ...dependencies: PanelViewDependencies) {
     super(leaf);
@@ -193,6 +194,7 @@ export class PanelView extends ItemView {
       onSaveSettings = async () => {},
       commentTimeContext,
       onSaveViewState = async () => {},
+      projectManager,
     ] = dependencies;
     this.settings_abyssPrivate = settings;
     this.tagManager_abyssPrivate = tagManager;
@@ -202,6 +204,7 @@ export class PanelView extends ItemView {
     this.onSaveSettings_abyssPrivate = onSaveSettings;
     this.onSaveViewState_abyssPrivate = onSaveViewState;
     this.commentTimeContext_abyssPrivate = commentTimeContext;
+    this.projectManager_abyssPrivate = projectManager;
   }
 
   override getViewType(): string {
@@ -223,7 +226,6 @@ export class PanelView extends ItemView {
     this.initializeNavigation_abyssPrivate();
     const selectionTasks = this.createSelectionTasks_abyssPrivate();
     const elements = this.createLayout_abyssPrivate();
-    const resolver = new DailyNoteResolver(this.app, this.settings_abyssPrivate);
     const projectStore = new ProjectStore(
       this.app,
       this.queries_abyssPrivate,
@@ -231,12 +233,18 @@ export class PanelView extends ItemView {
     );
     projectStore.initialize();
     this.projectStore_abyssPrivate = projectStore;
-    const projectManager = new ProjectManager(
-      this.app,
-      this.settings_abyssPrivate,
-      resolver,
-      selectionTasks,
-    );
+    const projectManager =
+      this.projectManager_abyssPrivate ??
+      new ProjectManager(
+        this.app,
+        this.settings_abyssPrivate,
+        {
+          createNoteFromTemplate: async () => {
+            throw new Error('Project note creation is unavailable.');
+          },
+        },
+        selectionTasks,
+      );
     this.createPanels_abyssPrivate(selectionTasks, projectStore, projectManager);
     this.registerProjectUpdates_abyssPrivate(projectStore);
     this.registerWorkspaceUpdates_abyssPrivate();

@@ -526,7 +526,7 @@ describe('ListView', () => {
       expect(c.querySelector('.abyss-task-source-note')).toBeNull();
     });
 
-    it('sourceNoteDisplay non-default → no chip when filePath matches customFilePath', () => {
+    it('sourceNoteDisplay non-default → no chip when filePath matches taskFilePath', () => {
       const { view } = makeView();
       const c = freshContainer();
       const t = task({
@@ -538,7 +538,7 @@ describe('ListView', () => {
       view.render(
         c,
         [t],
-        resolvedConfig({ sourceNoteDisplay: 'non-default', customFilePath: 'Inbox/tasks.md' }),
+        resolvedConfig({ sourceNoteDisplay: 'non-default', taskFilePath: 'Inbox/tasks.md' }),
       );
       expect(c.querySelector('.abyss-task-source-note')).toBeNull();
     });
@@ -552,7 +552,11 @@ describe('ListView', () => {
         source: { filePath: 'Projects/beta.md' },
         presentation: {},
       });
-      view.render(c, [t], resolvedConfig({ sourceNoteDisplay: 'non-default', customFilePath: '' }));
+      view.render(
+        c,
+        [t],
+        resolvedConfig({ sourceNoteDisplay: 'non-default', taskFilePath: 'Inbox/tasks.md' }),
+      );
       const chip = c.querySelector('.abyss-task-source-note');
       expect(chip).not.toBeNull();
       expect(chip?.textContent).toContain('beta');

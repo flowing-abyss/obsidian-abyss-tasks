@@ -49,27 +49,18 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
     reason:
       'Rename recovery compensates only note values that still match the value written by the failed operation.',
   },
-  'src/resolvers/DailyNoteResolver.ts#DailyNoteResolver.createNoteWithTemplate#vault.create#1': {
+  'src/notes/NoteTemplateService.ts#NoteTemplateService.createPreparedNote#vault.create#1': {
     mutation: 'destination provisioning',
-    reason: 'Creates an empty Templater destination before template expansion.',
+    reason: 'Creates the owned destination before applying an optional template.',
   },
-  'src/resolvers/DailyNoteResolver.ts#DailyNoteResolver.createNoteWithTemplate#vault.create#2': {
+  'src/notes/NoteTemplateService.ts#NoteTemplateService.createPreparedNote#vault.create#2': {
     mutation: 'destination provisioning',
-    reason: 'Creates a daily or project destination from a raw template.',
-  },
-  'src/resolvers/DailyNoteResolver.ts#DailyNoteResolver.createNoteWithTemplate#vault.create#3': {
-    mutation: 'destination provisioning',
-    reason: 'Creates an empty daily or project destination note.',
+    reason: 'Creates an empty owned destination when no template is selected.',
   },
   'src/tags/TagManager.ts#TagManager.applyVaultRenames#process#1': {
     mutation: 'vault-wide tag rename',
     reason: 'A global tag rename intentionally updates task and non-task text across the vault.',
   },
-  'src/tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider.ts#ObsidianTaskDestinationProvider.planExplicit#vault.create#1':
-    {
-      mutation: 'destination provisioning',
-      reason: 'Provisions the configured destination without inserting task Markdown.',
-    },
   'src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts#ObsidianTaskRepository.processFile_abyssPrivate#process#1':
     {
       mutation: 'single-task transaction',

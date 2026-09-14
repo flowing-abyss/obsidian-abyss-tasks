@@ -407,7 +407,11 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       const plan = await this.destinationPlan_abyssPrivate(destination);
       if (plan === undefined) return this.unavailableCreateSession_abyssPrivate();
       return this.readyCreateSession_abyssPrivate(plan, settings, reading);
-    } catch {
+    } catch (error) {
+      this.diagnostics_abyssPrivate(
+        { operation: 'create', phase: 'unexpected', cause: 'destination-plan' },
+        error,
+      );
       return this.unavailableCreateSession_abyssPrivate();
     }
   }
@@ -760,7 +764,11 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
             settings,
             reading,
           );
-        } catch {
+        } catch (error) {
+          this.diagnostics_abyssPrivate(
+            { operation: 'create', phase: 'unexpected', cause: 'destination-provision' },
+            error,
+          );
           return {
             type: 'io-error',
             cause: 'repository-error',

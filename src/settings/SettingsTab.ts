@@ -15,7 +15,6 @@ import {
 } from '../projects/ObsidianProjectProperties';
 import { sameProjectPropertyName } from '../projects/projectPropertyNames';
 import { projectStatusDisplayName } from '../projects/status';
-import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import { StatusRegistry } from '../status/StatusRegistry';
 import { TYPE_LABELS, TYPE_ORDER } from '../status/statusConstants';
 import type { TagManager } from '../tags/TagManager';
@@ -427,11 +426,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
 
   private renderGeneralSettings_abyssPrivate(containerEl: HTMLElement): void {
     this.renderTaskCreationSettings_abyssPrivate(containerEl);
+    this.renderTaskDestinationSettings_abyssPrivate(containerEl);
     this.renderTaskLifecycleSettings_abyssPrivate(containerEl);
     this.renderRecurrenceSettings_abyssPrivate(containerEl);
-    if (this.plugin_abyssPrivate.settings.addToToday)
-      this.renderDailyNoteSettings_abyssPrivate(containerEl);
-    else this.renderCustomTaskFileSetting_abyssPrivate(containerEl);
   }
 
   private renderTaskCreationSettings_abyssPrivate(containerEl: HTMLElement): void {
@@ -468,17 +465,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   private renderTaskLifecycleSettings_abyssPrivate(containerEl: HTMLElement): void {
-    new Setting(containerEl)
-      .setName("Add to today's note")
-      .setDesc('New tasks are added to the daily note for today.')
-      .addToggle((t) =>
-        t.setValue(this.plugin_abyssPrivate.settings.addToToday).onChange(async (v) => {
-          this.plugin_abyssPrivate.settings.addToToday = v;
-          await this.plugin_abyssPrivate.saveSettings();
-          this.render_abyssPrivate();
-        }),
-      );
-
     new Setting(containerEl)
       .setName('Add created date')
       .setDesc('Add a created date to newly created tasks.')
@@ -532,83 +518,40 @@ export class CalendarSettingsTab extends PluginSettingTab {
       );
   }
 
-  private dailyNoteProviderOptions_abyssPrivate(
-    resolver: DailyNoteResolver,
-  ): Record<string, string> {
-    const options: Record<string, string> = {};
-    for (const provider of resolver.getAvailableProviders()) options[provider.id] = provider.label;
-    options['periodic-notes'] ??= 'Periodic Notes';
-    options['core'] ??= 'Core Daily Notes';
-    options['obsidian-journal'] ??= 'Obsidian Journal';
-    options['manual'] ??= 'Manual';
-    return options;
-  }
-
-  private dailyNoteProviderDescription_abyssPrivate(resolver: DailyNoteResolver): DocumentFragment {
-    const providerSettings = resolver
-      .getActiveAdapter()
-      .getSettings(this.app, this.plugin_abyssPrivate.settings);
-    const description = createFragment();
-    description.appendText('Which plugin manages your daily notes.');
-    try {
-      const folderPrefix = providerSettings.folder === '' ? '' : `${providerSettings.folder}/`;
-      const todayPath = `${folderPrefix}${window.moment().format(providerSettings.format)}.md`;
-      description.createEl('br');
-      description.appendText('Today → ');
-      description.createEl('code', { text: todayPath });
-      if (providerSettings.template !== '') {
-        description.appendText('  template: ');
-        description.createEl('code', { text: providerSettings.template });
-      }
-    } catch {
-      // Moment is not available in the test environment.
-    }
-    return description;
-  }
-
-  private renderDailyNoteSettings_abyssPrivate(containerEl: HTMLElement): void {
-    const resolver = new DailyNoteResolver(this.app, this.plugin_abyssPrivate.settings);
+  private renderTaskDestinationSettings_abyssPrivate(containerEl: HTMLElement): void {
     new Setting(containerEl)
-      .setName('Daily note provider')
-      .setDesc(this.dailyNoteProviderDescription_abyssPrivate(resolver))
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOptions(this.dailyNoteProviderOptions_abyssPrivate(resolver))
-          .setValue(this.plugin_abyssPrivate.settings.dailyNoteProvider)
-          .onChange(async (value) => {
-            this.plugin_abyssPrivate.settings.dailyNoteProvider =
-              value as typeof this.plugin_abyssPrivate.settings.dailyNoteProvider;
-            await this.plugin_abyssPrivate.saveSettings();
-            this.render_abyssPrivate();
-          }),
-      );
-
-    if (this.plugin_abyssPrivate.settings.dailyNoteProvider === 'manual') {
-      this.renderManualDailyNotePathSetting_abyssPrivate(containerEl);
-    }
-    this.renderTaskInsertionSettings_abyssPrivate(containerEl);
-  }
-
-  private renderManualDailyNotePathSetting_abyssPrivate(containerEl: HTMLElement): void {
-    new Setting(containerEl)
-      .setName('Note path pattern')
-      .setDesc('Folder + date format, e.g. Daily/yyyy-mm-dd or just yyyy-mm-dd.')
+      .setName('Task file')
+      .setDesc('New tasks are captured here. Use {{YYYY-MM-DD}} for a local date.')
       .addText((text) =>
         text
-          .setPlaceholder('Yyyy-mm-dd')
-          .setValue(this.plugin_abyssPrivate.settings.manualDailyNotePath)
+          .setPlaceholder('tasks/active.md')
+          .setValue(this.plugin_abyssPrivate.settings.taskFilePath)
           .onChange(async (value) => {
-            this.plugin_abyssPrivate.settings.manualDailyNotePath = value;
+            this.plugin_abyssPrivate.settings.taskFilePath = value;
             await this.plugin_abyssPrivate.saveSettings();
-            this.render_abyssPrivate();
           }),
       );
+
+    new Setting(containerEl)
+      .setName('Note template')
+      .setDesc('Optional template for a task file created during capture.')
+      .addText((text) =>
+        text
+          .setPlaceholder('templates/task.md')
+          .setValue(this.plugin_abyssPrivate.settings.taskTemplatePath)
+          .onChange(async (value) => {
+            this.plugin_abyssPrivate.settings.taskTemplatePath = value;
+            await this.plugin_abyssPrivate.saveSettings();
+          }),
+      );
+
+    this.renderTaskInsertionSettings_abyssPrivate(containerEl);
   }
 
   private renderTaskInsertionSettings_abyssPrivate(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName('Insert position')
-      .setDesc('Where in the daily note to add new tasks.')
+      .setDesc('Where in the task file to add new tasks.')
       .addDropdown((dropdown) =>
         dropdown
           .addOptions({ append: 'End of file', section: 'Under section heading' })
@@ -630,21 +573,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .setValue(this.plugin_abyssPrivate.settings.taskInsertionSection)
           .onChange(async (value) => {
             this.plugin_abyssPrivate.settings.taskInsertionSection = value;
-            await this.plugin_abyssPrivate.saveSettings();
-          }),
-      );
-  }
-
-  private renderCustomTaskFileSetting_abyssPrivate(containerEl: HTMLElement): void {
-    new Setting(containerEl)
-      .setName('Custom file path')
-      .setDesc('Add new tasks to this file instead.')
-      .addText((text) =>
-        text
-          .setPlaceholder('Tasks/inbox.md')
-          .setValue(this.plugin_abyssPrivate.settings.customFilePath)
-          .onChange(async (value) => {
-            this.plugin_abyssPrivate.settings.customFilePath = value;
             await this.plugin_abyssPrivate.saveSettings();
           }),
       );
@@ -1425,27 +1353,22 @@ export class CalendarSettingsTab extends PluginSettingTab {
         }),
     );
 
-    if (
-      this.plugin_abyssPrivate.settings.dailyNoteProvider === 'manual' ||
-      !this.plugin_abyssPrivate.settings.addToToday
-    ) {
-      new Setting(container).setName('Daily note folder').addText((t) =>
-        t.setValue(cfg.dailyNoteFolder).onChange(async (v) => {
-          cfg.dailyNoteFolder = v;
+    new Setting(container).setName('Daily note folder').addText((t) =>
+      t.setValue(cfg.dailyNoteFolder).onChange(async (v) => {
+        cfg.dailyNoteFolder = v;
+        await this.plugin_abyssPrivate.saveSettings();
+      }),
+    );
+
+    new Setting(container)
+      .setName('Daily note format')
+      .setDesc('Format for calendar links and date parsing, e.g. Yyyy-mm-dd.')
+      .addText((t) =>
+        t.setValue(cfg.dailyNoteFormat).onChange(async (v) => {
+          cfg.dailyNoteFormat = v;
           await this.plugin_abyssPrivate.saveSettings();
         }),
       );
-
-      new Setting(container)
-        .setName('Daily note format')
-        .setDesc('Moment.js format, e.g. YYYY-MM-DD.')
-        .addText((t) =>
-          t.setValue(cfg.dailyNoteFormat).onChange(async (v) => {
-            cfg.dailyNoteFormat = v;
-            await this.plugin_abyssPrivate.saveSettings();
-          }),
-        );
-    }
 
     new Setting(container)
       .setName('Global task filter')

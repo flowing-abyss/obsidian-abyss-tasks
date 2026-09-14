@@ -1687,8 +1687,7 @@ describe('CenterPanel shared list capture', () => {
   it('freezes the configured destination when the inline capture opens', async () => {
     const settings: CalendarSettings = {
       ...DEFAULT_SETTINGS,
-      addToToday: false,
-      customFilePath: 'first.md',
+      taskFilePath: 'first.md',
       taskPrefix: '',
     };
     const { panel, state, app } = await makePanel({ 'first.md': '', 'changed.md': '' }, settings);
@@ -1698,7 +1697,7 @@ describe('CenterPanel shared list capture', () => {
 
     container.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
     await flushMicrotasks();
-    settings.customFilePath = 'changed.md';
+    settings.taskFilePath = 'changed.md';
     const input = expectDefined(
       container.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
     );
@@ -1711,11 +1710,10 @@ describe('CenterPanel shared list capture', () => {
     expect(await readMd(app, 'changed.md')).toBe('');
   });
 
-  it("sel='today' creates through TaskApplicationApi in customFilePath when addToToday=false", async () => {
+  it("sel='today' creates through TaskApplicationApi in the configured task file", async () => {
     const settings: CalendarSettings = {
       ...DEFAULT_SETTINGS,
-      addToToday: false,
-      customFilePath: 'inbox.md',
+      taskFilePath: 'inbox.md',
       taskPrefix: '',
     };
     const { panel, state, app } = await makePanel({ 'inbox.md': '- [ ] existing' }, settings);
@@ -1731,8 +1729,7 @@ describe('CenterPanel shared list capture', () => {
   it("sel='upcoming' freezes tomorrow through the capture application route", async () => {
     const settings: CalendarSettings = {
       ...DEFAULT_SETTINGS,
-      addToToday: false,
-      customFilePath: 'inbox.md',
+      taskFilePath: 'inbox.md',
       taskPrefix: '',
     };
     const { panel, state, app } = await makePanel({ 'inbox.md': '' }, settings);
@@ -1746,11 +1743,10 @@ describe('CenterPanel shared list capture', () => {
     expect(content).toContain(`- [ ] future task ➕ ${TODAY} 📅 ${tomorrow}`);
   });
 
-  it("sel='inbox' tag mode appends task line with inboxTag to customFilePath", async () => {
+  it("sel='inbox' tag mode appends task line with inboxTag to the configured task file", async () => {
     const settings: CalendarSettings = {
       ...DEFAULT_SETTINGS,
-      addToToday: false,
-      customFilePath: 'Inbox.md',
+      taskFilePath: 'Inbox.md',
       inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
     };
     const { panel, state, app } = await makePanel({ 'Inbox.md': '- [ ] existing' }, settings);
@@ -1762,11 +1758,10 @@ describe('CenterPanel shared list capture', () => {
     expect(content).toContain('- [ ] new inbox task #inbox');
   });
 
-  it("sel='inbox' untagged mode appends plain task line to customFilePath", async () => {
+  it("sel='inbox' untagged mode appends plain task line to the configured task file", async () => {
     const settings: CalendarSettings = {
       ...DEFAULT_SETTINGS,
-      addToToday: false,
-      customFilePath: 'Inbox.md',
+      taskFilePath: 'Inbox.md',
       inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
     };
     const { panel, state, app } = await makePanel({ 'Inbox.md': '- [ ] existing' }, settings);
@@ -1779,11 +1774,10 @@ describe('CenterPanel shared list capture', () => {
     expect(content).not.toContain('#inbox');
   });
 
-  it("sel={type:'tag'} appends task line with the tag to customFilePath", async () => {
+  it("sel={type:'tag'} appends task line with the tag to the configured task file", async () => {
     const settings: CalendarSettings = {
       ...DEFAULT_SETTINGS,
-      addToToday: false,
-      customFilePath: 'Inbox.md',
+      taskFilePath: 'Inbox.md',
     };
     const { panel, state, app } = await makePanel({ 'Inbox.md': '' }, settings);
     state.set('selectedList', { type: 'tag', tag: '#work' });
@@ -1794,13 +1788,11 @@ describe('CenterPanel shared list capture', () => {
     expect(content).toContain('- [ ] tagged task #work');
   });
 
-  it('routes the inbox body/tag rule through TaskApplicationApi to the configured daily note', async () => {
+  it('routes the inbox body/tag rule through TaskApplicationApi to a dated configured task file', async () => {
     const settings: CalendarSettings = {
       ...DEFAULT_SETTINGS,
-      addToToday: true,
       inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
-      dailyNoteProvider: 'manual',
-      manualDailyNotePath: 'periodic/daily/YYYY-MM-DD',
+      taskFilePath: 'periodic/daily/{{YYYY-MM-DD}}.md',
     };
     const { panel, state, app } = await makePanel(
       { [`periodic/daily/${TODAY}.md`]: '# Today\n' },
@@ -3729,8 +3721,7 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
 describe('CenterPanel calendar mode — click-to-create', () => {
   const clickToCreateSettings: CalendarSettings = {
     ...DEFAULT_SETTINGS,
-    addToToday: false,
-    customFilePath: 'inbox.md',
+    taskFilePath: 'inbox.md',
     taskPrefix: '',
   };
 

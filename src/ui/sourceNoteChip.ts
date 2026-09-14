@@ -1,16 +1,21 @@
 import { setIcon } from 'obsidian';
+import { compileNotePathPattern } from '../markdown/notePathPattern';
 import type { TaskSnapshot } from '../tasks';
 
 export function shouldShowSourceNote(
   task: TaskSnapshot,
   sourceNoteDisplay: 'never' | 'always' | 'non-default',
-  customFilePath: string,
+  taskFilePath: string,
 ): boolean {
   if (sourceNoteDisplay === 'never') return false;
   if (sourceNoteDisplay === 'always') return true;
-  const isDefault =
-    task.presentation.dailyNoteDate !== undefined ||
-    (customFilePath !== '' && task.source.filePath === customFilePath);
+  let isConfiguredTaskFile = false;
+  try {
+    isConfiguredTaskFile = compileNotePathPattern(taskFilePath).matches(task.source.filePath);
+  } catch {
+    isConfiguredTaskFile = false;
+  }
+  const isDefault = task.presentation.dailyNoteDate !== undefined || isConfiguredTaskFile;
   return !isDefault;
 }
 

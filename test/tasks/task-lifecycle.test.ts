@@ -2,7 +2,7 @@ import type * as ObsidianModule from 'obsidian';
 import type { App } from 'obsidian';
 import { Notice, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
-import { DailyNoteResolver } from '../../src/resolvers/DailyNoteResolver';
+import { NoteTemplateService } from '../../src/notes/NoteTemplateService';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import type { CalendarSettings } from '../../src/settings/types';
@@ -116,11 +116,10 @@ function applicationFor(app: App, settings: CalendarSettings) {
     locator: new TaskLocator(),
     snapshotsFromContent: (filePath, content) => index.snapshotsFromContent(filePath, content),
   });
-  const dailyNotes = new DailyNoteResolver(app, settings);
+  const noteTemplates = new NoteTemplateService(app);
   const provider = new ObsidianTaskDestinationProvider(
-    app,
     () => configuredDestination(settings),
-    () => dailyNotes.planDailyNoteDestination(),
+    (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
   );
   return new TaskApplicationService(
     index,
@@ -133,8 +132,9 @@ function applicationFor(app: App, settings: CalendarSettings) {
 
 function configuredDestination(settings: CalendarSettings): ConfiguredTaskDestination {
   return {
-    addToToday: settings.addToToday,
-    customFilePath: settings.customFilePath,
+    taskFilePath: settings.taskFilePath,
+    taskTemplatePath: settings.taskTemplatePath,
+    capturedToday: '2026-07-14',
     insertion:
       settings.taskInsertionMode === 'section' && settings.taskInsertionSection.trim().length > 0
         ? { type: 'section', heading: settings.taskInsertionSection }
@@ -1064,6 +1064,82 @@ describe('TaskApplicationService lifecycle routing', () => {
     expect(destinationProvider.planConfiguredDefault).toHaveBeenCalledOnce();
     expect(create).not.toHaveBeenCalled();
   });
+
+  it('records destination planning failures while preserving the unavailable capture result', async () => {
+    const failure = new Error('invalid task path');
+    const diagnostics = vi.fn();
+    const destinationProvider = {
+      planConfiguredDefault: vi.fn().mockRejectedValue(failure),
+      planExplicit: vi.fn(),
+      resolveConfiguredDefault: vi.fn(),
+      prepare: vi.fn(),
+    } satisfies TaskDestinationProvider;
+    const application = new TaskApplicationService(
+      queries,
+      {
+        edit: vi.fn(),
+        editBatch: vi.fn(),
+        createDependencySubtask: vi.fn(),
+        completeRecurrence: vi.fn(),
+        create: vi.fn(),
+        move: vi.fn(),
+      },
+      catalog,
+      clock,
+      destinationProvider,
+      undefined,
+      undefined,
+      diagnostics,
+    );
+
+    const session = await application.planCreate({ type: 'configured-default' });
+
+    expect(session.type).toBe('unavailable');
+    expect(diagnostics).toHaveBeenCalledWith(
+      { operation: 'create', phase: 'unexpected', cause: 'destination-plan' },
+      failure,
+    );
+  });
+
+  it('records destination preparation failures while preserving the capture draft result', async () => {
+    const failure = new Error('template failed');
+    const diagnostics = vi.fn();
+    const destinationProvider = {
+      planConfiguredDefault: vi.fn().mockResolvedValue({
+        destination: appendDestination,
+        prepare: vi.fn().mockRejectedValue(failure),
+      }),
+      planExplicit: vi.fn(),
+      resolveConfiguredDefault: vi.fn(),
+      prepare: vi.fn(),
+    } satisfies TaskDestinationProvider;
+    const application = new TaskApplicationService(
+      queries,
+      {
+        edit: vi.fn(),
+        editBatch: vi.fn(),
+        createDependencySubtask: vi.fn(),
+        completeRecurrence: vi.fn(),
+        create: vi.fn(),
+        move: vi.fn(),
+      },
+      catalog,
+      clock,
+      destinationProvider,
+      undefined,
+      undefined,
+      diagnostics,
+    );
+    const session = await application.planCreate({ type: 'configured-default' });
+
+    await expect(session.execute({ markdownBody: 'retry this draft' })).resolves.toMatchObject({
+      type: 'io-error',
+    });
+    expect(diagnostics).toHaveBeenCalledWith(
+      { operation: 'create', phase: 'unexpected', cause: 'destination-provision' },
+      failure,
+    );
+  });
 });
 
 describe('TaskApplicationService subtask recovery', () => {
@@ -1438,184 +1514,44 @@ describe('TaskApplicationService lifecycle settings', () => {
 });
 
 describe('ObsidianTaskDestinationProvider', () => {
-  it('plans an existing explicit destination without creating it', async () => {
-    const app = await createAppWithFiles({ 'existing.md': '# Existing\n' });
-    const dailyNotes = new DailyNoteResolver(app, DEFAULT_SETTINGS);
+  it('freezes a dated configured path without provisioning until preparation', async () => {
+    const provision = vi.fn(async (path: string) => ({ path }));
     const provider = new ObsidianTaskDestinationProvider(
-      app,
-      () => configuredDestination(DEFAULT_SETTINGS),
-      () => dailyNotes.planDailyNoteDestination(),
+      () => ({
+        taskFilePath: 'daily/{{YYYY-MM-DD}}',
+        taskTemplatePath: 'templates/task.md',
+        capturedToday: '2026-07-14',
+        insertion: { type: 'append' },
+      }),
+      provision,
     );
-    const create = vi.spyOn(app.vault, 'create');
 
-    const plan = await provider.planExplicit({
-      filePath: 'existing.md',
-      insertion: { type: 'section', heading: '## Tasks' },
-    });
+    const plan = await provider.planConfiguredDefault();
 
-    expect(plan.destination).toEqual({
-      filePath: 'existing.md',
-      insertion: { type: 'section', heading: '## Tasks' },
-    });
-    expect(create).not.toHaveBeenCalled();
+    expect(plan.destination.filePath).toBe('daily/2026-07-14.md');
+    expect(provision).not.toHaveBeenCalled();
     await expect(plan.prepare()).resolves.toEqual({
       type: 'resolved',
-      destination: {
-        filePath: 'existing.md',
-        insertion: { type: 'section', heading: '## Tasks' },
-      },
+      destination: plan.destination,
     });
-    expect(create).not.toHaveBeenCalled();
-  });
-
-  it('creates and resolves a daily note without inserting task Markdown', async () => {
-    const app = await createAppWithFiles({});
-    (app as unknown as { plugins: unknown }).plugins = { getPlugin: () => null };
-    (app as unknown as { internalPlugins: unknown }).internalPlugins = {
-      getPluginById: () => null,
-    };
-    const settings = {
-      ...DEFAULT_SETTINGS,
-      addToToday: true,
-      dailyNoteProvider: 'manual' as const,
-      manualDailyNotePath: 'daily/YYYY-MM-DD',
-      taskInsertionMode: 'section' as const,
-      taskInsertionSection: '## Tasks',
-    };
-    const resolver = new DailyNoteResolver(app, settings);
-    const provider = new ObsidianTaskDestinationProvider(
-      app,
-      () => configuredDestination(settings),
-      () => resolver.planDailyNoteDestination(),
+    expect(provision).toHaveBeenCalledWith(
+      'daily/2026-07-14.md',
+      'templates/task.md',
+      '2026-07-14',
     );
-
-    const result = await provider.resolveConfiguredDefault();
-
-    expect(result).toMatchObject({
-      type: 'resolved',
-      destination: {
-        insertion: { type: 'section', heading: '## Tasks' },
-      },
-    });
-    if (result.type !== 'resolved') throw new Error('daily destination unavailable');
-    expect(result.destination.filePath).toMatch(/^daily\/\d{4}-\d{2}-\d{2}\.md$/u);
-    expect(await app.vault.cachedRead(fileAt(app, result.destination.filePath))).not.toContain(
-      '- [ ]',
-    );
-  });
-
-  it('creates an empty configured custom note and reports absent or failed destinations', async () => {
-    const app = await createAppWithFiles({});
-    let configured: ConfiguredTaskDestination = {
-      addToToday: false,
-      customFilePath: 'Inbox.md',
-      insertion: { type: 'append' },
-    };
-    const custom = new ObsidianTaskDestinationProvider(
-      app,
-      () => configured,
-      () => {
-        throw new Error('daily plan not requested');
-      },
-    );
-    const firstPlan = await custom.planConfiguredDefault();
-    expect(firstPlan?.destination.filePath).toBe('Inbox.md');
-    expect(firstPlan?.destination.insertion).not.toBe(configured.insertion);
-    configured = {
-      addToToday: false,
-      customFilePath: 'Later.md',
-      insertion: { type: 'section', heading: '## Tasks' },
-    };
-    expect((await custom.planConfiguredDefault())?.destination).toEqual({
-      filePath: 'Later.md',
-      insertion: { type: 'section', heading: '## Tasks' },
-    });
-
-    await expect(custom.resolveConfiguredDefault()).resolves.toEqual({
-      type: 'resolved',
-      destination: {
-        filePath: 'Later.md',
-        insertion: { type: 'section', heading: '## Tasks' },
-      },
-    });
-    expect(app.vault.getAbstractFileByPath('Later.md')).toBeInstanceOf(TFile);
-
-    const unavailableConfiguration: ConfiguredTaskDestination = {
-      addToToday: false,
-      customFilePath: '',
-      insertion: { type: 'append' },
-    };
-    const unavailable = new ObsidianTaskDestinationProvider(
-      app,
-      () => unavailableConfiguration,
-      () => {
-        throw new Error('daily plan not requested');
-      },
-    );
-    await expect(unavailable.resolveConfiguredDefault()).resolves.toEqual({
-      type: 'unavailable',
-    });
-
-    const failedApp = await createAppWithFiles({});
-    vi.spyOn(failedApp.vault, 'create').mockRejectedValue(new Error('disk full'));
-    const failed = new ObsidianTaskDestinationProvider(
-      failedApp,
-      () => configured,
-      () => {
-        throw new Error('daily plan not requested');
-      },
-    );
-    await expect(failed.resolveConfiguredDefault()).resolves.toEqual({ type: 'unavailable' });
-  });
-
-  it('reports thrown or rejected daily-note plans as unavailable', async () => {
-    const app = await createAppWithFiles({});
-    const configuration: ConfiguredTaskDestination = {
-      addToToday: true,
-      customFilePath: '',
-      insertion: { type: 'append' },
-    };
-    const thrown = new ObsidianTaskDestinationProvider(
-      app,
-      () => configuration,
-      () => {
-        throw new Error('resolver failed');
-      },
-    );
-    const rejected = new ObsidianTaskDestinationProvider(
-      app,
-      () => configuration,
-      () => ({
-        destination: { filePath: 'daily/today.md', insertion: { type: 'append' } },
-        prepare: async () => await Promise.reject(new Error('provider failed')),
-      }),
-    );
-
-    await expect(thrown.resolveConfiguredDefault()).resolves.toEqual({ type: 'unavailable' });
-    await expect(rejected.resolveConfiguredDefault()).resolves.toEqual({ type: 'unavailable' });
   });
 });
 
 describe('configured destination end-to-end lifecycle', () => {
-  it('executes a frozen daily-note session with exactly-once provisioning', async () => {
+  it('executes a frozen configured session with exactly-once provisioning', async () => {
     const app = await createAppWithFiles({
       'templates/frozen.md': '# {{title}}\n\n## Frozen tasks\n',
       'templates/changed.md': '# Changed template\n',
     });
-    (app as unknown as { plugins: unknown }).plugins = { getPlugin: () => null };
-    const options = {
-      folder: 'daily/frozen',
-      format: 'YYYY-MM-DD',
-      template: 'templates/frozen',
-    };
-    (app as unknown as { internalPlugins: unknown }).internalPlugins = {
-      getPluginById: (id: string) =>
-        id === 'daily-notes' ? { enabled: true, instance: { options } } : null,
-    };
     const settings: CalendarSettings = {
       ...DEFAULT_SETTINGS,
-      addToToday: true,
-      dailyNoteProvider: 'core',
+      taskFilePath: 'daily/frozen/{{YYYY-MM-DD}}.md',
+      taskTemplatePath: 'templates/frozen.md',
       taskInsertionMode: 'section',
       taskInsertionSection: '## Frozen tasks',
     };
@@ -1624,7 +1560,7 @@ describe('configured destination end-to-end lifecycle', () => {
     const createFolder = vi.spyOn(app.vault, 'createFolder');
 
     const session = await application.planCreate({ type: 'configured-default' });
-    const today = window.moment().format('YYYY-MM-DD');
+    const today = '2026-07-14';
 
     expect(session).toMatchObject({
       type: 'ready',
@@ -1636,15 +1572,15 @@ describe('configured destination end-to-end lifecycle', () => {
     expect(create).not.toHaveBeenCalled();
     expect(createFolder).not.toHaveBeenCalled();
 
-    options.folder = 'daily/changed';
-    options.template = 'templates/changed';
+    settings.taskFilePath = 'daily/changed/{{YYYY-MM-DD}}.md';
+    settings.taskTemplatePath = 'templates/changed.md';
     settings.taskInsertionMode = 'append';
     settings.taskInsertionSection = '## Changed tasks';
     await session.execute({ markdownBody: 'first frozen task' });
     await session.execute({ markdownBody: 'second frozen task' });
 
     expect(create).toHaveBeenCalledOnce();
-    expect(createFolder).toHaveBeenCalledOnce();
+    expect(createFolder).toHaveBeenCalledTimes(2);
     const content = await app.vault.cachedRead(fileAt(app, `daily/frozen/${today}.md`));
     expect(content).toContain(`# ${today}`);
     expect(content).toContain('## Frozen tasks\n- [ ] second frozen task');
@@ -1656,13 +1592,13 @@ describe('configured destination end-to-end lifecycle', () => {
   it.each([
     {
       name: 'configured custom note',
-      settings: { ...DEFAULT_SETTINGS, addToToday: false, customFilePath: 'Capture.md' },
+      settings: { ...DEFAULT_SETTINGS, taskFilePath: 'Capture.md' },
       destination: { type: 'configured-default' } as const,
       path: 'Capture.md',
     },
     {
       name: 'provisioned Inbox note',
-      settings: { ...DEFAULT_SETTINGS, addToToday: false, customFilePath: '' },
+      settings: { ...DEFAULT_SETTINGS, taskFilePath: 'tasks/active.md' },
       destination: {
         type: 'explicit',
         destination: { filePath: 'Inbox.md', insertion: { type: 'append' } },
@@ -1692,32 +1628,20 @@ describe('configured destination end-to-end lifecycle', () => {
     expect(Notice).toHaveBeenCalledWith(`Task added to ${scenario.path}`);
   });
 
-  it('creates a template-backed daily note and inserts through its section policy', async () => {
+  it('creates a template-backed configured note and inserts through its section policy', async () => {
     vi.mocked(Notice).mockClear();
     const app = await createAppWithFiles({
       'template.md': '# {{title}}\n\n## Tasks\n\nDaily notes stay here.\n',
     });
-    (app as unknown as { plugins: unknown }).plugins = { getPlugin: () => null };
-    (app as unknown as { internalPlugins: unknown }).internalPlugins = {
-      getPluginById: (id: string) =>
-        id === 'daily-notes'
-          ? {
-              enabled: true,
-              instance: {
-                options: { folder: 'daily', format: 'YYYY-MM-DD', template: 'template' },
-              },
-            }
-          : null,
-    };
     const settings = {
       ...DEFAULT_SETTINGS,
-      addToToday: true,
-      dailyNoteProvider: 'core' as const,
+      taskFilePath: 'daily/{{YYYY-MM-DD}}.md',
+      taskTemplatePath: 'template.md',
       taskInsertionMode: 'section' as const,
       taskInsertionSection: '## Tasks',
     };
     const application = applicationFor(app, settings);
-    const today = window.moment().format('YYYY-MM-DD');
+    const today = '2026-07-14';
 
     const result = await application.execute({
       type: 'create',

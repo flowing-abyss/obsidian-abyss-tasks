@@ -96,10 +96,13 @@ also covers accepted metadata events with unchanged tasks, including notes witho
 `ProjectStore` waits for these barriers before combining frontmatter with matching task statistics.
 
 Task creation freezes its capture context before `TaskCaptureApplicationApi` plans a destination.
-The provider resolves today's note or the configured file; project capture uses the selected note
-and project insertion policy. Overview capture follows the active Table, Kanban, or Timeline
-selection. Creation then uses the same application/repository path and reveals the indexed result
-without inventing another persisted identity.
+The provider resolves the captured local date through the configured `taskFilePath` pattern and
+retains its template and insertion policy without writing. `NoteTemplateService` provisions that
+path only when the command executes: it creates nested folders, applies a selected template once,
+and shares in-flight preparation by App and path. Project capture uses the selected note and project
+insertion policy. Overview capture follows the active Table, Kanban, or Timeline selection. Creation
+then uses the same application/repository path and reveals the indexed result without inventing
+another persisted identity.
 
 ### Dependencies
 
@@ -242,8 +245,9 @@ nor native type writes. See [manager tests](test/project-manager.test.ts),
 ### Creation and status renames
 
 Overview project creation belongs to its retained session. The composer freezes a configured
-status; `ProjectManager` validates its writable source before creating a note through
-`DailyNoteResolver`, awaits Templater, and applies final status through serialized metadata mutation.
+status; `ProjectManager` validates its writable source before creating a note through the shared
+`NoteTemplateService`, awaits template preparation, and applies final status through serialized
+metadata mutation.
 `ProjectStore` publication owns the visible snapshot. The overview matches the owned path/status,
 relaxes obstructing filters, and reuses selection/reveal.
 

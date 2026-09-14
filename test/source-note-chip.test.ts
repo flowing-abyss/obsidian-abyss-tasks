@@ -25,7 +25,7 @@ describe('shouldShowSourceNote', () => {
     expect(shouldShowSourceNote(t, 'non-default', '')).toBe(false);
   });
 
-  it("'non-default' hides when filePath matches customFilePath", () => {
+  it("'non-default' hides when filePath matches taskFilePath", () => {
     const t = task({
       source: { filePath: 'Inbox/tasks.md' },
       presentation: {},
@@ -33,7 +33,7 @@ describe('shouldShowSourceNote', () => {
     expect(shouldShowSourceNote(t, 'non-default', 'Inbox/tasks.md')).toBe(false);
   });
 
-  it("'non-default' does NOT hide when customFilePath is empty (prevents false positive)", () => {
+  it("'non-default' does not hide a note that differs from taskFilePath", () => {
     const t = task({
       source: { filePath: 'Inbox/tasks.md' },
       presentation: {},

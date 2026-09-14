@@ -90,7 +90,7 @@ describe('TaskCalendarPlugin loadSettings', () => {
     const plugin = makePlugin({ taskPrefix: '#custom' });
     await plugin.loadSettings();
     expect(plugin.settings.taskPrefix).toBe('#custom');
-    expect(plugin.settings.addToToday).toBe(DEFAULT_SETTINGS.addToToday);
+    expect(plugin.settings.taskFilePath).toBe(DEFAULT_SETTINGS.taskFilePath);
   });
 
   it('loadData returns empty object -> settings equal DEFAULT_SETTINGS', async () => {

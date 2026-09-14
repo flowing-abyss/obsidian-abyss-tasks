@@ -1,12 +1,12 @@
 import { normalizePath, Notice, Plugin } from 'obsidian';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
+import { NoteTemplateService } from './notes/NoteTemplateService';
 import { initializeProjectPropertyDefinitions } from './projects/initializeProjectPropertyDefinitions';
 import {
   ObsidianProjectProperties,
   type ProjectPropertyCatalog,
 } from './projects/ObsidianProjectProperties';
 import { ProjectManager } from './projects/ProjectManager';
-import { DailyNoteResolver } from './resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from './settings/defaults';
 import {
   SettingsPersistenceCoordinator,
@@ -101,22 +101,22 @@ export default class TaskCalendarPlugin extends Plugin {
       refAuthority,
       snapshotState: this.taskIndex,
     });
-    const dailyNotes = new DailyNoteResolver(this.app, this.settings);
+    const noteTemplates = new NoteTemplateService(this.app);
     const destinationProvider = new ObsidianTaskDestinationProvider(
-      this.app,
       () => ({
-        addToToday: this.settings.addToToday,
-        customFilePath: this.settings.customFilePath,
+        taskFilePath: this.settings.taskFilePath,
+        taskTemplatePath: this.settings.taskTemplatePath,
+        capturedToday: window.moment().format('YYYY-MM-DD'),
         insertion:
           this.settings.taskInsertionMode === 'section' &&
           this.settings.taskInsertionSection.trim().length > 0
             ? { type: 'section', heading: this.settings.taskInsertionSection }
             : { type: 'append' },
       }),
-      () => dailyNotes.planDailyNoteDestination(),
+      (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
     );
     const diagnostics: TaskDiagnosticSink = (diagnostic, error) => {
-      console.error('[abyss-tasks] task dependency operation failed', diagnostic, error);
+      console.error('[abyss-tasks] task operation failed', diagnostic, error);
     };
     this.tasks = new TaskApplicationService(
       this.taskIndex,
@@ -147,7 +147,7 @@ export default class TaskCalendarPlugin extends Plugin {
     this.projectManager = new ProjectManager(
       this.app,
       this.settings,
-      dailyNotes,
+      noteTemplates,
       this.tasks,
       this.projectProperties,
     );
@@ -168,6 +168,7 @@ export default class TaskCalendarPlugin extends Plugin {
           () => this.saveSettings(),
           commentTimeContext,
           () => this.saveViewState(),
+          this.projectManager,
         ),
     );
   }

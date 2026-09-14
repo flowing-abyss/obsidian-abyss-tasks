@@ -1,11 +1,11 @@
 import { moment, App as ObsidianApp, Platform, type CachedMetadata, type TFile } from 'obsidian';
 import { afterEach, beforeEach, expect, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
+import { NoteTemplateService } from '../src/notes/NoteTemplateService';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { LeftPanel } from '../src/panels/LeftPanel';
 import type { ProjectManager } from '../src/projects/ProjectManager';
 import type { ProjectStore } from '../src/projects/ProjectStore';
-import { DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
 import { buildDefaultTaskStatuses, DEFAULT_VIEW_CONFIG } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import type { CalendarSettings, ResolvedConfig } from '../src/settings/types';
@@ -684,7 +684,7 @@ export function resolvedConfig(overrides: Partial<ResolvedConfig> = {}): Resolve
     ...DEFAULT_VIEW_CONFIG,
     isMobile: false,
     sourceNoteDisplay: 'non-default',
-    customFilePath: '',
+    taskFilePath: 'tasks/active.md',
     ...overrides,
   };
 }
@@ -800,7 +800,7 @@ export function configuredTaskApplication(
     snapshotsFromContent: (path, content) => index.snapshotsFromContent(path, content),
     ...(refAuthority === undefined ? {} : { refAuthority, snapshotState: index }),
   });
-  const dailyNotes = new DailyNoteResolver(app, settings);
+  const noteTemplates = new NoteTemplateService(app);
   const tasks = new TaskApplicationService(
     index,
     repository,
@@ -810,17 +810,17 @@ export function configuredTaskApplication(
       (epochMs) => -new Date(epochMs).getTimezoneOffset(),
     ),
     new ObsidianTaskDestinationProvider(
-      app,
       () => ({
-        addToToday: settings.addToToday,
-        customFilePath: settings.customFilePath,
+        taskFilePath: settings.taskFilePath,
+        taskTemplatePath: settings.taskTemplatePath,
+        capturedToday: window.moment().format('YYYY-MM-DD'),
         insertion:
           settings.taskInsertionMode === 'section' &&
           settings.taskInsertionSection.trim().length > 0
             ? { type: 'section', heading: settings.taskInsertionSection }
             : { type: 'append' },
       }),
-      () => dailyNotes.planDailyNoteDestination(),
+      (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
     ),
   );
   return {

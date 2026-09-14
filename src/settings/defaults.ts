@@ -109,9 +109,9 @@ export function buildDefaultTaskStatuses(): TaskStatusDef[] {
 export const DEFAULT_SETTINGS: CalendarSettings = {
   desktop: { ...DEFAULT_VIEW_CONFIG },
   mobile: { ...DEFAULT_VIEW_CONFIG, defaultView: 'list' },
-  taskPrefix: '#task/one-off',
-  addToToday: true,
-  customFilePath: '',
+  taskPrefix: '',
+  taskFilePath: 'tasks/active.md',
+  taskTemplatePath: '',
   inbox: {
     mode: 'tag',
     tag: '#task/inbox',
@@ -120,8 +120,6 @@ export const DEFAULT_SETTINGS: CalendarSettings = {
   pinnedTags: [],
   archivedTags: [],
   tagGroups: [],
-  dailyNoteProvider: 'auto',
-  manualDailyNotePath: 'YYYY-MM-DD',
   taskInsertionMode: 'append',
   taskInsertionSection: '## Tasks',
   sourceNoteDisplay: 'non-default' as const,

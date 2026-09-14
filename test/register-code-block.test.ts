@@ -100,9 +100,9 @@ describe('resolveConfig', () => {
       expect(resolveConfig(s, {}).sourceNoteDisplay).toBe('never');
     });
 
-    it('copies customFilePath from settings', () => {
-      const s = { ...DEFAULT_SETTINGS, customFilePath: 'Inbox/tasks.md' };
-      expect(resolveConfig(s, {}).customFilePath).toBe('Inbox/tasks.md');
+    it('copies taskFilePath from settings', () => {
+      const s = { ...DEFAULT_SETTINGS, taskFilePath: 'Inbox/tasks.md' };
+      expect(resolveConfig(s, {}).taskFilePath).toBe('Inbox/tasks.md');
     });
 
     it('default resolveConfig has sourceNoteDisplay non-default', () => {

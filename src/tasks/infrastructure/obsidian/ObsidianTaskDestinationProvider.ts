@@ -1,4 +1,5 @@
-import { TFile, normalizePath, type App } from 'obsidian';
+import { normalizePath } from 'obsidian';
+import { compileNotePathPattern } from '../../../markdown/notePathPattern';
 import type {
   TaskDestinationPlan,
   TaskDestinationProvider,
@@ -7,83 +8,75 @@ import type {
 import type { TaskDestination, TaskInsertionPolicy } from '../../domain/types';
 
 export interface ConfiguredTaskDestination {
-  readonly addToToday: boolean;
-  readonly customFilePath: string;
+  readonly taskFilePath: string;
+  readonly taskTemplatePath: string;
+  readonly capturedToday: string;
   readonly insertion: TaskInsertionPolicy;
 }
 
+interface ProvisionedNote {
+  readonly path: string;
+}
+
 type CurrentTaskDestinationConfiguration = () => ConfiguredTaskDestination;
-type PlanDailyNoteDestination = () => TaskDestinationPlan;
+type ProvisionTaskNote = (
+  filePath: string,
+  templatePath: string,
+  title: string,
+) => Promise<ProvisionedNote>;
+
+function titleFor(filePath: string): string {
+  const name = filePath.slice(filePath.lastIndexOf('/') + 1);
+  return name.toLowerCase().endsWith('.md') ? name.slice(0, -'.md'.length) : name;
+}
 
 export class ObsidianTaskDestinationProvider implements TaskDestinationProvider {
   constructor(
-    private readonly app: App,
     private readonly currentConfiguration: CurrentTaskDestinationConfiguration,
-    private readonly planDailyNoteDestination: PlanDailyNoteDestination,
+    private readonly provision: ProvisionTaskNote,
   ) {}
 
-  planConfiguredDefault(): Promise<TaskDestinationPlan | undefined> {
-    try {
-      const configuration = this.currentConfiguration();
-      if (configuration.addToToday) {
-        return Promise.resolve(this.safePlan(this.planDailyNoteDestination()));
-      }
-      const configuredPath = configuration.customFilePath.trim();
-      if (configuredPath.length === 0) return Promise.resolve(undefined);
-      return this.planExplicit({
-        filePath: configuredPath,
-        insertion: { ...configuration.insertion },
-      });
-    } catch {
-      return Promise.resolve(undefined);
-    }
+  planConfiguredDefault(): Promise<TaskDestinationPlan> {
+    const configuration = this.currentConfiguration();
+    const pattern = compileNotePathPattern(configuration.taskFilePath);
+    const destination: TaskDestination = {
+      filePath: pattern.resolve(configuration.capturedToday),
+      insertion: { ...configuration.insertion },
+    };
+    return Promise.resolve(
+      this.plan(destination, configuration.taskTemplatePath, titleFor(destination.filePath)),
+    );
   }
 
   planExplicit(destination: TaskDestination): Promise<TaskDestinationPlan> {
     const planned: TaskDestination = {
-      filePath: normalizePath(destination.filePath),
+      filePath: normalizePath(destination.filePath.trim()),
       insertion: { ...destination.insertion },
     };
-    return Promise.resolve({
-      destination: planned,
-      prepare: async () => {
-        try {
-          const existing = this.app.vault.getAbstractFileByPath(planned.filePath);
-          if (!(existing instanceof TFile)) await this.app.vault.create(planned.filePath, '');
-          const prepared = this.app.vault.getAbstractFileByPath(planned.filePath);
-          if (!(prepared instanceof TFile)) return { type: 'unavailable' };
-          return {
-            type: 'resolved',
-            destination: { filePath: prepared.path, insertion: planned.insertion },
-          };
-        } catch {
-          return { type: 'unavailable' };
-        }
-      },
-    });
+    return Promise.resolve(this.plan(planned, '', titleFor(planned.filePath)));
   }
 
   async resolveConfiguredDefault(): Promise<TaskDestinationResolution> {
-    const plan = await this.planConfiguredDefault();
-    return plan != null ? await plan.prepare() : { type: 'unavailable' };
+    return await (await this.planConfiguredDefault()).prepare();
   }
 
   async prepare(destination: TaskDestination): Promise<TaskDestinationResolution> {
     return await (await this.planExplicit(destination)).prepare();
   }
 
-  private safePlan(plan: TaskDestinationPlan): TaskDestinationPlan {
+  private plan(
+    destination: TaskDestination,
+    templatePath: string,
+    title: string,
+  ): TaskDestinationPlan {
     return {
-      destination: {
-        filePath: plan.destination.filePath,
-        insertion: { ...plan.destination.insertion },
-      },
+      destination,
       prepare: async () => {
-        try {
-          return await plan.prepare();
-        } catch {
-          return { type: 'unavailable' };
-        }
+        const file = await this.provision(destination.filePath, templatePath, title);
+        return {
+          type: 'resolved',
+          destination: { filePath: file.path, insertion: destination.insertion },
+        };
       },
     };
   }

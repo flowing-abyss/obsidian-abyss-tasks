@@ -11,12 +11,12 @@ describe('sourceNoteDisplay defaults', () => {
     expect(resolvedConfig().sourceNoteDisplay).toBe('non-default');
   });
 
-  it('resolvedConfig() helper includes empty customFilePath', () => {
-    expect(resolvedConfig().customFilePath).toBe('');
+  it('resolvedConfig() helper includes the default task file path', () => {
+    expect(resolvedConfig().taskFilePath).toBe('tasks/active.md');
   });
 
   it('resolvedConfig() override wins', () => {
     expect(resolvedConfig({ sourceNoteDisplay: 'always' }).sourceNoteDisplay).toBe('always');
-    expect(resolvedConfig({ customFilePath: 'inbox.md' }).customFilePath).toBe('inbox.md');
+    expect(resolvedConfig({ taskFilePath: 'inbox.md' }).taskFilePath).toBe('inbox.md');
   });
 });

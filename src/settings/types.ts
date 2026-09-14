@@ -34,7 +34,7 @@ export interface ViewConfig {
 export interface ResolvedConfig extends ViewConfig {
   isMobile: boolean;
   sourceNoteDisplay: 'never' | 'always' | 'non-default';
-  customFilePath: string;
+  taskFilePath: string;
 }
 
 export interface TagGroup {
@@ -91,14 +91,12 @@ export interface CalendarSettings {
   desktop: ViewConfig;
   mobile: ViewConfig;
   taskPrefix: string;
-  addToToday: boolean;
-  customFilePath: string;
+  taskFilePath: string;
+  taskTemplatePath: string;
   inbox: InboxSettings;
   pinnedTags: string[];
   archivedTags: string[];
   tagGroups: TagGroup[];
-  dailyNoteProvider: 'auto' | 'periodic-notes' | 'core' | 'obsidian-journal' | 'manual';
-  manualDailyNotePath: string; // e.g. 'Daily/YYYY-MM-DD' or just 'YYYY-MM-DD'
   taskInsertionMode: 'append' | 'section';
   taskInsertionSection: string;
   sourceNoteDisplay: 'never' | 'always' | 'non-default';

@@ -390,7 +390,7 @@ describe('CenterPanel root lifecycle API delegation', () => {
     await submitCapture(panel, 'buy milk');
     expect(planCreate).toHaveBeenLastCalledWith({ type: 'configured-default' });
     const [todayRequest] = expectDefined(sessionExecute.mock.lastCall);
-    expect(todayRequest.markdownBody).toBe('#task/one-off buy milk');
+    expect(todayRequest.markdownBody).toBe('buy milk');
     const due = todayRequest.initial?.due;
     expect(due?.type).toBe('set');
     if (due?.type !== 'set') throw new Error('Expected a due date for the Today capture');
@@ -417,7 +417,7 @@ describe('CenterPanel root lifecycle API delegation', () => {
     ['missing default inbox', {}, ''],
   ])(
     'plans $name through the configured capture API without legacy path guessing',
-    async (_name, files, customFilePath) => {
+    async (_name, files, taskFilePath) => {
       const app = await createAppWithFiles(files);
       const state = new AppState();
       state.set('selectedList', 'inbox');
@@ -444,7 +444,7 @@ describe('CenterPanel root lifecycle API delegation', () => {
       const panel = new CenterPanel(
         state,
         app,
-        { ...DEFAULT_SETTINGS, addToToday: false, customFilePath },
+        { ...DEFAULT_SETTINGS, taskFilePath },
         queries,
         new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
         undefined,

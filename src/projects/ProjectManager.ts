@@ -9,8 +9,8 @@ import {
   TFolder,
   type App,
 } from 'obsidian';
+import { CreatedNoteTemplateError } from '../notes/NoteTemplateService';
 import { evaluateQuery } from '../query/evaluateQuery';
-import { CreatedNoteTemplateError, type DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import type { CalendarSettings, ProjectStatus } from '../settings/types';
 import { normalizeTag, transformMarkdownTags } from '../tags/markdownTagRename';
 import type { TaskApplicationApi, TaskCommandResult, TaskRef } from '../tasks';
@@ -46,6 +46,11 @@ export interface ExpectedProjectStatus {
 interface NormalizedPropertyValue {
   clear: boolean;
   value: unknown;
+}
+
+/** The shared note provisioner used for project template creation. */
+export interface ProjectNoteCreator {
+  createNoteFromTemplate(filePath: string, templatePath: string, title: string): Promise<TFile>;
 }
 
 interface PreparedProjectCellChange {
@@ -398,17 +403,23 @@ function serializeProjectSource(parsed: ParsedProjectSource): string {
 export class ProjectManager {
   private readonly app: App;
   private readonly settings: CalendarSettings;
-  private readonly resolver: DailyNoteResolver;
+  private readonly noteCreator: ProjectNoteCreator;
   private readonly tasks: TaskApplicationApi;
   private readonly projectProperties: ProjectPropertyCatalog;
 
   constructor(
-    ...args: [App, CalendarSettings, DailyNoteResolver, TaskApplicationApi, ProjectPropertyCatalog?]
+    ...args: [
+      App,
+      CalendarSettings,
+      ProjectNoteCreator,
+      TaskApplicationApi,
+      ProjectPropertyCatalog?,
+    ]
   ) {
-    const [app, settings, resolver, tasks, projectProperties] = args;
+    const [app, settings, noteCreator, tasks, projectProperties] = args;
     this.app = app;
     this.settings = settings;
-    this.resolver = resolver;
+    this.noteCreator = noteCreator;
     this.tasks = tasks;
     this.projectProperties = projectProperties ?? new ObsidianProjectProperties(app);
   }
@@ -1063,7 +1074,7 @@ export class ProjectManager {
 
   private async createProjectFile(path: string, cleanName: string): Promise<TFile> {
     try {
-      return await this.resolver.createNoteFromTemplate(
+      return await this.noteCreator.createNoteFromTemplate(
         path,
         this.settings.projects.templatePath,
         cleanName,

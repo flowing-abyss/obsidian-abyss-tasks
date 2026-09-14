@@ -1177,7 +1177,7 @@ export class CenterPanel {
       ...this.settings_abyssPrivate.desktop,
       isMobile: false,
       sourceNoteDisplay: this.settings_abyssPrivate.sourceNoteDisplay,
-      customFilePath: this.settings_abyssPrivate.customFilePath,
+      taskFilePath: this.settings_abyssPrivate.taskFilePath,
       startPosition: this.calendarStartPosition_abyssPrivate(firstDayOfWeek),
     };
   }
@@ -2438,7 +2438,7 @@ export class CenterPanel {
     const showSourceNote = shouldShowSourceNote(
       task,
       this.settings_abyssPrivate.sourceNoteDisplay,
-      this.settings_abyssPrivate.customFilePath,
+      this.settings_abyssPrivate.taskFilePath,
     );
     const hasRightMeta =
       showSourceNote ||

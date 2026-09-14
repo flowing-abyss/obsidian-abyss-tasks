@@ -416,6 +416,13 @@ function migrateRecurrence(raw: Record<string, unknown>): void {
   }
 }
 
+function removeObsoleteCaptureSettings(raw: Record<string, unknown>): void {
+  delete raw['addToToday'];
+  delete raw['customFilePath'];
+  delete raw['dailyNoteProvider'];
+  delete raw['manualDailyNotePath'];
+}
+
 export function migrateSettings(raw: Record<string, unknown>): SettingsMigrationResult {
   const result: SettingsMigrationResult = { notices: [] };
   migrateInbox(raw);
@@ -429,6 +436,7 @@ export function migrateSettings(raw: Record<string, unknown>): SettingsMigration
   migrateListViewStates(raw);
   migrateTaskLifecycle(raw);
   migrateRecurrence(raw);
+  removeObsoleteCaptureSettings(raw);
   migrateShortcuts(raw);
   return result;
 }

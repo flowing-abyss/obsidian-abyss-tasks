@@ -84,7 +84,7 @@ export class ListView extends BaseView {
     ...DEFAULT_VIEW_CONFIG,
     isMobile: false,
     sourceNoteDisplay: 'non-default',
-    customFilePath: '',
+    taskFilePath: 'tasks/active.md',
   };
   private md = new Component();
 
@@ -210,7 +210,7 @@ export class ListView extends BaseView {
     }
 
     // Source note chip — before tags
-    if (shouldShowSourceNote(task, this.config.sourceNoteDisplay, this.config.customFilePath)) {
+    if (shouldShowSourceNote(task, this.config.sourceNoteDisplay, this.config.taskFilePath)) {
       renderSourceNoteChip(meta, task);
     }
 

@@ -113,7 +113,7 @@ function makeTab(
 } {
   const expandCards = opts.expand ?? true;
   const app = new App();
-  // Mock plugins so DailyNoteResolver adapters don't throw on app.plugins access
+  // Settings tests do not need plugin integrations.
   (app as unknown as Record<string, unknown>)['plugins'] = { getPlugin: () => null };
   (app as unknown as Record<string, unknown>)['internalPlugins'] = {
     getPluginById: () => null,
@@ -934,41 +934,23 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     expect(plugin.settings.taskPrefix).toBe('#todo');
   });
 
-  it('add to today toggle reflects setting and saves on change', () => {
-    const { tab, plugin, captured } = makeTab({ addToToday: true });
-    openSection(tab, 0);
-    // Toggle has no checkbox input in the mock; verify via captured component value
-    const toggleComp = expectDefined(findComp(captured, "Add to today's note", 'toggle'));
-    if (toggleComp.comp.getValue === undefined) {
-      throw new Error('Expected the toggle component to expose getValue');
-    }
-    expect(toggleComp.comp.getValue()).toBe(true);
-    toggleComp.comp.setValue(false);
-    expect(plugin.saveSettings).toHaveBeenCalled();
-    expect(plugin.settings.addToToday).toBe(false);
-  });
-
-  it('custom file path visible when addToToday is false', () => {
-    const { tab } = makeTab({ addToToday: false, customFilePath: 'inbox.md' });
+  it('task file input reflects setting and saves on change', () => {
+    const { tab, plugin, captured } = makeTab({ taskFilePath: 'inbox.md' });
     const body = openSection(tab, 0);
-    const input = findInput(body, 'Custom file path');
+    const input = findInput(body, 'Task file');
     expect(input).not.toBeNull();
     expect(expectDefined(input).value).toBe('inbox.md');
-  });
-
-  it('custom file path hidden when addToToday is true', () => {
-    const { tab } = makeTab({ addToToday: true });
-    const body = openSection(tab, 0);
-    const input = findInput(body, 'Custom file path');
-    expect(input).toBeNull();
-  });
-
-  it('custom file path change saves', () => {
-    const { tab, plugin, captured } = makeTab({ addToToday: false, customFilePath: 'old.md' });
-    openSection(tab, 0);
-    expectDefined(findComp(captured, 'Custom file path', 'text')).comp.setValue('new.md');
+    expectDefined(findComp(captured, 'Task file', 'text')).comp.setValue('new.md');
     expect(plugin.saveSettings).toHaveBeenCalled();
-    expect(plugin.settings.customFilePath).toBe('new.md');
+    expect(plugin.settings.taskFilePath).toBe('new.md');
+  });
+
+  it('note template input reflects setting and saves on change', () => {
+    const { tab, plugin, captured } = makeTab({ taskTemplatePath: 'templates/task.md' });
+    const body = openSection(tab, 0);
+    expect(expectDefined(findInput(body, 'Note template')).value).toBe('templates/task.md');
+    expectDefined(findComp(captured, 'Note template', 'text')).comp.setValue('templates/new.md');
+    expect(plugin.settings.taskTemplatePath).toBe('templates/new.md');
   });
 });
 
@@ -1460,27 +1442,27 @@ describe('CalendarSettingsTab renderViewConfigSettings', () => {
     expect(plugin.settings.desktop.firstDayOfWeek).toBe(1);
   });
 
-  it('daily note folder input saves (manual provider)', () => {
-    const { tab, plugin, captured } = makeTab({ dailyNoteProvider: 'manual' });
+  it('daily note folder input saves', () => {
+    const { tab, plugin, captured } = makeTab();
     openSection(tab, 1);
     expectDefined(findComp(captured, 'Daily note folder', 'text')).comp.setValue('notes/daily');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.desktop.dailyNoteFolder).toBe('notes/daily');
   });
 
-  it('daily note format input saves (manual provider)', () => {
-    const { tab, plugin, captured } = makeTab({ dailyNoteProvider: 'manual' });
+  it('daily note format input saves', () => {
+    const { tab, plugin, captured } = makeTab();
     openSection(tab, 1);
     expectDefined(findComp(captured, 'Daily note format', 'text')).comp.setValue('DD-MM-YYYY');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.desktop.dailyNoteFormat).toBe('DD-MM-YYYY');
   });
 
-  it('daily note folder and format hidden when addToToday is true and provider is auto', () => {
-    const { tab } = makeTab({ addToToday: true, dailyNoteProvider: 'auto' });
+  it('daily note folder and format remain available for calendar configuration', () => {
+    const { tab } = makeTab();
     const body = openSection(tab, 1);
-    expect(findInput(body, 'Daily note folder')).toBeNull();
-    expect(findInput(body, 'Daily note format')).toBeNull();
+    expect(findInput(body, 'Daily note folder')).not.toBeNull();
+    expect(findInput(body, 'Daily note format')).not.toBeNull();
   });
 
   it('global task filter input saves', () => {
@@ -1510,7 +1492,7 @@ describe('CalendarSettingsTab renderViewConfigSettings', () => {
   });
 
   it('mobile section has same view config settings, and no "Default style" dropdown', () => {
-    const { tab } = makeTab({ dailyNoteProvider: 'manual' });
+    const { tab } = makeTab();
     const body = openSection(tab, 2); // Mobile
     expect(findDropdown(body, 'Default view')).not.toBeNull();
     expect(findDropdown(body, 'Default style')).toBeNull();

@@ -48,7 +48,7 @@ export function resolveConfig(settings: CalendarSettings, params: CodeBlockParam
     folder: overrideOr(params.folder, merged.folder),
     isMobile: Platform.isMobile,
     sourceNoteDisplay: settings.sourceNoteDisplay,
-    customFilePath: settings.customFilePath,
+    taskFilePath: settings.taskFilePath,
   };
 }
 
