@@ -1,4 +1,4 @@
-import { Keymap, MarkdownRenderer, Menu, type App, type Component, type MenuItem } from 'obsidian';
+import { Component, Keymap, MarkdownRenderer, Menu, type App, type MenuItem } from 'obsidian';
 import { pairAnchorsToTokens, parseLinks, type LinkToken } from '../markdown/links';
 import { showMenuAtMouseEventWithFocus } from './nativeMenuFocus';
 import { runAsyncAction } from './runAsyncAction';
@@ -32,7 +32,11 @@ export function renderTaskText(
     'Could not render task text',
   );
   // Unwrap the single wrapping <p> MarkdownRenderer emits so titles stay inline.
-  window.setTimeout(() => {
+  const ownerWindow = holder.ownerDocument.defaultView;
+  if (ownerWindow === null) return;
+  const wiring = opts.component.addChild(new Component());
+  const timer = ownerWindow.setTimeout(() => {
+    opts.component.removeChild(wiring);
     // The list may have re-rendered (filter keystroke, store update) and detached this
     // node before the macrotask ran — skip the wasted work in that case.
     if (!holder.isConnected) return;
@@ -43,6 +47,9 @@ export function renderTaskText(
     }
     wireLinks(holder, tokens, opts);
   }, 0);
+  wiring.register(() => {
+    ownerWindow.clearTimeout(timer);
+  });
 }
 
 function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTextOptions): void {

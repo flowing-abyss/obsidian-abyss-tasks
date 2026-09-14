@@ -281,6 +281,290 @@ function viewOption(row: HTMLElement, label: string): HTMLButtonElement {
 }
 
 describe('ProjectsTableView', () => {
+  function largeTable(grouped = false, overrides: Parameters<typeof mount>[1] = {}) {
+    const fixture = mount([], overrides);
+    fixture.config.projects.table.groupBy = grouped ? 'status' : 'none';
+    fixture.config.projects.table.sortBy = { field: 'name', dir: 'asc' };
+    const scroll = expectDefined(
+      fixture.host.querySelector<HTMLElement>('.abyss-project-table-scroll'),
+    );
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 340 });
+    Object.defineProperty(scroll, 'clientWidth', { configurable: true, value: 1000 });
+    const projects = Array.from({ length: 500 }, (_, index) =>
+      project({
+        path: `Projects/P${String(index).padStart(4, '0')}.md`,
+        name: `P${String(index).padStart(4, '0')}`,
+      }),
+    );
+    fixture.view.update(projects);
+    return { ...fixture, scroll, projects };
+  }
+
+  it('fills a zero-size viewport on owner resize and does no work after destroy', () => {
+    let resize: (() => void) | undefined;
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resize = () => {
+          callback([], this as unknown as ResizeObserver);
+        };
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver);
+    const { host, view, projects, scroll } = largeTable();
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 0 });
+    view.update(projects);
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 1700 });
+    resize?.();
+    expect(host.querySelector('[data-project-path="Projects/P0049.md"]')).not.toBeNull();
+    const table = expectDefined(host.querySelector('table'));
+    destroyMountedView(view);
+    const html = table.outerHTML;
+    scroll.scrollTop = 10000;
+    scroll.dispatchEvent(new Event('scroll'));
+    resize?.();
+    expect(table.outerHTML).toBe(html);
+    expect(table.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
+  });
+
+  it('remeasures the viewport when theme changes resize the table content', () => {
+    const observers: Array<{ targets: Element[]; trigger(): void }> = [];
+    class TestResizeObserver {
+      readonly targets: Element[] = [];
+      constructor(private readonly callback: ResizeObserverCallback) {
+        observers.push(this);
+      }
+      observe(target: Element): void {
+        this.targets.push(target);
+      }
+      disconnect(): void {}
+      trigger(): void {
+        this.callback([], this as unknown as ResizeObserver);
+      }
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver);
+    const { host } = largeTable();
+    const table = expectDefined(host.querySelector('table'));
+    const original = host.querySelectorAll('.abyss-project-table-row').length;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return rectangle(0, 0, 1000, this.classList.contains('abyss-project-table-row') ? 58 : 0);
+    });
+    for (const observer of observers) {
+      if (observer.targets.includes(table)) observer.trigger();
+    }
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(original);
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).not.toBeNull();
+    expect(host.querySelector('[data-project-path="Projects/P0005.md"]')).not.toBeNull();
+  });
+
+  it('renders a bounded window and reveals later project rows on scroll', () => {
+    const { host, scroll } = largeTable();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).not.toBeNull();
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('[data-project-path="Projects/P0100.md"]')).not.toBeNull();
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).toBeNull();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    scroll.scrollTop = 999999;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('[data-project-path="Projects/P0499.md"]')).not.toBeNull();
+    expect(scroll.scrollTop).toBeLessThan(18000);
+  });
+
+  it('clamps the viewport immediately when filtering from 500 projects to two', () => {
+    const { host, scroll, view, projects } = largeTable();
+    scroll.scrollTop = 15000;
+    scroll.dispatchEvent(new Event('scroll'));
+    view.update(projects.slice(0, 2));
+    expect(scroll.scrollTop).toBe(0);
+    expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(2);
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).not.toBeNull();
+  });
+
+  it('expands a large group into a bounded viewport and fills the next group on collapse', async () => {
+    const { host, scroll, view, projects } = largeTable(true);
+    view.update([...projects, project({ path: 'Projects/Z.md', name: 'Z', statusId: null })]);
+    const toggle = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    );
+    toggle.click();
+    await flushMicrotasks();
+    toggle.click();
+    await flushMicrotasks();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    scroll.scrollTop = 15000;
+    scroll.dispatchEvent(new Event('scroll'));
+    // Retain the original control to exercise the same collapse action while its header is offscreen.
+    toggle.click();
+    await flushMicrotasks();
+    expect(scroll.scrollTop).toBe(0);
+    expect(host.querySelector('[data-project-path="Projects/Z.md"]')).not.toBeNull();
+    expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(1);
+  });
+
+  it('copies the complete large group including offscreen cells without mounting them', () => {
+    const { host } = largeTable(true);
+    const cell = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-name-cell'));
+    cell.focus();
+    cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+    const data = transfer();
+    cell.dispatchEvent(clipboardEvent('copy', data));
+    const lines = data.getData('text/plain').split('\n');
+    expect(lines).toHaveLength(500);
+    expect(lines[0]?.split('\t')[0]).toBe('P0000');
+    expect(lines[499]?.split('\t')[0]).toBe('P0499');
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+  });
+
+  it('reveals offscreen logical cells during keyboard navigation', () => {
+    const { host, scroll } = largeTable();
+    expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-name-cell')).focus();
+    for (let index = 0; index < 40; index++) {
+      host.ownerDocument.activeElement?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+      );
+    }
+    expect(
+      host.ownerDocument.activeElement?.closest<HTMLElement>('tr')?.dataset['projectPath'],
+    ).toBe('Projects/P0040.md');
+    expect(scroll.scrollTop).toBeGreaterThan(0);
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+  });
+
+  it('retains an active editor node while updating the viewport', () => {
+    const { host, scroll } = largeTable();
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('[data-column-id="start"].abyss-project-table-cell'),
+    );
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const editor = expectDefined(host.querySelector('.abyss-project-cell-editor-host'));
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('.abyss-project-cell-editor-host')).toBe(editor);
+    expect(cell.isConnected).toBe(true);
+    expect(host.querySelector('[data-project-path="Projects/P0100.md"]')).not.toBeNull();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+  });
+
+  it('retains the native drag source node outside the viewport', () => {
+    const { host, scroll } = largeTable(true);
+    const row = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-row'));
+    const data = transfer();
+    row.dispatchEvent(dragEvent('dragstart', data));
+    expect(row.classList.contains('is-dragging')).toBe(true);
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).toBe(row);
+    expect(host.querySelector('[data-project-path="Projects/P0100.md"]')).not.toBeNull();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    row.dispatchEvent(dragEvent('dragend', data));
+  });
+
+  it('pastes and clears all 500 offscreen cells through guarded bulk commands', async () => {
+    const applyEdits = vi.fn(async (_changes: readonly ProjectCellChange[]) => ({
+      applied: [],
+      failed: [],
+    }));
+    const { host, scroll, projects } = largeTable(false, { applyEdits });
+    const first = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    first.click();
+    scroll.scrollTop = 999999;
+    scroll.dispatchEvent(new Event('scroll'));
+    const last = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/P0499.md"] [data-column-id="start"]',
+      ),
+    );
+    last.dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true }));
+    last.dispatchEvent(clipboardEvent('paste', transfer({ 'text/plain': '2026-10-10' })));
+    await flushMicrotasks();
+    const pasted = expectDefined(applyEdits.mock.calls[0]?.[0]);
+    expect(pasted).toHaveLength(500);
+    expect(pasted.map(({ path }) => path)).toEqual(projects.map(({ path }) => path));
+    expect(
+      pasted.every(
+        ({ value, expectedValue, expectedExists, sourceProperty }) =>
+          value === '2026-10-10' &&
+          expectedValue === '2026-09-01' &&
+          expectedExists === true &&
+          sourceProperty === 'start',
+      ),
+    ).toBe(true);
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    last.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    await flushMicrotasks();
+    const cleared = expectDefined(applyEdits.mock.calls[1]?.[0]);
+    expect(cleared).toHaveLength(500);
+    expect(cleared.map(({ path }) => path)).toEqual(projects.map(({ path }) => path));
+    expect(cleared.every(({ value }) => value === undefined)).toBe(true);
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+  });
+
+  it('reveals an offscreen created project through the existing composer', async () => {
+    let finishCreate: ((path: string) => void) | undefined;
+    const createProject = () =>
+      new Promise<string>((resolve) => {
+        finishCreate = resolve;
+      });
+    const { host, view, projects, scroll } = largeTable(false, { createProject });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+    const input = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    input.value = 'Zebra';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    view.update([...projects, project({ path: 'Projects/Zebra.md', name: 'Zebra' })]);
+    finishCreate?.('Projects/Zebra.md');
+    await flushMicrotasks();
+    const row = expectDefined(host.querySelector('[data-project-path="Projects/Zebra.md"]'));
+    expect(row.classList.contains('is-just-created')).toBe(true);
+    expect(host.ownerDocument.activeElement?.closest('tr')).toBe(row);
+    expect(scroll.scrollTop).toBeGreaterThan(15000);
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+  });
+
+  it('keeps distant repeated project occurrences distinct in offscreen group selection', () => {
+    const { host, view, projects, scroll, config } = largeTable(false, {
+      catalog: catalog([{ name: 'Owners', type: 'list' }]),
+    });
+    config.projects.table.groupBy = 'property:Owners';
+    view.update(
+      projects.map((entry) => ({
+        ...entry,
+        frontmatter: { ...entry.frontmatter, Owners: ['Alpha', 'Beta'] },
+      })),
+    );
+    const first = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/P0000.md"]'),
+    );
+    const firstId = first.dataset['occurrenceId'];
+    scroll.scrollTop = 17064;
+    scroll.dispatchEvent(new Event('scroll'));
+    const repeated = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/P0000.md"]'),
+    );
+    expect(repeated.dataset['occurrenceId']).not.toBe(firstId);
+    const cell = expectDefined(repeated.querySelector<HTMLElement>('[data-column-id="name"]'));
+    cell.focus();
+    cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+    const data = transfer();
+    cell.dispatchEvent(clipboardEvent('copy', data));
+    const lines = data.getData('text/plain').split('\n');
+    expect(lines).toHaveLength(500);
+    expect(lines.map((line) => line.split('\t')[0])).toEqual(projects.map(({ name }) => name));
+    scroll.scrollTop = 0;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"] .is-selected')).toBeNull();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+  });
+
   it('commits a Timeline keyboard endpoint edit as one guarded batch and one history group', async () => {
     const config = settings();
     config.projects.overviewView = 'timeline';

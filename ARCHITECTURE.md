@@ -173,6 +173,14 @@ search, selection, organization, and viewport. Switching hides inactive surfaces
 rebuilding them. A dashboard temporarily detaches the overview and invalidates Timeline interaction
 authority; reattachment preserves the session but cannot revive an old queued gesture.
 
+Table owns a full expanded logical row/cell projection for selection, keyboard navigation, and
+clipboard commands, independently of mounted DOM. Its local `projectTableViewport` owns measured
+and estimated row offsets, bounded windows, and spacer geometry. Scroll reconciliation reuses the
+retained model; data and group changes replace that sequence and clamp the viewport immediately.
+Group metadata remains available outside the window. Editors and native drag sources pin their
+occurrence rows until the interaction finishes; other evicted rows release listeners and Markdown
+components. Table geometry, resize, scroll, and focus use the host's owning document and window.
+
 Table rows, Kanban cards, and Timeline ranges reconcile keyed DOM. Surviving listeners read current
 reconciled contexts. Shared `ViewOptionsPopover`, field menus, cell renderers, commands, and
 selection paths preserve one interaction model. Editors retain drafts on failure and route explicit

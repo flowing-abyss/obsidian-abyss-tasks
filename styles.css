@@ -6977,6 +6977,7 @@ body.abyss-modal-open .popover.hover-popover {
   background: var(--background-primary);
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  overflow-anchor: none;
 }
 
 .abyss-project-table-host {
@@ -9861,4 +9862,10 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   inset-block-end: calc(
     env(safe-area-inset-bottom, 0px) + var(--size-4-16, 4rem) + var(--size-4-12, 3rem)
   );
+}
+
+.abyss-project-table .abyss-project-table-spacer > td {
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
