@@ -181,6 +181,28 @@ Group metadata remains available outside the window. Editors and native drag sou
 occurrence rows until the interaction finishes; other evicted rows release listeners and Markdown
 components. Table geometry, resize, scroll, and focus use the host's owning document and window.
 
+The [viewport helper](src/panels/projects/projectTableViewport.ts) contains geometry only: ordered
+occurrence/header keys, measured heights, cumulative offsets, binary range lookup, and pinned-row
+segments. It keeps one range with 170px overscan and consumes that buffer before refilling it.
+Replacing the row sequence or accepting changed measurements invalidates the range; a viewport
+height change also forces recalculation. Measurements preserve the current row anchor, and the
+controller bounds measurement correction to two passes. Mounted rows stay bounded; full-collection
+sorting, grouping, counts, and logical cell projection still scale with the collection.
+
+DOM identity alone does not preserve native focus: detaching and reinserting a retained row can
+blur its editor. Table reuses keyed spacer rows, patches only changed geometry, and removes obsolete
+spacers before ordering retained rows. Selection consumers, including Quick Capture, resolve logical
+cells rather than requiring mounted elements. Row mounting is needed only for rendering, focus,
+editing, and pointer interaction. These interaction rules belong to the controller, not the geometry
+helper; windowing alone is not a complete reusable view implementation.
+
+Regression entry points are [viewport geometry tests](test/project-table-viewport.test.ts) and
+[table interaction tests](test/project-table-view.test.ts). They cover buffer boundaries, group
+expansion/collapse, shrinking results, changed heights, offscreen bulk selection and Quick Capture,
+and retained editor/drag rows. Native validation additionally checks visible coverage after large
+jumps and group expansion, focus, and style/layout cost: a bounded DOM does not guarantee uniformly
+cheap buffer refills under every vault theme and plugin combination.
+
 Table rows, Kanban cards, and Timeline ranges reconcile keyed DOM. Surviving listeners read current
 reconciled contexts. Shared `ViewOptionsPopover`, field menus, cell renderers, commands, and
 selection paths preserve one interaction model. Editors retain drafts on failure and route explicit
