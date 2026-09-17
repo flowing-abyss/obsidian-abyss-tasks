@@ -221,9 +221,9 @@ function firstTouchedIndex(windows: readonly DayWindow[], atMs: number): number 
   let high = windows.length;
   while (low < high) {
     const middle = Math.floor((low + high) / 2);
-    const window = windows[middle];
-    if (window === undefined) break;
-    if (window.dayEndMs <= atMs) low = middle + 1;
+    const day = windows[middle];
+    if (day === undefined) break;
+    if (day.dayEndMs <= atMs) low = middle + 1;
     else high = middle;
   }
   return low;
@@ -249,26 +249,26 @@ function mergeIntoRow(
   }
 }
 
-function addToWindow(
-  window: DayWindow,
+function addToDay(
+  day: DayWindow,
   entry: TrackedEntry,
   key: string,
   span: { readonly startMs: number; readonly endMs: number },
 ): void {
-  const trackedMs = clampedSpanMs(span.startMs, span.endMs, window.dayStartMs, window.overlapEndMs);
+  const trackedMs = clampedSpanMs(span.startMs, span.endMs, day.dayStartMs, day.overlapEndMs);
   if (trackedMs <= 0) return;
-  window.totalMs += trackedMs;
+  day.totalMs += trackedMs;
   const contribution: RowContribution = {
     trackedMs,
-    running: window.current && entry.entry.state === 'running',
+    running: day.current && entry.entry.state === 'running',
     // A running entry ends at `nowMs`, so this clamp reports `nowMs` on the day that holds it and
     // that day's own end boundary on every earlier one. It also keeps a hand-written end that lies
     // in the future from claiming activity the clock has not reached.
-    atMs: Math.min(Math.max(span.endMs, window.dayStartMs), window.overlapEndMs),
+    atMs: Math.min(Math.max(span.endMs, day.dayStartMs), day.overlapEndMs),
   };
-  const existing = window.rows.get(key);
+  const existing = day.rows.get(key);
   if (existing === undefined) {
-    window.rows.set(key, {
+    day.rows.set(key, {
       key,
       entryOfRecord: entry,
       trackedMs,
@@ -294,25 +294,25 @@ function placeEntry(
   const span = { startMs, endMs };
   const key = nodeKey(entry);
   for (let index = firstTouchedIndex(windows, startMs); index < windows.length; index += 1) {
-    const window = windows[index];
-    if (window === undefined || window.dayStartMs >= endMs) break;
-    addToWindow(window, entry, key, span);
+    const day = windows[index];
+    if (day === undefined || day.dayStartMs >= endMs) break;
+    addToDay(day, entry, key, span);
   }
 }
 
 /** Newest day first, rows by last activity descending, days without rows omitted, all frozen. */
 function frozenDays(windows: readonly DayWindow[]): readonly TrackedDay[] {
   const days: TrackedDay[] = [];
-  for (const window of windows) {
-    if (window.rows.size === 0) continue;
-    const rows = [...window.rows.values()].sort(
+  for (const day of windows) {
+    if (day.rows.size === 0) continue;
+    const rows = [...day.rows.values()].sort(
       (left, right) => right.lastActivityMs - left.lastActivityMs,
     );
     for (const row of rows) Object.freeze(row);
     days.push(
       Object.freeze({
-        dayStartMs: window.dayStartMs,
-        totalMs: window.totalMs,
+        dayStartMs: day.dayStartMs,
+        totalMs: day.totalMs,
         rows: Object.freeze(rows),
       }),
     );
