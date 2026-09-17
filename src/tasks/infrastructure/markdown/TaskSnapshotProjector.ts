@@ -26,6 +26,7 @@ const PREFIX_RE = /^([\s>]*)/u;
 const SUBTASK_RE = /^([\s>]*)- \[(.)\]\s+(.*)/u;
 const DESCRIPTION_RE = /^([\s>]*)- > (.*)/u;
 const ENTRY_ARROW = '→';
+const NO_TIME_ENTRIES: readonly TimeEntrySnapshot[] = Object.freeze([]);
 
 interface ProjectionContext {
   readonly codec: TaskMarkdownCodec;
@@ -232,6 +233,11 @@ function appendProjectedContent(target: ProjectedContentTarget): void {
   );
 }
 
+/** Most nodes track no time, so they all share one array instead of freezing an empty one each. */
+function frozenTimeEntries(entries: TimeEntrySnapshot[]): readonly TimeEntrySnapshot[] {
+  return entries.length === 0 ? NO_TIME_ENTRIES : Object.freeze(entries);
+}
+
 function projectChildren(
   context: ProjectionContext,
   parentLine: number,
@@ -281,7 +287,7 @@ function projectChildren(
   return {
     subtasks,
     comments,
-    timeEntries: Object.freeze(timeEntries),
+    timeEntries: frozenTimeEntries(timeEntries),
     ...(Boolean(description) && { description }),
     toLine,
   };

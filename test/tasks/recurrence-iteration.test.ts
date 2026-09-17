@@ -186,8 +186,20 @@ describe('prepareRecurrenceIteration', () => {
   it('drops tracked time from the next occurrence and keeps it on the completed copy', () => {
     const closed = '  - 2026-09-17T09:12:00+03:00 → 2026-09-17T10:40:51+03:00';
     const running = '  - 2026-09-18T14:05:32+03:00 → still going';
+    const broken = '  - 2026-09-16T14:05:00+03:00 → 13:20';
     const comment = '  - Ordinary comment stays';
-    const rootBlock = ['- [/] Owner 🔁 every day', closed, running, comment].join('\n');
+    const descendantClosed = '    - 2026-09-19T08:00:00+03:00 → 2026-09-19T08:30:00+03:00';
+    const descendantNote = '    - Descendant note stays';
+    const rootBlock = [
+      '- [/] Owner 🔁 every day',
+      closed,
+      running,
+      broken,
+      comment,
+      '  - [x] Descendant ✅ 2026-09-19',
+      descendantClosed,
+      descendantNote,
+    ].join('\n');
 
     const prepared = prepareRecurrenceIteration({
       rootBlock,
@@ -205,12 +217,21 @@ describe('prepareRecurrenceIteration', () => {
     if (prepared.type !== 'prepared') return;
     const cleanLines = prepared.cleanSubtree.split('\n');
     expect(cleanLines.filter((line) => isTimeEntryShape(line))).toEqual([]);
-    expect(cleanLines).toEqual(['- [ ] Owner 🔁 every day', comment]);
+    expect(cleanLines).toEqual([
+      '- [ ] Owner 🔁 every day',
+      comment,
+      '  - [ ] Descendant',
+      descendantNote,
+    ]);
     expect(prepared.completedSubtree.split('\n')).toEqual([
       '- [x] Owner 🔁 every day ✅ 2026-09-20',
       closed,
       running,
+      broken,
       comment,
+      '  - [x] Descendant ✅ 2026-09-19',
+      descendantClosed,
+      descendantNote,
     ]);
   });
 

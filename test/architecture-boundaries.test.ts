@@ -118,6 +118,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskSnapshot: ['src/ui/TaskCard.ts'],
   TaskStatusType: ['src/settings/SettingsTab.ts'],
   TaskTextTarget: ['src/panels/RightPanel.ts'],
+  TimeEntrySnapshot: ['src/views/calendarOccurrences.ts'],
   daysBetweenLocalDates: ['src/panels/CenterPanel.ts', 'src/views/timegrid/dragGeometry.ts'],
   cloneTaskSnapshot: ['src/app/AppState.ts'],
   durationMinutes: ['src/panels/CenterPanel.ts'],

@@ -47,6 +47,7 @@ export {
   type TaskResolution,
 } from './domain/taskReconciliation';
 export { sameTaskTreeWithOwnedChanges } from './domain/taskTreeChangeProof';
+export type { TimeEntrySnapshot } from './domain/timeTracking';
 export { sameTaskNodeRef } from './domain/types';
 export type {
   CommentRef,
