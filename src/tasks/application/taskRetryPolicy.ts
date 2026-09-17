@@ -7,6 +7,7 @@ import {
   rebaseTaskCommand,
   rebaseTaskNode,
   taskCommandMutationTarget,
+  taskMutationNodeRef,
 } from '../domain/taskCommandTargets';
 import { reconcileTaskNodeRef, type RebaseEvidence } from '../domain/taskReconciliation';
 import type {
@@ -178,7 +179,7 @@ function nodeForCommand(
   const target = isDependencyMetadataCommand(command)
     ? command.target
     : taskCommandMutationTarget(command);
-  return snapshotForTarget(root, target.type === 'comment' ? target.ref.parent : target);
+  return snapshotForTarget(root, taskMutationNodeRef(target));
 }
 
 function requestedFieldValue(update: { readonly type: string; readonly value?: unknown }): unknown {

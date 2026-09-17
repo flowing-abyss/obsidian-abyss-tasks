@@ -25,6 +25,7 @@ function snapshot(
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source: {
       filePath,
       line,

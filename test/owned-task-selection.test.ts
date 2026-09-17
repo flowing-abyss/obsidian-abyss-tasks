@@ -17,6 +17,7 @@ function snapshot(markdown: string, revision: string) {
       exactBlock: markdown,
       ref: { filePath: 'tasks.md', line: 0, revision },
       presentation: { linkCount: 0 },
+      offsetAt: () => 0,
     }),
   );
 }

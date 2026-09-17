@@ -11,12 +11,14 @@ import { shiftLocalDate } from '../domain/localDateMath';
 import { parseRecurrenceRule } from '../domain/recurrence';
 import { type StatusCatalog } from '../domain/StatusCatalog';
 import {
+  isOwnedLineTarget,
   taskCommandMutationTarget as mutationTargetForCommand,
   rebaseTaskCommand as rebaseCommandRoot,
   rebaseTaskNode as rebaseStatusTarget,
   taskCommandRootRef as rootRefForCommand,
   taskNodeRootRef as rootRefOf,
   taskNodeAtSourcePath as snapshotForTarget,
+  taskMutationNodeRef,
 } from '../domain/taskCommandTargets';
 import { reconcileTaskNodeRef, type TaskResolution } from '../domain/taskReconciliation';
 import type {
@@ -571,7 +573,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     let symbol: string | undefined;
     if ('recurrence' in prepared) symbol = prepared.recurrence.doneSymbol;
     else if (prepared.command.type === 'set-status') symbol = prepared.command.symbol;
-    if (symbol === undefined || predecessor.type === 'comment') return undefined;
+    if (symbol === undefined || isOwnedLineTarget(predecessor)) return undefined;
     const type = this.statusCatalog_abyssPrivate.statusForSymbol(symbol);
     if (type !== 'done' && type !== 'cancelled') return undefined;
     return (root, target) => {
@@ -1115,11 +1117,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (outcome == null) return undefined;
     if (outcome.permittedTarget == null) return outcome.task;
     if (command.type === 'move') return undefined;
-    const target = mutationTargetForCommand(command);
-    let node: TaskNodeRef;
-    if (target.type === 'comment') node = target.ref.parent;
-    else if (target.type === 'subtask') node = { type: 'subtask', ref: target.ref };
-    else node = target;
+    const node = taskMutationNodeRef(mutationTargetForCommand(command));
     return sameTaskNodeRef(outcome.permittedTarget, node) ? outcome.task : undefined;
   }
 }

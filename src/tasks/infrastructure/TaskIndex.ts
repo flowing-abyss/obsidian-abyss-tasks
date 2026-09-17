@@ -34,6 +34,7 @@ import {
   type TaskResolution,
   type VisualEvidence,
 } from '../domain/taskReconciliation';
+import type { OffsetAt } from '../domain/timeEntry';
 import {
   sameTaskNodeRef,
   type LocalDate,
@@ -59,7 +60,11 @@ export interface TaskIndexOptions {
   readonly dailyNoteFormat: string;
   readonly globalTaskFilter?: string;
   readonly refAuthority?: TaskRefAuthority;
+  /** Resolves a written time entry stamp that carries no offset of its own. */
+  readonly timeZoneOffsetAt?: OffsetAt;
 }
+
+const deviceOffsetAt: OffsetAt = (epochMs) => -new Date(epochMs).getTimezoneOffset();
 
 type Listener = (event: TaskIndexEvent) => void;
 
@@ -552,6 +557,7 @@ interface FileParseContext {
   readonly presentation: TaskSnapshot['presentation'];
   readonly itemByLine: ReadonlyMap<number, MetadataListItem>;
   readonly revision: ReconciledRevisionContext;
+  readonly offsetAt: OffsetAt;
 }
 
 function reusablePriorRevision(input: ReconciledRevisionInput): string | undefined {
@@ -1277,6 +1283,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
         cache.frontmatter,
       ),
       itemByLine: metadataItemsByLine(cache.listItems ?? []),
+      offsetAt: this.options_abyssPrivate.timeZoneOffsetAt ?? deviceOffsetAt,
       revision: {
         overrides: new Map(overrides.map((override) => [override.line, override] as const)),
         priorByLine: new Map(priorTasks.map((task) => [task.source.line, task] as const)),
@@ -1319,6 +1326,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       exactBlock,
       ref,
       presentation: context.presentation,
+      offsetAt: context.offsetAt,
     });
   }
 

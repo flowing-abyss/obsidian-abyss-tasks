@@ -400,6 +400,7 @@ export function task(overrides: TaskFixtureInput = {}): TaskSnapshot {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source,
     presentation: { linkCount: 0 },
   };
@@ -413,6 +414,7 @@ export function task(overrides: TaskFixtureInput = {}): TaskSnapshot {
     tags: [...(overrides.tags ?? [])],
     subtasks: [...(overrides.subtasks ?? [])],
     comments: [...(overrides.comments ?? [])],
+    timeEntries: [...(overrides.timeEntries ?? [])],
   };
 }
 
@@ -563,6 +565,7 @@ export function subtask(overrides: SubtaskFixtureInput = {}): SubtaskSnapshot {
     ...subtaskDependencyFields(overrides),
     subtasks: [...subtasks],
     comments: [...comments],
+    timeEntries: [...(overrides.timeEntries ?? [])],
     ...(overrides.recurrence === undefined ? {} : { recurrence: overrides.recurrence }),
     ...(overrides.description === undefined ? {} : { description: overrides.description }),
   };

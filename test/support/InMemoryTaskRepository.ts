@@ -28,6 +28,7 @@ import {
   prepareRecurrenceIteration,
   recurrenceMarkerCountInOwnedSubtree,
 } from '../../src/tasks/domain/recurrenceIteration';
+import { isOwnedLineTarget } from '../../src/tasks/domain/taskCommandTargets';
 import type {
   CommentRef,
   LocalDate,
@@ -1305,13 +1306,9 @@ export class InMemoryTaskRepository implements TaskRepository {
     const root = this.snapshot(path, content, block.line);
     if (root === undefined) return undefined;
     const original = targetOf(command);
-    const target =
-      original.type === 'comment'
-        ? {
-            type: 'comment' as const,
-            ref: { ...original.ref, parent: rebaseNode(original.ref.parent, root.ref) },
-          }
-        : rebaseNode(original, root.ref);
+    const target = isOwnedLineTarget(original)
+      ? { ...original, ref: { ...original.ref, parent: rebaseNode(original.ref.parent, root.ref) } }
+      : rebaseNode(original, root.ref);
     return { root, target };
   }
 

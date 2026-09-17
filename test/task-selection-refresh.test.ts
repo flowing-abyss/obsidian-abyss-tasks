@@ -70,6 +70,7 @@ function snapshot(revision: string, title = revision): TaskSnapshot {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source: {
       filePath: 'tasks.md',
       line: 4,
@@ -252,6 +253,7 @@ describe('revision-aware nested selection rebuild', () => {
           dependsOn: [],
           subtasks: [],
           comments: [],
+          timeEntries: [],
         },
       ],
     };
@@ -419,6 +421,7 @@ describe('revision-aware nested selection rebuild', () => {
         dependsOn: [],
         subtasks: [],
         comments: [],
+        timeEntries: [],
       };
     });
     const current = { ...root, subtasks };
@@ -460,6 +463,7 @@ describe('revision-aware nested selection rebuild', () => {
         dependsOn: [],
         subtasks: [],
         comments: [],
+        timeEntries: [],
       };
       currentNode.subtasks = [child];
       currentNode = child as unknown as { subtasks: SubtaskSnapshot[] };

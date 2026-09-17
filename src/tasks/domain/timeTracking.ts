@@ -1,5 +1,5 @@
 import type { OffsetAt, ParsedTimeEntry } from './timeEntry';
-import type { TaskNodeRef, TaskRef, TaskStatus } from './types';
+import type { TaskNodeRef, TaskRef, TaskStatus, TimeEntryRef } from './types';
 
 export type { TimeEntryIssue } from './timeEntry';
 
@@ -10,6 +10,11 @@ const MS_PER_MINUTE = 60_000;
 export interface TimeEntrySnapshot extends ParsedTimeEntry {
   readonly relativeLine: number;
   readonly originalMarkdown: string;
+}
+
+/** Addresses the entry line for a write, the way `CommentRef` addresses a comment line. */
+export function timeEntryRef(parent: TaskNodeRef, entry: TimeEntrySnapshot): TimeEntryRef {
+  return { parent, relativeLine: entry.relativeLine, originalMarkdown: entry.originalMarkdown };
 }
 
 /** One entry lifted out of the tree, carrying the node it belongs to. */

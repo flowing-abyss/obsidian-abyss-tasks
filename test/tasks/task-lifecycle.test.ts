@@ -737,6 +737,7 @@ describe('TaskApplicationService lifecycle routing', () => {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source: {
       filePath: path,
       line: 0,

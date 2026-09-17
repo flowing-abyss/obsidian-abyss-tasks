@@ -33,6 +33,7 @@ function snapshot(filePath: string): TaskSnapshot {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source: {
       filePath,
       line: 1,

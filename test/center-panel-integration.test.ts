@@ -3175,6 +3175,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       onCompletionExplicit: false,
       subtasks: [],
       comments: [],
+      timeEntries: [],
     };
     const root = { ...baseRoot, subtasks: [child] };
     const source = {

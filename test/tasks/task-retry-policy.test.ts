@@ -41,6 +41,7 @@ function snapshot(markdownTitle = 'Task', revision = 'old'): TaskSnapshot {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source: {
       filePath: 'tasks.md',
       line: 0,
@@ -95,6 +96,7 @@ function subtask(root: TaskSnapshot, overrides: Partial<SubtaskSnapshot> = {}): 
     onCompletionExplicit: false,
     subtasks: [],
     comments: [],
+    timeEntries: [],
     ...overrides,
   };
 }
@@ -436,6 +438,7 @@ describe('prepareRetry', () => {
       onCompletionExplicit: false,
       subtasks: [],
       comments: [],
+      timeEntries: [],
     };
     const previous = { ...base, subtasks: [child] };
     const current = {

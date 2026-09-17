@@ -39,6 +39,7 @@ function snapshot(): TaskSnapshot {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source: {
       filePath: 'tasks.md',
       line: 0,
@@ -1021,6 +1022,7 @@ describe('TaskApplicationService planning commands', () => {
       dependsOn: [],
       subtasks: [],
       comments: [],
+      timeEntries: [],
     };
     const rootWithChild = { ...initialRoot, subtasks: [initialChild] };
     const freshRef = { ...ref, revision: 'fresh-nested' };
@@ -1576,6 +1578,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
       onCompletionExplicit: false,
       subtasks: [],
       comments: [],
+      timeEntries: [],
     });
     const consumedRoot = recurringSnapshot();
     Reflect.deleteProperty(consumedRoot, 'recurrence');

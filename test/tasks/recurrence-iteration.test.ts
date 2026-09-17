@@ -5,6 +5,7 @@ import {
   recurrenceMarkerCountInOwnedSubtree,
   recurrenceOwnedSubtree,
 } from '../../src/tasks/domain/recurrenceIteration';
+import { isTimeEntryShape } from '../../src/tasks/domain/timeEntry';
 import type { TaskPlanning } from '../../src/tasks/domain/types';
 import { localDate, localTime } from '../../src/tasks/domain/validation';
 import { stripTerminalBlockId } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
@@ -180,6 +181,37 @@ describe('prepareRecurrenceIteration', () => {
         '>         - > Deep description byte-for-byte except id ^deep-description',
       ].join('\r\n'),
     });
+  });
+
+  it('drops tracked time from the next occurrence and keeps it on the completed copy', () => {
+    const closed = '  - 2026-09-17T09:12:00+03:00 → 2026-09-17T10:40:51+03:00';
+    const running = '  - 2026-09-18T14:05:32+03:00 → still going';
+    const comment = '  - Ordinary comment stays';
+    const rootBlock = ['- [/] Owner 🔁 every day', closed, running, comment].join('\n');
+
+    const prepared = prepareRecurrenceIteration({
+      rootBlock,
+      ownerRelativeLine: 0,
+      nextPlanning: {},
+      dayDelta: 1,
+      doneSymbol: 'x',
+      todoSymbol: ' ',
+      today: localDate('2026-09-20'),
+      addCreatedDate: false,
+      addCompletionDate: true,
+    });
+
+    expect(prepared.type).toBe('prepared');
+    if (prepared.type !== 'prepared') return;
+    const cleanLines = prepared.cleanSubtree.split('\n');
+    expect(cleanLines.filter((line) => isTimeEntryShape(line))).toEqual([]);
+    expect(cleanLines).toEqual(['- [ ] Owner 🔁 every day', comment]);
+    expect(prepared.completedSubtree.split('\n')).toEqual([
+      '- [x] Owner 🔁 every day ✅ 2026-09-20',
+      closed,
+      running,
+      comment,
+    ]);
   });
 
   it('removes recursive created dates when disabled and changes only owner lifecycle history', () => {

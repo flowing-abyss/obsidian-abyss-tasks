@@ -29,6 +29,7 @@ function task(status: TaskSnapshot['status']): TaskSnapshot {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source: {
       filePath: 'Projects/A.md',
       line: 0,

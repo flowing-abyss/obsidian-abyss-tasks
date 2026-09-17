@@ -1,6 +1,7 @@
 import { shiftLocalDate } from './localDateMath';
 import { parseRecurrenceRule, type RecurrenceIssueCode } from './recurrence';
 import { parseTaskLineSourceModel, type TaskLineSourceCarrier } from './taskLineSourceModel';
+import { isTimeEntryShape } from './timeEntry';
 import type { LocalDate, TaskPlanning } from './types';
 import { formatDurationMinutes, localDate, localTime } from './validation';
 
@@ -615,10 +616,15 @@ export function editRecurrenceIterationTaskLine(
   return validated.type === 'invalid' ? validated : { type: 'changed', content };
 }
 
-function serializeSubtree(lines: readonly SourceLine[], from: number, to: number): string {
-  return lines
-    .slice(from, to + 1)
-    .map((line, index, selected) => line.text + (index === selected.length - 1 ? '' : line.ending))
+function serializeSubtree(
+  lines: readonly SourceLine[],
+  from: number,
+  to: number,
+  removed: ReadonlySet<number>,
+): string {
+  const selected = lines.slice(from, to + 1).filter((_line, index) => !removed.has(from + index));
+  return selected
+    .map((line, index) => line.text + (index === selected.length - 1 ? '' : line.ending))
     .join('');
 }
 
@@ -626,8 +632,15 @@ function invalid(code: IterationIssueCode): RecurrenceIterationResult {
   return { type: 'invalid', code };
 }
 
+const KEEP_EVERY_LINE: ReadonlySet<number> = new Set<number>();
+
 type IterationLinesResult =
-  | { readonly type: 'valid'; readonly lines: SourceLine[] }
+  | {
+      readonly type: 'valid';
+      readonly lines: SourceLine[];
+      /** Indices dropped from this candidate only, so the other candidate stays byte-identical. */
+      readonly removed: ReadonlySet<number>;
+    }
   | { readonly type: 'invalid'; readonly code: IterationIssueCode };
 
 function recurrenceStructureIssue(
@@ -666,7 +679,7 @@ function completedIterationLines(
   const updated = sourceLines(completed.content)[0];
   if (updated == null) return { type: 'invalid', code: 'invalid-task-syntax' };
   completedLines[ownership.fromLine] = updated;
-  return { type: 'valid', lines: completedLines };
+  return { type: 'valid', lines: completedLines, removed: KEEP_EVERY_LINE };
 }
 
 function cleanLineEdit(
@@ -705,7 +718,25 @@ function cleanIterationLines(
   if (!stripOwnedBlockIds(cleanLines, ownership)) {
     return { type: 'invalid', code: 'invalid-task-syntax' };
   }
-  return { type: 'valid', lines: cleanLines };
+  return { type: 'valid', lines: cleanLines, removed: ownedTimeEntryLines(cleanLines, ownership) };
+}
+
+/**
+ * Tracked time belongs to the occurrence that was worked on, so the next occurrence starts empty.
+ * The indices are collected after the task-line edits, which never move a line.
+ */
+function ownedTimeEntryLines(
+  lines: readonly SourceLine[],
+  ownership: RecurrenceOwnedSubtree,
+): ReadonlySet<number> {
+  const taskLines = new Set(ownership.taskLines);
+  const entries = new Set<number>();
+  for (let index = ownership.fromLine; index <= ownership.toLine; index++) {
+    const source = lines[index];
+    if (source === undefined || taskLines.has(index)) continue;
+    if (isTimeEntryShape(source.text)) entries.add(index);
+  }
+  return entries;
 }
 
 function stripOwnedBlockIds(lines: SourceLine[], ownership: RecurrenceOwnedSubtree): boolean {
@@ -732,7 +763,17 @@ export function prepareRecurrenceIteration(
   if (clean.type === 'invalid') return invalid(clean.code);
   return {
     type: 'prepared',
-    cleanSubtree: serializeSubtree(clean.lines, ownership.fromLine, ownership.toLine),
-    completedSubtree: serializeSubtree(completed.lines, ownership.fromLine, ownership.toLine),
+    cleanSubtree: serializeSubtree(
+      clean.lines,
+      ownership.fromLine,
+      ownership.toLine,
+      clean.removed,
+    ),
+    completedSubtree: serializeSubtree(
+      completed.lines,
+      ownership.fromLine,
+      ownership.toLine,
+      completed.removed,
+    ),
   };
 }

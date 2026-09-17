@@ -39,6 +39,7 @@ import {
   taskNodeAtSourcePath as nodeSnapshot,
   rebaseTaskNode as rebaseNode,
   taskNodeRootRef as rootRefOf,
+  taskMutationNodeRef,
 } from '../../domain/taskCommandTargets';
 import type {
   CommentRef,
@@ -149,8 +150,7 @@ function nodeTargetOf(command: TaskEditCommand): PlanningTarget | undefined {
   if ('ref' in command) return undefined;
   if (command.type === 'delete-subtask' || command.type === 'reorder-subtask')
     return command.subtask.parent;
-  const target = mutationTarget(command);
-  return target.type === 'comment' ? target.ref.parent : target;
+  return taskMutationNodeRef(mutationTarget(command));
 }
 
 function legacyLine(line: string): string {

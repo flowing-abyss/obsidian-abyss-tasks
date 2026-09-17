@@ -25,6 +25,18 @@ function isRootless(command: TaskCommand): command is RootlessCommand {
   return command.type === 'create' || 'dependent' in command;
 }
 
+/** A comment and a time entry are nested lines owned by a node, not nodes in their own right. */
+export function isOwnedLineTarget(
+  target: TaskMutationTarget,
+): target is Extract<TaskMutationTarget, { readonly type: 'comment' | 'time-entry' }> {
+  return target.type === 'comment' || target.type === 'time-entry';
+}
+
+/** The node that carries the target, which is the target itself unless it is an owned line. */
+export function taskMutationNodeRef(target: TaskMutationTarget): TaskNodeRef {
+  return isOwnedLineTarget(target) ? target.ref.parent : target;
+}
+
 export function taskNodeRootRef(target: TaskMutationTarget): TaskRef {
   let node = target;
   while (node.type !== 'task') node = node.ref.parent;
