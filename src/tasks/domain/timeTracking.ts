@@ -1,20 +1,15 @@
-import type { OffsetAt, TimeEntryIssue } from './timeEntry';
+import type { OffsetAt, ParsedTimeEntry } from './timeEntry';
 import type { TaskNodeRef, TaskRef, TaskStatus } from './types';
 
-export type { TimeEntryIssue };
+export type { TimeEntryIssue } from './timeEntry';
 
 const MS_PER_DAY = 86_400_000;
 const MS_PER_MINUTE = 60_000;
 
 /** One parsed entry line kept next to the source it came from, so writes can find it again. */
-export interface TimeEntrySnapshot {
+export interface TimeEntrySnapshot extends ParsedTimeEntry {
   readonly relativeLine: number;
   readonly originalMarkdown: string;
-  readonly state: 'running' | 'closed' | 'broken';
-  readonly startMs?: number;
-  readonly endMs?: number;
-  readonly tail?: string;
-  readonly issue?: TimeEntryIssue;
 }
 
 /** One entry lifted out of the tree, carrying the node it belongs to. */
@@ -52,6 +47,11 @@ export function entryDurationMs(entry: TimeEntrySnapshot, nowMs: number): number
   return Math.max(0, endMs - startMs);
 }
 
+/** The length of `[startMs, endMs)` once it is cut down to `[fromMs, toMs)`. */
+function clampedSpanMs(startMs: number, endMs: number, fromMs: number, toMs: number): number {
+  return Math.max(0, Math.min(endMs, toMs) - Math.max(startMs, fromMs));
+}
+
 /** The part of an entry that falls inside `[fromMs, toMs)`, which is how a day clips at midnight. */
 export function entryOverlapMs(
   entry: TimeEntrySnapshot,
@@ -62,7 +62,7 @@ export function entryOverlapMs(
   const startMs = measurableStartMs(entry);
   const endMs = measurableEndMs(entry, nowMs);
   if (startMs === undefined || endMs === undefined) return 0;
-  return Math.max(0, Math.min(endMs, toMs) - Math.max(startMs, fromMs));
+  return clampedSpanMs(startMs, endMs, fromMs, toMs);
 }
 
 export function totalMs(total: TrackedTotal, nowMs: number): number {
@@ -107,15 +107,20 @@ export function subtreeTotal(node: NodeWithEntries): TrackedTotal {
 }
 
 /**
- * The offset at a local midnight is not the offset that was in force at `guessOffsetMinutes`, so the
- * wall midnight is re-resolved once against the offset of its own approximate instant.
+ * The instant of a wall midnight. The offset in force at that midnight is not the offset of the
+ * instant used to guess it, so the candidate is re-checked against its own offset. Where a zone
+ * changes exactly at local midnight the first candidate can miss by the size of the change, and
+ * where the local midnight never happens at all the two candidates simply trade offsets, so the
+ * later one is taken because the transition itself is then the first moment of the local day.
  */
-function resolveDayStartMs(
-  dayWallMs: number,
-  guessOffsetMinutes: number,
-  offsetAt: OffsetAt,
-): number {
-  return dayWallMs - offsetAt(dayWallMs - guessOffsetMinutes * MS_PER_MINUTE) * MS_PER_MINUTE;
+function resolveDayStartMs(wallMs: number, guessOffsetMinutes: number, offsetAt: OffsetAt): number {
+  const firstOffsetMinutes = offsetAt(wallMs - guessOffsetMinutes * MS_PER_MINUTE);
+  const firstMs = wallMs - firstOffsetMinutes * MS_PER_MINUTE;
+  const secondOffsetMinutes = offsetAt(firstMs);
+  if (secondOffsetMinutes === firstOffsetMinutes) return firstMs;
+  const secondMs = wallMs - secondOffsetMinutes * MS_PER_MINUTE;
+  if (offsetAt(secondMs) === secondOffsetMinutes) return secondMs;
+  return Math.max(firstMs, secondMs);
 }
 
 /** The local wall midnight of a day, read as if the wall clock were UTC. */
@@ -176,64 +181,144 @@ function nodeKey(entry: TrackedEntry): string {
   return JSON.stringify([entry.filePath, entry.root.line, relativeLinePath(entry.target)]);
 }
 
-/** A running entry is active right now, a closed one last counted when it ended inside the day. */
-function activityMs(
-  entry: TimeEntrySnapshot,
-  dayStartMs: number,
-  dayEndMs: number,
-  nowMs: number,
-): number {
-  if (entry.state === 'running') return nowMs;
-  if (entry.endMs === undefined) return dayStartMs;
-  return Math.min(Math.max(entry.endMs, dayStartMs), dayEndMs);
+/** One day of the window, with the rows collected into it so far. */
+interface DayWindow {
+  readonly dayStartMs: number;
+  /** The real local midnight that ends the day. */
+  readonly dayEndMs: number;
+  /** Where time stops counting, which is `nowMs` on the day that holds it. */
+  readonly overlapEndMs: number;
+  /** True only for the day that contains `nowMs`, so only its rows can look live. */
+  readonly current: boolean;
+  readonly rows: Map<string, MutableDayRow>;
+  totalMs: number;
+}
+
+/** The `days` windows ending with today, oldest first, so they can be searched by instant. */
+function dayWindows(nowMs: number, offsetAt: OffsetAt, days: number): readonly DayWindow[] {
+  const windows: DayWindow[] = [];
+  let dayStartMs = localDayStartMs(nowMs, offsetAt);
+  let dayEndMs = shiftLocalDayStartMs(dayStartMs, 1, offsetAt);
+  for (let index = 0; index < days; index += 1) {
+    windows.push({
+      dayStartMs,
+      dayEndMs,
+      overlapEndMs: Math.min(dayEndMs, nowMs),
+      current: dayStartMs <= nowMs && nowMs < dayEndMs,
+      rows: new Map(),
+      totalMs: 0,
+    });
+    dayEndMs = dayStartMs;
+    dayStartMs = shiftLocalDayStartMs(dayStartMs, -1, offsetAt);
+  }
+  windows.reverse();
+  return windows;
+}
+
+/** Index of the oldest window that has not already ended at `atMs`, by binary search. */
+function firstTouchedIndex(windows: readonly DayWindow[], atMs: number): number {
+  let low = 0;
+  let high = windows.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const window = windows[middle];
+    if (window === undefined) break;
+    if (window.dayEndMs <= atMs) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+/** What one entry adds to one day, once it has been cut down to that day. */
+interface RowContribution {
+  readonly trackedMs: number;
+  readonly running: boolean;
+  readonly atMs: number;
 }
 
 function mergeIntoRow(
   row: MutableDayRow,
   entry: TrackedEntry,
-  trackedMs: number,
-  atMs: number,
+  contribution: RowContribution,
 ): void {
-  row.trackedMs += trackedMs;
-  if (entry.entry.state === 'running') row.running = true;
-  if (atMs >= row.lastActivityMs) {
-    row.lastActivityMs = atMs;
+  row.trackedMs += contribution.trackedMs;
+  if (contribution.running) row.running = true;
+  if (contribution.atMs >= row.lastActivityMs) {
+    row.lastActivityMs = contribution.atMs;
     row.entryOfRecord = entry;
   }
 }
 
-function collectDay(
-  entries: readonly TrackedEntry[],
-  dayStartMs: number,
-  dayEndMs: number,
-  nowMs: number,
-): TrackedDay | undefined {
-  const rows = new Map<string, MutableDayRow>();
-  let dayTotalMs = 0;
-  for (const entry of entries) {
-    const trackedMs = entryOverlapMs(entry.entry, dayStartMs, dayEndMs, nowMs);
-    if (trackedMs <= 0) continue;
-    dayTotalMs += trackedMs;
-    const key = nodeKey(entry);
-    const atMs = activityMs(entry.entry, dayStartMs, dayEndMs, nowMs);
-    const existing = rows.get(key);
-    if (existing === undefined) {
-      rows.set(key, {
-        key,
-        entryOfRecord: entry,
-        trackedMs,
-        running: entry.entry.state === 'running',
-        lastActivityMs: atMs,
-      });
-      continue;
-    }
-    mergeIntoRow(existing, entry, trackedMs, atMs);
+function addToWindow(
+  window: DayWindow,
+  entry: TrackedEntry,
+  key: string,
+  span: { readonly startMs: number; readonly endMs: number },
+): void {
+  const trackedMs = clampedSpanMs(span.startMs, span.endMs, window.dayStartMs, window.overlapEndMs);
+  if (trackedMs <= 0) return;
+  window.totalMs += trackedMs;
+  const contribution: RowContribution = {
+    trackedMs,
+    running: window.current && entry.entry.state === 'running',
+    // A running entry ends at `nowMs`, so this clamp reports `nowMs` on the day that holds it and
+    // that day's own end boundary on every earlier one. It also keeps a hand-written end that lies
+    // in the future from claiming activity the clock has not reached.
+    atMs: Math.min(Math.max(span.endMs, window.dayStartMs), window.overlapEndMs),
+  };
+  const existing = window.rows.get(key);
+  if (existing === undefined) {
+    window.rows.set(key, {
+      key,
+      entryOfRecord: entry,
+      trackedMs,
+      running: contribution.running,
+      lastActivityMs: contribution.atMs,
+    });
+    return;
   }
-  if (rows.size === 0) return undefined;
-  const ordered = [...rows.values()].sort(
-    (left, right) => right.lastActivityMs - left.lastActivityMs,
-  );
-  return { dayStartMs, totalMs: dayTotalMs, rows: Object.freeze(ordered) };
+  mergeIntoRow(existing, entry, contribution);
+}
+
+/** Adds one entry to every window it touches, rejecting the rest of the window in constant time. */
+function placeEntry(
+  windows: readonly DayWindow[],
+  bounds: { readonly startMs: number; readonly endMs: number },
+  entry: TrackedEntry,
+  nowMs: number,
+): void {
+  const startMs = measurableStartMs(entry.entry);
+  const endMs = measurableEndMs(entry.entry, nowMs);
+  if (startMs === undefined || endMs === undefined) return;
+  if (endMs <= bounds.startMs || startMs >= bounds.endMs) return;
+  const span = { startMs, endMs };
+  const key = nodeKey(entry);
+  for (let index = firstTouchedIndex(windows, startMs); index < windows.length; index += 1) {
+    const window = windows[index];
+    if (window === undefined || window.dayStartMs >= endMs) break;
+    addToWindow(window, entry, key, span);
+  }
+}
+
+/** Newest day first, rows by last activity descending, days without rows omitted, all frozen. */
+function frozenDays(windows: readonly DayWindow[]): readonly TrackedDay[] {
+  const days: TrackedDay[] = [];
+  for (const window of windows) {
+    if (window.rows.size === 0) continue;
+    const rows = [...window.rows.values()].sort(
+      (left, right) => right.lastActivityMs - left.lastActivityMs,
+    );
+    for (const row of rows) Object.freeze(row);
+    days.push(
+      Object.freeze({
+        dayStartMs: window.dayStartMs,
+        totalMs: window.totalMs,
+        rows: Object.freeze(rows),
+      }),
+    );
+  }
+  days.reverse();
+  return Object.freeze(days);
 }
 
 /** Newest day first, rows by last activity descending, days without rows omitted. */
@@ -242,16 +327,13 @@ export function groupTrackedDays(
   options: { readonly nowMs: number; readonly offsetAt: OffsetAt; readonly days: number },
 ): readonly TrackedDay[] {
   const { nowMs, offsetAt, days } = options;
-  const grouped: TrackedDay[] = [];
-  let dayStartMs = localDayStartMs(nowMs, offsetAt);
-  let dayEndMs = shiftLocalDayStartMs(dayStartMs, 1, offsetAt);
-  for (let index = 0; index < days; index += 1) {
-    const day = collectDay(entries, dayStartMs, dayEndMs, nowMs);
-    if (day !== undefined) grouped.push(day);
-    dayEndMs = dayStartMs;
-    dayStartMs = shiftLocalDayStartMs(dayStartMs, -1, offsetAt);
-  }
-  return Object.freeze(grouped);
+  const windows = dayWindows(nowMs, offsetAt, days);
+  const oldest = windows[0];
+  const newest = windows[windows.length - 1];
+  if (oldest === undefined || newest === undefined) return Object.freeze([]);
+  const bounds = { startMs: oldest.dayStartMs, endMs: newest.overlapEndMs };
+  for (const entry of entries) placeEntry(windows, bounds, entry, nowMs);
+  return frozenDays(windows);
 }
 
 /** When an entry last mattered, and whether it still does. A broken entry has no candidacy. */
