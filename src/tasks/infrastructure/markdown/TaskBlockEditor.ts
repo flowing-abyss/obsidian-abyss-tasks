@@ -15,6 +15,7 @@ import {
   isTimeEntryShape,
   parseTimeEntryLine,
   type OffsetAt,
+  type ParsedTimeEntry,
 } from '../../domain/timeEntry';
 import type { LocalDate, TaskInsertionPolicy } from '../../domain/types';
 import { createLinkedTaskLines } from './createTaskLine';
@@ -771,11 +772,18 @@ function closeTimeEntry(
   const elapsedMs = edit.endMs - running.startMs;
   // A start after the end is not a short session; discarding it would destroy unexplained evidence.
   if (elapsedMs < 0) return { type: 'conflict' };
-  if (elapsedMs < edit.minimumMs) return discardShortEntry(context, found.index);
+  if (elapsedMs < edit.minimumMs && discardable(running)) {
+    return discardShortEntry(context, found.index);
+  }
   const closed = closeEntryLine(found.line.text, edit.stamp);
   if (closed === undefined) return { type: 'conflict' };
   found.line.text = closed;
   return undefined;
+}
+
+/** A line the reader wrote a note on is never thrown away, however short its session was. */
+function discardable(running: ParsedTimeEntry): boolean {
+  return running.tail === undefined || running.tail.length === 0;
 }
 
 /** A session too short to be worth recording leaves no trace in the note. */

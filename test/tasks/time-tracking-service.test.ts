@@ -507,6 +507,22 @@ describe('time tracking orchestration', () => {
     }
   });
 
+  it('closes a short session that carries a tail rather than dropping the note on it', async () => {
+    const tailed = `  - ${atomAt(-SHORT_SESSION_MS)} \u2192 what I was doing`;
+    const stack = await stackFor({ 'a.md': `- [ ] Alpha\n${tailed}\n` });
+    try {
+      const result = await stack.tasks.execute({ type: 'stop-tracking' });
+
+      expect(result).toEqual({ type: 'ok', changed: true, outcome: { type: 'stopped' } });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `- [ ] Alpha\n  - ${atomAt(-SHORT_SESSION_MS)} \u2192 ${NOW_ATOM} what I was doing\n`,
+      );
+      expect(active(stack)).toEqual([]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
   it('closes every hand-written open entry on one stop', async () => {
     const stack = await stackFor({
       'a.md': `- [ ] Alpha\n  - ${EARLIER_ATOM} →\n  - ${HOUR_AGO_ATOM} →\n`,

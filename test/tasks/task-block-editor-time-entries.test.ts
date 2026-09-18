@@ -135,6 +135,36 @@ describe('TaskBlockEditor time entries', () => {
     },
   );
 
+  it('closes a short session that carries a hand-written tail instead of dropping it', () => {
+    const line = `  - ${START} \u2192 what I was doing`;
+    const end = '2026-09-18T14:05:30+03:00';
+
+    const result = editBlock(
+      `- [ ] root\n${line}\n`,
+      { relativeLine: 0, lineCount: 2, childRanges: [] },
+      closeEdit(1, line, end, instantMs(START) + 30_000),
+    );
+
+    expect(result).toMatchObject({
+      type: 'changed',
+      content: `- [ ] root\n  - ${START} \u2192 ${end} what I was doing\n`,
+    });
+    expect(result).not.toHaveProperty('discardedShortEntry');
+  });
+
+  it('still drops a short session with no tail of its own', () => {
+    const line = `  - ${START} \u2192`;
+    const end = '2026-09-18T14:05:30+03:00';
+
+    expect(
+      editBlock(
+        `- [ ] root\n${line}\n`,
+        { relativeLine: 0, lineCount: 2, childRanges: [] },
+        closeEdit(1, line, end, instantMs(START) + 30_000),
+      ),
+    ).toMatchObject({ type: 'changed', content: '- [ ] root\n', discardedShortEntry: true });
+  });
+
   it('measures a hand-written start at the offset the closing stamp was written in', () => {
     const line = '  - 2026-09-18 14:05 →';
     const end = '2026-09-18T14:05:59Z';

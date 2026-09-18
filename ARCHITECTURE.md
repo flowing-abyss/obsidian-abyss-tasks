@@ -116,7 +116,8 @@ returned rather than waiting for the index. A hand-written entry the plugin cann
 one whose start lies ahead of the clock, is reported to diagnostics and left alone so a single
 unwritable line cannot disable tracking vault wide; only an I/O failure stops the operation and
 returns its structured result. A session shorter than a minute leaves no line at all, and the
-outcome says so. Starting on a node that is already tracking writes nothing to that node, and a
+outcome says so, unless the reader wrote a note on that line, which is kept and closed like any
+other session. Starting on a node that is already tracking writes nothing to that node, and a
 done or cancelled node is refused.
 
 Presentation reads those lines through one tick per owning surface. `PanelView` and `TaskModal`
