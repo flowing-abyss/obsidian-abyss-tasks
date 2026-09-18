@@ -194,18 +194,26 @@ describe('time entry projection', () => {
     expect(entry.endMs).toBe(Date.parse('2026-09-17T10:40:00-05:00'));
   });
 
-  it('falls back to the device zone offset when no option is configured', async () => {
-    // The suite runs at UTC, where a fallback that silently resolved to zero would be right by
-    // accident, so the device is moved to +05:30 for the length of this test.
-    vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(-330);
+  /**
+   * Two devices rather than one, so the assertion holds whatever zone the host runs in: a fallback
+   * that silently resolved to a constant would read the same instant on both.
+   */
+  it.each([
+    ['+05:30', -330],
+    ['-08:00', 480],
+  ])(
+    'falls back to the device zone offset %s when no option is configured',
+    async (zone, minutes) => {
+      vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(minutes);
 
-    const entry = onlyEntry((await offsetIndex()).list());
+      const entry = onlyEntry((await offsetIndex()).list());
 
-    // A bare date and time is the device-local wall clock, which is what the default resolver
-    // `-new Date(epochMs).getTimezoneOffset()` reports at the resolved instant.
-    expect(entry.startMs).toBe(Date.parse('2026-09-17T09:12:00+05:30'));
-    expect(entry.endMs).toBe(Date.parse('2026-09-17T10:40:00+05:30'));
-  });
+      // A bare date and time is the device-local wall clock, which is what the default resolver
+      // `-new Date(epochMs).getTimezoneOffset()` reports at the resolved instant.
+      expect(entry.startMs).toBe(Date.parse(`2026-09-17T09:12:00${zone}`));
+      expect(entry.endMs).toBe(Date.parse(`2026-09-17T10:40:00${zone}`));
+    },
+  );
 
   it('keeps entries JSON-stable so the index still compares files by serialization', async () => {
     const { root } = await projectedRoot();
