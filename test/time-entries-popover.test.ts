@@ -486,3 +486,84 @@ describe('tracked sessions popover', () => {
     expect([...popover(harness.el).children].indexOf(expectDefined(undoRows[0]))).toBe(2);
   });
 });
+
+function selectedTitles(harness: Awaited<ReturnType<typeof inspector>>): readonly string[] {
+  return harness.state.get('taskStack').map((node) => node.title);
+}
+
+function badge(el: HTMLElement): HTMLElement {
+  return expectDefined(el.querySelector<HTMLElement>('.abyss-time-badge'), 'Missing badge');
+}
+
+function toggle(el: HTMLElement): HTMLButtonElement {
+  return expectDefined(
+    el.querySelector<HTMLButtonElement>('.abyss-time-badge-toggle'),
+    'Missing badge control',
+  );
+}
+
+/**
+ * An entry written under a selected sub-task rewrites that sub-task's source block, so the
+ * inspector has to recognise the successor by position rather than by text.
+ */
+describe('tracking a selected sub-task', () => {
+  it('keeps the sub-task selected when its own badge starts the timer', async () => {
+    const harness = await inspector(SESSIONS, 'Child');
+    expect(selectedTitles(harness)).toEqual(['Current', 'Child']);
+
+    toggle(harness.el).click();
+    await flushMicrotasks();
+
+    expect(selectedTitles(harness)).toEqual(['Current', 'Child']);
+    expect(badge(harness.el).classList.contains('is-tracking')).toBe(true);
+    expect(harness.tasks.queries.activeEntries().map((entry) => entry.title)).toEqual(['Child']);
+  });
+
+  it('keeps the sub-task selected when its own badge pauses the timer', async () => {
+    const harness = await inspector(SESSIONS, 'Child');
+    toggle(harness.el).click();
+    await flushMicrotasks();
+    harness.advance(2 * 60_000);
+
+    toggle(harness.el).click();
+    await flushMicrotasks();
+
+    expect(selectedTitles(harness)).toEqual(['Current', 'Child']);
+    expect(badge(harness.el).classList.contains('is-tracking')).toBe(false);
+    expect(harness.tasks.queries.activeEntries()).toEqual([]);
+  });
+
+  it('keeps the sub-task selected when a pause runs from outside the inspector', async () => {
+    const harness = await inspector(SESSIONS, 'Child');
+    toggle(harness.el).click();
+    await flushMicrotasks();
+    harness.advance(2 * 60_000);
+
+    await harness.tasks.execute({ type: 'stop-tracking' });
+    await flushMicrotasks();
+
+    expect(selectedTitles(harness)).toEqual(['Current', 'Child']);
+    expect(harness.tasks.queries.activeEntries()).toEqual([]);
+  });
+
+  it('keeps the undo row after a session is removed with a sub-task selected', async () => {
+    const harness = await inspector(SESSIONS, 'Child');
+    const before = await harness.read();
+    open(harness.el);
+
+    expectDefined(
+      rows(harness.el)[0]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(selectedTitles(harness)).toEqual(['Current', 'Child']);
+    const undoRow = expectDefined(
+      popover(harness.el).querySelector<HTMLElement>('.abyss-undo-row'),
+      'Missing undo row',
+    );
+    expectDefined(undoRow.querySelector<HTMLButtonElement>('button')).click();
+    await flushMicrotasks();
+
+    expect(await harness.read()).toBe(before);
+  });
+});

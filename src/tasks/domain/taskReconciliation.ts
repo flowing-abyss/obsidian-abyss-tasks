@@ -459,6 +459,39 @@ export function sameTaskTreeExceptDependencies(
   );
 }
 
+/**
+ * Everything an entry line cannot carry: the tree's shape, every node's own content and every
+ * comment's text, read without the addresses an entry moves. Writing, closing or dropping an
+ * entry rewrites the block text of the node and of its ancestors, shifts the relative line of
+ * everything below it in the same root and can move the root itself, so none of those may take
+ * part in the comparison.
+ */
+function timeEntryIdentity(node: TaskSnapshot | SubtaskSnapshot): unknown {
+  return {
+    ...node,
+    ref: 'source' in node ? { filePath: node.ref.filePath } : {},
+    source: 'source' in node ? { filePath: node.source.filePath } : undefined,
+    timeEntries: undefined,
+    subtasks: node.subtasks.map(timeEntryIdentity),
+    comments: node.comments.map((comment) => ({
+      ...comment,
+      ref: { originalMarkdown: comment.ref.originalMarkdown },
+    })),
+  };
+}
+
+/**
+ * True when two generations of one root differ in nothing but their tracked entries, which is
+ * what a start, a pause or a removed session leaves behind. Positional matching of a node inside
+ * such a pair is sound because the shape and the content of every other node is proven identical.
+ */
+export function sameTaskTreeExceptTimeEntries(
+  previous: TaskSnapshot,
+  current: TaskSnapshot,
+): boolean {
+  return JSON.stringify(timeEntryIdentity(previous)) === JSON.stringify(timeEntryIdentity(current));
+}
+
 function childSourcePositions(children: readonly SubtaskSnapshot[]): Map<string, Set<number>> {
   const positions = new Map<string, Set<number>>();
   children.forEach((child, index) => {

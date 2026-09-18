@@ -3,6 +3,7 @@ import {
   reconcileNested,
   reconcileRoot,
   reconcileRootTransitions,
+  sameTaskTreeExceptTimeEntries,
   type ProvenRootRevisionOverride,
   type RebaseEvidence,
   type VisualEvidence,
@@ -267,5 +268,101 @@ describe('task reconciliation', () => {
 
     expect(reconcileRootTransitions(previous, current, authorities).writable).toHaveLength(size);
     expect(reads).toBeLessThan(size * 20);
+  });
+});
+
+/** A root with one child, the shape every tracked-entry write touches. */
+function parentOf(childBlock: string, childOverrides: Record<string, unknown> = {}) {
+  const parent = root(4, 'Parent');
+  return {
+    ...parent,
+    subtasks: [
+      subtask({
+        title: 'Child',
+        ref: {
+          parent: { type: 'task', ref: parent.ref },
+          relativeLine: 1,
+          originalBlock: childBlock,
+        },
+        ...childOverrides,
+      }),
+    ],
+  };
+}
+
+const ENTRY = '    - 2026-09-18T14:05:32+03:00 \u2192';
+const RUNNING = [
+  { relativeLine: 1, originalMarkdown: ENTRY, state: 'running' as const, startMs: 0 },
+];
+
+describe('tracked entry tree proof', () => {
+  it('accepts a child that only gained a running entry', () => {
+    const before = parentOf('  - [ ] Child');
+    const after = parentOf(`  - [ ] Child\n${ENTRY}`, { timeEntries: RUNNING });
+
+    expect(sameTaskTreeExceptTimeEntries(before, after)).toBe(true);
+  });
+
+  it('accepts a root the same write moved to another line', () => {
+    const before = parentOf('  - [ ] Child');
+    const after = parentOf(`  - [ ] Child\n${ENTRY}`, { timeEntries: RUNNING });
+    const moved = {
+      ...after,
+      ref: { ...after.ref, line: 9, revision: 'revision:moved' },
+      source: { ...after.source, line: 9 },
+    };
+
+    expect(sameTaskTreeExceptTimeEntries(before, moved)).toBe(true);
+  });
+
+  it('accepts a comment that only moved down for the entry above it', () => {
+    const comment = { relativeLine: 1, originalMarkdown: '  - 2026-09-18T09:00:00+03:00: note' };
+    const before = { ...parentOf('  - [ ] Child'), comments: [{ ref: comment, text: 'note' }] };
+    const after = {
+      ...parentOf(`  - [ ] Child\n${ENTRY}`, { timeEntries: RUNNING }),
+      comments: [{ ref: { ...comment, relativeLine: 2 }, text: 'note' }],
+    };
+
+    expect(sameTaskTreeExceptTimeEntries(before, after)).toBe(true);
+  });
+
+  it.each([
+    ['a renamed child', { title: 'Renamed' }],
+    ['a completed child', { status: 'done' as const, statusSymbol: 'x' }],
+    ['a reprioritised child', { priority: 'A' as const }],
+    [
+      'a changed comment',
+      { comments: [{ ref: { relativeLine: 1, originalMarkdown: '  - x' }, text: 'x' }] },
+    ],
+  ])('rejects %s alongside the entry', (_label, change) => {
+    const before = parentOf('  - [ ] Child');
+    const after = parentOf(`  - [ ] Child\n${ENTRY}`, { timeEntries: RUNNING, ...change });
+
+    expect(sameTaskTreeExceptTimeEntries(before, after)).toBe(false);
+  });
+
+  it('rejects a tree whose child count changed', () => {
+    const before = parentOf('  - [ ] Child');
+    const after = parentOf(`  - [ ] Child\n${ENTRY}`, { timeEntries: RUNNING });
+
+    expect(
+      sameTaskTreeExceptTimeEntries(before, {
+        ...after,
+        subtasks: [...after.subtasks, ...after.subtasks],
+      }),
+    ).toBe(false);
+  });
+
+  it('rejects a root in another file', () => {
+    const before = parentOf('  - [ ] Child');
+    const after = parentOf('  - [ ] Child');
+
+    expect(
+      sameTaskTreeExceptTimeEntries(before, {
+        ...after,
+        ref: { ...after.ref, filePath: 'other.md' },
+        source: { ...after.source, filePath: 'other.md' },
+      }),
+    ).toBe(false);
   });
 });

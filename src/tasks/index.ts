@@ -45,6 +45,7 @@ export type {
 } from './domain/taskDependencies';
 export {
   sameTaskTreeExceptDependencies,
+  sameTaskTreeExceptTimeEntries,
   taskReconciliationKey,
   type TaskResolution,
 } from './domain/taskReconciliation';

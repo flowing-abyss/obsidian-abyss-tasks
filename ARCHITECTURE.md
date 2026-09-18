@@ -130,7 +130,11 @@ when the formatted text differs. The tick it emits for an index change belongs t
 render instead, which re-reads the selection, so a surface recognises that frame by the active
 entries it carries and paints a change exactly once. The badge outlives one inspector render: the chips row is rebuilt
 on every index change, while the sessions popover the badge owns has to survive the write it just
-made, the way the inline undo row already does.
+made, the way the inline undo row already does. An entry rewrites the source block of the node it
+sits under, so a selected sub-task has no text left to match itself by. `rebuildTaskSelection`
+follows it by child position instead, but only where the domain proves the two generations of the
+root differ in nothing but their tracked entries, which covers every surface that starts or pauses
+a timer rather than only the inspector's own writes.
 
 The other tracking surfaces are passive. A list card carries a count badge with its subtree total,
 and while that subtree runs the card keeps the total it read so the panel's one subscription

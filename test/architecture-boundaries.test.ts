@@ -152,6 +152,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   recentTrackingWindow: ['src/main.ts', 'src/ui/timeTracking/RailTrackingWidget.ts'],
   resumeTarget: ['src/main.ts', 'src/ui/timeTracking/RailTrackingWidget.ts'],
   sameTaskTreeExceptDependencies: ['src/ui/taskSelection.ts'],
+  sameTaskTreeExceptTimeEntries: ['src/ui/taskSelection.ts'],
   dependencySubtaskChild: ['src/ui/ownedTaskSelection.ts'],
   sameTaskTreeWithOwnedChanges: ['src/ui/ownedTaskSelection.ts'],
   taskCommandRootRef: ['src/views/PanelView.ts'],
