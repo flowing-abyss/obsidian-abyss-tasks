@@ -88,13 +88,6 @@ interface RenderedList {
   readonly dayStartMs: number;
 }
 
-/** What every row of one rebuild reads: the clock its labels are against, and how wide the pane is. */
-interface RenderPass {
-  readonly context: TrackedTimeContext;
-  /** Whether the pane has dropped the note cell, which is what makes a row tooltip worth writing. */
-  readonly noteHidden: boolean;
-}
-
 /** One open popover: its surface, the rows a tick repaints, and what a rebuild has to carry over. */
 interface PopoverSession {
   readonly options: TimeEntriesPopoverOptions;
@@ -106,6 +99,8 @@ interface PopoverSession {
   undoDayKey: string | undefined;
   /** Which offer holds it, so the offer it replaced cannot take the heading away with it. */
   undoOffer: number;
+  /** Whether an undo row is on screen, which is the only thing that can release a held day. */
+  undoPending: boolean;
   /** The one wait for the next local midnight, for the list no tick is driving. */
   rollover: number | undefined;
   closed: boolean;
@@ -119,13 +114,6 @@ const DAY_KEY = 'day';
 const REMOVED_LABEL = 'Removed';
 const MISSING_ENTRY = '[abyss-tasks] The tracked session to remove is no longer in the note';
 const MISSING_DAY = '[abyss-tasks] The tracked session to remove is no longer under a day';
-/**
- * How the stylesheet says it has dropped the note cell, which is the one width question this list
- * asks. The sheet owns the breakpoint and answers through a custom property, so a rebuild reads one
- * resolved value for the whole list instead of measuring a single row.
- */
-const NOTE_PROPERTY = '--abyss-time-note';
-const NOTE_HIDDEN = 'hidden';
 
 /** The written entry without its list prefix, which is all a broken line can be shown as. */
 function entryLineText(originalMarkdown: string): string {
@@ -248,6 +236,23 @@ function close(session: PopoverSession, restoreFocus?: boolean): void {
   session.shell.close(restoreFocus);
 }
 
+/**
+ * What a removal that wrote nothing gives back: the number an offer knows itself by, without which
+ * it could never let its day go, and the day this attempt took from whatever was holding one. That
+ * day returns only while an undo row is still on screen to release it later; with nothing pending,
+ * holding it would strand a heading with no entries and nobody left to drop it.
+ */
+function refundRemoval(
+  session: PopoverSession,
+  offer: number,
+  heldBefore: string | undefined,
+): void {
+  if (session.undoOffer !== offer) return;
+  session.undoOffer = offer - 1;
+  if (session.closed) return;
+  holdUndoDay(session, session.undoPending ? heldBefore : undefined);
+}
+
 async function removeSession(
   session: PopoverSession,
   row: SessionRow,
@@ -286,13 +291,7 @@ async function removeSession(
   session.undoDayKey = dayKey;
   const recovery = await actions.remove(timeEntryRef(current.parent, current.entry));
   if (recovery === undefined || session.closed) {
-    // Nothing was removed, so this attempt gives back both what it took: the day the earlier offer
-    // was holding open, and the number that offer knows itself by, without which it could never
-    // let that day go.
-    if (session.undoOffer === offer) {
-      session.undoOffer = offer - 1;
-      if (!session.closed) holdUndoDay(session, heldBefore);
-    }
+    refundRemoval(session, offer, heldBefore);
     return;
   }
   session.undo.show(
@@ -310,10 +309,14 @@ async function removeSession(
       report: () => {},
       // Replacing this offer runs the one it replaced, whose day is no longer the held one.
       onEnd: () => {
+        session.undoPending = false;
         if (session.undoOffer === offer) holdUndoDay(session, undefined);
       },
     },
   );
+  // Set after the row exists, because showing it ends the offer it replaced, and that end runs
+  // through the same flag on its way out.
+  session.undoPending = true;
 }
 
 /** Holds a day open for an undo row, or lets the last one go, and redraws past the memo. */
@@ -329,16 +332,25 @@ function redraw(session: PopoverSession): void {
   update(session);
 }
 
+/** The arrow of a span said as the word it stands for, for a label that is read out rather than seen. */
+function spokenArrow(range: string): string {
+  return range
+    .replaceAll('→', ' to ')
+    .replace(/\s{2,}/gu, ' ')
+    .trim();
+}
+
 /**
  * One session said aloud, `09:12 to 10:32` or `12:30 onwards`, because an arrow is a shape rather
- * than a word and an accessible name is read out.
+ * than a word and an accessible name is read out. A line the plugin could not read is spoken as it
+ * was written, with the same arrow spelled out.
  */
 function spokenRange(row: SessionRow, context: TrackedTimeContext): string {
   const range = rangeLabel(row.entry, context);
-  if (row.entry.state === 'broken') return range;
-  return range.endsWith('→')
-    ? `${range.slice(0, -1).trimEnd()} onwards`
-    : range.replace(' → ', ' to ');
+  if (row.entry.state !== 'broken' && range.endsWith('→')) {
+    return `${range.slice(0, -1).trimEnd()} onwards`;
+  }
+  return spokenArrow(range);
 }
 
 /**
@@ -398,9 +410,8 @@ function renderRow(
   session: PopoverSession,
   section: HTMLElement,
   row: SessionRow,
-  pass: RenderPass,
+  context: TrackedTimeContext,
 ): void {
-  const { context, noteHidden } = pass;
   const { entry } = row;
   const running = entry.state === 'running';
   const rowEl = section.createDiv({ cls: 'abyss-time-row' });
@@ -412,10 +423,10 @@ function renderRow(
       : undefined;
   rowEl.toggleClass('is-tracking', running);
   rowEl.toggleClass('is-stale', question !== undefined);
-  // A pane too narrow for the note cell hands what it would have said to the row, and a pane wide
-  // enough to show it says nothing twice. A line nobody could read keeps its cell at every width.
-  const hidden = noteHidden && entry.state !== 'broken';
-  writeTitle(rowEl, question ?? (hidden ? noteLabel(row) : ''));
+  // The note cell truncates at every width and is dropped outright in a narrow pane, so the row
+  // always carries what it says. The question a long-running row earns comes first, because that is
+  // the one thing about the row a reader has to be told.
+  writeTitle(rowEl, question ?? noteLabel(row));
   const remove = rowEl.createEl('button', {
     cls: 'abyss-time-row-remove',
     attr: { type: 'button', 'aria-label': 'Remove this session' },
@@ -428,7 +439,11 @@ function renderRow(
 }
 
 /** One section per day: its heading, then its rows, and the day it is named by for an undo row. */
-function renderDays(session: PopoverSession, groups: readonly DayGroup[], pass: RenderPass): void {
+function renderDays(
+  session: PopoverSession,
+  groups: readonly DayGroup[],
+  context: TrackedTimeContext,
+): void {
   for (const group of groups) {
     const section = session.shell.element.createDiv({ cls: 'abyss-time-day' });
     section.dataset[DAY_KEY] = group.key;
@@ -437,20 +452,13 @@ function renderDays(session: PopoverSession, groups: readonly DayGroup[], pass: 
       cls: 'abyss-right-section-label abyss-time-day-label',
       text: group.heading,
     });
-    for (const row of group.rows) renderRow(session, section, row, pass);
+    for (const row of group.rows) renderRow(session, section, row, context);
   }
 }
 
-/** The window the surface lives in, which owns both its timer and its resolved styles. */
+/** The window the surface lives in, which owns its timer. */
 function ownerWindow(session: PopoverSession): Window | null {
   return session.shell.element.ownerDocument.defaultView;
-}
-
-/** Whether the pane has dropped the note cell, asked of the stylesheet once per rebuild. */
-function noteCellHidden(session: PopoverSession): boolean {
-  const { element } = session.shell;
-  const style = ownerWindow(session)?.getComputedStyle(element);
-  return style?.getPropertyValue(NOTE_PROPERTY).trim() === NOTE_HIDDEN;
 }
 
 function clearDayRollover(session: PopoverSession): void {
@@ -520,10 +528,7 @@ function update(session: PopoverSession): void {
   if (rows.length === 0 && session.undoDayKey === undefined) {
     element.createDiv({ cls: 'abyss-time-tracking-empty', text: EMPTY_TEXT });
   }
-  renderDays(session, withUndoDay(dayGroups(rows, context), session.undoDayKey, context), {
-    context,
-    noteHidden: noteCellHidden(session),
-  });
+  renderDays(session, withUndoDay(dayGroups(rows, context), session.undoDayKey, context), context);
   session.undo.render(session.options.owner);
   element.scrollTop = scrollTop;
   session.shell.reposition();
@@ -571,6 +576,7 @@ export function showTimeEntriesPopover(
     rendered: undefined,
     undoDayKey: undefined,
     undoOffer: 0,
+    undoPending: false,
     rollover: undefined,
     closed: false,
   };

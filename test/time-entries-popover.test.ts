@@ -203,22 +203,6 @@ async function inspector(markdown = SESSIONS, selected = 'Current', win: Window 
   };
 }
 
-/**
- * A pane narrow enough for the stylesheet to drop the note cell. jsdom resolves no container
- * query, so the one signal the popover reads from the sheet is answered here instead.
- */
-function compactPane(): void {
-  const computed = activeWindow.getComputedStyle.bind(activeWindow);
-  vi.spyOn(activeWindow, 'getComputedStyle').mockImplementation((element, pseudo) => {
-    const style = computed(element, pseudo ?? undefined);
-    if (!element.classList.contains('abyss-time-tracking-popover--sessions')) return style;
-    return Object.assign(Object.create(style) as CSSStyleDeclaration, {
-      getPropertyValue: (property: string) =>
-        property === '--abyss-time-note' ? 'hidden' : style.getPropertyValue(property),
-    });
-  });
-}
-
 function open(el: HTMLElement): HTMLElement {
   expectDefined(el.querySelector<HTMLButtonElement>('.abyss-time-badge-body')).click();
   return popover(el);
@@ -356,25 +340,18 @@ describe('tracked sessions popover', () => {
     ]);
   });
 
-  it('leaves the note out of the row tooltip while the cell itself is on screen', async () => {
+  it('carries the note as the row tooltip, at every width', async () => {
     const harness = await inspector();
     open(harness.el);
 
-    expect(rows(harness.el).map((row) => row.title)).toEqual(['', '', '', '', '']);
-  });
-
-  it('carries the note as the row tooltip once the pane drops the cell', async () => {
-    const harness = await inspector();
-    compactPane();
-    open(harness.el);
-
+    // The cell truncates wherever it is shown and is dropped outright in a narrow pane, so the row
+    // always says what it holds. A broken line carries its own text for the same reason.
     expect(rows(harness.el).map((row) => row.title)).toEqual([
       '',
       'Child',
       '',
       'call with Bob',
-      // A line nobody could read keeps its cell at every width, so it needs no tooltip.
-      '',
+      '2026-09-16 14:05 → 13:20',
     ]);
   });
 
@@ -387,14 +364,6 @@ describe('tracked sessions popover', () => {
     expect(rows(harness.el).map((row) => row.title)).toEqual([
       'Still tracking since yesterday at 20:00?',
     ]);
-  });
-
-  it('asks the stylesheet whether the note cell is on screen', () => {
-    const compact = cssDeclarationsFor(css, '.abyss-time-tracking-popover--sessions');
-    const hidden = cssDeclarationsFor(css, '.abyss-time-row:not(.is-broken) .abyss-time-row-note');
-
-    expect(cssDeclarationValue(hidden, 'display')).toBe('none');
-    expect(cssDeclarationValue(compact, '--abyss-time-note')).toBe('hidden');
   });
 
   it('drops the note cell in a pane too narrow to say a word in it', () => {
@@ -573,6 +542,18 @@ describe('tracked sessions popover', () => {
     expect(harness.el.querySelector('.abyss-time-tracking-popover')).toBeNull();
   });
 
+  it('closes when the keyboard leaves it', async () => {
+    const harness = await inspector();
+    open(harness.el);
+    const elsewhere = activeDocument.body.createEl('button', { text: 'Elsewhere' });
+
+    // This list opens nothing of its own, so an outside focus is always a reader leaving it. The
+    // shared surface dismisses on it unless the caller holds one of its own actions.
+    elsewhere.focus();
+
+    expect(harness.el.querySelector('.abyss-time-tracking-popover')).toBeNull();
+  });
+
   it('keeps the list alive across an index change', async () => {
     const harness = await inspector();
     open(harness.el);
@@ -653,6 +634,32 @@ describe('tracked sessions popover', () => {
       expect(headings(harness.el)).toEqual(['Yesterday', 'Thu 17 Sep']);
       // The midnight that arrived arms the next one, and nothing else waits alongside it.
       expect(timers.armed()).toHaveLength(2);
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps one midnight timer across an index event it ignores', async () => {
+    const harness = await inspector(IDLE_SESSIONS);
+    vi.useFakeTimers();
+    const timers = longTimers();
+    try {
+      open(harness.el);
+      const first = timers.armed();
+      expect(first).toHaveLength(1);
+
+      // A file this list never shows repaints nothing, and the early return still has to leave the
+      // one wait it already had rather than arming a second beside it.
+      const touched = harness.touchOtherFile();
+      await vi.advanceTimersByTimeAsync(20);
+      await touched;
+
+      const armed = timers.armed();
+      const cleared = timers.cleared();
+      expect(armed).toHaveLength(2);
+      expect(cleared).toEqual(expect.arrayContaining([...first]));
+      expect(armed.filter((timer) => !cleared.includes(timer))).toHaveLength(1);
     } finally {
       vi.restoreAllMocks();
       vi.useRealTimers();
@@ -903,6 +910,48 @@ describe('tracked sessions popover', () => {
     }
   });
 
+  /**
+   * The offer a failed removal interrupted can be over by the time the write answers, and a day
+   * given back to an offer that has already ended would sit there empty with nobody to drop it.
+   */
+  it('drops an emptied day when its offer ends while the next removal is in flight', async () => {
+    const harness = await inspector();
+    vi.useFakeTimers();
+    try {
+      open(harness.el);
+      // The only session of `Yesterday` goes, so its heading is held open for the undo row.
+      expectDefined(
+        rows(harness.el)[3]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+      ).click();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(headings(harness.el)).toEqual(['Today', 'Yesterday', 'Needs attention']);
+
+      let refuse: (error: Error) => void = () => {};
+      vi.spyOn(harness.app.vault, 'process').mockReturnValueOnce(
+        new Promise<string>((_resolve, reject) => {
+          refuse = reject;
+        }),
+      );
+      expectDefined(
+        rows(harness.el)[0]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+      ).click();
+      await vi.advanceTimersByTimeAsync(10);
+
+      // The first offer runs out while the second write is still unanswered.
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(popover(harness.el).querySelector('.abyss-undo-row')).toBeNull();
+
+      refuse(new Error('disk full'));
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(popover(harness.el).querySelector('.abyss-undo-row')).toBeNull();
+      expect(headings(harness.el)).toEqual(['Today', 'Needs attention']);
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
   it('names the day an undo row restores into', async () => {
     const harness = await inspector();
     open(harness.el);
@@ -933,6 +982,24 @@ describe('tracked sessions popover', () => {
         .querySelector<HTMLButtonElement>('.abyss-undo-row button')
         ?.getAttribute('aria-label'),
     ).toBe('Undo removing 12:30 onwards on Today');
+  });
+
+  it('says the arrow of a line it could not read as a word too', async () => {
+    const harness = await inspector();
+    open(harness.el);
+    const broken = expectDefined(rows(harness.el)[4], 'Missing the broken row');
+    // The row shows the line exactly as the note wrote it, arrow and all.
+    expect(broken.textContent).toContain('2026-09-16 14:05 → 13:20');
+
+    expectDefined(broken.querySelector<HTMLButtonElement>('.abyss-time-row-remove')).click();
+    await flushMicrotasks();
+
+    // Only the name that is read out spells the arrow, because a reader hears this one.
+    expect(
+      popover(harness.el)
+        .querySelector<HTMLButtonElement>('.abyss-undo-row button')
+        ?.getAttribute('aria-label'),
+    ).toBe('Undo removing 2026-09-16 14:05 to 13:20');
   });
 
   it('reports a row that has lost its day instead of doing nothing about it', async () => {
