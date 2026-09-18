@@ -16,7 +16,7 @@ import {
 import { writeAttribute, writeClass, writeText, writeTitle } from '../guardedDomWrites';
 import { runAsyncAction } from '../runAsyncAction';
 import {
-  formatTrackedClock,
+  formatTrackedDuration,
   staleTrackingQuestion,
   type TrackedTimeContext,
 } from './formatTracked';
@@ -43,16 +43,20 @@ export interface RailTrackingWidgetHandle {
 
 const NO_RESUME_TITLE = 'The last tracked task is already finished';
 const TASK_TITLE = 'Tracked on this task today';
-const DAY_TITLE = 'Tracked today';
-const TODAY_CAPTION = 'TODAY';
 const NO_OPEN_STARTS: readonly number[] = Object.freeze([]);
+
+/**
+ * The rail is 48px wide and the number has to hold `23h 59m` inside it, so the units are bound with
+ * a thin space here and nowhere else. The accessible name keeps the ordinary space, because that is
+ * the label a reader hears rather than the one the rail has room for.
+ */
+function railNumber(label: string): string {
+  return label.replace(' ', '\u2009');
+}
 
 interface WidgetElements {
   readonly toggle: HTMLButtonElement;
   readonly task: HTMLButtonElement;
-  readonly hours: HTMLElement;
-  readonly minutes: HTMLElement;
-  readonly day: HTMLButtonElement;
 }
 
 /**
@@ -69,11 +73,8 @@ interface WidgetModel {
   /** The node the widget speaks for: the running one, else the one tracked most recently. */
   readonly current: TrackedEntry | undefined;
   readonly taskBaseMs: number;
-  /** Every timer still open on the current node, so the top number adds all of them. */
+  /** Every timer still open on the current node, so the number adds all of them. */
   readonly taskOpenStartsMs: readonly number[];
-  readonly dayBaseMs: number;
-  /** Every timer still open today, so the bottom number cannot drift when two of them run. */
-  readonly dayOpenStartsMs: readonly number[];
   /** When the open timer began counting towards today, absent while nothing runs. */
   readonly openSinceMs: number | undefined;
   readonly empty: boolean;
@@ -155,7 +156,7 @@ function sameEntries(left: readonly TrackedEntry[], right: readonly TrackedEntry
   return left.every((entry, index) => entry === right[index]);
 }
 
-/** The seven-day window of entries, grouped into days and reduced to the two numbers on the rail. */
+/** The seven-day window of entries, grouped into days and reduced to the one number on the rail. */
 function readModel(
   context: TrackedTimeContext,
   entries: readonly TrackedEntry[],
@@ -175,8 +176,6 @@ function readModel(
     current,
     taskBaseMs: currentRow?.trackedMs ?? 0,
     taskOpenStartsMs: currentRow?.openStartsMs ?? NO_OPEN_STARTS,
-    dayBaseMs: today?.totalMs ?? 0,
-    dayOpenStartsMs: today?.openStartsMs ?? NO_OPEN_STARTS,
     openSinceMs: openTimerSinceMs(current, todayStartMs),
     empty: entries.length === 0,
   };
@@ -219,36 +218,24 @@ function paintToggle(
   // The question replaces the tooltip but never the accessible name, so a reader still hears which
   // task the control acts on.
   writeTitle(view.toggle, question ?? label);
-  writeClass(view.toggle, 'is-active', running);
   writeClass(session.options.host, 'is-stale', question !== undefined);
   if (view.toggle.disabled !== blocked) view.toggle.disabled = blocked;
 }
 
-/** One frame from one reading of the clock, so the two numbers and the toggle cannot disagree. */
+/** One frame from one reading of the clock, so the number and the toggle cannot disagree. */
 function paint(session: WidgetSession, context: TrackedTimeContext): void {
   const view = session.elements;
   const model = session.model;
   if (view === undefined || model === undefined) return;
-  const { nowMs } = context;
-  const task = formatTrackedClock(
-    model.taskBaseMs + extraSince(model, model.taskOpenStartsMs, nowMs),
+  const task = formatTrackedDuration(
+    model.taskBaseMs + extraSince(model, model.taskOpenStartsMs, context.nowMs),
   );
-  const day = formatTrackedClock(model.dayBaseMs + extraSince(model, model.dayOpenStartsMs, nowMs));
-  const [hours = '0', minutes = '00'] = task.split(':');
-  writeText(view.hours, hours);
-  writeText(view.minutes, minutes);
-  writeText(view.day, day);
-  // The buttons read as bare digits, so the accessible name carries the number as well as what it
-  // counts; the tooltip stays the short phrase a pointer wants.
+  writeText(view.task, railNumber(task));
+  // The button reads as a bare number, so the accessible name carries what it counts as well; the
+  // tooltip stays the short phrase a pointer wants.
   writeAttribute(view.task, 'aria-label', `${TASK_TITLE}, ${task}`);
-  writeAttribute(view.day, 'aria-label', `${DAY_TITLE}, ${day}`);
   writeClass(session.options.host, 'is-tracking', model.openSinceMs !== undefined);
   paintToggle(session, view, model, context);
-}
-
-function openCurrentTask(session: WidgetSession): void {
-  const target = session.model?.current?.target;
-  if (target !== undefined) session.options.openTask(target);
 }
 
 function toggleTracking(session: WidgetSession): void {
@@ -271,7 +258,7 @@ function openDays(session: WidgetSession, view: WidgetElements): void {
   }
   session.popover = showTrackedTasksPopover({
     owner: session.options.popoverOwner,
-    anchor: view.day,
+    anchor: view.task,
     boundary: session.options.boundary,
     days: () => session.model?.days ?? [],
     openExtraMs: (openStartsMs) =>
@@ -283,48 +270,43 @@ function openDays(session: WidgetSession, view: WidgetElements): void {
     openTask: session.options.openTask,
     onClose: (restoreFocus) => {
       session.popover = undefined;
-      writeAttribute(view.day, 'aria-expanded', 'false');
-      if (restoreFocus && view.day.isConnected) view.day.focus({ preventScroll: true });
+      writeAttribute(view.task, 'aria-expanded', 'false');
+      if (restoreFocus && view.task.isConnected) view.task.focus({ preventScroll: true });
     },
   });
-  writeAttribute(view.day, 'aria-expanded', 'true');
+  writeAttribute(view.task, 'aria-expanded', 'true');
 }
 
+/**
+ * A control and a number, with a hairline under them so nothing of the widget touches Settings.
+ *
+ * The toggle is not a rail button: a mode button is the heaviest thing on the rail and this one
+ * speaks for a single task, so it carries only its own quiet class and never the filled active
+ * style. The number is the way into the tracked list, which is where a task is opened from.
+ */
 function createElements(session: WidgetSession): WidgetElements {
   const { host } = session.options;
   const toggle = host.createEl('button', {
-    cls: 'abyss-rail-btn abyss-rail-tracking-toggle',
+    cls: 'abyss-rail-tracking-toggle',
     attr: { type: 'button' },
   });
   const task = host.createEl('button', {
     cls: 'abyss-rail-tracking-task',
-    attr: { type: 'button', 'aria-label': TASK_TITLE, title: TASK_TITLE },
-  });
-  const hours = task.createSpan({ cls: 'abyss-rail-tracking-hours' });
-  task.createSpan({ cls: 'abyss-rail-tracking-colon', text: ':' });
-  const minutes = task.createSpan({ cls: 'abyss-rail-tracking-minutes' });
-  host.createSpan({ cls: 'abyss-rail-tracking-rule', attr: { 'aria-hidden': 'true' } });
-  const day = host.createEl('button', {
-    cls: 'abyss-rail-tracking-day',
     attr: {
       type: 'button',
-      'aria-label': DAY_TITLE,
-      title: DAY_TITLE,
+      'aria-label': TASK_TITLE,
+      title: TASK_TITLE,
       'aria-haspopup': 'dialog',
       'aria-expanded': 'false',
     },
   });
-  host.createSpan({ cls: 'abyss-rail-tracking-caption', text: TODAY_CAPTION });
-  const view: WidgetElements = { toggle, task, hours, minutes, day };
+  host.createSpan({ cls: 'abyss-rail-tracking-rule', attr: { 'aria-hidden': 'true' } });
+  const view: WidgetElements = { toggle, task };
   toggle.addEventListener('click', (event) => {
     event.stopPropagation();
     toggleTracking(session);
   });
   task.addEventListener('click', (event) => {
-    event.stopPropagation();
-    openCurrentTask(session);
-  });
-  day.addEventListener('click', (event) => {
     event.stopPropagation();
     openDays(session, view);
   });
@@ -387,12 +369,12 @@ function refresh(session: WidgetSession): void {
 }
 
 /**
- * The always-visible face of time tracking: what is running, how long today's task has taken, and
- * how long the whole day has.
+ * The always-visible face of time tracking: what is running and how long today's task has taken.
+ * The day's own total lives in the heading of the list the number opens.
  *
  * The seven-day window is regrouped only when the index reports a change or the local day rolls
- * over. A second adds the open timer's own elapsed time to the two totals already in hand and
- * writes to the DOM only when the displayed minute turns over, so an idle rail costs nothing.
+ * over. A second adds the open timer's own elapsed time to the total already in hand and writes to
+ * the DOM only when the displayed minute turns over, so an idle rail costs nothing.
  */
 export function mountRailTrackingWidget(
   options: RailTrackingWidgetOptions,

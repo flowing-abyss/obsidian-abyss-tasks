@@ -459,14 +459,22 @@ function placeEntry(placement: Placement, entry: TrackedEntry): void {
   if (!outside) spreadOverDays(placement, entry, { startMs, endMs });
 }
 
-/** Newest day first, rows by last activity descending, days without rows omitted, all frozen. */
+/**
+ * The running row first, then the rest by last activity descending. Starting a timer pauses the one
+ * before it, so both rows report activity at the same instant; the one that is running is what the
+ * reader just asked for, so it takes the top rather than the order the file happened to be read in.
+ */
+function newestRowFirst(left: MutableDayRow, right: MutableDayRow): number {
+  if (left.running !== right.running) return left.running ? -1 : 1;
+  return right.lastActivityMs - left.lastActivityMs;
+}
+
+/** Newest day first, running row then last activity descending, empty days omitted, all frozen. */
 function frozenDays(windows: readonly DayWindow[]): readonly TrackedDay[] {
   const days: TrackedDay[] = [];
   for (const day of windows) {
     if (day.rows.size === 0) continue;
-    const rows = [...day.rows.values()].sort(
-      (left, right) => right.lastActivityMs - left.lastActivityMs,
-    );
+    const rows = [...day.rows.values()].sort(newestRowFirst);
     for (const row of rows) {
       Object.freeze(row.openStartsMs);
       Object.freeze(row);
@@ -485,8 +493,8 @@ function frozenDays(windows: readonly DayWindow[]): readonly TrackedDay[] {
 }
 
 /**
- * Newest day first, rows by last activity descending, days without rows omitted. A day whose only
- * row is an open timer that has earned nothing yet still counts as a day with a row.
+ * Newest day first, the running row then last activity descending, days without rows omitted. A day
+ * whose only row is an open timer that has earned nothing yet still counts as a day with a row.
  */
 export function groupTrackedDays(
   entries: readonly TrackedEntry[],

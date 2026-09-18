@@ -1,5 +1,6 @@
 import { setIcon } from 'obsidian';
 import {
+  formatTrackedDurationWithSeconds,
   localDayStartMs,
   type TaskNodeRef,
   type TrackedDay,
@@ -8,7 +9,7 @@ import {
 import { openAnchoredPopover, type AnchoredPopover } from '../anchoredPopover';
 import { writeText } from '../guardedDomWrites';
 import { runAsyncAction } from '../runAsyncAction';
-import { formatDayHeading, formatTrackedClock, type TrackedTimeContext } from './formatTracked';
+import { formatDayHeading, formatTrackedDuration, type TrackedTimeContext } from './formatTracked';
 import type { TrackingActions } from './trackingActions';
 
 export interface TrackedTasksPopoverOptions {
@@ -80,6 +81,16 @@ function rowMs(row: TrackedDayRow, pass: RenderPass): number {
 
 function dayMs(day: TrackedDay, pass: RenderPass): number {
   return day.totalMs + pass.extraMs(day.openStartsMs);
+}
+
+/**
+ * The running row spells out its seconds, because a reader opened this list to be told the timer is
+ * really moving. Every other number, the day headings among them, stays at the minute the rest of
+ * the plugin reports, so a heading and the rail cannot read as two different clocks.
+ */
+function rowLabel(row: TrackedDayRow, pass: RenderPass): string {
+  const ms = rowMs(row, pass);
+  return row.running ? formatTrackedDurationWithSeconds(ms) : formatTrackedDuration(ms);
 }
 
 function close(session: PopoverSession, restoreFocus?: boolean): void {
@@ -192,11 +203,14 @@ function renderRow(
   open.addEventListener('click', (event) => {
     event.stopPropagation();
     session.options.openTask(row.entryOfRecord.target);
-    close(session, false);
+    // The list is how a reader moves between tracked tasks, so it outlives the task it opened and
+    // hands the keyboard back to the row that was just used rather than to whatever the inspector
+    // focused.
+    open.focus({ preventScroll: true });
   });
   const clock = rowEl.createSpan({
     cls: 'abyss-tracked-row-clock',
-    text: formatTrackedClock(rowMs(row, pass)),
+    text: rowLabel(row, pass),
   });
   if (running) session.live.push({ row, clock, day: section.day, dayTotal: section.total });
 }
@@ -218,7 +232,7 @@ function renderDay(session: PopoverSession, day: TrackedDay, pass: RenderPass): 
   });
   const total = header.createSpan({
     cls: 'abyss-tracked-day-total',
-    text: formatTrackedClock(dayMs(day, pass)),
+    text: formatTrackedDuration(dayMs(day, pass)),
   });
   const rows = sectionEl.createDiv({ cls: 'abyss-tracked-day-rows' });
   rows.hidden = !open;
@@ -267,8 +281,8 @@ function tick(session: PopoverSession): void {
   if (session.closed || session.live.length === 0) return;
   const pass = renderPass(session);
   for (const live of session.live) {
-    writeText(live.clock, formatTrackedClock(rowMs(live.row, pass)));
-    writeText(live.dayTotal, formatTrackedClock(dayMs(live.day, pass)));
+    writeText(live.clock, rowLabel(live.row, pass));
+    writeText(live.dayTotal, formatTrackedDuration(dayMs(live.day, pass)));
   }
 }
 
@@ -297,6 +311,9 @@ export function showTrackedTasksPopover(
       preferred: 'right-end',
       cls: 'abyss-time-tracking-popover abyss-time-tracking-popover--tasks',
       attr: { role: 'dialog', 'aria-label': 'Tracked tasks' },
+      // Opening a task from a row hands the inspector the keyboard, and that is this list's own
+      // doing, so it stays open. A pointer down outside it and Escape still dismiss it.
+      dismissOnOutsideFocus: false,
       onClose: onShellClose,
     }),
     expanded: new Set<number>(),

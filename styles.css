@@ -10073,29 +10073,61 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 }
 
 /*
- * The rail widget stacks the live total under the control that starts and pauses it. That control
- * is an ordinary rail button, composed as `abyss-rail-btn abyss-rail-tracking-toggle`, so the
- * widget itself carries only its own column layout and the numeric font that stops the digits
- * shifting as the seconds turn over.
+ * The rail widget is a control with one number under it, quiet enough that the mode buttons above
+ * still lead the rail. It stays muted until a timer runs, when the whole column takes the accent,
+ * and its own bottom padding is what keeps the hairline off the Settings button below.
  */
 .abyss-rail-tracking {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 1px;
-  min-height: 36px;
-  font-size: var(--font-ui-smaller);
+  gap: 2px;
+  padding-bottom: 8px;
+  color: var(--text-muted);
+
+  /*
+   * A whole day on one task reads `23h 59m`, which at 11px is wider than the 48px rail even with
+   * the thin space the label is written with, so the number takes the size that fits the rail it
+   * lives on rather than one that would spill over its border.
+   */
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
 }
 
 /*
- * Both totals read as numbers first, so their buttons carry no chrome of their own and take the
- * widget's colour. The container is named again to outrank Obsidian's own button colour.
+ * The control is not a mode button: it carries no fill and no border, only the hover background
+ * every quiet control on the rail shares, inside a hit area a pointer can still find.
  */
-.abyss-rail-tracking :is(.abyss-rail-tracking-task, .abyss-rail-tracking-day) {
-  padding: 0 2px;
+.abyss-rail-tracking .abyss-rail-tracking-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.abyss-rail-tracking-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+
+/*
+ * The number reads as a number first, so its button carries no chrome of its own and takes the
+ * widget's colour. It gives up the theme's input height as well, because a button as tall as an
+ * input would put a band of dead space between the control above it and the hairline below.
+ */
+.abyss-rail-tracking .abyss-rail-tracking-task {
+  height: auto;
+  min-height: 0;
+  padding: 1px 2px;
   border: none;
   border-radius: var(--radius-s);
   background: transparent;
@@ -10105,25 +10137,27 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   cursor: pointer;
 }
 
-.abyss-rail-tracking :is(.abyss-rail-tracking-task, .abyss-rail-tracking-day):hover {
+.abyss-rail-tracking .abyss-rail-tracking-toggle:hover,
+.abyss-rail-tracking .abyss-rail-tracking-task:hover {
   background: var(--background-modifier-hover);
 }
 
-/* Paused, the current task steps back and the day total leads. */
-.abyss-rail-tracking:not(.is-tracking) .abyss-rail-tracking-task {
-  color: var(--text-muted);
-}
-
-.abyss-rail-tracking-rule {
-  width: 22px;
-  height: 1px;
-  background: var(--background-modifier-border);
-}
-
-.abyss-rail-tracking-caption {
+/* Nothing left to resume, so the control says so by weight rather than by disappearing. */
+.abyss-rail-tracking .abyss-rail-tracking-toggle:disabled {
   color: var(--text-faint);
-  font-size: 9px;
-  letter-spacing: 0.03em;
+  cursor: default;
+}
+
+.abyss-rail-tracking .abyss-rail-tracking-toggle:disabled:hover {
+  background: transparent;
+}
+
+/* The 6px plus the column's own gap is the 8px that keeps the hairline off the number above it. */
+.abyss-rail-tracking-rule {
+  width: 20px;
+  height: 1px;
+  margin-top: 6px;
+  background: var(--background-modifier-border);
 }
 
 /* Accent while a timer runs, warning once it has run long enough to look forgotten. */
@@ -10153,32 +10187,6 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 .abyss-time-row.is-stale,
 .abyss-rail-tracking.is-stale {
   color: var(--text-warning, var(--color-orange));
-}
-
-/*
- * Only the separator blinks, so the widget reads as a live clock without reflowing every second.
- * Two jump-none steps hold each end of the fade for half of the one-second cycle, which keeps the
- * keyframe block on the keyword selectors the rest of this stylesheet uses.
- */
-.abyss-rail-tracking-colon {
-  animation: abyss-tracking-colon-blink 1s steps(2, jump-none) infinite;
-}
-
-@keyframes abyss-tracking-colon-blink {
-  from {
-    opacity: 1;
-  }
-
-  to {
-    opacity: 0.25;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .abyss-rail-tracking-colon {
-    animation: none;
-    opacity: 1;
-  }
 }
 
 /*

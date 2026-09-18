@@ -190,12 +190,20 @@ function toggle(host: HTMLElement): HTMLButtonElement {
   return query(host, 'button.abyss-rail-tracking-toggle', 'Missing the tracking toggle');
 }
 
-function taskClock(host: HTMLElement): HTMLButtonElement {
+function taskTotal(host: HTMLElement): HTMLButtonElement {
   return query(host, 'button.abyss-rail-tracking-task', 'Missing the current task total');
 }
 
-function dayClock(host: HTMLElement): HTMLButtonElement {
-  return query(host, 'button.abyss-rail-tracking-day', 'Missing the day total');
+/** The rail is 48px wide, so its one number binds its units with a thin space. */
+const THIN = '\u2009';
+
+function dayHeadings(layout: HTMLElement): Array<[string, string]> {
+  return [
+    ...layout.querySelectorAll('.abyss-time-tracking-popover--tasks .abyss-tracked-day-header'),
+  ].map((header) => [
+    header.querySelector('.abyss-tracked-day-name')?.textContent ?? '',
+    header.querySelector('.abyss-tracked-day-total')?.textContent ?? '',
+  ]);
 }
 
 const EMPTY_VAULT = '- [ ] Nothing tracked\n';
@@ -234,33 +242,42 @@ describe('rail tracking widget', () => {
 
     expect(host.hidden).toBe(false);
     expect(host.classList.contains('is-tracking')).toBe(false);
-    expect(taskClock(host).textContent).toBe('0:00');
-    expect(dayClock(host).textContent).toBe('0:00');
-    expect(query(host, '.abyss-rail-tracking-caption', 'Missing the caption').textContent).toBe(
-      'TODAY',
-    );
+    expect(taskTotal(host).textContent).toBe('0m');
     expect(toggle(host).disabled).toBe(false);
     expect(toggle(host).title).toBe('Resume Write report');
     expect(toggle(host).getAttribute('aria-label')).toBe('Resume Write report');
-    expect(taskClock(host).title).toBe('Tracked on this task today');
-    expect(dayClock(host).title).toBe('Tracked today');
+    expect(taskTotal(host).title).toBe('Tracked on this task today');
     // A screen reader hears the number, not only what the number is about.
-    expect(taskClock(host).getAttribute('aria-label')).toBe('Tracked on this task today, 0:00');
-    expect(dayClock(host).getAttribute('aria-label')).toBe('Tracked today, 0:00');
+    expect(taskTotal(host).getAttribute('aria-label')).toBe('Tracked on this task today, 0m');
   });
 
-  it('counts the running task and the day, and rewrites only on the minute', async () => {
+  it('says one number and nothing a clock would say', async () => {
+    const { host } = await widgetFor(WORKING_WEEK);
+
+    // The day total moved into the list's own heading, and the caption and the blinking separator
+    // are gone, so the rail carries a control and a number and nothing else.
+    expect(host.querySelector('.abyss-rail-tracking-day')).toBeNull();
+    expect(host.querySelector('.abyss-rail-tracking-caption')).toBeNull();
+    expect(host.querySelector('.abyss-rail-tracking-colon')).toBeNull();
+    expect([...host.children].map((child) => child.className)).toEqual([
+      'abyss-rail-tracking-toggle',
+      'abyss-rail-tracking-task',
+      'abyss-rail-tracking-rule',
+    ]);
+    // Never the filled mode-button style: this control speaks for one task, not for a view.
+    expect(toggle(host).classList.contains('is-active')).toBe(false);
+    expect(toggle(host).classList.contains('abyss-rail-btn')).toBe(false);
+  });
+
+  it('counts the running task, and rewrites only on the minute', async () => {
     const harness = await widgetFor(WORKING_WEEK);
     const { host } = harness;
 
     expect(host.classList.contains('is-tracking')).toBe(true);
-    expect(toggle(host).classList.contains('is-active')).toBe(true);
+    expect(toggle(host).classList.contains('is-active')).toBe(false);
     expect(toggle(host).title).toBe('Pause Write report');
-    expect(taskClock(host).textContent).toBe('1:47');
-    expect(dayClock(host).textContent).toBe('5:12');
-    expect(taskClock(host).getAttribute('aria-label')).toBe('Tracked on this task today, 1:47');
-    expect(dayClock(host).getAttribute('aria-label')).toBe('Tracked today, 5:12');
-    expect(host.querySelector('.abyss-rail-tracking-colon')).not.toBeNull();
+    expect(taskTotal(host).textContent).toBe(`1h${THIN}47m`);
+    expect(taskTotal(host).getAttribute('aria-label')).toBe('Tracked on this task today, 1h 47m');
 
     const observer = new MutationObserver(() => {});
     observer.observe(host, {
@@ -275,14 +292,12 @@ describe('rail tracking widget', () => {
         harness.clock.tick();
       }
       expect(observer.takeRecords()).toEqual([]);
-      expect(taskClock(host).textContent).toBe('1:47');
-      expect(dayClock(host).textContent).toBe('5:12');
+      expect(taskTotal(host).textContent).toBe(`1h${THIN}47m`);
 
       harness.advance(SECOND);
       harness.clock.tick();
 
-      expect(taskClock(host).textContent).toBe('1:48');
-      expect(dayClock(host).textContent).toBe('5:13');
+      expect(taskTotal(host).textContent).toBe(`1h${THIN}48m`);
       expect(observer.takeRecords().length).toBeGreaterThan(0);
     } finally {
       observer.disconnect();
@@ -298,20 +313,40 @@ describe('rail tracking widget', () => {
     '',
   ].join('\n');
 
-  it('adds every open timer to the day while only one of them is the task', async () => {
+  it('speaks for the current task while the day keeps every open timer', async () => {
     const harness = await widgetFor(TWO_RUNNING);
     const { host } = harness;
 
-    // The resume target is the newest open timer, so the task reads its half hour alone.
-    expect(taskClock(host).textContent).toBe('0:30');
-    expect(dayClock(host).textContent).toBe('1:30');
+    // The resume target is the newest open timer, so the rail reads its half hour alone while the
+    // day the list heads up carries both.
+    expect(taskTotal(host).textContent).toBe('30m');
+    taskTotal(host).click();
+    // The list has the room the rail has not, so its own numbers keep the ordinary space.
+    expect(dayHeadings(harness.layout)).toEqual([['Today', '1h 30m']]);
 
     harness.advance(2 * MINUTE);
     harness.clock.tick();
 
     // Two minutes on the task, four on the day, because both timers kept counting.
-    expect(taskClock(host).textContent).toBe('0:32');
-    expect(dayClock(host).textContent).toBe('1:34');
+    expect(taskTotal(host).textContent).toBe('32m');
+    expect(dayHeadings(harness.layout)).toEqual([['Today', '1h 34m']]);
+  });
+
+  it('opens and closes the tracked list from the number', async () => {
+    const harness = await widgetFor(WORKING_WEEK);
+    const number = taskTotal(harness.host);
+    expect(number.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(number.getAttribute('aria-expanded')).toBe('false');
+
+    number.click();
+
+    expect(harness.layout.querySelector('.abyss-time-tracking-popover--tasks')).not.toBeNull();
+    expect(number.getAttribute('aria-expanded')).toBe('true');
+
+    number.click();
+
+    expect(harness.layout.querySelector('.abyss-time-tracking-popover--tasks')).toBeNull();
+    expect(number.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('pauses the running task from the rail', async () => {
@@ -323,7 +358,7 @@ describe('rail tracking widget', () => {
     expect(await harness.read()).toContain(`  - 2026-09-18T12:18:32+03:00 → ${NOW_ATOM}\n`);
     expect(harness.host.classList.contains('is-tracking')).toBe(false);
     expect(toggle(harness.host).title).toBe('Resume Write report');
-    expect(taskClock(harness.host).textContent).toBe('1:47');
+    expect(taskTotal(harness.host).textContent).toBe(`1h${THIN}47m`);
     expect(harness.reported).toEqual([]);
   });
 
@@ -361,16 +396,14 @@ describe('rail tracking widget', () => {
       ].join('\n'),
     );
 
-    expect(taskClock(harness.host).textContent).toBe('1:00');
-    expect(dayClock(harness.host).textContent).toBe('1:30');
+    expect(taskTotal(harness.host).textContent).toBe('1h');
     // 2026-09-19T00:00:00+03:00 is nine hours, fifty-four minutes and twenty-eight seconds away.
     expect(harness.clock.delays()).toEqual([9 * HOUR + 54 * MINUTE + 28 * SECOND]);
 
     harness.advance(9 * HOUR + 54 * MINUTE + 28 * SECOND + MINUTE);
     harness.clock.fireTimeouts();
 
-    expect(taskClock(harness.host).textContent).toBe('0:01');
-    expect(dayClock(harness.host).textContent).toBe('0:01');
+    expect(taskTotal(harness.host).textContent).toBe('1m');
   });
 
   it('questions a timer that has been running for half a day', async () => {
@@ -424,7 +457,7 @@ describe('rail tracking widget', () => {
 
   it('leaves the widget alone when another file changes', async () => {
     const harness = await widgetFor(WORKING_WEEK, { 'notes.md': '\n- [ ] Unrelated\n' });
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
     const row = query(harness.layout, '.abyss-tracked-row', 'Missing a row');
     const observer = new MutationObserver(() => {});
     observer.observe(harness.host, {

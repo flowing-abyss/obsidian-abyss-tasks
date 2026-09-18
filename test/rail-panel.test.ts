@@ -2,7 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RailPanel } from '../src/panels/RailPanel';
 import type { PanelNavigationActions } from '../src/views/panelNavigation';
-import { expectDefined, freshContainer, methodOf } from './helpers';
+import {
+  cssDeclarationsFor,
+  expectDefined,
+  freshContainer,
+  loadPluginStyles,
+  methodOf,
+} from './helpers';
+
+const css = await loadPluginStyles();
 
 describe('RailPanel', () => {
   function navigationActions(): PanelNavigationActions {
@@ -410,5 +418,18 @@ describe('RailPanel', () => {
     expect(panel['el'].querySelectorAll('.abyss-rail-tracking')).toHaveLength(1);
 
     panel.destroy();
+  });
+
+  it('keeps the tracking widget off the Settings button', () => {
+    // The widget sits directly above Settings, so the space that keeps them apart is its own: the
+    // column's 2px rhythm plus the rule's margin is the 8px above the hairline, and the widget's
+    // own bottom padding is the 8px below it.
+    const widget = cssDeclarationsFor(css, '.abyss-rail-tracking');
+    expect(widget).toContain('gap: 2px');
+    expect(widget).toContain('padding-bottom: 8px');
+    const rule = cssDeclarationsFor(css, '.abyss-rail-tracking-rule');
+    expect(rule).toContain('margin-top: 6px');
+    expect(rule).toContain('width: 20px');
+    expect(rule).toContain('height: 1px');
   });
 });

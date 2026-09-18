@@ -50,20 +50,6 @@ function pad2(value: number): string {
   return value < 10 ? `0${value}` : String(value);
 }
 
-/**
- * Elapsed time that can be counted. A total is arithmetic over instants a note can hand out, so a
- * missing or infinite one reads as no time at all rather than reaching a branded constructor that
- * rejects it.
- */
-function countableMs(ms: number): number {
-  return Number.isFinite(ms) ? Math.max(0, ms) : 0;
-}
-
-/** Part-minutes have not been earned yet, so every total floors to whole minutes. */
-function wholeMinutes(ms: number): number {
-  return Math.floor(countableMs(ms) / MS_PER_MINUTE);
-}
-
 /** The local wall clock of an instant, read as if the wall clock itself were UTC. */
 function wallMs(epochMs: number, offsetAt: OffsetAt): number {
   return epochMs + offsetAt(epochMs) * MS_PER_MINUTE;
@@ -81,12 +67,6 @@ function calendarLabel(dayStartMs: number, offsetAt: OffsetAt, weekday: boolean)
   const value = new Date(wallMs(dayStartMs, offsetAt));
   const date = `${value.getUTCDate()} ${MONTHS[value.getUTCMonth()] as string}`;
   return weekday ? `${WEEKDAYS[value.getUTCDay()] as string} ${date}` : date;
-}
-
-/** Elapsed time as a compact clock, for the places a badge has room for digits only. */
-export function formatTrackedClock(ms: number): string {
-  const minutes = wholeMinutes(ms);
-  return `${Math.floor(minutes / 60)}:${pad2(minutes % 60)}`;
 }
 
 /** `Today`, `Yesterday`, or the weekday and calendar date of an older local day. */

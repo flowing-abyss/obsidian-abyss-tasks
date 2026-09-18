@@ -7,7 +7,6 @@ import {
 import {
   formatDayHeading,
   formatSessionClockRange,
-  formatTrackedClock,
   formatTrackedDuration,
   staleTrackingQuestion,
 } from '../src/ui/timeTracking/formatTracked';
@@ -74,19 +73,6 @@ describe('formatTrackedDuration', () => {
   it('reads an uncountable total as no time instead of rejecting it', () => {
     expect(formatTrackedDuration(Number.NaN)).toBe('0m');
     expect(formatTrackedDuration(Number.POSITIVE_INFINITY)).toBe('0m');
-    expect(formatTrackedClock(Number.NaN)).toBe('0:00');
-  });
-});
-
-describe('formatTrackedClock', () => {
-  it.each([
-    [0, '0:00'],
-    [59_999, '0:00'],
-    [107 * MINUTE, '1:47'],
-    [725 * MINUTE, '12:05'],
-    [HOUR, '1:00'],
-  ])('formats %i ms as %s', (ms, expected) => {
-    expect(formatTrackedClock(ms)).toBe(expected);
   });
 });
 

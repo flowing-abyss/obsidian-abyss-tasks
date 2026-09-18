@@ -25,6 +25,8 @@ const OFFSET_MINUTES = 180;
 const NOW_MS = Date.UTC(2026, 8, 18, 11, 5, 32);
 const NOW_ATOM = '2026-09-18T14:05:32+03:00';
 const SECOND = 1000;
+/** The rail binds its units with a thin space; the list, which has room, does not. */
+const THIN = '\u2009';
 
 const cleanups: Array<() => void> = [];
 
@@ -124,12 +126,8 @@ function toggle(host: HTMLElement): HTMLButtonElement {
   return query(host, 'button.abyss-rail-tracking-toggle', 'Missing the tracking toggle');
 }
 
-function taskClock(host: HTMLElement): HTMLButtonElement {
+function taskTotal(host: HTMLElement): HTMLButtonElement {
   return query(host, 'button.abyss-rail-tracking-task', 'Missing the current task total');
-}
-
-function dayClock(host: HTMLElement): HTMLButtonElement {
-  return query(host, 'button.abyss-rail-tracking-day', 'Missing the day total');
 }
 
 function popover(layout: HTMLElement): HTMLElement | null {
@@ -164,10 +162,14 @@ function rowsOf(section: HTMLElement): Array<[string, string, string]> {
   ]);
 }
 
-/** A `h:mm` clock back as minutes, so a sum of rows can be compared with its heading. */
-function clockMinutes(clock: string): number {
-  const [hours = '0', minutes = '0'] = clock.split(':');
-  return Number(hours) * 60 + Number(minutes);
+/** A `1h 47m` or `1h 47m 12s` label back as seconds, so rows can be summed against a heading. */
+function labelSeconds(label: string): number {
+  const units: Record<string, number> = { h: 3600, m: 60, s: 1 };
+  let total = 0;
+  for (const match of label.matchAll(/(\d{1,4})([hms])/gu)) {
+    total += Number(match[1] ?? 0) * (units[match[2] ?? ''] ?? 0);
+  }
+  return total;
 }
 
 /** Nothing at all today, so resuming is the only thing that can put a row on today. */
@@ -196,47 +198,58 @@ describe('tracked tasks popover', () => {
   it('opens the last seven days with today expanded', async () => {
     const harness = await widgetFor(WORKING_WEEK);
 
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
 
-    expect(dayClock(harness.host).getAttribute('aria-expanded')).toBe('true');
+    expect(taskTotal(harness.host).getAttribute('aria-expanded')).toBe('true');
     expect(dayHeadings(harness.layout)).toEqual([
-      ['Today', '5:12', 'true'],
-      ['Yesterday', '6:30', 'false'],
-      ['Wed 16 Sep', '4:15', 'false'],
+      ['Today', '5h 12m', 'true'],
+      ['Yesterday', '6h 30m', 'false'],
+      ['Wed 16 Sep', '4h 15m', 'false'],
     ]);
+    // Only the running row spells out its seconds, which is what proves the timer is moving.
     expect(rowsOf(daySection(harness.layout, 'Today'))).toEqual([
-      ['Write report', '', '1:47'],
-      ['Email cleanup', '', '1:20'],
-      ['Review PR', '', '2:05'],
+      ['Write report', '', '1h 47m 0s'],
+      ['Email cleanup', '', '1h 20m'],
+      ['Review PR', '', '2h 5m'],
     ]);
   });
 
   it('adds every row of a day up to the number in its heading', async () => {
     const harness = await widgetFor(WORKING_WEEK);
 
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
 
     for (const [name, total] of dayHeadings(harness.layout)) {
       const rows = rowsOf(daySection(harness.layout, name));
-      expect(rows.reduce((sum, row) => sum + clockMinutes(row[2]), 0)).toBe(clockMinutes(total));
+      const sum = rows.reduce((total_, row) => total_ + labelSeconds(row[2]), 0);
+      // A heading has no seconds of its own, so the rows are compared at the minute they share.
+      expect(Math.floor(sum / 60)).toBe(labelSeconds(total) / 60);
     }
-    expect(dayHeadings(harness.layout)[0]?.[1]).toBe(dayClock(harness.host).textContent);
   });
 
-  it('keeps the running row level with the widget while the seconds pass', async () => {
+  it('ticks the running row by the second while its heading keeps to minutes', async () => {
     const harness = await widgetFor(WORKING_WEEK);
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
 
-    harness.advance(60 * SECOND);
+    harness.advance(SECOND);
     harness.clock.tick();
 
-    expect(rowsOf(daySection(harness.layout, 'Today'))[0]?.[2]).toBe('1:48');
-    expect(dayHeadings(harness.layout)[0]?.[1]).toBe(dayClock(harness.host).textContent);
+    expect(rowsOf(daySection(harness.layout, 'Today'))[0]?.[2]).toBe('1h 47m 1s');
+    expect(dayHeadings(harness.layout)[0]?.[1]).toBe('5h 12m');
+    // The rail counts in minutes, so the seconds live in the list a reader opened on purpose.
+    expect(taskTotal(harness.host).textContent).toBe(`1h${THIN}47m`);
+
+    harness.advance(59 * SECOND);
+    harness.clock.tick();
+
+    expect(rowsOf(daySection(harness.layout, 'Today'))[0]?.[2]).toBe('1h 48m 0s');
+    expect(dayHeadings(harness.layout)[0]?.[1]).toBe('5h 13m');
+    expect(taskTotal(harness.host).textContent).toBe(`1h${THIN}48m`);
   });
 
   it('opens today the instant a timer starts and stays level with the widget', async () => {
     const harness = await widgetFor(YESTERDAY_ONLY);
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
     expect(dayHeadings(harness.layout).map(([name]) => name)).toEqual(['Yesterday']);
 
     // The entry is stamped at this very instant, so it has earned nothing at all yet.
@@ -244,23 +257,22 @@ describe('tracked tasks popover', () => {
     await flushMicrotasks();
 
     expect(dayHeadings(harness.layout)).toEqual([
-      ['Today', '0:00', 'true'],
-      ['Yesterday', '6:30', 'false'],
+      ['Today', '0m', 'true'],
+      ['Yesterday', '6h 30m', 'false'],
     ]);
     const today = daySection(harness.layout, 'Today');
-    expect(rowsOf(today)).toEqual([['Write report', '', '0:00']]);
+    expect(rowsOf(today)).toEqual([['Write report', '', '0s']]);
     expect(
       query(today, '.abyss-tracked-row-toggle', 'Missing the row pause').getAttribute('aria-label'),
     ).toBe('Pause Write report');
-    expect(rowsOf(today)[0]?.[2]).toBe(taskClock(harness.host).textContent);
-    expect(dayHeadings(harness.layout)[0]?.[1]).toBe(dayClock(harness.host).textContent);
+    expect(taskTotal(harness.host).textContent).toBe('0m');
 
     harness.advance(60 * SECOND);
     harness.clock.tick();
 
-    expect(rowsOf(daySection(harness.layout, 'Today'))).toEqual([['Write report', '', '0:01']]);
-    expect(taskClock(harness.host).textContent).toBe('0:01');
-    expect(dayHeadings(harness.layout)[0]?.[1]).toBe(dayClock(harness.host).textContent);
+    expect(rowsOf(daySection(harness.layout, 'Today'))).toEqual([['Write report', '', '1m 0s']]);
+    expect(taskTotal(harness.host).textContent).toBe('1m');
+    expect(dayHeadings(harness.layout)[0]?.[1]).toBe('1m');
   });
 
   it('keeps two running rows level with the day they share', async () => {
@@ -273,25 +285,24 @@ describe('tracked tasks popover', () => {
         '',
       ].join('\n'),
     );
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
 
     harness.advance(60 * SECOND);
     harness.clock.tick();
 
     const rows = rowsOf(daySection(harness.layout, 'Today'));
     expect(rows.map(([name, , clock]) => [name, clock])).toEqual([
-      ['Write report', '1:01'],
-      ['Review PR', '0:31'],
+      ['Write report', '1h 1m 0s'],
+      ['Review PR', '31m 0s'],
     ]);
-    expect(rows.reduce((sum, row) => sum + clockMinutes(row[2]), 0)).toBe(
-      clockMinutes(expectDefined(dayHeadings(harness.layout)[0])[1]),
+    expect(Math.floor(rows.reduce((sum, row) => sum + labelSeconds(row[2]), 0) / 60)).toBe(
+      labelSeconds(expectDefined(dayHeadings(harness.layout)[0])[1]) / 60,
     );
-    expect(dayHeadings(harness.layout)[0]?.[1]).toBe(dayClock(harness.host).textContent);
   });
 
   it('lays every row out as control, title cell, clock, parent title or not', async () => {
     const harness = await widgetFor(WORKING_WEEK);
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
     query<HTMLButtonElement>(
       daySection(harness.layout, 'Yesterday'),
       '.abyss-tracked-day-header',
@@ -326,7 +337,7 @@ describe('tracked tasks popover', () => {
 
   it('expands a past day and names the parent of a sub-task', async () => {
     const harness = await widgetFor(WORKING_WEEK);
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
     const yesterday = daySection(harness.layout, 'Yesterday');
     expect(
       query<HTMLElement>(yesterday, '.abyss-tracked-day-rows', 'Missing the rows').hidden,
@@ -342,12 +353,12 @@ describe('tracked tasks popover', () => {
         'aria-expanded',
       ),
     ).toBe('true');
-    expect(rowsOf(yesterday)).toEqual([['Yesterday pass', 'Older', '6:30']]);
+    expect(rowsOf(yesterday)).toEqual([['Yesterday pass', 'Older', '6h 30m']]);
   });
 
   it('moves the timer to the task whose play is pressed', async () => {
     const harness = await widgetFor(WORKING_WEEK);
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
     const rows = [
       ...daySection(harness.layout, 'Today').querySelectorAll<HTMLElement>('.abyss-tracked-row'),
     ];
@@ -372,6 +383,12 @@ describe('tracked tasks popover', () => {
     expect(markdown).toContain(`  - ${NOW_ATOM} →\n`);
     expect(toggle(harness.host).title).toBe('Pause Review PR');
     expect(harness.reported).toEqual([]);
+    // The task that is running is the task the list is about, so it takes the top of its day.
+    expect(rowsOf(daySection(harness.layout, 'Today')).map(([title]) => title)).toEqual([
+      'Review PR',
+      'Write report',
+      'Email cleanup',
+    ]);
   });
 
   it('shows no play on a finished task', async () => {
@@ -385,7 +402,7 @@ describe('tracked tasks popover', () => {
       ].join('\n'),
     );
 
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
     const rows = [
       ...daySection(harness.layout, 'Today').querySelectorAll<HTMLElement>('.abyss-tracked-row'),
     ];
@@ -413,7 +430,7 @@ describe('tracked tasks popover', () => {
 
   it('takes the keyboard into the list and hands it back on Escape', async () => {
     const harness = await widgetFor(WORKING_WEEK);
-    const day = dayClock(harness.host);
+    const day = taskTotal(harness.host);
     day.focus();
     day.click();
 
@@ -435,29 +452,45 @@ describe('tracked tasks popover', () => {
     expect(activeDocument.activeElement).toBe(day);
   });
 
-  it('opens a task from its title and closes behind it', async () => {
+  it('opens a task from its title and stays open on that row', async () => {
     const harness = await widgetFor(WORKING_WEEK);
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
 
-    query<HTMLButtonElement>(
+    const title = query<HTMLButtonElement>(
       daySection(harness.layout, 'Today'),
       '.abyss-tracked-row-open',
       'Missing the row title',
-    ).click();
+    );
+    title.click();
 
+    // Opening a task is how a reader moves through this list, so the list survives it and the
+    // keyboard stays on the row that was just opened.
     expect(harness.opened).toHaveLength(1);
-    expect(popover(harness.layout)).toBeNull();
-    expect(dayClock(harness.host).getAttribute('aria-expanded')).toBe('false');
+    expect(popover(harness.layout)).not.toBeNull();
+    expect(taskTotal(harness.host).getAttribute('aria-expanded')).toBe('true');
+    expect(activeDocument.activeElement).toBe(title);
+  });
+
+  it('stays open when the task it opened takes the focus', async () => {
+    const harness = await widgetFor(WORKING_WEEK);
+    taskTotal(harness.host).click();
+    const inspector = harness.layout.createEl('button', { text: 'Inspector' });
+
+    // The inspector the click opened takes the keyboard a moment later. That is this list's own
+    // doing, so it is not the dismissal an outside focus usually is.
+    inspector.focus();
+
+    expect(popover(harness.layout)).not.toBeNull();
   });
 
   it('closes on an outside pointer down and on Escape', async () => {
     const harness = await widgetFor(WORKING_WEEK);
 
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
     activeDocument.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     expect(popover(harness.layout)).toBeNull();
 
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
     expect(popover(harness.layout)).not.toBeNull();
     activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(popover(harness.layout)).toBeNull();
@@ -465,7 +498,7 @@ describe('tracked tasks popover', () => {
 
   it('keeps the keyboard on the row it was on after a rebuild', async () => {
     const harness = await widgetFor(WORKING_WEEK);
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
     const rows = [
       ...daySection(harness.layout, 'Today').querySelectorAll<HTMLElement>('.abyss-tracked-row'),
     ];
@@ -492,7 +525,7 @@ describe('tracked tasks popover', () => {
 
   it('finds the focused control again when it carries a state class', async () => {
     const harness = await widgetFor(WORKING_WEEK);
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
     const open = query<HTMLButtonElement>(
       daySection(harness.layout, 'Today'),
       '.abyss-tracked-row-open',
@@ -516,7 +549,7 @@ describe('tracked tasks popover', () => {
 
   it('keeps the days a reader opened across an index change', async () => {
     const harness = await widgetFor(WORKING_WEEK);
-    dayClock(harness.host).click();
+    taskTotal(harness.host).click();
     query<HTMLButtonElement>(
       daySection(harness.layout, 'Yesterday'),
       '.abyss-tracked-day-header',

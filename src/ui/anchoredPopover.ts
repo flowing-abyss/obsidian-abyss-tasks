@@ -9,6 +9,12 @@ export interface AnchoredPopoverOptions {
   /** Classes beyond the shared `abyss-popover abyss-popover-anchored` pair. */
   readonly cls: string;
   readonly attr?: Record<string, string>;
+  /**
+   * Whether focus landing outside dismisses the surface, which it does unless said otherwise. A
+   * popover whose own controls hand the keyboard to another surface has to say no here, because
+   * that focus is the popover's own doing rather than a reader leaving it.
+   */
+  readonly dismissOnOutsideFocus?: boolean;
   /** Called once, after the element has left the document. */
   readonly onClose: (restoreFocus: boolean) => void;
 }
@@ -123,14 +129,15 @@ function listen(state: PopoverState): () => void {
     event.stopPropagation();
     close(state, true);
   };
+  const onOutsideFocus = state.options.dismissOnOutsideFocus ?? true;
   ownerDocument.addEventListener('pointerdown', outside, true);
-  ownerDocument.addEventListener('focusin', outside, true);
+  if (onOutsideFocus) ownerDocument.addEventListener('focusin', outside, true);
   ownerDocument.addEventListener('keydown', keydown, true);
   ownerDocument.addEventListener('scroll', reposition, true);
   ownerWindow?.addEventListener('resize', reposition);
   return () => {
     ownerDocument.removeEventListener('pointerdown', outside, true);
-    ownerDocument.removeEventListener('focusin', outside, true);
+    if (onOutsideFocus) ownerDocument.removeEventListener('focusin', outside, true);
     ownerDocument.removeEventListener('keydown', keydown, true);
     ownerDocument.removeEventListener('scroll', reposition, true);
     ownerWindow?.removeEventListener('resize', reposition);
@@ -141,8 +148,8 @@ function listen(state: PopoverState): () => void {
  * The shell every anchored list popover shares: the element, where it sits, and when it goes away.
  *
  * It owns the placement against the boundary, the `--abyss-pop-*` lengths the stylesheet reads, and
- * the four ways a popover is dismissed. What goes inside it, and what a rebuild has to preserve, is
- * the caller's business.
+ * the ways a popover is dismissed. What goes inside it, and what a rebuild has to preserve, is the
+ * caller's business.
  */
 export function openAnchoredPopover(options: AnchoredPopoverOptions): AnchoredPopover {
   const state: PopoverState = {

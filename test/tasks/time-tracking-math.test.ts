@@ -238,6 +238,26 @@ describe('groupTrackedDays', () => {
     ]);
   });
 
+  it('puts the running row above the one that stopped at the same instant', () => {
+    // Pressing play on a task pauses the one before it, so both rows report activity at this very
+    // instant. The task that is running is what the list is about, so it takes the top of its day.
+    const days = groupTrackedDays(
+      [
+        tracked(
+          'Write report',
+          1,
+          closed('2026-09-18T09:00:00+03:00', '2026-09-18T15:00:00+03:00'),
+        ),
+        tracked('Review PR', 5, running('2026-09-18T15:00:00+03:00')),
+      ],
+      { nowMs: now, offsetAt: plus3, days: 7 },
+    );
+    expect(days[0]?.rows.map((row) => [row.entryOfRecord.title, row.running])).toEqual([
+      ['Review PR', true],
+      ['Write report', false],
+    ]);
+  });
+
   it('picks the resume target by most recent activity', () => {
     expect(resumeTarget(entries)?.title).toBe('Write report');
     expect(resumeTarget(entries.filter((item) => item.entry.state !== 'running'))?.title).toBe(
