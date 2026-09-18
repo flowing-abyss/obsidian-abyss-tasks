@@ -6,10 +6,9 @@ import {
 } from '../src/tasks';
 import {
   formatDayHeading,
-  formatSessionRange,
+  formatSessionClockRange,
   formatTrackedClock,
   formatTrackedDuration,
-  formatTrackedTicker,
   staleTrackingQuestion,
 } from '../src/ui/timeTracking/formatTracked';
 
@@ -76,7 +75,6 @@ describe('formatTrackedDuration', () => {
     expect(formatTrackedDuration(Number.NaN)).toBe('0m');
     expect(formatTrackedDuration(Number.POSITIVE_INFINITY)).toBe('0m');
     expect(formatTrackedClock(Number.NaN)).toBe('0:00');
-    expect(formatTrackedTicker(Number.NaN)).toBe('0:00:00');
   });
 });
 
@@ -89,18 +87,6 @@ describe('formatTrackedClock', () => {
     [HOUR, '1:00'],
   ])('formats %i ms as %s', (ms, expected) => {
     expect(formatTrackedClock(ms)).toBe(expected);
-  });
-});
-
-describe('formatTrackedTicker', () => {
-  it.each([
-    [0, '0:00:00'],
-    [727_000, '0:12:07'],
-    [999, '0:00:00'],
-    [HOUR + MINUTE + 1000, '1:01:01'],
-    [25 * HOUR, '25:00:00'],
-  ])('formats %i ms as %s', (ms, expected) => {
-    expect(formatTrackedTicker(ms)).toBe(expected);
   });
 });
 
@@ -162,42 +148,38 @@ describe('formatDayHeading', () => {
   });
 });
 
-describe('formatSessionRange', () => {
+/** The day now lives in the group heading above the row, so a range carries wall times only. */
+describe('formatSessionClockRange', () => {
   const now = '2026-09-20T16:00:00+03:00';
 
-  it('shows a closed session inside today as two wall times', () => {
+  it('shows a closed session as two wall times', () => {
     const entry = closed('2026-09-20T09:12:00+03:00', '2026-09-20T10:32:00+03:00');
-    expect(formatSessionRange(entry, context(now))).toBe('Today 09:12 → 10:32');
+    expect(formatSessionClockRange(entry, context(now))).toBe('09:12 → 10:32');
   });
 
-  it('shows a closed session from the day before', () => {
-    const entry = closed('2026-09-19T18:40:00+03:00', '2026-09-19T18:55:00+03:00');
-    expect(formatSessionRange(entry, context(now))).toBe('Yesterday 18:40 → 18:55');
-  });
-
-  it('shows an older session with its calendar day', () => {
+  it('names no day on a session older than yesterday', () => {
     const entry = closed('2026-09-16T09:12:00+03:00', '2026-09-16T10:32:00+03:00');
-    expect(formatSessionRange(entry, context(now))).toBe('Wed 16 Sep 09:12 → 10:32');
+    expect(formatSessionClockRange(entry, context(now))).toBe('09:12 → 10:32');
   });
 
   it('leaves a running session open', () => {
-    expect(formatSessionRange(running('2026-09-20T14:05:00+03:00'), context(now))).toBe(
-      'Today 14:05 →',
+    expect(formatSessionClockRange(running('2026-09-20T14:05:00+03:00'), context(now))).toBe(
+      '14:05 →',
     );
   });
 
-  it('repeats the day when a session crosses midnight', () => {
+  it('shows both wall times of a session that crossed midnight', () => {
     const entry = closed('2026-09-19T23:30:00+03:00', '2026-09-20T00:15:00+03:00');
-    expect(formatSessionRange(entry, context(now))).toBe('Yesterday 23:30 → Today 00:15');
+    expect(formatSessionClockRange(entry, context(now))).toBe('23:30 → 00:15');
   });
 
   it('renders the wall times through the supplied offset', () => {
     const entry = closed('2026-09-20T09:12:00+03:00', '2026-09-20T10:32:00+03:00');
-    expect(formatSessionRange(entry, context(now, utc))).toBe('Today 06:12 → 07:32');
+    expect(formatSessionClockRange(entry, context(now, utc))).toBe('06:12 → 07:32');
   });
 
   it('has no range to show for a broken entry', () => {
-    expect(formatSessionRange(broken, context(now))).toBe('');
+    expect(formatSessionClockRange(broken, context(now))).toBe('');
   });
 });
 

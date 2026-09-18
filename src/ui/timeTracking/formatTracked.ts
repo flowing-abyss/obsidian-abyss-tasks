@@ -89,13 +89,6 @@ export function formatTrackedClock(ms: number): string {
   return `${Math.floor(minutes / 60)}:${pad2(minutes % 60)}`;
 }
 
-/** Elapsed time down to the second, for the surface that repaints every second. */
-export function formatTrackedTicker(ms: number): string {
-  const seconds = Math.floor(countableMs(ms) / 1000);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return `${Math.floor(seconds / 3600)}:${pad2(minutes)}:${pad2(seconds % 60)}`;
-}
-
 /** `Today`, `Yesterday`, or the weekday and calendar date of an older local day. */
 export function formatDayHeading(dayStartMs: number, context: TrackedTimeContext): string {
   const todayStartMs = localDayStartMs(context.nowMs, context.offsetAt);
@@ -105,24 +98,23 @@ export function formatDayHeading(dayStartMs: number, context: TrackedTimeContext
 }
 
 /**
- * One session as a day and a wall-clock span. The day is repeated on the end only when the
- * session crossed a midnight, and a running session simply stays open after the arrow.
+ * One session as a wall-clock span, `09:12 → 10:32`. A running session stays open after the arrow,
+ * and a session that crossed a midnight still shows two times only, because the day it belongs to
+ * is the heading it is listed under.
  *
  * A broken entry carries no usable instants and so has no span, which this reports as the empty
  * string. Callers must branch on `entry.state === 'broken'` and render their own explanation
  * rather than hand a reader a blank line.
  */
-export function formatSessionRange(entry: TimeEntrySnapshot, context: TrackedTimeContext): string {
+export function formatSessionClockRange(
+  entry: TimeEntrySnapshot,
+  context: TrackedTimeContext,
+): string {
   const { offsetAt } = context;
   if (entry.state === 'broken' || entry.startMs === undefined) return '';
-  const startDayMs = localDayStartMs(entry.startMs, offsetAt);
-  const opening = `${formatDayHeading(startDayMs, context)} ${clockLabel(entry.startMs, offsetAt)}`;
+  const opening = clockLabel(entry.startMs, offsetAt);
   if (entry.state === 'running' || entry.endMs === undefined) return `${opening} →`;
-  const endDayMs = localDayStartMs(entry.endMs, offsetAt);
-  const endClock = clockLabel(entry.endMs, offsetAt);
-  const ending =
-    endDayMs === startDayMs ? endClock : `${formatDayHeading(endDayMs, context)} ${endClock}`;
-  return `${opening} → ${ending}`;
+  return `${opening} → ${clockLabel(entry.endMs, offsetAt)}`;
 }
 
 /** The question a long-running timer earns, or nothing while it is still plausibly real. */

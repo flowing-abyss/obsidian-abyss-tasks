@@ -52,7 +52,24 @@ function affects(event: TaskIndexEvent, path: string): boolean {
 
 const ELSEWHERE = '- [ ] Elsewhere\n';
 
-async function inspector(markdown = SESSIONS, selected = 'Current') {
+/** A tick the test drives, because a real interval survives a later switch to fake timers. */
+function fakeTickWindow(): { readonly win: Window; tick(): void } {
+  let scheduled: (() => void) | undefined;
+  return {
+    win: {
+      setInterval: (callback: () => void) => {
+        scheduled = callback;
+        return 1;
+      },
+      clearInterval: () => {
+        scheduled = undefined;
+      },
+    } as unknown as Window,
+    tick: () => scheduled?.(),
+  };
+}
+
+async function inspector(markdown = SESSIONS, selected = 'Current', win: Window = window) {
   // The mock metadata parser uses -0 for a root list beginning on line zero.
   const content = `\n${markdown}`;
   const elsewhere = `\n${ELSEWHERE}`;
@@ -80,7 +97,7 @@ async function inspector(markdown = SESSIONS, selected = 'Current') {
   const ticker = new TrackingTicker({
     queries: stack.tasks.queries,
     now: () => nowMs,
-    win: window,
+    win,
   });
   const panel = new RightPanel(
     state,
@@ -173,14 +190,31 @@ function rowShape(row: HTMLElement) {
   return {
     duration: text(row, '.abyss-time-row-duration'),
     range: text(row, '.abyss-time-row-range'),
-    node: text(row, '.abyss-time-row-node'),
-    tail: text(row, '.abyss-time-row-tail'),
+    note: text(row, '.abyss-time-row-note'),
   };
+}
+
+/** The list as a reader scans it: day headings in place, each row as its three columns. */
+function listed(el: HTMLElement): string[][] {
+  return [...popover(el).children].map((child) =>
+    child.classList.contains('abyss-time-day')
+      ? ['day', child.textContent]
+      : [
+          'row',
+          text(child as HTMLElement, '.abyss-time-row-range'),
+          text(child as HTMLElement, '.abyss-time-row-note'),
+          text(child as HTMLElement, '.abyss-time-row-duration'),
+        ],
+  );
+}
+
+function headings(el: HTMLElement): string[] {
+  return [...popover(el).querySelectorAll('.abyss-time-day')].map((heading) => heading.textContent);
 }
 
 /** Reads a rendered row duration back into the whole minutes the badge total floors to. */
 function minutesOf(duration: string): number {
-  const parts = /^\+(?:(\d+)h)?(?: ?(\d+)m)?(?: ?(\d+)s)?$/u.exec(duration);
+  const parts = /^(?:(\d+)h)?(?: ?(\d+)m)?(?: ?(\d+)s)?$/u.exec(duration);
   const [, hours, minutes, seconds] = parts ?? [];
   if (hours === undefined && minutes === undefined && seconds === undefined) {
     throw new Error(`Unreadable duration ${duration}`);
@@ -189,23 +223,19 @@ function minutesOf(duration: string): number {
 }
 
 describe('tracked sessions popover', () => {
-  it('lists every session in the subtree, newest first', async () => {
+  it('groups every session under the day it started, newest first', async () => {
     const harness = await inspector();
     open(harness.el);
 
-    const listed = rows(harness.el).map(rowShape);
-
-    expect(listed).toEqual([
-      { duration: '+1h 35m 32s', range: 'Today 12:30 →', node: '', tail: '' },
-      { duration: '+15m', range: 'Today 11:00 → 11:15', node: 'Child', tail: '' },
-      { duration: '+1h 20m', range: 'Today 09:12 → 10:32', node: '', tail: '' },
-      {
-        duration: '+15m',
-        range: 'Yesterday 18:40 → 18:55',
-        node: '',
-        tail: 'call with Bob',
-      },
-      { duration: '', range: '2026-09-16 14:05 → 13:20', node: '', tail: '' },
+    expect(listed(harness.el)).toEqual([
+      ['day', 'Today'],
+      ['row', '12:30 →', '', '1h 35m 32s'],
+      ['row', '11:00 → 11:15', 'Child', '15m'],
+      ['row', '09:12 → 10:32', '', '1h 20m'],
+      ['day', 'Yesterday'],
+      ['row', '18:40 → 18:55', 'call with Bob', '15m'],
+      ['day', 'Needs attention'],
+      ['row', '', '2026-09-16 14:05 → 13:20', ''],
     ]);
     expect(rows(harness.el)[0]?.classList.contains('is-tracking')).toBe(true);
     expect(rows(harness.el)[4]?.querySelector('.abyss-time-row-warning')).not.toBeNull();
@@ -216,14 +246,96 @@ describe('tracked sessions popover', () => {
     ).toBe('true');
   });
 
+  it('files a session that crossed midnight under the day it began', async () => {
+    const harness = await inspector(
+      ['- [ ] Current', '  - 2026-09-17T23:30:00+03:00 → 2026-09-18T00:15:00+03:00', ''].join('\n'),
+    );
+    open(harness.el);
+
+    expect(listed(harness.el)).toEqual([
+      ['day', 'Yesterday'],
+      ['row', '23:30 → 00:15', '', '45m'],
+    ]);
+  });
+
+  it('keeps a note and the sub-task it belongs to in the one note cell', async () => {
+    const harness = await inspector(
+      [
+        '- [ ] Current',
+        '  - [ ] Child',
+        '    - 2026-09-18T11:00:00+03:00 → 2026-09-18T11:15:00+03:00 pairing',
+        '',
+      ].join('\n'),
+    );
+    open(harness.el);
+    const note = expectDefined(
+      rows(harness.el)[0]?.querySelector('.abyss-time-row-note'),
+      'Missing the note cell',
+    );
+
+    expect([...note.children].map((span) => `${span.className} ${span.textContent}`)).toEqual([
+      'abyss-time-row-tail pairing',
+      'abyss-time-row-node Child',
+    ]);
+  });
+
+  it('gives every row the same columns, with the remove slot always reserved', async () => {
+    const harness = await inspector();
+    open(harness.el);
+
+    const cells = rows(harness.el).map((row) => [...row.children].map((cell) => cell.className));
+
+    expect(cells.slice(0, 4)).toEqual(
+      Array.from({ length: 4 }, () => [
+        'abyss-time-row-range',
+        'abyss-time-row-note',
+        'abyss-time-row-duration',
+        'abyss-time-row-remove',
+      ]),
+    );
+    expect(cells[4]).toEqual([
+      'abyss-time-row-warning',
+      'abyss-time-row-note',
+      'abyss-time-row-remove',
+    ]);
+  });
+
+  it('ticks the running row alone, down to the second', async () => {
+    const clock = fakeTickWindow();
+    const harness = await inspector(SESSIONS, 'Current', clock.win);
+    open(harness.el);
+    const running = expectDefined(rows(harness.el)[0], 'Missing the running row');
+    const observer = new MutationObserver(() => {});
+    observer.observe(popover(harness.el), { characterData: true, childList: true, subtree: true });
+    try {
+      harness.advance(1000);
+      clock.tick();
+
+      expect(rowShape(running).duration).toBe('1h 35m 33s');
+      const written = observer.takeRecords().map((record) => {
+        const { target } = record;
+        return (target.instanceOf(HTMLElement) ? target : target.parentElement)?.className;
+      });
+      expect(written.length).toBeGreaterThan(0);
+      expect([...new Set(written)]).toEqual(['abyss-time-row-duration']);
+
+      // The same second again writes nothing at all, which is what the guarded writes buy.
+      clock.tick();
+
+      expect(observer.takeRecords()).toEqual([]);
+    } finally {
+      observer.disconnect();
+    }
+  });
+
   it('adds every valid row up to the badge total', async () => {
     const harness = await inspector();
     open(harness.el);
-    const listed = rows(harness.el)
+    const counted = rows(harness.el)
       .map(rowShape)
       .filter((row) => row.duration !== '');
 
-    const total = listed.reduce((sum, row) => sum + minutesOf(row.duration), 0);
+    const total = counted.reduce((sum, row) => sum + minutesOf(row.duration), 0);
 
     expect(total).toBe(205);
     expect(harness.el.querySelector('.abyss-time-badge-body')?.textContent).toBe('3h 25m');
@@ -253,7 +365,8 @@ describe('tracked sessions popover', () => {
       'Missing undo row',
     );
     expect(undoRow.textContent).toContain('Removed');
-    expect([...popover(harness.el).children].indexOf(undoRow)).toBe(2);
+    // The row sat third under the `Today` heading, so its undo takes that same slot.
+    expect([...popover(harness.el).children].indexOf(undoRow)).toBe(3);
 
     expectDefined(undoRow.querySelector<HTMLButtonElement>('button')).click();
     await flushMicrotasks();
@@ -384,12 +497,12 @@ describe('tracked sessions popover', () => {
   it('relabels the days once the clock passes local midnight', async () => {
     const harness = await inspector();
     open(harness.el);
-    expect(rowShape(expectDefined(rows(harness.el)[1])).range).toBe('Today 11:00 → 11:15');
+    expect(headings(harness.el)).toEqual(['Today', 'Yesterday', 'Needs attention']);
 
     harness.advance(10 * 3_600_000);
     await harness.touchOtherFile();
 
-    expect(rowShape(expectDefined(rows(harness.el)[1])).range).toBe('Yesterday 11:00 → 11:15');
+    expect(headings(harness.el)).toEqual(['Yesterday', 'Thu 17 Sep', 'Needs attention']);
   });
 
   it('keeps the scroll position across a rebuild', async () => {
@@ -499,14 +612,15 @@ describe('tracked sessions popover', () => {
     ).click();
     await flushMicrotasks();
     const second = expectDefined(rows(harness.el)[2], 'Missing the second row to remove');
-    expect(rowShape(second).range).toBe('Yesterday 18:40 → 18:55');
+    expect(rowShape(second).range).toBe('18:40 → 18:55');
 
     expectDefined(second.querySelector<HTMLButtonElement>('.abyss-time-row-remove')).click();
     await flushMicrotasks();
 
     const undoRows = popover(harness.el).querySelectorAll('.abyss-undo-row');
     expect(undoRows).toHaveLength(1);
-    expect([...popover(harness.el).children].indexOf(expectDefined(undoRows[0]))).toBe(2);
+    // The only row of `Yesterday` went with it, so the slot the row held is now the broken group's.
+    expect([...popover(harness.el).children].indexOf(expectDefined(undoRows[0]))).toBe(4);
   });
 });
 

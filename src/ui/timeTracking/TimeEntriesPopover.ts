@@ -15,7 +15,8 @@ import { writeText } from '../guardedDomWrites';
 import { createInlineTaskUndo } from '../inlineTaskUndo';
 import { runAsyncAction } from '../runAsyncAction';
 import {
-  formatSessionRange,
+  formatDayHeading,
+  formatSessionClockRange,
   formatTrackedDuration,
   staleTrackingQuestion,
   type TrackedTimeContext,
@@ -62,7 +63,7 @@ interface SessionRow {
   readonly key: string;
   readonly entry: TimeEntrySnapshot;
   readonly parent: TaskNodeRef;
-  /** The descendant that owns the entry, muted beside the span, absent on the node's own. */
+  /** The descendant that owns the entry, named in the note cell, absent on the node's own. */
   readonly node?: string;
 }
 
@@ -90,6 +91,7 @@ interface PopoverSession {
 
 const POPOVER_SELECTOR = '.abyss-time-tracking-popover--sessions';
 const EMPTY_TEXT = 'No tracked time yet';
+const BROKEN_HEADING = 'Needs attention';
 const REMOVED_LABEL = 'Removed';
 const MISSING_ENTRY = '[abyss-tasks] The tracked session to remove is no longer in the note';
 
@@ -139,14 +141,14 @@ function newestFirst(left: SessionRow, right: SessionRow): number {
 function durationLabel(entry: TimeEntrySnapshot, nowMs: number): string {
   const elapsed = entryDurationMs(entry, nowMs);
   return entry.state === 'running'
-    ? `+${formatTrackedDurationWithSeconds(elapsed)}`
-    : `+${formatTrackedDuration(elapsed)}`;
+    ? formatTrackedDurationWithSeconds(elapsed)
+    : formatTrackedDuration(elapsed);
 }
 
 function rangeLabel(entry: TimeEntrySnapshot, context: TrackedTimeContext): string {
   return entry.state === 'broken'
     ? entryLineText(entry.originalMarkdown)
-    : formatSessionRange(entry, context);
+    : formatSessionClockRange(entry, context);
 }
 
 function close(session: PopoverSession, restoreFocus?: boolean): void {
@@ -191,22 +193,39 @@ async function removeSession(
   );
 }
 
-function renderLeading(
+/**
+ * The cells of one row, always in reading order: when the span is, what it was about, how long it
+ * took. A line the plugin could not read has no span and no total, so it puts the warning where the
+ * span would be and shows what the note actually holds.
+ */
+function renderCells(
   session: PopoverSession,
   rowEl: HTMLElement,
-  entry: TimeEntrySnapshot,
+  row: SessionRow,
+  context: TrackedTimeContext,
 ): void {
+  const { entry } = row;
   if (entry.state === 'broken') {
     const warning = rowEl.createSpan({
       cls: 'abyss-time-row-warning',
       attr: { 'aria-hidden': 'true' },
     });
     setIcon(warning, 'triangle-alert');
+    rowEl
+      .createDiv({ cls: 'abyss-time-row-note' })
+      .createSpan({ text: entryLineText(entry.originalMarkdown) });
     return;
   }
+  rowEl.createSpan({
+    cls: 'abyss-time-row-range',
+    text: formatSessionClockRange(entry, context),
+  });
+  const note = rowEl.createDiv({ cls: 'abyss-time-row-note' });
+  if (entry.tail !== undefined) note.createSpan({ cls: 'abyss-time-row-tail', text: entry.tail });
+  if (row.node !== undefined) note.createSpan({ cls: 'abyss-time-row-node', text: row.node });
   const duration = rowEl.createSpan({
     cls: 'abyss-time-row-duration',
-    text: durationLabel(entry, session.options.context().nowMs),
+    text: durationLabel(entry, context.nowMs),
   });
   if (entry.state === 'running') session.live.push({ entry, duration });
 }
@@ -215,12 +234,8 @@ function renderRow(session: PopoverSession, row: SessionRow, context: TrackedTim
   const { entry } = row;
   const running = entry.state === 'running';
   const rowEl = session.shell.element.createDiv({ cls: 'abyss-time-row' });
-  renderLeading(session, rowEl, entry);
-  const body = rowEl.createDiv({ cls: 'abyss-time-row-body' });
-  const line = body.createDiv({ cls: 'abyss-time-row-line' });
-  line.createSpan({ cls: 'abyss-time-row-range', text: rangeLabel(entry, context) });
-  if (row.node !== undefined) line.createSpan({ cls: 'abyss-time-row-node', text: row.node });
-  if (entry.tail !== undefined) body.createSpan({ cls: 'abyss-time-row-tail', text: entry.tail });
+  rowEl.toggleClass('is-broken', entry.state === 'broken');
+  renderCells(session, rowEl, row, context);
   const question =
     running && entry.startMs !== undefined
       ? staleTrackingQuestion(entry.startMs, context)
@@ -237,6 +252,33 @@ function renderRow(session: PopoverSession, row: SessionRow, context: TrackedTim
     event.stopPropagation();
     runAsyncAction(removeSession(session, row, rowEl), 'Could not remove a tracked session');
   });
+}
+
+/**
+ * The rows under the day they started in, newest day first, with the lines that carry no instant
+ * gathered under the last heading. The sort already put them in that order, so one pass is enough.
+ */
+function renderDays(
+  session: PopoverSession,
+  rows: readonly SessionRow[],
+  context: TrackedTimeContext,
+): void {
+  let openDayMs: number | undefined;
+  let opened = false;
+  for (const row of rows) {
+    const start = startMs(row);
+    const dayMs = start === undefined ? undefined : localDayStartMs(start, context.offsetAt);
+    if (!opened || dayMs !== openDayMs) {
+      openDayMs = dayMs;
+      opened = true;
+      // The day reads as an inspector section label, so the rows under it carry all the weight.
+      session.shell.element.createDiv({
+        cls: 'abyss-right-section-label abyss-time-day',
+        text: dayMs === undefined ? BROKEN_HEADING : formatDayHeading(dayMs, context),
+      });
+    }
+    renderRow(session, row, context);
+  }
 }
 
 function update(session: PopoverSession): void {
@@ -271,7 +313,7 @@ function update(session: PopoverSession): void {
   session.rendered = rendered;
   const rows = collectRows(node);
   if (rows.length === 0) element.createDiv({ cls: 'abyss-time-tracking-empty', text: EMPTY_TEXT });
-  for (const row of rows) renderRow(session, row, context);
+  renderDays(session, rows, context);
   session.undo.render(session.options.owner);
   element.scrollTop = scrollTop;
   session.shell.reposition();
@@ -284,7 +326,7 @@ function tick(session: PopoverSession): void {
 }
 
 /**
- * The sessions of one inspector selection, listed newest first.
+ * The sessions of one inspector selection, grouped under the day each one started in, newest first.
  *
  * The list is rebuilt only when the index reports a change; a tick repaints the running rows from
  * the entries already in hand. Every removal re-reads the selection first, so the line a click

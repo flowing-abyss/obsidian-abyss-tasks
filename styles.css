@@ -5624,7 +5624,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   --abyss-dependency-blocks: var(--color-blue, var(--text-accent));
 }
 
-.abyss-dep-badge.abyss-chip {
+/* The dependency and tracking badges are siblings in the chips row and carry the same weight. */
+:is(.abyss-dep-badge, .abyss-time-badge).abyss-chip {
   height: 24px;
   padding: 0;
   gap: 0;
@@ -5653,7 +5654,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   cursor: no-drop;
 }
 
-.abyss-dep-badge > button {
+:is(.abyss-dep-badge, .abyss-time-badge) > button {
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -9906,40 +9907,19 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 /* ---- Time tracking ---- */
 
 /*
- * The tracking badge is the dependency badge's sibling: one chip-sized control split into a body
- * that opens the sessions and a toggle that starts or pauses, so both live in a single 24px row.
+ * The tracking badge reads as one more chip in the row: the total is plain chip text, and the only
+ * control beside it is a glyph of the weight the dependency badge gives its own `+`. Its flat chip
+ * and bare buttons come from the shared rules next to that badge.
  */
-.abyss-time-badge.abyss-chip {
-  height: 24px;
-  padding: 0;
-  gap: 0;
-  border: 0;
-  background: transparent;
-}
-
-.abyss-time-badge > button {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  height: 24px;
-  padding: 3px 6px;
-  border: 0;
-  border-radius: inherit;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  box-shadow: none;
-}
-
 .abyss-time-badge > .abyss-time-badge-body {
   padding-inline: 8px 4px;
   font-variant-numeric: tabular-nums;
 }
 
-/* The seam keeps the two targets legible without splitting the control into two chips. */
+/* Quiet until it is reached for, and the colour of the badge itself once a timer is running. */
 .abyss-time-badge > .abyss-time-badge-toggle {
   padding-inline: 4px 8px;
-  box-shadow: inset 1px 0 0 var(--background-modifier-border);
+  color: var(--text-muted);
 }
 
 .abyss-time-badge > .abyss-time-badge-toggle svg {
@@ -9947,12 +9927,9 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   height: 13px;
 }
 
-.abyss-time-badge:hover {
-  background: var(--background-modifier-hover);
-}
-
-.abyss-time-badge > .abyss-time-badge-toggle:hover {
-  background: var(--background-modifier-active-hover);
+.abyss-time-badge:is(.is-tracking, .is-stale) > .abyss-time-badge-toggle,
+.abyss-time-badge > .abyss-time-badge-toggle:is(:hover, :focus-visible) {
+  color: inherit;
 }
 
 /*
@@ -9966,28 +9943,78 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   overflow-y: auto;
 }
 
+/* The day a session belongs to, in the voice the inspector uses for its own section labels. */
+.abyss-time-day {
+  padding: 2px 6px;
+  color: var(--text-faint);
+}
+
+.abyss-time-row + .abyss-time-day {
+  margin-top: 6px;
+}
+
+/*
+ * One grid per row with a fixed first track, so the arrow of every span sits on the same axis
+ * whatever the note beside it says, and the reserved remove slot never shifts the totals.
+ */
 .abyss-time-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 6.8em minmax(0, 1fr) auto 20px;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
+  gap: 8px;
+  min-height: 28px;
   padding: 4px 6px;
   border-radius: var(--radius-s);
   color: var(--text-normal);
+}
+
+/* A line that cannot be read has no span and no total, so the warning opens it instead. */
+.abyss-time-row.is-broken {
+  grid-template-columns: auto minmax(0, 1fr) 20px;
+}
+
+/* A 20px slot keeps the row at the 28px the rail's own list uses, with 4px above and below. */
+.abyss-time-row-remove {
+  width: 20px;
+  height: 20px;
 }
 
 .abyss-time-row:hover {
   background: var(--background-modifier-hover);
 }
 
-/* The leading slot is either the session total or, when the line cannot be read, the warning. */
-.abyss-time-row-duration,
-.abyss-time-row-warning {
-  flex: 0 0 auto;
+.abyss-time-row-range {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
+/* The total is what a reader scans down, so it is the one cell in the row's own colour. */
 .abyss-time-row-duration {
+  justify-self: end;
+  font-weight: var(--font-medium);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Every single-line text in this list gives up its end rather than its row. */
+.abyss-time-row-note,
+.abyss-time-tracking-empty {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/*
+ * The note and the sub-task a session sits under share one cell and truncate together, so a row
+ * that carries both ends in a single ellipsis rather than two competing ones.
+ */
+.abyss-time-row-note {
+  color: var(--text-faint);
+}
+
+.abyss-time-row-note > span + span {
+  margin-inline-start: 6px;
 }
 
 .abyss-time-row-warning {
@@ -9995,39 +10022,14 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   color: var(--text-warning, var(--color-orange));
 }
 
-/* The span and the sub-task share the first line; a session note wraps under them. */
-.abyss-time-row-body {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-width: 0;
+/* A live row takes the accent whole, so its span stops stepping back from its total. */
+.abyss-time-row:is(.is-tracking, .is-stale) .abyss-time-row-range {
+  color: inherit;
 }
 
-.abyss-time-row-line {
-  display: flex;
-  gap: 6px;
-  min-width: 0;
-}
-
-/* The span is the row, so the sub-task name beside it gives up its width first. */
-.abyss-time-row-range {
-  flex: 0 0 auto;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.abyss-time-row-node {
-  flex: 0 1 auto;
-}
-
-.abyss-time-row-node,
-.abyss-time-row-tail,
+.abyss-time-row.is-broken .abyss-time-row-note,
 .abyss-time-tracking-empty {
-  overflow: hidden;
   color: var(--text-muted);
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 .abyss-time-tracking-popover--sessions > .abyss-undo-row {
