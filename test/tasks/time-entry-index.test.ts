@@ -26,13 +26,32 @@ const RANGE_DAYS = 7;
 const MAX_DAY_KEYS = 400;
 const EPOCH_MS = Date.parse('1970-01-01T00:00:00Z');
 const FAR_FUTURE_MS = Date.parse('2100-01-01T00:00:00Z');
+/** A span wide enough to exceed a small bucket count and stay under a large one. */
+const WIDE_FROM_MS = Date.parse('2026-09-01T00:00:00Z');
+const WIDE_TO_MS = Date.parse('2026-10-01T00:00:00Z');
+const WIDE_DAYS = 30;
+const DISTANT_DAYS = 60;
+
+type DayBucket = Map<string, readonly TrackedEntry[]>;
 
 /**
- * The day buckets are private, so only their own map can show that a query skipped them. Reading
- * it keeps the guard against a range wider than the data a structural check instead of a timing one.
+ * The day buckets are private, so only their own maps can show that a query skipped them or that an
+ * update left another file alone. Reading them keeps both guarantees structural rather than timed.
  */
-function dayBuckets(index: TimeEntryIndex): Map<number, readonly TrackedEntry[]> {
-  return (index as unknown as { readonly byUtcDay: Map<number, readonly TrackedEntry[]> }).byUtcDay;
+function dayBuckets(index: TimeEntryIndex): Map<number, DayBucket> {
+  return (index as unknown as { readonly byUtcDay: Map<number, DayBucket> }).byUtcDay;
+}
+
+function dayKeyOf(day: string): number {
+  return Math.floor(Date.parse(`${day}T00:00:00Z`) / MS_PER_DAY);
+}
+
+function fileEntriesOn(
+  index: TimeEntryIndex,
+  day: string,
+  filePath: string,
+): readonly TrackedEntry[] {
+  return expectDefined(expectDefined(dayBuckets(index).get(dayKeyOf(day))).get(filePath));
 }
 
 function closedEntry(start: string, end: string, relativeLine: number): TimeEntrySnapshot {
@@ -115,6 +134,22 @@ function rangeLines(index: TimeEntryIndex): readonly number[] {
   return index
     .entriesOverlapping(RANGE_FROM_MS, RANGE_TO_MS)
     .map((tracked) => tracked.entry.relativeLine);
+}
+
+/** One closed entry on each of many days well outside the wide range, purely to fill buckets. */
+function distantRoot(dayCount: number): TaskSnapshot {
+  const firstMs = Date.parse('2027-01-01T08:00:00Z');
+  return task({
+    title: 'Distant',
+    source: { filePath: 'distant.md', line: 0 },
+    timeEntries: Array.from({ length: dayCount }, (_unused, offset) => ({
+      state: 'closed' as const,
+      startMs: firstMs + offset * MS_PER_DAY,
+      endMs: firstMs + offset * MS_PER_DAY + 3_600_000,
+      relativeLine: offset + 1,
+      originalMarkdown: `    - a distant entry ${offset}`,
+    })),
+  });
 }
 
 /** One closed entry far longer than the bucket cap, so the cap and its cleanup are observable. */
@@ -306,6 +341,66 @@ describe('time entry index', () => {
 
     expect(rangeLines(index)).toEqual([7, 1, 5, 2]);
     expect(lookups).toHaveBeenCalledTimes(RANGE_DAYS);
+  });
+
+  it('returns the same entries whether the range guard or the day stepping answers', () => {
+    const index = new TimeEntryIndex();
+    index.updateFile('range.md', [rangeFile()]);
+    const lookups = vi.spyOn(dayBuckets(index), 'get');
+
+    // Nine buckets against thirty requested days, so the guard reads the buckets it has.
+    expect(dayBuckets(index).size).toBeLessThan(WIDE_DAYS);
+    const guarded = index.entriesOverlapping(WIDE_FROM_MS, WIDE_TO_MS);
+    expect(lookups).not.toHaveBeenCalled();
+
+    // The same range and the same entries in it, but now more buckets than days asked for.
+    index.updateFile('distant.md', [distantRoot(DISTANT_DAYS)]);
+    expect(dayBuckets(index).size).toBeGreaterThan(WIDE_DAYS);
+    lookups.mockClear();
+    const stepped = index.entriesOverlapping(WIDE_FROM_MS, WIDE_TO_MS);
+
+    expect(lookups).toHaveBeenCalledTimes(WIDE_DAYS);
+    expect(stepped).toEqual(guarded);
+    expect(stepped.map((tracked) => tracked.entry.relativeLine)).toEqual([7, 3, 6, 1, 5, 2, 4]);
+  });
+
+  it('leaves the entries and the buckets of another file alone when one file is updated', () => {
+    const index = new TimeEntryIndex();
+    index.updateFile('b.md', [
+      task({
+        title: 'Other',
+        source: { filePath: 'b.md', line: 0 },
+        timeEntries: [
+          closedEntry('2026-09-17T12:00:00Z', '2026-09-17T13:00:00Z', 1),
+          closedEntry('2026-09-19T12:00:00Z', '2026-09-19T13:00:00Z', 2),
+        ],
+      }),
+    ]);
+    index.updateFile('a.md', [
+      task({
+        title: 'Root',
+        source: { filePath: 'a.md', line: 0 },
+        timeEntries: [closedEntry('2026-09-17T09:00:00Z', '2026-09-17T10:00:00Z', 1)],
+      }),
+    ]);
+    const sharedBucket = expectDefined(dayBuckets(index).get(dayKeyOf('2026-09-17')));
+    const soloBucket = expectDefined(dayBuckets(index).get(dayKeyOf('2026-09-19')));
+    const otherEntries = fileEntriesOn(index, '2026-09-17', 'b.md');
+
+    index.updateFile('a.md', [
+      task({
+        title: 'Root',
+        source: { filePath: 'a.md', line: 0 },
+        timeEntries: [closedEntry('2026-09-17T14:00:00Z', '2026-09-17T15:00:00Z', 1)],
+      }),
+    ]);
+
+    // Rewriting one file replaces only its own array in the day it shares, and never reads the day
+    // it does not touch at all.
+    expect(fileEntriesOn(index, '2026-09-17', 'b.md')).toBe(otherEntries);
+    expect(dayBuckets(index).get(dayKeyOf('2026-09-17'))).toBe(sharedBucket);
+    expect(dayBuckets(index).get(dayKeyOf('2026-09-19'))).toBe(soloBucket);
+    expect(rangeLines(index)).toEqual([1, 1, 2]);
   });
 
   it('orders entries that share one stamp by the entry line, whatever order they arrive in', () => {

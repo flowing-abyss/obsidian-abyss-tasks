@@ -134,17 +134,34 @@ function frozenTotal(total: FileCollection['total']): TrackedTotal {
   });
 }
 
+/** What one file puts into one epoch-UTC day, kept apart so removing it never rebuilds the day. */
+type DayBucket = Map<string, readonly TrackedEntry[]>;
+
+/** The days one file's closed entries cross, gathered before any of them reaches a shared bucket. */
+function bucketClosedSpan(span: ClosedSpan, byDay: Map<number, TrackedEntry[]>): void {
+  const firstKey = Math.floor(span.startMs / MS_PER_DAY);
+  // The range is half-open, so an entry ending exactly at midnight stops on the previous day.
+  const spannedKey = Math.floor((span.endMs - 1) / MS_PER_DAY);
+  const lastKey = Math.min(Math.max(firstKey, spannedKey), firstKey + MAX_DAY_KEYS - 1);
+  for (let dayKey = firstKey; dayKey <= lastKey; dayKey += 1) {
+    const entries = byDay.get(dayKey);
+    if (entries === undefined) byDay.set(dayKey, [span.tracked]);
+    else entries.push(span.tracked);
+  }
+}
+
 /**
  * The incremental read model behind `TimeTrackingQueryApi`.
  *
  * Entries are lifted out of the indexed snapshots once per file update and then only read.
- * Closed entries live in epoch-UTC day buckets, which makes a range query cost the days it
- * asks for rather than the vault; running entries stay in their own small set, so a ticking
- * consumer never walks the buckets. Returned arrays and entries are frozen and shared.
+ * Closed entries live in epoch-UTC day buckets keyed by file inside the day, which makes a range
+ * query cost the days it asks for rather than the vault and keeps an update on the size of the one
+ * file that changed; running entries stay in their own small set, so a ticking consumer never walks
+ * the buckets. Returned arrays and entries are frozen and shared.
  */
 export class TimeEntryIndex {
   private readonly byFile = new Map<string, FileEntries>();
-  private readonly byUtcDay = new Map<number, TrackedEntry[]>();
+  private readonly byUtcDay = new Map<number, DayBucket>();
   private readonly runningByFile = new Map<string, readonly TrackedEntry[]>();
   /** Rebuilt only when a file changes, so a ticking consumer can skip a render by reference. */
   private activeResult: readonly TrackedEntry[] | undefined;
@@ -154,12 +171,16 @@ export class TimeEntryIndex {
     this.removeFile(filePath);
     const collection = collectFile(filePath, roots);
     if (collection.closed.length === 0 && collection.running.length === 0) return;
-    const dayKeys = new Set<number>();
-    for (const span of collection.closed) this.bucketClosedSpan(span, dayKeys);
+    const byDay = new Map<number, TrackedEntry[]>();
+    for (const span of collection.closed) bucketClosedSpan(span, byDay);
+    this.installDays(filePath, byDay);
     if (collection.running.length > 0) {
       this.runningByFile.set(filePath, Object.freeze(collection.running));
     }
-    this.byFile.set(filePath, { dayKeys, total: frozenTotal(collection.total) });
+    this.byFile.set(filePath, {
+      dayKeys: new Set(byDay.keys()),
+      total: frozenTotal(collection.total),
+    });
   }
 
   removeFile(filePath: string): void {
@@ -214,9 +235,12 @@ export class TimeEntryIndex {
   private collectClosedInRange(found: Set<TrackedEntry>, fromMs: number, toMs: number): void {
     const firstKey = Math.floor(fromMs / MS_PER_DAY);
     const lastKey = Math.floor((toMs - 1) / MS_PER_DAY);
-    const collect = (bucket: readonly TrackedEntry[] | undefined): void => {
-      for (const tracked of bucket ?? EMPTY_ENTRIES) {
-        if (overlapsRange(tracked.entry, fromMs, toMs)) found.add(tracked);
+    const collect = (bucket: DayBucket | undefined): void => {
+      if (bucket === undefined) return;
+      for (const entries of bucket.values()) {
+        for (const tracked of entries) {
+          if (overlapsRange(tracked.entry, fromMs, toMs)) found.add(tracked);
+        }
       }
     };
     if (lastKey - firstKey > this.byUtcDay.size) {
@@ -236,24 +260,21 @@ export class TimeEntryIndex {
     }
   }
 
-  private bucketClosedSpan(span: ClosedSpan, dayKeys: Set<number>): void {
-    const firstKey = Math.floor(span.startMs / MS_PER_DAY);
-    // The range is half-open, so an entry ending exactly at midnight stops on the previous day.
-    const spannedKey = Math.floor((span.endMs - 1) / MS_PER_DAY);
-    const lastKey = Math.min(Math.max(firstKey, spannedKey), firstKey + MAX_DAY_KEYS - 1);
-    for (let dayKey = firstKey; dayKey <= lastKey; dayKey += 1) {
+  /** One frozen array per day and file, so placing these never copies another file's entries. */
+  private installDays(filePath: string, byDay: ReadonlyMap<number, TrackedEntry[]>): void {
+    for (const [dayKey, entries] of byDay) {
       const bucket = this.byUtcDay.get(dayKey);
-      if (bucket === undefined) this.byUtcDay.set(dayKey, [span.tracked]);
-      else bucket.push(span.tracked);
-      dayKeys.add(dayKey);
+      const frozen = Object.freeze(entries);
+      if (bucket === undefined) this.byUtcDay.set(dayKey, new Map([[filePath, frozen]]));
+      else bucket.set(filePath, frozen);
     }
   }
 
+  /** Only this file's own array leaves the day, so the files that share it are never rebuilt. */
   private dropFileFromDay(filePath: string, dayKey: number): void {
     const bucket = this.byUtcDay.get(dayKey);
     if (bucket === undefined) return;
-    const remaining = bucket.filter((tracked) => tracked.filePath !== filePath);
-    if (remaining.length > 0) this.byUtcDay.set(dayKey, remaining);
-    else this.byUtcDay.delete(dayKey);
+    bucket.delete(filePath);
+    if (bucket.size === 0) this.byUtcDay.delete(dayKey);
   }
 }

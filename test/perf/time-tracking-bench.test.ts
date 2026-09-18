@@ -38,6 +38,7 @@ const WINDOW_DAYS = 7;
 
 const MS_PER_DAY = 86_400_000;
 const MS_PER_MINUTE = 60_000;
+const MS_PER_SECOND = 1_000;
 /** 09:12:00 to 10:40:51, the canonical entry of the design spec. */
 const SESSION_MS = 88 * MS_PER_MINUTE + 51_000;
 const OFFSET_MINUTES = 180;
@@ -61,11 +62,15 @@ function atomAt(epochMs: number): string {
   return `${new Date(epochMs + OFFSET_MINUTES * MS_PER_MINUTE).toISOString().slice(0, 19)}${OFFSET_SUFFIX}`;
 }
 
-/** Spread over the whole window and over the day, so no two entries share a start by accident. */
+/**
+ * Spread over the whole window and backwards over the day, so no entry lands after `NOW_MS`. The
+ * two offsets repeat together every 1,200 tasks, so about sixteen tasks share each start at this
+ * size, which is the kind of tie a real vault has too rather than an artefact to avoid.
+ */
 function entryStartMs(taskIndex: number, entryIndex: number): number {
   const dayOffset = (taskIndex * 3 + entryIndex * 40) % SPREAD_DAYS;
   const minuteOffset = (taskIndex * 7 + entryIndex * 13) % 600;
-  return ANCHOR_MS - dayOffset * MS_PER_DAY + minuteOffset * MS_PER_MINUTE;
+  return ANCHOR_MS - dayOffset * MS_PER_DAY - minuteOffset * MS_PER_MINUTE;
 }
 
 function pushTaskLines(lines: string[], taskIndex: number, running: boolean): void {
@@ -113,6 +118,17 @@ function buildFiles(variant: Variant): Record<string, string> {
     files[`file-${fileIndex}.md`] = variantContent(buildFileContent(fileIndex), variant);
   }
   return files;
+}
+
+/**
+ * The same file with the first entry's end second moved. A byte-identical install returns before
+ * the index updates, so the install measurement has to alternate two contents to measure anything.
+ */
+function shiftedFileContent(content: string): string {
+  return content.replace(
+    atomAt(ANCHOR_MS + SESSION_MS),
+    atomAt(ANCHOR_MS + SESSION_MS + MS_PER_SECOND),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -241,23 +257,31 @@ function measureWindow(stack: Stack): WindowMetrics {
   const windowMs = medianMs(() => {
     stack.tasks.queries.entriesOverlapping(fromMs, toMs);
   }, QUERY_RUNS);
-  return {
-    windowMs,
-    windowCount: stack.tasks.queries.entriesOverlapping(fromMs, toMs).length,
-    entries: stack.tasks.queries.entriesOverlapping(fromMs, toMs),
-  };
+  const entries = stack.tasks.queries.entriesOverlapping(fromMs, toMs);
+  return { windowMs, windowCount: entries.length, entries };
 }
 
 /** A consumer asking for everything it has, which must not cost one step per calendar day. */
 function measureUnbounded(stack: Stack): { readonly ms: number; readonly count: number } {
   const fromMs = Date.UTC(1970, 0, 1);
   const toMs = Date.UTC(2100, 0, 1);
-  return {
-    ms: medianMs(() => {
-      stack.tasks.queries.entriesOverlapping(fromMs, toMs);
-    }, LIST_RUNS),
-    count: stack.tasks.queries.entriesOverlapping(fromMs, toMs).length,
-  };
+  const ms = medianMs(() => {
+    stack.tasks.queries.entriesOverlapping(fromMs, toMs);
+  }, LIST_RUNS);
+  return { ms, count: stack.tasks.queries.entriesOverlapping(fromMs, toMs).length };
+}
+
+/** Alternating contents, because a repeated identical install never reaches the read model. */
+function measureInstall(stack: Stack): number {
+  const original = buildFileContent(0);
+  const shifted = shiftedFileContent(original);
+  let run = 0;
+  const ms = medianMs(() => {
+    stack.index.installCommittedContent('file-0.md', run % 2 === 0 ? shifted : original);
+    run += 1;
+  }, INSTALL_RUNS);
+  // An even run count ends on the original, so every later measurement sees the built vault.
+  return ms;
 }
 
 /** The same unbounded shape with nothing to find, which isolates the walk from the result. */
@@ -269,6 +293,12 @@ function measureEmptyFarRange(stack: Stack): number {
   }, QUERY_RUNS);
 }
 
+/**
+ * The variants always run in this order and each holds its vault only for its own measurements, so
+ * the initialization rows carry whatever heap the previous variant left behind. The order is fixed
+ * rather than randomised so two runs stay comparable; read the rows against each other, not as
+ * absolute timings.
+ */
 async function runBenchmark(): Promise<TrackingMetrics> {
   const asComments = await measureBaseline('comments');
   const withoutEntries = await measureBaseline('stripped');
@@ -277,11 +307,7 @@ async function runBenchmark(): Promise<TrackingMetrics> {
   const taskCount = stack.index.list().length;
   const entryCount = countEntries(stack);
 
-  const content = buildFileContent(0);
-  const installOneFileMs = medianMs(() => {
-    stack.index.installCommittedContent('file-0.md', content);
-  }, INSTALL_RUNS);
-
+  const installOneFileMs = measureInstall(stack);
   const weekWindow = measureWindow(stack);
   const unbounded = measureUnbounded(stack);
   const emptyFarRangeMs = measureEmptyFarRange(stack);
@@ -378,8 +404,13 @@ describe('time tracking read model benchmark', () => {
       SPREAD_DAYS: 400,
       WINDOW_DAYS: 7,
     });
-    expect(buildFileContent(0).split('\n')[2]).toBe(
+    const content = buildFileContent(0);
+    expect(content.split('\n')[2]).toBe(
       '    - 2026-09-18T09:12:00+03:00 → 2026-09-18T10:40:51+03:00',
+    );
+    // Without a real difference the install row would time the unchanged early return instead.
+    expect(shiftedFileContent(content).split('\n')[2]).toBe(
+      '    - 2026-09-18T09:12:00+03:00 → 2026-09-18T10:40:52+03:00',
     );
   });
 
