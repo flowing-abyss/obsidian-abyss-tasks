@@ -5823,14 +5823,18 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-dep-badge > button:focus-visible,
+.abyss-time-badge > button:focus-visible,
 :is(.abyss-subtask-remove, .abyss-dep-remove, .abyss-dep-add):focus-visible,
 .abyss-undo-row button:focus-visible,
-.abyss-dep-search button:focus-visible {
+.abyss-dep-search button:focus-visible,
+.abyss-rail-tracking-toggle:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
 
-.abyss-dep-search {
+/* The anchored list popovers share one size and flow; only their contents differ. */
+.abyss-dep-search,
+.abyss-time-tracking-popover {
   display: flex;
   flex-direction: column;
   width: 19rem;
@@ -5842,7 +5846,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   font-size: var(--font-ui-small);
 }
 
-.abyss-dep-search > * {
+.abyss-dep-search > *,
+.abyss-time-tracking-popover > * {
   flex-shrink: 0;
 }
 
@@ -9922,28 +9927,10 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   background: var(--background-modifier-active-hover);
 }
 
-.abyss-time-badge > button:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: 2px;
-}
-
-/* The session list every tracking surface opens, sized like the dependency search popover. */
+/* The session list is the shared popover flow, plus the row rhythm and its own scroll. */
 .abyss-time-tracking-popover {
-  display: flex;
-  flex-direction: column;
   gap: 2px;
-  width: 19rem;
-  min-width: 0;
-  max-width: var(--abyss-pop-width, calc(100% - 16px));
-  max-height: var(--abyss-pop-height);
   overflow-y: auto;
-  box-sizing: border-box;
-  box-shadow: none;
-  font-size: var(--font-ui-small);
-}
-
-.abyss-time-tracking-popover > * {
-  flex-shrink: 0;
 }
 
 .abyss-time-row {
@@ -9960,42 +9947,22 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   background: var(--background-modifier-hover);
 }
 
-/* The rail widget carries the live total, so its digits must not shift as the seconds turn over. */
+/*
+ * The rail widget stacks the live total under the control that starts and pauses it. That control
+ * is an ordinary rail button, composed as `abyss-rail-btn abyss-rail-tracking-toggle`, so the
+ * widget itself carries only its own column layout and the numeric font that stops the digits
+ * shifting as the seconds turn over.
+ */
 .abyss-rail-tracking {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 1px;
-  width: 36px;
   min-height: 36px;
-  padding: 2px 0;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--icon-color);
   font-size: var(--font-ui-smaller);
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
-  cursor: pointer;
-  transition:
-    background 0.1s,
-    color 0.1s;
-}
-
-.abyss-rail-tracking:hover {
-  background: var(--background-modifier-hover);
-  color: var(--icon-color-active);
-}
-
-.abyss-rail-tracking:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: 2px;
-}
-
-.abyss-rail-tracking svg {
-  width: 18px;
-  height: 18px;
 }
 
 /* Accent while a timer runs, warning once it has run long enough to look forgotten. */

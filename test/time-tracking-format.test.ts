@@ -18,15 +18,9 @@ const utc: OffsetAt = () => 0;
 
 const at = (iso: string): number => Date.parse(iso);
 
-/**
- * `en-GB` is the one English locale whose short calendar label carries no comma, so the day
- * headings read as the sentence fragments the surfaces embed. The September abbreviation is
- * ICU's own (`Sept`), which is why the December cases pin the plain `Wed 16 Dec` shape.
- */
-const context = (nowIso: string, offsetAt: OffsetAt = plus3, locale = 'en-GB') => ({
+const context = (nowIso: string, offsetAt: OffsetAt = plus3) => ({
   nowMs: at(nowIso),
   offsetAt,
-  locale,
 });
 
 const closed = (start: string, end: string): TimeEntrySnapshot => ({
@@ -57,11 +51,11 @@ describe('formatTrackedDuration', () => {
     [59_999, '0m'],
     [MINUTE, '1m'],
     [15 * MINUTE, '15m'],
-    [80 * MINUTE, '1h 20m'],
+    [80 * MINUTE, '1h20m'],
     [HOUR, '1h'],
     [120 * MINUTE, '2h'],
     [HOUR + 59_999, '1h'],
-    [25 * HOUR + MINUTE, '25h 1m'],
+    [25 * HOUR + MINUTE, '25h1m'],
   ])('formats %i ms as %s', (ms, expected) => {
     expect(formatTrackedDuration(ms)).toBe(expected);
   });
@@ -107,10 +101,44 @@ describe('formatDayHeading', () => {
   });
 
   it('falls back to the weekday and calendar date', () => {
-    expect(formatDayHeading(at('2026-09-16T00:00:00+03:00'), context(now))).toBe('Wed 16 Sept');
+    expect(formatDayHeading(at('2026-09-16T00:00:00+03:00'), context(now))).toBe('Wed 16 Sep');
+  });
+
+  it('names every month in fixed English short form', () => {
+    const later = context('2027-03-01T12:00:00Z', utc);
     expect(
-      formatDayHeading(at('2026-12-16T00:00:00+03:00'), context('2026-12-20T16:00:00+03:00')),
-    ).toBe('Wed 16 Dec');
+      Array.from({ length: 12 }, (_, month) => formatDayHeading(Date.UTC(2026, month, 16), later)),
+    ).toEqual([
+      'Fri 16 Jan',
+      'Mon 16 Feb',
+      'Mon 16 Mar',
+      'Thu 16 Apr',
+      'Sat 16 May',
+      'Tue 16 Jun',
+      'Thu 16 Jul',
+      'Sun 16 Aug',
+      'Wed 16 Sep',
+      'Fri 16 Oct',
+      'Mon 16 Nov',
+      'Wed 16 Dec',
+    ]);
+  });
+
+  it('names every weekday in fixed English short form', () => {
+    const later = context('2027-03-01T12:00:00Z', utc);
+    expect(
+      Array.from({ length: 7 }, (_, index) =>
+        formatDayHeading(Date.UTC(2026, 7, 10 + index), later),
+      ),
+    ).toEqual([
+      'Mon 10 Aug',
+      'Tue 11 Aug',
+      'Wed 12 Aug',
+      'Thu 13 Aug',
+      'Fri 14 Aug',
+      'Sat 15 Aug',
+      'Sun 16 Aug',
+    ]);
   });
 
   it('reads the day through the supplied offset rather than the ambient zone', () => {
@@ -134,7 +162,7 @@ describe('formatSessionRange', () => {
 
   it('shows an older session with its calendar day', () => {
     const entry = closed('2026-09-16T09:12:00+03:00', '2026-09-16T10:32:00+03:00');
-    expect(formatSessionRange(entry, context(now))).toBe('Wed 16 Sept 09:12 → 10:32');
+    expect(formatSessionRange(entry, context(now))).toBe('Wed 16 Sep 09:12 → 10:32');
   });
 
   it('leaves a running session open', () => {
@@ -177,10 +205,10 @@ describe('staleTrackingQuestion', () => {
     ).toBe('Still tracking since yesterday at 14:05?');
   });
 
-  it('names an older day by its calendar date', () => {
+  it('names an older day by its calendar date, without the weekday', () => {
     expect(
       staleTrackingQuestion(at('2026-09-16T14:05:00+03:00'), context('2026-09-20T10:00:00+03:00')),
-    ).toBe('Still tracking since 16 Sept at 14:05?');
+    ).toBe('Still tracking since 16 Sep at 14:05?');
     expect(
       staleTrackingQuestion(at('2026-12-16T14:05:00+03:00'), context('2026-12-20T10:00:00+03:00')),
     ).toBe('Still tracking since 16 Dec at 14:05?');

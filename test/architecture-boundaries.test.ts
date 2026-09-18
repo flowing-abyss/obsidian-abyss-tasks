@@ -129,6 +129,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   durationMinutes: ['src/panels/CenterPanel.ts'],
   expandRecurrenceReferences: ['src/views/calendarOccurrences.ts'],
   formatCommentTimeLabel: ['src/panels/RightPanel.ts'],
+  formatDurationMinutes: ['src/ui/timeTracking/formatTracked.ts'],
   localDate: ['src/main.ts'],
   localDayStartMs: ['src/ui/timeTracking/formatTracked.ts'],
   localTime: ['src/panels/CenterPanel.ts'],

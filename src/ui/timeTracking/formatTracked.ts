@@ -1,4 +1,6 @@
 import {
+  durationMinutes,
+  formatDurationMinutes,
   localDayStartMs,
   shiftLocalDayStartMs,
   type OffsetAt,
@@ -9,7 +11,6 @@ import {
 interface TrackedTimeContext {
   readonly nowMs: number;
   readonly offsetAt: OffsetAt;
-  readonly locale: string;
 }
 
 const MS_PER_MINUTE = 60_000;
@@ -20,24 +21,25 @@ const MS_PER_DAY = 86_400_000;
 const STALE_TRACKING_MS = 12 * MS_PER_HOUR;
 
 /**
- * Constructing an `Intl.DateTimeFormat` costs far more than formatting with one, and these labels
- * are re-rendered on every tick, so one formatter per locale and shape is kept for the session.
+ * Calendar labels are fixed English short names, the same `ddd D MMM` shape the date chips render.
+ * A locale-aware formatter cannot produce it: every English locale but `en-GB` inserts a comma,
+ * and ICU abbreviates September as `Sept`.
  */
-const CALENDAR_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
-
-function calendarFormatter(locale: string, weekday: boolean): Intl.DateTimeFormat {
-  const key = `${weekday ? 'w' : 'd'}:${locale}`;
-  const cached = CALENDAR_FORMATTERS.get(key);
-  if (cached !== undefined) return cached;
-  const created = new Intl.DateTimeFormat(locale, {
-    ...(weekday ? { weekday: 'short' as const } : {}),
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-  });
-  CALENDAR_FORMATTERS.set(key, created);
-  return created;
-}
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+const MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+] as const;
 
 function pad2(value: number): string {
   return value < 10 ? `0${value}` : String(value);
@@ -60,18 +62,17 @@ function clockLabel(epochMs: number, offsetAt: OffsetAt): string {
   return `${pad2(hours)}:${pad2(Math.floor((dayMs % MS_PER_HOUR) / MS_PER_MINUTE))}`;
 }
 
-/** The locale's short calendar label for a local day, formatted off the shifted instant. */
-function calendarLabel(dayStartMs: number, context: TrackedTimeContext, weekday: boolean): string {
-  return calendarFormatter(context.locale, weekday).format(wallMs(dayStartMs, context.offsetAt));
+/** `16 Sep`, optionally opened by the weekday, read off the shifted instant as if it were UTC. */
+function calendarLabel(dayStartMs: number, offsetAt: OffsetAt, weekday: boolean): string {
+  const value = new Date(wallMs(dayStartMs, offsetAt));
+  const date = `${value.getUTCDate()} ${MONTHS[value.getUTCMonth()] as string}`;
+  return weekday ? `${WEEKDAYS[value.getUTCDay()] as string} ${date}` : date;
 }
 
-/** Elapsed time as a sentence fragment, matching the duration style task lines already use. */
+/** Elapsed time in the compact style the task line and the inspector duration chip already use. */
 export function formatTrackedDuration(ms: number): string {
   const minutes = wholeMinutes(ms);
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  if (hours > 0 && rest > 0) return `${hours}h ${rest}m`;
-  return hours > 0 ? `${hours}h` : `${rest}m`;
+  return minutes === 0 ? '0m' : formatDurationMinutes(durationMinutes(minutes));
 }
 
 /** Elapsed time as a compact clock, for the places a badge has room for digits only. */
@@ -87,19 +88,21 @@ export function formatTrackedTicker(ms: number): string {
   return `${Math.floor(seconds / 3600)}:${pad2(minutes)}:${pad2(seconds % 60)}`;
 }
 
-/** `Today`, `Yesterday`, or the locale's short calendar label for an older local day. */
+/** `Today`, `Yesterday`, or the weekday and calendar date of an older local day. */
 export function formatDayHeading(dayStartMs: number, context: TrackedTimeContext): string {
   const todayStartMs = localDayStartMs(context.nowMs, context.offsetAt);
   if (dayStartMs === todayStartMs) return 'Today';
   if (dayStartMs === shiftLocalDayStartMs(todayStartMs, -1, context.offsetAt)) return 'Yesterday';
-  return calendarLabel(dayStartMs, context, true);
+  return calendarLabel(dayStartMs, context.offsetAt, true);
 }
 
 /**
  * One session as a day and a wall-clock span. The day is repeated on the end only when the
  * session crossed a midnight, and a running session simply stays open after the arrow.
  *
- * A broken entry carries no usable instants, so there is no span to show for it.
+ * A broken entry carries no usable instants and so has no span, which this reports as the empty
+ * string. Callers must branch on `entry.state === 'broken'` and render their own explanation
+ * rather than hand a reader a blank line.
  */
 export function formatSessionRange(entry: TimeEntrySnapshot, context: TrackedTimeContext): string {
   const { offsetAt } = context;
@@ -128,6 +131,6 @@ export function staleTrackingQuestion(
   const day =
     startDayMs === shiftLocalDayStartMs(todayStartMs, -1, offsetAt)
       ? 'yesterday'
-      : calendarLabel(startDayMs, context, false);
+      : calendarLabel(startDayMs, offsetAt, false);
   return `Still tracking since ${day} at ${clock}?`;
 }

@@ -245,4 +245,66 @@ describe('TrackingTicker', () => {
     expect(vi.getTimerCount()).toBe(0);
     expect(listener).not.toHaveBeenCalled();
   });
+
+  it('skips a listener that a sibling unsubscribed during the same tick', () => {
+    const index = fakeIndex([trackedEntry(1)]);
+    const subject = ticker(index);
+    const second = tickerListener();
+    let unsubscribeSecond = (): void => {};
+    subject.subscribe(() => {
+      unsubscribeSecond();
+    });
+    unsubscribeSecond = subject.subscribe(second);
+    second.mockClear();
+
+    vi.advanceTimersByTime(1000);
+
+    expect(second).not.toHaveBeenCalled();
+
+    subject.destroy();
+  });
+
+  it('never re-calls a listener subscribed during the tick that added it', () => {
+    const index = fakeIndex([trackedEntry(1)]);
+    const subject = ticker(index);
+    const late = tickerListener();
+    let rounds = 0;
+    subject.subscribe(() => {
+      rounds += 1;
+      // Round one is the immediate call; round two is the tick this test is about.
+      if (rounds === 2) subject.subscribe(late);
+    });
+
+    vi.advanceTimersByTime(1000);
+
+    expect(late).toHaveBeenCalledTimes(1);
+    expect(late).toHaveBeenCalledWith({
+      nowMs: START_MS + 1000,
+      active: index.api.activeEntries(),
+    });
+
+    subject.destroy();
+  });
+
+  it('drops a listener that throws on its immediate call and leaves no interval behind', () => {
+    const index = fakeIndex([trackedEntry(1)]);
+    const subject = ticker(index);
+    const failure = new Error('render exploded');
+
+    expect(() =>
+      subject.subscribe(() => {
+        throw failure;
+      }),
+    ).toThrow(failure);
+
+    expect(vi.getTimerCount()).toBe(0);
+
+    const healthy = tickerListener();
+    subject.subscribe(healthy);
+    healthy.mockClear();
+    vi.advanceTimersByTime(1000);
+    expect(healthy).toHaveBeenCalledTimes(1);
+
+    subject.destroy();
+  });
 });

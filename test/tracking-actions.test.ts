@@ -67,9 +67,7 @@ function harness(execute: (command: TaskCommand) => Promise<TaskCommandResult>):
   return { actions: createTrackingActions(tasks, report), commands, report };
 }
 
-function resolving(
-  result: TaskCommandResult,
-): (command: TaskCommand) => Promise<TaskCommandResult> {
+function resolving(result: TaskCommandResult): () => Promise<TaskCommandResult> {
   return () => Promise.resolve(result);
 }
 

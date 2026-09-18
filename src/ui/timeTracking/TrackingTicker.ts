@@ -43,7 +43,15 @@ export class TrackingTicker {
     if (this.destroyed_abyssPrivate) return () => {};
     this.listeners_abyssPrivate.add(listener);
     this.syncInterval_abyssPrivate();
-    listener(this.state_abyssPrivate());
+    try {
+      listener(this.state_abyssPrivate());
+    } catch (error) {
+      // A surface that cannot paint its first frame is not worth an interval, so it leaves nothing
+      // running behind it and the caller still sees why.
+      this.listeners_abyssPrivate.delete(listener);
+      this.syncInterval_abyssPrivate();
+      throw error;
+    }
     return () => {
       if (!this.listeners_abyssPrivate.delete(listener)) return;
       this.syncInterval_abyssPrivate();
@@ -71,9 +79,12 @@ export class TrackingTicker {
   private emit_abyssPrivate(): void {
     if (this.listeners_abyssPrivate.size === 0) return;
     const state = this.state_abyssPrivate();
-    // Set iteration tolerates a listener unsubscribing itself or a sibling mid-emit, so the tick
-    // notifies without copying the set.
-    for (const listener of this.listeners_abyssPrivate) listener(state);
+    // A snapshot bounds the round to the listeners this state was built for, so one listener
+    // subscribing another mid-emit does not hand the newcomer a second, already-delivered state.
+    // The membership re-check covers the other direction, a listener unsubscribed by a sibling.
+    for (const listener of [...this.listeners_abyssPrivate]) {
+      if (this.listeners_abyssPrivate.has(listener)) listener(state);
+    }
   }
 
   private syncInterval_abyssPrivate(): void {

@@ -73,4 +73,4 @@ export type {
   TaskTextTarget,
   TimeEntryRef,
 } from './domain/types';
-export { durationMinutes, localDate, localTime } from './domain/validation';
+export { durationMinutes, formatDurationMinutes, localDate, localTime } from './domain/validation';
