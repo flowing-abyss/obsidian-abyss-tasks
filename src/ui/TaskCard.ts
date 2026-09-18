@@ -1,7 +1,7 @@
 import { Notice, Platform, type App, type Component } from 'obsidian';
 import type { LinkToken } from '../markdown/links';
 import type { StatusRegistry } from '../status/StatusRegistry';
-import { subtreeTotal, type TaskSnapshot } from '../tasks';
+import { subtreeRunning, type TaskSnapshot } from '../tasks';
 import { isForecastCalendarTask } from '../views/calendarOccurrences';
 import { attachLongPress } from './MobileTouch';
 import { recurrenceBadgeInput, renderRecurrenceBadge } from './recurrence/renderRecurrenceBadge';
@@ -108,7 +108,7 @@ function createCardIcon(task: TaskSnapshot, taskIcon: string): HTMLElement {
  * it never reads as tracking even though it still carries its source's sub-tasks.
  */
 function trackingNow(task: TaskSnapshot): boolean {
-  return !isForecastCalendarTask(task) && subtreeTotal(task).openStartsMs.length > 0;
+  return !isForecastCalendarTask(task) && subtreeRunning(task);
 }
 
 function attachTaskBodyContextMenu(

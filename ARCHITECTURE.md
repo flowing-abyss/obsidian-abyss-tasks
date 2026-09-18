@@ -135,7 +135,9 @@ and while that subtree runs the card keeps the total it read so the panel's one 
 repaints only the running roots, found by the `data-tracking-root` address the badge carries. A
 calendar card reads the same snapshot for a running marker and subscribes to nothing. Starting and
 pausing are offered wherever a node already has a context menu, and the `toggle-time-tracking`
-command pauses whatever runs or resumes the most recently tracked task of the last seven days.
+command pauses whatever runs or resumes the most recently tracked task of the last seven days. The
+code-block calendar keeps only the marker, because its card body right-click already belongs to the
+recurrence editor and its start and pause controls live in the task modal's badge instead.
 
 Completing or cancelling a node closes the entries still running in its subtree as a follow-up
 write with the same clock reading, inside the same serialized mutation. That write never changes

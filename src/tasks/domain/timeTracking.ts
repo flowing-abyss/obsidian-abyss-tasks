@@ -112,6 +112,21 @@ export function subtreeTotal(node: NodeWithEntries): TrackedTotal {
 }
 
 /**
+ * Whether a timer is open anywhere in the subtree. This answers the same question as a non-empty
+ * `subtreeTotal().openStartsMs`, but it stops at the first open entry and sums nothing, so a
+ * surface that only needs the boolean neither walks the whole subtree nor allocates a total.
+ */
+export function subtreeRunning(node: NodeWithEntries): boolean {
+  for (const entry of node.timeEntries) {
+    if (entry.state === 'running' && entry.startMs !== undefined) return true;
+  }
+  for (const subtask of node.subtasks) {
+    if (subtreeRunning(subtask)) return true;
+  }
+  return false;
+}
+
+/**
  * The instant of a wall midnight. The offset in force at that midnight is not the offset of the
  * instant used to guess it, so the candidate is re-checked against its own offset. Where a zone
  * changes exactly at local midnight the first candidate can miss by the size of the change, and

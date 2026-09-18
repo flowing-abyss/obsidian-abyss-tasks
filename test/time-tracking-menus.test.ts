@@ -4,7 +4,7 @@ import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import type { TaskCommandResult } from '../src/tasks';
+import { taskNodeAddress, type TaskCommandResult } from '../src/tasks';
 import { systemClock } from '../src/tasks/domain/clock';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
@@ -64,8 +64,12 @@ async function trackingStack(markdown: string) {
 
 type TrackingStack = Awaited<ReturnType<typeof trackingStack>>;
 
-/** A tick the test drives, because a real interval survives a later switch to fake timers. */
-function fakeTickWindow(): { readonly win: Window; tick(): void } {
+/**
+ * A tick the test drives, because a real interval survives a later switch to fake timers. The
+ * ticker runs its interval only while somebody is listening, so `running` also reports whether the
+ * surface under test still holds a subscription.
+ */
+function fakeTickWindow(): { readonly win: Window; tick(): void; running(): boolean } {
   let scheduled: (() => void) | undefined;
   return {
     win: {
@@ -78,6 +82,7 @@ function fakeTickWindow(): { readonly win: Window; tick(): void } {
       },
     } as unknown as Window,
     tick: () => scheduled?.(),
+    running: () => scheduled !== undefined,
   };
 }
 
@@ -231,6 +236,13 @@ const CLOSED_SESSIONS = [
 const RUNNING_SESSION = ['- [ ] Alpha', '  - 2026-09-18T12:30:32+03:00 →', '- [ ] Beta', ''].join(
   '\n',
 );
+const RUNNING_CHILD_SESSION = [
+  '- [ ] Alpha',
+  '  - [ ] Child',
+  '    - 2026-09-18T12:30:32+03:00 →',
+  '- [ ] Beta',
+  '',
+].join('\n');
 
 describe('list card tracked time indicator', () => {
   it('stays away from a task with no tracked time', async () => {
@@ -283,6 +295,48 @@ describe('list card tracked time indicator', () => {
     } finally {
       observer.disconnect();
     }
+  });
+
+  it('advances the root card when the running entry belongs to a sub-task', async () => {
+    const clock = fakeTickWindow();
+    const harness = await center(RUNNING_CHILD_SESSION, clock.win);
+    const root = expectDefined(
+      harness.index.listNodes().find(({ node }) => node.title === 'Alpha'),
+      'Missing Alpha',
+    ).root;
+
+    const badge = expectDefined(timeBadge(cardFor(harness.el, 'Alpha')));
+    expect(badge.dataset['trackingRoot']).toBe(taskNodeAddress({ type: 'task', ref: root.ref }));
+    expect(badge.classList.contains('is-tracking')).toBe(true);
+    expect(badge.textContent).toContain('1h35m');
+
+    harness.advance(MINUTE);
+    clock.tick();
+
+    expect(expectDefined(timeBadge(cardFor(harness.el, 'Alpha'))).textContent).toContain('1h36m');
+  });
+
+  it('releases its tick subscription when the panel is destroyed', async () => {
+    const clock = fakeTickWindow();
+    const harness = await center(RUNNING_SESSION, clock.win);
+    expect(clock.running()).toBe(true);
+
+    harness.panel.destroy();
+
+    // The ticker runs its interval only while a listener remains, so a stopped one proves the
+    // panel was its only listener and released that listener exactly once.
+    expect(clock.running()).toBe(false);
+  });
+
+  it('keeps exactly one tick subscription across a remount', async () => {
+    const clock = fakeTickWindow();
+    const harness = await center(RUNNING_SESSION, clock.win);
+
+    harness.panel.mount(activeDocument.body.createDiv());
+    expect(clock.running()).toBe(true);
+    harness.panel.destroy();
+
+    expect(clock.running()).toBe(false);
   });
 });
 

@@ -55,6 +55,7 @@ export {
   localDayStartMs,
   resumeTarget,
   shiftLocalDayStartMs,
+  subtreeRunning,
   subtreeTotal,
   taskNodeAddress,
   timeEntryRef,

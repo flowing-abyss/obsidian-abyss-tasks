@@ -27,6 +27,7 @@ import {
   localDate,
   localTime,
   shiftLocalDate,
+  subtreeRunning,
   subtreeTotal,
   taskNodeAddress,
   totalMs,
@@ -373,6 +374,8 @@ export class CenterPanel {
   private readonly timeTracking_abyssPrivate: TrackingSurface | undefined;
   /** The running card badges of the current render, keyed by the root address a tick looks up. */
   private readonly runningCardBadges_abyssPrivate = new Map<string, RunningCardBadge>();
+  /** The one instant every card badge of the current render is read against. */
+  private cardRenderNowMs_abyssPrivate = 0;
   private trackingUnsubscribe_abyssPrivate: (() => void) | undefined;
 
   constructor(...args: CenterPanelConstructorArgs) {
@@ -789,6 +792,7 @@ export class CenterPanel {
   destroy(): void {
     this.trackingUnsubscribe_abyssPrivate?.();
     this.trackingUnsubscribe_abyssPrivate = undefined;
+    // Nothing can repaint them any more, and their elements go with the panel.
     this.runningCardBadges_abyssPrivate.clear();
     this.endTaskDrag_abyssPrivate?.();
     this.completionConfirmationAbortController_abyssPrivate.abort();
@@ -817,6 +821,7 @@ export class CenterPanel {
 
   /** Renders a project's tasks (reusing the card component) plus an add bar that writes into the note. */
   private renderProjectTasks_abyssPrivate(host: HTMLElement, path: string): void {
+    this.beginTaskCardRender_abyssPrivate();
     const tasks = [...this.queries_abyssPrivate.list({ filePath: path })];
     const scroll = host.createDiv({ cls: 'abyss-center-scroll abyss-project-tasks-scroll' });
     if (tasks.length === 0) {
@@ -895,6 +900,7 @@ export class CenterPanel {
   private render_abyssPrivate(): void {
     const mode = this.state_abyssPrivate.get('mode');
     if (this.refreshMountedProjects_abyssPrivate(mode)) return;
+    this.beginTaskCardRender_abyssPrivate();
     const retainTaskShell = this.canRetainTaskShell_abyssPrivate(mode);
     this.prepareRender_abyssPrivate(mode, retainTaskShell);
     if (mode !== 'projects') this.destroyProjectsPanel_abyssPrivate();
@@ -2248,6 +2254,7 @@ export class CenterPanel {
   }
 
   private renderSearchResults_abyssPrivate(host: HTMLElement, query: string): void {
+    this.beginTaskCardRender_abyssPrivate();
     this.md_abyssPrivate.unload();
     this.md_abyssPrivate = new Component();
     this.md_abyssPrivate.load();
@@ -2454,6 +2461,15 @@ export class CenterPanel {
   }
 
   /**
+   * A render owns the badges it creates and the instant they are read against, so the previous
+   * render's badges go with it and every card in this one shows the same clock.
+   */
+  private beginTaskCardRender_abyssPrivate(): void {
+    this.runningCardBadges_abyssPrivate.clear();
+    this.cardRenderNowMs_abyssPrivate = this.timeTracking_abyssPrivate?.context().nowMs ?? 0;
+  }
+
+  /**
    * Tracked time on a card, as a passive reading of the snapshot the render was handed. A running
    * subtree keeps its total here so the shared tick is one addition per running root and one DOM
    * write per displayed minute, never a walk of the list or a question to the index.
@@ -2463,7 +2479,7 @@ export class CenterPanel {
     if (tracking === undefined || isForecastCalendarTask(task)) return;
     const total = subtreeTotal(task);
     const running = total.openStartsMs.length > 0;
-    const tracked = totalMs(total, tracking.context().nowMs);
+    const tracked = totalMs(total, this.cardRenderNowMs_abyssPrivate);
     if (!running && tracked <= 0) return;
     const { badge, value } = this.renderTaskCountBadge_abyssPrivate(
       titleRow,
@@ -2481,6 +2497,8 @@ export class CenterPanel {
   private subscribeToTracking_abyssPrivate(): void {
     const tracking = this.timeTracking_abyssPrivate;
     if (tracking === undefined) return;
+    // A remount must not leave the previous mount listening, so the panel keeps exactly one.
+    this.trackingUnsubscribe_abyssPrivate?.();
     this.trackingUnsubscribe_abyssPrivate = tracking.ticker.subscribe((state) => {
       this.paintRunningCardBadges_abyssPrivate(state);
     });
@@ -2489,10 +2507,6 @@ export class CenterPanel {
   private paintRunningCardBadges_abyssPrivate({ nowMs, active }: TrackingTickerState): void {
     const badges = this.runningCardBadges_abyssPrivate;
     if (badges.size === 0) return;
-    // A render replaces its cards, so the badges of the previous one are dropped as they are found.
-    for (const [address, badge] of badges) {
-      if (!badge.value.isConnected) badges.delete(address);
-    }
     for (const entry of active) {
       const badge = badges.get(trackingRootAddress(entry.root));
       if (badge === undefined) continue;
@@ -2959,7 +2973,7 @@ export class CenterPanel {
     const tracking = this.timeTracking_abyssPrivate;
     const target = calendarMutationTarget(task);
     if (tracking === undefined || target === undefined) return;
-    const running = subtreeTotal(task).openStartsMs.length > 0;
+    const running = subtreeRunning(task);
     if (!running && (task.status === 'done' || task.status === 'cancelled')) return;
     menu.addItem((item) =>
       item

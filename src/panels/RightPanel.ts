@@ -14,7 +14,7 @@ import {
   localDate,
   localTime,
   sameTaskNodeRef,
-  subtreeTotal,
+  subtreeRunning,
   type CommentRef,
   type CommentTimeContext,
   type CommentTimeContextProvider,
@@ -3658,11 +3658,15 @@ export class RightPanel {
    * Start or pause the timer on the node the menu belongs to, which is the task or the sub-task
    * the inspector is showing. A finished node is refused unless something under it is still
    * running, which is the one case that still needs a way to stop.
+   *
+   * There is no forecast guard here, unlike the card menus: the inspector selection is a node the
+   * index holds, never a projected calendar occurrence, so every node reaching this menu has a
+   * line to write to.
    */
   private addTrackingMenuItem_abyssPrivate(menu: HTMLElement, task: TaskLike): void {
     const tracking = this.timeTracking_abyssPrivate;
     if (tracking === undefined) return;
-    const running = subtreeTotal(task).openStartsMs.length > 0;
+    const running = subtreeRunning(task);
     if (!running && (task.status === 'done' || task.status === 'cancelled')) return;
     this.createContextMenuItem_abyssPrivate(
       menu,
