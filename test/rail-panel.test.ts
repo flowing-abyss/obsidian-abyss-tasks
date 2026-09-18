@@ -432,4 +432,10 @@ describe('RailPanel', () => {
     expect(rule).toContain('width: 20px');
     expect(rule).toContain('height: 1px');
   });
+
+  it('collapses the host the widget hides itself with', () => {
+    // The host is a flex column, which outranks the browser's own rule for `hidden`, so a rail with
+    // nothing to report would keep its own bottom padding above Settings unless the sheet says so.
+    expect(cssDeclarationsFor(css, '.abyss-rail-tracking[hidden]')).toContain('display: none');
+  });
 });

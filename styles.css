@@ -10097,6 +10097,11 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   line-height: 1.1;
 }
 
+/* The column above outranks the browser's own answer to the attribute the widget hides itself with. */
+.abyss-rail-tracking[hidden] {
+  display: none;
+}
+
 /*
  * The control is not a mode button: it carries no fill and no border, only the hover background
  * every quiet control on the rail shares, inside a hit area a pointer can still find.
