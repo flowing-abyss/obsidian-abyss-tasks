@@ -205,7 +205,9 @@ and progress is derived from completed top-level tasks over non-cancelled top-le
 derived the same way from the note's own time entries: `ProjectStore` asks the time entry index for
 the file total whenever it re-evaluates that note, so a project never walks entries itself. Both
 derived fields are read-only wherever a field can be written, and Time ships as a curated column
-that is present but hidden, so a table only widens when a reader asks for it.
+that is present but hidden, so a table only widens when a reader asks for it. Normalization appends
+any curated column missing from saved Table state as a hidden entry, so an older `state.json` loads
+unchanged and a new curated column costs a reader nothing until they turn it on.
 Curated types are fixed. Custom types and preset presentation in `projects.propertyDefinitions`
 remain authoritative when Obsidian's registry changes or is unavailable. A custom definition whose
 source is assigned to a curated role stays saved but inactive until that role moves away.

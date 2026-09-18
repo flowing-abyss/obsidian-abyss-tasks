@@ -1,5 +1,6 @@
 import type { OffsetAt, ParsedTimeEntry } from './timeEntry';
 import type { TaskNodeRef, TaskRef, TaskStatus, TimeEntryRef } from './types';
+import { durationMinutes, formatDurationMinutes } from './valueObjects';
 
 export type { TimeEntryIssue } from './timeEntry';
 
@@ -74,6 +75,25 @@ export function totalMs(total: TrackedTotal, nowMs: number): number {
   let sum = total.closedMs;
   for (const startMs of total.openStartsMs) sum += Math.max(0, nowMs - startMs);
   return sum;
+}
+
+/**
+ * Elapsed time that can be counted. A total is arithmetic over instants a note can hand out, so a
+ * missing or infinite one reads as no time at all rather than reaching a branded constructor that
+ * rejects it.
+ */
+function countableMs(ms: number): number {
+  return Number.isFinite(ms) ? Math.max(0, ms) : 0;
+}
+
+/**
+ * Elapsed time in the compact style every tracked-time surface shows. Part minutes have not been
+ * earned yet, so a total floors to whole minutes. This is the one place that turns milliseconds
+ * into a label, so the project table, the inspector badge and the task line can never disagree.
+ */
+export function formatTrackedDuration(ms: number): string {
+  const minutes = Math.floor(countableMs(ms) / MS_PER_MINUTE);
+  return minutes === 0 ? '0m' : formatDurationMinutes(durationMinutes(minutes));
 }
 
 /** Folds one entry into an accumulator so a subtree walk never allocates an intermediate total. */

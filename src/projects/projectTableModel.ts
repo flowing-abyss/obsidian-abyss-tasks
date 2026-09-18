@@ -1,9 +1,9 @@
 import { exactLinkToken, linkValueLabel } from '../markdown/links';
 import type { ProjectStatus } from '../settings/types';
-import { totalMs } from '../tasks';
-import { formatTrackedDuration } from '../ui/timeTracking/formatTracked';
+import { formatTrackedDuration, totalMs } from '../tasks';
 import {
   findProjectFieldById,
+  isGroupableProjectField,
   isProjectStatusField,
   projectFieldValue,
   type ProjectFieldCatalogItem,
@@ -161,7 +161,7 @@ export function projectTableDisplayValues(
   project: Project,
   field: ProjectFieldCatalogItem,
   statuses: readonly ProjectStatus[],
-  nowMs = Date.now(),
+  nowMs: number,
 ): string[] {
   if (isProjectStatusField(field)) return [statusLabel(project, statuses)];
   if (field.type === 'progress') return [projectProgressDisplayValue(project.stats)];
@@ -213,6 +213,12 @@ function stableProjectOrder(left: Project, right: Project): number {
   return byName !== 0 ? byName : compareStrings(left.path, right.path);
 }
 
+/** A project with nothing to show pins last in both directions, the way an empty value does. */
+function sortableTrackedMs(stats: ProjectStats, nowMs: number): number | null {
+  const ms = projectTrackedMs(stats, nowMs);
+  return ms < MS_PER_MINUTE ? null : ms;
+}
+
 function sortableValue(
   project: Project,
   field: ProjectFieldCatalogItem | undefined,
@@ -220,7 +226,7 @@ function sortableValue(
 ): unknown {
   if (field === undefined) return null;
   if (field.type === 'progress') return projectProgress(project.stats).percent;
-  if (field.type === 'tracked') return projectTrackedMs(project.stats, nowMs);
+  if (field.type === 'tracked') return sortableTrackedMs(project.stats, nowMs);
   const value = projectFieldValue(project, field);
   if (field.type === 'number') {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -316,14 +322,6 @@ function progressValueGroup(project: Project): ProjectTableValueGroup[] {
   ];
 }
 
-function trackedValueGroup(project: Project, nowMs: number): ProjectTableValueGroup[] {
-  const label = projectTrackedDisplayValue(project.stats, nowMs);
-  if (label === '') {
-    return [{ key: 'empty', label: 'No value', value: null, sourcePath: project.path }];
-  }
-  return [{ key: `value:${label}`, label, value: label, sourcePath: project.path }];
-}
-
 function propertyValueGroup(
   value: unknown,
   project: Project,
@@ -373,14 +371,12 @@ interface GroupValuesInput {
   readonly statuses: readonly ProjectStatus[];
   readonly resolveLink: ProjectTableModelInput['resolveLink'];
   readonly compiledPresets: CompiledProjectPropertyPresets | undefined;
-  readonly nowMs: number;
 }
 
 function groupValues(input: GroupValuesInput): ProjectTableValueGroup[] {
-  const { project, field, statuses, resolveLink, compiledPresets, nowMs } = input;
+  const { project, field, statuses, resolveLink, compiledPresets } = input;
   if (isProjectStatusField(field)) return statusValueGroup(project, statuses);
   if (field.type === 'progress') return progressValueGroup(project);
-  if (field.type === 'tracked') return trackedValueGroup(project, nowMs);
   return propertyValueGroups(project, field, resolveLink, compiledPresets);
 }
 
@@ -392,7 +388,6 @@ interface MakeGroupsInput {
   statuses: readonly ProjectStatus[];
   resolveLink: ProjectTableModelInput['resolveLink'];
   propertyDefinitions?: ProjectTableModelInput['propertyDefinitions'];
-  nowMs: number;
 }
 
 function orderGroupProjects(
@@ -420,7 +415,6 @@ function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
     statuses,
     resolveLink,
     propertyDefinitions,
-    nowMs,
   } = input;
   if (groupField === undefined || groupField.id === 'none') {
     return [{ key: 'all', label: '', value: null, projects: [...sortedProjects] }];
@@ -437,7 +431,6 @@ function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
       statuses,
       resolveLink,
       compiledPresets,
-      nowMs,
     })) {
       const current = byKey.get(group.key) ?? { ...group, projects: [] };
       current.projects.push(project);
@@ -493,7 +486,12 @@ export function buildProjectTableModel(input: ProjectTableModelInput): ProjectTa
           statuses: input.statuses,
           nowMs,
         });
-  const groupField = findProjectFieldById(input.fields, input.settings.groupBy);
+  // Saved state can still name a field the options no longer offer, which then groups everything.
+  const savedGroupField = findProjectFieldById(input.fields, input.settings.groupBy);
+  const groupField =
+    savedGroupField !== undefined && isGroupableProjectField(savedGroupField)
+      ? savedGroupField
+      : undefined;
   return {
     groups: makeGroups({
       projects: visibleProjects,
@@ -502,7 +500,6 @@ export function buildProjectTableModel(input: ProjectTableModelInput): ProjectTa
       availableStatuses: availableStatusGroups,
       statuses: input.statuses,
       resolveLink: input.resolveLink,
-      nowMs,
       ...(input.propertyDefinitions === undefined
         ? {}
         : { propertyDefinitions: input.propertyDefinitions }),

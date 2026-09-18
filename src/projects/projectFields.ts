@@ -167,6 +167,15 @@ export function isAvailableProjectField(field: ProjectFieldCatalogItem): field i
   return field.type !== null;
 }
 
+/**
+ * True for a field whose values can name a group. A derived duration changes with the clock and
+ * every project lands in a group of its own, so grouping by it orders groups by label text and
+ * tells a reader nothing. It stays available for sorting, which is what the value is good for.
+ */
+export function isGroupableProjectField(field: ProjectFieldCatalogItem): boolean {
+  return field.type !== 'tracked';
+}
+
 /** True for the curated Status field regardless of current edit availability. */
 export function isProjectStatusField(field: ProjectFieldCatalogItem): boolean {
   return field.id === 'status';

@@ -1,11 +1,16 @@
 import {
-  durationMinutes,
-  formatDurationMinutes,
   localDayStartMs,
   shiftLocalDayStartMs,
   type OffsetAt,
   type TimeEntrySnapshot,
 } from '../../tasks';
+
+/**
+ * Elapsed time in the compact style the task line and the inspector duration chip already use.
+ * The rule itself belongs to the task domain, because the project table reads the same label and
+ * must not reach into presentation for it. Tracking surfaces keep importing it from here.
+ */
+export { formatTrackedDuration } from '../../tasks';
 
 /** The wall-clock context every tracking label is read against, supplied by the owning surface. */
 export interface TrackedTimeContext {
@@ -76,12 +81,6 @@ function calendarLabel(dayStartMs: number, offsetAt: OffsetAt, weekday: boolean)
   const value = new Date(wallMs(dayStartMs, offsetAt));
   const date = `${value.getUTCDate()} ${MONTHS[value.getUTCMonth()] as string}`;
   return weekday ? `${WEEKDAYS[value.getUTCDay()] as string} ${date}` : date;
-}
-
-/** Elapsed time in the compact style the task line and the inspector duration chip already use. */
-export function formatTrackedDuration(ms: number): string {
-  const minutes = wholeMinutes(ms);
-  return minutes === 0 ? '0m' : formatDurationMinutes(durationMinutes(minutes));
 }
 
 /** Elapsed time as a compact clock, for the places a badge has room for digits only. */

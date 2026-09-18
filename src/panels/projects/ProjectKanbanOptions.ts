@@ -1,4 +1,7 @@
-import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
+import {
+  isGroupableProjectField,
+  type ProjectFieldCatalogItem,
+} from '../../projects/projectFields';
 import {
   buildDefaultProjectKanbanSettings,
   type ProjectKanbanSettings,
@@ -41,7 +44,7 @@ function setBoolean(
 function groupFieldOptions(context: ProjectKanbanOptionsContext): ViewOption[] {
   return context
     .fields()
-    .filter(({ id }) => id !== 'status')
+    .filter((field) => field.id !== 'status' && isGroupableProjectField(field))
     .map((field) => ({
       value: field.id,
       label: () => labelFor(context, field.id),

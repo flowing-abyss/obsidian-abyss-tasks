@@ -89,11 +89,13 @@ function renderStatus(
   cell: HTMLElement,
   project: Project,
   field: ProjectFieldCatalogItem,
-  statuses: readonly ProjectStatus[],
+  options: RenderProjectTableCellOptions,
 ): void {
+  const { statuses } = options;
   const status = statusFor(project, statuses);
   const pill = cell.createSpan({
-    text: projectTableDisplayValues(project, field, statuses)[0] ?? 'No status',
+    text:
+      projectTableDisplayValues(project, field, statuses, options.trackedNowMs)[0] ?? 'No status',
   });
   applyProjectStatusPresentation(pill, status);
   renderUnavailableType(cell, field);
@@ -123,7 +125,7 @@ interface RenderProjectTableCellOptions {
   readonly progressDisplay?: ProjectTableProgressDisplay;
   readonly now?: Date;
   /** The instant tracked time is measured against, read once per render pass by the owner. */
-  readonly trackedNowMs?: number;
+  readonly trackedNowMs: number;
   readonly locale?: string;
   readonly description?: {
     readonly field: ProjectFieldCatalogItem;
@@ -433,7 +435,12 @@ function renderPropertyValue(
     renderCheckbox(cell, value, options);
     return;
   }
-  const displayedValues = projectTableDisplayValues(project, field, options.statuses);
+  const displayedValues = projectTableDisplayValues(
+    project,
+    field,
+    options.statuses,
+    options.trackedNowMs,
+  );
   if (Array.isArray(value) || (field.type === 'tags' && typeof value === 'string')) {
     const values = Array.isArray(value) ? value : [value];
     renderListValues({ cell, project, field, values, displayedValues }, options);
@@ -482,13 +489,13 @@ export function renderProjectTableCell(
   project: Project,
   options: RenderProjectTableCellOptions,
 ): void {
-  const { field, statuses } = options;
+  const { field } = options;
   if (field.type === 'name') {
     renderName(cell, project, options);
     return;
   }
   if (isProjectStatusField(field)) {
-    renderStatus(cell, project, field, statuses);
+    renderStatus(cell, project, field, options);
     return;
   }
   if (field.type === 'progress') {
@@ -496,7 +503,7 @@ export function renderProjectTableCell(
     return;
   }
   if (field.type === 'tracked') {
-    renderTracked(cell, project, options.trackedNowMs ?? Date.now());
+    renderTracked(cell, project, options.trackedNowMs);
     return;
   }
   renderPropertyValue(cell, project, field, options);

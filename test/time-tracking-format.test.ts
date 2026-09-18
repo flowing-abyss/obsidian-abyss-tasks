@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { OffsetAt, TimeEntrySnapshot } from '../src/tasks';
+import {
+  formatTrackedDuration as publicFormatTrackedDuration,
+  type OffsetAt,
+  type TimeEntrySnapshot,
+} from '../src/tasks';
 import {
   formatDayHeading,
   formatSessionRange,
@@ -46,6 +50,10 @@ const broken: TimeEntrySnapshot = {
 };
 
 describe('formatTrackedDuration', () => {
+  it('delegates to the one task-domain formatter instead of keeping its own copy', () => {
+    expect(formatTrackedDuration).toBe(publicFormatTrackedDuration);
+  });
+
   it.each([
     [0, '0m'],
     [59_999, '0m'],

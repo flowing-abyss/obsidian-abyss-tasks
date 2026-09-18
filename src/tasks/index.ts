@@ -52,6 +52,7 @@ export { sameTaskTreeWithOwnedChanges } from './domain/taskTreeChangeProof';
 export type { OffsetAt } from './domain/timeEntry';
 export {
   entryDurationMs,
+  formatTrackedDuration,
   groupTrackedDays,
   localDayStartMs,
   recentTrackingWindow,
@@ -85,4 +86,4 @@ export type {
   TaskTextTarget,
   TimeEntryRef,
 } from './domain/types';
-export { durationMinutes, formatDurationMinutes, localDate, localTime } from './domain/validation';
+export { durationMinutes, localDate, localTime } from './domain/validation';

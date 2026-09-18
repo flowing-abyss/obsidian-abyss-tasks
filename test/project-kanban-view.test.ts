@@ -915,6 +915,30 @@ describe('project Kanban overview', () => {
     expect(settings.projects.table.hiddenStatuses).not.toContain(`id:${other.id}`);
   });
 
+  it('offers Time for sorting but never for grouping on any overview surface', () => {
+    const { host } = mountView();
+    const optionLabels = (rowLabel: string): string[] => {
+      if (host.querySelector('.abyss-view-state-popover') === null) {
+        expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+      }
+      const row = viewOptionRow(host, rowLabel);
+      expectDefined(row.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+      return Array.from(row.querySelectorAll<HTMLElement>('.abyss-view-state-option-label')).map(
+        ({ textContent }) => textContent,
+      );
+    };
+    const closePopover = (): void => {
+      expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    };
+
+    for (const mode of ['Table', 'Kanban', 'Timeline'] as const) {
+      clickView(host, mode);
+      expect(optionLabels('Group by'), `${mode} Group by`).not.toContain('Time');
+      expect(optionLabels('Sort by').join('|'), `${mode} Sort by`).toContain('Time');
+      closePopover();
+    }
+  });
+
   it('updates successive board grouping and sort direction choices in one popover', async () => {
     const { host, settings } = mountView();
     const tableGroup = settings.projects.table.groupBy;

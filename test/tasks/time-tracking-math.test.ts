@@ -3,6 +3,7 @@ import {
   addEntryToTotal,
   entryDurationMs,
   entryOverlapMs,
+  formatTrackedDuration,
   groupTrackedDays,
   localDayStartMs,
   resumeTarget,
@@ -313,5 +314,27 @@ describe('groupTrackedDays', () => {
     expect(Object.isFrozen(days)).toBe(true);
     expect(days.every((day) => Object.isFrozen(day) && Object.isFrozen(day.rows))).toBe(true);
     expect(days.every((day) => day.rows.every((row) => Object.isFrozen(row)))).toBe(true);
+  });
+});
+
+describe('formatTrackedDuration', () => {
+  it.each([
+    [0, '0m'],
+    [59_999, '0m'],
+    [M, '1m'],
+    [15 * M, '15m'],
+    [80 * M, '1h20m'],
+    [H, '1h'],
+    [120 * M, '2h'],
+    [H + 59_999, '1h'],
+    [25 * H + M, '25h1m'],
+  ])('formats %i ms as %s', (ms, expected) => {
+    expect(formatTrackedDuration(ms)).toBe(expected);
+  });
+
+  it('reads negative and uncountable totals as no time instead of rejecting them', () => {
+    expect(formatTrackedDuration(-5 * M)).toBe('0m');
+    expect(formatTrackedDuration(Number.NaN)).toBe('0m');
+    expect(formatTrackedDuration(Number.POSITIVE_INFINITY)).toBe('0m');
   });
 });

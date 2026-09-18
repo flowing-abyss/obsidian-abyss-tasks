@@ -1479,6 +1479,36 @@ describe('ProjectsTableView', () => {
     expect(applyEdits).toHaveBeenCalledOnce();
   });
 
+  it('repaints a running Time cell once the render clock has advanced', () => {
+    vi.useFakeTimers();
+    const startMs = Date.UTC(2026, 8, 18, 9, 0);
+    vi.setSystemTime(startMs + 80 * 60_000);
+    const config = settings();
+    const tracked = expectDefined(config.projects.table.columns.find(({ id }) => id === 'tracked'));
+    tracked.visible = true;
+    const running = project({
+      stats: {
+        total: 1,
+        done: 0,
+        cancelled: 0,
+        inProgress: 0,
+        tracked: { closedMs: 0, openStartsMs: [startMs] },
+      },
+    });
+    const { host, view } = mount([running], { settings: config });
+    const trackedText = (): string =>
+      expectDefined(
+        host.querySelector<HTMLElement>('.abyss-project-table-row [data-column-id="tracked"]'),
+      ).textContent;
+
+    expect(trackedText()).toBe('1h20m');
+
+    vi.setSystemTime(startMs + 81 * 60_000);
+    view.update([running]);
+
+    expect(trackedText()).toBe('1h21m');
+  });
+
   it('keeps a held Start resize visible and reorders its focused row on the receipt', async () => {
     const config = settings();
     config.projects.overviewView = 'timeline';
