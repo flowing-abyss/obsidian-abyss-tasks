@@ -137,7 +137,13 @@ function project(over: Partial<Project>): Project {
     tags: [],
     statusId: active.id,
     rawStatus: null,
-    stats: { total: 10, done: 6, cancelled: 0, inProgress: 0 },
+    stats: {
+      total: 10,
+      done: 6,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    },
     ...over,
   };
 }
@@ -1704,7 +1710,13 @@ describe('ProjectsTableView', () => {
     const { host } = mount(
       [
         project({
-          stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 0,
+            done: 0,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
         project({ path: 'Projects/B.md', name: 'B' }),
       ],
@@ -2751,7 +2763,13 @@ describe('ProjectsTableView', () => {
         project({
           path: `Projects/${name}.md`,
           name: String(name),
-          stats: { total: 10, done: Number(done), cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 10,
+            done: Number(done),
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
       ),
     );
@@ -3214,6 +3232,7 @@ describe('ProjectsTableView', () => {
       ['name', 260],
       ['status', 150],
       ['progress', 190],
+      ['tracked', undefined],
       ['start', 290],
       ['end', 150],
     ]);
@@ -3589,11 +3608,11 @@ describe('ProjectsTableView', () => {
     const order = (): string[] => config.projects.table.columns.map(({ id }) => id);
 
     drag('status', 'progress', 75);
-    expect(order()).toEqual(['name', 'progress', 'status', 'start', 'end']);
+    expect(order()).toEqual(['name', 'progress', 'status', 'tracked', 'start', 'end']);
     drag('progress', 'end', 75);
-    expect(order()).toEqual(['name', 'status', 'start', 'end', 'progress']);
+    expect(order()).toEqual(['name', 'status', 'tracked', 'start', 'end', 'progress']);
     drag('progress', 'status', 25);
-    expect(order()).toEqual(['name', 'progress', 'status', 'start', 'end']);
+    expect(order()).toEqual(['name', 'progress', 'status', 'tracked', 'start', 'end']);
 
     expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
     expect(saveSettings).toHaveBeenCalledTimes(3);
@@ -3694,6 +3713,7 @@ describe('ProjectsTableView', () => {
       'name',
       'progress',
       'status',
+      'tracked',
       'start',
       'end',
     ]);
@@ -6125,15 +6145,33 @@ describe('ProjectsTableView', () => {
       [
         project({
           path: 'Projects/A.md',
-          stats: { total: 10, done: 8, cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 10,
+            done: 8,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
         project({
           path: 'Projects/B.md',
-          stats: { total: 10, done: 2, cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 10,
+            done: 2,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
         project({
           path: 'Projects/C.md',
-          stats: { total: 10, done: 2, cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 10,
+            done: 2,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
       ],
       { settings: config },

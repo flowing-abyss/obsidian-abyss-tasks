@@ -10,7 +10,11 @@ import {
   compiledProjectPropertyPresentation,
   type CompiledProjectPropertyPresets,
 } from '../../projects/projectPropertyPresets';
-import { projectProgress, projectTableDisplayValues } from '../../projects/projectTableModel';
+import {
+  projectProgress,
+  projectTableDisplayValues,
+  projectTrackedDisplayValue,
+} from '../../projects/projectTableModel';
 import type { Project } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
 import {
@@ -74,6 +78,13 @@ function renderProgress(
   }
 }
 
+/** Tracked time reads as a plain total, and an untracked project leaves the cell empty. */
+function renderTracked(cell: HTMLElement, project: Project, nowMs: number): void {
+  const label = projectTrackedDisplayValue(project.stats, nowMs);
+  if (label === '') return;
+  cell.createSpan({ cls: 'abyss-project-table-tracked', text: label });
+}
+
 function renderStatus(
   cell: HTMLElement,
   project: Project,
@@ -111,6 +122,8 @@ interface RenderProjectTableCellOptions {
   readonly dateDisplay?: ProjectDateDisplay;
   readonly progressDisplay?: ProjectTableProgressDisplay;
   readonly now?: Date;
+  /** The instant tracked time is measured against, read once per render pass by the owner. */
+  readonly trackedNowMs?: number;
   readonly locale?: string;
   readonly description?: {
     readonly field: ProjectFieldCatalogItem;
@@ -480,6 +493,10 @@ export function renderProjectTableCell(
   }
   if (field.type === 'progress') {
     renderProgress(cell, project, options.progressDisplay ?? 'full');
+    return;
+  }
+  if (field.type === 'tracked') {
+    renderTracked(cell, project, options.trackedNowMs ?? Date.now());
     return;
   }
   renderPropertyValue(cell, project, field, options);

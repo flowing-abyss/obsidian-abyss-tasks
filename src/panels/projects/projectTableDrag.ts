@@ -74,7 +74,7 @@ export function planProjectGroupDrop(input: ProjectGroupDropInput): unknown {
 
 function validateDropField(field: ProjectFieldCatalogItem): void {
   if (field.type === null) throw new Error(`${field.label} is read-only`);
-  if (field.type === 'name' || field.type === 'progress') {
+  if (field.type === 'name' || field.type === 'progress' || field.type === 'tracked') {
     throw new Error(`${field.label} cannot be changed by moving a group`);
   }
 }

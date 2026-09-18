@@ -1,4 +1,5 @@
 import { Menu, setIcon } from 'obsidian';
+import { projectTrackedDisplayValue } from '../../projects/projectTableModel';
 import { projectStatusDisplayName } from '../../projects/status';
 import type { Project } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
@@ -71,6 +72,7 @@ function renderProjectDetails(
 
   const stats = container.createDiv({ cls: 'abyss-project-dashboard-stats' });
   renderProgressBar(stats, project.stats);
+  renderTrackedTime(stats, project);
 
   const rawDesc = project.frontmatter['description'];
   const desc = typeof rawDesc === 'string' ? rawDesc.trim() : '';
@@ -80,6 +82,15 @@ function renderProjectDetails(
 
   const taskHost = container.createDiv({ cls: 'abyss-project-tasks' });
   ctx.renderTasks(taskHost, project.path);
+}
+
+/** The note's tracked total, left out entirely while a project has recorded no time. */
+function renderTrackedTime(stats: HTMLElement, project: Project): void {
+  const tracked = projectTrackedDisplayValue(project.stats, Date.now());
+  if (tracked === '') return;
+  const time = stats.createDiv({ cls: 'abyss-project-time' });
+  time.createSpan({ cls: 'abyss-project-time-label', text: 'Time' });
+  time.createSpan({ cls: 'abyss-project-time-value', text: tracked });
 }
 
 /** Refreshes the dashboard's status presentation without replacing its retained content. */

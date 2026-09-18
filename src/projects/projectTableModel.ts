@@ -1,5 +1,7 @@
 import { exactLinkToken, linkValueLabel } from '../markdown/links';
 import type { ProjectStatus } from '../settings/types';
+import { totalMs } from '../tasks';
+import { formatTrackedDuration } from '../ui/timeTracking/formatTracked';
 import {
   findProjectFieldById,
   isProjectStatusField,
@@ -63,9 +65,28 @@ export interface ProjectTableModelInput {
   search?: string;
   resolveLink?: (target: string, sourcePath: string) => string | undefined;
   propertyDefinitions?: Readonly<Record<string, ProjectPropertyDefinition>>;
+  /** The instant every running timer is measured against, so one pass reads one clock. */
+  nowMs?: number;
 }
 
 type ProjectTableLinkResolver = (target: string, sourcePath: string) => string | undefined;
+
+const MS_PER_MINUTE = 60_000;
+
+/** Tracked time a project has reached at one instant, so a whole table sorts against one clock. */
+function projectTrackedMs(stats: ProjectStats, nowMs: number): number {
+  return totalMs(stats.tracked, nowMs);
+}
+
+/**
+ * Tracked time as the compact label the tracking surfaces already use. Part minutes have not been
+ * earned yet, so anything below a whole minute reads as nothing at all and untracked projects stay
+ * quiet instead of filling a column with zeros.
+ */
+export function projectTrackedDisplayValue(stats: ProjectStats, nowMs: number): string {
+  const ms = projectTrackedMs(stats, nowMs);
+  return ms < MS_PER_MINUTE ? '' : formatTrackedDuration(ms);
+}
 
 export function projectProgress(stats: ProjectStats): ProjectProgress {
   const total = Math.max(0, stats.total - stats.cancelled);
@@ -140,9 +161,11 @@ export function projectTableDisplayValues(
   project: Project,
   field: ProjectFieldCatalogItem,
   statuses: readonly ProjectStatus[],
+  nowMs = Date.now(),
 ): string[] {
   if (isProjectStatusField(field)) return [statusLabel(project, statuses)];
   if (field.type === 'progress') return [projectProgressDisplayValue(project.stats)];
+  if (field.type === 'tracked') return [projectTrackedDisplayValue(project.stats, nowMs)];
   const value = projectFieldValue(project, field);
   const values = Array.isArray(value) ? value : [value];
   return values.length === 0 ? ['—'] : values.map((entry) => displayScalar(entry));
@@ -190,9 +213,14 @@ function stableProjectOrder(left: Project, right: Project): number {
   return byName !== 0 ? byName : compareStrings(left.path, right.path);
 }
 
-function sortableValue(project: Project, field: ProjectFieldCatalogItem | undefined): unknown {
+function sortableValue(
+  project: Project,
+  field: ProjectFieldCatalogItem | undefined,
+  nowMs: number,
+): unknown {
   if (field === undefined) return null;
   if (field.type === 'progress') return projectProgress(project.stats).percent;
+  if (field.type === 'tracked') return projectTrackedMs(project.stats, nowMs);
   const value = projectFieldValue(project, field);
   if (field.type === 'number') {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -201,52 +229,58 @@ function sortableValue(project: Project, field: ProjectFieldCatalogItem | undefi
   return value;
 }
 
+/** What one ordering pass compares against, including the clock every running timer is read at. */
+interface SortContext {
+  readonly field: ProjectFieldCatalogItem | undefined;
+  readonly direction: 'asc' | 'desc';
+  readonly statuses: readonly ProjectStatus[];
+  readonly nowMs: number;
+}
+
 function comparePopulatedValues(
   leftProject: Project,
   rightProject: Project,
-  field: ProjectFieldCatalogItem | undefined,
-  statuses: readonly ProjectStatus[],
+  context: SortContext,
 ): number {
+  const { field, statuses, nowMs } = context;
   if (field === undefined) return 0;
   if (isProjectStatusField(field)) {
     return compareStatusValues(leftProject, rightProject, statuses);
   }
-  const left = sortableValue(leftProject, field);
-  const right = sortableValue(rightProject, field);
-  if (field.type === 'number' || field.type === 'progress') {
+  const left = sortableValue(leftProject, field, nowMs);
+  const right = sortableValue(rightProject, field, nowMs);
+  if (field.type === 'number' || field.type === 'progress' || field.type === 'tracked') {
     return Number(left) - Number(right);
   }
   if (field.type === 'checkbox') return Number(left) - Number(right);
   return compareStrings(textualSortValue(left), textualSortValue(right));
 }
 
-function sortProjects(
-  projects: readonly Project[],
-  field: ProjectFieldCatalogItem | undefined,
-  direction: 'asc' | 'desc',
-  statuses: readonly ProjectStatus[],
-): Project[] {
+function sortProjects(projects: readonly Project[], context: SortContext): Project[] {
+  const { field, direction, nowMs } = context;
   return [...projects].sort((left, right) => {
-    const leftValue = sortableValue(left, field);
-    const rightValue = sortableValue(right, field);
+    const leftValue = sortableValue(left, field, nowMs);
+    const rightValue = sortableValue(right, field, nowMs);
     const nullableOrder = compareNullable(leftValue, rightValue);
     if (nullableOrder !== 0) return nullableOrder;
-    const byField = comparePopulatedValues(left, right, field, statuses);
+    const byField = comparePopulatedValues(left, right, context);
     if (byField !== 0) return direction === 'asc' ? byField : -byField;
     return stableProjectOrder(left, right);
   });
 }
 
-function matchesSearch(
-  project: Project,
-  search: string,
-  fields: readonly ProjectFieldCatalogItem[],
-  statuses: readonly ProjectStatus[],
-): boolean {
+/** The visible text a search runs against, read at the same clock as the rest of the pass. */
+interface SearchContext {
+  readonly fields: readonly ProjectFieldCatalogItem[];
+  readonly statuses: readonly ProjectStatus[];
+  readonly nowMs: number;
+}
+
+function matchesSearch(project: Project, search: string, context: SearchContext): boolean {
   if (search.length === 0) return true;
   if (project.name.toLocaleLowerCase().includes(search)) return true;
-  return fields.some((field) =>
-    projectTableDisplayValues(project, field, statuses).some((value) =>
+  return context.fields.some((field) =>
+    projectTableDisplayValues(project, field, context.statuses, context.nowMs).some((value) =>
       value.toLocaleLowerCase().includes(search),
     ),
   );
@@ -280,6 +314,14 @@ function progressValueGroup(project: Project): ProjectTableValueGroup[] {
       sourcePath: project.path,
     },
   ];
+}
+
+function trackedValueGroup(project: Project, nowMs: number): ProjectTableValueGroup[] {
+  const label = projectTrackedDisplayValue(project.stats, nowMs);
+  if (label === '') {
+    return [{ key: 'empty', label: 'No value', value: null, sourcePath: project.path }];
+  }
+  return [{ key: `value:${label}`, label, value: label, sourcePath: project.path }];
 }
 
 function propertyValueGroup(
@@ -331,12 +373,14 @@ interface GroupValuesInput {
   readonly statuses: readonly ProjectStatus[];
   readonly resolveLink: ProjectTableModelInput['resolveLink'];
   readonly compiledPresets: CompiledProjectPropertyPresets | undefined;
+  readonly nowMs: number;
 }
 
 function groupValues(input: GroupValuesInput): ProjectTableValueGroup[] {
-  const { project, field, statuses, resolveLink, compiledPresets } = input;
+  const { project, field, statuses, resolveLink, compiledPresets, nowMs } = input;
   if (isProjectStatusField(field)) return statusValueGroup(project, statuses);
   if (field.type === 'progress') return progressValueGroup(project);
+  if (field.type === 'tracked') return trackedValueGroup(project, nowMs);
   return propertyValueGroups(project, field, resolveLink, compiledPresets);
 }
 
@@ -348,6 +392,7 @@ interface MakeGroupsInput {
   statuses: readonly ProjectStatus[];
   resolveLink: ProjectTableModelInput['resolveLink'];
   propertyDefinitions?: ProjectTableModelInput['propertyDefinitions'];
+  nowMs: number;
 }
 
 function orderGroupProjects(
@@ -375,6 +420,7 @@ function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
     statuses,
     resolveLink,
     propertyDefinitions,
+    nowMs,
   } = input;
   if (groupField === undefined || groupField.id === 'none') {
     return [{ key: 'all', label: '', value: null, projects: [...sortedProjects] }];
@@ -391,6 +437,7 @@ function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
       statuses,
       resolveLink,
       compiledPresets,
+      nowMs,
     })) {
       const current = byKey.get(group.key) ?? { ...group, projects: [] };
       current.projects.push(project);
@@ -419,6 +466,8 @@ function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
 }
 
 export function buildProjectTableModel(input: ProjectTableModelInput): ProjectTableModel {
+  // One clock for the whole pass, so every running timer is compared and shown at the same instant.
+  const nowMs = input.nowMs ?? Date.now();
   const availableStatusGroups = orderedGroups([...input.statuses], [...input.projects]);
   const hidden = new Set(input.settings.hiddenStatuses);
   const visibleFields = input.settings.columns
@@ -429,17 +478,21 @@ export function buildProjectTableModel(input: ProjectTableModelInput): ProjectTa
   const visibleProjects = input.projects.filter(
     (project) =>
       !hidden.has(statusGroupKey(project)) &&
-      matchesSearch(project, search, visibleFields, input.statuses),
+      matchesSearch(project, search, {
+        fields: visibleFields,
+        statuses: input.statuses,
+        nowMs,
+      }),
   );
   const sortedProjects =
     input.settings.sortBy.field === 'none'
       ? [...visibleProjects]
-      : sortProjects(
-          visibleProjects,
-          findProjectFieldById(input.fields, input.settings.sortBy.field),
-          input.settings.sortBy.dir,
-          input.statuses,
-        );
+      : sortProjects(visibleProjects, {
+          field: findProjectFieldById(input.fields, input.settings.sortBy.field),
+          direction: input.settings.sortBy.dir,
+          statuses: input.statuses,
+          nowMs,
+        });
   const groupField = findProjectFieldById(input.fields, input.settings.groupBy);
   return {
     groups: makeGroups({
@@ -449,6 +502,7 @@ export function buildProjectTableModel(input: ProjectTableModelInput): ProjectTa
       availableStatuses: availableStatusGroups,
       statuses: input.statuses,
       resolveLink: input.resolveLink,
+      nowMs,
       ...(input.propertyDefinitions === undefined
         ? {}
         : { propertyDefinitions: input.propertyDefinitions }),

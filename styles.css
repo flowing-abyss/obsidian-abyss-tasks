@@ -7592,6 +7592,12 @@ button.abyss-project-table-status-pill {
   color: var(--abyss-project-progress-color, var(--text-muted));
 }
 
+.abyss-project-table-tracked {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .abyss-project-table-values {
   display: flex;
   overflow: hidden;
@@ -9489,6 +9495,24 @@ button.abyss-project-table-status-pill {
   align-items: center;
   gap: 16px;
   margin: 12px 0;
+}
+
+.abyss-project-time {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+}
+
+.abyss-project-time-label {
+  color: var(--text-faint);
+}
+
+.abyss-project-time-value {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .abyss-project-description {

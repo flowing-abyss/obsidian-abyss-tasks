@@ -22,18 +22,33 @@ function t(over: TaskFixtureInput): TaskSnapshot {
 
 describe('computeStats', () => {
   it('counts task statuses', () => {
-    const stats = computeStats([
-      t({ status: 'open' }),
-      t({ status: 'done' }),
-      t({ status: 'done' }),
-      t({ status: 'cancelled' }),
-      t({ status: 'in-progress' }),
-    ]);
-    expect(stats).toEqual({ total: 5, done: 2, cancelled: 1, inProgress: 1 });
+    const stats = computeStats(
+      [
+        t({ status: 'open' }),
+        t({ status: 'done' }),
+        t({ status: 'done' }),
+        t({ status: 'cancelled' }),
+        t({ status: 'in-progress' }),
+      ],
+      { closedMs: 90_000, openStartsMs: [] },
+    );
+    expect(stats).toEqual({
+      total: 5,
+      done: 2,
+      cancelled: 1,
+      inProgress: 1,
+      tracked: { closedMs: 90_000, openStartsMs: [] },
+    });
   });
 
   it('handles an empty list', () => {
-    expect(computeStats([])).toEqual({ total: 0, done: 0, cancelled: 0, inProgress: 0 });
+    expect(computeStats([], { closedMs: 0, openStartsMs: [] })).toEqual({
+      total: 0,
+      done: 0,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    });
   });
 });
 
@@ -131,6 +146,7 @@ describe('ProjectStore enumeration', () => {
       done: 1,
       cancelled: 0,
       inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
     });
     ps.destroy();
   });
@@ -163,6 +179,7 @@ describe('ProjectStore enumeration', () => {
       done: 0,
       cancelled: 0,
       inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
     });
     expect(list).toHaveBeenCalled();
     expect(forCalendarProjection).not.toHaveBeenCalled();
@@ -220,8 +237,9 @@ describe('ProjectStore enumeration', () => {
     (change) => {
       const mock = makeApp([{ path: 'Projects/A.md', tags: [], fm: { status: 'active' } }]);
       const list = vi.fn(() => [] as TaskSnapshot[]);
+      const fileTotal = vi.fn(() => ({ closedMs: 0, openStartsMs: [] }));
       const settings = structuredClone(DEFAULT_SETTINGS);
-      const ps = new ProjectStore(mock.app, queryApiForTasks(list), settings);
+      const ps = new ProjectStore(mock.app, { ...queryApiForTasks(list), fileTotal }, settings);
       ps.initialize();
       const getMarkdownFiles = vi.spyOn(
         (mock.app as { vault: { getMarkdownFiles: () => unknown[] } }).vault,
@@ -229,6 +247,7 @@ describe('ProjectStore enumeration', () => {
       );
       list.mockClear();
       getMarkdownFiles.mockClear();
+      fileTotal.mockClear();
 
       if (change === 'membership') settings.projects.membershipQuery = '#project';
       else if (change === 'status source') settings.projects.statusProperty = 'phase';
@@ -237,6 +256,8 @@ describe('ProjectStore enumeration', () => {
 
       expect(getMarkdownFiles).toHaveBeenCalledOnce();
       expect(list).toHaveBeenCalledOnce();
+      // The tracked total is one indexed lookup per surviving project, never a walk over entries.
+      expect(fileTotal).toHaveBeenCalledTimes(change === 'membership' ? 0 : 1);
       ps.destroy();
     },
   );

@@ -38,12 +38,17 @@ const fields: ProjectField[] = [
   { id: 'name', label: 'Name', type: 'name' },
   { id: 'status', label: 'Status', type: 'status' },
   { id: 'progress', label: 'Progress', type: 'progress' },
+  { id: 'tracked', label: 'Time', type: 'tracked' },
   { id: 'start', property: 'start', label: 'Start', type: 'date' },
   { id: 'end', property: 'end', label: 'End', type: 'date' },
   { id: 'property:budget', property: 'budget', label: 'Budget', type: 'number' },
   { id: 'property:owners', property: 'owners', label: 'Owners', type: 'list' },
   { id: 'property:approved', property: 'approved', label: 'Approved', type: 'checkbox' },
 ];
+
+const NO_TRACKED = { closedMs: 0, openStartsMs: [] } as const;
+const NOW_MS = Date.UTC(2026, 8, 18, 12, 0);
+const MINUTE = 60_000;
 
 function project(name: string, overrides: Partial<Project> = {}): Project {
   return {
@@ -53,9 +58,22 @@ function project(name: string, overrides: Partial<Project> = {}): Project {
     tags: [],
     statusId: 'active',
     rawStatus: null,
-    stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+    stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, tracked: NO_TRACKED },
     ...overrides,
   };
+}
+
+/** A project whose only distinguishing statistic is how much time its note records. */
+function timed(name: string, closedMinutes: number, openStartsMs: readonly number[] = []): Project {
+  return project(name, {
+    stats: {
+      total: 0,
+      done: 0,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: closedMinutes * MINUTE, openStartsMs: [...openStartsMs] },
+    },
+  });
 }
 
 function table(overrides: Partial<ProjectTableSettings> = {}): ProjectTableSettings {
@@ -81,6 +99,7 @@ function model(
     statuses,
     settings,
     search,
+    nowMs: NOW_MS,
     ...(propertyDefinitions === undefined ? {} : { propertyDefinitions }),
   });
 }
@@ -448,11 +467,23 @@ describe('buildProjectTableModel', () => {
     const projects = [
       project('Approved', {
         frontmatter: { approved: true },
-        stats: { total: 10, done: 6, cancelled: 0, inProgress: 1 },
+        stats: {
+          total: 10,
+          done: 6,
+          cancelled: 0,
+          inProgress: 1,
+          tracked: { closedMs: 0, openStartsMs: [] },
+        },
       }),
       project('Rejected', {
         frontmatter: { approved: false },
-        stats: { total: 4, done: 1, cancelled: 0, inProgress: 0 },
+        stats: {
+          total: 4,
+          done: 1,
+          cancelled: 0,
+          inProgress: 0,
+          tracked: { closedMs: 0, openStartsMs: [] },
+        },
       }),
     ];
 
@@ -472,13 +503,31 @@ describe('buildProjectTableModel', () => {
     const result = model(
       [
         project('Open remainder', {
-          stats: { total: 2, done: 1, cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 2,
+            done: 1,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
         project('In-progress remainder', {
-          stats: { total: 3, done: 1, cancelled: 1, inProgress: 1 },
+          stats: {
+            total: 3,
+            done: 1,
+            cancelled: 1,
+            inProgress: 1,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
         project('No included tasks', {
-          stats: { total: 2, done: 0, cancelled: 2, inProgress: 0 },
+          stats: {
+            total: 2,
+            done: 0,
+            cancelled: 2,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
       ],
       table({ groupBy: 'progress' }),
@@ -536,9 +585,61 @@ describe('buildProjectTableModel', () => {
   });
 });
 
+describe('tracked project time', () => {
+  it('sorts by the total a running timer has reached, not by closed time alone', () => {
+    const result = model(
+      [
+        timed('Closed two hours', 120),
+        timed('Running since an hour ago', 0, [NOW_MS - 60 * MINUTE]),
+        timed('Closed ten minutes', 10),
+      ],
+      table({ sortBy: { field: 'tracked', dir: 'desc' } }),
+    );
+
+    expect(result.groups[0]?.projects.map(({ name }) => name)).toEqual([
+      'Closed two hours',
+      'Running since an hour ago',
+      'Closed ten minutes',
+    ]);
+  });
+
+  it('displays the compact total and stays blank below one tracked minute', () => {
+    const trackedField = expectDefined(fields.find(({ id }) => id === 'tracked'));
+
+    expect(projectTableDisplayValues(timed('Busy', 185), trackedField, statuses, NOW_MS)).toEqual([
+      '3h5m',
+    ]);
+    expect(projectTableDisplayValues(timed('Quiet', 0), trackedField, statuses, NOW_MS)).toEqual([
+      '',
+    ]);
+  });
+
+  it('searches the displayed total and groups untracked projects as having no value', () => {
+    const projects = [timed('Busy', 185), timed('Quiet', 0)];
+
+    expect(model(projects, table(), '3h5m').groups[0]?.projects.map(({ name }) => name)).toEqual([
+      'Busy',
+    ]);
+    expect(
+      model(projects, table({ groupBy: 'tracked' })).groups.map(({ key, label }) => [key, label]),
+    ).toEqual([
+      ['value:3h5m', '3h5m'],
+      ['empty', 'No value'],
+    ]);
+  });
+});
+
 describe('projectProgress', () => {
   it('excludes cancelled tasks from the denominator', () => {
-    expect(projectProgress({ total: 12, done: 6, cancelled: 2, inProgress: 1 })).toEqual({
+    expect(
+      projectProgress({
+        total: 12,
+        done: 6,
+        cancelled: 2,
+        inProgress: 1,
+        tracked: { closedMs: 0, openStartsMs: [] },
+      }),
+    ).toEqual({
       done: 6,
       total: 10,
       percent: 60,
@@ -546,7 +647,15 @@ describe('projectProgress', () => {
   });
 
   it('uses a neutral percentage when no non-cancelled tasks exist', () => {
-    expect(projectProgress({ total: 2, done: 0, cancelled: 2, inProgress: 0 })).toEqual({
+    expect(
+      projectProgress({
+        total: 2,
+        done: 0,
+        cancelled: 2,
+        inProgress: 0,
+        tracked: { closedMs: 0, openStartsMs: [] },
+      }),
+    ).toEqual({
       done: 0,
       total: 0,
       percent: null,

@@ -2,6 +2,7 @@ import type * as ObsidianModule from 'obsidian';
 import { Menu, Notice, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import type { ProjectStats } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { RenameTagModal } from '../src/tags/RenameTagModal';
@@ -1315,7 +1316,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     projects?: Array<{
       path: string;
       name: string;
-      stats?: { total: number; done: number; cancelled: number; inProgress: number };
+      stats?: ProjectStats;
     }>;
   }) {
     const state = new AppState();
@@ -1330,7 +1331,13 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       tags: [],
       statusId: null,
       rawStatus: null,
-      stats: p.stats ?? { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+      stats: p.stats ?? {
+        total: 0,
+        done: 0,
+        cancelled: 0,
+        inProgress: 0,
+        tracked: { closedMs: 0, openStartsMs: [] },
+      },
       ...p,
     }));
     const projectStore = {
@@ -1439,7 +1446,13 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       {
         path: 'Projects/A.md',
         name: 'A',
-        stats: { total: 4, done: 1, cancelled: 1, inProgress: 1 },
+        stats: {
+          total: 4,
+          done: 1,
+          cancelled: 1,
+          inProgress: 1,
+          tracked: { closedMs: 0, openStartsMs: [] },
+        },
       },
     ];
     const { el } = makeFull({ projects });

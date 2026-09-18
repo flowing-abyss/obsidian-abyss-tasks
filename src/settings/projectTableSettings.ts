@@ -37,6 +37,7 @@ const CURATED_LABELS: Readonly<Record<string, string>> = {
   name: 'Name',
   status: 'Status',
   progress: 'Progress',
+  tracked: 'Time',
   start: 'Start',
   end: 'End',
 };
@@ -86,6 +87,7 @@ export function setProjectColumnAlignment(
 function projectColumnSourceLabel(projects: ProjectsSettings, column: ProjectColumn): string {
   if (column.id === 'name') return 'Filename';
   if (column.id === 'progress') return 'Tasks';
+  if (column.id === 'tracked') return 'Time entries';
   if (column.id === 'status') return projects.statusProperty;
   if (column.id === 'start') return projects.startProperty;
   if (column.id === 'end') return projects.endProperty;
@@ -225,7 +227,7 @@ function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext)
   const { column, options, persist, source, display, cardId, expanded } = context;
   const sourceElement = summary.createDiv({ cls: 'abyss-project-column-source' });
   sourceElement.createSpan({ text: source });
-  if (column.id === 'progress') {
+  if (column.id === 'progress' || column.id === 'tracked') {
     sourceElement.createSpan({
       cls: 'abyss-project-column-source-badge abyss-project-column-auto',
       text: 'Auto',
@@ -281,10 +283,11 @@ function reservedOwner(projects: ProjectsSettings, property: string): string {
 function columnType(
   column: ProjectColumn,
   entry: ReturnType<typeof definitionEntry>,
-): ProjectPropertyDefinition['type'] | 'status' | 'name' | 'progress' | null {
+): ProjectPropertyDefinition['type'] | 'status' | 'name' | 'progress' | 'tracked' | null {
   if (column.id === 'name') return 'name';
   if (column.id === 'status') return 'status';
   if (column.id === 'progress') return 'progress';
+  if (column.id === 'tracked') return 'tracked';
   if (column.id === 'start' || column.id === 'end') return 'date';
   return entry?.value.type ?? null;
 }

@@ -16,7 +16,7 @@ export interface ProjectField {
   id: string;
   property?: string;
   label: string;
-  type: ProjectPropertyType | 'status' | 'progress' | 'name';
+  type: ProjectPropertyType | 'status' | 'progress' | 'tracked' | 'name';
 }
 
 export interface ProjectPropertyInfo {
@@ -54,6 +54,7 @@ export type ProjectFieldCatalogItem = ProjectField | UnavailableProjectField;
 
 const NAME_FIELD: ProjectField = { id: 'name', label: 'Name', type: 'name' };
 const PROGRESS_FIELD: ProjectField = { id: 'progress', label: 'Progress', type: 'progress' };
+const TRACKED_FIELD: ProjectField = { id: 'tracked', label: 'Time', type: 'tracked' };
 const DESCRIPTION_PROPERTY = 'description';
 
 /** Finds the exact vault/frontmatter spelling for a case-insensitive property name. */
@@ -135,6 +136,7 @@ export function buildProjectFieldCatalog(
       type: null,
     },
     PROGRESS_FIELD,
+    TRACKED_FIELD,
     resolveConfiguredProjectField(settings, 'start') ?? {
       id: 'start',
       property: settings.startProperty,
@@ -197,6 +199,7 @@ export function projectFieldValue(project: Project, field: ProjectFieldCatalogIt
   if (field.type === 'name') return project.name;
   if (isProjectStatusField(field)) return project.statusId ?? project.rawStatus;
   if (field.type === 'progress') return project.stats;
+  if (field.type === 'tracked') return project.stats.tracked;
   if (field.property === undefined) return undefined;
   return findFrontmatterProperty(project.frontmatter, field.property)?.value;
 }

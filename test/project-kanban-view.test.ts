@@ -78,7 +78,13 @@ function project(over: Partial<Project> = {}): Project {
     tags: [],
     statusId: status.id,
     rawStatus: null,
-    stats: { total: 10, done: 6, cancelled: 0, inProgress: 0 },
+    stats: {
+      total: 10,
+      done: 6,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    },
     ...over,
   };
 }
@@ -3574,6 +3580,7 @@ describe('project Kanban overview', () => {
       'name',
       'status',
       'progress',
+      'tracked',
       'end',
       'start',
     ]);
@@ -3796,7 +3803,13 @@ describe('project Kanban overview', () => {
 
   it('treats an all-cancelled project as empty progress until empty progress is enabled', () => {
     const cancelled = project({
-      stats: { total: 4, done: 0, cancelled: 4, inProgress: 0 },
+      stats: {
+        total: 4,
+        done: 0,
+        cancelled: 4,
+        inProgress: 0,
+        tracked: { closedMs: 0, openStartsMs: [] },
+      },
     });
     const { host, view, settings } = mountView([cancelled]);
     settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);

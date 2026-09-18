@@ -2,7 +2,7 @@ import { TFile, type CachedMetadata } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectStore, type ProjectSourceObservation } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import type { TaskIndexEvent, TaskQueryApi, TaskSnapshot } from '../src/tasks';
+import type { TaskIndexEvent, TaskSnapshot } from '../src/tasks';
 import { expectDefined, taskQueryApi } from './helpers';
 
 function tfile(path: string, extension = 'md'): TFile {
@@ -92,7 +92,7 @@ function harness() {
   let reconciledListener: ((files: readonly string[]) => void) | undefined;
   const indexUnsub = vi.fn();
   const reconciledUnsub = vi.fn();
-  const queries: TaskQueryApi = taskQueryApi({
+  const queries = taskQueryApi({
     list: (query) =>
       snapshots.filter(
         (snapshot) => query?.filePath === undefined || snapshot.ref.filePath === query.filePath,
@@ -423,6 +423,7 @@ describe('ProjectStore event convergence', () => {
       done: 0,
       cancelled: 0,
       inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
     });
     expect(listener).toHaveBeenCalledOnce();
     store.destroy();

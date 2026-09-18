@@ -72,6 +72,7 @@ function isClipboardFieldType(value: unknown): value is ProjectFieldCatalogItem[
     'tags',
     'status',
     'progress',
+    'tracked',
     'name',
   ].includes(value as never);
 }
@@ -289,6 +290,7 @@ function validateSourceRectangle(
 
 function fieldLabel(type: ProjectFieldCatalogItem['type']): string {
   if (type === null) return 'This field';
+  if (type === 'tracked') return 'Time';
   return type.charAt(0).toLocaleUpperCase() + type.slice(1);
 }
 
@@ -321,7 +323,7 @@ export function coerceProjectClipboardValue(
   targetType: ProjectFieldCatalogItem['type'],
   statusNames: readonly string[],
 ): unknown {
-  if (targetType === 'name' || targetType === 'progress') {
+  if (targetType === 'name' || targetType === 'progress' || targetType === 'tracked') {
     throw new Error(`${fieldLabel(targetType)} is read-only`);
   }
   if (targetType === null) throw new Error('This field is read-only');
@@ -333,7 +335,7 @@ function coerceScalarTarget(
   source: ProjectClipboardCell,
   targetType: Exclude<
     ProjectFieldCatalogItem['type'],
-    null | 'name' | 'progress' | 'list' | 'tags'
+    null | 'name' | 'progress' | 'tracked' | 'list' | 'tags'
   >,
   statusNames: readonly string[],
 ): unknown {

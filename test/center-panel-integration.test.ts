@@ -2685,7 +2685,13 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       tags: [],
       statusId: expectDefined(DEFAULT_SETTINGS.projects.statuses[0]).id,
       rawStatus: null,
-      stats: { total: 1, done: 0, cancelled: 0, inProgress: 0 },
+      stats: {
+        total: 1,
+        done: 0,
+        cancelled: 0,
+        inProgress: 0,
+        tracked: { closedMs: 0, openStartsMs: [] },
+      },
     };
     const projectStore = {
       list: () => [project],
@@ -2940,7 +2946,13 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       tags: [],
       statusId: expectDefined(DEFAULT_SETTINGS.projects.statuses[0]).id,
       rawStatus: null,
-      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+      stats: {
+        total: 0,
+        done: 0,
+        cancelled: 0,
+        inProgress: 0,
+        tracked: { closedMs: 0, openStartsMs: [] },
+      },
     };
     const projectStore = {
       list: () => [project],

@@ -32,7 +32,13 @@ function project(name: string, overrides: Partial<Project> = {}): Project {
     tags: [],
     statusId: 'active',
     rawStatus: null,
-    stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+    stats: {
+      total: 0,
+      done: 0,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    },
     ...overrides,
   };
 }

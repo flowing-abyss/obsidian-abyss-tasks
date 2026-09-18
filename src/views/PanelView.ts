@@ -21,6 +21,7 @@ import type {
   TaskQueryApi,
   TaskRef,
   TaskResolution,
+  TimeTrackingQueryApi,
 } from '../tasks';
 import { taskCommandRootRef, taskNodeAddress } from '../tasks';
 import { CreationPresentationController } from '../ui/creation/CreationPresentationController';
@@ -86,7 +87,7 @@ interface PanelLayoutElements {
 type PanelViewDependencies = [
   settings: CalendarSettings,
   tagManager: TagManager,
-  queries: TaskQueryApi,
+  queries: TaskQueryApi & TimeTrackingQueryApi,
   tasks: TaskApplicationApi & TaskCaptureApplicationApi,
   statusRegistry: StatusRegistry,
   onSaveSettings?: () => Promise<void>,
@@ -185,7 +186,7 @@ export class PanelView extends ItemView {
   private pendingCompactPane_abyssPrivate: PendingCompactPane | undefined = undefined;
   private readonly settings_abyssPrivate: CalendarSettings;
   private readonly tagManager_abyssPrivate: TagManager;
-  private readonly queries_abyssPrivate: TaskQueryApi;
+  private readonly queries_abyssPrivate: TaskQueryApi & TimeTrackingQueryApi;
   private readonly tasks_abyssPrivate: TaskApplicationApi & TaskCaptureApplicationApi;
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
   private readonly onSaveSettings_abyssPrivate: () => Promise<void>;

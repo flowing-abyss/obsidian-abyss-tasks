@@ -20,7 +20,13 @@ function proj(over: Partial<Project>): Project {
     tags: [],
     statusId: ACTIVE_ID,
     rawStatus: null,
-    stats: { total: 4, done: 1, cancelled: 0, inProgress: 0 },
+    stats: {
+      total: 4,
+      done: 1,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    },
     ...over,
   };
 }
@@ -28,14 +34,26 @@ function proj(over: Partial<Project>): Project {
 describe('renderProgressBar', () => {
   it('renders a fill proportional to done/total', () => {
     const el = freshContainer();
-    renderProgressBar(el, { total: 4, done: 3, cancelled: 0, inProgress: 0 });
+    renderProgressBar(el, {
+      total: 4,
+      done: 3,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    });
     expect((el.querySelector('.abyss-progress-fill') as HTMLElement).style.width).toBe('75%');
     expect(el.querySelector('.abyss-progress-label')?.textContent).toBe('3/4');
   });
 
   it('handles total=0 without NaN', () => {
     const el = freshContainer();
-    renderProgressBar(el, { total: 2, done: 0, cancelled: 2, inProgress: 0 });
+    renderProgressBar(el, {
+      total: 2,
+      done: 0,
+      cancelled: 2,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    });
     expect((el.querySelector('.abyss-progress-fill') as HTMLElement).style.width).toBe('0%');
     expect(el.querySelector('.abyss-progress-label')?.textContent).toBe('—');
   });
@@ -80,6 +98,7 @@ describe('renderProjectDashboard', () => {
         done: 1,
         cancelled: 0,
         inProgress: 0,
+        tracked: { closedMs: 0, openStartsMs: [] },
         estimateMin: 90,
         spentMin: 30,
       } as Project['stats'] & { estimateMin: number; spentMin: number },

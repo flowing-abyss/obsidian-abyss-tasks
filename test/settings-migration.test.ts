@@ -421,6 +421,7 @@ describe('projects migration', () => {
         { id: 'name', visible: true },
         { id: 'status', visible: true },
         { id: 'progress', visible: true },
+        { id: 'tracked', visible: false },
         { id: 'start', visible: true },
         { id: 'end', visible: true },
       ],
@@ -458,6 +459,7 @@ describe('projects migration', () => {
       { id: 'property:Budget', label: 'Cost', width: 240, visible: false },
       { id: 'status', visible: true },
       { id: 'progress', visible: true },
+      { id: 'tracked', visible: false },
       { id: 'start', visible: true },
       { id: 'end', visible: true },
     ]);
@@ -487,6 +489,7 @@ describe('projects migration', () => {
       { id: 'name', visible: true },
       { id: 'status', visible: true },
       { id: 'progress', visible: true },
+      { id: 'tracked', visible: false },
       { id: 'start', visible: true },
       { id: 'end', visible: true },
     ]);

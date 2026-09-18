@@ -201,7 +201,11 @@ frontmatter property and literal status-definition names; project tags do not ca
 
 `projectFields` owns case-insensitive field lookup and the shared catalog. Status, start, and end
 have configured source properties; description uses `description`. Name comes from the filename,
-and progress is derived from completed top-level tasks over non-cancelled top-level tasks.
+and progress is derived from completed top-level tasks over non-cancelled top-level tasks. Time is
+derived the same way from the note's own time entries: `ProjectStore` asks the time entry index for
+the file total whenever it re-evaluates that note, so a project never walks entries itself. Both
+derived fields are read-only wherever a field can be written, and Time ships as a curated column
+that is present but hidden, so a table only widens when a reader asks for it.
 Curated types are fixed. Custom types and preset presentation in `projects.propertyDefinitions`
 remain authoritative when Obsidian's registry changes or is unavailable. A custom definition whose
 source is assigned to a curated role stays saved but inactive until that role moves away.
@@ -218,6 +222,8 @@ projections, and editors. See [field tests](test/project-fields.test.ts) and
 `projectTableModel` is the DOM-free source of search, typed sorting, status filtering, grouping,
 and unique visible counts. Link groups use resolved note paths as identity while retaining raw
 values and source paths for rendering and edits; external targets keep source-independent identity.
+A render pass reads one clock and hands it to the model, so every running timer is sorted, grouped,
+searched, and labelled at the same instant and nothing in a table ticks on its own.
 Kanban and Timeline models reuse this projection. Their settings modules own independent saved
 presentation and organization, initialized from Table only when first requested.
 
