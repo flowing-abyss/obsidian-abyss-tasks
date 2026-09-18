@@ -139,6 +139,16 @@ command pauses whatever runs or resumes the most recently tracked task of the la
 code-block calendar keeps only the marker, because its card body right-click already belongs to the
 recurrence editor and its start and pause controls live in the task modal's badge instead.
 
+The rail widget is the one live surface outside the inspector. `RailPanel` creates its host element
+once and re-places it on each mode change, so the widget survives navigation, and `PanelView` mounts
+it there on the ticker and write boundary the panels already share. It regroups the seven-day window
+only when the index reports a change and at one scheduled local midnight; a tick adds the open
+timer's own elapsed time to the two totals already in hand and never asks the index anything. The
+tracked-task list it opens beside the rail reads that same grouping, so a day's rows always add up
+to its heading and today's heading to the widget's own total. Opening a task from either switches to
+Tasks mode and makes the node the inspector selection, which is what opens the details pane at a
+compact width.
+
 Completing or cancelling a node closes the entries still running in its subtree as a follow-up
 write with the same clock reading, inside the same serialized mutation. That write never changes
 the status command's own result; a failure goes to the diagnostics sink and leaves the running

@@ -52,6 +52,7 @@ export { sameTaskTreeWithOwnedChanges } from './domain/taskTreeChangeProof';
 export type { OffsetAt } from './domain/timeEntry';
 export {
   entryDurationMs,
+  groupTrackedDays,
   localDayStartMs,
   resumeTarget,
   shiftLocalDayStartMs,
@@ -61,6 +62,8 @@ export {
   timeEntryRef,
   totalMs,
   type TimeEntrySnapshot,
+  type TrackedDay,
+  type TrackedDayRow,
   type TrackedEntry,
   type TrackedTotal,
 } from './domain/timeTracking';

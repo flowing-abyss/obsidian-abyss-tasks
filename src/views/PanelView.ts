@@ -17,11 +17,12 @@ import type {
   TaskCaptureApplicationApi,
   TaskCommandResult,
   TaskIndexEvent,
+  TaskNodeRef,
   TaskQueryApi,
   TaskRef,
   TaskResolution,
 } from '../tasks';
-import { taskCommandRootRef } from '../tasks';
+import { taskCommandRootRef, taskNodeAddress } from '../tasks';
 import { CreationPresentationController } from '../ui/creation/CreationPresentationController';
 import { InteractionRegistry } from '../ui/interactionOwnership';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
@@ -35,9 +36,14 @@ import { presentTaskCommandResult } from '../ui/taskCommandResult';
 import {
   rebuildTaskSelection,
   renamedRootSelection,
+  rootTaskNodeRef,
   rootTaskRef,
   type TaskSelectionNode,
 } from '../ui/taskSelection';
+import {
+  mountRailTrackingWidget,
+  type RailTrackingWidgetHandle,
+} from '../ui/timeTracking/RailTrackingWidget';
 import { deviceTrackedTimeContext, type TrackingSurface } from '../ui/timeTracking/TimeBadge';
 import { TrackingTicker } from '../ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../ui/timeTracking/trackingActions';
@@ -186,6 +192,7 @@ export class PanelView extends ItemView {
   private readonly onSaveViewState_abyssPrivate: () => Promise<void>;
   private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
   private timeTracking_abyssPrivate: TrackingSurface | undefined;
+  private railTracking_abyssPrivate: RailTrackingWidgetHandle | undefined;
 
   constructor(leaf: WorkspaceLeaf, ...dependencies: PanelViewDependencies) {
     super(leaf);
@@ -487,9 +494,43 @@ export class PanelView extends ItemView {
 
   private mountPanels_abyssPrivate(elements: PanelLayoutElements): void {
     this.rail_abyssPrivate.mount(elements.rail);
+    this.mountRailTracking_abyssPrivate(elements.layout);
     this.left_abyssPrivate.mount(elements.left);
     this.center_abyssPrivate.mount(elements.center);
     this.right_abyssPrivate.mount(elements.right);
+  }
+
+  /** The rail widget shares this view's one ticker and write boundary with every other control. */
+  private mountRailTracking_abyssPrivate(layout: HTMLElement): void {
+    const host = this.rail_abyssPrivate.trackingHost();
+    const surface = this.timeTracking_abyssPrivate;
+    if (host === undefined || surface === undefined) return;
+    this.railTracking_abyssPrivate = mountRailTrackingWidget({
+      host,
+      popoverOwner: layout,
+      boundary: layout,
+      queries: this.tasks_abyssPrivate.queries,
+      ticker: surface.ticker,
+      actions: surface.actions,
+      openTask: (target) => {
+        this.openTrackedTask_abyssPrivate(target);
+      },
+      context: surface.context,
+      win: layout.ownerDocument.defaultView ?? activeWindow,
+    });
+  }
+
+  /**
+   * Shows a tracked task the way a card selection does: the panel switches to Tasks and the node
+   * becomes the inspector selection, which at a compact width is what opens the details pane.
+   */
+  private openTrackedTask_abyssPrivate(target: TaskNodeRef): void {
+    this.panelNavigation_abyssPrivate.openTasks();
+    const address = taskNodeAddress(target);
+    const node = this.tasks_abyssPrivate.queries
+      .listNodes({ filePath: rootTaskNodeRef(target).filePath })
+      .find((candidate) => taskNodeAddress(candidate.target) === address);
+    if (node !== undefined) this.state_abyssPrivate.openInspectorDependency(node);
   }
 
   private initializeCapture_abyssPrivate(
@@ -637,6 +678,8 @@ export class PanelView extends ItemView {
   private destroyOwnedViews_abyssPrivate(): void {
     this.creationPresentation_abyssPrivate?.destroy();
     this.creationPresentation_abyssPrivate = undefined;
+    this.railTracking_abyssPrivate?.destroy();
+    this.railTracking_abyssPrivate = undefined;
     this.timeTracking_abyssPrivate?.ticker.destroy();
     this.timeTracking_abyssPrivate = undefined;
     this.projectStore_abyssPrivate?.destroy();

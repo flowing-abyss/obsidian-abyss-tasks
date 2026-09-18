@@ -5830,14 +5830,16 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 :is(.abyss-subtask-remove, .abyss-dep-remove, .abyss-dep-add, .abyss-time-row-remove):focus-visible,
 .abyss-undo-row button:focus-visible,
 .abyss-dep-search button:focus-visible,
-.abyss-rail-tracking-toggle:focus-visible {
+.abyss-tracked-tasks-popover button:focus-visible,
+.abyss-rail-tracking button:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
 
 /* The anchored list popovers share one size and flow; only their contents differ. */
 .abyss-dep-search,
-.abyss-time-tracking-popover {
+.abyss-time-tracking-popover,
+.abyss-tracked-tasks-popover {
   display: flex;
   flex-direction: column;
   width: 19rem;
@@ -5850,7 +5852,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-dep-search > *,
-.abyss-time-tracking-popover > * {
+.abyss-time-tracking-popover > *,
+.abyss-tracked-tasks-popover > * {
   flex-shrink: 0;
 }
 
@@ -9930,8 +9933,9 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   background: var(--background-modifier-active-hover);
 }
 
-/* The session list is the shared popover flow, plus the row rhythm and its own scroll. */
-.abyss-time-tracking-popover {
+/* The session and tracked-task lists are the shared popover flow, plus their own scroll. */
+.abyss-time-tracking-popover,
+.abyss-tracked-tasks-popover {
   gap: 2px;
   overflow-y: auto;
 }
@@ -10023,6 +10027,42 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   line-height: 1.1;
 }
 
+/*
+ * Both totals read as numbers first, so their buttons carry no chrome of their own and take the
+ * widget's colour. The container is named again to outrank Obsidian's own button colour.
+ */
+.abyss-rail-tracking :is(.abyss-rail-tracking-task, .abyss-rail-tracking-day) {
+  padding: 0 2px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.abyss-rail-tracking :is(.abyss-rail-tracking-task, .abyss-rail-tracking-day):hover {
+  background: var(--background-modifier-hover);
+}
+
+/* Paused, the current task steps back and the day total leads. */
+.abyss-rail-tracking:not(.is-tracking) .abyss-rail-tracking-task {
+  color: var(--text-muted);
+}
+
+.abyss-rail-tracking-rule {
+  width: 22px;
+  height: 1px;
+  background: var(--background-modifier-border);
+}
+
+.abyss-rail-tracking-caption {
+  color: var(--text-faint);
+  font-size: 9px;
+  letter-spacing: 0.03em;
+}
+
 /* Accent while a timer runs, warning once it has run long enough to look forgotten. */
 .abyss-task-time-badge.is-tracking,
 .abyss-time-badge.is-tracking,
@@ -10066,4 +10106,134 @@ body.is-phone.is-mobile .abyss-creation-feedback {
     animation: none;
     opacity: 1;
   }
+}
+
+/*
+ * A day of the tracked list: one heading that folds it, then the tasks worked on that day. Every
+ * control here names the popover as well, so a row keeps its own flow instead of Obsidian's
+ * default button chrome, which outranks a lone class.
+ */
+.abyss-tracked-tasks-popover .abyss-tracked-day-header,
+.abyss-tracked-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-normal);
+  text-align: start;
+}
+
+.abyss-tracked-tasks-popover .abyss-tracked-day-header {
+  font-weight: var(--font-medium);
+  cursor: pointer;
+}
+
+.abyss-tracked-tasks-popover .abyss-tracked-day-header:hover,
+.abyss-tracked-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.abyss-tracked-day-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.abyss-tracked-day-total,
+.abyss-tracked-row-clock {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.abyss-tracked-day-rows {
+  display: flex;
+  flex-direction: column;
+  padding-inline-start: 8px;
+}
+
+/* A folded day keeps its rows in the tree for the next tick, so the fold has to beat the flow. */
+.abyss-tracked-day-rows[hidden] {
+  display: none;
+}
+
+/* The control column is one width whether it offers a timer or only reports a finished task. */
+.abyss-tracked-row :is(.abyss-tracked-row-toggle, .abyss-tracked-row-done) {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+.abyss-tracked-row .abyss-tracked-row-toggle {
+  cursor: pointer;
+}
+
+.abyss-tracked-row .abyss-tracked-row-toggle:hover {
+  background: var(--background-modifier-active-hover);
+  color: var(--text-normal);
+}
+
+:is(.abyss-tracked-row-toggle, .abyss-tracked-row-done) svg {
+  width: 13px;
+  height: 13px;
+}
+
+.abyss-tracked-row .abyss-tracked-row-open {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.abyss-tracked-row-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.abyss-tracked-row-parent,
+.abyss-tracked-empty {
+  overflow: hidden;
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.abyss-tracked-row.is-tracking {
+  color: var(--interactive-accent);
+}
+
+.abyss-tracked-row.is-tracking .abyss-tracked-row-toggle,
+.abyss-tracked-row.is-tracking .abyss-tracked-row-clock {
+  color: var(--interactive-accent);
+}
+
+.abyss-tracked-row.is-finished .abyss-tracked-row-title {
+  color: var(--text-muted);
 }

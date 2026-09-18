@@ -17,6 +17,7 @@ const ITEMS: RailItem[] = [
 
 export class RailPanel {
   private el!: HTMLElement;
+  private trackingHostEl: HTMLElement | undefined;
   private offMode?: () => void;
   private settingsLifecycle: {
     button: HTMLElement;
@@ -38,15 +39,24 @@ export class RailPanel {
 
   mount(container: HTMLElement): void {
     this.el = container;
+    // The rail is rebuilt on every mode change, so the tracking widget's own element is created
+    // once here and re-placed by each render instead of being remounted with the buttons.
+    this.trackingHostEl = container.createDiv({ cls: 'abyss-rail-tracking', attr: { hidden: '' } });
     this.offMode = this.state.on('mode', () => {
       this.render();
     });
     this.render();
   }
 
+  /** The element the rail keeps alive for whoever owns the time tracking widget. */
+  trackingHost(): HTMLElement | undefined {
+    return this.trackingHostEl;
+  }
+
   destroy(): void {
     this.disposeSettingsLifecycle();
     this.offMode?.();
+    this.trackingHostEl = undefined;
     this.el.empty();
   }
 
@@ -67,8 +77,9 @@ export class RailPanel {
       });
     }
 
-    // Settings at bottom
+    // Settings at bottom, under whatever time tracking has to say
     const bottomGroup = this.el.createDiv({ cls: 'abyss-rail-bottom' });
+    if (this.trackingHostEl !== undefined) bottomGroup.appendChild(this.trackingHostEl);
     const settingsBtn = bottomGroup.createEl('button', {
       cls: 'abyss-rail-btn',
       attr: { 'aria-label': 'Settings', title: 'Settings' },

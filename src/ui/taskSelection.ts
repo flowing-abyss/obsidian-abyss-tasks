@@ -18,10 +18,15 @@ export function taskNodeRef(node: TaskSelectionNode): TaskNodeRef {
     : { type: 'task', ref: node.ref };
 }
 
+/** The root task a node reference hangs off, which is the only part of it that names a file. */
+export function rootTaskNodeRef(ref: TaskNodeRef): TaskRef {
+  let current = ref;
+  while (current.type === 'subtask') current = current.ref.parent;
+  return current.ref;
+}
+
 export function rootTaskRef(node: TaskSelectionNode): TaskRef {
-  let ref = taskNodeRef(node);
-  while (ref.type === 'subtask') ref = ref.ref.parent;
-  return ref.ref;
+  return rootTaskNodeRef(taskNodeRef(node));
 }
 
 export function taskNodeLine(root: TaskSnapshot, node: TaskSelectionNode): number {
