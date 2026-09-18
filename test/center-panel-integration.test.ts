@@ -977,6 +977,52 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     }
   });
 
+  it('opens the tracked sort on the most tracked task and toggles from there', async () => {
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
+    const panel = makeStaticPanel(state, [], settings);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+
+    const sortOption = (label: string): HTMLButtonElement => {
+      const popover = expectDefined(
+        container.querySelector<HTMLElement>('.abyss-view-state-popover'),
+      );
+      const sortRow = expectDefined(
+        Array.from(popover.querySelectorAll<HTMLElement>('.abyss-view-state-row')).find(
+          (candidate) =>
+            candidate.querySelector('.abyss-view-state-row-label')?.textContent === 'Sort by',
+        ),
+      );
+      return expectDefined(
+        Array.from(sortRow.querySelectorAll<HTMLButtonElement>('button')).find(
+          (candidate) =>
+            candidate.querySelector('.abyss-view-state-option-label')?.textContent === label,
+        ),
+      );
+    };
+
+    try {
+      panel.mount(container);
+      expectDefined(container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+
+      sortOption('Tracked').click();
+      await flushMicrotasks();
+
+      expect(sortOption('Tracked ↓').getAttribute('aria-pressed')).toBe('true');
+      expect(state.get('centerListViewState').sortBy).toEqual({ field: 'tracked', dir: 'desc' });
+
+      sortOption('Tracked ↓').click();
+      await flushMicrotasks();
+
+      expect(state.get('centerListViewState').sortBy).toEqual({ field: 'tracked', dir: 'asc' });
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   it('retains task-list scroll while refreshing content under an open options popover', () => {
     const state = new AppState();
     state.set('selectedList', 'today');

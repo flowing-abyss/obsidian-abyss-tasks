@@ -834,6 +834,34 @@ describe('SettingsPersistenceCoordinator migration', () => {
     },
   );
 
+  it('carries the tracked sort field through a load and save round trip', async () => {
+    const port = memoryPort(
+      markedStatic(),
+      stateEnvelope({
+        listViewStates: {
+          today: { groupBy: 'none', sortBy: { field: 'tracked', dir: 'desc' }, filters: [] },
+        },
+      }),
+    );
+    const coordinator = new SettingsPersistenceCoordinator(port);
+
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+
+    expect(loaded.notices).toEqual([]);
+    expect(loaded.settings.listViewStates?.['today']?.sortBy).toEqual({
+      field: 'tracked',
+      dir: 'desc',
+    });
+
+    await coordinator.saveViewState(loaded.settings);
+
+    expect(JSON.parse(port.stateText ?? '')).toMatchObject({
+      views: {
+        listViewStates: { today: { sortBy: { field: 'tracked', dir: 'desc' } } },
+      },
+    });
+  });
+
   it('keeps malformed nested entries in recovery while loading safe defaults', async () => {
     const malformedState = stateEnvelope({
       listViewStates: {

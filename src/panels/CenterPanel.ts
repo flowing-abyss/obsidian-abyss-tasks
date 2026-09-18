@@ -3434,6 +3434,7 @@ export class CenterPanel {
       'title',
       'tag',
       'status',
+      'tracked',
     ];
     return {
       kind: 'single',
@@ -3456,8 +3457,11 @@ export class CenterPanel {
       onSelect: (value) => {
         const viewState = this.state_abyssPrivate.get('centerListViewState');
         const field = value as ListViewState['sortBy']['field'];
-        const dir =
-          viewState.sortBy.field === field && viewState.sortBy.dir === 'asc' ? 'desc' : 'asc';
+        // Tracked time is asked for to find where the time went, so it opens on the busiest task;
+        // every other field opens ascending. Choosing the field again flips it either way.
+        const opening = field === 'tracked' ? 'desc' : 'asc';
+        const flipped = viewState.sortBy.dir === 'asc' ? 'desc' : 'asc';
+        const dir = viewState.sortBy.field === field ? flipped : opening;
         this.updateViewState_abyssPrivate({ ...viewState, sortBy: { field, dir } });
       },
     };
@@ -3945,6 +3949,9 @@ export class CenterPanel {
         viewState: this.state_abyssPrivate.get('centerListViewState'),
         settings: this.settings_abyssPrivate,
         today: window.moment().format('YYYY-MM-DD') as LocalDate,
+        // The clock this render pass already read, so sorting by tracked time and the badges it
+        // orders agree on one instant instead of each asking the ticker again.
+        nowMs: this.cardRenderNowMs_abyssPrivate,
         textQuery: this.state_abyssPrivate.get('centerFilter'),
       }),
     ];
