@@ -104,12 +104,14 @@ function startMsOf(tracked: TrackedEntry): number {
   return tracked.entry.startMs ?? 0;
 }
 
-/** Stable across calls: the instant first, then the file, then the root line. */
+/** Stable across calls: the instant first, then the file, the root line and the entry line. */
 function compareTrackedEntries(left: TrackedEntry, right: TrackedEntry): number {
   const startOrder = startMsOf(left) - startMsOf(right);
   if (startOrder !== 0) return startOrder;
   const pathOrder = left.filePath.localeCompare(right.filePath);
-  return pathOrder !== 0 ? pathOrder : left.root.line - right.root.line;
+  if (pathOrder !== 0) return pathOrder;
+  const rootOrder = left.root.line - right.root.line;
+  return rootOrder !== 0 ? rootOrder : left.entry.relativeLine - right.entry.relativeLine;
 }
 
 function orderedResult(entries: TrackedEntry[]): readonly TrackedEntry[] {
@@ -144,8 +146,11 @@ export class TimeEntryIndex {
   private readonly byFile = new Map<string, FileEntries>();
   private readonly byUtcDay = new Map<number, TrackedEntry[]>();
   private readonly runningByFile = new Map<string, readonly TrackedEntry[]>();
+  /** Rebuilt only when a file changes, so a ticking consumer can skip a render by reference. */
+  private activeResult: readonly TrackedEntry[] | undefined;
 
   updateFile(filePath: string, roots: readonly TaskSnapshot[]): void {
+    this.activeResult = undefined;
     this.removeFile(filePath);
     const collection = collectFile(filePath, roots);
     if (collection.closed.length === 0 && collection.running.length === 0) return;
@@ -158,6 +163,7 @@ export class TimeEntryIndex {
   }
 
   removeFile(filePath: string): void {
+    this.activeResult = undefined;
     const previous = this.byFile.get(filePath);
     this.byFile.delete(filePath);
     this.runningByFile.delete(filePath);
@@ -166,15 +172,16 @@ export class TimeEntryIndex {
   }
 
   clear(): void {
+    this.activeResult = undefined;
     this.byFile.clear();
     this.byUtcDay.clear();
     this.runningByFile.clear();
   }
 
+  /** The same array until a file changes, so a ticker can compare by reference before rendering. */
   activeEntries(): readonly TrackedEntry[] {
-    const running: TrackedEntry[] = [];
-    for (const entries of this.runningByFile.values()) running.push(...entries);
-    return orderedResult(running);
+    this.activeResult ??= this.collectRunning();
+    return this.activeResult;
   }
 
   /**
@@ -193,14 +200,32 @@ export class TimeEntryIndex {
     return this.byFile.get(filePath)?.total ?? EMPTY_TOTAL;
   }
 
-  /** A bucket holds whole entries, so every candidate day is still cut down to the exact range. */
+  private collectRunning(): readonly TrackedEntry[] {
+    const running: TrackedEntry[] = [];
+    for (const entries of this.runningByFile.values()) running.push(...entries);
+    return orderedResult(running);
+  }
+
+  /**
+   * A bucket holds whole entries, so every candidate day is still cut down to the exact range.
+   * A range asking for more days than the index has buckets reads the buckets instead of stepping,
+   * which keeps an open ended query on the size of the data rather than on the calendar.
+   */
   private collectClosedInRange(found: Set<TrackedEntry>, fromMs: number, toMs: number): void {
+    const firstKey = Math.floor(fromMs / MS_PER_DAY);
     const lastKey = Math.floor((toMs - 1) / MS_PER_DAY);
-    for (let dayKey = Math.floor(fromMs / MS_PER_DAY); dayKey <= lastKey; dayKey += 1) {
-      for (const tracked of this.byUtcDay.get(dayKey) ?? EMPTY_ENTRIES) {
+    const collect = (bucket: readonly TrackedEntry[] | undefined): void => {
+      for (const tracked of bucket ?? EMPTY_ENTRIES) {
         if (overlapsRange(tracked.entry, fromMs, toMs)) found.add(tracked);
       }
+    };
+    if (lastKey - firstKey > this.byUtcDay.size) {
+      for (const [dayKey, bucket] of this.byUtcDay) {
+        if (dayKey >= firstKey && dayKey <= lastKey) collect(bucket);
+      }
+      return;
     }
+    for (let dayKey = firstKey; dayKey <= lastKey; dayKey += 1) collect(this.byUtcDay.get(dayKey));
   }
 
   private collectRunningStartedBefore(found: Set<TrackedEntry>, toMs: number): void {

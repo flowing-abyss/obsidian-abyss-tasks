@@ -1,5 +1,5 @@
 import { TFile, type CachedMetadata } from 'obsidian';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import type { TimeEntrySnapshot, TrackedEntry } from '../../src/tasks/domain/timeTracking';
 import type { SubtaskSnapshot, TaskSnapshot } from '../../src/tasks/domain/types';
@@ -21,6 +21,19 @@ useRealMoment();
 const MS_PER_DAY = 86_400_000;
 const RANGE_FROM_MS = Date.parse('2026-09-14T00:00:00Z');
 const RANGE_TO_MS = Date.parse('2026-09-21T00:00:00Z');
+const RANGE_DAYS = 7;
+/** The bucket cap of one closed entry, mirrored here so the cap stays observable from outside. */
+const MAX_DAY_KEYS = 400;
+const EPOCH_MS = Date.parse('1970-01-01T00:00:00Z');
+const FAR_FUTURE_MS = Date.parse('2100-01-01T00:00:00Z');
+
+/**
+ * The day buckets are private, so only their own map can show that a query skipped them. Reading
+ * it keeps the guard against a range wider than the data a structural check instead of a timing one.
+ */
+function dayBuckets(index: TimeEntryIndex): Map<number, readonly TrackedEntry[]> {
+  return (index as unknown as { readonly byUtcDay: Map<number, readonly TrackedEntry[]> }).byUtcDay;
+}
 
 function closedEntry(start: string, end: string, relativeLine: number): TimeEntrySnapshot {
   return {
@@ -102,6 +115,23 @@ function rangeLines(index: TimeEntryIndex): readonly number[] {
   return index
     .entriesOverlapping(RANGE_FROM_MS, RANGE_TO_MS)
     .map((tracked) => tracked.entry.relativeLine);
+}
+
+/** One closed entry far longer than the bucket cap, so the cap and its cleanup are observable. */
+function longSpanRoot(startMs: number): TaskSnapshot {
+  return task({
+    title: 'Runaway',
+    source: { filePath: 'long.md', line: 0 },
+    timeEntries: [
+      {
+        state: 'closed',
+        startMs,
+        endMs: startMs + 500 * MS_PER_DAY,
+        relativeLine: 1,
+        originalMarkdown: '    - a span of five hundred days',
+      },
+    ],
+  });
 }
 
 const TRACKED_CONTENT = [
@@ -238,21 +268,7 @@ describe('time entry index', () => {
   it('bounds how many day buckets one entry can fill', () => {
     const index = new TimeEntryIndex();
     const startMs = Date.parse('2026-01-01T00:00:00Z');
-    index.updateFile('long.md', [
-      task({
-        title: 'Runaway',
-        source: { filePath: 'long.md', line: 0 },
-        timeEntries: [
-          {
-            state: 'closed',
-            startMs,
-            endMs: startMs + 500 * MS_PER_DAY,
-            relativeLine: 1,
-            originalMarkdown: '    - a span of five hundred days',
-          },
-        ],
-      }),
-    ]);
+    index.updateFile('long.md', [longSpanRoot(startMs)]);
 
     expect(index.entriesOverlapping(startMs, startMs + MS_PER_DAY)).toHaveLength(1);
     expect(
@@ -263,6 +279,82 @@ describe('time entry index', () => {
       index.entriesOverlapping(startMs + 400 * MS_PER_DAY, startMs + 401 * MS_PER_DAY),
     ).toEqual([]);
     expect(index.fileTotal('long.md').closedMs).toBe(500 * MS_PER_DAY);
+  });
+
+  it('empties every bucket a capped span filled when its file is removed', () => {
+    const index = new TimeEntryIndex();
+    const startMs = Date.parse('2026-01-01T00:00:00Z');
+    index.updateFile('long.md', [longSpanRoot(startMs)]);
+    expect(dayBuckets(index).size).toBe(MAX_DAY_KEYS);
+
+    index.removeFile('long.md');
+
+    const middleMs = startMs + 200 * MS_PER_DAY;
+    expect(index.entriesOverlapping(middleMs, middleMs + MS_PER_DAY)).toEqual([]);
+    expect(dayBuckets(index).size).toBe(0);
+  });
+
+  it('reads the buckets it has when the range is wider than them, and steps days when it is not', () => {
+    const index = new TimeEntryIndex();
+    index.updateFile('range.md', [rangeFile()]);
+    const lookups = vi.spyOn(dayBuckets(index), 'get');
+
+    const wide = index.entriesOverlapping(EPOCH_MS, FAR_FUTURE_MS);
+
+    expect(wide.map((tracked) => tracked.entry.relativeLine)).toEqual([7, 3, 6, 1, 5, 2, 4]);
+    expect(lookups).not.toHaveBeenCalled();
+
+    expect(rangeLines(index)).toEqual([7, 1, 5, 2]);
+    expect(lookups).toHaveBeenCalledTimes(RANGE_DAYS);
+  });
+
+  it('orders entries that share one stamp by the entry line, whatever order they arrive in', () => {
+    const index = new TimeEntryIndex();
+    const startedAt = '2026-09-17T09:00:00Z';
+    index.updateFile('tie.md', [
+      task({
+        title: 'Tie',
+        source: { filePath: 'tie.md', line: 0 },
+        timeEntries: [
+          closedEntry(startedAt, '2026-09-17T09:30:00Z', 9),
+          closedEntry(startedAt, '2026-09-17T10:00:00Z', 2),
+          closedEntry(startedAt, '2026-09-17T11:00:00Z', 5),
+          runningEntry(startedAt, 7),
+          runningEntry(startedAt, 4),
+        ],
+      }),
+    ]);
+
+    expect(rangeLines(index)).toEqual([2, 4, 5, 7, 9]);
+    expect(index.activeEntries().map((tracked) => tracked.entry.relativeLine)).toEqual([4, 7]);
+  });
+
+  it('hands back one active array until a file changes, so a ticker can skip by reference', () => {
+    const index = new TimeEntryIndex();
+    const { root } = trackedFile();
+    index.updateFile('a.md', [root]);
+    const first = index.activeEntries();
+    expect(index.activeEntries()).toBe(first);
+
+    index.updateFile('b.md', [
+      task({
+        title: 'Other',
+        source: { filePath: 'b.md', line: 0 },
+        timeEntries: [runningEntry('2026-09-19T07:00:00Z', 1)],
+      }),
+    ]);
+
+    const second = index.activeEntries();
+    expect(second).not.toBe(first);
+    expect(titlesOf(second)).toEqual(['Child', 'Root', 'Other']);
+    expect(index.activeEntries()).toBe(second);
+
+    index.removeFile('b.md');
+    expect(titlesOf(index.activeEntries())).toEqual(['Child', 'Root']);
+    expect(index.activeEntries()).not.toBe(second);
+
+    index.clear();
+    expect(index.activeEntries()).toEqual([]);
   });
 
   it('follows vault edits, renames and deletions through the task queries', async () => {

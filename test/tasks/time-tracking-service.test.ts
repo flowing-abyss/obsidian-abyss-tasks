@@ -284,6 +284,35 @@ describe('time tracking orchestration', () => {
     },
   );
 
+  it('starts from a stale root the index rebases and writes under that task', async () => {
+    const committed = '# Heading\n- [ ] Alpha\n- [ ] Bravo\n';
+    const stack = await stackFor({ 'a.md': committed });
+    try {
+      // An earlier generation of the same file, so the ref a caller kept points at a root the
+      // index has since relocated byte for byte under the authority.
+      stack.index.installCommittedContent('a.md', '- [ ] Alpha\n- [ ] Bravo\n');
+      const stale = rootIn(stack, 'a.md');
+      stack.index.installCommittedContent('a.md', committed);
+      expect(stack.tasks.queries.resolve(stale.ref)).toMatchObject({
+        type: 'rebased',
+        evidence: 'byte-identical-relocation',
+      });
+
+      const result = await stack.tasks.execute({
+        type: 'start-tracking',
+        parent: taskNode(stale),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', changed: true });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `# Heading\n- [ ] Alpha\n  - ${NOW_ATOM} →\n- [ ] Bravo\n`,
+      );
+      expect(activeTitles(stack)).toEqual(['Alpha']);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
   it('skips a foreign entry it cannot close and still starts', async () => {
     const diagnostics = vi.fn();
     const foreign = `- [ ] Foreign\n  - ${FUTURE_ATOM} →\n`;
