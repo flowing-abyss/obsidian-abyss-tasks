@@ -571,12 +571,28 @@ function addSubtask(
   return undefined;
 }
 
+/**
+ * The prefix a new nested line takes. A node that already holds one uses that line's exact
+ * indentation and quote markers, so a note written with tabs or four spaces never ends up with
+ * one node's children at two different indents. Only a node without any nested line falls back
+ * to the parent's own prefix and two spaces.
+ */
+function nestedLinePrefix(context: BlockEditContext): string {
+  const parentIndent = indentation(context.parent.text);
+  const end = context.parentLine + context.target.lineCount;
+  for (let at = context.parentLine + 1; at < end; at++) {
+    const line = context.lines[at];
+    if (line === undefined || isTaskBlockBlankLine(line.text)) continue;
+    if (indentation(line.text) > parentIndent) return PREFIX_RE.exec(line.text)?.[1] ?? '';
+  }
+  return `${PREFIX_RE.exec(context.parent.text)?.[1] ?? ''}  `;
+}
+
 function appendChildLine(context: BlockEditContext, text: string): void {
-  const prefix = `${PREFIX_RE.exec(context.parent.text)?.[1] ?? ''}  `;
   insertAt(
     context.lines,
     context.parentLine + context.target.lineCount,
-    insertedLines([`${prefix}${text}`], context.ending),
+    insertedLines([`${nestedLinePrefix(context)}${text}`], context.ending),
     context.ending,
   );
 }

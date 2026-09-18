@@ -590,3 +590,82 @@ describe('TaskLocator', () => {
     expect(locator.locate([second], ref)).toEqual({ type: 'conflict', block: second });
   });
 });
+
+/**
+ * A new nested line has to join the indentation the note already uses, so a plugin write never
+ * leaves one node with children at two different indents.
+ */
+describe('TaskBlockEditor nested line indentation', () => {
+  const STAMP = atomDateTime('2026-07-14T12:34:56+07:00');
+
+  function appended(source: string, lineCount: number, edit: 'comment' | 'subtask'): string {
+    const editor = new TaskBlockEditor();
+    const block = expectDefined(editor.rootBlocks(source)[0]);
+    const result = editor.edit(
+      source,
+      block,
+      { relativeLine: 0, lineCount, childRanges: [] },
+      edit === 'comment'
+        ? { type: 'add-comment', text: 'note', stamp: STAMP }
+        : { type: 'add-subtask', text: 'child' },
+    );
+    if (result.type !== 'changed') throw new Error(`expected a change, saw ${result.type}`);
+    return result.content;
+  }
+
+  const ADDED = { comment: '- 2026-07-14T12:34:56+07:00: note', subtask: '- [ ] child' } as const;
+
+  it.each(['comment', 'subtask'] as const)('follows a four space child for a new %s', (edit) => {
+    const source = '- [ ] root\n    - [ ] existing\n';
+
+    expect(appended(source, 2, edit)).toBe(`${source}    ${ADDED[edit]}\n`);
+  });
+
+  it.each(['comment', 'subtask'] as const)('follows a tab indented child for a new %s', (edit) => {
+    const source = '- [ ] root\n\t- [ ] existing\n';
+
+    expect(appended(source, 2, edit)).toBe(`${source}\t${ADDED[edit]}\n`);
+  });
+
+  it.each(['comment', 'subtask'] as const)('follows a quoted child for a new %s', (edit) => {
+    const source = '> - [ ] root\n>     - [ ] existing\n';
+
+    expect(appended(source, 2, edit)).toBe(`${source}>     ${ADDED[edit]}\n`);
+  });
+
+  it.each(['comment', 'subtask'] as const)(
+    'follows an existing entry line for a new %s',
+    (edit) => {
+      const source = '- [ ] root\n\t- 2026-07-14T09:00:00+07:00 → 2026-07-14T10:00:00+07:00\n';
+
+      expect(appended(source, 2, edit)).toBe(`${source}\t${ADDED[edit]}\n`);
+    },
+  );
+
+  it.each(['comment', 'subtask'] as const)(
+    'keeps two spaces without a nested line for a %s',
+    (edit) => {
+      const source = '- [ ] root\n';
+
+      expect(appended(source, 1, edit)).toBe(`${source}  ${ADDED[edit]}\n`);
+    },
+  );
+
+  it.each(['comment', 'subtask'] as const)(
+    'follows the first child past a blank line for a %s',
+    (edit) => {
+      const source = '- [ ] root\n\n\t- [ ] existing\n';
+
+      expect(appended(source, 3, edit)).toBe(`${source}\t${ADDED[edit]}\n`);
+    },
+  );
+
+  it.each(['comment', 'subtask'] as const)(
+    'follows the shallowest child, not a grandchild, for a %s',
+    (edit) => {
+      const source = '- [ ] root\n    - [ ] existing\n        - [ ] deeper\n';
+
+      expect(appended(source, 3, edit)).toBe(`${source}    ${ADDED[edit]}\n`);
+    },
+  );
+});

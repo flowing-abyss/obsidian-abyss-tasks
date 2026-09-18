@@ -300,3 +300,29 @@ describe('TaskBlockEditor time entries', () => {
     });
   });
 });
+
+describe('TaskBlockEditor entry indentation', () => {
+  it('opens an entry at the indentation the node already uses', () => {
+    const source = '- [ ] root\n\t- [ ] existing\n';
+
+    const result = editBlock(
+      source,
+      { relativeLine: 0, lineCount: 2, childRanges: [{ from: 1, to: 1 }] },
+      { type: 'add-time-entry', stamp: atomDateTime(START) },
+    );
+
+    expect(result).toMatchObject({ type: 'changed', content: `${source}\t- ${START} →\n` });
+  });
+
+  it('opens an entry at two spaces under a node without nested lines', () => {
+    const source = '- [ ] root\n';
+
+    const result = editBlock(
+      source,
+      { relativeLine: 0, lineCount: 1, childRanges: [] },
+      { type: 'add-time-entry', stamp: atomDateTime(START) },
+    );
+
+    expect(result).toMatchObject({ type: 'changed', content: `${source}  - ${START} →\n` });
+  });
+});
