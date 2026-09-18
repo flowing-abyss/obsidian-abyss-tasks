@@ -54,6 +54,7 @@ export {
   entryDurationMs,
   groupTrackedDays,
   localDayStartMs,
+  recentTrackingWindow,
   resumeTarget,
   shiftLocalDayStartMs,
   subtreeRunning,

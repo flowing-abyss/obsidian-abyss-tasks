@@ -125,7 +125,7 @@ function dayClock(host: HTMLElement): HTMLButtonElement {
 }
 
 function popover(layout: HTMLElement): HTMLElement | null {
-  return layout.querySelector<HTMLElement>('.abyss-tracked-tasks-popover');
+  return layout.querySelector<HTMLElement>('.abyss-time-tracking-popover--tasks');
 }
 
 function dayHeadings(layout: HTMLElement): Array<[string, string, string | null]> {
@@ -217,6 +217,41 @@ describe('tracked tasks popover', () => {
 
     expect(rowsOf(daySection(harness.layout, 'Today'))[0]?.[2]).toBe('1:48');
     expect(dayHeadings(harness.layout)[0]?.[1]).toBe(dayClock(harness.host).textContent);
+  });
+
+  it('lays every row out as control, title cell, clock, parent title or not', async () => {
+    const harness = await widgetFor(WORKING_WEEK);
+    dayClock(harness.host).click();
+    query<HTMLButtonElement>(
+      daySection(harness.layout, 'Yesterday'),
+      '.abyss-tracked-day-header',
+      'Missing the header',
+    ).click();
+
+    // The sub-task row carries an extra muted span, and a row that grows a second span must not
+    // pull the whole list off its columns, so both shapes are asserted against one structure.
+    const shapes = [
+      ...expectDefined(popover(harness.layout)).querySelectorAll<HTMLElement>('.abyss-tracked-row'),
+    ].map((row) => [...row.children].map((child) => child.className));
+    expect(shapes).toEqual([
+      ['abyss-tracked-row-toggle', 'abyss-tracked-row-open', 'abyss-tracked-row-clock'],
+      ['abyss-tracked-row-toggle', 'abyss-tracked-row-open', 'abyss-tracked-row-clock'],
+      ['abyss-tracked-row-toggle', 'abyss-tracked-row-open', 'abyss-tracked-row-clock'],
+      ['abyss-tracked-row-toggle', 'abyss-tracked-row-open', 'abyss-tracked-row-clock'],
+      ['abyss-tracked-row-toggle', 'abyss-tracked-row-open', 'abyss-tracked-row-clock'],
+    ]);
+    const cells = [
+      ...expectDefined(popover(harness.layout)).querySelectorAll<HTMLElement>(
+        '.abyss-tracked-row-open',
+      ),
+    ].map((cell) => [...cell.children].map((child) => child.className));
+    expect(cells).toEqual([
+      ['abyss-tracked-row-title'],
+      ['abyss-tracked-row-title'],
+      ['abyss-tracked-row-title'],
+      ['abyss-tracked-row-title', 'abyss-tracked-row-parent'],
+      ['abyss-tracked-row-title'],
+    ]);
   });
 
   it('expands a past day and names the parent of a sub-task', async () => {
@@ -316,6 +351,33 @@ describe('tracked tasks popover', () => {
     expect(popover(harness.layout)).not.toBeNull();
     activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(popover(harness.layout)).toBeNull();
+  });
+
+  it('keeps the keyboard on the row it was on after a rebuild', async () => {
+    const harness = await widgetFor(WORKING_WEEK);
+    dayClock(harness.host).click();
+    const rows = [
+      ...daySection(harness.layout, 'Today').querySelectorAll<HTMLElement>('.abyss-tracked-row'),
+    ];
+    const play = query<HTMLButtonElement>(
+      expectDefined(rows[1], 'Missing the second row'),
+      '.abyss-tracked-row-toggle',
+      'Missing the row play',
+    );
+    play.focus();
+
+    play.click();
+    await flushMicrotasks();
+
+    // The list reorders around the newly running task, so the control has to be found again by the
+    // row it belongs to rather than by where it used to sit.
+    const focused = activeDocument.activeElement as HTMLElement | null;
+    expect(focused?.className).toBe('abyss-tracked-row-toggle');
+    expect(
+      focused?.closest('.abyss-tracked-row')?.querySelector('.abyss-tracked-row-title')
+        ?.textContent,
+    ).toBe('Email cleanup');
+    expect(focused?.getAttribute('aria-label')).toBe('Pause Email cleanup');
   });
 
   it('keeps the days a reader opened across an index change', async () => {

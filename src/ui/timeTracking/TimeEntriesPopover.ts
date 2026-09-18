@@ -9,7 +9,8 @@ import {
   type TaskSnapshot,
   type TimeEntrySnapshot,
 } from '../../tasks';
-import { anchoredPlacement } from '../anchoredPlacement';
+import { openAnchoredPopover, type AnchoredPopover } from '../anchoredPopover';
+import { writeText } from '../guardedDomWrites';
 import { createInlineTaskUndo } from '../inlineTaskUndo';
 import { runAsyncAction } from '../runAsyncAction';
 import {
@@ -77,23 +78,20 @@ interface RenderedList {
   readonly dayStartMs: number;
 }
 
-/** One open popover: its surface, the rows a tick repaints, and the listeners it holds. */
+/** One open popover: its surface, the rows a tick repaints, and what a rebuild has to carry over. */
 interface PopoverSession {
   readonly options: TimeEntriesPopoverOptions;
-  readonly element: HTMLElement;
+  readonly shell: AnchoredPopover;
   readonly undo: ReturnType<typeof createInlineTaskUndo>;
   live: LiveRow[];
   rendered: RenderedList | undefined;
   closed: boolean;
-  release: () => void;
 }
 
-const POPOVER_SELECTOR = '.abyss-time-tracking-popover';
+const POPOVER_SELECTOR = '.abyss-time-tracking-popover--sessions';
 const EMPTY_TEXT = 'No tracked time yet';
 const REMOVED_LABEL = 'Removed';
 const MISSING_ENTRY = '[abyss-tasks] The tracked session to remove is no longer in the note';
-const GAP = 4;
-const EDGE_GAP = 8;
 
 /** The written entry without its list prefix, which is all a broken line can be shown as. */
 function entryLineText(originalMarkdown: string): string {
@@ -150,110 +148,8 @@ function rangeLabel(entry: TimeEntrySnapshot, context: TrackedTimeContext): stri
     : formatSessionRange(entry, context);
 }
 
-function writeText(element: HTMLElement, value: string): void {
-  if (element.textContent !== value) element.setText(value);
-}
-
-function setPopoverLength(popover: HTMLElement, property: string, value: number): void {
-  popover.style.setProperty(`--abyss-pop-${property}`, `${value}px`);
-}
-
-/** The room the popover has inside the boundary, which is what gives the list its own scroll. */
-function constrainPopover(element: HTMLElement, boundary: DOMRect, anchor: DOMRect): void {
-  setPopoverLength(element, 'width', Math.max(0, boundary.width - 2 * EDGE_GAP));
-  setPopoverLength(
-    element,
-    'height',
-    Math.max(
-      0,
-      Math.min(
-        boundary.height - 2 * EDGE_GAP,
-        Math.max(
-          anchor.top - boundary.top - EDGE_GAP - GAP,
-          boundary.bottom - EDGE_GAP - anchor.bottom - GAP,
-        ),
-      ),
-    ),
-  );
-}
-
-function position(session: PopoverSession): void {
-  const { element } = session;
-  if (session.closed || !element.isConnected) return;
-  const boundary = session.options.boundary.getBoundingClientRect();
-  const anchor = session.options.anchor.getBoundingClientRect();
-  constrainPopover(element, boundary, anchor);
-  const floating = element.getBoundingClientRect();
-  const placement = anchoredPlacement({
-    anchor,
-    boundary,
-    floating: {
-      width: floating.width !== 0 ? floating.width : element.offsetWidth,
-      height: floating.height !== 0 ? floating.height : element.offsetHeight,
-    },
-    gap: GAP,
-    edgeGap: EDGE_GAP,
-    preferred: 'below-start',
-  });
-  // The placement is in viewport space, so it is read back into the padding box of whichever
-  // ancestor actually positions the popover.
-  const block = (element.offsetParent as HTMLElement | null) ?? session.options.boundary;
-  const rect = block.getBoundingClientRect();
-  setPopoverLength(element, 'top', placement.top - rect.top - block.clientTop + block.scrollTop);
-  setPopoverLength(
-    element,
-    'left',
-    placement.left - rect.left - block.clientLeft + block.scrollLeft,
-  );
-  element.dataset['side'] = placement.side;
-}
-
 function close(session: PopoverSession, restoreFocus?: boolean): void {
-  if (session.closed) return;
-  const { element } = session;
-  const focused = restoreFocus ?? element.contains(element.ownerDocument.activeElement);
-  session.closed = true;
-  session.undo.clear();
-  session.release();
-  element.remove();
-  session.options.onClose(focused);
-}
-
-function listen(session: PopoverSession): () => void {
-  const { element } = session;
-  const ownerDocument = element.ownerDocument;
-  const ownerWindow = ownerDocument.defaultView;
-  const reposition = (): void => {
-    position(session);
-  };
-  const outside = (event: Event): void => {
-    const target = event.target;
-    if (
-      !(target instanceof Node) ||
-      element.contains(target) ||
-      session.options.anchor.contains(target)
-    )
-      return;
-    close(session, false);
-  };
-  const keydown = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    event.stopPropagation();
-    close(session, true);
-  };
-  ownerDocument.addEventListener('pointerdown', outside, true);
-  ownerDocument.addEventListener('focusin', outside, true);
-  ownerDocument.addEventListener('keydown', keydown, true);
-  ownerDocument.addEventListener('scroll', reposition, true);
-  ownerWindow?.addEventListener('resize', reposition);
-  return () => {
-    ownerDocument.removeEventListener('pointerdown', outside, true);
-    ownerDocument.removeEventListener('focusin', outside, true);
-    ownerDocument.removeEventListener('keydown', keydown, true);
-    ownerDocument.removeEventListener('scroll', reposition, true);
-    ownerWindow?.removeEventListener('resize', reposition);
-  };
+  session.shell.close(restoreFocus);
 }
 
 async function removeSession(
@@ -275,7 +171,7 @@ async function removeSession(
   // The row's place is read with the earlier undo row discounted, because `show` clears that row
   // before it renders this one. Reading it here rather than clearing first leaves a failed removal
   // with the undo it was already offering.
-  const index = [...session.element.children]
+  const index = [...session.shell.element.children]
     .filter((child) => !child.classList.contains('abyss-undo-row'))
     .indexOf(rowEl);
   const recovery = await actions.remove(timeEntryRef(current.parent, current.entry));
@@ -317,7 +213,7 @@ function renderLeading(
 function renderRow(session: PopoverSession, row: SessionRow, context: TrackedTimeContext): void {
   const { entry } = row;
   const running = entry.state === 'running';
-  const rowEl = session.element.createDiv({ cls: 'abyss-time-row' });
+  const rowEl = session.shell.element.createDiv({ cls: 'abyss-time-row' });
   renderLeading(session, rowEl, entry);
   const body = rowEl.createDiv({ cls: 'abyss-time-row-body' });
   const line = body.createDiv({ cls: 'abyss-time-row-line' });
@@ -349,10 +245,9 @@ function update(session: PopoverSession): void {
     close(session, false);
     return;
   }
-  const { element } = session;
+  const { element } = session.shell;
   // A re-rendered inspector empties the panel, so the popover re-enters the surface it owns.
-  const reattached = !element.isConnected;
-  if (reattached) session.options.owner.appendChild(element);
+  if (!element.isConnected) session.options.owner.appendChild(element);
   const context = session.options.context();
   const rendered: RenderedList = {
     key: trackedNodeKey(node),
@@ -365,7 +260,7 @@ function update(session: PopoverSession): void {
     session.rendered?.key === rendered.key &&
     session.rendered.dayStartMs === rendered.dayStartMs
   ) {
-    position(session);
+    session.shell.reposition();
     return;
   }
   const { scrollTop } = element;
@@ -378,7 +273,7 @@ function update(session: PopoverSession): void {
   for (const row of rows) renderRow(session, row, context);
   session.undo.render(session.options.owner);
   element.scrollTop = scrollTop;
-  position(session);
+  session.shell.reposition();
 }
 
 function tick(session: PopoverSession): void {
@@ -397,19 +292,30 @@ function tick(session: PopoverSession): void {
 export function showTimeEntriesPopover(
   options: TimeEntriesPopoverOptions,
 ): TimeEntriesPopoverHandle {
+  const undo = createInlineTaskUndo();
+  // The shell cannot close before it has been opened, so the session it marks closed is always the
+  // one this call is about to build.
+  const onShellClose = (focused: boolean): void => {
+    session.closed = true;
+    undo.clear();
+    options.onClose(focused);
+  };
   const session: PopoverSession = {
     options,
-    element: options.owner.createDiv({
-      cls: 'abyss-popover abyss-popover-anchored abyss-time-tracking-popover',
+    shell: openAnchoredPopover({
+      owner: options.owner,
+      anchor: options.anchor,
+      boundary: options.boundary,
+      preferred: 'below-start',
+      cls: 'abyss-time-tracking-popover abyss-time-tracking-popover--sessions',
       attr: { role: 'dialog', 'aria-label': 'Tracked sessions' },
+      onClose: onShellClose,
     }),
-    undo: createInlineTaskUndo(),
+    undo,
     live: [],
     rendered: undefined,
     closed: false,
-    release: () => {},
   };
-  session.release = listen(session);
   update(session);
   return {
     update: () => {

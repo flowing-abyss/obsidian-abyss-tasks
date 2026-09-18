@@ -382,4 +382,33 @@ describe('RailPanel', () => {
     panel.destroy();
     expect(panel['el'].children).toHaveLength(0);
   });
+
+  it('keeps the same tracking host element across a mode render, above Settings', () => {
+    const state = new AppState();
+    const panel = new RailPanel(state, { setting: {} }, stateNavigationActions(state));
+    panel.mount(freshContainer());
+    const host = expectDefined(panel.trackingHost(), 'The rail never made a tracking host');
+    const bottom = expectDefined(
+      panel['el'].querySelector<HTMLElement>('.abyss-rail-bottom'),
+      'Missing the rail bottom group',
+    );
+    expect(host.parentElement).toBe(bottom);
+    expect(host.nextElementSibling?.getAttribute('aria-label')).toBe('Settings');
+
+    state.set('mode', 'calendar');
+
+    // A remount would throw away whatever the tracking widget had mounted into the host, so the
+    // rail has to re-place the very same element rather than build a new one.
+    expect(panel.trackingHost()).toBe(host);
+    const rebuilt = expectDefined(
+      panel['el'].querySelector<HTMLElement>('.abyss-rail-bottom'),
+      'Missing the rail bottom group',
+    );
+    expect(rebuilt).not.toBe(bottom);
+    expect(host.parentElement).toBe(rebuilt);
+    expect(host.nextElementSibling?.getAttribute('aria-label')).toBe('Settings');
+    expect(panel['el'].querySelectorAll('.abyss-rail-tracking')).toHaveLength(1);
+
+    panel.destroy();
+  });
 });

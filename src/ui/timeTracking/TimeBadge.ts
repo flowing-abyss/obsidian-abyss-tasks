@@ -7,6 +7,7 @@ import {
   type OffsetAt,
   type TrackedTotal,
 } from '../../tasks';
+import { writeAttribute, writeClass, writeText, writeTitle } from '../guardedDomWrites';
 import { runAsyncAction } from '../runAsyncAction';
 import {
   formatTrackedDuration,
@@ -112,22 +113,6 @@ function readModel(
     runningSinceMs,
     finished: status === 'done' || status === 'cancelled',
   };
-}
-
-function writeText(element: HTMLElement, value: string): void {
-  if (element.textContent !== value) element.setText(value);
-}
-
-function writeAttribute(element: HTMLElement, name: string, value: string): void {
-  if (element.getAttribute(name) !== value) element.setAttribute(name, value);
-}
-
-function writeTitle(element: HTMLElement, value: string): void {
-  if (element.title !== value) element.title = value;
-}
-
-function writeClass(element: HTMLElement, name: string, present: boolean): void {
-  if (element.classList.contains(name) !== present) element.toggleClass(name, present);
 }
 
 function paintToggle(session: BadgeSession, view: BadgeElements, model: BadgeModel): void {

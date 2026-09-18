@@ -161,6 +161,26 @@ export function shiftLocalDayStartMs(dayStartMs: number, days: number, offsetAt:
   return resolveDayStartMs(shiftedWallMs, offsetMinutes, offsetAt);
 }
 
+/** How many local days back every tracked-time surface looks. */
+const RECENT_TRACKING_DAYS = 7;
+
+/**
+ * The `[fromMs, toMs)` the tracked-time surfaces read, which is the last seven local days up to the
+ * midnight that ends today. The rail widget and the palette command both resume from this window,
+ * so both ask for it here rather than each rolling its own span back from the clock.
+ */
+export function recentTrackingWindow(
+  nowMs: number,
+  offsetAt: OffsetAt,
+): { readonly fromMs: number; readonly toMs: number; readonly days: number } {
+  const todayStartMs = localDayStartMs(nowMs, offsetAt);
+  return {
+    fromMs: shiftLocalDayStartMs(todayStartMs, 1 - RECENT_TRACKING_DAYS, offsetAt),
+    toMs: shiftLocalDayStartMs(todayStartMs, 1, offsetAt),
+    days: RECENT_TRACKING_DAYS,
+  };
+}
+
 export interface TrackedDayRow {
   /** Stable per node: JSON of the file path, the root line and the relative-line path to the node. */
   readonly key: string;

@@ -21,6 +21,7 @@ import { StatusRegistry } from './status/StatusRegistry';
 import { TagManager } from './tags/TagManager';
 import {
   localDate,
+  recentTrackingWindow,
   resumeTarget,
   type TaskApplicationApi,
   type TaskCaptureApplicationApi,
@@ -49,9 +50,8 @@ import { presentTaskCommandResult } from './ui/taskCommandResult';
 import { createTrackingActions } from './ui/timeTracking/trackingActions';
 import { PANEL_VIEW_TYPE, PanelView } from './views/PanelView';
 
-/** How far back the palette command looks for the task it offers to resume. */
-const RESUME_WINDOW_MS = 7 * 86_400_000;
 const NO_RESUME_TARGET = 'There is no recent task to resume';
+const DEVICE_OFFSET_AT = (epochMs: number): number => -new Date(epochMs).getTimezoneOffset();
 
 export default class TaskCalendarPlugin extends Plugin {
   override settings!: CalendarSettings;
@@ -207,8 +207,9 @@ export default class TaskCalendarPlugin extends Plugin {
       await actions.pause();
       return;
     }
-    const nowMs = Date.now();
-    const recent = resumeTarget(this.queries.entriesOverlapping(nowMs - RESUME_WINDOW_MS, nowMs));
+    // The same window the rail widget groups, so the key and the widget always name one task.
+    const window = recentTrackingWindow(Date.now(), DEVICE_OFFSET_AT);
+    const recent = resumeTarget(this.queries.entriesOverlapping(window.fromMs, window.toMs));
     if (recent === undefined || recent.status === 'done' || recent.status === 'cancelled') {
       new Notice(NO_RESUME_TARGET);
       return;

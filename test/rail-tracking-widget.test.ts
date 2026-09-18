@@ -77,10 +77,10 @@ function fakeTimerWindow(): {
   };
 }
 
-async function trackingStack(markdown: string) {
+async function trackingStack(markdown: string, extra: Record<string, string> = {}) {
   // The mock metadata parser uses -0 for a root list beginning on line zero.
   const content = `\n${markdown}`;
-  const app = await createAppWithFiles({ 'tasks.md': content });
+  const app = await createAppWithFiles({ 'tasks.md': content, ...extra });
   let nowMs = NOW_MS;
   const stack = configuredTaskApplication(app, DEFAULT_SETTINGS, {
     authority: true,
@@ -109,13 +109,40 @@ async function trackingStack(markdown: string) {
 
 type TrackingStack = Awaited<ReturnType<typeof trackingStack>>;
 
+/** The index behind a counted subscription, so a released surface can be proved released. */
+function countedQueries(stack: TrackingStack) {
+  const source = stack.tasks.queries;
+  let subscribers = 0;
+  return {
+    subscribers: () => subscribers,
+    api: {
+      activeEntries: () => source.activeEntries(),
+      entriesOverlapping: (fromMs: number, toMs: number) => source.entriesOverlapping(fromMs, toMs),
+      fileTotal: (filePath: string) => source.fileTotal(filePath),
+      subscribe: (listener: Parameters<typeof source.subscribe>[0]) => {
+        subscribers += 1;
+        const off = source.subscribe(listener);
+        let released = false;
+        return () => {
+          if (released) return;
+          released = true;
+          subscribers -= 1;
+          off();
+        };
+      },
+    },
+  };
+}
+
 function mountWidget(stack: TrackingStack, clock: ReturnType<typeof fakeTimerWindow>) {
   const layout = activeDocument.body.createDiv({ cls: 'abyss-layout' });
   const host = layout.createDiv({ cls: 'abyss-rail' }).createDiv({ cls: 'abyss-rail-tracking' });
   const reported: TaskCommandResult[] = [];
   const opened: TaskNodeRef[] = [];
+  const queries = countedQueries(stack);
+  let contextReads = 0;
   const ticker = new TrackingTicker({
-    queries: stack.tasks.queries,
+    queries: queries.api,
     now: stack.now,
     win: clock.win,
   });
@@ -123,22 +150,35 @@ function mountWidget(stack: TrackingStack, clock: ReturnType<typeof fakeTimerWin
     host,
     popoverOwner: layout,
     boundary: layout,
-    queries: stack.tasks.queries,
+    queries: queries.api,
     ticker,
     actions: createTrackingActions(stack.tasks, (result) => reported.push(result)),
     openTask: (target) => opened.push(target),
-    context: () => ({ nowMs: stack.now(), offsetAt: () => OFFSET_MINUTES }),
+    context: () => {
+      contextReads += 1;
+      return { nowMs: stack.now(), offsetAt: () => OFFSET_MINUTES };
+    },
     win: clock.win,
   });
   cleanups.push(() => {
     widget.destroy();
     ticker.destroy();
   });
-  return { clock, host, layout, opened, reported, ticker, widget };
+  return {
+    clock,
+    host,
+    layout,
+    opened,
+    reported,
+    ticker,
+    widget,
+    subscribers: queries.subscribers,
+    contextReads: () => contextReads,
+  };
 }
 
-async function widgetFor(markdown: string) {
-  const stack = await trackingStack(markdown);
+async function widgetFor(markdown: string, extra: Record<string, string> = {}) {
+  const stack = await trackingStack(markdown, extra);
   return { ...stack, ...mountWidget(stack, fakeTimerWindow()) };
 }
 
@@ -204,6 +244,9 @@ describe('rail tracking widget', () => {
     expect(toggle(host).getAttribute('aria-label')).toBe('Resume Write report');
     expect(taskClock(host).title).toBe('Tracked on this task today');
     expect(dayClock(host).title).toBe('Tracked today');
+    // A screen reader hears the number, not only what the number is about.
+    expect(taskClock(host).getAttribute('aria-label')).toBe('Tracked on this task today, 0:00');
+    expect(dayClock(host).getAttribute('aria-label')).toBe('Tracked today, 0:00');
   });
 
   it('counts the running task and the day, and rewrites only on the minute', async () => {
@@ -215,6 +258,8 @@ describe('rail tracking widget', () => {
     expect(toggle(host).title).toBe('Pause Write report');
     expect(taskClock(host).textContent).toBe('1:47');
     expect(dayClock(host).textContent).toBe('5:12');
+    expect(taskClock(host).getAttribute('aria-label')).toBe('Tracked on this task today, 1:47');
+    expect(dayClock(host).getAttribute('aria-label')).toBe('Tracked today, 5:12');
     expect(host.querySelector('.abyss-rail-tracking-colon')).not.toBeNull();
 
     const observer = new MutationObserver(() => {});
@@ -317,11 +362,14 @@ describe('rail tracking widget', () => {
     const harness = await widgetFor(WORKING_WEEK);
     expect(harness.clock.ticking()).toBe(true);
     expect(harness.clock.pending()).toBe(1);
+    // The shared ticker holds one; the widget's own model subscription is the other.
+    expect(harness.subscribers()).toBe(2);
 
     harness.widget.destroy();
 
     expect(harness.clock.ticking()).toBe(false);
     expect(harness.clock.pending()).toBe(0);
+    expect(harness.subscribers()).toBe(1);
     expect(harness.host.childElementCount).toBe(0);
 
     harness.advance(MINUTE);
@@ -329,5 +377,46 @@ describe('rail tracking widget', () => {
     await flushMicrotasks();
 
     expect(harness.host.childElementCount).toBe(0);
+  });
+
+  it('reads the clock once per index event and once per tick', async () => {
+    const harness = await widgetFor(WORKING_WEEK);
+    const mounted = harness.contextReads();
+
+    harness.advance(SECOND);
+    harness.clock.tick();
+
+    expect(harness.contextReads()).toBe(mounted + 1);
+
+    toggle(harness.host).click();
+    await flushMicrotasks();
+
+    // One repaint per index event: the shared ticker also emits on an index change, and a surface
+    // that painted from both would show the stale model for an instant and write the DOM twice.
+    expect(harness.contextReads()).toBe(mounted + 2);
+    expect(toggle(harness.host).title).toBe('Resume Write report');
+  });
+
+  it('leaves the widget alone when another file changes', async () => {
+    const harness = await widgetFor(WORKING_WEEK, { 'notes.md': '\n- [ ] Unrelated\n' });
+    dayClock(harness.host).click();
+    const row = query(harness.layout, '.abyss-tracked-row', 'Missing a row');
+    const observer = new MutationObserver(() => {});
+    observer.observe(harness.host, {
+      attributes: true,
+      characterData: true,
+      childList: true,
+      subtree: true,
+    });
+    try {
+      harness.index.installCommittedContent('notes.md', '\n- [ ] Unrelated again\n');
+      await flushMicrotasks();
+
+      expect(observer.takeRecords()).toEqual([]);
+      // The entries came back identical, so the day list was never regrouped or rebuilt.
+      expect(query(harness.layout, '.abyss-tracked-row', 'Missing a row')).toBe(row);
+    } finally {
+      observer.disconnect();
+    }
   });
 });

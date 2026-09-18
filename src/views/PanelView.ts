@@ -504,7 +504,15 @@ export class PanelView extends ItemView {
   private mountRailTracking_abyssPrivate(layout: HTMLElement): void {
     const host = this.rail_abyssPrivate.trackingHost();
     const surface = this.timeTracking_abyssPrivate;
-    if (host === undefined || surface === undefined) return;
+    if (host === undefined || surface === undefined) {
+      // Silently skipping would leave the rail short of a control nobody could explain, so the
+      // missing half is named where a diagnostic report can pick it up.
+      console.warn(
+        '[abyss-tasks] The rail time tracking widget was not mounted because',
+        host === undefined ? 'the rail has no host element' : 'the view has no tracking surface',
+      );
+      return;
+    }
     this.railTracking_abyssPrivate = mountRailTrackingWidget({
       host,
       popoverOwner: layout,
@@ -530,7 +538,13 @@ export class PanelView extends ItemView {
     const node = this.tasks_abyssPrivate.queries
       .listNodes({ filePath: rootTaskNodeRef(target).filePath })
       .find((candidate) => taskNodeAddress(candidate.target) === address);
-    if (node !== undefined) this.state_abyssPrivate.openInspectorDependency(node);
+    if (node === undefined) {
+      // The note moved on since the list was grouped, so the click reaches nothing. It says so
+      // rather than looking like a dead control.
+      console.warn('[abyss-tasks] The tracked task is no longer in its note', address);
+      return;
+    }
+    this.state_abyssPrivate.openInspectorDependency(node);
   }
 
   private initializeCapture_abyssPrivate(

@@ -555,9 +555,21 @@ describe('TaskCalendarPlugin toggle-time-tracking command', () => {
       type: 'start-tracking',
       parent: { type: 'task', ref: REF },
     });
+    // The same window the rail widget groups, so the two never disagree about what is recent: seven
+    // whole local days, both ends on a local midnight rather than on the instant of the keystroke.
     const [window] = harness.windows;
     expect(window).toBeDefined();
-    expect((window as [number, number])[1] - (window as [number, number])[0]).toBe(7 * DAY_MS);
+    const [fromMs, toMs] = window as [number, number];
+    expect(toMs - fromMs).toBe(7 * DAY_MS);
+    for (const edge of [fromMs, toMs]) {
+      const local = new Date(edge);
+      expect([
+        local.getHours(),
+        local.getMinutes(),
+        local.getSeconds(),
+        local.getMilliseconds(),
+      ]).toEqual([0, 0, 0, 0]);
+    }
     expect(harness.notices).toEqual([]);
   });
 

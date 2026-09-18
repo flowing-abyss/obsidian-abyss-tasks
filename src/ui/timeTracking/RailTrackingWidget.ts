@@ -2,6 +2,7 @@ import { setIcon } from 'obsidian';
 import {
   groupTrackedDays,
   localDayStartMs,
+  recentTrackingWindow,
   resumeTarget,
   shiftLocalDayStartMs,
   taskNodeAddress,
@@ -11,6 +12,7 @@ import {
   type TrackedDay,
   type TrackedEntry,
 } from '../../tasks';
+import { writeAttribute, writeClass, writeText, writeTitle } from '../guardedDomWrites';
 import { runAsyncAction } from '../runAsyncAction';
 import {
   formatTrackedClock,
@@ -38,7 +40,6 @@ export interface RailTrackingWidgetHandle {
   destroy(): void;
 }
 
-const WINDOW_DAYS = 7;
 const NO_RESUME_TITLE = 'The last tracked task is already finished';
 const TASK_TITLE = 'Tracked on this task today';
 const DAY_TITLE = 'Tracked today';
@@ -58,6 +59,10 @@ interface WidgetElements {
  */
 interface WidgetModel {
   readonly anchorMs: number;
+  /** The local day the totals belong to, which is what a rollover changes. */
+  readonly dayStartMs: number;
+  /** The window as the index handed it over, kept so an unrelated change can be recognised. */
+  readonly entries: readonly TrackedEntry[];
   readonly days: readonly TrackedDay[];
   /** The node the widget speaks for: the running one, else the one tracked most recently. */
   readonly current: TrackedEntry | undefined;
@@ -77,25 +82,14 @@ interface WidgetSession {
   icon: 'play' | 'pause' | undefined;
   /** The local day the pending rollover was scheduled for, with the timer that will announce it. */
   midnight: { readonly dayStartMs: number; readonly id: number } | undefined;
+  /**
+   * The active entries of the last tick, so an emit carrying a new set is recognised as the shared
+   * ticker's own index notification and left to `refresh`, which is repainting anyway.
+   */
+  active: readonly TrackedEntry[] | undefined;
   unsubscribeIndex: () => void;
   unsubscribeTick: () => void;
   destroyed: boolean;
-}
-
-function writeText(element: HTMLElement, value: string): void {
-  if (element.textContent !== value) element.setText(value);
-}
-
-function writeAttribute(element: HTMLElement, name: string, value: string): void {
-  if (element.getAttribute(name) !== value) element.setAttribute(name, value);
-}
-
-function writeTitle(element: HTMLElement, value: string): void {
-  if (element.title !== value) element.title = value;
-}
-
-function writeClass(element: HTMLElement, name: string, present: boolean): void {
-  if (element.classList.contains(name) !== present) element.toggleClass(name, present);
 }
 
 /** A finished task cannot be picked up again, so it is no resume target at all. */
@@ -126,19 +120,34 @@ function openTimerSinceMs(
   return Math.max(entry.startMs, todayStartMs);
 }
 
+/**
+ * Whether the index handed back the very same entries. Every `TrackedEntry` is rebuilt only when
+ * its own file is reindexed, so identity across the window is exactly the question "did anything
+ * that shows here actually change", answered without regrouping a single day.
+ */
+function sameEntries(left: readonly TrackedEntry[], right: readonly TrackedEntry[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((entry, index) => entry === right[index]);
+}
+
 /** The seven-day window of entries, grouped into days and reduced to the two numbers on the rail. */
-function readModel(options: RailTrackingWidgetOptions, context: TrackedTimeContext): WidgetModel {
+function readModel(
+  context: TrackedTimeContext,
+  entries: readonly TrackedEntry[],
+  todayStartMs: number,
+): WidgetModel {
   const { nowMs, offsetAt } = context;
-  const todayStartMs = localDayStartMs(nowMs, offsetAt);
-  const entries = options.queries.entriesOverlapping(
-    shiftLocalDayStartMs(todayStartMs, 1 - WINDOW_DAYS, offsetAt),
-    shiftLocalDayStartMs(todayStartMs, 1, offsetAt),
-  );
-  const days = groupTrackedDays(entries, { nowMs, offsetAt, days: WINDOW_DAYS });
+  const days = groupTrackedDays(entries, {
+    nowMs,
+    offsetAt,
+    days: recentTrackingWindow(nowMs, offsetAt).days,
+  });
   const today = todayOf(days, todayStartMs);
   const current = resumeTarget(entries);
   return {
     anchorMs: nowMs,
+    dayStartMs: todayStartMs,
+    entries,
     days,
     current,
     taskBaseMs: currentTodayMs(today, current),
@@ -191,19 +200,33 @@ function paintToggle(
   if (view.toggle.disabled !== blocked) view.toggle.disabled = blocked;
 }
 
-function paint(session: WidgetSession): void {
+/** One frame from one reading of the clock, so the two numbers and the toggle cannot disagree. */
+function paint(session: WidgetSession, context: TrackedTimeContext): void {
   const view = session.elements;
   const model = session.model;
   if (view === undefined || model === undefined) return;
-  // One reading of the clock per frame, so the two numbers and the toggle cannot disagree.
-  const context = session.options.context();
   const extraMs = runningExtraMs(model, context.nowMs);
-  const [hours = '0', minutes = '00'] = formatTrackedClock(model.taskBaseMs + extraMs).split(':');
+  const task = formatTrackedClock(model.taskBaseMs + extraMs);
+  const day = formatTrackedClock(model.dayBaseMs + extraMs);
+  const [hours = '0', minutes = '00'] = task.split(':');
   writeText(view.hours, hours);
   writeText(view.minutes, minutes);
-  writeText(view.day, formatTrackedClock(model.dayBaseMs + extraMs));
+  writeText(view.day, day);
+  // The buttons read as bare digits, so the accessible name carries the number as well as what it
+  // counts; the tooltip stays the short phrase a pointer wants.
+  writeAttribute(view.task, 'aria-label', `${TASK_TITLE}, ${task}`);
+  writeAttribute(view.day, 'aria-label', `${DAY_TITLE}, ${day}`);
   writeClass(session.options.host, 'is-tracking', model.openSinceMs !== undefined);
   paintToggle(session, view, model, context);
+}
+
+/**
+ * The row the open timer belongs to, which the tracked-task list needs from here: a timer started
+ * this second has earned no time, so the day grouping carries no row of its own to read it off.
+ */
+function openTimerRowKey(model: WidgetModel | undefined): string | undefined {
+  const current = model?.openSinceMs === undefined ? undefined : model.current;
+  return current === undefined ? undefined : taskNodeAddress(current.target);
 }
 
 function openCurrentTask(session: WidgetSession): void {
@@ -238,6 +261,7 @@ function openDays(session: WidgetSession, view: WidgetElements): void {
       session.model === undefined
         ? 0
         : runningExtraMs(session.model, session.options.context().nowMs),
+    runningRowKey: () => openTimerRowKey(session.model),
     context: session.options.context,
     actions: session.options.actions,
     openTask: session.options.openTask,
@@ -323,7 +347,18 @@ function scheduleMidnight(session: WidgetSession, context: TrackedTimeContext): 
 function refresh(session: WidgetSession): void {
   if (session.destroyed) return;
   const context = session.options.context();
-  const model = readModel(session.options, context);
+  const { nowMs, offsetAt } = context;
+  const todayStartMs = localDayStartMs(nowMs, offsetAt);
+  const window = recentTrackingWindow(nowMs, offsetAt);
+  const entries = session.options.queries.entriesOverlapping(window.fromMs, window.toMs);
+  const previous = session.model;
+  // Most index events come from a file this window never shows. Reading it back identical is the
+  // whole answer, so the days are not regrouped and the open list is not rebuilt under the reader.
+  if (previous?.dayStartMs === todayStartMs && sameEntries(previous.entries, entries)) {
+    scheduleMidnight(session, context);
+    return;
+  }
+  const model = readModel(context, entries, todayStartMs);
   session.model = model;
   if (model.empty) {
     clearWidget(session);
@@ -332,7 +367,7 @@ function refresh(session: WidgetSession): void {
   }
   session.options.host.hidden = false;
   session.elements ??= createElements(session);
-  paint(session);
+  paint(session, context);
   session.popover?.update();
   scheduleMidnight(session, context);
 }
@@ -355,6 +390,7 @@ export function mountRailTrackingWidget(
     model: undefined,
     icon: undefined,
     midnight: undefined,
+    active: undefined,
     unsubscribeIndex: () => {},
     unsubscribeTick: () => {},
     destroyed: false,
@@ -363,8 +399,14 @@ export function mountRailTrackingWidget(
   session.unsubscribeIndex = options.queries.subscribe(() => {
     refresh(session);
   });
-  session.unsubscribeTick = options.ticker.subscribe(() => {
-    paint(session);
+  session.unsubscribeTick = options.ticker.subscribe((state) => {
+    // The shared ticker emits on index changes too, and it emits first. Those frames belong to
+    // `refresh`, which reads the new window; painting them here as well would show the stale model
+    // for an instant and write the DOM twice for one change.
+    const sameActive = session.active === state.active;
+    session.active = state.active;
+    if (!sameActive) return;
+    paint(session, session.options.context());
     session.popover?.tick();
   });
   return {

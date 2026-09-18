@@ -149,6 +149,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   localTime: ['src/panels/CenterPanel.ts'],
   parseRecurrenceRule: ['src/ui/recurrence/RecurrenceEditor.ts'],
+  recentTrackingWindow: ['src/main.ts', 'src/ui/timeTracking/RailTrackingWidget.ts'],
   resumeTarget: ['src/main.ts', 'src/ui/timeTracking/RailTrackingWidget.ts'],
   sameTaskTreeExceptDependencies: ['src/ui/taskSelection.ts'],
   dependencySubtaskChild: ['src/ui/ownedTaskSelection.ts'],
