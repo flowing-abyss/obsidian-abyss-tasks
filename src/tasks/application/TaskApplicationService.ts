@@ -43,6 +43,7 @@ import type {
   TaskCreateSession,
   TaskDependencyQueryApi,
   TaskQueryApi,
+  TimeTrackingQueryApi,
 } from './TaskApplicationApi';
 import type { TaskBehaviorSettings, TaskBehaviorSettingsProvider } from './TaskBehaviorSettings';
 import {
@@ -367,7 +368,7 @@ function destinationUnavailableResult(): TaskCommandResult {
 }
 
 type TaskApplicationServiceDependencies = [
-  queries: TaskQueryApi & TaskDependencyQueryApi,
+  queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi,
   repository: TaskRepository,
   statusCatalog: StatusCatalog,
   clock: Clock | LegacyClock,
@@ -382,7 +383,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   // service lifetime and is bounded so revision churn cannot retain an unbounded snapshot history.
   private readonly recentOutcomes_abyssPrivate = new Map<string, RecentOutcome>();
 
-  readonly queries: TaskQueryApi & TaskDependencyQueryApi;
+  readonly queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
   private readonly dependencies_abyssPrivate: TaskDependencyService;
   private readonly diagnostics_abyssPrivate: TaskDiagnosticSink;
   private readonly repository_abyssPrivate: TaskRepository;

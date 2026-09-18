@@ -21,6 +21,7 @@ import type {
   TaskQueryApi,
   TaskSnapshot,
 } from '../src/tasks';
+import type { TimeTrackingQueryApi } from '../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
 import { systemClock } from '../src/tasks/domain/clock';
 import type { CommentTimestamp } from '../src/tasks/domain/commentTimestamp';
@@ -33,6 +34,7 @@ import { ObsidianTaskDestinationProvider } from '../src/tasks/infrastructure/obs
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
+import { TimeEntryIndex } from '../src/tasks/infrastructure/TimeEntryIndex';
 import { expandCompoundSelectorLists } from './support/expandedCss';
 
 export async function loadPluginStyles(): Promise<string> {
@@ -143,7 +145,7 @@ export function cssDeclarationValue(declarations: string, property: string): str
 export function queryApiForTasks(
   getTasks: () => readonly TaskSnapshot[],
   onSubscribe?: (listener: (event: TaskIndexEvent) => void) => () => void,
-): TaskQueryApi & TaskDependencyQueryApi {
+): TestTaskQueries {
   return taskQueryApi({
     list: (query) =>
       getTasks()
@@ -201,10 +203,36 @@ function rootDailyNoteDate(task: TaskSnapshot): TaskSnapshot['presentation']['da
   return task.presentation.dailyNoteDate;
 }
 
-export function taskQueryApi(
-  overrides: Partial<TaskQueryApi & TaskDependencyQueryApi> = {},
-): TaskQueryApi & TaskDependencyQueryApi {
+/** Every query capability a test double has to supply, matching `TaskApplicationApi.queries`. */
+export type TestTaskQueries = TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
+
+/**
+ * Real time tracking answers for a stub, projected from whatever tasks the stub currently lists.
+ *
+ * The task list of a stub is mutable, so the projection is rebuilt per call instead of cached.
+ */
+function timeTrackingQueryApi(getTasks: () => readonly TaskSnapshot[]): TimeTrackingQueryApi {
+  const index = new TimeEntryIndex();
+  const projected = (): TimeEntryIndex => {
+    index.clear();
+    const rootsByFile = new Map<string, TaskSnapshot[]>();
+    for (const root of getTasks()) {
+      const roots = rootsByFile.get(root.source.filePath) ?? [];
+      roots.push(root);
+      rootsByFile.set(root.source.filePath, roots);
+    }
+    for (const [filePath, roots] of rootsByFile) index.updateFile(filePath, roots);
+    return index;
+  };
   return {
+    activeEntries: () => projected().activeEntries(),
+    entriesOverlapping: (fromMs, toMs) => projected().entriesOverlapping(fromMs, toMs),
+    fileTotal: (filePath) => projected().fileTotal(filePath),
+  };
+}
+
+export function taskQueryApi(overrides: Partial<TestTaskQueries> = {}): TestTaskQueries {
+  const api: TestTaskQueries = {
     listNodes: () => [],
     dependencies: () => ({
       blockedBy: [],
@@ -218,8 +246,11 @@ export function taskQueryApi(
     resolve: (ref) => ({ type: 'not-found', ref: { ...ref } }),
     subscribe: () => () => {},
     subscribeReconciled: () => () => {},
+    // Reads the final `list`, so a stub that overrides it still gets real tracking answers.
+    ...timeTrackingQueryApi(() => api.list()),
     ...overrides,
   };
+  return api;
 }
 
 export interface TestTaskHarness extends TaskApplicationApi {

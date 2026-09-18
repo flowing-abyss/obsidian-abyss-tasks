@@ -34,6 +34,7 @@ reconcile them through the same parsing path as manual edits.
 | Concern                                              | Authoritative source                                                                     | Derived or temporary state                   |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------- |
 | Tasks, metadata, and dependencies                    | Vault Markdown                                                                           | TaskIndex snapshots and calendar projections |
+| Tracked time                                         | Vault Markdown time entry lines                                                          | TimeEntryIndex projection and tracked totals |
 | Projects and status                                  | Project Markdown, membership query, configured status property, and literal status names | ProjectStore snapshots and task statistics   |
 | Static preferences                                   | Plugin `data.json`                                                                       | Composed runtime CalendarSettings            |
 | Saved list, section, and project views               | Versioned plugin `state.json`                                                            | Composed runtime CalendarSettings            |
@@ -59,9 +60,10 @@ wired here; consumers receive interfaces instead of constructing alternate repos
 | [Sidebar shell](src/views/PanelView.ts)                   | AppState, responsive panels, navigation, shortcuts, and collaborator lifetimes              | Public task capabilities                                                 |
 | [Native code blocks](src/code-block/registerCodeBlock.ts) | Resolve block settings and mount CalendarRenderer                                           | Same query, command, and status capabilities as the sidebar              |
 
-The public task capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TaskApplicationApi`, and
-`TaskCaptureApplicationApi`. Application queries supply both query capabilities. Add exports only
-when another component needs them. Presentation must not edit task Markdown or import private task
+The public task capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TimeTrackingQueryApi`,
+`TaskApplicationApi`, and `TaskCaptureApplicationApi`. Application queries supply all three query
+capabilities; `TimeTrackingQueryApi` reaches the public barrel with its first presentation consumer.
+Add exports only when another component needs them. Presentation must not edit task Markdown or import private task
 layers. The domain must not import Obsidian, infrastructure, panels, or settings UI.
 
 `PanelView` owns `RailPanel` for mode changes, `LeftPanel` for navigation, `CenterPanel` for selected
@@ -78,6 +80,8 @@ only proven successor references survive writes, and history never becomes persi
 
 `TaskIndex` watches vault and metadata events and parses supported Markdown through the canonical
 `TaskMarkdownCodec`. It exposes detached snapshots and reference resolution through public queries.
+A nested line shaped as a start stamp followed by `→` is a time entry rather than a comment, and an
+entry the parser cannot read stays visible on its task while counting nothing anywhere.
 `TaskApplicationService` captures the relevant clock and behavior settings, resolves a command,
 validates it, and delegates persistence through repository and destination ports.
 
