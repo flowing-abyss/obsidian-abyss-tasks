@@ -7,6 +7,7 @@ import type {
   TimeEntryRef,
   TimeEntryRemovalRecovery,
 } from '../../tasks';
+import { SHORT_ENTRY_NOTICE } from '../taskCommandResult';
 
 /** The four writes every tracking surface shares, each already reported when it fails. */
 export interface TrackingActions {
@@ -23,8 +24,6 @@ const REPOSITORY_FAILURE: TaskCommandResult = {
   cause: 'repository-error',
   contentState: 'unknown',
 };
-
-const SHORT_ENTRY_NOTICE = 'Tracking under a minute was not saved';
 
 function discardedShortEntry(result: TaskCommandResult): boolean {
   if (result.type !== 'ok') return false;

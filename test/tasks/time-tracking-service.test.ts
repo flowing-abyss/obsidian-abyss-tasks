@@ -594,6 +594,42 @@ describe('time tracking orchestration', () => {
     }
   });
 
+  it('says so when completing a task drops the session it was running', async () => {
+    const stack = await stackFor({
+      'a.md': `- [ ] Alpha\n  - ${atomAt(-SHORT_SESSION_MS)} \u2192\n`,
+    });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'toggle-completion',
+        target: taskNode(rootIn(stack, 'a.md')),
+      });
+
+      expect(result).toMatchObject({
+        type: 'ok',
+        outcome: { type: 'task', discardedShortEntry: true },
+      });
+      expect(await read(stack.app, 'a.md')).toBe('- [x] Alpha \u2705 2026-09-18\n');
+      expect(active(stack)).toEqual([]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('keeps a completion silent when the session it closed was worth recording', async () => {
+    const stack = await stackFor({ 'a.md': `- [ ] Alpha\n  - ${HOUR_AGO_ATOM} \u2192\n` });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'toggle-completion',
+        target: taskNode(rootIn(stack, 'a.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', outcome: { type: 'task' } });
+      expect(result).not.toMatchObject({ outcome: { discardedShortEntry: true } });
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
   it('closes a running entry when the task is cancelled', async () => {
     const stack = await stackFor({ 'a.md': `- [ ] Alpha\n  - ${HOUR_AGO_ATOM} →\n` });
     try {

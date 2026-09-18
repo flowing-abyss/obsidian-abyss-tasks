@@ -159,9 +159,10 @@ Tasks mode and makes the node the inspector selection, which is what opens the d
 compact width.
 
 Completing or cancelling a node closes the entries still running in its subtree as a follow-up
-write with the same clock reading, inside the same serialized mutation. That write never changes
-the status command's own result; a failure goes to the diagnostics sink and leaves the running
-entry visible for repair. Recurrence completion closes entries in the completed occurrence, and the
+write with the same clock reading, inside the same serialized mutation. That write changes the
+status command's own result in one way only: a session it dropped for being under a minute is said
+so on the outcome, so the shared command-result presentation can explain the line that vanished. A
+failure goes to the diagnostics sink and leaves the running entry visible for repair. Recurrence completion closes entries in the completed occurrence, and the
 cloned next occurrence starts with none. The index only reads: a status symbol edited by hand in a
 note closes nothing.
 

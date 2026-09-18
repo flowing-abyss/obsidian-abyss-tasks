@@ -316,8 +316,13 @@ describe('tracked entry tree proof', () => {
   });
 
   it('accepts a comment that only moved down for the entry above it', () => {
-    const comment = { relativeLine: 1, originalMarkdown: '  - 2026-09-18T09:00:00+03:00: note' };
-    const before = { ...parentOf('  - [ ] Child'), comments: [{ ref: comment, text: 'note' }] };
+    const plain = parentOf('  - [ ] Child');
+    const comment = {
+      parent: { type: 'task' as const, ref: plain.ref },
+      relativeLine: 1,
+      originalMarkdown: '  - 2026-09-18T09:00:00+03:00: note',
+    };
+    const before = { ...plain, comments: [{ ref: comment, text: 'note' }] };
     const after = {
       ...parentOf(`  - [ ] Child\n${ENTRY}`, { timeEntries: RUNNING }),
       comments: [{ ref: { ...comment, relativeLine: 2 }, text: 'note' }],
@@ -332,7 +337,18 @@ describe('tracked entry tree proof', () => {
     ['a reprioritised child', { priority: 'A' as const }],
     [
       'a changed comment',
-      { comments: [{ ref: { relativeLine: 1, originalMarkdown: '  - x' }, text: 'x' }] },
+      {
+        comments: [
+          {
+            ref: {
+              parent: { type: 'task' as const, ref: root(4, 'Parent').ref },
+              relativeLine: 1,
+              originalMarkdown: '  - x',
+            },
+            text: 'x',
+          },
+        ],
+      },
     ],
   ])('rejects %s alongside the entry', (_label, change) => {
     const before = parentOf('  - [ ] Child');

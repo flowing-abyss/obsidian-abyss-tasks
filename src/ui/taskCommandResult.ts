@@ -176,8 +176,25 @@ function showCompletionConfirmation(
   });
 }
 
+/** The one word a successful command still owes the reader, shared with the tracking surfaces. */
+export const SHORT_ENTRY_NOTICE = 'Tracking under a minute was not saved';
+
+function droppedShortSession(result: TaskCommandResult): boolean {
+  if (result.type !== 'ok') return false;
+  const outcome = result.outcome;
+  return (
+    (outcome.type === 'task' || outcome.type === 'stopped' || outcome.type === 'recurrence') &&
+    outcome.discardedShortEntry === true
+  );
+}
+
 export function presentTaskCommandResult(result: TaskCommandResult): void {
-  if (result.type === 'ok') return;
+  if (result.type === 'ok') {
+    // Completing a task closes the session it was running, and a session under a minute leaves no
+    // line, so the note changes in a way nothing else on screen would explain.
+    if (droppedShortSession(result)) new Notice(SHORT_ENTRY_NOTICE);
+    return;
+  }
   new Notice(describeCommandError(result).message);
 }
 

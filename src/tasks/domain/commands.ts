@@ -230,6 +230,8 @@ export type TaskCommandOutcome =
       readonly type: 'recurrence';
       readonly active: TaskOccurrenceResult;
       readonly completed?: TaskOccurrenceResult;
+      /** The completed occurrence was running a session too short to record. */
+      readonly discardedShortEntry?: true;
     };
 
 export interface TaskResolutionCandidate {

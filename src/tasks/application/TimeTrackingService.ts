@@ -22,6 +22,8 @@ import type { TaskEditCommand } from './TaskRepository';
 /** A session shorter than this leaves no trace, so a mistaken start costs the note nothing. */
 export const MINIMUM_TRACKED_MS = 60_000;
 
+const NOTHING_DISCARDED = { discardedShortEntry: false } as const;
+
 export interface TimeTrackingDependencies {
   readonly queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
   /** Resolves a root exactly as every rooted command does, including the index-lag bridge. */
@@ -204,28 +206,30 @@ export class TimeTrackingService {
   /**
    * Called after a status command succeeded. Closes the subtree's running entries only while the
    * committed node really reads as done or cancelled, because a queued command may have resolved
-   * the same target against a status the caller no longer sees. Never throws.
+   * the same target against a status the caller no longer sees. Never throws. Reports back only
+   * whether a session was dropped for being too short, so the command that triggered it can say so.
    */
   async closeAfterCompletion(
     root: TaskSnapshot,
     target: TaskNodeRef,
     reading: ClockReading,
-  ): Promise<void> {
+  ): Promise<{ readonly discardedShortEntry: boolean }> {
     try {
       const path = childIndexPath(root, target);
-      if (path === undefined) return;
+      if (path === undefined) return NOTHING_DISCARDED;
       const completed = nodeAtIndexPath(root, path);
-      if (completed === undefined || !this.isCompleted_abyssPrivate(completed.node)) return;
+      if (completed === undefined || !this.isCompleted_abyssPrivate(completed.node)) {
+        return NOTHING_DISCARDED;
+      }
       const closed = await this.closeInRoot_abyssPrivate(root, reading, (candidate) =>
         withinSubtree(candidate, path),
       );
-      if (closed.type === 'failed') {
-        this.diagnostics_abyssPrivate({
-          operation: 'close-time-entry',
-          phase: 'completion-follow-up',
-          cause: closed.result.type,
-        });
-      }
+      if (closed.type !== 'failed') return { discardedShortEntry: closed.discarded };
+      this.diagnostics_abyssPrivate({
+        operation: 'close-time-entry',
+        phase: 'completion-follow-up',
+        cause: closed.result.type,
+      });
     } catch (error) {
       this.diagnostics_abyssPrivate(
         {
@@ -236,6 +240,7 @@ export class TimeTrackingService {
         error,
       );
     }
+    return NOTHING_DISCARDED;
   }
 
   private async startNow_abyssPrivate(

@@ -531,28 +531,29 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
 
   /**
    * Closes the entries a completed node was still tracking, as a follow-up write with the same
-   * clock reading. The status command keeps its own result: a failed follow-up only reports to
-   * diagnostics and leaves the running entry visible for repair.
+   * clock reading. The status command keeps its own result apart from one note: a session the
+   * follow-up dropped for being under a minute is said so on the outcome, because the reader would
+   * otherwise see the line vanish without a word. A failed follow-up only reports to diagnostics
+   * and leaves the running entry visible for repair.
    */
   private async closeTrackingAfterCompletion_abyssPrivate(
     command: EditableTaskCommand,
     result: TaskCommandResult,
     reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
-  ): Promise<void> {
-    if (!isStatusCommand(command) || result.type !== 'ok' || !('atom' in reading)) return;
+  ): Promise<TaskCommandResult> {
+    if (!isStatusCommand(command) || result.type !== 'ok' || !('atom' in reading)) return result;
     const outcome = result.outcome;
-    if (outcome.type === 'recurrence') {
-      const completed = outcome.completed;
-      if (completed === undefined) return;
-      await this.tracking_abyssPrivate.closeAfterCompletion(
-        completed.root,
-        completed.target,
-        reading,
-      );
-      return;
-    }
-    if (outcome.type !== 'task') return;
-    await this.tracking_abyssPrivate.closeAfterCompletion(outcome.task, command.target, reading);
+    if (outcome.type !== 'task' && outcome.type !== 'recurrence') return result;
+    const follow =
+      outcome.type === 'task' ? { root: outcome.task, target: command.target } : outcome.completed;
+    if (follow === undefined) return result;
+    const closed = await this.tracking_abyssPrivate.closeAfterCompletion(
+      follow.root,
+      follow.target,
+      reading,
+    );
+    if (!closed.discardedShortEntry) return result;
+    return { ...result, outcome: { ...outcome, discardedShortEntry: true } };
   }
 
   private async createDependencySubtask_abyssPrivate(
@@ -651,8 +652,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
         const result = queued
           ? await this.executeExistingCommand_abyssPrivate(command, settings, reading, true)
           : await this.dispatchPrepared_abyssPrivate(prepared);
-        await this.closeTrackingAfterCompletion_abyssPrivate(command, result, reading);
-        return result;
+        return await this.closeTrackingAfterCompletion_abyssPrivate(command, result, reading);
       });
     }
     return await this.dispatchPrepared_abyssPrivate(prepared);
