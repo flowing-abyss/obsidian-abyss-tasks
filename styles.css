@@ -9869,3 +9869,170 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   border: 0;
   background: transparent;
 }
+
+/* ---- Time tracking ---- */
+
+/*
+ * The tracking badge is the dependency badge's sibling: one chip-sized control split into a body
+ * that opens the sessions and a toggle that starts or pauses, so both live in a single 24px row.
+ */
+.abyss-time-badge.abyss-chip {
+  height: 24px;
+  padding: 0;
+  gap: 0;
+  border: 0;
+  background: transparent;
+}
+
+.abyss-time-badge > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  box-shadow: none;
+}
+
+.abyss-time-badge > .abyss-time-badge-body {
+  padding-inline: 8px 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The seam keeps the two targets legible without splitting the control into two chips. */
+.abyss-time-badge > .abyss-time-badge-toggle {
+  padding-inline: 4px 8px;
+  box-shadow: inset 1px 0 0 var(--background-modifier-border);
+}
+
+.abyss-time-badge > .abyss-time-badge-toggle svg {
+  width: 13px;
+  height: 13px;
+}
+
+.abyss-time-badge:hover {
+  background: var(--background-modifier-hover);
+}
+
+.abyss-time-badge > .abyss-time-badge-toggle:hover {
+  background: var(--background-modifier-active-hover);
+}
+
+.abyss-time-badge > button:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+/* The session list every tracking surface opens, sized like the dependency search popover. */
+.abyss-time-tracking-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 19rem;
+  min-width: 0;
+  max-width: var(--abyss-pop-width, calc(100% - 16px));
+  max-height: var(--abyss-pop-height);
+  overflow-y: auto;
+  box-sizing: border-box;
+  box-shadow: none;
+  font-size: var(--font-ui-small);
+}
+
+.abyss-time-tracking-popover > * {
+  flex-shrink: 0;
+}
+
+.abyss-time-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: var(--radius-s);
+  color: var(--text-normal);
+}
+
+.abyss-time-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* The rail widget carries the live total, so its digits must not shift as the seconds turn over. */
+.abyss-rail-tracking {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 36px;
+  min-height: 36px;
+  padding: 2px 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--icon-color);
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  cursor: pointer;
+  transition:
+    background 0.1s,
+    color 0.1s;
+}
+
+.abyss-rail-tracking:hover {
+  background: var(--background-modifier-hover);
+  color: var(--icon-color-active);
+}
+
+.abyss-rail-tracking:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.abyss-rail-tracking svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Accent while a timer runs, warning once it has run long enough to look forgotten. */
+.abyss-time-badge.is-tracking,
+.abyss-time-row.is-tracking,
+.abyss-rail-tracking.is-tracking {
+  color: var(--interactive-accent);
+}
+
+.abyss-time-badge.is-stale,
+.abyss-time-row.is-stale,
+.abyss-rail-tracking.is-stale {
+  color: var(--text-warning, var(--color-orange));
+}
+
+/*
+ * Only the separator blinks, so the widget reads as a live clock without reflowing every second.
+ * Two jump-none steps hold each end of the fade for half of the one-second cycle, which keeps the
+ * keyframe block on the keyword selectors the rest of this stylesheet uses.
+ */
+.abyss-rail-tracking-colon {
+  animation: abyss-tracking-colon-blink 1s steps(2, jump-none) infinite;
+}
+
+@keyframes abyss-tracking-colon-blink {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .abyss-rail-tracking-colon {
+    animation: none;
+    opacity: 1;
+  }
+}

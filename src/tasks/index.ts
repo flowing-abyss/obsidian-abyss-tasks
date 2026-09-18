@@ -20,6 +20,7 @@ export type {
   TaskCommandResult,
   TaskOccurrenceResult,
   TaskPatch,
+  TimeEntryRemovalRecovery,
 } from './domain/commands';
 export {
   formatCommentTimeLabel,
@@ -48,7 +49,13 @@ export {
   type TaskResolution,
 } from './domain/taskReconciliation';
 export { sameTaskTreeWithOwnedChanges } from './domain/taskTreeChangeProof';
-export type { TimeEntrySnapshot } from './domain/timeTracking';
+export type { OffsetAt } from './domain/timeEntry';
+export {
+  localDayStartMs,
+  shiftLocalDayStartMs,
+  type TimeEntrySnapshot,
+  type TrackedEntry,
+} from './domain/timeTracking';
 export { sameTaskNodeRef } from './domain/types';
 export type {
   CommentRef,
@@ -64,5 +71,6 @@ export type {
   TaskSnapshot,
   TaskStatusType,
   TaskTextTarget,
+  TimeEntryRef,
 } from './domain/types';
 export { durationMinutes, localDate, localTime } from './domain/validation';
