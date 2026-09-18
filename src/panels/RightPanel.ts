@@ -2805,6 +2805,9 @@ export class RightPanel {
   }
 
   private clearPopovers_abyssPrivate(): void {
+    // The sessions popover is owned by the badge, not by the anchored-surface map, so it is told
+    // to close rather than merely detached; otherwise it would keep its document listeners.
+    this.timeBadge_abyssPrivate?.closePopover();
     this.el_abyssPrivate.querySelectorAll<HTMLElement>('.abyss-popover').forEach((element) => {
       this.removeAnchoredSurface_abyssPrivate(element);
     });

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import type { TaskCommandResult } from '../src/tasks';
+import type { TaskCommandResult, TaskIndexEvent } from '../src/tasks';
 import { systemClock } from '../src/tasks/domain/clock';
 import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
@@ -43,11 +43,21 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function affects(event: TaskIndexEvent, path: string): boolean {
+  if (event.type === 'initialized') return true;
+  if (event.type === 'changed') return event.files.includes(path);
+  if (event.type === 'renamed') return event.oldPath === path || event.newPath === path;
+  return event.path === path;
+}
+
+const ELSEWHERE = '- [ ] Elsewhere\n';
+
 async function inspector(markdown = SESSIONS, selected = 'Current') {
   // The mock metadata parser uses -0 for a root list beginning on line zero.
   const content = `\n${markdown}`;
-  const app = await createAppWithFiles({ 'tasks.md': content });
-  const nowMs = NOW_MS;
+  const elsewhere = `\n${ELSEWHERE}`;
+  const app = await createAppWithFiles({ 'tasks.md': content, 'other.md': elsewhere });
+  let nowMs = NOW_MS;
   const stack = configuredTaskApplication(app, DEFAULT_SETTINGS, {
     authority: true,
     clock: systemClock(
@@ -57,6 +67,7 @@ async function inspector(markdown = SESSIONS, selected = 'Current') {
   });
   await stack.index.initialize();
   stack.index.installCommittedContent('tasks.md', content);
+  stack.index.installCommittedContent('other.md', elsewhere);
   const located = (title: string) =>
     expectDefined(
       stack.index.listNodes().find(({ node }) => node.title === title),
@@ -90,15 +101,17 @@ async function inspector(markdown = SESSIONS, selected = 'Current') {
   );
   const el = activeDocument.body.createDiv();
   panel.mount(el);
-  // The owning view converges the selection on every index change; the inspector alone does not.
-  const off = stack.tasks.queries.subscribe(() => {
+  // What the owning view does: it converges the selection only for the file the inspector shows.
+  const off = stack.tasks.queries.subscribe((event) => {
     const current = state.get('taskStack');
     const root = current[0];
-    if (root === undefined) return;
+    if (root === undefined || !affects(event, rootTaskRef(root).filePath)) return;
     const resolution = stack.tasks.queries.resolve(rootTaskRef(root));
     if (resolution.type !== 'exact' && resolution.type !== 'rebased') return;
     const task = resolution.type === 'exact' ? resolution.task : resolution.current;
+    const draft = panel.captureDraftState();
     state.updateInspectorSelection(rebuildTaskSelection(task, current));
+    panel.restoreDraftState(draft, task);
   });
   cleanups.push(() => {
     off();
@@ -117,9 +130,21 @@ async function inspector(markdown = SESSIONS, selected = 'Current') {
     reported,
     located,
     read: async () => (await app.vault.read(file)).slice(1),
+    advance: (ms: number) => {
+      nowMs += ms;
+    },
     select: (title: string) => {
       const next = located(title);
       state.updateInspectorSelection([next.root, ...next.path]);
+    },
+    /** A write to a file the inspector is not showing, which still reaches every subscriber. */
+    touchOtherFile: async () => {
+      await stack.tasks.execute({
+        type: 'add-comment',
+        parent: { type: 'task', ref: located('Elsewhere').root.ref },
+        text: 'noted',
+      });
+      await flushMicrotasks();
     },
   };
 }
@@ -294,5 +319,113 @@ describe('tracked sessions popover', () => {
     await flushMicrotasks();
 
     expect(rows(harness.el)).toHaveLength(5);
+  });
+
+  it('leaves the rows and the focus alone when another file changes', async () => {
+    const harness = await inspector();
+    open(harness.el);
+    const before = rows(harness.el);
+    const remove = expectDefined(
+      before[1]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    );
+    remove.focus();
+
+    await harness.touchOtherFile();
+
+    const after = rows(harness.el);
+    expect(after).toHaveLength(before.length);
+    for (const [index, row] of after.entries()) expect(row).toBe(before[index]);
+    expect(activeDocument.activeElement).toBe(remove);
+  });
+
+  it('rebuilds the rows when the shown file changes', async () => {
+    const harness = await inspector();
+    open(harness.el);
+    const before = rows(harness.el);
+
+    await harness.tasks.execute({
+      type: 'delete-time-entry',
+      entry: {
+        parent: { type: 'task', ref: harness.located('Current').root.ref },
+        relativeLine: 2,
+        originalMarkdown: '  - 2026-09-18T09:12:00+03:00 → 2026-09-18T10:32:00+03:00',
+      },
+    });
+    await flushMicrotasks();
+
+    const after = rows(harness.el);
+    expect(after).toHaveLength(4);
+    expect(after[0]).not.toBe(before[0]);
+  });
+
+  it('relabels the days once the clock passes local midnight', async () => {
+    const harness = await inspector();
+    open(harness.el);
+    expect(rowShape(expectDefined(rows(harness.el)[1])).range).toBe('Today 11:00 → 11:15');
+
+    harness.advance(10 * 3_600_000);
+    await harness.touchOtherFile();
+
+    expect(rowShape(expectDefined(rows(harness.el)[1])).range).toBe('Yesterday 11:00 → 11:15');
+  });
+
+  it('keeps the scroll position across a rebuild', async () => {
+    const harness = await inspector();
+    open(harness.el);
+    popover(harness.el).scrollTop = 24;
+
+    await harness.tasks.execute({
+      type: 'start-tracking',
+      parent: { type: 'task', ref: harness.located('Other').root.ref },
+    });
+    await flushMicrotasks();
+
+    expect(popover(harness.el).scrollTop).toBe(24);
+  });
+
+  it('drops a row whose line the note no longer holds', async () => {
+    const harness = await inspector();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    open(harness.el);
+    const stale = expectDefined(
+      rows(harness.el)[2]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    );
+    await harness.tasks.execute({
+      type: 'delete-time-entry',
+      entry: {
+        parent: { type: 'task', ref: harness.located('Current').root.ref },
+        relativeLine: 2,
+        originalMarkdown: '  - 2026-09-18T09:12:00+03:00 → 2026-09-18T10:32:00+03:00',
+      },
+    });
+    await flushMicrotasks();
+
+    stale.click();
+    await flushMicrotasks();
+
+    expect(rows(harness.el)).toHaveLength(4);
+    expect(error).toHaveBeenCalledWith(
+      '[abyss-tasks] The tracked session to remove is no longer in the note',
+    );
+    expect(harness.reported).toEqual([]);
+  });
+
+  it('places a second undo row where its own row was', async () => {
+    const harness = await inspector();
+    open(harness.el);
+    // The first undo row sits above the second removal, so it moves that row's place by one.
+    expectDefined(
+      rows(harness.el)[1]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    ).click();
+    await flushMicrotasks();
+    const second = expectDefined(rows(harness.el)[2], 'Missing the second row to remove');
+    expect(rowShape(second).range).toBe('Yesterday 18:40 → 18:55');
+
+    expectDefined(second.querySelector<HTMLButtonElement>('.abyss-time-row-remove')).click();
+    await flushMicrotasks();
+
+    const undoRows = popover(harness.el).querySelectorAll('.abyss-undo-row');
+    expect(undoRows).toHaveLength(1);
+    expect([...popover(harness.el).children].indexOf(expectDefined(undoRows[0]))).toBe(2);
   });
 });

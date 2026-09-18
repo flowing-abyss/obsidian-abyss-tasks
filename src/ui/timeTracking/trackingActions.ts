@@ -13,7 +13,8 @@ export interface TrackingActions {
   start(target: TaskNodeRef): Promise<void>;
   pause(): Promise<void>;
   remove(entry: TimeEntryRef): Promise<TimeEntryRemovalRecovery | undefined>;
-  restore(recovery: TimeEntryRemovalRecovery): Promise<boolean>;
+  /** Reports its own failure, and hands the outcome back for the surface that offered the undo. */
+  restore(recovery: TimeEntryRemovalRecovery): Promise<TaskCommandResult>;
 }
 
 /** A rejected command leaves the note in a state nobody observed, so it reports as such. */
@@ -67,8 +68,7 @@ export function createTrackingActions(
       return removalRecovery(await run({ type: 'delete-time-entry', entry }));
     },
     async restore(recovery) {
-      const result = await run({ type: 'restore-time-entry', ...recovery });
-      return result.type === 'ok';
+      return run({ type: 'restore-time-entry', ...recovery });
     },
   };
 }

@@ -171,19 +171,24 @@ interface MutableDayRow {
   lastActivityMs: number;
 }
 
-/** The relative lines from the root task down to the node, which is empty for a root task. */
-function relativeLinePath(target: TaskNodeRef): readonly number[] {
+/**
+ * Where a node sits, as its file, its root line and the relative lines down to it. A ref carries
+ * the revision it was read at, so it reports the same node as a new one after every write; this
+ * address is what survives a write and identifies the node across snapshots.
+ */
+export function taskNodeAddress(target: TaskNodeRef): string {
   const path: number[] = [];
   let node = target;
   while (node.type === 'subtask') {
     path.push(node.ref.relativeLine);
     node = node.ref.parent;
   }
-  return path.reverse();
+  path.reverse();
+  return JSON.stringify([node.ref.filePath, node.ref.line, path]);
 }
 
 function nodeKey(entry: TrackedEntry): string {
-  return JSON.stringify([entry.filePath, entry.root.line, relativeLinePath(entry.target)]);
+  return taskNodeAddress(entry.target);
 }
 
 /** One day of the window, with the rows collected into it so far. */

@@ -140,6 +140,10 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   dependencySubtaskChild: ['src/ui/ownedTaskSelection.ts'],
   sameTaskTreeWithOwnedChanges: ['src/ui/ownedTaskSelection.ts'],
   taskCommandRootRef: ['src/views/PanelView.ts'],
+  taskNodeAddress: [
+    'src/ui/timeTracking/TimeBadge.ts',
+    'src/ui/timeTracking/TimeEntriesPopover.ts',
+  ],
   sameTaskNodeRef: ['src/panels/RightPanel.ts'],
   shiftLocalDate: ['src/ui/timedBlockKeyboardQueue.ts'],
   shiftLocalDayStartMs: ['src/ui/timeTracking/formatTracked.ts'],

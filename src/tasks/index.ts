@@ -55,6 +55,7 @@ export {
   localDayStartMs,
   shiftLocalDayStartMs,
   subtreeTotal,
+  taskNodeAddress,
   timeEntryRef,
   totalMs,
   type TimeEntrySnapshot,

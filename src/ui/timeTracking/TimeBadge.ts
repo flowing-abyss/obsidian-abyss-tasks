@@ -1,9 +1,10 @@
 import { setIcon } from 'obsidian';
 import {
+  localDayStartMs,
   subtreeTotal,
+  taskNodeAddress,
   totalMs,
   type OffsetAt,
-  type TaskNodeRef,
   type TrackedTotal,
 } from '../../tasks';
 import { runAsyncAction } from '../runAsyncAction';
@@ -14,6 +15,7 @@ import {
 } from './formatTracked';
 import {
   showTimeEntriesPopover,
+  trackedNodeKey,
   type TimeEntriesPopoverHandle,
   type TrackedNode,
 } from './TimeEntriesPopover';
@@ -41,6 +43,8 @@ export interface TimeBadgeHandle {
   render(host: HTMLElement): void;
   /** Re-reads the selection, which only an index change or a new render can have moved. */
   update(): void;
+  /** Dismisses the sessions popover, for an owner tearing its surfaces down. Idempotent. */
+  closePopover(): void;
   destroy(): void;
 }
 
@@ -50,8 +54,13 @@ interface BadgeElements {
   readonly toggle: HTMLButtonElement;
 }
 
-/** Everything the badge repaints from, so a tick never asks the index anything. */
+/**
+ * Everything the badge repaints from, so a tick never asks the index anything. It is keyed by the
+ * node's lines and by the local day, which is all that can change what the badge says.
+ */
 interface BadgeModel {
+  readonly key: string;
+  readonly dayStartMs: number;
   readonly total: TrackedTotal;
   readonly runningSinceMs: number | undefined;
   readonly finished: boolean;
@@ -77,29 +86,32 @@ export function deviceTrackedTimeContext(): TrackedTimeContext {
 }
 
 /**
- * Where the node sits, which survives the writes tracking makes. A ref carries the revision it was
- * read at, so it reports every session as a different node; only a move is a different selection.
+ * The model of the current selection, walked again only when the node's own lines changed or the
+ * local day rolled over. An index change in another file leaves both alone, so it costs one string
+ * comparison instead of a walk of the subtree.
  */
-function nodeAddress(ref: TaskNodeRef): string {
-  const path: number[] = [];
-  let node = ref;
-  while (node.type === 'subtask') {
-    path.push(node.ref.relativeLine);
-    node = node.ref.parent;
-  }
-  path.reverse();
-  return JSON.stringify([node.ref.filePath, node.ref.line, path]);
-}
-
-function badgeModel(node: TrackedNode | undefined): BadgeModel | undefined {
-  if (node === undefined) return undefined;
+function readModel(
+  session: BadgeSession,
+  node: TrackedNode,
+  context: TrackedTimeContext,
+): BadgeModel {
+  const dayStartMs = localDayStartMs(context.nowMs, context.offsetAt);
+  const key = trackedNodeKey(node);
+  const cached = session.model;
+  if (cached?.key === key && cached.dayStartMs === dayStartMs) return cached;
   const total = subtreeTotal(node.snapshot);
   let runningSinceMs: number | undefined;
   for (const startMs of total.openStartsMs) {
     if (runningSinceMs === undefined || startMs < runningSinceMs) runningSinceMs = startMs;
   }
   const { status } = node.snapshot;
-  return { total, runningSinceMs, finished: status === 'done' || status === 'cancelled' };
+  return {
+    key,
+    dayStartMs,
+    total,
+    runningSinceMs,
+    finished: status === 'done' || status === 'cancelled',
+  };
 }
 
 function writeText(element: HTMLElement, value: string): void {
@@ -108,6 +120,14 @@ function writeText(element: HTMLElement, value: string): void {
 
 function writeAttribute(element: HTMLElement, name: string, value: string): void {
   if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+}
+
+function writeTitle(element: HTMLElement, value: string): void {
+  if (element.title !== value) element.title = value;
+}
+
+function writeClass(element: HTMLElement, name: string, present: boolean): void {
+  if (element.classList.contains(name) !== present) element.toggleClass(name, present);
 }
 
 function paintToggle(session: BadgeSession, view: BadgeElements, model: BadgeModel): void {
@@ -119,8 +139,8 @@ function paintToggle(session: BadgeSession, view: BadgeElements, model: BadgeMod
   }
   writeAttribute(view.toggle, 'aria-label', running ? 'Pause tracking' : 'Start tracking');
   const blocked = model.finished && !running;
-  view.toggle.disabled = blocked;
-  view.toggle.title = blocked ? FINISHED_TITLE : '';
+  if (view.toggle.disabled !== blocked) view.toggle.disabled = blocked;
+  writeTitle(view.toggle, blocked ? FINISHED_TITLE : '');
 }
 
 function paint(session: BadgeSession): void {
@@ -136,21 +156,22 @@ function paint(session: BadgeSession): void {
     model.runningSinceMs === undefined
       ? undefined
       : staleTrackingQuestion(model.runningSinceMs, context);
-  view.badge.toggleClass('is-tracking', model.runningSinceMs !== undefined);
-  view.badge.toggleClass('is-stale', question !== undefined);
-  view.body.title = question ?? '';
+  writeClass(view.badge, 'is-tracking', model.runningSinceMs !== undefined);
+  writeClass(view.badge, 'is-stale', question !== undefined);
+  writeTitle(view.body, question ?? '');
   paintToggle(session, view, model);
 }
 
 function update(session: BadgeSession): void {
   if (session.destroyed) return;
   const node = session.options.node();
-  session.model = badgeModel(node);
+  session.model =
+    node === undefined ? undefined : readModel(session, node, session.options.context());
   if (
     node === undefined ||
-    (session.openedAt !== undefined && session.openedAt !== nodeAddress(node.ref))
+    (session.openedAt !== undefined && session.openedAt !== taskNodeAddress(node.ref))
   ) {
-    session.popover?.close();
+    session.popover?.close(false);
   }
   paint(session);
   session.popover?.update();
@@ -160,8 +181,9 @@ function toggleTracking(session: BadgeSession): void {
   const node = session.options.node();
   if (node === undefined) return;
   const { actions } = session.options;
+  const running = readModel(session, node, session.options.context()).runningSinceMs !== undefined;
   runAsyncAction(
-    badgeModel(node)?.runningSinceMs === undefined ? actions.start(node.ref) : actions.pause(),
+    running ? actions.pause() : actions.start(node.ref),
     'Could not change time tracking',
   );
 }
@@ -173,7 +195,7 @@ function openSessions(session: BadgeSession, view: BadgeElements): void {
   }
   const node = session.options.node();
   if (node === undefined) return;
-  session.openedAt = nodeAddress(node.ref);
+  session.openedAt = taskNodeAddress(node.ref);
   session.popover = showTimeEntriesPopover({
     owner: session.options.popoverOwner,
     anchor: view.body,
@@ -245,11 +267,14 @@ export function mountTimeBadge(options: TimeBadgeOptions): TimeBadgeHandle {
     update(): void {
       update(session);
     },
+    closePopover(): void {
+      session.popover?.close(false);
+    },
     destroy(): void {
       if (session.destroyed) return;
       session.destroyed = true;
       unsubscribe();
-      session.popover?.close();
+      session.popover?.close(false);
       session.elements?.badge.remove();
       session.elements = undefined;
     },

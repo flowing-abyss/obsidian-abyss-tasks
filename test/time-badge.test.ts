@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import type { TaskCommandResult } from '../src/tasks';
+import type { TaskCommandResult, TaskIndexEvent } from '../src/tasks';
 import { systemClock } from '../src/tasks/domain/clock';
 import { TaskModal } from '../src/ui/TaskModal';
 import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
@@ -75,6 +75,34 @@ function selectionState(stack: TrackingStack, title: string): AppState {
   return state;
 }
 
+function affects(event: TaskIndexEvent, path: string): boolean {
+  if (event.type === 'initialized') return true;
+  if (event.type === 'changed') return event.files.includes(path);
+  if (event.type === 'renamed') return event.oldPath === path || event.newPath === path;
+  return event.path === path;
+}
+
+/**
+ * What the owning view does on an index change: it converges the selection only for the file the
+ * inspector is showing, and carries the drafts across that render. The inspector alone does not.
+ */
+function convergeSelection(
+  stack: TrackingStack,
+  state: AppState,
+  panel: RightPanel,
+  event: TaskIndexEvent,
+): void {
+  const current = state.get('taskStack');
+  const root = current[0];
+  if (root === undefined || !affects(event, rootTaskRef(root).filePath)) return;
+  const resolution = stack.tasks.queries.resolve(rootTaskRef(root));
+  if (resolution.type !== 'exact' && resolution.type !== 'rebased') return;
+  const task = resolution.type === 'exact' ? resolution.task : resolution.current;
+  const draft = panel.captureDraftState();
+  state.updateInspectorSelection(rebuildTaskSelection(task, current));
+  panel.restoreDraftState(draft, task);
+}
+
 /** A tick the test drives, because a real interval survives a later switch to fake timers. */
 function fakeTickWindow(): { readonly win: Window; tick(): void } {
   let scheduled: (() => void) | undefined;
@@ -118,15 +146,8 @@ function mountInspector(stack: TrackingStack, state: AppState, win: Window = win
   );
   const el = activeDocument.body.createDiv();
   panel.mount(el);
-  // The owning view converges the selection on every index change; the inspector alone does not.
-  const off = stack.tasks.queries.subscribe(() => {
-    const current = state.get('taskStack');
-    const root = current[0];
-    if (root === undefined) return;
-    const resolution = stack.tasks.queries.resolve(rootTaskRef(root));
-    if (resolution.type !== 'exact' && resolution.type !== 'rebased') return;
-    const task = resolution.type === 'exact' ? resolution.task : resolution.current;
-    state.updateInspectorSelection(rebuildTaskSelection(task, current));
+  const off = stack.tasks.queries.subscribe((event) => {
+    convergeSelection(stack, state, panel, event);
   });
   cleanups.push(() => {
     off();
@@ -142,11 +163,44 @@ async function inspector(markdown: string, selected = 'Current', win?: Window) {
   return { ...stack, ...mountInspector(stack, state, win), state };
 }
 
+/**
+ * The document and window listeners a surface registers between opening the ledger and sealing it,
+ * minus the ones it has since released. Sealing keeps later surfaces out of the count.
+ */
+function listenerLedger(): { seal(): void; outstanding(): string[] } {
+  const owned = ['pointerdown', 'focusin', 'keydown', 'scroll', 'resize'];
+  const open: Array<{ type: string; listener: unknown }> = [];
+  let recording = true;
+  for (const target of [activeDocument, window] as EventTarget[]) {
+    const add = target.addEventListener.bind(target);
+    const remove = target.removeEventListener.bind(target);
+    vi.spyOn(target, 'addEventListener').mockImplementation((type, listener, options) => {
+      if (recording && owned.includes(type)) open.push({ type, listener });
+      add(type, listener, options);
+    });
+    vi.spyOn(target, 'removeEventListener').mockImplementation((type, listener, options) => {
+      const at = open.findIndex((entry) => entry.type === type && entry.listener === listener);
+      if (at >= 0) open.splice(at, 1);
+      remove(type, listener, options);
+    });
+  }
+  return {
+    seal: () => {
+      recording = false;
+    },
+    outstanding: () => open.map((entry) => entry.type),
+  };
+}
+
 function badge(el: HTMLElement): HTMLElement {
   return expectDefined(
     el.querySelector<HTMLElement>('.abyss-chips-row .abyss-time-badge'),
     'Missing tracked time badge',
   );
+}
+
+function sessionsPopover(el: HTMLElement): HTMLElement | null {
+  return el.querySelector<HTMLElement>('.abyss-time-tracking-popover');
 }
 
 function body(el: HTMLElement): HTMLButtonElement {
@@ -227,12 +281,28 @@ describe('inspector tracked time badge', () => {
     expect(await harness.read()).toBe(`- [ ] Current\n  - [ ] Child\n    - ${NOW_ATOM} →\n`);
   });
 
+  it('hands the inspector selection the entry it just wrote', async () => {
+    const harness = await inspector(UNTRACKED);
+
+    toggle(harness.el).click();
+    await flushMicrotasks();
+
+    const selection = harness.state.get('taskStack');
+    const selected = expectDefined(selection[selection.length - 1], 'Nothing is selected');
+    expect(selected.timeEntries.map((entry) => entry.state)).toEqual(['running']);
+  });
+
   it('rewrites the running total only when its displayed minute changes', async () => {
     const clock = fakeTickWindow();
     const harness = await inspector(RUNNING_SESSION, 'Current', clock.win);
     expect(body(harness.el).textContent).toBe('1h35m');
     const observer = new MutationObserver(() => {});
-    observer.observe(body(harness.el), { characterData: true, childList: true, subtree: true });
+    observer.observe(badge(harness.el), {
+      attributes: true,
+      characterData: true,
+      childList: true,
+      subtree: true,
+    });
     try {
       for (let second = 0; second < 59; second++) {
         harness.advance(1000);
@@ -260,6 +330,44 @@ describe('inspector tracked time badge', () => {
     harness.panel.destroy();
 
     expect(clearInterval).toHaveBeenCalledWith(started.value);
+  });
+
+  it('releases the open sessions popover when the inspector is destroyed', async () => {
+    const harness = await inspector(CLOSED_SESSIONS);
+    const ledger = listenerLedger();
+    body(harness.el).click();
+    ledger.seal();
+    expect(sessionsPopover(harness.el)).not.toBeNull();
+
+    harness.panel.destroy();
+
+    expect(sessionsPopover(harness.el)).toBeNull();
+    expect(ledger.outstanding()).toEqual([]);
+  });
+
+  it('closes the sessions popover when the inspector clears its popovers', async () => {
+    const harness = await inspector(CLOSED_SESSIONS);
+    // A dirty recurrence draft reopens its editor after the next render, and that reopening clears
+    // every popover in the panel without any pointer event reaching the sessions list.
+    expectDefined(harness.el.querySelector<HTMLElement>('.abyss-repeat-chip')).click();
+    expectDefined(
+      harness.el.querySelector<HTMLElement>(
+        '.abyss-recurrence-popover input, .abyss-recurrence-popover button',
+      ),
+      'Missing recurrence editor',
+    ).focus();
+    const ledger = listenerLedger();
+    body(harness.el).click();
+    ledger.seal();
+    expect(sessionsPopover(harness.el)).not.toBeNull();
+
+    toggle(harness.el).click();
+    await flushMicrotasks();
+
+    expect(harness.el.querySelector('.abyss-recurrence-popover')).not.toBeNull();
+    expect(sessionsPopover(harness.el)).toBeNull();
+    expect(body(harness.el).getAttribute('aria-expanded')).toBe('false');
+    expect(ledger.outstanding()).toEqual([]);
   });
 
   it('shows the same badge inside the task modal', async () => {

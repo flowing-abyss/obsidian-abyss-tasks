@@ -113,7 +113,7 @@ describe('createTrackingActions', () => {
   it('restores a removed entry through the recovery shape', async () => {
     const { actions, commands } = harness(resolving(okTask()));
 
-    await expect(actions.restore(recovery)).resolves.toBe(true);
+    await expect(actions.restore(recovery)).resolves.toMatchObject({ type: 'ok' });
     expect(commands).toEqual([{ type: 'restore-time-entry', ...recovery }]);
   });
 
@@ -121,7 +121,7 @@ describe('createTrackingActions', () => {
     const failure: TaskCommandResult = { type: 'not-found', target: parent };
     const { actions, report } = harness(resolving(failure));
 
-    await expect(actions.restore(recovery)).resolves.toBe(false);
+    await expect(actions.restore(recovery)).resolves.toEqual(failure);
     expect(report).toHaveBeenCalledWith(failure);
   });
 
@@ -153,7 +153,7 @@ describe('createTrackingActions', () => {
     const { actions, report } = harness(() => Promise.reject(new Error('vault exploded')));
 
     await expect(actions.remove(entryRef)).resolves.toBeUndefined();
-    await expect(actions.restore(recovery)).resolves.toBe(false);
+    await expect(actions.restore(recovery)).resolves.toMatchObject({ type: 'io-error' });
 
     expect(report).toHaveBeenCalledTimes(2);
     expect(error).toHaveBeenCalledTimes(2);
