@@ -22,6 +22,8 @@ import { TaskModal } from '../src/ui/TaskModal';
 import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
 import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
+import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
+import type { TrackingActions } from '../src/ui/timeTracking/trackingActions';
 import { TodayView } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
 import {
@@ -179,6 +181,16 @@ function makeStaticPanel(
     undefined,
     interactionOwnership,
   );
+}
+
+/** The writes a tracking surface offers, for a panel under test that only ever reads its clock. */
+function trackingActionStubs(): TrackingActions {
+  return {
+    start: async () => {},
+    pause: async () => {},
+    remove: async () => undefined,
+    restore: async () => ({ type: 'ok', changed: false }) as TaskCommandResult,
+  };
 }
 
 /**
@@ -973,6 +985,100 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       expect(option(popover, 'Show', 'Active').getAttribute('aria-pressed')).toBe('false');
     } finally {
       panel.destroy();
+      container.remove();
+    }
+  });
+
+  /**
+   * A running entry is only worth anything against a clock, and the panel is the one that owns it,
+   * so this pins the instant the render reads travelling into the sort rather than into the badges
+   * alone. Without it a running timer would sort as no time at all.
+   */
+  it('sorts a running task by the clock the render reads', () => {
+    const nowMs = Date.UTC(2026, 8, 18, 9, 0);
+    const running = task({
+      title: 'Running',
+      source: { line: 0 },
+      planning: { due: TODAY },
+      timeEntries: [
+        {
+          relativeLine: 1,
+          originalMarkdown: '  - running',
+          state: 'running',
+          startMs: nowMs - 90 * 60_000,
+        },
+      ],
+    });
+    const closed = task({
+      title: 'Closed',
+      source: { line: 1 },
+      planning: { due: TODAY },
+      timeEntries: [
+        {
+          relativeLine: 1,
+          originalMarkdown: '  - closed',
+          state: 'closed',
+          startMs: nowMs - 120 * 60_000,
+          endMs: nowMs - 90 * 60_000,
+        },
+      ],
+    });
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const queries = queryApiForSnapshots(() => [closed, running]);
+    const ticker = new TrackingTicker({ queries, now: () => nowMs, win: window });
+    const panel = new CenterPanel(
+      state,
+      {} as App,
+      DEFAULT_SETTINGS,
+      queries,
+      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      undefined,
+      null,
+      null,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        ticker,
+        actions: trackingActionStubs(),
+        context: () => ({ nowMs, offsetAt: () => 0 }),
+      },
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+
+    const titles = (): readonly string[] =>
+      Array.from(container.querySelectorAll<HTMLElement>('.abyss-task-card')).map(
+        (card) => card.querySelector('.abyss-task-title')?.textContent ?? '',
+      );
+
+    try {
+      // The mount reads the stored view state, so the sort under test is set from there on.
+      panel.mount(container);
+      state.set('centerListViewState', {
+        groupBy: 'none',
+        sortBy: { field: 'tracked', dir: 'desc' },
+        filters: [],
+      });
+
+      expect(titles()).toEqual(['Running', 'Closed']);
+
+      state.set('centerListViewState', {
+        groupBy: 'none',
+        sortBy: { field: 'tracked', dir: 'asc' },
+        filters: [],
+      });
+
+      expect(titles()).toEqual(['Closed', 'Running']);
+    } finally {
+      panel.destroy();
+      ticker.destroy();
       container.remove();
     }
   });
