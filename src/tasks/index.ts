@@ -56,6 +56,7 @@ export {
   formatTrackedDuration,
   groupTrackedDays,
   localDayStartMs,
+  openTimersExtraMs,
   recentTrackingWindow,
   resumeTarget,
   shiftLocalDayStartMs,

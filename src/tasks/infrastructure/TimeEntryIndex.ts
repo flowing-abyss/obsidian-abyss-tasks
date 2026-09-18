@@ -1,5 +1,6 @@
 import {
   addEntryToTotal,
+  taskNodeAddress,
   type TimeEntrySnapshot,
   type TrackedEntry,
   type TrackedTotal,
@@ -39,7 +40,18 @@ interface FileEntries {
 interface WalkContext {
   readonly filePath: string;
   readonly root: TaskRef;
+  readonly rootTarget: TaskNodeRef;
+  /** Read once per root, and only for a root that turns out to hold an entry somewhere. */
+  rootAddress: string | undefined;
   readonly collection: FileCollection;
+}
+
+function rootAddressOf(context: WalkContext): string {
+  const known = context.rootAddress;
+  if (known !== undefined) return known;
+  const address = taskNodeAddress(context.rootTarget);
+  context.rootAddress = address;
+  return address;
 }
 
 interface NodeWalk {
@@ -51,12 +63,15 @@ interface NodeWalk {
 function trackedEntry(
   context: WalkContext,
   walk: NodeWalk,
+  address: string,
   entry: TimeEntrySnapshot,
 ): TrackedEntry {
   return Object.freeze({
     filePath: context.filePath,
     root: context.root,
     target: walk.target,
+    address,
+    rootAddress: rootAddressOf(context),
     title: walk.node.title,
     ...(walk.parentTitle === undefined ? {} : { parentTitle: walk.parentTitle }),
     status: walk.node.status,
@@ -65,23 +80,37 @@ function trackedEntry(
 }
 
 /** A broken entry carries no instants, so it counts nothing and never reaches a query. */
-function collectEntry(context: WalkContext, walk: NodeWalk, entry: TimeEntrySnapshot): void {
+function collectEntry(
+  context: WalkContext,
+  walk: NodeWalk,
+  address: string,
+  entry: TimeEntrySnapshot,
+): void {
   const { startMs, endMs } = entry;
   if (entry.state === 'broken' || startMs === undefined) return;
   addEntryToTotal(context.collection.total, entry);
-  const tracked = trackedEntry(context, walk, entry);
+  const tracked = trackedEntry(context, walk, address, entry);
   if (entry.state === 'running') context.collection.running.push(tracked);
   else if (endMs !== undefined) context.collection.closed.push({ tracked, startMs, endMs });
 }
 
-function collectNode(context: WalkContext, walk: NodeWalk): void {
-  for (const entry of walk.node.timeEntries) collectEntry(context, walk, entry);
+function collectNode(context: WalkContext, walk: NodeWalk, rootWalk: boolean): void {
+  if (walk.node.timeEntries.length > 0) {
+    // Read here rather than per entry or per consumer, and only for a node that has entries, so a
+    // vault of untracked sub-tasks pays nothing for the address every tracked-time surface keys by.
+    const address = rootWalk ? rootAddressOf(context) : taskNodeAddress(walk.target);
+    for (const entry of walk.node.timeEntries) collectEntry(context, walk, address, entry);
+  }
   for (const child of walk.node.subtasks) {
-    collectNode(context, {
-      node: child,
-      target: { type: 'subtask', ref: child.ref },
-      parentTitle: walk.node.title,
-    });
+    collectNode(
+      context,
+      {
+        node: child,
+        target: { type: 'subtask', ref: child.ref },
+        parentTitle: walk.node.title,
+      },
+      false,
+    );
   }
 }
 
@@ -92,9 +121,11 @@ function collectFile(filePath: string, roots: readonly TaskSnapshot[]): FileColl
     total: { closedMs: 0, openStartsMs: [] },
   };
   for (const root of roots) {
+    const target: TaskNodeRef = { type: 'task', ref: root.ref };
     collectNode(
-      { filePath, root: root.ref, collection },
-      { node: root, target: { type: 'task', ref: root.ref }, parentTitle: undefined },
+      { filePath, root: root.ref, rootTarget: target, rootAddress: undefined, collection },
+      { node: root, target, parentTitle: undefined },
+      true,
     );
   }
   return collection;

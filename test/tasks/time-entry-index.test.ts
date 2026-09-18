@@ -1,7 +1,11 @@
 import { TFile, type CachedMetadata } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
-import type { TimeEntrySnapshot, TrackedEntry } from '../../src/tasks/domain/timeTracking';
+import {
+  taskNodeAddress,
+  type TimeEntrySnapshot,
+  type TrackedEntry,
+} from '../../src/tasks/domain/timeTracking';
 import type { SubtaskSnapshot, TaskSnapshot } from '../../src/tasks/domain/types';
 import { TimeEntryIndex } from '../../src/tasks/infrastructure/TimeEntryIndex';
 import {
@@ -222,6 +226,22 @@ describe('time entry index', () => {
     expect(expectDefined(active[0]).target).toEqual({ type: 'subtask', ref: child.ref });
     expect(expectDefined(active[1]).target).toEqual({ type: 'task', ref: root.ref });
     expect(expectDefined(active[1]).root).toBe(root.ref);
+  });
+
+  it('carries the node address and the root address every surface keys by', () => {
+    const index = new TimeEntryIndex();
+    const { root, child } = trackedFile();
+    index.updateFile('a.md', [root]);
+
+    const active = index.activeEntries();
+    const rootAddress = taskNodeAddress({ type: 'task', ref: root.ref });
+
+    expect(expectDefined(active[0]).address).toBe(
+      taskNodeAddress({ type: 'subtask', ref: child.ref }),
+    );
+    expect(expectDefined(active[0]).rootAddress).toBe(rootAddress);
+    expect(expectDefined(active[1]).address).toBe(rootAddress);
+    expect(expectDefined(active[1]).rootAddress).toBe(rootAddress);
   });
 
   it('totals closed time per file, lists open starts and ignores broken entries', () => {

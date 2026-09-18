@@ -289,6 +289,31 @@ describe('rail tracking widget', () => {
     }
   });
 
+  /** Two timers left running by the skip policy, one on the resume target and one elsewhere. */
+  const TWO_RUNNING = [
+    '- [ ] Write report',
+    '  - 2026-09-18T13:05:32+03:00 \u2192',
+    '- [ ] Review PR',
+    '  - 2026-09-18T13:35:32+03:00 \u2192',
+    '',
+  ].join('\n');
+
+  it('adds every open timer to the day while only one of them is the task', async () => {
+    const harness = await widgetFor(TWO_RUNNING);
+    const { host } = harness;
+
+    // The resume target is the newest open timer, so the task reads its half hour alone.
+    expect(taskClock(host).textContent).toBe('0:30');
+    expect(dayClock(host).textContent).toBe('1:30');
+
+    harness.advance(2 * MINUTE);
+    harness.clock.tick();
+
+    // Two minutes on the task, four on the day, because both timers kept counting.
+    expect(taskClock(host).textContent).toBe('0:32');
+    expect(dayClock(host).textContent).toBe('1:34');
+  });
+
   it('pauses the running task from the rail', async () => {
     const harness = await widgetFor(WORKING_WEEK);
 

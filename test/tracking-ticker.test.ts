@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type {
-  TaskIndexEvent,
-  TaskQueryApi,
-  TimeTrackingQueryApi,
-  TrackedEntry,
+import {
+  taskNodeAddress,
+  type TaskIndexEvent,
+  type TaskQueryApi,
+  type TimeTrackingQueryApi,
+  type TrackedEntry,
 } from '../src/tasks';
 import { TrackingTicker, type TrackingTickerState } from '../src/ui/timeTracking/TrackingTicker';
 
@@ -15,10 +16,14 @@ const START_MS = Date.parse('2026-09-20T16:00:00Z');
 
 function trackedEntry(line: number): TrackedEntry {
   const ref = { filePath: 'a.md', line, revision: `r${line}` };
+  const target = { type: 'task', ref } as const;
+  const address = taskNodeAddress(target);
   return {
     filePath: 'a.md',
     root: ref,
-    target: { type: 'task', ref },
+    target,
+    address,
+    rootAddress: address,
     title: `Task ${line}`,
     status: 'open',
     entry: {

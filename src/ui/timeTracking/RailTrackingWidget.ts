@@ -2,14 +2,15 @@ import { setIcon } from 'obsidian';
 import {
   groupTrackedDays,
   localDayStartMs,
+  openTimersExtraMs,
   recentTrackingWindow,
   resumeTarget,
   shiftLocalDayStartMs,
-  taskNodeAddress,
   type TaskNodeRef,
   type TaskQueryApi,
   type TimeTrackingQueryApi,
   type TrackedDay,
+  type TrackedDayRow,
   type TrackedEntry,
 } from '../../tasks';
 import { writeAttribute, writeClass, writeText, writeTitle } from '../guardedDomWrites';
@@ -44,6 +45,7 @@ const NO_RESUME_TITLE = 'The last tracked task is already finished';
 const TASK_TITLE = 'Tracked on this task today';
 const DAY_TITLE = 'Tracked today';
 const TODAY_CAPTION = 'TODAY';
+const NO_OPEN_STARTS: readonly number[] = Object.freeze([]);
 
 interface WidgetElements {
   readonly toggle: HTMLButtonElement;
@@ -67,7 +69,11 @@ interface WidgetModel {
   /** The node the widget speaks for: the running one, else the one tracked most recently. */
   readonly current: TrackedEntry | undefined;
   readonly taskBaseMs: number;
+  /** Every timer still open on the current node, so the top number adds all of them. */
+  readonly taskOpenStartsMs: readonly number[];
   readonly dayBaseMs: number;
+  /** Every timer still open today, so the bottom number cannot drift when two of them run. */
+  readonly dayOpenStartsMs: readonly number[];
   /** When the open timer began counting towards today, absent while nothing runs. */
   readonly openSinceMs: number | undefined;
   readonly empty: boolean;
@@ -103,11 +109,13 @@ function todayOf(days: readonly TrackedDay[], todayStartMs: number): TrackedDay 
   return newest?.dayStartMs === todayStartMs ? newest : undefined;
 }
 
-/** What the current node has earned today, which is nothing at all until it has a row. */
-function currentTodayMs(today: TrackedDay | undefined, current: TrackedEntry | undefined): number {
-  if (today === undefined || current === undefined) return 0;
-  const address = taskNodeAddress(current.target);
-  return today.rows.find((row) => row.key === address)?.trackedMs ?? 0;
+/** The current node's row of today, which it does not have until it has tracked something. */
+function currentTodayRow(
+  today: TrackedDay | undefined,
+  current: TrackedEntry | undefined,
+): TrackedDayRow | undefined {
+  if (today === undefined || current === undefined) return undefined;
+  return today.rows.find((row) => row.key === current.address);
 }
 
 /** When the open timer began counting towards today, absent while nothing runs. */
@@ -158,23 +166,25 @@ function readModel(
   const days = groupTrackedDays(entries, { nowMs, offsetAt, days: window.days });
   const today = todayOf(days, todayStartMs);
   const current = resumeTarget(entries);
+  const currentRow = currentTodayRow(today, current);
   return {
     anchorMs: nowMs,
     dayStartMs: todayStartMs,
     entries,
     days,
     current,
-    taskBaseMs: currentTodayMs(today, current),
+    taskBaseMs: currentRow?.trackedMs ?? 0,
+    taskOpenStartsMs: currentRow?.openStartsMs ?? NO_OPEN_STARTS,
     dayBaseMs: today?.totalMs ?? 0,
+    dayOpenStartsMs: today?.openStartsMs ?? NO_OPEN_STARTS,
     openSinceMs: openTimerSinceMs(current, todayStartMs),
     empty: entries.length === 0,
   };
 }
 
-/** What the open timer has added since the totals were read, which is all a second can change. */
-function runningExtraMs(model: WidgetModel, nowMs: number): number {
-  if (model.openSinceMs === undefined) return 0;
-  return Math.max(0, nowMs - Math.max(model.anchorMs, model.openSinceMs));
+/** What the open timers have added since the totals were read, which is all a second can change. */
+function extraSince(model: WidgetModel, openStartsMs: readonly number[], nowMs: number): number {
+  return openTimersExtraMs(openStartsMs, model.anchorMs, nowMs);
 }
 
 /** What the toggle will do next, or why there is nothing left for it to pick up. */
@@ -219,9 +229,11 @@ function paint(session: WidgetSession, context: TrackedTimeContext): void {
   const view = session.elements;
   const model = session.model;
   if (view === undefined || model === undefined) return;
-  const extraMs = runningExtraMs(model, context.nowMs);
-  const task = formatTrackedClock(model.taskBaseMs + extraMs);
-  const day = formatTrackedClock(model.dayBaseMs + extraMs);
+  const { nowMs } = context;
+  const task = formatTrackedClock(
+    model.taskBaseMs + extraSince(model, model.taskOpenStartsMs, nowMs),
+  );
+  const day = formatTrackedClock(model.dayBaseMs + extraSince(model, model.dayOpenStartsMs, nowMs));
   const [hours = '0', minutes = '00'] = task.split(':');
   writeText(view.hours, hours);
   writeText(view.minutes, minutes);
@@ -262,10 +274,10 @@ function openDays(session: WidgetSession, view: WidgetElements): void {
     anchor: view.day,
     boundary: session.options.boundary,
     days: () => session.model?.days ?? [],
-    runningExtraMs: () =>
+    openExtraMs: (openStartsMs) =>
       session.model === undefined
         ? 0
-        : runningExtraMs(session.model, session.options.context().nowMs),
+        : extraSince(session.model, openStartsMs, session.options.context().nowMs),
     context: session.options.context,
     actions: session.options.actions,
     openTask: session.options.openTask,

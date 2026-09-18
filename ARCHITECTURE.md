@@ -139,7 +139,9 @@ a timer rather than only the inspector's own writes.
 
 The other tracking surfaces are passive. A list card carries a count badge with its subtree total,
 and while that subtree runs the card keeps the total it read so the panel's one subscription
-repaints only the running roots, found by the `data-tracking-root` address the badge carries. A
+repaints only the running roots, found by the `data-tracking-root` address the badge carries, which
+every entry already carries because `TimeEntryIndex` reads a node's address once while it lifts the
+entry out of the tree rather than per grouping, render or tick. A
 calendar card reads the same snapshot for a running marker and subscribes to nothing. Starting and
 pausing are offered wherever a node already has a context menu, and the `toggle-time-tracking`
 command pauses whatever runs or resumes the most recently tracked task of the last seven days. The
@@ -149,8 +151,10 @@ recurrence editor and its start and pause controls live in the task modal's badg
 The rail widget is the one live surface outside the inspector. `RailPanel` creates its host element
 once and re-places it on each mode change, so the widget survives navigation, and `PanelView` mounts
 it there on the ticker and write boundary the panels already share. It regroups the seven-day window
-only when the index reports a change and at one scheduled local midnight; a tick adds the open
-timer's own elapsed time to the two totals already in hand and never asks the index anything. The
+only when the index reports a change and at one scheduled local midnight; a tick adds what every
+open timer has earned since that grouping to the two totals already in hand and never asks the index
+anything. A grouping carries the open starts of each row and of the day itself, so a note left with
+two timers running counts both on the day and only its own on the task. The
 tracked-task list it opens beside the rail reads that same grouping, so a day's rows always add up
 to its heading and today's heading to the widget's own total. The grouping gives an open timer a row
 on the day that holds it from the instant it is opened, before it has earned a millisecond, so the

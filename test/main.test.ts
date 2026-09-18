@@ -8,7 +8,7 @@ import {
 } from '../src/settings/persistence';
 import { latestSettingsSaveRevision } from '../src/settings/settingsSaveRevision';
 import type { CalendarSettings } from '../src/settings/types';
-import type { TrackedEntry } from '../src/tasks';
+import { taskNodeAddress, type TrackedEntry } from '../src/tasks';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import { flushMicrotasks, useRealMoment } from './helpers';
 
@@ -476,6 +476,8 @@ describe('TaskCalendarPlugin toggle-time-tracking command', () => {
       filePath: REF.filePath,
       root: REF,
       target: { type: 'task', ref: REF },
+      address: taskNodeAddress({ type: 'task', ref: REF }),
+      rootAddress: taskNodeAddress({ type: 'task', ref: REF }),
       title: 'Alpha',
       status: 'open',
       entry: {

@@ -18,10 +18,11 @@ export interface TrackedTasksPopoverOptions {
   readonly boundary: HTMLElement;
   readonly days: () => readonly TrackedDay[];
   /**
-   * What the open timer has earned since the days were grouped, which is all a second can add.
-   * Only the running row and the day holding it count it, so both stay level with the rail widget.
+   * What the timers named by these starts have earned since the days were grouped, which is all a
+   * second can add. Each row and each heading asks with its own open starts, so a day that holds
+   * two running timers stays level with the rail widget instead of counting one of them twice.
    */
-  readonly runningExtraMs: () => number;
+  readonly openExtraMs: (openStartsMs: readonly number[]) => number;
   readonly context: () => TrackedTimeContext;
   readonly actions: TrackingActions;
   readonly openTask: (target: TaskNodeRef) => void;
@@ -48,7 +49,7 @@ interface LiveTotals {
 interface RenderPass {
   readonly context: TrackedTimeContext;
   readonly todayStartMs: number;
-  readonly extraMs: number;
+  readonly extraMs: (openStartsMs: readonly number[]) => number;
 }
 
 /** One open list: its surface, the days a reader opened, and what a rebuild has to carry over. */
@@ -73,13 +74,12 @@ function finished(row: TrackedDayRow): boolean {
   return status === 'done' || status === 'cancelled';
 }
 
-function rowMs(running: boolean, row: TrackedDayRow, extraMs: number): number {
-  return row.trackedMs + (running ? extraMs : 0);
+function rowMs(row: TrackedDayRow, pass: RenderPass): number {
+  return row.trackedMs + pass.extraMs(row.openStartsMs);
 }
 
 function dayMs(day: TrackedDay, pass: RenderPass): number {
-  const live = day.rows.some((row) => row.running);
-  return day.totalMs + (live ? pass.extraMs : 0);
+  return day.totalMs + pass.extraMs(day.openStartsMs);
 }
 
 function close(session: PopoverSession, restoreFocus?: boolean): void {
@@ -196,7 +196,7 @@ function renderRow(
   });
   const clock = rowEl.createSpan({
     cls: 'abyss-tracked-row-clock',
-    text: formatTrackedClock(rowMs(running, row, pass.extraMs)),
+    text: formatTrackedClock(rowMs(row, pass)),
   });
   if (running) session.live.push({ row, clock, day: section.day, dayTotal: section.total });
 }
@@ -241,7 +241,7 @@ function renderPass(session: PopoverSession): RenderPass {
   return {
     context,
     todayStartMs: localDayStartMs(context.nowMs, context.offsetAt),
-    extraMs: session.options.runningExtraMs(),
+    extraMs: session.options.openExtraMs,
   };
 }
 
@@ -267,7 +267,7 @@ function tick(session: PopoverSession): void {
   if (session.closed || session.live.length === 0) return;
   const pass = renderPass(session);
   for (const live of session.live) {
-    writeText(live.clock, formatTrackedClock(rowMs(true, live.row, pass.extraMs)));
+    writeText(live.clock, formatTrackedClock(rowMs(live.row, pass)));
     writeText(live.dayTotal, formatTrackedClock(dayMs(live.day, pass)));
   }
 }

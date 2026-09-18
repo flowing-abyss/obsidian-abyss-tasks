@@ -259,6 +259,32 @@ describe('tracked tasks popover', () => {
     expect(dayHeadings(harness.layout)[0]?.[1]).toBe(dayClock(harness.host).textContent);
   });
 
+  it('keeps two running rows level with the day they share', async () => {
+    const harness = await widgetFor(
+      [
+        '- [ ] Write report',
+        '  - 2026-09-18T13:05:32+03:00 \u2192',
+        '- [ ] Review PR',
+        '  - 2026-09-18T13:35:32+03:00 \u2192',
+        '',
+      ].join('\n'),
+    );
+    dayClock(harness.host).click();
+
+    harness.advance(60 * SECOND);
+    harness.clock.tick();
+
+    const rows = rowsOf(daySection(harness.layout, 'Today'));
+    expect(rows.map(([name, , clock]) => [name, clock])).toEqual([
+      ['Write report', '1:01'],
+      ['Review PR', '0:31'],
+    ]);
+    expect(rows.reduce((sum, row) => sum + clockMinutes(row[2]), 0)).toBe(
+      clockMinutes(expectDefined(dayHeadings(harness.layout)[0])[1]),
+    );
+    expect(dayHeadings(harness.layout)[0]?.[1]).toBe(dayClock(harness.host).textContent);
+  });
+
   it('lays every row out as control, title cell, clock, parent title or not', async () => {
     const harness = await widgetFor(WORKING_WEEK);
     dayClock(harness.host).click();

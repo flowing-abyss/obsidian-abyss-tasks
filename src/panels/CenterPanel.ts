@@ -2508,7 +2508,8 @@ export class CenterPanel {
     const badges = this.runningCardBadges_abyssPrivate;
     if (badges.size === 0) return;
     for (const entry of active) {
-      const badge = badges.get(trackingRootAddress(entry.root));
+      // The entry already carries its root's address, so a tick reads a string rather than builds one.
+      const badge = badges.get(entry.rootAddress);
       if (badge === undefined) continue;
       const tracked = formatTrackedDuration(totalMs(badge.total, nowMs));
       if (badge.value.textContent !== tracked) badge.value.setText(tracked);

@@ -6,9 +6,11 @@ import {
   formatTrackedDuration,
   groupTrackedDays,
   localDayStartMs,
+  openTimersExtraMs,
   resumeTarget,
   shiftLocalDayStartMs,
   subtreeTotal,
+  taskNodeAddress,
   totalMs,
   type TimeEntryIssue,
   type TimeEntrySnapshot,
@@ -17,6 +19,7 @@ import {
   type TrackedEntry,
   type TrackedTotal,
 } from '../../src/tasks/domain/timeTracking';
+import { expectDefined } from '../helpers';
 
 const H = 3_600_000;
 const M = 60_000;
@@ -48,34 +51,42 @@ const tracked = (
   line: number,
   entry: TimeEntrySnapshot,
   status: TrackedEntry['status'] = 'open',
-): TrackedEntry => ({
-  filePath: 'a.md',
-  root: { filePath: 'a.md', line, revision: `r${line}` },
-  target: { type: 'task', ref: { filePath: 'a.md', line, revision: `r${line}` } },
-  title,
-  status,
-  entry,
-});
+): TrackedEntry => {
+  const target = { type: 'task', ref: { filePath: 'a.md', line, revision: `r${line}` } } as const;
+  const address = taskNodeAddress(target);
+  return {
+    filePath: 'a.md',
+    root: target.ref,
+    target,
+    address,
+    rootAddress: address,
+    title,
+    status,
+    entry,
+  };
+};
 const trackedSubtask = (
   title: string,
   line: number,
   relativeLine: number,
   entry: TimeEntrySnapshot,
-): TrackedEntry => ({
-  filePath: 'a.md',
-  root: { filePath: 'a.md', line, revision: `r${line}` },
-  target: {
+): TrackedEntry => {
+  const root = { type: 'task', ref: { filePath: 'a.md', line, revision: `r${line}` } } as const;
+  const target = {
     type: 'subtask',
-    ref: {
-      parent: { type: 'task', ref: { filePath: 'a.md', line, revision: `r${line}` } },
-      relativeLine,
-      originalBlock: `- [ ] sub ${relativeLine}`,
-    },
-  },
-  title,
-  status: 'open',
-  entry,
-});
+    ref: { parent: root, relativeLine, originalBlock: `- [ ] sub ${relativeLine}` },
+  } as const;
+  return {
+    filePath: 'a.md',
+    root: root.ref,
+    target,
+    address: taskNodeAddress(target),
+    rootAddress: taskNodeAddress(root),
+    title,
+    status: 'open',
+    entry,
+  };
+};
 
 describe('durations', () => {
   it('measures closed, running and broken entries', () => {
@@ -376,6 +387,52 @@ describe('groupTrackedDays', () => {
     expect(Object.isFrozen(days)).toBe(true);
     expect(days.every((day) => Object.isFrozen(day) && Object.isFrozen(day.rows))).toBe(true);
     expect(days.every((day) => day.rows.every((row) => Object.isFrozen(row)))).toBe(true);
+    expect(days.every((day) => Object.isFrozen(day.openStartsMs))).toBe(true);
+    expect(days.every((day) => day.rows.every((row) => Object.isFrozen(row.openStartsMs)))).toBe(
+      true,
+    );
+  });
+
+  it('keeps every open start on today and on the row that holds it', () => {
+    const first = at('2026-09-18T13:00:00+03:00');
+    const second = at('2026-09-18T14:30:00+03:00');
+    const days = groupTrackedDays(
+      [
+        tracked('Write report', 1, running('2026-09-18T13:00:00+03:00', 2)),
+        tracked('Review PR', 5, running('2026-09-18T14:30:00+03:00', 2)),
+      ],
+      { nowMs: now, offsetAt: plus3, days: 7 },
+    );
+
+    const today = expectDefined(days[0]);
+    expect(today.openStartsMs).toEqual([first, second]);
+    expect(today.rows.map((row) => [row.entryOfRecord.title, row.openStartsMs])).toEqual([
+      ['Write report', [first]],
+      ['Review PR', [second]],
+    ]);
+  });
+
+  it('leaves an earlier day without any open start of its own', () => {
+    const days = groupTrackedDays(
+      [tracked('Write report', 1, running('2026-09-16T09:00:00+03:00', 2))],
+      {
+        nowMs: now,
+        offsetAt: plus3,
+        days: 7,
+      },
+    );
+
+    expect(days.map((day) => day.openStartsMs.length)).toEqual([1, 0, 0]);
+  });
+
+  it('adds every open timer once the grouping instant has passed', () => {
+    const first = at('2026-09-18T13:00:00+03:00');
+    const second = at('2026-09-18T14:30:00+03:00');
+
+    expect(openTimersExtraMs([first, second], now, now + 2 * M)).toBe(4 * M);
+    expect(openTimersExtraMs([], now, now + 2 * M)).toBe(0);
+    // A hand-written start ahead of the clock earns nothing until the clock reaches it.
+    expect(openTimersExtraMs([now + 5 * M], now, now + 2 * M)).toBe(0);
   });
 });
 

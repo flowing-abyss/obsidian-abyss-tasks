@@ -155,11 +155,11 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   sameTaskTreeExceptTimeEntries: ['src/ui/taskSelection.ts'],
   dependencySubtaskChild: ['src/ui/ownedTaskSelection.ts'],
   sameTaskTreeWithOwnedChanges: ['src/ui/ownedTaskSelection.ts'],
+  openTimersExtraMs: ['src/ui/timeTracking/RailTrackingWidget.ts'],
   taskCommandRootRef: ['src/views/PanelView.ts'],
   taskNodeAddress: [
     'src/ui/timeTracking/TimeBadge.ts',
     'src/ui/timeTracking/TimeEntriesPopover.ts',
-    'src/ui/timeTracking/RailTrackingWidget.ts',
     'src/panels/CenterPanel.ts',
     'src/views/PanelView.ts',
   ],

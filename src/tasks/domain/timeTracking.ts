@@ -23,6 +23,10 @@ export interface TrackedEntry {
   readonly filePath: string;
   readonly root: TaskRef;
   readonly target: TaskNodeRef;
+  /** `taskNodeAddress(target)`, read once per node when the entry is lifted out of the tree. */
+  readonly address: string;
+  /** The same address for the root that owns the node, which is what a card badge is keyed by. */
+  readonly rootAddress: string;
   readonly title: string;
   readonly parentTitle?: string;
   readonly status: TaskStatus;
@@ -209,12 +213,16 @@ export interface TrackedDayRow {
   /** Time spent on this node during this day, clipped at both midnights. */
   readonly trackedMs: number;
   readonly running: boolean;
+  /** The start of every timer still open on this node, so a tick adds all of them, not one. */
+  readonly openStartsMs: readonly number[];
   readonly lastActivityMs: number;
 }
 
 export interface TrackedDay {
   readonly dayStartMs: number;
   readonly totalMs: number;
+  /** Every open start of the day, which is the union of its rows' and grows the heading alike. */
+  readonly openStartsMs: readonly number[];
   readonly rows: readonly TrackedDayRow[];
 }
 
@@ -223,7 +231,23 @@ interface MutableDayRow {
   entryOfRecord: TrackedEntry;
   trackedMs: number;
   running: boolean;
+  openStartsMs: number[];
   lastActivityMs: number;
+}
+
+/**
+ * What open timers have added since a grouping was read. A grouping already counts every timer up
+ * to the instant it was taken, so a tick only adds what each of them earned after that. Reading
+ * every open start rather than one keeps a day whose skip policy left two timers running exact.
+ */
+export function openTimersExtraMs(
+  openStartsMs: readonly number[],
+  anchorMs: number,
+  nowMs: number,
+): number {
+  let extra = 0;
+  for (const startMs of openStartsMs) extra += Math.max(0, nowMs - Math.max(anchorMs, startMs));
+  return extra;
 }
 
 /**
@@ -242,10 +266,6 @@ export function taskNodeAddress(target: TaskNodeRef): string {
   return JSON.stringify([node.ref.filePath, node.ref.line, path]);
 }
 
-function nodeKey(entry: TrackedEntry): string {
-  return taskNodeAddress(entry.target);
-}
-
 /** One day of the window, with the rows collected into it so far. */
 interface DayWindow {
   readonly dayStartMs: number;
@@ -256,6 +276,8 @@ interface DayWindow {
   /** True only for the day that contains `nowMs`, so only its rows can look live. */
   readonly current: boolean;
   readonly rows: Map<string, MutableDayRow>;
+  /** Only the day holding `nowMs` collects these, because only its total can still grow. */
+  readonly openStartsMs: number[];
   totalMs: number;
 }
 
@@ -271,6 +293,7 @@ function dayWindows(nowMs: number, offsetAt: OffsetAt, days: number): readonly D
       overlapEndMs: Math.min(dayEndMs, nowMs),
       current: dayStartMs <= nowMs && nowMs < dayEndMs,
       rows: new Map(),
+      openStartsMs: [],
       totalMs: 0,
     });
     dayEndMs = dayStartMs;
@@ -328,6 +351,7 @@ function contributeToDay(
       entryOfRecord: entry,
       trackedMs: contribution.trackedMs,
       running: contribution.running,
+      openStartsMs: [],
       lastActivityMs: contribution.atMs,
     });
     return;
@@ -357,10 +381,18 @@ function addToDay(
 /**
  * An open timer is what today is about, so its row exists from the instant it is opened rather than
  * from the first millisecond it earns. The contribution is empty, so the day's total is untouched
- * and the rows of a day still add up to its heading.
+ * and the rows of a day still add up to its heading. Its start is remembered on the row and on the
+ * day, so a tick can add every open timer instead of assuming there is only one.
  */
-function openToday(day: DayWindow, entry: TrackedEntry, key: string, nowMs: number): void {
-  contributeToDay(day, entry, key, { trackedMs: 0, running: true, atMs: nowMs });
+function openToday(
+  day: DayWindow,
+  entry: TrackedEntry,
+  key: string,
+  open: { readonly startMs: number; readonly nowMs: number },
+): void {
+  contributeToDay(day, entry, key, { trackedMs: 0, running: true, atMs: open.nowMs });
+  day.openStartsMs.push(open.startMs);
+  day.rows.get(key)?.openStartsMs.push(open.startMs);
 }
 
 /** Everything every entry of one grouping is placed against, built once for the whole pass. */
@@ -374,23 +406,35 @@ interface Placement {
   readonly nowMs: number;
 }
 
+/** Every window the span touches, in order, once it is known to reach at least one of them. */
+function spreadOverDays(
+  placement: Placement,
+  entry: TrackedEntry,
+  span: { readonly startMs: number; readonly endMs: number },
+): void {
+  const { windows } = placement;
+  for (let index = firstTouchedIndex(windows, span.startMs); index < windows.length; index += 1) {
+    const day = windows[index];
+    if (day === undefined || day.dayStartMs >= span.endMs) break;
+    addToDay(day, entry, entry.address, span);
+  }
+}
+
 /** Adds one entry to every window it touches, rejecting the rest of the window in constant time. */
 function placeEntry(placement: Placement, entry: TrackedEntry): void {
-  const { windows, today, nowMs } = placement;
+  const { today, nowMs } = placement;
   const startMs = measurableStartMs(entry.entry);
   const endMs = measurableEndMs(entry.entry, nowMs);
   if (startMs === undefined || endMs === undefined) return;
-  const key = nodeKey(entry);
+  // Every reject is arithmetic on instants the entry already carries, so an entry outside the
+  // window costs nothing but two comparisons.
+  const outside = endMs <= placement.startMs || startMs >= placement.endMs;
+  const opens = today !== undefined && entry.entry.state === 'running';
+  if (outside && !opens) return;
   // Before the span, because a timer started this instant has earned nothing and would otherwise be
   // rejected outright, leaving the node it runs on with no row on the day it is running.
-  if (today !== undefined && entry.entry.state === 'running') openToday(today, entry, key, nowMs);
-  if (endMs <= placement.startMs || startMs >= placement.endMs) return;
-  const span = { startMs, endMs };
-  for (let index = firstTouchedIndex(windows, startMs); index < windows.length; index += 1) {
-    const day = windows[index];
-    if (day === undefined || day.dayStartMs >= endMs) break;
-    addToDay(day, entry, key, span);
-  }
+  if (opens) openToday(today, entry, entry.address, { startMs, nowMs });
+  if (!outside) spreadOverDays(placement, entry, { startMs, endMs });
 }
 
 /** Newest day first, rows by last activity descending, days without rows omitted, all frozen. */
@@ -401,11 +445,15 @@ function frozenDays(windows: readonly DayWindow[]): readonly TrackedDay[] {
     const rows = [...day.rows.values()].sort(
       (left, right) => right.lastActivityMs - left.lastActivityMs,
     );
-    for (const row of rows) Object.freeze(row);
+    for (const row of rows) {
+      Object.freeze(row.openStartsMs);
+      Object.freeze(row);
+    }
     days.push(
       Object.freeze({
         dayStartMs: day.dayStartMs,
         totalMs: day.totalMs,
+        openStartsMs: Object.freeze(day.openStartsMs),
         rows: Object.freeze(rows),
       }),
     );
