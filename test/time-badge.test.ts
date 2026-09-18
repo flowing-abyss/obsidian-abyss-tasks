@@ -406,12 +406,12 @@ describe('inspector tracked time badge', () => {
     // A dirty recurrence draft reopens its editor after the next render, and that reopening clears
     // every popover in the panel without any pointer event reaching the sessions list.
     expectDefined(harness.el.querySelector<HTMLElement>('.abyss-repeat-chip')).click();
+    // A preset leaves the draft dirty, which is what carries the editor across the render. Opening
+    // the sessions list takes the keyboard, exactly as clicking its badge does in a browser.
     expectDefined(
-      harness.el.querySelector<HTMLElement>(
-        '.abyss-recurrence-popover input, .abyss-recurrence-popover button',
-      ),
+      harness.el.querySelector<HTMLButtonElement>('.abyss-recurrence-presets button'),
       'Missing recurrence editor',
-    ).focus();
+    ).click();
     const ledger = listenerLedger();
     body(harness.el).click();
     ledger.seal();

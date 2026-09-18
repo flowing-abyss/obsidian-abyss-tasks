@@ -391,6 +391,30 @@ describe('tracked tasks popover', () => {
     expect(finished.querySelector('.abyss-tracked-row-done')).not.toBeNull();
   });
 
+  it('takes the keyboard into the list and hands it back on Escape', async () => {
+    const harness = await widgetFor(WORKING_WEEK);
+    const day = dayClock(harness.host);
+    day.focus();
+    day.click();
+
+    const surface = query(harness.layout, '.abyss-time-tracking-popover', 'Missing the list');
+    expect(activeDocument.activeElement).toBe(surface);
+    expect(surface.getAttribute('tabindex')).toBe('-1');
+
+    // Tab reaches the first control of the list, which must not read as a dismissal.
+    query<HTMLButtonElement>(
+      daySection(harness.layout, 'Today'),
+      '.abyss-tracked-row-open',
+      'Missing the row title',
+    ).focus();
+    expect(harness.layout.querySelector('.abyss-time-tracking-popover')).not.toBeNull();
+
+    activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(harness.layout.querySelector('.abyss-time-tracking-popover')).toBeNull();
+    expect(activeDocument.activeElement).toBe(day);
+  });
+
   it('opens a task from its title and closes behind it', async () => {
     const harness = await widgetFor(WORKING_WEEK);
     dayClock(harness.host).click();

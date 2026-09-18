@@ -149,12 +149,17 @@ export function openAnchoredPopover(options: AnchoredPopoverOptions): AnchoredPo
     options,
     element: options.owner.createDiv({
       cls: `abyss-popover abyss-popover-anchored ${options.cls}`,
-      ...(options.attr === undefined ? {} : { attr: options.attr }),
+      // Focusable but out of the tab order, so the surface itself can hold the keyboard while its
+      // own controls stay the only Tab stops inside it.
+      attr: { tabindex: '-1', ...options.attr },
     }),
     closed: false,
     release: () => {},
   };
   state.release = listen(state);
+  // The keyboard follows the surface it opened, so the next Tab reaches the list rather than
+  // whatever sits after the anchor, which the outside-focus guard would read as a dismissal.
+  state.element.focus({ preventScroll: true });
   return {
     element: state.element,
     reposition: () => {

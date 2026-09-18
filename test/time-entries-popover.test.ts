@@ -290,6 +290,28 @@ describe('tracked sessions popover', () => {
     );
   });
 
+  it('takes the keyboard into the list and hands it back on Escape', async () => {
+    const harness = await inspector();
+    const badge = expectDefined(
+      harness.el.querySelector<HTMLButtonElement>('.abyss-time-badge-body'),
+    );
+    badge.focus();
+    badge.click();
+
+    const surface = popover(harness.el);
+    expect(activeDocument.activeElement).toBe(surface);
+    expect(surface.getAttribute('tabindex')).toBe('-1');
+
+    // Tab moves the keyboard onto the first control of the list, which must not dismiss it.
+    expectDefined(rows(harness.el)[0]?.querySelector<HTMLButtonElement>('button')).focus();
+    expect(harness.el.querySelector('.abyss-time-tracking-popover')).not.toBeNull();
+
+    activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(harness.el.querySelector('.abyss-time-tracking-popover')).toBeNull();
+    expect(activeDocument.activeElement).toBe(badge);
+  });
+
   it('closes when another task is selected', async () => {
     const harness = await inspector();
     open(harness.el);
