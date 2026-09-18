@@ -84,8 +84,10 @@ A nested line shaped as a start stamp followed by `→` is a time entry rather t
 entry the parser cannot read stays visible on its task while counting nothing anywhere. A node reads
 top to bottom as description, subtasks, comments, and then its tracked sessions, so a new line joins
 the group it belongs to: a subtask follows the last subtask the node already has, a comment goes
-above the node's closing run of entries, and an entry is appended at the end of the block. Only the
-new line is placed; existing lines are never reordered and reading never depends on their order.
+above the node's closing run of entries, and an entry is appended at the end of the block. A blank
+line inside that closing run neither belongs to it nor ends it, so a note spaced out by hand still
+takes its comment above the entries. Only the new line is placed; existing lines are never reordered,
+no blank line is added or removed, and reading never depends on their order.
 `TaskApplicationService` captures the relevant clock and behavior settings, resolves a command,
 validates it, and delegates persistence through repository and destination ports.
 
@@ -141,11 +143,20 @@ follows it by child position instead, but only where the domain proves the two g
 root differ in nothing but their tracked entries, which covers every surface that starts or pauses
 a timer rather than only the inspector's own writes.
 
+Every tracked label comes from the one domain formatter and reads `0m`, `47m` or `1h 47m`; only a
+running row inside a popover spells its seconds out, so the rail, the cards, the inspector and the
+project table can never disagree about a duration. Both tracking popovers take the shared anchored
+surface, and the tracked-task list alone waives its dismiss-on-outside-focus default, because
+opening a task from a row hands the inspector the keyboard by the list's own doing; a pointer press
+outside it and Escape still close it.
+
 The other tracking surfaces are passive. A list card carries a count badge with its subtree total,
 and while that subtree runs the card keeps the total it read so the panel's one subscription
 repaints only the running roots, found by the `data-tracking-root` address the badge carries, which
 every entry already carries because `TimeEntryIndex` reads a node's address once while it lifts the
-entry out of the tree rather than per grouping, render or tick. A
+entry out of the tree rather than per grouping, render or tick. The list can also be ordered by a
+`tracked` sort field, which the panel resolves against the one instant that render already read, so
+a running task is placed by the same total its badge shows. A
 calendar item reads the same snapshot for a running marker and subscribes to nothing: every
 sidebar month, week and day item takes it through `applyOccurrenceDomState`, the one place each of
 them already passes, and a forecast occurrence never carries it. Starting and
