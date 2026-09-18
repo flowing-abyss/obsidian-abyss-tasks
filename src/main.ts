@@ -208,8 +208,8 @@ export default class TaskCalendarPlugin extends Plugin {
       return;
     }
     // The same window the rail widget groups, so the key and the widget always name one task.
-    const window = recentTrackingWindow(Date.now(), DEVICE_OFFSET_AT);
-    const recent = resumeTarget(this.queries.entriesOverlapping(window.fromMs, window.toMs));
+    const span = recentTrackingWindow(Date.now(), DEVICE_OFFSET_AT);
+    const recent = resumeTarget(this.queries.entriesOverlapping(span.fromMs, span.toMs));
     if (recent === undefined || recent.status === 'done' || recent.status === 'cancelled') {
       new Notice(NO_RESUME_TARGET);
       return;
