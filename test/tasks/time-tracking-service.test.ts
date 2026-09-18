@@ -705,6 +705,180 @@ describe('time tracking orchestration', () => {
   });
 });
 
+/** The running entry a close rewrites, and the text that entry leaves behind once it is closed. */
+const KEPT_OPEN = `  - ${HOUR_AGO_ATOM} →\n`;
+const KEPT_CLOSED = `  - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n`;
+/** A session under a minute, so closing it removes the line and shifts everything below it up. */
+const SHORT_OPEN = `  - ${atomAt(-SHORT_SESSION_MS)} →\n`;
+/** The mock metadata parser reads a root list that begins on line zero as its own child. */
+const LEAD = '\n';
+
+/**
+ * A write to one root shifts the revision of every root below it in the same file, because a root
+ * is anchored on its predecessor. These cover the target the tracking service has to find again
+ * after its own close pass moved it, which is the ordinary case inside one project note.
+ */
+describe.each([
+  { label: 'a kept session', open: KEPT_OPEN, left: KEPT_CLOSED, discarded: false },
+  { label: 'a discarded session', open: SHORT_OPEN, left: '', discarded: true },
+])('starting in a file its own close pass rewrote, with $label', ({ open, left, discarded }) => {
+  const outcome = discarded ? { type: 'task', discardedShortEntry: true } : { type: 'task' };
+
+  it.each([false, true])(
+    'starts the root below the running one with authority %s',
+    async (authority) => {
+      const stack = await stackFor(
+        { 'a.md': `${LEAD}- [ ] Above\n${open}- [ ] Below\n` },
+        { authority },
+      );
+      try {
+        const result = await stack.tasks.execute({
+          type: 'start-tracking',
+          parent: taskNode(expectDefined(rootsIn(stack, 'a.md')[1], 'missing Below')),
+        });
+
+        expect(result).toMatchObject({ type: 'ok', changed: true, outcome });
+        expect(await read(stack.app, 'a.md')).toBe(
+          `${LEAD}- [ ] Above\n${left}- [ ] Below\n  - ${NOW_ATOM} →\n`,
+        );
+        expect(activeTitles(stack)).toEqual(['Below']);
+      } finally {
+        stack.index.destroy();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'starts the root above the running one with authority %s',
+    async (authority) => {
+      const stack = await stackFor(
+        { 'a.md': `${LEAD}- [ ] Above\n- [ ] Below\n${open}` },
+        { authority },
+      );
+      try {
+        const result = await stack.tasks.execute({
+          type: 'start-tracking',
+          parent: taskNode(expectDefined(rootsIn(stack, 'a.md')[0], 'missing Above')),
+        });
+
+        expect(result).toMatchObject({ type: 'ok', changed: true, outcome });
+        expect(await read(stack.app, 'a.md')).toBe(
+          `${LEAD}- [ ] Above\n  - ${NOW_ATOM} →\n- [ ] Below\n${left}`,
+        );
+        expect(activeTitles(stack)).toEqual(['Above']);
+      } finally {
+        stack.index.destroy();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'starts a subtask under a lower root with authority %s',
+    async (authority) => {
+      const stack = await stackFor(
+        { 'a.md': `${LEAD}- [ ] Above\n${open}- [ ] Below\n  - [ ] Child\n` },
+        { authority },
+      );
+      try {
+        const below = expectDefined(rootsIn(stack, 'a.md')[1], 'missing Below');
+        const result = await stack.tasks.execute({
+          type: 'start-tracking',
+          parent: subtaskNode(childOf(below)),
+        });
+
+        expect(result).toMatchObject({ type: 'ok', changed: true, outcome });
+        expect(await read(stack.app, 'a.md')).toBe(
+          `${LEAD}- [ ] Above\n${left}- [ ] Below\n  - [ ] Child\n    - ${NOW_ATOM} →\n`,
+        );
+        expect(activeTitles(stack)).toEqual(['Child']);
+      } finally {
+        stack.index.destroy();
+      }
+    },
+  );
+});
+
+/** Stops have to close every root of one file, whichever order the entries arrive in. */
+describe('stopping several running roots of one file', () => {
+  it.each([false, true])('closes both roots with authority %s', async (authority) => {
+    const stack = await stackFor(
+      { 'a.md': `${LEAD}- [ ] One\n${KEPT_OPEN}- [ ] Two\n  - ${EARLIER_ATOM} →\n` },
+      { authority },
+    );
+    try {
+      const result = await stack.tasks.execute({ type: 'stop-tracking' });
+
+      expect(result).toEqual({ type: 'ok', changed: true, outcome: { type: 'stopped' } });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `${LEAD}- [ ] One\n${KEPT_CLOSED}- [ ] Two\n  - ${EARLIER_ATOM} → ${NOW_ATOM}\n`,
+      );
+      expect(active(stack)).toEqual([]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('closes three roots of one file', async () => {
+    const stack = await stackFor({
+      'a.md': `${LEAD}- [ ] One\n${KEPT_OPEN}- [ ] Two\n${KEPT_OPEN}- [ ] Three\n${KEPT_OPEN}`,
+    });
+    try {
+      const result = await stack.tasks.execute({ type: 'stop-tracking' });
+
+      expect(result).toEqual({ type: 'ok', changed: true, outcome: { type: 'stopped' } });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `${LEAD}- [ ] One\n${KEPT_CLOSED}- [ ] Two\n${KEPT_CLOSED}- [ ] Three\n${KEPT_CLOSED}`,
+      );
+      expect(active(stack)).toEqual([]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('discards the short roots of one file together', async () => {
+    const stack = await stackFor({
+      'a.md': `${LEAD}- [ ] One\n${SHORT_OPEN}- [ ] Two\n${SHORT_OPEN}`,
+    });
+    try {
+      const result = await stack.tasks.execute({ type: 'stop-tracking' });
+
+      expect(result).toEqual({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'stopped', discardedShortEntry: true },
+      });
+      expect(await read(stack.app, 'a.md')).toBe(`${LEAD}- [ ] One\n- [ ] Two\n`);
+      expect(active(stack)).toEqual([]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('closes the writable roots of one file around an entry it cannot write', async () => {
+    const diagnostics = vi.fn();
+    const stack = await stackFor(
+      {
+        'a.md': `${LEAD}- [ ] One\n${KEPT_OPEN}- [ ] Foreign\n  - ${FUTURE_ATOM} →\n- [ ] Three\n${KEPT_OPEN}`,
+      },
+      { diagnostics },
+    );
+    try {
+      const result = await stack.tasks.execute({ type: 'stop-tracking' });
+
+      expect(result).toEqual({ type: 'ok', changed: true, outcome: { type: 'stopped' } });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `${LEAD}- [ ] One\n${KEPT_CLOSED}- [ ] Foreign\n  - ${FUTURE_ATOM} →\n- [ ] Three\n${KEPT_CLOSED}`,
+      );
+      expect(activeTitles(stack)).toEqual(['Foreign']);
+      expect(diagnostics.mock.calls).toEqual([
+        [{ operation: 'close-time-entry', phase: 'close-others', cause: 'conflict' }],
+      ]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+});
+
 /** A sub-task of a root that holds none, so every lookup for it comes back empty. */
 function childRef(root: TaskSnapshot): TaskNodeRef {
   return {
