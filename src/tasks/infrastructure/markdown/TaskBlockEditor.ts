@@ -651,8 +651,10 @@ function directChildBlocks(
 
 /**
  * Where the node's closing run of tracking lines starts, which is the end of its block when it has
- * none. The run is the longest suffix of the node's own lines that are entries, so a child block, a
- * comment or a blank line closes it and a child's entries are never read as the parent's.
+ * none. The run is the topmost entry of the longest suffix of the node's own lines that holds
+ * nothing but entries and blank lines, so a child block or a comment closes it and a child's
+ * entries are never read as the parent's. A blank line neither belongs to the run nor closes it: a
+ * note spaced out by hand still gets its new comment above the entries rather than after them.
  */
 function trailingEntryRunStart(context: BlockEditContext): number {
   const children = directChildBlocks(context);
@@ -660,7 +662,9 @@ function trailingEntryRunStart(context: BlockEditContext): number {
   let start = blockEnd;
   for (let at = blockEnd - 1; at > context.parentLine; at--) {
     const text = context.lines[at]?.text;
-    if (text === undefined || !isTimeEntryShape(text)) break;
+    if (text === undefined) break;
+    if (isTaskBlockBlankLine(text)) continue;
+    if (!isTimeEntryShape(text)) break;
     if (children.some((range) => at >= range.from && at <= range.to)) break;
     start = at;
   }

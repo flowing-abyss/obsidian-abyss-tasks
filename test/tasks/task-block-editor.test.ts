@@ -824,6 +824,34 @@ describe('TaskBlockEditor content order', () => {
     );
   });
 
+  /**
+   * A hand-edited note spaces its lines out however it likes, and a blank line says nothing about
+   * where the tracking lines begin, so the run reads through one instead of ending at it.
+   */
+  it('reads the closing run through a blank line between two entries', () => {
+    const source = note('- [ ] root', '  - [ ] existing', ENTRY, '', OPEN_ENTRY);
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 5 }, 'comment')).toBe(
+      note('- [ ] root', '  - [ ] existing', ADDED_COMMENT, ENTRY, '', OPEN_ENTRY),
+    );
+  });
+
+  it('leaves a blank line that trails the entries outside the block alone', () => {
+    const source = note('- [ ] root', '  - [ ] existing', ENTRY, '');
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 3 }, 'comment')).toBe(
+      note('- [ ] root', '  - [ ] existing', ADDED_COMMENT, ENTRY, ''),
+    );
+  });
+
+  it('puts the comment under a blank line that follows an earlier comment', () => {
+    const source = note('- [ ] root', EARLIER, '', ENTRY);
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 4 }, 'comment')).toBe(
+      note('- [ ] root', EARLIER, '', ADDED_COMMENT, ENTRY),
+    );
+  });
+
   it('puts a linked subtask under the last subtask and still reports its line', () => {
     const editor = new TaskBlockEditor();
     const source = note('- [ ] root', '  - [ ] existing', EARLIER, ENTRY);
