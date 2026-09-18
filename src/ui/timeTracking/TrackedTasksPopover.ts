@@ -65,6 +65,8 @@ interface PopoverSession {
 
 const EMPTY_TEXT = 'No tracked time in the last seven days';
 const ROW_KEY = 'rowKey';
+/** Names what a control of a row is, so focus survives a rebuild that restyled or replaced it. */
+const CONTROL = 'control';
 
 function finished(row: TrackedDayRow): boolean {
   const { status } = row.entryOfRecord;
@@ -87,7 +89,7 @@ function close(session: PopoverSession, restoreFocus?: boolean): void {
 /** Which control of which row the keyboard was on, so a rebuild can hand it back. */
 interface FocusedControl {
   readonly rowKey: string;
-  readonly cls: string;
+  readonly control: string;
 }
 
 function focusedControl(session: PopoverSession): FocusedControl | undefined {
@@ -95,17 +97,27 @@ function focusedControl(session: PopoverSession): FocusedControl | undefined {
   const active = element.ownerDocument.activeElement;
   if (!(active instanceof HTMLElement) || !element.contains(active)) return undefined;
   const rowKey = active.closest<HTMLElement>('.abyss-tracked-row')?.dataset[ROW_KEY];
-  return rowKey === undefined ? undefined : { rowKey, cls: active.className };
+  const control = active.dataset[CONTROL];
+  if (rowKey === undefined || control === undefined) return undefined;
+  return { rowKey, control };
+}
+
+/**
+ * The same control of the rebuilt row. A row that swapped play for pause hands the keyboard to the
+ * control that replaced it rather than to the first button it happens to hold.
+ */
+function controlIn(row: HTMLElement, control: string): HTMLElement | null {
+  for (const candidate of row.querySelectorAll<HTMLElement>('[data-control]')) {
+    if (candidate.dataset[CONTROL] === control) return candidate;
+  }
+  return row.querySelector('button');
 }
 
 function restoreFocus(session: PopoverSession, focused: FocusedControl | undefined): void {
   if (focused === undefined) return;
   for (const row of session.shell.element.querySelectorAll<HTMLElement>('.abyss-tracked-row')) {
     if (row.dataset[ROW_KEY] !== focused.rowKey) continue;
-    // The class also says which control it was, so a row that swapped play for pause hands the
-    // keyboard to the control that replaced it rather than to the first button it happens to hold.
-    const control =
-      row.querySelector<HTMLElement>(`.${focused.cls}`) ?? row.querySelector('button');
+    const control = controlIn(row, focused.control);
     if (control instanceof HTMLElement) control.focus({ preventScroll: true });
     return;
   }
@@ -131,7 +143,7 @@ function renderRowControl(
   const label = running ? `Pause ${title}` : `Resume ${title}`;
   const control = rowEl.createEl('button', {
     cls: 'abyss-tracked-row-toggle',
-    attr: { type: 'button', 'aria-label': label, title: label },
+    attr: { type: 'button', 'aria-label': label, title: label, 'data-control': 'toggle' },
   });
   setIcon(control, running ? 'pause' : 'play');
   control.addEventListener('click', (event) => {
@@ -170,7 +182,7 @@ function renderRow(
   renderRowControl(session, rowEl, row, running);
   const open = rowEl.createEl('button', {
     cls: 'abyss-tracked-row-open',
-    attr: { type: 'button' },
+    attr: { type: 'button', 'data-control': 'open' },
   });
   open.createSpan({ cls: 'abyss-tracked-row-title', text: row.entryOfRecord.title });
   const { parentTitle } = row.entryOfRecord;

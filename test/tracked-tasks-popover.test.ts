@@ -420,6 +420,30 @@ describe('tracked tasks popover', () => {
     expect(focused?.getAttribute('aria-label')).toBe('Pause Email cleanup');
   });
 
+  it('finds the focused control again when it carries a state class', async () => {
+    const harness = await widgetFor(WORKING_WEEK);
+    dayClock(harness.host).click();
+    const open = query<HTMLButtonElement>(
+      daySection(harness.layout, 'Today'),
+      '.abyss-tracked-row-open',
+      'Missing the row title',
+    );
+    open.focus();
+    // A control is found again by what it is. Its class list is a style decision, and a state class
+    // on it must not turn the lookup into a selector that matches something else or nothing at all.
+    open.addClass('is-pressed');
+
+    toggle(harness.host).click();
+    await flushMicrotasks();
+
+    const focused = activeDocument.activeElement as HTMLElement | null;
+    expect(focused?.className).toBe('abyss-tracked-row-open');
+    expect(
+      focused?.closest('.abyss-tracked-row')?.querySelector('.abyss-tracked-row-title')
+        ?.textContent,
+    ).toBe('Write report');
+  });
+
   it('keeps the days a reader opened across an index change', async () => {
     const harness = await widgetFor(WORKING_WEEK);
     dayClock(harness.host).click();
