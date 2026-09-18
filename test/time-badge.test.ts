@@ -7,6 +7,7 @@ import type { TaskCommandResult, TaskIndexEvent } from '../src/tasks';
 import { systemClock } from '../src/tasks/domain/clock';
 import { TaskModal } from '../src/ui/TaskModal';
 import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
+import { mountTimeBadge } from '../src/ui/timeTracking/TimeBadge';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
 import {
@@ -118,6 +119,40 @@ function fakeTickWindow(): { readonly win: Window; tick(): void } {
     } as unknown as Window,
     tick: () => scheduled?.(),
   };
+}
+
+/** The badge on its own, so what the shared tick costs it is not mixed with an owner's render. */
+function mountBareBadge(stack: TrackingStack, clock: { readonly win: Window }) {
+  const host = activeDocument.body.createDiv();
+  const chips = host.createDiv({ cls: 'abyss-chips-row' });
+  let contextReads = 0;
+  const ticker = new TrackingTicker({
+    queries: stack.tasks.queries,
+    now: stack.now,
+    win: clock.win,
+  });
+  const handle = mountTimeBadge({
+    popoverOwner: host,
+    boundary: host,
+    node: () => {
+      const root = stack.index.list()[0];
+      return root === undefined
+        ? undefined
+        : { snapshot: root, ref: { type: 'task', ref: root.ref } };
+    },
+    ticker,
+    actions: createTrackingActions(stack.tasks, () => {}),
+    context: () => {
+      contextReads += 1;
+      return { nowMs: stack.now(), offsetAt: () => OFFSET_MINUTES };
+    },
+  });
+  handle.render(chips);
+  cleanups.push(() => {
+    handle.destroy();
+    ticker.destroy();
+  });
+  return { host, handle, contextReads: () => contextReads };
 }
 
 function mountInspector(stack: TrackingStack, state: AppState, win: Window = window) {
@@ -319,6 +354,27 @@ describe('inspector tracked time badge', () => {
     } finally {
       observer.disconnect();
     }
+  });
+
+  it('paints on a tick and leaves an index event to its owner', async () => {
+    const clock = fakeTickWindow();
+    const stack = await trackingStack(RUNNING_SESSION);
+    const mounted = mountBareBadge(stack, clock);
+    const rendered = mounted.contextReads();
+
+    stack.advance(MINUTE);
+    clock.tick();
+
+    expect(mounted.contextReads()).toBe(rendered + 1);
+    expect(body(mounted.host).textContent).toBe('1h36m');
+
+    // An index change reaches the badge through its owner, which re-reads the selection first. The
+    // shared ticker emits that frame too, and it emits first, so painting it here would repaint
+    // from the model the change has already replaced and write the badge twice for one change.
+    stack.index.installCommittedContent('tasks.md', `\n${CLOSED_SESSIONS}`);
+    await flushMicrotasks();
+
+    expect(mounted.contextReads()).toBe(rendered + 1);
   });
 
   it('releases the shared ticker when the inspector is destroyed', async () => {

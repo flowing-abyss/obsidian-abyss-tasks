@@ -5,6 +5,7 @@ import {
   taskNodeAddress,
   totalMs,
   type OffsetAt,
+  type TrackedEntry,
   type TrackedTotal,
 } from '../../tasks';
 import { writeAttribute, writeClass, writeText, writeTitle } from '../guardedDomWrites';
@@ -75,6 +76,11 @@ interface BadgeSession {
   model: BadgeModel | undefined;
   icon: 'play' | 'pause' | undefined;
   openedAt: string | undefined;
+  /**
+   * The active entries of the last tick, so an emit carrying a new set is recognised as the shared
+   * ticker's own index notification and left to the owner, which re-reads the selection anyway.
+   */
+  active: readonly TrackedEntry[] | undefined;
   destroyed: boolean;
 }
 
@@ -236,9 +242,16 @@ export function mountTimeBadge(options: TimeBadgeOptions): TimeBadgeHandle {
     model: undefined,
     icon: undefined,
     openedAt: undefined,
+    active: undefined,
     destroyed: false,
   };
-  const unsubscribe = options.ticker.subscribe(() => {
+  const unsubscribe = options.ticker.subscribe((state) => {
+    // The shared ticker emits on index changes too, and it emits first. Those frames belong to the
+    // owner, which re-renders the badge from the new selection; painting them here as well would
+    // show the model the change replaced for an instant and write the badge twice for one change.
+    const sameActive = session.active === state.active;
+    session.active = state.active;
+    if (!sameActive) return;
     paint(session);
     session.popover?.tick();
   });
