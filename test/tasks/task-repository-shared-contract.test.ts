@@ -492,6 +492,49 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       }
     });
 
+    it('keeps a node reading as description, subtasks, comments and then tracked sessions', async () => {
+      const source =
+        '- [ ] root\n' +
+        '  - > about\n' +
+        '  - [ ] existing\n' +
+        '    - 2026-07-14T08:00:00+00:00 → 2026-07-14T08:30:00+00:00\n' +
+        '  - 2026-07-13T09:00:00+00:00: earlier\n' +
+        '  - 2026-07-14T09:00:00+00:00 → 2026-07-14T10:00:00+00:00\n';
+      const h = await makeHarness(adapter, source);
+      const root = expectDefined(h.snapshots(source)[0]);
+
+      await expect(
+        h.repository.edit({
+          type: 'add-subtask',
+          parent: { type: 'task', ref: root.ref },
+          text: 'new child',
+          today: localDate('2026-07-14'),
+          addCreatedDate: false,
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+
+      const withSubtask = await h.read();
+      await expect(
+        h.repository.edit({
+          type: 'add-comment',
+          parent: { type: 'task', ref: expectDefined(h.snapshots(withSubtask)[0]).ref },
+          text: 'new comment',
+          stamp: atomDateTime('2026-07-14T11:00:00+00:00'),
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+
+      expect(await h.read()).toBe(
+        '- [ ] root\n' +
+          '  - > about\n' +
+          '  - [ ] existing\n' +
+          '    - 2026-07-14T08:00:00+00:00 → 2026-07-14T08:30:00+00:00\n' +
+          '  - [ ] new child\n' +
+          '  - 2026-07-13T09:00:00+00:00: earlier\n' +
+          '  - 2026-07-14T11:00:00+00:00: new comment\n' +
+          '  - 2026-07-14T09:00:00+00:00 → 2026-07-14T10:00:00+00:00\n',
+      );
+    });
+
     it('deletes the exact duplicate child with descendants after confirming every ancestor', async () => {
       const source =
         '- [ ] root\n' +

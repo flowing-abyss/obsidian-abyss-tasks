@@ -81,7 +81,11 @@ only proven successor references survive writes, and history never becomes persi
 `TaskIndex` watches vault and metadata events and parses supported Markdown through the canonical
 `TaskMarkdownCodec`. It exposes detached snapshots and reference resolution through public queries.
 A nested line shaped as a start stamp followed by `→` is a time entry rather than a comment, and an
-entry the parser cannot read stays visible on its task while counting nothing anywhere.
+entry the parser cannot read stays visible on its task while counting nothing anywhere. A node reads
+top to bottom as description, subtasks, comments, and then its tracked sessions, so a new line joins
+the group it belongs to: a subtask follows the last subtask the node already has, a comment goes
+above the node's closing run of entries, and an entry is appended at the end of the block. Only the
+new line is placed; existing lines are never reordered and reading never depends on their order.
 `TaskApplicationService` captures the relevant clock and behavior settings, resolves a command,
 validates it, and delegates persistence through repository and destination ports.
 

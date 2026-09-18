@@ -568,7 +568,7 @@ function addSubtask(
   if (edit.text.trim().length === 0 || /[\r\n]/u.test(edit.text)) {
     return { type: 'invalid', field: 'subtask' };
   }
-  appendChildLine(context, `- [ ] ${edit.text}`);
+  insertChildLine(context, subtaskInsertionLine(context), `- [ ] ${edit.text}`);
   return undefined;
 }
 
@@ -589,13 +589,99 @@ function nestedLinePrefix(context: BlockEditContext): string {
   return `${PREFIX_RE.exec(context.parent.text)?.[1] ?? ''}  `;
 }
 
-function appendChildLine(context: BlockEditContext, text: string): void {
+function insertChildLine(context: BlockEditContext, at: number, text: string): void {
   insertAt(
     context.lines,
-    context.parentLine + context.target.lineCount,
+    at,
     insertedLines([`${nestedLinePrefix(context)}${text}`], context.ending),
     context.ending,
   );
+}
+
+function blockEndLine(context: BlockEditContext): number {
+  return context.parentLine + context.target.lineCount;
+}
+
+function appendChildLine(context: BlockEditContext, text: string): void {
+  insertChildLine(context, blockEndLine(context), text);
+}
+
+/** Where a child's own block ends, by the same indentation rule that bounds a root block. */
+function childBlockEnd(context: BlockEditContext, from: number, blockEnd: number): number {
+  const child = context.lines[from]?.text ?? '';
+  const childIndent = indentation(child);
+  const childQuote = quoteDepth(child);
+  let to = from;
+  for (let at = from + 1; at < blockEnd; at++) {
+    const text = context.lines[at]?.text;
+    if (text === undefined) break;
+    if (isTaskBlockBlankLine(text)) continue;
+    if (quoteDepth(text) !== childQuote || indentation(text) <= childIndent) break;
+    to = at;
+  }
+  return to;
+}
+
+/**
+ * The node's own subtask blocks, read from the note rather than from the caller's ranges, because
+ * the bytes are what an insertion has to fit between and the linked-subtask path knows a node's
+ * line count without knowing its children. A child's block is opaque: whatever it holds belongs to
+ * the child, so the scan resumes after it rather than inside it.
+ */
+function directChildBlocks(
+  context: BlockEditContext,
+): ReadonlyArray<{ readonly from: number; readonly to: number }> {
+  const parentIndent = indentation(context.parent.text);
+  const blockEnd = blockEndLine(context);
+  const ranges: Array<{ readonly from: number; readonly to: number }> = [];
+  let at = context.parentLine + 1;
+  while (at < blockEnd) {
+    const text = context.lines[at]?.text;
+    if (text === undefined) break;
+    if (TASK_RE.test(text) && indentation(text) > parentIndent) {
+      const to = childBlockEnd(context, at, blockEnd);
+      ranges.push({ from: at, to });
+      at = to + 1;
+      continue;
+    }
+    at++;
+  }
+  return ranges;
+}
+
+/**
+ * Where the node's closing run of tracking lines starts, which is the end of its block when it has
+ * none. The run is the longest suffix of the node's own lines that are entries, so a child block, a
+ * comment or a blank line closes it and a child's entries are never read as the parent's.
+ */
+function trailingEntryRunStart(context: BlockEditContext): number {
+  const children = directChildBlocks(context);
+  const blockEnd = blockEndLine(context);
+  let start = blockEnd;
+  for (let at = blockEnd - 1; at > context.parentLine; at--) {
+    const text = context.lines[at]?.text;
+    if (text === undefined || !isTimeEntryShape(text)) break;
+    if (children.some((range) => at >= range.from && at <= range.to)) break;
+    start = at;
+  }
+  return start;
+}
+
+/**
+ * Where a new subtask goes: under the last subtask the node already has, else under the last line
+ * of its description, else directly under its own line. Comments and tracking lines therefore stay
+ * below the subtasks without any existing line being moved.
+ */
+function subtaskInsertionLine(context: BlockEditContext): number {
+  const children = directChildBlocks(context);
+  const last = children[children.length - 1];
+  if (last !== undefined) return last.to + 1;
+  const blockEnd = blockEndLine(context);
+  let insertion = context.parentLine + 1;
+  for (let at = context.parentLine + 1; at < blockEnd; at++) {
+    if (DESCRIPTION_RE.test(context.lines[at]?.text ?? '')) insertion = at + 1;
+  }
+  return insertion;
 }
 
 function deleteSubtask(
@@ -685,7 +771,7 @@ function addComment(
   if (edit.text.length === 0 || /[\r\n]/u.test(edit.text)) {
     return { type: 'invalid', field: 'comment' };
   }
-  appendChildLine(context, `- ${edit.stamp}: ${edit.text}`);
+  insertChildLine(context, trailingEntryRunStart(context), `- ${edit.stamp}: ${edit.text}`);
   return undefined;
 }
 
@@ -1044,8 +1130,9 @@ export class TaskBlockEditor {
     const linked = createLinkedTaskLines(codec, context.parent.text, edit);
     if (linked === undefined) return { type: 'invalid', field: 'subtask' };
     context.parent.text = linked.current;
-    const createdChildRelativeLine = edit.current.relativeLine + edit.current.lineCount;
-    appendChildLine(context, linked.child);
+    const insertion = subtaskInsertionLine(context);
+    const createdChildRelativeLine = insertion - block.line;
+    insertChildLine(context, insertion, linked.child);
     const result = editedResult(context);
     return result.type === 'changed'
       ? { ...result, createdChildRelativeLine }
