@@ -161,6 +161,33 @@ describe('TaskBlockEditor time entries', () => {
     expect(close(4, line)).toEqual({ type: 'conflict' });
   });
 
+  it.each([
+    ['carries no offset at all', '2026-09-18T15:05:00'],
+    ['carries an offset outside the legal range', '2026-09-18T15:05:00+15:00'],
+  ])('refuses to close an entry when the end stamp %s', (...[, end]: readonly [string, string]) => {
+    const line = `  - ${START} →`;
+
+    expect(
+      editBlock(
+        `- [ ] root\n${line}\n`,
+        { relativeLine: 0, lineCount: 2, childRanges: [] },
+        closeEdit(1, line, end, instantMs(END)),
+      ),
+    ).toEqual({ type: 'conflict' });
+  });
+
+  it('refuses to close an entry that started after the end instant', () => {
+    const line = `  - ${START} →`;
+
+    expect(
+      editBlock(
+        `- [ ] root\n${line}\n`,
+        { relativeLine: 0, lineCount: 2, childRanges: [] },
+        closeEdit(1, line, END, instantMs(START) - 1),
+      ),
+    ).toEqual({ type: 'conflict' });
+  });
+
   it('refuses to close an entry that is already closed', () => {
     const line = `  - ${START} → ${END}`;
 

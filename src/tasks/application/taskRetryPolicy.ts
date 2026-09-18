@@ -6,10 +6,10 @@ import {
   taskNodeAtSourcePath as exactRestorationNode,
   rebaseTaskCommand,
   rebaseTaskNode,
-  taskCommandMutationTarget,
   taskMutationNodeRef,
 } from '../domain/taskCommandTargets';
 import { reconcileTaskNodeRef, type RebaseEvidence } from '../domain/taskReconciliation';
+import type { TimeEntrySnapshot } from '../domain/timeTracking';
 import type {
   CommentRef,
   LocalDate,
@@ -18,6 +18,7 @@ import type {
   TaskNodeRef,
   TaskRef,
   TaskSnapshot,
+  TimeEntryRef,
 } from '../domain/types';
 import type { TaskBehaviorSettings } from './TaskBehaviorSettings';
 import type {
@@ -27,7 +28,7 @@ import type {
   TaskEditRequest,
   TaskMoveRequest,
 } from './TaskRepository';
-import { subtaskRestorationGapIsCurrent } from './TaskRepository';
+import { subtaskRestorationGapIsCurrent, taskEditMutationTarget } from './TaskRepository';
 
 export type RetryPolicy =
   'commutative' | 'field-compare' | 'exact-target' | 'relocation-only' | 'never';
@@ -167,19 +168,26 @@ export function recurrenceCompletionPreconditionHolds(
 }
 
 function rebaseEditCommand(command: TaskEditCommand, root: TaskRef): TaskEditCommand {
-  return isDependencyMetadataCommand(command)
-    ? { ...command, target: rebaseTaskNode(command.target, root) }
-    : rebaseTaskCommand(command, root);
+  if (isDependencyMetadataCommand(command)) {
+    return { ...command, target: rebaseTaskNode(command.target, root) };
+  }
+  if (command.type === 'add-time-entry') {
+    return { ...command, parent: rebaseTaskNode(command.parent, root) };
+  }
+  if (command.type === 'close-time-entry') {
+    return {
+      ...command,
+      entry: rebaseTaskNode({ type: 'time-entry', ref: command.entry }, root).ref,
+    };
+  }
+  return rebaseTaskCommand(command, root);
 }
 
 function nodeForCommand(
   root: TaskSnapshot,
   command: TaskEditCommand,
 ): TaskStatusSnapshot | undefined {
-  const target = isDependencyMetadataCommand(command)
-    ? command.target
-    : taskCommandMutationTarget(command);
-  return snapshotForTarget(root, taskMutationNodeRef(target));
+  return snapshotForTarget(root, taskMutationNodeRef(taskEditMutationTarget(command)));
 }
 
 function requestedFieldValue(update: { readonly type: string; readonly value?: unknown }): unknown {
@@ -413,6 +421,30 @@ function commentTargetExists(target: TaskSnapshot | SubtaskSnapshot, ref: Commen
   );
 }
 
+function timeEntryTargetExists(target: TaskSnapshot | SubtaskSnapshot, ref: TimeEntryRef): boolean {
+  return target.timeEntries.some(
+    (entry) =>
+      entry.relativeLine === ref.relativeLine && entry.originalMarkdown === ref.originalMarkdown,
+  );
+}
+
+function sameEntryLine(left: TimeEntrySnapshot, right: TimeEntrySnapshot | undefined): boolean {
+  return (
+    left.relativeLine === right?.relativeLine && left.originalMarkdown === right.originalMarkdown
+  );
+}
+
+/** A restoration may only be replayed while nobody else has moved or rewritten an entry line. */
+function timeEntryLinesUnchanged(
+  previous: TaskSnapshot | SubtaskSnapshot,
+  current: TaskSnapshot | SubtaskSnapshot,
+): boolean {
+  return (
+    previous.timeEntries.length === current.timeEntries.length &&
+    previous.timeEntries.every((entry, index) => sameEntryLine(entry, current.timeEntries[index]))
+  );
+}
+
 function deletedSubtaskUnchanged(
   previous: TaskSnapshot | SubtaskSnapshot,
   current: TaskSnapshot | SubtaskSnapshot,
@@ -449,7 +481,10 @@ type ExactTargetCommand = Extract<
       | 'edit-link'
       | 'reorder-subtask'
       | 'add-comment'
-      | 'add-subtask';
+      | 'add-subtask'
+      | 'close-time-entry'
+      | 'delete-time-entry'
+      | 'restore-time-entry';
   }
 >;
 
@@ -470,6 +505,9 @@ const EXACT_TARGET_COMMAND_TYPES = new Set<TaskEditCommand['type']>([
   'reorder-subtask',
   'add-comment',
   'add-subtask',
+  'close-time-entry',
+  'delete-time-entry',
+  'restore-time-entry',
 ]);
 
 function isExactTargetCommand(command: TaskEditCommand): command is ExactTargetCommand {
@@ -485,6 +523,49 @@ function isAdditiveExactTargetCommand(
   command: ExactTargetCommand,
 ): command is AdditiveExactTargetCommand {
   return ADDITIVE_EXACT_TARGET_TYPES.has(command.type);
+}
+
+/** Commands that address one nested line the node owns rather than the node itself. */
+type OwnedLineExactCommand = Extract<
+  ExactTargetCommand,
+  {
+    readonly type:
+      | 'update-comment'
+      | 'delete-comment'
+      | 'close-time-entry'
+      | 'delete-time-entry'
+      | 'restore-time-entry';
+  }
+>;
+
+const OWNED_LINE_EXACT_TARGET_TYPES = new Set<TaskEditCommand['type']>([
+  'update-comment',
+  'delete-comment',
+  'close-time-entry',
+  'delete-time-entry',
+  'restore-time-entry',
+]);
+
+function isOwnedLineExactCommand(command: ExactTargetCommand): command is OwnedLineExactCommand {
+  return OWNED_LINE_EXACT_TARGET_TYPES.has(command.type);
+}
+
+/** An owned line may be rewritten only while the node still carries it exactly where it was. */
+function ownedLinePreconditionHolds(
+  command: OwnedLineExactCommand,
+  previous: TaskStatusSnapshot,
+  current: TaskStatusSnapshot,
+): boolean {
+  switch (command.type) {
+    case 'update-comment':
+    case 'delete-comment':
+      return commentTargetExists(current, command.comment);
+    case 'close-time-entry':
+    case 'delete-time-entry':
+      return timeEntryTargetExists(current, command.entry);
+    case 'restore-time-entry':
+      return timeEntryLinesUnchanged(previous, current);
+  }
 }
 
 function dependencyMetadataPreconditionHolds(
@@ -506,6 +587,9 @@ function exactCommandPreconditionHolds(
     return dependencyMetadataPreconditionHolds(command, previous, current);
   }
   if (isAdditiveExactTargetCommand(command)) return true;
+  if (isOwnedLineExactCommand(command)) {
+    return ownedLinePreconditionHolds(command, previous, current);
+  }
   switch (command.type) {
     case 'append-title':
       return previous.markdownTitle === current.markdownTitle;
@@ -513,9 +597,6 @@ function exactCommandPreconditionHolds(
       return previous.description === current.description;
     case 'delete-subtask':
       return deletedSubtaskUnchanged(previous, current);
-    case 'update-comment':
-    case 'delete-comment':
-      return commentTargetExists(current, command.comment);
     case 'edit-link':
       return editLinkPreconditionHolds(command, previous, current);
     case 'reorder-subtask':

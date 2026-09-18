@@ -92,6 +92,7 @@ export function taskCommandMutationTarget(command: TaskCommand): TaskMutationTar
   if ('parent' in command) return command.parent;
   if ('subtask' in command) return { type: 'subtask', ref: command.subtask };
   if ('comment' in command) return { type: 'comment', ref: command.comment };
+  if ('entry' in command) return { type: 'time-entry', ref: command.entry };
   if ('target' in command)
     return command.type === 'edit-link' ? linkTarget(command.target) : command.target;
   return unreachable(command);
@@ -133,6 +134,11 @@ function rebaseRootedCommand(command: RootedTaskCommand, root: TaskRef): RootedT
     return {
       ...command,
       comment: rebaseTaskNode({ type: 'comment', ref: command.comment }, root).ref,
+    };
+  if ('entry' in command)
+    return {
+      ...command,
+      entry: rebaseTaskNode({ type: 'time-entry', ref: command.entry }, root).ref,
     };
   if ('target' in command) return rebaseTargetCommand(command, root);
   return unreachable(command);

@@ -164,12 +164,15 @@ type TimeEntryEdit = Extract<
   }
 >;
 
-const TIME_ENTRY_EDIT_TYPES: ReadonlySet<string> = new Set<TimeEntryEdit['type']>([
-  'add-time-entry',
-  'close-time-entry',
-  'delete-time-entry',
-  'restore-time-entry',
-]);
+/** Exhaustive by construction, so a new entry edit cannot be added without reaching its dispatch. */
+const TIME_ENTRY_EDIT_TYPES: ReadonlySet<string> = new Set(
+  Object.keys({
+    'add-time-entry': true,
+    'close-time-entry': true,
+    'delete-time-entry': true,
+    'restore-time-entry': true,
+  } satisfies Readonly<Record<TimeEntryEdit['type'], true>>),
+);
 
 function isTimeEntryEdit(edit: TaskBlockEdit): edit is TimeEntryEdit {
   return TIME_ENTRY_EDIT_TYPES.has(edit.type);
@@ -698,11 +701,14 @@ function editExistingComment(
   return undefined;
 }
 
-/** A stamp written by the plugin always carries its offset, so the start needs no clock. */
-function stampOffsetAt(stamp: AtomDateTime): OffsetAt {
+/**
+ * A stamp written by the plugin always carries its offset, so the start needs no clock. Undefined
+ * when the closing stamp has no readable offset, because guessing one would misplace the start.
+ */
+function stampOffsetAt(stamp: AtomDateTime): OffsetAt | undefined {
   const written = STAMP_OFFSET_RE.exec(stamp)?.[0];
-  const offsetMinutes = (written === undefined ? undefined : instantOffsetMinutes(written)) ?? 0;
-  return () => offsetMinutes;
+  const offsetMinutes = written === undefined ? undefined : instantOffsetMinutes(written);
+  return offsetMinutes === undefined ? undefined : () => offsetMinutes;
 }
 
 interface ConfirmedEntryLine {
@@ -742,10 +748,14 @@ function closeTimeEntry(
   edit: Extract<TaskBlockEdit, { readonly type: 'close-time-entry' }>,
 ): TaskBlockEditResult | undefined {
   const found = confirmedEntryLine(context, edit);
-  if (found === undefined) return { type: 'conflict' };
-  const running = parseTimeEntryLine(found.line.text, stampOffsetAt(edit.stamp));
+  const offsetAt = stampOffsetAt(edit.stamp);
+  if (found === undefined || offsetAt === undefined) return { type: 'conflict' };
+  const running = parseTimeEntryLine(found.line.text, offsetAt);
   if (running?.state !== 'running' || running.startMs === undefined) return { type: 'conflict' };
-  if (edit.endMs - running.startMs < edit.minimumMs) return discardShortEntry(context, found.index);
+  const elapsedMs = edit.endMs - running.startMs;
+  // A start after the end is not a short session; discarding it would destroy unexplained evidence.
+  if (elapsedMs < 0) return { type: 'conflict' };
+  if (elapsedMs < edit.minimumMs) return discardShortEntry(context, found.index);
   const closed = closeEntryLine(found.line.text, edit.stamp);
   if (closed === undefined) return { type: 'conflict' };
   found.line.text = closed;

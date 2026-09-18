@@ -13,6 +13,7 @@ import type {
   TaskRef,
   TaskSnapshot,
   TaskTextTarget,
+  TimeEntryRef,
 } from './types';
 import type { TaskIssue } from './validation';
 
@@ -138,6 +139,8 @@ export type TaskCommand =
       readonly text: string;
     }
   | { readonly type: 'delete-comment'; readonly comment: CommentRef }
+  | { readonly type: 'delete-time-entry'; readonly entry: TimeEntryRef }
+  | ({ readonly type: 'restore-time-entry' } & TimeEntryRemovalRecovery)
   | {
       readonly type: 'edit-link';
       readonly target: TaskTextTarget;
@@ -200,6 +203,13 @@ export interface SubtaskRemovalRecovery {
   };
 }
 
+/** Everything `restore-time-entry` needs to put one removed entry line back where it was. */
+export interface TimeEntryRemovalRecovery {
+  readonly parent: TaskNodeRef;
+  readonly markdown: string;
+  readonly relativeLine: number;
+}
+
 export type TaskCommandOutcome =
   | DependencyCommandOutcome
   | DependencySubtaskCreationOutcome
@@ -207,6 +217,9 @@ export type TaskCommandOutcome =
       readonly type: 'task';
       readonly task: TaskSnapshot;
       readonly subtaskRemovalRecovery?: SubtaskRemovalRecovery;
+      readonly timeEntryRemovalRecovery?: TimeEntryRemovalRecovery;
+      /** The closed session was too short to record, so the note keeps no trace of it. */
+      readonly discardedShortEntry?: true;
     }
   | { readonly type: 'deleted'; readonly ref: TaskRef }
   | {

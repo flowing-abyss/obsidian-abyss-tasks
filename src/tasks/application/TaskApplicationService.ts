@@ -169,7 +169,11 @@ type MoveScheduleCommand = Extract<
 >;
 type StatusCommand = Extract<TaskCommand, { readonly type: 'set-status' | 'toggle-completion' }>;
 
-const COMMUTATIVE_COMMAND_TYPES = new Set<TaskEditCommand['type']>(['add-comment', 'add-subtask']);
+const COMMUTATIVE_COMMAND_TYPES = new Set<TaskEditCommand['type']>([
+  'add-comment',
+  'add-subtask',
+  'add-time-entry',
+]);
 const FIELD_COMPARE_COMMAND_TYPES = new Set<TaskEditCommand['type']>([
   'patch',
   'set-status',
@@ -251,6 +255,13 @@ function subtaskInputIssue(command: TaskCommand): TaskCommandResult | undefined 
   return undefined;
 }
 
+function timeEntryInputIssue(command: TaskCommand): TaskCommandResult | undefined {
+  if (command.type === 'restore-time-entry' && !isSingleLineText(command.markdown)) {
+    return invalidTaskTarget('time-entry');
+  }
+  return undefined;
+}
+
 function descriptionInputIssue(command: TaskCommand): TaskCommandResult | undefined {
   if (
     command.type === 'set-description' &&
@@ -267,6 +278,7 @@ function multilineInputIssue(command: TaskCommand): TaskCommandResult | undefine
     titleInputIssue(command) ??
     commentInputIssue(command) ??
     subtaskInputIssue(command) ??
+    timeEntryInputIssue(command) ??
     descriptionInputIssue(command)
   );
 }
@@ -995,29 +1007,10 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (resolution.type === 'ambiguous') {
       return {
         type: 'ambiguous',
-        candidates: resolution.candidates.map((candidate) => {
-          let rebasedTarget: TaskMutationTarget;
-          if (target.type === 'task') {
-            rebasedTarget = { type: 'task', ref: candidate.root.ref };
-          } else if (target.type === 'subtask') {
-            rebasedTarget = {
-              type: 'subtask',
-              ref: {
-                ...target.ref,
-                parent: rebaseStatusTarget(target.ref.parent, candidate.root.ref),
-              },
-            };
-          } else {
-            rebasedTarget = {
-              type: 'comment',
-              ref: {
-                ...target.ref,
-                parent: rebaseStatusTarget(target.ref.parent, candidate.root.ref),
-              },
-            };
-          }
-          return { root: candidate.root, target: rebasedTarget };
-        }),
+        candidates: resolution.candidates.map((candidate) => ({
+          root: candidate.root,
+          target: rebaseStatusTarget(target, candidate.root.ref),
+        })),
       };
     }
     return { type: 'not-found', target };

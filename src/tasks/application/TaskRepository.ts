@@ -20,6 +20,7 @@ import type {
   TaskNodeRef,
   TaskRef,
   TaskSnapshot,
+  TimeEntryRef,
 } from '../domain/types';
 import { sameTaskNodeRef } from '../domain/types';
 import type { TaskIssue } from '../domain/validation';
@@ -67,7 +68,20 @@ export type TaskEditCommand =
       readonly type: 'add-subtask';
       readonly parent: TaskStatusTarget;
       readonly text: string;
-    } & AddSubtaskLifecycle);
+    } & AddSubtaskLifecycle)
+  | {
+      readonly type: 'add-time-entry';
+      readonly parent: TaskStatusTarget;
+      readonly stamp: AtomDateTime;
+    }
+  | {
+      readonly type: 'close-time-entry';
+      readonly entry: TimeEntryRef;
+      readonly stamp: AtomDateTime;
+      readonly endMs: number;
+      /** Sessions below this length leave no trace, so the caller states the threshold. */
+      readonly minimumMs: number;
+    };
 
 export function dependencyMetadataIssues(command: TaskEditCommand): readonly TaskIssue[] {
   if (command.type === 'set-dependency-id') {
@@ -81,11 +95,14 @@ export function dependencyMetadataIssues(command: TaskEditCommand): readonly Tas
   return [];
 }
 
-/** Storage metadata commands share the public command target contract without exposing edits. */
+/** Storage metadata and tracking commands share the public target contract without exposing edits. */
 export function taskEditMutationTarget(command: TaskEditCommand): TaskMutationTarget {
-  return command.type === 'set-dependency-id' || command.type === 'set-depends-on'
-    ? command.target
-    : taskCommandMutationTarget(command);
+  if (command.type === 'set-dependency-id' || command.type === 'set-depends-on') {
+    return command.target;
+  }
+  if (command.type === 'add-time-entry') return command.parent;
+  if (command.type === 'close-time-entry') return { type: 'time-entry', ref: command.entry };
+  return taskCommandMutationTarget(command);
 }
 
 export function taskEditRootRef(command: TaskEditCommand): TaskRef {
