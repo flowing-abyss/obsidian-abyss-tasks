@@ -1,10 +1,21 @@
-import { parseCommentTimestampPrefix, type AtomDateTime } from '../../domain/commentTimestamp';
+import {
+  instantOffsetMinutes,
+  parseCommentTimestampPrefix,
+  type AtomDateTime,
+} from '../../domain/commentTimestamp';
 import {
   recurrenceOwnedSubtree,
   stripRecurrenceTerminalBlockId,
   type RecurrenceOwnedSubtree,
 } from '../../domain/recurrenceIteration';
 import type { DependencyDirection } from '../../domain/taskDependencies';
+import {
+  closeEntryLine,
+  formatOpenEntry,
+  isTimeEntryShape,
+  parseTimeEntryLine,
+  type OffsetAt,
+} from '../../domain/timeEntry';
 import type { LocalDate, TaskInsertionPolicy } from '../../domain/types';
 import { createLinkedTaskLines } from './createTaskLine';
 import { isTaskBlockBlankLine } from './taskBlockSyntax';
@@ -13,6 +24,8 @@ import type { TaskMarkdownCodec } from './TaskMarkdownCodec';
 const TASK_RE = /^[\s>]*- \[(.)\]/u;
 const PREFIX_RE = /^([\s>]*)/u;
 const DESCRIPTION_RE = /^[\s>]*- > /u;
+const LINE_BREAK_RE = /[\r\n]/u;
+const STAMP_OFFSET_RE = /(?:Z|[+-]\d{2}:\d{2})$/u;
 
 export function stripTerminalBlockId(line: string): string {
   return stripRecurrenceTerminalBlockId(line);
@@ -106,6 +119,25 @@ export type TaskBlockEdit =
       readonly type: 'delete-comment';
       readonly relativeLine: number;
       readonly originalMarkdown: string;
+    }
+  | { readonly type: 'add-time-entry'; readonly stamp: AtomDateTime }
+  | {
+      readonly type: 'close-time-entry';
+      readonly relativeLine: number;
+      readonly originalMarkdown: string;
+      readonly stamp: AtomDateTime;
+      readonly endMs: number;
+      readonly minimumMs: number;
+    }
+  | {
+      readonly type: 'delete-time-entry';
+      readonly relativeLine: number;
+      readonly originalMarkdown: string;
+    }
+  | {
+      readonly type: 'restore-time-entry';
+      readonly markdown: string;
+      readonly relativeLine: number;
     };
 
 export type TaskBlockEditResult =
@@ -114,10 +146,34 @@ export type TaskBlockEditResult =
       readonly content: string;
       readonly block: TaskRootBlock;
       readonly removedSubtask?: { readonly markdown: string; readonly lineEnding?: '\n' | '\r\n' };
+      readonly removedTimeEntry?: { readonly markdown: string; readonly relativeLine: number };
+      readonly discardedShortEntry?: true;
     }
   | { readonly type: 'unchanged'; readonly content: string; readonly block: TaskRootBlock }
   | { readonly type: 'conflict' }
-  | { readonly type: 'invalid'; readonly field: 'description' | 'comment' | 'subtask' };
+  | {
+      readonly type: 'invalid';
+      readonly field: 'description' | 'comment' | 'subtask' | 'time-entry';
+    };
+
+type TimeEntryEdit = Extract<
+  TaskBlockEdit,
+  {
+    readonly type:
+      'add-time-entry' | 'close-time-entry' | 'delete-time-entry' | 'restore-time-entry';
+  }
+>;
+
+const TIME_ENTRY_EDIT_TYPES: ReadonlySet<string> = new Set<TimeEntryEdit['type']>([
+  'add-time-entry',
+  'close-time-entry',
+  'delete-time-entry',
+  'restore-time-entry',
+]);
+
+function isTimeEntryEdit(edit: TaskBlockEdit): edit is TimeEntryEdit {
+  return TIME_ENTRY_EDIT_TYPES.has(edit.type);
+}
 
 function sourceLines(content: string): SourceLine[] {
   const result: SourceLine[] = [];
@@ -642,9 +698,135 @@ function editExistingComment(
   return undefined;
 }
 
+/** A stamp written by the plugin always carries its offset, so the start needs no clock. */
+function stampOffsetAt(stamp: AtomDateTime): OffsetAt {
+  const written = STAMP_OFFSET_RE.exec(stamp)?.[0];
+  const offsetMinutes = (written === undefined ? undefined : instantOffsetMinutes(written)) ?? 0;
+  return () => offsetMinutes;
+}
+
+interface ConfirmedEntryLine {
+  readonly index: number;
+  readonly line: SourceLine;
+}
+
+/** The line a stored entry still occupies, or undefined when its evidence no longer holds. */
+function confirmedEntryLine(
+  context: BlockEditContext,
+  edit: { readonly relativeLine: number; readonly originalMarkdown: string },
+): ConfirmedEntryLine | undefined {
+  const { relativeLine } = edit;
+  const ownedByNode =
+    relativeLine > 0 &&
+    relativeLine < context.target.lineCount &&
+    !context.target.childRanges.some(
+      (range) => relativeLine >= range.from && relativeLine <= range.to,
+    );
+  if (!ownedByNode) return undefined;
+  const index = context.parentLine + relativeLine;
+  const line = context.lines[index];
+  if (line?.text !== lineWithoutCr(edit.originalMarkdown)) return undefined;
+  return { index, line };
+}
+
+function addTimeEntry(
+  context: BlockEditContext,
+  edit: Extract<TaskBlockEdit, { readonly type: 'add-time-entry' }>,
+): TaskBlockEditResult | undefined {
+  appendChildLine(context, `- ${formatOpenEntry(edit.stamp)}`);
+  return undefined;
+}
+
+function closeTimeEntry(
+  context: BlockEditContext,
+  edit: Extract<TaskBlockEdit, { readonly type: 'close-time-entry' }>,
+): TaskBlockEditResult | undefined {
+  const found = confirmedEntryLine(context, edit);
+  if (found === undefined) return { type: 'conflict' };
+  const running = parseTimeEntryLine(found.line.text, stampOffsetAt(edit.stamp));
+  if (running?.state !== 'running' || running.startMs === undefined) return { type: 'conflict' };
+  if (edit.endMs - running.startMs < edit.minimumMs) return discardShortEntry(context, found.index);
+  const closed = closeEntryLine(found.line.text, edit.stamp);
+  if (closed === undefined) return { type: 'conflict' };
+  found.line.text = closed;
+  return undefined;
+}
+
+/** A session too short to be worth recording leaves no trace in the note. */
+function discardShortEntry(context: BlockEditContext, entryLine: number): TaskBlockEditResult {
+  context.lines.splice(entryLine, 1);
+  const result = editedResult(context);
+  return result.type === 'changed' ? { ...result, discardedShortEntry: true } : result;
+}
+
+function deleteTimeEntry(
+  context: BlockEditContext,
+  edit: Extract<TaskBlockEdit, { readonly type: 'delete-time-entry' }>,
+): TaskBlockEditResult | undefined {
+  const found = confirmedEntryLine(context, edit);
+  if (found === undefined || !isTimeEntryShape(found.line.text)) return { type: 'conflict' };
+  const markdown = found.line.text;
+  context.lines.splice(found.index, 1);
+  const result = editedResult(context);
+  return result.type === 'changed'
+    ? { ...result, removedTimeEntry: { markdown, relativeLine: edit.relativeLine } }
+    : result;
+}
+
+function restoreTimeEntry(
+  context: BlockEditContext,
+  edit: Extract<TaskBlockEdit, { readonly type: 'restore-time-entry' }>,
+): TaskBlockEditResult | undefined {
+  if (LINE_BREAK_RE.test(edit.markdown) || !isTimeEntryShape(edit.markdown)) {
+    return { type: 'invalid', field: 'time-entry' };
+  }
+  insertAt(
+    context.lines,
+    restoredEntryLine(context, edit.relativeLine),
+    insertedLines([edit.markdown], context.ending),
+    context.ending,
+  );
+  return undefined;
+}
+
+/** A remembered position the node no longer owns falls back to the end of its block. */
+function restoredEntryLine(context: BlockEditContext, relativeLine: number): number {
+  const appended = context.parentLine + context.target.lineCount;
+  if (!Number.isSafeInteger(relativeLine) || relativeLine <= 0) return appended;
+  if (relativeLine > context.target.lineCount) return appended;
+  return context.target.childRanges.some(
+    (range) => relativeLine > range.from && relativeLine <= range.to,
+  )
+    ? appended
+    : context.parentLine + relativeLine;
+}
+
+function editTimeEntry(
+  context: BlockEditContext,
+  edit: TimeEntryEdit,
+): TaskBlockEditResult | undefined {
+  switch (edit.type) {
+    case 'add-time-entry':
+      return addTimeEntry(context, edit);
+    case 'close-time-entry':
+      return closeTimeEntry(context, edit);
+    case 'delete-time-entry':
+      return deleteTimeEntry(context, edit);
+    case 'restore-time-entry':
+      return restoreTimeEntry(context, edit);
+  }
+}
+
 function applyEdit(
   context: BlockEditContext,
   edit: TaskBlockEdit,
+): TaskBlockEditResult | undefined {
+  return isTimeEntryEdit(edit) ? editTimeEntry(context, edit) : editTaskContent(context, edit);
+}
+
+function editTaskContent(
+  context: BlockEditContext,
+  edit: Exclude<TaskBlockEdit, TimeEntryEdit>,
 ): TaskBlockEditResult | undefined {
   switch (edit.type) {
     case 'set-description':
