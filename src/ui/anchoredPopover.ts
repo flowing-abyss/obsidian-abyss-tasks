@@ -9,12 +9,6 @@ export interface AnchoredPopoverOptions {
   /** Classes beyond the shared `abyss-popover abyss-popover-anchored` pair. */
   readonly cls: string;
   readonly attr?: Record<string, string>;
-  /**
-   * Whether focus landing outside dismisses the surface, which it does unless said otherwise. A
-   * popover whose own controls hand the keyboard to another surface has to say no here, because
-   * that focus is the popover's own doing rather than a reader leaving it.
-   */
-  readonly dismissOnOutsideFocus?: boolean;
   /** Called once, after the element has left the document. */
   readonly onClose: (restoreFocus: boolean) => void;
 }
@@ -23,6 +17,12 @@ export interface AnchoredPopover {
   readonly element: HTMLElement;
   /** Re-measures the room inside the boundary and places the surface again. Idempotent. */
   reposition(): void;
+  /**
+   * Runs one of the surface's own actions, ignoring the focus it sends outside. Only the turn the
+   * action runs in and the microtask after it are covered, so a reader leaving later still closes
+   * the surface; a pointer press outside and Escape are never held.
+   */
+  holdOutsideFocus(run: () => void): void;
   /** Idempotent. Without an argument, focus returns only if it was inside the popover. */
   close(restoreFocus?: boolean): void;
 }
@@ -31,6 +31,8 @@ interface PopoverState {
   readonly options: AnchoredPopoverOptions;
   readonly element: HTMLElement;
   closed: boolean;
+  /** Whether an action of this surface is placing focus elsewhere right now. */
+  holdingFocus: boolean;
   release: () => void;
 }
 
@@ -121,6 +123,9 @@ function listen(state: PopoverState): () => void {
       state.options.anchor.contains(target)
     )
       return;
+    // Focus the surface itself sent away is the surface's own doing rather than a reader leaving
+    // it. A pointer press outside is a reader either way, so it is never held.
+    if (event.type === 'focusin' && state.holdingFocus) return;
     close(state, false);
   };
   const keydown = (event: KeyboardEvent): void => {
@@ -129,15 +134,14 @@ function listen(state: PopoverState): () => void {
     event.stopPropagation();
     close(state, true);
   };
-  const onOutsideFocus = state.options.dismissOnOutsideFocus ?? true;
   ownerDocument.addEventListener('pointerdown', outside, true);
-  if (onOutsideFocus) ownerDocument.addEventListener('focusin', outside, true);
+  ownerDocument.addEventListener('focusin', outside, true);
   ownerDocument.addEventListener('keydown', keydown, true);
   ownerDocument.addEventListener('scroll', reposition, true);
   ownerWindow?.addEventListener('resize', reposition);
   return () => {
     ownerDocument.removeEventListener('pointerdown', outside, true);
-    if (onOutsideFocus) ownerDocument.removeEventListener('focusin', outside, true);
+    ownerDocument.removeEventListener('focusin', outside, true);
     ownerDocument.removeEventListener('keydown', keydown, true);
     ownerDocument.removeEventListener('scroll', reposition, true);
     ownerWindow?.removeEventListener('resize', reposition);
@@ -161,6 +165,7 @@ export function openAnchoredPopover(options: AnchoredPopoverOptions): AnchoredPo
       attr: { tabindex: '-1', ...options.attr },
     }),
     closed: false,
+    holdingFocus: false,
     release: () => {},
   };
   state.release = listen(state);
@@ -171,6 +176,18 @@ export function openAnchoredPopover(options: AnchoredPopoverOptions): AnchoredPo
     element: state.element,
     reposition: () => {
       place(state);
+    },
+    holdOutsideFocus: (run: () => void) => {
+      state.holdingFocus = true;
+      try {
+        run();
+      } finally {
+        // A surface that takes the keyboard does it in this turn or in the microtask that follows
+        // it, so the hold ends there and the next thing to reach for focus is a reader again.
+        queueMicrotask(() => {
+          state.holdingFocus = false;
+        });
+      }
     },
     close: (restoreFocus?: boolean) => {
       close(state, restoreFocus);

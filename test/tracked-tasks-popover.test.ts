@@ -88,7 +88,7 @@ async function trackingStack(markdown: string) {
   };
 }
 
-async function widgetFor(markdown: string) {
+async function widgetFor(markdown: string, onOpenTask: () => void = () => {}) {
   const stack = await trackingStack(markdown);
   const clock = fakeTimerWindow();
   const layout = activeDocument.body.createDiv({ cls: 'abyss-layout' });
@@ -107,7 +107,12 @@ async function widgetFor(markdown: string) {
     queries: stack.tasks.queries,
     ticker,
     actions: createTrackingActions(stack.tasks, (result) => reported.push(result)),
-    openTask: (target) => opened.push(target),
+    openTask: (target) => {
+      opened.push(target);
+      // What the real inspector does on the way: it takes the keyboard while the click that opened
+      // the task is still running.
+      onOpenTask();
+    },
     context: () => ({ nowMs: stack.now(), offsetAt: () => OFFSET_MINUTES }),
     win: clock.win,
   });
@@ -453,7 +458,10 @@ describe('tracked tasks popover', () => {
   });
 
   it('opens a task from its title and stays open on that row', async () => {
-    const harness = await widgetFor(WORKING_WEEK);
+    const inspector = activeDocument.body.createEl('button', { text: 'Inspector' });
+    const harness = await widgetFor(WORKING_WEEK, () => {
+      inspector.focus();
+    });
     taskTotal(harness.host).click();
 
     const title = query<HTMLButtonElement>(
@@ -463,24 +471,64 @@ describe('tracked tasks popover', () => {
     );
     title.click();
 
-    // Opening a task is how a reader moves through this list, so the list survives it and the
-    // keyboard stays on the row that was just opened.
+    // Opening a task is how a reader moves through this list, so the list survives the keyboard
+    // going to the inspector and hands it back to the row that was just opened.
     expect(harness.opened).toHaveLength(1);
     expect(popover(harness.layout)).not.toBeNull();
     expect(taskTotal(harness.host).getAttribute('aria-expanded')).toBe('true');
     expect(activeDocument.activeElement).toBe(title);
   });
 
-  it('stays open when the task it opened takes the focus', async () => {
-    const harness = await widgetFor(WORKING_WEEK);
+  it('holds that focus for the click only', async () => {
+    const inspector = activeDocument.body.createEl('button', { text: 'Inspector' });
+    const harness = await widgetFor(WORKING_WEEK, () => {
+      inspector.focus();
+    });
     taskTotal(harness.host).click();
-    const inspector = harness.layout.createEl('button', { text: 'Inspector' });
+    query<HTMLButtonElement>(
+      daySection(harness.layout, 'Today'),
+      '.abyss-tracked-row-open',
+      'Missing the row title',
+    ).click();
+    expect(popover(harness.layout)).not.toBeNull();
 
-    // The inspector the click opened takes the keyboard a moment later. That is this list's own
-    // doing, so it is not the dismissal an outside focus usually is.
+    // The hold covers the click and the microtask after it. Anything that reaches for the keyboard
+    // later is a reader leaving, which dismisses the list like any other surface.
+    await flushMicrotasks();
     inspector.focus();
 
+    expect(popover(harness.layout)).toBeNull();
+  });
+
+  it('closes when the keyboard leaves it for another surface', async () => {
+    const harness = await widgetFor(WORKING_WEEK);
+    const elsewhere = activeDocument.body.createEl('button', { text: 'Elsewhere' });
+
+    taskTotal(harness.host).click();
     expect(popover(harness.layout)).not.toBeNull();
+    elsewhere.focus();
+
+    expect(popover(harness.layout)).toBeNull();
+    expect(taskTotal(harness.host).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('leaves the next Escape to whatever is on top once it has closed', async () => {
+    const harness = await widgetFor(WORKING_WEEK);
+    const elsewhere = activeDocument.body.createEl('button', { text: 'Elsewhere' });
+    taskTotal(harness.host).click();
+    elsewhere.focus();
+    expect(popover(harness.layout)).toBeNull();
+
+    const escape = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+    activeDocument.dispatchEvent(escape);
+
+    // A closed list has released its listeners, so the command palette or modal that is on top now
+    // still gets the key.
+    expect(escape.defaultPrevented).toBe(false);
   });
 
   it('closes on an outside pointer down and on Escape', async () => {

@@ -10127,13 +10127,18 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 
 /*
  * The number reads as a number first, so its button carries no chrome of its own and takes the
- * widget's colour. It gives up the theme's input height as well, because a button as tall as an
- * input would put a band of dead space between the control above it and the hairline below.
+ * widget's colour. It gives up the theme's input height, which would put a band of dead space
+ * between the control above it and the hairline below, and buys its own target back with padding
+ * the negative margin takes out of the layout again, so an 11px line still answers a pointer over
+ * 21px while every gap in the column stays where it was.
  */
 .abyss-rail-tracking .abyss-rail-tracking-task {
   height: auto;
   min-height: 0;
-  padding: 1px 2px;
+  margin-block: -4px;
+
+  /* No padding beside the digits: `23h 59m` fills the rail, and a gap there belongs to the rail. */
+  padding: 5px 0;
   border: none;
   border-radius: var(--radius-s);
   background: transparent;
@@ -10141,6 +10146,12 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   color: inherit;
   font: inherit;
   cursor: pointer;
+}
+
+/* `23h 59m` leaves under 2px beside it, so this ring goes inside the button rather than off the
+   rail. */
+.abyss-rail-tracking .abyss-rail-tracking-task:focus-visible {
+  outline-offset: -1px;
 }
 
 .abyss-rail-tracking .abyss-rail-tracking-toggle:hover,
@@ -10166,12 +10177,17 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   background: var(--background-modifier-border);
 }
 
-/* Accent while a timer runs, warning once it has run long enough to look forgotten. */
+/*
+ * Accent while a timer runs, warning once it has run long enough to look forgotten. Text takes the
+ * accent the host reads its own links in, which follows the accent setting and carries the contrast
+ * a fill does not have to; the glyph inside each of these controls takes it too, so a running badge
+ * or rail widget still reads as one object.
+ */
 .abyss-task-time-badge.is-tracking,
 .abyss-time-badge.is-tracking,
 .abyss-time-row.is-tracking,
 .abyss-rail-tracking.is-tracking {
-  color: var(--interactive-accent);
+  color: var(--text-accent);
 }
 
 /* A calendar card takes the same accent on the rail it already draws, and carries no total. */
@@ -10338,12 +10354,12 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 }
 
 .abyss-tracked-row.is-tracking {
-  color: var(--interactive-accent);
+  color: var(--text-accent);
 }
 
 .abyss-tracked-row.is-tracking .abyss-tracked-row-toggle,
 .abyss-tracked-row.is-tracking .abyss-tracked-row-clock {
-  color: var(--interactive-accent);
+  color: var(--text-accent);
 }
 
 .abyss-tracked-row.is-finished .abyss-tracked-row-title {

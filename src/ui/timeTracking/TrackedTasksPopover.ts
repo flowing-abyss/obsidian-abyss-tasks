@@ -202,11 +202,13 @@ function renderRow(
   }
   open.addEventListener('click', (event) => {
     event.stopPropagation();
-    session.options.openTask(row.entryOfRecord.target);
-    // The list is how a reader moves between tracked tasks, so it outlives the task it opened and
-    // hands the keyboard back to the row that was just used rather than to whatever the inspector
-    // focused.
-    open.focus({ preventScroll: true });
+    // The list is how a reader moves between tracked tasks, so it outlives the task it opened: the
+    // keyboard the inspector takes on the way is held against dismissal for this one turn, and the
+    // row that was used gets it back.
+    session.shell.holdOutsideFocus(() => {
+      session.options.openTask(row.entryOfRecord.target);
+      open.focus({ preventScroll: true });
+    });
   });
   const clock = rowEl.createSpan({
     cls: 'abyss-tracked-row-clock',
@@ -311,9 +313,6 @@ export function showTrackedTasksPopover(
       preferred: 'right-end',
       cls: 'abyss-time-tracking-popover abyss-time-tracking-popover--tasks',
       attr: { role: 'dialog', 'aria-label': 'Tracked tasks' },
-      // Opening a task from a row hands the inspector the keyboard, and that is this list's own
-      // doing, so it stays open. A pointer down outside it and Escape still dismiss it.
-      dismissOnOutsideFocus: false,
       onClose: onShellClose,
     }),
     expanded: new Set<number>(),
