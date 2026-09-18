@@ -5684,7 +5684,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-muted);
 }
 
-:is(.abyss-dep-remove, .abyss-dep-search-field, .abyss-subtask-remove) svg {
+:is(.abyss-dep-remove, .abyss-dep-search-field, .abyss-subtask-remove, .abyss-time-row-remove) svg {
   width: 13px;
   height: 13px;
 }
@@ -5710,6 +5710,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-subtask-row .abyss-subtask-remove,
 .abyss-dep-row .abyss-dep-remove,
+.abyss-time-row .abyss-time-row-remove,
 .abyss-dep-add,
 .abyss-dep-search :is(.abyss-dep-search-direction, .abyss-dep-search-option) {
   background: transparent;
@@ -5769,7 +5770,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-subtask-remove,
-.abyss-dep-remove {
+.abyss-dep-remove,
+.abyss-time-row-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5787,7 +5789,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   opacity: 1;
 }
 
-.abyss-subtask-row:is(:hover, :focus-within) .abyss-subtask-remove {
+.abyss-subtask-row:is(:hover, :focus-within) .abyss-subtask-remove,
+.abyss-time-row:is(:hover, :focus-within) .abyss-time-row-remove {
   opacity: 1;
 }
 
@@ -5795,7 +5798,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-warning, var(--color-orange));
 }
 
-:is(.abyss-subtask-remove, .abyss-dep-remove):hover {
+:is(.abyss-subtask-remove, .abyss-dep-remove, .abyss-time-row-remove):hover {
   background: var(--background-modifier-hover);
 }
 
@@ -5824,7 +5827,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-dep-badge > button:focus-visible,
 .abyss-time-badge > button:focus-visible,
-:is(.abyss-subtask-remove, .abyss-dep-remove, .abyss-dep-add):focus-visible,
+:is(.abyss-subtask-remove, .abyss-dep-remove, .abyss-dep-add, .abyss-time-row-remove):focus-visible,
 .abyss-undo-row button:focus-visible,
 .abyss-dep-search button:focus-visible,
 .abyss-rail-tracking-toggle:focus-visible {
@@ -9945,6 +9948,61 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 
 .abyss-time-row:hover {
   background: var(--background-modifier-hover);
+}
+
+/* The leading slot is either the session total or, when the line cannot be read, the warning. */
+.abyss-time-row-duration,
+.abyss-time-row-warning {
+  flex: 0 0 auto;
+}
+
+.abyss-time-row-duration {
+  font-variant-numeric: tabular-nums;
+}
+
+.abyss-time-row-warning {
+  display: inline-flex;
+  color: var(--text-warning, var(--color-orange));
+}
+
+/* The span and the sub-task share the first line; a session note wraps under them. */
+.abyss-time-row-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.abyss-time-row-line {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The span is the row, so the sub-task name beside it gives up its width first. */
+.abyss-time-row-range {
+  flex: 0 0 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.abyss-time-row-node {
+  flex: 0 1 auto;
+}
+
+.abyss-time-row-node,
+.abyss-time-row-tail,
+.abyss-time-tracking-empty {
+  overflow: hidden;
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.abyss-time-tracking-popover > .abyss-undo-row {
+  gap: 6px;
+  padding: 4px 6px;
 }
 
 /*

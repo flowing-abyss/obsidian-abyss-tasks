@@ -124,9 +124,11 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TimeEntrySnapshot: ['src/views/calendarOccurrences.ts'],
   TimeTrackingQueryApi: ['src/main.ts'],
   TrackedEntry: ['src/ui/timeTracking/TrackingTicker.ts'],
+  TrackedTotal: ['src/ui/timeTracking/TimeBadge.ts'],
   daysBetweenLocalDates: ['src/panels/CenterPanel.ts', 'src/views/timegrid/dragGeometry.ts'],
   cloneTaskSnapshot: ['src/app/AppState.ts'],
   durationMinutes: ['src/panels/CenterPanel.ts'],
+  entryDurationMs: ['src/ui/timeTracking/TimeEntriesPopover.ts'],
   expandRecurrenceReferences: ['src/views/calendarOccurrences.ts'],
   formatCommentTimeLabel: ['src/panels/RightPanel.ts'],
   formatDurationMinutes: ['src/ui/timeTracking/formatTracked.ts'],
@@ -141,7 +143,10 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   sameTaskNodeRef: ['src/panels/RightPanel.ts'],
   shiftLocalDate: ['src/ui/timedBlockKeyboardQueue.ts'],
   shiftLocalDayStartMs: ['src/ui/timeTracking/formatTracked.ts'],
+  subtreeTotal: ['src/ui/timeTracking/TimeBadge.ts'],
   taskReconciliationKey: ['src/ui/taskPresentationIdentity.ts'],
+  timeEntryRef: ['src/ui/timeTracking/TimeEntriesPopover.ts'],
+  totalMs: ['src/ui/timeTracking/TimeBadge.ts'],
 };
 
 const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string[]> = {

@@ -5,6 +5,16 @@ export interface InlineUndoPosition {
   readonly list: string;
   readonly index: number;
   readonly title: string;
+  /** What the row says, for a list whose removal is neither a sub-task nor a dependency. */
+  readonly label?: string;
+}
+
+/** What an undo row needs beyond its place, for the surfaces that do not take the defaults. */
+interface InlineUndoPolicy {
+  /** Proof that the row it offers to undo is still the one the note holds. */
+  readonly validate?: () => boolean;
+  /** Where a failed undo is reported, for a caller whose command boundary reports its own. */
+  readonly report?: (result: TaskCommandResult) => void;
 }
 
 interface InlineTaskUndo {
@@ -15,7 +25,7 @@ interface InlineTaskUndo {
     container: HTMLElement,
     position: InlineUndoPosition,
     execute: () => Promise<TaskCommandResult>,
-    validate?: () => boolean,
+    policy?: InlineUndoPolicy,
   ): void;
 }
 
@@ -53,9 +63,10 @@ export function createInlineTaskUndo(): InlineTaskUndo {
       focused = row?.contains(row.ownerDocument.activeElement) ?? false;
       row?.remove();
     },
-    show(container, location, execute, validator): void {
+    show(container, location, execute, policy): void {
       clear();
-      validate = validator;
+      validate = policy?.validate;
+      const report = policy?.report ?? presentTaskCommandResult;
       const ownerWindow = container.ownerDocument.defaultView;
       const [element, button] = createUndoRow(container, location);
       const expire = (): number | undefined => ownerWindow?.setTimeout(clear, 5_000);
@@ -67,7 +78,7 @@ export function createInlineTaskUndo(): InlineTaskUndo {
             button.disabled = false;
             timer = expire();
           }
-          presentTaskCommandResult(result);
+          report(result);
         } else if (row === element) {
           clear();
           restoreRowFocus(container, location);
@@ -103,7 +114,10 @@ function createUndoRow(
   location: InlineUndoPosition,
 ): readonly [HTMLElement, HTMLButtonElement] {
   const row = container.createDiv({ cls: 'abyss-subtask-row abyss-undo-row' });
-  row.append(location.list.includes('subtask-section') ? 'Sub-task deleted' : 'Dependency removed');
+  row.append(
+    location.label ??
+      (location.list.includes('subtask-section') ? 'Sub-task deleted' : 'Dependency removed'),
+  );
   const button = row.createEl('button', {
     text: 'Undo',
     attr: { type: 'button', 'aria-label': `Undo: ${location.title}` },

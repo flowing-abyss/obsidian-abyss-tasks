@@ -8,7 +8,7 @@ import {
 } from '../../tasks';
 
 /** The wall-clock context every tracking label is read against, supplied by the owning surface. */
-interface TrackedTimeContext {
+export interface TrackedTimeContext {
   readonly nowMs: number;
   readonly offsetAt: OffsetAt;
 }
@@ -45,9 +45,18 @@ function pad2(value: number): string {
   return value < 10 ? `0${value}` : String(value);
 }
 
+/**
+ * Elapsed time that can be counted. A total is arithmetic over instants a note can hand out, so a
+ * missing or infinite one reads as no time at all rather than reaching a branded constructor that
+ * rejects it.
+ */
+function countableMs(ms: number): number {
+  return Number.isFinite(ms) ? Math.max(0, ms) : 0;
+}
+
 /** Part-minutes have not been earned yet, so every total floors to whole minutes. */
 function wholeMinutes(ms: number): number {
-  return Math.floor(Math.max(0, ms) / MS_PER_MINUTE);
+  return Math.floor(countableMs(ms) / MS_PER_MINUTE);
 }
 
 /** The local wall clock of an instant, read as if the wall clock itself were UTC. */
@@ -83,7 +92,7 @@ export function formatTrackedClock(ms: number): string {
 
 /** Elapsed time down to the second, for the surface that repaints every second. */
 export function formatTrackedTicker(ms: number): string {
-  const seconds = Math.floor(Math.max(0, ms) / 1000);
+  const seconds = Math.floor(countableMs(ms) / 1000);
   const minutes = Math.floor((seconds % 3600) / 60);
   return `${Math.floor(seconds / 3600)}:${pad2(minutes)}:${pad2(seconds % 60)}`;
 }

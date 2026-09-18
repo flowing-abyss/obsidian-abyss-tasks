@@ -51,10 +51,15 @@ export {
 export { sameTaskTreeWithOwnedChanges } from './domain/taskTreeChangeProof';
 export type { OffsetAt } from './domain/timeEntry';
 export {
+  entryDurationMs,
   localDayStartMs,
   shiftLocalDayStartMs,
+  subtreeTotal,
+  timeEntryRef,
+  totalMs,
   type TimeEntrySnapshot,
   type TrackedEntry,
+  type TrackedTotal,
 } from './domain/timeTracking';
 export { sameTaskNodeRef } from './domain/types';
 export type {

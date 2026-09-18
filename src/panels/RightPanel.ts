@@ -87,6 +87,12 @@ import { openInFile } from '../ui/taskNavigation';
 import { startTaskNodeDrag } from '../ui/taskNodeDrag';
 import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
 import { taskRemovalInverse } from '../ui/taskUndoNotice';
+import {
+  mountTimeBadge,
+  type TimeBadgeHandle,
+  type TrackedNode,
+  type TrackingSurface,
+} from '../ui/timeTracking/TimeBadge';
 
 type TaskLike = TaskSnapshot | SubtaskSnapshot;
 
@@ -106,6 +112,7 @@ type RightPanelDependencies = readonly [
   onMutationLifecycle?: (event: RightPanelMutationLifecycle) => void,
   commentTimeContext?: CommentTimeContextProvider,
   interactionOwnership?: InteractionOwnershipPort,
+  timeTracking?: TrackingSurface,
 ];
 
 interface TextDraftSnapshot {
@@ -369,6 +376,8 @@ export class RightPanel {
     ((event: RightPanelMutationLifecycle) => void) | undefined;
   private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
   private readonly interactionOwnership_abyssPrivate: InteractionOwnershipPort;
+  private readonly timeTracking_abyssPrivate: TrackingSurface | undefined;
+  private timeBadge_abyssPrivate: TimeBadgeHandle | undefined;
   private off_abyssPrivate?: () => void;
   private offDependencyQueries_abyssPrivate: (() => void) | undefined;
   private dependencySearch_abyssPrivate: DependencySearchHandle | undefined;
@@ -409,6 +418,7 @@ export class RightPanel {
       onMutationLifecycle,
       commentTimeContext,
       interactionOwnership = noInteractionOwnership,
+      timeTracking,
     ] = dependencies;
     this.state_abyssPrivate = state;
     this.app_abyssPrivate = app;
@@ -420,11 +430,13 @@ export class RightPanel {
     this.onMutationLifecycle_abyssPrivate = onMutationLifecycle;
     this.commentTimeContext_abyssPrivate = commentTimeContext;
     this.interactionOwnership_abyssPrivate = interactionOwnership;
+    this.timeTracking_abyssPrivate = timeTracking;
   }
 
   mount(container: HTMLElement): void {
     this.el_abyssPrivate = container;
     this.mounted_abyssPrivate = true;
+    this.mountTimeBadge_abyssPrivate(container);
     this.updateDependencyDisclosureSelection_abyssPrivate(
       this.state_abyssPrivate.get('taskStack'),
       false,
@@ -479,9 +491,29 @@ export class RightPanel {
     this.render_abyssPrivate();
   }
 
+  /** One badge per mounted inspector: it owns its popover across every re-render below it. */
+  private mountTimeBadge_abyssPrivate(container: HTMLElement): void {
+    const tracking = this.timeTracking_abyssPrivate;
+    if (tracking === undefined) return;
+    this.timeBadge_abyssPrivate = mountTimeBadge({
+      ...tracking,
+      popoverOwner: container,
+      boundary: container,
+      node: () => this.trackingNode_abyssPrivate(),
+    });
+  }
+
+  /** The selection as the index holds it now, so a tracking write never uses a stale ref. */
+  private trackingNode_abyssPrivate(): TrackedNode | undefined {
+    const task = this.dependencyTask_abyssPrivate();
+    return task === undefined ? undefined : { snapshot: task, ref: taskNodeRef(task) };
+  }
+
   destroy(): void {
     this.undo_abyssPrivate.clear();
     this.undoConvergence_abyssPrivate = undefined;
+    this.timeBadge_abyssPrivate?.destroy();
+    this.timeBadge_abyssPrivate = undefined;
     this.mounted_abyssPrivate = false;
     this.dependencyStatusMarkers_abyssPrivate.clear();
     this.endTaskDrag_abyssPrivate?.();
@@ -1428,6 +1460,7 @@ export class RightPanel {
     if (this.tasks_abyssPrivate !== undefined) {
       chips.createSpan({ cls: 'abyss-chip abyss-dep-badge' });
       this.updateDependencyBadge_abyssPrivate();
+      this.timeBadge_abyssPrivate?.render(chips);
     }
     this.renderPriorityChip_abyssPrivate(chips, task);
     this.renderRecurrenceChip_abyssPrivate(chips, task, stack);
@@ -1833,6 +1866,7 @@ export class RightPanel {
       setStatusMarkerCompletionBlocked(marker, this.isDependencyBlocked_abyssPrivate(task));
     }
     this.updateDependencyBadge_abyssPrivate();
+    this.timeBadge_abyssPrivate?.update();
     this.closeDependencyStatusMenu_abyssPrivate();
     this.el_abyssPrivate.querySelectorAll('.abyss-dep-section').forEach((section) => {
       section.remove();
@@ -3280,19 +3314,21 @@ export class RightPanel {
         return restored;
       },
       command.type === 'restore-dependency'
-        ? () => {
-            const matches = tasks.queries
-              .listNodes()
-              .filter(({ target }) => sameTaskNodeAddress(target, command.dependent));
-            const node = matches.length === 1 ? matches[0]?.node : undefined;
-            if (node === undefined) return false;
-            const source =
-              'source' in node
-                ? node.source.originalMarkdown
-                : node.ref.originalBlock.split(/\r?\n/u, 1)[0];
-            return command.recovery.source === undefined
-              ? JSON.stringify(node.dependsOn) === JSON.stringify(command.recovery.afterIds)
-              : source === command.recovery.source.after;
+        ? {
+            validate: () => {
+              const matches = tasks.queries
+                .listNodes()
+                .filter(({ target }) => sameTaskNodeAddress(target, command.dependent));
+              const node = matches.length === 1 ? matches[0]?.node : undefined;
+              if (node === undefined) return false;
+              const source =
+                'source' in node
+                  ? node.source.originalMarkdown
+                  : node.ref.originalBlock.split(/\r?\n/u, 1)[0];
+              return command.recovery.source === undefined
+                ? JSON.stringify(node.dependsOn) === JSON.stringify(command.recovery.afterIds)
+                : source === command.recovery.source.after;
+            },
           }
         : undefined,
     );

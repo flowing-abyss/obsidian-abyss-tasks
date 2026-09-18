@@ -93,7 +93,7 @@ it.each(['render', 'activation'] as const)(
         calls.push('restore');
         return { type: 'io-error', cause: 'test', contentState: 'unchanged' };
       },
-      () => valid,
+      { validate: () => valid },
     );
     const button = expectDefined(container.querySelector('button'));
     valid = false;
@@ -128,12 +128,9 @@ it('revokes a failed pending tombstone when its evidence changed', async () => {
   const pending = deferred<TaskCommandResult>();
   const present = vi.spyOn(presenter, 'presentTaskCommandResult');
   let valid = true;
-  action.show(
-    container,
-    { list: '.list', index: 0, title: 'Removed' },
-    () => pending.promise,
-    () => valid,
-  );
+  action.show(container, { list: '.list', index: 0, title: 'Removed' }, () => pending.promise, {
+    validate: () => valid,
+  });
   const button = expectDefined(container.querySelector('button'));
   button.click();
   await flushMicrotasks();

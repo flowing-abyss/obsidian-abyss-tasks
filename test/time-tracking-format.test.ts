@@ -63,6 +63,13 @@ describe('formatTrackedDuration', () => {
   it('never reports negative time', () => {
     expect(formatTrackedDuration(-5 * MINUTE)).toBe('0m');
   });
+
+  it('reads an uncountable total as no time instead of rejecting it', () => {
+    expect(formatTrackedDuration(Number.NaN)).toBe('0m');
+    expect(formatTrackedDuration(Number.POSITIVE_INFINITY)).toBe('0m');
+    expect(formatTrackedClock(Number.NaN)).toBe('0:00');
+    expect(formatTrackedTicker(Number.NaN)).toBe('0:00:00');
+  });
 });
 
 describe('formatTrackedClock', () => {

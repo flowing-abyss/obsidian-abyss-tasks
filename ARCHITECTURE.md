@@ -119,6 +119,16 @@ returns its structured result. A session shorter than a minute leaves no line at
 outcome says so. Starting on a node that is already tracking writes nothing to that node, and a
 done or cancelled node is refused.
 
+Presentation reads those lines through one tick per owning surface. `PanelView` and `TaskModal`
+each build a `TrackingTicker` and a `TrackingActions` write boundary and hand them to the
+`RightPanel` they host, together with the device wall clock every label is read against. The ticker
+re-reads the active entries only when the index reports a change and runs its one-second interval
+only while something is running and a surface is listening. The inspector badge keeps the total it
+read at that change, so a tick is one addition and never a query, and it writes to the DOM only
+when the formatted text differs. The badge outlives one inspector render: the chips row is rebuilt
+on every index change, while the sessions popover the badge owns has to survive the write it just
+made, the way the inline undo row already does.
+
 Completing or cancelling a node closes the entries still running in its subtree as a follow-up
 write with the same clock reading, inside the same serialized mutation. That write never changes
 the status command's own result; a failure goes to the diagnostics sink and leaves the running

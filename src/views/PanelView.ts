@@ -31,12 +31,16 @@ import {
   type CaptureContext,
 } from '../ui/taskCapture/CaptureTargetResolver';
 import { QuickCaptureCoordinator } from '../ui/taskCapture/QuickCaptureCoordinator';
+import { presentTaskCommandResult } from '../ui/taskCommandResult';
 import {
   rebuildTaskSelection,
   renamedRootSelection,
   rootTaskRef,
   type TaskSelectionNode,
 } from '../ui/taskSelection';
+import { deviceTrackedTimeContext, type TrackingSurface } from '../ui/timeTracking/TimeBadge';
+import { TrackingTicker } from '../ui/timeTracking/TrackingTicker';
+import { createTrackingActions } from '../ui/timeTracking/trackingActions';
 import { PanelNavigator } from './panelNavigation';
 
 export const PANEL_VIEW_TYPE = 'task-calendar-panel';
@@ -181,6 +185,7 @@ export class PanelView extends ItemView {
   private readonly onSaveSettings_abyssPrivate: () => Promise<void>;
   private readonly onSaveViewState_abyssPrivate: () => Promise<void>;
   private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
+  private timeTracking_abyssPrivate: TrackingSurface | undefined;
 
   constructor(leaf: WorkspaceLeaf, ...dependencies: PanelViewDependencies) {
     super(leaf);
@@ -413,7 +418,23 @@ export class PanelView extends ItemView {
       },
       this.commentTimeContext_abyssPrivate,
       this.interactionRegistry_abyssPrivate,
+      this.createTrackingSurface_abyssPrivate(),
     );
+  }
+
+  /** One tick and one write boundary for every tracking control this view hosts. */
+  private createTrackingSurface_abyssPrivate(): TrackingSurface {
+    const surface: TrackingSurface = {
+      ticker: new TrackingTicker({
+        queries: this.tasks_abyssPrivate.queries,
+        now: () => Date.now(),
+        win: this.contentEl.ownerDocument.defaultView ?? activeWindow,
+      }),
+      actions: createTrackingActions(this.tasks_abyssPrivate, presentTaskCommandResult),
+      context: deviceTrackedTimeContext,
+    };
+    this.timeTracking_abyssPrivate = surface;
+    return surface;
   }
 
   private registerProjectUpdates_abyssPrivate(projectStore: ProjectStore): void {
@@ -614,6 +635,8 @@ export class PanelView extends ItemView {
   private destroyOwnedViews_abyssPrivate(): void {
     this.creationPresentation_abyssPrivate?.destroy();
     this.creationPresentation_abyssPrivate = undefined;
+    this.timeTracking_abyssPrivate?.ticker.destroy();
+    this.timeTracking_abyssPrivate = undefined;
     this.projectStore_abyssPrivate?.destroy();
     this.rail_abyssPrivate.destroy();
     this.left_abyssPrivate.destroy();
