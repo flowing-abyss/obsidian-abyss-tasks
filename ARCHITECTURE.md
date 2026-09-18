@@ -145,7 +145,9 @@ it there on the ticker and write boundary the panels already share. It regroups 
 only when the index reports a change and at one scheduled local midnight; a tick adds the open
 timer's own elapsed time to the two totals already in hand and never asks the index anything. The
 tracked-task list it opens beside the rail reads that same grouping, so a day's rows always add up
-to its heading and today's heading to the widget's own total. Opening a task from either switches to
+to its heading and today's heading to the widget's own total. The grouping gives an open timer a row
+on the day that holds it from the instant it is opened, before it has earned a millisecond, so the
+list never lags the widget by an index event. Opening a task from either switches to
 Tasks mode and makes the node the inspector selection, which is what opens the details pane at a
 compact width.
 

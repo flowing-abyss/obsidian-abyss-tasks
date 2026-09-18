@@ -309,6 +309,68 @@ describe('groupTrackedDays', () => {
     ]);
   });
 
+  it('gives a timer started this instant a row on the day that holds now', () => {
+    const days = groupTrackedDays(
+      [tracked('Fresh start', 7, running('2026-09-18T15:00:00+03:00'))],
+      {
+        nowMs: now,
+        offsetAt: plus3,
+        days: 7,
+      },
+    );
+    expect(days.map((day) => [day.dayStartMs, day.totalMs])).toEqual([
+      [at('2026-09-18T00:00:00+03:00'), 0],
+    ]);
+    expect(
+      days[0]?.rows.map((row) => [
+        row.entryOfRecord.title,
+        row.trackedMs,
+        row.running,
+        row.lastActivityMs,
+      ]),
+    ).toEqual([['Fresh start', 0, true, now]]);
+  });
+
+  it('opens today for a node whose only earned time is on earlier days', () => {
+    const days = groupTrackedDays(
+      [
+        tracked(
+          'Write report',
+          1,
+          closed('2026-09-17T09:00:00+03:00', '2026-09-17T10:00:00+03:00'),
+        ),
+        tracked('Write report', 1, running('2026-09-18T15:00:00+03:00', 2)),
+      ],
+      { nowMs: now, offsetAt: plus3, days: 7 },
+    );
+    expect(days.map((day) => [day.dayStartMs, day.totalMs, day.rows.length])).toEqual([
+      [at('2026-09-18T00:00:00+03:00'), 0, 1],
+      [at('2026-09-17T00:00:00+03:00'), H, 1],
+    ]);
+    expect(days.map((day) => day.rows.map((row) => row.running))).toEqual([[true], [false]]);
+  });
+
+  it('marks a node tracking again without moving the total it already earned today', () => {
+    const days = groupTrackedDays(
+      [
+        tracked('Review PR', 5, closed('2026-09-18T11:00:00+03:00', '2026-09-18T12:00:00+03:00')),
+        tracked('Review PR', 5, running('2026-09-18T15:00:00+03:00', 2)),
+      ],
+      { nowMs: now, offsetAt: plus3, days: 7 },
+    );
+    expect(days[0]?.rows.map((row) => [row.trackedMs, row.running])).toEqual([[H, true]]);
+    expect(days[0]?.totalMs).toBe(H);
+  });
+
+  it('still makes no row for a closed entry that lasted no time', () => {
+    expect(
+      groupTrackedDays(
+        [tracked('Mistake', 8, closed('2026-09-18T12:00:00+03:00', '2026-09-18T12:00:00+03:00'))],
+        { nowMs: now, offsetAt: plus3, days: 7 },
+      ),
+    ).toEqual([]);
+  });
+
   it('freezes the days and the rows it hands out', () => {
     const days = groupTrackedDays(entries, { nowMs: now, offsetAt: plus3, days: 7 });
     expect(Object.isFrozen(days)).toBe(true);

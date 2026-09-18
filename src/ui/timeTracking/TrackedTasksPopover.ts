@@ -22,12 +22,6 @@ export interface TrackedTasksPopoverOptions {
    * Only the running row and the day holding it count it, so both stay level with the rail widget.
    */
   readonly runningExtraMs: () => number;
-  /**
-   * The row key of the node whose timer is open, or nothing while none is. A timer started this
-   * second has earned no time yet, so its day carries no row for it to be read off; the owner knows
-   * it is running from the entries themselves and says so here.
-   */
-  readonly runningRowKey: () => string | undefined;
   readonly context: () => TrackedTimeContext;
   readonly actions: TrackingActions;
   readonly openTask: (target: TaskNodeRef) => void;
@@ -54,7 +48,6 @@ interface LiveTotals {
 interface RenderPass {
   readonly context: TrackedTimeContext;
   readonly todayStartMs: number;
-  readonly runningRowKey: string | undefined;
   readonly extraMs: number;
 }
 
@@ -78,18 +71,12 @@ function finished(row: TrackedDayRow): boolean {
   return status === 'done' || status === 'cancelled';
 }
 
-/** Whether this row's timer is open, counting the one that has not earned a minute yet. */
-function isRunning(day: TrackedDay, row: TrackedDayRow, pass: RenderPass): boolean {
-  if (row.running) return true;
-  return day.dayStartMs === pass.todayStartMs && row.key === pass.runningRowKey;
-}
-
 function rowMs(running: boolean, row: TrackedDayRow, extraMs: number): number {
   return row.trackedMs + (running ? extraMs : 0);
 }
 
 function dayMs(day: TrackedDay, pass: RenderPass): number {
-  const live = day.rows.some((row) => isRunning(day, row, pass));
+  const live = day.rows.some((row) => row.running);
   return day.totalMs + (live ? pass.extraMs : 0);
 }
 
@@ -175,7 +162,7 @@ function renderRow(
   row: TrackedDayRow,
   pass: RenderPass,
 ): void {
-  const running = isRunning(section.day, row, pass);
+  const { running } = row;
   const rowEl = section.rows.createDiv({ cls: 'abyss-tracked-row' });
   rowEl.dataset[ROW_KEY] = row.key;
   rowEl.toggleClass('is-tracking', running);
@@ -242,7 +229,6 @@ function renderPass(session: PopoverSession): RenderPass {
   return {
     context,
     todayStartMs: localDayStartMs(context.nowMs, context.offsetAt),
-    runningRowKey: session.options.runningRowKey(),
     extraMs: session.options.runningExtraMs(),
   };
 }

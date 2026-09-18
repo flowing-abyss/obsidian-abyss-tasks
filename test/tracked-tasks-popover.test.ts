@@ -120,6 +120,10 @@ function toggle(host: HTMLElement): HTMLButtonElement {
   return query(host, 'button.abyss-rail-tracking-toggle', 'Missing the tracking toggle');
 }
 
+function taskClock(host: HTMLElement): HTMLButtonElement {
+  return query(host, 'button.abyss-rail-tracking-task', 'Missing the current task total');
+}
+
 function dayClock(host: HTMLElement): HTMLButtonElement {
   return query(host, 'button.abyss-rail-tracking-day', 'Missing the day total');
 }
@@ -161,6 +165,13 @@ function clockMinutes(clock: string): number {
   const [hours = '0', minutes = '0'] = clock.split(':');
   return Number(hours) * 60 + Number(minutes);
 }
+
+/** Nothing at all today, so resuming is the only thing that can put a row on today. */
+const YESTERDAY_ONLY = [
+  '- [ ] Write report',
+  '  - 2026-09-17T09:00:00+03:00 → 2026-09-17T15:30:00+03:00',
+  '',
+].join('\n');
 
 /** Today is 5:12 across three tasks, one of them still running at 1:47. */
 const WORKING_WEEK = [
@@ -216,6 +227,35 @@ describe('tracked tasks popover', () => {
     harness.clock.tick();
 
     expect(rowsOf(daySection(harness.layout, 'Today'))[0]?.[2]).toBe('1:48');
+    expect(dayHeadings(harness.layout)[0]?.[1]).toBe(dayClock(harness.host).textContent);
+  });
+
+  it('opens today the instant a timer starts and stays level with the widget', async () => {
+    const harness = await widgetFor(YESTERDAY_ONLY);
+    dayClock(harness.host).click();
+    expect(dayHeadings(harness.layout).map(([name]) => name)).toEqual(['Yesterday']);
+
+    // The entry is stamped at this very instant, so it has earned nothing at all yet.
+    toggle(harness.host).click();
+    await flushMicrotasks();
+
+    expect(dayHeadings(harness.layout)).toEqual([
+      ['Today', '0:00', 'true'],
+      ['Yesterday', '6:30', 'false'],
+    ]);
+    const today = daySection(harness.layout, 'Today');
+    expect(rowsOf(today)).toEqual([['Write report', '', '0:00']]);
+    expect(
+      query(today, '.abyss-tracked-row-toggle', 'Missing the row pause').getAttribute('aria-label'),
+    ).toBe('Pause Write report');
+    expect(rowsOf(today)[0]?.[2]).toBe(taskClock(harness.host).textContent);
+    expect(dayHeadings(harness.layout)[0]?.[1]).toBe(dayClock(harness.host).textContent);
+
+    harness.advance(60 * SECOND);
+    harness.clock.tick();
+
+    expect(rowsOf(daySection(harness.layout, 'Today'))).toEqual([['Write report', '', '0:01']]);
+    expect(taskClock(harness.host).textContent).toBe('0:01');
     expect(dayHeadings(harness.layout)[0]?.[1]).toBe(dayClock(harness.host).textContent);
   });
 

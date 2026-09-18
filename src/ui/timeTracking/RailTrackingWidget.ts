@@ -220,15 +220,6 @@ function paint(session: WidgetSession, context: TrackedTimeContext): void {
   paintToggle(session, view, model, context);
 }
 
-/**
- * The row the open timer belongs to, which the tracked-task list needs from here: a timer started
- * this second has earned no time, so the day grouping carries no row of its own to read it off.
- */
-function openTimerRowKey(model: WidgetModel | undefined): string | undefined {
-  const current = model?.openSinceMs === undefined ? undefined : model.current;
-  return current === undefined ? undefined : taskNodeAddress(current.target);
-}
-
 function openCurrentTask(session: WidgetSession): void {
   const target = session.model?.current?.target;
   if (target !== undefined) session.options.openTask(target);
@@ -261,7 +252,6 @@ function openDays(session: WidgetSession, view: WidgetElements): void {
       session.model === undefined
         ? 0
         : runningExtraMs(session.model, session.options.context().nowMs),
-    runningRowKey: () => openTimerRowKey(session.model),
     context: session.options.context,
     actions: session.options.actions,
     openTask: session.options.openTask,

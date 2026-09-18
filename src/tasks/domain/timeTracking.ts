@@ -314,6 +314,27 @@ function mergeIntoRow(
   }
 }
 
+/** Folds one contribution into a day, opening the node's row when this is its first. */
+function contributeToDay(
+  day: DayWindow,
+  entry: TrackedEntry,
+  key: string,
+  contribution: RowContribution,
+): void {
+  const existing = day.rows.get(key);
+  if (existing === undefined) {
+    day.rows.set(key, {
+      key,
+      entryOfRecord: entry,
+      trackedMs: contribution.trackedMs,
+      running: contribution.running,
+      lastActivityMs: contribution.atMs,
+    });
+    return;
+  }
+  mergeIntoRow(existing, entry, contribution);
+}
+
 function addToDay(
   day: DayWindow,
   entry: TrackedEntry,
@@ -323,41 +344,48 @@ function addToDay(
   const trackedMs = clampedSpanMs(span.startMs, span.endMs, day.dayStartMs, day.overlapEndMs);
   if (trackedMs <= 0) return;
   day.totalMs += trackedMs;
-  const contribution: RowContribution = {
+  contributeToDay(day, entry, key, {
     trackedMs,
     running: day.current && entry.entry.state === 'running',
     // A running entry ends at `nowMs`, so this clamp reports `nowMs` on the day that holds it and
     // that day's own end boundary on every earlier one. It also keeps a hand-written end that lies
     // in the future from claiming activity the clock has not reached.
     atMs: Math.min(Math.max(span.endMs, day.dayStartMs), day.overlapEndMs),
-  };
-  const existing = day.rows.get(key);
-  if (existing === undefined) {
-    day.rows.set(key, {
-      key,
-      entryOfRecord: entry,
-      trackedMs,
-      running: contribution.running,
-      lastActivityMs: contribution.atMs,
-    });
-    return;
-  }
-  mergeIntoRow(existing, entry, contribution);
+  });
+}
+
+/**
+ * An open timer is what today is about, so its row exists from the instant it is opened rather than
+ * from the first millisecond it earns. The contribution is empty, so the day's total is untouched
+ * and the rows of a day still add up to its heading.
+ */
+function openToday(day: DayWindow, entry: TrackedEntry, key: string, nowMs: number): void {
+  contributeToDay(day, entry, key, { trackedMs: 0, running: true, atMs: nowMs });
+}
+
+/** Everything every entry of one grouping is placed against, built once for the whole pass. */
+interface Placement {
+  readonly windows: readonly DayWindow[];
+  /** Nothing before this instant or at and after `endMs` can land in any window. */
+  readonly startMs: number;
+  readonly endMs: number;
+  /** The window holding `nowMs`, which is the only one an open timer can be live on. */
+  readonly today: DayWindow | undefined;
+  readonly nowMs: number;
 }
 
 /** Adds one entry to every window it touches, rejecting the rest of the window in constant time. */
-function placeEntry(
-  windows: readonly DayWindow[],
-  bounds: { readonly startMs: number; readonly endMs: number },
-  entry: TrackedEntry,
-  nowMs: number,
-): void {
+function placeEntry(placement: Placement, entry: TrackedEntry): void {
+  const { windows, today, nowMs } = placement;
   const startMs = measurableStartMs(entry.entry);
   const endMs = measurableEndMs(entry.entry, nowMs);
   if (startMs === undefined || endMs === undefined) return;
-  if (endMs <= bounds.startMs || startMs >= bounds.endMs) return;
-  const span = { startMs, endMs };
   const key = nodeKey(entry);
+  // Before the span, because a timer started this instant has earned nothing and would otherwise be
+  // rejected outright, leaving the node it runs on with no row on the day it is running.
+  if (today !== undefined && entry.entry.state === 'running') openToday(today, entry, key, nowMs);
+  if (endMs <= placement.startMs || startMs >= placement.endMs) return;
+  const span = { startMs, endMs };
   for (let index = firstTouchedIndex(windows, startMs); index < windows.length; index += 1) {
     const day = windows[index];
     if (day === undefined || day.dayStartMs >= endMs) break;
@@ -386,7 +414,10 @@ function frozenDays(windows: readonly DayWindow[]): readonly TrackedDay[] {
   return Object.freeze(days);
 }
 
-/** Newest day first, rows by last activity descending, days without rows omitted. */
+/**
+ * Newest day first, rows by last activity descending, days without rows omitted. A day whose only
+ * row is an open timer that has earned nothing yet still counts as a day with a row.
+ */
 export function groupTrackedDays(
   entries: readonly TrackedEntry[],
   options: { readonly nowMs: number; readonly offsetAt: OffsetAt; readonly days: number },
@@ -396,8 +427,14 @@ export function groupTrackedDays(
   const oldest = windows[0];
   const newest = windows[windows.length - 1];
   if (oldest === undefined || newest === undefined) return Object.freeze([]);
-  const bounds = { startMs: oldest.dayStartMs, endMs: newest.overlapEndMs };
-  for (const entry of entries) placeEntry(windows, bounds, entry, nowMs);
+  const placement: Placement = {
+    windows,
+    startMs: oldest.dayStartMs,
+    endMs: newest.overlapEndMs,
+    today: newest.current ? newest : undefined,
+    nowMs,
+  };
+  for (const entry of entries) placeEntry(placement, entry);
   return frozenDays(windows);
 }
 
