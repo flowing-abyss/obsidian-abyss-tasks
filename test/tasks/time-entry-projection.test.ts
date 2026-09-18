@@ -195,15 +195,16 @@ describe('time entry projection', () => {
   });
 
   it('falls back to the device zone offset when no option is configured', async () => {
+    // The suite runs at UTC, where a fallback that silently resolved to zero would be right by
+    // accident, so the device is moved to +05:30 for the length of this test.
+    vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(-330);
+
     const entry = onlyEntry((await offsetIndex()).list());
-    const startMs = expectDefined(entry.startMs);
+
     // A bare date and time is the device-local wall clock, which is what the default resolver
     // `-new Date(epochMs).getTimezoneOffset()` reports at the resolved instant.
-    expect(startMs).toBe(Date.parse('2026-09-17T09:12:00'));
-    expect(entry.endMs).toBe(Date.parse('2026-09-17T10:40:00'));
-    expect(-new Date(startMs).getTimezoneOffset()).toBe(
-      (Date.UTC(2026, 8, 17, 9, 12) - startMs) / 60_000,
-    );
+    expect(entry.startMs).toBe(Date.parse('2026-09-17T09:12:00+05:30'));
+    expect(entry.endMs).toBe(Date.parse('2026-09-17T10:40:00+05:30'));
   });
 
   it('keeps entries JSON-stable so the index still compares files by serialization', async () => {

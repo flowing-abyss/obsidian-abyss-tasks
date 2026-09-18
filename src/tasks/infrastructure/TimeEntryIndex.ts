@@ -238,8 +238,12 @@ export class TimeEntryIndex {
     const collect = (bucket: DayBucket | undefined): void => {
       if (bucket === undefined) return;
       for (const entries of bucket.values()) {
-        for (const tracked of entries) {
-          if (overlapsRange(tracked.entry, fromMs, toMs)) found.add(tracked);
+        // Indexed, because this is the innermost loop of the whole read model and a `for of` here
+        // allocates one array iterator for every day and file the range touches.
+        for (let index = 0; index < entries.length; index += 1) {
+          const tracked = entries[index];
+          if (tracked !== undefined && overlapsRange(tracked.entry, fromMs, toMs))
+            found.add(tracked);
         }
       }
     };

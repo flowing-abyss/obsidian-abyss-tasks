@@ -31,8 +31,10 @@ const LEADING_BLANK_RE = /^[ \t]+/u;
 const BLANK_ONLY_RE = /^[ \t]*$/u;
 /** Groups: 1 date, 2 hour, 3 minute. The date is absent on a time-only end. */
 const STAMP_CALENDAR_RE = /^(?:(\d{4}-\d{2}-\d{2})(?:T|[ \t]+))?(\d{1,2}):(\d{2})/u;
-/** Groups: 1 second, 2 fraction, 3 offset. Everything is optional, so this always matches. */
-const STAMP_PRECISION_RE = /^(?::(\d{2})(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?/u;
+/** Groups: 1 second, 2 fraction. Absent on a stamp written to the minute. */
+const STAMP_SECONDS_RE = /^:(\d{2})(\.\d+)?/u;
+/** Group 1 offset. Absent on a stamp that leaves its zone to the reader. */
+const STAMP_OFFSET_RE = /^(Z|[+-]\d{2}:\d{2})/u;
 /** Text that opens like a stamp is a failed end rather than free tail text. */
 const END_SHAPE_RE = /^(?:\d{1,2}:\d{2}|\d{4}-\d{2})/u;
 
@@ -94,19 +96,23 @@ function stripLeadingBlanks(value: string): string {
 function matchStamp(text: string): StampMatch | undefined {
   const calendar = STAMP_CALENDAR_RE.exec(text);
   if (calendar === null) return undefined;
-  const calendarLength = calendar[0].length;
-  const precision = STAMP_PRECISION_RE.exec(text.slice(calendarLength));
-  if (precision === null) return undefined;
+  // The optional precision is read one part at a time rather than as one all-optional pattern, so
+  // every branch here is a stamp somebody can actually write instead of a match that cannot fail.
+  let length = calendar[0].length;
+  const seconds = STAMP_SECONDS_RE.exec(text.slice(length));
+  if (seconds !== null) length += seconds[0].length;
+  const offset = STAMP_OFFSET_RE.exec(text.slice(length));
+  if (offset !== null) length += offset[0].length;
   return {
     fields: {
       date: calendar[1],
       hour: calendar[2],
       minute: calendar[3],
-      second: precision[1],
-      fraction: precision[2],
-      offset: precision[3],
+      second: seconds?.[1],
+      fraction: seconds?.[2],
+      offset: offset?.[1],
     },
-    length: calendarLength + precision[0].length,
+    length,
   };
 }
 

@@ -173,6 +173,8 @@ describe('parseTimeEntryLine', () => {
     '- 2026-09-17 09:12 - 10:40',
     '- 2026-09-17 09:12 -> 10:40',
     '- note 2026-09-17 09:12 → 10:40',
+    // Only blanks may stand between the start and the arrow, so prose there is still a comment.
+    '- 2026-09-17 09:12 stood up → 10:40',
     '- [ ] 2026-09-17 09:12 → 10:40',
     '- > 2026-09-17 09:12 → 10:40',
     '2026-09-17 09:12 → 10:40',
