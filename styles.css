@@ -10237,8 +10237,9 @@ body.is-phone.is-mobile .abyss-creation-feedback {
  * day that holds none rather than centring the whole list around the longest row.
  *
  * It fills the row's own height instead of taking a theme's input height, so the whole row answers
- * a click rather than only the line of text in the middle of it. Its content is centred inside that
- * height, which keeps the title level with the control and the clock beside it.
+ * a click rather than only the line of text in the middle of it. The negative block margin takes it
+ * back out over the row's own padding, which is the rest of that height, and its content is centred
+ * inside the box that leaves, which keeps the title level with the control and the clock beside it.
  */
 .abyss-tracked-row .abyss-tracked-row-open {
   display: flex;
@@ -10250,7 +10251,8 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   min-width: 0;
   height: auto;
   min-height: 0;
-  padding: 0;
+  margin-block: -4px;
+  padding: 4px 0;
   border: none;
   background: transparent;
   box-shadow: none;

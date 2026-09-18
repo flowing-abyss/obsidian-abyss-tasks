@@ -399,10 +399,16 @@ describe('tracked tasks popover', () => {
     const declarations = cssDeclarationsFor(css, '.abyss-tracked-row .abyss-tracked-row-open');
 
     // Without the stretch the button is one line of text inside a taller row, which leaves a dead
-    // band above and below it that a click on the row passes straight through.
+    // band above and below it that a click on the row passes straight through. The negative block
+    // margin reaches the rest of that height, which is the row's own padding.
     expect(declarations).toContain('align-self: stretch');
     expect(declarations).toContain('align-items: center');
+    expect(declarations).toContain('margin-block: -4px');
+    expect(declarations).toContain('padding: 4px 0');
     expect(declarations).not.toContain('align-items: baseline');
+    expect(
+      cssDeclarationsFor(css, '.abyss-time-tracking-popover--tasks .abyss-tracked-day-header'),
+    ).toBeDefined();
   });
 
   it('takes the keyboard into the list and hands it back on Escape', async () => {
