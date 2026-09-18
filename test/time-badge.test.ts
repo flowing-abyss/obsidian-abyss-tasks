@@ -499,6 +499,13 @@ describe('inspector tracked time badge weight', () => {
     );
   });
 
+  it('draws the glyph at the weight of the plus beside it', () => {
+    const glyph = cssDeclarationsFor(css, '.abyss-time-badge > .abyss-time-badge-toggle svg');
+
+    expect(cssDeclarationValue(glyph, 'width')).toBe('12px');
+    expect(cssDeclarationValue(glyph, 'height')).toBe('12px');
+  });
+
   it('paints the glyph muted at rest and in the badge colour while a timer runs', async () => {
     const glyph = cssDeclarationsFor(css, '.abyss-time-badge > .abyss-time-badge-toggle');
     expect(cssDeclarationValue(glyph, 'color')).toBe('var(--text-muted)');

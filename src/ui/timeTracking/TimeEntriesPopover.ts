@@ -88,6 +88,13 @@ interface RenderedList {
   readonly dayStartMs: number;
 }
 
+/** What every row of one rebuild reads: the clock its labels are against, and how wide the pane is. */
+interface RenderPass {
+  readonly context: TrackedTimeContext;
+  /** Whether the pane has dropped the note cell, which is what makes a row tooltip worth writing. */
+  readonly noteHidden: boolean;
+}
+
 /** One open popover: its surface, the rows a tick repaints, and what a rebuild has to carry over. */
 interface PopoverSession {
   readonly options: TimeEntriesPopoverOptions;
@@ -99,6 +106,8 @@ interface PopoverSession {
   undoDayKey: string | undefined;
   /** Which offer holds it, so the offer it replaced cannot take the heading away with it. */
   undoOffer: number;
+  /** The one wait for the next local midnight, for the list no tick is driving. */
+  rollover: number | undefined;
   closed: boolean;
 }
 
@@ -109,6 +118,14 @@ const BROKEN_KEY = 'broken';
 const DAY_KEY = 'day';
 const REMOVED_LABEL = 'Removed';
 const MISSING_ENTRY = '[abyss-tasks] The tracked session to remove is no longer in the note';
+const MISSING_DAY = '[abyss-tasks] The tracked session to remove is no longer under a day';
+/**
+ * How the stylesheet says it has dropped the note cell, which is the one width question this list
+ * asks. The sheet owns the breakpoint and answers through a custom property, so a rebuild reads one
+ * resolved value for the whole list instead of measuring a single row.
+ */
+const NOTE_PROPERTY = '--abyss-time-note';
+const NOTE_HIDDEN = 'hidden';
 
 /** The written entry without its list prefix, which is all a broken line can be shown as. */
 function entryLineText(originalMarkdown: string): string {
@@ -244,7 +261,7 @@ async function removeSession(
     // The note moved on without this row, so it says so in diagnostics and redraws the list rather
     // than leaving a control that does nothing.
     console.error(MISSING_ENTRY);
-    update(session);
+    redraw(session);
     return;
   }
   // The row's place is its day and its position inside that day, read with the earlier undo row
@@ -252,7 +269,13 @@ async function removeSession(
   // than clearing first leaves a failed removal with the undo it was already offering.
   const section = rowEl.parentElement;
   const dayKey = section?.dataset[DAY_KEY];
-  if (section === null || dayKey === undefined) return;
+  if (section === null || dayKey === undefined) {
+    // A row outside its day has nowhere to put an undo, which is a broken list rather than a
+    // refused write, so it is reported and redrawn like a row the note no longer holds.
+    console.error(MISSING_DAY);
+    redraw(session);
+    return;
+  }
   const index = [...section.children]
     .filter((child) => !child.classList.contains('abyss-undo-row'))
     .indexOf(rowEl);
@@ -263,8 +286,13 @@ async function removeSession(
   session.undoDayKey = dayKey;
   const recovery = await actions.remove(timeEntryRef(current.parent, current.entry));
   if (recovery === undefined || session.closed) {
-    // Nothing was removed, so the day the earlier offer was holding open goes back to holding it.
-    if (session.undoOffer === offer && !session.closed) holdUndoDay(session, heldBefore);
+    // Nothing was removed, so this attempt gives back both what it took: the day the earlier offer
+    // was holding open, and the number that offer knows itself by, without which it could never
+    // let that day go.
+    if (session.undoOffer === offer) {
+      session.undoOffer = offer - 1;
+      if (!session.closed) holdUndoDay(session, heldBefore);
+    }
     return;
   }
   session.undo.show(
@@ -274,6 +302,7 @@ async function removeSession(
       index,
       title: rangeLabel(current.entry, context()),
       label: REMOVED_LABEL,
+      accessibleName: undoName(current, dayKey, section, context()),
     },
     () => actions.restore(recovery),
     // The tracking actions already report a failed write, so the row only has to come back.
@@ -291,8 +320,41 @@ async function removeSession(
 function holdUndoDay(session: PopoverSession, key: string | undefined): void {
   if (session.closed || session.undoDayKey === key) return;
   session.undoDayKey = key;
+  redraw(session);
+}
+
+/** Rebuilds the list whatever the memo of the last one says, for a list known to be out of date. */
+function redraw(session: PopoverSession): void {
   session.rendered = undefined;
   update(session);
+}
+
+/**
+ * One session said aloud, `09:12 to 10:32` or `12:30 onwards`, because an arrow is a shape rather
+ * than a word and an accessible name is read out.
+ */
+function spokenRange(row: SessionRow, context: TrackedTimeContext): string {
+  const range = rangeLabel(row.entry, context);
+  if (row.entry.state === 'broken') return range;
+  return range.endsWith('→')
+    ? `${range.slice(0, -1).trimEnd()} onwards`
+    : range.replace(' → ', ' to ');
+}
+
+/**
+ * What the undo control is called, which says which day the session goes back into: a list holding
+ * several days offers one Undo at a time, and its own row is the only thing that names the rest.
+ */
+function undoName(
+  row: SessionRow,
+  dayKey: string,
+  section: HTMLElement,
+  context: TrackedTimeContext,
+): string {
+  const spoken = spokenRange(row, context);
+  if (dayKey === BROKEN_KEY) return `Undo removing ${spoken}`;
+  const day = section.querySelector('.abyss-time-day-label')?.textContent ?? '';
+  return day.length === 0 ? `Undo removing ${spoken}` : `Undo removing ${spoken} on ${day}`;
 }
 
 /**
@@ -336,8 +398,9 @@ function renderRow(
   session: PopoverSession,
   section: HTMLElement,
   row: SessionRow,
-  context: TrackedTimeContext,
+  pass: RenderPass,
 ): void {
+  const { context, noteHidden } = pass;
   const { entry } = row;
   const running = entry.state === 'running';
   const rowEl = section.createDiv({ cls: 'abyss-time-row' });
@@ -349,8 +412,10 @@ function renderRow(
       : undefined;
   rowEl.toggleClass('is-tracking', running);
   rowEl.toggleClass('is-stale', question !== undefined);
-  // A narrow pane drops the note cell, so the row always carries what that cell would have said.
-  writeTitle(rowEl, question ?? noteLabel(row));
+  // A pane too narrow for the note cell hands what it would have said to the row, and a pane wide
+  // enough to show it says nothing twice. A line nobody could read keeps its cell at every width.
+  const hidden = noteHidden && entry.state !== 'broken';
+  writeTitle(rowEl, question ?? (hidden ? noteLabel(row) : ''));
   const remove = rowEl.createEl('button', {
     cls: 'abyss-time-row-remove',
     attr: { type: 'button', 'aria-label': 'Remove this session' },
@@ -363,11 +428,7 @@ function renderRow(
 }
 
 /** One section per day: its heading, then its rows, and the day it is named by for an undo row. */
-function renderDays(
-  session: PopoverSession,
-  groups: readonly DayGroup[],
-  context: TrackedTimeContext,
-): void {
+function renderDays(session: PopoverSession, groups: readonly DayGroup[], pass: RenderPass): void {
   for (const group of groups) {
     const section = session.shell.element.createDiv({ cls: 'abyss-time-day' });
     section.dataset[DAY_KEY] = group.key;
@@ -376,8 +437,50 @@ function renderDays(
       cls: 'abyss-right-section-label abyss-time-day-label',
       text: group.heading,
     });
-    for (const row of group.rows) renderRow(session, section, row, context);
+    for (const row of group.rows) renderRow(session, section, row, pass);
   }
+}
+
+/** The window the surface lives in, which owns both its timer and its resolved styles. */
+function ownerWindow(session: PopoverSession): Window | null {
+  return session.shell.element.ownerDocument.defaultView;
+}
+
+/** Whether the pane has dropped the note cell, asked of the stylesheet once per rebuild. */
+function noteCellHidden(session: PopoverSession): boolean {
+  const { element } = session.shell;
+  const style = ownerWindow(session)?.getComputedStyle(element);
+  return style?.getPropertyValue(NOTE_PROPERTY).trim() === NOTE_HIDDEN;
+}
+
+function clearDayRollover(session: PopoverSession): void {
+  if (session.rollover === undefined) return;
+  ownerWindow(session)?.clearTimeout(session.rollover);
+  session.rollover = undefined;
+}
+
+/**
+ * One wait for the next local midnight, which is when `Today` becomes `Yesterday` and every
+ * heading below it moves on. The shared tick already rebuilds the list on the second that crosses
+ * midnight, so this exists only for the list with nothing running, which nothing else would wake.
+ */
+function scheduleDayRollover(session: PopoverSession, context: TrackedTimeContext): void {
+  clearDayRollover(session);
+  if (session.closed || session.live.length > 0) return;
+  const win = ownerWindow(session);
+  if (win === null) return;
+  const nextDayMs = shiftLocalDayStartMs(
+    localDayStartMs(context.nowMs, context.offsetAt),
+    1,
+    context.offsetAt,
+  );
+  session.rollover = win.setTimeout(
+    () => {
+      session.rollover = undefined;
+      update(session);
+    },
+    Math.max(nextDayMs - context.nowMs, 0),
+  );
 }
 
 function update(session: PopoverSession): void {
@@ -403,6 +506,9 @@ function update(session: PopoverSession): void {
     session.rendered.dayStartMs === rendered.dayStartMs
   ) {
     session.shell.reposition();
+    // A midnight that arrived a moment early leaves the day it was waiting for still ahead, so the
+    // wait is armed again rather than dropped on the one frame that changed nothing.
+    scheduleDayRollover(session, context);
     return;
   }
   const { scrollTop } = element;
@@ -414,10 +520,14 @@ function update(session: PopoverSession): void {
   if (rows.length === 0 && session.undoDayKey === undefined) {
     element.createDiv({ cls: 'abyss-time-tracking-empty', text: EMPTY_TEXT });
   }
-  renderDays(session, withUndoDay(dayGroups(rows, context), session.undoDayKey, context), context);
+  renderDays(session, withUndoDay(dayGroups(rows, context), session.undoDayKey, context), {
+    context,
+    noteHidden: noteCellHidden(session),
+  });
   session.undo.render(session.options.owner);
   element.scrollTop = scrollTop;
   session.shell.reposition();
+  scheduleDayRollover(session, context);
 }
 
 function tick(session: PopoverSession): void {
@@ -441,6 +551,7 @@ export function showTimeEntriesPopover(
   // one this call is about to build.
   const onShellClose = (focused: boolean): void => {
     session.closed = true;
+    clearDayRollover(session);
     undo.clear();
     options.onClose(focused);
   };
@@ -460,6 +571,7 @@ export function showTimeEntriesPopover(
     rendered: undefined,
     undoDayKey: undefined,
     undoOffer: 0,
+    rollover: undefined,
     closed: false,
   };
   update(session);

@@ -7,6 +7,11 @@ export interface InlineUndoPosition {
   readonly title: string;
   /** What the row says, for a list whose removal is neither a sub-task nor a dependency. */
   readonly label?: string;
+  /**
+   * What the control is called where the title alone would not be a sentence, such as a list whose
+   * rows are spans of a day and whose undo has to name the day it puts one back into.
+   */
+  readonly accessibleName?: string;
 }
 
 /** What an undo row needs beyond its place, for the surfaces that do not take the defaults. */
@@ -154,7 +159,10 @@ function createUndoRow(
   );
   const button = row.createEl('button', {
     text: 'Undo',
-    attr: { type: 'button', 'aria-label': `Undo: ${location.title}` },
+    attr: {
+      type: 'button',
+      'aria-label': location.accessibleName ?? `Undo: ${location.title}`,
+    },
   });
   row.createSpan({ text: '(5s)' });
   return [row, button];

@@ -9924,9 +9924,10 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   color: var(--text-muted);
 }
 
+/* A hair under the icons in the lists, because its neighbour in the row is a `+` of plain text. */
 .abyss-time-badge > .abyss-time-badge-toggle svg {
-  width: 13px;
-  height: 13px;
+  width: 12px;
+  height: 12px;
 }
 
 .abyss-time-badge:is(.is-tracking, .is-stale) > .abyss-time-badge-toggle,
@@ -10058,11 +10059,16 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 
 /*
  * A pane too narrow for the note to say a word drops it rather than leave a stub of two characters.
- * The row still carries it as a tooltip, and what is left reads as a span and a total. Under this
- * width the inspector overlay is `100cqi - 48px`, which leaves the note cell below 60px. A line
- * that could not be read keeps its text, because that text is the whole point of the row.
+ * The row carries it as a tooltip instead, which the list reads back off `--abyss-time-note` so
+ * this width is stated once, and what is left reads as a span and a total. Under this width the
+ * inspector overlay is `100cqi - 48px`, which leaves the note cell below 60px. A line that could
+ * not be read keeps its text, because that text is the whole point of the row.
  */
 @container abyss-panel-layout (max-width: 20rem) {
+  .abyss-time-tracking-popover--sessions {
+    --abyss-time-note: hidden;
+  }
+
   .abyss-time-row:not(.is-broken) .abyss-time-row-note {
     display: none;
   }
