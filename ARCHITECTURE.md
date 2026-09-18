@@ -126,7 +126,9 @@ the `CenterPanel` and the `RightPanel` it hosts, so the whole panel shares a sin
 re-reads the active entries only when the index reports a change and runs its one-second interval
 only while something is running and a surface is listening. The inspector badge keeps the total it
 read at that change, so a tick is one addition and never a query, and it writes to the DOM only
-when the formatted text differs. The badge outlives one inspector render: the chips row is rebuilt
+when the formatted text differs. The tick it emits for an index change belongs to the owner's own
+render instead, which re-reads the selection, so a surface recognises that frame by the active
+entries it carries and paints a change exactly once. The badge outlives one inspector render: the chips row is rebuilt
 on every index change, while the sessions popover the badge owns has to survive the write it just
 made, the way the inline undo row already does.
 
