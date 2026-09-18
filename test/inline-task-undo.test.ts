@@ -149,3 +149,39 @@ it('revokes a failed pending tombstone when its evidence changed', async () => {
   expect(present).toHaveBeenCalledExactlyOnceWith(result);
   action.clear();
 });
+
+it('tells the owner once when the offer ends, however it ended', async () => {
+  vi.useFakeTimers();
+  const container = activeDocument.body.createDiv();
+  container.createDiv({ cls: 'list' });
+  const action = createInlineTaskUndo();
+  const ended: string[] = [];
+  const offer = (name: string): void => {
+    action.show(
+      container,
+      { list: '.list', index: 0, title: 'Removed' },
+      async () => ({ type: 'ok', task: undefined }) as unknown as TaskCommandResult,
+      { onEnd: () => ended.push(name) },
+    );
+  };
+
+  // Expiry.
+  offer('expired');
+  await vi.advanceTimersByTimeAsync(4_999);
+  expect(ended).toEqual([]);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(ended).toEqual(['expired']);
+
+  // Replacement: the offer that goes on screen ends the one it takes the place of.
+  offer('replaced');
+  offer('undone');
+  expect(ended).toEqual(['expired', 'replaced']);
+
+  // Undone, and then nothing more: an offer that already ended is never reported again.
+  expectDefined(container.querySelector('button')).click();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(ended).toEqual(['expired', 'replaced', 'undone']);
+
+  action.clear();
+  expect(ended).toEqual(['expired', 'replaced', 'undone']);
+});

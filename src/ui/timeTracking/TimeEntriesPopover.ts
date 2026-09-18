@@ -3,6 +3,7 @@ import {
   entryDurationMs,
   formatTrackedDurationWithSeconds,
   localDayStartMs,
+  shiftLocalDayStartMs,
   taskNodeAddress,
   timeEntryRef,
   type SubtaskSnapshot,
@@ -11,7 +12,7 @@ import {
   type TimeEntrySnapshot,
 } from '../../tasks';
 import { openAnchoredPopover, type AnchoredPopover } from '../anchoredPopover';
-import { writeText } from '../guardedDomWrites';
+import { writeText, writeTitle } from '../guardedDomWrites';
 import { createInlineTaskUndo } from '../inlineTaskUndo';
 import { runAsyncAction } from '../runAsyncAction';
 import {
@@ -73,6 +74,14 @@ interface LiveRow {
   readonly duration: HTMLElement;
 }
 
+/** One local day of sessions, or the trailing group of lines the plugin could not read. */
+interface DayGroup {
+  /** The day start in milliseconds, or `broken`, written on the section so a row can name it. */
+  readonly key: string;
+  readonly heading: string;
+  readonly rows: SessionRow[];
+}
+
 /** What the rendered list was built from, so an unrelated change repaints nothing. */
 interface RenderedList {
   readonly key: string;
@@ -86,12 +95,18 @@ interface PopoverSession {
   readonly undo: ReturnType<typeof createInlineTaskUndo>;
   live: LiveRow[];
   rendered: RenderedList | undefined;
+  /** The day whose heading is held open so a pending undo row has somewhere of its own to sit. */
+  undoDayKey: string | undefined;
+  /** Which offer holds it, so the offer it replaced cannot take the heading away with it. */
+  undoOffer: number;
   closed: boolean;
 }
 
 const POPOVER_SELECTOR = '.abyss-time-tracking-popover--sessions';
 const EMPTY_TEXT = 'No tracked time yet';
 const BROKEN_HEADING = 'Needs attention';
+const BROKEN_KEY = 'broken';
+const DAY_KEY = 'day';
 const REMOVED_LABEL = 'Removed';
 const MISSING_ENTRY = '[abyss-tasks] The tracked session to remove is no longer in the note';
 
@@ -151,6 +166,67 @@ function rangeLabel(entry: TimeEntrySnapshot, context: TrackedTimeContext): stri
     : formatSessionClockRange(entry, context);
 }
 
+/** What the note cell says, which is also the row's tooltip once that cell has no room to say it. */
+function noteLabel(row: SessionRow): string {
+  const { entry } = row;
+  if (entry.state === 'broken') return entryLineText(entry.originalMarkdown);
+  return [entry.tail, row.node].filter((part) => part !== undefined).join(' ');
+}
+
+/**
+ * The sorted rows cut into the local days they started in, newest day first, with the lines that
+ * carry no instant gathered under the last heading.
+ *
+ * The bounds of the open day are read once, not once per row: the rows are already in order, so a
+ * row inside them belongs to the day that is open and only a row outside them opens the next.
+ */
+function dayGroups(rows: readonly SessionRow[], context: TrackedTimeContext): DayGroup[] {
+  const groups: DayGroup[] = [];
+  let open: DayGroup | undefined;
+  let dayStartMs = 0;
+  let nextDayStartMs = 0;
+  for (const row of rows) {
+    const start = startMs(row);
+    if (start === undefined) {
+      if (open?.key !== BROKEN_KEY) {
+        open = { key: BROKEN_KEY, heading: BROKEN_HEADING, rows: [] };
+        groups.push(open);
+      }
+    } else if (open === undefined || start < dayStartMs || start >= nextDayStartMs) {
+      dayStartMs = localDayStartMs(start, context.offsetAt);
+      nextDayStartMs = shiftLocalDayStartMs(dayStartMs, 1, context.offsetAt);
+      open = { key: String(dayStartMs), heading: formatDayHeading(dayStartMs, context), rows: [] };
+      groups.push(open);
+    }
+    open.rows.push(row);
+  }
+  return groups;
+}
+
+/**
+ * The same days with the one an undo row is waiting under put back in its place, so removing the
+ * last session of a day leaves that day standing until the offer is over rather than filing its
+ * undo row under the heading of the day below.
+ */
+function withUndoDay(
+  groups: DayGroup[],
+  key: string | undefined,
+  context: TrackedTimeContext,
+): DayGroup[] {
+  if (key === undefined || groups.some((group) => group.key === key)) return groups;
+  const broken = key === BROKEN_KEY;
+  const restored: DayGroup = {
+    key,
+    heading: broken ? BROKEN_HEADING : formatDayHeading(Number(key), context),
+    rows: [],
+  };
+  const at = broken
+    ? groups.length
+    : groups.findIndex((group) => group.key === BROKEN_KEY || Number(group.key) < Number(key));
+  groups.splice(at < 0 ? groups.length : at, 0, restored);
+  return groups;
+}
+
 function close(session: PopoverSession, restoreFocus?: boolean): void {
   session.shell.close(restoreFocus);
 }
@@ -171,26 +247,52 @@ async function removeSession(
     update(session);
     return;
   }
-  // The row's place is read with the earlier undo row discounted, because `show` clears that row
-  // before it renders this one. Reading it here rather than clearing first leaves a failed removal
-  // with the undo it was already offering.
-  const index = [...session.shell.element.children]
+  // The row's place is its day and its position inside that day, read with the earlier undo row
+  // discounted because `show` clears that row before it renders this one. Reading it here rather
+  // than clearing first leaves a failed removal with the undo it was already offering.
+  const section = rowEl.parentElement;
+  const dayKey = section?.dataset[DAY_KEY];
+  if (section === null || dayKey === undefined) return;
+  const index = [...section.children]
     .filter((child) => !child.classList.contains('abyss-undo-row'))
     .indexOf(rowEl);
+  // The day is held open from here, so a removal that empties it still has the heading to sit
+  // under by the time the write lands and the list is rebuilt.
+  const heldBefore = session.undoDayKey;
+  const offer = (session.undoOffer += 1);
+  session.undoDayKey = dayKey;
   const recovery = await actions.remove(timeEntryRef(current.parent, current.entry));
-  if (recovery === undefined || session.closed) return;
+  if (recovery === undefined || session.closed) {
+    // Nothing was removed, so the day the earlier offer was holding open goes back to holding it.
+    if (session.undoOffer === offer && !session.closed) holdUndoDay(session, heldBefore);
+    return;
+  }
   session.undo.show(
     owner,
     {
-      list: POPOVER_SELECTOR,
+      list: `${POPOVER_SELECTOR} [data-${DAY_KEY}="${dayKey}"]`,
       index,
       title: rangeLabel(current.entry, context()),
       label: REMOVED_LABEL,
     },
     () => actions.restore(recovery),
     // The tracking actions already report a failed write, so the row only has to come back.
-    { report: () => {} },
+    {
+      report: () => {},
+      // Replacing this offer runs the one it replaced, whose day is no longer the held one.
+      onEnd: () => {
+        if (session.undoOffer === offer) holdUndoDay(session, undefined);
+      },
+    },
   );
+}
+
+/** Holds a day open for an undo row, or lets the last one go, and redraws past the memo. */
+function holdUndoDay(session: PopoverSession, key: string | undefined): void {
+  if (session.closed || session.undoDayKey === key) return;
+  session.undoDayKey = key;
+  session.rendered = undefined;
+  update(session);
 }
 
 /**
@@ -230,10 +332,15 @@ function renderCells(
   if (entry.state === 'running') session.live.push({ entry, duration });
 }
 
-function renderRow(session: PopoverSession, row: SessionRow, context: TrackedTimeContext): void {
+function renderRow(
+  session: PopoverSession,
+  section: HTMLElement,
+  row: SessionRow,
+  context: TrackedTimeContext,
+): void {
   const { entry } = row;
   const running = entry.state === 'running';
-  const rowEl = session.shell.element.createDiv({ cls: 'abyss-time-row' });
+  const rowEl = section.createDiv({ cls: 'abyss-time-row' });
   rowEl.toggleClass('is-broken', entry.state === 'broken');
   renderCells(session, rowEl, row, context);
   const question =
@@ -242,7 +349,8 @@ function renderRow(session: PopoverSession, row: SessionRow, context: TrackedTim
       : undefined;
   rowEl.toggleClass('is-tracking', running);
   rowEl.toggleClass('is-stale', question !== undefined);
-  if (question !== undefined) rowEl.title = question;
+  // A narrow pane drops the note cell, so the row always carries what that cell would have said.
+  writeTitle(rowEl, question ?? noteLabel(row));
   const remove = rowEl.createEl('button', {
     cls: 'abyss-time-row-remove',
     attr: { type: 'button', 'aria-label': 'Remove this session' },
@@ -254,30 +362,21 @@ function renderRow(session: PopoverSession, row: SessionRow, context: TrackedTim
   });
 }
 
-/**
- * The rows under the day they started in, newest day first, with the lines that carry no instant
- * gathered under the last heading. The sort already put them in that order, so one pass is enough.
- */
+/** One section per day: its heading, then its rows, and the day it is named by for an undo row. */
 function renderDays(
   session: PopoverSession,
-  rows: readonly SessionRow[],
+  groups: readonly DayGroup[],
   context: TrackedTimeContext,
 ): void {
-  let openDayMs: number | undefined;
-  let opened = false;
-  for (const row of rows) {
-    const start = startMs(row);
-    const dayMs = start === undefined ? undefined : localDayStartMs(start, context.offsetAt);
-    if (!opened || dayMs !== openDayMs) {
-      openDayMs = dayMs;
-      opened = true;
-      // The day reads as an inspector section label, so the rows under it carry all the weight.
-      session.shell.element.createDiv({
-        cls: 'abyss-right-section-label abyss-time-day',
-        text: dayMs === undefined ? BROKEN_HEADING : formatDayHeading(dayMs, context),
-      });
-    }
-    renderRow(session, row, context);
+  for (const group of groups) {
+    const section = session.shell.element.createDiv({ cls: 'abyss-time-day' });
+    section.dataset[DAY_KEY] = group.key;
+    // The day reads as an inspector section label, so the rows under it carry all the weight.
+    section.createDiv({
+      cls: 'abyss-right-section-label abyss-time-day-label',
+      text: group.heading,
+    });
+    for (const row of group.rows) renderRow(session, section, row, context);
   }
 }
 
@@ -312,8 +411,10 @@ function update(session: PopoverSession): void {
   session.live = [];
   session.rendered = rendered;
   const rows = collectRows(node);
-  if (rows.length === 0) element.createDiv({ cls: 'abyss-time-tracking-empty', text: EMPTY_TEXT });
-  renderDays(session, rows, context);
+  if (rows.length === 0 && session.undoDayKey === undefined) {
+    element.createDiv({ cls: 'abyss-time-tracking-empty', text: EMPTY_TEXT });
+  }
+  renderDays(session, withUndoDay(dayGroups(rows, context), session.undoDayKey, context), context);
   session.undo.render(session.options.owner);
   element.scrollTop = scrollTop;
   session.shell.reposition();
@@ -357,6 +458,8 @@ export function showTimeEntriesPopover(
     undo,
     live: [],
     rendered: undefined,
+    undoDayKey: undefined,
+    undoOffer: 0,
     closed: false,
   };
   update(session);

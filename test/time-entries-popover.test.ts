@@ -11,12 +11,17 @@ import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
 import {
   configuredTaskApplication,
   createAppWithFiles,
+  cssDeclarationsFor,
+  cssDeclarationValue,
   expectDefined,
   flushMicrotasks,
+  loadPluginStyles,
   useRealMoment,
 } from './helpers';
 
 useRealMoment();
+
+const css = await loadPluginStyles();
 
 const OFFSET_MINUTES = 180;
 /** 2026-09-18T14:05:32+03:00, the instant every fixture below is written against. */
@@ -194,22 +199,46 @@ function rowShape(row: HTMLElement) {
   };
 }
 
-/** The list as a reader scans it: day headings in place, each row as its three columns. */
-function listed(el: HTMLElement): string[][] {
-  return [...popover(el).children].map((child) =>
-    child.classList.contains('abyss-time-day')
-      ? ['day', child.textContent]
-      : [
-          'row',
-          text(child as HTMLElement, '.abyss-time-row-range'),
-          text(child as HTMLElement, '.abyss-time-row-note'),
-          text(child as HTMLElement, '.abyss-time-row-duration'),
-        ],
+function days(el: HTMLElement): HTMLElement[] {
+  return [...popover(el).querySelectorAll<HTMLElement>('.abyss-time-day')];
+}
+
+/** The day one section stands for, which is also how an undo row finds its way back into it. */
+function dayOf(el: HTMLElement, heading: string): HTMLElement {
+  return expectDefined(
+    days(el).find((day) => text(day, '.abyss-time-day-label') === heading),
+    `Missing the ${heading} section`,
   );
 }
 
+/** The list as a reader scans it: each day heading, then its rows as their three columns. */
+function listed(el: HTMLElement): string[][] {
+  return days(el).flatMap((day) => [
+    ['day', text(day, '.abyss-time-day-label')],
+    ...[...day.querySelectorAll<HTMLElement>('.abyss-time-row')].map((row) => [
+      'row',
+      text(row, '.abyss-time-row-range'),
+      text(row, '.abyss-time-row-note'),
+      text(row, '.abyss-time-row-duration'),
+    ]),
+  ]);
+}
+
 function headings(el: HTMLElement): string[] {
-  return [...popover(el).querySelectorAll('.abyss-time-day')].map((heading) => heading.textContent);
+  return days(el).map((day) => text(day, '.abyss-time-day-label'));
+}
+
+/** Where an undo row sits: the day it was filed under and its place among that day's children. */
+function undoPlace(el: HTMLElement): { day: string; index: number } {
+  const row = expectDefined(
+    popover(el).querySelector<HTMLElement>('.abyss-undo-row'),
+    'Missing undo row',
+  );
+  const day = expectDefined(row.parentElement, 'The undo row left its day');
+  return {
+    day: text(day, '.abyss-time-day-label'),
+    index: [...day.children].indexOf(row),
+  };
 }
 
 /** Reads a rendered row duration back into the whole minutes the badge total floors to. */
@@ -277,6 +306,30 @@ describe('tracked sessions popover', () => {
       'abyss-time-row-tail pairing',
       'abyss-time-row-node Child',
     ]);
+  });
+
+  it('carries the note as the row tooltip, for a pane with no room to show the cell', async () => {
+    const harness = await inspector();
+    open(harness.el);
+
+    expect(rows(harness.el).map((row) => row.title)).toEqual([
+      '',
+      'Child',
+      '',
+      'call with Bob',
+      '2026-09-16 14:05 → 13:20',
+    ]);
+  });
+
+  it('drops the note cell in a pane too narrow to say a word in it', () => {
+    const hidden = cssDeclarationsFor(css, '.abyss-time-row:not(.is-broken) .abyss-time-row-note');
+
+    expect(css).toContain('@container abyss-panel-layout (max-width: 20rem)');
+    expect(cssDeclarationValue(hidden, 'display')).toBe('none');
+    // The line nobody could read is the whole reason its row exists, so it keeps its text.
+    expect(cssDeclarationsFor(css, '.abyss-time-row.is-broken .abyss-time-row-note')).not.toContain(
+      'display: none',
+    );
   });
 
   it('gives every row the same columns, with the remove slot always reserved', async () => {
@@ -365,8 +418,8 @@ describe('tracked sessions popover', () => {
       'Missing undo row',
     );
     expect(undoRow.textContent).toContain('Removed');
-    // The row sat third under the `Today` heading, so its undo takes that same slot.
-    expect([...popover(harness.el).children].indexOf(undoRow)).toBe(3);
+    // The row sat third under the `Today` heading, whose label is that section's first child.
+    expect(undoPlace(harness.el)).toEqual({ day: 'Today', index: 3 });
 
     expectDefined(undoRow.querySelector<HTMLButtonElement>('button')).click();
     await flushMicrotasks();
@@ -505,6 +558,18 @@ describe('tracked sessions popover', () => {
     expect(headings(harness.el)).toEqual(['Yesterday', 'Thu 17 Sep', 'Needs attention']);
   });
 
+  it('relabels the days on the tick that crosses midnight, with no index event', async () => {
+    const clock = fakeTickWindow();
+    const harness = await inspector(SESSIONS, 'Current', clock.win);
+    open(harness.el);
+    expect(headings(harness.el)).toEqual(['Today', 'Yesterday', 'Needs attention']);
+
+    harness.advance(10 * 3_600_000);
+    clock.tick();
+
+    expect(headings(harness.el)).toEqual(['Yesterday', 'Thu 17 Sep', 'Needs attention']);
+  });
+
   it('keeps the scroll position across a rebuild', async () => {
     const harness = await inspector();
     open(harness.el);
@@ -603,24 +668,91 @@ describe('tracked sessions popover', () => {
     expect(harness.reported).toEqual([]);
   });
 
-  it('places a second undo row where its own row was', async () => {
+  it('files a second undo row under the day its own row came from', async () => {
     const harness = await inspector();
     open(harness.el);
-    // The first undo row sits above the second removal, so it moves that row's place by one.
     expectDefined(
       rows(harness.el)[1]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
     ).click();
     await flushMicrotasks();
+    expect(undoPlace(harness.el)).toEqual({ day: 'Today', index: 2 });
     const second = expectDefined(rows(harness.el)[2], 'Missing the second row to remove');
     expect(rowShape(second).range).toBe('18:40 → 18:55');
 
     expectDefined(second.querySelector<HTMLButtonElement>('.abyss-time-row-remove')).click();
     await flushMicrotasks();
 
-    const undoRows = popover(harness.el).querySelectorAll('.abyss-undo-row');
-    expect(undoRows).toHaveLength(1);
-    // The only row of `Yesterday` went with it, so the slot the row held is now the broken group's.
-    expect([...popover(harness.el).children].indexOf(expectDefined(undoRows[0]))).toBe(4);
+    expect(popover(harness.el).querySelectorAll('.abyss-undo-row')).toHaveLength(1);
+    expect(undoPlace(harness.el)).toEqual({ day: 'Yesterday', index: 1 });
+  });
+
+  it.each([
+    [0, 1],
+    [1, 2],
+    [2, 3],
+  ])('puts the undo row of row %i of a day back in its own place', async (at, index) => {
+    const harness = await inspector();
+    open(harness.el);
+
+    expectDefined(
+      rows(harness.el)[at]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(undoPlace(harness.el)).toEqual({ day: 'Today', index });
+  });
+
+  it('keeps the heading of a day whose last session was removed', async () => {
+    const harness = await inspector();
+    const before = await harness.read();
+    open(harness.el);
+
+    // `Yesterday` holds one session, so removing it would otherwise take its heading with it.
+    expectDefined(
+      rows(harness.el)[3]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(headings(harness.el)).toEqual(['Today', 'Yesterday', 'Needs attention']);
+    expect(dayOf(harness.el, 'Yesterday').querySelectorAll('.abyss-time-row')).toHaveLength(0);
+    expect(undoPlace(harness.el)).toEqual({ day: 'Yesterday', index: 1 });
+
+    expectDefined(
+      popover(harness.el).querySelector<HTMLButtonElement>('.abyss-undo-row button'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(await harness.read()).toBe(before);
+    expect(popover(harness.el).querySelector('.abyss-undo-row')).toBeNull();
+    expect(listed(harness.el)).toEqual([
+      ['day', 'Today'],
+      ['row', '12:30 →', '', '1h 35m 32s'],
+      ['row', '11:00 → 11:15', 'Child', '15m'],
+      ['row', '09:12 → 10:32', '', '1h 20m'],
+      ['day', 'Yesterday'],
+      ['row', '18:40 → 18:55', 'call with Bob', '15m'],
+      ['day', 'Needs attention'],
+      ['row', '', '2026-09-16 14:05 → 13:20', ''],
+    ]);
+  });
+
+  it('lets an emptied day go once its undo offer is over', async () => {
+    const harness = await inspector();
+    open(harness.el);
+    expectDefined(
+      rows(harness.el)[3]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    ).click();
+    await flushMicrotasks();
+    expect(headings(harness.el)).toEqual(['Today', 'Yesterday', 'Needs attention']);
+
+    // The next removal replaces the offer, which ends the one that was holding `Yesterday` open.
+    expectDefined(
+      rows(harness.el)[0]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(headings(harness.el)).toEqual(['Today', 'Needs attention']);
+    expect(undoPlace(harness.el)).toEqual({ day: 'Today', index: 1 });
   });
 });
 

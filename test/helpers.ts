@@ -86,8 +86,11 @@ export function cssRuleParts(source: string): readonly CssRuleParts[] {
   for (const segment of stripCssComments(source).split('}')) {
     const openingBrace = segment.lastIndexOf('{');
     if (openingBrace < 0) continue;
+    // A rule inside an at-rule carries that block's prelude ahead of it, which is not part of the
+    // selector the caller is asking about.
+    const prelude = segment.slice(0, openingBrace);
     rules.push({
-      selector: segment.slice(0, openingBrace).trim(),
+      selector: prelude.slice(prelude.lastIndexOf('{') + 1).trim(),
       declarations: segment.slice(openingBrace + 1),
     });
   }
@@ -118,6 +121,18 @@ export function cssDeclarationsFor(source: string, selector: string): string {
     }
   }
   return declarations.join('\n');
+}
+
+/**
+ * Every selector of the rule one selector takes part in, for the facts that are about which
+ * selectors share a rule rather than about what that rule declares.
+ */
+export function cssRuleSelectorsFor(source: string, selector: string): readonly string[] {
+  for (const rule of cssRuleParts(source)) {
+    const selectors = cssSelectorList(rule.selector);
+    if (selectors.includes(selector)) return selectors;
+  }
+  return [];
 }
 
 export function stripCssComments(source: string): string {

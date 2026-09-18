@@ -1,5 +1,4 @@
 import { TFile } from 'obsidian';
-import ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
@@ -14,12 +13,18 @@ import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
 import {
   configuredTaskApplication,
   createAppWithFiles,
+  cssDeclarationsFor,
+  cssDeclarationValue,
+  cssRuleSelectorsFor,
   expectDefined,
   flushMicrotasks,
+  loadPluginStyles,
   useRealMoment,
 } from './helpers';
 
 useRealMoment();
+
+const css = await loadPluginStyles();
 
 const OFFSET_MINUTES = 180;
 /** 2026-09-18T14:05:32+03:00, the instant every fixture below is written against. */
@@ -247,19 +252,6 @@ function toggle(el: HTMLElement): HTMLButtonElement {
   return expectDefined(badge(el).querySelector<HTMLButtonElement>('.abyss-time-badge-toggle'));
 }
 
-const STYLES = ts.sys.readFile(ts.sys.resolvePath(`${import.meta.dirname}/../styles.css`)) ?? '';
-
-/**
- * The declarations of the rule one selector opens, for the visual weight a jsdom tree cannot carry
- * on its own. The selector may stand alone or lead a list, and nothing else may come between it
- * and the block, so a near neighbour is never read as the rule that was asked for.
- */
-function declarationsFor(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-  const rule = new RegExp(`${escaped}\\s*(?:,[^{}]*)?\\{(?<body>[^}]*)\\}`, 'u');
-  return rule.exec(STYLES)?.groups?.['body'] ?? '';
-}
-
 const UNTRACKED = '- [ ] Current\n';
 const CLOSED_SESSIONS = [
   '- [ ] Current',
@@ -474,33 +466,50 @@ describe('inspector tracked time badge', () => {
  * the stylesheet, which is why these assertions look at the rules rather than at the tree.
  */
 describe('inspector tracked time badge weight', () => {
-  it('is composed as the dependency badge beside it, with no pill of its own', async () => {
+  it('is composed as the dependency badge beside it, and carries no pill at rest', async () => {
     const { el } = await inspector(UNTRACKED);
 
     expect(badge(el).className).toBe('abyss-chip abyss-time-badge');
     expect(body(el).children).toHaveLength(0);
     expect(toggle(el).textContent).toBe('');
-    expect(declarationsFor(':is(.abyss-dep-badge, .abyss-time-badge).abyss-chip')).toContain(
-      'background: transparent',
+    const rest = cssDeclarationsFor(css, '.abyss-time-badge.abyss-chip');
+    expect(cssDeclarationValue(rest, 'background')).toBe('transparent');
+    expect(cssDeclarationValue(rest, 'border')).toBe('0');
+    expect(
+      cssDeclarationValue(cssDeclarationsFor(css, '.abyss-time-badge > button'), 'box-shadow'),
+    ).toBe('none');
+  });
+
+  it('takes its hover states from the dependency badge rules rather than copies of them', () => {
+    expect(cssRuleSelectorsFor(css, '.abyss-time-badge:hover')).toContain('.abyss-dep-badge:hover');
+    expect(cssRuleSelectorsFor(css, '.abyss-time-badge-toggle:hover')).toContain(
+      '.abyss-dep-badge-add:hover',
     );
   });
 
-  it('paints the toggle as a muted glyph rather than a ringed button', () => {
-    const glyph = declarationsFor('.abyss-time-badge > .abyss-time-badge-toggle');
+  it('sits the glyph the dependency badge distance from its value', () => {
+    const inset = (selector: string): string | undefined =>
+      cssDeclarationValue(cssDeclarationsFor(css, selector), 'padding-inline');
 
-    expect(glyph).toContain('color: var(--text-muted)');
-    expect(glyph).not.toContain('background');
-    expect(glyph).not.toContain('box-shadow');
-    expect(declarationsFor('.abyss-time-badge:hover')).toBe('');
-    expect(declarationsFor('.abyss-time-badge > .abyss-time-badge-toggle:hover')).toBe('');
+    expect(inset('.abyss-time-badge > .abyss-time-badge-body')).toBe(
+      inset('.abyss-dep-badge > .abyss-dep-badge-body'),
+    );
+    expect(inset('.abyss-time-badge > .abyss-time-badge-toggle')).toBe(
+      inset('.abyss-dep-badge > .abyss-dep-badge-add'),
+    );
   });
 
-  it('carries the accent into the glyph while a timer runs', async () => {
+  it('paints the glyph muted at rest and in the badge colour while a timer runs', async () => {
+    const glyph = cssDeclarationsFor(css, '.abyss-time-badge > .abyss-time-badge-toggle');
+    expect(cssDeclarationValue(glyph, 'color')).toBe('var(--text-muted)');
+
     const { el } = await inspector(RUNNING_SESSION);
 
     expect(badge(el).classList.contains('is-tracking')).toBe(true);
-    expect(
-      declarationsFor('.abyss-time-badge:is(.is-tracking, .is-stale) > .abyss-time-badge-toggle'),
-    ).toContain('color: inherit');
+    const tracking = cssDeclarationsFor(
+      css,
+      '.abyss-time-badge.is-tracking > .abyss-time-badge-toggle',
+    );
+    expect(cssDeclarationValue(tracking, 'color')).toBe('inherit');
   });
 });

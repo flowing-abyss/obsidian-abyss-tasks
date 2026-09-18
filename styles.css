@@ -3578,7 +3578,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-task-card.is-selected,
-.abyss-dep-badge-add:hover {
+.abyss-dep-badge-add:hover,
+.abyss-time-badge-toggle:hover {
   background: var(--background-modifier-active-hover);
 }
 
@@ -5676,7 +5677,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding-inline: 2px 8px;
 }
 
-.abyss-dep-badge:hover {
+:is(.abyss-dep-badge, .abyss-time-badge):hover {
   background: var(--background-modifier-hover);
 }
 
@@ -9908,17 +9909,18 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 
 /*
  * The tracking badge reads as one more chip in the row: the total is plain chip text, and the only
- * control beside it is a glyph of the weight the dependency badge gives its own `+`. Its flat chip
- * and bare buttons come from the shared rules next to that badge.
+ * control beside it is a glyph of the weight the dependency badge gives its own `+`. Its flat chip,
+ * its bare buttons and both of its hover states come from the shared rules beside that badge, so
+ * the two speak the same language without a copy of it here.
  */
 .abyss-time-badge > .abyss-time-badge-body {
-  padding-inline: 8px 4px;
+  padding-inline: 8px 2px;
   font-variant-numeric: tabular-nums;
 }
 
 /* Quiet until it is reached for, and the colour of the badge itself once a timer is running. */
 .abyss-time-badge > .abyss-time-badge-toggle {
-  padding-inline: 4px 8px;
+  padding-inline: 2px 8px;
   color: var(--text-muted);
 }
 
@@ -9943,40 +9945,57 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   overflow-y: auto;
 }
 
-/* The day a session belongs to, in the voice the inspector uses for its own section labels. */
+/*
+ * A day is a section, so its heading and its rows are one subtree: an undo row can be filed under
+ * the day it was removed from, and that day can stay on screen while the offer stands.
+ */
 .abyss-time-day {
-  padding: 2px 6px;
-  color: var(--text-faint);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.abyss-time-row + .abyss-time-day {
+/* The popover's own 2px gap makes this a step of 8 between a day's last row and the next heading. */
+.abyss-time-day + .abyss-time-day {
   margin-top: 6px;
+}
+
+/* The heading takes its weight and its colour from the inspector's section labels. */
+.abyss-time-day-label {
+  padding: 2px 6px;
 }
 
 /*
  * One grid per row with a fixed first track, so the arrow of every span sits on the same axis
- * whatever the note beside it says, and the reserved remove slot never shifts the totals.
+ * whatever the note beside it says. The remove slot is reserved at all times and laps back over
+ * its column gap, so the only dead space past the totals is the 22px the button itself needs.
  */
 .abyss-time-row {
   display: grid;
-  grid-template-columns: 6.8em minmax(0, 1fr) auto 20px;
+  grid-template-columns: 7.2em minmax(0, 1fr) auto 14px;
   align-items: center;
   gap: 8px;
-  min-height: 28px;
   padding: 4px 6px;
   border-radius: var(--radius-s);
   color: var(--text-normal);
 }
 
-/* A line that cannot be read has no span and no total, so the warning opens it instead. */
-.abyss-time-row.is-broken {
-  grid-template-columns: auto minmax(0, 1fr) 20px;
+/*
+ * The undo row stands in for the session row it replaces, so both are one height: the shared 22px
+ * remove control with the sheet's 4px above and below it.
+ */
+.abyss-time-row,
+.abyss-time-tracking-popover--sessions .abyss-undo-row {
+  min-height: 30px;
 }
 
-/* A 20px slot keeps the row at the 28px the rail's own list uses, with 4px above and below. */
+/* A line that cannot be read has no span and no total, so the warning opens it instead. */
+.abyss-time-row.is-broken {
+  grid-template-columns: auto minmax(0, 1fr) 14px;
+}
+
 .abyss-time-row-remove {
-  width: 20px;
-  height: 20px;
+  margin-inline-start: -8px;
 }
 
 .abyss-time-row:hover {
@@ -10014,7 +10033,7 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 }
 
 .abyss-time-row-note > span + span {
-  margin-inline-start: 6px;
+  margin-inline-start: 8px;
 }
 
 .abyss-time-row-warning {
@@ -10032,9 +10051,25 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   color: var(--text-muted);
 }
 
-.abyss-time-tracking-popover--sessions > .abyss-undo-row {
+.abyss-time-tracking-popover--sessions .abyss-undo-row {
   gap: 6px;
-  padding: 4px 6px;
+  padding: 0 6px;
+}
+
+/*
+ * A pane too narrow for the note to say a word drops it rather than leave a stub of two characters.
+ * The row still carries it as a tooltip, and what is left reads as a span and a total. Under this
+ * width the inspector overlay is `100cqi - 48px`, which leaves the note cell below 60px. A line
+ * that could not be read keeps its text, because that text is the whole point of the row.
+ */
+@container abyss-panel-layout (max-width: 20rem) {
+  .abyss-time-row:not(.is-broken) .abyss-time-row-note {
+    display: none;
+  }
+
+  .abyss-time-row:not(.is-broken) {
+    grid-template-columns: 7.2em minmax(0, 1fr) 14px;
+  }
 }
 
 /*

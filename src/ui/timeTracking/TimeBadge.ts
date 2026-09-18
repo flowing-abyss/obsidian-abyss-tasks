@@ -134,11 +134,10 @@ function paintToggle(session: BadgeSession, view: BadgeElements, model: BadgeMod
   writeTitle(view.toggle, blocked ? FINISHED_TITLE : '');
 }
 
-function paint(session: BadgeSession): void {
+function paint(session: BadgeSession, context = session.options.context()): void {
   const view = session.elements;
   const model = session.model;
   if (view === undefined || model === undefined) return;
-  const context = session.options.context();
   const tracked = formatTrackedDuration(totalMs(model.total, context.nowMs));
   writeText(view.body, tracked);
   writeAttribute(view.body, 'aria-label', `Tracked time ${tracked}`);
@@ -252,7 +251,18 @@ export function mountTimeBadge(options: TimeBadgeOptions): TimeBadgeHandle {
     const sameActive = session.active === state.active;
     session.active = state.active;
     if (!sameActive) return;
-    paint(session);
+    // One read of the clock serves the whole frame, so a second still costs the badge one call.
+    const context = session.options.context();
+    paint(session, context);
+    // The second that crosses local midnight renames every heading the open popover shows, and no
+    // index event has to arrive for that, so the tick that notices the new day rebuilds the list.
+    if (
+      session.model !== undefined &&
+      localDayStartMs(context.nowMs, context.offsetAt) !== session.model.dayStartMs
+    ) {
+      update(session);
+      return;
+    }
     session.popover?.tick();
   });
   return {
