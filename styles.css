@@ -10225,6 +10225,10 @@ body.is-phone.is-mobile .abyss-creation-feedback {
  * The middle column of the row. It takes every pixel the control and the clock leave, and starts
  * its own content at its own edge, so a day holding a sub-task with a parent name lines up with a
  * day that holds none rather than centring the whole list around the longest row.
+ *
+ * It is a button, so it takes its own line rather than a theme's input height. A taller box would
+ * hold its baseline-aligned text at the top and leave the title sitting above the centre the
+ * control and the clock share.
  */
 .abyss-tracked-row .abyss-tracked-row-open {
   display: flex;
@@ -10233,6 +10237,8 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   justify-content: flex-start;
   gap: 6px;
   min-width: 0;
+  height: auto;
+  min-height: 0;
   padding: 0;
   border: none;
   background: transparent;
