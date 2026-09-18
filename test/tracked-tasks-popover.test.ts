@@ -9,12 +9,16 @@ import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
 import {
   configuredTaskApplication,
   createAppWithFiles,
+  cssDeclarationsFor,
   expectDefined,
   flushMicrotasks,
+  loadPluginStyles,
   useRealMoment,
 } from './helpers';
 
 useRealMoment();
+
+const css = await loadPluginStyles();
 
 const OFFSET_MINUTES = 180;
 /** 2026-09-18T14:05:32+03:00, a Friday, the instant every fixture below is written against. */
@@ -389,6 +393,16 @@ describe('tracked tasks popover', () => {
 
     expect(finished.querySelector('.abyss-tracked-row-toggle')).toBeNull();
     expect(finished.querySelector('.abyss-tracked-row-done')).not.toBeNull();
+  });
+
+  it('gives the title button the whole height of its row', () => {
+    const declarations = cssDeclarationsFor(css, '.abyss-tracked-row .abyss-tracked-row-open');
+
+    // Without the stretch the button is one line of text inside a taller row, which leaves a dead
+    // band above and below it that a click on the row passes straight through.
+    expect(declarations).toContain('align-self: stretch');
+    expect(declarations).toContain('align-items: center');
+    expect(declarations).not.toContain('align-items: baseline');
   });
 
   it('takes the keyboard into the list and hands it back on Escape', async () => {

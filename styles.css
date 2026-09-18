@@ -10236,14 +10236,15 @@ body.is-phone.is-mobile .abyss-creation-feedback {
  * its own content at its own edge, so a day holding a sub-task with a parent name lines up with a
  * day that holds none rather than centring the whole list around the longest row.
  *
- * It is a button, so it takes its own line rather than a theme's input height. A taller box would
- * hold its baseline-aligned text at the top and leave the title sitting above the centre the
- * control and the clock share.
+ * It fills the row's own height instead of taking a theme's input height, so the whole row answers
+ * a click rather than only the line of text in the middle of it. Its content is centred inside that
+ * height, which keeps the title level with the control and the clock beside it.
  */
 .abyss-tracked-row .abyss-tracked-row-open {
   display: flex;
   flex: 1 1 auto;
-  align-items: baseline;
+  align-self: stretch;
+  align-items: center;
   justify-content: flex-start;
   gap: 6px;
   min-width: 0;
