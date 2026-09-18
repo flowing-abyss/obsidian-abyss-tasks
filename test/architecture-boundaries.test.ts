@@ -140,6 +140,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   expandRecurrenceReferences: ['src/views/calendarOccurrences.ts'],
   formatCommentTimeLabel: ['src/panels/RightPanel.ts'],
   formatTrackedDuration: ['src/projects/projectTableModel.ts'],
+  formatTrackedDurationWithSeconds: ['src/ui/timeTracking/TimeEntriesPopover.ts'],
   groupTrackedDays: ['src/ui/timeTracking/RailTrackingWidget.ts'],
   localDate: ['src/main.ts'],
   localDayStartMs: [

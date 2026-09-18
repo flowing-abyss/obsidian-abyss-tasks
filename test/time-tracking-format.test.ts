@@ -59,11 +59,11 @@ describe('formatTrackedDuration', () => {
     [59_999, '0m'],
     [MINUTE, '1m'],
     [15 * MINUTE, '15m'],
-    [80 * MINUTE, '1h20m'],
+    [80 * MINUTE, '1h 20m'],
     [HOUR, '1h'],
     [120 * MINUTE, '2h'],
     [HOUR + 59_999, '1h'],
-    [25 * HOUR + MINUTE, '25h1m'],
+    [25 * HOUR + MINUTE, '25h 1m'],
   ])('formats %i ms as %s', (ms, expected) => {
     expect(formatTrackedDuration(ms)).toBe(expected);
   });

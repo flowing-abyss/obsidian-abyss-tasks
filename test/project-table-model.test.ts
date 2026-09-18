@@ -620,7 +620,7 @@ describe('tracked project time', () => {
     const trackedField = expectDefined(fields.find(({ id }) => id === 'tracked'));
 
     expect(projectTableDisplayValues(timed('Busy', 185), trackedField, statuses, NOW_MS)).toEqual([
-      '3h5m',
+      '3h 5m',
     ]);
     expect(projectTableDisplayValues(timed('Quiet', 0), trackedField, statuses, NOW_MS)).toEqual([
       '',
@@ -630,7 +630,7 @@ describe('tracked project time', () => {
   it('searches the displayed total', () => {
     const projects = [timed('Busy', 185), timed('Quiet', 0)];
 
-    expect(model(projects, table(), '3h5m').groups[0]?.projects.map(({ name }) => name)).toEqual([
+    expect(model(projects, table(), '3h 5m').groups[0]?.projects.map(({ name }) => name)).toEqual([
       'Busy',
     ]);
   });

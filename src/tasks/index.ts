@@ -54,6 +54,7 @@ export type { OffsetAt } from './domain/timeEntry';
 export {
   entryDurationMs,
   formatTrackedDuration,
+  formatTrackedDurationWithSeconds,
   groupTrackedDays,
   localDayStartMs,
   openTimersExtraMs,

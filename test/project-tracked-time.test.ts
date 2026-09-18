@@ -357,7 +357,7 @@ describe('tracked time presentation', () => {
     renderProjectDashboard(empty, project(), context);
 
     expect(withTime.querySelector('.abyss-project-time-label')?.textContent).toBe('Time');
-    expect(withTime.querySelector('.abyss-project-time-value')?.textContent).toBe('2h5m');
+    expect(withTime.querySelector('.abyss-project-time-value')?.textContent).toBe('2h 5m');
     expect(empty.querySelector('.abyss-project-time')).toBeNull();
   });
 });

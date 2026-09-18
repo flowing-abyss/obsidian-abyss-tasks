@@ -1501,12 +1501,12 @@ describe('ProjectsTableView', () => {
         host.querySelector<HTMLElement>('.abyss-project-table-row [data-column-id="tracked"]'),
       ).textContent;
 
-    expect(trackedText()).toBe('1h20m');
+    expect(trackedText()).toBe('1h 20m');
 
     vi.setSystemTime(startMs + 81 * 60_000);
     view.update([running]);
 
-    expect(trackedText()).toBe('1h21m');
+    expect(trackedText()).toBe('1h 21m');
   });
 
   it('keeps a held Start resize visible and reorders its focused row on the receipt', async () => {

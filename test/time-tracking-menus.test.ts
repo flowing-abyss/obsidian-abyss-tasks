@@ -256,7 +256,7 @@ describe('list card tracked time indicator', () => {
 
     const badge = expectDefined(timeBadge(cardFor(harness.el, 'Alpha')));
     expect(badge.classList.contains('abyss-task-count-badge')).toBe(true);
-    expect(badge.textContent).toContain('1h35m');
+    expect(badge.textContent).toContain('1h 35m');
     expect(badge.classList.contains('is-tracking')).toBe(false);
     expect(timeBadge(cardFor(harness.el, 'Beta'))).toBeNull();
   });
@@ -268,12 +268,12 @@ describe('list card tracked time indicator', () => {
     const badge = expectDefined(timeBadge(cardFor(harness.el, 'Alpha')));
     expect(badge.classList.contains('is-tracking')).toBe(true);
     expect(badge.dataset['trackingRoot']).toBeDefined();
-    expect(badge.textContent).toContain('1h35m');
+    expect(badge.textContent).toContain('1h 35m');
 
     harness.advance(MINUTE);
     clock.tick();
 
-    expect(expectDefined(timeBadge(cardFor(harness.el, 'Alpha'))).textContent).toContain('1h36m');
+    expect(expectDefined(timeBadge(cardFor(harness.el, 'Alpha'))).textContent).toContain('1h 36m');
   });
 
   it('rewrites a running card only when its displayed minute changes', async () => {
@@ -308,12 +308,12 @@ describe('list card tracked time indicator', () => {
     const badge = expectDefined(timeBadge(cardFor(harness.el, 'Alpha')));
     expect(badge.dataset['trackingRoot']).toBe(taskNodeAddress({ type: 'task', ref: root.ref }));
     expect(badge.classList.contains('is-tracking')).toBe(true);
-    expect(badge.textContent).toContain('1h35m');
+    expect(badge.textContent).toContain('1h 35m');
 
     harness.advance(MINUTE);
     clock.tick();
 
-    expect(expectDefined(timeBadge(cardFor(harness.el, 'Alpha'))).textContent).toContain('1h36m');
+    expect(expectDefined(timeBadge(cardFor(harness.el, 'Alpha'))).textContent).toContain('1h 36m');
   });
 
   it('releases its tick subscription when the panel is destroyed', async () => {

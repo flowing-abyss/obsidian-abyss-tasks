@@ -1,6 +1,7 @@
 import { setIcon } from 'obsidian';
 import {
   entryDurationMs,
+  formatTrackedDurationWithSeconds,
   localDayStartMs,
   taskNodeAddress,
   timeEntryRef,
@@ -16,7 +17,6 @@ import { runAsyncAction } from '../runAsyncAction';
 import {
   formatSessionRange,
   formatTrackedDuration,
-  formatTrackedTicker,
   staleTrackingQuestion,
   type TrackedTimeContext,
 } from './formatTracked';
@@ -135,10 +135,11 @@ function newestFirst(left: SessionRow, right: SessionRow): number {
   return rightMs - leftMs;
 }
 
+/** A running session spells out its seconds, because they are what proves the timer is moving. */
 function durationLabel(entry: TimeEntrySnapshot, nowMs: number): string {
   const elapsed = entryDurationMs(entry, nowMs);
   return entry.state === 'running'
-    ? `+${formatTrackedTicker(elapsed)}`
+    ? `+${formatTrackedDurationWithSeconds(elapsed)}`
     : `+${formatTrackedDuration(elapsed)}`;
 }
 

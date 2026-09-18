@@ -272,8 +272,8 @@ describe('inspector tracked time badge', () => {
   it('sums the node and its sub-tasks over all time', async () => {
     const { el } = await inspector(CLOSED_SESSIONS);
 
-    expect(body(el).textContent).toBe('1h35m');
-    expect(body(el).getAttribute('aria-label')).toBe('Tracked time 1h35m');
+    expect(body(el).textContent).toBe('1h 35m');
+    expect(body(el).getAttribute('aria-label')).toBe('Tracked time 1h 35m');
   });
 
   it('refuses to track a finished task', async () => {
@@ -330,7 +330,7 @@ describe('inspector tracked time badge', () => {
   it('rewrites the running total only when its displayed minute changes', async () => {
     const clock = fakeTickWindow();
     const harness = await inspector(RUNNING_SESSION, 'Current', clock.win);
-    expect(body(harness.el).textContent).toBe('1h35m');
+    expect(body(harness.el).textContent).toBe('1h 35m');
     const observer = new MutationObserver(() => {});
     observer.observe(badge(harness.el), {
       attributes: true,
@@ -344,12 +344,12 @@ describe('inspector tracked time badge', () => {
         clock.tick();
       }
       expect(observer.takeRecords()).toEqual([]);
-      expect(body(harness.el).textContent).toBe('1h35m');
+      expect(body(harness.el).textContent).toBe('1h 35m');
 
       harness.advance(1000);
       clock.tick();
 
-      expect(body(harness.el).textContent).toBe('1h36m');
+      expect(body(harness.el).textContent).toBe('1h 36m');
       expect(observer.takeRecords().length).toBeGreaterThan(0);
     } finally {
       observer.disconnect();
@@ -366,7 +366,7 @@ describe('inspector tracked time badge', () => {
     clock.tick();
 
     expect(mounted.contextReads()).toBe(rendered + 1);
-    expect(body(mounted.host).textContent).toBe('1h36m');
+    expect(body(mounted.host).textContent).toBe('1h 36m');
 
     // An index change reaches the badge through its owner, which re-reads the selection first. The
     // shared ticker emits that frame too, and it emits first, so painting it here would repaint
@@ -445,7 +445,7 @@ describe('inspector tracked time badge', () => {
       activeDocument.body.querySelector<HTMLElement>('.abyss-modal'),
       'Missing modal',
     );
-    expect(body(el).textContent).toBe('1h35m');
+    expect(body(el).textContent).toBe('1h 35m');
 
     toggle(el).click();
     await flushMicrotasks();

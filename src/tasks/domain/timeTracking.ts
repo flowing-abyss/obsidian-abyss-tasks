@@ -1,11 +1,14 @@
 import type { OffsetAt, ParsedTimeEntry } from './timeEntry';
 import type { TaskNodeRef, TaskRef, TaskStatus, TimeEntryRef } from './types';
-import { durationMinutes, formatDurationMinutes } from './valueObjects';
 
 export type { TimeEntryIssue } from './timeEntry';
 
 const MS_PER_DAY = 86_400_000;
 const MS_PER_MINUTE = 60_000;
+const MS_PER_SECOND = 1000;
+const MINUTES_PER_HOUR = 60;
+const SECONDS_PER_MINUTE = 60;
+const SECONDS_PER_HOUR = 3600;
 
 /** One parsed entry line kept next to the source it came from, so writes can find it again. */
 export interface TimeEntrySnapshot extends ParsedTimeEntry {
@@ -91,13 +94,32 @@ function countableMs(ms: number): number {
 }
 
 /**
- * Elapsed time in the compact style every tracked-time surface shows. Part minutes have not been
- * earned yet, so a total floors to whole minutes. This is the one place that turns milliseconds
- * into a label, so the project table, the inspector badge and the task line can never disagree.
+ * Elapsed time the way a reader says it, `0m`, `47m`, `1h` or `17h 37m`. Part minutes have not been
+ * earned yet, so a total floors to whole minutes, and a zero hour is left unsaid rather than padded
+ * into a clock. This is the one place that turns milliseconds into a label, so the project table,
+ * the inspector badge and the task line can never disagree.
  */
 export function formatTrackedDuration(ms: number): string {
   const minutes = Math.floor(countableMs(ms) / MS_PER_MINUTE);
-  return minutes === 0 ? '0m' : formatDurationMinutes(durationMinutes(minutes));
+  const hours = Math.floor(minutes / MINUTES_PER_HOUR);
+  const restMinutes = minutes % MINUTES_PER_HOUR;
+  if (hours === 0) return `${restMinutes}m`;
+  return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`;
+}
+
+/**
+ * The same label down to the second, `12s`, `1m 5s` or `1h 20m 30s`, for the one running row a
+ * popover shows. The seconds are the proof that a timer really is running, so they are spelled out
+ * where a reader is already looking at one session rather than on every total. Minutes are kept
+ * between hours and seconds even at zero, so the units never skip a step.
+ */
+export function formatTrackedDurationWithSeconds(ms: number): string {
+  const seconds = Math.floor(countableMs(ms) / MS_PER_SECOND);
+  const hours = Math.floor(seconds / SECONDS_PER_HOUR);
+  const minutes = Math.floor((seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE);
+  const restSeconds = seconds % SECONDS_PER_MINUTE;
+  if (hours > 0) return `${hours}h ${minutes}m ${restSeconds}s`;
+  return minutes === 0 ? `${restSeconds}s` : `${minutes}m ${restSeconds}s`;
 }
 
 /** Folds one entry into an accumulator so a subtree walk never allocates an intermediate total. */

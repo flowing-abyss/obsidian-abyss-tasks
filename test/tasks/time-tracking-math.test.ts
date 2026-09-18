@@ -4,6 +4,7 @@ import {
   entryDurationMs,
   entryOverlapMs,
   formatTrackedDuration,
+  formatTrackedDurationWithSeconds,
   groupTrackedDays,
   localDayStartMs,
   openTimersExtraMs,
@@ -442,11 +443,13 @@ describe('formatTrackedDuration', () => {
     [59_999, '0m'],
     [M, '1m'],
     [15 * M, '15m'],
-    [80 * M, '1h20m'],
+    [59 * M + 59_999, '59m'],
+    [80 * M, '1h 20m'],
     [H, '1h'],
+    [H + M, '1h 1m'],
     [120 * M, '2h'],
     [H + 59_999, '1h'],
-    [25 * H + M, '25h1m'],
+    [25 * H + M, '25h 1m'],
   ])('formats %i ms as %s', (ms, expected) => {
     expect(formatTrackedDuration(ms)).toBe(expected);
   });
@@ -455,5 +458,27 @@ describe('formatTrackedDuration', () => {
     expect(formatTrackedDuration(-5 * M)).toBe('0m');
     expect(formatTrackedDuration(Number.NaN)).toBe('0m');
     expect(formatTrackedDuration(Number.POSITIVE_INFINITY)).toBe('0m');
+  });
+});
+
+describe('formatTrackedDurationWithSeconds', () => {
+  it.each([
+    [0, '0s'],
+    [999, '0s'],
+    [1000, '1s'],
+    [59_000, '59s'],
+    [65_000, '1m 5s'],
+    [H, '1h 0m 0s'],
+    [H + 30_000, '1h 0m 30s'],
+    [H + 20 * M + 30_000, '1h 20m 30s'],
+    [25 * H + M + 1000, '25h 1m 1s'],
+  ])('formats %i ms as %s', (ms, expected) => {
+    expect(formatTrackedDurationWithSeconds(ms)).toBe(expected);
+  });
+
+  it('reads negative and uncountable totals as no time instead of rejecting them', () => {
+    expect(formatTrackedDurationWithSeconds(-5 * M)).toBe('0s');
+    expect(formatTrackedDurationWithSeconds(Number.NaN)).toBe('0s');
+    expect(formatTrackedDurationWithSeconds(Number.POSITIVE_INFINITY)).toBe('0s');
   });
 });

@@ -180,11 +180,12 @@ function rowShape(row: HTMLElement) {
 
 /** Reads a rendered row duration back into the whole minutes the badge total floors to. */
 function minutesOf(duration: string): number {
-  const clock = /^\+(\d+):(\d{2}):\d{2}$/u.exec(duration);
-  if (clock !== null) return Number(clock[1]) * 60 + Number(clock[2]);
-  const compact = /^\+(?:(\d+)h)?(?:(\d+)m)?$/u.exec(duration);
-  if (compact === null) throw new Error(`Unreadable duration ${duration}`);
-  return Number(compact[1] ?? 0) * 60 + Number(compact[2] ?? 0);
+  const parts = /^\+(?:(\d+)h)?(?: ?(\d+)m)?(?: ?(\d+)s)?$/u.exec(duration);
+  const [, hours, minutes, seconds] = parts ?? [];
+  if (hours === undefined && minutes === undefined && seconds === undefined) {
+    throw new Error(`Unreadable duration ${duration}`);
+  }
+  return Number(hours ?? 0) * 60 + Number(minutes ?? 0);
 }
 
 describe('tracked sessions popover', () => {
@@ -195,9 +196,9 @@ describe('tracked sessions popover', () => {
     const listed = rows(harness.el).map(rowShape);
 
     expect(listed).toEqual([
-      { duration: '+1:35:32', range: 'Today 12:30 →', node: '', tail: '' },
+      { duration: '+1h 35m 32s', range: 'Today 12:30 →', node: '', tail: '' },
       { duration: '+15m', range: 'Today 11:00 → 11:15', node: 'Child', tail: '' },
-      { duration: '+1h20m', range: 'Today 09:12 → 10:32', node: '', tail: '' },
+      { duration: '+1h 20m', range: 'Today 09:12 → 10:32', node: '', tail: '' },
       {
         duration: '+15m',
         range: 'Yesterday 18:40 → 18:55',
@@ -225,7 +226,7 @@ describe('tracked sessions popover', () => {
     const total = listed.reduce((sum, row) => sum + minutesOf(row.duration), 0);
 
     expect(total).toBe(205);
-    expect(harness.el.querySelector('.abyss-time-badge-body')?.textContent).toBe('3h25m');
+    expect(harness.el.querySelector('.abyss-time-badge-body')?.textContent).toBe('3h 25m');
   });
 
   it('reports an untracked task instead of an empty list', async () => {
