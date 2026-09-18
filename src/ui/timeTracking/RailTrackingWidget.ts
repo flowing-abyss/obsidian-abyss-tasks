@@ -120,6 +120,23 @@ function openTimerSinceMs(
   return Math.max(entry.startMs, todayStartMs);
 }
 
+/** The span the index is asked for, the day count it is grouped into, and the day it ends on. */
+interface TrackingWindow {
+  readonly fromMs: number;
+  readonly toMs: number;
+  readonly days: number;
+  readonly todayStartMs: number;
+}
+
+/** One reading of the clock as the span, the grouping and the day every refresh works against. */
+function trackingWindow(context: TrackedTimeContext): TrackingWindow {
+  const { nowMs, offsetAt } = context;
+  return {
+    ...recentTrackingWindow(nowMs, offsetAt),
+    todayStartMs: localDayStartMs(nowMs, offsetAt),
+  };
+}
+
 /**
  * Whether the index handed back the very same entries. Every `TrackedEntry` is rebuilt only when
  * its own file is reindexed, so identity across the window is exactly the question "did anything
@@ -134,14 +151,11 @@ function sameEntries(left: readonly TrackedEntry[], right: readonly TrackedEntry
 function readModel(
   context: TrackedTimeContext,
   entries: readonly TrackedEntry[],
-  todayStartMs: number,
+  window: TrackingWindow,
 ): WidgetModel {
   const { nowMs, offsetAt } = context;
-  const days = groupTrackedDays(entries, {
-    nowMs,
-    offsetAt,
-    days: recentTrackingWindow(nowMs, offsetAt).days,
-  });
+  const { todayStartMs } = window;
+  const days = groupTrackedDays(entries, { nowMs, offsetAt, days: window.days });
   const today = todayOf(days, todayStartMs);
   const current = resumeTarget(entries);
   return {
@@ -337,18 +351,16 @@ function scheduleMidnight(session: WidgetSession, context: TrackedTimeContext): 
 function refresh(session: WidgetSession): void {
   if (session.destroyed) return;
   const context = session.options.context();
-  const { nowMs, offsetAt } = context;
-  const todayStartMs = localDayStartMs(nowMs, offsetAt);
-  const window = recentTrackingWindow(nowMs, offsetAt);
+  const window = trackingWindow(context);
   const entries = session.options.queries.entriesOverlapping(window.fromMs, window.toMs);
   const previous = session.model;
   // Most index events come from a file this window never shows. Reading it back identical is the
   // whole answer, so the days are not regrouped and the open list is not rebuilt under the reader.
-  if (previous?.dayStartMs === todayStartMs && sameEntries(previous.entries, entries)) {
+  if (previous?.dayStartMs === window.todayStartMs && sameEntries(previous.entries, entries)) {
     scheduleMidnight(session, context);
     return;
   }
-  const model = readModel(context, entries, todayStartMs);
+  const model = readModel(context, entries, window);
   session.model = model;
   if (model.empty) {
     clearWidget(session);
