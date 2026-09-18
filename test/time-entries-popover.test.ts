@@ -375,12 +375,69 @@ describe('tracked sessions popover', () => {
     popover(harness.el).scrollTop = 24;
 
     await harness.tasks.execute({
-      type: 'start-tracking',
-      parent: { type: 'task', ref: harness.located('Other').root.ref },
+      type: 'delete-time-entry',
+      entry: {
+        parent: { type: 'task', ref: harness.located('Current').root.ref },
+        relativeLine: 2,
+        originalMarkdown: '  - 2026-09-18T09:12:00+03:00 → 2026-09-18T10:32:00+03:00',
+      },
     });
     await flushMicrotasks();
 
+    // One row fewer proves the list was rebuilt rather than left untouched by the write.
+    expect(rows(harness.el)).toHaveLength(4);
     expect(popover(harness.el).scrollTop).toBe(24);
+  });
+
+  it('follows its anchor when an unrelated write moves the inspector', async () => {
+    const harness = await inspector();
+    open(harness.el);
+    const anchor = expectDefined(
+      harness.el.querySelector<HTMLButtonElement>('.abyss-time-badge-body'),
+    );
+    vi.spyOn(harness.el, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 400, 800));
+    const anchorRect = vi
+      .spyOn(anchor, 'getBoundingClientRect')
+      .mockReturnValue(new DOMRect(10, 100, 50, 20));
+    await harness.touchOtherFile();
+    expect(popover(harness.el).style.getPropertyValue('--abyss-pop-top')).toBe('124px');
+
+    anchorRect.mockReturnValue(new DOMRect(10, 200, 50, 20));
+    await harness.touchOtherFile();
+
+    expect(popover(harness.el).style.getPropertyValue('--abyss-pop-top')).toBe('224px');
+  });
+
+  it('keeps the earlier undo row when the next removal fails', async () => {
+    const harness = await inspector();
+    open(harness.el);
+    expectDefined(
+      rows(harness.el)[1]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    ).click();
+    await flushMicrotasks();
+    expect(popover(harness.el).querySelectorAll('.abyss-undo-row')).toHaveLength(1);
+
+    vi.spyOn(harness.app.vault, 'process').mockRejectedValueOnce(new Error('disk full'));
+    expectDefined(
+      rows(harness.el)[2]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(popover(harness.el).querySelectorAll('.abyss-undo-row')).toHaveLength(1);
+    expect(harness.reported.map((result) => result.type)).toEqual(['io-error']);
+  });
+
+  it('closes with the selection it was opened from', async () => {
+    const harness = await inspector();
+    open(harness.el);
+
+    harness.state.set('taskStack', []);
+
+    expect(harness.el.querySelector('.abyss-time-tracking-popover')).toBeNull();
+
+    harness.select('Current');
+
+    expect(harness.el.querySelector('.abyss-time-tracking-popover')).toBeNull();
   });
 
   it('drops a row whose line the note no longer holds', async () => {

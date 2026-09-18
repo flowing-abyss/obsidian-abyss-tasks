@@ -10024,10 +10024,16 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 }
 
 /* Accent while a timer runs, warning once it has run long enough to look forgotten. */
+.abyss-task-time-badge.is-tracking,
 .abyss-time-badge.is-tracking,
 .abyss-time-row.is-tracking,
 .abyss-rail-tracking.is-tracking {
   color: var(--interactive-accent);
+}
+
+/* A calendar card takes the same accent on the rail it already draws, and carries no total. */
+.tasksCalendar .task.is-tracking {
+  border-inline-start-color: var(--interactive-accent);
 }
 
 .abyss-time-badge.is-stale,

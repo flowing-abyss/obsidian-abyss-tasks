@@ -272,9 +272,12 @@ async function removeSession(
     update(session);
     return;
   }
-  // The row's place is read once the earlier undo row is gone, so it is the place it will land in.
-  session.undo.clear();
-  const index = [...session.element.children].indexOf(rowEl);
+  // The row's place is read with the earlier undo row discounted, because `show` clears that row
+  // before it renders this one. Reading it here rather than clearing first leaves a failed removal
+  // with the undo it was already offering.
+  const index = [...session.element.children]
+    .filter((child) => !child.classList.contains('abyss-undo-row'))
+    .indexOf(rowEl);
   const recovery = await actions.remove(timeEntryRef(current.parent, current.entry));
   if (recovery === undefined || session.closed) return;
   session.undo.show(
@@ -357,11 +360,12 @@ function update(session: PopoverSession): void {
   };
   // A change in another file leaves this node's lines as they were, and only a new day renames a
   // heading, so an unrelated index event neither re-reads the entries nor takes focus off a row.
+  // The placement is still redone, because that same event can have moved the anchor under it.
   if (
     session.rendered?.key === rendered.key &&
     session.rendered.dayStartMs === rendered.dayStartMs
   ) {
-    if (reattached) position(session);
+    position(session);
     return;
   }
   const { scrollTop } = element;

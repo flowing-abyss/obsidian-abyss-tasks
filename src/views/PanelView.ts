@@ -369,6 +369,7 @@ export class PanelView extends ItemView {
     projectStore: ProjectStore,
     projectManager: ProjectManager,
   ): void {
+    const timeTracking = this.createTrackingSurface_abyssPrivate();
     this.rail_abyssPrivate = new RailPanel(
       this.state_abyssPrivate,
       this.app as never,
@@ -404,6 +405,7 @@ export class PanelView extends ItemView {
       this.interactionRegistry_abyssPrivate,
       this.panelNavigation_abyssPrivate,
       this.onSaveViewState_abyssPrivate,
+      timeTracking,
     );
     this.right_abyssPrivate = new RightPanel(
       this.state_abyssPrivate,
@@ -418,7 +420,7 @@ export class PanelView extends ItemView {
       },
       this.commentTimeContext_abyssPrivate,
       this.interactionRegistry_abyssPrivate,
-      this.createTrackingSurface_abyssPrivate(),
+      timeTracking,
     );
   }
 

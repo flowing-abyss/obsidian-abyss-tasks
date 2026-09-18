@@ -21,6 +21,7 @@ import { StatusRegistry } from './status/StatusRegistry';
 import { TagManager } from './tags/TagManager';
 import {
   localDate,
+  resumeTarget,
   type TaskApplicationApi,
   type TaskCaptureApplicationApi,
   type TaskDependencyQueryApi,
@@ -44,7 +45,13 @@ import { ObsidianTaskRepository } from './tasks/infrastructure/obsidian/Obsidian
 import { TaskIndex } from './tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from './tasks/infrastructure/TaskRefAuthority';
 import { CalendarRenderer } from './ui/CalendarRenderer';
+import { presentTaskCommandResult } from './ui/taskCommandResult';
+import { createTrackingActions } from './ui/timeTracking/trackingActions';
 import { PANEL_VIEW_TYPE, PanelView } from './views/PanelView';
+
+/** How far back the palette command looks for the task it offers to resume. */
+const RESUME_WINDOW_MS = 7 * 86_400_000;
+const NO_RESUME_TARGET = 'There is no recent task to resume';
 
 export default class TaskCalendarPlugin extends Plugin {
   override settings!: CalendarSettings;
@@ -181,6 +188,32 @@ export default class TaskCalendarPlugin extends Plugin {
         await this.openPanel();
       },
     });
+    this.addCommand({
+      id: 'toggle-time-tracking',
+      name: 'Pause or resume time tracking',
+      callback: async () => {
+        await this.toggleTimeTracking();
+      },
+    });
+  }
+
+  /**
+   * One key for the whole timer. Something running is paused, and an idle vault picks up the task
+   * that was tracked most recently, as long as it is still a task somebody can work on.
+   */
+  private async toggleTimeTracking(): Promise<void> {
+    const actions = createTrackingActions(this.tasks, presentTaskCommandResult);
+    if (this.queries.activeEntries().length > 0) {
+      await actions.pause();
+      return;
+    }
+    const nowMs = Date.now();
+    const recent = resumeTarget(this.queries.entriesOverlapping(nowMs - RESUME_WINDOW_MS, nowMs));
+    if (recent === undefined || recent.status === 'done' || recent.status === 'cancelled') {
+      new Notice(NO_RESUME_TARGET);
+      return;
+    }
+    await actions.start(recent.target);
   }
 
   private initializeIndexWhenReady(): void {

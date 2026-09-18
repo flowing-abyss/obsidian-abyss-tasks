@@ -1,7 +1,7 @@
 import { Notice, Platform, type App, type Component } from 'obsidian';
 import type { LinkToken } from '../markdown/links';
 import type { StatusRegistry } from '../status/StatusRegistry';
-import type { TaskSnapshot } from '../tasks';
+import { subtreeTotal, type TaskSnapshot } from '../tasks';
 import { isForecastCalendarTask } from '../views/calendarOccurrences';
 import { attachLongPress } from './MobileTouch';
 import { recurrenceBadgeInput, renderRecurrenceBadge } from './recurrence/renderRecurrenceBadge';
@@ -103,6 +103,14 @@ function createCardIcon(task: TaskSnapshot, taskIcon: string): HTMLElement {
   return icon;
 }
 
+/**
+ * Whether a timer is open anywhere under this card. A forecast occurrence has not happened yet, so
+ * it never reads as tracking even though it still carries its source's sub-tasks.
+ */
+function trackingNow(task: TaskSnapshot): boolean {
+  return !isForecastCalendarTask(task) && subtreeTotal(task).openStartsMs.length > 0;
+}
+
 function attachTaskBodyContextMenu(
   content: HTMLElement,
   task: TaskSnapshot,
@@ -138,6 +146,9 @@ export function createTaskCard(
   div.setAttribute('data-task-text', task.title);
   div.setAttribute('title', task.title);
   if (task.planning.due != null) div.setAttribute('data-due', task.planning.due);
+  // A passive marker only: the calendar card carries no total and subscribes to no tick, so a
+  // render reads the snapshot it was handed and nothing repaints between index changes.
+  if (trackingNow(task)) div.addClass('is-tracking');
 
   // Inner wrapper
   const inner = createFragment().createDiv();

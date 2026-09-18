@@ -120,14 +120,22 @@ outcome says so. Starting on a node that is already tracking writes nothing to t
 done or cancelled node is refused.
 
 Presentation reads those lines through one tick per owning surface. `PanelView` and `TaskModal`
-each build a `TrackingTicker` and a `TrackingActions` write boundary and hand them to the
-`RightPanel` they host, together with the device wall clock every label is read against. The ticker
+each build a `TrackingTicker` and a `TrackingActions` write boundary and hand them on, together
+with the device wall clock every label is read against; `PanelView` hands its one surface to both
+the `CenterPanel` and the `RightPanel` it hosts, so the whole panel shares a single tick. The ticker
 re-reads the active entries only when the index reports a change and runs its one-second interval
 only while something is running and a surface is listening. The inspector badge keeps the total it
 read at that change, so a tick is one addition and never a query, and it writes to the DOM only
 when the formatted text differs. The badge outlives one inspector render: the chips row is rebuilt
 on every index change, while the sessions popover the badge owns has to survive the write it just
 made, the way the inline undo row already does.
+
+The other tracking surfaces are passive. A list card carries a count badge with its subtree total,
+and while that subtree runs the card keeps the total it read so the panel's one subscription
+repaints only the running roots, found by the `data-tracking-root` address the badge carries. A
+calendar card reads the same snapshot for a running marker and subscribes to nothing. Starting and
+pausing are offered wherever a node already has a context menu, and the `toggle-time-tracking`
+command pauses whatever runs or resumes the most recently tracked task of the last seven days.
 
 Completing or cancelling a node closes the entries still running in its subtree as a follow-up
 write with the same clock reading, inside the same serialized mutation. That write never changes

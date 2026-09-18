@@ -124,7 +124,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TimeEntrySnapshot: ['src/views/calendarOccurrences.ts'],
   TimeTrackingQueryApi: ['src/main.ts'],
   TrackedEntry: ['src/ui/timeTracking/TrackingTicker.ts'],
-  TrackedTotal: ['src/ui/timeTracking/TimeBadge.ts'],
+  TrackedTotal: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/CenterPanel.ts'],
   daysBetweenLocalDates: ['src/panels/CenterPanel.ts', 'src/views/timegrid/dragGeometry.ts'],
   cloneTaskSnapshot: ['src/app/AppState.ts'],
   durationMinutes: ['src/panels/CenterPanel.ts'],
@@ -136,6 +136,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   localDayStartMs: ['src/ui/timeTracking/formatTracked.ts'],
   localTime: ['src/panels/CenterPanel.ts'],
   parseRecurrenceRule: ['src/ui/recurrence/RecurrenceEditor.ts'],
+  resumeTarget: ['src/main.ts'],
   sameTaskTreeExceptDependencies: ['src/ui/taskSelection.ts'],
   dependencySubtaskChild: ['src/ui/ownedTaskSelection.ts'],
   sameTaskTreeWithOwnedChanges: ['src/ui/ownedTaskSelection.ts'],
@@ -143,14 +144,20 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   taskNodeAddress: [
     'src/ui/timeTracking/TimeBadge.ts',
     'src/ui/timeTracking/TimeEntriesPopover.ts',
+    'src/panels/CenterPanel.ts',
   ],
   sameTaskNodeRef: ['src/panels/RightPanel.ts'],
   shiftLocalDate: ['src/ui/timedBlockKeyboardQueue.ts'],
   shiftLocalDayStartMs: ['src/ui/timeTracking/formatTracked.ts'],
-  subtreeTotal: ['src/ui/timeTracking/TimeBadge.ts'],
+  subtreeTotal: [
+    'src/ui/timeTracking/TimeBadge.ts',
+    'src/panels/CenterPanel.ts',
+    'src/panels/RightPanel.ts',
+    'src/ui/TaskCard.ts',
+  ],
   taskReconciliationKey: ['src/ui/taskPresentationIdentity.ts'],
   timeEntryRef: ['src/ui/timeTracking/TimeEntriesPopover.ts'],
-  totalMs: ['src/ui/timeTracking/TimeBadge.ts'],
+  totalMs: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/CenterPanel.ts'],
 };
 
 const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string[]> = {

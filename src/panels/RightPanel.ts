@@ -14,6 +14,7 @@ import {
   localDate,
   localTime,
   sameTaskNodeRef,
+  subtreeTotal,
   type CommentRef,
   type CommentTimeContext,
   type CommentTimeContextProvider,
@@ -1083,6 +1084,9 @@ export class RightPanel {
     const stack = this.state_abyssPrivate.get('taskStack');
     const task = stack[stack.length - 1];
     if (task === undefined) {
+      // Nothing is selected, so the badge is not re-placed and the popover it owns would otherwise
+      // outlive the selection it was opened from, listeners and all.
+      this.timeBadge_abyssPrivate?.closePopover();
       this.renderEmpty_abyssPrivate();
       this.renderDetachedDraftTray_abyssPrivate();
       return;
@@ -3626,6 +3630,8 @@ export class RightPanel {
       },
     );
 
+    this.addTrackingMenuItem_abyssPrivate(menu, task);
+
     this.createContextMenuItem_abyssPrivate(
       menu,
       'abyss-context-item abyss-context-danger',
@@ -3646,6 +3652,31 @@ export class RightPanel {
     this.positionAnchoredSurface_abyssPrivate(menu, anchor, 'below-end');
     this.dismissMenuOnOutsideClick_abyssPrivate(menu, anchor);
     editRepeat.focus({ preventScroll: true });
+  }
+
+  /**
+   * Start or pause the timer on the node the menu belongs to, which is the task or the sub-task
+   * the inspector is showing. A finished node is refused unless something under it is still
+   * running, which is the one case that still needs a way to stop.
+   */
+  private addTrackingMenuItem_abyssPrivate(menu: HTMLElement, task: TaskLike): void {
+    const tracking = this.timeTracking_abyssPrivate;
+    if (tracking === undefined) return;
+    const running = subtreeTotal(task).openStartsMs.length > 0;
+    if (!running && (task.status === 'done' || task.status === 'cancelled')) return;
+    this.createContextMenuItem_abyssPrivate(
+      menu,
+      'abyss-context-item',
+      running ? 'Pause tracking' : 'Start tracking',
+      () => {
+        this.removeAnchoredSurface_abyssPrivate(menu);
+        const target = this.trackingNode_abyssPrivate()?.ref ?? taskNodeRef(task);
+        runAsyncAction(
+          running ? tracking.actions.pause() : tracking.actions.start(target),
+          'Could not change time tracking',
+        );
+      },
+    );
   }
 
   private recurrenceStackFor_abyssPrivate(task: TaskLike): readonly TaskLike[] {

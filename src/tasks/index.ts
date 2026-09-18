@@ -53,6 +53,7 @@ export type { OffsetAt } from './domain/timeEntry';
 export {
   entryDurationMs,
   localDayStartMs,
+  resumeTarget,
   shiftLocalDayStartMs,
   subtreeTotal,
   taskNodeAddress,

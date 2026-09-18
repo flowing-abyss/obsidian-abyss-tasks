@@ -49,7 +49,7 @@
     ]
   },
   "release": {
-    "mainJsBudgetBytes": 1048576,
+    "mainJsBudgetBytes": 1052672,
     "stylesCssBudgetBytes": 174080
   },
   "keywords": [

@@ -27,6 +27,9 @@ import {
   localDate,
   localTime,
   shiftLocalDate,
+  subtreeTotal,
+  taskNodeAddress,
+  totalMs,
   type CommentTimeContextProvider,
   type LocalDate,
   type TaskApplicationApi,
@@ -37,6 +40,7 @@ import {
   type TaskRef,
   type TaskSnapshot,
   type TaskStatusType,
+  type TrackedTotal,
 } from '../tasks';
 import { showDatePickerPopover } from '../ui/DatePickerPopover';
 import { LinkEditModal } from '../ui/LinkEditModal';
@@ -83,6 +87,9 @@ import { openInFile } from '../ui/taskNavigation';
 import { startTaskNodeDrag } from '../ui/taskNodeDrag';
 import { applyTaskPresentationIdentity } from '../ui/taskPresentationIdentity';
 import { rootTaskRef, taskNodeLine } from '../ui/taskSelection';
+import type { TrackingSurface } from '../ui/timeTracking/TimeBadge';
+import type { TrackingTickerState } from '../ui/timeTracking/TrackingTicker';
+import { formatTrackedDuration } from '../ui/timeTracking/formatTracked';
 import { TimedBlockKeyboardQueue } from '../ui/timedBlockKeyboardQueue';
 import { MonthGridView } from '../views/MonthGridView';
 import { TodayView } from '../views/TodayView';
@@ -230,7 +237,19 @@ type CenterPanelConstructorArgs = [
   interactionOwnership?: InteractionOwnershipPort,
   navigation?: PanelNavigationActions,
   onSaveViewState?: () => Promise<void>,
+  timeTracking?: TrackingSurface,
 ];
+
+/** One rendered card badge a tick can repaint without asking the index anything again. */
+interface RunningCardBadge {
+  readonly total: TrackedTotal;
+  readonly value: HTMLElement;
+}
+
+/** How a card badge names the root a running entry belongs to, for the tick that repaints it. */
+function trackingRootAddress(ref: TaskRef): string {
+  return taskNodeAddress({ type: 'task', ref });
+}
 
 function isRealmHTMLElement(target: EventTarget | null): target is HTMLElement {
   if (target == null || !('ownerDocument' in target)) return false;
@@ -351,6 +370,10 @@ export class CenterPanel {
   ) => void;
   private readonly onRenderComplete_abyssPrivate: (root: HTMLElement) => void;
   private readonly interactionOwnership_abyssPrivate: InteractionOwnershipPort;
+  private readonly timeTracking_abyssPrivate: TrackingSurface | undefined;
+  /** The running card badges of the current render, keyed by the root address a tick looks up. */
+  private readonly runningCardBadges_abyssPrivate = new Map<string, RunningCardBadge>();
+  private trackingUnsubscribe_abyssPrivate: (() => void) | undefined;
 
   constructor(...args: CenterPanelConstructorArgs) {
     const [
@@ -370,6 +393,7 @@ export class CenterPanel {
       interactionOwnership = noInteractionOwnership,
       navigation,
       onSaveViewState = async () => {},
+      timeTracking,
     ] = args;
     this.state_abyssPrivate = state;
     this.app_abyssPrivate = app;
@@ -385,6 +409,7 @@ export class CenterPanel {
     this.onCreationResult_abyssPrivate = onCreationResult;
     this.onRenderComplete_abyssPrivate = onRenderComplete;
     this.interactionOwnership_abyssPrivate = interactionOwnership;
+    this.timeTracking_abyssPrivate = timeTracking;
     this.captureApplication_abyssPrivate = captureApplication ?? null;
     this.captureTargets_abyssPrivate =
       this.captureApplication_abyssPrivate != null
@@ -467,6 +492,7 @@ export class CenterPanel {
     this.initializeOwnedUi_abyssPrivate(container.ownerDocument);
     this.initializeListViewState_abyssPrivate();
     this.subscribeToState_abyssPrivate();
+    this.subscribeToTracking_abyssPrivate();
     this.render_abyssPrivate();
     this.el.setAttribute('tabindex', '0');
     this.mountKeyboardNavigation_abyssPrivate();
@@ -761,6 +787,9 @@ export class CenterPanel {
   }
 
   destroy(): void {
+    this.trackingUnsubscribe_abyssPrivate?.();
+    this.trackingUnsubscribe_abyssPrivate = undefined;
+    this.runningCardBadges_abyssPrivate.clear();
     this.endTaskDrag_abyssPrivate?.();
     this.completionConfirmationAbortController_abyssPrivate.abort();
     this.cancelActiveCapture_abyssPrivate();
@@ -2410,12 +2439,66 @@ export class CenterPanel {
         String(task.presentation.linkCount),
       );
     }
+    this.renderTrackedTimeBadge_abyssPrivate(titleRow, task);
   }
 
-  private renderTaskCountBadge_abyssPrivate(host: HTMLElement, icon: string, text: string): void {
-    const badge = host.createSpan({ cls: 'abyss-task-count-badge' });
+  private renderTaskCountBadge_abyssPrivate(
+    host: HTMLElement,
+    icon: string,
+    text: string,
+    cls = 'abyss-task-count-badge',
+  ): { readonly badge: HTMLElement; readonly value: HTMLElement } {
+    const badge = host.createSpan({ cls });
     setIcon(badge, icon);
-    badge.createSpan({ text });
+    return { badge, value: badge.createSpan({ text }) };
+  }
+
+  /**
+   * Tracked time on a card, as a passive reading of the snapshot the render was handed. A running
+   * subtree keeps its total here so the shared tick is one addition per running root and one DOM
+   * write per displayed minute, never a walk of the list or a question to the index.
+   */
+  private renderTrackedTimeBadge_abyssPrivate(titleRow: HTMLElement, task: TaskSnapshot): void {
+    const tracking = this.timeTracking_abyssPrivate;
+    if (tracking === undefined || isForecastCalendarTask(task)) return;
+    const total = subtreeTotal(task);
+    const running = total.openStartsMs.length > 0;
+    const tracked = totalMs(total, tracking.context().nowMs);
+    if (!running && tracked <= 0) return;
+    const { badge, value } = this.renderTaskCountBadge_abyssPrivate(
+      titleRow,
+      'timer',
+      formatTrackedDuration(tracked),
+      `abyss-task-count-badge abyss-task-time-badge${running ? ' is-tracking' : ''}`,
+    );
+    if (!running) return;
+    const address = trackingRootAddress(task.ref);
+    badge.dataset['trackingRoot'] = address;
+    this.runningCardBadges_abyssPrivate.set(address, { total, value });
+  }
+
+  /** One subscription per panel repaints the running roots, and only those. */
+  private subscribeToTracking_abyssPrivate(): void {
+    const tracking = this.timeTracking_abyssPrivate;
+    if (tracking === undefined) return;
+    this.trackingUnsubscribe_abyssPrivate = tracking.ticker.subscribe((state) => {
+      this.paintRunningCardBadges_abyssPrivate(state);
+    });
+  }
+
+  private paintRunningCardBadges_abyssPrivate({ nowMs, active }: TrackingTickerState): void {
+    const badges = this.runningCardBadges_abyssPrivate;
+    if (badges.size === 0) return;
+    // A render replaces its cards, so the badges of the previous one are dropped as they are found.
+    for (const [address, badge] of badges) {
+      if (!badge.value.isConnected) badges.delete(address);
+    }
+    for (const entry of active) {
+      const badge = badges.get(trackingRootAddress(entry.root));
+      if (badge === undefined) continue;
+      const tracked = formatTrackedDuration(totalMs(badge.total, nowMs));
+      if (badge.value.textContent !== tracked) badge.value.setText(tracked);
+    }
   }
 
   private renderTaskDescription_abyssPrivate(card: HTMLElement, task: TaskSnapshot): void {
@@ -2844,6 +2927,8 @@ export class CenterPanel {
         });
     });
 
+    this.addTrackingMenuItem_abyssPrivate(menu, task);
+
     menu.addItem((item) =>
       item
         .setTitle('Open in note')
@@ -2861,6 +2946,31 @@ export class CenterPanel {
         .setSection('danger')
         .onClick(() => {
           runAsyncAction(this.deleteTask_abyssPrivate(task));
+        }),
+    );
+  }
+
+  /**
+   * Start or pause the timer on the card the menu was opened from. A forecast occurrence has no
+   * line to write to, and a finished node is refused unless something under it is still running,
+   * which is the one case that still needs a way to stop.
+   */
+  private addTrackingMenuItem_abyssPrivate(menu: Menu, task: TaskSnapshot): void {
+    const tracking = this.timeTracking_abyssPrivate;
+    const target = calendarMutationTarget(task);
+    if (tracking === undefined || target === undefined) return;
+    const running = subtreeTotal(task).openStartsMs.length > 0;
+    if (!running && (task.status === 'done' || task.status === 'cancelled')) return;
+    menu.addItem((item) =>
+      item
+        .setTitle(running ? 'Pause tracking' : 'Start tracking')
+        .setIcon(running ? 'pause' : 'play')
+        .setSection('actions')
+        .onClick(() => {
+          runAsyncAction(
+            running ? tracking.actions.pause() : tracking.actions.start(target),
+            'Could not change time tracking',
+          );
         }),
     );
   }
