@@ -25,6 +25,7 @@ import {
   type TaskCaptureApplicationApi,
   type TaskDependencyQueryApi,
   type TaskQueryApi,
+  type TimeTrackingQueryApi,
 } from './tasks';
 import { TaskApplicationService } from './tasks/application/TaskApplicationService';
 import {
@@ -48,7 +49,7 @@ import { PANEL_VIEW_TYPE, PanelView } from './views/PanelView';
 export default class TaskCalendarPlugin extends Plugin {
   override settings!: CalendarSettings;
   tagManager!: TagManager;
-  queries!: TaskQueryApi & TaskDependencyQueryApi;
+  queries!: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
   tasks!: TaskApplicationApi & TaskCaptureApplicationApi;
   private taskIndex!: TaskIndex;
   private statusCatalog!: StatusCatalog;

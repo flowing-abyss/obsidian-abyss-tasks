@@ -122,6 +122,9 @@ const cases = {
     command: { type: 'delete-comment', comment },
     target: { type: 'comment', ref: comment },
   },
+  // Orchestrated tracking owns no single root write, so a `parent` field stays rootless.
+  'start-tracking': { command: { type: 'start-tracking', parent: child }, target: undefined },
+  'stop-tracking': { command: { type: 'stop-tracking' }, target: undefined },
   'delete-time-entry': {
     command: { type: 'delete-time-entry', entry },
     target: { type: 'time-entry', ref: entry },

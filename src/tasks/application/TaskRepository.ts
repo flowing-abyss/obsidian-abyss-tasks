@@ -38,6 +38,7 @@ export type TaskEditCommand =
       | { readonly type: 'add-comment' }
       | { readonly type: 'add-subtask' }
       | { readonly type: 'create-dependency-subtask' }
+      | { readonly type: 'start-tracking' | 'stop-tracking' }
       | {
           readonly type:
             'add-dependency' | 'remove-dependency' | 'restore-dependency' | 'reverse-dependency';

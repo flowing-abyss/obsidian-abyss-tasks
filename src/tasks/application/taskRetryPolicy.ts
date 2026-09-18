@@ -34,7 +34,6 @@ export type RetryPolicy =
   'commutative' | 'field-compare' | 'exact-target' | 'relocation-only' | 'never';
 
 export interface PreparedMutation {
-  readonly publicCommand: TaskCommand;
   readonly repositoryRequest:
     TaskEditRequest | RecurrenceCompletionRevisionRequest | TaskMoveRequest;
   readonly base: TaskSnapshot;
@@ -167,7 +166,8 @@ export function recurrenceCompletionPreconditionHolds(
   );
 }
 
-function rebaseEditCommand(command: TaskEditCommand, root: TaskRef): TaskEditCommand {
+/** Re-anchors an internal edit on another generation of its root; the caller proves the retry. */
+export function rebaseTaskEditCommand(command: TaskEditCommand, root: TaskRef): TaskEditCommand {
   if (isDependencyMetadataCommand(command)) {
     return { ...command, target: rebaseTaskNode(command.target, root) };
   }
@@ -397,7 +397,7 @@ function fieldPreconditionHolds(
   current: TaskSnapshot,
 ): boolean {
   const previousTarget = nodeForCommand(previous, command);
-  const currentTarget = nodeForCommand(current, rebaseEditCommand(command, current.ref));
+  const currentTarget = nodeForCommand(current, rebaseTaskEditCommand(command, current.ref));
   if (previousTarget == null || currentTarget == null) return false;
   if (command.type === 'patch') {
     return patchPreconditionHolds(command, previousTarget, currentTarget);
@@ -615,7 +615,7 @@ function exactTargetPreconditionHolds(
   previous: TaskSnapshot,
   current: TaskSnapshot,
 ): boolean {
-  const rebased = rebaseEditCommand(command, current.ref);
+  const rebased = rebaseTaskEditCommand(command, current.ref);
   const previousTarget = nodeForCommand(previous, command);
   const currentTarget = nodeForCommand(current, rebased);
   if (previousTarget == null || currentTarget == null) return false;
@@ -652,7 +652,7 @@ function retryEdit(
       case 'commutative':
         return Boolean(
           nodeForCommand(previous, command) != null &&
-          nodeForCommand(current, rebaseEditCommand(command, current.ref)),
+          nodeForCommand(current, rebaseTaskEditCommand(command, current.ref)),
         );
       case 'field-compare':
         return fieldPreconditionHolds(command, previous, current);
@@ -665,7 +665,7 @@ function retryEdit(
     }
   })();
   if (!allowed) return { type: 'unsafe' };
-  let rebasedCommand = rebaseEditCommand(command, current.ref);
+  let rebasedCommand = rebaseTaskEditCommand(command, current.ref);
   if (command.type === 'set-status') {
     const target = reconcileTaskNodeRef(previous, current, command.target);
     if (target === undefined) return { type: 'unsafe' };

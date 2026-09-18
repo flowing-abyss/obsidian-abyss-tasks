@@ -204,6 +204,26 @@ for (const authority of [false, true]) {
       }
     });
 
+    it('rejects a blank restoration payload before any write', async () => {
+      const stack = await stackFor(authority);
+      try {
+        const result = await stack.tasks.execute({
+          type: 'restore-time-entry',
+          parent: taskNode(rootOf(stack)),
+          markdown: '   ',
+          relativeLine: 1,
+        });
+
+        expect(result).toEqual({
+          type: 'invalid',
+          issues: [{ code: 'invalid-target', field: 'time-entry' }],
+        });
+        expect(await read(stack.app)).toBe(SOURCE);
+      } finally {
+        stack.index.destroy();
+      }
+    });
+
     it('rejects a multi-line restoration payload before any write', async () => {
       const stack = await stackFor(authority);
       try {

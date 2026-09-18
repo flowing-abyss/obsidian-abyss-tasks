@@ -16,13 +16,24 @@ type RootlessCommand = Extract<
       | 'add-dependency'
       | 'remove-dependency'
       | 'restore-dependency'
-      | 'reverse-dependency';
+      | 'reverse-dependency'
+      | 'start-tracking'
+      | 'stop-tracking';
   }
 >;
 export type RootedTaskCommand = Exclude<TaskCommand, RootlessCommand>;
 
+/**
+ * Orchestrated commands own no single root write, so they are checked by type before any shape
+ * test. `start-tracking` carries a `parent` like `add-comment` and would otherwise look rooted.
+ */
 function isRootless(command: TaskCommand): command is RootlessCommand {
-  return command.type === 'create' || 'dependent' in command;
+  return (
+    command.type === 'create' ||
+    command.type === 'start-tracking' ||
+    command.type === 'stop-tracking' ||
+    'dependent' in command
+  );
 }
 
 /** A comment and a time entry are nested lines owned by a node, not nodes in their own right. */

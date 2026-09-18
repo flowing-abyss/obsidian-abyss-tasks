@@ -1,0 +1,490 @@
+import type { App } from 'obsidian';
+import { TFile } from 'obsidian';
+import { describe, expect, it, vi } from 'vitest';
+import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
+import type { TaskDiagnosticSink } from '../../src/tasks/application/TaskDependencyService';
+import { MINIMUM_TRACKED_MS } from '../../src/tasks/application/TimeTrackingService';
+import { clockFrom, systemClock, type Clock } from '../../src/tasks/domain/clock';
+import type { TrackedEntry } from '../../src/tasks/domain/timeTracking';
+import type { SubtaskSnapshot, TaskNodeRef, TaskSnapshot } from '../../src/tasks/domain/types';
+import {
+  configuredTaskApplication,
+  createAppWithFiles,
+  expectDefined,
+  useRealMoment,
+} from '../helpers';
+
+useRealMoment();
+
+const OFFSET_MINUTES = 180;
+const SECOND = 1000;
+const SHORT_SESSION_MS = MINIMUM_TRACKED_MS / 2;
+const LONG_SESSION_MS = MINIMUM_TRACKED_MS + SECOND;
+/** 2026-09-18T14:05:32+03:00, the instant every fixture below is written against. */
+const NOW_MS = Date.UTC(2026, 8, 18, 11, 5, 32);
+
+function atomAt(offsetMs: number): string {
+  return clockFrom(NOW_MS + offsetMs, OFFSET_MINUTES).read().atom;
+}
+
+const NOW_ATOM = atomAt(0);
+const HOUR_AGO_ATOM = '2026-09-18T13:00:00+03:00';
+const EARLIER_ATOM = '2026-09-18T12:30:00+03:00';
+
+interface TestClock extends Clock {
+  advance(milliseconds: number): void;
+}
+
+/** A clock the test drives, so no assertion depends on the machine's wall time or zone. */
+function testClock(): TestClock {
+  let nowMs = NOW_MS;
+  const clock = systemClock(
+    () => nowMs,
+    () => OFFSET_MINUTES,
+  );
+  return {
+    read: () => clock.read(),
+    advance: (milliseconds) => {
+      nowMs += milliseconds;
+    },
+  };
+}
+
+type Stack = ReturnType<typeof configuredTaskApplication> & {
+  readonly app: App;
+  readonly clock: TestClock;
+};
+
+interface StackOptions {
+  readonly authority?: boolean;
+  readonly diagnostics?: TaskDiagnosticSink;
+}
+
+async function stackFor(files: Record<string, string>, options: StackOptions = {}): Promise<Stack> {
+  const app = await createAppWithFiles(files);
+  const clock = testClock();
+  const authority = options.authority ?? true;
+  const stack = configuredTaskApplication(app, DEFAULT_SETTINGS, {
+    authority,
+    clock,
+    ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
+  });
+  await stack.index.initialize();
+  if (authority) {
+    for (const [path, content] of Object.entries(files)) {
+      stack.index.installCommittedContent(path, content);
+    }
+  }
+  return { ...stack, app, clock };
+}
+
+async function read(app: App, path: string): Promise<string> {
+  const file = app.vault.getAbstractFileByPath(path);
+  if (!(file instanceof TFile)) throw new Error(`missing ${path}`);
+  return await app.vault.read(file);
+}
+
+function rootsIn(stack: Stack, path: string): readonly TaskSnapshot[] {
+  return stack.index.list().filter((task) => task.source.filePath === path);
+}
+
+function rootIn(stack: Stack, path: string): TaskSnapshot {
+  return expectDefined(rootsIn(stack, path)[0], `missing root in ${path}`);
+}
+
+function taskNode(root: TaskSnapshot): TaskNodeRef {
+  return { type: 'task', ref: root.ref };
+}
+
+function subtaskNode(child: SubtaskSnapshot): TaskNodeRef {
+  return { type: 'subtask', ref: child.ref };
+}
+
+function childOf(root: TaskSnapshot): SubtaskSnapshot {
+  return expectDefined(root.subtasks[0]);
+}
+
+function active(stack: Stack): readonly TrackedEntry[] {
+  return stack.tasks.queries.activeEntries();
+}
+
+function activeTitles(stack: Stack): readonly string[] {
+  return active(stack).map((entry) => entry.title);
+}
+
+/** Rejects the vault write for one path so an orchestration step fails without touching others. */
+function failWritesTo(app: App, path: string): void {
+  const original = app.vault.process.bind(app.vault);
+  vi.spyOn(app.vault, 'process').mockImplementation(async (file, fn, options) => {
+    if (file.path === path) throw new Error('disk full');
+    return await original(file, fn, options);
+  });
+}
+
+/** Rejects every vault write after the first, so a follow-up write fails on its own. */
+function failWritesAfterFirst(app: App): void {
+  const original = app.vault.process.bind(app.vault);
+  let writes = 0;
+  vi.spyOn(app.vault, 'process').mockImplementation(async (file, fn, options) => {
+    writes += 1;
+    if (writes > 1) throw new Error('disk full');
+    return await original(file, fn, options);
+  });
+}
+
+describe('time tracking orchestration', () => {
+  it('writes the canonical open entry under an idle task', async () => {
+    expect(NOW_ATOM).toBe('2026-09-18T14:05:32+03:00');
+    const stack = await stackFor({ 'a.md': '- [ ] Alpha\n' });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'start-tracking',
+        parent: taskNode(rootIn(stack, 'a.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', changed: true });
+      expect(await read(stack.app, 'a.md')).toBe(`- [ ] Alpha\n  - ${NOW_ATOM} →\n`);
+      expect(activeTitles(stack)).toEqual(['Alpha']);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('closes a timer in another file before opening the new one', async () => {
+    const stack = await stackFor({
+      'a.md': `- [ ] Alpha\n  - ${HOUR_AGO_ATOM} →\n`,
+      'b.md': '- [ ] Bravo\n',
+    });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'start-tracking',
+        parent: taskNode(rootIn(stack, 'b.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', changed: true });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `- [ ] Alpha\n  - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n`,
+      );
+      expect(await read(stack.app, 'b.md')).toBe(`- [ ] Bravo\n  - ${NOW_ATOM} →\n`);
+      expect(activeTitles(stack)).toEqual(['Bravo']);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('rebases the second write when both nodes share one root block', async () => {
+    const stack = await stackFor({
+      'a.md': `- [ ] Bravo\n  - [ ] Alpha\n    - ${HOUR_AGO_ATOM} →\n`,
+    });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'start-tracking',
+        parent: taskNode(rootIn(stack, 'a.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', changed: true });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `- [ ] Bravo\n  - [ ] Alpha\n    - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n  - ${NOW_ATOM} →\n`,
+      );
+      expect(activeTitles(stack)).toEqual(['Bravo']);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('leaves a node that is already tracking untouched', async () => {
+    const source = `- [ ] Alpha\n  - ${HOUR_AGO_ATOM} →\n`;
+    const stack = await stackFor({ 'a.md': source });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'start-tracking',
+        parent: taskNode(rootIn(stack, 'a.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', changed: false });
+      expect(await read(stack.app, 'a.md')).toBe(source);
+      expect(activeTitles(stack)).toEqual(['Alpha']);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('refuses to track a completed task', async () => {
+    const source = '- [x] Alpha ✅ 2026-09-17\n';
+    const stack = await stackFor({ 'a.md': source });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'start-tracking',
+        parent: taskNode(rootIn(stack, 'a.md')),
+      });
+
+      expect(result).toEqual({
+        type: 'invalid',
+        issues: [{ code: 'invalid-target', field: 'time-entry' }],
+      });
+      expect(await read(stack.app, 'a.md')).toBe(source);
+      expect(active(stack)).toEqual([]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('keeps one timer when two starts race', async () => {
+    const stack = await stackFor({ 'a.md': '- [ ] Alpha\n', 'b.md': '- [ ] Bravo\n' });
+    try {
+      const results = await Promise.all([
+        stack.tasks.execute({
+          type: 'start-tracking',
+          parent: taskNode(rootIn(stack, 'a.md')),
+        }),
+        stack.tasks.execute({
+          type: 'start-tracking',
+          parent: taskNode(rootIn(stack, 'b.md')),
+        }),
+      ]);
+
+      expect(results.map((result) => result.type)).toEqual(['ok', 'ok']);
+      const running = active(stack);
+      expect(running).toHaveLength(1);
+      const tracked = expectDefined(running[0]);
+      const idle = tracked.filePath === 'a.md' ? 'b.md' : 'a.md';
+      expect(await read(stack.app, tracked.filePath)).toContain(` - ${NOW_ATOM} →\n`);
+      // The losing session lasted no time at all, so its line leaves no trace.
+      expect(await read(stack.app, idle)).not.toContain('→');
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('discards a session under a minute and keeps a longer one', async () => {
+    const stack = await stackFor({ 'a.md': '- [ ] Alpha\n' });
+    try {
+      await stack.tasks.execute({
+        type: 'start-tracking',
+        parent: taskNode(rootIn(stack, 'a.md')),
+      });
+      stack.clock.advance(SHORT_SESSION_MS);
+      const discarded = await stack.tasks.execute({ type: 'stop-tracking' });
+
+      expect(discarded).toEqual({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'stopped', discardedShortEntry: true },
+      });
+      expect(await read(stack.app, 'a.md')).toBe('- [ ] Alpha\n');
+      expect(active(stack)).toEqual([]);
+
+      await stack.tasks.execute({
+        type: 'start-tracking',
+        parent: taskNode(rootIn(stack, 'a.md')),
+      });
+      stack.clock.advance(LONG_SESSION_MS);
+      const kept = await stack.tasks.execute({ type: 'stop-tracking' });
+
+      expect(kept).toEqual({ type: 'ok', changed: true, outcome: { type: 'stopped' } });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `- [ ] Alpha\n  - ${atomAt(SHORT_SESSION_MS)} → ${atomAt(SHORT_SESSION_MS + LONG_SESSION_MS)}\n`,
+      );
+      expect(active(stack)).toEqual([]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('closes every hand-written open entry on one stop', async () => {
+    const stack = await stackFor({
+      'a.md': `- [ ] Alpha\n  - ${EARLIER_ATOM} →\n  - ${HOUR_AGO_ATOM} →\n`,
+    });
+    try {
+      const result = await stack.tasks.execute({ type: 'stop-tracking' });
+
+      expect(result).toEqual({ type: 'ok', changed: true, outcome: { type: 'stopped' } });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `- [ ] Alpha\n  - ${EARLIER_ATOM} → ${NOW_ATOM}\n  - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n`,
+      );
+      expect(active(stack)).toEqual([]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('reports nothing to stop without writing', async () => {
+    const stack = await stackFor({ 'a.md': '- [ ] Alpha\n' });
+    try {
+      const result = await stack.tasks.execute({ type: 'stop-tracking' });
+
+      expect(result).toEqual({ type: 'ok', changed: false, outcome: { type: 'stopped' } });
+      expect(await read(stack.app, 'a.md')).toBe('- [ ] Alpha\n');
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('stops after a failed start and reports the failure', async () => {
+    const stack = await stackFor({
+      'a.md': `- [ ] Alpha\n  - ${HOUR_AGO_ATOM} →\n`,
+      'b.md': '- [ ] Bravo\n',
+    });
+    failWritesTo(stack.app, 'b.md');
+    try {
+      const result = await stack.tasks.execute({
+        type: 'start-tracking',
+        parent: taskNode(rootIn(stack, 'b.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'io-error', path: 'b.md', contentState: 'unknown' });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `- [ ] Alpha\n  - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n`,
+      );
+      expect(await read(stack.app, 'b.md')).toBe('- [ ] Bravo\n');
+      expect(active(stack)).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
+      stack.index.destroy();
+    }
+  });
+
+  it('closes a running entry when the task is completed', async () => {
+    const stack = await stackFor({ 'a.md': `- [ ] Alpha\n  - ${HOUR_AGO_ATOM} →\n` });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'toggle-completion',
+        target: taskNode(rootIn(stack, 'a.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', outcome: { type: 'task' } });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `- [x] Alpha ✅ 2026-09-18\n  - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n`,
+      );
+      expect(active(stack)).toEqual([]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('closes a running entry when the task is cancelled', async () => {
+    const stack = await stackFor({ 'a.md': `- [ ] Alpha\n  - ${HOUR_AGO_ATOM} →\n` });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'set-status',
+        target: taskNode(rootIn(stack, 'a.md')),
+        symbol: '-',
+      });
+
+      expect(result).toMatchObject({ type: 'ok', outcome: { type: 'task' } });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `- [-] Alpha ❌ 2026-09-18\n  - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n`,
+      );
+      expect(active(stack)).toEqual([]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('keeps the timer running when a status change is not a completion', async () => {
+    const source = `- [x] Alpha ✅ 2026-09-17\n  - ${HOUR_AGO_ATOM} →\n`;
+    const stack = await stackFor({ 'a.md': source });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'toggle-completion',
+        target: taskNode(rootIn(stack, 'a.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', outcome: { type: 'task' } });
+      expect(await read(stack.app, 'a.md')).toBe(`- [ ] Alpha\n  - ${HOUR_AGO_ATOM} →\n`);
+      expect(activeTitles(stack)).toEqual(['Alpha']);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('closes a subtask entry when its parent is completed', async () => {
+    const stack = await stackFor({
+      'a.md': `- [ ] Alpha\n  - [ ] Child\n    - ${HOUR_AGO_ATOM} →\n`,
+    });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'toggle-completion',
+        target: taskNode(rootIn(stack, 'a.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', outcome: { type: 'task' } });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `- [x] Alpha ✅ 2026-09-18\n  - [ ] Child\n    - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n`,
+      );
+      expect(active(stack)).toEqual([]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('leaves the next recurrence occurrence without any entries', async () => {
+    const stack = await stackFor({
+      'a.md': `- [ ] Repeat 🔁 every day 📅 2026-09-18\n  - ${HOUR_AGO_ATOM} →\n`,
+    });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'toggle-completion',
+        target: taskNode(rootIn(stack, 'a.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', outcome: { type: 'recurrence' } });
+      const [next, completed] = rootsIn(stack, 'a.md');
+      expect(expectDefined(next).status).toBe('open');
+      expect(expectDefined(next).timeEntries).toEqual([]);
+      expect(expectDefined(completed).status).toBe('done');
+      expect(expectDefined(completed).timeEntries).toMatchObject([{ state: 'closed' }]);
+      expect(active(stack)).toEqual([]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('keeps a completed status when its tracking follow-up fails', async () => {
+    const diagnostics = vi.fn();
+    const stack = await stackFor(
+      { 'a.md': `- [ ] Alpha\n  - ${HOUR_AGO_ATOM} →\n` },
+      { diagnostics },
+    );
+    failWritesAfterFirst(stack.app);
+    try {
+      const result = await stack.tasks.execute({
+        type: 'toggle-completion',
+        target: taskNode(rootIn(stack, 'a.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', outcome: { type: 'task' } });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `- [x] Alpha ✅ 2026-09-18\n  - ${HOUR_AGO_ATOM} →\n`,
+      );
+      expect(diagnostics.mock.calls).toEqual([
+        [{ operation: 'close-time-entry', phase: 'completion-follow-up', cause: 'io-error' }],
+      ]);
+      expect(activeTitles(stack)).toEqual(['Alpha']);
+    } finally {
+      vi.restoreAllMocks();
+      stack.index.destroy();
+    }
+  });
+
+  it('starts on a subtask that a sibling timer does not own', async () => {
+    const stack = await stackFor({
+      'a.md': `- [ ] Alpha\n  - [ ] One\n    - ${HOUR_AGO_ATOM} →\n  - [ ] Two\n`,
+    });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'start-tracking',
+        parent: subtaskNode(expectDefined(rootIn(stack, 'a.md').subtasks[1])),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', changed: true });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `- [ ] Alpha\n  - [ ] One\n    - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n  - [ ] Two\n    - ${NOW_ATOM} →\n`,
+      );
+      expect(activeTitles(stack)).toEqual(['Two']);
+      expect(childOf(rootIn(stack, 'a.md')).timeEntries).toMatchObject([{ state: 'closed' }]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+});

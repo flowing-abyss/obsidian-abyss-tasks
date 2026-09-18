@@ -57,7 +57,6 @@ function prepared(
 ): PreparedMutation {
   const base = snapshot();
   return {
-    publicCommand: { type: 'delete', ref: base.ref },
     repositoryRequest: {
       command,
       baseRoot: base,
@@ -1102,11 +1101,6 @@ describe('prepareRetry', () => {
 
     const moveMutation: PreparedMutation = {
       ...preparedFor(base, { type: 'delete', ref: base.ref }, 'never'),
-      publicCommand: {
-        type: 'move',
-        ref: base.ref,
-        destination: { filePath: 'archive.md', insertion: { type: 'append' } },
-      },
       repositoryRequest: {
         destination: { filePath: 'archive.md', insertion: { type: 'append' } },
         baseRoot: base,
@@ -1156,7 +1150,6 @@ describe('prepareRetry', () => {
     };
     const mutation: PreparedMutation = {
       ...preparedFor(previous, { type: 'delete', ref: previous.ref }, 'never'),
-      publicCommand: { type: 'set-status', target: request.command.target, symbol: 'x' },
       repositoryRequest: request,
       targetBase: request.baseTarget,
     };

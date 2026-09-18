@@ -23,7 +23,8 @@ import type {
 } from '../src/tasks';
 import type { TimeTrackingQueryApi } from '../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
-import { systemClock } from '../src/tasks/domain/clock';
+import type { TaskDiagnosticSink } from '../src/tasks/application/TaskDependencyService';
+import { systemClock, type Clock } from '../src/tasks/domain/clock';
 import type { CommentTimestamp } from '../src/tasks/domain/commentTimestamp';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import { localDate } from '../src/tasks/domain/validation';
@@ -809,7 +810,11 @@ export function makeStubStore(tasks: TaskSnapshot[], _app?: ObsidianApp): TestTa
 export function configuredTaskApplication(
   app: ObsidianApp,
   settings: CalendarSettings,
-  options: { readonly authority?: boolean } = {},
+  options: {
+    readonly authority?: boolean;
+    readonly clock?: Clock;
+    readonly diagnostics?: TaskDiagnosticSink;
+  } = {},
 ): {
   readonly index: TaskIndex;
   readonly tasks: TaskApplicationApi;
@@ -839,10 +844,11 @@ export function configuredTaskApplication(
     index,
     repository,
     statusCatalog,
-    systemClock(
-      () => Date.now(),
-      (epochMs) => -new Date(epochMs).getTimezoneOffset(),
-    ),
+    options.clock ??
+      systemClock(
+        () => Date.now(),
+        (epochMs) => -new Date(epochMs).getTimezoneOffset(),
+      ),
     new ObsidianTaskDestinationProvider(
       app,
       () => ({
@@ -856,6 +862,9 @@ export function configuredTaskApplication(
       }),
       () => dailyNotes.planDailyNoteDestination(),
     ),
+    undefined,
+    undefined,
+    options.diagnostics,
   );
   return {
     index,

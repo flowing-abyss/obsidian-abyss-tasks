@@ -132,6 +132,8 @@ export type TaskCommand =
       readonly target: SubtaskRef;
       readonly placement: 'before' | 'after';
     }
+  | { readonly type: 'start-tracking'; readonly parent: TaskNodeRef }
+  | { readonly type: 'stop-tracking' }
   | { readonly type: 'add-comment'; readonly parent: TaskNodeRef; readonly text: string }
   | {
       readonly type: 'update-comment';
@@ -221,6 +223,8 @@ export type TaskCommandOutcome =
       /** The closed session was too short to record, so the note keeps no trace of it. */
       readonly discardedShortEntry?: true;
     }
+  /** Every `stop-tracking` result carries this one shape, whether or not anything was running. */
+  | { readonly type: 'stopped'; readonly discardedShortEntry?: true }
   | { readonly type: 'deleted'; readonly ref: TaskRef }
   | {
       readonly type: 'recurrence';
