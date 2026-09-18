@@ -142,7 +142,9 @@ and while that subtree runs the card keeps the total it read so the panel's one 
 repaints only the running roots, found by the `data-tracking-root` address the badge carries, which
 every entry already carries because `TimeEntryIndex` reads a node's address once while it lifts the
 entry out of the tree rather than per grouping, render or tick. A
-calendar card reads the same snapshot for a running marker and subscribes to nothing. Starting and
+calendar item reads the same snapshot for a running marker and subscribes to nothing: every
+sidebar month, week and day item takes it through `applyOccurrenceDomState`, the one place each of
+them already passes, and a forecast occurrence never carries it. Starting and
 pausing are offered wherever a node already has a context menu, and the `toggle-time-tracking`
 command pauses whatever runs or resumes the most recently tracked task of the last seven days. The
 code-block calendar keeps only the marker, because its card body right-click already belongs to the

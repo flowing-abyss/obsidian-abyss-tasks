@@ -10102,6 +10102,16 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   border-inline-start-color: var(--interactive-accent);
 }
 
+/*
+ * A sidebar month, week or day item does the same through the outline token it already resolves
+ * from its tag, so a running timer reads the same whether the item has a tag colour or not.
+ */
+.abyss-calendar-item.is-tracking {
+  --abyss-calendar-border: var(--interactive-accent);
+
+  border-inline-start-color: var(--interactive-accent);
+}
+
 .abyss-time-badge.is-stale,
 .abyss-time-row.is-stale,
 .abyss-rail-tracking.is-stale {
