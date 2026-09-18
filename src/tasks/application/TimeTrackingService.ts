@@ -1,14 +1,14 @@
 import type { ClockReading } from '../domain/clock';
 import type { TaskCommandResult } from '../domain/commands';
-import { taskNodeChain, taskNodeRootRef } from '../domain/taskCommandTargets';
+import { rebaseTaskNode, taskNodeChain, taskNodeRootRef } from '../domain/taskCommandTargets';
+import type { TaskResolution } from '../domain/taskReconciliation';
 import { timeEntryRef, type TimeEntrySnapshot, type TrackedEntry } from '../domain/timeTracking';
-import {
-  sameTaskNodeRef,
-  type SubtaskSnapshot,
-  type TaskNodeRef,
-  type TaskRef,
-  type TaskSnapshot,
-  type TaskStatus,
+import type {
+  SubtaskSnapshot,
+  TaskNodeRef,
+  TaskRef,
+  TaskSnapshot,
+  TaskStatus,
 } from '../domain/types';
 import { invalidTaskTarget } from '../domain/validation';
 import type {
@@ -24,6 +24,8 @@ export const MINIMUM_TRACKED_MS = 60_000;
 
 export interface TimeTrackingDependencies {
   readonly queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
+  /** Resolves a root exactly as every rooted command does, including the index-lag bridge. */
+  readonly resolveRoot: (ref: TaskRef, node: TaskNodeRef) => TaskResolution;
   /** Resolves, validates and writes one internal edit through the normal existing-command path. */
   readonly edit: (command: TaskEditCommand) => Promise<TaskCommandResult>;
   readonly statusOf: (symbol: string) => TaskStatus;
@@ -62,8 +64,42 @@ interface ClosePass {
   readonly failure?: TaskCommandResult;
 }
 
+type StartTarget =
+  { readonly root: TaskSnapshot; readonly path: NodePath } | { readonly result: TaskCommandResult };
+
+function ambiguousStart(
+  resolution: Extract<TaskResolution, { readonly type: 'ambiguous' }>,
+  parent: TaskNodeRef,
+): TaskCommandResult {
+  return {
+    type: 'ambiguous',
+    candidates: resolution.candidates.map((candidate) => ({
+      root: candidate.root,
+      target: rebaseTaskNode(parent, candidate.root.ref),
+    })),
+  };
+}
+
+/** The target was already tracking, so the result reports only what closing the others changed. */
+function alreadyTracking(current: TaskSnapshot, pass: ClosePass): TaskCommandResult {
+  return {
+    type: 'ok',
+    changed: pass.closed > 0,
+    outcome: {
+      type: 'task',
+      task: current,
+      ...(pass.discarded ? { discardedShortEntry: true } : {}),
+    },
+  };
+}
+
 function rootKey(ref: TaskRef): string {
   return `${ref.filePath}\0${ref.line}`;
+}
+
+/** Identifies one entry line inside a root generation that a failed close leaves exactly as it was. */
+function entryKey(entry: RunningEntry): string {
+  return JSON.stringify([entry.path, entry.entry.originalMarkdown]);
 }
 
 function samePath(left: NodePath, right: NodePath): boolean {
@@ -140,6 +176,7 @@ function runningEntries(root: TaskSnapshot): readonly RunningEntry[] {
  */
 export class TimeTrackingService {
   private readonly queries_abyssPrivate: TimeTrackingDependencies['queries'];
+  private readonly resolveRoot_abyssPrivate: TimeTrackingDependencies['resolveRoot'];
   private readonly edit_abyssPrivate: TimeTrackingDependencies['edit'];
   private readonly statusOf_abyssPrivate: TimeTrackingDependencies['statusOf'];
   private readonly serialize_abyssPrivate: TimeTrackingDependencies['serialize'];
@@ -147,6 +184,7 @@ export class TimeTrackingService {
 
   constructor(dependencies: TimeTrackingDependencies) {
     this.queries_abyssPrivate = dependencies.queries;
+    this.resolveRoot_abyssPrivate = dependencies.resolveRoot;
     this.edit_abyssPrivate = dependencies.edit;
     this.statusOf_abyssPrivate = dependencies.statusOf;
     this.serialize_abyssPrivate = dependencies.serialize;
@@ -204,26 +242,22 @@ export class TimeTrackingService {
     parent: TaskNodeRef,
     reading: ClockReading,
   ): Promise<TaskCommandResult> {
-    const rootRef = taskNodeRootRef(parent);
-    const indexed = this.queries_abyssPrivate
-      .listNodes({ filePath: rootRef.filePath })
-      .find((candidate) => sameTaskNodeRef(candidate.target, parent));
-    if (indexed === undefined) return { type: 'not-found', target: parent };
-    if (this.isCompleted_abyssPrivate(indexed.node)) return invalidTaskTarget('time-entry');
-    const targetPath = childIndexPath(indexed.root, parent);
-    if (targetPath === undefined) return { type: 'conflict', current: indexed.root };
-
-    const entries = this.queries_abyssPrivate.activeEntries();
-    const running = entries.some((entry) => sameTaskNodeRef(entry.target, parent));
-    const pass = await this.closeOthers_abyssPrivate(entries, reading, {
-      root: rootKey(rootRef),
-      path: targetPath,
-    });
+    const target = this.startTarget_abyssPrivate(parent);
+    if ('result' in target) return target.result;
+    const { root, path } = target;
+    // Read from the resolved generation, so a stale reference cannot hide the target's own timer.
+    const running = runningEntries(root).some((entry) => samePath(entry.path, path));
+    const key = rootKey(root.ref);
+    const pass = await this.closeOthers_abyssPrivate(
+      this.queries_abyssPrivate.activeEntries(),
+      reading,
+      { root: key, path },
+    );
     if (pass.failure !== undefined) return pass.failure;
 
-    const current = pass.roots.get(rootKey(rootRef)) ?? indexed.root;
-    if (running) return { type: 'ok', changed: false, outcome: { type: 'task', task: current } };
-    const located = nodeAtIndexPath(current, targetPath);
+    const current = pass.roots.get(key) ?? root;
+    if (running) return alreadyTracking(current, pass);
+    const located = nodeAtIndexPath(current, path);
     if (located === undefined) return { type: 'conflict', current };
     const result = await this.edit_abyssPrivate({
       type: 'add-time-entry',
@@ -231,6 +265,27 @@ export class TimeTrackingService {
       stamp: reading.atom,
     });
     return pass.discarded ? withDiscardedShortEntry(result) : result;
+  }
+
+  /**
+   * Resolves the node to start on the way every rooted command resolves its root, so a reference
+   * the index has already rebased still writes, and no other root of the file is cloned to find it.
+   */
+  private startTarget_abyssPrivate(parent: TaskNodeRef): StartTarget {
+    const resolution = this.resolveRoot_abyssPrivate(taskNodeRootRef(parent), parent);
+    if (resolution.type === 'ambiguous') return { result: ambiguousStart(resolution, parent) };
+    if (resolution.type !== 'exact' && resolution.type !== 'rebased') {
+      return { result: { type: 'not-found', target: parent } };
+    }
+    const root = resolution.type === 'exact' ? resolution.task : resolution.current;
+    const path = childIndexPath(root, parent);
+    const located = path === undefined ? undefined : nodeAtIndexPath(root, path);
+    if (path === undefined || located === undefined) {
+      return { result: { type: 'conflict', current: root } };
+    }
+    return this.isCompleted_abyssPrivate(located.node)
+      ? { result: invalidTaskTarget('time-entry') }
+      : { root, path };
   }
 
   private async stopNow_abyssPrivate(reading: ClockReading): Promise<TaskCommandResult> {
@@ -261,14 +316,17 @@ export class TimeTrackingService {
     let closed = 0;
     let discarded = false;
     for (const [key, first] of observed) {
-      const root = this.rootSnapshot_abyssPrivate(first.root);
+      const root = this.rootSnapshot_abyssPrivate(first.root, first.target);
+      // A root the index can no longer address is reported like any other unwritable foreign entry.
       if (root === undefined) {
-        return { roots, closed, discarded, failure: { type: 'not-found', target: first.target } };
+        this.setAside_abyssPrivate({ type: 'not-found', target: first.target }, 'skip-unwritable');
+        continue;
       }
       const pass = await this.closeInRoot_abyssPrivate(
         root,
         reading,
         (path) => exempt?.root !== key || !samePath(path, exempt.path),
+        'skip-unwritable',
       );
       if (pass.type === 'failed') return { roots, closed, discarded, failure: pass.result };
       roots.set(key, pass.root);
@@ -280,18 +338,27 @@ export class TimeTrackingService {
 
   /**
    * Closes accepted entries of one root in source order, re-reading the next entry from the root
-   * the previous write returned. Each write closes or discards one running line, so this ends.
+   * the previous write returned. Each iteration either writes one running line away or sets it
+   * aside, so the accepted set shrinks and this ends.
+   *
+   * Under `skip-unwritable` a hand-written entry the plugin cannot write, such as one whose start
+   * lies ahead of the clock, is reported and left alone rather than disabling tracking vault wide.
+   * Only an I/O failure aborts, because then the file's content state is unknown.
    */
   private async closeInRoot_abyssPrivate(
     root: TaskSnapshot,
     reading: ClockReading,
     accepts: (path: NodePath) => boolean,
+    unwritable: 'stop' | 'skip-unwritable' = 'stop',
   ): Promise<RootClose> {
     let current = root;
     let closed = 0;
     let discarded = false;
+    const setAside = new Set<string>();
     for (;;) {
-      const next = runningEntries(current).find((candidate) => accepts(candidate.path));
+      const next = runningEntries(current).find(
+        (candidate) => accepts(candidate.path) && !setAside.has(entryKey(candidate)),
+      );
       if (next === undefined) return { type: 'closed', root: current, closed, discarded };
       const result = await this.edit_abyssPrivate({
         type: 'close-time-entry',
@@ -300,18 +367,34 @@ export class TimeTrackingService {
         endMs: reading.epochMs,
         minimumMs: MINIMUM_TRACKED_MS,
       });
-      if (result.type !== 'ok') return { type: 'failed', result };
-      closed += 1;
-      if (result.outcome.type !== 'task') {
-        return { type: 'closed', root: current, closed, discarded };
+      // A committed close always answers with its fresh root; without one nothing can be re-read.
+      if (result.type === 'ok' && result.outcome.type === 'task') {
+        closed += 1;
+        discarded = discarded || result.outcome.discardedShortEntry === true;
+        current = result.outcome.task;
+        continue;
       }
-      if (result.outcome.discardedShortEntry === true) discarded = true;
-      current = result.outcome.task;
+      if (!this.setAside_abyssPrivate(result, unwritable)) return { type: 'failed', result };
+      setAside.add(entryKey(next));
     }
   }
 
-  private rootSnapshot_abyssPrivate(ref: TaskRef): TaskSnapshot | undefined {
-    const resolution = this.queries_abyssPrivate.resolve(ref);
+  /** True when a foreign entry the plugin cannot write may be left alone instead of aborting. */
+  private setAside_abyssPrivate(
+    result: TaskCommandResult,
+    unwritable: 'stop' | 'skip-unwritable',
+  ): boolean {
+    if (unwritable === 'stop' || result.type === 'ok' || result.type === 'io-error') return false;
+    this.diagnostics_abyssPrivate({
+      operation: 'close-time-entry',
+      phase: 'close-others',
+      cause: result.type,
+    });
+    return true;
+  }
+
+  private rootSnapshot_abyssPrivate(ref: TaskRef, node: TaskNodeRef): TaskSnapshot | undefined {
+    const resolution = this.resolveRoot_abyssPrivate(ref, node);
     if (resolution.type === 'exact') return resolution.task;
     return resolution.type === 'rebased' ? resolution.current : undefined;
   }

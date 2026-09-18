@@ -111,11 +111,13 @@ Entry lines under a task are the record of tracked work; no session state is per
 else. `TimeTrackingService` owns `start-tracking` and `stop-tracking`, which carry no single root
 and never reach the rooted command path. It enforces one active timer by serialized sequential
 writes on the mutation queue it shares with dependency operations: every running entry is closed
-first, then the new entry is opened. A failing step returns its structured result and writes
-nothing further, and each step re-reads its node from the root the previous write returned rather
-than waiting for the index. A session shorter than a minute leaves no line at all, and the outcome
-says so. Starting on a node that is already tracking is a successful no-op, and a done or cancelled
-node is refused.
+first, then the new entry is opened. Each step re-reads its node from the root the previous write
+returned rather than waiting for the index. A hand-written entry the plugin cannot close, such as
+one whose start lies ahead of the clock, is reported to diagnostics and left alone so a single
+unwritable line cannot disable tracking vault wide; only an I/O failure stops the operation and
+returns its structured result. A session shorter than a minute leaves no line at all, and the
+outcome says so. Starting on a node that is already tracking writes nothing to that node, and a
+done or cancelled node is refused.
 
 Completing or cancelling a node closes the entries still running in its subtree as a follow-up
 write with the same clock reading, inside the same serialized mutation. That write never changes

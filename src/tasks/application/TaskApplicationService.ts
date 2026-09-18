@@ -429,6 +429,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     this.diagnostics_abyssPrivate = diagnostics;
     this.tracking_abyssPrivate = new TimeTrackingService({
       queries,
+      resolveRoot: (ref, node) => this.resolveRoot_abyssPrivate(ref, node),
       edit: async (command) => await this.executeTrackingEdit_abyssPrivate(command),
       statusOf: (symbol) => statusCatalog.statusForSymbol(symbol),
       // Tracking and dependency operations share one queue, so their writes never interleave.
@@ -505,12 +506,10 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
     const reading = captureClock(this.clock_abyssPrivate);
     const targetBase = taskEditMutationTarget(command);
-    const rootRef = rootRefOf(targetBase);
-    const recent = this.recentOutcome_abyssPrivate(rootRef, taskMutationNodeRef(targetBase));
-    const resolution: TaskResolution =
-      recent === undefined
-        ? this.queries.resolve(rootRef)
-        : { type: 'exact', task: recent, basis: { observed: recent } };
+    const resolution = this.resolveRoot_abyssPrivate(
+      rootRefOf(targetBase),
+      taskMutationNodeRef(targetBase),
+    );
     const unavailable = this.unavailableTarget_abyssPrivate(targetBase, resolution);
     if (unavailable != null) return unavailable;
     const proven = resolution as ProvenResolution;
@@ -1217,6 +1216,14 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     }
     const outcome = this.recentOutcomes_abyssPrivate.get(refKey(ref));
     return outcome?.permittedTarget == null ? outcome?.task : undefined;
+  }
+
+  /** The shared root resolution every rooted write uses, bridging the index-event lag first. */
+  private resolveRoot_abyssPrivate(ref: TaskRef, node: TaskNodeRef): TaskResolution {
+    const recent = this.recentOutcome_abyssPrivate(ref, node);
+    return recent === undefined
+      ? this.queries.resolve(ref)
+      : { type: 'exact', task: recent, basis: { observed: recent } };
   }
 
   /** A remembered outcome is authority only for the node the mutation that produced it owned. */

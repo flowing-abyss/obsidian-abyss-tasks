@@ -3,7 +3,11 @@ import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import type { TaskDiagnosticSink } from '../../src/tasks/application/TaskDependencyService';
-import { MINIMUM_TRACKED_MS } from '../../src/tasks/application/TimeTrackingService';
+import {
+  MINIMUM_TRACKED_MS,
+  TimeTrackingService,
+  type TimeTrackingDependencies,
+} from '../../src/tasks/application/TimeTrackingService';
 import { clockFrom, systemClock, type Clock } from '../../src/tasks/domain/clock';
 import type { TrackedEntry } from '../../src/tasks/domain/timeTracking';
 import type { SubtaskSnapshot, TaskNodeRef, TaskSnapshot } from '../../src/tasks/domain/types';
@@ -11,6 +15,9 @@ import {
   configuredTaskApplication,
   createAppWithFiles,
   expectDefined,
+  queryApiForTasks,
+  task,
+  taskQueryApi,
   useRealMoment,
 } from '../helpers';
 
@@ -30,6 +37,8 @@ function atomAt(offsetMs: number): string {
 const NOW_ATOM = atomAt(0);
 const HOUR_AGO_ATOM = '2026-09-18T13:00:00+03:00';
 const EARLIER_ATOM = '2026-09-18T12:30:00+03:00';
+/** A hand-written entry whose start lies ahead of the clock, so no close can ever write it. */
+const FUTURE_ATOM = '2026-09-19T09:00:00+03:00';
 
 interface TestClock extends Clock {
   advance(milliseconds: number): void;
@@ -121,6 +130,17 @@ function failWritesTo(app: App, path: string): void {
   });
 }
 
+/** Records the path of every committed vault write, in order, so interleaving is observable. */
+function recordWrites(app: App): readonly string[] {
+  const written: string[] = [];
+  const original = app.vault.process.bind(app.vault);
+  vi.spyOn(app.vault, 'process').mockImplementation(async (file, fn, options) => {
+    written.push(file.path);
+    return await original(file, fn, options);
+  });
+  return written;
+}
+
 /** Rejects every vault write after the first, so a follow-up write fails on its own. */
 function failWritesAfterFirst(app: App): void {
   const original = app.vault.process.bind(app.vault);
@@ -205,6 +225,170 @@ describe('time tracking orchestration', () => {
       expect(await read(stack.app, 'a.md')).toBe(source);
       expect(activeTitles(stack)).toEqual(['Alpha']);
     } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('reports a discarded session when the target is already tracking', async () => {
+    const target = `- [ ] Target\n  - ${HOUR_AGO_ATOM} →\n`;
+    const stack = await stackFor({
+      'a.md': target,
+      'b.md': `- [ ] Other\n  - ${atomAt(-SHORT_SESSION_MS)} →\n`,
+    });
+    try {
+      const result = await stack.tasks.execute({
+        type: 'start-tracking',
+        parent: taskNode(rootIn(stack, 'a.md')),
+      });
+
+      expect(result).toMatchObject({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', discardedShortEntry: true },
+      });
+      expect(await read(stack.app, 'a.md')).toBe(target);
+      expect(await read(stack.app, 'b.md')).toBe('- [ ] Other\n');
+      expect(activeTitles(stack)).toEqual(['Target']);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it.each([false, true])(
+    'starts from the root a previous command returned with authority %s',
+    async (authority) => {
+      const stack = await stackFor({ 'a.md': '- [ ] Alpha\n' }, { authority });
+      try {
+        const commented = await stack.tasks.execute({
+          type: 'add-comment',
+          parent: taskNode(rootIn(stack, 'a.md')),
+          text: 'note',
+        });
+        if (commented.type !== 'ok' || commented.outcome.type !== 'task') {
+          throw new Error(`expected a committed comment, saw ${commented.type}`);
+        }
+
+        const result = await stack.tasks.execute({
+          type: 'start-tracking',
+          parent: taskNode(commented.outcome.task),
+        });
+
+        expect(result).toMatchObject({ type: 'ok', changed: true });
+        expect(await read(stack.app, 'a.md')).toBe(
+          `- [ ] Alpha\n  - ${NOW_ATOM}: note\n  - ${NOW_ATOM} →\n`,
+        );
+        expect(activeTitles(stack)).toEqual(['Alpha']);
+      } finally {
+        stack.index.destroy();
+      }
+    },
+  );
+
+  it('skips a foreign entry it cannot close and still starts', async () => {
+    const diagnostics = vi.fn();
+    const foreign = `- [ ] Foreign\n  - ${FUTURE_ATOM} →\n`;
+    const stack = await stackFor(
+      {
+        'a.md': foreign,
+        'b.md': `- [ ] Other\n  - ${HOUR_AGO_ATOM} →\n`,
+        'c.md': '- [ ] Alpha\n',
+      },
+      { diagnostics },
+    );
+    try {
+      const result = await stack.tasks.execute({
+        type: 'start-tracking',
+        parent: taskNode(rootIn(stack, 'c.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', changed: true });
+      expect(await read(stack.app, 'a.md')).toBe(foreign);
+      expect(await read(stack.app, 'b.md')).toBe(
+        `- [ ] Other\n  - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n`,
+      );
+      expect(await read(stack.app, 'c.md')).toBe(`- [ ] Alpha\n  - ${NOW_ATOM} →\n`);
+      expect([...activeTitles(stack)].sort((left, right) => left.localeCompare(right))).toEqual([
+        'Alpha',
+        'Foreign',
+      ]);
+      expect(diagnostics.mock.calls).toEqual([
+        [{ operation: 'close-time-entry', phase: 'close-others', cause: 'conflict' }],
+      ]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('skips a foreign entry it cannot close and still stops the rest', async () => {
+    const diagnostics = vi.fn();
+    const foreign = `- [ ] Foreign\n  - ${FUTURE_ATOM} →\n`;
+    const stack = await stackFor(
+      { 'a.md': foreign, 'b.md': `- [ ] Other\n  - ${HOUR_AGO_ATOM} →\n` },
+      { diagnostics },
+    );
+    try {
+      const result = await stack.tasks.execute({ type: 'stop-tracking' });
+
+      expect(result).toEqual({ type: 'ok', changed: true, outcome: { type: 'stopped' } });
+      expect(await read(stack.app, 'a.md')).toBe(foreign);
+      expect(await read(stack.app, 'b.md')).toBe(
+        `- [ ] Other\n  - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n`,
+      );
+      expect(activeTitles(stack)).toEqual(['Foreign']);
+      expect(diagnostics.mock.calls).toEqual([
+        [{ operation: 'close-time-entry', phase: 'close-others', cause: 'conflict' }],
+      ]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
+  it('aborts the start when closing another timer cannot be written', async () => {
+    const stack = await stackFor({
+      'b.md': `- [ ] Other\n  - ${HOUR_AGO_ATOM} →\n`,
+      'c.md': '- [ ] Alpha\n',
+    });
+    failWritesTo(stack.app, 'b.md');
+    try {
+      const result = await stack.tasks.execute({
+        type: 'start-tracking',
+        parent: taskNode(rootIn(stack, 'c.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'io-error', path: 'b.md', contentState: 'unknown' });
+      expect(await read(stack.app, 'c.md')).toBe('- [ ] Alpha\n');
+      expect(activeTitles(stack)).toEqual(['Other']);
+    } finally {
+      vi.restoreAllMocks();
+      stack.index.destroy();
+    }
+  });
+
+  it('serializes tracking behind a dependency command on the shared queue', async () => {
+    const stack = await stackFor({
+      'a.md': '- [ ] Alpha\n',
+      'b.md': `- [ ] Bravo\n  - ${HOUR_AGO_ATOM} →\n- [ ] Charlie\n`,
+    });
+    const writes = recordWrites(stack.app);
+    try {
+      const blocker = taskNode(rootIn(stack, 'b.md'));
+      const dependent = taskNode(expectDefined(rootsIn(stack, 'b.md')[1]));
+      const results = await Promise.all([
+        stack.tasks.execute({ type: 'add-dependency', blocker, dependent }),
+        stack.tasks.execute({ type: 'start-tracking', parent: taskNode(rootIn(stack, 'a.md')) }),
+      ]);
+
+      expect(results.map((result) => result.type)).toEqual(['ok', 'ok']);
+      // The dependency batch commits before tracking reads, so closing Bravo's timer still matches
+      // the line the dependency edit rewrote, and no write of either operation interleaves.
+      expect(writes).toEqual(['b.md', 'b.md', 'a.md']);
+      expect(await read(stack.app, 'b.md')).toBe(
+        `- [ ] Bravo 🆔 00000000\n  - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n- [ ] Charlie ⛔ 00000000\n`,
+      );
+      expect(await read(stack.app, 'a.md')).toBe(`- [ ] Alpha\n  - ${NOW_ATOM} →\n`);
+      expect(activeTitles(stack)).toEqual(['Alpha']);
+    } finally {
+      vi.restoreAllMocks();
       stack.index.destroy();
     }
   });
@@ -486,5 +670,113 @@ describe('time tracking orchestration', () => {
     } finally {
       stack.index.destroy();
     }
+  });
+});
+
+/** A root whose only entry is still running, built without touching the vault. */
+function trackedRoot(statusSymbol: string): TaskSnapshot {
+  return task({
+    title: 'Alpha',
+    statusSymbol,
+    status: statusSymbol === 'x' ? 'done' : 'open',
+    timeEntries: [
+      {
+        relativeLine: 1,
+        originalMarkdown: `  - ${HOUR_AGO_ATOM} →`,
+        state: 'running',
+        startMs: NOW_MS - 3600 * SECOND,
+      },
+    ],
+  });
+}
+
+function trackingService(
+  overrides: Partial<TimeTrackingDependencies> & Pick<TimeTrackingDependencies, 'edit'>,
+): TimeTrackingService {
+  const queries = overrides.queries ?? taskQueryApi();
+  return new TimeTrackingService({
+    queries,
+    resolveRoot: (ref) => queries.resolve(ref),
+    statusOf: (symbol) => (symbol === 'x' ? 'done' : 'open'),
+    serialize: async (operation) => await operation(),
+    diagnostics: () => {},
+    ...overrides,
+  });
+}
+
+describe('time tracking service guards', () => {
+  it('starts against the root a rebased resolution returns', async () => {
+    const previous = task({ title: 'Alpha' });
+    const current = task({
+      title: 'Alpha',
+      source: { line: 4 },
+      ref: { line: 4, revision: 'relocated' },
+    });
+    const edit = vi
+      .fn()
+      .mockResolvedValue({ type: 'ok', changed: true, outcome: { type: 'task', task: current } });
+    const service = trackingService({
+      edit,
+      resolveRoot: () => ({
+        type: 'rebased',
+        previous,
+        current,
+        evidence: 'byte-identical-relocation',
+        basis: { observed: previous },
+      }),
+    });
+
+    const result = await service.start(
+      { type: 'task', ref: previous.ref },
+      clockFrom(NOW_MS, OFFSET_MINUTES).read(),
+    );
+
+    expect(result).toMatchObject({ type: 'ok', changed: true });
+    expect(edit).toHaveBeenCalledWith({
+      type: 'add-time-entry',
+      parent: { type: 'task', ref: current.ref },
+      stamp: NOW_ATOM,
+    });
+  });
+
+  it('closes nothing when the committed node does not read as completed', async () => {
+    const edit = vi.fn();
+    const reading = clockFrom(NOW_MS, OFFSET_MINUTES).read();
+    const open = trackedRoot(' ');
+
+    await trackingService({ edit }).closeAfterCompletion(
+      open,
+      { type: 'task', ref: open.ref },
+      reading,
+    );
+
+    expect(edit).not.toHaveBeenCalled();
+  });
+
+  it('closes the subtree when the committed node does read as completed', async () => {
+    const edit = vi.fn().mockResolvedValue({ type: 'conflict', current: trackedRoot('x') });
+    const reading = clockFrom(NOW_MS, OFFSET_MINUTES).read();
+    const done = trackedRoot('x');
+
+    await trackingService({ edit }).closeAfterCompletion(
+      done,
+      { type: 'task', ref: done.ref },
+      reading,
+    );
+
+    expect(edit).toHaveBeenCalledTimes(1);
+    expect(edit.mock.calls[0]?.[0]).toMatchObject({ type: 'close-time-entry' });
+  });
+
+  it('surfaces a committed close whose outcome carries no root', async () => {
+    const running = trackedRoot(' ');
+    const surprising = { type: 'ok', changed: true, outcome: { type: 'stopped' } } as const;
+    const edit = vi.fn().mockResolvedValue(surprising);
+    const service = trackingService({ edit, queries: queryApiForTasks(() => [running]) });
+
+    const result = await service.stopAll(clockFrom(NOW_MS, OFFSET_MINUTES).read());
+
+    expect(result).toEqual(surprising);
+    expect(edit).toHaveBeenCalledTimes(1);
   });
 });

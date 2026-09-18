@@ -82,6 +82,7 @@ interface TaskCommandDiagnostic {
   readonly phase:
     | 'unexpected'
     | 'cross-file-edge-write'
+    | 'close-others'
     | 'completion-follow-up'
     | `reversal-${DependencyReversalPhase}`;
   readonly cause: string;
