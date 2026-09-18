@@ -2,7 +2,9 @@ import type { App } from 'obsidian';
 import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
+import type { TaskCommandResult } from '../../src/tasks';
 import type { TaskDiagnosticSink } from '../../src/tasks/application/TaskDependencyService';
+import type { TaskEditCommand } from '../../src/tasks/application/TaskRepository';
 import {
   MINIMUM_TRACKED_MS,
   TimeTrackingService,
@@ -16,6 +18,7 @@ import {
   createAppWithFiles,
   expectDefined,
   queryApiForTasks,
+  subtask,
   task,
   taskQueryApi,
   useRealMoment,
@@ -702,6 +705,18 @@ describe('time tracking orchestration', () => {
   });
 });
 
+/** A sub-task of a root that holds none, so every lookup for it comes back empty. */
+function childRef(root: TaskSnapshot): TaskNodeRef {
+  return {
+    type: 'subtask',
+    ref: {
+      parent: { type: 'task', ref: root.ref },
+      relativeLine: 1,
+      originalBlock: '  - [ ] Child',
+    },
+  };
+}
+
 /** A root whose only entry is still running, built without touching the vault. */
 function trackedRoot(statusSymbol: string): TaskSnapshot {
   return task({
@@ -807,5 +822,247 @@ describe('time tracking service guards', () => {
 
     expect(result).toEqual(surprising);
     expect(edit).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers the candidates instead of guessing when the root is ambiguous', async () => {
+    const first = task({
+      title: 'Alpha',
+      source: { line: 0 },
+      ref: { line: 0, revision: 'first' },
+    });
+    const second = task({
+      title: 'Alpha',
+      source: { line: 9 },
+      ref: { line: 9, revision: 'second' },
+    });
+    const edit = vi.fn();
+    const service = trackingService({
+      edit,
+      resolveRoot: () => ({
+        type: 'ambiguous',
+        candidates: [
+          { root: first, target: { type: 'task', ref: first.ref } },
+          { root: second, target: { type: 'task', ref: second.ref } },
+        ],
+      }),
+    });
+
+    const result = await service.start(childRef(first), clockFrom(NOW_MS, OFFSET_MINUTES).read());
+
+    // Each candidate carries the sub-task the caller asked for, rebased onto that candidate's root,
+    // so picking one in the prompt names a node that can actually be written.
+    expect(result).toEqual({
+      type: 'ambiguous',
+      candidates: [
+        { root: first, target: childRef(first) },
+        { root: second, target: childRef(second) },
+      ],
+    });
+    expect(edit).not.toHaveBeenCalled();
+  });
+
+  it('reports a start whose root the index cannot place at all', async () => {
+    const gone = task({ title: 'Alpha' });
+    const parent: TaskNodeRef = { type: 'task', ref: gone.ref };
+    const edit = vi.fn();
+    const service = trackingService({
+      edit,
+      resolveRoot: () => ({ type: 'uncertain', ref: gone.ref }),
+    });
+
+    const result = await service.start(parent, clockFrom(NOW_MS, OFFSET_MINUTES).read());
+
+    expect(result).toEqual({ type: 'not-found', target: parent });
+    expect(edit).not.toHaveBeenCalled();
+  });
+
+  it('reports a conflict when the sub-task a start names is gone from its root', async () => {
+    const root = task({ title: 'Alpha' });
+    const edit = vi.fn();
+    const service = trackingService({ edit, queries: queryApiForTasks(() => [root]) });
+
+    const result = await service.start(childRef(root), clockFrom(NOW_MS, OFFSET_MINUTES).read());
+
+    expect(result).toEqual({ type: 'conflict', current: root });
+    expect(edit).not.toHaveBeenCalled();
+  });
+
+  it('reports a conflict when closing the other timers loses the node to start on', async () => {
+    const child = subtask({ title: 'Child', ref: { relativeLine: 1 } });
+    const root = task({
+      title: 'Alpha',
+      subtasks: [child],
+      timeEntries: trackedRoot(' ').timeEntries,
+    });
+    // The close committed a root the sub-task is no longer part of, so the start has nothing to
+    // write to and says so rather than writing under whatever now sits at that index.
+    const shrunk = task({ title: 'Alpha' });
+    const edit = vi
+      .fn()
+      .mockResolvedValue({ type: 'ok', changed: true, outcome: { type: 'task', task: shrunk } });
+    const service = trackingService({
+      edit,
+      queries: queryApiForTasks(() => [root]),
+      resolveRoot: () => ({ type: 'exact', task: root, basis: { observed: root } }),
+    });
+
+    const result = await service.start(
+      { type: 'subtask', ref: child.ref },
+      clockFrom(NOW_MS, OFFSET_MINUTES).read(),
+    );
+
+    expect(result).toEqual({ type: 'conflict', current: shrunk });
+    expect(edit).toHaveBeenCalledTimes(1);
+    expect(edit.mock.calls[0]?.[0]).toMatchObject({ type: 'close-time-entry' });
+  });
+
+  it('keeps a failed start as the answer even when a short session was discarded', async () => {
+    const other = trackedRoot(' ');
+    const target = task({
+      title: 'Bravo',
+      source: { filePath: 'b.md' },
+      ref: { filePath: 'b.md' },
+    });
+    const failure: TaskCommandResult = {
+      type: 'io-error',
+      cause: 'disk full',
+      path: 'b.md',
+      contentState: 'unknown',
+    };
+    const discarded: TaskCommandResult = {
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'task', task: task({ title: 'Alpha' }), discardedShortEntry: true },
+    };
+    const edit: TimeTrackingDependencies['edit'] = async (command: TaskEditCommand) =>
+      await Promise.resolve(command.type === 'close-time-entry' ? discarded : failure);
+    const service = trackingService({ edit, queries: queryApiForTasks(() => [other, target]) });
+
+    const result = await service.start(
+      { type: 'task', ref: target.ref },
+      clockFrom(NOW_MS, OFFSET_MINUTES).read(),
+    );
+
+    expect(result).toEqual(failure);
+  });
+
+  it('closes nothing when the completed node is gone from the root it was read from', async () => {
+    const edit = vi.fn();
+    const done = trackedRoot('x');
+
+    await trackingService({ edit }).closeAfterCompletion(
+      done,
+      childRef(done),
+      clockFrom(NOW_MS, OFFSET_MINUTES).read(),
+    );
+
+    expect(edit).not.toHaveBeenCalled();
+  });
+
+  it('closes the completed sub-task and leaves its root and its sibling running', async () => {
+    const open = trackedRoot(' ').timeEntries;
+    const child = subtask({
+      title: 'Child',
+      statusSymbol: 'x',
+      status: 'done',
+      ref: { relativeLine: 1 },
+      timeEntries: open,
+    });
+    const sibling = subtask({ title: 'Sibling', ref: { relativeLine: 2 }, timeEntries: open });
+    const root = task({ title: 'Alpha', subtasks: [child, sibling], timeEntries: open });
+    const settled = task({
+      title: 'Alpha',
+      subtasks: [subtask({ title: 'Child', ref: { relativeLine: 1 } }), sibling],
+      timeEntries: open,
+    });
+    const edit = vi
+      .fn()
+      .mockResolvedValue({ type: 'ok', changed: true, outcome: { type: 'task', task: settled } });
+
+    await trackingService({ edit }).closeAfterCompletion(
+      root,
+      { type: 'subtask', ref: child.ref },
+      clockFrom(NOW_MS, OFFSET_MINUTES).read(),
+    );
+
+    expect(edit).toHaveBeenCalledTimes(1);
+    expect(edit.mock.calls[0]?.[0]).toMatchObject({
+      type: 'close-time-entry',
+      entry: { parent: { type: 'subtask', ref: { relativeLine: 1 } } },
+    });
+  });
+
+  it('reports a follow-up close that threw instead of letting it escape', async () => {
+    const diagnostics = vi.fn();
+    const edit = vi.fn().mockRejectedValue(new Error('disk full'));
+    const done = trackedRoot('x');
+
+    await trackingService({ edit, diagnostics }).closeAfterCompletion(
+      done,
+      { type: 'task', ref: done.ref },
+      clockFrom(NOW_MS, OFFSET_MINUTES).read(),
+    );
+
+    expect(diagnostics.mock.calls).toEqual([
+      [
+        { operation: 'close-time-entry', phase: 'completion-follow-up', cause: 'repository-error' },
+        new Error('disk full'),
+      ],
+    ]);
+  });
+
+  it('sets aside a running entry whose root the index can no longer address', async () => {
+    const diagnostics = vi.fn();
+    const stranded = trackedRoot(' ');
+    const edit = vi.fn();
+    const service = trackingService({
+      edit,
+      diagnostics,
+      queries: queryApiForTasks(() => [stranded]),
+      resolveRoot: () => ({ type: 'uncertain', ref: stranded.ref }),
+    });
+
+    const result = await service.stopAll(clockFrom(NOW_MS, OFFSET_MINUTES).read());
+
+    expect(result).toEqual({ type: 'ok', changed: false, outcome: { type: 'stopped' } });
+    expect(edit).not.toHaveBeenCalled();
+    expect(diagnostics.mock.calls).toEqual([
+      [{ operation: 'close-time-entry', phase: 'close-others', cause: 'not-found' }],
+    ]);
+  });
+
+  it('closes through the root a rebased resolution returns', async () => {
+    const previous = trackedRoot(' ');
+    const current = task({
+      title: 'Alpha',
+      source: { line: 4 },
+      ref: { line: 4, revision: 'relocated' },
+      timeEntries: previous.timeEntries,
+    });
+    const edit = vi.fn().mockResolvedValue({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'task', task: task({ title: 'Alpha', ref: { line: 4 } }) },
+    });
+    const service = trackingService({
+      edit,
+      queries: queryApiForTasks(() => [previous]),
+      resolveRoot: () => ({
+        type: 'rebased',
+        previous,
+        current,
+        evidence: 'byte-identical-relocation',
+        basis: { observed: previous },
+      }),
+    });
+
+    const result = await service.stopAll(clockFrom(NOW_MS, OFFSET_MINUTES).read());
+
+    expect(result).toEqual({ type: 'ok', changed: true, outcome: { type: 'stopped' } });
+    expect(edit).toHaveBeenCalledTimes(1);
+    expect(edit.mock.calls[0]?.[0]).toMatchObject({
+      type: 'close-time-entry',
+      entry: { parent: { type: 'task', ref: current.ref } },
+    });
   });
 });
