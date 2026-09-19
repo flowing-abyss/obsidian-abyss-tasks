@@ -1,16 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
-import type {
-  TaskDependencyQueryApi,
-  TaskQueryApi,
-} from '../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
 import type { TaskRepository, TaskRepositoryResult } from '../src/tasks/application/TaskRepository';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import type { TaskRef, TaskSnapshot } from '../src/tasks/domain/types';
 import { localDate } from '../src/tasks/domain/validation';
-import { taskQueryApi } from './helpers';
+import { taskQueryApi, type TestTaskQueries } from './helpers';
 
 const ref: TaskRef = { filePath: 'source.md', line: 3, revision: 'source-revision' };
 const destination = {
@@ -33,6 +29,7 @@ function snapshot(filePath: string): TaskSnapshot {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source: {
       filePath,
       line: 1,
@@ -54,7 +51,7 @@ function service(move: TaskRepository['move']): TaskApplicationService {
       originalBlock: '- [ ] task',
     },
   };
-  const queries: TaskQueryApi & TaskDependencyQueryApi = {
+  const queries: TestTaskQueries = {
     ...taskQueryApi(),
     resolve: () => ({
       type: 'exact',

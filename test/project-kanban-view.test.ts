@@ -78,7 +78,13 @@ function project(over: Partial<Project> = {}): Project {
     tags: [],
     statusId: status.id,
     rawStatus: null,
-    stats: { total: 10, done: 6, cancelled: 0, inProgress: 0 },
+    stats: {
+      total: 10,
+      done: 6,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    },
     ...over,
   };
 }
@@ -907,6 +913,30 @@ describe('project Kanban overview', () => {
     ).click();
     expect(kanban.hiddenStatuses).toContain(`id:${other.id}`);
     expect(settings.projects.table.hiddenStatuses).not.toContain(`id:${other.id}`);
+  });
+
+  it('offers Time for sorting but never for grouping on any overview surface', () => {
+    const { host } = mountView();
+    const optionLabels = (rowLabel: string): string[] => {
+      if (host.querySelector('.abyss-view-state-popover') === null) {
+        expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+      }
+      const row = viewOptionRow(host, rowLabel);
+      expectDefined(row.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+      return Array.from(row.querySelectorAll<HTMLElement>('.abyss-view-state-option-label')).map(
+        ({ textContent }) => textContent,
+      );
+    };
+    const closePopover = (): void => {
+      expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    };
+
+    for (const mode of ['Table', 'Kanban', 'Timeline'] as const) {
+      clickView(host, mode);
+      expect(optionLabels('Group by'), `${mode} Group by`).not.toContain('Time');
+      expect(optionLabels('Sort by').join('|'), `${mode} Sort by`).toContain('Time');
+      closePopover();
+    }
   });
 
   it('updates successive board grouping and sort direction choices in one popover', async () => {
@@ -3574,6 +3604,7 @@ describe('project Kanban overview', () => {
       'name',
       'status',
       'progress',
+      'tracked',
       'end',
       'start',
     ]);
@@ -3796,7 +3827,13 @@ describe('project Kanban overview', () => {
 
   it('treats an all-cancelled project as empty progress until empty progress is enabled', () => {
     const cancelled = project({
-      stats: { total: 4, done: 0, cancelled: 4, inProgress: 0 },
+      stats: {
+        total: 4,
+        done: 0,
+        cancelled: 4,
+        inProgress: 0,
+        tracked: { closedMs: 0, openStartsMs: [] },
+      },
     });
     const { host, view, settings } = mountView([cancelled]);
     settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);

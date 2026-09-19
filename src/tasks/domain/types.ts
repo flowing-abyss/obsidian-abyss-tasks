@@ -4,6 +4,7 @@ export type TaskPriority = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 export type OnCompletion = 'keep' | 'delete';
 
 import type { CommentTimestamp } from './commentTimestamp';
+import type { TimeEntrySnapshot } from './timeTracking';
 
 declare const localDateBrand: unique symbol;
 declare const localTimeBrand: unique symbol;
@@ -50,6 +51,13 @@ export interface CommentRef {
   readonly originalMarkdown: string;
 }
 
+/** Locates one tracked time entry line by the node that owns it, like a comment. */
+export interface TimeEntryRef {
+  readonly parent: TaskNodeRef;
+  readonly relativeLine: number;
+  readonly originalMarkdown: string;
+}
+
 export type TaskNodeRef =
   | { readonly type: 'task'; readonly ref: TaskRef }
   | { readonly type: 'subtask'; readonly ref: SubtaskRef };
@@ -74,7 +82,9 @@ export function sameTaskNodeRef(left: TaskNodeRef, right: TaskNodeRef): boolean 
 }
 
 export type TaskMutationTarget =
-  TaskNodeRef | { readonly type: 'comment'; readonly ref: CommentRef };
+  | TaskNodeRef
+  | { readonly type: 'comment'; readonly ref: CommentRef }
+  | { readonly type: 'time-entry'; readonly ref: TimeEntryRef };
 
 export type TaskTextTarget =
   | { readonly type: 'title'; readonly target: TaskNodeRef }
@@ -143,6 +153,7 @@ export interface SubtaskSnapshot extends TaskDependencyFields {
   readonly onCompletionExplicit: boolean;
   readonly subtasks: readonly SubtaskSnapshot[];
   readonly comments: readonly TaskCommentSnapshot[];
+  readonly timeEntries: readonly TimeEntrySnapshot[];
   readonly description?: string;
 }
 
@@ -160,6 +171,7 @@ export interface TaskSnapshot extends TaskDependencyFields {
   readonly onCompletionExplicit: boolean;
   readonly subtasks: readonly SubtaskSnapshot[];
   readonly comments: readonly TaskCommentSnapshot[];
+  readonly timeEntries: readonly TimeEntrySnapshot[];
   readonly description?: string;
   readonly source: TaskSource;
   readonly presentation: TaskPresentationMetadata;

@@ -51,6 +51,7 @@ const TYPE_ICONS: Readonly<Record<ProjectFieldCatalogItem['type'] & string, stri
   name: 'file-text',
   status: 'circle-dot',
   progress: 'percent',
+  tracked: 'clock',
 };
 
 export function projectTableColumnWidth(

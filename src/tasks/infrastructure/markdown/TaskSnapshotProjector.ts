@@ -2,6 +2,9 @@ import { countLinksIn } from '../../../markdown/links';
 import type { CommentTimestamp } from '../../domain/commentTimestamp';
 import { parseCommentTimestampPrefix } from '../../domain/commentTimestamp';
 import type { StatusCatalog } from '../../domain/StatusCatalog';
+import type { OffsetAt } from '../../domain/timeEntry';
+import { parseTimeEntryLine } from '../../domain/timeEntry';
+import type { TimeEntrySnapshot } from '../../domain/timeTracking';
 import type {
   CommentRef,
   DurationMinutes,
@@ -22,17 +25,21 @@ import type { TaskMarkdownCodec } from './TaskMarkdownCodec';
 const PREFIX_RE = /^([\s>]*)/u;
 const SUBTASK_RE = /^([\s>]*)- \[(.)\]\s+(.*)/u;
 const DESCRIPTION_RE = /^([\s>]*)- > (.*)/u;
+const ENTRY_ARROW = '→';
+const NO_TIME_ENTRIES: readonly TimeEntrySnapshot[] = Object.freeze([]);
 
 interface ProjectionContext {
   readonly codec: TaskMarkdownCodec;
   readonly statusCatalog: StatusCatalog;
   readonly filePath: string;
   readonly lines: readonly string[];
+  readonly offsetAt: OffsetAt;
 }
 
 interface ProjectedChildren {
   readonly subtasks: readonly SubtaskSnapshot[];
   readonly comments: readonly TaskCommentSnapshot[];
+  readonly timeEntries: readonly TimeEntrySnapshot[];
   readonly description?: string;
   readonly toLine: number;
 }
@@ -46,6 +53,7 @@ export interface TaskSnapshotProjection {
   readonly exactBlock: string;
   readonly ref: TaskRef;
   readonly presentation: TaskSnapshot['presentation'];
+  readonly offsetAt: OffsetAt;
 }
 
 function indentation(line: string): number {
@@ -179,8 +187,29 @@ interface ProjectedContentTarget {
   readonly parentLine: number;
   readonly line: number;
   readonly source: string;
+  readonly offsetAt: OffsetAt;
   readonly descriptions: string[];
   readonly comments: TaskCommentSnapshot[];
+  readonly timeEntries: TimeEntrySnapshot[];
+}
+
+/**
+ * An entry line is parsed once, and the arrow test rejects every ordinary nested line before the
+ * grammar runs. A parsed entry carries no undefined-valued keys, so the spread keeps the snapshot
+ * JSON-stable for the index's change comparison.
+ */
+function appendProjectedTimeEntry(target: ProjectedContentTarget): boolean {
+  if (target.source.indexOf(ENTRY_ARROW) < 0) return false;
+  const parsed = parseTimeEntryLine(target.source, target.offsetAt);
+  if (parsed === undefined) return false;
+  target.timeEntries.push(
+    Object.freeze({
+      relativeLine: target.line - target.parentLine,
+      originalMarkdown: target.source,
+      ...parsed,
+    }),
+  );
+  return true;
 }
 
 function appendProjectedContent(target: ProjectedContentTarget): void {
@@ -189,6 +218,7 @@ function appendProjectedContent(target: ProjectedContentTarget): void {
     target.descriptions.push((description[2] ?? '').trim());
     return;
   }
+  if (appendProjectedTimeEntry(target)) return;
   const comment = parseCommentTimestampPrefix(target.source);
   if (comment == null) return;
   target.comments.push(
@@ -203,6 +233,11 @@ function appendProjectedContent(target: ProjectedContentTarget): void {
   );
 }
 
+/** Most nodes track no time, so they all share one array instead of freezing an empty one each. */
+function frozenTimeEntries(entries: TimeEntrySnapshot[]): readonly TimeEntrySnapshot[] {
+  return entries.length === 0 ? NO_TIME_ENTRIES : Object.freeze(entries);
+}
+
 function projectChildren(
   context: ProjectionContext,
   parentLine: number,
@@ -213,6 +248,7 @@ function projectChildren(
   const parentQuoteDepth = quoteDepth(parentSource);
   const subtasks: SubtaskSnapshot[] = [];
   const comments: TaskCommentSnapshot[] = [];
+  const timeEntries: TimeEntrySnapshot[] = [];
   const descriptions: string[] = [];
   let toLine = parentLine;
   let line = parentLine + 1;
@@ -234,7 +270,16 @@ function projectChildren(
       line = child.toLine + 1;
       continue;
     }
-    appendProjectedContent({ parent, parentLine, line, source, descriptions, comments });
+    appendProjectedContent({
+      parent,
+      parentLine,
+      line,
+      source,
+      offsetAt: context.offsetAt,
+      descriptions,
+      comments,
+      timeEntries,
+    });
     line++;
   }
 
@@ -242,6 +287,7 @@ function projectChildren(
   return {
     subtasks,
     comments,
+    timeEntries: frozenTimeEntries(timeEntries),
     ...(Boolean(description) && { description }),
     toLine,
   };
@@ -287,6 +333,7 @@ function projectSubtask(
       onCompletionExplicit: parsed.onCompletionExplicit,
       subtasks: relocatedChildren.subtasks,
       comments: relocatedChildren.comments,
+      timeEntries: relocatedChildren.timeEntries,
       ...(relocatedChildren.description !== undefined && {
         description: relocatedChildren.description,
       }),
@@ -355,6 +402,7 @@ export function projectTaskSnapshot(projection: TaskSnapshotProjection): TaskSna
     onCompletionExplicit: parsed.onCompletionExplicit,
     subtasks: children.subtasks,
     comments: children.comments,
+    timeEntries: children.timeEntries,
     ...(children.description !== undefined && { description: children.description }),
     source: {
       filePath: projection.filePath,

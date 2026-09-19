@@ -590,3 +590,294 @@ describe('TaskLocator', () => {
     expect(locator.locate([second], ref)).toEqual({ type: 'conflict', block: second });
   });
 });
+
+/**
+ * A new nested line has to join the indentation the note already uses, so a plugin write never
+ * leaves one node with children at two different indents.
+ */
+describe('TaskBlockEditor nested line indentation', () => {
+  const STAMP = atomDateTime('2026-07-14T12:34:56+07:00');
+
+  function written(source: string, lineCount: number, edit: 'comment' | 'subtask'): string {
+    const editor = new TaskBlockEditor();
+    const block = expectDefined(editor.rootBlocks(source)[0]);
+    const result = editor.edit(
+      source,
+      block,
+      { relativeLine: 0, lineCount, childRanges: [] },
+      edit === 'comment'
+        ? { type: 'add-comment', text: 'note', stamp: STAMP }
+        : { type: 'add-subtask', text: 'child' },
+    );
+    if (result.type !== 'changed') throw new Error(`expected a change, saw ${result.type}`);
+    return result.content;
+  }
+
+  const ADDED = { comment: '- 2026-07-14T12:34:56+07:00: note', subtask: '- [ ] child' } as const;
+
+  it.each(['comment', 'subtask'] as const)('follows a four space child for a new %s', (edit) => {
+    const source = '- [ ] root\n    - [ ] existing\n';
+
+    expect(written(source, 2, edit)).toBe(`${source}    ${ADDED[edit]}\n`);
+  });
+
+  it.each(['comment', 'subtask'] as const)('follows a tab indented child for a new %s', (edit) => {
+    const source = '- [ ] root\n\t- [ ] existing\n';
+
+    expect(written(source, 2, edit)).toBe(`${source}\t${ADDED[edit]}\n`);
+  });
+
+  it.each(['comment', 'subtask'] as const)('follows a quoted child for a new %s', (edit) => {
+    const source = '> - [ ] root\n>     - [ ] existing\n';
+
+    expect(written(source, 2, edit)).toBe(`${source}>     ${ADDED[edit]}\n`);
+  });
+
+  it.each(['comment', 'subtask'] as const)(
+    'follows an existing entry line for a new %s',
+    (edit) => {
+      const entry = '\t- 2026-07-14T09:00:00+07:00 → 2026-07-14T10:00:00+07:00\n';
+
+      // The entry closes the node, so the new line takes its indentation and its place above it.
+      expect(written(`- [ ] root\n${entry}`, 2, edit)).toBe(
+        `- [ ] root\n\t${ADDED[edit]}\n${entry}`,
+      );
+    },
+  );
+
+  it.each(['comment', 'subtask'] as const)(
+    'keeps two spaces without a nested line for a %s',
+    (edit) => {
+      const source = '- [ ] root\n';
+
+      expect(written(source, 1, edit)).toBe(`${source}  ${ADDED[edit]}\n`);
+    },
+  );
+
+  it.each(['comment', 'subtask'] as const)(
+    'follows the first child past a blank line for a %s',
+    (edit) => {
+      const source = '- [ ] root\n\n\t- [ ] existing\n';
+
+      expect(written(source, 3, edit)).toBe(`${source}\t${ADDED[edit]}\n`);
+    },
+  );
+
+  it.each(['comment', 'subtask'] as const)(
+    'follows the shallowest child, not a grandchild, for a %s',
+    (edit) => {
+      const source = '- [ ] root\n    - [ ] existing\n        - [ ] deeper\n';
+
+      expect(written(source, 3, edit)).toBe(`${source}    ${ADDED[edit]}\n`);
+    },
+  );
+});
+
+/**
+ * A node reads top to bottom as description, subtasks, comments and then its tracking lines, so a
+ * new line joins the group it belongs to instead of landing at the end of everything. Only the new
+ * line moves; the note's existing lines keep their exact places and bytes.
+ */
+describe('TaskBlockEditor content order', () => {
+  const STAMP = atomDateTime('2026-07-14T12:34:56+07:00');
+  const COMMENT = '- 2026-07-14T12:34:56+07:00: note';
+  const SUBTASK = '- [ ] child';
+
+  function inserted(
+    source: string,
+    target: { relativeLine: number; lineCount: number },
+    edit: 'comment' | 'subtask',
+  ): string {
+    const editor = new TaskBlockEditor();
+    const block = expectDefined(editor.rootBlocks(source)[0]);
+    const result = editor.edit(
+      source,
+      block,
+      { ...target, childRanges: [] },
+      edit === 'comment'
+        ? { type: 'add-comment', text: 'note', stamp: STAMP }
+        : { type: 'add-subtask', text: 'child' },
+    );
+    if (result.type !== 'changed') throw new Error(`expected a change, saw ${result.type}`);
+    return result.content;
+  }
+
+  const ENTRY = '  - 2026-07-14T09:00:00+07:00 → 2026-07-14T10:00:00+07:00';
+  const CHILD_ENTRY = '    - 2026-07-14T09:00:00+07:00 → 2026-07-14T10:00:00+07:00';
+  const OPEN_ENTRY = '  - 2026-07-14T11:00:00+07:00 →';
+  const EARLIER = '  - 2026-07-13T09:00:00+07:00: earlier';
+  const ADDED_COMMENT = `  ${COMMENT}`;
+  const ADDED_SUBTASK = `  ${SUBTASK}`;
+
+  /** The exact bytes of a note written as lines, with the final newline a note normally has. */
+  const note = (...lines: readonly string[]): string => `${lines.join('\n')}\n`;
+
+  it('puts a comment above the closing run of tracking lines', () => {
+    const source = note(
+      '- [ ] root',
+      '  - > about',
+      '  - [ ] existing',
+      EARLIER,
+      ENTRY,
+      OPEN_ENTRY,
+    );
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 6 }, 'comment')).toBe(
+      note(
+        '- [ ] root',
+        '  - > about',
+        '  - [ ] existing',
+        EARLIER,
+        ADDED_COMMENT,
+        ENTRY,
+        OPEN_ENTRY,
+      ),
+    );
+  });
+
+  it('appends a comment when the node ends with a subtask rather than a tracking line', () => {
+    const source = note('- [ ] root', ENTRY, '  - [ ] existing');
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 3 }, 'comment')).toBe(
+      note('- [ ] root', ENTRY, '  - [ ] existing', ADDED_COMMENT),
+    );
+  });
+
+  it('reads the closing run of a sub-task against that sub-task, not its parent', () => {
+    const source = note('- [ ] root', '  - [ ] existing', CHILD_ENTRY, ENTRY);
+
+    expect(inserted(source, { relativeLine: 1, lineCount: 2 }, 'comment')).toBe(
+      note('- [ ] root', '  - [ ] existing', `    ${COMMENT}`, CHILD_ENTRY, ENTRY),
+    );
+  });
+
+  it('leaves the entries a sub-task owns out of the parent closing run', () => {
+    const source = note('- [ ] root', '  - [ ] existing', CHILD_ENTRY);
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 3 }, 'comment')).toBe(
+      note('- [ ] root', '  - [ ] existing', CHILD_ENTRY, ADDED_COMMENT),
+    );
+  });
+
+  it('puts a new subtask under the last subtask the node already has', () => {
+    const source = note(
+      '- [ ] root',
+      '  - > about',
+      '  - [ ] first',
+      '    - > about the first',
+      '  - [ ] second',
+      EARLIER,
+      ENTRY,
+    );
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 7 }, 'subtask')).toBe(
+      note(
+        '- [ ] root',
+        '  - > about',
+        '  - [ ] first',
+        '    - > about the first',
+        '  - [ ] second',
+        ADDED_SUBTASK,
+        EARLIER,
+        ENTRY,
+      ),
+    );
+  });
+
+  it('puts the first subtask of a node under its description', () => {
+    const source = note('- [ ] root', '  - > about', '  - > and more', EARLIER);
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 4 }, 'subtask')).toBe(
+      note('- [ ] root', '  - > about', '  - > and more', ADDED_SUBTASK, EARLIER),
+    );
+  });
+
+  it('puts the first subtask of a node with no description right under its own line', () => {
+    const source = note('- [ ] root', EARLIER, ENTRY);
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 3 }, 'subtask')).toBe(
+      note('- [ ] root', ADDED_SUBTASK, EARLIER, ENTRY),
+    );
+  });
+
+  it('keeps CRLF and a missing final newline while inserting above the closing run', () => {
+    const source = `- [ ] root\r\n  - [ ] existing\r\n${ENTRY}`;
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 3 }, 'comment')).toBe(
+      `- [ ] root\r\n  - [ ] existing\r\n  ${COMMENT}\r\n${ENTRY}`,
+    );
+  });
+
+  it('keeps a quoted tab indented node together when a subtask joins it', () => {
+    const source = '>\t- [ ] root\r\n>\t  - 2026-07-14T09:00:00+07:00 →\r\n';
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 2 }, 'subtask')).toBe(
+      `>\t- [ ] root\r\n>\t  ${SUBTASK}\r\n>\t  - 2026-07-14T09:00:00+07:00 →\r\n`,
+    );
+  });
+
+  it('keeps a blank line inside the block where the note put it', () => {
+    const source = note('- [ ] root', '  - > about', '', ENTRY);
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 4 }, 'comment')).toBe(
+      note('- [ ] root', '  - > about', '', ADDED_COMMENT, ENTRY),
+    );
+  });
+
+  /**
+   * A hand-edited note spaces its lines out however it likes, and a blank line says nothing about
+   * where the tracking lines begin, so the run reads through one instead of ending at it.
+   */
+  it('reads the closing run through a blank line between two entries', () => {
+    const source = note('- [ ] root', '  - [ ] existing', ENTRY, '', OPEN_ENTRY);
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 5 }, 'comment')).toBe(
+      note('- [ ] root', '  - [ ] existing', ADDED_COMMENT, ENTRY, '', OPEN_ENTRY),
+    );
+  });
+
+  it('leaves a blank line that trails the entries outside the block alone', () => {
+    const source = note('- [ ] root', '  - [ ] existing', ENTRY, '');
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 3 }, 'comment')).toBe(
+      note('- [ ] root', '  - [ ] existing', ADDED_COMMENT, ENTRY, ''),
+    );
+  });
+
+  it('puts the comment under a blank line that follows an earlier comment', () => {
+    const source = note('- [ ] root', EARLIER, '', ENTRY);
+
+    expect(inserted(source, { relativeLine: 0, lineCount: 4 }, 'comment')).toBe(
+      note('- [ ] root', EARLIER, '', ADDED_COMMENT, ENTRY),
+    );
+  });
+
+  it('puts a linked subtask under the last subtask and still reports its line', () => {
+    const editor = new TaskBlockEditor();
+    const source = note('- [ ] root', '  - [ ] existing', EARLIER, ENTRY);
+    const result = editor.createDependencySubtask(
+      new TaskMarkdownCodec(canonicalStatusCatalog()),
+      source,
+      expectDefined(editor.rootBlocks(source)[0]),
+      {
+        type: 'create-dependency-subtask',
+        current: { relativeLine: 0, lineCount: 4, childRanges: [] },
+        direction: 'blocks',
+        text: 'New',
+        currentId: 'root_id',
+      },
+    );
+
+    expect(result).toMatchObject({
+      type: 'changed',
+      content: note(
+        '- [ ] root 🆔 root_id',
+        '  - [ ] existing',
+        '  - [ ] New ⛔ root_id',
+        EARLIER,
+        ENTRY,
+      ),
+      createdChildRelativeLine: 2,
+    });
+  });
+});

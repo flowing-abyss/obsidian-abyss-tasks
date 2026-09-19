@@ -441,6 +441,23 @@ describe('task command result presentation', () => {
     expect(noticeCalls()).toHaveLength(0);
   });
 
+  it.each([
+    ['task', { type: 'task', task: {} as never, discardedShortEntry: true }],
+    [
+      'recurrence',
+      {
+        type: 'recurrence',
+        active: { root: {} as never, target: {} as never },
+        completed: { root: {} as never, target: {} as never },
+        discardedShortEntry: true,
+      },
+    ],
+  ] as const)('says a %s completion dropped a session under a minute', (_type, outcome) => {
+    presentTaskCommandResult({ type: 'ok', changed: true, outcome });
+
+    expect(noticeCalls()).toEqual([['Tracking under a minute was not saved']]);
+  });
+
   it('warns against retrying a move when the target commit state is unknown', () => {
     presentTaskMoveResult({} as App, {} as TaskApplicationApi, {
       type: 'io-error',

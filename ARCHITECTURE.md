@@ -34,6 +34,7 @@ reconcile them through the same parsing path as manual edits.
 | Concern                                              | Authoritative source                                                                     | Derived or temporary state                   |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------- |
 | Tasks, metadata, and dependencies                    | Vault Markdown                                                                           | TaskIndex snapshots and calendar projections |
+| Tracked time                                         | Vault Markdown time entry lines                                                          | TimeEntryIndex projection and tracked totals |
 | Projects and status                                  | Project Markdown, membership query, configured status property, and literal status names | ProjectStore snapshots and task statistics   |
 | Static preferences                                   | Plugin `data.json`                                                                       | Composed runtime CalendarSettings            |
 | Saved list, section, and project views               | Versioned plugin `state.json`                                                            | Composed runtime CalendarSettings            |
@@ -59,10 +60,11 @@ wired here; consumers receive interfaces instead of constructing alternate repos
 | [Sidebar shell](src/views/PanelView.ts)                   | AppState, responsive panels, navigation, shortcuts, and collaborator lifetimes              | Public task capabilities                                                 |
 | [Native code blocks](src/code-block/registerCodeBlock.ts) | Resolve block settings and mount CalendarRenderer                                           | Same query, command, and status capabilities as the sidebar              |
 
-The public task capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TaskApplicationApi`, and
-`TaskCaptureApplicationApi`. Application queries supply both query capabilities. Add exports only
-when another component needs them. Presentation must not edit task Markdown or import private task
-layers. The domain must not import Obsidian, infrastructure, panels, or settings UI.
+The public task capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TimeTrackingQueryApi`,
+`TaskApplicationApi`, and `TaskCaptureApplicationApi`. Application queries supply all three query
+capabilities. Add exports only when another component needs them. Presentation must not edit task
+Markdown or import private task layers. The domain must not import Obsidian, infrastructure, panels,
+or settings UI.
 
 `PanelView` owns `RailPanel` for mode changes, `LeftPanel` for navigation, `CenterPanel` for selected
 content, and `RightPanel` for the task inspector. Panels share transient navigation through
@@ -132,6 +134,41 @@ own source rules. Calendar and sidebar views share dependency/status presentatio
 blocking. See [dependency reversal tests](test/task-dependency-reversal.test.ts) and
 [linked subtask tests](test/task-create-dependency-subtask.test.ts).
 
+### Time tracking
+
+A time entry is a nested list line that opens with a start stamp and `→`. Entry lines are the only
+record of tracked time. An entry the parser cannot read stays visible on its task and counts
+nothing. A new nested line joins its group in the order description, subtasks, comments, entries.
+Existing lines never move, and reading does not depend on their order.
+
+`TimeTrackingService` owns `start-tracking` and `stop-tracking`. Neither command writes to a single
+root, so both bypass the rooted command path, and their writes are serialized on the mutation
+coordinator that dependency changes use. A start closes every other running entry and then opens its
+own, which keeps one timer running at a time. Each step reads the root the previous write returned
+and does not wait for the index. An entry the service cannot close goes to diagnostics and is
+skipped; only an I/O failure aborts. A session under a minute with no note is discarded, and the
+outcome reports it. Entry removal returns transient recovery data for a local inline Undo.
+
+`TaskIndex` owns `TimeEntryIndex`, updates it on the same per-file path as the task map, and serves
+it through `TimeTrackingQueryApi`. `PanelView` and `TaskModal` each own one `TrackingTicker` and one
+`TrackingActions` write boundary and share them with the controls they host. The ticker re-reads
+active entries when the index changes and runs its interval only while an entry is running and a
+surface listens. A tick adds to a cached total and never queries the index. Cards and calendar items
+read the render's snapshot; forecast occurrences carry no tracked time. The inspector badge outlives
+the chips row, so its sessions popover survives its own writes. An entry write changes its node's
+source block, so a selected subtask can no longer be matched by its text. `rebuildTaskSelection`
+follows it by child position, and only where `sameTaskTreeExceptTimeEntries` proves that nothing but
+time entries changed.
+
+Completing or cancelling a node closes its subtree's running entries in a follow-up write with the
+same clock reading, inside the same serialized mutation. The status result changes only by reporting
+a discarded short session. The follow-up skips and aborts by the same rule as a start, and an entry
+it leaves running stays visible for repair. Recurrence completion closes the completed occurrence's
+entries, and the next occurrence starts with none. The index only reads, so a status symbol edited
+by hand closes nothing.
+See [service tests](test/tasks/time-tracking-service.test.ts) and
+[ticker tests](test/tracking-ticker.test.ts).
+
 ## Projects
 
 ### Discovery and field authority
@@ -147,6 +184,9 @@ frontmatter property and literal status-definition names; project tags do not ca
 `projectFields` owns case-insensitive field lookup and the shared catalog. Status, start, and end
 have configured source properties; description uses `description`. Name comes from the filename,
 and progress is derived from completed top-level tasks over non-cancelled top-level tasks.
+Time is derived from the note's time entries. `ProjectStore` reads the index's per-file total when
+it re-evaluates the note; a project never walks entries itself. Both derived fields are read-only
+wherever a field can be written. Time's curated column is hidden by default.
 Curated types are fixed. Custom types and preset presentation in `projects.propertyDefinitions`
 remain authoritative when Obsidian's registry changes or is unavailable. A custom definition whose
 source is assigned to a curated role stays saved but inactive until that role moves away.
@@ -163,8 +203,10 @@ projections, and editors. See [field tests](test/project-fields.test.ts) and
 `projectTableModel` is the DOM-free source of search, typed sorting, status filtering, grouping,
 and unique visible counts. Link groups use resolved note paths as identity while retaining raw
 values and source paths for rendering and edits; external targets keep source-independent identity.
-Kanban and Timeline models reuse this projection. Their settings modules own independent saved
-presentation and organization, initialized from Table only when first requested.
+A render pass reads one clock and hands it to the model, so tracked totals sort and display at one
+instant and none ticks on its own. Kanban and Timeline models reuse this projection. Their settings
+modules own independent saved presentation and organization, initialized from Table only when first
+requested.
 
 `ProjectsPanel` owns a long-lived [overview controller](src/panels/projects/ProjectsTableView.ts) and
 property-catalog subscription. The controller shares the toolbar, field renderer, editor boundary, mutation queues,

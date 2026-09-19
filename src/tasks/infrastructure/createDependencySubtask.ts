@@ -4,6 +4,7 @@ import type {
   TaskRepositoryResult,
 } from '../application/TaskRepository';
 import type { DependencySubtaskCreationOutcome } from '../domain/commands';
+import { isOwnedLineTarget } from '../domain/taskCommandTargets';
 import { enumerateTaskNodes, type TaskNodeSnapshot } from '../domain/taskDependencies';
 import { sameTaskNodeRef, type TaskSnapshot } from '../domain/types';
 import { invalidTaskSyntax, invalidTaskTarget } from '../domain/validation';
@@ -16,7 +17,7 @@ export function dependencySubtaskResolutionRequest(
   request: CreateDependencySubtaskRequest,
 ): TaskEditRequest | undefined {
   if (
-    request.baseTarget.type === 'comment' ||
+    isOwnedLineTarget(request.baseTarget) ||
     !['blocks', 'blocked-by'].includes(request.direction)
   )
     return undefined;
@@ -92,7 +93,7 @@ export function prepareDependencySubtask(
 ): PreparedDependencySubtask | TaskRepositoryResult {
   const current = enumerateTaskNodes([request.baseRoot]).find(
     (node) =>
-      request.baseTarget.type !== 'comment' && sameTaskNodeRef(node.target, request.baseTarget),
+      !isOwnedLineTarget(request.baseTarget) && sameTaskNodeRef(node.target, request.baseTarget),
   );
   if (current === undefined) return { type: 'conflict', current: request.baseRoot };
   const currentLine = nodeLine(current);

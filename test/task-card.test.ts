@@ -2,9 +2,10 @@ import { Component, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import type { TaskSnapshot as Task } from '../src/tasks';
+import { localDate, type TaskSnapshot as Task, type TimeEntrySnapshot } from '../src/tasks';
 import { createTaskCard, type TaskCardOptions } from '../src/ui/TaskCard';
-import { expectDefined, task, useRealMoment, withMobile } from './helpers';
+import { taskSnapshotForCalendarOccurrence } from '../src/views/calendarOccurrences';
+import { expectDefined, subtask, task, useRealMoment, withMobile } from './helpers';
 
 useRealMoment();
 
@@ -100,6 +101,56 @@ describe('createTaskCard', () => {
         ).getAttribute('data-due'),
       ).toBe('2026-06-24');
       expect(createTaskCard(task(), 'due', baseOptions()).getAttribute('data-due')).toBeNull();
+    });
+  });
+
+  describe('running timer indicator', () => {
+    const running = { state: 'running' as const, startMs: Date.UTC(2026, 8, 18, 9, 30) };
+    const closed = {
+      state: 'closed' as const,
+      startMs: Date.UTC(2026, 8, 18, 9, 30),
+      endMs: Date.UTC(2026, 8, 18, 10, 30),
+    };
+    const entry = (
+      parsed: typeof running | typeof closed,
+      relativeLine: number,
+    ): TimeEntrySnapshot => ({ ...parsed, relativeLine, originalMarkdown: '  - session' });
+
+    it('marks a card whose own entry is running', () => {
+      const el = createTaskCard(task({ timeEntries: [entry(running, 1)] }), 'due', baseOptions());
+      expect(el.classList.contains('is-tracking')).toBe(true);
+    });
+
+    it('marks a card whose sub-task is running', () => {
+      const el = createTaskCard(
+        task({ subtasks: [subtask({ title: 'child', timeEntries: [entry(running, 2)] })] }),
+        'due',
+        baseOptions(),
+      );
+      expect(el.classList.contains('is-tracking')).toBe(true);
+    });
+
+    it('leaves a card with only closed entries unmarked', () => {
+      const el = createTaskCard(task({ timeEntries: [entry(closed, 1)] }), 'due', baseOptions());
+      expect(el.className).toBe('task due noNoteIcon');
+    });
+
+    it('leaves a forecast occurrence unmarked', () => {
+      const root = task({
+        subtasks: [subtask({ title: 'child', timeEntries: [entry(running, 2)] })],
+      });
+      const forecast = taskSnapshotForCalendarOccurrence({
+        kind: 'forecast',
+        key: 'forecast:1',
+        source: { root, target: { type: 'task', ref: root.ref }, node: root },
+        planning: root.planning,
+        referenceDate: localDate('2026-09-19'),
+        ordinal: 1,
+      });
+
+      expect(createTaskCard(forecast, 'due', baseOptions()).classList.contains('is-tracking')).toBe(
+        false,
+      );
     });
   });
 

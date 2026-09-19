@@ -10,6 +10,7 @@ import type {
   TaskCommandResult,
   TaskCreateSession,
   TaskIndexEvent,
+  TaskNodeRef,
   TaskQueryApi,
   TaskRef,
 } from '../src/tasks';
@@ -301,6 +302,36 @@ describe('PanelView', () => {
       expect(layout?.querySelector('.abyss-left')).not.toBeNull();
       expect(layout?.querySelector('.abyss-center')).not.toBeNull();
       expect(layout?.querySelector('.abyss-right')).not.toBeNull();
+    });
+
+    it('says so when a tracked task is no longer in its note', () => {
+      const internals = view as unknown as {
+        openTrackedTask_abyssPrivate(target: TaskNodeRef): void;
+        panelNavigation_abyssPrivate: { openTasks(): void };
+      };
+      const openTasks = vi.spyOn(internals.panelNavigation_abyssPrivate, 'openTasks');
+      let noticeMessage: unknown;
+      const notice = vi.spyOn(
+        Notice.prototype as unknown as {
+          constructor__(message: string | DocumentFragment, duration?: number): void;
+        },
+        'constructor__',
+      );
+      notice.mockImplementation((message) => {
+        noticeMessage = message;
+      });
+      const log = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      internals.openTrackedTask_abyssPrivate({
+        type: 'task',
+        ref: { filePath: 'gone.md', line: 4, revision: '1' },
+      });
+
+      expect(notice).toHaveBeenCalledOnce();
+      expect(noticeMessage).toBe('That tracked task is no longer in its note');
+      expect(log).toHaveBeenCalledOnce();
+      // A click that reaches nothing leaves the reader in the mode they were in.
+      expect(openTasks).not.toHaveBeenCalled();
     });
 
     it('owns one stable out-of-flow creation feedback host inside the layout', () => {

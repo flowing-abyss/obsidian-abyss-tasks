@@ -1,4 +1,4 @@
-import { ItemView, Platform, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
+import { ItemView, Notice, Platform, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
 import { AppState } from '../app/AppState';
 import { CenterPanel } from '../panels/CenterPanel';
 import { LeftPanel } from '../panels/LeftPanel';
@@ -17,11 +17,13 @@ import type {
   TaskCaptureApplicationApi,
   TaskCommandResult,
   TaskIndexEvent,
+  TaskNodeRef,
   TaskQueryApi,
   TaskRef,
   TaskResolution,
+  TimeTrackingQueryApi,
 } from '../tasks';
-import { taskCommandRootRef } from '../tasks';
+import { taskCommandRootRef, taskNodeAddress } from '../tasks';
 import { CreationPresentationController } from '../ui/creation/CreationPresentationController';
 import { InteractionRegistry } from '../ui/interactionOwnership';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
@@ -31,12 +33,21 @@ import {
   type CaptureContext,
 } from '../ui/taskCapture/CaptureTargetResolver';
 import { QuickCaptureCoordinator } from '../ui/taskCapture/QuickCaptureCoordinator';
+import { presentTaskCommandResult } from '../ui/taskCommandResult';
 import {
   rebuildTaskSelection,
   renamedRootSelection,
+  rootTaskNodeRef,
   rootTaskRef,
   type TaskSelectionNode,
 } from '../ui/taskSelection';
+import {
+  mountRailTrackingWidget,
+  type RailTrackingWidgetHandle,
+} from '../ui/timeTracking/RailTrackingWidget';
+import { deviceTrackedTimeContext, type TrackingSurface } from '../ui/timeTracking/TimeBadge';
+import { TrackingTicker } from '../ui/timeTracking/TrackingTicker';
+import { createTrackingActions } from '../ui/timeTracking/trackingActions';
 import { PanelNavigator } from './panelNavigation';
 
 export const PANEL_VIEW_TYPE = 'task-calendar-panel';
@@ -76,7 +87,7 @@ interface PanelLayoutElements {
 type PanelViewDependencies = [
   settings: CalendarSettings,
   tagManager: TagManager,
-  queries: TaskQueryApi,
+  queries: TaskQueryApi & TimeTrackingQueryApi,
   tasks: TaskApplicationApi & TaskCaptureApplicationApi,
   statusRegistry: StatusRegistry,
   onSaveSettings?: () => Promise<void>,
@@ -175,12 +186,14 @@ export class PanelView extends ItemView {
   private pendingCompactPane_abyssPrivate: PendingCompactPane | undefined = undefined;
   private readonly settings_abyssPrivate: CalendarSettings;
   private readonly tagManager_abyssPrivate: TagManager;
-  private readonly queries_abyssPrivate: TaskQueryApi;
+  private readonly queries_abyssPrivate: TaskQueryApi & TimeTrackingQueryApi;
   private readonly tasks_abyssPrivate: TaskApplicationApi & TaskCaptureApplicationApi;
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
   private readonly onSaveSettings_abyssPrivate: () => Promise<void>;
   private readonly onSaveViewState_abyssPrivate: () => Promise<void>;
   private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
+  private timeTracking_abyssPrivate: TrackingSurface | undefined;
+  private railTracking_abyssPrivate: RailTrackingWidgetHandle | undefined;
 
   constructor(leaf: WorkspaceLeaf, ...dependencies: PanelViewDependencies) {
     super(leaf);
@@ -364,6 +377,7 @@ export class PanelView extends ItemView {
     projectStore: ProjectStore,
     projectManager: ProjectManager,
   ): void {
+    const timeTracking = this.createTrackingSurface_abyssPrivate();
     this.rail_abyssPrivate = new RailPanel(
       this.state_abyssPrivate,
       this.app as never,
@@ -399,6 +413,7 @@ export class PanelView extends ItemView {
       this.interactionRegistry_abyssPrivate,
       this.panelNavigation_abyssPrivate,
       this.onSaveViewState_abyssPrivate,
+      timeTracking,
     );
     this.right_abyssPrivate = new RightPanel(
       this.state_abyssPrivate,
@@ -413,7 +428,23 @@ export class PanelView extends ItemView {
       },
       this.commentTimeContext_abyssPrivate,
       this.interactionRegistry_abyssPrivate,
+      timeTracking,
     );
+  }
+
+  /** One tick and one write boundary for every tracking control this view hosts. */
+  private createTrackingSurface_abyssPrivate(): TrackingSurface {
+    const surface: TrackingSurface = {
+      ticker: new TrackingTicker({
+        queries: this.tasks_abyssPrivate.queries,
+        now: () => Date.now(),
+        win: this.contentEl.ownerDocument.defaultView ?? activeWindow,
+      }),
+      actions: createTrackingActions(this.tasks_abyssPrivate, presentTaskCommandResult),
+      context: deviceTrackedTimeContext,
+    };
+    this.timeTracking_abyssPrivate = surface;
+    return surface;
   }
 
   private registerProjectUpdates_abyssPrivate(projectStore: ProjectStore): void {
@@ -464,9 +495,60 @@ export class PanelView extends ItemView {
 
   private mountPanels_abyssPrivate(elements: PanelLayoutElements): void {
     this.rail_abyssPrivate.mount(elements.rail);
+    this.mountRailTracking_abyssPrivate(elements.layout);
     this.left_abyssPrivate.mount(elements.left);
     this.center_abyssPrivate.mount(elements.center);
     this.right_abyssPrivate.mount(elements.right);
+  }
+
+  /** The rail widget shares this view's one ticker and write boundary with every other control. */
+  private mountRailTracking_abyssPrivate(layout: HTMLElement): void {
+    const host = this.rail_abyssPrivate.trackingHost();
+    const surface = this.timeTracking_abyssPrivate;
+    if (host === undefined || surface === undefined) {
+      // Silently skipping would leave the rail short of a control nobody could explain, so the
+      // missing half is named where a diagnostic report can pick it up.
+      console.warn(
+        '[abyss-tasks] The rail time tracking widget was not mounted because',
+        host === undefined ? 'the rail has no host element' : 'the view has no tracking surface',
+      );
+      return;
+    }
+    this.railTracking_abyssPrivate = mountRailTrackingWidget({
+      host,
+      popoverOwner: layout,
+      boundary: layout,
+      queries: this.tasks_abyssPrivate.queries,
+      ticker: surface.ticker,
+      actions: surface.actions,
+      openTask: (target) => {
+        this.openTrackedTask_abyssPrivate(target);
+      },
+      context: surface.context,
+      ownership: this.interactionRegistry_abyssPrivate,
+      win: layout.ownerDocument.defaultView ?? activeWindow,
+    });
+  }
+
+  /**
+   * Shows a tracked task the way a card selection does: the panel switches to Tasks and the node
+   * becomes the inspector selection, which at a compact width is what opens the details pane.
+   */
+  private openTrackedTask_abyssPrivate(target: TaskNodeRef): void {
+    const address = taskNodeAddress(target);
+    const node = this.tasks_abyssPrivate.queries
+      .listNodes({ filePath: rootTaskNodeRef(target).filePath })
+      .find((candidate) => taskNodeAddress(candidate.target) === address);
+    if (node === undefined) {
+      // The note moved on since the list was grouped, so the click reaches nothing. The reader is
+      // told rather than left with a dead control, and the address goes to the console for whoever
+      // has to find out which line went away.
+      new Notice('That tracked task is no longer in its note');
+      console.warn('[abyss-tasks] The tracked task is no longer in its note', address);
+      return;
+    }
+    this.panelNavigation_abyssPrivate.openTasks();
+    this.state_abyssPrivate.openInspectorDependency(node);
   }
 
   private initializeCapture_abyssPrivate(
@@ -614,6 +696,10 @@ export class PanelView extends ItemView {
   private destroyOwnedViews_abyssPrivate(): void {
     this.creationPresentation_abyssPrivate?.destroy();
     this.creationPresentation_abyssPrivate = undefined;
+    this.railTracking_abyssPrivate?.destroy();
+    this.railTracking_abyssPrivate = undefined;
+    this.timeTracking_abyssPrivate?.ticker.destroy();
+    this.timeTracking_abyssPrivate = undefined;
     this.projectStore_abyssPrivate?.destroy();
     this.rail_abyssPrivate.destroy();
     this.left_abyssPrivate.destroy();

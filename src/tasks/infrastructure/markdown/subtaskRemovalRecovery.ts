@@ -6,7 +6,8 @@ import type { TaskBlockEditResult } from './TaskBlockEditor';
 
 type TaskOutcome = Extract<TaskCommandOutcome, { readonly type: 'task' }>;
 
-function freeze<T>(value: T): T {
+/** Recovery evidence is rebuilt rather than borrowed, so freezing it cannot reach a live snapshot. */
+export function freeze<T>(value: T): T {
   if (value !== null && typeof value === 'object') {
     for (const child of Object.values(value)) freeze(child);
     Object.freeze(value);

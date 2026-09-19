@@ -5,6 +5,7 @@ import type {
   TaskNodeSnapshot,
 } from '../domain/taskDependencies';
 import type { TaskResolution } from '../domain/taskReconciliation';
+import type { TrackedEntry, TrackedTotal } from '../domain/timeTracking';
 import type {
   DateRange,
   LocalDate,
@@ -51,8 +52,15 @@ export interface TaskQueryApi {
   subscribeReconciled(listener: (files: readonly string[]) => void): () => void;
 }
 
+export interface TimeTrackingQueryApi {
+  activeEntries(): readonly TrackedEntry[];
+  /** Closed entries overlapping [fromMs, toMs) plus every running entry whose start is before toMs. Broken entries are never returned. */
+  entriesOverlapping(fromMs: number, toMs: number): readonly TrackedEntry[];
+  fileTotal(filePath: string): TrackedTotal;
+}
+
 export interface TaskApplicationApi {
-  readonly queries: TaskQueryApi & TaskDependencyQueryApi;
+  readonly queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
   /** Includes atomic linked-child creation; presentation never sequences repository edits. */
   execute(command: TaskCommand): Promise<TaskCommandResult>;
 }

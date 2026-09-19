@@ -28,6 +28,7 @@ import {
   prepareRecurrenceIteration,
   recurrenceMarkerCountInOwnedSubtree,
 } from '../../src/tasks/domain/recurrenceIteration';
+import { isOwnedLineTarget } from '../../src/tasks/domain/taskCommandTargets';
 import type {
   CommentRef,
   LocalDate,
@@ -38,6 +39,7 @@ import type {
   TaskNodeRef,
   TaskRef,
   TaskSnapshot,
+  TimeEntryRef,
 } from '../../src/tasks/domain/types';
 import { sameTaskNodeRef } from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
@@ -55,6 +57,7 @@ import {
 } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
 import { type TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { recoverTimeEntryRemoval } from '../../src/tasks/infrastructure/markdown/timeEntryRemovalRecovery';
 import { preparedRevisionResult } from '../../src/tasks/infrastructure/preparedRevisionResult';
 import {
   prepareTaskEditBatch,
@@ -117,6 +120,16 @@ function commentNodeTarget(command: TaskEditCommand): PlanningTarget | undefined
   return undefined;
 }
 
+function timeEntryNodeTarget(command: TaskEditCommand): PlanningTarget | undefined {
+  if (command.type === 'add-time-entry' || command.type === 'restore-time-entry') {
+    return command.parent;
+  }
+  if (command.type === 'close-time-entry' || command.type === 'delete-time-entry') {
+    return command.entry.parent;
+  }
+  return undefined;
+}
+
 function nodeTarget(command: TaskEditCommand): PlanningTarget | undefined {
   const direct = directNodeTarget(command);
   if (direct !== undefined) return direct;
@@ -124,7 +137,7 @@ function nodeTarget(command: TaskEditCommand): PlanningTarget | undefined {
     return command.target.type === 'comment' ? command.target.ref.parent : command.target.target;
   }
   if (command.type === 'set-description') return command.target;
-  return childNodeTarget(command) ?? commentNodeTarget(command);
+  return childNodeTarget(command) ?? commentNodeTarget(command) ?? timeEntryNodeTarget(command);
 }
 
 function commandRootRef(command: TaskEditCommand): TaskRef {
@@ -183,6 +196,16 @@ function commentMutationTarget(command: TaskEditCommand): TaskMutationTarget | u
   return undefined;
 }
 
+function timeEntryMutationTarget(command: TaskEditCommand): TaskMutationTarget | undefined {
+  if (command.type === 'add-time-entry' || command.type === 'restore-time-entry') {
+    return command.parent;
+  }
+  if (command.type === 'close-time-entry' || command.type === 'delete-time-entry') {
+    return { type: 'time-entry', ref: command.entry };
+  }
+  return undefined;
+}
+
 function targetOf(command: TaskEditCommand): TaskMutationTarget {
   const direct = directMutationTarget(command);
   if (direct !== undefined) return direct;
@@ -194,6 +217,8 @@ function targetOf(command: TaskEditCommand): TaskMutationTarget {
   if (child !== undefined) return child;
   const comment = commentMutationTarget(command);
   if (comment !== undefined) return comment;
+  const entry = timeEntryMutationTarget(command);
+  if (entry !== undefined) return entry;
   return { type: 'task', ref: commandRootRef(command) };
 }
 
@@ -233,30 +258,48 @@ function blockTarget(
   };
 }
 
-function isStructuralCommand(command: TaskEditCommand): command is Extract<
-  TaskEditCommand,
+type TimeEntryTaskEditCommand = Extract<
+  StructuralTaskEditCommand,
   {
     readonly type:
-      | 'set-description'
-      | 'add-subtask'
-      | 'restore-subtask'
-      | 'delete-subtask'
-      | 'reorder-subtask'
-      | 'add-comment'
-      | 'update-comment'
-      | 'delete-comment';
+      'add-time-entry' | 'close-time-entry' | 'delete-time-entry' | 'restore-time-entry';
   }
-> {
-  return (
-    command.type === 'set-description' ||
-    command.type === 'add-subtask' ||
-    command.type === 'restore-subtask' ||
-    command.type === 'delete-subtask' ||
-    command.type === 'reorder-subtask' ||
-    command.type === 'add-comment' ||
-    command.type === 'update-comment' ||
-    command.type === 'delete-comment'
-  );
+>;
+
+const TIME_ENTRY_COMMAND_TYPES: ReadonlySet<string> = new Set(
+  Object.keys({
+    'add-time-entry': true,
+    'close-time-entry': true,
+    'delete-time-entry': true,
+    'restore-time-entry': true,
+  } satisfies Readonly<Record<TimeEntryTaskEditCommand['type'], true>>),
+);
+
+const STRUCTURAL_COMMAND_TYPES: ReadonlySet<string> = new Set(
+  Object.keys({
+    'set-description': true,
+    'add-subtask': true,
+    'restore-subtask': true,
+    'delete-subtask': true,
+    'reorder-subtask': true,
+    'add-comment': true,
+    'update-comment': true,
+    'delete-comment': true,
+    'add-time-entry': true,
+    'close-time-entry': true,
+    'delete-time-entry': true,
+    'restore-time-entry': true,
+  } satisfies Readonly<Record<StructuralTaskEditCommand['type'], true>>),
+);
+
+function isStructuralCommand(command: TaskEditCommand): command is StructuralTaskEditCommand {
+  return STRUCTURAL_COMMAND_TYPES.has(command.type);
+}
+
+function isTimeEntryCommand(
+  command: StructuralTaskEditCommand,
+): command is TimeEntryTaskEditCommand {
+  return TIME_ENTRY_COMMAND_TYPES.has(command.type);
 }
 
 function ownsComment(node: TaskSnapshot | SubtaskSnapshot, comment: CommentRef): boolean {
@@ -264,6 +307,14 @@ function ownsComment(node: TaskSnapshot | SubtaskSnapshot, comment: CommentRef):
     (candidate) =>
       candidate.ref.relativeLine === comment.relativeLine &&
       legacyLine(candidate.ref.originalMarkdown) === legacyLine(comment.originalMarkdown),
+  );
+}
+
+function ownsTimeEntry(node: TaskSnapshot | SubtaskSnapshot, entry: TimeEntryRef): boolean {
+  return node.timeEntries.some(
+    (candidate) =>
+      candidate.relativeLine === entry.relativeLine &&
+      legacyLine(candidate.originalMarkdown) === legacyLine(entry.originalMarkdown),
   );
 }
 
@@ -275,21 +326,40 @@ function ownsSubtask(node: TaskSnapshot | SubtaskSnapshot, subtask: SubtaskRef):
   );
 }
 
-function structuralEdit(
-  command: Extract<
-    TaskEditCommand,
-    {
-      readonly type:
-        | 'set-description'
-        | 'add-subtask'
-        | 'restore-subtask'
-        | 'delete-subtask'
-        | 'reorder-subtask'
-        | 'add-comment'
-        | 'update-comment'
-        | 'delete-comment';
-    }
-  >,
+function structuralEdit(command: StructuralTaskEditCommand): TaskBlockEdit {
+  return isTimeEntryCommand(command) ? timeEntryEdit(command) : taskContentEdit(command);
+}
+
+function timeEntryEdit(command: TimeEntryTaskEditCommand): TaskBlockEdit {
+  switch (command.type) {
+    case 'add-time-entry':
+      return { type: command.type, stamp: command.stamp };
+    case 'close-time-entry':
+      return {
+        type: command.type,
+        relativeLine: command.entry.relativeLine,
+        originalMarkdown: command.entry.originalMarkdown,
+        stamp: command.stamp,
+        endMs: command.endMs,
+        minimumMs: command.minimumMs,
+      };
+    case 'delete-time-entry':
+      return {
+        type: command.type,
+        relativeLine: command.entry.relativeLine,
+        originalMarkdown: command.entry.originalMarkdown,
+      };
+    case 'restore-time-entry':
+      return {
+        type: command.type,
+        markdown: command.markdown,
+        relativeLine: command.relativeLine,
+      };
+  }
+}
+
+function taskContentEdit(
+  command: Exclude<StructuralTaskEditCommand, TimeEntryTaskEditCommand>,
 ): TaskBlockEdit {
   switch (command.type) {
     case 'set-description':
@@ -524,7 +594,11 @@ type StructuralTaskEditCommand = Extract<
       | 'reorder-subtask'
       | 'add-comment'
       | 'update-comment'
-      | 'delete-comment';
+      | 'delete-comment'
+      | 'add-time-entry'
+      | 'close-time-entry'
+      | 'delete-time-entry'
+      | 'restore-time-entry';
   }
 >;
 
@@ -1305,13 +1379,9 @@ export class InMemoryTaskRepository implements TaskRepository {
     const root = this.snapshot(path, content, block.line);
     if (root === undefined) return undefined;
     const original = targetOf(command);
-    const target =
-      original.type === 'comment'
-        ? {
-            type: 'comment' as const,
-            ref: { ...original.ref, parent: rebaseNode(original.ref.parent, root.ref) },
-          }
-        : rebaseNode(original, root.ref);
+    const target = isOwnedLineTarget(original)
+      ? { ...original, ref: { ...original.ref, parent: rebaseNode(original.ref.parent, root.ref) } }
+      : rebaseNode(original, root.ref);
     return { root, target };
   }
 
@@ -1390,7 +1460,7 @@ export class InMemoryTaskRepository implements TaskRepository {
       structuralEdit(prepared),
     );
     const result = this.structuralEditOutcome(input, current, edited);
-    return recoverSubtaskRemoval(command, edited, result);
+    return recoverTimeEntryRemoval(command, edited, recoverSubtaskRemoval(command, edited, result));
   }
 
   private structuralOwnershipConflict(
@@ -1400,6 +1470,9 @@ export class InMemoryTaskRepository implements TaskRepository {
     if (command.type === 'restore-subtask') return !subtaskRestorationGapIsCurrent(command, target);
     if (command.type === 'update-comment' || command.type === 'delete-comment') {
       return !ownsComment(target, command.comment);
+    }
+    if (command.type === 'close-time-entry' || command.type === 'delete-time-entry') {
+      return !ownsTimeEntry(target, command.entry);
     }
     if (command.type === 'delete-subtask') return !ownsSubtask(target, command.subtask);
     if (command.type === 'reorder-subtask') {

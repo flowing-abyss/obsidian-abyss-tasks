@@ -367,7 +367,7 @@ function groupField(input: ProjectKanbanDropInput): ProjectField | undefined {
   if (group === undefined || !isAvailableProjectField(group)) {
     throw new Error('Project grouping field is read-only');
   }
-  if (group.type === 'name' || group.type === 'progress') {
+  if (group.type === 'name' || group.type === 'progress' || group.type === 'tracked') {
     throw new Error(`${group.label} cannot be changed by moving a card`);
   }
   return group;

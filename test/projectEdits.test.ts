@@ -113,7 +113,13 @@ describe('project edit source values', () => {
     tags: [],
     statusId: 'status-id',
     rawStatus: null,
-    stats: { total: 2, done: 1, cancelled: 0, inProgress: 0 },
+    stats: {
+      total: 2,
+      done: 1,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    },
   };
 
   it('reads the raw configured status value rather than its logical status id', () => {
@@ -730,7 +736,13 @@ describe('ProjectManager.applyEdits', () => {
       tags: [],
       statusId: null,
       rawStatus: null,
-      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+      stats: {
+        total: 0,
+        done: 0,
+        cancelled: 0,
+        inProgress: 0,
+        tracked: { closedMs: 0, openStartsMs: [] },
+      },
     };
 
     expect(

@@ -137,7 +137,13 @@ function project(over: Partial<Project>): Project {
     tags: [],
     statusId: active.id,
     rawStatus: null,
-    stats: { total: 10, done: 6, cancelled: 0, inProgress: 0 },
+    stats: {
+      total: 10,
+      done: 6,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    },
     ...over,
   };
 }
@@ -1473,6 +1479,36 @@ describe('ProjectsTableView', () => {
     expect(applyEdits).toHaveBeenCalledOnce();
   });
 
+  it('repaints a running Time cell once the render clock has advanced', () => {
+    vi.useFakeTimers();
+    const startMs = Date.UTC(2026, 8, 18, 9, 0);
+    vi.setSystemTime(startMs + 80 * 60_000);
+    const config = settings();
+    const tracked = expectDefined(config.projects.table.columns.find(({ id }) => id === 'tracked'));
+    tracked.visible = true;
+    const running = project({
+      stats: {
+        total: 1,
+        done: 0,
+        cancelled: 0,
+        inProgress: 0,
+        tracked: { closedMs: 0, openStartsMs: [startMs] },
+      },
+    });
+    const { host, view } = mount([running], { settings: config });
+    const trackedText = (): string =>
+      expectDefined(
+        host.querySelector<HTMLElement>('.abyss-project-table-row [data-column-id="tracked"]'),
+      ).textContent;
+
+    expect(trackedText()).toBe('1h 20m');
+
+    vi.setSystemTime(startMs + 81 * 60_000);
+    view.update([running]);
+
+    expect(trackedText()).toBe('1h 21m');
+  });
+
   it('keeps a held Start resize visible and reorders its focused row on the receipt', async () => {
     const config = settings();
     config.projects.overviewView = 'timeline';
@@ -1704,7 +1740,13 @@ describe('ProjectsTableView', () => {
     const { host } = mount(
       [
         project({
-          stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 0,
+            done: 0,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
         project({ path: 'Projects/B.md', name: 'B' }),
       ],
@@ -2751,7 +2793,13 @@ describe('ProjectsTableView', () => {
         project({
           path: `Projects/${name}.md`,
           name: String(name),
-          stats: { total: 10, done: Number(done), cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 10,
+            done: Number(done),
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
       ),
     );
@@ -3214,6 +3262,7 @@ describe('ProjectsTableView', () => {
       ['name', 260],
       ['status', 150],
       ['progress', 190],
+      ['tracked', undefined],
       ['start', 290],
       ['end', 150],
     ]);
@@ -3589,11 +3638,11 @@ describe('ProjectsTableView', () => {
     const order = (): string[] => config.projects.table.columns.map(({ id }) => id);
 
     drag('status', 'progress', 75);
-    expect(order()).toEqual(['name', 'progress', 'status', 'start', 'end']);
+    expect(order()).toEqual(['name', 'progress', 'status', 'tracked', 'start', 'end']);
     drag('progress', 'end', 75);
-    expect(order()).toEqual(['name', 'status', 'start', 'end', 'progress']);
+    expect(order()).toEqual(['name', 'status', 'tracked', 'start', 'end', 'progress']);
     drag('progress', 'status', 25);
-    expect(order()).toEqual(['name', 'progress', 'status', 'start', 'end']);
+    expect(order()).toEqual(['name', 'progress', 'status', 'tracked', 'start', 'end']);
 
     expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
     expect(saveSettings).toHaveBeenCalledTimes(3);
@@ -3694,6 +3743,7 @@ describe('ProjectsTableView', () => {
       'name',
       'progress',
       'status',
+      'tracked',
       'start',
       'end',
     ]);
@@ -6125,15 +6175,33 @@ describe('ProjectsTableView', () => {
       [
         project({
           path: 'Projects/A.md',
-          stats: { total: 10, done: 8, cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 10,
+            done: 8,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
         project({
           path: 'Projects/B.md',
-          stats: { total: 10, done: 2, cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 10,
+            done: 2,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
         project({
           path: 'Projects/C.md',
-          stats: { total: 10, done: 2, cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 10,
+            done: 2,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
       ],
       { settings: config },

@@ -8,6 +8,7 @@ export type {
   TaskDependencyQueryApi,
   TaskIndexEvent,
   TaskQueryApi,
+  TimeTrackingQueryApi,
 } from './application/TaskApplicationApi';
 export { cloneTaskSnapshot } from './domain/cloneTaskSnapshot';
 export type {
@@ -19,6 +20,7 @@ export type {
   TaskCommandResult,
   TaskOccurrenceResult,
   TaskPatch,
+  TimeEntryRemovalRecovery,
 } from './domain/commands';
 export {
   formatCommentTimeLabel,
@@ -43,10 +45,33 @@ export type {
 } from './domain/taskDependencies';
 export {
   sameTaskTreeExceptDependencies,
+  sameTaskTreeExceptTimeEntries,
   taskReconciliationKey,
   type TaskResolution,
 } from './domain/taskReconciliation';
 export { sameTaskTreeWithOwnedChanges } from './domain/taskTreeChangeProof';
+export type { OffsetAt } from './domain/timeEntry';
+export {
+  entryDurationMs,
+  formatTrackedDuration,
+  formatTrackedDurationWithSeconds,
+  groupTrackedDays,
+  localDayStartMs,
+  openTimersExtraMs,
+  recentTrackingWindow,
+  resumeTarget,
+  shiftLocalDayStartMs,
+  subtreeRunning,
+  subtreeTotal,
+  taskNodeAddress,
+  timeEntryRef,
+  totalMs,
+  type TimeEntrySnapshot,
+  type TrackedDay,
+  type TrackedDayRow,
+  type TrackedEntry,
+  type TrackedTotal,
+} from './domain/timeTracking';
 export { sameTaskNodeRef } from './domain/types';
 export type {
   CommentRef,
@@ -62,5 +87,6 @@ export type {
   TaskSnapshot,
   TaskStatusType,
   TaskTextTarget,
+  TimeEntryRef,
 } from './domain/types';
 export { durationMinutes, localDate, localTime } from './domain/validation';

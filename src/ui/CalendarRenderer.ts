@@ -277,6 +277,8 @@ export class CalendarRenderer {
       onDateClick: (date: string) => {
         this.openAddTaskModal_abyssPrivate(date);
       },
+      // A card body right-click belongs to the recurrence editor here, so this surface offers no
+      // start or pause item. Clicking a card opens the task modal, whose badge owns those controls.
       onTaskBodyContextMenu: (_event, task, anchor) => {
         if (isForecastCalendarTask(task)) return;
         this.openRecurrenceEditor_abyssPrivate(anchor, task);

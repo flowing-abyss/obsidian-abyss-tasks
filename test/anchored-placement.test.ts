@@ -112,4 +112,56 @@ describe('anchoredPlacement', () => {
       ).toEqual({ left: 110, top: 34, side: 'below' });
     },
   );
+
+  it('places a right-end surface past the anchor and level with its bottom', () => {
+    expect(
+      anchoredPlacement({
+        anchor: rect(0, 100, 48, 20),
+        floating: { width: 200, height: 80 },
+        boundary: rect(0, 0, 400, 400),
+        gap: 4,
+        edgeGap: 8,
+        preferred: 'right-end',
+      }),
+    ).toEqual({ left: 52, top: 40, side: 'right' });
+  });
+
+  it('clamps a right-end surface to the lower boundary edge', () => {
+    expect(
+      anchoredPlacement({
+        anchor: rect(0, 380, 48, 20),
+        floating: { width: 200, height: 80 },
+        boundary: rect(0, 0, 400, 400),
+        gap: 4,
+        edgeGap: 8,
+        preferred: 'right-end',
+      }),
+    ).toEqual({ left: 52, top: 312, side: 'right' });
+  });
+
+  it('clamps a right-end surface to the upper boundary edge', () => {
+    expect(
+      anchoredPlacement({
+        anchor: rect(0, 10, 48, 20),
+        floating: { width: 200, height: 80 },
+        boundary: rect(0, 0, 400, 400),
+        gap: 4,
+        edgeGap: 8,
+        preferred: 'right-end',
+      }),
+    ).toEqual({ left: 52, top: 8, side: 'right' });
+  });
+
+  it('keeps an over-wide right-end surface anchored to the left inset', () => {
+    expect(
+      anchoredPlacement({
+        anchor: rect(0, 100, 48, 20),
+        floating: { width: 420, height: 80 },
+        boundary: rect(0, 0, 400, 400),
+        gap: 4,
+        edgeGap: 8,
+        preferred: 'right-end',
+      }),
+    ).toEqual({ left: 8, top: 40, side: 'right' });
+  });
 });

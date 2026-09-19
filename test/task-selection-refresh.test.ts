@@ -70,6 +70,7 @@ function snapshot(revision: string, title = revision): TaskSnapshot {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source: {
       filePath: 'tasks.md',
       line: 4,
@@ -252,6 +253,7 @@ describe('revision-aware nested selection rebuild', () => {
           dependsOn: [],
           subtasks: [],
           comments: [],
+          timeEntries: [],
         },
       ],
     };
@@ -380,6 +382,72 @@ describe('revision-aware nested selection rebuild', () => {
     ).toHaveLength(1);
   });
 
+  /** Writing an entry under the selected child rewrites its block, so text can no longer match. */
+  function withEntry(root: TaskSnapshot, atom: string): TaskSnapshot {
+    const child = expectDefined(root.subtasks[0]);
+    return {
+      ...root,
+      subtasks: [
+        {
+          ...child,
+          ref: { ...child.ref, originalBlock: `${child.ref.originalBlock}\n    - ${atom}` },
+          timeEntries: [
+            {
+              relativeLine: 1,
+              originalMarkdown: `    - ${atom}`,
+              state: 'running' as const,
+              startMs: 0,
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  it('keeps a selected child whose block only gained a tracked entry', () => {
+    const staleRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
+    const stale = expectDefined(staleRoot.subtasks[0]);
+    const tracked = withEntry(staleRoot, '2026-09-18T14:05:32+03:00 \u2192');
+
+    const rebuilt = rebuildTaskSelection(tracked, [staleRoot, stale]);
+
+    expect(rebuilt).toHaveLength(2);
+    expect(rebuilt[1]).toBe(tracked.subtasks[0]);
+  });
+
+  it('keeps a selected child whose block only lost a tracked entry', () => {
+    const staleRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
+    const tracked = withEntry(staleRoot, '2026-09-18T14:05:32+03:00 \u2192');
+    const stale = expectDefined(tracked.subtasks[0]);
+
+    const rebuilt = rebuildTaskSelection(staleRoot, [tracked, stale]);
+
+    expect(rebuilt).toHaveLength(2);
+    expect(rebuilt[1]).toBe(staleRoot.subtasks[0]);
+  });
+
+  it('does not keep a selected child when the entry write came with another change', () => {
+    const staleRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
+    const stale = expectDefined(staleRoot.subtasks[0]);
+    const tracked = withEntry(staleRoot, '2026-09-18T14:05:32+03:00 \u2192');
+    const renamed = {
+      ...tracked,
+      subtasks: [{ ...expectDefined(tracked.subtasks[0]), title: 'Renamed' }],
+    };
+
+    expect(rebuildTaskSelection(renamed, [staleRoot, stale])).toEqual([renamed]);
+  });
+
+  it('does not let a tracked entry pair two duplicate children by position', () => {
+    const staleRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
+    const child = expectDefined(staleRoot.subtasks[0]);
+    const twins = { ...staleRoot, subtasks: [child, child] };
+    const started = expectDefined(withEntry(twins, '2026-09-18T14:05:32+03:00 \u2192').subtasks[0]);
+    const tracked = { ...twins, subtasks: [started, started] };
+
+    expect(rebuildTaskSelection(tracked, [twins, child])).toHaveLength(1);
+  });
+
   it('does not let a duplicate child at the stale line capture the selection', () => {
     const staleRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
     const child = expectDefined(staleRoot.subtasks[0]);
@@ -419,6 +487,7 @@ describe('revision-aware nested selection rebuild', () => {
         dependsOn: [],
         subtasks: [],
         comments: [],
+        timeEntries: [],
       };
     });
     const current = { ...root, subtasks };
@@ -460,6 +529,7 @@ describe('revision-aware nested selection rebuild', () => {
         dependsOn: [],
         subtasks: [],
         comments: [],
+        timeEntries: [],
       };
       currentNode.subtasks = [child];
       currentNode = child as unknown as { subtasks: SubtaskSnapshot[] };

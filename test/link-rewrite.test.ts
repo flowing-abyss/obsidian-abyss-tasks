@@ -220,6 +220,7 @@ describe('task link rewrite delegation', () => {
       dependsOn: [],
       subtasks: [],
       comments: [],
+      timeEntries: [],
       source: {
         filePath: 't.md',
         line: 0,

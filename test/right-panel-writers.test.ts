@@ -550,9 +550,11 @@ describe('RightPanel planning API delegation', () => {
           dependsOn: [],
           subtasks: [],
           comments: [],
+          timeEntries: [],
         },
       ],
       comments: [],
+      timeEntries: [],
       source: {
         filePath: 't.md',
         line: 0,
@@ -694,10 +696,12 @@ describe('RightPanel planning API delegation', () => {
                   dependsOn: [],
                   subtasks: [],
                   comments: [],
+                  timeEntries: [],
                 },
               ]
             : [],
         comments: [],
+        timeEntries: [],
         source: {
           filePath: 'a.md',
           line: 0,

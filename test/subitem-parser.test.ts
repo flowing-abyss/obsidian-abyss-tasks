@@ -106,6 +106,17 @@ describe('parseSubItems', () => {
     expect(r.comments[0]?.timestamp).toBeUndefined();
   });
 
+  it('skips a tracked time entry line instead of reading it as a comment', () => {
+    const lines = [
+      '- [ ] Parent',
+      '  - 2026-09-17T09:12:00+03:00 → 2026-09-17T10:40:51+03:00',
+      '  - Just a comment',
+    ];
+    const r = parseSubItems(lines, 0, FILE);
+    expect(r.comments).toHaveLength(1);
+    expect(r.comments[0]).toMatchObject({ text: 'Just a comment', line: 2 });
+  });
+
   it('stops at non-indented line', () => {
     const lines = ['- [ ] Parent', '  - [ ] Child', '- [ ] Sibling'];
     const r = parseSubItems(lines, 0, FILE);

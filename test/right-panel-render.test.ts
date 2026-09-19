@@ -1450,6 +1450,7 @@ describe('RightPanel popovers', () => {
       dependsOn: [],
       subtasks: [],
       comments: [],
+      timeEntries: [],
       source: {
         filePath: 'f.md',
         line: 0,

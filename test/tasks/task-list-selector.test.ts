@@ -3,7 +3,7 @@ import type { ListSelection } from '../../src/app/AppState';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../../src/settings/defaults';
 import type { ListViewState } from '../../src/settings/types';
 import { searchTaskList, selectTaskList } from '../../src/task-lists/TaskListSelector';
-import type { LocalDate, TaskSnapshot } from '../../src/tasks';
+import type { LocalDate, SubtaskSnapshot, TaskSnapshot, TimeEntrySnapshot } from '../../src/tasks';
 
 function snapshot(
   title: string,
@@ -25,6 +25,7 @@ function snapshot(
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source: {
       filePath,
       line,
@@ -56,6 +57,7 @@ function titles(
     viewState,
     settings: DEFAULT_SETTINGS,
     today,
+    nowMs: Date.parse('2026-07-13T12:00:00Z'),
     ...(textQuery === undefined ? {} : { textQuery }),
   }).map((task) => task.title);
 }
@@ -389,5 +391,98 @@ describe('selectTaskList', () => {
     expect(searchTaskList([plain, spaced], '  ').map((task) => task.title)).toEqual([
       'two  spaces',
     ]);
+  });
+});
+
+describe('selectTaskList sorted by tracked time', () => {
+  const NOW = Date.parse('2026-07-13T12:00:00Z');
+
+  const closed = (minutes: number): TimeEntrySnapshot => ({
+    relativeLine: 1,
+    originalMarkdown: '- closed session',
+    state: 'closed',
+    startMs: NOW - minutes * 60_000,
+    endMs: NOW,
+  });
+
+  const running = (minutes: number): TimeEntrySnapshot => ({
+    relativeLine: 1,
+    originalMarkdown: '- running session',
+    state: 'running',
+    startMs: NOW - minutes * 60_000,
+  });
+
+  const child = (entries: readonly TimeEntrySnapshot[]): SubtaskSnapshot => ({
+    ref: {
+      parent: { type: 'task', ref: { filePath: 'tasks.md', line: 0, revision: 'rev:parent' } },
+      relativeLine: 1,
+      originalBlock: '  - [ ] child',
+    },
+    title: 'child',
+    markdownTitle: 'child',
+    status: 'open',
+    statusSymbol: ' ',
+    priority: 'F',
+    onCompletion: 'keep',
+    onCompletionExplicit: false,
+    planning: {},
+    tags: [],
+    dependsOn: [],
+    subtasks: [],
+    comments: [],
+    timeEntries: entries,
+  });
+
+  const viewState = (dir: 'asc' | 'desc'): ListViewState => ({
+    groupBy: 'none',
+    sortBy: { field: 'tracked', dir },
+    filters: [],
+  });
+
+  const order = (dir: 'asc' | 'desc'): string[] =>
+    selectTaskList({
+      tasks: [
+        snapshot('untracked', { line: 0 }),
+        snapshot('subtasks only', { line: 1, subtasks: [child([closed(30)])] }),
+        snapshot('running', { line: 2, timeEntries: [running(45)] }),
+        snapshot('closed', { line: 3, timeEntries: [closed(10)] }),
+      ],
+      selection: { type: 'project', path: 'tasks.md' },
+      viewState: viewState(dir),
+      settings: DEFAULT_SETTINGS,
+      today,
+      nowMs: NOW,
+    }).map((task) => task.title);
+
+  it('puts the most tracked task first when sorting down', () => {
+    expect(order('desc')).toEqual(['running', 'subtasks only', 'closed', 'untracked']);
+  });
+
+  it('puts untracked tasks first when sorting up', () => {
+    expect(order('asc')).toEqual(['untracked', 'closed', 'subtasks only', 'running']);
+  });
+
+  it('falls back to the created date when two tasks tracked the same time', () => {
+    const first = snapshot('first', {
+      line: 0,
+      planning: { created: '2026-07-01' as LocalDate },
+      timeEntries: [closed(20)],
+    });
+    const second = snapshot('second', {
+      line: 1,
+      planning: { created: '2026-07-02' as LocalDate },
+      timeEntries: [closed(20)],
+    });
+
+    expect(
+      selectTaskList({
+        tasks: [second, first],
+        selection: { type: 'project', path: 'tasks.md' },
+        viewState: viewState('desc'),
+        settings: DEFAULT_SETTINGS,
+        today,
+        nowMs: NOW,
+      }).map((task) => task.title),
+    ).toEqual(['first', 'second']);
   });
 });

@@ -178,6 +178,7 @@ describe('CenterPanel planning API delegation', () => {
         dependsOn: [],
         subtasks: [],
         comments: [],
+        timeEntries: [],
         source: {
           filePath: 'f.md',
           line: 0,
@@ -287,6 +288,7 @@ describe('CenterPanel planning API delegation', () => {
         dependsOn: [],
         subtasks: [],
         comments: [],
+        timeEntries: [],
         source: {
           filePath: 'f.md',
           line: 0,

@@ -24,6 +24,7 @@ function snapshot(ref: TaskRef, originalBlock = '- [ ] task'): TaskSnapshot {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source: {
       filePath: ref.filePath,
       line: ref.line,

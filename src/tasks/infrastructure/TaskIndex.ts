@@ -13,6 +13,7 @@ import type {
   TaskIndexEvent,
   TaskQuery,
   TaskQueryApi,
+  TimeTrackingQueryApi,
 } from '../application/TaskApplicationApi';
 import { cloneTaskSnapshot, taskSnapshotWithStatuses } from '../domain/cloneTaskSnapshot';
 import type { TaskResolutionCandidate } from '../domain/commands';
@@ -34,6 +35,8 @@ import {
   type TaskResolution,
   type VisualEvidence,
 } from '../domain/taskReconciliation';
+import type { OffsetAt } from '../domain/timeEntry';
+import type { TrackedEntry, TrackedTotal } from '../domain/timeTracking';
 import {
   sameTaskNodeRef,
   type LocalDate,
@@ -53,13 +56,21 @@ import {
   type TaskRefAuthority,
   type TaskSnapshotState,
 } from './TaskRefAuthority';
+import { TimeEntryIndex } from './TimeEntryIndex';
 
 export interface TaskIndexOptions {
   readonly statusCatalog: StatusCatalog;
   readonly dailyNoteFormat: string;
   readonly globalTaskFilter?: string;
   readonly refAuthority?: TaskRefAuthority;
+  /**
+   * Resolves a written time entry stamp that carries no offset of its own. Runtime uses the
+   * device, so this is here for the tests that project a fixed zone across a daylight saving jump.
+   */
+  readonly timeZoneOffsetAt?: OffsetAt;
 }
+
+const deviceOffsetAt: OffsetAt = (epochMs) => -new Date(epochMs).getTimezoneOffset();
 
 type Listener = (event: TaskIndexEvent) => void;
 
@@ -552,6 +563,7 @@ interface FileParseContext {
   readonly presentation: TaskSnapshot['presentation'];
   readonly itemByLine: ReadonlyMap<number, MetadataListItem>;
   readonly revision: ReconciledRevisionContext;
+  readonly offsetAt: OffsetAt;
 }
 
 function reusablePriorRevision(input: ReconciledRevisionInput): string | undefined {
@@ -939,8 +951,11 @@ function activeRecurringSources(
   );
 }
 
-export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnapshotState {
+export class TaskIndex
+  implements TaskQueryApi, TaskDependencyQueryApi, TimeTrackingQueryApi, TaskSnapshotState
+{
   private readonly taskMap_abyssPrivate = new Map<string, readonly TaskSnapshot[]>();
+  private readonly timeEntryIndex_abyssPrivate = new TimeEntryIndex();
   private readonly calendarDateIndex_abyssPrivate = new TaskDateIndex<CalendarTaskSource>(
     (source) => calendarDatesForPlanning(source.node.planning),
     (source) => calendarRangeForPlanning(source.node.planning),
@@ -1062,6 +1077,19 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     return this.dependencyGraph_abyssPrivate;
   }
 
+  /** Frozen projections shared by reference; consumers read them and must not mutate them. */
+  activeEntries(): readonly TrackedEntry[] {
+    return this.timeEntryIndex_abyssPrivate.activeEntries();
+  }
+
+  entriesOverlapping(fromMs: number, toMs: number): readonly TrackedEntry[] {
+    return this.timeEntryIndex_abyssPrivate.entriesOverlapping(fromMs, toMs);
+  }
+
+  fileTotal(filePath: string): TrackedTotal {
+    return this.timeEntryIndex_abyssPrivate.fileTotal(filePath);
+  }
+
   forCalendarProjection(dates: readonly LocalDate[]): CalendarProjectionSources {
     const seen = new Set<CalendarTaskSource>();
     for (const date of dates) {
@@ -1152,6 +1180,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     this.reconciliationTransitions_abyssPrivate.clear();
     this.options_abyssPrivate.refAuthority?.clear();
     this.calendarDateIndex_abyssPrivate.clear();
+    this.timeEntryIndex_abyssPrivate.clear();
     this.recurringSourcesByFile_abyssPrivate.clear();
   }
 
@@ -1277,6 +1306,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
         cache.frontmatter,
       ),
       itemByLine: metadataItemsByLine(cache.listItems ?? []),
+      offsetAt: this.options_abyssPrivate.timeZoneOffsetAt ?? deviceOffsetAt,
       revision: {
         overrides: new Map(overrides.map((override) => [override.line, override] as const)),
         priorByLine: new Map(priorTasks.map((task) => [task.source.line, task] as const)),
@@ -1319,6 +1349,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       exactBlock,
       ref,
       presentation: context.presentation,
+      offsetAt: context.offsetAt,
     });
   }
 
@@ -1483,6 +1514,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     else this.taskMap_abyssPrivate.delete(filePath);
     const sources = calendarSources(tasks);
     this.calendarDateIndex_abyssPrivate.updateFile(filePath, sources);
+    this.timeEntryIndex_abyssPrivate.updateFile(filePath, tasks);
     const recurringSources = activeRecurringSources(sources);
     if (recurringSources.length > 0)
       this.recurringSourcesByFile_abyssPrivate.set(filePath, recurringSources);
@@ -1645,6 +1677,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     this.dependencyGraph_abyssPrivate = undefined;
     this.taskMap_abyssPrivate.delete(filePath);
     this.calendarDateIndex_abyssPrivate.updateFile(filePath, []);
+    this.timeEntryIndex_abyssPrivate.removeFile(filePath);
     this.recurringSourcesByFile_abyssPrivate.delete(filePath);
     this.fileGenerations_abyssPrivate.delete(filePath);
     this.reconciliationTransitions_abyssPrivate.delete(filePath);

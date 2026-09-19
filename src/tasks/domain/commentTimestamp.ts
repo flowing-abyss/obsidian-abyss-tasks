@@ -75,7 +75,8 @@ function instantParts(match: RegExpExecArray): InstantParts | undefined {
   return { dateRaw, hourRaw, minuteRaw, secondRaw, fractionRaw, offsetRaw } as InstantParts;
 }
 
-function parseInstantDate(value: string): LocalDate | undefined {
+/** Calendar validation that reports failure as a value instead of throwing. */
+export function localDateOrUndefined(value: string): LocalDate | undefined {
   let date: LocalDate;
   try {
     date = localDate(value);
@@ -85,7 +86,8 @@ function parseInstantDate(value: string): LocalDate | undefined {
   return date;
 }
 
-function instantOffsetMinutes(offsetRaw: string): number | undefined {
+/** Minutes east of UTC for an Atom offset, or undefined when the offset is out of range. */
+export function instantOffsetMinutes(offsetRaw: string): number | undefined {
   if (offsetRaw === 'Z') return 0;
   const sign = offsetRaw[0] === '-' ? -1 : 1;
   const offsetHour = Number(offsetRaw.slice(1, 3));
@@ -96,17 +98,20 @@ function instantOffsetMinutes(offsetRaw: string): number | undefined {
   return sign * (offsetHour * 60 + offsetMinute);
 }
 
+/** Milliseconds carried by a leading-dot fractional second such as `.25`, truncated to three digits. */
+export function fractionMilliseconds(fractionRaw: string | undefined): number {
+  if (fractionRaw === undefined || fractionRaw.length === 0) return 0;
+  return Number(`${fractionRaw.slice(1)}000`.slice(0, 3));
+}
+
 function epochForInstant(match: RegExpExecArray): number | undefined {
   const parts = instantParts(match);
   if (parts === undefined) return undefined;
-  const date = parseInstantDate(parts.dateRaw);
+  const date = localDateOrUndefined(parts.dateRaw);
   const offsetMinutes = instantOffsetMinutes(parts.offsetRaw);
   if (date === undefined || offsetMinutes === undefined) return undefined;
 
-  const milliseconds =
-    parts.fractionRaw === undefined || parts.fractionRaw.length === 0
-      ? 0
-      : Number(`${parts.fractionRaw.slice(1)}000`.slice(0, 3));
+  const milliseconds = fractionMilliseconds(parts.fractionRaw);
   const epochMs =
     epochDayForLocalDate(date) * 86_400_000 +
     Number(parts.hourRaw) * 3_600_000 +

@@ -6,10 +6,6 @@ import { DailyNoteResolver } from '../../src/resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import type { CalendarSettings } from '../../src/settings/types';
-import type {
-  TaskDependencyQueryApi,
-  TaskQueryApi,
-} from '../../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type { TaskBehaviorSettingsProvider } from '../../src/tasks/application/TaskBehaviorSettings';
 import type { TaskDestinationProvider } from '../../src/tasks/application/TaskDestinationProvider';
@@ -34,6 +30,7 @@ import {
   methodOf,
   taskQueryApi,
   useRealMoment,
+  type TestTaskQueries,
 } from '../helpers';
 import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
 
@@ -720,7 +717,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
 }
 
 describe('TaskApplicationService lifecycle routing', () => {
-  const queries: TaskQueryApi & TaskDependencyQueryApi = taskQueryApi();
+  const queries: TestTaskQueries = taskQueryApi();
   const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
   const clock = { today: () => localDate('2026-07-14') };
   const committedTask = {
@@ -737,6 +734,7 @@ describe('TaskApplicationService lifecycle routing', () => {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source: {
       filePath: path,
       line: 0,
@@ -1319,7 +1317,7 @@ describe('TaskApplicationService subtask recovery', () => {
 });
 
 describe('TaskApplicationService lifecycle settings', () => {
-  const queries: TaskQueryApi & TaskDependencyQueryApi = taskQueryApi();
+  const queries: TestTaskQueries = taskQueryApi();
 
   it('snapshots lifecycle settings once per command for root and subtask creation/completion dates', async () => {
     const harness = await makeHarness('in-memory', '');

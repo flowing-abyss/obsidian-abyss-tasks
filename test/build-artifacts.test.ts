@@ -41,6 +41,8 @@ const privateOwners = new Set([
   'LeftPanel',
   'TaskIndex',
   'TaskApplicationService',
+  'TimeTrackingService',
+  'TrackingTicker',
   'TaskModal',
   'TaskMoveRecoveryModal',
   'DatePickerLifecycle',

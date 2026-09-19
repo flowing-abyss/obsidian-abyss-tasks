@@ -48,6 +48,7 @@ function snapshot(revision: string, description = 'old description'): TaskSnapsh
         text: 'old comment',
       },
     ],
+    timeEntries: [],
     description,
     source: {
       filePath: 'tasks.md',
@@ -83,6 +84,7 @@ function snapshotWithChildren(revision: string, titles: readonly string[]): Task
       dependsOn: [],
       subtasks: [],
       comments: [],
+      timeEntries: [],
     })),
   };
 }
@@ -114,6 +116,7 @@ function snapshotWithNestedChildren(revision: string): TaskSnapshot {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
   }));
   return {
     ...root,

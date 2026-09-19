@@ -55,6 +55,7 @@ import {
   buildProjectTableModel,
   projectProgressDisplayValue,
   projectTableGroupLinkIdentity,
+  projectTrackedDisplayValue,
   statusGroupKey,
   type ProjectTableGroup,
   type ProjectTableModel,
@@ -485,7 +486,12 @@ interface ProjectCellPresentation {
 }
 
 function editableField(field: ProjectFieldCatalogItem): field is ProjectField {
-  return isAvailableProjectField(field) && field.type !== 'name' && field.type !== 'progress';
+  return (
+    isAvailableProjectField(field) &&
+    field.type !== 'name' &&
+    field.type !== 'progress' &&
+    field.type !== 'tracked'
+  );
 }
 
 function visibleColumns(
@@ -681,6 +687,12 @@ export class ProjectsTableView {
   private groupDropRevision_abyssPrivate = 0;
   private columnCleanup_abyssPrivate: (() => void) | undefined;
   private compiledPresets_abyssPrivate = new Map<string, CompiledProjectPropertyPresets>();
+  /**
+   * The instant tracked time is read at. It is taken once per render pass and never on a timer, so
+   * every row is sorted and labelled against the same clock and a running project never repaints
+   * on its own.
+   */
+  private trackedNowMs_abyssPrivate = Date.now();
   private readonly collapsedGroups_abyssPrivate = new Set<string>();
   private readonly tableSelection_abyssPrivate = new ProjectTableSelection();
   private readonly kanbanSelection_abyssPrivate = new ProjectTableSelection();
@@ -1509,6 +1521,7 @@ export class ProjectsTableView {
       return;
     }
     this.renderPending_abyssPrivate = false;
+    this.trackedNowMs_abyssPrivate = Date.now();
     if (this.renderAlternativeSurface_abyssPrivate()) return;
     this.showTableSurface_abyssPrivate();
     const scrollLeft = this.scroll_abyssPrivate.scrollLeft;
@@ -1606,6 +1619,7 @@ export class ProjectsTableView {
       settings: this.context_abyssPrivate.settings.projects.table,
       propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,
       search: this.searches_abyssPrivate.table,
+      nowMs: this.trackedNowMs_abyssPrivate,
       resolveLink: (target, sourcePath) =>
         this.context_abyssPrivate.app.metadataCache.getFirstLinkpathDest(target, sourcePath)?.path,
     };
@@ -3032,6 +3046,10 @@ export class ProjectsTableView {
       statusId: project.statusId,
       rawStatus: project.rawStatus,
       stats: field.type === 'progress' ? project.stats : undefined,
+      tracked:
+        field.type === 'tracked'
+          ? projectTrackedDisplayValue(project.stats, this.trackedNowMs_abyssPrivate)
+          : undefined,
       progressDisplay:
         field.type === 'progress'
           ? (this.context_abyssPrivate.settings.projects.table.progress ?? 'full')
@@ -3110,6 +3128,7 @@ export class ProjectsTableView {
       },
       ...cellPresentation,
       now: new Date(),
+      trackedNowMs: this.trackedNowMs_abyssPrivate,
       locale: moment.locale(),
       ...(rendered.field.type !== 'name' ||
       effectiveDescription === undefined ||
@@ -3779,6 +3798,9 @@ export class ProjectsTableView {
   private clipboardValue_abyssPrivate(cell: LogicalCellContext): unknown {
     if (cell.field.type === 'name') return cell.project.name;
     if (cell.field.type === 'progress') return projectProgressDisplayValue(cell.project.stats);
+    if (cell.field.type === 'tracked') {
+      return projectTrackedDisplayValue(cell.project.stats, this.trackedNowMs_abyssPrivate);
+    }
     const property =
       cell.field.id === 'status'
         ? this.context_abyssPrivate.settings.projects.statusProperty

@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type {
-  TaskDependencyQueryApi,
-  TaskQueryApi,
-} from '../../src/tasks/application/TaskApplicationApi';
+import type { TaskQueryApi } from '../../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type {
   TaskEditRequest,
@@ -14,6 +11,7 @@ import { clockFrom } from '../../src/tasks/domain/clock';
 import type { TaskCommand } from '../../src/tasks/domain/commands';
 import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
+import type { TimeEntrySnapshot } from '../../src/tasks/domain/timeTracking';
 import type {
   DurationMinutes,
   LocalTime,
@@ -25,6 +23,7 @@ import type {
   TaskSnapshot,
 } from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
+import { taskQueryApi, type TestTaskQueries } from '../helpers';
 
 function snapshot(markdownTitle = 'Task', revision = 'old'): TaskSnapshot {
   return {
@@ -41,6 +40,7 @@ function snapshot(markdownTitle = 'Task', revision = 'old'): TaskSnapshot {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source: {
       filePath: 'tasks.md',
       line: 0,
@@ -57,7 +57,6 @@ function prepared(
 ): PreparedMutation {
   const base = snapshot();
   return {
-    publicCommand: { type: 'delete', ref: base.ref },
     repositoryRequest: {
       command,
       baseRoot: base,
@@ -95,6 +94,7 @@ function subtask(root: TaskSnapshot, overrides: Partial<SubtaskSnapshot> = {}): 
     onCompletionExplicit: false,
     subtasks: [],
     comments: [],
+    timeEntries: [],
     ...overrides,
   };
 }
@@ -110,6 +110,18 @@ function comment(parent: SubtaskSnapshot | TaskSnapshot, text = 'note'): TaskCom
       originalMarkdown: `  - ${text}`,
     },
     text,
+  };
+}
+
+function timeEntry(
+  relativeLine = 2,
+  originalMarkdown = '  - 2026-08-11T09:00:00+00:00 →',
+): TimeEntrySnapshot {
+  return {
+    state: 'running',
+    startMs: Date.parse('2026-08-11T09:00:00+00:00'),
+    relativeLine,
+    originalMarkdown,
   };
 }
 
@@ -436,6 +448,7 @@ describe('prepareRetry', () => {
       onCompletionExplicit: false,
       subtasks: [],
       comments: [],
+      timeEntries: [],
     };
     const previous = { ...base, subtasks: [child] };
     const current = {
@@ -790,6 +803,92 @@ describe('prepareRetry', () => {
     ).toEqual({ type: 'unsafe' });
   });
 
+  it('rebases a commutative add-time-entry onto the authoritative root', () => {
+    const base = snapshot();
+    const current = snapshot('Task', 'new');
+    const command: TaskEditRequest['command'] = {
+      type: 'add-time-entry',
+      parent: { type: 'task', ref: base.ref },
+      stamp: atomDateTime('2026-08-11T09:00:00+00:00'),
+    };
+
+    expect(retryAgainst(preparedFor(base, command, 'commutative'), base, current)).toMatchObject({
+      type: 'edit',
+      request: {
+        baseRoot: current,
+        command: { type: 'add-time-entry', parent: { type: 'task', ref: current.ref } },
+      },
+    });
+  });
+
+  it.each(['close-time-entry', 'delete-time-entry'] as const)(
+    'retries %s only while the referenced entry still exists',
+    (type) => {
+      const base = snapshot();
+      const entry = timeEntry();
+      const previous = { ...base, timeEntries: [entry] };
+      const currentRoot = snapshot('Task', 'new');
+      const current = { ...currentRoot, timeEntries: [entry] };
+      const ref = {
+        parent: { type: 'task' as const, ref: base.ref },
+        relativeLine: entry.relativeLine,
+        originalMarkdown: entry.originalMarkdown,
+      };
+      const command: TaskEditRequest['command'] =
+        type === 'close-time-entry'
+          ? {
+              type,
+              entry: ref,
+              stamp: atomDateTime('2026-08-11T10:00:00+00:00'),
+              endMs: Date.parse('2026-08-11T10:00:00+00:00'),
+              minimumMs: 60_000,
+            }
+          : { type, entry: ref };
+
+      expect(
+        retryAgainst(preparedFor(previous, command, 'exact-target'), previous, current),
+      ).toMatchObject({
+        type: 'edit',
+        request: { command: { type, entry: { parent: { type: 'task', ref: current.ref } } } },
+      });
+      expect(
+        retryAgainst(preparedFor(previous, command, 'exact-target'), previous, {
+          ...current,
+          timeEntries: [],
+        }),
+      ).toEqual({ type: 'unsafe' });
+    },
+  );
+
+  it('retries restore-time-entry only while the owning node keeps its entry lines', () => {
+    const base = snapshot();
+    const kept = timeEntry(1, '  - 2026-08-10T08:00:00+00:00 → 2026-08-10T09:00:00+00:00');
+    const previous = { ...base, timeEntries: [kept] };
+    const currentRoot = snapshot('Task', 'new');
+    const current = { ...currentRoot, timeEntries: [kept] };
+    const command: TaskEditRequest['command'] = {
+      type: 'restore-time-entry',
+      parent: { type: 'task', ref: base.ref },
+      markdown: '  - 2026-08-11T09:00:00+00:00 → 2026-08-11T10:00:00+00:00',
+      relativeLine: 2,
+    };
+
+    expect(
+      retryAgainst(preparedFor(previous, command, 'exact-target'), previous, current),
+    ).toMatchObject({
+      type: 'edit',
+      request: {
+        command: { type: 'restore-time-entry', parent: { type: 'task', ref: current.ref } },
+      },
+    });
+    expect(
+      retryAgainst(preparedFor(previous, command, 'exact-target'), previous, {
+        ...current,
+        timeEntries: [{ ...kept, relativeLine: 3 }],
+      }),
+    ).toEqual({ type: 'unsafe' });
+  });
+
   it.each([
     ['markdownTitle', { type: 'set' as const, value: 'Requested' }, { markdownTitle: 'Requested' }],
     ['priority', { type: 'set' as const, value: 'A' }, { priority: 'A' as const }],
@@ -1002,11 +1101,6 @@ describe('prepareRetry', () => {
 
     const moveMutation: PreparedMutation = {
       ...preparedFor(base, { type: 'delete', ref: base.ref }, 'never'),
-      publicCommand: {
-        type: 'move',
-        ref: base.ref,
-        destination: { filePath: 'archive.md', insertion: { type: 'append' } },
-      },
       repositoryRequest: {
         destination: { filePath: 'archive.md', insertion: { type: 'append' } },
         baseRoot: base,
@@ -1056,7 +1150,6 @@ describe('prepareRetry', () => {
     };
     const mutation: PreparedMutation = {
       ...preparedFor(previous, { type: 'delete', ref: previous.ref }, 'never'),
-      publicCommand: { type: 'set-status', target: request.command.target, symbol: 'x' },
       repositoryRequest: request,
       targetBase: request.baseTarget,
     };
@@ -1078,24 +1171,8 @@ const statuses = new StatusCatalog([
   { id: 'done', symbol: 'x', type: 'done', defaultForType: true },
 ]);
 
-function query(
-  resolution: ReturnType<TaskQueryApi['resolve']>,
-): TaskQueryApi & TaskDependencyQueryApi {
-  return {
-    listNodes: () => [],
-    dependencies: () => ({
-      blockedBy: [],
-      blocks: [],
-      activeBlockedByCount: 0,
-      activeBlocksCount: 0,
-    }),
-    dependencyEligibility: () => ({ type: 'allowed' }),
-    list: () => [],
-    forCalendarProjection: () => ({ materialized: [], recurringSources: [] }),
-    resolve: () => resolution,
-    subscribe: () => () => undefined,
-    subscribeReconciled: () => () => undefined,
-  };
+function query(resolution: ReturnType<TaskQueryApi['resolve']>): TestTaskQueries {
+  return taskQueryApi({ resolve: () => resolution });
 }
 
 function repositoryWith(
