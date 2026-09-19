@@ -13,6 +13,7 @@ import {
   createAppWithFiles,
   cssDeclarationsFor,
   cssDeclarationValue,
+  cssRuleSelectorsFor,
   expectDefined,
   flushMicrotasks,
   loadPluginStyles,
@@ -378,10 +379,12 @@ describe('tracked sessions popover', () => {
 
     expect(css).toContain('@container abyss-panel-layout (max-width: 20rem)');
     expect(cssDeclarationValue(hidden, 'display')).toBe('none');
-    // The line nobody could read is the whole reason its row exists, so it keeps its text.
-    expect(cssDeclarationsFor(css, '.abyss-time-row.is-broken .abyss-time-row-note')).not.toContain(
-      'display: none',
-    );
+    // The line nobody could read is the whole reason its row exists, so the only rule that hides a
+    // note is the one scoped away from those rows, and the note's own rules never hide it.
+    expect(
+      cssRuleSelectorsFor(css, '.abyss-time-row:not(.is-broken) .abyss-time-row-note'),
+    ).toEqual(['.abyss-time-row:not(.is-broken) .abyss-time-row-note']);
+    expect(cssDeclarationsFor(css, '.abyss-time-row-note')).not.toContain('display');
     // What is left is the total and the span it covers, in that order and each in its own track.
     expect(
       cssDeclarationValue(
@@ -411,8 +414,14 @@ describe('tracked sessions popover', () => {
     const light = cssDeclarationsFor(css, '.abyss-time-tracking-popover');
     const dark = cssDeclarationsFor(css, '.theme-dark .abyss-time-tracking-popover');
 
-    expect(cssDeclarationValue(light, '--abyss-time-gain')).toContain('var(--color-green)');
-    expect(cssDeclarationValue(dark, '--abyss-time-gain')).toContain('var(--color-green)');
+    // Each mix is measured against the background it is read on, 5.0:1 in light and over 7:1 in
+    // dark, so the share of green is pinned as written rather than as any green at all.
+    expect(cssDeclarationValue(light, '--abyss-time-gain')).toBe(
+      'color-mix(in srgb, var(--color-green) 60%, var(--text-normal))',
+    );
+    expect(cssDeclarationValue(dark, '--abyss-time-gain')).toBe(
+      'color-mix(in srgb, var(--color-green) 85%, var(--text-normal))',
+    );
     expect(cssDeclarationValue(cssDeclarationsFor(css, '.abyss-time-row-duration'), 'color')).toBe(
       'var(--abyss-time-gain)',
     );
@@ -434,6 +443,9 @@ describe('tracked sessions popover', () => {
         'var(--text-muted)',
       );
     }
+    // A row that could not be read is not a state a note is coloured by: it takes the muted base
+    // above through the cascade rather than through a rule of its own that repeats it.
+    expect(cssDeclarationsFor(css, '.abyss-time-row.is-broken .abyss-time-row-note')).toBe('');
   });
 
   it('gives every row the same columns, with the remove slot always reserved', async () => {

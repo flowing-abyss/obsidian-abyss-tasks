@@ -10078,7 +10078,6 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   color: inherit;
 }
 
-.abyss-time-row.is-broken .abyss-time-row-note,
 .abyss-time-tracking-empty {
   color: var(--text-muted);
 }
