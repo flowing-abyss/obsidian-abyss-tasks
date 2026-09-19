@@ -786,6 +786,47 @@ describe('tracked sessions popover', () => {
     expect(after[0]).not.toBe(before[0]);
   });
 
+  it('takes the keyboard back into the list when a rebuild drops the row holding it', async () => {
+    const harness = await inspector();
+    const surface = open(harness.el);
+    expectDefined(
+      rows(harness.el)[1]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    ).focus();
+
+    await harness.tasks.execute({
+      type: 'delete-time-entry',
+      entry: {
+        parent: { type: 'task', ref: harness.located('Current').root.ref },
+        relativeLine: 2,
+        originalMarkdown: '  - 2026-09-18T09:12:00+03:00 → 2026-09-18T10:32:00+03:00',
+      },
+    });
+    await flushMicrotasks();
+
+    // One row fewer proves the rebuilt list threw away the button the reader was on.
+    expect(rows(harness.el)).toHaveLength(4);
+    expect(activeDocument.activeElement).toBe(surface);
+  });
+
+  it('takes the keyboard back when the panel redraws around an unchanged list', async () => {
+    const harness = await inspector();
+    const surface = open(harness.el);
+    const before = rows(harness.el);
+
+    await harness.tasks.execute({
+      type: 'add-comment',
+      parent: { type: 'task', ref: harness.located('Other').root.ref },
+      text: 'noted',
+    });
+    await flushMicrotasks();
+
+    const after = rows(harness.el);
+    // The same row elements prove the list itself was never redrawn, only carried back in.
+    expect(after).toHaveLength(before.length);
+    for (const [index, row] of after.entries()) expect(row).toBe(before[index]);
+    expect(activeDocument.activeElement).toBe(surface);
+  });
+
   it('relabels the days once the clock passes local midnight', async () => {
     const harness = await inspector();
     open(harness.el);

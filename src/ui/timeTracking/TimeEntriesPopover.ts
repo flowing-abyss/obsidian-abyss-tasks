@@ -539,6 +539,16 @@ function scheduleDayRollover(session: PopoverSession, context: TrackedTimeContex
   );
 }
 
+/**
+ * Takes the keyboard back after a rebuild, because both a re-rendered panel and a redrawn list
+ * throw away whatever control inside the surface was holding it and leave the document focusing
+ * nothing at all. Focus a reader has put somewhere of their own is never taken.
+ */
+function recoverKeyboard(element: HTMLElement): void {
+  const { activeElement, body } = element.ownerDocument;
+  if (activeElement === null || activeElement === body) element.focus({ preventScroll: true });
+}
+
 function update(session: PopoverSession): void {
   if (session.closed) return;
   const node = session.options.node();
@@ -562,6 +572,7 @@ function update(session: PopoverSession): void {
     session.rendered.dayStartMs === rendered.dayStartMs
   ) {
     session.shell.reposition();
+    recoverKeyboard(element);
     // A midnight that arrived a moment early leaves the day it was waiting for still ahead, so the
     // wait is armed again rather than dropped on the one frame that changed nothing.
     scheduleDayRollover(session, context);
@@ -581,6 +592,7 @@ function update(session: PopoverSession): void {
   session.undo.render(session.options.owner);
   element.scrollTop = scrollTop;
   session.shell.reposition();
+  recoverKeyboard(element);
   scheduleDayRollover(session, context);
 }
 
