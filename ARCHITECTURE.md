@@ -162,9 +162,10 @@ time entries changed.
 
 Completing or cancelling a node closes its subtree's running entries in a follow-up write with the
 same clock reading, inside the same serialized mutation. The status result changes only by reporting
-a discarded short session. A failed follow-up goes to diagnostics and leaves the running entry
-visible for repair. Recurrence completion closes the completed occurrence's entries, and the next
-occurrence starts with none. The index only reads, so a status symbol edited by hand closes nothing.
+a discarded short session. The follow-up skips and aborts by the same rule as a start, and an entry
+it leaves running stays visible for repair. Recurrence completion closes the completed occurrence's
+entries, and the next occurrence starts with none. The index only reads, so a status symbol edited
+by hand closes nothing.
 See [service tests](test/tasks/time-tracking-service.test.ts) and
 [ticker tests](test/tracking-ticker.test.ts).
 
