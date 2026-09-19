@@ -1310,6 +1310,169 @@ describe('RightPanel popovers', () => {
     panel.destroy();
   });
 
+  it('keeps a segmented keyboard date draft open until Enter commits it once', async () => {
+    const parent = task({ title: 'Parent' });
+    const child = subtask({ title: 'Child', root: parent.ref });
+    const selected = { ...parent, subtasks: [child] };
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'io-error',
+      cause: 'test',
+      contentState: 'unchanged',
+    });
+    const tasks: TaskApplicationApi = {
+      queries: queryApiForTasks(() => [selected]),
+      execute,
+    };
+    const { panel, state, el } = await makePanel({}, tasks);
+    state.set('taskStack', [selected, child]);
+    const chip = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')).find(
+        (candidate) => candidate.textContent.startsWith('📅'),
+      ),
+    );
+    click(chip);
+    await tick();
+    const input = expectDefined(
+      el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input'),
+    );
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true }));
+    input.value = '0002-09-21';
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(el.querySelector('.abyss-date-popover')).not.toBeNull();
+    expect(input.value).toBe('0002-09-21');
+
+    input.value = '2026-09-21';
+    const enter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(enter);
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushMicrotasks();
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith({
+      type: 'patch',
+      target: { type: 'subtask', ref: child.ref },
+      patch: { due: { type: 'set', value: '2026-09-21' } },
+    });
+    expect(el.querySelector('.abyss-date-popover')).toBeNull();
+    panel.destroy();
+  });
+
+  it('cancels a keyboard date draft on Escape without persisting it', async () => {
+    const selected = task({ title: 'Escape date' });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'io-error',
+      cause: 'test',
+      contentState: 'unchanged',
+    });
+    const { panel, state, el } = await makePanel(
+      {},
+      { queries: queryApiForTasks(() => [selected]), execute },
+    );
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = expectDefined(frame.contentDocument);
+    const KeyboardEvent = expectDefined(ownerDocument.defaultView).KeyboardEvent;
+    ownerDocument.body.append(ownerDocument.adoptNode(el));
+    state.set('taskStack', [selected]);
+    const chip = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')).find(
+        (candidate) => candidate.textContent.startsWith('📅'),
+      ),
+    );
+    click(chip);
+    await tick();
+    const input = expectDefined(
+      el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input'),
+    );
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true }));
+    input.value = '0002-09-21';
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(el.querySelector('.abyss-date-popover')).toBeNull();
+    panel.destroy();
+    el.remove();
+    frame.remove();
+  });
+
+  it('commits a keyboard date draft on focus departure and a native picker change immediately', async () => {
+    const selected = task({ title: 'Commit date' });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'io-error',
+      cause: 'test',
+      contentState: 'unchanged',
+    });
+    const { panel, state, el } = await makePanel(
+      {},
+      { queries: queryApiForTasks(() => [selected]), execute },
+    );
+    activeDocument.body.append(el);
+    state.set('taskStack', [selected]);
+    const chip = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')).find(
+        (candidate) => candidate.textContent.startsWith('📅'),
+      ),
+    );
+
+    click(chip);
+    const keyboardInput = expectDefined(
+      el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input'),
+    );
+    keyboardInput.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true }));
+    keyboardInput.value = '2026-09-22';
+    keyboardInput.dispatchEvent(new Event('change', { bubbles: true }));
+    const clear = expectDefined(
+      el.querySelector<HTMLButtonElement>('.abyss-date-popover [aria-label="Clear date"]'),
+    );
+    const outside = activeDocument.body.createEl('button');
+    keyboardInput.focus();
+    clear.focus();
+    expect(execute).not.toHaveBeenCalled();
+    expect(el.querySelector('.abyss-date-popover')).not.toBeNull();
+    outside.focus();
+    await flushMicrotasks();
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenLastCalledWith({
+      type: 'patch',
+      target: { type: 'task', ref: selected.ref },
+      patch: { due: { type: 'set', value: '2026-09-22' } },
+    });
+
+    execute.mockClear();
+    click(chip);
+    const pickerInput = expectDefined(
+      el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input'),
+    );
+    pickerInput.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    pickerInput.value = '2026-09-23';
+    pickerInput.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushMicrotasks();
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenLastCalledWith({
+      type: 'patch',
+      target: { type: 'task', ref: selected.ref },
+      patch: { due: { type: 'set', value: '2026-09-23' } },
+    });
+    expect(el.querySelector('.abyss-date-popover')).toBeNull();
+    panel.destroy();
+    el.remove();
+    outside.remove();
+  });
+
   it('owns Escape in the mounted document and restores focus from the date popover', async () => {
     const { panel, state, el } = await makePanel();
     const frame = activeDocument.body.createEl('iframe');

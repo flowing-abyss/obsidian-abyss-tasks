@@ -2478,6 +2478,32 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     ).toBeNull();
   });
 
+  it('renders named default and persisted hex project status colors without saving', () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.statuses.push({
+      ...expectDefined(projects.statuses[0]),
+      id: 'status-hex',
+      name: 'hex',
+      color: '#123456',
+    });
+    const storedColors = projects.statuses.map(({ color }) => color);
+    const { tab, plugin } = makeTab({ projects }, { expand: false });
+    const body = openSection(tab, 5);
+    const statusProperty = expectDefined(
+      body.querySelector<HTMLElement>('[data-card-id="project-property:status"]'),
+    );
+    expectDefined(statusProperty.querySelector<HTMLElement>('.abyss-settings-card-header')).click();
+
+    const renderedColors = projectStatusRows(statusProperty).map(
+      (row) =>
+        expectDefined(row.querySelector<HTMLInputElement>('.abyss-project-value-color')).value,
+    );
+
+    expect(renderedColors).toEqual(['#ffa500', '#ff0000', '#0000ff', '#008000', '#123456']);
+    expect(plugin.settings.projects.statuses.map(({ color }) => color)).toEqual(storedColors);
+    expect(plugin.saveSettings).not.toHaveBeenCalled();
+  });
+
   it('labels the status checkbox and prevents removing the final status', () => {
     const projects = structuredClone(DEFAULT_SETTINGS.projects);
     projects.statuses = [expectDefined(projects.statuses[0])];

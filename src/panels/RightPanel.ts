@@ -2897,9 +2897,40 @@ export class RightPanel {
       cls: 'abyss-date-input',
       attr: { type: 'date', value: currentValue ?? '' },
     });
-    input.addEventListener('change', () => {
+    let keyboardDraft = false;
+    let committed = false;
+    const commit = (): void => {
+      if (committed) return;
+      committed = true;
       runAsyncAction(this.updateDate_abyssPrivate(task, field, input.value));
       this.removeAnchoredSurface_abyssPrivate(pop);
+    };
+    input.addEventListener('pointerdown', () => {
+      keyboardDraft = false;
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && keyboardDraft) {
+        event.preventDefault();
+        event.stopPropagation();
+        commit();
+        return;
+      }
+      if (!['Alt', 'Control', 'Enter', 'Escape', 'Meta', 'Shift', 'Tab'].includes(event.key)) {
+        keyboardDraft = true;
+      }
+    });
+    input.addEventListener('change', () => {
+      if (!keyboardDraft) commit();
+    });
+    pop.addEventListener('focusout', (event) => {
+      const next = event.relatedTarget;
+      const remainsInPopover =
+        next !== null &&
+        typeof (next as { nodeType?: unknown }).nodeType === 'number' &&
+        pop.contains(next as Node);
+      if (keyboardDraft && pop.isConnected && !remainsInPopover) {
+        commit();
+      }
     });
     this.el_abyssPrivate.ownerDocument.defaultView?.setTimeout(() => {
       input.focus();

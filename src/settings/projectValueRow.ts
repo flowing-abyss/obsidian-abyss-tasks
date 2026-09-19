@@ -27,6 +27,13 @@ export interface ProjectValueRowControls {
   readonly updateLabel: (label: string) => void;
 }
 
+const SHIPPED_PROJECT_COLOR_HEX: Readonly<Record<string, string>> = {
+  orange: '#ffa500',
+  red: '#ff0000',
+  blue: '#0000ff',
+  green: '#008000',
+};
+
 function renderGrip(row: HTMLElement, options: ProjectValueRowOptions): HTMLElement {
   const grip = row.createSpan({
     cls: 'abyss-settings-card-grip abyss-project-value-grip',
@@ -81,7 +88,7 @@ function renderColor(row: HTMLElement, options: ProjectValueRowOptions): HTMLInp
   color.value =
     options.color !== undefined && /^#[\da-f]{6}$/iu.test(options.color)
       ? options.color
-      : '#888888';
+      : (SHIPPED_PROJECT_COLOR_HEX[options.color ?? ''] ?? '#888888');
   return color;
 }
 

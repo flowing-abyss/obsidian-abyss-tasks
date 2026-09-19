@@ -480,7 +480,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
         d
           .addOptions({
             never: 'Never',
-            'non-default': 'Non-default notes only',
+            'non-default': 'Non-default notes',
             always: 'Always',
           })
           .setValue(this.plugin_abyssPrivate.settings.sourceNoteDisplay)
