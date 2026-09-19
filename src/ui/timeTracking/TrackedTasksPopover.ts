@@ -9,7 +9,12 @@ import {
 import { openAnchoredPopover, type AnchoredPopover } from '../anchoredPopover';
 import { writeText } from '../guardedDomWrites';
 import { runAsyncAction } from '../runAsyncAction';
-import { formatDayHeading, formatTrackedDuration, type TrackedTimeContext } from './formatTracked';
+import {
+  formatDayHeading,
+  formatTrackedDuration,
+  formatTrackedGain,
+  type TrackedTimeContext,
+} from './formatTracked';
 import type { TrackingActions } from './trackingActions';
 
 export interface TrackedTasksPopoverOptions {
@@ -90,7 +95,14 @@ function dayMs(day: TrackedDay, pass: RenderPass): number {
  */
 function rowLabel(row: TrackedDayRow, pass: RenderPass): string {
   const ms = rowMs(row, pass);
-  return row.running ? formatTrackedDurationWithSeconds(ms) : formatTrackedDuration(ms);
+  return formatTrackedGain(
+    row.running ? formatTrackedDurationWithSeconds(ms) : formatTrackedDuration(ms),
+  );
+}
+
+/** What a day added, which is what its heading is opened to report. */
+function dayLabel(day: TrackedDay, pass: RenderPass): string {
+  return formatTrackedGain(formatTrackedDuration(dayMs(day, pass)));
 }
 
 function close(session: PopoverSession, restoreFocus?: boolean): void {
@@ -234,7 +246,7 @@ function renderDay(session: PopoverSession, day: TrackedDay, pass: RenderPass): 
   });
   const total = header.createSpan({
     cls: 'abyss-tracked-day-total',
-    text: formatTrackedDuration(dayMs(day, pass)),
+    text: dayLabel(day, pass),
   });
   const rows = sectionEl.createDiv({ cls: 'abyss-tracked-day-rows' });
   rows.hidden = !open;
@@ -284,7 +296,7 @@ function tick(session: PopoverSession): void {
   const pass = renderPass(session);
   for (const live of session.live) {
     writeText(live.clock, rowLabel(live.row, pass));
-    writeText(live.dayTotal, formatTrackedDuration(dayMs(live.day, pass)));
+    writeText(live.dayTotal, dayLabel(live.day, pass));
   }
 }
 

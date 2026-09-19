@@ -10,6 +10,7 @@ import {
   configuredTaskApplication,
   createAppWithFiles,
   cssDeclarationsFor,
+  cssDeclarationValue,
   expectDefined,
   flushMicrotasks,
   loadPluginStyles,
@@ -206,16 +207,17 @@ describe('tracked tasks popover', () => {
     taskTotal(harness.host).click();
 
     expect(taskTotal(harness.host).getAttribute('aria-expanded')).toBe('true');
+    // Every total here is time already added to the pile, and says so.
     expect(dayHeadings(harness.layout)).toEqual([
-      ['Today', '5h 12m', 'true'],
-      ['Yesterday', '6h 30m', 'false'],
-      ['Wed 16 Sep', '4h 15m', 'false'],
+      ['Today', '+5h 12m', 'true'],
+      ['Yesterday', '+6h 30m', 'false'],
+      ['Wed 16 Sep', '+4h 15m', 'false'],
     ]);
     // Only the running row spells out its seconds, which is what proves the timer is moving.
     expect(rowsOf(daySection(harness.layout, 'Today'))).toEqual([
-      ['Write report', '', '1h 47m 0s'],
-      ['Email cleanup', '', '1h 20m'],
-      ['Review PR', '', '2h 5m'],
+      ['Write report', '', '+1h 47m 0s'],
+      ['Email cleanup', '', '+1h 20m'],
+      ['Review PR', '', '+2h 5m'],
     ]);
   });
 
@@ -239,16 +241,17 @@ describe('tracked tasks popover', () => {
     harness.advance(SECOND);
     harness.clock.tick();
 
-    expect(rowsOf(daySection(harness.layout, 'Today'))[0]?.[2]).toBe('1h 47m 1s');
-    expect(dayHeadings(harness.layout)[0]?.[1]).toBe('5h 12m');
-    // The rail counts in minutes, so the seconds live in the list a reader opened on purpose.
+    expect(rowsOf(daySection(harness.layout, 'Today'))[0]?.[2]).toBe('+1h 47m 1s');
+    expect(dayHeadings(harness.layout)[0]?.[1]).toBe('+5h 12m');
+    // The rail counts in minutes and reports a plain amount, so the seconds and the plus live in
+    // the list a reader opened on purpose.
     expect(taskTotal(harness.host).textContent).toBe(`1h${THIN}47m`);
 
     harness.advance(59 * SECOND);
     harness.clock.tick();
 
-    expect(rowsOf(daySection(harness.layout, 'Today'))[0]?.[2]).toBe('1h 48m 0s');
-    expect(dayHeadings(harness.layout)[0]?.[1]).toBe('5h 13m');
+    expect(rowsOf(daySection(harness.layout, 'Today'))[0]?.[2]).toBe('+1h 48m 0s');
+    expect(dayHeadings(harness.layout)[0]?.[1]).toBe('+5h 13m');
     expect(taskTotal(harness.host).textContent).toBe(`1h${THIN}48m`);
   });
 
@@ -261,12 +264,13 @@ describe('tracked tasks popover', () => {
     toggle(harness.host).click();
     await flushMicrotasks();
 
+    // A day that has earned nothing yet still reports a total, so it reports a gain of nothing.
     expect(dayHeadings(harness.layout)).toEqual([
-      ['Today', '0m', 'true'],
-      ['Yesterday', '6h 30m', 'false'],
+      ['Today', '+0m', 'true'],
+      ['Yesterday', '+6h 30m', 'false'],
     ]);
     const today = daySection(harness.layout, 'Today');
-    expect(rowsOf(today)).toEqual([['Write report', '', '0s']]);
+    expect(rowsOf(today)).toEqual([['Write report', '', '+0s']]);
     expect(
       query(today, '.abyss-tracked-row-toggle', 'Missing the row pause').getAttribute('aria-label'),
     ).toBe('Pause Write report');
@@ -275,9 +279,9 @@ describe('tracked tasks popover', () => {
     harness.advance(60 * SECOND);
     harness.clock.tick();
 
-    expect(rowsOf(daySection(harness.layout, 'Today'))).toEqual([['Write report', '', '1m 0s']]);
+    expect(rowsOf(daySection(harness.layout, 'Today'))).toEqual([['Write report', '', '+1m 0s']]);
     expect(taskTotal(harness.host).textContent).toBe('1m');
-    expect(dayHeadings(harness.layout)[0]?.[1]).toBe('1m');
+    expect(dayHeadings(harness.layout)[0]?.[1]).toBe('+1m');
   });
 
   it('keeps two running rows level with the day they share', async () => {
@@ -297,8 +301,8 @@ describe('tracked tasks popover', () => {
 
     const rows = rowsOf(daySection(harness.layout, 'Today'));
     expect(rows.map(([name, , clock]) => [name, clock])).toEqual([
-      ['Write report', '1h 1m 0s'],
-      ['Review PR', '31m 0s'],
+      ['Write report', '+1h 1m 0s'],
+      ['Review PR', '+31m 0s'],
     ]);
     expect(Math.floor(rows.reduce((sum, row) => sum + labelSeconds(row[2]), 0) / 60)).toBe(
       labelSeconds(expectDefined(dayHeadings(harness.layout)[0])[1]) / 60,
@@ -358,7 +362,7 @@ describe('tracked tasks popover', () => {
         'aria-expanded',
       ),
     ).toBe('true');
-    expect(rowsOf(yesterday)).toEqual([['Yesterday pass', 'Older', '6h 30m']]);
+    expect(rowsOf(yesterday)).toEqual([['Yesterday pass', 'Older', '+6h 30m']]);
   });
 
   it('moves the timer to the task whose play is pressed', async () => {
@@ -431,6 +435,31 @@ describe('tracked tasks popover', () => {
     expect(
       cssDeclarationsFor(css, '.abyss-time-tracking-popover--tasks .abyss-tracked-day-header'),
     ).toBeDefined();
+  });
+
+  it('reads every total in the gain colour, which a running row takes back', () => {
+    for (const cell of ['.abyss-tracked-day-total', '.abyss-tracked-row-clock']) {
+      expect(cssDeclarationValue(cssDeclarationsFor(css, cell), 'color')).toBe(
+        'var(--abyss-time-gain)',
+      );
+    }
+    // Two classes outrank the one the clock carries, so a running row stays the accent whole.
+    expect(
+      cssDeclarationValue(
+        cssDeclarationsFor(css, '.abyss-tracked-row.is-tracking .abyss-tracked-row-clock'),
+        'color',
+      ),
+    ).toBe('var(--text-accent)');
+    // A finished task mutes its title and nothing else: the time it earned is still a gain.
+    expect(
+      cssDeclarationValue(
+        cssDeclarationsFor(css, '.abyss-tracked-row.is-finished .abyss-tracked-row-title'),
+        'color',
+      ),
+    ).toBe('var(--text-muted)');
+    expect(cssDeclarationsFor(css, '.abyss-tracked-row.is-finished .abyss-tracked-row-clock')).toBe(
+      '',
+    );
   });
 
   it('takes the keyboard into the list and hands it back on Escape', async () => {

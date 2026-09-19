@@ -256,9 +256,9 @@ function listed(el: HTMLElement): string[][] {
     ['day', text(day, '.abyss-time-day-label')],
     ...[...day.querySelectorAll<HTMLElement>('.abyss-time-row')].map((row) => [
       'row',
-      text(row, '.abyss-time-row-range'),
-      text(row, '.abyss-time-row-note'),
       text(row, '.abyss-time-row-duration'),
+      text(row, '.abyss-time-row-note'),
+      text(row, '.abyss-time-row-range'),
     ]),
   ]);
 }
@@ -282,7 +282,7 @@ function undoPlace(el: HTMLElement): { day: string; index: number } {
 
 /** Reads a rendered row duration back into the whole minutes the badge total floors to. */
 function minutesOf(duration: string): number {
-  const parts = /^(?:(\d+)h)?(?: ?(\d+)m)?(?: ?(\d+)s)?$/u.exec(duration);
+  const parts = /^\+(?:(\d+)h)?(?: ?(\d+)m)?(?: ?(\d+)s)?$/u.exec(duration);
   const [, hours, minutes, seconds] = parts ?? [];
   if (hours === undefined && minutes === undefined && seconds === undefined) {
     throw new Error(`Unreadable duration ${duration}`);
@@ -297,11 +297,11 @@ describe('tracked sessions popover', () => {
 
     expect(listed(harness.el)).toEqual([
       ['day', 'Today'],
-      ['row', '12:30 →', '', '1h 35m 32s'],
-      ['row', '11:00 → 11:15', 'Child', '15m'],
-      ['row', '09:12 → 10:32', '', '1h 20m'],
+      ['row', '+1h 35m 32s', '', '12:30 →'],
+      ['row', '+15m', 'Child', '11:00 → 11:15'],
+      ['row', '+1h 20m', '', '09:12 → 10:32'],
       ['day', 'Yesterday'],
-      ['row', '18:40 → 18:55', 'call with Bob', '15m'],
+      ['row', '+15m', 'call with Bob', '18:40 → 18:55'],
       ['day', 'Needs attention'],
       ['row', '', '2026-09-16 14:05 → 13:20', ''],
     ]);
@@ -322,7 +322,7 @@ describe('tracked sessions popover', () => {
 
     expect(listed(harness.el)).toEqual([
       ['day', 'Yesterday'],
-      ['row', '23:30 → 00:15', '', '45m'],
+      ['row', '+45m', '', '23:30 → 00:15'],
     ]);
   });
 
@@ -382,6 +382,56 @@ describe('tracked sessions popover', () => {
     expect(cssDeclarationsFor(css, '.abyss-time-row.is-broken .abyss-time-row-note')).not.toContain(
       'display: none',
     );
+    // What is left is the total and the span it covers, in that order and each in its own track.
+    expect(
+      cssDeclarationValue(
+        cssDeclarationsFor(css, '.abyss-time-row:not(.is-broken)'),
+        'grid-template-columns',
+      ),
+    ).toBe('minmax(5.2em, auto) minmax(0, 1fr) 14px');
+  });
+
+  it('reads the total first, as what the session added', async () => {
+    const harness = await inspector();
+    open(harness.el);
+    const duration = cssDeclarationsFor(css, '.abyss-time-row-duration');
+
+    expect(rowShape(expectDefined(rows(harness.el)[1], 'Missing a finished row'))).toEqual({
+      duration: '+15m',
+      note: 'Child',
+      range: '11:00 → 11:15',
+    });
+    expect(
+      cssDeclarationValue(cssDeclarationsFor(css, '.abyss-time-row'), 'grid-template-columns'),
+    ).toBe('minmax(5.2em, auto) minmax(0, 1fr) 7.2em 14px');
+    expect(cssDeclarationValue(duration, 'justify-self')).toBe('start');
+  });
+
+  it('paints a finished total in the one gain colour, which a live row takes back', () => {
+    const light = cssDeclarationsFor(css, '.abyss-time-tracking-popover');
+    const dark = cssDeclarationsFor(css, '.theme-dark .abyss-time-tracking-popover');
+
+    expect(cssDeclarationValue(light, '--abyss-time-gain')).toContain('var(--color-green)');
+    expect(cssDeclarationValue(dark, '--abyss-time-gain')).toContain('var(--color-green)');
+    expect(cssDeclarationValue(cssDeclarationsFor(css, '.abyss-time-row-duration'), 'color')).toBe(
+      'var(--abyss-time-gain)',
+    );
+    // A running or stale row is one colour whole, so the total steps back into it.
+    for (const state of ['is-tracking', 'is-stale']) {
+      expect(
+        cssDeclarationValue(
+          cssDeclarationsFor(css, `.abyss-time-row.${state} .abyss-time-row-duration`),
+          'color',
+        ),
+      ).toBe('inherit');
+    }
+    // The note is what is read after the total, the span is the reference detail under both.
+    expect(cssDeclarationValue(cssDeclarationsFor(css, '.abyss-time-row-note'), 'color')).toBe(
+      'var(--text-muted)',
+    );
+    expect(cssDeclarationValue(cssDeclarationsFor(css, '.abyss-time-row-range'), 'color')).toBe(
+      'var(--text-faint)',
+    );
   });
 
   it('gives every row the same columns, with the remove slot always reserved', async () => {
@@ -392,9 +442,9 @@ describe('tracked sessions popover', () => {
 
     expect(cells.slice(0, 4)).toEqual(
       Array.from({ length: 4 }, () => [
-        'abyss-time-row-range',
-        'abyss-time-row-note',
         'abyss-time-row-duration',
+        'abyss-time-row-note',
+        'abyss-time-row-range',
         'abyss-time-row-remove',
       ]),
     );
@@ -416,7 +466,8 @@ describe('tracked sessions popover', () => {
       harness.advance(1000);
       clock.tick();
 
-      expect(rowShape(running).duration).toBe('1h 35m 33s');
+      // The plus is part of the label the tick rewrites, so a live row keeps it second by second.
+      expect(rowShape(running).duration).toBe('+1h 35m 33s');
       const written = observer.takeRecords().map((record) => {
         const { target } = record;
         return (target.instanceOf(HTMLElement) ? target : target.parentElement)?.className;
@@ -874,11 +925,11 @@ describe('tracked sessions popover', () => {
     expect(popover(harness.el).querySelector('.abyss-undo-row')).toBeNull();
     expect(listed(harness.el)).toEqual([
       ['day', 'Today'],
-      ['row', '12:30 →', '', '1h 35m 32s'],
-      ['row', '11:00 → 11:15', 'Child', '15m'],
-      ['row', '09:12 → 10:32', '', '1h 20m'],
+      ['row', '+1h 35m 32s', '', '12:30 →'],
+      ['row', '+15m', 'Child', '11:00 → 11:15'],
+      ['row', '+1h 20m', '', '09:12 → 10:32'],
       ['day', 'Yesterday'],
-      ['row', '18:40 → 18:55', 'call with Bob', '15m'],
+      ['row', '+15m', 'call with Bob', '18:40 → 18:55'],
       ['day', 'Needs attention'],
       ['row', '', '2026-09-16 14:05 → 13:20', ''],
     ]);
@@ -1159,6 +1210,7 @@ describe('tracked sessions popover', () => {
     const undo = expectDefined(
       popover(harness.el).querySelector<HTMLButtonElement>('.abyss-undo-row button'),
     );
+    // An offer names the session by when it was, so the total's plus has no place in it.
     expect(undo.getAttribute('aria-label')).toBe('Undo removing 18:40 to 18:55 on Yesterday');
     expect(undo.textContent).toBe('Undo');
   });
@@ -1268,7 +1320,7 @@ describe('tracked sessions popover', () => {
       expect(popover(harness.el).querySelector('.abyss-undo-row')).toBeNull();
       expect(listed(harness.el)).toEqual([
         ['day', 'Today'],
-        ['row', '09:12 → 10:32', '', '1h 20m'],
+        ['row', '+1h 20m', '', '09:12 → 10:32'],
       ]);
 
       // Removed again and left alone, the day goes when the offer does and the list says so.

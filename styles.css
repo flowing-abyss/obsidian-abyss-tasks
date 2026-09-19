@@ -9941,9 +9941,19 @@ body.is-phone.is-mobile .abyss-creation-feedback {
  * layer rather than the `.abyss-popover-anchored` default meant for surfaces inside a pane.
  */
 .abyss-time-tracking-popover {
+  /* Time already earned reads as a gain. The theme's own green follows the theme, and mixing it
+     toward that theme's text colour is what carries a 13px total over the contrast a bare green
+     cannot reach. */
+  --abyss-time-gain: color-mix(in srgb, var(--color-green) 60%, var(--text-normal));
+
   z-index: var(--layer-popover, 30);
   gap: 2px;
   overflow-y: auto;
+}
+
+/* A dark background takes far more of the green before the mix stops reading as green. */
+.theme-dark .abyss-time-tracking-popover {
+  --abyss-time-gain: color-mix(in srgb, var(--color-green) 85%, var(--text-normal));
 }
 
 /*
@@ -9967,13 +9977,14 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 }
 
 /*
- * One grid per row with a fixed first track, so the arrow of every span sits on the same axis
- * whatever the note beside it says. The remove slot is reserved at all times and laps back over
- * its column gap, so the only dead space past the totals is the 22px the button itself needs.
+ * One grid per row with two fixed tracks, so every note starts on one axis and the arrow of every
+ * span sits on another. The first track is the width of `+23h 59m`, and its `auto` lets the one
+ * running row past an hour grow rather than clip. The remove slot is reserved at all times and laps
+ * back over its column gap, so the only dead space past the spans is the 22px the button needs.
  */
 .abyss-time-row {
   display: grid;
-  grid-template-columns: 7.2em minmax(0, 1fr) auto 14px;
+  grid-template-columns: minmax(5.2em, auto) minmax(0, 1fr) 7.2em 14px;
   align-items: center;
   gap: 8px;
   padding: 4px 6px;
@@ -9990,7 +10001,7 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   min-height: 30px;
 }
 
-/* A line that cannot be read has no span and no total, so the warning opens it instead. */
+/* A line that cannot be read has no total and no span, so the warning opens it instead. */
 .abyss-time-row.is-broken {
   grid-template-columns: auto minmax(0, 1fr) 14px;
 }
@@ -10003,15 +10014,17 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   background: var(--background-modifier-hover);
 }
 
+/* The span is the reference detail under the two things the row is opened for. */
 .abyss-time-row-range {
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-/* The total is what a reader scans down, so it is the one cell in the row's own colour. */
+/* The total opens the row and is what a reader scans down, so it carries the gain colour. */
 .abyss-time-row-duration {
-  justify-self: end;
+  justify-self: start;
+  color: var(--abyss-time-gain);
   font-weight: var(--font-medium);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -10027,10 +10040,11 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 
 /*
  * The note and the sub-task a session sits under share one cell and truncate together, so a row
- * that carries both ends in a single ellipsis rather than two competing ones.
+ * that carries both ends in a single ellipsis rather than two competing ones. It is the second
+ * thing read in the row, which is the step it takes above the span under it.
  */
 .abyss-time-row-note {
-  color: var(--text-faint);
+  color: var(--text-muted);
 }
 
 .abyss-time-row-note > span + span {
@@ -10042,7 +10056,8 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   color: var(--text-warning, var(--color-orange));
 }
 
-/* A live row takes the accent whole, so its span stops stepping back from its total. */
+/* A live row is one colour whole, so neither its total nor its span keeps a colour of its own. */
+.abyss-time-row:is(.is-tracking, .is-stale) .abyss-time-row-duration,
 .abyss-time-row:is(.is-tracking, .is-stale) .abyss-time-row-range {
   color: inherit;
 }
@@ -10060,17 +10075,18 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 /*
  * A pane too narrow for the note to say a word drops it rather than leave a stub of two characters.
  * The row carries what it said as its tooltip at every width, so nothing is lost here, and what is
- * left reads as a span and a total. Under this width the inspector overlay is `100cqi - 48px`,
- * which leaves the note cell below 60px. A line that could not be read keeps its text, because
- * that text is the whole point of the row.
+ * left reads as a total and the span it covers. Under this width the inspector overlay is
+ * `100cqi - 48px`, which leaves the note cell below 60px. A line that could not be read keeps its
+ * text, because that text is the whole point of the row.
  */
 @container abyss-panel-layout (max-width: 20rem) {
   .abyss-time-row:not(.is-broken) .abyss-time-row-note {
     display: none;
   }
 
+  /* The span takes the room the note gave up and reads from the start of it, not the end. */
   .abyss-time-row:not(.is-broken) {
-    grid-template-columns: 7.2em minmax(0, 1fr) 14px;
+    grid-template-columns: minmax(5.2em, auto) minmax(0, 1fr) 14px;
   }
 }
 
@@ -10251,10 +10267,11 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   text-overflow: ellipsis;
 }
 
+/* Both numbers report time already earned, so both read as the gain the popover is opened for. */
 .abyss-tracked-day-total,
 .abyss-tracked-row-clock {
   flex: 0 0 auto;
-  color: var(--text-muted);
+  color: var(--abyss-time-gain);
   font-variant-numeric: tabular-nums;
 }
 

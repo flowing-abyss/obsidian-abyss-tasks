@@ -20,6 +20,7 @@ import {
   formatDayHeading,
   formatSessionClockRange,
   formatTrackedDuration,
+  formatTrackedGain,
   staleTrackingQuestion,
   type TrackedTimeContext,
 } from './formatTracked';
@@ -164,9 +165,11 @@ function newestFirst(left: SessionRow, right: SessionRow): number {
 /** A running session spells out its seconds, because they are what proves the timer is moving. */
 function durationLabel(entry: TimeEntrySnapshot, nowMs: number): string {
   const elapsed = entryDurationMs(entry, nowMs);
-  return entry.state === 'running'
-    ? formatTrackedDurationWithSeconds(elapsed)
-    : formatTrackedDuration(elapsed);
+  return formatTrackedGain(
+    entry.state === 'running'
+      ? formatTrackedDurationWithSeconds(elapsed)
+      : formatTrackedDuration(elapsed),
+  );
 }
 
 function rangeLabel(entry: TimeEntrySnapshot, context: TrackedTimeContext): string {
@@ -412,9 +415,9 @@ function undoName(
 }
 
 /**
- * The cells of one row, always in reading order: when the span is, what it was about, how long it
- * took. A line the plugin could not read has no span and no total, so it puts the warning where the
- * span would be and shows what the note actually holds.
+ * The cells of one row, always in reading order: what the session added, what it was about, when it
+ * ran. A line the plugin could not read has no span and no total, so it puts the warning where the
+ * total would be and shows what the note actually holds.
  */
 function renderCells(
   session: PopoverSession,
@@ -434,16 +437,16 @@ function renderCells(
       .createSpan({ text: entryLineText(entry.originalMarkdown) });
     return;
   }
-  rowEl.createSpan({
-    cls: 'abyss-time-row-range',
-    text: formatSessionClockRange(entry, context),
+  const duration = rowEl.createSpan({
+    cls: 'abyss-time-row-duration',
+    text: durationLabel(entry, context.nowMs),
   });
   const note = rowEl.createDiv({ cls: 'abyss-time-row-note' });
   if (entry.tail !== undefined) note.createSpan({ cls: 'abyss-time-row-tail', text: entry.tail });
   if (row.node !== undefined) note.createSpan({ cls: 'abyss-time-row-node', text: row.node });
-  const duration = rowEl.createSpan({
-    cls: 'abyss-time-row-duration',
-    text: durationLabel(entry, context.nowMs),
+  rowEl.createSpan({
+    cls: 'abyss-time-row-range',
+    text: formatSessionClockRange(entry, context),
   });
   if (entry.state === 'running') session.live.push({ entry, duration });
 }

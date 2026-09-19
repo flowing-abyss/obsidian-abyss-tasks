@@ -8,6 +8,7 @@ import {
   formatDayHeading,
   formatSessionClockRange,
   formatTrackedDuration,
+  formatTrackedGain,
   staleTrackingQuestion,
 } from '../src/ui/timeTracking/formatTracked';
 
@@ -73,6 +74,20 @@ describe('formatTrackedDuration', () => {
   it('reads an uncountable total as no time instead of rejecting it', () => {
     expect(formatTrackedDuration(Number.NaN)).toBe('0m');
     expect(formatTrackedDuration(Number.POSITIVE_INFINITY)).toBe('0m');
+  });
+});
+
+describe('formatTrackedGain', () => {
+  it('says a total a popover shows as what it added', () => {
+    expect(formatTrackedGain(formatTrackedDuration(80 * MINUTE))).toBe('+1h 20m');
+  });
+
+  it('says a running total the same way, seconds and all', () => {
+    expect(formatTrackedGain('12m 5s')).toBe('+12m 5s');
+  });
+
+  it('keeps a total of nothing as the nothing it is', () => {
+    expect(formatTrackedGain('0m')).toBe('+0m');
   });
 });
 

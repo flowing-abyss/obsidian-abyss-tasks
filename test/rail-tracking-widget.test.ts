@@ -321,15 +321,16 @@ describe('rail tracking widget', () => {
     // day the list heads up carries both.
     expect(taskTotal(host).textContent).toBe('30m');
     taskTotal(host).click();
-    // The list has the room the rail has not, so its own numbers keep the ordinary space.
-    expect(dayHeadings(harness.layout)).toEqual([['Today', '1h 30m']]);
+    // The list has the room the rail has not, so its own numbers keep the ordinary space and say
+    // what the day added; the rail stays a plain amount.
+    expect(dayHeadings(harness.layout)).toEqual([['Today', '+1h 30m']]);
 
     harness.advance(2 * MINUTE);
     harness.clock.tick();
 
     // Two minutes on the task, four on the day, because both timers kept counting.
     expect(taskTotal(host).textContent).toBe('32m');
-    expect(dayHeadings(harness.layout)).toEqual([['Today', '1h 34m']]);
+    expect(dayHeadings(harness.layout)).toEqual([['Today', '+1h 34m']]);
   });
 
   it('opens and closes the tracked list from the number', async () => {

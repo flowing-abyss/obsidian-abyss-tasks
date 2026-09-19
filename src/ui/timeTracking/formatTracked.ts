@@ -12,6 +12,15 @@ import {
  */
 export { formatTrackedDuration } from '../../tasks';
 
+/**
+ * The same total said as what it added, `+1h 16m`. Only the two tracking popovers speak this way,
+ * because they are opened to look at time already earned. The badges, the rail number and the
+ * project table report a plain amount and keep the domain formatter as it is.
+ */
+export function formatTrackedGain(label: string): string {
+  return `+${label}`;
+}
+
 /** The wall-clock context every tracking label is read against, supplied by the owning surface. */
 export interface TrackedTimeContext {
   readonly nowMs: number;
