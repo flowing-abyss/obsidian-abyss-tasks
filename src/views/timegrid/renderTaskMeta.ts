@@ -165,6 +165,33 @@ export function bindMaterializedInteractions(
   bind(occurrence.source.target);
 }
 
+const TASK_SELECTION_EXCLUSION =
+  '.abyss-status-marker, a, button, input, select, textarea, [data-resize-edge]';
+
+/**
+ * Gives a materialized calendar surface the shared click-to-select contract without stealing
+ * clicks from its embedded controls or links. The callback remains separate from the existing
+ * context-menu action so selecting a task does not replace the established task editor.
+ */
+export function bindTaskSelection(
+  element: HTMLElement,
+  task: TaskSnapshot,
+  onTaskSelect: ((task: TaskSnapshot) => void) | undefined,
+): void {
+  if (onTaskSelect === undefined) return;
+  element.setAttribute('tabindex', '0');
+  element.addEventListener('focusin', () => {
+    onTaskSelect(task);
+  });
+  element.addEventListener('click', (event) => {
+    const target = event.target as Element | null;
+    if (target?.closest(TASK_SELECTION_EXCLUSION) != null) return;
+    const wasFocused = element.contains(element.ownerDocument.activeElement);
+    element.focus({ preventScroll: true });
+    if (wasFocused || !element.contains(element.ownerDocument.activeElement)) onTaskSelect(task);
+  });
+}
+
 interface ActiveForecastMenu {
   readonly menu: HTMLElement;
   readonly restoreTarget: HTMLElement | null;

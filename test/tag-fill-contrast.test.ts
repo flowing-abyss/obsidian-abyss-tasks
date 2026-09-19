@@ -184,7 +184,7 @@ describe('calendar focus and selection contrast', () => {
     const focusRules = [
       declarationsFor('.abyss-span-piece:focus-visible:hover'),
       declarationsFor('.abyss-tg-block:focus-visible'),
-      declarationsFor('.abyss-tg-block.is-selected'),
+      declarationsFor('.abyss-calendar-item.is-selected'),
     ];
 
     expect(cssPercent('--abyss-event-focus-tag-strength')).toBe(55);

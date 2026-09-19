@@ -32,6 +32,7 @@ import {
   applyOccurrenceDomState,
   bindForecastInteractions,
   bindMaterializedInteractions,
+  bindTaskSelection,
   hasCountBadges,
   renderCountBadges,
   type CalendarOccurrenceLookup,
@@ -56,6 +57,7 @@ export interface TimedBlockCallbacks extends ForecastInteractionCallbacks {
   app: App;
   component: Component;
   onTaskClick: (task: TaskSnapshot) => void;
+  onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onKeyboardIntent: (task: TaskSnapshot, intent: TimedBlockKeyboardIntent) => void;
   onTimeChange: (task: TaskSnapshot, newStartMinutes: number) => void;
   onDurationChange: (task: TaskSnapshot, newDurationMinutes: number) => void;
@@ -300,6 +302,7 @@ function renderTimedBlock(input: TimedBlockRenderInput): void {
   renderTimedBlockContent(block, task, blockLayout, occurrence, terminal, callbacks);
   bindMaterializedInteractions(occurrence, (target) => {
     if (target.type !== 'task') return;
+    bindTaskSelection(block, task, callbacks.onTaskSelect);
     attachTimedBlockControls({
       block,
       hourColumnEl,

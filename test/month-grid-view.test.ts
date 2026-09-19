@@ -111,6 +111,7 @@ function callbacks() {
     onDayClick: vi.fn(),
     onCreateAtDate: vi.fn(),
     onTaskClick: vi.fn(),
+    onTaskSelect: vi.fn(),
     onDrop: vi.fn(),
     onSpanMove: vi.fn(),
     onSpanBoundary: vi.fn(),
@@ -1022,7 +1023,7 @@ describe('MonthGridView', () => {
     expect(cbs.onDayClick).toHaveBeenCalledTimes(1);
   });
 
-  it('a plain click on a compact plain row does NOT fire onTaskClick (reserved for drag)', () => {
+  it('a plain click on a compact plain row selects without firing the context-menu action', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const view = new MonthGridView(cbs);
@@ -1032,6 +1033,8 @@ describe('MonthGridView', () => {
       '[data-mg-date="2026-07-15"] .abyss-mg-plain',
     ) as HTMLElement;
     row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(row.getAttribute('tabindex')).toBe('0');
+    expect(cbs.onTaskSelect).toHaveBeenCalledWith(t);
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
@@ -1048,7 +1051,7 @@ describe('MonthGridView', () => {
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
   });
 
-  it('a plain click on a compact block-dot does NOT fire onTaskClick (reserved for drag)', () => {
+  it('a plain click on a compact block-dot selects without firing the context-menu action', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const view = new MonthGridView(cbs);
@@ -1058,6 +1061,7 @@ describe('MonthGridView', () => {
       '[data-mg-date="2026-07-15"] .abyss-mg-block-dot',
     ) as HTMLElement;
     dot.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(cbs.onTaskSelect).toHaveBeenCalledWith(t);
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
@@ -1074,7 +1078,7 @@ describe('MonthGridView', () => {
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
   });
 
-  it('a plain click on a compact span-segment does NOT fire onTaskClick (reserved for drag)', () => {
+  it('a plain click on a compact span-segment selects without firing the context-menu action', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const view = new MonthGridView(cbs);
@@ -1084,6 +1088,7 @@ describe('MonthGridView', () => {
       '[data-mg-date="2026-07-15"] .abyss-mg-span-segment',
     ) as HTMLElement;
     bar.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(cbs.onTaskSelect).toHaveBeenCalledWith(t);
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
@@ -1100,7 +1105,7 @@ describe('MonthGridView', () => {
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
   });
 
-  it('a plain click on a compact deadline marker does NOT fire onTaskClick (reserved for drag)', () => {
+  it('a plain click on a compact deadline marker selects without firing the context-menu action', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const view = new MonthGridView(cbs);
@@ -1110,6 +1115,7 @@ describe('MonthGridView', () => {
       '[data-mg-date="2026-07-15"] .abyss-mg-deadline-marker',
     ) as HTMLElement;
     marker.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(cbs.onTaskSelect).toHaveBeenCalledWith(t);
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
@@ -1140,6 +1146,7 @@ describe('MonthGridView', () => {
     expect(row.firstElementChild).toBe(marker);
     (marker as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onToggle).toHaveBeenCalledWith(t);
+    expect(cbs.onTaskSelect).not.toHaveBeenCalled();
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 

@@ -71,7 +71,7 @@ describe('renderHourGrid', () => {
     expect(hover).not.toMatch(/background(?:-color)?\s*:/u);
     expect(hover).toMatch(/box-shadow\s*:.*var\(--background-modifier-hover\)/u);
 
-    const selected = declarationsFor('.abyss-tg-block.is-selected');
+    const selected = declarationsFor('.abyss-calendar-item.is-selected');
     const resting = fills;
     expect(selected).not.toMatch(/background(?:-color)?\s*:/u);
     expect(resting).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px/u);

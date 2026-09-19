@@ -87,6 +87,7 @@ const callbacks = () => ({
   app: fakeApp,
   component: new Component(),
   onTaskClick: vi.fn(),
+  onTaskSelect: vi.fn(),
   onDrop: vi.fn(),
   onStartChange: vi.fn(),
   onDueChange: vi.fn(),
@@ -427,14 +428,15 @@ describe('renderAllDayCell', () => {
     expect(container.querySelector('.abyss-tg-span')).toBeNull();
   });
 
-  it('a plain click on a plain chip does NOT fire onTaskClick (reserved for drag)', () => {
+  it('a plain click on a plain chip selects without firing the context-menu action', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const t = task({ title: 'Plain', planning: { due: '2026-07-10' } });
     renderAllDayCell(container, '2026-07-10', [], [t], [], cbs);
-    (container.querySelector('.abyss-tg-plain') as HTMLElement).dispatchEvent(
-      new MouseEvent('click', { bubbles: true }),
-    );
+    const chip = container.querySelector('.abyss-tg-plain') as HTMLElement;
+    chip.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(chip.getAttribute('tabindex')).toBe('0');
+    expect(cbs.onTaskSelect).toHaveBeenCalledWith(t);
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
@@ -449,14 +451,14 @@ describe('renderAllDayCell', () => {
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
   });
 
-  it('a plain click on a span continuation does NOT fire onTaskClick (reserved for drag)', () => {
+  it('a plain click on a non-interactive span continuation fires no task action', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-12' } });
     renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
-    (container.querySelector('.abyss-tg-span-continuation') as HTMLElement).dispatchEvent(
-      new MouseEvent('click', { bubbles: true }),
-    );
+    const continuation = container.querySelector('.abyss-tg-span-continuation') as HTMLElement;
+    continuation.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(cbs.onTaskSelect).not.toHaveBeenCalled();
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
@@ -471,14 +473,14 @@ describe('renderAllDayCell', () => {
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
   });
 
-  it('a plain click on a deadline marker does NOT fire onTaskClick (reserved for drag)', () => {
+  it('a plain click on a deadline marker selects without firing the context-menu action', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const t = task({ title: 'Deadline', planning: { due: '2026-07-10', scheduled: '2026-07-05' } });
     renderAllDayCell(container, '2026-07-10', [], [], [t], cbs);
-    (container.querySelector('.abyss-tg-deadline-marker') as HTMLElement).dispatchEvent(
-      new MouseEvent('click', { bubbles: true }),
-    );
+    const marker = container.querySelector('.abyss-tg-deadline-marker') as HTMLElement;
+    marker.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(cbs.onTaskSelect).toHaveBeenCalledWith(t);
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
@@ -504,6 +506,7 @@ describe('renderAllDayCell', () => {
     expect(chip.firstElementChild).toBe(marker);
     (marker as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onToggle).toHaveBeenCalledWith(t);
+    expect(cbs.onTaskSelect).not.toHaveBeenCalled();
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 

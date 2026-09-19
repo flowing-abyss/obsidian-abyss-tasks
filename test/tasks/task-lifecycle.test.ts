@@ -26,6 +26,10 @@ import {
   type ConfiguredTaskDestination,
 } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import {
+  CaptureTargetResolver,
+  commandBodyForCapture,
+} from '../../src/ui/taskCapture/CaptureTargetResolver';
 import { presentTaskCreationResult } from '../../src/ui/taskCommandResult';
 import {
   captureChangedCallback,
@@ -129,6 +133,12 @@ function applicationFor(app: App, settings: CalendarSettings) {
     catalog,
     { today: () => localDate('2026-07-14') },
     provider,
+    () => ({
+      taskPrefix: settings.taskPrefix,
+      inbox: settings.inbox,
+      taskLifecycle: settings.taskLifecycle,
+      recurrence: settings.recurrence,
+    }),
   );
 }
 
@@ -1955,6 +1965,70 @@ describe('ObsidianTaskDestinationProvider', () => {
 });
 
 describe('configured destination end-to-end lifecycle', () => {
+  it('keeps Q capture on the real project section when a fenced example repeats its heading', async () => {
+    const projectPath = 'projects/Abyss Tasks.md';
+    const inboxPath = 'tasks/active.md';
+    const projectSource = [
+      '# Abyss Tasks',
+      '',
+      '```md',
+      '%%',
+      '# Tasks',
+      '- [ ] Example only',
+      '%%',
+      '```',
+      '',
+      'Project notes.',
+      '',
+      '# Tasks',
+      '',
+      '- [ ] Existing',
+      '',
+    ].join('\n');
+    const app = await createAppWithFiles({ [projectPath]: projectSource, [inboxPath]: '' });
+    const settings: CalendarSettings = {
+      ...DEFAULT_SETTINGS,
+      taskFilePath: inboxPath,
+      taskPrefix: '#task',
+      inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: true },
+      taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+      projects: {
+        ...DEFAULT_SETTINGS.projects,
+        taskInsertionMode: 'section',
+        taskInsertionSection: '# Tasks',
+        taskInsertionSectionPosition: 'top',
+      },
+    };
+    const application = applicationFor(app, settings);
+    const resolver = new CaptureTargetResolver(application, settings, () =>
+      localDate('2026-07-14'),
+    );
+
+    const inbox = await resolver.resolve({ type: 'list', selection: 'inbox' });
+    const inboxResult = await inbox.session.execute({
+      markdownBody: commandBodyForCapture(inbox, 'Обычная задача Inbox'),
+      ...(inbox.initial === undefined ? {} : { initial: inbox.initial }),
+    });
+    const project = await resolver.resolve({ type: 'project-dashboard', path: projectPath });
+    const projectResult = await project.session.execute({
+      markdownBody: commandBodyForCapture(project, 'Обычная задача проекта'),
+      ...(project.initial === undefined ? {} : { initial: project.initial }),
+    });
+
+    expect(inboxResult).toMatchObject({ type: 'ok' });
+    expect(await app.vault.cachedRead(fileAt(app, inboxPath))).toContain('Обычная задача Inbox');
+    expect(projectResult).toMatchObject({
+      type: 'ok',
+      outcome: { type: 'task', task: { source: { filePath: projectPath, line: 12 } } },
+    });
+    expect(await app.vault.cachedRead(fileAt(app, projectPath))).toBe(
+      projectSource.replace(
+        '# Tasks\n\n- [ ] Existing',
+        '# Tasks\n- [ ] #task Обычная задача проекта\n\n- [ ] Existing',
+      ),
+    );
+  });
+
   it('executes a frozen configured session with exactly-once provisioning', async () => {
     const app = await createAppWithFiles({
       'templates/frozen.md': '# {{title}}\n\n## Frozen tasks\n',

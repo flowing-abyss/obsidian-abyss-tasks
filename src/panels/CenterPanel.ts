@@ -89,7 +89,10 @@ import {
 } from '../ui/taskDependencyPresentation';
 import { openInFile } from '../ui/taskNavigation';
 import { startTaskNodeDrag } from '../ui/taskNodeDrag';
-import { applyTaskPresentationIdentity } from '../ui/taskPresentationIdentity';
+import {
+  applyTaskPresentationIdentity,
+  renderedTaskElements,
+} from '../ui/taskPresentationIdentity';
 import { rootTaskRef, taskNodeLine } from '../ui/taskSelection';
 import { TimedBlockKeyboardQueue } from '../ui/timedBlockKeyboardQueue';
 import { MonthGridView } from '../views/MonthGridView';
@@ -179,6 +182,7 @@ interface CalendarContent {
 
 interface CalendarHandlers {
   readonly onTaskClick: (task: TaskSnapshot) => void;
+  readonly onTaskSelect: (task: TaskSnapshot) => void;
   readonly onForecastClick: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
   readonly onForecastContextMenu: (source: CalendarTaskSource) => void;
   readonly onDrop: (dragData: string, targetDate: string) => void;
@@ -559,6 +563,14 @@ export class CenterPanel {
           : undefined,
       );
     });
+    this.el.querySelectorAll<HTMLElement>('.abyss-calendar-item.is-selected').forEach((item) => {
+      item.classList.remove('is-selected');
+    });
+    if (root !== undefined) {
+      renderedTaskElements(this.el, rootTaskRef(root)).forEach((item) => {
+        if (item.classList.contains('abyss-calendar-item')) item.classList.add('is-selected');
+      });
+    }
   }
 
   private handleStateCommit_abyssPrivate(changed: ReadonlySet<string>): void {
@@ -1222,6 +1234,7 @@ export class CenterPanel {
       app: this.app_abyssPrivate,
       forecastMenuOwner,
       onTaskClick: handlers.onTaskClick,
+      onTaskSelect: handlers.onTaskSelect,
       onForecastClick: handlers.onForecastClick,
       onForecastContextMenu: handlers.onForecastContextMenu,
       onDrop: handlers.onDrop,
@@ -1257,6 +1270,7 @@ export class CenterPanel {
       app: this.app_abyssPrivate,
       forecastMenuOwner,
       onTaskClick: handlers.onTaskClick,
+      onTaskSelect: handlers.onTaskSelect,
       onForecastClick: handlers.onForecastClick,
       onForecastContextMenu: handlers.onForecastContextMenu,
       onDrop: handlers.onDrop,
@@ -1299,6 +1313,7 @@ export class CenterPanel {
       },
       onCreateAtDate: handlers.onCreateAtDate,
       onTaskClick: handlers.onTaskClick,
+      onTaskSelect: handlers.onTaskSelect,
       onForecastClick: handlers.onForecastClick,
       onForecastContextMenu: handlers.onForecastContextMenu,
       onDrop: handlers.onDrop,
@@ -1587,6 +1602,7 @@ export class CenterPanel {
   ): Pick<
     CalendarHandlers,
     | 'onTaskClick'
+    | 'onTaskSelect'
     | 'onForecastClick'
     | 'onForecastContextMenu'
     | 'onDrop'
@@ -1598,6 +1614,15 @@ export class CenterPanel {
     return {
       onTaskClick: (task) => {
         if (calendarRootTaskRef(task) !== undefined) this.taskModal_abyssPrivate?.open(task);
+      },
+      onTaskSelect: (task) => {
+        const occurrence = calendarOccurrenceForTask(task);
+        if (occurrence?.kind === 'forecast') return;
+        if (occurrence == null || occurrence.source.root === occurrence.source.node) {
+          this.state_abyssPrivate.set('taskStack', [occurrence?.source.root ?? task]);
+          return;
+        }
+        this.state_abyssPrivate.set('taskStack', [occurrence.source.root, occurrence.source.node]);
       },
       onForecastClick: (source, referenceDate) => {
         this.openForecastTask_abyssPrivate(source, referenceDate);

@@ -106,6 +106,7 @@ function callbacks() {
     app: fakeApp,
     component: new Component(),
     onTaskClick: vi.fn(),
+    onTaskSelect: vi.fn(),
     onKeyboardIntent: vi.fn(),
     onTimeChange: vi.fn(),
     onDurationChange: vi.fn(),
@@ -1149,6 +1150,7 @@ describe('renderTimedBlocksForDay', () => {
     const marker = container.querySelector('.abyss-status-marker') as HTMLElement;
     marker.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onToggle).toHaveBeenCalledWith(t);
+    expect(cbs.onTaskSelect).not.toHaveBeenCalled();
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
@@ -1375,15 +1377,17 @@ describe('renderTimedBlocksForDay', () => {
     expect(block.style.height).toBe('48px');
   });
 
-  it('a plain click does NOT fire onTaskClick (reserved for drag)', () => {
+  it('a plain click selects and focuses the block without firing the context-menu action', () => {
     const container = freshContainer();
     const onTaskClick = vi.fn();
+    const onTaskSelect = vi.fn();
     const t = task({ planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], {
       occurrenceFor: calendarOccurrenceForRender,
       app: fakeApp,
       component: new Component(),
       onTaskClick,
+      onTaskSelect,
       onKeyboardIntent: vi.fn(),
       onTimeChange: vi.fn(),
       onDurationChange: vi.fn(),
@@ -1396,6 +1400,8 @@ describe('renderTimedBlocksForDay', () => {
     });
     const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     block.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(block.getAttribute('tabindex')).toBe('0');
+    expect(onTaskSelect).toHaveBeenCalledWith(t);
     expect(onTaskClick).not.toHaveBeenCalled();
   });
 
@@ -2365,8 +2371,8 @@ describe('renderTimedBlocksForDay', () => {
       container.remove();
     });
 
-    it('.abyss-tg-block.is-selected is a distinct rule from transient drag and edge-specific resize state and can coexist with is-picked-up', () => {
-      const rule = declarationsFor('.abyss-tg-block.is-selected');
+    it('.abyss-calendar-item.is-selected is a distinct rule from transient drag and edge-specific resize state and can coexist with is-picked-up', () => {
+      const rule = declarationsFor('.abyss-calendar-item.is-selected');
       expect(rule).not.toBe('');
       // Distinct rule bodies: is-selected must not just be an alias reusing is-picked-up's
       // scale/shadow transform (that's the transient drag-feedback language, not "selected").

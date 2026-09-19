@@ -25,6 +25,7 @@ import {
   applyOccurrenceDomState,
   bindForecastInteractions,
   bindMaterializedInteractions,
+  bindTaskSelection,
   hasCountBadges,
   renderCalendarLeadingSlots,
   renderCountBadges,
@@ -39,6 +40,7 @@ export interface AllDayCallbacks extends ForecastInteractionCallbacks {
   app: App;
   component: Component;
   onTaskClick: (task: TaskSnapshot) => void;
+  onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onDrop: (dragData: string, targetDate: string) => void; // native HTML5 DnD, existing convention
   onStartChange: (task: TaskSnapshot, newStart: string) => void; // pointer edge-resize
   onDueChange: (task: TaskSnapshot, newDue: string) => void; // pointer edge-resize
@@ -229,10 +231,12 @@ function bindAllDayBodyInteractions(
   el: HTMLElement,
   task: TaskSnapshot,
   callbacks: AllDayCallbacks,
-  nativeDraggable: boolean,
+  options: { readonly nativeDraggable: boolean; readonly selectable: boolean },
 ): void {
+  const { nativeDraggable, selectable } = options;
   const occurrence = callbacks.occurrenceFor(task);
   bindMaterializedInteractions(occurrence, (target) => {
+    if (selectable) bindTaskSelection(el, task, callbacks.onTaskSelect);
     if (nativeDraggable && target.type === 'task') {
       el.setAttribute('draggable', 'true');
       el.addEventListener('dragstart', (event) => {
@@ -311,7 +315,10 @@ function renderAllDayBody(context: AllDayBodyRenderContext): HTMLElement {
   // status marker above already conveys priority via its own border, so a second
   // priority border on the body was redundant visual noise.
   applyAllDayTagFill(el, task, tagGroups);
-  bindAllDayBodyInteractions(el, task, callbacks, nativeDraggable);
+  bindAllDayBodyInteractions(el, task, callbacks, {
+    nativeDraggable,
+    selectable: interactive,
+  });
   return el;
 }
 
@@ -377,6 +384,9 @@ function attachSegmentInteractions(
   const occurrence = context.callbacks.occurrenceFor(segment.task);
   bindMaterializedInteractions(occurrence, (target) => {
     if (target.type !== 'task') return;
+    if (segment.kind === 'ghost') {
+      bindTaskSelection(body, segment.task, context.callbacks.onTaskSelect);
+    }
     body.setAttribute('tabindex', '0');
     const exposesRangeProxy = context.indexByDate.size > 1 && segment.kind === 'ghost';
     attachSpanInteractions({
@@ -776,6 +786,7 @@ function renderDeadlineTask(context: AllDayCellRenderContext, task: TaskSnapshot
     renderCountBadges(meta, task);
   }
   bindMaterializedInteractions(occurrence, () => {
+    bindTaskSelection(marker, task, callbacks.onTaskSelect);
     marker.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();

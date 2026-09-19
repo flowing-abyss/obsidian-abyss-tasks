@@ -3034,6 +3034,64 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     expect(el.querySelector('.abyss-mg-grid')).not.toBeNull();
   });
 
+  it('selects and focuses materialized Month and Week items so keyboard actions start from a click', () => {
+    const timed = keyboardSnapshot(TODAY);
+    const secondTimed = keyboardSnapshot(TODAY, '11:00', 'second-timed.md', 'second-revision');
+    const allDay = task({
+      title: 'All day',
+      ref: { filePath: 'all-day.md', line: 2, revision: 'all-day-revision' },
+      source: { filePath: 'all-day.md', line: 2 },
+      planning: { due: TODAY },
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target' }],
+    });
+    const h = keyboardPanelHarness([timed, secondTimed, allDay], execute);
+    try {
+      const monthTimed = expectDefined(h.el.querySelector<HTMLElement>('.abyss-mg-block-dot'));
+      monthTimed.click();
+      expect(h.state.get('taskStack')).toEqual([timed]);
+      expect(h.el.ownerDocument.activeElement).toBe(monthTimed);
+      expect(monthTimed.classList.contains('is-selected')).toBe(true);
+
+      const monthAllDay = expectDefined(h.el.querySelector<HTMLElement>('.abyss-mg-plain'));
+      monthAllDay.click();
+      expect(h.state.get('taskStack')).toEqual([allDay]);
+      expect(h.el.ownerDocument.activeElement).toBe(monthAllDay);
+      expect(monthAllDay.classList.contains('is-selected')).toBe(true);
+
+      clickCalendarView(h.el, 'Week');
+      const weekAllDay = expectDefined(h.el.querySelector<HTMLElement>('.abyss-tg-plain'));
+      weekAllDay.click();
+      expect(h.state.get('taskStack')).toEqual([allDay]);
+      expect(h.el.ownerDocument.activeElement).toBe(weekAllDay);
+      expect(weekAllDay.classList.contains('is-selected')).toBe(true);
+
+      const weekTimed = timedBlock(h.el);
+      weekTimed.click();
+      expect(h.state.get('taskStack')).toEqual([timed]);
+      expect(h.el.ownerDocument.activeElement).toBe(weekTimed);
+      expect(weekTimed.classList.contains('is-selected')).toBe(true);
+
+      press(weekTimed, 'ArrowDown');
+      expect(execute).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledWith({
+        type: 'patch',
+        target: { type: 'task', ref: timed.ref },
+        patch: { time: { type: 'set', value: '09:15' } },
+      });
+
+      press(weekTimed, 'Tab');
+      const secondWeekTimed = timedBlock(h.el, secondTimed.source.filePath);
+      expect(h.el.ownerDocument.activeElement).toBe(secondWeekTimed);
+      expect(h.state.get('taskStack')).toEqual([secondTimed]);
+    } finally {
+      h.panel.destroy();
+      h.el.remove();
+    }
+  });
+
   it('renders forecast occurrences as inert, non-draggable calendar items', () => {
     const root = task({
       title: 'Repeat source',
@@ -3090,6 +3148,8 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     );
     const item = expectDefined(forecastBadge.parentElement);
     expect(item.getAttribute('draggable')).toBeNull();
+    item.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(state.get('taskStack')).toEqual([]);
     item.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
     expect(state.get('draggingTaskNode')).toBeNull();
     item
@@ -3105,6 +3165,8 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     expect(timedBlock.querySelector('.abyss-status-marker')).toBeNull();
     expect(timedBlock.getAttribute('tabindex')).toBeNull();
     expect(timedBlock.querySelector('[data-resize-edge]')).toBeNull();
+    timedBlock.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(state.get('taskStack')).toEqual([]);
     timedBlock.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(execute).not.toHaveBeenCalled();
     const spanBadge = expectDefined(
@@ -3113,6 +3175,8 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const spanBody = expectDefined(spanBadge.closest<HTMLElement>('.abyss-tg-body'));
     expect(spanBody.getAttribute('draggable')).toBeNull();
     expect(spanBody.querySelector('[data-resize-edge]')).toBeNull();
+    spanBody.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(state.get('taskStack')).toEqual([]);
     for (const source of [timedBlock, spanBody]) {
       source.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
       expect(state.get('draggingTaskNode')).toBeNull();

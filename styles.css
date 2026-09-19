@@ -2666,7 +2666,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
     );
 }
 
-.abyss-tg-block.is-selected {
+.abyss-calendar-item.is-selected {
   box-shadow: inset 0 0 0 2px
     color-mix(
       in srgb,

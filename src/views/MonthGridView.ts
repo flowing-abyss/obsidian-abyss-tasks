@@ -32,6 +32,7 @@ import {
   applyOccurrenceDomState,
   bindForecastInteractions,
   bindMaterializedInteractions,
+  bindTaskSelection,
   calendarOccurrenceLookup,
   renderCalendarLeadingSlots,
   type CalendarOccurrenceLookup,
@@ -84,6 +85,7 @@ export interface MonthGridViewCallbacks extends ForecastInteractionCallbacks {
   onDayClick: (date: string) => void;
   onCreateAtDate: (date: string) => void;
   onTaskClick: (task: TaskSnapshot) => void;
+  onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onDrop: (dragData: string, targetDate: string) => void;
   onSpanMove?: (task: TaskSnapshot, target: SpanMoveTarget) => void;
   onSpanBoundary?: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;
@@ -342,6 +344,7 @@ export class MonthGridView extends BaseView {
       app: this.callbacks.app,
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
+      onTaskSelect: this.callbacks.onTaskSelect,
       onDrop: this.callbacks.onDrop,
       onStartChange: (task, date) =>
         this.callbacks.onSpanBoundary?.(task, {
@@ -417,6 +420,7 @@ export class MonthGridView extends BaseView {
       if (kind === 'deadline') item.createSpan({ text: '📅 ' });
       this.renderTitle(item, t, occurrence.kind === 'forecast');
       bindMaterializedInteractions(occurrence, () => {
+        bindTaskSelection(item, t, this.callbacks.onTaskSelect);
         item.addEventListener('contextmenu', (e) => {
           e.preventDefault();
           e.stopPropagation();

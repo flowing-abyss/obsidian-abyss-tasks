@@ -40,6 +40,7 @@ export interface TimeGridCallbacks extends ForecastInteractionCallbacks {
   dependenciesFor?: TimedBlockCallbacks['dependenciesFor'];
   app: App;
   onTaskClick: (task: TaskSnapshot) => void;
+  onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onDrop: (dragData: string, targetDate: string) => void;
   onDropTime: (dragData: string, date: string, time: string) => void;
   onCreateAtTime: (date: string, time: string) => void;
@@ -336,6 +337,7 @@ export class TodayView extends BaseView {
       app: this.callbacks.app,
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
+      onTaskSelect: this.callbacks.onTaskSelect,
       onKeyboardIntent: this.callbacks.onKeyboardIntent,
       onTimeChange: this.callbacks.onTimeChange,
       onDurationChange: this.callbacks.onDurationChange,
@@ -376,6 +378,7 @@ export class TodayView extends BaseView {
       app: this.callbacks.app,
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
+      onTaskSelect: this.callbacks.onTaskSelect,
       onDrop: this.callbacks.onDrop,
       onStartChange: this.callbacks.onStartChange,
       onDueChange: this.callbacks.onDueChange,
