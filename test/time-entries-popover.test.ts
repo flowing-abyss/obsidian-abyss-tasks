@@ -1305,6 +1305,29 @@ describe('tracked sessions popover', () => {
     }
   });
 
+  it('takes the keyboard back into the list when the offer holding it runs out', async () => {
+    const harness = await inspector();
+    vi.useFakeTimers();
+    try {
+      const surface = open(harness.el);
+      expectDefined(
+        rows(harness.el)[1]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+      ).click();
+      await vi.advanceTimersByTimeAsync(10);
+      const offer = expectDefined(
+        popover(harness.el).querySelector<HTMLButtonElement>('.abyss-undo-row button'),
+      );
+      expect(activeDocument.activeElement).toBe(offer);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(offer.isConnected).toBe(false);
+      expect(activeDocument.activeElement).toBe(surface);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('draws the list once for a removal the index has already reported', async () => {
     const harness = await inspector();
     const surface = open(harness.el);

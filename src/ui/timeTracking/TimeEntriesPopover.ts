@@ -346,6 +346,8 @@ async function removeSession(
       // Only the offer that still owns the day may let it go, so the one this replaced cannot.
       onEnd: () => {
         if (session.undoOffer === offer) holdUndoDay(session, undefined);
+        // An offer that ran out took its focused control with it, and no rebuild follows.
+        if (!session.closed) recoverKeyboard(session.shell.element);
       },
     },
   );
