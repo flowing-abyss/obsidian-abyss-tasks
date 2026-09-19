@@ -2118,6 +2118,14 @@ describe('RightPanel dependency inspector', () => {
     expect(value('.abyss-dep-badge > button:focus-visible', 'outline')).toBe(
       '2px solid var(--interactive-accent)',
     );
+    // The count and the plus sit 4px apart inside one pill, so that ring is drawn inside the
+    // segment by a later rule of the same weight. Reading both offsets in source order is what
+    // says the inset is the one a focused segment resolves to.
+    const ring = cssDeclarationsFor(css, '.abyss-dep-badge > button:focus-visible');
+    expect([...ring.matchAll(/outline-offset: ([^;]+);/gu)].map((match) => match[1])).toEqual([
+      '2px',
+      '-2px',
+    ]);
   });
 
   it('keeps a search draft through a proven selection refresh and drops it on another task', async () => {

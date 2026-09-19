@@ -499,6 +499,23 @@ describe('inspector tracked time badge weight', () => {
     expect(cssDeclarationValue(hover, 'border-color')).toBeUndefined();
   });
 
+  it('keeps a focused segment ring inside the pill the two segments share', () => {
+    const ring = cssDeclarationsFor(css, '.abyss-time-badge > button:focus-visible');
+
+    // The ring itself is still the shared one every control in the inspector wears, and the
+    // dependency badge is still named beside it, so the two badges cannot answer focus differently.
+    expect(cssDeclarationValue(ring, 'outline')).toBe('2px solid var(--interactive-accent)');
+    expect(cssRuleSelectorsFor(css, '.abyss-time-badge > button:focus-visible')).toContain(
+      '.abyss-dep-badge > button:focus-visible',
+    );
+    // Only the offset is answered again, and it ties the shared rule, so reading both in source
+    // order is what says the inset is the one a focused segment resolves to.
+    expect([...ring.matchAll(/outline-offset: ([^;]+);/gu)].map((match) => match[1])).toEqual([
+      '2px',
+      '-2px',
+    ]);
+  });
+
   it('sits the glyph the dependency badge distance from its value', () => {
     const inset = (selector: string): string | undefined =>
       cssDeclarationValue(cssDeclarationsFor(css, selector), 'padding-inline');

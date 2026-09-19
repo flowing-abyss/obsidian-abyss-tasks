@@ -5854,6 +5854,13 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   outline-offset: 2px;
 }
 
+/* A badge holds its two segments 4px apart in one pill, so a ring outside a segment would cross
+   its neighbour's glyph. Inside, it follows the pill. This ties the rule above, so it stays after
+   it. */
+:is(.abyss-dep-badge, .abyss-time-badge) > button:focus-visible {
+  outline-offset: -2px;
+}
+
 /* The anchored list popovers share one size and flow; only their contents differ. */
 .abyss-dep-search,
 .abyss-time-tracking-popover {
