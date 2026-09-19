@@ -212,6 +212,107 @@ describe('TaskBlockEditor', () => {
     ).toBe('\n## Tasks\n- [ ] task\n');
   });
 
+  it('prepends after complete frontmatter and inserts first inside a commented section', () => {
+    const editor = new TaskBlockEditor();
+
+    expect(
+      editor.insertRoot('---\nstatus: inbox\n---\nBody\n', '- [ ] New', { type: 'prepend' })
+        ?.content,
+    ).toBe('---\nstatus: inbox\n---\n- [ ] New\nBody\n');
+    const wrapped = '%%\n# Tasks\n\n- [ ] Old\n\n%%\n';
+    expect(
+      editor.insertRoot(wrapped, '- [ ] New', { type: 'section', heading: '# Tasks' })?.content,
+    ).toBe('%%\n# Tasks\n- [ ] New\n\n- [ ] Old\n\n%%\n');
+  });
+
+  it('inserts at the bottom of a section before its next boundary', () => {
+    const editor = new TaskBlockEditor();
+    const source = [
+      '%%',
+      '# Tasks',
+      '',
+      '- [ ] First',
+      '  continuation',
+      '',
+      '- [ ] Second',
+      '',
+      '```md',
+      '- [ ] Example',
+      '```',
+      '',
+      '# Later',
+      '- [ ] Excluded',
+      '%%',
+      '',
+    ].join('\n');
+
+    expect(
+      editor.insertRoot(source, '- [ ] New', {
+        type: 'section',
+        heading: '# Tasks',
+        position: 'bottom',
+      } as never)?.content,
+    ).toBe(
+      [
+        '%%',
+        '# Tasks',
+        '',
+        '- [ ] First',
+        '  continuation',
+        '',
+        '- [ ] Second',
+        '- [ ] New',
+        '',
+        '```md',
+        '- [ ] Example',
+        '```',
+        '',
+        '# Later',
+        '- [ ] Excluded',
+        '%%',
+        '',
+      ].join('\n'),
+    );
+    expect(
+      editor.insertRoot('# Tasks\n\n', '- [ ] New', {
+        type: 'section',
+        heading: '# Tasks',
+        position: 'bottom',
+      })?.content,
+    ).toBe('# Tasks\n- [ ] New\n\n');
+  });
+
+  it('preserves BOM, CRLF, and final-newline semantics when prepending', () => {
+    const editor = new TaskBlockEditor();
+
+    expect(editor.insertRoot('\uFEFFBody', '- [ ] New', { type: 'prepend' })?.content).toBe(
+      '\uFEFF- [ ] New\nBody',
+    );
+    expect(
+      editor.insertRoot('\uFEFF---\r\nstatus: inbox\r\n---\r\nBody\r\n', '- [ ] New', {
+        type: 'prepend',
+      })?.content,
+    ).toBe('\uFEFF---\r\nstatus: inbox\r\n---\r\n- [ ] New\r\nBody\r\n');
+  });
+
+  it('ignores fenced headings and creates a missing section safely after frontmatter', () => {
+    const editor = new TaskBlockEditor();
+    const fenced = '---\nstatus: inbox\n---\n```md\n# Tasks\n```\nBody\n';
+
+    expect(
+      editor.insertRoot(fenced, '- [ ] New', { type: 'section', heading: '# Tasks' })?.content,
+    ).toBe('---\nstatus: inbox\n---\n```md\n# Tasks\n```\nBody\n\n# Tasks\n- [ ] New\n');
+    expect(
+      editor.insertRoot('```md\n# Tasks\n', '- [ ] New', {
+        type: 'section',
+        heading: '# Tasks',
+      })?.content,
+    ).toBe('# Tasks\n- [ ] New\n```md\n# Tasks\n');
+    expect(
+      editor.insertRoot('---\nstatus: inbox\nBody\n', '- [ ] New', { type: 'prepend' }),
+    ).toBeUndefined();
+  });
+
   it('removes the preceding line ending with a final root that has no ending', () => {
     const editor = new TaskBlockEditor();
     const source = 'note\n- [ ] final';

@@ -31,9 +31,13 @@ function makeCenter(tasks: TaskSnapshot[]): {
   const state = new AppState();
   state.set('selectedList', 'inbox');
   const save = vi.fn().mockResolvedValue(undefined);
-  const tm = new TagManager(null as never, DEFAULT_SETTINGS, save);
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    inbox: { mode: 'tag' as const, tag: '#task/inbox', removeTagOnAssign: true },
+  };
+  const tm = new TagManager(null as never, settings, save);
   const store = makeStubStore(tasks);
-  const panel = makeCenterPanelForTest(state, store, null as never, DEFAULT_SETTINGS, tm);
+  const panel = makeCenterPanelForTest(state, store, null as never, settings, tm);
   const el = freshContainer();
   panel.mount(el);
   return { el, state, panel };

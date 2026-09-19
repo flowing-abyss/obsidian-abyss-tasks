@@ -1291,12 +1291,10 @@ describe('CenterPanel shared list capture', () => {
     const snapshots = [
       task({
         title: 'First selected task',
-        tags: ['#task/inbox'],
         source: { filePath: 'Capture.md', line: 0 },
       }),
       task({
         title: 'Second selected task',
-        tags: ['#task/inbox'],
         source: { filePath: 'Capture.md', line: 1 },
       }),
     ];
@@ -2991,7 +2989,10 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       expect(planCreate).toHaveBeenCalledOnce();
       expect(planCreate).toHaveBeenCalledWith({
         type: 'explicit',
-        destination: { filePath: 'Projects/A.md', insertion: { type: 'append' } },
+        destination: {
+          filePath: 'Projects/A.md',
+          insertion: { type: 'section', heading: '# Tasks', position: 'top' },
+        },
       });
       expect(sessionExecute.mock.calls.map(([request]) => request.markdownBody)).toEqual([
         'first project task',

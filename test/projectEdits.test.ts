@@ -468,15 +468,15 @@ describe('ProjectManager.applyEdits', () => {
       properties: [{ name: 'status', type: 'number' }] as const,
     },
   ])('renames a configured status when the native catalog is $label', async ({ properties }) => {
-    const app = await createAppWithFiles({
-      'Projects/A.md': '---\nstatus: active\n---\n',
-    });
     const settings = cloneSettings();
     const active = expectDefined(settings.projects.statuses[0]);
+    const app = await createAppWithFiles({
+      'Projects/A.md': `---\nstatus: ${active.name}\n---\n`,
+    });
     const pm = manager(app, settings, properties);
 
     await expect(
-      pm.renameStatusDefinition(active.id, 'running', 'active', vi.fn()),
+      pm.renameStatusDefinition(active.id, 'running', active.name, vi.fn()),
     ).resolves.toBeUndefined();
     expect(active.name).toBe('running');
     expect((await frontmatter(app, 'Projects/A.md'))['status']).toBe('running');

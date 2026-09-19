@@ -79,8 +79,9 @@ export interface ProjectsSettings {
   // Where a task lands inside a project note when it is created there or moved
   // in (drag-and-drop). Independent of the global task-insertion setting so
   // project notes can keep tasks under a dedicated heading.
-  taskInsertionMode: 'append' | 'section';
+  taskInsertionMode: 'append' | 'prepend' | 'section';
   taskInsertionSection: string;
+  taskInsertionSectionPosition: 'top' | 'bottom';
   table: ProjectTableSettings;
   kanban?: ProjectKanbanSettings;
   timeline?: ProjectTimelineSettings;
@@ -97,8 +98,9 @@ export interface CalendarSettings {
   pinnedTags: string[];
   archivedTags: string[];
   tagGroups: TagGroup[];
-  taskInsertionMode: 'append' | 'section';
+  taskInsertionMode: 'append' | 'prepend' | 'section';
   taskInsertionSection: string;
+  taskInsertionSectionPosition: 'top' | 'bottom';
   sourceNoteDisplay: 'never' | 'always' | 'non-default';
   listViewStates?: Record<string, ListViewState>;
   projects: ProjectsSettings;

@@ -28,6 +28,7 @@ interface AllowedWriter {
   readonly mutation:
     | 'single-task transaction'
     | 'destination provisioning'
+    | 'project creation scaffold'
     | 'project metadata'
     | 'vault-wide tag rename';
   readonly reason: string;
@@ -38,6 +39,10 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
     mutation: 'project metadata',
     reason:
       'One guarded project-note transaction validates fresh expected metadata and applies the prepared batch for that file.',
+  },
+  'src/projects/ProjectManager.ts#ProjectManager.createProjectFile#process#1': {
+    mutation: 'project creation scaffold',
+    reason: 'Adds the configured task section only to the newly owned, template-free project note.',
   },
   'src/projects/ProjectManager.ts#ProjectManager.writeStatusRename#process#1': {
     mutation: 'project metadata',
@@ -94,6 +99,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskCommentSnapshot: ['src/panels/RightPanel.ts'],
   TaskCreateSession: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   TaskIndexEvent: ['src/projects/ProjectStore.ts'],
+  TaskInsertionPolicy: ['src/main.ts'],
   TaskNodeRef: ['src/panels/RightPanel.ts'],
   TaskPlanning: ['src/views/calendarOccurrences.ts'],
   TaskOccurrenceResult: ['src/ui/recurrence/RecurrenceEditor.ts'],

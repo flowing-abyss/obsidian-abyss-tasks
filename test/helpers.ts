@@ -17,6 +17,7 @@ import type {
   TaskCommentSnapshot,
   TaskDependencyQueryApi,
   TaskIndexEvent,
+  TaskInsertionPolicy,
   TaskNodeRef,
   TaskQueryApi,
   TaskSnapshot,
@@ -810,16 +811,27 @@ export function configuredTaskApplication(
       (epochMs) => -new Date(epochMs).getTimezoneOffset(),
     ),
     new ObsidianTaskDestinationProvider(
-      () => ({
-        taskFilePath: settings.taskFilePath,
-        taskTemplatePath: settings.taskTemplatePath,
-        capturedToday: window.moment().format('YYYY-MM-DD'),
-        insertion:
+      () => {
+        let insertion: TaskInsertionPolicy = { type: 'append' };
+        if (
           settings.taskInsertionMode === 'section' &&
           settings.taskInsertionSection.trim().length > 0
-            ? { type: 'section', heading: settings.taskInsertionSection }
-            : { type: 'append' },
-      }),
+        ) {
+          insertion = {
+            type: 'section',
+            heading: settings.taskInsertionSection,
+            position: settings.taskInsertionSectionPosition,
+          };
+        } else if (settings.taskInsertionMode === 'prepend') {
+          insertion = { type: 'prepend' };
+        }
+        return {
+          taskFilePath: settings.taskFilePath,
+          taskTemplatePath: settings.taskTemplatePath,
+          capturedToday: window.moment().format('YYYY-MM-DD'),
+          insertion,
+        };
+      },
       (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
     ),
   );

@@ -202,7 +202,13 @@ function makeCenter(
 ) {
   const state = new AppState();
   state.set('selectedList', 'inbox');
-  const s: CalendarSettings = { ...DEFAULT_SETTINGS, ...settings, pinnedTags, archivedTags: [] };
+  const s: CalendarSettings = {
+    ...DEFAULT_SETTINGS,
+    inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: true },
+    ...settings,
+    pinnedTags,
+    archivedTags: [],
+  };
   const save = vi.fn().mockResolvedValue(undefined);
   const tm = new TagManager(null as never, s, save);
   const store = makeStubStore(tasks);

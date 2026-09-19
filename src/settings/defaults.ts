@@ -29,36 +29,47 @@ export function buildDefaultProjectsSettings(): ProjectsSettings {
     return `status-${n}`;
   };
 
-  const active: ProjectsSettings['statuses'][number] = {
+  const inbox: ProjectsSettings['statuses'][number] = {
     id: statusId(),
-    name: 'active',
-    color: '#4caf50',
-    onLeftPanel: true,
-  };
-  const planned = {
-    id: statusId(),
-    name: 'planned',
-    color: '#2196f3',
+    name: 'inbox',
+    color: 'orange',
+    display: 'badge',
     onLeftPanel: false,
   };
-  const done = {
+  const todo: ProjectsSettings['statuses'][number] = {
+    id: statusId(),
+    name: 'todo',
+    color: 'red',
+    display: 'badge',
+    onLeftPanel: false,
+  };
+  const wip: ProjectsSettings['statuses'][number] = {
+    id: statusId(),
+    name: 'wip',
+    color: 'blue',
+    display: 'badge',
+    onLeftPanel: true,
+  };
+  const done: ProjectsSettings['statuses'][number] = {
     id: statusId(),
     name: 'done',
-    color: '#888888',
+    color: 'green',
+    display: 'badge',
     onLeftPanel: false,
   };
   return {
-    membershipQuery: 'Projects/',
-    createFolder: 'Projects',
+    membershipQuery: 'projects/',
+    createFolder: 'projects',
     templatePath: '',
     statusProperty: 'status',
     startProperty: 'start',
     endProperty: 'end',
     propertyDefinitions: {},
-    statuses: [active, planned, done],
-    defaultStatusId: active.id,
-    taskInsertionMode: 'append',
-    taskInsertionSection: '## Tasks',
+    statuses: [inbox, todo, wip, done],
+    defaultStatusId: inbox.id,
+    taskInsertionMode: 'section',
+    taskInsertionSection: '# Tasks',
+    taskInsertionSectionPosition: 'top',
     table: buildDefaultProjectTableSettings(),
   };
 }
@@ -113,8 +124,8 @@ export const DEFAULT_SETTINGS: CalendarSettings = {
   taskFilePath: 'tasks/active.md',
   taskTemplatePath: '',
   inbox: {
-    mode: 'tag',
-    tag: '#task/inbox',
+    mode: 'untagged',
+    tag: '',
     removeTagOnAssign: true,
   },
   pinnedTags: [],
@@ -122,6 +133,7 @@ export const DEFAULT_SETTINGS: CalendarSettings = {
   tagGroups: [],
   taskInsertionMode: 'append',
   taskInsertionSection: '## Tasks',
+  taskInsertionSectionPosition: 'top',
   sourceNoteDisplay: 'non-default' as const,
   projects: buildDefaultProjectsSettings(),
   sectionCollapse: { pinned: false, projects: false, tags: false },

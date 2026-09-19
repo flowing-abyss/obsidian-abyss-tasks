@@ -31,7 +31,13 @@ export interface TaskRef {
 }
 
 export type TaskInsertionPolicy =
-  { readonly type: 'append' } | { readonly type: 'section'; readonly heading: string };
+  | { readonly type: 'append' }
+  | { readonly type: 'prepend' }
+  | {
+      readonly type: 'section';
+      readonly heading: string;
+      readonly position?: 'top' | 'bottom';
+    };
 
 export interface TaskDestination {
   readonly filePath: string;

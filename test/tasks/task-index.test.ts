@@ -1176,6 +1176,45 @@ describe('TaskIndex lifecycle and events', () => {
     index.destroy();
   });
 
+  it('discovers visible and %% tasks from source when cache only lists the visible task', async () => {
+    const content = ['- [ ] visible', '', '%%', '# Tasks', '', '- [ ] hidden', '%%', ''].join('\n');
+    const { app, index, fireChanged } = await setup({ 'mixed.md': content });
+
+    await index.initialize();
+    expect(index.list().map((task) => task.title)).toEqual(['visible', 'hidden']);
+
+    fireChanged(mdFile(app, 'mixed.md'), content, rootsCache([0]));
+    expect(index.list().map((task) => task.title)).toEqual(['visible', 'hidden']);
+    index.destroy();
+  });
+
+  it('uses source candidates to reject cached task examples in frontmatter and fences', async () => {
+    const content = [
+      '---',
+      'example: "- [ ] frontmatter fake"',
+      '---',
+      '```md',
+      '- [ ] fenced fake',
+      '```',
+      '- [ ] real',
+    ].join('\n');
+    const app = await createAppWithFiles({ 'examples.md': content });
+    seedTaskCache(app, 'examples.md', [
+      { task: ' ', parent: -1, line: 1 },
+      { task: ' ', parent: -1, line: 4 },
+      { task: ' ', parent: -1, line: 6 },
+    ]);
+    const index = new TaskIndex(app, {
+      statusCatalog: canonicalStatusCatalog(),
+      dailyNoteFormat: 'YYYY-MM-DD',
+    });
+
+    await index.initialize();
+
+    expect(index.list().map((task) => task.title)).toEqual(['real']);
+    index.destroy();
+  });
+
   it('keeps a delete that arrives during a blocked initial read', async () => {
     const { app, index } = await setup({ 'blocked.md': '- [ ] stale' });
     const read = blockRead(app, 'blocked.md', '- [ ] stale');

@@ -9,6 +9,7 @@ const fm = (o: Record<string, unknown> = {}) => o;
 describe('evaluateQuery', () => {
   it('matches a folder prefix', () => {
     expect(evaluateQuery('Projects/', 'Projects/A.md', [], fm())).toBe(true);
+    expect(evaluateQuery('projects/', 'Projects/A.md', [], fm())).toBe(true);
     expect(evaluateQuery('Projects/', 'Other/A.md', [], fm())).toBe(false);
   });
   it('matches a tag or child tag', () => {

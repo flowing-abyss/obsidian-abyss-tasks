@@ -792,7 +792,7 @@ describe('CalendarSettingsTab project value commits', () => {
     try {
       const body = openSection(tab, 5);
       const input = expectDefined(
-        projectStatusRowNamed(body, 'active').querySelector<HTMLInputElement>(
+        projectStatusRowNamed(body, 'inbox').querySelector<HTMLInputElement>(
           '.abyss-project-value-raw',
         ),
       );
@@ -803,7 +803,7 @@ describe('CalendarSettingsTab project value commits', () => {
       expectDefined(tab.containerEl.ownerDocument.defaultView).dispatchEvent(new Event('blur'));
       await flushMicrotasks();
 
-      expect(plugin.renameProjectStatus).toHaveBeenCalledWith('status-1', 'running', 'active');
+      expect(plugin.renameProjectStatus).toHaveBeenCalledWith('status-1', 'running', 'inbox');
       expect(plugin.renameProjectStatus).toHaveBeenCalledOnce();
 
       input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -827,7 +827,7 @@ describe('CalendarSettingsTab project value commits', () => {
     try {
       const body = openSection(tab, 5);
       const input = expectDefined(
-        projectStatusRowNamed(body, 'active').querySelector<HTMLInputElement>(
+        projectStatusRowNamed(body, 'inbox').querySelector<HTMLInputElement>(
           '.abyss-project-value-raw',
         ),
       );
@@ -862,7 +862,7 @@ describe('CalendarSettingsTab project value commits', () => {
     try {
       const body = openSection(tab, 5);
       const input = expectDefined(
-        projectStatusRowNamed(body, 'active').querySelector<HTMLInputElement>(
+        projectStatusRowNamed(body, 'inbox').querySelector<HTMLInputElement>(
           '.abyss-project-value-raw',
         ),
       );
@@ -894,7 +894,7 @@ describe('CalendarSettingsTab project value commits', () => {
     try {
       const body = openSection(tab, 5);
       const input = expectDefined(
-        projectStatusRowNamed(body, 'active').querySelector<HTMLInputElement>(
+        projectStatusRowNamed(body, 'inbox').querySelector<HTMLInputElement>(
           '.abyss-project-value-raw',
         ),
       );
@@ -912,7 +912,7 @@ describe('CalendarSettingsTab project value commits', () => {
           '.abyss-project-value-raw',
         ),
       );
-      expect(current.value).toBe('active');
+      expect(current.value).toBe('inbox');
       expect(current.disabled).toBe(false);
       expect(plugin.renameProjectStatus).toHaveBeenCalledOnce();
     } finally {
@@ -951,6 +951,36 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     expect(expectDefined(findInput(body, 'Note template')).value).toBe('templates/task.md');
     expectDefined(findComp(captured, 'Note template', 'text')).comp.setValue('templates/new.md');
     expect(plugin.settings.taskTemplatePath).toBe('templates/new.md');
+  });
+
+  it('shows and persists section placement only while section insertion is selected', () => {
+    const { tab, plugin, captured } = makeTab({
+      taskInsertionMode: 'section',
+      taskInsertionSectionPosition: 'bottom',
+    });
+    openSection(tab, 0);
+
+    const position = expectDefined(findComp(captured, 'Section position', 'dropdown'));
+    expect(position.comp.getValue?.()).toBe('bottom');
+    position.comp.setValue('top');
+
+    expect(plugin.settings.taskInsertionSectionPosition).toBe('top');
+    expect(plugin.saveSettings).toHaveBeenCalled();
+  });
+
+  it('shows and persists project section placement while project section insertion is selected', () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    projects.taskInsertionMode = 'section';
+    projects.taskInsertionSectionPosition = 'bottom';
+    const { tab, plugin, captured } = makeTab({ projects });
+    openSection(tab, 5);
+
+    const position = expectDefined(findComp(captured, 'Task section position', 'dropdown'));
+    expect(position.comp.getValue?.()).toBe('bottom');
+    position.comp.setValue('top');
+
+    expect(plugin.settings.projects.taskInsertionSectionPosition).toBe('top');
+    expect(plugin.saveSettings).toHaveBeenCalled();
   });
 });
 
@@ -1591,7 +1621,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       secondStatus.id,
       thirdStatus.id,
     ]);
-    expect(projectStatusOrder(tab)).toEqual([firstStatus.id, secondStatus.id, thirdStatus.id]);
+    expect(projectStatusOrder(tab)).toEqual(plugin.settings.projects.statuses.map(({ id }) => id));
     expect(scroller.scrollTop).toBe(513);
     expect(activeDocument.activeElement).toBe(draft);
     expect(draft.isConnected).toBe(true);
@@ -1860,9 +1890,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       expectDefined(before[0]),
       ...before.slice(2),
     ]);
-    expect(projectStatusOrder(tab)).toEqual(
-      plugin.settings.projects.statuses.slice(0, 3).map(({ id }) => id),
-    );
+    expect(projectStatusOrder(tab)).toEqual(plugin.settings.projects.statuses.map(({ id }) => id));
     expect(Notice).toHaveBeenCalledOnce();
     const noticeContent = vi.mocked(Notice).mock.calls[0]?.[0];
     expect(noticeContent).toBeInstanceOf(DocumentFragment);
@@ -1907,7 +1935,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       thirdStatus.id,
       secondStatus.id,
     ]);
-    expect(projectStatusOrder(tab)).toEqual([firstStatus.id, thirdStatus.id, secondStatus.id]);
+    expect(projectStatusOrder(tab)).toEqual(plugin.settings.projects.statuses.map(({ id }) => id));
   });
 
   it('renders a tag-group addition immediately and keeps it after save failure', async () => {
@@ -1956,9 +1984,9 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expectDefined(
       tab.containerEl.querySelector<HTMLButtonElement>('[aria-label="Add project status"]'),
     ).click();
-    expect(projectStatusRowNamed(tab.containerEl, 'status 4').isConnected).toBe(true);
+    expect(projectStatusRowNamed(tab.containerEl, 'status 5').isConnected).toBe(true);
     expect(activeDocument.activeElement).toBe(
-      projectStatusRowNamed(tab.containerEl, 'status 4').querySelector('.abyss-project-value-raw'),
+      projectStatusRowNamed(tab.containerEl, 'status 5').querySelector('.abyss-project-value-raw'),
     );
 
     const deleteStatus = expectDefined(plugin.settings.projects.statuses[0]);
@@ -2086,7 +2114,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
     expect(scroller.scrollTop).toBe(720.5);
     expect(activeDocument.activeElement).toBe(
-      projectStatusRowNamed(tab.containerEl, 'status 4').querySelector('.abyss-project-value-raw'),
+      projectStatusRowNamed(tab.containerEl, 'status 5').querySelector('.abyss-project-value-raw'),
     );
   });
 
@@ -2154,7 +2182,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       row.querySelector<HTMLButtonElement>('.abyss-project-value-remove'),
     );
 
-    expect(leftPanel.getAttribute('aria-label')).toBe('Show active on left panel');
+    expect(leftPanel.getAttribute('aria-label')).toBe('Show inbox on left panel');
     leftPanel.checked = true;
     leftPanel.dispatchEvent(new Event('change', { bubbles: true }));
     expect(plugin.settings.projects.statuses[0]?.onLeftPanel).toBe(true);
@@ -2179,13 +2207,13 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     const { tab, plugin } = makeTab();
     const body = openSection(tab, 5);
     const appearance = expectDefined(
-      projectStatusRowNamed(body, 'active').querySelector<HTMLSelectElement>(
+      projectStatusRowNamed(body, 'inbox').querySelector<HTMLSelectElement>(
         '.abyss-project-value-appearance',
       ),
     );
 
     expect(appearance.classList.contains('dropdown')).toBe(true);
-    expect(appearance.getAttribute('aria-label')).toBe('Appearance for active');
+    expect(appearance.getAttribute('aria-label')).toBe('Appearance for inbox');
     expect(appearance.value).toBe('badge');
     expect(Array.from(appearance.options).map(({ value }) => value)).toEqual([
       'badge',
@@ -2206,7 +2234,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     const body = openSection(tab, 5);
     const survivorId = expectDefined(plugin.settings.projects.statuses[1]).id;
     expectDefined(
-      projectStatusRowNamed(body, 'active').querySelector<HTMLButtonElement>(
+      projectStatusRowNamed(body, 'inbox').querySelector<HTMLButtonElement>(
         '.abyss-project-value-remove',
       ),
     ).click();
@@ -2242,14 +2270,14 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
     expect(statusProperty.getAttribute('aria-label')).toBe('Status property');
     expect(findDropdown(body, 'Status property')).toBeNull();
     expect(body.textContent).not.toContain('Defined by');
-    expect(projectStatusRowNamed(body, 'active')).toBeDefined();
+    expect(projectStatusRowNamed(body, 'inbox')).toBeDefined();
   });
 
   it('commits a status rename on blur rather than on each input event', async () => {
     const { tab, plugin } = makeTab();
     const body = openSection(tab, 5);
     const input = expectDefined(
-      projectStatusRowNamed(body, 'active').querySelector<HTMLInputElement>(
+      projectStatusRowNamed(body, 'inbox').querySelector<HTMLInputElement>(
         '.abyss-project-value-raw',
       ),
     );
@@ -2261,7 +2289,7 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(plugin.renameProjectStatus).toHaveBeenCalledWith('status-1', 'running', 'active');
+    expect(plugin.renameProjectStatus).toHaveBeenCalledWith('status-1', 'running', 'inbox');
   });
 
   it('nests status and curated date controls inside their property cards', () => {

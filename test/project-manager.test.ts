@@ -6,6 +6,7 @@ import { ProjectCreationError } from '../src/projects/projectCreation';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
 import type { ProjectField } from '../src/projects/projectFields';
+import { evaluateQuery } from '../src/query/evaluateQuery';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import type { TaskApplicationApi, TaskCommandResult } from '../src/tasks';
@@ -105,7 +106,7 @@ describe('ProjectManager.setStatus', () => {
       'P.md': '---\nstatus: active\nother: keep\n---\n\n- [ ] a task\n',
     });
     const settings = clone();
-    const doneId = expectDefined(settings.projects.statuses[2]).id;
+    const doneId = expectDefined(settings.projects.statuses.find(({ name }) => name === 'done')).id;
     const pm = new ProjectManager(app, settings, {} as never, {} as never);
     await pm.setStatus('P.md', doneId);
     await flushMicrotasks();
@@ -126,8 +127,8 @@ describe('ProjectManager.setStatus', () => {
       'P.md': '---\nstatus: active\nother: keep\n---\n\n- [ ] a task\n',
     });
     const settings = clone();
-    const planned = expectDefined(settings.projects.statuses[1]);
-    const done = expectDefined(settings.projects.statuses[2]);
+    const planned = expectDefined(settings.projects.statuses.find(({ name }) => name === 'todo'));
+    const done = expectDefined(settings.projects.statuses.find(({ name }) => name === 'done'));
     const file = expectDefined(app.vault.getAbstractFileByPath('P.md'));
     if (!(file instanceof TFile)) throw new Error('missing project file');
     await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
@@ -153,7 +154,10 @@ describe('ProjectManager.setStatus', () => {
     });
     const settings = clone();
     const pm = new ProjectManager(app, settings, {} as never, {} as never);
-    await pm.setStatus('P.md', expectDefined(settings.projects.statuses[2]).id);
+    await pm.setStatus(
+      'P.md',
+      expectDefined(settings.projects.statuses.find(({ name }) => name === 'done')).id,
+    );
     await flushMicrotasks();
     const file = expectDefined(app.vault.getAbstractFileByPath('P.md'));
     if (!(file instanceof TFile)) throw new Error('missing project file');
@@ -167,7 +171,7 @@ describe('ProjectManager.setStatus', () => {
 
   it('accepts guarded unknown and no-status snapshots when they are still current', async () => {
     const settings = clone();
-    const done = expectDefined(settings.projects.statuses[2]);
+    const done = expectDefined(settings.projects.statuses.find(({ name }) => name === 'done'));
     const unknownApp = await createAppWithFiles({ 'Unknown.md': '---\nstatus: mystery\n---\n' });
     const unknown = new ProjectManager(unknownApp, settings, {} as never, {} as never);
     await unknown.setStatus('Unknown.md', done.id, { statusId: null, rawStatus: 'mystery' });
@@ -492,6 +496,22 @@ describe('ProjectManager.moveTaskToProject', () => {
     });
   });
 
+  it('delegates prepend-mode relocation to the shared semantic API', async () => {
+    const app = await createAppWithFiles({});
+    const settings = clone();
+    settings.projects.taskInsertionMode = 'prepend';
+    const tasks = taskApi(ok);
+    const pm = new ProjectManager(app, settings, {} as never, tasks);
+
+    await pm.moveTaskToProject(ref, 'Projects/Redesign.md');
+
+    expect(methodOf(tasks, 'execute')).toHaveBeenCalledWith({
+      type: 'move',
+      ref,
+      destination: { filePath: 'Projects/Redesign.md', insertion: { type: 'prepend' } },
+    });
+  });
+
   it('translates the section insertion setting without writing Markdown itself', async () => {
     const app = await createAppWithFiles({});
     const settings = clone();
@@ -507,7 +527,7 @@ describe('ProjectManager.moveTaskToProject', () => {
       ref,
       destination: {
         filePath: 'Projects/P.md',
-        insertion: { type: 'section', heading: '## Tasks' },
+        insertion: { type: 'section', heading: '## Tasks', position: 'top' },
       },
     });
   });
@@ -536,6 +556,47 @@ describe('ProjectManager.moveTaskToProject', () => {
 });
 
 describe('ProjectManager.create', () => {
+  it('uses ready-to-use project defaults and writes the complete no-template skeleton', async () => {
+    const app = await createAppWithFiles({});
+    const settings = clone();
+    const pm = new ProjectManager(app, settings, new NoteTemplateService(app), {} as never);
+
+    const file = expectDefined(await pm.create('My Project', { openFile: false }));
+
+    expect(file.path).toBe('projects/My Project.md');
+    expect(await app.vault.cachedRead(file)).toBe('---\nstatus: inbox\n---\n# Tasks\n');
+    expect(settings.projects).toMatchObject({
+      membershipQuery: 'projects/',
+      createFolder: 'projects',
+      statusProperty: 'status',
+      defaultStatusId: 'status-1',
+      taskInsertionMode: 'section',
+      taskInsertionSection: '# Tasks',
+      taskInsertionSectionPosition: 'top',
+      statuses: [
+        { id: 'status-1', name: 'inbox', color: 'orange', display: 'badge', onLeftPanel: false },
+        { id: 'status-2', name: 'todo', color: 'red', display: 'badge', onLeftPanel: false },
+        { id: 'status-3', name: 'wip', color: 'blue', display: 'badge', onLeftPanel: true },
+        { id: 'status-4', name: 'done', color: 'green', display: 'badge', onLeftPanel: false },
+      ],
+    });
+  });
+
+  it('reuses a differently-cased existing project folder and remains a default member', async () => {
+    const app = await createAppWithFiles({ 'Projects/Existing.md': '# Existing\n' });
+    const settings = clone();
+    const createFolder = vi.spyOn(app.vault, 'createFolder');
+    const pm = new ProjectManager(app, settings, new NoteTemplateService(app), {} as never);
+
+    const file = expectDefined(await pm.create('Case compatible', { openFile: false }));
+
+    expect(file.path).toBe('Projects/Case compatible.md');
+    expect(createFolder).not.toHaveBeenCalledWith('projects');
+    expect(
+      evaluateQuery(settings.projects.membershipQuery, file.path, [], { status: 'inbox' }),
+    ).toBe(true);
+  });
+
   it('builds a path under createFolder, applies default status, opens the note', async () => {
     const app = await createAppWithFiles({});
     const settings = clone();
@@ -544,9 +605,9 @@ describe('ProjectManager.create', () => {
     const file = await pm.create('My Project');
     await flushMicrotasks();
     expect(file).not.toBeNull();
-    expect(expectDefined(file).path).toBe('Projects/My Project.md');
-    const fm = await readFm(app, 'Projects/My Project.md');
-    expect(fm['status']).toBe('active');
+    expect(expectDefined(file).path).toBe('projects/My Project.md');
+    const fm = await readFm(app, 'projects/My Project.md');
+    expect(fm['status']).toBe('inbox');
   });
 
   it('dedupes the path when a note already exists', async () => {
@@ -569,7 +630,7 @@ describe('ProjectManager.create', () => {
       'Projects/Template target.md': '---\nstatus: planned\n---\n',
     });
     const settings = clone();
-    const done = expectDefined(settings.projects.statuses[2]);
+    const done = expectDefined(settings.projects.statuses.find(({ name }) => name === 'done'));
     const file = expectDefined(app.vault.getAbstractFileByPath('Projects/Template target.md'));
     if (!(file instanceof TFile)) throw new Error('missing project file');
     let finishTemplate: ((file: TFile) => void) | undefined;
@@ -599,7 +660,7 @@ describe('ProjectManager.create', () => {
   it('reports the owned path and requested status when the post-create status write fails', async () => {
     const app = await createAppWithFiles({});
     const settings = clone();
-    const done = expectDefined(settings.projects.statuses[2]);
+    const done = expectDefined(settings.projects.statuses.find(({ name }) => name === 'done'));
     const noteTemplates = new NoteTemplateService(app);
     const pm = new ProjectManager(app, settings, noteTemplates, {} as never);
     vi.spyOn(pm, 'setStatus').mockRejectedValueOnce(new Error('disk full'));
@@ -610,12 +671,12 @@ describe('ProjectManager.create', () => {
 
     expect(error).toBeInstanceOf(ProjectCreationError);
     if (!(error instanceof ProjectCreationError)) throw new Error('expected project failure');
-    expect(error.createdPath).toBe('Projects/Owned project.md');
+    expect(error.createdPath).toBe('projects/Owned project.md');
     expect(error.phase).toBe('status');
     expect(error.statusId).toBe(done.id);
     expect(error.cause).toBeInstanceOf(Error);
     expect((error.cause as Error).message).toBe('disk full');
-    expect(app.vault.getAbstractFileByPath('Projects/Owned project.md')).toBeInstanceOf(TFile);
+    expect(app.vault.getAbstractFileByPath('projects/Owned project.md')).toBeInstanceOf(TFile);
   });
 
   it('translates resolver-owned template failure without attempting status or open', async () => {

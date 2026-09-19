@@ -55,6 +55,7 @@ export type {
   SubtaskRef,
   SubtaskSnapshot,
   TaskCommentSnapshot,
+  TaskInsertionPolicy,
   TaskNodeRef,
   TaskPlanning,
   TaskPriority,

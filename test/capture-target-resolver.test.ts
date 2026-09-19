@@ -18,7 +18,7 @@ import { methodOf } from './helpers';
 
 const configuredDestination: TaskDestination = {
   filePath: 'Daily/2026-08-22.md',
-  insertion: { type: 'section', heading: '## Tasks' },
+  insertion: { type: 'section', heading: '## Tasks', position: 'top' },
 };
 
 function readySession(destination: TaskDestination): TaskCreateSession {
@@ -132,7 +132,7 @@ const scenarios: readonly Scenario[] = [
     label: 'Projects/Alpha.md',
     destination: {
       filePath: 'Projects/Alpha.md',
-      insertion: { type: 'section', heading: '## Project tasks' },
+      insertion: { type: 'section', heading: '## Project tasks', position: 'top' },
     },
   },
   {
@@ -141,7 +141,7 @@ const scenarios: readonly Scenario[] = [
     label: 'Projects/Beta.md',
     destination: {
       filePath: 'Projects/Beta.md',
-      insertion: { type: 'section', heading: '## Project tasks' },
+      insertion: { type: 'section', heading: '## Project tasks', position: 'top' },
     },
   },
   {
@@ -150,7 +150,7 @@ const scenarios: readonly Scenario[] = [
     label: 'Projects/Gamma.md',
     destination: {
       filePath: 'Projects/Gamma.md',
-      insertion: { type: 'section', heading: '## Project tasks' },
+      insertion: { type: 'section', heading: '## Project tasks', position: 'top' },
     },
   },
   {
@@ -247,12 +247,32 @@ describe('CaptureTargetResolver', () => {
       type: 'ready',
       destination: {
         filePath: 'Projects/Frozen.md',
-        insertion: { type: 'section', heading: '## Project tasks' },
+        insertion: { type: 'section', heading: '## Project tasks', position: 'top' },
       },
     });
     expect(commandBodyForCapture(upcoming, 'Draft text')).toBe('#base Draft text');
     expect(upcoming.initial).toEqual({
       due: { type: 'set', value: localDate('2026-08-23') },
+    });
+  });
+
+  it('resolves a project prepend insertion policy', async () => {
+    const captureApplication = application();
+    const projectSettings = settings();
+    projectSettings.projects.taskInsertionMode = 'prepend';
+    const resolver = new CaptureTargetResolver(captureApplication, projectSettings);
+
+    const target = await resolver.resolve({
+      type: 'project-dashboard',
+      path: 'Projects/Prepended.md',
+    });
+
+    expect(target.session).toMatchObject({
+      type: 'ready',
+      destination: {
+        filePath: 'Projects/Prepended.md',
+        insertion: { type: 'prepend' },
+      },
     });
   });
 });

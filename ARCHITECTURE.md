@@ -76,8 +76,11 @@ only proven successor references survive writes, and history never becomes persi
 
 ### Reads, writes, and identity
 
-`TaskIndex` watches vault and metadata events and parses supported Markdown through the canonical
-`TaskMarkdownCodec`. It exposes detached snapshots and reference resolution through public queries.
+`TaskIndex` watches vault and metadata events and discovers task candidates from Markdown source,
+including tasks inside Obsidian comment blocks while excluding frontmatter and fenced examples.
+Obsidian list-item metadata enriches those candidates but cannot remove a source task by omission;
+the canonical `TaskMarkdownCodec` parses each candidate. The index exposes detached snapshots and
+reference resolution through public queries.
 `TaskApplicationService` captures the relevant clock and behavior settings, resolves a command,
 validates it, and delegates persistence through repository and destination ports.
 
@@ -247,7 +250,9 @@ nor native type writes. See [manager tests](test/project-manager.test.ts),
 Overview project creation belongs to its retained session. The composer freezes a configured
 status; `ProjectManager` validates its writable source before creating a note through the shared
 `NoteTemplateService`, awaits template preparation, and applies final status through serialized
-metadata mutation.
+metadata mutation. Without a template it creates the configured task heading before applying the
+status, yielding a minimal project note with no synthetic date fields. Folder creation remains lazy;
+an existing folder whose case differs from the configured path is reused without renaming it.
 `ProjectStore` publication owns the visible snapshot. The overview matches the owned path/status,
 relaxes obstructing filters, and reuses selection/reveal.
 

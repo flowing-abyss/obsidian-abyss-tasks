@@ -24,6 +24,7 @@ import {
   type TaskApplicationApi,
   type TaskCaptureApplicationApi,
   type TaskDependencyQueryApi,
+  type TaskInsertionPolicy,
   type TaskQueryApi,
 } from './tasks';
 import { TaskApplicationService } from './tasks/application/TaskApplicationService';
@@ -44,6 +45,17 @@ import { TaskIndex } from './tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from './tasks/infrastructure/TaskRefAuthority';
 import { CalendarRenderer } from './ui/CalendarRenderer';
 import { PANEL_VIEW_TYPE, PanelView } from './views/PanelView';
+
+function configuredTaskInsertion(settings: CalendarSettings): TaskInsertionPolicy {
+  if (settings.taskInsertionMode === 'section' && settings.taskInsertionSection.trim().length > 0) {
+    return {
+      type: 'section',
+      heading: settings.taskInsertionSection,
+      position: settings.taskInsertionSectionPosition,
+    };
+  }
+  return settings.taskInsertionMode === 'prepend' ? { type: 'prepend' } : { type: 'append' };
+}
 
 export default class TaskCalendarPlugin extends Plugin {
   override settings!: CalendarSettings;
@@ -107,11 +119,7 @@ export default class TaskCalendarPlugin extends Plugin {
         taskFilePath: this.settings.taskFilePath,
         taskTemplatePath: this.settings.taskTemplatePath,
         capturedToday: window.moment().format('YYYY-MM-DD'),
-        insertion:
-          this.settings.taskInsertionMode === 'section' &&
-          this.settings.taskInsertionSection.trim().length > 0
-            ? { type: 'section', heading: this.settings.taskInsertionSection }
-            : { type: 'append' },
+        insertion: configuredTaskInsertion(this.settings),
       }),
       (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
     );

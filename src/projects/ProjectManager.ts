@@ -13,7 +13,7 @@ import { CreatedNoteTemplateError } from '../notes/NoteTemplateService';
 import { evaluateQuery } from '../query/evaluateQuery';
 import type { CalendarSettings, ProjectStatus } from '../settings/types';
 import { normalizeTag, transformMarkdownTags } from '../tags/markdownTagRename';
-import type { TaskApplicationApi, TaskCommandResult, TaskRef } from '../tasks';
+import type { TaskApplicationApi, TaskCommandResult, TaskInsertionPolicy, TaskRef } from '../tasks';
 import {
   ObsidianProjectProperties,
   type ProjectPropertyCatalog,
@@ -80,6 +80,32 @@ interface EditableConfiguredProperty {
   readonly property: string;
   readonly inferredCustomProperty: boolean;
   readonly ownedClear: OwnedInferredPropertyClear | undefined;
+}
+
+interface CaseInsensitiveVaultLookup {
+  getAbstractFileByPathInsensitive?(
+    path: string,
+  ): ReturnType<App['vault']['getAbstractFileByPath']>;
+}
+
+function abstractFileByPathInsensitive(
+  app: App,
+  path: string,
+): ReturnType<App['vault']['getAbstractFileByPath']> {
+  const vault = app.vault as App['vault'] & CaseInsensitiveVaultLookup;
+  return vault.getAbstractFileByPathInsensitive?.(path) ?? vault.getAbstractFileByPath(path);
+}
+
+function projectTaskInsertion(settings: CalendarSettings['projects']): TaskInsertionPolicy {
+  if (settings.taskInsertionMode === 'section') {
+    return {
+      type: 'section',
+      heading: settings.taskInsertionSection,
+      position: settings.taskInsertionSectionPosition,
+    };
+  }
+  if (settings.taskInsertionMode === 'prepend') return { type: 'prepend' };
+  return { type: 'append' };
 }
 
 function validDate(value: string): boolean {
@@ -793,13 +819,7 @@ export class ProjectManager {
    * lives in that note. Honors the plugin's task-insertion setting.
    */
   async moveTaskToProject(ref: TaskRef, projectPath: string): Promise<TaskCommandResult> {
-    const insertion =
-      this.settings.projects.taskInsertionMode === 'section'
-        ? {
-            type: 'section' as const,
-            heading: this.settings.projects.taskInsertionSection,
-          }
-        : { type: 'append' as const };
+    const insertion = projectTaskInsertion(this.settings.projects);
     return this.tasks.execute({
       type: 'move',
       ref,
@@ -1041,8 +1061,8 @@ export class ProjectManager {
     if (clean.length === 0) return null;
     const targetStatusId = this.creationStatusId(options);
     this.validateCreationStatus(targetStatusId);
-    await this.ensureFolder(folder);
-    const path = this.uniqueProjectPath(folder, clean);
+    const resolvedFolder = await this.ensureFolder(folder);
+    const path = this.uniqueProjectPath(resolvedFolder, clean);
     const file = await this.createProjectFile(path, clean);
     await this.applyCreationStatus(file, targetStatusId);
     if (options.openFile !== false) await this.app.workspace.getLeaf(false).openFile(file);
@@ -1073,18 +1093,32 @@ export class ProjectManager {
   }
 
   private async createProjectFile(path: string, cleanName: string): Promise<TFile> {
+    let file: TFile | undefined;
     try {
-      return await this.noteCreator.createNoteFromTemplate(
+      file = await this.noteCreator.createNoteFromTemplate(
         path,
         this.settings.projects.templatePath,
         cleanName,
       );
+      if (this.settings.projects.templatePath.trim().length === 0) {
+        await this.app.vault.process(file, (source) =>
+          source.length === 0 ? `${this.settings.projects.taskInsertionSection}\n` : source,
+        );
+      }
+      return file;
     } catch (cause) {
       if (cause instanceof CreatedNoteTemplateError) {
         throw new ProjectCreationError(cause.message, {
           createdPath: cause.createdPath,
           phase: 'template',
           cause: cause.cause,
+        });
+      }
+      if (file !== undefined) {
+        throw new ProjectCreationError(`Could not prepare ${file.path}.`, {
+          createdPath: file.path,
+          phase: 'template',
+          cause,
         });
       }
       throw cause;
@@ -1105,13 +1139,18 @@ export class ProjectManager {
     }
   }
 
-  private async ensureFolder(folder: string): Promise<void> {
-    if (folder.length === 0 || this.app.vault.getAbstractFileByPath(folder) != null) return;
+  private async ensureFolder(folder: string): Promise<string> {
+    if (folder.length === 0) return folder;
+    const existing = abstractFileByPathInsensitive(this.app, folder);
+    if (existing instanceof TFolder) return existing.path;
+    if (existing !== null) return folder;
     try {
-      await this.app.vault.createFolder(folder);
+      return (await this.app.vault.createFolder(folder)).path;
     } catch (cause) {
       // Another writer may have created the folder after the existence check.
-      if (!(this.app.vault.getAbstractFileByPath(folder) instanceof TFolder)) throw cause;
+      const concurrent = abstractFileByPathInsensitive(this.app, folder);
+      if (!(concurrent instanceof TFolder)) throw cause;
+      return concurrent.path;
     }
   }
 
@@ -1119,7 +1158,7 @@ export class ProjectManager {
     const base = folder.length > 0 ? `${folder}/${cleanName}` : cleanName;
     let path = normalizePath(`${base}.md`);
     let suffix = 2;
-    while (this.app.vault.getAbstractFileByPath(path) != null) {
+    while (abstractFileByPathInsensitive(this.app, path) != null) {
       path = normalizePath(`${base} ${suffix}.md`);
       suffix++;
     }

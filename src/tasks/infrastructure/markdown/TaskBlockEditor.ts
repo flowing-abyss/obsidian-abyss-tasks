@@ -409,16 +409,184 @@ function rootInsertionIndex(
   lines: SourceLine[],
   insertion: TaskInsertionPolicy,
   ending: '\n' | '\r\n',
-): number {
+): number | undefined {
+  const contentStart = frontmatterContentStart(lines);
+  if (contentStart === undefined) return undefined;
+  if (insertion.type === 'prepend') return contentStart;
   if (insertion.type !== 'section' || insertion.heading.trim().length === 0) return lines.length;
   const heading = insertion.heading.trim();
-  const found = lines.findIndex((line) => line.text.trim() === heading);
-  if (found >= 0) return found + 1;
-  if (lines.length > 0 && lines[lines.length - 1]?.text.trim().length !== 0) {
+  const semantic = semanticHeading(lines, contentStart, heading);
+  if (semantic.line >= 0) {
+    return insertion.position === 'bottom'
+      ? sectionBottomInsertionIndex(lines, semantic, contentStart)
+      : semantic.line + 1;
+  }
+  return insertMissingSection({
+    lines,
+    heading: insertion.heading,
+    contentStart,
+    unsafeTail: semantic.unsafeTail,
+    ending,
+  });
+}
+
+interface MissingSectionInsertion {
+  readonly lines: SourceLine[];
+  readonly heading: string;
+  readonly contentStart: number;
+  readonly unsafeTail: boolean;
+  readonly ending: '\n' | '\r\n';
+}
+
+function insertMissingSection(input: MissingSectionInsertion): number {
+  const { lines, heading, contentStart, unsafeTail, ending } = input;
+  if (lines.every((line) => line.text.trim().length === 0)) {
+    insertAt(lines, lines.length, insertedLines([heading], ending), ending);
+    return lines.length;
+  }
+  if (unsafeTail) {
+    insertAt(lines, contentStart, insertedLines([heading], ending), ending);
+    return contentStart + 1;
+  }
+  if (lines[lines.length - 1]?.text.trim().length !== 0) {
     insertAt(lines, lines.length, insertedLines([''], ending), ending);
   }
-  insertAt(lines, lines.length, insertedLines([insertion.heading], ending), ending);
+  insertAt(lines, lines.length, insertedLines([heading], ending), ending);
   return lines.length;
+}
+
+interface MarkdownFence {
+  readonly marker: '`' | '~';
+  readonly length: number;
+}
+
+interface SemanticScanState {
+  readonly fence: MarkdownFence | undefined;
+  readonly comment: boolean;
+}
+
+interface SemanticLine {
+  readonly state: SemanticScanState;
+  readonly isContent: boolean;
+}
+
+function frontmatterContentStart(lines: readonly SourceLine[]): number | undefined {
+  if (lines[0]?.text.trim() !== '---') return 0;
+  const closing = lines.findIndex((line, index) => index > 0 && line.text.trim() === '---');
+  return closing < 0 ? undefined : closing + 1;
+}
+
+function fenceToken(line: string): string | undefined {
+  return /^[\s>]*(`{3,}|~{3,})/u.exec(line)?.[1];
+}
+
+function consumeSemanticFence(state: SemanticScanState, text: string): SemanticLine | undefined {
+  const token = fenceToken(text);
+  if (state.fence !== undefined) {
+    const closes = token?.[0] === state.fence.marker && token.length >= state.fence.length;
+    return { state: { ...state, fence: closes ? undefined : state.fence }, isContent: false };
+  }
+  const marker = token?.[0];
+  if (token === undefined || (marker !== '`' && marker !== '~')) return undefined;
+  return { state: { ...state, fence: { marker, length: token.length } }, isContent: false };
+}
+
+function consumeSemanticLine(state: SemanticScanState, text: string): SemanticLine {
+  const fenced = consumeSemanticFence(state, text);
+  if (fenced !== undefined) return fenced;
+  const commentMarkers = text.match(/%%/gu)?.length ?? 0;
+  return {
+    state: {
+      fence: undefined,
+      comment: commentMarkers % 2 === 1 ? !state.comment : state.comment,
+    },
+    isContent: true,
+  };
+}
+
+function semanticHeading(
+  lines: readonly SourceLine[],
+  contentStart: number,
+  heading: string,
+): { readonly line: number; readonly state: SemanticScanState; readonly unsafeTail: boolean } {
+  let state: SemanticScanState = { fence: undefined, comment: false };
+  for (let index = contentStart; index < lines.length; index++) {
+    const text = lines[index]?.text ?? '';
+    const consumed = consumeSemanticLine(state, text);
+    state = consumed.state;
+    if (consumed.isContent && text.trim() === heading) {
+      return { line: index, state, unsafeTail: false };
+    }
+  }
+  return { line: -1, state, unsafeTail: state.fence !== undefined || state.comment };
+}
+
+function markdownHeadingLevel(text: string): number | undefined {
+  const match = /^ {0,3}(#{1,6})(?:[ \t]+|$)/u.exec(text);
+  return match?.[1]?.length;
+}
+
+function sectionBottomInsertionIndex(
+  lines: readonly SourceLine[],
+  heading: { readonly line: number; readonly state: SemanticScanState },
+  contentStart: number,
+): number {
+  const headingLevel = markdownHeadingLevel(lines[heading.line]?.text ?? '');
+  const section = scanSection(lines, heading, contentStart, headingLevel);
+  const blocks = readTaskRootBlocks(lines.map((line) => line.text + line.ending).join('')).filter(
+    (block) => isOwnedSectionBlock(block, heading.line, section.end, section.semanticLines),
+  );
+  const last = blocks[blocks.length - 1];
+  return last === undefined ? heading.line + 1 : Math.min(last.toLine + 1, section.end);
+}
+
+function scanSection(
+  lines: readonly SourceLine[],
+  heading: { readonly line: number; readonly state: SemanticScanState },
+  contentStart: number,
+  headingLevel: number | undefined,
+): { readonly end: number; readonly semanticLines: ReadonlyMap<number, boolean> } {
+  const semanticLines = new Map<number, boolean>();
+  let state: SemanticScanState = { fence: undefined, comment: false };
+
+  for (let index = contentStart; index < lines.length; index++) {
+    const consumed = consumeSemanticLine(state, lines[index]?.text ?? '');
+    state = consumed.state;
+    semanticLines.set(index, consumed.isContent);
+    if (index <= heading.line) continue;
+    if (
+      isSectionBoundary({ heading, state, consumed, text: lines[index]?.text ?? '', headingLevel })
+    ) {
+      return { end: index, semanticLines };
+    }
+  }
+  return { end: lines.length, semanticLines };
+}
+
+interface SectionBoundaryInput {
+  readonly heading: { readonly state: SemanticScanState };
+  readonly state: SemanticScanState;
+  readonly consumed: SemanticLine;
+  readonly text: string;
+  readonly headingLevel: number | undefined;
+}
+
+function isSectionBoundary(input: SectionBoundaryInput): boolean {
+  const { heading, state, consumed, text, headingLevel } = input;
+  if (heading.state.comment && !state.comment) return true;
+  const level = consumed.isContent ? markdownHeadingLevel(text) : undefined;
+  return level !== undefined && headingLevel !== undefined && level <= headingLevel;
+}
+
+function isOwnedSectionBlock(
+  block: TaskRootBlock,
+  headingLine: number,
+  sectionEnd: number,
+  semanticLines: ReadonlyMap<number, boolean>,
+): boolean {
+  return (
+    block.line > headingLine && block.line < sectionEnd && semanticLines.get(block.line) === true
+  );
 }
 
 function readTaskRootBlocks(content: string): readonly TaskRootBlock[] {
@@ -728,10 +896,13 @@ export class TaskBlockEditor {
     const capturedLines = sourceLines(blockSource);
     const capturedBlocks = readTaskRootBlocks(blockSource);
     if (!validCapturedBlock(blockSource, capturedLines, capturedBlocks)) return undefined;
-    const lines = sourceLines(content);
+    const bom = content.startsWith('\uFEFF') ? '\uFEFF' : '';
+    const workingContent = bom.length > 0 ? content.slice(1) : content;
+    const lines = sourceLines(workingContent);
     const ending = firstNonEmptyEnding(lines);
-    const hadFinalEnding = content.endsWith('\n');
+    const hadFinalEnding = workingContent.endsWith('\n');
     const at = rootInsertionIndex(lines, insertion, ending);
+    if (at === undefined) return undefined;
     insertAt(
       lines,
       at,
@@ -740,7 +911,7 @@ export class TaskBlockEditor {
     );
     const next = serializeLines(lines, hadFinalEnding, ending);
     const block = readTaskRootBlocks(next).find((candidate) => candidate.line === at);
-    return block != null ? { content: next, block } : undefined;
+    return block != null ? { content: `${bom}${next}`, block } : undefined;
   }
 
   deleteRoot(content: string, block: TaskRootBlock): string | undefined {

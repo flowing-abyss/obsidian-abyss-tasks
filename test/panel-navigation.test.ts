@@ -64,7 +64,7 @@ describe('center inspector selection', () => {
     'clears dependency history when an ordinary center card selects %s',
     async (title) => {
       const app = await createAppWithFiles({
-        'tasks.md': '\n- [ ] A #task/inbox\n- [ ] B #task/inbox\n',
+        'tasks.md': '\n- [ ] A\n- [ ] B\n',
       });
       const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
       await application.index.initialize();

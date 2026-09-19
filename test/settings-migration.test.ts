@@ -315,9 +315,10 @@ describe('projects migration', () => {
       propertyCandidates: [],
     });
     expect(projects['statuses']).toEqual([
-      { id: 'status-1', name: 'active', color: '#4caf50', onLeftPanel: true },
-      { id: 'status-2', name: 'planned', color: '#2196f3', onLeftPanel: false },
-      { id: 'status-3', name: 'done', color: '#888888', onLeftPanel: false },
+      { id: 'status-1', name: 'inbox', color: 'orange', display: 'badge', onLeftPanel: false },
+      { id: 'status-2', name: 'todo', color: 'red', display: 'badge', onLeftPanel: false },
+      { id: 'status-3', name: 'wip', color: 'blue', display: 'badge', onLeftPanel: true },
+      { id: 'status-4', name: 'done', color: 'green', display: 'badge', onLeftPanel: false },
     ]);
   });
 
@@ -381,9 +382,11 @@ describe('projects migration', () => {
     const projects = raw['projects'] as {
       taskInsertionMode: string;
       taskInsertionSection: string;
+      taskInsertionSectionPosition: string;
     };
-    expect(projects.taskInsertionMode).toBe('append');
-    expect(projects.taskInsertionSection).toBe('## Tasks');
+    expect(projects.taskInsertionMode).toBe('section');
+    expect(projects.taskInsertionSection).toBe('# Tasks');
+    expect(projects.taskInsertionSectionPosition).toBe('top');
   });
   it('preserves an already-set project task-insertion mode', () => {
     const raw: Record<string, unknown> = {
@@ -401,6 +404,21 @@ describe('projects migration', () => {
     };
     expect(projects.taskInsertionMode).toBe('section');
     expect(projects.taskInsertionSection).toBe('## Todo');
+  });
+
+  it('preserves an already-set prepend insertion mode', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statuses: [{ id: 'a' }],
+        defaultStatusId: 'a',
+        taskInsertionMode: 'prepend',
+        taskInsertionSection: '# Tasks',
+      },
+    };
+
+    migrateSettings(raw);
+
+    expect((raw['projects'] as { taskInsertionMode: string }).taskInsertionMode).toBe('prepend');
   });
 
   it('adds table defaults to old project settings without discarding sibling settings', () => {

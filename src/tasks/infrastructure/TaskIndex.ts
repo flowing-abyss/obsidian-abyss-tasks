@@ -475,14 +475,12 @@ function cacheWithContentFallback(
   cache: CachedMetadata | null | undefined,
 ): CachedMetadata {
   const fallbackItems = fallbackListItems(data);
-  const sourceHasTask = fallbackItems.some((item) => item.task !== undefined);
-  if (
-    cache?.listItems !== undefined &&
-    (cache.listItems.some((item) => item.task !== undefined) || !sourceHasTask)
-  ) {
-    return cache;
-  }
-  return { ...(cache ?? {}), listItems: fallbackItems };
+  const cachedByLine = metadataItemsByLine(cache?.listItems ?? []);
+  const listItems = fallbackItems.map((item) => ({
+    ...cachedByLine.get(item.position.start.line),
+    ...item,
+  }));
+  return { ...(cache ?? {}), listItems };
 }
 
 function frontmatterFromContent(data: string): Record<string, unknown> | undefined {
@@ -1000,7 +998,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       await Promise.all(
         files
           .slice(index, index + chunkSize)
-          .map(({ file, path }) => this.loadFile_abyssPrivate(file, path, false)),
+          .map(({ file, path }) => this.loadFile_abyssPrivate(file, path)),
       );
       if (index + chunkSize < files.length) {
         await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
@@ -1158,31 +1156,12 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
   private async loadFile_abyssPrivate(
     file: TFile,
     path: string,
-    forceContentFallback: boolean,
     observedFile = false,
   ): Promise<boolean> {
     const observation = this.observe_abyssPrivate(file, path);
     if (observation == null) return false;
     const cache = this.app_abyssPrivate.metadataCache.getFileCache(file);
-    const hasCachedTasks = cache?.listItems?.some((item) => item.task !== undefined) ?? false;
-    if (!forceContentFallback && !hasCachedTasks) {
-      return this.loadEmptyFile_abyssPrivate(observation);
-    }
-    return this.loadParsedFile_abyssPrivate(observation, cache, forceContentFallback, observedFile);
-  }
-
-  private async loadEmptyFile_abyssPrivate(observation: FileObservation): Promise<boolean> {
-    try {
-      const authority = this.options_abyssPrivate.refAuthority;
-      if (authority != null) {
-        const content = await this.app_abyssPrivate.vault.cachedRead(observation.file);
-        if (!this.isCurrent_abyssPrivate(observation)) return false;
-        if (authority.deferObservation(observation.path, content)) return false;
-      }
-    } catch {
-      // The empty replacement still wins for the observed lifecycle generation.
-    }
-    return this.commitEmptyObservation_abyssPrivate(observation);
+    return this.loadParsedFile_abyssPrivate(observation, cache, observedFile);
   }
 
   private commitEmptyObservation_abyssPrivate(observation: FileObservation): boolean {
@@ -1194,7 +1173,6 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
   private async loadParsedFile_abyssPrivate(
     observation: FileObservation,
     cache: CachedMetadata | null,
-    forceContentFallback: boolean,
     observedFile: boolean,
   ): Promise<boolean> {
     try {
@@ -1204,8 +1182,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
         this.options_abyssPrivate.refAuthority?.deferObservation(observation.path, content) === true
       )
         return false;
-      const selectedCache = forceContentFallback ? cacheWithContentFallback(content, cache) : cache;
-      if (selectedCache == null) return false;
+      const selectedCache = cacheWithContentFallback(content, cache);
       const tasks = this.parseFile_abyssPrivate({
         filePath: observation.path,
         content,
@@ -1548,7 +1525,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     const path = file.path;
     if (this.app_abyssPrivate.vault.getAbstractFileByPath(path) !== file) return;
     this.advance_abyssPrivate(file, path);
-    const read = this.loadFile_abyssPrivate(file, path, true, true).then((committed) => {
+    const read = this.loadFile_abyssPrivate(file, path, true).then((committed) => {
       if (committed) this.queueChanged_abyssPrivate(path);
     });
     this.trackRead_abyssPrivate(read);

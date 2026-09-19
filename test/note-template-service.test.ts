@@ -76,8 +76,9 @@ describe('NoteTemplateService', () => {
     );
 
     expect(file.path).toBe('tasks/2026/09/active.md');
+    const today = window.moment().format('YYYY-MM-DD');
     expect(await app.vault.cachedRead(file)).toMatch(
-      /^# 2026-09-14\nDate: 2026-09-14\nTime: \d{2}:\d{2}\n$/u,
+      new RegExp(`^# 2026-09-14\\nDate: ${today}\\nTime: \\d{2}:\\d{2}\\n$`, 'u'),
     );
   });
 

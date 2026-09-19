@@ -90,7 +90,7 @@ describe('selectTaskList', () => {
   ];
 
   it.each([
-    ['inbox', 'inbox', ['inbox']],
+    ['inbox', 'inbox', ['overdue', 'today due', 'future', 'untagged', 'project']],
     ['today', 'today', ['overdue', 'today due']],
     ['upcoming', 'upcoming', ['future']],
     ['tag', { type: 'tag', tag: '#work' }, ['tagged']],

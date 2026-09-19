@@ -564,7 +564,11 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .setDesc('Where in the task file to add new tasks.')
       .addDropdown((dropdown) =>
         dropdown
-          .addOptions({ append: 'End of file', section: 'Under section heading' })
+          .addOptions({
+            append: 'End of file',
+            prepend: 'Start of file',
+            section: 'Under section heading',
+          })
           .setValue(this.plugin_abyssPrivate.settings.taskInsertionMode)
           .onChange(async (value) => {
             this.plugin_abyssPrivate.settings.taskInsertionMode =
@@ -583,6 +587,19 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .setValue(this.plugin_abyssPrivate.settings.taskInsertionSection)
           .onChange(async (value) => {
             this.plugin_abyssPrivate.settings.taskInsertionSection = value;
+            await this.plugin_abyssPrivate.saveSettings();
+          }),
+      );
+    new Setting(containerEl)
+      .setName('Section position')
+      .setDesc('Place new tasks at the top or bottom of this section.')
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOptions({ top: 'Top of section', bottom: 'Bottom of section' })
+          .setValue(this.plugin_abyssPrivate.settings.taskInsertionSectionPosition)
+          .onChange(async (value) => {
+            this.plugin_abyssPrivate.settings.taskInsertionSectionPosition = value as
+              'top' | 'bottom';
             await this.plugin_abyssPrivate.saveSettings();
           }),
       );
@@ -1018,7 +1035,11 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .setDesc('Where a task is placed in a project note when created there or moved in.')
       .addDropdown((d) =>
         d
-          .addOptions({ append: 'End of note', section: 'Under section heading' })
+          .addOptions({
+            append: 'End of note',
+            prepend: 'Start of note',
+            section: 'Under section heading',
+          })
           .setValue(projects.taskInsertionMode)
           .onChange(async (v) => {
             projects.taskInsertionMode = v as typeof projects.taskInsertionMode;
@@ -1037,6 +1058,18 @@ export class CalendarSettingsTab extends PluginSettingTab {
             .setValue(projects.taskInsertionSection)
             .onChange(async (v) => {
               projects.taskInsertionSection = v;
+              await this.plugin_abyssPrivate.saveSettings();
+            }),
+        );
+      new Setting(containerEl)
+        .setName('Task section position')
+        .setDesc('Place new tasks at the top or bottom of this section.')
+        .addDropdown((dropdown) =>
+          dropdown
+            .addOptions({ top: 'Top of section', bottom: 'Bottom of section' })
+            .setValue(projects.taskInsertionSectionPosition)
+            .onChange(async (value) => {
+              projects.taskInsertionSectionPosition = value as 'top' | 'bottom';
               await this.plugin_abyssPrivate.saveSettings();
             }),
         );

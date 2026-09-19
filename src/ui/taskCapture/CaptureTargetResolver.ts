@@ -7,6 +7,7 @@ import type {
   TaskCaptureApplicationApi,
   TaskCommandResult,
   TaskCreateSession,
+  TaskInsertionPolicy,
 } from '../../tasks';
 import { localDate, shiftLocalDate } from '../../tasks';
 
@@ -52,6 +53,18 @@ function cloneContext(context: CaptureContext): CaptureContext {
 function normalizedTag(value: string): string {
   const tag = value.trim();
   return tag.length === 0 || tag.startsWith('#') ? tag : `#${tag}`;
+}
+
+function projectInsertion(settings: CalendarSettings['projects']): TaskInsertionPolicy {
+  if (settings.taskInsertionMode === 'section' && settings.taskInsertionSection.trim().length > 0) {
+    return {
+      type: 'section',
+      heading: settings.taskInsertionSection,
+      position: settings.taskInsertionSectionPosition,
+    };
+  }
+  if (settings.taskInsertionMode === 'prepend') return { type: 'prepend' };
+  return { type: 'append' };
 }
 
 export class CaptureTargetResolver {
@@ -189,14 +202,7 @@ export class CaptureTargetResolver {
   }
 
   private async projectTarget(context: CaptureContext, path: string): Promise<CaptureTarget> {
-    const insertion =
-      this.settings.projects.taskInsertionMode === 'section' &&
-      this.settings.projects.taskInsertionSection.trim().length > 0
-        ? {
-            type: 'section' as const,
-            heading: this.settings.projects.taskInsertionSection,
-          }
-        : { type: 'append' as const };
+    const insertion = projectInsertion(this.settings.projects);
     return {
       label: path,
       context,

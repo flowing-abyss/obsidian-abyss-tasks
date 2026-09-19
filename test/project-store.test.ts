@@ -98,7 +98,7 @@ function storeWith(tasks: TaskSnapshot[]): never {
 describe('ProjectStore enumeration', () => {
   it('lists only notes matching the membership query and resolves status', () => {
     const { app } = makeApp([
-      { path: 'Projects/A.md', tags: [], fm: { status: 'active' } },
+      { path: 'Projects/A.md', tags: [], fm: { status: 'inbox' } },
       { path: 'Projects/B.md', tags: [], fm: { status: 'archive' } },
       { path: 'Notes/C.md', tags: [], fm: {} },
     ]);
@@ -171,7 +171,7 @@ describe('ProjectStore enumeration', () => {
 
   it('activeForLeftPanel returns only onLeftPanel statuses', () => {
     const { app } = makeApp([
-      { path: 'Projects/A.md', tags: [], fm: { status: 'active' } }, // onLeftPanel true
+      { path: 'Projects/A.md', tags: [], fm: { status: 'wip' } }, // onLeftPanel true
       { path: 'Projects/D.md', tags: [], fm: { status: 'done' } }, // onLeftPanel false
     ]);
     const ps = new ProjectStore(app, storeWith([]), { ...DEFAULT_SETTINGS });

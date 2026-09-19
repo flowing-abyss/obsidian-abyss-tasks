@@ -17,8 +17,8 @@ const DONE_CANCELLED_STATUS_GROUPS = TYPE_ORDER.filter(
 function migrateInbox(raw: Record<string, unknown>): void {
   if (!('inbox' in raw)) {
     raw['inbox'] = {
-      mode: raw['inboxMode'] ?? 'tag',
-      tag: raw['inboxTag'] ?? '#task/inbox',
+      mode: raw['inboxMode'] ?? 'untagged',
+      tag: raw['inboxTag'] ?? '',
       removeTagOnAssign: true,
     };
     delete raw['inboxMode'];
@@ -46,6 +46,7 @@ interface MigratedProjectSettings {
   defaultStatusId?: string;
   taskInsertionMode?: string;
   taskInsertionSection?: string;
+  taskInsertionSectionPosition?: string;
   table?: unknown;
   kanban?: unknown;
   timeline?: unknown;
@@ -280,13 +281,8 @@ function normalizeProjectSettings(
   normalizeProjectSources(projects, defaults);
   normalizeDefaultProjectStatus(projects);
   normalizeProjectPropertyDefinitions(projects, result);
+  normalizeProjectInsertionSettings(projects, defaults);
 
-  if (projects.taskInsertionMode !== 'append' && projects.taskInsertionMode !== 'section') {
-    projects.taskInsertionMode = defaults.taskInsertionMode;
-  }
-  if (typeof projects.taskInsertionSection !== 'string') {
-    projects.taskInsertionSection = defaults.taskInsertionSection;
-  }
   const table = normalizeProjectTableSettings(projects.table);
   projects.table = table;
   if (hasOwn(projects, 'kanban')) {
@@ -301,6 +297,21 @@ function normalizeProjectSettings(
     projects.overviewView !== 'timeline'
   ) {
     delete projects.overviewView;
+  }
+}
+
+function normalizeProjectInsertionSettings(
+  projects: MigratedProjectSettings,
+  defaults: ReturnType<typeof buildDefaultProjectsSettings>,
+): void {
+  if (!['append', 'prepend', 'section'].includes(projects.taskInsertionMode ?? '')) {
+    projects.taskInsertionMode = defaults.taskInsertionMode;
+  }
+  if (typeof projects.taskInsertionSection !== 'string') {
+    projects.taskInsertionSection = defaults.taskInsertionSection;
+  }
+  if (!['top', 'bottom'].includes(projects.taskInsertionSectionPosition ?? '')) {
+    projects.taskInsertionSectionPosition = defaults.taskInsertionSectionPosition;
   }
 }
 
@@ -429,6 +440,12 @@ export function migrateSettings(raw: Record<string, unknown>): SettingsMigration
   if (!('pinnedTags' in raw)) raw['pinnedTags'] = [];
   if (!('archivedTags' in raw)) raw['archivedTags'] = [];
   migrateProjects(raw, result);
+  if (
+    raw['taskInsertionSectionPosition'] !== 'top' &&
+    raw['taskInsertionSectionPosition'] !== 'bottom'
+  ) {
+    raw['taskInsertionSectionPosition'] = 'top';
+  }
   if (!('sectionCollapse' in raw)) {
     raw['sectionCollapse'] = { pinned: false, projects: false, tags: false };
   }

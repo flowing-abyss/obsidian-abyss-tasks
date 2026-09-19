@@ -105,6 +105,8 @@ function evaluateBaseTerm(
     return (fmVal === null || fmVal === undefined ? '' : String(fmVal)) === val;
   }
   const folderRaw = term.replace(/^["']|["']$/g, '');
-  if (folderRaw.endsWith('/')) return filePath.startsWith(folderRaw);
+  if (folderRaw.endsWith('/')) {
+    return filePath.toLocaleLowerCase().startsWith(folderRaw.toLocaleLowerCase());
+  }
   return false;
 }

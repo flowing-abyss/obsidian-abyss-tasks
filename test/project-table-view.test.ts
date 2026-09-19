@@ -113,7 +113,7 @@ function pickerOption(host: HTMLElement, value: string | number): HTMLElement {
   );
 }
 
-const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+const active = { ...expectDefined(DEFAULT_SETTINGS.projects.statuses[0]), name: 'active' };
 const mountedViews = new Set<ProjectsTableView>();
 
 function destroyMountedView(view: ProjectsTableView): void {
@@ -144,6 +144,7 @@ function project(over: Partial<Project>): Project {
 
 function settings(): CalendarSettings {
   const config = structuredClone(DEFAULT_SETTINGS);
+  config.projects.statuses[0] = { ...active };
   config.projects.propertyDefinitions = {
     'property:Budget': { type: 'number' },
     'property:Flag': { type: 'checkbox' },
@@ -2029,7 +2030,7 @@ describe('ProjectsTableView', () => {
   });
 
   it('opens status choices directly from a pointer context action', () => {
-    const { host } = mount([project({})]);
+    const { host, config } = mount([project({})]);
     const status = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="status"]'),
     );
@@ -2042,7 +2043,7 @@ describe('ProjectsTableView', () => {
       Array.from(host.querySelectorAll<HTMLElement>('[role="option"]')).map(
         (option) => option.querySelector('.abyss-suggest-title')?.textContent,
       ),
-    ).toEqual(DEFAULT_SETTINGS.projects.statuses.map(({ name }) => name));
+    ).toEqual(config.projects.statuses.map(({ name }) => name));
   });
 
   it('suppresses table focus while the native description menu owns keys and restores it on hide', () => {

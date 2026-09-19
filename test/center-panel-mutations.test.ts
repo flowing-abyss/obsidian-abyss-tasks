@@ -400,7 +400,10 @@ describe('CenterPanel root lifecycle API delegation', () => {
     await submitCapture(panel, 'project task');
     expect(planCreate).toHaveBeenLastCalledWith({
       type: 'explicit',
-      destination: { filePath: 'Projects/A.md', insertion: { type: 'append' } },
+      destination: {
+        filePath: 'Projects/A.md',
+        insertion: { type: 'section', heading: '# Tasks', position: 'top' },
+      },
     });
     expect(sessionExecute).toHaveBeenLastCalledWith({
       markdownBody: 'project task',
@@ -459,7 +462,7 @@ describe('CenterPanel root lifecycle API delegation', () => {
 
       expect(planCreate).toHaveBeenCalledWith({ type: 'configured-default' });
       expect(sessionExecute).toHaveBeenCalledWith({
-        markdownBody: `captured ${DEFAULT_SETTINGS.inbox.tag}`,
+        markdownBody: 'captured',
       });
       expect(execute).not.toHaveBeenCalled();
       expect(lookup).not.toHaveBeenCalled();

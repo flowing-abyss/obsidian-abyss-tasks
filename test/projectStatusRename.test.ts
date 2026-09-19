@@ -7,7 +7,15 @@ import type { CalendarSettings } from '../src/settings/types';
 import { createAppWithFiles, expectDefined } from './helpers';
 
 function clone(): CalendarSettings {
-  return JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
+  const settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
+  settings.projects.membershipQuery = 'Projects/';
+  settings.projects.statuses = [
+    { id: 'status-1', name: 'active', color: '#4caf50', onLeftPanel: true },
+    { id: 'status-2', name: 'planned', color: '#2196f3', onLeftPanel: false },
+    { id: 'status-3', name: 'done', color: '#888888', onLeftPanel: false },
+  ];
+  settings.projects.defaultStatusId = 'status-1';
+  return settings;
 }
 
 async function frontmatterValue(

@@ -1560,7 +1560,7 @@ describe('PanelView', () => {
         type: 'ready',
         destination: {
           filePath: 'Projects/B.md',
-          insertion: { type: 'section', heading: '## Project tasks' },
+          insertion: { type: 'section', heading: '## Project tasks', position: 'top' },
         },
         execute: vi.fn(),
       });
@@ -1571,7 +1571,7 @@ describe('PanelView', () => {
         type: 'explicit',
         destination: {
           filePath: 'Projects/B.md',
-          insertion: { type: 'section', heading: '## Project tasks' },
+          insertion: { type: 'section', heading: '## Project tasks', position: 'top' },
         },
       });
       const input = expectDefined(
