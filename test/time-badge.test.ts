@@ -466,18 +466,21 @@ describe('inspector tracked time badge', () => {
  * the stylesheet, which is why these assertions look at the rules rather than at the tree.
  */
 describe('inspector tracked time badge weight', () => {
-  it('is composed as the dependency badge beside it, and carries no pill at rest', async () => {
+  it('is composed as the dependency badge beside it, and wears the same pill', async () => {
     const { el } = await inspector(UNTRACKED);
 
     expect(badge(el).className).toBe('abyss-chip abyss-time-badge');
     expect(body(el).children).toHaveLength(0);
     expect(toggle(el).textContent).toBe('');
     const rest = cssDeclarationsFor(css, '.abyss-time-badge.abyss-chip');
-    expect(cssDeclarationValue(rest, 'background')).toBe('transparent');
-    expect(cssDeclarationValue(rest, 'border')).toBe('0');
-    expect(
-      cssDeclarationValue(cssDeclarationsFor(css, '.abyss-time-badge > button'), 'box-shadow'),
-    ).toBe('none');
+    // A chip beside it is a button, which the host fills with this, and the badge is a span, so it
+    // has to say so itself. It declares no border, which is how the chip's own border reaches it.
+    expect(cssDeclarationValue(rest, 'background')).toBe('var(--interactive-normal)');
+    expect(cssDeclarationValue(rest, 'border')).toBeUndefined();
+    const inner = cssDeclarationsFor(css, '.abyss-time-badge > button');
+    expect(cssDeclarationValue(inner, 'box-shadow')).toBe('none');
+    // The pill counts its border into its 24px, so its buttons take what is left rather than 24px.
+    expect(cssDeclarationValue(inner, 'height')).toBe('100%');
   });
 
   it('takes its hover states from the dependency badge rules rather than copies of them', () => {
@@ -485,12 +488,20 @@ describe('inspector tracked time badge weight', () => {
     expect(cssRuleSelectorsFor(css, '.abyss-time-badge-toggle:hover')).toContain(
       '.abyss-dep-badge-add:hover',
     );
+    // Hovering a chip beside it reaches the host's button fill, so the badge answers with the same
+    // one, and it leaves the border alone so the chip's accent is what outlines both.
+    const hover = cssDeclarationsFor(css, '.abyss-time-badge:hover');
+    expect(cssDeclarationValue(hover, 'background')).toBe('var(--interactive-hover)');
+    expect(cssDeclarationValue(hover, 'border-color')).toBeUndefined();
   });
 
   it('sits the glyph the dependency badge distance from its value', () => {
     const inset = (selector: string): string | undefined =>
       cssDeclarationValue(cssDeclarationsFor(css, selector), 'padding-inline');
 
+    // 10px is where a neighbouring chip starts its own text.
+    expect(inset('.abyss-time-badge > .abyss-time-badge-body')).toBe('10px 2px');
+    expect(inset('.abyss-time-badge > .abyss-time-badge-toggle')).toBe('2px 10px');
     expect(inset('.abyss-time-badge > .abyss-time-badge-body')).toBe(
       inset('.abyss-dep-badge > .abyss-dep-badge-body'),
     );
@@ -518,5 +529,35 @@ describe('inspector tracked time badge weight', () => {
       '.abyss-time-badge.is-tracking > .abyss-time-badge-toggle',
     );
     expect(cssDeclarationValue(tracking, 'color')).toBe('inherit');
+  });
+
+  it('holds both running colours over the light fill the badge now carries', () => {
+    // Plain `--text-accent` reads 3.35:1 on that fill and the warning orange 2.32:1, so the light
+    // theme mixes each toward the text colour to reach about 4.9:1 and 4.51:1. A dark fill is the
+    // panel itself, where both tokens already pass, so only the light theme is answered here.
+    expect(
+      cssDeclarationValue(
+        cssDeclarationsFor(css, '.theme-light .abyss-time-badge.is-tracking'),
+        'color',
+      ),
+    ).toBe('color-mix(in srgb, var(--text-accent) 72%, var(--text-normal))');
+    expect(
+      cssDeclarationValue(
+        cssDeclarationsFor(css, '.theme-light .abyss-time-badge.is-stale'),
+        'color',
+      ),
+    ).toBe('color-mix(in srgb, var(--text-warning, var(--color-orange)) 60%, var(--text-normal))');
+    // Both carry three classes, so a badge that is running and stale keeps the warning only while
+    // the stale rule stays the later of the two.
+    expect(css.indexOf('.theme-light .abyss-time-badge.is-stale')).toBeGreaterThan(
+      css.indexOf('.theme-light .abyss-time-badge.is-tracking'),
+    );
+    // Every other total is read on the panel, not on a fill, so all of them keep the plain tokens.
+    expect(cssRuleSelectorsFor(css, '.abyss-time-badge.is-tracking')).toEqual([
+      '.abyss-task-time-badge.is-tracking',
+      '.abyss-time-badge.is-tracking',
+      '.abyss-time-row.is-tracking',
+      '.abyss-rail-tracking.is-tracking',
+    ]);
   });
 });

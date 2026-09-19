@@ -860,11 +860,12 @@ describe('inspector subtask row removal', () => {
     expect(value('.abyss-undo-row button:focus-visible', 'outline')).toBe(
       '2px solid var(--interactive-accent)',
     );
-    expect(value('.abyss-dep-badge:hover', 'background')).toBe('var(--background-modifier-hover)');
+    expect(value('.abyss-dep-badge:hover', 'background')).toBe('var(--interactive-hover)');
     expect(value('.abyss-dep-badge.abyss-chip', 'padding')).toBe('0');
     expect(value('.abyss-dep-badge > button', 'padding')).toBe('3px 6px');
-    expect(value('.abyss-dep-badge > .abyss-dep-badge-body', 'padding-inline')).toBe('8px 2px');
-    expect(value('.abyss-dep-badge > .abyss-dep-badge-add', 'padding-inline')).toBe('2px 8px');
+    // The text starts where a neighbouring chip's does, which is 10px in from the pill.
+    expect(value('.abyss-dep-badge > .abyss-dep-badge-body', 'padding-inline')).toBe('10px 2px');
+    expect(value('.abyss-dep-badge > .abyss-dep-badge-add', 'padding-inline')).toBe('2px 10px');
     expect(value('.abyss-dep-badge > button', 'gap')).toBe('2px');
     expect(value('.abyss-dep-badge-add:hover', 'background')).toBe(
       'var(--background-modifier-active-hover)',
@@ -2078,7 +2079,7 @@ describe('RightPanel dependency inspector', () => {
     },
   );
 
-  it('keeps shared chip sizing and interaction rhythm without dependency pill chrome', async () => {
+  it('keeps shared chip sizing and interaction rhythm, in the pill its neighbours wear', async () => {
     if (!Platform.isDesktop) throw new Error('CSS fixture needs desktop runtime');
     const fs = await import('node:fs');
     const css = expandCompoundSelectorLists(
@@ -2090,9 +2091,13 @@ describe('RightPanel dependency inspector', () => {
     expect(value('.abyss-chip', 'height')).toBe('24px');
     expect(value('.abyss-chip', 'font-size')).toBe('var(--font-ui-smaller)');
     expect(value('.abyss-dep-badge.abyss-chip', 'height')).toBe('24px');
-    expect(value('.abyss-dep-badge.abyss-chip', 'border')).toBe('0');
-    expect(value('.abyss-dep-badge.abyss-chip', 'background')).toBe('transparent');
-    expect(value('.abyss-dep-badge > button', 'height')).toBe('24px');
+    // The chips beside it are buttons, so what they render is the host's own button fill rather
+    // than the one `.abyss-chip` asks for. The badge is a span and has to name that fill itself,
+    // and it declares no border at all so the chip's own border and hover accent reach it.
+    expect(value('.abyss-dep-badge.abyss-chip', 'border')).toBeUndefined();
+    expect(value('.abyss-dep-badge.abyss-chip', 'background')).toBe('var(--interactive-normal)');
+    // The pill is 24px with its border counted in, so a 24px child would stand over it.
+    expect(value('.abyss-dep-badge > button', 'height')).toBe('100%');
     expect(value('.abyss-dep-badge > button', 'gap')).toBe('2px');
     expect(value('.abyss-dep-badge > button', 'font')).toBe('inherit');
     expect(value('.abyss-dep-lock', 'color')).toBe('var(--text-muted)');
@@ -2100,7 +2105,10 @@ describe('RightPanel dependency inspector', () => {
       'var(--abyss-dependency-blocked-by)',
     );
     expect(value('.abyss-dep-count-blocks', 'color')).toBe('var(--abyss-dependency-blocks)');
-    expect(value('.abyss-dep-badge:hover', 'background')).toBe('var(--background-modifier-hover)');
+    expect(value('.abyss-dep-badge:hover', 'background')).toBe('var(--interactive-hover)');
+    // Nothing in the badge rules touches the border on hover, so the chip's accent still lands.
+    expect(value('.abyss-dep-badge:hover', 'border-color')).toBeUndefined();
+    expect(value('.abyss-chip:hover', 'border-color')).toBe('var(--interactive-accent)');
     expect(value('.abyss-dep-badge > button:focus-visible', 'outline')).toBe(
       '2px solid var(--interactive-accent)',
     );

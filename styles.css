@@ -5631,13 +5631,18 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   --abyss-dependency-blocks: var(--color-blue, var(--text-accent));
 }
 
-/* The dependency and tracking badges are siblings in the chips row and carry the same weight. */
+/*
+ * The dependency and tracking badges are siblings in the chips row, so they wear the pill those
+ * chips wear. Every one of them is a button, which the host fills with `--interactive-normal` over
+ * anything a lone class asks for, and these two are spans holding buttons, so the fill is named
+ * here. Nothing declares a border: the one `.abyss-chip` draws is the one they need, and a border
+ * here would take its hover accent with it.
+ */
 :is(.abyss-dep-badge, .abyss-time-badge).abyss-chip {
   height: 24px;
   padding: 0;
   gap: 0;
-  border: 0;
-  background: transparent;
+  background: var(--interactive-normal);
 }
 
 .abyss-dep-section {
@@ -5665,7 +5670,9 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  height: 24px;
+
+  /* The pill counts its border into its 24px, so a button of that height would stand over it. */
+  height: 100%;
   padding: 3px 6px;
   border: 0;
   border-radius: inherit;
@@ -5676,15 +5683,17 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-dep-badge > .abyss-dep-badge-body {
-  padding-inline: 8px 2px;
+  padding-inline: 10px 2px;
 }
 
 .abyss-dep-badge > .abyss-dep-badge-add {
-  padding-inline: 2px 8px;
+  padding-inline: 2px 10px;
 }
 
+/* What the host hands the buttons beside them. The accent outline is `.abyss-chip:hover`, which
+   these rules leave alone. */
 :is(.abyss-dep-badge, .abyss-time-badge):hover {
-  background: var(--background-modifier-hover);
+  background: var(--interactive-hover);
 }
 
 .abyss-dep-lock {
@@ -9915,18 +9924,18 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 
 /*
  * The tracking badge reads as one more chip in the row: the total is plain chip text, and the only
- * control beside it is a glyph of the weight the dependency badge gives its own `+`. Its flat chip,
- * its bare buttons and both of its hover states come from the shared rules beside that badge, so
- * the two speak the same language without a copy of it here.
+ * control beside it is a glyph of the weight the dependency badge gives its own `+`. Its pill, its
+ * bare buttons and both of its hover states come from the shared rules beside that badge, so the
+ * two speak the same language without a copy of it here.
  */
 .abyss-time-badge > .abyss-time-badge-body {
-  padding-inline: 8px 2px;
+  padding-inline: 10px 2px;
   font-variant-numeric: tabular-nums;
 }
 
 /* Quiet until it is reached for, and the colour of the badge itself once a timer is running. */
 .abyss-time-badge > .abyss-time-badge-toggle {
-  padding-inline: 2px 8px;
+  padding-inline: 2px 10px;
   color: var(--text-muted);
 }
 
@@ -10246,6 +10255,21 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 .abyss-time-row.is-stale,
 .abyss-rail-tracking.is-stale {
   color: var(--text-warning, var(--color-orange));
+}
+
+/*
+ * Only the inspector badge reads its state on a fill, where a light theme drops the accent to
+ * 3.35:1 and the warning to 2.32:1. Mixing each toward the text colour carries them over 4.5:1
+ * again. A dark fill is the panel itself, where both already pass, and every other total in the
+ * plugin is read on the panel too, so they all keep the plain tokens. Stale stays the later rule,
+ * because a badge that has run this long is stale before it is merely running.
+ */
+.theme-light .abyss-time-badge.is-tracking {
+  color: color-mix(in srgb, var(--text-accent) 72%, var(--text-normal));
+}
+
+.theme-light .abyss-time-badge.is-stale {
+  color: color-mix(in srgb, var(--text-warning, var(--color-orange)) 60%, var(--text-normal));
 }
 
 /*
