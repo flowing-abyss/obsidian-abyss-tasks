@@ -1462,9 +1462,11 @@ export class RightPanel {
     this.renderDateChip_abyssPrivate(chips, task);
     this.renderTimeChip_abyssPrivate(chips, task);
     if (this.tasks_abyssPrivate !== undefined) {
+      // Tracked time reads with the chips that plan the task, so it leads the dependency badge.
+      // Both are placed by the order of these calls, which is the order they keep in the row.
+      this.timeBadge_abyssPrivate?.render(chips);
       chips.createSpan({ cls: 'abyss-chip abyss-dep-badge' });
       this.updateDependencyBadge_abyssPrivate();
-      this.timeBadge_abyssPrivate?.render(chips);
     }
     this.renderPriorityChip_abyssPrivate(chips, task);
     this.renderRecurrenceChip_abyssPrivate(chips, task, stack);

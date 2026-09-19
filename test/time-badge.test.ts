@@ -275,6 +275,33 @@ describe('inspector tracked time badge', () => {
     expect(toggle(el).disabled).toBe(false);
   });
 
+  it('leads the dependency badge in the chips row', async () => {
+    const { el } = await inspector(UNTRACKED);
+
+    const row = expectDefined(el.querySelector<HTMLElement>('.abyss-chips-row'));
+    const dependency = expectDefined(row.querySelector<HTMLElement>('.abyss-dep-badge'));
+
+    // Time is the pair the row reads first: the chip that plans it, then the total spent on it.
+    expect(
+      expectDefined(badge(el).previousElementSibling).classList.contains('abyss-chip-time'),
+    ).toBe(true);
+    expect(badge(el).nextElementSibling).toBe(dependency);
+  });
+
+  it('keeps that order across a re-render', async () => {
+    const harness = await inspector(UNTRACKED);
+    const row = () => expectDefined(harness.el.querySelector<HTMLElement>('.abyss-chips-row'));
+
+    toggle(harness.el).click();
+    await flushMicrotasks();
+
+    // The badge outlives the row it sat in, so the rebuilt row re-places it rather than making a
+    // new one, and the order is the order it is placed in.
+    expect(badge(harness.el).nextElementSibling).toBe(
+      expectDefined(row().querySelector<HTMLElement>('.abyss-dep-badge')),
+    );
+  });
+
   it('sums the node and its sub-tasks over all time', async () => {
     const { el } = await inspector(CLOSED_SESSIONS);
 
