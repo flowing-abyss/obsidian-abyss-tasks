@@ -11,7 +11,13 @@ function project(statusId = 'active'): Project {
     tags: [],
     statusId,
     rawStatus: null,
-    stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+    stats: {
+      total: 0,
+      done: 0,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    },
   };
 }
 

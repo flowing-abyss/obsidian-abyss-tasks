@@ -92,6 +92,7 @@ export function projectCellSourceValue(
 ): unknown {
   if (field.type === 'name') return project.name;
   if (field.type === 'progress') return project.stats;
+  if (field.type === 'tracked') return project.stats.tracked;
   const property = field.type === 'status' ? settings.statusProperty : field.property;
   if (property === undefined) return undefined;
   return findFrontmatterProperty(project.frontmatter, property)?.value;

@@ -34,6 +34,7 @@ reconcile them through the same parsing path as manual edits.
 | Concern                                              | Authoritative source                                                                     | Derived or temporary state                   |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------- |
 | Tasks, metadata, and dependencies                    | Vault Markdown                                                                           | TaskIndex snapshots and calendar projections |
+| Tracked time                                         | Vault Markdown time entry lines                                                          | TimeEntryIndex projection and tracked totals |
 | Projects and status                                  | Project Markdown, membership query, configured status property, and literal status names | ProjectStore snapshots and task statistics   |
 | Static preferences                                   | Plugin `data.json`                                                                       | Composed runtime CalendarSettings            |
 | Saved list, section, and project views               | Versioned plugin `state.json`                                                            | Composed runtime CalendarSettings            |
@@ -59,10 +60,11 @@ wired here; consumers receive interfaces instead of constructing alternate repos
 | [Sidebar shell](src/views/PanelView.ts)                   | AppState, responsive panels, navigation, shortcuts, and collaborator lifetimes              | Public task capabilities                                                 |
 | [Native code blocks](src/code-block/registerCodeBlock.ts) | Resolve block settings and mount CalendarRenderer                                           | Same query, command, and status capabilities as the sidebar              |
 
-The public task capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TaskApplicationApi`, and
-`TaskCaptureApplicationApi`. Application queries supply both query capabilities. Add exports only
-when another component needs them. Presentation must not edit task Markdown or import private task
-layers. The domain must not import Obsidian, infrastructure, panels, or settings UI.
+The public task capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TimeTrackingQueryApi`,
+`TaskApplicationApi`, and `TaskCaptureApplicationApi`. Application queries supply all three query
+capabilities. Add exports only when another component needs them. Presentation must not edit task
+Markdown or import private task layers. The domain must not import Obsidian, infrastructure, panels,
+or settings UI.
 
 `PanelView` owns `RailPanel` for mode changes, `LeftPanel` for navigation, `CenterPanel` for selected
 content, and `RightPanel` for the task inspector. Panels share transient navigation through
@@ -76,16 +78,12 @@ only proven successor references survive writes, and history never becomes persi
 
 ### Reads, writes, and identity
 
-`TaskIndex` watches vault and metadata events and discovers task candidates from Markdown source,
-including tasks inside Obsidian comment blocks while excluding frontmatter and fenced examples.
-Obsidian list-item metadata enriches those candidates but cannot remove a source task by omission;
-the canonical `TaskMarkdownCodec` parses each candidate. The index exposes detached snapshots and
-reference resolution through public queries. `src/main.ts` injects the configured source-exclusion
-predicate. The index applies it before every public publication and reconciliation transition,
-while its raw content preview remains available to repository proof. Excluded roots therefore do
-not enter task, calendar, dependency, statistics, or task-tag projections. Source tags are derived
-from committed Markdown through the shared lossless tag-scanning boundary, combined with parsed
-frontmatter tags, and evaluated before the committed projection can be installed.
+`TaskIndex` discovers tasks from Markdown, including Obsidian comment blocks but excluding
+frontmatter and fenced examples. List-item metadata enriches source candidates; its omissions do
+not remove tasks. `TaskMarkdownCodec` parses each candidate; the index exposes detached snapshots
+and reference resolution. `src/main.ts` injects source exclusions, which the index evaluates against
+the file's path, Markdown tags, and frontmatter before publishing tasks or reconciliation transitions.
+Excluded files stay outside public projections; raw content remains available for repository proof.
 `TaskApplicationService` captures the relevant clock and behavior settings, resolves a command,
 validates it, and delegates persistence through repository and destination ports.
 
@@ -94,10 +92,9 @@ in the index before returning. Conflicts, invalid input, missing or ambiguous ta
 and I/O failures are structured outcomes; the initiating presentation boundary reports failures.
 The UI must not treat an earlier snapshot as continuing write authority.
 
-The index retains the latest repository-installed content as an observation barrier. A later cache
-or metadata observation with different bytes is accepted only when those bytes still match the raw
-vault file; this prevents delayed create/startup observations from replacing a committed successor
-while preserving real external edits, deletions, and source exclusion.
+After a repository write, the index retains the committed content. A conflicting cache observation
+must match a fresh vault read before it can replace that content, so delayed events cannot undo a
+published write.
 
 `TaskRefAuthority` distinguishes even byte-identical occurrences without adding Markdown IDs. It
 stages proven successor references and rejects ambiguous or externally changed targets. A successor
@@ -108,57 +105,44 @@ Vault and metadata events reconcile external and plugin edits through the same i
 also covers accepted metadata events with unchanged tasks, including notes without tasks.
 `ProjectStore` waits for these barriers before combining frontmatter with matching task statistics.
 
-Task creation freezes its capture context before `TaskCaptureApplicationApi` plans a destination.
-Sidebar capture and the native `task-calendar` modal both retain that planned session while their
-input stays open, so retries preserve the captured path, template, prefix, tags, and local date.
-The provider resolves the captured local date through the configured `taskFilePath` pattern and
-retains its template and insertion policy without writing. `NoteTemplateService` provisions that
-path only when the command executes: it creates nested folders, applies a selected template once,
-and shares in-flight preparation by App and path. Project capture uses the selected note and project
+Task creation freezes its destination, local date, template, insertion policy, prefix, tags, and
+lifecycle settings in a retained `TaskCaptureApplicationApi` session. Sidebar capture and the native
+`task-calendar` modal reuse that session for retries. Planning expands the configured `taskFilePath`
+without writing; `NoteTemplateService` prepares the note when the command executes and coordinates
+concurrent preparation of the same path. Project capture uses the selected note and project
 insertion policy. Overview capture follows the active Table, Kanban, or Timeline selection. Creation
-then uses the same application/repository path and reveals the indexed result without inventing
-another persisted identity. The create session also freezes the task prefix, Inbox tag policy, and
-lifecycle settings. `TaskApplicationService` applies the Markdown prefix once for roots, ordinary
-subtasks, and linked subtasks; normalizes explicit tag input atomically; and owns Inbox-tag removal
-for creation and tag patches. Creation uses canonical task-line tag occurrences, evaluates each
-task line independently, and composes the root's typed initial tags before applying Inbox policy.
-Presentation sends capture tags as typed initial fields and does not repeat either the prefix or
-Inbox-removal policy.
+uses the application/repository path and reveals the indexed result.
 
-`collectTaskTags` builds the assignable picker catalog from public `TaskNodeSnapshot` values plus
-explicit tag configuration and the current selection. Picker and inspector surfaces consume that
-catalog instead of vault-wide metadata, so note-body/frontmatter tags and excluded archive-source
-tags cannot become suggestions unless they are also configured or present on a public task node.
-Selected tags and archived prefix roots remain available even when they are otherwise absent from
-the catalog.
+`TaskApplicationService` owns prefix and Inbox-tag policy for roots, subtasks, and linked subtasks.
+It validates explicit tags atomically, combines the root's initial tags with its Markdown tags, and
+evaluates each created task line independently. Tag patches use the same Inbox policy. Presentation
+supplies typed fields and does not duplicate these policies.
 
-`resolveEffectiveTagGroups` is the shared navigation catalog for the sidebar, list selection,
-calendar presentation, capture, and settings. It combines configured groups with canonical tags
-from public root and subtask snapshots. Unclaimed standalone tags become deterministic exact
-groups; nested tags become deterministic top-prefix groups. Discovery is derived and is never
-copied into settings on task-index events. A user appearance or reorder action promotes the needed
-discovered identities into `tagGroups` without changing their IDs.
+Tag pickers use `collectTaskTags`, which combines public task-node tags, configured tags, and the
+current selection. Note-only tags and excluded sources do not supply suggestions. Selected tags and
+archived prefix roots remain available.
 
-Tag navigation archives remain static preferences in `data.json`: `archivedTags` excludes exact
-navigation entries, `archivedTagPrefixes` excludes discovered branches and future descendants, and
-`TagGroup.archived` preserves configured group metadata while hiding it. These preferences never
-change task Markdown or remove tasks from Today, Inbox, project, or other matching group views.
-`TagManager` owns revision-aware saves and rollback for archive, promotion, appearance, and order;
-the Tags settings section renders active derived/configured groups and zero-task archived entries
-through that same manager.
+`resolveEffectiveTagGroups` combines configured groups with tags from public roots and subtasks.
+Unclaimed standalone tags form exact groups; nested tags form top-prefix groups. Discovery is
+derived. An appearance or reorder action persists the affected groups in `tagGroups` while
+preserving their IDs.
 
-Archive uses the same exact-root transfer machinery as ordinary moves, but produces an `archived`
-outcome because its destination is intentionally absent from public queries. One planned archive
-session freezes the date-expanded destination and shares lazy note preparation across a batch.
-The repository proves the appended raw root before source removal, retains bounded unresolved
-receipts without eviction, and requires fresh target evidence before retrying removal. A prepared
-archive retains the original command target as its receipt identity while the current root reference
-locates a rebased source; equivalent freshly selected roots resume only with the same authority
-revision. Raw-block equality without revision continuity is ambiguous and rejected. Canonical vault
-casing is reused for an existing archive file or parent folder. Ordinary capture destinations are
-rejected before provisioning when the injected exclusion predicate matches their authoritative
-current Markdown. A retained session repeats that validation before every write. Template failures
-that may have written partial bytes stay blocked until a later external edit supplies new content.
+Navigation archive preferences live in `data.json`: `archivedTags` hides exact entries,
+`archivedTagPrefixes` hides discovered branches and future descendants, and `TagGroup.archived`
+hides a configured group while retaining its metadata. These preferences leave task Markdown and
+membership in other views unchanged. `TagManager` owns their saves and rollback, including group
+promotion, appearance, and order. Settings uses the same manager and retains archived entries with
+no tasks.
+
+Task archive reuses root transfer and returns an `archived` outcome because the destination is
+excluded from public queries. A retained archive session freezes its date-expanded destination and
+shares note preparation across a batch. The repository proves the appended root before removing
+the source. Unresolved transfers retain bounded recovery receipts; retries require fresh destination
+evidence and source revision continuity, so identical Markdown alone cannot authorize removal.
+
+Capture validates the current destination against source exclusions before provisioning and before
+every retained-session write. `NoteTemplateService` retains failed preparation state and requires
+proof that uncertain content has been resolved before a retry can write.
 
 ### Dependencies
 
@@ -191,6 +175,41 @@ own source rules. Calendar and sidebar views share dependency/status presentatio
 blocking. See [dependency reversal tests](test/task-dependency-reversal.test.ts) and
 [linked subtask tests](test/task-create-dependency-subtask.test.ts).
 
+### Time tracking
+
+A time entry is a nested list line that opens with a start stamp and `→`. Entry lines are the only
+record of tracked time. An entry the parser cannot read stays visible on its task and counts
+nothing. A new nested line joins its group in the order description, subtasks, comments, entries.
+Existing lines never move, and reading does not depend on their order.
+
+`TimeTrackingService` owns `start-tracking` and `stop-tracking`. Neither command writes to a single
+root, so both bypass the rooted command path, and their writes are serialized on the mutation
+coordinator that dependency changes use. A start closes every other running entry and then opens its
+own, which keeps one timer running at a time. Each step reads the root the previous write returned
+and does not wait for the index. An entry the service cannot close goes to diagnostics and is
+skipped; only an I/O failure aborts. A session under a minute with no note is discarded, and the
+outcome reports it. Entry removal returns transient recovery data for a local inline Undo.
+
+`TaskIndex` owns `TimeEntryIndex`, updates it on the same per-file path as the task map, and serves
+it through `TimeTrackingQueryApi`. `PanelView` and `TaskModal` each own one `TrackingTicker` and one
+`TrackingActions` write boundary and share them with the controls they host. The ticker re-reads
+active entries when the index changes and runs its interval only while an entry is running and a
+surface listens. A tick adds to a cached total and never queries the index. Cards and calendar items
+read the render's snapshot; forecast occurrences carry no tracked time. The inspector badge outlives
+the chips row, so its sessions popover survives its own writes. An entry write changes its node's
+source block, so a selected subtask can no longer be matched by its text. `rebuildTaskSelection`
+follows it by child position, and only where `sameTaskTreeExceptTimeEntries` proves that nothing but
+time entries changed.
+
+Completing or cancelling a node closes its subtree's running entries in a follow-up write with the
+same clock reading, inside the same serialized mutation. The status result changes only by reporting
+a discarded short session. The follow-up skips and aborts by the same rule as a start, and an entry
+it leaves running stays visible for repair. Recurrence completion closes the completed occurrence's
+entries, and the next occurrence starts with none. The index only reads, so a status symbol edited
+by hand closes nothing.
+See [service tests](test/tasks/time-tracking-service.test.ts) and
+[ticker tests](test/tracking-ticker.test.ts).
+
 ## Projects
 
 ### Discovery and field authority
@@ -206,6 +225,9 @@ frontmatter property and literal status-definition names; project tags do not ca
 `projectFields` owns case-insensitive field lookup and the shared catalog. Status, start, and end
 have configured source properties; description uses `description`. Name comes from the filename,
 and progress is derived from completed top-level tasks over non-cancelled top-level tasks.
+Time is derived from the note's time entries. `ProjectStore` reads the index's per-file total when
+it re-evaluates the note; a project never walks entries itself. Both derived fields are read-only
+wherever a field can be written. Time's curated column is hidden by default.
 Curated types are fixed. Custom types and preset presentation in `projects.propertyDefinitions`
 remain authoritative when Obsidian's registry changes or is unavailable. A custom definition whose
 source is assigned to a curated role stays saved but inactive until that role moves away.
@@ -222,8 +244,10 @@ projections, and editors. See [field tests](test/project-fields.test.ts) and
 `projectTableModel` is the DOM-free source of search, typed sorting, status filtering, grouping,
 and unique visible counts. Link groups use resolved note paths as identity while retaining raw
 values and source paths for rendering and edits; external targets keep source-independent identity.
-Kanban and Timeline models reuse this projection. Their settings modules own independent saved
-presentation and organization, initialized from Table only when first requested.
+A render pass reads one clock and hands it to the model, so tracked totals sort and display at one
+instant and none ticks on its own. Kanban and Timeline models reuse this projection. Their settings
+modules own independent saved presentation and organization, initialized from Table only when first
+requested.
 
 `ProjectsPanel` owns a long-lived [overview controller](src/panels/projects/ProjectsTableView.ts) and
 property-catalog subscription. The controller shares the toolbar, field renderer, editor boundary, mutation queues,
@@ -231,6 +255,36 @@ receipt projection, and history across Table, Kanban, and Timeline. Each surface
 search, selection, organization, and viewport. Switching hides inactive surfaces instead of
 rebuilding them. A dashboard temporarily detaches the overview and invalidates Timeline interaction
 authority; reattachment preserves the session but cannot revive an old queued gesture.
+
+Table owns a full expanded logical row/cell projection for selection, keyboard navigation, and
+clipboard commands, independently of mounted DOM. Its local `projectTableViewport` owns measured
+and estimated row offsets, bounded windows, and spacer geometry. Scroll reconciliation reuses the
+retained model; data and group changes replace that sequence and clamp the viewport immediately.
+Group metadata remains available outside the window. Editors and native drag sources pin their
+occurrence rows until the interaction finishes; other evicted rows release listeners and Markdown
+components. Table geometry, resize, scroll, and focus use the host's owning document and window.
+
+The [viewport helper](src/panels/projects/projectTableViewport.ts) contains geometry only: ordered
+occurrence/header keys, measured heights, cumulative offsets, binary range lookup, and pinned-row
+segments. It keeps one range with 170px overscan and consumes that buffer before refilling it.
+Replacing the row sequence or accepting changed measurements invalidates the range; a viewport
+height change also forces recalculation. Measurements preserve the current row anchor, and the
+controller bounds measurement correction to two passes. Mounted rows stay bounded; full-collection
+sorting, grouping, counts, and logical cell projection still scale with the collection.
+
+DOM identity alone does not preserve native focus: detaching and reinserting a retained row can
+blur its editor. Table reuses keyed spacer rows, patches only changed geometry, and removes obsolete
+spacers before ordering retained rows. Selection consumers, including Quick Capture, resolve logical
+cells rather than requiring mounted elements. Row mounting is needed only for rendering, focus,
+editing, and pointer interaction. These interaction rules belong to the controller, not the geometry
+helper; windowing alone is not a complete reusable view implementation.
+
+Regression entry points are [viewport geometry tests](test/project-table-viewport.test.ts) and
+[table interaction tests](test/project-table-view.test.ts). They cover buffer boundaries, group
+expansion/collapse, shrinking results, changed heights, offscreen bulk selection and Quick Capture,
+and retained editor/drag rows. Native validation additionally checks visible coverage after large
+jumps and group expansion, focus, and style/layout cost: a bounded DOM does not guarantee uniformly
+cheap buffer refills under every vault theme and plugin combination.
 
 Table rows, Kanban cards, and Timeline ranges reconcile keyed DOM. Surviving listeners read current
 reconciled contexts. Shared `ViewOptionsPopover`, field menus, cell renderers, commands, and
@@ -301,11 +355,10 @@ nor native type writes. See [manager tests](test/project-manager.test.ts),
 ### Creation and status renames
 
 Overview project creation belongs to its retained session. The composer freezes a configured
-status; `ProjectManager` validates its writable source before creating a note through the shared
-`NoteTemplateService`, awaits template preparation, and applies final status through serialized
-metadata mutation. Without a template it creates the configured task heading before applying the
-status, yielding a minimal project note with no synthetic date fields. Folder creation remains lazy;
-an existing folder whose case differs from the configured path is reused without renaming it.
+status; `ProjectManager` validates the writable source, creates the note through
+`NoteTemplateService`, and applies status through serialized metadata mutation after template
+preparation. Without a template, the note starts with the configured task heading and status,
+without synthetic date fields.
 `ProjectStore` publication owns the visible snapshot. The overview matches the owned path/status,
 relaxes obstructing filters, and reuses selection/reveal.
 
@@ -328,10 +381,10 @@ Obsidian's public vault adapter. `data.json` owns static configuration; adjacent
 One composed `CalendarSettings` object remains the runtime authority. Panels do not receive separate
 settings copies.
 
-Archive-path and ignored-source settings commit as one validated static draft. A changed archive
-path adds the previous path to the ignore expression before the single save; only a durable save
-replaces the effective predicate and rebuilds task projections. Save rejection restores the prior
-effective storage configuration under the shared settings revision coordinator.
+Archive-path and source-exclusion settings commit as one validated draft. Changing the archive path
+adds the previous path to the ignore expression. Only a successful save replaces the effective
+predicate and rebuilds task projections; a rejected save restores the prior configuration through
+the shared settings revision coordinator.
 
 Migration captures untouched legacy data, writes and verifies the versioned state envelope with an
 exact recovery snapshot, then removes moved static keys. Recognized state wins when both copies

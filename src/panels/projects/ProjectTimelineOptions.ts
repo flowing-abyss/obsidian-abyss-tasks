@@ -1,4 +1,8 @@
-import type { ProjectFieldCatalogItem, ProjectTableSettings } from '../../projects/projectFields';
+import {
+  isGroupableProjectField,
+  type ProjectFieldCatalogItem,
+  type ProjectTableSettings,
+} from '../../projects/projectFields';
 import {
   buildDefaultProjectTimelineSettings,
   projectTimelineDescriptionLines,
@@ -34,11 +38,23 @@ function updateSort(settings: ProjectTimelineSettings, field: string): void {
   }
 }
 
-function groupOptions(context: ProjectTimelineOptionsContext): ViewOption[] {
+function fieldOptions(
+  context: ProjectTimelineOptionsContext,
+  fields: readonly ProjectFieldCatalogItem[],
+): ViewOption[] {
   return [
     { value: 'none', label: 'None' },
-    ...context.fields().map((field) => ({ value: field.id, label: labelFor(context, field.id) })),
+    ...fields.map((field) => ({ value: field.id, label: labelFor(context, field.id) })),
   ];
+}
+
+/** Sorting reads every field; grouping skips the ones whose values cannot name a group. */
+function groupOptions(context: ProjectTimelineOptionsContext): ViewOption[] {
+  return fieldOptions(context, context.fields().filter(isGroupableProjectField));
+}
+
+function sortOptions(context: ProjectTimelineOptionsContext): ViewOption[] {
+  return fieldOptions(context, context.fields());
 }
 
 function sortDisplay(context: ProjectTimelineOptionsContext): string {
@@ -225,6 +241,7 @@ export function projectTimelineOptionsRows(
   context: ProjectTimelineOptionsContext,
 ): ViewOptionsRow[] {
   const groupingOptions = groupOptions(context);
+  const sortingOptions = sortOptions(context);
   return [
     single(context, {
       kind: 'single',
@@ -243,7 +260,7 @@ export function projectTimelineOptionsRows(
       label: 'Sort by',
       displayValue: () => sortDisplay(context),
       activeValue: () => context.settings().sortBy.field,
-      options: groupingOptions.map((option) => ({
+      options: sortingOptions.map((option) => ({
         ...option,
         label: () => sortOptionLabel(context, option),
       })),

@@ -14,6 +14,8 @@ const parent: TaskNodeRef = { type: 'task', ref: root };
 const subtask = { parent, relativeLine: 1, originalBlock: '  - [ ] Child' };
 const child: TaskNodeRef = { type: 'subtask', ref: subtask };
 const comment = { parent: child, relativeLine: 1, originalMarkdown: '    - 💬 Comment' };
+const entryMarkdown = '    - 2026-09-17T09:12:00+03:00 → 2026-09-17T10:40:51+03:00';
+const entry = { parent: child, relativeLine: 2, originalMarkdown: entryMarkdown };
 const date = tasks.localDate('2026-09-06');
 const destination = { filePath: 'other.md', insertion: { type: 'append' as const } };
 const cases = {
@@ -119,6 +121,22 @@ const cases = {
   'delete-comment': {
     command: { type: 'delete-comment', comment },
     target: { type: 'comment', ref: comment },
+  },
+  // Orchestrated tracking owns no single root write, so a `parent` field stays rootless.
+  'start-tracking': { command: { type: 'start-tracking', parent: child }, target: undefined },
+  'stop-tracking': { command: { type: 'stop-tracking' }, target: undefined },
+  'delete-time-entry': {
+    command: { type: 'delete-time-entry', entry },
+    target: { type: 'time-entry', ref: entry },
+  },
+  'restore-time-entry': {
+    command: {
+      type: 'restore-time-entry',
+      parent: child,
+      markdown: entryMarkdown,
+      relativeLine: 2,
+    },
+    target: child,
   },
   'edit-link': {
     command: {

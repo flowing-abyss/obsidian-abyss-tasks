@@ -11,12 +11,14 @@ import { shiftLocalDate } from '../domain/localDateMath';
 import { parseRecurrenceRule } from '../domain/recurrence';
 import { type StatusCatalog } from '../domain/StatusCatalog';
 import {
+  isOwnedLineTarget,
   taskCommandMutationTarget as mutationTargetForCommand,
   rebaseTaskCommand as rebaseCommandRoot,
   rebaseTaskNode as rebaseStatusTarget,
   taskCommandRootRef as rootRefForCommand,
   taskNodeRootRef as rootRefOf,
   taskNodeAtSourcePath as snapshotForTarget,
+  taskMutationNodeRef,
 } from '../domain/taskCommandTargets';
 import { reconcileTaskNodeRef, type TaskResolution } from '../domain/taskReconciliation';
 import { applyTaskCreationTagPolicy, normalizeTaskTagInput } from '../domain/taskTags';
@@ -43,6 +45,7 @@ import type {
   TaskCreateSession,
   TaskDependencyQueryApi,
   TaskQueryApi,
+  TimeTrackingQueryApi,
 } from './TaskApplicationApi';
 import type { TaskBehaviorSettings, TaskBehaviorSettingsProvider } from './TaskBehaviorSettings';
 import {
@@ -65,14 +68,16 @@ import type {
   TaskRepository,
   TaskRepositoryResult,
 } from './TaskRepository';
-import { subtaskRestorationIssues } from './TaskRepository';
+import { subtaskRestorationIssues, taskEditMutationTarget } from './TaskRepository';
 import {
   prepareRetry,
+  rebaseTaskEditCommand,
   reconcileSubtaskRestoration,
   recurrenceCompletionPreconditionHolds,
   type PreparedMutation,
   type RetryPolicy,
 } from './taskRetryPolicy';
+import { TimeTrackingService } from './TimeTrackingService';
 
 function uniqueInOrder(values: readonly string[]): string[] {
   return [...new Set(values)];
@@ -181,7 +186,11 @@ type DependencyCommand = Extract<
       | 'create-dependency-subtask';
   }
 >;
-type ExistingTaskCommand = Exclude<TaskCommand, DependencyCommand | { readonly type: 'create' }>;
+type TrackingCommand = Extract<TaskCommand, { readonly type: 'start-tracking' | 'stop-tracking' }>;
+type ExistingTaskCommand = Exclude<
+  TaskCommand,
+  DependencyCommand | TrackingCommand | { readonly type: 'create' }
+>;
 type EditableTaskCommand = Exclude<ExistingTaskCommand, { readonly type: 'move' | 'archive' }>;
 type PreparedTaskCommand =
   | { readonly command: TaskEditCommand }
@@ -200,7 +209,11 @@ type MoveScheduleCommand = Extract<
 >;
 type StatusCommand = Extract<TaskCommand, { readonly type: 'set-status' | 'toggle-completion' }>;
 
-const COMMUTATIVE_COMMAND_TYPES = new Set<TaskEditCommand['type']>(['add-comment', 'add-subtask']);
+const COMMUTATIVE_COMMAND_TYPES = new Set<TaskEditCommand['type']>([
+  'add-comment',
+  'add-subtask',
+  'add-time-entry',
+]);
 const FIELD_COMPARE_COMMAND_TYPES = new Set<TaskEditCommand['type']>([
   'patch',
   'set-status',
@@ -216,6 +229,10 @@ const FIELD_COMPARE_COMMAND_TYPES = new Set<TaskEditCommand['type']>([
 
 function isStatusCommand(command: TaskCommand): command is StatusCommand {
   return command.type === 'set-status' || command.type === 'toggle-completion';
+}
+
+function isTrackingCommand(command: TaskCommand): command is TrackingCommand {
+  return command.type === 'start-tracking' || command.type === 'stop-tracking';
 }
 
 function invalidStatusResult(): PreparedTaskCommand {
@@ -282,6 +299,16 @@ function subtaskInputIssue(command: TaskCommand): TaskCommandResult | undefined 
   return undefined;
 }
 
+function timeEntryInputIssue(command: TaskCommand): TaskCommandResult | undefined {
+  if (
+    command.type === 'restore-time-entry' &&
+    (!isSingleLineText(command.markdown) || command.markdown.trim().length === 0)
+  ) {
+    return invalidTaskTarget('time-entry');
+  }
+  return undefined;
+}
+
 function descriptionInputIssue(command: TaskCommand): TaskCommandResult | undefined {
   if (
     command.type === 'set-description' &&
@@ -298,6 +325,7 @@ function multilineInputIssue(command: TaskCommand): TaskCommandResult | undefine
     titleInputIssue(command) ??
     commentInputIssue(command) ??
     subtaskInputIssue(command) ??
+    timeEntryInputIssue(command) ??
     descriptionInputIssue(command)
   );
 }
@@ -416,7 +444,7 @@ function sameFilePath(left: string, right: string): boolean {
 }
 
 type TaskApplicationServiceDependencies = [
-  queries: TaskQueryApi & TaskDependencyQueryApi,
+  queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi,
   repository: TaskRepository,
   statusCatalog: StatusCatalog,
   clock: Clock | LegacyClock,
@@ -435,8 +463,9 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   // service lifetime and is bounded so revision churn cannot retain an unbounded snapshot history.
   private readonly recentOutcomes_abyssPrivate = new Map<string, RecentOutcome>();
 
-  readonly queries: TaskQueryApi & TaskDependencyQueryApi;
+  readonly queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
   private readonly dependencies_abyssPrivate: TaskDependencyService;
+  private readonly tracking_abyssPrivate: TimeTrackingService;
   private readonly diagnostics_abyssPrivate: TaskDiagnosticSink;
   private readonly repository_abyssPrivate: TaskRepository;
   private readonly statusCatalog_abyssPrivate: StatusCatalog;
@@ -465,6 +494,16 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       dependencyService ??
       new TaskDependencyService(queries, repository, nextTaskDependencyId, diagnostics);
     this.diagnostics_abyssPrivate = diagnostics;
+    this.tracking_abyssPrivate = new TimeTrackingService({
+      queries,
+      resolveRoot: (ref, node) => this.resolveRoot_abyssPrivate(ref, node),
+      edit: async (command) => await this.executeTrackingEdit_abyssPrivate(command),
+      statusOf: (symbol) => statusCatalog.statusForSymbol(symbol),
+      // Tracking and dependency operations share one queue, so their writes never interleave.
+      serialize: async (operation) =>
+        await this.dependencies_abyssPrivate.serializeMutation(async () => await operation()),
+      diagnostics,
+    });
   }
 
   async planCreate(destination: CreateTaskCommandDestination): Promise<TaskCreateSession> {
@@ -566,6 +605,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
     const reading = captureClock(this.clock_abyssPrivate);
     if (command.type === 'add-comment' && !('atom' in reading)) return invalidTaskTarget('comment');
+    if (isTrackingCommand(command)) return await this.track_abyssPrivate(command, reading);
     if (command.type === 'create-dependency-subtask')
       return this.createDependencySubtask_abyssPrivate(command, {
         today: reading.localDate,
@@ -576,6 +616,73 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (command.type === 'create')
       return await this.create_abyssPrivate(command, settings, reading);
     return await this.executeExistingCommand_abyssPrivate(command, settings, reading);
+  }
+
+  private async track_abyssPrivate(
+    command: TrackingCommand,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+  ): Promise<TaskCommandResult> {
+    if (!('atom' in reading)) return invalidTaskTarget('time-entry');
+    return command.type === 'start-tracking'
+      ? await this.tracking_abyssPrivate.start(command.parent, reading)
+      : await this.tracking_abyssPrivate.stopAll(reading);
+  }
+
+  /** Writes one internal tracking edit through the resolution, retry and outcome path of a command. */
+  private async executeTrackingEdit_abyssPrivate(
+    command: TaskEditCommand,
+  ): Promise<TaskCommandResult> {
+    const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
+    const reading = captureClock(this.clock_abyssPrivate);
+    const targetBase = taskEditMutationTarget(command);
+    const resolution = this.resolveRoot_abyssPrivate(
+      rootRefOf(targetBase),
+      taskMutationNodeRef(targetBase),
+    );
+    const unavailable = this.unavailableTarget_abyssPrivate(targetBase, resolution);
+    if (unavailable != null) return unavailable;
+    const proven = resolution as ProvenResolution;
+    const currentRoot = proven.type === 'exact' ? proven.task : proven.current;
+    return await this.dispatchPrepared_abyssPrivate({
+      repositoryRequest: {
+        command: rebaseTaskEditCommand(command, currentRoot.ref),
+        baseRoot: currentRoot,
+        baseTarget: targetBase,
+        reconciliation: proven.basis,
+      },
+      base: proven.type === 'exact' ? proven.task : proven.previous,
+      targetBase,
+      clock: reading,
+      settings,
+      retry: retryPolicy(command),
+    });
+  }
+
+  /**
+   * Closes the entries a completed node was still tracking, as a follow-up write with the same
+   * clock reading. The status command keeps its own result apart from one note: a session the
+   * follow-up dropped for being under a minute is said so on the outcome, because the reader would
+   * otherwise see the line vanish without a word. A failed follow-up only reports to diagnostics
+   * and leaves the running entry visible for repair.
+   */
+  private async closeTrackingAfterCompletion_abyssPrivate(
+    command: EditableTaskCommand,
+    result: TaskCommandResult,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+  ): Promise<TaskCommandResult> {
+    if (!isStatusCommand(command) || result.type !== 'ok' || !('atom' in reading)) return result;
+    const outcome = result.outcome;
+    if (outcome.type !== 'task' && outcome.type !== 'recurrence') return result;
+    const follow =
+      outcome.type === 'task' ? { root: outcome.task, target: command.target } : outcome.completed;
+    if (follow === undefined) return result;
+    const closed = await this.tracking_abyssPrivate.closeAfterCompletion(
+      follow.root,
+      follow.target,
+      reading,
+    );
+    if (!closed.discardedShortEntry) return result;
+    return { ...result, outcome: { ...outcome, discardedShortEntry: true } };
   }
 
   private async createDependencySubtask_abyssPrivate(
@@ -659,7 +766,6 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       resolution.basis.observed,
     );
     const prepared: PreparedMutation = {
-      publicCommand: command,
       repositoryRequest,
       base: baseRoot,
       targetBase,
@@ -669,12 +775,15 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
         'recurrence' in preparedCommand ? 'exact-target' : retryPolicy(preparedCommand.command),
       ...(validateCurrent === undefined ? {} : { validateCurrent }),
     };
+    // A completion validation means the command lands on done or cancelled, which is exactly when
+    // the tracking follow-up belongs inside the same serialized mutation.
     if (validateCurrent !== undefined && !serialized) {
-      return await this.dependencies_abyssPrivate.serializeMutation((queued) =>
-        queued
-          ? this.executeExistingCommand_abyssPrivate(command, settings, reading, true)
-          : this.dispatchPrepared_abyssPrivate(prepared),
-      );
+      return await this.dependencies_abyssPrivate.serializeMutation(async (queued) => {
+        const result = queued
+          ? await this.executeExistingCommand_abyssPrivate(command, settings, reading, true)
+          : await this.dispatchPrepared_abyssPrivate(prepared);
+        return await this.closeTrackingAfterCompletion_abyssPrivate(command, result, reading);
+      });
     }
     return await this.dispatchPrepared_abyssPrivate(prepared);
   }
@@ -701,7 +810,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     let symbol: string | undefined;
     if ('recurrence' in prepared) symbol = prepared.recurrence.doneSymbol;
     else if (prepared.command.type === 'set-status') symbol = prepared.command.symbol;
-    if (symbol === undefined || predecessor.type === 'comment') return undefined;
+    if (symbol === undefined || isOwnedLineTarget(predecessor)) return undefined;
     const type = this.statusCatalog_abyssPrivate.statusForSymbol(symbol);
     if (type !== 'done' && type !== 'cancelled') return undefined;
     return (root, target) => {
@@ -774,7 +883,6 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       reconciliation: resolution.basis,
     };
     const prepared: PreparedMutation = {
-      publicCommand: command,
       repositoryRequest: request,
       base,
       targetBase: { type: 'task', ref: command.ref },
@@ -1192,32 +1300,21 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       command.type === 'move'
         ? ({ type: 'task', ref: command.ref } as const)
         : mutationTargetForCommand(command);
+    return this.unavailableTarget_abyssPrivate(target, resolution);
+  }
+
+  private unavailableTarget_abyssPrivate(
+    target: TaskMutationTarget,
+    resolution: TaskResolution,
+  ): TaskCommandResult | undefined {
+    if (resolution.type === 'exact' || resolution.type === 'rebased') return undefined;
     if (resolution.type === 'ambiguous') {
       return {
         type: 'ambiguous',
-        candidates: resolution.candidates.map((candidate) => {
-          let rebasedTarget: TaskMutationTarget;
-          if (target.type === 'task') {
-            rebasedTarget = { type: 'task', ref: candidate.root.ref };
-          } else if (target.type === 'subtask') {
-            rebasedTarget = {
-              type: 'subtask',
-              ref: {
-                ...target.ref,
-                parent: rebaseStatusTarget(target.ref.parent, candidate.root.ref),
-              },
-            };
-          } else {
-            rebasedTarget = {
-              type: 'comment',
-              ref: {
-                ...target.ref,
-                parent: rebaseStatusTarget(target.ref.parent, candidate.root.ref),
-              },
-            };
-          }
-          return { root: candidate.root, target: rebasedTarget };
-        }),
+        candidates: resolution.candidates.map((candidate) => ({
+          root: candidate.root,
+          target: rebaseStatusTarget(target, candidate.root.ref),
+        })),
       };
     }
     return { type: 'not-found', target };
@@ -1313,15 +1410,29 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     command: ExistingTaskCommand,
     ref: TaskRef,
   ): TaskSnapshot | undefined {
+    if (command.type !== 'move') {
+      return this.recentOutcome_abyssPrivate(
+        ref,
+        taskMutationNodeRef(mutationTargetForCommand(command)),
+      );
+    }
+    const outcome = this.recentOutcomes_abyssPrivate.get(refKey(ref));
+    return outcome?.permittedTarget == null ? outcome?.task : undefined;
+  }
+
+  /** The shared root resolution every rooted write uses, bridging the index-event lag first. */
+  private resolveRoot_abyssPrivate(ref: TaskRef, node: TaskNodeRef): TaskResolution {
+    const recent = this.recentOutcome_abyssPrivate(ref, node);
+    return recent === undefined
+      ? this.queries.resolve(ref)
+      : { type: 'exact', task: recent, basis: { observed: recent } };
+  }
+
+  /** A remembered outcome is authority only for the node the mutation that produced it owned. */
+  private recentOutcome_abyssPrivate(ref: TaskRef, node: TaskNodeRef): TaskSnapshot | undefined {
     const outcome = this.recentOutcomes_abyssPrivate.get(refKey(ref));
     if (outcome == null) return undefined;
     if (outcome.permittedTarget == null) return outcome.task;
-    if (command.type === 'move') return undefined;
-    const target = mutationTargetForCommand(command);
-    let node: TaskNodeRef;
-    if (target.type === 'comment') node = target.ref.parent;
-    else if (target.type === 'subtask') node = { type: 'subtask', ref: target.ref };
-    else node = target;
     return sameTaskNodeRef(outcome.permittedTarget, node) ? outcome.task : undefined;
   }
 }

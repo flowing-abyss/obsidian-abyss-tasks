@@ -1,8 +1,12 @@
+import type { TrackedTotal } from '../tasks';
+
 export interface ProjectStats {
   total: number;
   done: number;
   cancelled: number;
   inProgress: number;
+  /** Time the note's own entries record, kept as closed time plus the starts still running. */
+  readonly tracked: TrackedTotal;
 }
 
 export interface Project {

@@ -1,6 +1,7 @@
 import {
   sameTaskNodeRef,
   sameTaskTreeExceptDependencies,
+  sameTaskTreeExceptTimeEntries,
   type SubtaskRef,
   type SubtaskSnapshot,
   type TaskIndexEvent,
@@ -44,10 +45,15 @@ export function taskSelectionPath(
   return stack;
 }
 
+/** The root task a node reference hangs off, which is the only part of it that names a file. */
+export function rootTaskNodeRef(ref: TaskNodeRef): TaskRef {
+  let current = ref;
+  while (current.type === 'subtask') current = current.ref.parent;
+  return current.ref;
+}
+
 export function rootTaskRef(node: TaskSelectionNode): TaskRef {
-  let ref = taskNodeRef(node);
-  while (ref.type === 'subtask') ref = ref.ref.parent;
-  return ref.ref;
+  return rootTaskNodeRef(taskNodeRef(node));
 }
 
 export function taskNodeLine(root: TaskSnapshot, node: TaskSelectionNode): number {
@@ -68,40 +74,59 @@ export function rebuildTaskSelection(
   options: { readonly preserveDependencyChanges?: boolean } = {},
 ): TaskSelectionNode[] {
   const stack: TaskSelectionNode[] = [root];
-  const previousRoot = staleStack[0];
-  const preserveDependencies =
-    options.preserveDependencyChanges === true &&
-    previousRoot !== undefined &&
-    'source' in previousRoot &&
-    sameTaskTreeExceptDependencies(previousRoot, root);
+  const proofs = selectionProofs(root, staleStack[0], options.preserveDependencyChanges === true);
   for (let index = 1; index < staleStack.length; index++) {
     const parent = stack[index - 1];
     const stale = staleStack[index];
     if (parent == null || stale == null || 'source' in stale) break;
-    const child = selectionChild(
-      parent.subtasks,
-      stale,
-      staleStack[index - 1],
-      preserveDependencies,
-    );
+    const child = selectionChild(parent.subtasks, stale, staleStack[index - 1], proofs);
     if (child == null) break;
     stack.push(child);
   }
   return stack;
 }
 
+interface SelectionProofs {
+  readonly preserveDependencies: boolean;
+  readonly timeEntriesOnly: () => boolean;
+}
+
+/** The whole-tree proofs a positional match needs, each read at most once per rebuild. */
+function selectionProofs(
+  root: TaskSnapshot,
+  previousRoot: TaskSelectionNode | undefined,
+  preserveDependencyChanges: boolean,
+): SelectionProofs {
+  const staleRoot =
+    previousRoot !== undefined && 'source' in previousRoot ? previousRoot : undefined;
+  let trackedOnly: boolean | undefined;
+  return {
+    preserveDependencies:
+      preserveDependencyChanges &&
+      staleRoot !== undefined &&
+      sameTaskTreeExceptDependencies(staleRoot, root),
+    // Read only after a match on the node's own text has already failed.
+    timeEntriesOnly: () =>
+      (trackedOnly ??= staleRoot !== undefined && sameTaskTreeExceptTimeEntries(staleRoot, root)),
+  };
+}
+
 function selectionChild(
   candidates: readonly SubtaskSnapshot[],
   stale: SubtaskSnapshot,
   previousParent: TaskSelectionNode | undefined,
-  preserveDependencies: boolean,
+  proofs: SelectionProofs,
 ): SubtaskSnapshot | undefined {
   const exact = candidates.filter((candidate) =>
     sameTaskNodeRef(taskNodeRef(candidate), taskNodeRef(stale)),
   );
   if (exact.length === 1) return exact[0];
-  const positioned = preserveDependencies ? dependencyChangedChild(candidates, stale) : undefined;
+  const positioned = proofs.preserveDependencies
+    ? dependencyChangedChild(candidates, stale)
+    : undefined;
   if (positioned !== undefined) return positioned;
+  const tracked = trackedChild(candidates, previousParent, stale, proofs.timeEntriesOnly);
+  if (tracked !== undefined) return tracked;
   const matches = candidates.filter(
     (candidate) => candidate.ref.originalBlock === stale.ref.originalBlock,
   );
@@ -109,6 +134,26 @@ function selectionChild(
     (candidate) => candidate.ref.originalBlock === stale.ref.originalBlock,
   );
   return previousMatches?.length === 1 && matches.length === 1 ? matches[0] : undefined;
+}
+
+/**
+ * An entry written under the selected node rewrites that node's own source block, so no text
+ * match can find its successor. Inside a tree the domain proves unchanged apart from tracked
+ * entries the child order is identical, which makes the stale child's position its identity.
+ */
+function trackedChild(
+  candidates: readonly SubtaskSnapshot[],
+  previousParent: TaskSelectionNode | undefined,
+  stale: SubtaskSnapshot,
+  timeEntriesOnly: () => boolean,
+): SubtaskSnapshot | undefined {
+  if (previousParent === undefined) return undefined;
+  const staleRef = taskNodeRef(stale);
+  const places = previousParent.subtasks.flatMap((candidate, at) =>
+    sameTaskNodeRef(taskNodeRef(candidate), staleRef) ? [at] : [],
+  );
+  const at = places.length === 1 ? places[0] : undefined;
+  return at !== undefined && timeEntriesOnly() ? candidates[at] : undefined;
 }
 
 function dependencyChangedChild(

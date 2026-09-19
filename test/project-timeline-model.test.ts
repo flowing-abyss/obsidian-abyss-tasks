@@ -28,7 +28,13 @@ function project(path: string, frontmatter: Record<string, unknown>): Project {
     tags: [],
     statusId: DEFAULT_SETTINGS.projects.statuses[0]?.id ?? null,
     rawStatus: null,
-    stats: { total: 4, done: 2, cancelled: 0, inProgress: 1 },
+    stats: {
+      total: 4,
+      done: 2,
+      cancelled: 0,
+      inProgress: 1,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    },
   };
 }
 

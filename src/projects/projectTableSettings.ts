@@ -10,6 +10,8 @@ const DEFAULT_COLUMNS: readonly ProjectColumn[] = [
   { id: 'name', visible: true },
   { id: 'status', visible: true },
   { id: 'progress', visible: true },
+  // Derived from time entries, so it ships present but hidden rather than widening every table.
+  { id: 'tracked', visible: false },
   { id: 'start', visible: true },
   { id: 'end', visible: true },
 ];

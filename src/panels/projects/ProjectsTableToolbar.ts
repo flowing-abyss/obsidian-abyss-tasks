@@ -1,9 +1,10 @@
 import { Menu, setIcon } from 'obsidian';
-import type {
-  ProjectDateDisplay,
-  ProjectFieldCatalogItem,
-  ProjectTableProgressDisplay,
-  ProjectTableSettings,
+import {
+  isGroupableProjectField,
+  type ProjectDateDisplay,
+  type ProjectFieldCatalogItem,
+  type ProjectTableProgressDisplay,
+  type ProjectTableSettings,
 } from '../../projects/projectFields';
 import type {
   ProjectKanbanSettings,
@@ -312,6 +313,7 @@ export class ProjectsTableToolbar {
     configured.add(settings.groupBy);
     configured.add(settings.sortBy.field);
     const selectable = fields.filter((field) => configured.has(field.id));
+    const groupable = selectable.filter((field) => isGroupableProjectField(field));
     const sortArrow = (): string => (current().sortBy.dir === 'asc' ? '↑' : '↓');
     const sortDisplay = (): string =>
       current().sortBy.field === 'none'
@@ -327,7 +329,7 @@ export class ProjectsTableToolbar {
         activeValue: () => current().groupBy,
         options: [
           { value: 'none', label: 'None' },
-          ...selectable.map((field) => ({
+          ...groupable.map((field) => ({
             value: field.id,
             label: () => fieldLabel(currentFields(), current(), field.id),
             isDefault: field.id === 'status',

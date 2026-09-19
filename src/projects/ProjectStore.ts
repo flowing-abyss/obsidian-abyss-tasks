@@ -1,7 +1,13 @@
 import { getAllTags, TFile, type App, type CachedMetadata, type TAbstractFile } from 'obsidian';
 import { evaluateQuery } from '../query/evaluateQuery';
 import type { CalendarSettings } from '../settings/types';
-import type { TaskIndexEvent, TaskQueryApi, TaskSnapshot } from '../tasks';
+import type {
+  TaskIndexEvent,
+  TaskQueryApi,
+  TaskSnapshot,
+  TimeTrackingQueryApi,
+  TrackedTotal,
+} from '../tasks';
 import { resolveStatus } from './status';
 import type { Project, ProjectStats } from './types';
 
@@ -23,7 +29,7 @@ interface PublishedSourceObservation {
   readonly observation: ProjectSourceObservation;
 }
 
-export function computeStats(tasks: readonly TaskSnapshot[]): ProjectStats {
+export function computeStats(tasks: readonly TaskSnapshot[], tracked: TrackedTotal): ProjectStats {
   let done = 0;
   let cancelled = 0;
   let inProgress = 0;
@@ -32,7 +38,7 @@ export function computeStats(tasks: readonly TaskSnapshot[]): ProjectStats {
     else if (t.status === 'cancelled') cancelled++;
     else if (t.status === 'in-progress') inProgress++;
   }
-  return { total: tasks.length, done, cancelled, inProgress };
+  return { total: tasks.length, done, cancelled, inProgress, tracked };
 }
 
 function basename(path: string): string {
@@ -88,7 +94,7 @@ export class ProjectStore {
 
   constructor(
     private readonly app_abyssPrivate: App,
-    private readonly queries_abyssPrivate: TaskQueryApi,
+    private readonly queries_abyssPrivate: TaskQueryApi & TimeTrackingQueryApi,
     private readonly settings_abyssPrivate: CalendarSettings,
   ) {}
 
@@ -360,7 +366,8 @@ export class ProjectStore {
       tags,
       statusId,
       rawStatus,
-      stats: computeStats(tasks),
+      // The index answers the note's tracked total in O(1), so a project never walks its entries.
+      stats: computeStats(tasks, this.queries_abyssPrivate.fileTotal(path)),
     };
   }
 

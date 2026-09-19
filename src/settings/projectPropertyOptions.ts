@@ -29,7 +29,7 @@ interface RenderProjectPropertyOptions {
   readonly container: HTMLElement;
   readonly label: string;
   readonly property?: string;
-  readonly type: ProjectPropertyType | 'status' | 'name' | 'progress' | null;
+  readonly type: ProjectPropertyType | 'status' | 'name' | 'progress' | 'tracked' | null;
   readonly definition?: ProjectPropertyDefinition;
   readonly alignment?: ProjectColumnAlignment;
   readonly onTypeChange?: (type: ProjectPropertyType) => void;
@@ -40,8 +40,9 @@ interface RenderProjectPropertyOptions {
 }
 
 function fixedTypeLabel(type: RenderProjectPropertyOptions['type']): string {
-  if (type === 'name' || type === 'progress')
-    return `${type === 'name' ? 'Name' : 'Progress'} (derived)`;
+  if (type === 'name') return 'Name (derived)';
+  if (type === 'progress') return 'Progress (derived)';
+  if (type === 'tracked') return 'Time (derived)';
   if (type === 'status') return 'Status (curated)';
   if (type === null) return 'Choose a type';
   return `${PROPERTY_TYPE_LABELS[type]} (curated)`;

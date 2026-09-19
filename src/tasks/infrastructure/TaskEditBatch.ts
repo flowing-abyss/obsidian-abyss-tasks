@@ -5,7 +5,7 @@ import {
   type TaskEditRequest,
   type TaskRepositoryResult,
 } from '../application/TaskRepository';
-import { taskNodeChain } from '../domain/taskCommandTargets';
+import { isOwnedLineTarget, taskNodeChain } from '../domain/taskCommandTargets';
 import type { ProvenRootRevisionOverride } from '../domain/taskReconciliation';
 import {
   sameTaskNodeRef,
@@ -82,7 +82,7 @@ function editIssues(edit: TaskEditRequest, filePath: string): readonly TaskIssue
   if (root.ref.filePath !== filePath) return invalid('batch-file');
   if (
     !sameTaskNodeRef(root, { type: 'task', ref: edit.baseRoot.ref }) ||
-    edit.baseTarget.type === 'comment' ||
+    isOwnedLineTarget(edit.baseTarget) ||
     !sameTaskNodeRef(edit.command.target, edit.baseTarget)
   )
     return invalid('batch-precondition');

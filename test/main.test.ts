@@ -9,6 +9,7 @@ import {
 import { latestSettingsSaveRevision } from '../src/settings/settingsSaveRevision';
 import type { TaskStorageSettings } from '../src/settings/taskStorageSettings';
 import type { CalendarSettings } from '../src/settings/types';
+import { taskNodeAddress, type TrackedEntry } from '../src/tasks';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import { flushMicrotasks, useRealMoment } from './helpers';
 
@@ -508,6 +509,133 @@ describe('TaskCalendarPlugin renderCalendar shim', () => {
     )['renderCalendar']({ container }, {});
     // CalendarRenderer adds the configured style class to the root element (the container itself)
     expect(container.classList.contains('style1')).toBe(true);
+  });
+});
+
+describe('TaskCalendarPlugin toggle-time-tracking command', () => {
+  const DAY_MS = 86_400_000;
+  const REF = { filePath: 'tasks.md', line: 0, revision: 'r1' } as const;
+
+  function trackedEntry(overrides: Partial<TrackedEntry> = {}): TrackedEntry {
+    return {
+      filePath: REF.filePath,
+      root: REF,
+      target: { type: 'task', ref: REF },
+      address: taskNodeAddress({ type: 'task', ref: REF }),
+      rootAddress: taskNodeAddress({ type: 'task', ref: REF }),
+      title: 'Alpha',
+      status: 'open',
+      entry: {
+        state: 'closed',
+        startMs: 1000,
+        endMs: 2000,
+        relativeLine: 1,
+        originalMarkdown: '  - session',
+      },
+      ...overrides,
+    };
+  }
+
+  async function trackingPlugin(tracking: {
+    readonly active?: readonly TrackedEntry[];
+    readonly recent?: readonly TrackedEntry[];
+  }) {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const windows: Array<readonly [number, number]> = [];
+    const execute = vi.fn(async () => ({ type: 'ok', outcome: { type: 'stopped' } }) as never);
+    const typed = plugin as unknown as {
+      queries: Record<string, unknown>;
+      tasks: { execute: unknown; queries: unknown };
+    };
+    typed.queries = {
+      ...typed.queries,
+      activeEntries: () => tracking.active ?? [],
+      entriesOverlapping: (fromMs: number, toMs: number) => {
+        windows.push([fromMs, toMs]);
+        return tracking.recent ?? [];
+      },
+    };
+    typed.tasks = { ...typed.tasks, queries: typed.queries, execute };
+    const notices: unknown[] = [];
+    vi.spyOn(
+      Notice.prototype as unknown as { constructor__(message: unknown, duration?: number): void },
+      'constructor__',
+    ).mockImplementation((message: unknown) => {
+      notices.push(message);
+    });
+    const command = plugin.commands__.get('toggle-time-tracking');
+    return {
+      plugin,
+      execute,
+      notices,
+      windows,
+      command,
+      run: async () => {
+        await (command as unknown as { callback: () => Promise<void> }).callback();
+        await flushMicrotasks();
+      },
+    };
+  }
+
+  it('is registered with its palette name', async () => {
+    const harness = await trackingPlugin({});
+    expect(harness.command?.id).toBe('toggle-time-tracking');
+    expect(harness.command?.name).toBe('Pause or resume time tracking');
+  });
+
+  it('pauses whatever is running', async () => {
+    const harness = await trackingPlugin({ active: [trackedEntry()] });
+
+    await harness.run();
+
+    expect(harness.execute).toHaveBeenCalledWith({ type: 'stop-tracking' });
+    expect(harness.notices).toEqual([]);
+  });
+
+  it('resumes the most recent task of the last seven days', async () => {
+    const harness = await trackingPlugin({ recent: [trackedEntry()] });
+
+    await harness.run();
+
+    expect(harness.execute).toHaveBeenCalledWith({
+      type: 'start-tracking',
+      parent: { type: 'task', ref: REF },
+    });
+    // The same window the rail widget groups, so the two never disagree about what is recent: seven
+    // whole local days, both ends on a local midnight rather than on the instant of the keystroke.
+    const [window] = harness.windows;
+    expect(window).toBeDefined();
+    const [fromMs, toMs] = window as [number, number];
+    expect(toMs - fromMs).toBe(7 * DAY_MS);
+    for (const edge of [fromMs, toMs]) {
+      const local = new Date(edge);
+      expect([
+        local.getHours(),
+        local.getMinutes(),
+        local.getSeconds(),
+        local.getMilliseconds(),
+      ]).toEqual([0, 0, 0, 0]);
+    }
+    expect(harness.notices).toEqual([]);
+  });
+
+  it('refuses to resume a finished task', async () => {
+    const harness = await trackingPlugin({ recent: [trackedEntry({ status: 'done' })] });
+
+    await harness.run();
+
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(harness.notices).toEqual(['There is no recent task to resume']);
+  });
+
+  it('says so when nothing was tracked recently', async () => {
+    const harness = await trackingPlugin({});
+
+    await harness.run();
+
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(harness.notices).toEqual(['There is no recent task to resume']);
   });
 });
 

@@ -175,6 +175,12 @@ describe('CenterPanel task metadata styles', () => {
     expect(dateIconSvg).toContain('display: block');
   });
 
+  it('lifts the stopwatch of the time badge onto the axis of the digits beside it', () => {
+    // The crown of the lucide timer takes the top of its box, which leaves the circle a pixel
+    // under every other glyph in the row.
+    expect(declarationsFor('.abyss-task-time-badge svg')).toContain('transform: translateY(-1px)');
+  });
+
   it('underlines clickable center-panel tags on hover', () => {
     const tagHover = declarationsFor('.abyss-center .abyss-task-tag:hover');
 

@@ -13,6 +13,7 @@ import type {
   TaskRef,
   TaskSnapshot,
   TaskTextTarget,
+  TimeEntryRef,
 } from './types';
 import type { TaskIssue } from './validation';
 
@@ -131,6 +132,8 @@ export type TaskCommand =
       readonly target: SubtaskRef;
       readonly placement: 'before' | 'after';
     }
+  | { readonly type: 'start-tracking'; readonly parent: TaskNodeRef }
+  | { readonly type: 'stop-tracking' }
   | { readonly type: 'add-comment'; readonly parent: TaskNodeRef; readonly text: string }
   | {
       readonly type: 'update-comment';
@@ -138,6 +141,8 @@ export type TaskCommand =
       readonly text: string;
     }
   | { readonly type: 'delete-comment'; readonly comment: CommentRef }
+  | { readonly type: 'delete-time-entry'; readonly entry: TimeEntryRef }
+  | ({ readonly type: 'restore-time-entry' } & TimeEntryRemovalRecovery)
   | {
       readonly type: 'edit-link';
       readonly target: TaskTextTarget;
@@ -201,6 +206,13 @@ export interface SubtaskRemovalRecovery {
   };
 }
 
+/** Everything `restore-time-entry` needs to put one removed entry line back where it was. */
+export interface TimeEntryRemovalRecovery {
+  readonly parent: TaskNodeRef;
+  readonly markdown: string;
+  readonly relativeLine: number;
+}
+
 export type TaskCommandOutcome =
   | DependencyCommandOutcome
   | DependencySubtaskCreationOutcome
@@ -208,13 +220,20 @@ export type TaskCommandOutcome =
       readonly type: 'task';
       readonly task: TaskSnapshot;
       readonly subtaskRemovalRecovery?: SubtaskRemovalRecovery;
+      readonly timeEntryRemovalRecovery?: TimeEntryRemovalRecovery;
+      /** The closed session was too short to record, so the note keeps no trace of it. */
+      readonly discardedShortEntry?: true;
     }
+  /** Every `stop-tracking` result carries this one shape, whether or not anything was running. */
+  | { readonly type: 'stopped'; readonly discardedShortEntry?: true }
   | { readonly type: 'deleted'; readonly ref: TaskRef }
   | { readonly type: 'archived'; readonly ref: TaskRef; readonly filePath: string }
   | {
       readonly type: 'recurrence';
       readonly active: TaskOccurrenceResult;
       readonly completed?: TaskOccurrenceResult;
+      /** The completed occurrence was running a session too short to record. */
+      readonly discardedShortEntry?: true;
     };
 
 export interface TaskResolutionCandidate {

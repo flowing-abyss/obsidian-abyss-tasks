@@ -28,7 +28,13 @@ function project(path: string, status: string, end: string, owners: string[] = [
     tags: [],
     statusId: statuses.find(({ name }) => name === status)?.id ?? null,
     rawStatus: statuses.some(({ name }) => name === status) ? null : status,
-    stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+    stats: {
+      total: 0,
+      done: 0,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    },
   };
 }
 

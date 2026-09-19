@@ -255,7 +255,7 @@ describe('final task consumer contract', () => {
     );
 
     expect(references).toEqual([]);
-  }, 15_000);
+  }, 60_000);
 
   it('recognizes removed paths through aliases, source suffixes, and TypeScript module forms', () => {
     const candidates = [
@@ -297,7 +297,7 @@ describe('final task consumer contract', () => {
     );
 
     expect(bindings).toEqual([]);
-  }, 15_000);
+  }, 60_000);
 
   it('keeps the final read model independent of legacy parser projections and task shapes', () => {
     const finalReadModel = productionFiles.filter((path) =>

@@ -440,6 +440,7 @@ describe('projects migration', () => {
         { id: 'name', visible: true },
         { id: 'status', visible: true },
         { id: 'progress', visible: true },
+        { id: 'tracked', visible: false },
         { id: 'start', visible: true },
         { id: 'end', visible: true },
       ],
@@ -477,6 +478,7 @@ describe('projects migration', () => {
       { id: 'property:Budget', label: 'Cost', width: 240, visible: false },
       { id: 'status', visible: true },
       { id: 'progress', visible: true },
+      { id: 'tracked', visible: false },
       { id: 'start', visible: true },
       { id: 'end', visible: true },
     ]);
@@ -485,7 +487,7 @@ describe('projects migration', () => {
     expect(projects.table['hiddenStatuses']).toEqual(['id:a']);
   });
 
-  it('restores all five curated columns and keeps Name first and visible', () => {
+  it('restores every curated column and keeps Name first and visible', () => {
     const raw: Record<string, unknown> = {
       projects: {
         statusProperty: 'status',
@@ -506,6 +508,7 @@ describe('projects migration', () => {
       { id: 'name', visible: true },
       { id: 'status', visible: true },
       { id: 'progress', visible: true },
+      { id: 'tracked', visible: false },
       { id: 'start', visible: true },
       { id: 'end', visible: true },
     ]);

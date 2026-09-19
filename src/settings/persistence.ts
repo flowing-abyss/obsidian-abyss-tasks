@@ -74,6 +74,7 @@ const SORT_FIELD_VALUES = new Set<ListViewState['sortBy']['field']>([
   'title',
   'tag',
   'status',
+  'tracked',
 ]);
 const STATUS_VALUES = new Set(TYPE_ORDER);
 const MALFORMED_VIEW_NOTICE =

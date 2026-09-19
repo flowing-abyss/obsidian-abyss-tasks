@@ -3578,7 +3578,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-task-card.is-selected,
-.abyss-dep-badge-add:hover {
+.abyss-dep-badge-add:hover,
+.abyss-time-badge-toggle:hover {
   background: var(--background-modifier-active-hover);
 }
 
@@ -3902,6 +3903,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   width: 11px;
   height: 11px;
   flex-shrink: 0;
+}
+
+/* The crown of the lucide timer takes the top of its box, which leaves the circle a pixel below
+   the digits and every other glyph in the row. The lift puts it back on their axis. */
+.abyss-task-time-badge svg {
+  transform: translateY(-1px);
 }
 
 /* Task time badge (in title row, kept for list view compatibility) */
@@ -5624,12 +5631,18 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   --abyss-dependency-blocks: var(--color-blue, var(--text-accent));
 }
 
-.abyss-dep-badge.abyss-chip {
+/*
+ * The dependency and tracking badges are siblings in the chips row, so they wear the pill those
+ * chips wear. Every one of them is a button, which the host fills with `--interactive-normal` at
+ * rest over anything a lone class asks for, and these two are spans holding buttons, so the fill is
+ * named here. Hover is the chips' own and is answered below. Nothing declares a border: the one
+ * `.abyss-chip` draws is the one they need, and a border here would take its hover accent with it.
+ */
+:is(.abyss-dep-badge, .abyss-time-badge).abyss-chip {
   height: 24px;
   padding: 0;
   gap: 0;
-  border: 0;
-  background: transparent;
+  background: var(--interactive-normal);
 }
 
 .abyss-dep-section {
@@ -5653,11 +5666,13 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   cursor: no-drop;
 }
 
-.abyss-dep-badge > button {
+:is(.abyss-dep-badge, .abyss-time-badge) > button {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  height: 24px;
+
+  /* The pill counts its border into its 24px, so a button of that height would stand over it. */
+  height: 100%;
   padding: 3px 6px;
   border: 0;
   border-radius: inherit;
@@ -5668,14 +5683,17 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-dep-badge > .abyss-dep-badge-body {
-  padding-inline: 8px 2px;
+  padding-inline: 10px 2px;
 }
 
 .abyss-dep-badge > .abyss-dep-badge-add {
-  padding-inline: 2px 8px;
+  padding-inline: 2px 10px;
 }
 
-.abyss-dep-badge:hover {
+/* The fill `.abyss-chip:hover` gives every chip in the row, said again because the rest-state fill
+   above is declared later and ties it. The accent outline comes from that same chip rule, which
+   nothing here touches. */
+:is(.abyss-dep-badge, .abyss-time-badge):hover {
   background: var(--background-modifier-hover);
 }
 
@@ -5684,7 +5702,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-muted);
 }
 
-:is(.abyss-dep-remove, .abyss-dep-search-field, .abyss-subtask-remove) svg {
+:is(.abyss-dep-remove, .abyss-dep-search-field, .abyss-subtask-remove, .abyss-time-row-remove) svg {
   width: 13px;
   height: 13px;
 }
@@ -5710,6 +5728,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-subtask-row .abyss-subtask-remove,
 .abyss-dep-row .abyss-dep-remove,
+.abyss-time-row .abyss-time-row-remove,
 .abyss-dep-add,
 .abyss-dep-search :is(.abyss-dep-search-direction, .abyss-dep-search-option) {
   background: transparent;
@@ -5769,7 +5788,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-subtask-remove,
-.abyss-dep-remove {
+.abyss-dep-remove,
+.abyss-time-row-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5787,7 +5807,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   opacity: 1;
 }
 
-.abyss-subtask-row:is(:hover, :focus-within) .abyss-subtask-remove {
+.abyss-subtask-row:is(:hover, :focus-within) .abyss-subtask-remove,
+.abyss-time-row:is(:hover, :focus-within) .abyss-time-row-remove {
   opacity: 1;
 }
 
@@ -5795,7 +5816,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-warning, var(--color-orange));
 }
 
-:is(.abyss-subtask-remove, .abyss-dep-remove):hover {
+:is(.abyss-subtask-remove, .abyss-dep-remove, .abyss-time-row-remove):hover {
   background: var(--background-modifier-hover);
 }
 
@@ -5823,14 +5844,26 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-dep-badge > button:focus-visible,
-:is(.abyss-subtask-remove, .abyss-dep-remove, .abyss-dep-add):focus-visible,
+.abyss-time-badge > button:focus-visible,
+:is(.abyss-subtask-remove, .abyss-dep-remove, .abyss-dep-add, .abyss-time-row-remove):focus-visible,
 .abyss-undo-row button:focus-visible,
-.abyss-dep-search button:focus-visible {
+.abyss-dep-search button:focus-visible,
+.abyss-time-tracking-popover button:focus-visible,
+.abyss-rail-tracking button:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
 
-.abyss-dep-search {
+/* A badge holds its two segments 4px apart in one pill, so a ring outside a segment would cross
+   its neighbour's glyph. Inside, it follows the pill. This ties the rule above, so it stays after
+   it. */
+:is(.abyss-dep-badge, .abyss-time-badge) > button:focus-visible {
+  outline-offset: -2px;
+}
+
+/* The anchored list popovers share one size and flow; only their contents differ. */
+.abyss-dep-search,
+.abyss-time-tracking-popover {
   display: flex;
   flex-direction: column;
   width: 19rem;
@@ -5842,7 +5875,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   font-size: var(--font-ui-small);
 }
 
-.abyss-dep-search > * {
+.abyss-dep-search > *,
+.abyss-time-tracking-popover > * {
   flex-shrink: 0;
 }
 
@@ -7025,6 +7059,7 @@ body.abyss-modal-open .popover.hover-popover {
   background: var(--background-primary);
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  overflow-anchor: none;
 }
 
 .abyss-project-table-host {
@@ -7628,6 +7663,12 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-progress-percent {
   color: var(--abyss-project-progress-color, var(--text-muted));
+}
+
+.abyss-project-table-tracked {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .abyss-project-table-values {
@@ -9529,6 +9570,24 @@ button.abyss-project-table-status-pill {
   margin: 12px 0;
 }
 
+.abyss-project-time {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+}
+
+.abyss-project-time-label {
+  color: var(--text-faint);
+}
+
+.abyss-project-time-value {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .abyss-project-description {
   color: var(--text-muted);
   margin: 8px 0 16px;
@@ -9909,4 +9968,518 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   inset-block-end: calc(
     env(safe-area-inset-bottom, 0px) + var(--size-4-16, 4rem) + var(--size-4-12, 3rem)
   );
+}
+
+.abyss-project-table .abyss-project-table-spacer > td {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+/* ---- Time tracking ---- */
+
+/*
+ * The tracking badge reads as one more chip in the row: the total is plain chip text, and the only
+ * control beside it is a glyph of the weight the dependency badge gives its own `+`. Its pill, its
+ * bare buttons and both of its hover states come from the shared rules beside that badge, so the
+ * two speak the same language without a copy of it here.
+ */
+.abyss-time-badge > .abyss-time-badge-body {
+  padding-inline: 10px 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Quiet until it is reached for, and the colour of the badge itself once a timer is running. */
+.abyss-time-badge > .abyss-time-badge-toggle {
+  padding-inline: 2px 10px;
+  color: var(--text-muted);
+}
+
+/* A hair under the icons in the lists, because its neighbour in the row is a `+` of plain text. */
+.abyss-time-badge > .abyss-time-badge-toggle svg {
+  width: 12px;
+  height: 12px;
+}
+
+/*
+ * A play or a pause is a shape rather than a drawing, and the Lucide outline of one reads hollow
+ * beside the rest of the plugin. Filling it with the colour it already carries is the whole fix.
+ * The check of a finished row and the menu icons stay outlines, because they are drawings.
+ */
+:is(.abyss-time-badge-toggle, .abyss-rail-tracking-toggle, .abyss-tracked-row-toggle) svg {
+  fill: currentcolor;
+}
+
+.abyss-time-badge:is(.is-tracking, .is-stale) > .abyss-time-badge-toggle,
+.abyss-time-badge > .abyss-time-badge-toggle:is(:hover, :focus-visible) {
+  color: inherit;
+}
+
+/*
+ * The tracking popovers are the shared anchored flow plus their own scroll. Both open over a
+ * compact pane, which sits one step under `--layer-popover` on purpose, so the family takes that
+ * layer rather than the `.abyss-popover-anchored` default meant for surfaces inside a pane.
+ */
+.abyss-time-tracking-popover {
+  /* Time already earned reads as a gain. The theme's own green follows the theme, and mixing it
+     toward that theme's text colour is what carries a 13px total over the contrast a bare green
+     cannot reach. */
+  --abyss-time-gain: color-mix(in srgb, var(--color-green) 60%, var(--text-normal));
+
+  z-index: var(--layer-popover, 30);
+  gap: 2px;
+  overflow-y: auto;
+}
+
+/* A dark background takes far more of the green before the mix stops reading as green. */
+.theme-dark .abyss-time-tracking-popover {
+  --abyss-time-gain: color-mix(in srgb, var(--color-green) 85%, var(--text-normal));
+}
+
+/*
+ * A day is a section, so its heading and its rows are one subtree: an undo row can be filed under
+ * the day it was removed from, and that day can stay on screen while the offer stands.
+ */
+.abyss-time-day {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The popover's own 2px gap makes this a step of 8 between a day's last row and the next heading. */
+.abyss-time-day + .abyss-time-day {
+  margin-top: 6px;
+}
+
+/* The heading takes its weight and its colour from the inspector's section labels. */
+.abyss-time-day-label {
+  padding: 2px 6px;
+}
+
+/*
+ * One grid per row with two fixed tracks, so every note starts on one axis and the arrow of every
+ * span sits on another. The first track is the width of `+23h 59m`, and its `auto` lets the one
+ * running row past an hour grow rather than clip. The remove slot is reserved at all times and laps
+ * back over its column gap, so the only dead space past the spans is the 22px the button needs.
+ */
+.abyss-time-row {
+  display: grid;
+  grid-template-columns: minmax(5.2em, auto) minmax(0, 1fr) 7.2em 14px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--radius-s);
+  color: var(--text-normal);
+}
+
+/*
+ * The undo row stands in for the session row it replaces, so both are one height: the shared 22px
+ * remove control with the sheet's 4px above and below it.
+ */
+.abyss-time-row,
+.abyss-time-tracking-popover--sessions .abyss-undo-row {
+  min-height: 30px;
+}
+
+/* A line that cannot be read has no total and no span, so the warning opens it instead. */
+.abyss-time-row.is-broken {
+  grid-template-columns: auto minmax(0, 1fr) 14px;
+}
+
+.abyss-time-row-remove {
+  margin-inline-start: -8px;
+}
+
+.abyss-time-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* The span is the reference detail under the two things the row is opened for. */
+.abyss-time-row-range {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The total opens the row and is what a reader scans down, so it carries the gain colour. */
+.abyss-time-row-duration {
+  justify-self: start;
+  color: var(--abyss-time-gain);
+  font-weight: var(--font-medium);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Every single-line text in this list gives up its end rather than its row. */
+.abyss-time-row-note,
+.abyss-time-tracking-empty {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/*
+ * The note and the sub-task a session sits under share one cell and truncate together, so a row
+ * that carries both ends in a single ellipsis rather than two competing ones. It is read after the
+ * total and the span after it, but both of them are read, so the order is carried by the colour and
+ * the weight of the total rather than by fading everything under it.
+ */
+.abyss-time-row-note,
+.abyss-time-row-range {
+  color: var(--text-muted);
+}
+
+.abyss-time-row-note > span + span {
+  margin-inline-start: 8px;
+}
+
+.abyss-time-row-warning {
+  display: inline-flex;
+  color: var(--text-warning, var(--color-orange));
+}
+
+/* A live row is one colour whole, so neither its total nor its span keeps a colour of its own. */
+.abyss-time-row:is(.is-tracking, .is-stale) .abyss-time-row-duration,
+.abyss-time-row:is(.is-tracking, .is-stale) .abyss-time-row-range {
+  color: inherit;
+}
+
+.abyss-time-tracking-empty {
+  color: var(--text-muted);
+}
+
+.abyss-time-tracking-popover--sessions .abyss-undo-row {
+  gap: 6px;
+  padding: 0 6px;
+}
+
+/*
+ * A pane too narrow for the note to say a word drops it rather than leave a stub of two characters.
+ * The row carries what it said as its tooltip at every width, so nothing is lost here, and what is
+ * left reads as a total and the span it covers. Under this width the inspector overlay is
+ * `100cqi - 48px`, which leaves the note cell below 60px. A line that could not be read keeps its
+ * text, because that text is the whole point of the row.
+ */
+@container abyss-panel-layout (max-width: 20rem) {
+  .abyss-time-row:not(.is-broken) .abyss-time-row-note {
+    display: none;
+  }
+
+  /* The span takes the room the note gave up and reads from the start of it, not the end. */
+  .abyss-time-row:not(.is-broken) {
+    grid-template-columns: minmax(5.2em, auto) minmax(0, 1fr) 14px;
+  }
+}
+
+/*
+ * The rail widget is a control with one number under it, quiet enough that the mode buttons above
+ * still lead the rail. It stays muted until a timer runs, when the whole column takes the accent,
+ * and its own bottom padding is what keeps the hairline off the Settings button below.
+ */
+.abyss-rail-tracking {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+
+  /* The two controls take the whole column as target, so the space between them is their own. */
+  gap: 0;
+  padding-bottom: 8px;
+  color: var(--text-muted);
+
+  /*
+   * A whole day on one task reads `23h 59m`, which at 11px is wider than the 48px rail even with
+   * the thin space the label is written with, so the number takes the size that fits the rail it
+   * lives on rather than one that would spill over its border. Over 1.2 that is a 12px line, which
+   * keeps every offset in the column a whole pixel.
+   */
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+/* The column above outranks the browser's own answer to the attribute the widget hides itself with. */
+.abyss-rail-tracking[hidden] {
+  display: none;
+}
+
+/*
+ * The control is not a mode button: it carries no fill and no border, only the hover background
+ * every quiet control on the rail shares, inside a hit area a pointer can still find.
+ */
+.abyss-rail-tracking .abyss-rail-tracking-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* Filled, so it comes in 2px under the rail's outlined icons to carry the same weight as them. */
+.abyss-rail-tracking-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+/*
+ * The number reads as a number first, so its button carries no chrome of its own and takes the
+ * widget's colour. It gives up the theme's input height, which would put a band of dead space
+ * between the control above it and the hairline below, and pads its 12px line out to a 36px by 24px
+ * target of its own, right under the toggle and never inside it. The column is about 5px taller for
+ * that, which is what it costs to let a pointer find the way into the tracked list.
+ */
+.abyss-rail-tracking .abyss-rail-tracking-task {
+  /* `1m` is 14px of text, far too little to aim at, so the short labels take the width instead. */
+  min-width: 36px;
+  height: auto;
+  min-height: 0;
+
+  /* No padding beside the digits: `23h 59m` fills the rail, and a gap there belongs to the rail. */
+  padding: 6px 0;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* `23h 59m` leaves under 2px beside it, so this ring goes inside the button rather than off the
+   rail. */
+.abyss-rail-tracking .abyss-rail-tracking-task:focus-visible {
+  outline-offset: -1px;
+}
+
+.abyss-rail-tracking .abyss-rail-tracking-toggle:hover,
+.abyss-rail-tracking .abyss-rail-tracking-task:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* Nothing left to resume, so the control says so by weight rather than by disappearing. */
+.abyss-rail-tracking .abyss-rail-tracking-toggle:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.abyss-rail-tracking .abyss-rail-tracking-toggle:disabled:hover {
+  background: transparent;
+}
+
+/* Clear of the number's target by 4px, which is 10px of air under the digits inside it. */
+.abyss-rail-tracking-rule {
+  width: 20px;
+  height: 1px;
+  margin-top: 4px;
+  background: var(--background-modifier-border);
+}
+
+/*
+ * Accent while a timer runs, warning once it has run long enough to look forgotten. Text takes the
+ * accent the host reads its own links in, which follows the accent setting and carries the contrast
+ * a fill does not have to; the glyph inside each of these controls takes it too, so a running badge
+ * or rail widget still reads as one object.
+ */
+.abyss-task-time-badge.is-tracking,
+.abyss-time-badge.is-tracking,
+.abyss-time-row.is-tracking,
+.abyss-rail-tracking.is-tracking {
+  color: var(--text-accent);
+}
+
+/* A calendar card takes the same accent on the rail it already draws, and carries no total. */
+.tasksCalendar .task.is-tracking {
+  border-inline-start-color: var(--interactive-accent);
+}
+
+/*
+ * A sidebar month, week or day item does the same through the outline token it already resolves
+ * from its tag, so a running timer reads the same whether the item has a tag colour or not.
+ */
+.abyss-calendar-item.is-tracking {
+  --abyss-calendar-border: var(--interactive-accent);
+
+  border-inline-start-color: var(--interactive-accent);
+}
+
+.abyss-time-badge.is-stale,
+.abyss-time-row.is-stale,
+.abyss-rail-tracking.is-stale {
+  color: var(--text-warning, var(--color-orange));
+}
+
+/*
+ * Only the inspector badge reads its state on a fill, where a light theme drops the accent to
+ * 3.35:1 and the warning to 2.32:1. Mixing each toward the text colour carries them over 4.5:1
+ * again. A dark fill is the panel itself, where both already pass, and every other total in the
+ * plugin is read on the panel too, so they all keep the plain tokens. Stale stays the later rule,
+ * because a badge that has run this long is stale before it is merely running.
+ */
+.theme-light .abyss-time-badge.is-tracking {
+  color: color-mix(in srgb, var(--text-accent) 72%, var(--text-normal));
+}
+
+.theme-light .abyss-time-badge.is-stale {
+  color: color-mix(in srgb, var(--text-warning, var(--color-orange)) 60%, var(--text-normal));
+}
+
+/*
+ * A day of the tracked list: one heading that folds it, then the tasks worked on that day. Every
+ * control here names the popover as well, so a row keeps its own flow instead of Obsidian's
+ * default button chrome, which outranks a lone class.
+ */
+.abyss-time-tracking-popover--tasks .abyss-tracked-day-header,
+.abyss-tracked-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-normal);
+  text-align: start;
+}
+
+.abyss-time-tracking-popover--tasks .abyss-tracked-day-header {
+  font-weight: var(--font-medium);
+  cursor: pointer;
+}
+
+.abyss-time-tracking-popover--tasks .abyss-tracked-day-header:hover,
+.abyss-tracked-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.abyss-tracked-day-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Both numbers report time already earned, so both read as the gain the popover is opened for. */
+.abyss-tracked-day-total,
+.abyss-tracked-row-clock {
+  flex: 0 0 auto;
+  color: var(--abyss-time-gain);
+  font-variant-numeric: tabular-nums;
+}
+
+.abyss-tracked-day-rows {
+  display: flex;
+  flex-direction: column;
+  padding-inline-start: 8px;
+}
+
+/* A folded day keeps its rows in the tree for the next tick, so the fold has to beat the flow. */
+.abyss-tracked-day-rows[hidden] {
+  display: none;
+}
+
+/* The control column is one width whether it offers a timer or only reports a finished task. */
+.abyss-tracked-row :is(.abyss-tracked-row-toggle, .abyss-tracked-row-done) {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+.abyss-tracked-row .abyss-tracked-row-toggle {
+  cursor: pointer;
+}
+
+.abyss-tracked-row .abyss-tracked-row-toggle:hover {
+  background: var(--background-modifier-active-hover);
+  color: var(--text-normal);
+}
+
+:is(.abyss-tracked-row-toggle, .abyss-tracked-row-done) svg {
+  width: 13px;
+  height: 13px;
+}
+
+/*
+ * The middle column of the row. It takes every pixel the control and the clock leave, and starts
+ * its own content at its own edge, so a day holding a sub-task with a parent name lines up with a
+ * day that holds none rather than centring the whole list around the longest row.
+ *
+ * It fills the row's own height instead of taking a theme's input height, so the whole row answers
+ * a click rather than only the line of text in the middle of it. The negative block margin takes it
+ * back out over the row's own padding, which is the rest of that height, and its content is centred
+ * inside the box that leaves, which keeps the title level with the control and the clock beside it.
+ */
+.abyss-tracked-row .abyss-tracked-row-open {
+  display: flex;
+  flex: 1 1 auto;
+  align-self: stretch;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-width: 0;
+  height: auto;
+  min-height: 0;
+  margin-block: -4px;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+/* The task is the row, so the parent name beside it gives up its width first. */
+.abyss-tracked-row-title {
+  flex: 0 1 auto;
+}
+
+.abyss-tracked-row-parent {
+  flex: 0 1 auto;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-tracked-row-title,
+.abyss-tracked-row-parent,
+.abyss-tracked-empty {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.abyss-tracked-empty {
+  color: var(--text-muted);
+}
+
+.abyss-tracked-row.is-tracking {
+  color: var(--text-accent);
+}
+
+.abyss-tracked-row.is-tracking .abyss-tracked-row-toggle,
+.abyss-tracked-row.is-tracking .abyss-tracked-row-clock {
+  color: var(--text-accent);
+}
+
+.abyss-tracked-row.is-finished .abyss-tracked-row-title {
+  color: var(--text-muted);
 }

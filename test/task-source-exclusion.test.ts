@@ -53,6 +53,42 @@ describe('TaskIndex source exclusion', () => {
     index.destroy();
   });
 
+  it('reconciles tracked queries when source-exclusion settings change', async () => {
+    const { index } = await sourceIndex({
+      'active.md': [
+        '- [ ] Tracked',
+        '  - 2026-09-19T09:00:00+00:00 → 2026-09-19T09:15:00+00:00',
+        '  - 2026-09-19T10:00:00+00:00 →',
+        '',
+      ].join('\n'),
+    });
+    try {
+      await index.initialize();
+      expect(index.activeEntries()).toHaveLength(1);
+      expect(index.fileTotal('active.md').closedMs).toBe(900_000);
+
+      await index.refreshSourceExclusion(({ filePath }) => filePath === 'active.md');
+
+      expect(index.list()).toEqual([]);
+      expect(index.activeEntries()).toEqual([]);
+      expect(index.fileTotal('active.md')).toEqual({ closedMs: 0, openStartsMs: [] });
+      expect(
+        index.entriesOverlapping(
+          Date.parse('2026-09-19T00:00:00Z'),
+          Date.parse('2026-09-20T00:00:00Z'),
+        ),
+      ).toEqual([]);
+
+      await index.refreshSourceExclusion(undefined);
+
+      expect(index.list()).toHaveLength(1);
+      expect(index.activeEntries()).toHaveLength(1);
+      expect(index.fileTotal('active.md').closedMs).toBe(900_000);
+    } finally {
+      index.destroy();
+    }
+  });
+
   it('excludes committed content and a note renamed under an excluded path', async () => {
     const { app, index } = await sourceIndex(
       { 'active.md': '- [ ] Active\n', 'archive/2026.md': '' },

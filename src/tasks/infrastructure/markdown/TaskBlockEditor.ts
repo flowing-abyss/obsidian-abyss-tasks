@@ -1,10 +1,22 @@
-import { parseCommentTimestampPrefix, type AtomDateTime } from '../../domain/commentTimestamp';
+import {
+  instantOffsetMinutes,
+  parseCommentTimestampPrefix,
+  type AtomDateTime,
+} from '../../domain/commentTimestamp';
 import {
   recurrenceOwnedSubtree,
   stripRecurrenceTerminalBlockId,
   type RecurrenceOwnedSubtree,
 } from '../../domain/recurrenceIteration';
 import type { DependencyDirection } from '../../domain/taskDependencies';
+import {
+  closeEntryLine,
+  formatOpenEntry,
+  isTimeEntryShape,
+  parseTimeEntryLine,
+  type OffsetAt,
+  type ParsedTimeEntry,
+} from '../../domain/timeEntry';
 import type { LocalDate, TaskInsertionPolicy } from '../../domain/types';
 import { createLinkedTaskLines } from './createTaskLine';
 import {
@@ -18,6 +30,8 @@ import type { TaskMarkdownCodec } from './TaskMarkdownCodec';
 const TASK_RE = /^[\s>]*- \[(.)\]/u;
 const PREFIX_RE = /^([\s>]*)/u;
 const DESCRIPTION_RE = /^[\s>]*- > /u;
+const LINE_BREAK_RE = /[\r\n]/u;
+const STAMP_OFFSET_RE = /(?:Z|[+-]\d{2}:\d{2})$/u;
 
 export function stripTerminalBlockId(line: string): string {
   return stripRecurrenceTerminalBlockId(line);
@@ -111,6 +125,25 @@ export type TaskBlockEdit =
       readonly type: 'delete-comment';
       readonly relativeLine: number;
       readonly originalMarkdown: string;
+    }
+  | { readonly type: 'add-time-entry'; readonly stamp: AtomDateTime }
+  | {
+      readonly type: 'close-time-entry';
+      readonly relativeLine: number;
+      readonly originalMarkdown: string;
+      readonly stamp: AtomDateTime;
+      readonly endMs: number;
+      readonly minimumMs: number;
+    }
+  | {
+      readonly type: 'delete-time-entry';
+      readonly relativeLine: number;
+      readonly originalMarkdown: string;
+    }
+  | {
+      readonly type: 'restore-time-entry';
+      readonly markdown: string;
+      readonly relativeLine: number;
     };
 
 export type TaskBlockEditResult =
@@ -119,10 +152,37 @@ export type TaskBlockEditResult =
       readonly content: string;
       readonly block: TaskRootBlock;
       readonly removedSubtask?: { readonly markdown: string; readonly lineEnding?: '\n' | '\r\n' };
+      readonly removedTimeEntry?: { readonly markdown: string; readonly relativeLine: number };
+      readonly discardedShortEntry?: true;
     }
   | { readonly type: 'unchanged'; readonly content: string; readonly block: TaskRootBlock }
   | { readonly type: 'conflict' }
-  | { readonly type: 'invalid'; readonly field: 'description' | 'comment' | 'subtask' };
+  | {
+      readonly type: 'invalid';
+      readonly field: 'description' | 'comment' | 'subtask' | 'time-entry';
+    };
+
+type TimeEntryEdit = Extract<
+  TaskBlockEdit,
+  {
+    readonly type:
+      'add-time-entry' | 'close-time-entry' | 'delete-time-entry' | 'restore-time-entry';
+  }
+>;
+
+/** Exhaustive by construction, so a new entry edit cannot be added without reaching its dispatch. */
+const TIME_ENTRY_EDIT_TYPES: ReadonlySet<string> = new Set(
+  Object.keys({
+    'add-time-entry': true,
+    'close-time-entry': true,
+    'delete-time-entry': true,
+    'restore-time-entry': true,
+  } satisfies Readonly<Record<TimeEntryEdit['type'], true>>),
+);
+
+function isTimeEntryEdit(edit: TaskBlockEdit): edit is TimeEntryEdit {
+  return TIME_ENTRY_EDIT_TYPES.has(edit.type);
+}
 
 function sourceLines(content: string): SourceLine[] {
   const result: SourceLine[] = [];
@@ -653,18 +713,124 @@ function addSubtask(
   if (edit.text.trim().length === 0 || /[\r\n]/u.test(edit.text)) {
     return { type: 'invalid', field: 'subtask' };
   }
-  appendChildLine(context, `- [ ] ${edit.text}`);
+  insertChildLine(context, subtaskInsertionLine(context), `- [ ] ${edit.text}`);
   return undefined;
 }
 
-function appendChildLine(context: BlockEditContext, text: string): void {
-  const prefix = `${PREFIX_RE.exec(context.parent.text)?.[1] ?? ''}  `;
+/**
+ * The prefix a new nested line takes. A node that already holds one uses that line's exact
+ * indentation and quote markers, so a note written with tabs or four spaces never ends up with
+ * one node's children at two different indents. Only a node without any nested line falls back
+ * to the parent's own prefix and two spaces.
+ */
+function nestedLinePrefix(context: BlockEditContext): string {
+  const parentIndent = indentation(context.parent.text);
+  const end = context.parentLine + context.target.lineCount;
+  for (let at = context.parentLine + 1; at < end; at++) {
+    const line = context.lines[at];
+    if (line === undefined || isTaskBlockBlankLine(line.text)) continue;
+    if (indentation(line.text) > parentIndent) return PREFIX_RE.exec(line.text)?.[1] ?? '';
+  }
+  return `${PREFIX_RE.exec(context.parent.text)?.[1] ?? ''}  `;
+}
+
+function insertChildLine(context: BlockEditContext, at: number, text: string): void {
   insertAt(
     context.lines,
-    context.parentLine + context.target.lineCount,
-    insertedLines([`${prefix}${text}`], context.ending),
+    at,
+    insertedLines([`${nestedLinePrefix(context)}${text}`], context.ending),
     context.ending,
   );
+}
+
+function blockEndLine(context: BlockEditContext): number {
+  return context.parentLine + context.target.lineCount;
+}
+
+function appendChildLine(context: BlockEditContext, text: string): void {
+  insertChildLine(context, blockEndLine(context), text);
+}
+
+/** Where a child's own block ends, by the same indentation rule that bounds a root block. */
+function childBlockEnd(context: BlockEditContext, from: number, blockEnd: number): number {
+  const child = context.lines[from]?.text ?? '';
+  const childIndent = indentation(child);
+  const childQuote = quoteDepth(child);
+  let to = from;
+  for (let at = from + 1; at < blockEnd; at++) {
+    const text = context.lines[at]?.text;
+    if (text === undefined) break;
+    if (isTaskBlockBlankLine(text)) continue;
+    if (quoteDepth(text) !== childQuote || indentation(text) <= childIndent) break;
+    to = at;
+  }
+  return to;
+}
+
+/**
+ * The node's own subtask blocks, read from the note rather than from the caller's ranges, because
+ * the bytes are what an insertion has to fit between and the linked-subtask path knows a node's
+ * line count without knowing its children. A child's block is opaque: whatever it holds belongs to
+ * the child, so the scan resumes after it rather than inside it.
+ */
+function directChildBlocks(
+  context: BlockEditContext,
+): ReadonlyArray<{ readonly from: number; readonly to: number }> {
+  const parentIndent = indentation(context.parent.text);
+  const blockEnd = blockEndLine(context);
+  const ranges: Array<{ readonly from: number; readonly to: number }> = [];
+  let at = context.parentLine + 1;
+  while (at < blockEnd) {
+    const text = context.lines[at]?.text;
+    if (text === undefined) break;
+    if (TASK_RE.test(text) && indentation(text) > parentIndent) {
+      const to = childBlockEnd(context, at, blockEnd);
+      ranges.push({ from: at, to });
+      at = to + 1;
+      continue;
+    }
+    at++;
+  }
+  return ranges;
+}
+
+/**
+ * Where the node's closing run of tracking lines starts, which is the end of its block when it has
+ * none. The run is the topmost entry of the longest suffix of the node's own lines that holds
+ * nothing but entries and blank lines, so a child block or a comment closes it and a child's
+ * entries are never read as the parent's. A blank line neither belongs to the run nor closes it: a
+ * note spaced out by hand still gets its new comment above the entries rather than after them.
+ */
+function trailingEntryRunStart(context: BlockEditContext): number {
+  const children = directChildBlocks(context);
+  const blockEnd = blockEndLine(context);
+  let start = blockEnd;
+  for (let at = blockEnd - 1; at > context.parentLine; at--) {
+    const text = context.lines[at]?.text;
+    if (text === undefined) break;
+    if (isTaskBlockBlankLine(text)) continue;
+    if (!isTimeEntryShape(text)) break;
+    if (children.some((range) => at >= range.from && at <= range.to)) break;
+    start = at;
+  }
+  return start;
+}
+
+/**
+ * Where a new subtask goes: under the last subtask the node already has, else under the last line
+ * of its description, else directly under its own line. Comments and tracking lines therefore stay
+ * below the subtasks without any existing line being moved.
+ */
+function subtaskInsertionLine(context: BlockEditContext): number {
+  const children = directChildBlocks(context);
+  const last = children[children.length - 1];
+  if (last !== undefined) return last.to + 1;
+  const blockEnd = blockEndLine(context);
+  let insertion = context.parentLine + 1;
+  for (let at = context.parentLine + 1; at < blockEnd; at++) {
+    if (DESCRIPTION_RE.test(context.lines[at]?.text ?? '')) insertion = at + 1;
+  }
+  return insertion;
 }
 
 function deleteSubtask(
@@ -754,7 +920,7 @@ function addComment(
   if (edit.text.length === 0 || /[\r\n]/u.test(edit.text)) {
     return { type: 'invalid', field: 'comment' };
   }
-  appendChildLine(context, `- ${edit.stamp}: ${edit.text}`);
+  insertChildLine(context, trailingEntryRunStart(context), `- ${edit.stamp}: ${edit.text}`);
   return undefined;
 }
 
@@ -787,9 +953,149 @@ function editExistingComment(
   return undefined;
 }
 
+/**
+ * A stamp written by the plugin always carries its offset, so the start needs no clock. Undefined
+ * when the closing stamp has no readable offset, because guessing one would misplace the start.
+ */
+function stampOffsetAt(stamp: AtomDateTime): OffsetAt | undefined {
+  const written = STAMP_OFFSET_RE.exec(stamp)?.[0];
+  const offsetMinutes = written === undefined ? undefined : instantOffsetMinutes(written);
+  return offsetMinutes === undefined ? undefined : () => offsetMinutes;
+}
+
+interface ConfirmedEntryLine {
+  readonly index: number;
+  readonly line: SourceLine;
+}
+
+/** The line a stored entry still occupies, or undefined when its evidence no longer holds. */
+function confirmedEntryLine(
+  context: BlockEditContext,
+  edit: { readonly relativeLine: number; readonly originalMarkdown: string },
+): ConfirmedEntryLine | undefined {
+  const { relativeLine } = edit;
+  const ownedByNode =
+    relativeLine > 0 &&
+    relativeLine < context.target.lineCount &&
+    !context.target.childRanges.some(
+      (range) => relativeLine >= range.from && relativeLine <= range.to,
+    );
+  if (!ownedByNode) return undefined;
+  const index = context.parentLine + relativeLine;
+  const line = context.lines[index];
+  if (line?.text !== lineWithoutCr(edit.originalMarkdown)) return undefined;
+  return { index, line };
+}
+
+function addTimeEntry(
+  context: BlockEditContext,
+  edit: Extract<TaskBlockEdit, { readonly type: 'add-time-entry' }>,
+): TaskBlockEditResult | undefined {
+  appendChildLine(context, `- ${formatOpenEntry(edit.stamp)}`);
+  return undefined;
+}
+
+function closeTimeEntry(
+  context: BlockEditContext,
+  edit: Extract<TaskBlockEdit, { readonly type: 'close-time-entry' }>,
+): TaskBlockEditResult | undefined {
+  const found = confirmedEntryLine(context, edit);
+  const offsetAt = stampOffsetAt(edit.stamp);
+  if (found === undefined || offsetAt === undefined) return { type: 'conflict' };
+  const running = parseTimeEntryLine(found.line.text, offsetAt);
+  if (running?.state !== 'running' || running.startMs === undefined) return { type: 'conflict' };
+  const elapsedMs = edit.endMs - running.startMs;
+  // A start after the end is not a short session; discarding it would destroy unexplained evidence.
+  if (elapsedMs < 0) return { type: 'conflict' };
+  if (elapsedMs < edit.minimumMs && discardable(running)) {
+    return discardShortEntry(context, found.index);
+  }
+  const closed = closeEntryLine(found.line.text, edit.stamp);
+  if (closed === undefined) return { type: 'conflict' };
+  found.line.text = closed;
+  return undefined;
+}
+
+/** A line the reader wrote a note on is never thrown away, however short its session was. */
+function discardable(running: ParsedTimeEntry): boolean {
+  return running.tail === undefined || running.tail.length === 0;
+}
+
+/** A session too short to be worth recording leaves no trace in the note. */
+function discardShortEntry(context: BlockEditContext, entryLine: number): TaskBlockEditResult {
+  context.lines.splice(entryLine, 1);
+  const result = editedResult(context);
+  return result.type === 'changed' ? { ...result, discardedShortEntry: true } : result;
+}
+
+function deleteTimeEntry(
+  context: BlockEditContext,
+  edit: Extract<TaskBlockEdit, { readonly type: 'delete-time-entry' }>,
+): TaskBlockEditResult | undefined {
+  const found = confirmedEntryLine(context, edit);
+  if (found === undefined || !isTimeEntryShape(found.line.text)) return { type: 'conflict' };
+  const markdown = found.line.text;
+  context.lines.splice(found.index, 1);
+  const result = editedResult(context);
+  return result.type === 'changed'
+    ? { ...result, removedTimeEntry: { markdown, relativeLine: edit.relativeLine } }
+    : result;
+}
+
+function restoreTimeEntry(
+  context: BlockEditContext,
+  edit: Extract<TaskBlockEdit, { readonly type: 'restore-time-entry' }>,
+): TaskBlockEditResult | undefined {
+  if (LINE_BREAK_RE.test(edit.markdown) || !isTimeEntryShape(edit.markdown)) {
+    return { type: 'invalid', field: 'time-entry' };
+  }
+  insertAt(
+    context.lines,
+    restoredEntryLine(context, edit.relativeLine),
+    insertedLines([edit.markdown], context.ending),
+    context.ending,
+  );
+  return undefined;
+}
+
+/** A remembered position the node no longer owns falls back to the end of its block. */
+function restoredEntryLine(context: BlockEditContext, relativeLine: number): number {
+  const appended = context.parentLine + context.target.lineCount;
+  if (!Number.isSafeInteger(relativeLine) || relativeLine <= 0) return appended;
+  if (relativeLine > context.target.lineCount) return appended;
+  return context.target.childRanges.some(
+    (range) => relativeLine > range.from && relativeLine <= range.to,
+  )
+    ? appended
+    : context.parentLine + relativeLine;
+}
+
+function editTimeEntry(
+  context: BlockEditContext,
+  edit: TimeEntryEdit,
+): TaskBlockEditResult | undefined {
+  switch (edit.type) {
+    case 'add-time-entry':
+      return addTimeEntry(context, edit);
+    case 'close-time-entry':
+      return closeTimeEntry(context, edit);
+    case 'delete-time-entry':
+      return deleteTimeEntry(context, edit);
+    case 'restore-time-entry':
+      return restoreTimeEntry(context, edit);
+  }
+}
+
 function applyEdit(
   context: BlockEditContext,
   edit: TaskBlockEdit,
+): TaskBlockEditResult | undefined {
+  return isTimeEntryEdit(edit) ? editTimeEntry(context, edit) : editTaskContent(context, edit);
+}
+
+function editTaskContent(
+  context: BlockEditContext,
+  edit: Exclude<TaskBlockEdit, TimeEntryEdit>,
 ): TaskBlockEditResult | undefined {
   switch (edit.type) {
     case 'set-description':
@@ -976,8 +1282,9 @@ export class TaskBlockEditor {
     const linked = createLinkedTaskLines(codec, context.parent.text, edit);
     if (linked === undefined) return { type: 'invalid', field: 'subtask' };
     context.parent.text = linked.current;
-    const createdChildRelativeLine = edit.current.relativeLine + edit.current.lineCount;
-    appendChildLine(context, linked.child);
+    const insertion = subtaskInsertionLine(context);
+    const createdChildRelativeLine = insertion - block.line;
+    insertChildLine(context, insertion, linked.child);
     const result = editedResult(context);
     return result.type === 'changed'
       ? { ...result, createdChildRelativeLine }

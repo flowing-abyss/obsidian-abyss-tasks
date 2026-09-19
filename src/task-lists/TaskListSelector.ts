@@ -7,6 +7,8 @@ import {
 } from '../tags/effectiveTagGroups';
 import {
   normalizeTaskTagInput,
+  subtreeTotal,
+  totalMs,
   type LocalDate,
   type SubtaskSnapshot,
   type TaskSnapshot,
@@ -19,7 +21,16 @@ export interface TaskListSelectionInput {
   readonly viewState: ListViewState;
   readonly settings: CalendarSettings;
   readonly today: LocalDate;
+  /** The one instant a running timer is read against, so every row of a pass agrees on it. */
+  readonly nowMs: number;
   readonly textQuery?: string;
+}
+
+/** What an ordering needs beyond the tasks themselves, read once rather than per comparison. */
+interface TaskOrder {
+  readonly input: TaskListSelectionInput;
+  /** Tracked totals by task, so a sort walks each subtree once instead of on every comparison. */
+  readonly trackedMs: ReadonlyMap<TaskSnapshot, number>;
 }
 
 function dateOf(task: TaskSnapshot): string | undefined {
@@ -137,7 +148,8 @@ function compareCreated(left: TaskSnapshot, right: TaskSnapshot): number {
   return a.localeCompare(b);
 }
 
-function compare(left: TaskSnapshot, right: TaskSnapshot, input: TaskListSelectionInput): number {
+function compare(left: TaskSnapshot, right: TaskSnapshot, order: TaskOrder): number {
+  const { input } = order;
   const field = input.viewState.sortBy.field;
   if (field === 'date') {
     const dateOrder = compareOptional(dateOf(left), dateOf(right));
@@ -146,19 +158,38 @@ function compare(left: TaskSnapshot, right: TaskSnapshot, input: TaskListSelecti
   if (field === 'priority') return left.priority.localeCompare(right.priority);
   if (field === 'title') return left.title.localeCompare(right.title);
   if (field === 'tag') return compareOptional(left.tags[0], right.tags[0]);
-  const order = input.settings.taskStatuses.map((status) => status.symbol);
+  if (field === 'tracked') {
+    return (order.trackedMs.get(left) ?? 0) - (order.trackedMs.get(right) ?? 0);
+  }
+  const symbols = input.settings.taskStatuses.map((status) => status.symbol);
   const statusOrder = (symbol: string): number => {
-    const index = order.indexOf(symbol === 'X' ? 'x' : symbol);
+    const index = symbols.indexOf(symbol === 'X' ? 'x' : symbol);
     return index < 0 ? Number.MAX_SAFE_INTEGER : index;
   };
   return statusOrder(left.statusSymbol) - statusOrder(right.statusSymbol);
+}
+
+const NO_TRACKED_TOTALS: ReadonlyMap<TaskSnapshot, number> = new Map();
+
+/**
+ * Time on a task and everything under it, read once per task. A comparison is asked for it
+ * O(n log n) times, so reading it here keeps a long list to one subtree walk per task and keeps
+ * every row of the same pass on the one instant the caller supplied.
+ */
+function trackedTotals(
+  tasks: readonly TaskSnapshot[],
+  nowMs: number,
+): ReadonlyMap<TaskSnapshot, number> {
+  const totals = new Map<TaskSnapshot, number>();
+  for (const task of tasks) totals.set(task, totalMs(subtreeTotal(task), nowMs));
+  return totals;
 }
 
 export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnapshot[] {
   const allowed = input.viewState.statusGroups;
   const query = input.textQuery?.toLowerCase() ?? '';
   const groups = resolveEffectiveTagGroups(input.settings, input.tasks.flatMap(taskTreeTags));
-  return input.tasks
+  const matching = input.tasks
     .filter((task) => selected(task, { ...input, groups }))
     .filter(
       (task) =>
@@ -173,13 +204,19 @@ export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnap
         query.length === 0 ||
         task.title.toLowerCase().includes(query) ||
         task.source.originalMarkdown.toLowerCase().includes(query),
-    )
-    .slice()
-    .sort((left, right) => {
-      const explicit = compare(left, right, input);
-      if (explicit !== 0) return input.viewState.sortBy.dir === 'asc' ? explicit : -explicit;
-      return compareCreated(left, right);
-    });
+    );
+  const order: TaskOrder = {
+    input,
+    trackedMs:
+      input.viewState.sortBy.field === 'tracked'
+        ? trackedTotals(matching, input.nowMs)
+        : NO_TRACKED_TOTALS,
+  };
+  return matching.sort((left, right) => {
+    const explicit = compare(left, right, order);
+    if (explicit !== 0) return input.viewState.sortBy.dir === 'asc' ? explicit : -explicit;
+    return compareCreated(left, right);
+  });
 }
 
 export function searchTaskList(

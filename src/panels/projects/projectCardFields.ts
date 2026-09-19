@@ -117,7 +117,8 @@ function selectableFields(
   fields: readonly ProjectFieldCatalogItem[],
 ): readonly ProjectFieldCatalogItem[] {
   return fields.filter(
-    ({ id, type }) => type !== 'name' && id !== 'description' && type !== 'progress',
+    ({ id, type }) =>
+      type !== 'name' && id !== 'description' && type !== 'progress' && type !== 'tracked',
   );
 }
 

@@ -137,7 +137,13 @@ function project(over: Partial<Project>): Project {
     tags: [],
     statusId: active.id,
     rawStatus: null,
-    stats: { total: 10, done: 6, cancelled: 0, inProgress: 0 },
+    stats: {
+      total: 10,
+      done: 6,
+      cancelled: 0,
+      inProgress: 0,
+      tracked: { closedMs: 0, openStartsMs: [] },
+    },
     ...over,
   };
 }
@@ -282,6 +288,412 @@ function viewOption(row: HTMLElement, label: string): HTMLButtonElement {
 }
 
 describe('ProjectsTableView', () => {
+  function largeTable(grouped = false, overrides: Parameters<typeof mount>[1] = {}) {
+    const fixture = mount([], overrides);
+    fixture.config.projects.table.groupBy = grouped ? 'status' : 'none';
+    fixture.config.projects.table.sortBy = { field: 'name', dir: 'asc' };
+    const scroll = expectDefined(
+      fixture.host.querySelector<HTMLElement>('.abyss-project-table-scroll'),
+    );
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 340 });
+    Object.defineProperty(scroll, 'clientWidth', { configurable: true, value: 1000 });
+    const projects = Array.from({ length: 500 }, (_, index) =>
+      project({
+        path: `Projects/P${String(index).padStart(4, '0')}.md`,
+        name: `P${String(index).padStart(4, '0')}`,
+      }),
+    );
+    fixture.view.update(projects);
+    return { ...fixture, scroll, projects };
+  }
+
+  it('fills a zero-size viewport on owner resize and does no work after destroy', () => {
+    let resize: (() => void) | undefined;
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resize = () => {
+          callback([], this as unknown as ResizeObserver);
+        };
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver);
+    const { host, view, projects, scroll } = largeTable();
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 0 });
+    view.update(projects);
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 1700 });
+    resize?.();
+    expect(host.querySelector('[data-project-path="Projects/P0049.md"]')).not.toBeNull();
+    const table = expectDefined(host.querySelector('table'));
+    destroyMountedView(view);
+    const html = table.outerHTML;
+    scroll.scrollTop = 10000;
+    scroll.dispatchEvent(new Event('scroll'));
+    resize?.();
+    expect(table.outerHTML).toBe(html);
+    expect(table.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
+  });
+
+  it('remeasures the viewport when theme changes resize the table content', () => {
+    const observers: Array<{ targets: Element[]; trigger(): void }> = [];
+    class TestResizeObserver {
+      readonly targets: Element[] = [];
+      constructor(private readonly callback: ResizeObserverCallback) {
+        observers.push(this);
+      }
+      observe(target: Element): void {
+        this.targets.push(target);
+      }
+      disconnect(): void {}
+      trigger(): void {
+        this.callback([], this as unknown as ResizeObserver);
+      }
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver);
+    const { host } = largeTable();
+    const table = expectDefined(host.querySelector('table'));
+    const original = host.querySelectorAll('.abyss-project-table-row').length;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return rectangle(0, 0, 1000, this.classList.contains('abyss-project-table-row') ? 58 : 0);
+    });
+    for (const observer of observers) {
+      if (observer.targets.includes(table)) observer.trigger();
+    }
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(original);
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).not.toBeNull();
+    expect(host.querySelector('[data-project-path="Projects/P0005.md"]')).not.toBeNull();
+  });
+
+  it('renders a bounded window and reveals later project rows on scroll', () => {
+    const { host, scroll } = largeTable();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).not.toBeNull();
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('[data-project-path="Projects/P0100.md"]')).not.toBeNull();
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).toBeNull();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    scroll.scrollTop = 999999;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('[data-project-path="Projects/P0499.md"]')).not.toBeNull();
+    expect(scroll.scrollTop).toBeLessThan(18000);
+  });
+
+  it('clamps the viewport immediately when filtering from 500 projects to two', () => {
+    const { host, scroll, view, projects } = largeTable();
+    scroll.scrollTop = 15000;
+    scroll.dispatchEvent(new Event('scroll'));
+    view.update(projects.slice(0, 2));
+    expect(scroll.scrollTop).toBe(0);
+    expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(2);
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).not.toBeNull();
+  });
+
+  it('expands a large group into a bounded viewport and fills the next group on collapse', async () => {
+    const { host, scroll, view, projects } = largeTable(true);
+    view.update([...projects, project({ path: 'Projects/Z.md', name: 'Z', statusId: null })]);
+    const toggle = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    );
+    toggle.click();
+    await flushMicrotasks();
+    toggle.click();
+    await flushMicrotasks();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    scroll.scrollTop = 15000;
+    scroll.dispatchEvent(new Event('scroll'));
+    // Retain the original control to exercise the same collapse action while its header is offscreen.
+    toggle.click();
+    await flushMicrotasks();
+    expect(scroll.scrollTop).toBe(0);
+    expect(host.querySelector('[data-project-path="Projects/Z.md"]')).not.toBeNull();
+    expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(1);
+  });
+
+  it('preserves quick-capture project context after the selected row leaves the viewport', () => {
+    const { host, view, scroll, projects } = largeTable();
+    expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/P0000.md"] [data-column-id="name"]',
+      ),
+    ).click();
+    expect(view.selectedProjectPath()).toBe('Projects/P0000.md');
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).toBeNull();
+    expect(view.selectedProjectPath()).toBe('Projects/P0000.md');
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    view.update(projects.slice(1));
+    expect(view.selectedProjectPath()).toBeUndefined();
+  });
+
+  it('uses the offscreen group focus for quick-capture project context until collapse', async () => {
+    const { host, view } = largeTable(true);
+    const first = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-name-cell'));
+    first.focus();
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+    expect(host.querySelector('[data-project-path="Projects/P0499.md"]')).toBeNull();
+    expect(view.selectedProjectPath()).toBe('Projects/P0499.md');
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    ).click();
+    await flushMicrotasks();
+    expect(view.selectedProjectPath()).toBeUndefined();
+  });
+
+  it('copies the complete large group including offscreen cells without mounting them', () => {
+    const { host } = largeTable(true);
+    const cell = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-name-cell'));
+    cell.focus();
+    cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+    const data = transfer();
+    cell.dispatchEvent(clipboardEvent('copy', data));
+    const lines = data.getData('text/plain').split('\n');
+    expect(lines).toHaveLength(500);
+    expect(lines[0]?.split('\t')[0]).toBe('P0000');
+    expect(lines[499]?.split('\t')[0]).toBe('P0499');
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+  });
+
+  it('reveals offscreen logical cells during keyboard navigation', () => {
+    const { host, scroll } = largeTable();
+    expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-name-cell')).focus();
+    for (let index = 0; index < 40; index++) {
+      host.ownerDocument.activeElement?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+      );
+    }
+    expect(
+      host.ownerDocument.activeElement?.closest<HTMLElement>('tr')?.dataset['projectPath'],
+    ).toBe('Projects/P0040.md');
+    expect(scroll.scrollTop).toBeGreaterThan(0);
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+  });
+
+  it('keeps keyboard focus through asynchronous scroll reconciliation with a leading spacer', async () => {
+    const { host, scroll } = largeTable();
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/P0100.md"] [data-column-id="name"]',
+      ),
+    ).focus();
+    const ownerWindow = expectDefined(host.ownerDocument.defaultView);
+    for (const path of ['Projects/P0101.md', 'Projects/P0102.md']) {
+      host.ownerDocument.activeElement?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+      );
+      const focused = host.ownerDocument.activeElement;
+      expect(focused?.closest<HTMLElement>('tr')?.dataset['projectPath']).toBe(path);
+      await new Promise<void>((resolve) => {
+        ownerWindow.setTimeout(() => {
+          scroll.dispatchEvent(new Event('scroll'));
+          resolve();
+        }, 0);
+      });
+      expect(host.ownerDocument.activeElement).toBe(focused);
+    }
+  });
+
+  it('keeps the mounted buffer unchanged until scrolling exposes a boundary row', () => {
+    const { host, scroll } = largeTable();
+    const body = expectDefined(host.querySelector('tbody'));
+    const initial = Array.from(host.querySelectorAll('.abyss-project-table-row'));
+    const observer = new MutationObserver(() => {});
+    observer.observe(body, { attributes: true, childList: true, subtree: true });
+    scroll.scrollTop = 100;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(Array.from(host.querySelectorAll('.abyss-project-table-row'))).toEqual(initial);
+    expect(observer.takeRecords()).toHaveLength(0);
+    scroll.scrollTop = 171;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('[data-project-path="Projects/P0005.md"]')).not.toBeNull();
+    expect(host.querySelector('[data-project-path="Projects/P0015.md"]')).not.toBeNull();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    observer.disconnect();
+  });
+
+  it('does not mutate an unchanged viewport window or its spacer styles', () => {
+    const { host, scroll } = largeTable();
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    const observer = new MutationObserver(() => {});
+    observer.observe(expectDefined(host.querySelector('tbody')), {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(observer.takeRecords()).toHaveLength(0);
+    observer.disconnect();
+  });
+
+  it('keeps a noninitial editor focused without relocating its pinned row as gaps change', async () => {
+    const { host, scroll, saveProperty } = largeTable();
+    scroll.scrollTop = 4250;
+    scroll.dispatchEvent(new Event('scroll'));
+    const row = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/P0125.md"]'),
+    );
+    const cell = expectDefined(row.querySelector<HTMLElement>('[data-column-id="start"]'));
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('input'));
+    input.value = '2026-10-10';
+    expect(host.ownerDocument.activeElement).toBe(input);
+    const observer = new MutationObserver(() => {});
+    observer.observe(expectDefined(row.parentElement), { childList: true });
+    for (const top of [10200, 3400, 10200]) {
+      scroll.scrollTop = top;
+      scroll.dispatchEvent(new Event('scroll'));
+      expect(
+        observer.takeRecords().some((record) => Array.from(record.removedNodes).includes(row)),
+      ).toBe(false);
+      expect(host.ownerDocument.activeElement).toBe(input);
+      expect(input.value).toBe('2026-10-10');
+      await flushMicrotasks();
+      expect(saveProperty).not.toHaveBeenCalled();
+    }
+    observer.disconnect();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flushMicrotasks();
+    expect(saveProperty).not.toHaveBeenCalled();
+  });
+
+  it('retains an active editor node while updating the viewport', () => {
+    const { host, scroll } = largeTable();
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('[data-column-id="start"].abyss-project-table-cell'),
+    );
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const editor = expectDefined(host.querySelector('.abyss-project-cell-editor-host'));
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('.abyss-project-cell-editor-host')).toBe(editor);
+    expect(cell.isConnected).toBe(true);
+    expect(host.querySelector('[data-project-path="Projects/P0100.md"]')).not.toBeNull();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+  });
+
+  it('retains the native drag source node outside the viewport', () => {
+    const { host, scroll } = largeTable(true);
+    const row = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-row'));
+    const data = transfer();
+    row.dispatchEvent(dragEvent('dragstart', data));
+    expect(row.classList.contains('is-dragging')).toBe(true);
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).toBe(row);
+    expect(host.querySelector('[data-project-path="Projects/P0100.md"]')).not.toBeNull();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    row.dispatchEvent(dragEvent('dragend', data));
+  });
+
+  it('pastes and clears all 500 offscreen cells through guarded bulk commands', async () => {
+    const applyEdits = vi.fn(async (_changes: readonly ProjectCellChange[]) => ({
+      applied: [],
+      failed: [],
+    }));
+    const { host, scroll, projects } = largeTable(false, { applyEdits });
+    const first = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    first.click();
+    scroll.scrollTop = 999999;
+    scroll.dispatchEvent(new Event('scroll'));
+    const last = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/P0499.md"] [data-column-id="start"]',
+      ),
+    );
+    last.dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true }));
+    last.dispatchEvent(clipboardEvent('paste', transfer({ 'text/plain': '2026-10-10' })));
+    await flushMicrotasks();
+    const pasted = expectDefined(applyEdits.mock.calls[0]?.[0]);
+    expect(pasted).toHaveLength(500);
+    expect(pasted.map(({ path }) => path)).toEqual(projects.map(({ path }) => path));
+    expect(
+      pasted.every(
+        ({ value, expectedValue, expectedExists, sourceProperty }) =>
+          value === '2026-10-10' &&
+          expectedValue === '2026-09-01' &&
+          expectedExists === true &&
+          sourceProperty === 'start',
+      ),
+    ).toBe(true);
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+    last.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    await flushMicrotasks();
+    const cleared = expectDefined(applyEdits.mock.calls[1]?.[0]);
+    expect(cleared).toHaveLength(500);
+    expect(cleared.map(({ path }) => path)).toEqual(projects.map(({ path }) => path));
+    expect(cleared.every(({ value }) => value === undefined)).toBe(true);
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+  });
+
+  it('reveals an offscreen created project through the existing composer', async () => {
+    let finishCreate: ((path: string) => void) | undefined;
+    const createProject = () =>
+      new Promise<string>((resolve) => {
+        finishCreate = resolve;
+      });
+    const { host, view, projects, scroll } = largeTable(false, { createProject });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+    const input = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    input.value = 'Zebra';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    view.update([...projects, project({ path: 'Projects/Zebra.md', name: 'Zebra' })]);
+    finishCreate?.('Projects/Zebra.md');
+    await flushMicrotasks();
+    const row = expectDefined(host.querySelector('[data-project-path="Projects/Zebra.md"]'));
+    expect(row.classList.contains('is-just-created')).toBe(true);
+    expect(host.ownerDocument.activeElement?.closest('tr')).toBe(row);
+    expect(scroll.scrollTop).toBeGreaterThan(15000);
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+  });
+
+  it('keeps distant repeated project occurrences distinct in offscreen group selection', () => {
+    const { host, view, projects, scroll, config } = largeTable(false, {
+      catalog: catalog([{ name: 'Owners', type: 'list' }]),
+    });
+    config.projects.table.groupBy = 'property:Owners';
+    view.update(
+      projects.map((entry) => ({
+        ...entry,
+        frontmatter: { ...entry.frontmatter, Owners: ['Alpha', 'Beta'] },
+      })),
+    );
+    const first = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/P0000.md"]'),
+    );
+    const firstId = first.dataset['occurrenceId'];
+    scroll.scrollTop = 17064;
+    scroll.dispatchEvent(new Event('scroll'));
+    const repeated = expectDefined(
+      host.querySelector<HTMLElement>('[data-project-path="Projects/P0000.md"]'),
+    );
+    expect(repeated.dataset['occurrenceId']).not.toBe(firstId);
+    const cell = expectDefined(repeated.querySelector<HTMLElement>('[data-column-id="name"]'));
+    cell.focus();
+    cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+    const data = transfer();
+    cell.dispatchEvent(clipboardEvent('copy', data));
+    const lines = data.getData('text/plain').split('\n');
+    expect(lines).toHaveLength(500);
+    expect(lines.map((line) => line.split('\t')[0])).toEqual(projects.map(({ name }) => name));
+    scroll.scrollTop = 0;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('[data-project-path="Projects/P0000.md"] .is-selected')).toBeNull();
+    expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
+  });
+
   it('commits a Timeline keyboard endpoint edit as one guarded batch and one history group', async () => {
     const config = settings();
     config.projects.overviewView = 'timeline';
@@ -1068,6 +1480,36 @@ describe('ProjectsTableView', () => {
     expect(applyEdits).toHaveBeenCalledOnce();
   });
 
+  it('repaints a running Time cell once the render clock has advanced', () => {
+    vi.useFakeTimers();
+    const startMs = Date.UTC(2026, 8, 18, 9, 0);
+    vi.setSystemTime(startMs + 80 * 60_000);
+    const config = settings();
+    const tracked = expectDefined(config.projects.table.columns.find(({ id }) => id === 'tracked'));
+    tracked.visible = true;
+    const running = project({
+      stats: {
+        total: 1,
+        done: 0,
+        cancelled: 0,
+        inProgress: 0,
+        tracked: { closedMs: 0, openStartsMs: [startMs] },
+      },
+    });
+    const { host, view } = mount([running], { settings: config });
+    const trackedText = (): string =>
+      expectDefined(
+        host.querySelector<HTMLElement>('.abyss-project-table-row [data-column-id="tracked"]'),
+      ).textContent;
+
+    expect(trackedText()).toBe('1h 20m');
+
+    vi.setSystemTime(startMs + 81 * 60_000);
+    view.update([running]);
+
+    expect(trackedText()).toBe('1h 21m');
+  });
+
   it('keeps a held Start resize visible and reorders its focused row on the receipt', async () => {
     const config = settings();
     config.projects.overviewView = 'timeline';
@@ -1299,7 +1741,13 @@ describe('ProjectsTableView', () => {
     const { host } = mount(
       [
         project({
-          stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 0,
+            done: 0,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
         project({ path: 'Projects/B.md', name: 'B' }),
       ],
@@ -2346,7 +2794,13 @@ describe('ProjectsTableView', () => {
         project({
           path: `Projects/${name}.md`,
           name: String(name),
-          stats: { total: 10, done: Number(done), cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 10,
+            done: Number(done),
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
       ),
     );
@@ -2809,6 +3263,7 @@ describe('ProjectsTableView', () => {
       ['name', 260],
       ['status', 150],
       ['progress', 190],
+      ['tracked', undefined],
       ['start', 290],
       ['end', 150],
     ]);
@@ -2833,6 +3288,67 @@ describe('ProjectsTableView', () => {
     );
     expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
     expect(saveSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the live column resize preview when the table resize observer fires', async () => {
+    const resizeObservers: Array<{ trigger(): void }> = [];
+    class TestResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {
+        resizeObservers.push(this);
+      }
+      observe(): void {}
+      disconnect(): void {}
+      trigger(): void {
+        this.callback([], this as unknown as ResizeObserver);
+      }
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver);
+    const { host, config } = mount([project({})]);
+    const renderedWidths: Record<string, number> = {
+      name: 400,
+      status: 250,
+      progress: 300,
+      start: 250,
+      end: 250,
+    };
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const columnId = this.dataset['columnId'];
+      const width = columnId === undefined ? 0 : (renderedWidths[columnId] ?? 0);
+      return { width } as DOMRect;
+    });
+    const startHeader = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-header-cell[data-column-id="start"]'),
+    );
+    const startCol = expectDefined(
+      host.querySelector<HTMLTableColElement>('col[data-column-id="start"]'),
+    );
+    const table = expectDefined(host.querySelector<HTMLTableElement>('.abyss-project-table'));
+    const savedWidth = startCol.style.width;
+    const savedTableWidth = table.style.width;
+    const triggerResize = (): void => {
+      for (const observer of resizeObservers) observer.trigger();
+    };
+
+    expectDefined(
+      startHeader.querySelector<HTMLElement>('.abyss-project-column-resize'),
+    ).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100 }));
+    startHeader.ownerDocument.dispatchEvent(new PointerEvent('pointermove', { clientX: 140 }));
+    triggerResize();
+
+    expect(startCol.style.width).toBe('290px');
+    expect(table.style.width).toBe('1040px');
+
+    startHeader.ownerDocument.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    triggerResize();
+    await flushMicrotasks();
+
+    expect(startCol.style.width).toBe(savedWidth);
+    expect(table.style.width).toBe(savedTableWidth);
+    expect(config.projects.table.columns.find(({ id }) => id === 'start')?.width).toBeUndefined();
   });
 
   it('reads the viewport and applies widths before attaching reconciled rows', () => {
@@ -3184,11 +3700,11 @@ describe('ProjectsTableView', () => {
     const order = (): string[] => config.projects.table.columns.map(({ id }) => id);
 
     drag('status', 'progress', 75);
-    expect(order()).toEqual(['name', 'progress', 'status', 'start', 'end']);
+    expect(order()).toEqual(['name', 'progress', 'status', 'tracked', 'start', 'end']);
     drag('progress', 'end', 75);
-    expect(order()).toEqual(['name', 'status', 'start', 'end', 'progress']);
+    expect(order()).toEqual(['name', 'status', 'tracked', 'start', 'end', 'progress']);
     drag('progress', 'status', 25);
-    expect(order()).toEqual(['name', 'progress', 'status', 'start', 'end']);
+    expect(order()).toEqual(['name', 'progress', 'status', 'tracked', 'start', 'end']);
 
     expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
     expect(saveSettings).toHaveBeenCalledTimes(3);
@@ -3289,6 +3805,7 @@ describe('ProjectsTableView', () => {
       'name',
       'progress',
       'status',
+      'tracked',
       'start',
       'end',
     ]);
@@ -5720,15 +6237,33 @@ describe('ProjectsTableView', () => {
       [
         project({
           path: 'Projects/A.md',
-          stats: { total: 10, done: 8, cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 10,
+            done: 8,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
         project({
           path: 'Projects/B.md',
-          stats: { total: 10, done: 2, cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 10,
+            done: 2,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
         project({
           path: 'Projects/C.md',
-          stats: { total: 10, done: 2, cancelled: 0, inProgress: 0 },
+          stats: {
+            total: 10,
+            done: 2,
+            cancelled: 0,
+            inProgress: 0,
+            tracked: { closedMs: 0, openStartsMs: [] },
+          },
         }),
       ],
       { settings: config },

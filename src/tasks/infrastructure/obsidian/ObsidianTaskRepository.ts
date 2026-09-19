@@ -40,6 +40,7 @@ import {
   taskNodeAtSourcePath as nodeSnapshot,
   rebaseTaskNode as rebaseNode,
   taskNodeRootRef as rootRefOf,
+  taskMutationNodeRef,
 } from '../../domain/taskCommandTargets';
 import type {
   CommentRef,
@@ -51,6 +52,7 @@ import type {
   TaskNodeRef,
   TaskRef,
   TaskSnapshot,
+  TimeEntryRef,
 } from '../../domain/types';
 import { sameTaskNodeRef } from '../../domain/types';
 import {
@@ -75,6 +77,10 @@ import type { TaskBlockEdit, TaskBlockTarget, TaskRootBlock } from '../markdown/
 import { type TaskBlockEditor } from '../markdown/TaskBlockEditor';
 import { type TaskLocator } from '../markdown/TaskLocator';
 import { type TaskMarkdownCodec } from '../markdown/TaskMarkdownCodec';
+import {
+  recoverTimeEntryRemoval,
+  withTimeEntryRemovalRecovery,
+} from '../markdown/timeEntryRemovalRecovery';
 import { preparedRevisionResult } from '../preparedRevisionResult';
 import {
   prepareTaskEditBatch,
@@ -146,16 +152,55 @@ type StructuralTaskEditCommand = Extract<
       | 'reorder-subtask'
       | 'add-comment'
       | 'update-comment'
-      | 'delete-comment';
+      | 'delete-comment'
+      | 'add-time-entry'
+      | 'close-time-entry'
+      | 'delete-time-entry'
+      | 'restore-time-entry';
   }
 >;
+
+type TimeEntryTaskEditCommand = Extract<
+  StructuralTaskEditCommand,
+  {
+    readonly type:
+      'add-time-entry' | 'close-time-entry' | 'delete-time-entry' | 'restore-time-entry';
+  }
+>;
+
+/** Exhaustive by construction, so a new entry command cannot miss the entry block edits. */
+const TIME_ENTRY_COMMAND_TYPES: ReadonlySet<string> = new Set(
+  Object.keys({
+    'add-time-entry': true,
+    'close-time-entry': true,
+    'delete-time-entry': true,
+    'restore-time-entry': true,
+  } satisfies Readonly<Record<TimeEntryTaskEditCommand['type'], true>>),
+);
+
+/** Exhaustive by construction, so a new structural command cannot miss the block-edit dispatch. */
+const STRUCTURAL_COMMAND_TYPES: ReadonlySet<string> = new Set(
+  Object.keys({
+    'set-description': true,
+    'add-subtask': true,
+    'restore-subtask': true,
+    'delete-subtask': true,
+    'reorder-subtask': true,
+    'add-comment': true,
+    'update-comment': true,
+    'delete-comment': true,
+    'add-time-entry': true,
+    'close-time-entry': true,
+    'delete-time-entry': true,
+    'restore-time-entry': true,
+  } satisfies Readonly<Record<StructuralTaskEditCommand['type'], true>>),
+);
 
 function nodeTargetOf(command: TaskEditCommand): PlanningTarget | undefined {
   if ('ref' in command) return undefined;
   if (command.type === 'delete-subtask' || command.type === 'reorder-subtask')
     return command.subtask.parent;
-  const target = mutationTarget(command);
-  return target.type === 'comment' ? target.ref.parent : target;
+  return taskMutationNodeRef(mutationTarget(command));
 }
 
 function legacyLine(line: string): string {
@@ -427,16 +472,7 @@ function blockTarget(
 }
 
 function isStructuralCommand(command: TaskEditCommand): command is StructuralTaskEditCommand {
-  return (
-    command.type === 'set-description' ||
-    command.type === 'add-subtask' ||
-    command.type === 'restore-subtask' ||
-    command.type === 'delete-subtask' ||
-    command.type === 'reorder-subtask' ||
-    command.type === 'add-comment' ||
-    command.type === 'update-comment' ||
-    command.type === 'delete-comment'
-  );
+  return STRUCTURAL_COMMAND_TYPES.has(command.type);
 }
 
 function ownsComment(node: TaskSnapshot | SubtaskSnapshot, comment: CommentRef): boolean {
@@ -444,6 +480,14 @@ function ownsComment(node: TaskSnapshot | SubtaskSnapshot, comment: CommentRef):
     (candidate) =>
       candidate.ref.relativeLine === comment.relativeLine &&
       legacyLine(candidate.ref.originalMarkdown) === legacyLine(comment.originalMarkdown),
+  );
+}
+
+function ownsTimeEntry(node: TaskSnapshot | SubtaskSnapshot, entry: TimeEntryRef): boolean {
+  return node.timeEntries.some(
+    (candidate) =>
+      candidate.relativeLine === entry.relativeLine &&
+      legacyLine(candidate.originalMarkdown) === legacyLine(entry.originalMarkdown),
   );
 }
 
@@ -455,7 +499,47 @@ function ownsSubtask(node: TaskSnapshot | SubtaskSnapshot, subtask: SubtaskRef):
   );
 }
 
+function isTimeEntryCommand(
+  command: StructuralTaskEditCommand,
+): command is TimeEntryTaskEditCommand {
+  return TIME_ENTRY_COMMAND_TYPES.has(command.type);
+}
+
 function structuralEdit(command: StructuralTaskEditCommand): TaskBlockEdit {
+  return isTimeEntryCommand(command) ? timeEntryEdit(command) : taskContentEdit(command);
+}
+
+function timeEntryEdit(command: TimeEntryTaskEditCommand): TaskBlockEdit {
+  switch (command.type) {
+    case 'add-time-entry':
+      return { type: command.type, stamp: command.stamp };
+    case 'close-time-entry':
+      return {
+        type: command.type,
+        relativeLine: command.entry.relativeLine,
+        originalMarkdown: command.entry.originalMarkdown,
+        stamp: command.stamp,
+        endMs: command.endMs,
+        minimumMs: command.minimumMs,
+      };
+    case 'delete-time-entry':
+      return {
+        type: command.type,
+        relativeLine: command.entry.relativeLine,
+        originalMarkdown: command.entry.originalMarkdown,
+      };
+    case 'restore-time-entry':
+      return {
+        type: command.type,
+        markdown: command.markdown,
+        relativeLine: command.relativeLine,
+      };
+  }
+}
+
+function taskContentEdit(
+  command: Exclude<StructuralTaskEditCommand, TimeEntryTaskEditCommand>,
+): TaskBlockEdit {
   switch (command.type) {
     case 'set-description':
       return { type: command.type, text: command.text };
@@ -2279,7 +2363,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       ...result,
       outcome:
         recovery === undefined
-          ? { type: 'task', task: rebased }
+          ? withTimeEntryRemovalRecovery(rebased, result.outcome)
           : withSubtaskRemovalRecovery(rebased, recovery),
     };
   }
@@ -2315,7 +2399,14 @@ export class ObsidianTaskRepository implements TaskRepository {
       current,
       edited,
     );
-    return { ...outcome, result: recoverSubtaskRemoval(command, edited, outcome.result) };
+    return {
+      ...outcome,
+      result: recoverTimeEntryRemoval(
+        command,
+        edited,
+        recoverSubtaskRemoval(command, edited, outcome.result),
+      ),
+    };
   }
 
   private structuralOwnershipConflict_abyssPrivate(
@@ -2325,6 +2416,9 @@ export class ObsidianTaskRepository implements TaskRepository {
     if (command.type === 'restore-subtask') return !subtaskRestorationGapIsCurrent(command, node);
     if (command.type === 'update-comment' || command.type === 'delete-comment') {
       return !ownsComment(node, command.comment);
+    }
+    if (command.type === 'close-time-entry' || command.type === 'delete-time-entry') {
+      return !ownsTimeEntry(node, command.entry);
     }
     if (command.type === 'delete-subtask') return !ownsSubtask(node, command.subtask);
     if (command.type === 'reorder-subtask') {

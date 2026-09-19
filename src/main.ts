@@ -28,11 +28,14 @@ import { StatusRegistry } from './status/StatusRegistry';
 import { TagManager } from './tags/TagManager';
 import {
   localDate,
+  recentTrackingWindow,
+  resumeTarget,
   type TaskApplicationApi,
   type TaskCaptureApplicationApi,
   type TaskDependencyQueryApi,
   type TaskInsertionPolicy,
   type TaskQueryApi,
+  type TimeTrackingQueryApi,
 } from './tasks';
 import { TaskApplicationService } from './tasks/application/TaskApplicationService';
 import {
@@ -52,6 +55,8 @@ import { ObsidianTaskRepository } from './tasks/infrastructure/obsidian/Obsidian
 import { TaskIndex, type TaskSourceMetadata } from './tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from './tasks/infrastructure/TaskRefAuthority';
 import { CalendarRenderer } from './ui/CalendarRenderer';
+import { presentTaskCommandResult } from './ui/taskCommandResult';
+import { createTrackingActions } from './ui/timeTracking/trackingActions';
 import { PANEL_VIEW_TYPE, PanelView } from './views/PanelView';
 
 function configuredTaskInsertion(settings: CalendarSettings): TaskInsertionPolicy {
@@ -64,11 +69,13 @@ function configuredTaskInsertion(settings: CalendarSettings): TaskInsertionPolic
   }
   return settings.taskInsertionMode === 'prepend' ? { type: 'prepend' } : { type: 'append' };
 }
+const NO_RESUME_TARGET = 'There is no recent task to resume';
+const DEVICE_OFFSET_AT = (epochMs: number): number => -new Date(epochMs).getTimezoneOffset();
 
 export default class TaskCalendarPlugin extends Plugin {
   override settings!: CalendarSettings;
   tagManager!: TagManager;
-  queries!: TaskQueryApi & TaskDependencyQueryApi;
+  queries!: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
   tasks!: TaskApplicationApi & TaskCaptureApplicationApi;
   private taskIndex!: TaskIndex;
   private statusCatalog!: StatusCatalog;
@@ -149,7 +156,7 @@ export default class TaskCalendarPlugin extends Plugin {
       this.statusCatalog,
       systemClock(
         () => Date.now(),
-        (epochMs) => -new Date(epochMs).getTimezoneOffset(),
+        DEVICE_OFFSET_AT,
         (epochMs) => localDate(window.moment(epochMs).format('YYYY-MM-DD')),
       ),
       destinationProvider,
@@ -208,6 +215,33 @@ export default class TaskCalendarPlugin extends Plugin {
         await this.openPanel();
       },
     });
+    this.addCommand({
+      id: 'toggle-time-tracking',
+      name: 'Pause or resume time tracking',
+      callback: async () => {
+        await this.toggleTimeTracking();
+      },
+    });
+  }
+
+  /**
+   * One key for the whole timer. Something running is paused, and an idle vault picks up the task
+   * that was tracked most recently, as long as it is still a task somebody can work on.
+   */
+  private async toggleTimeTracking(): Promise<void> {
+    const actions = createTrackingActions(this.tasks, presentTaskCommandResult);
+    if (this.queries.activeEntries().length > 0) {
+      await actions.pause();
+      return;
+    }
+    // The same window the rail widget groups, so the key and the widget always name one task.
+    const span = recentTrackingWindow(Date.now(), DEVICE_OFFSET_AT);
+    const recent = resumeTarget(this.queries.entriesOverlapping(span.fromMs, span.toMs));
+    if (recent === undefined || recent.status === 'done' || recent.status === 'cancelled') {
+      new Notice(NO_RESUME_TARGET);
+      return;
+    }
+    await actions.start(recent.target);
   }
 
   private initializeIndexWhenReady(): void {

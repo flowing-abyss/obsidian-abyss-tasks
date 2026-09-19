@@ -14,6 +14,7 @@ import {
   type TaskPlanning,
   type TaskRef,
   type TaskSnapshot,
+  type TimeEntrySnapshot,
 } from '../tasks';
 
 export type { CalendarProjectionSources, CalendarTaskSource } from '../tasks';
@@ -376,6 +377,8 @@ function addProjectionIssue(
   );
 }
 
+const NO_TIME_ENTRIES: readonly TimeEntrySnapshot[] = Object.freeze([]);
+
 export function taskSnapshotForCalendarOccurrence(occurrence: CalendarOccurrence): TaskSnapshot {
   const { root, node } = occurrence.source;
   const snapshot: TaskSnapshot = {
@@ -395,6 +398,9 @@ export function taskSnapshotForCalendarOccurrence(occurrence: CalendarOccurrence
     onCompletionExplicit: node.onCompletionExplicit,
     subtasks: [...node.subtasks],
     comments: [...node.comments],
+    // A forecast occurrence has not happened yet, so it carries none of the tracked time already
+    // written on the materialized one.
+    timeEntries: occurrence.kind === 'materialized' ? node.timeEntries : NO_TIME_ENTRIES,
     ...(node.description !== undefined && { description: node.description }),
     source: { ...root.source },
     presentation: { ...root.presentation },

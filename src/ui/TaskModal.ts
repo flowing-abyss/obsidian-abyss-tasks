@@ -13,6 +13,7 @@ import type {
   TaskSnapshot,
 } from '../tasks';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
+import { presentTaskCommandResult } from './taskCommandResult';
 import { isDirtyDraftBundle } from './taskDraftContinuity';
 import {
   rebuildTaskSelection,
@@ -20,6 +21,9 @@ import {
   rootTaskRef,
   type TaskSelectionNode,
 } from './taskSelection';
+import { deviceTrackedTimeContext, type TrackingSurface } from './timeTracking/TimeBadge';
+import { TrackingTicker } from './timeTracking/TrackingTicker';
+import { createTrackingActions } from './timeTracking/trackingActions';
 
 type TaskModalConstructorArgs = [
   app: App,
@@ -49,6 +53,7 @@ export class TaskModal {
   private selectionUnsub_abyssPrivate: (() => void) | null = null;
   private ownedWriteRef_abyssPrivate: TaskRef | undefined = undefined;
   private ownershipToken_abyssPrivate: { release(): void } | null = null;
+  private timeTracking_abyssPrivate: TrackingSurface | undefined;
 
   constructor(...args: TaskModalConstructorArgs) {
     const [app, statusRegistry, settings, queries, tasks, commentTimeContext, ownership] = args;
@@ -104,6 +109,7 @@ export class TaskModal {
       },
       this.commentTimeContext_abyssPrivate,
       this.interactionOwnership_abyssPrivate,
+      this.createTrackingSurface_abyssPrivate(),
     );
     this.innerPanel_abyssPrivate.mount(panelEl);
     // As in PanelView, RightPanel's synchronous history maintenance must run before
@@ -126,6 +132,24 @@ export class TaskModal {
       if (e.key === 'Escape' && !e.defaultPrevented) this.close();
     };
     this.ownerDoc_abyssPrivate.addEventListener('keydown', this.keyHandler_abyssPrivate);
+  }
+
+  /** The modal hosts its own inspector, so it owns the tick and the write boundary it runs on. */
+  private createTrackingSurface_abyssPrivate(): TrackingSurface | undefined {
+    const tasks = this.tasks_abyssPrivate;
+    const ownerWindow = this.ownerDoc_abyssPrivate?.defaultView;
+    if (tasks === undefined || ownerWindow == null) return undefined;
+    const surface: TrackingSurface = {
+      ticker: new TrackingTicker({
+        queries: tasks.queries,
+        now: () => Date.now(),
+        win: ownerWindow,
+      }),
+      actions: createTrackingActions(tasks, presentTaskCommandResult),
+      context: deviceTrackedTimeContext,
+    };
+    this.timeTracking_abyssPrivate = surface;
+    return surface;
   }
 
   private renderCloseButton_abyssPrivate(parent: HTMLElement): void {
@@ -161,6 +185,8 @@ export class TaskModal {
     this.ownerDoc_abyssPrivate = null;
     this.innerPanel_abyssPrivate?.destroy();
     this.innerPanel_abyssPrivate = null;
+    this.timeTracking_abyssPrivate?.ticker.destroy();
+    this.timeTracking_abyssPrivate = undefined;
     this.innerState_abyssPrivate = null;
     this.ownedWriteRef_abyssPrivate = undefined;
     this.modalEl_abyssPrivate = null;

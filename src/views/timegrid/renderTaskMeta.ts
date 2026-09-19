@@ -1,7 +1,7 @@
 import { setIcon } from 'obsidian';
 import type { TagGroup } from '../../settings/types';
 import { colorForTag } from '../../tags/tagColor';
-import type { LocalDate, TaskNodeRef, TaskSnapshot } from '../../tasks';
+import { subtreeRunning, type LocalDate, type TaskNodeRef, type TaskSnapshot } from '../../tasks';
 import { anchoredPlacement } from '../../ui/anchoredPlacement';
 import {
   noInteractionOwnership,
@@ -66,6 +66,14 @@ export function calendarOccurrenceLookup(tasks: readonly TaskSnapshot[]): Calend
   };
 }
 
+/**
+ * Whether a timer is open anywhere under the node this item shows. A forecast occurrence has not
+ * happened yet, so it never reads as tracking even though it carries its source's sub-tasks.
+ */
+function occurrenceTracking(occurrence: CalendarOccurrence): boolean {
+  return occurrence.kind === 'materialized' && subtreeRunning(occurrence.source.node);
+}
+
 export function applyOccurrenceDomState(
   element: HTMLElement,
   occurrence: CalendarOccurrence,
@@ -73,6 +81,9 @@ export function applyOccurrenceDomState(
   spanRole: string,
 ): void {
   element.addClass('abyss-calendar-item');
+  // A passive marker only: a calendar item carries no total and subscribes to no tick, so a render
+  // reads the snapshot it was handed and nothing repaints between index changes.
+  element.toggleClass('is-tracking', occurrenceTracking(occurrence));
   element.setAttribute('data-occurrence-state', occurrence.kind);
   element.setAttribute('data-continuity', continuity);
   element.setAttribute(

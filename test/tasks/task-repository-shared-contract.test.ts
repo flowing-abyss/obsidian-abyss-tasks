@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import type { TaskEditCommand, TaskRepository } from '../../src/tasks/application/TaskRepository';
+import { MINIMUM_TRACKED_MS } from '../../src/tasks/application/TimeTrackingService';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
+import { timeEntryRef } from '../../src/tasks/domain/timeTracking';
 import type { TaskRef, TaskSnapshot } from '../../src/tasks/domain/types';
 import { durationMinutes, localDate, localTime } from '../../src/tasks/domain/validation';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
@@ -17,6 +19,10 @@ import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
 import { expectDefined } from './../helpers';
 
 type Adapter = 'in-memory' | 'obsidian';
+
+const TRACK_START = '2026-09-18T14:05:00+03:00';
+const TRACK_END = '2026-09-18T15:05:00+03:00';
+const TRACK_SHORT_END = '2026-09-18T14:05:59+03:00';
 
 interface ContractHarness {
   readonly repository: TaskRepository;
@@ -261,6 +267,108 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       expect(await h.read()).toBe(source);
     });
 
+    it('opens and closes a tracked session as one guarded block write', async () => {
+      const source = '- [ ] root\r\n  - 2026-07-14: note\r\n  - [ ] child\r\n- [ ] neighbor\r\n';
+      const h = await makeHarness(adapter, source);
+      let root = expectDefined(h.snapshots(source)[0]);
+
+      await expect(
+        h.repository.edit({
+          type: 'add-time-entry',
+          parent: { type: 'task', ref: root.ref },
+          stamp: atomDateTime(TRACK_START),
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+
+      let content = await h.read();
+      expect(content).toBe(
+        '- [ ] root\r\n' +
+          '  - 2026-07-14: note\r\n' +
+          '  - [ ] child\r\n' +
+          `  - ${TRACK_START} →\r\n` +
+          '- [ ] neighbor\r\n',
+      );
+
+      root = expectDefined(h.snapshots(content)[0]);
+      await expect(
+        h.repository.edit({
+          type: 'close-time-entry',
+          entry: timeEntryRef({ type: 'task', ref: root.ref }, expectDefined(root.timeEntries[0])),
+          stamp: atomDateTime(TRACK_END),
+          endMs: Date.parse(TRACK_END),
+          minimumMs: MINIMUM_TRACKED_MS,
+        }),
+      ).resolves.toMatchObject({
+        type: 'committed',
+        changed: true,
+        outcome: { type: 'task' },
+      });
+
+      content = await h.read();
+      expect(content).toBe(
+        '- [ ] root\r\n' +
+          '  - 2026-07-14: note\r\n' +
+          '  - [ ] child\r\n' +
+          `  - ${TRACK_START} → ${TRACK_END}\r\n` +
+          '- [ ] neighbor\r\n',
+      );
+      expect(expectDefined(h.snapshots(content)[0]).timeEntries).toMatchObject([
+        { state: 'closed' },
+      ]);
+    });
+
+    it('leaves no trace of a session shorter than the minimum and says so', async () => {
+      const source = '- [ ] root\n';
+      const h = await makeHarness(adapter, source);
+
+      await expect(
+        h.repository.edit({
+          type: 'add-time-entry',
+          parent: { type: 'task', ref: rootRef(h, source) },
+          stamp: atomDateTime(TRACK_START),
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+
+      const opened = await h.read();
+      const root = expectDefined(h.snapshots(opened)[0]);
+      await expect(
+        h.repository.edit({
+          type: 'close-time-entry',
+          entry: timeEntryRef({ type: 'task', ref: root.ref }, expectDefined(root.timeEntries[0])),
+          stamp: atomDateTime(TRACK_SHORT_END),
+          endMs: Date.parse(TRACK_START) + MINIMUM_TRACKED_MS - 1,
+          minimumMs: MINIMUM_TRACKED_MS,
+        }),
+      ).resolves.toMatchObject({
+        type: 'committed',
+        changed: true,
+        outcome: { type: 'task', discardedShortEntry: true },
+      });
+      expect(await h.read()).toBe(source);
+    });
+
+    it('refuses an entry command whose line the resolved node does not own', async () => {
+      const source = `- [ ] root\n  - [ ] child\n    - ${TRACK_START} →\n`;
+      const h = await makeHarness(adapter, source);
+      const root = expectDefined(h.snapshots(source)[0]);
+      const owned = expectDefined(expectDefined(root.subtasks[0]).timeEntries[0]);
+      const forged = timeEntryRef({ type: 'task', ref: root.ref }, owned);
+
+      await expect(
+        h.repository.edit({ type: 'delete-time-entry', entry: forged }),
+      ).resolves.toMatchObject({ type: 'conflict' });
+      await expect(
+        h.repository.edit({
+          type: 'close-time-entry',
+          entry: forged,
+          stamp: atomDateTime(TRACK_END),
+          endMs: Date.parse(TRACK_END),
+          minimumMs: MINIMUM_TRACKED_MS,
+        }),
+      ).resolves.toMatchObject({ type: 'conflict' });
+      expect(await h.read()).toBe(source);
+    });
+
     it('edits descriptions and comments as one lossless revisioned block transaction', async () => {
       const source =
         '>\t- [ ] root #keep\r\n' +
@@ -382,6 +490,49 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
           ref: freshParent.ref,
         });
       }
+    });
+
+    it('keeps a node reading as description, subtasks, comments and then tracked sessions', async () => {
+      const source =
+        '- [ ] root\n' +
+        '  - > about\n' +
+        '  - [ ] existing\n' +
+        '    - 2026-07-14T08:00:00+00:00 → 2026-07-14T08:30:00+00:00\n' +
+        '  - 2026-07-13T09:00:00+00:00: earlier\n' +
+        '  - 2026-07-14T09:00:00+00:00 → 2026-07-14T10:00:00+00:00\n';
+      const h = await makeHarness(adapter, source);
+      const root = expectDefined(h.snapshots(source)[0]);
+
+      await expect(
+        h.repository.edit({
+          type: 'add-subtask',
+          parent: { type: 'task', ref: root.ref },
+          text: 'new child',
+          today: localDate('2026-07-14'),
+          addCreatedDate: false,
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+
+      const withSubtask = await h.read();
+      await expect(
+        h.repository.edit({
+          type: 'add-comment',
+          parent: { type: 'task', ref: expectDefined(h.snapshots(withSubtask)[0]).ref },
+          text: 'new comment',
+          stamp: atomDateTime('2026-07-14T11:00:00+00:00'),
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+
+      expect(await h.read()).toBe(
+        '- [ ] root\n' +
+          '  - > about\n' +
+          '  - [ ] existing\n' +
+          '    - 2026-07-14T08:00:00+00:00 → 2026-07-14T08:30:00+00:00\n' +
+          '  - [ ] new child\n' +
+          '  - 2026-07-13T09:00:00+00:00: earlier\n' +
+          '  - 2026-07-14T11:00:00+00:00: new comment\n' +
+          '  - 2026-07-14T09:00:00+00:00 → 2026-07-14T10:00:00+00:00\n',
+      );
     });
 
     it('deletes the exact duplicate child with descendants after confirming every ancestor', async () => {

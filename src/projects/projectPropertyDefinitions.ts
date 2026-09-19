@@ -96,6 +96,7 @@ function configuredCuratedField(
   const fields: Record<string, ProjectFieldCatalogItem> = {
     name: { id: 'name', label: 'Name', type: 'name' },
     progress: { id: 'progress', label: 'Progress', type: 'progress' },
+    tracked: { id: 'tracked', label: 'Time', type: 'tracked' },
     status: {
       id: 'status',
       property: projects.statusProperty,

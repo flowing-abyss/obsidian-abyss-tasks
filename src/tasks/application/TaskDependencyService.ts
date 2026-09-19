@@ -78,8 +78,14 @@ interface DependencyPair {
 
 export type TaskDependencyIdGenerator = (reserved: ReadonlySet<string>) => string;
 interface TaskCommandDiagnostic {
-  readonly operation: TaskCommand['type'];
-  readonly phase: 'unexpected' | 'cross-file-edge-write' | `reversal-${DependencyReversalPhase}`;
+  /** A public command, or the internal write a successful command follows up with. */
+  readonly operation: TaskCommand['type'] | 'close-time-entry';
+  readonly phase:
+    | 'unexpected'
+    | 'cross-file-edge-write'
+    | 'close-others'
+    | 'completion-follow-up'
+    | `reversal-${DependencyReversalPhase}`;
   readonly cause: string;
 }
 export type TaskDiagnosticSink = (diagnostic: TaskCommandDiagnostic, error?: unknown) => void;

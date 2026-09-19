@@ -16,13 +16,36 @@ type RootlessCommand = Extract<
       | 'add-dependency'
       | 'remove-dependency'
       | 'restore-dependency'
-      | 'reverse-dependency';
+      | 'reverse-dependency'
+      | 'start-tracking'
+      | 'stop-tracking';
   }
 >;
 export type RootedTaskCommand = Exclude<TaskCommand, RootlessCommand>;
 
+/**
+ * Orchestrated commands own no single root write, so they are checked by type before any shape
+ * test. `start-tracking` carries a `parent` like `add-comment` and would otherwise look rooted.
+ */
 function isRootless(command: TaskCommand): command is RootlessCommand {
-  return command.type === 'create' || 'dependent' in command;
+  return (
+    command.type === 'create' ||
+    command.type === 'start-tracking' ||
+    command.type === 'stop-tracking' ||
+    'dependent' in command
+  );
+}
+
+/** A comment and a time entry are nested lines owned by a node, not nodes in their own right. */
+export function isOwnedLineTarget(
+  target: TaskMutationTarget,
+): target is Extract<TaskMutationTarget, { readonly type: 'comment' | 'time-entry' }> {
+  return target.type === 'comment' || target.type === 'time-entry';
+}
+
+/** The node that carries the target, which is the target itself unless it is an owned line. */
+export function taskMutationNodeRef(target: TaskMutationTarget): TaskNodeRef {
+  return isOwnedLineTarget(target) ? target.ref.parent : target;
 }
 
 export function taskNodeRootRef(target: TaskMutationTarget): TaskRef {
@@ -80,6 +103,7 @@ export function taskCommandMutationTarget(command: TaskCommand): TaskMutationTar
   if ('parent' in command) return command.parent;
   if ('subtask' in command) return { type: 'subtask', ref: command.subtask };
   if ('comment' in command) return { type: 'comment', ref: command.comment };
+  if ('entry' in command) return { type: 'time-entry', ref: command.entry };
   if ('target' in command)
     return command.type === 'edit-link' ? linkTarget(command.target) : command.target;
   return unreachable(command);
@@ -121,6 +145,11 @@ function rebaseRootedCommand(command: RootedTaskCommand, root: TaskRef): RootedT
     return {
       ...command,
       comment: rebaseTaskNode({ type: 'comment', ref: command.comment }, root).ref,
+    };
+  if ('entry' in command)
+    return {
+      ...command,
+      entry: rebaseTaskNode({ type: 'time-entry', ref: command.entry }, root).ref,
     };
   if ('target' in command) return rebaseTargetCommand(command, root);
   return unreachable(command);

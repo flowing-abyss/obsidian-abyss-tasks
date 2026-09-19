@@ -324,6 +324,59 @@ describe('transactional task archive', () => {
     h.index.destroy();
   });
 
+  it('retains tracked bytes through a partial archive and removes only public tracked totals', async () => {
+    const block = [
+      '- [ ] Tracked root #work',
+      '  - [ ] Tracked child #work/child',
+      '    - 2026-09-19T09:00:00+00:00 → 2026-09-19T09:15:00+00:00',
+      '  - 2026-09-19T10:00:00+00:00 →',
+      '',
+    ].join('\n');
+    const h = await harness(block, '# Archive\n');
+    try {
+      expect(h.index.activeEntries()).toHaveLength(1);
+      expect(h.index.fileTotal('source.md')).toEqual({
+        closedMs: 900_000,
+        openStartsMs: [Date.parse('2026-09-19T10:00:00Z')],
+      });
+      const originalProcess = h.app.vault.process.bind(h.app.vault);
+      vi.spyOn(h.app.vault, 'process')
+        .mockImplementationOnce(originalProcess)
+        .mockRejectedValueOnce(new Error('source write failed'))
+        .mockImplementation(originalProcess);
+
+      await expect(h.repository.archive(h.ref, ARCHIVE)).resolves.toMatchObject({
+        type: 'partial',
+        operation: 'archive',
+      });
+      expect(h.index.activeEntries()).toHaveLength(1);
+      expect(h.index.fileTotal(ARCHIVE.filePath)).toEqual({ closedMs: 0, openStartsMs: [] });
+
+      await expect(h.repository.archive(h.ref, ARCHIVE)).resolves.toMatchObject({
+        type: 'committed',
+        outcome: { type: 'archived' },
+      });
+      expect(await h.read(ARCHIVE.filePath)).toBe(`# Archive\n${block}`);
+      expect(await h.read('source.md')).toBe('');
+      expect(h.index.activeEntries()).toEqual([]);
+      expect(
+        h.index.entriesOverlapping(
+          Date.parse('2026-09-19T00:00:00Z'),
+          Date.parse('2026-09-20T00:00:00Z'),
+        ),
+      ).toEqual([]);
+      expect(h.index.fileTotal('source.md')).toEqual({ closedMs: 0, openStartsMs: [] });
+      const raw = expectDefined(
+        h.index.previewContent(ARCHIVE.filePath, await h.read(ARCHIVE.filePath))[0],
+      );
+      expect(raw.timeEntries).toHaveLength(1);
+      expect(expectDefined(raw.subtasks[0]).timeEntries).toHaveLength(1);
+      expect(h.index.activeEntries()).toEqual([]);
+    } finally {
+      h.index.destroy();
+    }
+  });
+
   it('preserves CRLF owned bytes when the source has no final newline', async () => {
     const block = '- [ ] CRLF root\r\n  - [ ] nested';
     const h = await harness(block, '# Archive\r\n');

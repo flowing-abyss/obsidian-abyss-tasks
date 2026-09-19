@@ -709,9 +709,10 @@ describe('renderProjectTableSettings', () => {
     await settle();
 
     expect(projects.table.columns.find(({ id }) => id === 'status')?.visible).toBe(false);
-    expect(projects.table.columns.map(({ id }) => id).slice(0, 3)).toEqual([
+    expect(projects.table.columns.map(({ id }) => id).slice(0, 4)).toEqual([
       'name',
       'progress',
+      'tracked',
       'start',
     ]);
     expect(saveStatic).not.toHaveBeenCalled();
@@ -1050,7 +1051,7 @@ describe('renderProjectTableSettings', () => {
       container.querySelector('[data-column-id="name"] .abyss-project-column-source-badge'),
     ).toBeNull();
     expect(container.querySelector('[data-column-id="progress"]')?.textContent).toContain('Tasks');
-    const curated = ['name', 'status', 'progress', 'start', 'end'];
+    const curated = ['name', 'status', 'progress', 'tracked', 'start', 'end'];
     expect(
       curated.map(
         (id) =>
@@ -1060,12 +1061,18 @@ describe('renderProjectTableSettings', () => {
             ),
           ).placeholder,
       ),
-    ).toEqual(['Name', 'Status', 'Progress', 'Start', 'End']);
-    expect(container.querySelectorAll('.abyss-project-column-required')).toHaveLength(5);
+    ).toEqual(['Name', 'Status', 'Progress', 'Time', 'Start', 'End']);
+    expect(container.querySelectorAll('.abyss-project-column-required')).toHaveLength(6);
     expect(container.querySelector('.abyss-project-column-width')).toBeNull();
     expect(
       container.querySelector('[data-column-id="progress"] .abyss-project-column-auto')
         ?.textContent,
+    ).toBe('Auto');
+    expect(container.querySelector('[data-column-id="tracked"]')?.textContent).toContain(
+      'Time entries',
+    );
+    expect(
+      container.querySelector('[data-column-id="tracked"] .abyss-project-column-auto')?.textContent,
     ).toBe('Auto');
     expect(container.querySelectorAll('.abyss-settings-card-grip')).toHaveLength(
       projects.table.columns.length,

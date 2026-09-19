@@ -10,6 +10,21 @@ afterEach(() => {
 });
 
 describe('renderTaskText link occurrence pairing', () => {
+  it('cancels pending link wiring when its row component is unloaded', () => {
+    vi.useFakeTimers();
+    vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+    const component = new Component();
+    component.load();
+    renderTaskText(document.body.createDiv(), '[[Project]]', {
+      app: {} as App,
+      sourcePath: 'tasks.md',
+      component,
+    });
+    expect(vi.getTimerCount()).toBe(1);
+    component.unload();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('identifies hover-link events with the abyss-tasks plugin ID', async () => {
     vi.useFakeTimers();
     vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {

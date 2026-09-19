@@ -22,8 +22,10 @@ import type {
   TaskQueryApi,
   TaskSnapshot,
 } from '../src/tasks';
+import type { TimeTrackingQueryApi } from '../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
-import { systemClock } from '../src/tasks/domain/clock';
+import type { TaskDiagnosticSink } from '../src/tasks/application/TaskDependencyService';
+import { systemClock, type Clock } from '../src/tasks/domain/clock';
 import type { CommentTimestamp } from '../src/tasks/domain/commentTimestamp';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import { enumerateTaskNodes } from '../src/tasks/domain/taskDependencies';
@@ -35,6 +37,7 @@ import { ObsidianTaskDestinationProvider } from '../src/tasks/infrastructure/obs
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
+import { TimeEntryIndex } from '../src/tasks/infrastructure/TimeEntryIndex';
 import { expandCompoundSelectorLists } from './support/expandedCss';
 
 export async function loadPluginStyles(): Promise<string> {
@@ -85,8 +88,11 @@ export function cssRuleParts(source: string): readonly CssRuleParts[] {
   for (const segment of stripCssComments(source).split('}')) {
     const openingBrace = segment.lastIndexOf('{');
     if (openingBrace < 0) continue;
+    // A rule inside an at-rule carries that block's prelude ahead of it, which is not part of the
+    // selector the caller is asking about.
+    const prelude = segment.slice(0, openingBrace);
     rules.push({
-      selector: segment.slice(0, openingBrace).trim(),
+      selector: prelude.slice(prelude.lastIndexOf('{') + 1).trim(),
       declarations: segment.slice(openingBrace + 1),
     });
   }
@@ -119,6 +125,18 @@ export function cssDeclarationsFor(source: string, selector: string): string {
   return declarations.join('\n');
 }
 
+/**
+ * Every selector of the rule one selector takes part in, for the facts that are about which
+ * selectors share a rule rather than about what that rule declares.
+ */
+export function cssRuleSelectorsFor(source: string, selector: string): readonly string[] {
+  for (const rule of cssRuleParts(source)) {
+    const selectors = cssSelectorList(rule.selector);
+    if (selectors.includes(selector)) return selectors;
+  }
+  return [];
+}
+
 export function stripCssComments(source: string): string {
   let result = '';
   let cursor = 0;
@@ -145,7 +163,7 @@ export function cssDeclarationValue(declarations: string, property: string): str
 export function queryApiForTasks(
   getTasks: () => readonly TaskSnapshot[],
   onSubscribe?: (listener: (event: TaskIndexEvent) => void) => () => void,
-): TaskQueryApi & TaskDependencyQueryApi {
+): TestTaskQueries {
   return taskQueryApi({
     listNodes: (query) =>
       enumerateTaskNodes(getTasks()).filter(
@@ -210,10 +228,36 @@ function rootDailyNoteDate(task: TaskSnapshot): TaskSnapshot['presentation']['da
   return task.presentation.dailyNoteDate;
 }
 
-export function taskQueryApi(
-  overrides: Partial<TaskQueryApi & TaskDependencyQueryApi> = {},
-): TaskQueryApi & TaskDependencyQueryApi {
+/** Every query capability a test double has to supply, matching `TaskApplicationApi.queries`. */
+export type TestTaskQueries = TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
+
+/**
+ * Real time tracking answers for a stub, projected from whatever tasks the stub currently lists.
+ *
+ * The task list of a stub is mutable, so the projection is rebuilt per call instead of cached.
+ */
+function timeTrackingQueryApi(getTasks: () => readonly TaskSnapshot[]): TimeTrackingQueryApi {
+  const index = new TimeEntryIndex();
+  const projected = (): TimeEntryIndex => {
+    index.clear();
+    const rootsByFile = new Map<string, TaskSnapshot[]>();
+    for (const root of getTasks()) {
+      const roots = rootsByFile.get(root.source.filePath) ?? [];
+      roots.push(root);
+      rootsByFile.set(root.source.filePath, roots);
+    }
+    for (const [filePath, roots] of rootsByFile) index.updateFile(filePath, roots);
+    return index;
+  };
   return {
+    activeEntries: () => projected().activeEntries(),
+    entriesOverlapping: (fromMs, toMs) => projected().entriesOverlapping(fromMs, toMs),
+    fileTotal: (filePath) => projected().fileTotal(filePath),
+  };
+}
+
+export function taskQueryApi(overrides: Partial<TestTaskQueries> = {}): TestTaskQueries {
+  const api: TestTaskQueries = {
     listNodes: () => [],
     dependencies: () => ({
       blockedBy: [],
@@ -227,8 +271,11 @@ export function taskQueryApi(
     resolve: (ref) => ({ type: 'not-found', ref: { ...ref } }),
     subscribe: () => () => {},
     subscribeReconciled: () => () => {},
+    // Reads the final `list`, so a stub that overrides it still gets real tracking answers.
+    ...timeTrackingQueryApi(() => api.list()),
     ...overrides,
   };
+  return api;
 }
 
 export interface TestTaskHarness extends TaskApplicationApi {
@@ -409,6 +456,7 @@ export function task(overrides: TaskFixtureInput = {}): TaskSnapshot {
     dependsOn: [],
     subtasks: [],
     comments: [],
+    timeEntries: [],
     source,
     presentation: { linkCount: 0 },
   };
@@ -422,6 +470,7 @@ export function task(overrides: TaskFixtureInput = {}): TaskSnapshot {
     tags: [...(overrides.tags ?? [])],
     subtasks: [...(overrides.subtasks ?? [])],
     comments: [...(overrides.comments ?? [])],
+    timeEntries: [...(overrides.timeEntries ?? [])],
   };
 }
 
@@ -572,6 +621,7 @@ export function subtask(overrides: SubtaskFixtureInput = {}): SubtaskSnapshot {
     ...subtaskDependencyFields(overrides),
     subtasks: [...subtasks],
     comments: [...comments],
+    timeEntries: [...(overrides.timeEntries ?? [])],
     ...(overrides.recurrence === undefined ? {} : { recurrence: overrides.recurrence }),
     ...(overrides.description === undefined ? {} : { description: overrides.description }),
   };
@@ -784,7 +834,11 @@ export function makeStubStore(tasks: TaskSnapshot[], _app?: ObsidianApp): TestTa
 export function configuredTaskApplication(
   app: ObsidianApp,
   settings: CalendarSettings,
-  options: { readonly authority?: boolean } = {},
+  options: {
+    readonly authority?: boolean;
+    readonly clock?: Clock;
+    readonly diagnostics?: TaskDiagnosticSink;
+  } = {},
 ): {
   readonly index: TaskIndex;
   readonly tasks: TaskApplicationApi;
@@ -814,10 +868,11 @@ export function configuredTaskApplication(
     index,
     repository,
     statusCatalog,
-    systemClock(
-      () => Date.now(),
-      (epochMs) => -new Date(epochMs).getTimezoneOffset(),
-    ),
+    options.clock ??
+      systemClock(
+        () => Date.now(),
+        (epochMs) => -new Date(epochMs).getTimezoneOffset(),
+      ),
     new ObsidianTaskDestinationProvider(
       () => {
         let insertion: TaskInsertionPolicy = { type: 'append' };
@@ -842,6 +897,9 @@ export function configuredTaskApplication(
       },
       (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
     ),
+    undefined,
+    undefined,
+    options.diagnostics,
   );
   return {
     index,
