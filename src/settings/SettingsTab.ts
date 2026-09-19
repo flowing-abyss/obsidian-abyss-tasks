@@ -875,7 +875,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       .addDropdown((d) =>
         d
           .addOptions({
-            tag: 'Tasks with inbox tag',
+            tag: 'With inbox tag',
             untagged: 'Untagged tasks',
             both: 'Both',
           })
