@@ -9,6 +9,7 @@ import {
   type TrackedTotal,
 } from '../../tasks';
 import { writeAttribute, writeClass, writeText, writeTitle } from '../guardedDomWrites';
+import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
 import {
   formatTrackedDuration,
@@ -38,6 +39,8 @@ export interface TimeBadgeOptions extends TrackingSurface {
   readonly popoverOwner: HTMLElement;
   readonly boundary: HTMLElement;
   readonly node: () => TrackedNode | undefined;
+  /** Passed to the sessions list, which holds the panel shortcuts while it is open. */
+  readonly ownership?: InteractionOwnershipPort | undefined;
 }
 
 export interface TimeBadgeHandle {
@@ -193,6 +196,7 @@ function openSessions(session: BadgeSession, view: BadgeElements): void {
     node: session.options.node,
     actions: session.options.actions,
     context: session.options.context,
+    ownership: session.options.ownership,
     onClose: (restoreFocus) => {
       session.popover = undefined;
       session.openedAt = undefined;

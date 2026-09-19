@@ -8,6 +8,7 @@ import {
 } from '../../tasks';
 import { openAnchoredPopover, type AnchoredPopover } from '../anchoredPopover';
 import { writeText } from '../guardedDomWrites';
+import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
 import {
   formatDayHeading,
@@ -33,6 +34,8 @@ export interface TrackedTasksPopoverOptions {
   readonly actions: TrackingActions;
   readonly openTask: (target: TaskNodeRef) => void;
   readonly onClose: (restoreFocus: boolean) => void;
+  /** Held for as long as the list is open, so a bare letter stays out of the panel shortcuts. */
+  readonly ownership?: InteractionOwnershipPort | undefined;
 }
 
 export interface TrackedTasksPopoverHandle {
@@ -325,6 +328,7 @@ export function showTrackedTasksPopover(
       preferred: 'right-end',
       cls: 'abyss-time-tracking-popover abyss-time-tracking-popover--tasks',
       attr: { role: 'dialog', 'aria-label': 'Tracked tasks' },
+      ownership: options.ownership,
       onClose: onShellClose,
     }),
     expanded: new Set<number>(),

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskCommandResult, TaskNodeRef } from '../src/tasks';
 import { systemClock } from '../src/tasks/domain/clock';
+import type { InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { mountRailTrackingWidget } from '../src/ui/timeTracking/RailTrackingWidget';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
@@ -89,7 +90,11 @@ async function trackingStack(markdown: string) {
   };
 }
 
-async function widgetFor(markdown: string, onOpenTask: () => void = () => {}) {
+async function widgetFor(
+  markdown: string,
+  onOpenTask: () => void = () => {},
+  ownership?: InteractionOwnershipPort,
+) {
   const stack = await trackingStack(markdown);
   const clock = fakeTimerWindow();
   const layout = activeDocument.body.createDiv({ cls: 'abyss-layout' });
@@ -115,6 +120,7 @@ async function widgetFor(markdown: string, onOpenTask: () => void = () => {}) {
       onOpenTask();
     },
     context: () => ({ nowMs: stack.now(), offsetAt: () => OFFSET_MINUTES }),
+    ownership,
     win: clock.win,
   });
   cleanups.push(() => {
@@ -584,6 +590,23 @@ describe('tracked tasks popover', () => {
     expect(popover(harness.layout)).not.toBeNull();
     activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(popover(harness.layout)).toBeNull();
+  });
+
+  it('takes the panel keyboard while it is open and hands it back once', async () => {
+    const release = vi.fn();
+    const ownership = { acquire: vi.fn(() => ({ release })) };
+    const harness = await widgetFor(WORKING_WEEK, () => {}, ownership);
+
+    taskTotal(harness.host).click();
+
+    expect(ownership.acquire).toHaveBeenCalledOnce();
+    expect(ownership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+    expect(release).not.toHaveBeenCalled();
+
+    activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(popover(harness.layout)).toBeNull();
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it('keeps the keyboard on the row it was on after a rebuild', async () => {

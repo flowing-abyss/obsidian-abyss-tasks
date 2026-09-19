@@ -501,6 +501,7 @@ export class RightPanel {
       popoverOwner: container,
       boundary: container,
       node: () => this.trackingNode_abyssPrivate(),
+      ownership: this.interactionOwnership_abyssPrivate,
     });
   }
 

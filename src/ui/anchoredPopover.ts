@@ -1,4 +1,5 @@
 import { anchoredPlacement, type AnchoredPlacementInput } from './anchoredPlacement';
+import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 
 export interface AnchoredPopoverOptions {
   /** The positioned surface the popover is placed in, as the date picker uses. */
@@ -9,6 +10,11 @@ export interface AnchoredPopoverOptions {
   /** Classes beyond the shared `abyss-popover abyss-popover-anchored` pair. */
   readonly cls: string;
   readonly attr?: Record<string, string>;
+  /**
+   * Holds the panel shortcuts for as long as the surface is open, because a list a reader types
+   * into must not have its letters read as panel navigation.
+   */
+  readonly ownership?: InteractionOwnershipPort | undefined;
   /** Called once, after the element has left the document. */
   readonly onClose: (restoreFocus: boolean) => void;
 }
@@ -34,6 +40,7 @@ interface PopoverState {
   /** Whether an action of this surface is placing focus elsewhere right now. */
   holdingFocus: boolean;
   release: () => void;
+  readonly ownership: { release(): void };
 }
 
 const GAP = 4;
@@ -104,6 +111,7 @@ function close(state: PopoverState, restoreFocus?: boolean): void {
   const focused = restoreFocus ?? element.contains(element.ownerDocument.activeElement);
   state.closed = true;
   state.release();
+  state.ownership.release();
   element.remove();
   state.options.onClose(focused);
 }
@@ -167,6 +175,7 @@ export function openAnchoredPopover(options: AnchoredPopoverOptions): AnchoredPo
     closed: false,
     holdingFocus: false,
     release: () => {},
+    ownership: (options.ownership ?? noInteractionOwnership).acquire({ blocksShortcuts: true }),
   };
   state.release = listen(state);
   // The keyboard follows the surface it opened, so the next Tab reaches the list rather than

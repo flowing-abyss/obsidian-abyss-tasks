@@ -525,6 +525,7 @@ export class PanelView extends ItemView {
         this.openTrackedTask_abyssPrivate(target);
       },
       context: surface.context,
+      ownership: this.interactionRegistry_abyssPrivate,
       win: layout.ownerDocument.defaultView ?? activeWindow,
     });
   }

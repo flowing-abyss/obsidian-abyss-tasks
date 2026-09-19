@@ -3,11 +3,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import type { ShortcutActionId } from '../src/settings/shortcuts';
 import type { TaskCommandResult, TaskIndexEvent } from '../src/tasks';
 import { systemClock } from '../src/tasks/domain/clock';
+import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/interactionOwnership';
+import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
 import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
+import type { PanelNavigationActions } from '../src/views/panelNavigation';
 import {
   configuredTaskApplication,
   createAppWithFiles,
@@ -17,6 +21,7 @@ import {
   expectDefined,
   flushMicrotasks,
   loadPluginStyles,
+  methodOf,
   useRealMoment,
 } from './helpers';
 
@@ -114,7 +119,12 @@ function fakeTickWindow(): { readonly win: Window; tick(): void } {
   };
 }
 
-async function inspector(markdown = SESSIONS, selected = 'Current', win: Window = window) {
+async function inspector(
+  markdown = SESSIONS,
+  selected = 'Current',
+  win: Window = window,
+  ownership?: InteractionOwnershipPort,
+) {
   // The mock metadata parser uses -0 for a root list beginning on line zero.
   const content = `\n${markdown}`;
   const elsewhere = `\n${ELSEWHERE}`;
@@ -154,7 +164,7 @@ async function inspector(markdown = SESSIONS, selected = 'Current', win: Window 
     undefined,
     undefined,
     undefined,
-    undefined,
+    ownership,
     {
       ticker,
       actions: createTrackingActions(stack.tasks, (result) => reported.push(result)),
@@ -209,6 +219,31 @@ async function inspector(markdown = SESSIONS, selected = 'Current', win: Window 
       await flushMicrotasks();
     },
   };
+}
+
+/** The navigator the router drives, so a bare letter reaching the panel is visible as a call. */
+function panelNavigation(): PanelNavigationActions {
+  return {
+    openTasks: vi.fn(),
+    openList: vi.fn(),
+    openCalendar: vi.fn(),
+    openCalendarView: vi.fn(),
+    openProjects: vi.fn(),
+    openSearch: vi.fn(),
+    openQuickCapture: vi.fn(),
+    rebaseListIdentity: vi.fn(),
+  };
+}
+
+/** The unmodified `q` of the default shortcuts, which is what a list of text must swallow. */
+function letter(): KeyboardEvent {
+  return new KeyboardEvent('keydown', {
+    key: 'q',
+    code: 'KeyQ',
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  });
 }
 
 function open(el: HTMLElement): HTMLElement {
@@ -624,6 +659,81 @@ describe('tracked sessions popover', () => {
     elsewhere.focus();
 
     expect(harness.el.querySelector('.abyss-time-tracking-popover')).toBeNull();
+  });
+
+  it('takes the panel keyboard for as long as the list is open', async () => {
+    const release = vi.fn();
+    const ownership = { acquire: vi.fn(() => ({ release })) };
+    const harness = await inspector(SESSIONS, 'Current', window, ownership);
+    open(harness.el);
+
+    expect(ownership.acquire).toHaveBeenCalledOnce();
+    expect(ownership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'Escape',
+      () => {
+        activeDocument.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+        );
+      },
+    ],
+    [
+      'a pointer press outside it',
+      () => {
+        activeDocument.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      },
+    ],
+    [
+      'the inspector going away',
+      (harness: Awaited<ReturnType<typeof inspector>>) => {
+        harness.panel.destroy();
+      },
+    ],
+  ])('hands the panel keyboard back once on %s', async (_dismissal, dismiss) => {
+    const release = vi.fn();
+    const ownership = { acquire: vi.fn(() => ({ release })) };
+    const harness = await inspector(SESSIONS, 'Current', window, ownership);
+    open(harness.el);
+
+    dismiss(harness);
+
+    expect(harness.el.querySelector('.abyss-time-tracking-popover')).toBeNull();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('leaves a bare letter to the list rather than to the panel it opened over', async () => {
+    const registry = new InteractionRegistry<ShortcutActionId>();
+    const actions = panelNavigation();
+    const router = new PanelShortcutRouter({
+      ownerDocument: activeDocument,
+      isActive: () => true,
+      settings: () => DEFAULT_SETTINGS.shortcuts,
+      platform: { mod: 'ctrl' },
+      actions,
+      registry,
+      nativeHostBlocks: () => false,
+    });
+    cleanups.push(() => {
+      router.destroy();
+      registry.destroy();
+    });
+    const harness = await inspector(SESSIONS, 'Current', window, registry);
+    const surface = open(harness.el);
+
+    surface.dispatchEvent(letter());
+
+    expect(methodOf(actions, 'openQuickCapture')).not.toHaveBeenCalled();
+
+    activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    // The badge takes the keyboard back, and a control is a place the panel never routes from.
+    expectDefined(activeDocument.activeElement as HTMLElement | null).blur();
+    activeDocument.body.dispatchEvent(letter());
+
+    expect(methodOf(actions, 'openQuickCapture')).toHaveBeenCalledOnce();
   });
 
   it('keeps the list alive across an index change', async () => {

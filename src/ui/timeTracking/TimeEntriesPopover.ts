@@ -15,6 +15,7 @@ import {
 import { openAnchoredPopover, type AnchoredPopover } from '../anchoredPopover';
 import { writeText, writeTitle } from '../guardedDomWrites';
 import { createInlineTaskUndo } from '../inlineTaskUndo';
+import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
 import {
   formatDayHeading,
@@ -51,6 +52,8 @@ export interface TimeEntriesPopoverOptions {
   readonly actions: TrackingActions;
   readonly context: () => TrackedTimeContext;
   readonly onClose: (restoreFocus: boolean) => void;
+  /** Held for as long as the list is open, so a bare letter stays out of the panel shortcuts. */
+  readonly ownership?: InteractionOwnershipPort | undefined;
 }
 
 export interface TimeEntriesPopoverHandle {
@@ -615,6 +618,7 @@ export function showTimeEntriesPopover(
       preferred: 'below-start',
       cls: 'abyss-time-tracking-popover abyss-time-tracking-popover--sessions',
       attr: { role: 'dialog', 'aria-label': 'Tracked sessions' },
+      ownership: options.ownership,
       onClose: onShellClose,
     }),
     undo,
