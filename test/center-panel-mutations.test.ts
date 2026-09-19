@@ -433,7 +433,7 @@ describe('CenterPanel root lifecycle API delegation', () => {
         type: 'invalid',
         issues: [{ code: 'destination-unavailable', field: 'destination' }],
       });
-      const sessionExecute = vi.fn().mockResolvedValue({
+      const sessionExecute = vi.fn<TaskCreateSession['execute']>().mockResolvedValue({
         type: 'invalid',
         issues: [{ code: 'destination-unavailable', field: 'destination' }],
       });
@@ -462,7 +462,7 @@ describe('CenterPanel root lifecycle API delegation', () => {
 
       await submitCapture(panel, 'captured');
 
-      expect(planCreate).toHaveBeenCalledWith({ type: 'configured-default' });
+      expect(planCreate).toHaveBeenCalledWith({ type: 'configured-default' }, { intent: 'inbox' });
       expect(sessionExecute).toHaveBeenCalledWith({
         markdownBody: 'captured',
       });
