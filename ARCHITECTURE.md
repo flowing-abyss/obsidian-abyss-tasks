@@ -62,9 +62,9 @@ wired here; consumers receive interfaces instead of constructing alternate repos
 
 The public task capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TimeTrackingQueryApi`,
 `TaskApplicationApi`, and `TaskCaptureApplicationApi`. Application queries supply all three query
-capabilities; `TimeTrackingQueryApi` reaches the public barrel with its first presentation consumer.
-Add exports only when another component needs them. Presentation must not edit task Markdown or import private task
-layers. The domain must not import Obsidian, infrastructure, panels, or settings UI.
+capabilities. Add exports only when another component needs them. Presentation must not edit task
+Markdown or import private task layers. The domain must not import Obsidian, infrastructure, panels,
+or settings UI.
 
 `PanelView` owns `RailPanel` for mode changes, `LeftPanel` for navigation, `CenterPanel` for selected
 content, and `RightPanel` for the task inspector. Panels share transient navigation through
@@ -80,14 +80,6 @@ only proven successor references survive writes, and history never becomes persi
 
 `TaskIndex` watches vault and metadata events and parses supported Markdown through the canonical
 `TaskMarkdownCodec`. It exposes detached snapshots and reference resolution through public queries.
-A nested line shaped as a start stamp followed by `→` is a time entry rather than a comment, and an
-entry the parser cannot read stays visible on its task while counting nothing anywhere. A node reads
-top to bottom as description, subtasks, comments, and then its tracked sessions, so a new line joins
-the group it belongs to: a subtask follows the last subtask the node already has, a comment goes
-above the node's closing run of entries, and an entry is appended at the end of the block. A blank
-line inside that closing run neither belongs to it nor ends it, so a note spaced out by hand still
-takes its comment above the entries. Only the new line is placed; existing lines are never reordered,
-no blank line is added or removed, and reading never depends on their order.
 `TaskApplicationService` captures the relevant clock and behavior settings, resolves a command,
 validates it, and delegates persistence through repository and destination ports.
 
@@ -110,84 +102,6 @@ The provider resolves today's note or the configured file; project capture uses 
 and project insertion policy. Overview capture follows the active Table, Kanban, or Timeline
 selection. Creation then uses the same application/repository path and reveals the indexed result
 without inventing another persisted identity.
-
-### Time tracking
-
-Entry lines under a task are the record of tracked work; no session state is persisted anywhere
-else. `TimeTrackingService` owns `start-tracking` and `stop-tracking`, which carry no single root
-and never reach the rooted command path. It enforces one active timer by serialized sequential
-writes on the mutation queue it shares with dependency operations: every running entry is closed
-first, then the new entry is opened. Each step re-reads its node from the root the previous write
-returned rather than waiting for the index. A hand-written entry the plugin cannot close, such as
-one whose start lies ahead of the clock, is reported to diagnostics and left alone so a single
-unwritable line cannot disable tracking vault wide; only an I/O failure stops the operation and
-returns its structured result. A session shorter than a minute leaves no line at all, and the
-outcome says so, unless the reader wrote a note on that line, which is kept and closed like any
-other session. Starting on a node that is already tracking writes nothing to that node, and a
-done or cancelled node is refused.
-
-Presentation reads those lines through one tick per owning surface. `PanelView` and `TaskModal`
-each build a `TrackingTicker` and a `TrackingActions` write boundary and hand them on, together
-with the device wall clock every label is read against; `PanelView` hands its one surface to both
-the `CenterPanel` and the `RightPanel` it hosts, so the whole panel shares a single tick. The ticker
-re-reads the active entries only when the index reports a change and runs its one-second interval
-only while something is running and a surface is listening. The inspector badge keeps the total it
-read at that change, so a tick is one addition and never a query, and it writes to the DOM only
-when the formatted text differs. The tick it emits for an index change belongs to the owner's own
-render instead, which re-reads the selection, so a surface recognises that frame by the active
-entries it carries and paints a change exactly once. The badge outlives one inspector render: the chips row is rebuilt
-on every index change, while the sessions popover the badge owns has to survive the write it just
-made, the way the inline undo row already does. An entry rewrites the source block of the node it
-sits under, so a selected sub-task has no text left to match itself by. `rebuildTaskSelection`
-follows it by child position instead, but only where the domain proves the two generations of the
-root differ in nothing but their tracked entries, which covers every surface that starts or pauses
-a timer rather than only the inspector's own writes.
-
-Every tracked label comes from the one domain formatter and reads `0m`, `47m` or `1h 47m`; only a
-running row inside a popover spells its seconds out, so the rail, the cards, the inspector and the
-project table can never disagree about a duration. Both tracking popovers take the shared anchored
-surface, which dismisses on an outside pointer press, on Escape, and on focus landing outside it.
-The tracked-task list holds only that last rule, and only for the turn a row spends opening a task,
-because the keyboard the inspector takes there is the list's own doing; the hold ends one microtask
-later, so a reader leaving afterwards closes it like any other surface.
-
-The other tracking surfaces are passive. A list card carries a count badge with its subtree total,
-and while that subtree runs the card keeps the total it read so the panel's one subscription
-repaints only the running roots, found by the `data-tracking-root` address the badge carries, which
-every entry already carries because `TimeEntryIndex` reads a node's address once while it lifts the
-entry out of the tree rather than per grouping, render or tick. The list can also be ordered by a
-`tracked` sort field, which the panel resolves against the one instant that render already read, so
-a running task is placed by the same total its badge shows. A
-calendar item reads the same snapshot for a running marker and subscribes to nothing: every
-sidebar month, week and day item takes it through `applyOccurrenceDomState`, the one place each of
-them already passes, and a forecast occurrence never carries it. Starting and
-pausing are offered wherever a node already has a context menu, and the `toggle-time-tracking`
-command pauses whatever runs or resumes the most recently tracked task of the last seven days. The
-code-block calendar keeps only the marker, because its card body right-click already belongs to the
-recurrence editor and its start and pause controls live in the task modal's badge instead.
-
-The rail widget is the one live surface outside the inspector. `RailPanel` creates its host element
-once and re-places it on each mode change, so the widget survives navigation, and `PanelView` mounts
-it there on the ticker and write boundary the panels already share. It regroups the seven-day window
-only when the index reports a change and at one scheduled local midnight; a tick adds what every
-open timer has earned since that grouping to the total already in hand and never asks the index
-anything. A grouping carries the open starts of each row and of the day itself, so a note left with
-two timers running counts both on the day and only its own on the task. The rail shows that one
-task total; the day's own total lives in the heading of the tracked-task list the number opens,
-which reads the same grouping, so a day's rows always add up to its heading. The grouping gives an
-open timer a row on the day that holds it from the instant it is opened, before it has earned a
-millisecond, so the list never lags the widget by an index event. A task is opened from a row of
-that list, which switches to Tasks mode and makes the node the inspector selection, what opens the
-details pane at a compact width, and stays open behind it so the reader can move on to the next
-tracked task.
-
-Completing or cancelling a node closes the entries still running in its subtree as a follow-up
-write with the same clock reading, inside the same serialized mutation. That write changes the
-status command's own result in one way only: a session it dropped for being under a minute is said
-so on the outcome, so the shared command-result presentation can explain the line that vanished. A
-failure goes to the diagnostics sink and leaves the running entry visible for repair. Recurrence completion closes entries in the completed occurrence, and the
-cloned next occurrence starts with none. The index only reads: a status symbol edited by hand in a
-note closes nothing.
 
 ### Dependencies
 
@@ -220,6 +134,40 @@ own source rules. Calendar and sidebar views share dependency/status presentatio
 blocking. See [dependency reversal tests](test/task-dependency-reversal.test.ts) and
 [linked subtask tests](test/task-create-dependency-subtask.test.ts).
 
+### Time tracking
+
+A time entry is a nested list line that opens with a start stamp and `→`. Entry lines are the only
+record of tracked time. An entry the parser cannot read stays visible on its task and counts
+nothing. A new nested line joins its group in the order description, subtasks, comments, entries.
+Existing lines never move, and reading does not depend on their order.
+
+`TimeTrackingService` owns `start-tracking` and `stop-tracking`. Neither command writes to a single
+root, so both bypass the rooted command path, and their writes are serialized on the mutation
+coordinator that dependency changes use. A start closes every other running entry and then opens its
+own, which keeps one timer running at a time. Each step reads the root the previous write returned
+and does not wait for the index. An entry the service cannot close goes to diagnostics and is
+skipped; only an I/O failure aborts. A session under a minute with no note is discarded, and the
+outcome reports it. Entry removal returns transient recovery data for a local inline Undo.
+
+`TaskIndex` owns `TimeEntryIndex`, updates it on the same per-file path as the task map, and serves
+it through `TimeTrackingQueryApi`. `PanelView` and `TaskModal` each own one `TrackingTicker` and one
+`TrackingActions` write boundary and share them with the controls they host. The ticker re-reads
+active entries when the index changes and runs its interval only while an entry is running and a
+surface listens. A tick adds to a cached total and never queries the index. Cards and calendar items
+read the render's snapshot; forecast occurrences carry no tracked time. The inspector badge outlives
+the chips row, so its sessions popover survives its own writes. An entry write changes its node's
+source block, so a selected subtask can no longer be matched by its text. `rebuildTaskSelection`
+follows it by child position, and only where `sameTaskTreeExceptTimeEntries` proves that nothing but
+time entries changed.
+
+Completing or cancelling a node closes its subtree's running entries in a follow-up write with the
+same clock reading, inside the same serialized mutation. The status result changes only by reporting
+a discarded short session. A failed follow-up goes to diagnostics and leaves the running entry
+visible for repair. Recurrence completion closes the completed occurrence's entries, and the next
+occurrence starts with none. The index only reads, so a status symbol edited by hand closes nothing.
+See [service tests](test/tasks/time-tracking-service.test.ts) and
+[ticker tests](test/tracking-ticker.test.ts).
+
 ## Projects
 
 ### Discovery and field authority
@@ -234,13 +182,10 @@ frontmatter property and literal status-definition names; project tags do not ca
 
 `projectFields` owns case-insensitive field lookup and the shared catalog. Status, start, and end
 have configured source properties; description uses `description`. Name comes from the filename,
-and progress is derived from completed top-level tasks over non-cancelled top-level tasks. Time is
-derived the same way from the note's own time entries: `ProjectStore` asks the time entry index for
-the file total whenever it re-evaluates that note, so a project never walks entries itself. Both
-derived fields are read-only wherever a field can be written, and Time ships as a curated column
-that is present but hidden, so a table only widens when a reader asks for it. Normalization appends
-any curated column missing from saved Table state as a hidden entry, so an older `state.json` loads
-unchanged and a new curated column costs a reader nothing until they turn it on.
+and progress is derived from completed top-level tasks over non-cancelled top-level tasks.
+Time is derived from the note's time entries. `ProjectStore` reads the index's per-file total when
+it re-evaluates the note; a project never walks entries itself. Both derived fields are read-only
+wherever a field can be written. Time's curated column is hidden by default.
 Curated types are fixed. Custom types and preset presentation in `projects.propertyDefinitions`
 remain authoritative when Obsidian's registry changes or is unavailable. A custom definition whose
 source is assigned to a curated role stays saved but inactive until that role moves away.
@@ -257,10 +202,10 @@ projections, and editors. See [field tests](test/project-fields.test.ts) and
 `projectTableModel` is the DOM-free source of search, typed sorting, status filtering, grouping,
 and unique visible counts. Link groups use resolved note paths as identity while retaining raw
 values and source paths for rendering and edits; external targets keep source-independent identity.
-A render pass reads one clock and hands it to the model, so every running timer is sorted, grouped,
-searched, and labelled at the same instant and nothing in a table ticks on its own.
-Kanban and Timeline models reuse this projection. Their settings modules own independent saved
-presentation and organization, initialized from Table only when first requested.
+A render pass reads one clock and hands it to the model, so tracked totals sort and display at one
+instant and none ticks on its own. Kanban and Timeline models reuse this projection. Their settings
+modules own independent saved presentation and organization, initialized from Table only when first
+requested.
 
 `ProjectsPanel` owns a long-lived [overview controller](src/panels/projects/ProjectsTableView.ts) and
 property-catalog subscription. The controller shares the toolbar, field renderer, editor boundary, mutation queues,
