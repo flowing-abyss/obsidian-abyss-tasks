@@ -735,6 +735,33 @@ describe('time tracking orchestration', () => {
     }
   });
 
+  it('closes the timers it can when a completed subtree holds one it cannot', async () => {
+    const diagnostics = vi.fn();
+    const stack = await stackFor(
+      {
+        'a.md': `- [ ] Alpha\n  - [ ] Foreign\n    - ${FUTURE_ATOM} →\n  - [ ] Mine\n    - ${HOUR_AGO_ATOM} →\n`,
+      },
+      { diagnostics },
+    );
+    try {
+      const result = await stack.tasks.execute({
+        type: 'toggle-completion',
+        target: taskNode(rootIn(stack, 'a.md')),
+      });
+
+      expect(result).toMatchObject({ type: 'ok', outcome: { type: 'task' } });
+      expect(await read(stack.app, 'a.md')).toBe(
+        `- [x] Alpha ✅ 2026-09-18\n  - [ ] Foreign\n    - ${FUTURE_ATOM} →\n  - [ ] Mine\n    - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n`,
+      );
+      expect(activeTitles(stack)).toEqual(['Foreign']);
+      expect(diagnostics.mock.calls).toEqual([
+        [{ operation: 'close-time-entry', phase: 'close-others', cause: 'conflict' }],
+      ]);
+    } finally {
+      stack.index.destroy();
+    }
+  });
+
   it('starts on a subtask that a sibling timer does not own', async () => {
     const stack = await stackFor({
       'a.md': `- [ ] Alpha\n  - [ ] One\n    - ${HOUR_AGO_ATOM} →\n  - [ ] Two\n`,

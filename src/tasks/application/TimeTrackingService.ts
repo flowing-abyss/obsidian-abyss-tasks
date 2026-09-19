@@ -221,8 +221,13 @@ export class TimeTrackingService {
       if (completed === undefined || !this.isCompleted_abyssPrivate(completed.node)) {
         return NOTHING_DISCARDED;
       }
-      const closed = await this.closeInRoot_abyssPrivate(root, reading, (candidate) =>
-        withinSubtree(candidate, path),
+      const closed = await this.closeInRoot_abyssPrivate(
+        root,
+        reading,
+        (candidate) => withinSubtree(candidate, path),
+        // One hand-written entry under the completed node must not hold back the timers this
+        // completion really ends, the way starting and stopping already leave it alone.
+        'skip-unwritable',
       );
       if (closed.type !== 'failed') return { discardedShortEntry: closed.discarded };
       this.diagnostics_abyssPrivate({
