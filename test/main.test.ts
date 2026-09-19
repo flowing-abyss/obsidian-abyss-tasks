@@ -7,6 +7,7 @@ import {
   STATIC_SAVED_VIEW_STATE_MARKER,
 } from '../src/settings/persistence';
 import { latestSettingsSaveRevision } from '../src/settings/settingsSaveRevision';
+import type { TaskStorageSettings } from '../src/settings/taskStorageSettings';
 import type { CalendarSettings } from '../src/settings/types';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import { flushMicrotasks, useRealMoment } from './helpers';
@@ -50,6 +51,7 @@ interface PluginLike {
   onunload: () => void;
   loadSettings: () => Promise<void>;
   saveSettings: () => Promise<void>;
+  saveTaskStorageSettings: (draft: TaskStorageSettings) => Promise<void>;
   saveViewState: () => Promise<void>;
   refreshProjectTableSettings: () => void;
   openPanel: () => Promise<void>;
@@ -158,6 +160,49 @@ describe('TaskCalendarPlugin saveSettings', () => {
     expect(saved['sectionCollapse']).toBeUndefined();
     expect((saved['projects'] as Record<string, unknown>)['table']).toBeUndefined();
     expect(saved[STATIC_SAVED_VIEW_STATE_MARKER]).toBe(1);
+  });
+
+  it('saves one validated storage draft and rebuilds source exclusion after durability', async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const refresh = vi.spyOn(
+      plugin.taskIndex as unknown as {
+        refreshSourceExclusion(predicate: unknown): Promise<void>;
+      },
+      'refreshSourceExclusion',
+    );
+
+    await plugin.saveTaskStorageSettings({
+      taskArchivePath: 'archive/{{YYYY}}.md',
+      taskIgnoreQuery: '#private',
+    });
+
+    expect(plugin.settings.taskArchivePath).toBe('archive/{{YYYY}}.md');
+    expect(plugin.settings.taskIgnoreQuery).toBe('(#private) OR ("tasks/archive.md")');
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it('restores the prior storage settings and predicate when persistence rejects', async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const refresh = vi.spyOn(
+      plugin.taskIndex as unknown as {
+        refreshSourceExclusion(predicate: unknown): Promise<void>;
+      },
+      'refreshSourceExclusion',
+    );
+    vi.spyOn(plugin, 'saveSettings').mockRejectedValueOnce(new Error('disk full'));
+
+    await expect(
+      plugin.saveTaskStorageSettings({
+        taskArchivePath: 'archive/new.md',
+        taskIgnoreQuery: '#private',
+      }),
+    ).rejects.toThrow('disk full');
+
+    expect(plugin.settings.taskArchivePath).toBe(DEFAULT_SETTINGS.taskArchivePath);
+    expect(plugin.settings.taskIgnoreQuery).toBe(DEFAULT_SETTINGS.taskIgnoreQuery);
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it('refreshes project stores and table settings in open panel views after persistence', async () => {

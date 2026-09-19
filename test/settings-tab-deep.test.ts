@@ -945,6 +945,31 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     expect(plugin.settings.taskFilePath).toBe('new.md');
   });
 
+  it('commits archive and ignore inputs as completed drafts and keeps generated exclusions in sync', async () => {
+    const { tab, plugin } = makeTab();
+    const body = openSection(tab, 0);
+    const archive = expectDefined(findInput(body, 'Archive file'));
+    const ignore = expectDefined(findInput(body, 'Ignored task sources'));
+
+    archive.value = 'tasks/archive-2.md';
+    archive.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(plugin.saveSettings).not.toHaveBeenCalled();
+    archive.dispatchEvent(new FocusEvent('blur'));
+    await flushMicrotasks();
+
+    expect(plugin.settings.taskArchivePath).toBe('tasks/archive-2.md');
+    expect(plugin.settings.taskIgnoreQuery).toBe('"tasks/archive.md"');
+    expect(ignore.value).toBe('"tasks/archive.md"');
+
+    ignore.value = `${ignore.value} OR #private`;
+    ignore.dispatchEvent(new Event('input', { bubbles: true }));
+    ignore.dispatchEvent(new FocusEvent('blur'));
+    await flushMicrotasks();
+
+    expect(plugin.settings.taskIgnoreQuery).toBe('"tasks/archive.md" OR #private');
+    expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+  });
+
   it('note template input reflects setting and saves on change', () => {
     const { tab, plugin, captured } = makeTab({ taskTemplatePath: 'templates/task.md' });
     const body = openSection(tab, 0);

@@ -9,6 +9,7 @@ import type { TaskDestination, TaskInsertionPolicy } from '../../domain/types';
 
 export interface ConfiguredTaskDestination {
   readonly taskFilePath: string;
+  readonly taskArchivePath?: string;
   readonly taskTemplatePath: string;
   readonly capturedToday: string;
   readonly insertion: TaskInsertionPolicy;
@@ -25,6 +26,11 @@ type ProvisionTaskNote = (
   title: string,
 ) => Promise<ProvisionedNote>;
 
+interface DestinationPlanOptions {
+  readonly allowExcluded: boolean;
+  readonly provisionDestination?: boolean;
+}
+
 function titleFor(filePath: string): string {
   const name = filePath.slice(filePath.lastIndexOf('/') + 1);
   return name.toLowerCase().endsWith('.md') ? name.slice(0, -'.md'.length) : name;
@@ -34,26 +40,50 @@ export class ObsidianTaskDestinationProvider implements TaskDestinationProvider 
   constructor(
     private readonly currentConfiguration: CurrentTaskDestinationConfiguration,
     private readonly provision: ProvisionTaskNote,
+    private readonly isExcludedDestination: (filePath: string) => boolean = () => false,
+    private readonly canonicalizePath: (filePath: string) => string = (filePath) => filePath,
   ) {}
 
   planConfiguredDefault(): Promise<TaskDestinationPlan> {
     const configuration = this.currentConfiguration();
     const pattern = compileNotePathPattern(configuration.taskFilePath);
     const destination: TaskDestination = {
-      filePath: pattern.resolve(configuration.capturedToday),
+      filePath: this.canonicalizePath(pattern.resolve(configuration.capturedToday)),
       insertion: { ...configuration.insertion },
     };
     return Promise.resolve(
-      this.plan(destination, configuration.taskTemplatePath, titleFor(destination.filePath)),
+      this.plan(destination, configuration.taskTemplatePath, titleFor(destination.filePath), {
+        allowExcluded: false,
+      }),
     );
   }
 
-  planExplicit(destination: TaskDestination): Promise<TaskDestinationPlan> {
+  planArchive(): Promise<TaskDestinationPlan> {
+    const configuration = this.currentConfiguration();
+    const pattern = compileNotePathPattern(configuration.taskArchivePath ?? 'tasks/archive.md');
+    const destination: TaskDestination = {
+      filePath: this.canonicalizePath(pattern.resolve(configuration.capturedToday)),
+      insertion: { type: 'append' },
+    };
+    return Promise.resolve(
+      this.plan(destination, '', titleFor(destination.filePath), { allowExcluded: true }),
+    );
+  }
+
+  planExplicit(
+    destination: TaskDestination,
+    options: { readonly provision: boolean } = { provision: true },
+  ): Promise<TaskDestinationPlan> {
     const planned: TaskDestination = {
-      filePath: normalizePath(destination.filePath.trim()),
+      filePath: this.canonicalizePath(normalizePath(destination.filePath.trim())),
       insertion: { ...destination.insertion },
     };
-    return Promise.resolve(this.plan(planned, '', titleFor(planned.filePath)));
+    return Promise.resolve(
+      this.plan(planned, '', titleFor(planned.filePath), {
+        allowExcluded: false,
+        provisionDestination: options.provision,
+      }),
+    );
   }
 
   async resolveConfiguredDefault(): Promise<TaskDestinationResolution> {
@@ -61,18 +91,26 @@ export class ObsidianTaskDestinationProvider implements TaskDestinationProvider 
   }
 
   async prepare(destination: TaskDestination): Promise<TaskDestinationResolution> {
-    return await (await this.planExplicit(destination)).prepare();
+    return await (await this.planExplicit(destination, { provision: true })).prepare();
   }
 
   private plan(
     destination: TaskDestination,
     templatePath: string,
     title: string,
+    options: DestinationPlanOptions,
   ): TaskDestinationPlan {
     return {
       destination,
       prepare: async () => {
+        if (!options.allowExcluded && this.isExcludedDestination(destination.filePath)) {
+          return { type: 'unavailable' };
+        }
+        if (options.provisionDestination === false) return { type: 'resolved', destination };
         const file = await this.provision(destination.filePath, templatePath, title);
+        if (!options.allowExcluded && this.isExcludedDestination(file.path)) {
+          return { type: 'unavailable' };
+        }
         return {
           type: 'resolved',
           destination: { filePath: file.path, insertion: destination.insertion },

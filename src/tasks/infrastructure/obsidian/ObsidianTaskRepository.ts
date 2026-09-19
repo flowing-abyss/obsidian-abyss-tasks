@@ -20,6 +20,7 @@ import {
   type TaskRepositoryResult,
 } from '../../application/TaskRepository';
 import type {
+  ArchiveRecovery,
   MoveRecovery,
   PlanningTarget,
   TaskOccurrenceResult,
@@ -110,6 +111,10 @@ function committedTask(
   changed: boolean,
 ): Extract<TaskRepositoryResult, { readonly type: 'committed' }> {
   return { type: 'committed', outcome: { type: 'task', task }, changed };
+}
+
+function archiveReceiptKey(ref: TaskRef): string {
+  return `${ref.filePath}\0${ref.line}\0${ref.revision}`;
 }
 
 function authorityRevisionChanged(
@@ -513,12 +518,24 @@ interface MoveTargetInput {
   readonly destination: TaskDestination;
   readonly targetFile: TFile;
   readonly indexedRevision: string;
+  readonly archive: boolean;
 }
 
 interface MoveTargetTransaction {
   result: TaskRepositoryResult | undefined;
   transition: object | undefined;
   committedContent: string | undefined;
+  insertedBlock?: TaskRootBlock;
+  originalContent?: string;
+}
+
+interface ArchiveReceipt {
+  readonly source: TaskRef;
+  readonly sourceBlock: string;
+  readonly targetPath: string;
+  readonly targetBlock: TaskRootBlock;
+  readonly targetContentBefore: string;
+  readonly targetContentAfter: string;
 }
 
 type MoveSourceResolution =
@@ -529,6 +546,43 @@ type MoveSourceResolution =
       readonly block: TaskRootBlock;
       readonly indexedRevision: string;
     };
+
+interface SourceRemovalFailure {
+  readonly cause: MoveRecovery['cause'];
+  readonly contentState: 'remains' | 'unknown';
+}
+
+interface SourceRemovalTransaction {
+  committedContent?: string;
+  failure?: MoveRecovery['cause'];
+}
+
+type ArchiveStart =
+  | {
+      readonly type: 'ready';
+      readonly source: Extract<MoveSourceResolution, { type: 'ready' }>;
+      readonly targetFile: TFile;
+    }
+  | { readonly type: 'result'; readonly result: TaskRepositoryResult };
+
+type ArchiveTargetProof =
+  | { readonly type: 'proven' }
+  | { readonly type: 'absent' }
+  | { readonly type: 'result'; readonly result: TaskRepositoryResult };
+
+function archiveRequestParts(
+  request: TaskMoveRequest | TaskRef,
+  legacyDestination: TaskDestination | undefined,
+): {
+  readonly prepared: RevisionPrecondition | undefined;
+  readonly ref: TaskRef;
+  readonly destination: TaskDestination | undefined;
+} {
+  if ('baseRoot' in request) {
+    return { prepared: request, ref: request.baseRoot.ref, destination: request.destination };
+  }
+  return { prepared: undefined, ref: request, destination: legacyDestination };
+}
 
 interface RecurrenceProcessInput {
   readonly revisionRequest: RecurrenceCompletionRevisionRequest | undefined;
@@ -651,6 +705,8 @@ export class ObsidianTaskRepository implements TaskRepository {
   private readonly editor_abyssPrivate: TaskBlockEditor;
   private readonly locator_abyssPrivate: TaskLocator;
   private readonly parse_abyssPrivate: RepositoryOptions['snapshotsFromContent'];
+  private readonly archiveReceipts_abyssPrivate = new Map<string, ArchiveReceipt>();
+  private archiveQueue_abyssPrivate: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly app_abyssPrivate: App,
@@ -783,8 +839,198 @@ export class ObsidianTaskRepository implements TaskRepository {
       destination,
       targetFile,
       indexedRevision: source.indexedRevision,
+      archive: false,
     });
     return this.finishMoveSource_abyssPrivate(source.task, destination.filePath, targetResult);
+  }
+
+  async archive(
+    request: TaskMoveRequest | TaskRef,
+    legacyDestination?: TaskDestination,
+  ): Promise<TaskRepositoryResult> {
+    const operation = this.archiveQueue_abyssPrivate.then(() =>
+      this.archiveOnce_abyssPrivate(request, legacyDestination),
+    );
+    this.archiveQueue_abyssPrivate = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await operation;
+  }
+
+  private async archiveOnce_abyssPrivate(
+    request: TaskMoveRequest | TaskRef,
+    legacyDestination?: TaskDestination,
+  ): Promise<TaskRepositoryResult> {
+    const { prepared, ref, destination } = archiveRequestParts(request, legacyDestination);
+    if (destination == null || ref.filePath.toLowerCase() === destination.filePath.toLowerCase()) {
+      return invalidTaskTarget('destination');
+    }
+    const previous = await this.retainedArchiveResult_abyssPrivate(ref, destination);
+    if (previous !== undefined) return previous;
+    const start = await this.beginArchive_abyssPrivate(ref, prepared, destination);
+    if (start.type === 'result') return start.result;
+    const source = start.source;
+    const targetResult = await this.copyMoveTarget_abyssPrivate({
+      sourceTask: source.task,
+      sourceBlock: source.block,
+      destination,
+      targetFile: start.targetFile,
+      indexedRevision: source.indexedRevision,
+      archive: true,
+    });
+    if (targetResult.type !== 'committed' || targetResult.outcome.type !== 'task')
+      return targetResult;
+    const receipt = this.archiveReceipts_abyssPrivate.get(archiveReceiptKey(ref));
+    if (receipt === undefined) return this.processError_abyssPrivate(destination.filePath);
+    return await this.finishArchiveSource_abyssPrivate(source.task, receipt);
+  }
+
+  private async retainedArchiveResult_abyssPrivate(
+    ref: TaskRef,
+    destination: TaskDestination,
+  ): Promise<TaskRepositoryResult | undefined> {
+    const retained = this.archiveReceipts_abyssPrivate.get(archiveReceiptKey(ref));
+    if (retained !== undefined) {
+      return await this.resumeArchive_abyssPrivate(ref, destination, retained);
+    }
+    if (this.archiveReceipts_abyssPrivate.size < 64) return undefined;
+    return {
+      type: 'io-error',
+      cause: 'archive-recovery-capacity',
+      path: destination.filePath,
+      contentState: 'unchanged',
+    };
+  }
+
+  private async beginArchive_abyssPrivate(
+    ref: TaskRef,
+    prepared: RevisionPrecondition | undefined,
+    destination: TaskDestination,
+  ): Promise<ArchiveStart> {
+    const sourceFile = this.app_abyssPrivate.vault.getAbstractFileByPath(ref.filePath);
+    if (!(sourceFile instanceof TFile)) {
+      return { type: 'result', result: notFound({ type: 'task', ref }) };
+    }
+    const sourceContent = await this.readMoveSource_abyssPrivate(sourceFile, ref.filePath);
+    if (typeof sourceContent !== 'string') return { type: 'result', result: sourceContent };
+    const source = this.resolveMoveSource_abyssPrivate(ref, prepared, sourceContent);
+    if (source.type === 'result') return source;
+    const target = this.app_abyssPrivate.vault.getAbstractFileByPath(destination.filePath);
+    return target instanceof TFile
+      ? { type: 'ready', source, targetFile: target }
+      : { type: 'result', result: this.destinationUnavailable_abyssPrivate() };
+  }
+
+  private retainArchiveReceipt_abyssPrivate(receipt: ArchiveReceipt): void {
+    const key = archiveReceiptKey(receipt.source);
+    this.archiveReceipts_abyssPrivate.delete(key);
+    this.archiveReceipts_abyssPrivate.set(key, receipt);
+  }
+
+  private async resumeArchive_abyssPrivate(
+    ref: TaskRef,
+    destination: TaskDestination,
+    receipt: ArchiveReceipt,
+  ): Promise<TaskRepositoryResult> {
+    if (receipt.targetPath.toLowerCase() !== destination.filePath.toLowerCase()) {
+      return invalidTaskTarget('destination');
+    }
+    const targetProof = await this.proveArchiveTarget_abyssPrivate(receipt);
+    if (targetProof.type === 'result') return targetProof.result;
+    if (targetProof.type === 'absent') {
+      this.archiveReceipts_abyssPrivate.delete(archiveReceiptKey(ref));
+      return await this.archiveOnce_abyssPrivate(ref, destination);
+    }
+    return await this.resumeArchiveSource_abyssPrivate(ref, receipt);
+  }
+
+  private async proveArchiveTarget_abyssPrivate(
+    receipt: ArchiveReceipt,
+  ): Promise<ArchiveTargetProof> {
+    const target = this.app_abyssPrivate.vault.getAbstractFileByPath(receipt.targetPath);
+    if (!(target instanceof TFile)) {
+      return { type: 'result', result: this.partialArchive_abyssPrivate(receipt, 'not-found') };
+    }
+    let content: string;
+    try {
+      content = await this.app_abyssPrivate.vault.read(target);
+    } catch {
+      return { type: 'result', result: this.partialArchive_abyssPrivate(receipt, 'io-error') };
+    }
+    if (content === receipt.targetContentBefore) return { type: 'absent' };
+    const occurrence = this.editor_abyssPrivate
+      .rootBlocks(content)
+      .some(
+        (block) =>
+          block.line === receipt.targetBlock.line && block.source === receipt.targetBlock.source,
+      );
+    return content === receipt.targetContentAfter && occurrence
+      ? { type: 'proven' }
+      : { type: 'result', result: this.partialArchive_abyssPrivate(receipt, 'conflict') };
+  }
+
+  private async resumeArchiveSource_abyssPrivate(
+    ref: TaskRef,
+    receipt: ArchiveReceipt,
+  ): Promise<TaskRepositoryResult> {
+    const source = this.app_abyssPrivate.vault.getAbstractFileByPath(ref.filePath);
+    if (!(source instanceof TFile)) {
+      this.archiveReceipts_abyssPrivate.delete(archiveReceiptKey(ref));
+      return this.committedArchive_abyssPrivate(ref, receipt.targetPath);
+    }
+    const sourceContent = await this.readMoveSource_abyssPrivate(source, ref.filePath);
+    if (typeof sourceContent !== 'string') return sourceContent;
+    const located = this.locator_abyssPrivate.locate(
+      this.editor_abyssPrivate.rootBlocks(sourceContent),
+      ref,
+    );
+    if (located.type !== 'exact') {
+      return this.partialArchive_abyssPrivate(receipt, located.type);
+    }
+    if (located.block.source !== receipt.sourceBlock) {
+      return this.partialArchive_abyssPrivate(receipt, 'conflict');
+    }
+    const current = this.snapshotFor_abyssPrivate(ref.filePath, sourceContent, located.block);
+    if (current === undefined) return this.partialArchive_abyssPrivate(receipt, 'not-found');
+    return await this.finishArchiveSource_abyssPrivate(current, receipt);
+  }
+
+  private async finishArchiveSource_abyssPrivate(
+    source: TaskSnapshot,
+    receipt: ArchiveReceipt,
+  ): Promise<TaskRepositoryResult> {
+    const sourceFailure = await this.removeMoveSource_abyssPrivate(source);
+    if (sourceFailure !== undefined) {
+      return this.partialArchive_abyssPrivate(
+        receipt,
+        sourceFailure.cause,
+        sourceFailure.contentState === 'unknown' ? 'source-removal-unknown' : undefined,
+      );
+    }
+    this.archiveReceipts_abyssPrivate.delete(archiveReceiptKey(receipt.source));
+    return this.committedArchive_abyssPrivate(receipt.source, receipt.targetPath);
+  }
+
+  private committedArchive_abyssPrivate(ref: TaskRef, filePath: string): TaskRepositoryResult {
+    return { type: 'committed', changed: true, outcome: { type: 'archived', ref, filePath } };
+  }
+
+  private partialArchive_abyssPrivate(
+    receipt: ArchiveReceipt,
+    cause: ArchiveRecovery['cause'],
+    state: ArchiveRecovery['state'] = 'target-copied-source-remains',
+  ): TaskRepositoryResult {
+    return {
+      type: 'partial',
+      operation: 'archive',
+      recovery: {
+        source: receipt.source,
+        targetPath: receipt.targetPath,
+        state,
+        cause,
+      },
+    };
   }
 
   private async readMoveSource_abyssPrivate(
@@ -893,8 +1139,13 @@ export class ObsidianTaskRepository implements TaskRepository {
     }
     const copiedTask = targetResult.outcome.task;
     const sourceFailure = await this.removeMoveSource_abyssPrivate(sourceTask);
-    if (sourceFailure !== undefined && sourceFailure.length > 0) {
-      return this.partialMove_abyssPrivate(sourceTask.ref, targetPath, copiedTask, sourceFailure);
+    if (sourceFailure !== undefined) {
+      return this.partialMove_abyssPrivate(
+        sourceTask.ref,
+        targetPath,
+        copiedTask,
+        sourceFailure.cause,
+      );
     }
     return targetResult;
   }
@@ -911,9 +1162,57 @@ export class ObsidianTaskRepository implements TaskRepository {
       );
     } catch {
       await this.rejectMoveTarget_abyssPrivate(input, transaction);
+      return this.rejectedMoveTargetResult_abyssPrivate(input, transaction);
+    }
+    const result = this.commitMoveTarget_abyssPrivate(input, transaction);
+    this.retainCommittedArchiveTarget_abyssPrivate(input, transaction, result);
+    return result;
+  }
+
+  private rejectedMoveTargetResult_abyssPrivate(
+    input: MoveTargetInput,
+    transaction: MoveTargetTransaction,
+  ): TaskRepositoryResult {
+    if (!input.archive || transaction.insertedBlock === undefined) {
       return this.processError_abyssPrivate(input.destination.filePath);
     }
-    return this.commitMoveTarget_abyssPrivate(input, transaction);
+    const receipt = this.archiveReceiptForTransaction_abyssPrivate(input, transaction);
+    if (receipt === undefined) return this.processError_abyssPrivate(input.destination.filePath);
+    this.retainArchiveReceipt_abyssPrivate(receipt);
+    return this.partialArchive_abyssPrivate(receipt, 'io-error');
+  }
+
+  private retainCommittedArchiveTarget_abyssPrivate(
+    input: MoveTargetInput,
+    transaction: MoveTargetTransaction,
+    result: TaskRepositoryResult,
+  ): void {
+    if (!input.archive || result.type !== 'committed' || result.outcome.type !== 'task') return;
+    const receipt = this.archiveReceiptForTransaction_abyssPrivate(input, transaction);
+    if (receipt !== undefined) this.retainArchiveReceipt_abyssPrivate(receipt);
+  }
+
+  private archiveReceiptForTransaction_abyssPrivate(
+    input: MoveTargetInput,
+    transaction: MoveTargetTransaction,
+  ): ArchiveReceipt | undefined {
+    const targetBlock = transaction.insertedBlock;
+    const targetContentBefore = transaction.originalContent;
+    const targetContentAfter = transaction.committedContent;
+    if (
+      targetBlock === undefined ||
+      targetContentBefore === undefined ||
+      targetContentAfter === undefined
+    )
+      return undefined;
+    return {
+      source: input.sourceTask.ref,
+      sourceBlock: input.sourceBlock.source,
+      targetPath: input.destination.filePath,
+      targetBlock,
+      targetContentBefore,
+      targetContentAfter,
+    };
   }
 
   private copyMoveContent_abyssPrivate(
@@ -921,6 +1220,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     transaction: MoveTargetTransaction,
     content: string,
   ): string {
+    transaction.originalContent = content;
     const inserted = this.editor_abyssPrivate.insertRootBlock(
       content,
       input.sourceBlock.source,
@@ -930,6 +1230,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       transaction.result = invalidTaskSyntax();
       return content;
     }
+    transaction.insertedBlock = inserted.block;
     if (
       !this.stageMoveTransition_abyssPrivate(input, transaction, inserted.content, inserted.block)
     ) {
@@ -1021,52 +1322,99 @@ export class ObsidianTaskRepository implements TaskRepository {
 
   private async removeMoveSource_abyssPrivate(
     sourceTask: TaskSnapshot,
-  ): Promise<MoveRecovery['cause'] | undefined> {
+  ): Promise<SourceRemovalFailure | undefined> {
     const file = this.app_abyssPrivate.vault.getAbstractFileByPath(sourceTask.ref.filePath);
-    if (!(file instanceof TFile)) return 'not-found';
-    let committedContent: string | undefined;
-    let failure: MoveRecovery['cause'] | undefined;
+    if (!(file instanceof TFile)) return { cause: 'not-found', contentState: 'remains' };
+    const transaction: SourceRemovalTransaction = {};
     try {
-      await this.processFile_abyssPrivate(file, (content) => {
-        const located = this.locator_abyssPrivate.locate(
-          this.editor_abyssPrivate.rootBlocks(content),
-          sourceTask.ref,
-        );
-        if (located.type !== 'exact') {
-          failure = located.type;
-          return content;
-        }
-        const current = this.snapshotFor_abyssPrivate(
-          sourceTask.ref.filePath,
-          content,
-          located.block,
-        );
-        const next =
-          current === undefined
-            ? undefined
-            : this.editor_abyssPrivate.deleteRoot(content, located.block);
-        if (current === undefined || next === undefined) {
-          failure = 'not-found';
-          return content;
-        }
-        committedContent = next;
-        return next;
-      });
+      await this.processFile_abyssPrivate(file, (content) =>
+        this.removeMoveSourceContent_abyssPrivate(sourceTask, transaction, content),
+      );
     } catch {
-      if (committedContent !== undefined) {
-        await this.reconcileRejectedDeletion_abyssPrivate(
-          file,
-          sourceTask.ref.filePath,
-          sourceTask.ref,
-        );
-      }
-      return 'io-error';
+      return await this.rejectedSourceRemoval_abyssPrivate(file, sourceTask, transaction);
     }
-    if (committedContent === undefined || (failure !== undefined && failure.length > 0)) {
-      return failure ?? 'io-error';
+    if (transaction.committedContent === undefined || transaction.failure !== undefined) {
+      return { cause: transaction.failure ?? 'io-error', contentState: 'remains' };
     }
-    this.state_abyssPrivate?.installCommittedContent(sourceTask.ref.filePath, committedContent);
+    this.state_abyssPrivate?.installCommittedContent(
+      sourceTask.ref.filePath,
+      transaction.committedContent,
+    );
     return undefined;
+  }
+
+  private removeMoveSourceContent_abyssPrivate(
+    sourceTask: TaskSnapshot,
+    transaction: SourceRemovalTransaction,
+    content: string,
+  ): string {
+    const blocks = this.editor_abyssPrivate.rootBlocks(content);
+    if (!this.sourceRevisionIsCurrent_abyssPrivate(sourceTask, blocks)) {
+      transaction.failure = 'conflict';
+      return content;
+    }
+    const located = this.locator_abyssPrivate.locate(blocks, sourceTask.ref);
+    if (located.type !== 'exact') {
+      transaction.failure = located.type;
+      return content;
+    }
+    const current = this.snapshotFor_abyssPrivate(sourceTask.ref.filePath, content, located.block);
+    const next =
+      current === undefined
+        ? undefined
+        : this.editor_abyssPrivate.deleteRoot(content, located.block);
+    if (next === undefined) {
+      transaction.failure = 'not-found';
+      return content;
+    }
+    transaction.committedContent = next;
+    return next;
+  }
+
+  private sourceRevisionIsCurrent_abyssPrivate(
+    sourceTask: TaskSnapshot,
+    blocks: readonly TaskRootBlock[],
+  ): boolean {
+    if (this.authority_abyssPrivate === undefined || this.state_abyssPrivate === undefined) {
+      return true;
+    }
+    const population = blocks
+      .filter((block) => block.source === sourceTask.source.originalBlock)
+      .map((block) => block.line);
+    const current = this.state_abyssPrivate.currentRoot(
+      sourceTask.ref.filePath,
+      sourceTask.ref.line,
+      sourceTask.source.originalBlock,
+      population,
+    );
+    return current?.revision === sourceTask.ref.revision;
+  }
+
+  private async rejectedSourceRemoval_abyssPrivate(
+    file: TFile,
+    sourceTask: TaskSnapshot,
+    transaction: SourceRemovalTransaction,
+  ): Promise<SourceRemovalFailure | undefined> {
+    if (transaction.committedContent === undefined) {
+      return { cause: 'io-error', contentState: 'remains' };
+    }
+    await this.reconcileRejectedDeletion_abyssPrivate(
+      file,
+      sourceTask.ref.filePath,
+      sourceTask.ref,
+    );
+    try {
+      const authoritative = await this.app_abyssPrivate.vault.read(file);
+      const located = this.locator_abyssPrivate.locate(
+        this.editor_abyssPrivate.rootBlocks(authoritative),
+        sourceTask.ref,
+      );
+      return located.type === 'not-found'
+        ? undefined
+        : { cause: 'io-error', contentState: 'remains' };
+    } catch {
+      return { cause: 'io-error', contentState: 'unknown' };
+    }
   }
 
   async completeRecurrence(

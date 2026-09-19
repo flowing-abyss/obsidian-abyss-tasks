@@ -93,6 +93,8 @@ export interface CalendarSettings {
   mobile: ViewConfig;
   taskPrefix: string;
   taskFilePath: string;
+  taskArchivePath: string;
+  taskIgnoreQuery: string;
   taskTemplatePath: string;
   inbox: InboxSettings;
   pinnedTags: string[];

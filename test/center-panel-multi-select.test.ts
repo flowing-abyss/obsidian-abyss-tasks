@@ -4,7 +4,7 @@ import { AppState } from '../src/app/AppState';
 import { type CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
-import type { TaskSnapshot } from '../src/tasks';
+import type { TaskApplicationApi, TaskCommandResult, TaskRef, TaskSnapshot } from '../src/tasks';
 import {
   expectDefined,
   freshContainer,
@@ -23,7 +23,10 @@ afterEach(() => {
   });
 });
 
-function makeCenter(tasks: TaskSnapshot[]): {
+function makeCenter(
+  tasks: TaskSnapshot[],
+  application?: TaskApplicationApi,
+): {
   el: HTMLElement;
   state: AppState;
   panel: CenterPanel;
@@ -37,7 +40,17 @@ function makeCenter(tasks: TaskSnapshot[]): {
   };
   const tm = new TagManager(null as never, settings, save);
   const store = makeStubStore(tasks);
-  const panel = makeCenterPanelForTest(state, store, null as never, settings, tm);
+  const panel = makeCenterPanelForTest(
+    state,
+    store,
+    null as never,
+    settings,
+    tm,
+    undefined,
+    undefined,
+    undefined,
+    application,
+  );
   const el = freshContainer();
   panel.mount(el);
   return { el, state, panel };
@@ -223,6 +236,43 @@ describe('CenterPanel multi-selection', () => {
     );
     expect(expectDefined(cards[0]).classList.contains('abyss-multi-selected')).toBe(true);
     expect(expectDefined(cards[1]).classList.contains('abyss-multi-selected')).toBe(true);
+  });
+
+  it('archives two selected roots with one frozen session and retains failed selection', async () => {
+    const execute = vi
+      .fn<(ref: TaskRef) => Promise<TaskCommandResult>>()
+      .mockResolvedValueOnce({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'archived', ref: t1.ref, filePath: 'archive/2026-09-19.md' },
+      })
+      .mockResolvedValueOnce({
+        type: 'invalid',
+        issues: [{ code: 'destination-unavailable', field: 'destination' }],
+      });
+    const planArchive = vi.fn().mockResolvedValue({
+      type: 'ready',
+      filePath: 'archive/2026-09-19.md',
+      execute,
+    });
+    const application: TaskApplicationApi = {
+      queries: makeStubStore([t1, t2]).queries,
+      execute: vi.fn(),
+      planArchive,
+    };
+    const { el, panel } = makeCenter([t1, t2], application);
+    click(expectDefined(cards(el)[0]), { ctrlKey: true });
+    click(expectDefined(cards(el)[1]), { ctrlKey: true });
+
+    await (
+      panel as unknown as {
+        archiveTasks_abyssPrivate(tasks: readonly TaskSnapshot[]): Promise<void>;
+      }
+    ).archiveTasks_abyssPrivate([t1, t2]);
+
+    expect(planArchive).toHaveBeenCalledOnce();
+    expect(execute.mock.calls.map(([calledRef]) => calledRef)).toEqual([t1.ref, t2.ref]);
+    expect(selectedLines(el)).toEqual(['1']);
   });
 
   it('Ctrl+Click already-selected card deselects it', () => {

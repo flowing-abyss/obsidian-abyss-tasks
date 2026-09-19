@@ -842,7 +842,10 @@ describe('TaskApplicationService lifecycle routing', () => {
     });
     const provider: TaskDestinationProvider = {
       planConfiguredDefault: vi.fn(),
-      planExplicit: vi.fn(),
+      planExplicit: vi.fn<TaskDestinationProvider['planExplicit']>(async (destination) => ({
+        destination,
+        prepare: async () => ({ type: 'resolved' as const, destination }),
+      })),
       resolveConfiguredDefault: vi.fn().mockResolvedValue({ type: 'unavailable' }),
       prepare: vi.fn().mockResolvedValue({
         type: 'resolved',
@@ -871,6 +874,9 @@ describe('TaskApplicationService lifecycle routing', () => {
     });
     expect(methodOf(provider, 'resolveConfiguredDefault')).not.toHaveBeenCalled();
     expect(methodOf(provider, 'prepare')).not.toHaveBeenCalled();
+    expect(methodOf(provider, 'planExplicit')).toHaveBeenNthCalledWith(1, appendDestination, {
+      provision: false,
+    });
     expect(create).toHaveBeenCalledWith(appendDestination, {
       markdownBody: 'explicit',
       today: localDate('2026-07-14'),
@@ -887,7 +893,9 @@ describe('TaskApplicationService lifecycle routing', () => {
       },
       markdownBody: 'prepared',
     });
-    expect(methodOf(provider, 'prepare')).toHaveBeenCalledWith(appendDestination);
+    expect(methodOf(provider, 'planExplicit')).toHaveBeenNthCalledWith(2, appendDestination, {
+      provision: true,
+    });
     expect(create).toHaveBeenCalledWith(appendDestination, {
       markdownBody: 'prepared',
       today: localDate('2026-07-14'),
@@ -905,6 +913,63 @@ describe('TaskApplicationService lifecycle routing', () => {
       issues: [{ code: 'destination-unavailable', field: 'destination' }],
     });
   });
+
+  it.each([
+    {
+      name: 'existing explicit file',
+      destination: { type: 'explicit' as const, destination: appendDestination },
+      expectedPlan: { provision: false },
+    },
+    {
+      name: 'provisioned explicit file',
+      destination: {
+        type: 'explicit' as const,
+        destination: appendDestination,
+        provision: 'if-missing' as const,
+      },
+      expectedPlan: { provision: true },
+    },
+  ])(
+    'rejects an excluded $name before repository creation',
+    async ({ destination, expectedPlan }) => {
+      const create = vi.fn<TaskRepository['create']>();
+      const provider: TaskDestinationProvider = {
+        planConfiguredDefault: vi.fn(),
+        planExplicit: vi.fn<TaskDestinationProvider['planExplicit']>(async (planned) => ({
+          destination: planned,
+          prepare: async () => ({ type: 'unavailable' as const }),
+        })),
+        resolveConfiguredDefault: vi.fn(),
+        prepare: vi.fn(),
+      };
+      const application = new TaskApplicationService(
+        queries,
+        {
+          edit: vi.fn(),
+          editBatch: vi.fn(),
+          createDependencySubtask: vi.fn(),
+          completeRecurrence: vi.fn(),
+          create,
+          move: vi.fn(),
+        },
+        catalog,
+        clock,
+        provider,
+      );
+
+      await expect(
+        application.execute({ type: 'create', destination, markdownBody: 'blocked' }),
+      ).resolves.toEqual({
+        type: 'invalid',
+        issues: [{ code: 'destination-unavailable', field: 'destination' }],
+      });
+      expect(methodOf(provider, 'planExplicit')).toHaveBeenCalledWith(
+        appendDestination,
+        expectedPlan,
+      );
+      expect(create).not.toHaveBeenCalled();
+    },
+  );
 
   it('normalizes and validates initial tags before creation', async () => {
     const create = vi.fn<TaskRepository['create']>().mockResolvedValue({
@@ -1615,6 +1680,79 @@ describe('ObsidianTaskDestinationProvider', () => {
       'templates/task.md',
       '2026-07-14',
     );
+  });
+
+  it('freezes one archive date and prepares the empty destination once on demand', async () => {
+    let capturedToday = '2026-07-14';
+    const provision = vi.fn(async (path: string, template: string) => ({ path, template }));
+    const provider = new ObsidianTaskDestinationProvider(
+      () => ({
+        taskFilePath: 'tasks.md',
+        taskArchivePath: 'archive/{{YYYY-MM-DD}}.md',
+        taskTemplatePath: 'templates/task.md',
+        capturedToday,
+        insertion: { type: 'prepend' },
+      }),
+      provision,
+    );
+
+    const plan = await provider.planArchive();
+    capturedToday = '2026-07-15';
+
+    expect(plan.destination).toEqual({
+      filePath: 'archive/2026-07-14.md',
+      insertion: { type: 'append' },
+    });
+    expect(provision).not.toHaveBeenCalled();
+    await plan.prepare();
+    expect(provision).toHaveBeenCalledWith('archive/2026-07-14.md', '', '2026-07-14');
+  });
+
+  it('rejects ordinary capture into an excluded destination before provisioning', async () => {
+    const provision = vi.fn(async (path: string) => ({ path }));
+    const provider = new ObsidianTaskDestinationProvider(
+      () => ({
+        taskFilePath: 'tasks/archive.md',
+        taskArchivePath: 'tasks/archive.md',
+        taskTemplatePath: '',
+        capturedToday: '2026-07-14',
+        insertion: { type: 'append' },
+      }),
+      provision,
+      (path) => path.toLowerCase() === 'tasks/archive.md',
+    );
+
+    await expect((await provider.planConfiguredDefault()).prepare()).resolves.toEqual({
+      type: 'unavailable',
+    });
+    expect(provision).not.toHaveBeenCalled();
+  });
+
+  it('uses canonical vault casing for archive plans and their resulting destination', async () => {
+    const provision = vi.fn(async (path: string) => ({ path }));
+    const canonicalize = vi.fn((path: string) =>
+      path === 'tasks/archive.md' ? 'Tasks/Archive.md' : path,
+    );
+    const provider = new ObsidianTaskDestinationProvider(
+      () => ({
+        taskFilePath: 'tasks/active.md',
+        taskArchivePath: 'tasks/archive.md',
+        taskTemplatePath: '',
+        capturedToday: '2026-07-14',
+        insertion: { type: 'append' },
+      }),
+      provision,
+      () => false,
+      canonicalize,
+    );
+
+    const plan = await provider.planArchive();
+    expect(plan.destination.filePath).toBe('Tasks/Archive.md');
+    await expect(plan.prepare()).resolves.toEqual({
+      type: 'resolved',
+      destination: { filePath: 'Tasks/Archive.md', insertion: { type: 'append' } },
+    });
+    expect(provision).toHaveBeenCalledWith('Tasks/Archive.md', '', 'Archive');
   });
 });
 

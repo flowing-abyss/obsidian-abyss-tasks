@@ -37,6 +37,7 @@ import type {
   CreateTaskCommandDestination,
   CreateTaskCommandInitial,
   TaskApplicationApi,
+  TaskArchiveSession,
   TaskCaptureApplicationApi,
   TaskCreateSession,
   TaskDependencyQueryApi,
@@ -149,7 +150,7 @@ type DependencyCommand = Extract<
   }
 >;
 type ExistingTaskCommand = Exclude<TaskCommand, DependencyCommand | { readonly type: 'create' }>;
-type EditableTaskCommand = Exclude<ExistingTaskCommand, { readonly type: 'move' }>;
+type EditableTaskCommand = Exclude<ExistingTaskCommand, { readonly type: 'move' | 'archive' }>;
 type PreparedTaskCommand =
   | { readonly command: TaskEditCommand }
   | { readonly recurrence: RecurrenceCompletionRequest }
@@ -352,6 +353,10 @@ function destinationUnavailableResult(): TaskCommandResult {
   };
 }
 
+function sameFilePath(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
 type TaskApplicationServiceDependencies = [
   queries: TaskQueryApi & TaskDependencyQueryApi,
   repository: TaskRepository,
@@ -362,6 +367,10 @@ type TaskApplicationServiceDependencies = [
   dependencies?: TaskDependencyService,
   diagnostics?: TaskDiagnosticSink,
 ];
+
+type ArchiveDestinationResolution =
+  | { readonly type: 'ready'; readonly destination: TaskDestination }
+  | { readonly type: 'result'; readonly result: TaskCommandResult };
 
 export class TaskApplicationService implements TaskApplicationApi, TaskCaptureApplicationApi {
   // Bridges the index-event lag only for exact refs returned by this service. The cache shares the
@@ -413,6 +422,57 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
         error,
       );
       return this.unavailableCreateSession_abyssPrivate();
+    }
+  }
+
+  async planArchive(): Promise<TaskArchiveSession> {
+    try {
+      const plan = await this.destinationProvider_abyssPrivate?.planArchive?.();
+      if (plan === undefined) return this.unavailableArchiveSession_abyssPrivate();
+      let prepared: Promise<TaskDestinationResolution> | undefined;
+      return {
+        type: 'ready',
+        filePath: plan.destination.filePath,
+        execute: async (ref) => {
+          prepared ??= plan.prepare();
+          return await this.executeArchiveSession_abyssPrivate(ref, plan, prepared);
+        },
+      };
+    } catch (error) {
+      this.diagnostics_abyssPrivate(
+        { operation: 'archive', phase: 'unexpected', cause: 'destination-plan' },
+        error,
+      );
+      return this.unavailableArchiveSession_abyssPrivate();
+    }
+  }
+
+  private unavailableArchiveSession_abyssPrivate(): TaskArchiveSession {
+    return { type: 'unavailable', execute: async () => destinationUnavailableResult() };
+  }
+
+  private async executeArchiveSession_abyssPrivate(
+    ref: TaskRef,
+    plan: TaskDestinationPlan,
+    prepared: Promise<TaskDestinationResolution>,
+  ): Promise<TaskCommandResult> {
+    try {
+      const command = { type: 'archive' as const, ref };
+      const resolution = this.resolveForCommand_abyssPrivate(command, ref);
+      const unavailable = this.unavailableResult_abyssPrivate(command, resolution);
+      if (unavailable != null) return unavailable;
+      return await this.archive_abyssPrivate(
+        command,
+        resolution as ProvenResolution,
+        plan,
+        prepared,
+      );
+    } catch (error) {
+      this.diagnostics_abyssPrivate(
+        { operation: 'archive', phase: 'unexpected', cause: 'repository-error' },
+        error,
+      );
+      return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
     }
   }
 
@@ -476,6 +536,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     const proven = resolution as ProvenResolution;
     if (command.type === 'move')
       return await this.move_abyssPrivate(command, proven, settings, reading);
+    if (command.type === 'archive') return await this.archive_abyssPrivate(command, proven);
     return await this.executeEditableCommand_abyssPrivate(command, proven, {
       settings,
       reading,
@@ -662,6 +723,60 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     );
   }
 
+  private async archive_abyssPrivate(
+    command: Extract<TaskCommand, { readonly type: 'archive' }>,
+    resolution: ProvenResolution,
+    frozenPlan?: TaskDestinationPlan,
+    frozenPreparation?: Promise<TaskDestinationResolution>,
+  ): Promise<TaskCommandResult> {
+    const destination = await this.archiveDestination_abyssPrivate(
+      command.ref,
+      frozenPlan,
+      frozenPreparation,
+    );
+    if (destination.type === 'result') return destination.result;
+    const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+    const request: TaskMoveRequest = {
+      destination: destination.destination,
+      baseRoot: current,
+      baseTarget: { type: 'task', ref: command.ref },
+      reconciliation: resolution.basis,
+    };
+    if (this.repository_abyssPrivate.archive === undefined) return destinationUnavailableResult();
+    const result = await this.repository_abyssPrivate.archive(request);
+    return this.finishArchiveResult_abyssPrivate(command.ref, result);
+  }
+
+  private async archiveDestination_abyssPrivate(
+    ref: TaskRef,
+    frozenPlan?: TaskDestinationPlan,
+    frozenPreparation?: Promise<TaskDestinationResolution>,
+  ): Promise<ArchiveDestinationResolution> {
+    const plan = frozenPlan ?? (await this.destinationProvider_abyssPrivate?.planArchive?.());
+    if (plan === undefined) return { type: 'result', result: destinationUnavailableResult() };
+    if (sameFilePath(ref.filePath, plan.destination.filePath)) {
+      return { type: 'result', result: invalidTaskTarget('destination') };
+    }
+    const prepared = await (frozenPreparation ?? plan.prepare());
+    if (prepared.type !== 'resolved') {
+      return { type: 'result', result: destinationUnavailableResult() };
+    }
+    return sameFilePath(ref.filePath, prepared.destination.filePath)
+      ? { type: 'result', result: invalidTaskTarget('destination') }
+      : { type: 'ready', destination: prepared.destination };
+  }
+
+  private finishArchiveResult_abyssPrivate(
+    ref: TaskRef,
+    result: TaskRepositoryResult,
+  ): TaskCommandResult {
+    if (result.type === 'committed' && result.outcome.type === 'archived') {
+      this.forget_abyssPrivate(ref);
+      return { type: 'ok', outcome: result.outcome, changed: result.changed };
+    }
+    return this.terminalRepositoryResult_abyssPrivate(result);
+  }
+
   private async create_abyssPrivate(
     command: CreateTaskCommand,
     settings: TaskBehaviorSettings,
@@ -669,18 +784,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   ): Promise<TaskCommandResult> {
     const resolveDestination = async (): Promise<TaskDestinationResolution | undefined> => {
       if (command.destination.type === 'explicit') {
-        if (command.destination.provision === undefined) {
-          return {
-            type: 'resolved',
-            destination: {
-              filePath: command.destination.destination.filePath,
-              insertion: { ...command.destination.destination.insertion },
-            },
-          };
-        }
-        return await this.destinationProvider_abyssPrivate?.prepare(
-          command.destination.destination,
-        );
+        return await (await this.destinationPlan_abyssPrivate(command.destination))?.prepare();
       }
       return await this.destinationProvider_abyssPrivate?.resolveConfiguredDefault();
     };
@@ -726,9 +830,12 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (destination.type === 'configured-default') {
       return await this.destinationProvider_abyssPrivate?.planConfiguredDefault();
     }
-    if (destination.provision !== undefined) {
-      return await this.destinationProvider_abyssPrivate?.planExplicit(destination.destination);
+    if (this.destinationProvider_abyssPrivate !== undefined) {
+      return await this.destinationProvider_abyssPrivate.planExplicit(destination.destination, {
+        provision: destination.provision !== undefined,
+      });
     }
+    if (destination.provision !== undefined) return undefined;
     const planned: TaskDestination = {
       filePath: destination.destination.filePath,
       insertion: { ...destination.destination.insertion },

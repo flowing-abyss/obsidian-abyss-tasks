@@ -30,6 +30,7 @@ import {
   type CommentTimeContextProvider,
   type LocalDate,
   type TaskApplicationApi,
+  type TaskArchiveSession,
   type TaskCaptureApplicationApi,
   type TaskCommandResult,
   type TaskPriority,
@@ -70,6 +71,7 @@ import {
 import { TaskCaptureController } from '../ui/taskCapture/TaskCaptureController';
 import {
   describeTaskCreationResult,
+  presentTaskArchiveResult,
   presentTaskCommandResult,
   requestTaskCompletion,
   type CreationResultDescription,
@@ -2856,6 +2858,16 @@ export class CenterPanel {
 
     menu.addItem((item) =>
       item
+        .setTitle('Archive')
+        .setIcon('archive')
+        .setSection('actions')
+        .onClick(() => {
+          runAsyncAction(this.archiveTasks_abyssPrivate([task]));
+        }),
+    );
+
+    menu.addItem((item) =>
+      item
         .setTitle('Delete')
         .setIcon('trash-2')
         .setSection('danger')
@@ -2924,6 +2936,33 @@ export class CenterPanel {
     this.selectionAnchorKey_abyssPrivate = null;
     this.selectionFocusKey_abyssPrivate = null;
     this.updateSelectionVisuals_abyssPrivate();
+  }
+
+  private async archiveTasks_abyssPrivate(selectedTasks: readonly TaskSnapshot[]): Promise<void> {
+    const tasks = this.tasks_abyssPrivate;
+    if (tasks == null) return;
+    const session: TaskArchiveSession | undefined = await tasks.planArchive?.();
+    for (const task of selectedTasks) {
+      const result =
+        session?.type === 'ready'
+          ? await session.execute(task.ref)
+          : await tasks.execute({ type: 'archive', ref: task.ref });
+      presentTaskArchiveResult(this.app_abyssPrivate, tasks, result);
+      this.removeArchivedSelection_abyssPrivate(task, result);
+    }
+    this.updateSelectionVisuals_abyssPrivate();
+  }
+
+  private removeArchivedSelection_abyssPrivate(
+    task: TaskSnapshot,
+    result: TaskCommandResult,
+  ): void {
+    if (result.type !== 'ok' || result.outcome.type !== 'archived') return;
+    this.selectedTaskKeys_abyssPrivate.delete(this.taskKey_abyssPrivate(task));
+    const current = this.state_abyssPrivate.get('taskStack')[0];
+    if (current != null && this.sameTaskRef_abyssPrivate(rootTaskRef(current), task.ref)) {
+      this.state_abyssPrivate.set('taskStack', []);
+    }
   }
 
   private buildPrioritySubmenu_abyssPrivate(sub: Menu, task: TaskSnapshot): void {
@@ -3131,6 +3170,16 @@ export class CenterPanel {
         .setSection('actions')
         .onClick(() => {
           this.openBulkTagPicker_abyssPrivate(selectedTasks);
+        }),
+    );
+
+    menu.addItem((item) =>
+      item
+        .setTitle('Archive all')
+        .setIcon('archive')
+        .setSection('actions')
+        .onClick(() => {
+          runAsyncAction(this.archiveTasks_abyssPrivate(selectedTasks));
         }),
     );
 

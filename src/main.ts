@@ -1,4 +1,4 @@
-import { normalizePath, Notice, Plugin } from 'obsidian';
+import { getAllTags, normalizePath, Notice, Plugin, type TAbstractFile } from 'obsidian';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
 import { NoteTemplateService } from './notes/NoteTemplateService';
 import { initializeProjectPropertyDefinitions } from './projects/initializeProjectPropertyDefinitions';
@@ -7,15 +7,21 @@ import {
   type ProjectPropertyCatalog,
 } from './projects/ObsidianProjectProperties';
 import { ProjectManager } from './projects/ProjectManager';
+import { evaluateQuery } from './query/evaluateQuery';
 import { DEFAULT_SETTINGS } from './settings/defaults';
 import {
   SettingsPersistenceCoordinator,
   type SettingsPersistencePort,
 } from './settings/persistence';
 import { reportSettingsDraftSaveFailure } from './settings/settingsSaveFailure';
-import { beginSettingsSave } from './settings/settingsSaveRevision';
+import { beginSettingsSave, latestSettingsSaveRevision } from './settings/settingsSaveRevision';
 import { CalendarSettingsTab } from './settings/SettingsTab';
 import { toStatusRules } from './settings/statusCatalogAdapter';
+import {
+  taskSourceIgnoreQuery,
+  validateTaskStorageDraft,
+  type TaskStorageSettings,
+} from './settings/taskStorageSettings';
 import type { CalendarSettings, CodeBlockParams } from './settings/types';
 import { StatusRegistry } from './status/StatusRegistry';
 import { TagManager } from './tags/TagManager';
@@ -41,7 +47,7 @@ import { TaskLocator } from './tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from './tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskDestinationProvider } from './tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from './tasks/infrastructure/obsidian/ObsidianTaskRepository';
-import { TaskIndex } from './tasks/infrastructure/TaskIndex';
+import { TaskIndex, type TaskSourceMetadata } from './tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from './tasks/infrastructure/TaskRefAuthority';
 import { CalendarRenderer } from './ui/CalendarRenderer';
 import { PANEL_VIEW_TYPE, PanelView } from './views/PanelView';
@@ -68,6 +74,7 @@ export default class TaskCalendarPlugin extends Plugin {
   private projectManager!: ProjectManager;
   private projectProperties!: ProjectPropertyCatalog;
   private settingsPersistence!: SettingsPersistenceCoordinator;
+  private effectiveTaskStorage!: TaskStorageSettings;
   private projectPropertyCaptureQueue: Promise<void> = Promise.resolve();
 
   override async onload(): Promise<void> {
@@ -96,6 +103,10 @@ export default class TaskCalendarPlugin extends Plugin {
     this.statusCatalog = new StatusCatalog(toStatusRules(this.settings.taskStatuses));
     this.statusRegistry = new StatusRegistry(this.settings.taskStatuses);
     const refAuthority = new TaskRefAuthority();
+    this.effectiveTaskStorage = {
+      taskArchivePath: this.settings.taskArchivePath,
+      taskIgnoreQuery: this.settings.taskIgnoreQuery,
+    };
     this.taskIndex = new TaskIndex(this.app, {
       statusCatalog: this.statusCatalog,
       dailyNoteFormat: this.settings.desktop.dailyNoteFormat,
@@ -103,6 +114,7 @@ export default class TaskCalendarPlugin extends Plugin {
         ? { globalTaskFilter: this.settings.desktop.globalTaskFilter }
         : {}),
       refAuthority,
+      excludeSource: (source) => this.isTaskSourceExcluded(source),
     });
     const codec = new TaskMarkdownCodec(this.statusCatalog);
     const repository = new ObsidianTaskRepository(this.app, {
@@ -117,11 +129,14 @@ export default class TaskCalendarPlugin extends Plugin {
     const destinationProvider = new ObsidianTaskDestinationProvider(
       () => ({
         taskFilePath: this.settings.taskFilePath,
+        taskArchivePath: this.effectiveTaskStorage.taskArchivePath,
         taskTemplatePath: this.settings.taskTemplatePath,
         capturedToday: window.moment().format('YYYY-MM-DD'),
         insertion: configuredTaskInsertion(this.settings),
       }),
       (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
+      (filePath) => this.isExcludedDestination(filePath),
+      (filePath) => this.canonicalTaskDestinationPath(filePath),
     );
     const diagnostics: TaskDiagnosticSink = (diagnostic, error) => {
       console.error('[abyss-tasks] task operation failed', diagnostic, error);
@@ -300,6 +315,64 @@ export default class TaskCalendarPlugin extends Plugin {
     for (const leaf of this.app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)) {
       if (leaf.view instanceof PanelView) leaf.view.refreshProjectSettings();
     }
+  }
+
+  async saveTaskStorageSettings(draft: TaskStorageSettings): Promise<void> {
+    const current = {
+      taskArchivePath: this.settings.taskArchivePath,
+      taskIgnoreQuery: this.settings.taskIgnoreQuery,
+    };
+    const validated = validateTaskStorageDraft(current, draft);
+    if (validated.type === 'invalid') throw new Error(validated.message);
+    this.settings.taskArchivePath = validated.settings.taskArchivePath;
+    this.settings.taskIgnoreQuery = validated.settings.taskIgnoreQuery;
+    const save = this.saveSettings();
+    const revision = latestSettingsSaveRevision(this.settings);
+    try {
+      await save;
+    } catch (error) {
+      if (latestSettingsSaveRevision(this.settings) === revision) {
+        this.settings.taskArchivePath = current.taskArchivePath;
+        this.settings.taskIgnoreQuery = current.taskIgnoreQuery;
+      }
+      throw error;
+    }
+    this.effectiveTaskStorage = { ...validated.settings };
+    await this.taskIndex.refreshSourceExclusion((source) => this.isTaskSourceExcluded(source));
+  }
+
+  private isTaskSourceExcluded(source: TaskSourceMetadata): boolean {
+    return evaluateQuery(
+      taskSourceIgnoreQuery(this.effectiveTaskStorage),
+      source.filePath,
+      [...source.tags],
+      { ...source.frontmatter },
+    );
+  }
+
+  private isExcludedDestination(filePath: string): boolean {
+    const actual = this.app.vault
+      .getMarkdownFiles()
+      .find((file) => file.path.toLowerCase() === filePath.toLowerCase());
+    const cache = actual === undefined ? null : this.app.metadataCache.getFileCache(actual);
+    return this.isTaskSourceExcluded({
+      filePath: actual?.path ?? filePath,
+      tags: [...(cache == null ? [] : (getAllTags(cache) ?? []))],
+      frontmatter: { ...(cache?.frontmatter ?? {}) },
+    });
+  }
+
+  private canonicalTaskDestinationPath(filePath: string): string {
+    interface CaseInsensitiveVaultLookup {
+      getAbstractFileByPathInsensitive?(path: string): TAbstractFile | null;
+    }
+    const vault = this.app.vault as typeof this.app.vault & CaseInsensitiveVaultLookup;
+    const existing = vault.getAbstractFileByPathInsensitive?.(filePath);
+    if (existing != null) return existing.path;
+    const slash = filePath.lastIndexOf('/');
+    if (slash < 0) return filePath;
+    const parent = vault.getAbstractFileByPathInsensitive?.(filePath.slice(0, slash));
+    return parent == null ? filePath : `${parent.path}/${filePath.slice(slash + 1)}`;
   }
 
   async saveViewState(): Promise<void> {

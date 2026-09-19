@@ -131,6 +131,7 @@ const cases = {
   },
   delete: { command: { type: 'delete', ref: root }, target: parent },
   move: { command: { type: 'move', ref: root, destination }, target: parent },
+  archive: { command: { type: 'archive', ref: root }, target: parent },
 } satisfies Record<
   TaskCommand['type'],
   { command: TaskCommand; target: TaskMutationTarget | undefined }

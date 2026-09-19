@@ -75,6 +75,7 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
 };
 
 const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
+  ArchiveRecovery: ['src/ui/TaskArchiveRecoveryModal.ts'],
   CalendarProjectionSources: ['src/views/calendarOccurrences.ts'],
   CalendarTaskSource: ['src/views/calendarOccurrences.ts'],
   CommentRef: ['src/panels/RightPanel.ts'],
@@ -93,6 +94,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   SubtaskRef: ['src/panels/RightPanel.ts'],
   SubtaskSnapshot: ['src/panels/RightPanel.ts'],
   TaskApplicationApi: ['src/main.ts'],
+  TaskArchiveSession: ['src/panels/CenterPanel.ts'],
   TaskCaptureApplicationApi: ['src/main.ts'],
   TaskCommand: ['src/panels/RightPanel.ts'],
   TaskCommandResult: ['src/projects/ProjectManager.ts'],
@@ -135,6 +137,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
 
 const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string[]> = {
   'TaskApplicationApi.execute': 'src/panels/CenterPanel.ts',
+  'TaskApplicationApi.planArchive': 'src/panels/CenterPanel.ts',
   'TaskApplicationApi.queries': 'src/ui/TaskMoveRecoveryModal.ts',
   'TaskQueryApi.forCalendarProjection': 'src/panels/CenterPanel.ts',
   'TaskQueryApi.list': 'src/panels/CenterPanel.ts',

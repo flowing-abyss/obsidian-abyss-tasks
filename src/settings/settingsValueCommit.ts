@@ -1,5 +1,6 @@
 export interface SettingsValueCommitRegistrar {
   register(control: HTMLInputElement, commit: () => boolean | void): void;
+  synchronize(control: HTMLInputElement): void;
 }
 
 interface RegisteredValueCommit {
@@ -33,6 +34,13 @@ export class SettingsValueCommit implements SettingsValueCommitRegistrar, EventL
       committedValue: control.value,
       validationPending: false,
     });
+  }
+
+  synchronize(control: HTMLInputElement): void {
+    const registration = this.registrations_abyssPrivate.get(control);
+    if (registration === undefined) return;
+    registration.committedValue = control.value;
+    registration.validationPending = false;
   }
 
   handleEvent(event: Event): void {

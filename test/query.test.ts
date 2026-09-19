@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateQuery } from '../src/query/evaluateQuery';
+import { evaluateQuery, validateQuerySyntax } from '../src/query/evaluateQuery';
 import { localDate } from '../src/tasks';
 import { projectCalendarOccurrences } from '../src/views/calendarOccurrences';
 import { task, taskQueryApi } from './helpers';
@@ -31,6 +31,28 @@ describe('evaluateQuery', () => {
     );
     expect(evaluateQuery('Projects/ AND NOT #archived', 'Projects/A.md', [], fm())).toBe(true);
     expect(evaluateQuery('(#a OR #b) AND Notes/', 'Notes/A.md', ['#a'], fm())).toBe(true);
+  });
+
+  it('matches quoted exact paths and date path patterns inside boolean expressions', () => {
+    expect(
+      evaluateQuery(
+        '"tasks/archive.md" OR ("old tasks/" AND NOT #keep)',
+        'tasks/archive.md',
+        [],
+        fm(),
+      ),
+    ).toBe(true);
+    expect(evaluateQuery('"archive/{{YYYY}}.md"', 'archive/2025.md', [], fm())).toBe(true);
+    expect(evaluateQuery('"archive/{{YYYY}}.md"', 'archive/misc.md', [], fm())).toBe(false);
+  });
+
+  it('unescapes quoted paths and reports malformed source expressions', () => {
+    expect(evaluateQuery('"old \\"tasks\\".md"', 'old "tasks".md', [], fm())).toBe(true);
+    expect(validateQuerySyntax('("archive.md" OR #done) AND NOT status=active')).toEqual({
+      type: 'valid',
+    });
+    expect(validateQuerySyntax('("archive.md" OR #done')).toMatchObject({ type: 'invalid' });
+    expect(validateQuerySyntax('"archive.md" trailing')).toMatchObject({ type: 'invalid' });
   });
   it('empty query matches nothing', () => {
     expect(evaluateQuery('', 'A.md', ['#x'], fm({ status: 'active' }))).toBe(false);

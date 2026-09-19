@@ -55,7 +55,20 @@ export interface TaskApplicationApi {
   readonly queries: TaskQueryApi & TaskDependencyQueryApi;
   /** Includes atomic linked-child creation; presentation never sequences repository edits. */
   execute(command: TaskCommand): Promise<TaskCommandResult>;
+  /** Freezes the archive destination (including its date) for one single- or multi-root action. */
+  planArchive?(): Promise<TaskArchiveSession>;
 }
+
+export type TaskArchiveSession =
+  | {
+      readonly type: 'ready';
+      readonly filePath: string;
+      execute(ref: TaskRef): Promise<TaskCommandResult>;
+    }
+  | {
+      readonly type: 'unavailable';
+      execute(ref: TaskRef): Promise<TaskCommandResult>;
+    };
 
 export interface TaskDependencyQueryApi {
   listNodes(query?: TaskQuery): readonly TaskNodeSnapshot[];

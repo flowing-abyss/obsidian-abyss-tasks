@@ -145,6 +145,7 @@ export type TaskCommand =
       readonly replacement: string;
     }
   | { readonly type: 'delete'; readonly ref: TaskRef }
+  | { readonly type: 'archive'; readonly ref: TaskRef }
   | { readonly type: 'move'; readonly ref: TaskRef; readonly destination: TaskDestination };
 
 export interface TaskOccurrenceResult {
@@ -209,6 +210,7 @@ export type TaskCommandOutcome =
       readonly subtaskRemovalRecovery?: SubtaskRemovalRecovery;
     }
   | { readonly type: 'deleted'; readonly ref: TaskRef }
+  | { readonly type: 'archived'; readonly ref: TaskRef; readonly filePath: string }
   | {
       readonly type: 'recurrence';
       readonly active: TaskOccurrenceResult;
@@ -228,6 +230,13 @@ export interface MoveRecovery {
   readonly cause: 'conflict' | 'not-found' | 'ambiguous' | 'io-error';
 }
 
+export interface ArchiveRecovery {
+  readonly source: TaskRef;
+  readonly targetPath: string;
+  readonly state: 'target-copied-source-remains' | 'source-removal-unknown';
+  readonly cause: 'conflict' | 'not-found' | 'ambiguous' | 'io-error';
+}
+
 export type TaskCommandResult =
   | {
       readonly type: 'blocked';
@@ -240,6 +249,7 @@ export type TaskCommandResult =
   | { readonly type: 'ambiguous'; readonly candidates: readonly TaskResolutionCandidate[] }
   | { readonly type: 'invalid'; readonly issues: readonly TaskIssue[] }
   | { readonly type: 'partial'; readonly operation: 'move'; readonly recovery: MoveRecovery }
+  | { readonly type: 'partial'; readonly operation: 'archive'; readonly recovery: ArchiveRecovery }
   | {
       readonly type: 'io-error';
       readonly cause: string;

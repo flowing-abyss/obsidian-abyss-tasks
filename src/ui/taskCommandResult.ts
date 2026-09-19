@@ -6,6 +6,7 @@ import {
   type TaskSnapshot,
 } from '../tasks';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
+import { TaskArchiveRecoveryModal } from './TaskArchiveRecoveryModal';
 import { TaskMoveRecoveryModal } from './TaskMoveRecoveryModal';
 
 interface CompletionConfirmationTask {
@@ -236,7 +237,7 @@ export function presentTaskMoveResult(
   tasks: TaskApplicationApi,
   result: TaskCommandResult,
 ): void {
-  if (result.type === 'partial') {
+  if (result.type === 'partial' && result.operation === 'move') {
     new TaskMoveRecoveryModal(app, tasks, result.recovery).open();
     return;
   }
@@ -244,6 +245,25 @@ export function presentTaskMoveResult(
     const target = result.path ?? 'the target file';
     new Notice(
       `Could not confirm whether the move to ${target} was saved. Rescan and inspect the target and original task before taking any action. Do not retry the move.`,
+    );
+    return;
+  }
+  presentTaskCommandResult(result);
+}
+
+export function presentTaskArchiveResult(
+  app: App,
+  tasks: TaskApplicationApi,
+  result: TaskCommandResult,
+): void {
+  if (result.type === 'partial' && result.operation === 'archive') {
+    new TaskArchiveRecoveryModal(app, tasks, result.recovery).open();
+    return;
+  }
+  if (result.type === 'io-error' && result.contentState === 'unknown') {
+    const target = result.path ?? 'the archive file';
+    new Notice(
+      `Could not confirm whether the archive write to ${target} was saved. Inspect the archive and original task before retrying.`,
     );
     return;
   }

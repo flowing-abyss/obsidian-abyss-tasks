@@ -1,4 +1,11 @@
-import { TFile, type App, type CachedMetadata, type EventRef, type TAbstractFile } from 'obsidian';
+import {
+  getAllTags,
+  TFile,
+  type App,
+  type CachedMetadata,
+  type EventRef,
+  type TAbstractFile,
+} from 'obsidian';
 import type {
   CalendarProjectionSources,
   CalendarTaskSource,
@@ -57,6 +64,14 @@ export interface TaskIndexOptions {
   readonly dailyNoteFormat: string;
   readonly globalTaskFilter?: string;
   readonly refAuthority?: TaskRefAuthority;
+  readonly excludeSource?: (source: TaskSourceMetadata) => boolean;
+}
+
+/** Detached note metadata available to the composition-root source exclusion policy. */
+export interface TaskSourceMetadata {
+  readonly filePath: string;
+  readonly tags: readonly string[];
+  readonly frontmatter: Readonly<Record<string, unknown>>;
 }
 
 type Listener = (event: TaskIndexEvent) => void;
@@ -921,6 +936,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
   private dependencyGraph_abyssPrivate: TaskDependencyGraph | undefined;
   private readonly blockEditor_abyssPrivate = new TaskBlockEditor();
   private readonly locator_abyssPrivate: TaskLocator;
+  private excludeSource_abyssPrivate: TaskIndexOptions['excludeSource'];
 
   constructor(
     private readonly app_abyssPrivate: App,
@@ -928,11 +944,24 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
   ) {
     this.statusCatalog_abyssPrivate = options_abyssPrivate.statusCatalog;
     this.locator_abyssPrivate = new TaskLocator(options_abyssPrivate.refAuthority);
+    this.excludeSource_abyssPrivate = options_abyssPrivate.excludeSource;
   }
 
   setStatusCatalog(statusCatalog: StatusCatalog): void {
     this.statusCatalog_abyssPrivate = statusCatalog;
     this.dependencyGraph_abyssPrivate = undefined;
+  }
+
+  async refreshSourceExclusion(excludeSource: TaskIndexOptions['excludeSource']): Promise<void> {
+    this.excludeSource_abyssPrivate = excludeSource;
+    const files = [...this.app_abyssPrivate.vault.getMarkdownFiles()];
+    await Promise.all(
+      files.map(async (file) => {
+        const changed = await this.loadFile_abyssPrivate(file, file.path, true);
+        if (changed) this.queueChanged_abyssPrivate(file.path);
+      }),
+    );
+    await this.drainPendingReads_abyssPrivate();
   }
 
   async initialize(): Promise<void> {
@@ -1135,7 +1164,11 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
         this.options_abyssPrivate.refAuthority?.deferObservation(observation.path, content) === true
       )
         return false;
-      const selectedCache = cacheWithContentFallback(content, cache);
+      const selectedCache = this.cacheWithFrontmatter_abyssPrivate(content, cache);
+      if (this.sourceIsExcluded_abyssPrivate(observation.path, selectedCache)) {
+        this.options_abyssPrivate.refAuthority?.discard(observation.path);
+        return this.commitEmptyObservation_abyssPrivate(observation);
+      }
       const tasks = this.parseFile_abyssPrivate({
         filePath: observation.path,
         content,
@@ -1148,6 +1181,26 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     } catch {
       return this.commitEmptyObservation_abyssPrivate(observation);
     }
+  }
+
+  private cacheWithFrontmatter_abyssPrivate(
+    content: string,
+    cache: CachedMetadata | null | undefined,
+  ): CachedMetadata {
+    const selected = cacheWithContentFallback(content, cache);
+    const frontmatter = selected.frontmatter ?? frontmatterFromContent(content);
+    return frontmatter === undefined ? selected : { ...selected, frontmatter };
+  }
+
+  private sourceIsExcluded_abyssPrivate(filePath: string, cache: CachedMetadata): boolean {
+    const exclude = this.excludeSource_abyssPrivate;
+    if (exclude === undefined) return false;
+    const frontmatter = cache.frontmatter ?? {};
+    return exclude({
+      filePath,
+      tags: [...(getAllTags(cache) ?? [])],
+      frontmatter: { ...frontmatter },
+    });
   }
 
   private parseFile_abyssPrivate(input: ParseFileInput): readonly TaskSnapshot[] {
@@ -1295,12 +1348,11 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
   }
 
   previewContent(filePath: string, content: string): readonly TaskSnapshot[] {
-    const cache = cacheWithContentFallback(content, null);
-    const frontmatter = frontmatterFromContent(content);
+    const cache = this.cacheWithFrontmatter_abyssPrivate(content, null);
     return this.parseFile_abyssPrivate({
       filePath,
       content,
-      cache: { ...cache, ...(frontmatter != null && { frontmatter }) },
+      cache,
     });
   }
 
@@ -1317,13 +1369,12 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     for (const filePath of contents.keys()) this.invalidatePendingRead_abyssPrivate(filePath);
     const prepared = [...contents].map(([filePath, content]) => {
       let restored = false;
-      const cache = cacheWithContentFallback(content, null);
-      const frontmatter = frontmatterFromContent(content);
+      const cache = this.cacheWithFrontmatter_abyssPrivate(content, null);
       let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
-      const tasks = this.parseFile_abyssPrivate({
+      const rawTasks = this.parseFile_abyssPrivate({
         filePath,
         content,
-        cache: { ...cache, ...(frontmatter != null && { frontmatter }) },
+        cache,
         allocateSuccessor: true,
         captureAuthorityTransitions: (transitions, restoration) => {
           authorityTransitions = transitions;
@@ -1331,6 +1382,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
         },
         observedFile: this.fileGenerations_abyssPrivate.has(filePath),
       });
+      const tasks = this.sourceIsExcluded_abyssPrivate(filePath, cache) ? [] : rawTasks;
       roots.push(...tasks);
       return () => {
         if (this.replaceFile_abyssPrivate(filePath, tasks, authorityTransitions))
@@ -1464,11 +1516,19 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     }
     this.advance_abyssPrivate(file, path);
     if (this.options_abyssPrivate.refAuthority?.deferObservation(path, data) === true) return;
+    const selectedCache = this.cacheWithFrontmatter_abyssPrivate(data, cache);
+    if (this.sourceIsExcluded_abyssPrivate(path, selectedCache)) {
+      this.options_abyssPrivate.refAuthority?.discard(path);
+      const changed = this.replaceFile_abyssPrivate(path, [], [], true);
+      if (changed) this.queueChanged_abyssPrivate(path);
+      else this.queueReconciled_abyssPrivate(path);
+      return;
+    }
     let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
     const tasks = this.parseFile_abyssPrivate({
       filePath: path,
       content: data,
-      cache: cacheWithContentFallback(data, cache),
+      cache: selectedCache,
       allocateSuccessor: true,
       captureAuthorityTransitions: (transitions) => {
         authorityTransitions = transitions;
@@ -1534,7 +1594,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     newPath: string,
     tasks: readonly TaskSnapshot[],
   ): void {
-    if (tasks.length === 0) {
+    if (tasks.length === 0 || this.excludeSource_abyssPrivate !== undefined) {
       this.scheduleRenameLoad_abyssPrivate(file, oldPath, newPath);
       return;
     }

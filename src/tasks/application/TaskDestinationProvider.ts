@@ -12,7 +12,11 @@ export interface TaskDestinationPlan {
 /** Resolves and, when configured policy requires it, prepares the current default note. */
 export interface TaskDestinationProvider {
   planConfiguredDefault(): Promise<TaskDestinationPlan | undefined>;
-  planExplicit(destination: TaskDestination): Promise<TaskDestinationPlan>;
+  planArchive?(): Promise<TaskDestinationPlan | undefined>;
+  planExplicit(
+    destination: TaskDestination,
+    options?: { readonly provision: boolean },
+  ): Promise<TaskDestinationPlan>;
 
   /** Legacy eager adapter retained for existing create callers. */
   resolveConfiguredDefault(): Promise<TaskDestinationResolution>;

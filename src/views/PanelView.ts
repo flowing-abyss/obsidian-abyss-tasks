@@ -300,6 +300,25 @@ export class PanelView extends ItemView {
     return {
       queries: this.tasks_abyssPrivate.queries,
       planCreate: (destination) => this.tasks_abyssPrivate.planCreate(destination),
+      ...(this.tasks_abyssPrivate.planArchive === undefined
+        ? {}
+        : {
+            planArchive: async () => {
+              const session = await this.tasks_abyssPrivate.planArchive?.();
+              if (session === undefined) {
+                throw new Error('Archive planning became unavailable');
+              }
+              if (session.type !== 'ready') return session;
+              return {
+                ...session,
+                execute: async (ref: TaskRef) => {
+                  const result = await session.execute(ref);
+                  this.convergeOwnCommand_abyssPrivate(ref, result);
+                  return result;
+                },
+              };
+            },
+          }),
       execute: async (command) => {
         const initiatingRef = taskCommandRootRef(command);
         const result = await this.tasks_abyssPrivate.execute(command);

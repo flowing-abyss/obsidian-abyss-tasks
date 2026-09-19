@@ -3,6 +3,7 @@ export type {
   CalendarTaskSource,
   CreateTaskCommandInitial,
   TaskApplicationApi,
+  TaskArchiveSession,
   TaskCaptureApplicationApi,
   TaskCreateSession,
   TaskDependencyQueryApi,
@@ -11,6 +12,7 @@ export type {
 } from './application/TaskApplicationApi';
 export { cloneTaskSnapshot } from './domain/cloneTaskSnapshot';
 export type {
+  ArchiveRecovery,
   CreateDependencySubtaskCommand,
   MoveRecovery,
   PlanningTarget,

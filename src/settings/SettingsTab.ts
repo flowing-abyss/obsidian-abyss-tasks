@@ -36,6 +36,7 @@ import {
   type ShortcutPlatform,
   validateShortcuts,
 } from './shortcuts';
+import { type TaskStorageSettings, validateTaskStorageDraft } from './taskStorageSettings';
 import type { CalendarSettings, ProjectStatus, TaskStatusDef } from './types';
 
 interface TaskCalendarPlugin extends Plugin {
@@ -43,6 +44,7 @@ interface TaskCalendarPlugin extends Plugin {
   tagManager: TagManager;
   rebuildTaskStatusSemantics(): void;
   saveSettings(): Promise<void>;
+  saveTaskStorageSettings?(draft: TaskStorageSettings): Promise<void>;
   saveViewState(): Promise<void>;
   refreshProjectTableSettings(): void;
   renameProjectStatus(id: string, name: string, expectedName: string): Promise<void>;
@@ -542,6 +544,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
           }),
       );
 
+    this.renderArchiveSettings_abyssPrivate(containerEl);
+
     new Setting(containerEl)
       .setName('Note template')
       .setDesc('Optional template for a task file created during capture.')
@@ -556,6 +560,70 @@ export class CalendarSettingsTab extends PluginSettingTab {
       );
 
     this.renderTaskInsertionSettings_abyssPrivate(containerEl);
+  }
+
+  private renderArchiveSettings_abyssPrivate(containerEl: HTMLElement): void {
+    let archiveInput!: HTMLInputElement;
+    let ignoreInput!: HTMLInputElement;
+    const archiveSetting = new Setting(containerEl)
+      .setName('Archive file')
+      .setDesc('Tasks are archived here. Use {{YYYY-MM-DD}} for a local date.')
+      .addText((text) => {
+        text
+          .setPlaceholder('tasks/archive.md')
+          .setValue(this.plugin_abyssPrivate.settings.taskArchivePath);
+        archiveInput = text.inputEl;
+      });
+    const ignoreSetting = new Setting(containerEl)
+      .setName('Ignored task sources')
+      .setDesc('Exclude matching note paths, tags, or frontmatter from all task views.')
+      .addText((text) => {
+        text
+          .setPlaceholder('"archive/{{YYYY}}.md" OR #private')
+          .setValue(this.plugin_abyssPrivate.settings.taskIgnoreQuery);
+        ignoreInput = text.inputEl;
+      });
+    const storageDraft = (): TaskStorageSettings => ({
+      taskArchivePath: archiveInput.value,
+      taskIgnoreQuery: ignoreInput.value,
+    });
+    const commitStorage = (): boolean => {
+      archiveSetting.setDesc('Tasks are archived here. Use {{YYYY-MM-DD}} for a local date.');
+      ignoreSetting.setDesc(
+        'Exclude matching note paths, tags, or frontmatter from all task views.',
+      );
+      const validation = validateTaskStorageDraft(
+        {
+          taskArchivePath: this.plugin_abyssPrivate.settings.taskArchivePath,
+          taskIgnoreQuery: this.plugin_abyssPrivate.settings.taskIgnoreQuery,
+        },
+        storageDraft(),
+      );
+      if (validation.type === 'invalid') {
+        const target = validation.field === 'taskArchivePath' ? archiveSetting : ignoreSetting;
+        target.setDesc(validation.message);
+        return false;
+      }
+      saveSettingsDraft({
+        action: 'save task storage settings',
+        save: async () => {
+          if (this.plugin_abyssPrivate.saveTaskStorageSettings !== undefined) {
+            await this.plugin_abyssPrivate.saveTaskStorageSettings(storageDraft());
+          } else {
+            this.plugin_abyssPrivate.settings.taskArchivePath = validation.settings.taskArchivePath;
+            this.plugin_abyssPrivate.settings.taskIgnoreQuery = validation.settings.taskIgnoreQuery;
+            await this.plugin_abyssPrivate.saveSettings();
+          }
+          archiveInput.value = this.plugin_abyssPrivate.settings.taskArchivePath;
+          ignoreInput.value = this.plugin_abyssPrivate.settings.taskIgnoreQuery;
+          this.settingsValueCommit_abyssPrivate?.synchronize(archiveInput);
+          this.settingsValueCommit_abyssPrivate?.synchronize(ignoreInput);
+        },
+      });
+      return true;
+    };
+    this.settingsValueCommit_abyssPrivate?.register(archiveInput, commitStorage);
+    this.settingsValueCommit_abyssPrivate?.register(ignoreInput, commitStorage);
   }
 
   private renderTaskInsertionSettings_abyssPrivate(containerEl: HTMLElement): void {

@@ -1,4 +1,5 @@
 import type {
+  ArchiveRecovery,
   DependencyCommandOutcome,
   MoveRecovery,
   TaskCommand,
@@ -218,6 +219,7 @@ export type TaskRepositoryResult =
   | { readonly type: 'ambiguous'; readonly candidates: readonly TaskResolutionCandidate[] }
   | { readonly type: 'invalid'; readonly issues: readonly TaskIssue[] }
   | { readonly type: 'partial'; readonly operation: 'move'; readonly recovery: MoveRecovery }
+  | { readonly type: 'partial'; readonly operation: 'archive'; readonly recovery: ArchiveRecovery }
   | {
       readonly type: 'io-error';
       readonly cause: string;
@@ -240,6 +242,10 @@ export interface TaskRepository {
   ): Promise<TaskRepositoryResult>;
   create(destination: TaskDestination, draft: TaskDraft): Promise<TaskRepositoryResult>;
   move(
+    request: TaskMoveRequest | TaskRef,
+    legacyDestination?: TaskDestination,
+  ): Promise<TaskRepositoryResult>;
+  archive?(
     request: TaskMoveRequest | TaskRef,
     legacyDestination?: TaskDestination,
   ): Promise<TaskRepositoryResult>;

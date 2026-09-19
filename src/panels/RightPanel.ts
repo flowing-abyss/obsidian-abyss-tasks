@@ -67,7 +67,11 @@ import { runAsyncAction } from '../ui/runAsyncAction';
 import { renderStatusMarker, setStatusMarkerCompletionBlocked } from '../ui/StatusMarker';
 import { showStatusMenuAt, type StatusMenuHandle } from '../ui/statusMenu';
 import { showTagDropdown } from '../ui/tagDropdown';
-import { presentTaskCommandResult, requestTaskCompletion } from '../ui/taskCommandResult';
+import {
+  presentTaskArchiveResult,
+  presentTaskCommandResult,
+  requestTaskCompletion,
+} from '../ui/taskCommandResult';
 import {
   dependencyCompletionBlocked,
   dependencyCountPresentation,
@@ -3587,6 +3591,14 @@ export class RightPanel {
       },
     );
 
+    const contextTarget = taskNodeRef(task);
+    if (contextTarget.type === 'task') {
+      this.createContextMenuItem_abyssPrivate(menu, 'abyss-context-item', 'Archive', () => {
+        this.removeAnchoredSurface_abyssPrivate(menu);
+        runAsyncAction(this.archiveRootTask_abyssPrivate(contextTarget.ref));
+      });
+    }
+
     this.createContextMenuItem_abyssPrivate(
       menu,
       'abyss-context-item abyss-context-danger',
@@ -3712,6 +3724,33 @@ export class RightPanel {
       selectedRef != null &&
       sameTaskRef(selectedRef, ref)
     ) {
+      this.state_abyssPrivate.set('taskStack', []);
+    }
+  }
+
+  private async archiveRootTask_abyssPrivate(ref: TaskRef): Promise<void> {
+    const tasks = this.tasks_abyssPrivate;
+    if (tasks == null) return;
+    const initiatingStack = this.state_abyssPrivate.get('taskStack');
+    const session = await tasks.planArchive?.();
+    const result =
+      session?.type === 'ready'
+        ? await session.execute(ref)
+        : await executeTaskCommand(tasks, { type: 'archive', ref });
+    presentTaskArchiveResult(this.app_abyssPrivate, tasks, result);
+    this.clearArchivedInspector_abyssPrivate(ref, result, initiatingStack);
+  }
+
+  private clearArchivedInspector_abyssPrivate(
+    ref: TaskRef,
+    result: TaskCommandResult,
+    initiatingStack: readonly TaskLike[],
+  ): void {
+    if (result.type !== 'ok' || result.outcome.type !== 'archived') return;
+    if (this.state_abyssPrivate.get('taskStack') !== initiatingStack) return;
+    const selectedRoot = this.state_abyssPrivate.get('taskStack')[0];
+    const selectedRef = selectedRoot != null ? rootTaskRef(selectedRoot) : undefined;
+    if (selectedRef != null && sameTaskRef(selectedRef, ref)) {
       this.state_abyssPrivate.set('taskStack', []);
     }
   }

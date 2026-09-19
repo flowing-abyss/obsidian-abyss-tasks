@@ -80,7 +80,10 @@ only proven successor references survive writes, and history never becomes persi
 including tasks inside Obsidian comment blocks while excluding frontmatter and fenced examples.
 Obsidian list-item metadata enriches those candidates but cannot remove a source task by omission;
 the canonical `TaskMarkdownCodec` parses each candidate. The index exposes detached snapshots and
-reference resolution through public queries.
+reference resolution through public queries. `src/main.ts` injects the configured source-exclusion
+predicate. The index applies it before every public publication and reconciliation transition,
+while its raw content preview remains available to repository proof. Excluded roots therefore do
+not enter task, calendar, dependency, statistics, or task-tag projections.
 `TaskApplicationService` captures the relevant clock and behavior settings, resolves a command,
 validates it, and delegates persistence through repository and destination ports.
 
@@ -106,6 +109,14 @@ and shares in-flight preparation by App and path. Project capture uses the selec
 insertion policy. Overview capture follows the active Table, Kanban, or Timeline selection. Creation
 then uses the same application/repository path and reveals the indexed result without inventing
 another persisted identity.
+
+Archive uses the same exact-root transfer machinery as ordinary moves, but produces an `archived`
+outcome because its destination is intentionally absent from public queries. One planned archive
+session freezes the date-expanded destination and shares lazy note preparation across a batch.
+The repository proves the appended raw root before source removal, retains bounded unresolved
+receipts without eviction, and requires fresh target evidence before retrying removal. Canonical
+vault casing is reused for an existing archive file or parent folder. Ordinary capture destinations
+are rejected before provisioning when the injected exclusion predicate matches them.
 
 ### Dependencies
 
@@ -274,6 +285,11 @@ Obsidian's public vault adapter. `data.json` owns static configuration; adjacent
 `state.json` owns list/section state and project Table, Kanban, Timeline, and active-view preferences.
 One composed `CalendarSettings` object remains the runtime authority. Panels do not receive separate
 settings copies.
+
+Archive-path and ignored-source settings commit as one validated static draft. A changed archive
+path adds the previous path to the ignore expression before the single save; only a durable save
+replaces the effective predicate and rebuilds task projections. Save rejection restores the prior
+effective storage configuration under the shared settings revision coordinator.
 
 Migration captures untouched legacy data, writes and verifies the versioned state envelope with an
 exact recovery snapshot, then removes moved static keys. Recognized state wins when both copies

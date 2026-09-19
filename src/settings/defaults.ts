@@ -122,6 +122,8 @@ export const DEFAULT_SETTINGS: CalendarSettings = {
   mobile: { ...DEFAULT_VIEW_CONFIG, defaultView: 'list' },
   taskPrefix: '',
   taskFilePath: 'tasks/active.md',
+  taskArchivePath: 'tasks/archive.md',
+  taskIgnoreQuery: '',
   taskTemplatePath: '',
   inbox: {
     mode: 'untagged',
