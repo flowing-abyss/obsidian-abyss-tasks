@@ -952,6 +952,106 @@ describe('tracked sessions popover', () => {
     }
   });
 
+  /**
+   * Two removals can be waiting on the one write queue at once, and each has a day of its own to
+   * keep standing. They answer in the order they were made rather than the order they were offered,
+   * so neither may hand a day back to the other or to the offer already on screen.
+   */
+  it('lets an emptied day go after two overlapping removals both failed', async () => {
+    const harness = await inspector();
+    vi.useFakeTimers();
+    try {
+      open(harness.el);
+      // The only session of `Yesterday` goes, so its heading is held open for the undo row.
+      expectDefined(
+        rows(harness.el)[3]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+      ).click();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(headings(harness.el)).toEqual(['Today', 'Yesterday', 'Needs attention']);
+
+      const refuse: Array<(error: Error) => void> = [];
+      const deferred = (): Promise<string> =>
+        new Promise<string>((_resolve, reject) => {
+          refuse.push(reject);
+        });
+      vi.spyOn(harness.app.vault, 'process')
+        .mockImplementationOnce(deferred)
+        .mockImplementationOnce(deferred);
+      // Both `Today` rows are asked for before either write answers, so the second is made while
+      // the first is still unanswered even though the queue only starts it once the first is over.
+      expectDefined(
+        rows(harness.el)[1]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+      ).click();
+      await vi.advanceTimersByTimeAsync(10);
+      expectDefined(
+        rows(harness.el)[2]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+      ).click();
+      await vi.advanceTimersByTimeAsync(10);
+
+      expectDefined(refuse[0], 'The first removal never reached the vault')(new Error('disk full'));
+      await vi.advanceTimersByTimeAsync(10);
+      expectDefined(
+        refuse[1],
+        'The second removal never reached the vault',
+      )(new Error('disk full'));
+      await vi.advanceTimersByTimeAsync(10);
+
+      // Neither failure wrote anything, so the offer on screen is still the first one's.
+      expect(undoPlace(harness.el)).toEqual({ day: 'Yesterday', index: 1 });
+
+      // That offer runs out, which is the moment the day it was holding has to go with it.
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(popover(harness.el).querySelector('.abyss-undo-row')).toBeNull();
+      expect(headings(harness.el)).toEqual(['Today', 'Needs attention']);
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * The day a removal is writing and the day under the undo row already on screen are two
+   * different days, so a rebuild that lands while that write is unanswered has to keep both. The
+   * midnight tick is such a rebuild, and it needs no write of its own to arrive first.
+   */
+  it('keeps a pending undo row under its own day while another removal is in flight', async () => {
+    const clock = fakeTickWindow();
+    const harness = await inspector(SESSIONS, 'Current', clock.win);
+    open(harness.el);
+    // The only session of `Yesterday` goes, so its heading is held open for the undo row.
+    expectDefined(
+      rows(harness.el)[3]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    ).click();
+    await flushMicrotasks();
+    expect(undoPlace(harness.el)).toEqual({ day: 'Yesterday', index: 1 });
+
+    let refuse: (error: Error) => void = () => {};
+    vi.spyOn(harness.app.vault, 'process').mockReturnValueOnce(
+      new Promise<string>((_resolve, reject) => {
+        refuse = reject;
+      }),
+    );
+    expectDefined(
+      rows(harness.el)[1]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    ).click();
+    await flushMicrotasks();
+
+    // The list is rebuilt from scratch while that write is unanswered, and the day the undo row
+    // sits under is still the day it was removed from, whatever it is now called.
+    harness.advance(10 * 3_600_000);
+    clock.tick();
+
+    expect(headings(harness.el)).toEqual(['Yesterday', 'Thu 17 Sep', 'Needs attention']);
+    expect(undoPlace(harness.el)).toEqual({ day: 'Thu 17 Sep', index: 1 });
+
+    refuse(new Error('disk full'));
+    await flushMicrotasks();
+
+    expect(undoPlace(harness.el)).toEqual({ day: 'Thu 17 Sep', index: 1 });
+    expect(headings(harness.el)).toEqual(['Yesterday', 'Thu 17 Sep', 'Needs attention']);
+  });
+
   it('names the day an undo row restores into', async () => {
     const harness = await inspector();
     open(harness.el);

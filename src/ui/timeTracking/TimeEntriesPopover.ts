@@ -95,12 +95,15 @@ interface PopoverSession {
   readonly undo: ReturnType<typeof createInlineTaskUndo>;
   live: LiveRow[];
   rendered: RenderedList | undefined;
-  /** The day whose heading is held open so a pending undo row has somewhere of its own to sit. */
+  /** The day under the undo row on screen, held open so that row has somewhere of its own to sit. */
   undoDayKey: string | undefined;
   /** Which offer holds it, so the offer it replaced cannot take the heading away with it. */
   undoOffer: number;
-  /** Whether an undo row is on screen, which is the only thing that can release a held day. */
-  undoPending: boolean;
+  /**
+   * The day of every removal whose write is still unanswered, one entry per attempt, so the day a
+   * write is about to empty keeps its heading and two attempts on one day release it one at a time.
+   */
+  removingDays: string[];
   /** The one wait for the next local midnight, for the list no tick is driving. */
   rollover: number | undefined;
   closed: boolean;
@@ -209,16 +212,22 @@ function dayGroups(rows: readonly SessionRow[], context: TrackedTimeContext): Da
 }
 
 /**
- * The same days with the one an undo row is waiting under put back in its place, so removing the
- * last session of a day leaves that day standing until the offer is over rather than filing its
- * undo row under the heading of the day below.
+ * The same days with every held one put back in its place, so removing the last session of a day
+ * leaves that day standing while a write or an undo row is still waiting under it rather than
+ * filing that row under the heading of the day below.
  */
-function withUndoDay(
+function withHeldDays(
   groups: DayGroup[],
-  key: string | undefined,
+  keys: readonly string[],
   context: TrackedTimeContext,
 ): DayGroup[] {
-  if (key === undefined || groups.some((group) => group.key === key)) return groups;
+  for (const key of keys) insertHeldDay(groups, key, context);
+  return groups;
+}
+
+/** One held day put back among the days that still have sessions, or left alone if it is there. */
+function insertHeldDay(groups: DayGroup[], key: string, context: TrackedTimeContext): void {
+  if (groups.some((group) => group.key === key)) return;
   const broken = key === BROKEN_KEY;
   const restored: DayGroup = {
     key,
@@ -229,28 +238,39 @@ function withUndoDay(
     ? groups.length
     : groups.findIndex((group) => group.key === BROKEN_KEY || Number(group.key) < Number(key));
   groups.splice(at < 0 ? groups.length : at, 0, restored);
-  return groups;
+}
+
+/** Every day the list has to keep standing: the one under the undo row, and one per write. */
+function heldDays(session: PopoverSession): readonly string[] {
+  return session.undoDayKey === undefined
+    ? session.removingDays
+    : [...session.removingDays, session.undoDayKey];
 }
 
 function close(session: PopoverSession, restoreFocus?: boolean): void {
   session.shell.close(restoreFocus);
 }
 
+/** Lets one attempt's day go, by the single entry it added, since two can be writing the same day. */
+function releaseRemovingDay(session: PopoverSession, dayKey: string): void {
+  const at = session.removingDays.indexOf(dayKey);
+  if (at >= 0) session.removingDays.splice(at, 1);
+}
+
 /**
- * What a removal that wrote nothing gives back: the number an offer knows itself by, without which
- * it could never let its day go, and the day this attempt took from whatever was holding one. That
- * day returns only while an undo row is still on screen to release it later; with nothing pending,
- * holding it would strand a heading with no entries and nobody left to drop it.
+ * What a removal that wrote nothing leaves behind: a heading held open for a write that never
+ * landed. It goes only once nothing else is keeping it and the list has nothing to put under it,
+ * because a rebuild would otherwise take the rows and the focus of a list that never changed.
  */
-function refundRemoval(
-  session: PopoverSession,
-  offer: number,
-  heldBefore: string | undefined,
-): void {
-  if (session.undoOffer !== offer) return;
-  session.undoOffer = offer - 1;
-  if (session.closed) return;
-  holdUndoDay(session, session.undoPending ? heldBefore : undefined);
+function dropEmptiedDay(session: PopoverSession, dayKey: string): void {
+  if (session.closed || dayKey === session.undoDayKey || session.removingDays.includes(dayKey)) {
+    return;
+  }
+  const section = session.shell.element.querySelector(`[data-${DAY_KEY}="${dayKey}"]`);
+  // A day with no section of its own has nothing to drop, and one with a session left in it is
+  // standing on its own rows rather than on the hold this attempt just gave up.
+  if (section?.querySelector('.abyss-time-row') !== null) return;
+  redraw(session);
 }
 
 async function removeSession(
@@ -285,15 +305,20 @@ async function removeSession(
     .filter((child) => !child.classList.contains('abyss-undo-row'))
     .indexOf(rowEl);
   // The day is held open from here, so a removal that empties it still has the heading to sit
-  // under by the time the write lands and the list is rebuilt.
-  const heldBefore = session.undoDayKey;
-  const offer = (session.undoOffer += 1);
-  session.undoDayKey = dayKey;
+  // under by the time the write lands and the list is rebuilt. The hold is this attempt's own,
+  // because another removal can be writing alongside it and they answer one at a time.
+  session.removingDays.push(dayKey);
   const recovery = await actions.remove(timeEntryRef(current.parent, current.entry));
+  releaseRemovingDay(session, dayKey);
   if (recovery === undefined || session.closed) {
-    refundRemoval(session, offer, heldBefore);
+    dropEmptiedDay(session, dayKey);
     return;
   }
+  // The offer is numbered before it takes the day, so the offer it replaces, which `show` ends on
+  // its way in, reads a number that is no longer its own and leaves the day alone. The redraw the
+  // hold runs is what drops that offer's emptied heading, which nothing else is holding now.
+  const offer = (session.undoOffer += 1);
+  holdUndoDay(session, dayKey);
   session.undo.show(
     owner,
     {
@@ -307,16 +332,12 @@ async function removeSession(
     // The tracking actions already report a failed write, so the row only has to come back.
     {
       report: () => {},
-      // Replacing this offer runs the one it replaced, whose day is no longer the held one.
+      // Only the offer that still owns the day may let it go, so the one this replaced cannot.
       onEnd: () => {
-        session.undoPending = false;
         if (session.undoOffer === offer) holdUndoDay(session, undefined);
       },
     },
   );
-  // Set after the row exists, because showing it ends the offer it replaced, and that end runs
-  // through the same flag on its way out.
-  session.undoPending = true;
 }
 
 /** Holds a day open for an undo row, or lets the last one go, and redraws past the memo. */
@@ -525,10 +546,11 @@ function update(session: PopoverSession): void {
   session.live = [];
   session.rendered = rendered;
   const rows = collectRows(node);
-  if (rows.length === 0 && session.undoDayKey === undefined) {
+  const held = heldDays(session);
+  if (rows.length === 0 && held.length === 0) {
     element.createDiv({ cls: 'abyss-time-tracking-empty', text: EMPTY_TEXT });
   }
-  renderDays(session, withUndoDay(dayGroups(rows, context), session.undoDayKey, context), context);
+  renderDays(session, withHeldDays(dayGroups(rows, context), held, context), context);
   session.undo.render(session.options.owner);
   element.scrollTop = scrollTop;
   session.shell.reposition();
@@ -576,7 +598,7 @@ export function showTimeEntriesPopover(
     rendered: undefined,
     undoDayKey: undefined,
     undoOffer: 0,
-    undoPending: false,
+    removingDays: [],
     rollover: undefined,
     closed: false,
   };
