@@ -416,22 +416,24 @@ describe('tracked sessions popover', () => {
     expect(cssDeclarationValue(cssDeclarationsFor(css, '.abyss-time-row-duration'), 'color')).toBe(
       'var(--abyss-time-gain)',
     );
-    // A running or stale row is one colour whole, so the total steps back into it.
+    // A running or stale row is one colour whole, so neither the total nor the span keeps its own.
     for (const state of ['is-tracking', 'is-stale']) {
-      expect(
-        cssDeclarationValue(
-          cssDeclarationsFor(css, `.abyss-time-row.${state} .abyss-time-row-duration`),
-          'color',
-        ),
-      ).toBe('inherit');
+      for (const cell of ['duration', 'range']) {
+        expect(
+          cssDeclarationValue(
+            cssDeclarationsFor(css, `.abyss-time-row.${state} .abyss-time-row-${cell}`),
+            'color',
+          ),
+        ).toBe('inherit');
+      }
     }
-    // The note is what is read after the total, the span is the reference detail under both.
-    expect(cssDeclarationValue(cssDeclarationsFor(css, '.abyss-time-row-note'), 'color')).toBe(
-      'var(--text-muted)',
-    );
-    expect(cssDeclarationValue(cssDeclarationsFor(css, '.abyss-time-row-range'), 'color')).toBe(
-      'var(--text-faint)',
-    );
+    // What the total leads is carried by its colour and its weight, not by greying what follows it,
+    // so the note and the span are both read at the same strength.
+    for (const cell of ['note', 'range']) {
+      expect(cssDeclarationValue(cssDeclarationsFor(css, `.abyss-time-row-${cell}`), 'color')).toBe(
+        'var(--text-muted)',
+      );
+    }
   });
 
   it('gives every row the same columns, with the remove slot always reserved', async () => {

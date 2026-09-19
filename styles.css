@@ -10031,7 +10031,6 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 
 /* The span is the reference detail under the two things the row is opened for. */
 .abyss-time-row-range {
-  color: var(--text-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -10055,10 +10054,12 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 
 /*
  * The note and the sub-task a session sits under share one cell and truncate together, so a row
- * that carries both ends in a single ellipsis rather than two competing ones. It is the second
- * thing read in the row, which is the step it takes above the span under it.
+ * that carries both ends in a single ellipsis rather than two competing ones. It is read after the
+ * total and the span after it, but both of them are read, so the order is carried by the colour and
+ * the weight of the total rather than by fading everything under it.
  */
-.abyss-time-row-note {
+.abyss-time-row-note,
+.abyss-time-row-range {
   color: var(--text-muted);
 }
 
@@ -10114,18 +10115,21 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+
+  /* The two controls take the whole column as target, so the space between them is their own. */
+  gap: 0;
   padding-bottom: 8px;
   color: var(--text-muted);
 
   /*
    * A whole day on one task reads `23h 59m`, which at 11px is wider than the 48px rail even with
    * the thin space the label is written with, so the number takes the size that fits the rail it
-   * lives on rather than one that would spill over its border.
+   * lives on rather than one that would spill over its border. Over 1.2 that is a 12px line, which
+   * keeps every offset in the column a whole pixel.
    */
   font-size: 10px;
   font-variant-numeric: tabular-nums;
-  line-height: 1.1;
+  line-height: 1.2;
 }
 
 /* The column above outranks the browser's own answer to the attribute the widget hides itself with. */
@@ -10152,29 +10156,27 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   cursor: pointer;
 }
 
+/* Filled, so it comes in 2px under the rail's outlined icons to carry the same weight as them. */
 .abyss-rail-tracking-toggle svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 /*
  * The number reads as a number first, so its button carries no chrome of its own and takes the
  * widget's colour. It gives up the theme's input height, which would put a band of dead space
- * between the control above it and the hairline below, and buys its own target back with padding
- * the negative margin takes out of the layout again, so an 11px line answers a pointer over a 36px
- * by 17px rectangle while every gap in the column stays where it was. Those 3px above the digits
- * are what the target has: a taller box would have to start inside the 28px toggle, which owns the
- * whole of its own square.
+ * between the control above it and the hairline below, and pads its 12px line out to a 36px by 24px
+ * target of its own, right under the toggle and never inside it. The column is about 5px taller for
+ * that, which is what it costs to let a pointer find the way into the tracked list.
  */
 .abyss-rail-tracking .abyss-rail-tracking-task {
   /* `1m` is 14px of text, far too little to aim at, so the short labels take the width instead. */
   min-width: 36px;
   height: auto;
   min-height: 0;
-  margin-block: -2px;
 
   /* No padding beside the digits: `23h 59m` fills the rail, and a gap there belongs to the rail. */
-  padding: 3px 0;
+  padding: 6px 0;
   border: none;
   border-radius: var(--radius-s);
   background: transparent;
@@ -10205,11 +10207,11 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   background: transparent;
 }
 
-/* The 6px plus the column's own gap is the 8px that keeps the hairline off the number above it. */
+/* Clear of the number's target by 4px, which is 10px of air under the digits inside it. */
 .abyss-rail-tracking-rule {
   width: 20px;
   height: 1px;
-  margin-top: 6px;
+  margin-top: 4px;
   background: var(--background-modifier-border);
 }
 
