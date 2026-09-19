@@ -1,4 +1,4 @@
-import { ItemView, Platform, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
+import { ItemView, Notice, Platform, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
 import { AppState } from '../app/AppState';
 import { CenterPanel } from '../panels/CenterPanel';
 import { LeftPanel } from '../panels/LeftPanel';
@@ -541,8 +541,10 @@ export class PanelView extends ItemView {
       .listNodes({ filePath: rootTaskNodeRef(target).filePath })
       .find((candidate) => taskNodeAddress(candidate.target) === address);
     if (node === undefined) {
-      // The note moved on since the list was grouped, so the click reaches nothing. It says so
-      // rather than looking like a dead control.
+      // The note moved on since the list was grouped, so the click reaches nothing. The reader is
+      // told rather than left with a dead control, and the address goes to the console for whoever
+      // has to find out which line went away.
+      new Notice('That tracked task is no longer in its note');
       console.warn('[abyss-tasks] The tracked task is no longer in its note', address);
       return;
     }
