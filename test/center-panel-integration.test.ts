@@ -5494,6 +5494,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
   });
 
   it('follows a successful horizontal move in Day view and restores focus there', async () => {
+    vi.useFakeTimers();
     const tomorrow = moment(TODAY).add(1, 'day').format('YYYY-MM-DD');
     const original = keyboardSnapshot(TODAY);
     const updated = keyboardSnapshot(tomorrow, '09:00', original.source.filePath, 'revision-2');
@@ -5507,10 +5508,15 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const block = timedBlock(h.el);
     block.focus();
     press(block, 'ArrowRight');
-    await flushMicrotasks();
+    await Promise.resolve();
 
     expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(tomorrow);
-    expect(activeDocument.activeElement).toBe(timedBlock(h.el));
+    const movedBlock = timedBlock(h.el);
+    expect(activeDocument.activeElement).toBe(activeDocument.body);
+
+    vi.runOnlyPendingTimers();
+
+    expect(activeDocument.activeElement).toBe(movedBlock);
   });
 
   it('retains sequence ownership through an intermediate remount and follows two rapid Day moves', async () => {
