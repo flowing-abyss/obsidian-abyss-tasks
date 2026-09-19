@@ -18,14 +18,14 @@ interface TemplateApplication {
 const inFlightByApp = new WeakMap<App, Map<string, Promise<TFile>>>();
 const failedByApp = new WeakMap<App, Map<string, FailedPreparation>>();
 
-export class InvalidNotePathError extends Error {
+class InvalidNotePathError extends Error {
   constructor(readonly filePath: string) {
     super(`Invalid note path: ${filePath}`);
     this.name = 'InvalidNotePathError';
   }
 }
 
-export class MissingNoteTemplateError extends Error {
+class MissingNoteTemplateError extends Error {
   constructor(readonly templatePath: string) {
     super(`Could not find the selected note template: ${templatePath}`);
     this.name = 'MissingNoteTemplateError';
