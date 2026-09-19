@@ -3289,6 +3289,67 @@ describe('ProjectsTableView', () => {
     expect(saveSettings).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps the live column resize preview when the table resize observer fires', async () => {
+    const resizeObservers: Array<{ trigger(): void }> = [];
+    class TestResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {
+        resizeObservers.push(this);
+      }
+      observe(): void {}
+      disconnect(): void {}
+      trigger(): void {
+        this.callback([], this as unknown as ResizeObserver);
+      }
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver);
+    const { host, config } = mount([project({})]);
+    const renderedWidths: Record<string, number> = {
+      name: 400,
+      status: 250,
+      progress: 300,
+      start: 250,
+      end: 250,
+    };
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const columnId = this.dataset['columnId'];
+      const width = columnId === undefined ? 0 : (renderedWidths[columnId] ?? 0);
+      return { width } as DOMRect;
+    });
+    const startHeader = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-header-cell[data-column-id="start"]'),
+    );
+    const startCol = expectDefined(
+      host.querySelector<HTMLTableColElement>('col[data-column-id="start"]'),
+    );
+    const table = expectDefined(host.querySelector<HTMLTableElement>('.abyss-project-table'));
+    const savedWidth = startCol.style.width;
+    const savedTableWidth = table.style.width;
+    const triggerResize = (): void => {
+      for (const observer of resizeObservers) observer.trigger();
+    };
+
+    expectDefined(
+      startHeader.querySelector<HTMLElement>('.abyss-project-column-resize'),
+    ).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100 }));
+    startHeader.ownerDocument.dispatchEvent(new PointerEvent('pointermove', { clientX: 140 }));
+    triggerResize();
+
+    expect(startCol.style.width).toBe('290px');
+    expect(table.style.width).toBe('1040px');
+
+    startHeader.ownerDocument.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    triggerResize();
+    await flushMicrotasks();
+
+    expect(startCol.style.width).toBe(savedWidth);
+    expect(table.style.width).toBe(savedTableWidth);
+    expect(config.projects.table.columns.find(({ id }) => id === 'start')?.width).toBeUndefined();
+  });
+
   it('reads the viewport and applies widths before attaching reconciled rows', () => {
     const alpha = project({});
     const beta = project({ path: 'Projects/B.md', name: 'B' });

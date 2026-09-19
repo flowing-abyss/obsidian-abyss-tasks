@@ -717,6 +717,7 @@ export class ProjectsTableView {
   private table_abyssPrivate: HTMLTableElement | undefined;
   private body_abyssPrivate: HTMLTableSectionElement | undefined;
   private headerSignature_abyssPrivate = '';
+  private columnResizePreview_abyssPrivate = false;
   private visibleColumns_abyssPrivate: readonly VisibleProjectColumn[] = [];
   private readonly searches_abyssPrivate: Record<ProjectOverviewMode, string> = {
     table: '',
@@ -930,6 +931,9 @@ export class ProjectsTableView {
   private handleTableResize_abyssPrivate(): void {
     if (!this.mounted_abyssPrivate || this.overviewMode_abyssPrivate !== 'table') return;
     this.renderTableWindow_abyssPrivate();
+    // A column drag owns the live widths until it commits or cancels. Reapplying the saved
+    // widths here would revert its preview every time the observed table changes size.
+    if (this.columnResizePreview_abyssPrivate) return;
     this.applyTableWidth_abyssPrivate();
     this.updateResponsiveNamePinning_abyssPrivate();
   }
@@ -2286,6 +2290,9 @@ export class ProjectsTableView {
         this.finishEditorBeforeAction(() => {
           this.resizeColumns_abyssPrivate(resize);
         });
+      },
+      onResizePreview: (active) => {
+        this.columnResizePreview_abyssPrivate = active;
       },
     });
     const colgroup = table.querySelector(':scope > colgroup');

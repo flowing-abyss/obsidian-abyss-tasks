@@ -32,6 +32,8 @@ export interface ProjectTableColumnOptions {
     placement: 'before' | 'after',
   ) => void;
   readonly onResize: (resize: ProjectTableColumnResize) => void;
+  /** Reports whether a pointer drag currently owns the live column and table widths. */
+  readonly onResizePreview: (active: boolean) => void;
 }
 
 export interface ProjectTableColumnResize {
@@ -117,6 +119,7 @@ interface BindResizeOptions {
   readonly th: HTMLTableCellElement;
   readonly columnId: string;
   readonly onResize: ProjectTableColumnOptions['onResize'];
+  readonly onResizePreview: ProjectTableColumnOptions['onResizePreview'];
   readonly suppressSort: (value: boolean) => void;
 }
 
@@ -164,6 +167,14 @@ function resizeWidths(
   });
 }
 
+function resizeNeighbor(
+  neighbor: ProjectTableColumnResize['visibleWidths'][number] | undefined,
+  growth: number,
+): ProjectTableColumnResize['visibleWidths'][number] | undefined {
+  if (neighbor === undefined) return undefined;
+  return { columnId: neighbor.columnId, width: Math.max(60, neighbor.width - growth) };
+}
+
 function bindColumnMenu(
   button: HTMLButtonElement,
   th: HTMLTableCellElement,
@@ -204,7 +215,7 @@ function bindColumnMenu(
 }
 
 function bindResize(options: BindResizeOptions): () => void {
-  const { handle, th, columnId, onResize, suppressSort } = options;
+  const { handle, th, columnId, onResize, onResizePreview, suppressSort } = options;
   let cleanup: (() => void) | undefined;
   const start = (event: PointerEvent): void => {
     event.preventDefault();
@@ -229,15 +240,15 @@ function bindResize(options: BindResizeOptions): () => void {
     let previewWidths: ProjectTableColumnResize['visibleWidths'] = renderedWidths;
     let savedWidths: ProjectTableColumnResize['visibleWidths'] = configuredWidths;
     let changed = false;
+    const releaseSort = (): void => {
+      window.setTimeout(() => {
+        suppressSort(false);
+      }, 0);
+    };
     const move = (moveEvent: PointerEvent): void => {
       const requested = Math.round(startWidth + moveEvent.clientX - startX);
       width = Math.max(minimumWidth, requested);
-      const neighborWidth =
-        neighbor === undefined ? undefined : Math.max(60, neighbor.width - (width - startWidth));
-      const resizedNeighbor =
-        neighbor === undefined || neighborWidth === undefined
-          ? undefined
-          : { columnId: neighbor.columnId, width: neighborWidth };
+      const resizedNeighbor = resizeNeighbor(neighbor, width - startWidth);
       previewWidths = resizeWidths(renderedWidths, columnId, width, resizedNeighbor);
       savedWidths = resizeWidths(configuredWidths, columnId, width, resizedNeighbor);
       changed = previewWidths.some((entry, index) => entry.width !== renderedWidths[index]?.width);
@@ -247,17 +258,13 @@ function bindResize(options: BindResizeOptions): () => void {
       cleanup?.();
       cleanup = undefined;
       if (changed) onResize({ columnId, width, visibleWidths: savedWidths });
-      window.setTimeout(() => {
-        suppressSort(false);
-      }, 0);
+      releaseSort();
     };
     const cancel = (): void => {
       cleanup?.();
       cleanup = undefined;
       applyLiveColumnWidths(th, renderedWidths);
-      window.setTimeout(() => {
-        suppressSort(false);
-      }, 0);
+      releaseSort();
     };
     const cancelOnEscape = (keyEvent: KeyboardEvent): void => {
       if (keyEvent.key !== 'Escape') return;
@@ -266,11 +273,13 @@ function bindResize(options: BindResizeOptions): () => void {
       cancel();
     };
     cleanup = () => {
+      onResizePreview(false);
       ownerDocument.removeEventListener('pointermove', move);
       ownerDocument.removeEventListener('pointerup', finish);
       ownerDocument.removeEventListener('pointercancel', cancel);
       ownerDocument.removeEventListener('keydown', cancelOnEscape, true);
     };
+    onResizePreview(true);
     ownerDocument.addEventListener('pointermove', move);
     ownerDocument.addEventListener('pointerup', finish);
     ownerDocument.addEventListener('pointercancel', cancel);
@@ -464,6 +473,7 @@ function renderHeaderColumn(
     th,
     columnId: column.id,
     onResize: options.onResize,
+    onResizePreview: options.onResizePreview,
     suppressSort: (value) => {
       suppressSort = value;
     },
