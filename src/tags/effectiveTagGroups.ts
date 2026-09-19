@@ -31,7 +31,17 @@ export function prefixForDiscoveredGroupId(id: string): string | undefined {
   const marker = 'discovered:prefix:';
   if (!id.startsWith(marker)) return undefined;
   try {
-    return decodeURIComponent(id.slice(marker.length));
+    return decodeURIComponent(id.slice(marker.length).replace(/::\d+$/u, ''));
+  } catch {
+    return undefined;
+  }
+}
+
+export function tagForDiscoveredGroupId(id: string): string | undefined {
+  const marker = 'discovered:tag:';
+  if (!id.startsWith(marker)) return undefined;
+  try {
+    return decodeURIComponent(id.slice(marker.length).replace(/::\d+$/u, ''));
   } catch {
     return undefined;
   }
@@ -82,12 +92,24 @@ function normalizedObservedTags(tags: readonly string[]): string[] {
 }
 
 function configuredGroups(settings: CalendarSettings): EffectiveTagGroup[] {
-  return settings.tagGroups.map((group) => ({
-    ...group,
-    ...(group.tags === undefined ? {} : { tags: [...group.tags] }),
-    origin: 'configured',
-    archived: group.archived === true,
-  }));
+  return settings.tagGroups.map((group) => {
+    const configured: EffectiveTagGroup = {
+      ...group,
+      origin: 'configured',
+      archived: group.archived === true,
+    };
+    if (group.tags !== undefined) {
+      configured.tags = [
+        ...new Set(group.tags.flatMap((value) => normalizeTaskTagInput(value) ?? [])),
+      ];
+    }
+    if (group.prefix !== undefined) {
+      const prefix = normalizeTagPrefix(group.prefix);
+      if (prefix === undefined) delete configured.prefix;
+      else configured.prefix = prefix;
+    }
+    return configured;
+  });
 }
 
 interface DiscoveredCandidate {
@@ -107,6 +129,24 @@ function discoveredPrefix(prefix: string, archived: boolean): DiscoveredCandidat
       archived,
     },
   };
+}
+
+function uniqueDiscoveredId(preferred: string, occupied: Set<string>): string {
+  if (!occupied.has(preferred)) return preferred;
+  let suffix = 1;
+  while (occupied.has(`${preferred}::${suffix}`)) suffix += 1;
+  return `${preferred}::${suffix}`;
+}
+
+function reserveDiscoveredId(
+  candidate: DiscoveredCandidate,
+  occupied: Set<string>,
+): DiscoveredCandidate {
+  const id = uniqueDiscoveredId(candidate.group.id, occupied);
+  occupied.add(id);
+  return id === candidate.group.id
+    ? candidate
+    : { ...candidate, group: { ...candidate.group, id } };
 }
 
 function discoveredTag(tag: string, archived: boolean): DiscoveredCandidate {
@@ -130,6 +170,7 @@ export function resolveEffectiveTagGroups(
 ): readonly EffectiveTagGroup[] {
   const observed = normalizedObservedTags(tags);
   const configured = configuredGroups(settings);
+  const occupiedIds = new Set(configured.map(({ id }) => id));
   const unclaimed = observed.filter(
     (tag) => !configured.some((group) => tagMatchesGroup(tag, group)),
   );
@@ -153,12 +194,16 @@ export function resolveEffectiveTagGroups(
     ) {
       continue;
     }
-    discovered.push(discoveredPrefix(prefix, archivedPrefixes.has(prefix)));
+    discovered.push(
+      reserveDiscoveredId(discoveredPrefix(prefix, archivedPrefixes.has(prefix)), occupiedIds),
+    );
   }
   for (const tag of unclaimed) {
     const top = tag.slice(1).split('/')[0] ?? '';
     if (top !== '' && branchPrefixes.has(top)) continue;
-    discovered.push(discoveredTag(tag, settings.archivedTags.includes(tag)));
+    discovered.push(
+      reserveDiscoveredId(discoveredTag(tag, settings.archivedTags.includes(tag)), occupiedIds),
+    );
   }
   discovered.sort((left, right) => {
     const byKey = left.key.localeCompare(right.key);

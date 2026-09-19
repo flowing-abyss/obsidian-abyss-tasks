@@ -3,13 +3,19 @@ import { Notice, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import type { TaskApplicationApi, TaskIndexEvent, TaskSnapshot } from '../src/tasks';
+import type {
+  TaskApplicationApi,
+  TaskCreateSession,
+  TaskIndexEvent,
+  TaskSnapshot,
+} from '../src/tasks';
 import type { InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import {
   expectDefined,
   freshContainer,
   queryApiForTasks,
   resolvedConfig,
+  task,
   useRealMoment,
 } from './helpers';
 
@@ -68,6 +74,16 @@ class StubStore {
     type: 'invalid',
     issues: [{ code: 'invalid-target' }],
   });
+  create = vi.fn<Extract<TaskCreateSession, { type: 'ready' }>['execute']>().mockResolvedValue({
+    type: 'ok',
+    changed: true,
+    outcome: { type: 'task', task: task({ title: 'Created' }) },
+  });
+  planCreate = vi.fn(async () => ({
+    type: 'ready' as const,
+    destination: { filePath: 'tasks/active.md', insertion: { type: 'append' as const } },
+    execute: this.create,
+  }));
   addTask = vi.fn<(date: string, text: string) => Promise<void>>().mockResolvedValue(undefined);
 }
 
@@ -75,15 +91,16 @@ function fakeApp(): App {
   return {} as App;
 }
 
+async function settleSubmission(): Promise<void> {
+  for (let index = 0; index < 6; index += 1) await Promise.resolve();
+}
+
 function expectCreateCommand(store: StubStore, markdownBody: string): void {
-  const command = expectDefined(store.execute.mock.calls[0]?.[0]);
-  expect(command.type).toBe('create');
-  if (command.type !== 'create') throw new Error('Expected a create command');
-  expect(command.destination).toEqual({ type: 'configured-default' });
-  expect(command.markdownBody).toBe(markdownBody);
-  expect(command.initial?.due?.type).toBe('set');
-  if (command.initial?.due?.type !== 'set') throw new Error('Expected a due date');
-  expect(typeof command.initial.due.value).toBe('string');
+  const request = expectDefined(store.create.mock.calls[0]?.[0]);
+  expect(request.markdownBody).toBe(markdownBody);
+  expect(request.initial?.due?.type).toBe('set');
+  if (request.initial?.due?.type !== 'set') throw new Error('Expected a due date');
+  expect(typeof request.initial.due.value).toBe('string');
 }
 
 function makeRenderer(
@@ -100,7 +117,7 @@ function makeRenderer(
     config,
     app,
     store.taskQueries,
-    { queries: store.taskQueries, execute: store.execute },
+    { queries: store.taskQueries, execute: store.execute, planCreate: store.planCreate },
     new StatusRegistry(buildDefaultTaskStatuses()),
     undefined,
     undefined,
@@ -142,7 +159,7 @@ describe('CalendarRenderer TaskInputModal submit', () => {
     expect(addBtn).not.toBeNull();
   });
 
-  it('uses an optional ownership port for the legacy add-task modal and releases on submit', () => {
+  it('uses an optional ownership port for the legacy add-task modal and releases on submit', async () => {
     renderer.destroy();
     const release = vi.fn();
     const interactionOwnership = { acquire: vi.fn(() => ({ release })) };
@@ -165,6 +182,7 @@ describe('CalendarRenderer TaskInputModal submit', () => {
     );
     input.value = 'Owned capture';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settleSubmission();
     expect(release).toHaveBeenCalledOnce();
   });
 
@@ -200,17 +218,19 @@ describe('CalendarRenderer TaskInputModal submit', () => {
     expect(activeDocument.body.querySelector('input[type="text"]')).toBeNull();
   });
 
-  it('Enter with text sends one configured create command with a due date', () => {
+  it('plans once on open and submits through the retained session with a due date', async () => {
     const cell = root.querySelector('.cell.currentMonth') as HTMLElement;
     cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(store.planCreate).toHaveBeenCalledExactlyOnceWith({ type: 'configured-default' });
     const input = activeDocument.body.querySelector('input[type="text"]') as HTMLInputElement;
     input.value = '  Buy milk  ';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settleSubmission();
     expectCreateCommand(store, 'Buy milk');
     expect(store.addTask).not.toHaveBeenCalled();
   });
 
-  it('Add button click sends a configured create command', () => {
+  it('Add button click submits through the retained create session', async () => {
     const cell = root.querySelector('.cell.currentMonth') as HTMLElement;
     cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     const input = activeDocument.body.querySelector('input[type="text"]') as HTMLInputElement;
@@ -221,6 +241,7 @@ describe('CalendarRenderer TaskInputModal submit', () => {
       ),
     );
     addBtn.click();
+    await settleSubmission();
     expectCreateCommand(store, 'Task via button');
   });
 
@@ -230,10 +251,48 @@ describe('CalendarRenderer TaskInputModal submit', () => {
     const input = activeDocument.body.querySelector('input[type="text"]') as HTMLInputElement;
     input.value = '   ';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    expect(store.execute).not.toHaveBeenCalled();
+    expect(store.create).not.toHaveBeenCalled();
   });
 
-  it('create receives the clicked cell date as its initial due date', () => {
+  it('cancels an opened planned modal without executing the session', () => {
+    expectDefined(root.querySelector<HTMLElement>('.cell.currentMonth')).click();
+    expect(store.planCreate).toHaveBeenCalledOnce();
+
+    renderer.destroy();
+
+    expect(store.create).not.toHaveBeenCalled();
+    expect(activeDocument.body.querySelector('input[type="text"]')).toBeNull();
+  });
+
+  it('owns one pending submission and prevents duplicate execution', async () => {
+    let resolveCreate!: (result: Awaited<ReturnType<typeof store.create>>) => void;
+    store.create.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCreate = resolve;
+      }),
+    );
+    expectDefined(root.querySelector<HTMLElement>('.cell.currentMonth')).click();
+    const input = expectDefined(
+      activeDocument.body.querySelector<HTMLInputElement>('input[type="text"]'),
+    );
+    input.value = 'Pending task';
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settleSubmission();
+
+    expect(store.create).toHaveBeenCalledOnce();
+    expect(input.disabled).toBe(true);
+    resolveCreate({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'task', task: task({ title: 'Pending task' }) },
+    });
+    await settleSubmission();
+    expect(activeDocument.body.querySelector('input[type="text"]')).toBeNull();
+  });
+
+  it('create receives the clicked cell date as its initial due date', async () => {
     const cell = root.querySelector('.cell.currentMonth') as HTMLElement;
     const expectedDate =
       cell.querySelector('.cellName')?.getAttribute('href')?.split('/').pop() ??
@@ -242,7 +301,8 @@ describe('CalendarRenderer TaskInputModal submit', () => {
     const input = activeDocument.body.querySelector('input[type="text"]') as HTMLInputElement;
     input.value = 'test';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    expect(store.execute).toHaveBeenCalledWith(
+    await settleSubmission();
+    expect(store.create).toHaveBeenCalledWith(
       expect.objectContaining({
         initial: { due: { type: 'set', value: expectedDate } },
       }),
@@ -250,7 +310,7 @@ describe('CalendarRenderer TaskInputModal submit', () => {
   });
 
   it('reports a failed modal create through the shared creation result Notice adapter', async () => {
-    store.execute.mockResolvedValueOnce({
+    store.create.mockResolvedValueOnce({
       type: 'invalid',
       issues: [{ code: 'invalid-title', field: 'title' }],
     });
@@ -260,7 +320,40 @@ describe('CalendarRenderer TaskInputModal submit', () => {
     input.value = 'Task from modal';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
-    await Promise.resolve();
+    await settleSubmission();
     expect(Notice).toHaveBeenCalledWith('The new task is invalid and was not created.');
+    expect(input.isConnected).toBe(true);
+    expect(input.value).toBe('Task from modal');
+  });
+
+  it('keeps a failed draft focused and retries it without replanning', async () => {
+    store.create
+      .mockResolvedValueOnce({
+        type: 'io-error',
+        cause: 'repository-error',
+        contentState: 'unknown',
+      })
+      .mockResolvedValueOnce({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: task({ title: 'Retried' }) },
+      });
+    expectDefined(root.querySelector<HTMLElement>('.cell.currentMonth')).click();
+    const input = expectDefined(
+      activeDocument.body.querySelector<HTMLInputElement>('input[type="text"]'),
+    );
+    input.value = 'Retained draft';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settleSubmission();
+
+    expect(input.isConnected).toBe(true);
+    expect(input.value).toBe('Retained draft');
+    expect(activeDocument.activeElement).toBe(input);
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settleSubmission();
+    expect(store.planCreate).toHaveBeenCalledOnce();
+    expect(store.create).toHaveBeenCalledTimes(2);
+    expect(activeDocument.body.querySelector('input[type="text"]')).toBeNull();
   });
 });

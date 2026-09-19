@@ -40,7 +40,8 @@ export class ObsidianTaskDestinationProvider implements TaskDestinationProvider 
   constructor(
     private readonly currentConfiguration: CurrentTaskDestinationConfiguration,
     private readonly provision: ProvisionTaskNote,
-    private readonly isExcludedDestination: (filePath: string) => boolean = () => false,
+    private readonly isExcludedDestination: (filePath: string) => boolean | Promise<boolean> = () =>
+      false,
     private readonly canonicalizePath: (filePath: string) => string = (filePath) => filePath,
   ) {}
 
@@ -102,13 +103,15 @@ export class ObsidianTaskDestinationProvider implements TaskDestinationProvider 
   ): TaskDestinationPlan {
     return {
       destination,
+      validate: async (prepared) =>
+        options.allowExcluded || !(await this.isExcludedDestination(prepared.filePath)),
       prepare: async () => {
-        if (!options.allowExcluded && this.isExcludedDestination(destination.filePath)) {
+        if (!options.allowExcluded && (await this.isExcludedDestination(destination.filePath))) {
           return { type: 'unavailable' };
         }
         if (options.provisionDestination === false) return { type: 'resolved', destination };
         const file = await this.provision(destination.filePath, templatePath, title);
-        if (!options.allowExcluded && this.isExcludedDestination(file.path)) {
+        if (!options.allowExcluded && (await this.isExcludedDestination(file.path))) {
           return { type: 'unavailable' };
         }
         return {

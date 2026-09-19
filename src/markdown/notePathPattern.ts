@@ -274,16 +274,29 @@ function datesForCalendarYear(
   fields: DateFields,
   searchForIsoYear: boolean,
 ): ReadonlyArray<ReturnType<typeof moment>> {
-  const month = fields.months[0];
-  const day = fields.days[0];
-  const ordinal = fields.ordinals[0];
-  const quarter = fields.quarters[0];
-  if (ordinal !== undefined) return [moment([year, 0, 1]).dayOfYear(ordinal)];
-  if (month !== undefined && day !== undefined) return [moment([year, month - 1, day])];
-  if (month !== undefined) return datesForMonth(year, month, searchForIsoYear);
-  if (quarter !== undefined) return datesForQuarter(year, quarter, day, searchForIsoYear);
-  if (day !== undefined) {
-    return Array.from({ length: 12 }, (_value, index) => moment([year, index, day]));
+  const months = unique(fields.months);
+  const days = unique(fields.days);
+  const ordinals = unique(fields.ordinals);
+  const quarters = unique(fields.quarters);
+  if (ordinals.length > 0) {
+    return ordinals.map((ordinal) => moment([year, 0, 1]).dayOfYear(ordinal));
+  }
+  if (months.length > 0 && days.length > 0) {
+    return months.flatMap((month) => days.map((day) => moment([year, month - 1, day])));
+  }
+  if (months.length > 0) {
+    return months.flatMap((month) => datesForMonth(year, month, searchForIsoYear));
+  }
+  if (quarters.length > 0) {
+    const candidateDays = days.length > 0 ? days : [undefined];
+    return quarters.flatMap((quarter) =>
+      candidateDays.flatMap((day) => datesForQuarter(year, quarter, day, searchForIsoYear)),
+    );
+  }
+  if (days.length > 0) {
+    return days.flatMap((day) =>
+      Array.from({ length: 12 }, (_value, index) => moment([year, index, day])),
+    );
   }
   return datesForUnspecifiedCalendar(year, searchForIsoYear);
 }
@@ -339,9 +352,15 @@ function isMatchingDate(
   );
 }
 
-function hasMatchingDate(markers: readonly Marker[], values: readonly string[]): boolean {
+function hasMatchingDate(
+  markers: readonly Marker[],
+  values: readonly string[],
+  matchesResolvedPath: (candidate: ReturnType<typeof moment>) => boolean,
+): boolean {
   const fields = capturedFields(markers, values);
-  return candidateDates(fields).some((candidate) => isMatchingDate(candidate, markers, values));
+  return candidateDates(fields).some(
+    (candidate) => isMatchingDate(candidate, markers, values) || matchesResolvedPath(candidate),
+  );
 }
 
 export function compileNotePathPattern(pattern: string): NotePathPattern {
@@ -379,7 +398,13 @@ export function compileNotePathPattern(pattern: string): NotePathPattern {
       if (match === null) return false;
       if (markers.length === 0) return true;
       const values = match.slice(1);
-      return hasMatchingDate(markers, values);
+      return hasMatchingDate(markers, values, (candidate) => {
+        let resolved = literals[0] ?? '';
+        for (const [index, marker] of markers.entries()) {
+          resolved += candidate.format(marker.format) + (literals[index + 1] ?? '');
+        }
+        return resolved.toLocaleLowerCase() === filePath.toLocaleLowerCase();
+      });
     },
   };
 }

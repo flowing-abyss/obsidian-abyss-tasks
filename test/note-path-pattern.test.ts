@@ -37,6 +37,14 @@ describe('compileNotePathPattern', () => {
     expect(pattern.matches('archive/2025/2026.md')).toBe(false);
   });
 
+  it('round-trips adjacent variable-width fields when another marker fixes the date', () => {
+    const pattern = compileNotePathPattern('archive/{{YYYY-MM-DD}}-{{M}}{{D}}');
+    const path = pattern.resolve('2026-11-01');
+
+    expect(path).toBe('archive/2026-11-01-111.md');
+    expect(pattern.matches(path)).toBe(true);
+  });
+
   it('matches partial and mixed calendar and ISO-week paths against one candidate date', () => {
     const partial = compileNotePathPattern('archive/{{MM-DD}}.md');
     expect(partial.matches('archive/02-29.md')).toBe(true);

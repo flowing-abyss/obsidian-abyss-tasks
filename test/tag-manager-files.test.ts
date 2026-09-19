@@ -829,6 +829,14 @@ describe('TagManager exact and prefix vault rename', () => {
     selected = { type: 'group', groupId: discoveredTagGroupId('#home') };
     await tm.renameTagExact('#home', '#house');
     expect(selected).toEqual({ type: 'group', groupId: discoveredTagGroupId('#house') });
+
+    selected = { type: 'group', groupId: `${discoveredPrefixGroupId('legacy')}::1` };
+    await tm.renameTagPrefix('#legacy', '#current');
+    expect(selected).toEqual({ type: 'group', groupId: discoveredPrefixGroupId('current') });
+
+    selected = { type: 'group', groupId: `${discoveredTagGroupId('#old')}::1` };
+    await tm.renameTagExact('#old', '#new');
+    expect(selected).toEqual({ type: 'group', groupId: discoveredTagGroupId('#new') });
   });
 
   it('preserves the active stable id when a promoted prefix group is renamed', async () => {

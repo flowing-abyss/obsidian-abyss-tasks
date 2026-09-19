@@ -109,7 +109,11 @@ async function makeHarness(adapter: Adapter, source: string): Promise<Harness> {
   };
 }
 
-function applicationFor(app: App, settings: CalendarSettings) {
+function applicationFor(
+  app: App,
+  settings: CalendarSettings,
+  isExcludedDestination: (filePath: string) => boolean | Promise<boolean> = () => false,
+) {
   const catalog = new StatusCatalog(toStatusRules(settings.taskStatuses));
   const codec = new TaskMarkdownCodec(catalog);
   const index = new TaskIndex(app, {
@@ -126,6 +130,7 @@ function applicationFor(app: App, settings: CalendarSettings) {
   const provider = new ObsidianTaskDestinationProvider(
     () => configuredDestination(settings),
     (filePath, templatePath, title) => noteTemplates.ensureNote(filePath, templatePath, title),
+    isExcludedDestination,
   );
   return new TaskApplicationService(
     index,
@@ -2073,6 +2078,57 @@ describe('configured destination end-to-end lifecycle', () => {
     expect(content).toContain('- [ ] first frozen task');
     expect(content).not.toContain('Changed template');
     expect(app.vault.getAbstractFileByPath(`daily/changed/${today}.md`)).toBeNull();
+  });
+
+  it('rechecks current destination Markdown on every retained-session execution', async () => {
+    const path = 'tasks/active.md';
+    const app = await createAppWithFiles({ [path]: '' });
+    const application = applicationFor(app, DEFAULT_SETTINGS, async (filePath) => {
+      const file = app.vault.getAbstractFileByPath(filePath);
+      return file instanceof TFile && (await app.vault.cachedRead(file)).includes('#ignored');
+    });
+    const session = await application.planCreate({ type: 'configured-default' });
+
+    await expect(session.execute({ markdownBody: 'first' })).resolves.toMatchObject({ type: 'ok' });
+    const file = fileAt(app, path);
+    await app.vault.modify(file, `#ignored\n${await app.vault.cachedRead(file)}`);
+
+    await expect(session.execute({ markdownBody: 'must stay out' })).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'destination-unavailable', field: 'destination' }],
+    });
+    expect(await app.vault.cachedRead(file)).not.toContain('must stay out');
+  });
+
+  it.each([
+    { name: 'body tag', template: '#ignored\n' },
+    { name: 'frontmatter', template: '---\nprivate: true\n---\n' },
+  ])('rejects a freshly templated destination excluded by its $name', async ({ template }) => {
+    const path = 'tasks/templated.md';
+    const app = await createAppWithFiles({ 'templates/task.md': template });
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      taskFilePath: path,
+      taskTemplatePath: 'templates/task.md',
+    };
+    const application = applicationFor(app, settings, async (filePath) => {
+      const file = app.vault.getAbstractFileByPath(filePath);
+      if (!(file instanceof TFile)) return false;
+      const current = await app.vault.cachedRead(file);
+      return current.includes('#ignored') || current.includes('private: true');
+    });
+
+    await expect(
+      application.execute({
+        type: 'create',
+        destination: { type: 'configured-default' },
+        markdownBody: 'must not disappear',
+      }),
+    ).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'destination-unavailable', field: 'destination' }],
+    });
+    expect(await app.vault.cachedRead(fileAt(app, path))).toBe(template);
   });
 
   it.each([

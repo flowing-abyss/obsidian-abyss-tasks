@@ -143,13 +143,47 @@ describe('transactional task archive', () => {
       await expect(
         session.execute({ ...h.ref, revision: `${h.ref.revision}:stale` }),
       ).resolves.toMatchObject({ type: 'not-found' });
-      expect(prepare).toHaveBeenCalledOnce();
+      expect(prepare).not.toHaveBeenCalled();
       expect(archive).not.toHaveBeenCalled();
       expect(await h.read('source.md')).toBe('- [ ] Session target\n');
     } finally {
       h.index.destroy();
     }
   });
+
+  it.each(['synchronous', 'asynchronous'] as const)(
+    'diagnoses %s archive preparation failure inside the session boundary',
+    async (kind) => {
+      const h = await harness('- [ ] Preparation failure\n');
+      const failure = new Error('disk unavailable');
+      const diagnostics = vi.fn<TaskDiagnosticSink>();
+      const prepare =
+        kind === 'synchronous'
+          ? vi.fn(() => {
+              throw failure;
+            })
+          : vi.fn().mockRejectedValue(failure);
+      const provider = archiveProvider(
+        vi.fn().mockResolvedValue({ destination: ARCHIVE, prepare }),
+      );
+      try {
+        const session = await archiveApplication(h, provider, diagnostics).planArchive();
+        if (session.type !== 'ready') throw new Error('archive session unavailable');
+
+        await expect(session.execute(h.ref)).resolves.toEqual({
+          type: 'io-error',
+          cause: 'repository-error',
+          contentState: 'unknown',
+        });
+        expect(diagnostics).toHaveBeenCalledWith(
+          { operation: 'archive', phase: 'unexpected', cause: 'repository-error' },
+          failure,
+        );
+      } finally {
+        h.index.destroy();
+      }
+    },
+  );
 
   it('diagnoses a prepared-session repository failure without claiming an archive', async () => {
     const h = await harness('- [ ] Repository failure\n');

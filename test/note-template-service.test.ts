@@ -273,6 +273,34 @@ describe('NoteTemplateService', () => {
     expect(await app.vault.cachedRead(recovered)).toBe('external recovery\n');
   });
 
+  it('blocks retry of unchanged partial Templater output and preserves later external recovery', async () => {
+    const path = 'tasks/partial.md';
+    const app = await createAppWithFiles({ 'templates/task.md': '<% partial %>\n' });
+    let renders = 0;
+    installTemplater(app, async () => {
+      renders += 1;
+      await app.vault.modify(fileAt(app, path), 'partly prepared\n');
+      throw new Error('template failed after writing the target');
+    });
+    const service = new NoteTemplateService(app);
+
+    await expect(service.ensureNote(path, 'templates/task.md', 'Partial')).rejects.toBeInstanceOf(
+      CreatedNoteTemplateError,
+    );
+    await expect(service.ensureNote(path, 'templates/task.md', 'Partial')).rejects.toBeInstanceOf(
+      CreatedNoteTemplateError,
+    );
+
+    expect(renders).toBe(1);
+    expect(await app.vault.cachedRead(fileAt(app, path))).toBe('partly prepared\n');
+
+    await app.vault.modify(fileAt(app, path), 'external recovery\n');
+    const recovered = await service.ensureNote(path, 'templates/task.md', 'Partial');
+    expect(recovered.path).toBe(path);
+    expect(await app.vault.cachedRead(recovered)).toBe('external recovery\n');
+    expect(renders).toBe(1);
+  });
+
   it('does not adopt or overwrite external content changed while a retry is rendering', async () => {
     const app = await createAppWithFiles({ 'templates/task.md': '<% broken %>\n' });
     let attempt = 0;

@@ -1,5 +1,6 @@
-import { getAllTags, normalizePath, Notice, Plugin, type TAbstractFile } from 'obsidian';
+import { getAllTags, normalizePath, Notice, Plugin, TFile, type TAbstractFile } from 'obsidian';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
+import { extractMarkdownBodyTags } from './markdown/markdownTagRename';
 import { NoteTemplateService } from './notes/NoteTemplateService';
 import { initializeProjectPropertyDefinitions } from './projects/initializeProjectPropertyDefinitions';
 import {
@@ -43,6 +44,7 @@ import type { CommentTimeContextProvider } from './tasks/domain/commentTimeLabel
 import { StatusCatalog } from './tasks/domain/StatusCatalog';
 import { systemCommentTimeContext } from './tasks/infrastructure/commentTimeContext';
 import { TaskBlockEditor } from './tasks/infrastructure/markdown/TaskBlockEditor';
+import { parseMarkdownFrontmatter } from './tasks/infrastructure/markdown/taskBlockSyntax';
 import { TaskLocator } from './tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from './tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskDestinationProvider } from './tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
@@ -351,15 +353,21 @@ export default class TaskCalendarPlugin extends Plugin {
     );
   }
 
-  private isExcludedDestination(filePath: string): boolean {
+  private async isExcludedDestination(filePath: string): Promise<boolean> {
     const actual = this.app.vault
       .getMarkdownFiles()
       .find((file) => file.path.toLowerCase() === filePath.toLowerCase());
-    const cache = actual === undefined ? null : this.app.metadataCache.getFileCache(actual);
+    if (!(actual instanceof TFile)) {
+      return this.isTaskSourceExcluded({ filePath, tags: [], frontmatter: {} });
+    }
+    const content = await this.app.vault.cachedRead(actual);
+    const parsed = parseMarkdownFrontmatter(content.split(/\r?\n/u));
+    const frontmatter = parsed.type === 'valid' ? (parsed.value ?? {}) : {};
+    const frontmatterTags = getAllTags({ frontmatter }) ?? [];
     return this.isTaskSourceExcluded({
-      filePath: actual?.path ?? filePath,
-      tags: [...(cache == null ? [] : (getAllTags(cache) ?? []))],
-      frontmatter: { ...(cache?.frontmatter ?? {}) },
+      filePath: actual.path,
+      tags: [...new Set([...frontmatterTags, ...extractMarkdownBodyTags(content)])],
+      frontmatter: { ...frontmatter },
     });
   }
 

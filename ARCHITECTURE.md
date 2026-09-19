@@ -109,6 +109,8 @@ also covers accepted metadata events with unchanged tasks, including notes witho
 `ProjectStore` waits for these barriers before combining frontmatter with matching task statistics.
 
 Task creation freezes its capture context before `TaskCaptureApplicationApi` plans a destination.
+Sidebar capture and the native `task-calendar` modal both retain that planned session while their
+input stays open, so retries preserve the captured path, template, prefix, tags, and local date.
 The provider resolves the captured local date through the configured `taskFilePath` pattern and
 retains its template and insertion policy without writing. `NoteTemplateService` provisions that
 path only when the command executes: it creates nested folders, applies a selected template once,
@@ -154,7 +156,9 @@ archive retains the original command target as its receipt identity while the cu
 locates a rebased source; equivalent freshly selected roots resume only with the same authority
 revision. Raw-block equality without revision continuity is ambiguous and rejected. Canonical vault
 casing is reused for an existing archive file or parent folder. Ordinary capture destinations are
-rejected before provisioning when the injected exclusion predicate matches them.
+rejected before provisioning when the injected exclusion predicate matches their authoritative
+current Markdown. A retained session repeats that validation before every write. Template failures
+that may have written partial bytes stay blocked until a later external edit supplies new content.
 
 ### Dependencies
 

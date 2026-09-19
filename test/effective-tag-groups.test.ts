@@ -90,6 +90,23 @@ describe('resolveEffectiveTagGroups', () => {
     ]);
   });
 
+  it('exposes canonical selectors for previously saved noncanonical groups', () => {
+    const groups = resolveEffectiveTagGroups(
+      settings({
+        tagGroups: [
+          { id: 'prefix', name: 'Prefix', mode: 'prefix', prefix: '##work' },
+          { id: 'manual', name: 'Manual', mode: 'manual', tags: ['home', '##later', '#home'] },
+        ],
+      }),
+      ['#work/client', '#home', '#later'],
+    );
+
+    expect(groups.map(summary)).toEqual([
+      expect.objectContaining({ id: 'prefix', prefix: 'work' }),
+      expect.objectContaining({ id: 'manual', tags: ['#home', '#later'] }),
+    ]);
+  });
+
   it('preserves configured nested prefixes and discovers descendants beyond exact manual claims', () => {
     const configured = settings({
       tagGroups: [
@@ -149,6 +166,43 @@ describe('resolveEffectiveTagGroups', () => {
       expect.objectContaining({ id, name: 'Focused work', origin: 'configured', archived: false }),
     ]);
   });
+
+  it.each([
+    {
+      configured: {
+        id: discoveredPrefixGroupId('work'),
+        name: 'Focused work',
+        mode: 'prefix' as const,
+        prefix: 'focus',
+      },
+      observed: '#work/new',
+      selector: 'work',
+    },
+    {
+      configured: {
+        id: discoveredTagGroupId('#home'),
+        name: 'House',
+        mode: 'manual' as const,
+        tags: ['#house'],
+      },
+      observed: '#home',
+      selector: '#home',
+    },
+  ])(
+    'allocates a unique discovered identity when a promoted $selector id is reused',
+    (scenario) => {
+      const groups = resolveEffectiveTagGroups(settings({ tagGroups: [scenario.configured] }), [
+        scenario.observed,
+      ]);
+
+      expect(new Set(groups.map(({ id }) => id)).size).toBe(groups.length);
+      expect(groups).toEqual([
+        expect.objectContaining({ id: scenario.configured.id, origin: 'configured' }),
+        expect.objectContaining({ origin: 'discovered' }),
+      ]);
+      expect(groups[1]?.id).not.toBe(scenario.configured.id);
+    },
+  );
 
   it('retains full prefix membership after appearance promotion', () => {
     const id = discoveredPrefixGroupId('work');

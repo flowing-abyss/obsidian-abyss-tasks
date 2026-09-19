@@ -9,6 +9,7 @@ import {
   type LocalDate,
   type RecurrencePolicy,
   type TaskApplicationApi,
+  type TaskCaptureApplicationApi,
   type TaskQueryApi,
   type TaskSnapshot,
 } from '../tasks';
@@ -91,7 +92,7 @@ export class CalendarRenderer {
   private config_abyssPrivate: ResolvedConfig;
   private readonly app_abyssPrivate: App;
   private readonly queries_abyssPrivate: TaskQueryApi;
-  private readonly tasks_abyssPrivate: TaskApplicationApi;
+  private readonly tasks_abyssPrivate: TaskApplicationApi & Partial<TaskCaptureApplicationApi>;
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
   private readonly recurrencePolicy_abyssPrivate: RecurrencePolicy;
   private readonly interactionOwnership_abyssPrivate: InteractionOwnershipPort;
@@ -102,7 +103,7 @@ export class CalendarRenderer {
       config: ResolvedConfig,
       app: App,
       queries: TaskQueryApi,
-      tasks: TaskApplicationApi,
+      tasks: TaskApplicationApi & Partial<TaskCaptureApplicationApi>,
       statusRegistry: StatusRegistry,
       recurrencePolicy?: RecurrencePolicy,
       commentTimeContext?: CommentTimeContextProvider,
@@ -637,19 +638,22 @@ export class CalendarRenderer {
 
   private openAddTaskModal_abyssPrivate(date: string): void {
     this.dismissTaskInputModal_abyssPrivate();
+    const planCreate = this.tasks_abyssPrivate.planCreate;
+    if (planCreate === undefined) return;
+    const session = planCreate.call(this.tasks_abyssPrivate, { type: 'configured-default' });
     const modal = new TaskInputModal(
       this.app_abyssPrivate,
       async (text) => {
         const body = text.trim();
-        if (body.length === 0) return;
-        presentTaskCreationResult(
-          await this.tasks_abyssPrivate.execute({
-            type: 'create',
-            destination: { type: 'configured-default' },
-            markdownBody: body,
-            initial: { due: { type: 'set', value: localDate(date) } },
-          }),
-        );
+        if (body.length === 0) return false;
+        const result = await (
+          await session
+        ).execute({
+          markdownBody: body,
+          initial: { due: { type: 'set', value: localDate(date) } },
+        });
+        presentTaskCreationResult(result);
+        return result.type === 'ok';
       },
       this.interactionOwnership_abyssPrivate,
       () => {
@@ -691,7 +695,7 @@ class TaskInputModal extends Modal {
 
   constructor(
     app: App,
-    private readonly onSubmit: (text: string) => Promise<void>,
+    private readonly onSubmit: (text: string) => Promise<boolean>,
     private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
     private readonly onClosed: () => void = () => {},
   ) {
@@ -721,13 +725,6 @@ class TaskInputModal extends Modal {
       color: 'var(--text-normal)',
       outline: 'none',
     });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        this.close();
-        runAsyncAction(this.onSubmit(input.value), 'Could not add task');
-      }
-    });
-    input.focus();
     const btn = form.createEl('button', { text: 'Add' });
     btn.setCssStyles({
       flex: '0 0 auto',
@@ -739,9 +736,31 @@ class TaskInputModal extends Modal {
       color: 'var(--text-on-accent)',
       cursor: 'pointer',
     });
+    const submit = async (): Promise<void> => {
+      if (input.disabled || input.value.trim().length === 0) return;
+      input.disabled = true;
+      btn.disabled = true;
+      try {
+        if (await this.onSubmit(input.value)) {
+          if (input.isConnected) this.close();
+          return;
+        }
+      } finally {
+        if (input.isConnected) {
+          input.disabled = false;
+          btn.disabled = false;
+          input.focus();
+        }
+      }
+    };
+    input.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      runAsyncAction(submit(), 'Could not add task');
+    });
+    input.focus();
     btn.addEventListener('click', () => {
-      this.close();
-      runAsyncAction(this.onSubmit(input.value), 'Could not add task');
+      runAsyncAction(submit(), 'Could not add task');
     });
   }
 

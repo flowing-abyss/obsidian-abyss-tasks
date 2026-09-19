@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ListSelection } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
-import { discoveredPrefixGroupId } from '../src/tags/effectiveTagGroups';
+import { discoveredPrefixGroupId, resolveEffectiveTagGroups } from '../src/tags/effectiveTagGroups';
 import type { TaskNodeSnapshot } from '../src/tasks';
 import type {
   CreateTaskCommandDestination,
@@ -16,7 +16,7 @@ import {
   commandBodyForCapture,
   type CaptureContext,
 } from '../src/ui/taskCapture/CaptureTargetResolver';
-import { methodOf } from './helpers';
+import { expectDefined, methodOf } from './helpers';
 
 const configuredDestination: TaskDestination = {
   filePath: 'Daily/2026-08-22.md',
@@ -304,5 +304,42 @@ describe('CaptureTargetResolver', () => {
     expect(methodOf(captureApplication, 'planCreate')).toHaveBeenCalledWith({
       type: 'configured-default',
     });
+  });
+
+  it('targets a reused old prefix by its collision-free discovered identity', async () => {
+    const captureApplication = application();
+    const configured = settings({
+      tagGroups: [
+        {
+          id: discoveredPrefixGroupId('work'),
+          name: 'Focused work',
+          mode: 'prefix',
+          prefix: 'focus',
+        },
+      ],
+    });
+    const nodes = [
+      { node: { tags: ['#focus/client'] } },
+      { node: { tags: ['#work/new'] } },
+    ] as unknown as TaskNodeSnapshot[];
+    const reused = expectDefined(
+      resolveEffectiveTagGroups(configured, ['#focus/client', '#work/new']).find(
+        (group) => group.origin === 'discovered' && group.prefix === 'work',
+      ),
+    );
+    const resolver = new CaptureTargetResolver(
+      captureApplication,
+      configured,
+      () => localDate('2026-08-24'),
+      () => nodes,
+    );
+
+    const target = await resolver.resolve({
+      type: 'list',
+      selection: { type: 'group', groupId: reused.id },
+    });
+
+    expect(target.label).toBe('work · #work');
+    expect(target.initial).toEqual({ tags: { add: ['#work'] } });
   });
 });

@@ -5,6 +5,7 @@ interface FailedPreparation {
   readonly content: string;
   readonly templatePath: string;
   readonly title: string;
+  readonly uncertain: boolean;
 }
 
 interface TemplateApplication {
@@ -31,6 +32,8 @@ class MissingNoteTemplateError extends Error {
     this.name = 'MissingNoteTemplateError';
   }
 }
+
+class NoteContentChangedError extends Error {}
 
 /** Signals that note creation succeeded but applying its Templater template did not. */
 export class CreatedNoteTemplateError extends Error {
@@ -136,12 +139,19 @@ export class NoteTemplateService {
       failed.delete(file.path);
       return file;
     }
+    if (priorFailure.uncertain) {
+      throw new CreatedNoteTemplateError(
+        file.path,
+        new Error(`Template preparation left unresolved content in ${file.path}.`),
+      );
+    }
     const requestedTemplate = templatePath.length > 0 ? templatePath : priorFailure.templatePath;
     const requestedTitle = title.length > 0 ? title : priorFailure.title;
     return await this.retryTemplate(file, this.resolveTemplate(requestedTemplate), {
       content: priorFailure.content,
       templatePath: requestedTemplate,
       title: requestedTitle,
+      uncertain: false,
     });
   }
 
@@ -190,7 +200,13 @@ export class NoteTemplateService {
       return file;
     } catch (cause) {
       if (file !== undefined) {
-        mapFor(failedByApp, this.app).set(path, { content: '', templatePath, title });
+        const content = await this.app.vault.cachedRead(file);
+        mapFor(failedByApp, this.app).set(path, {
+          content,
+          templatePath,
+          title,
+          uncertain: content !== '',
+        });
         throw new CreatedNoteTemplateError(path, cause);
       }
       throw cause;
@@ -220,10 +236,18 @@ export class NoteTemplateService {
       mapFor(failedByApp, this.app).delete(file.path);
       return file;
     } catch (cause) {
+      const content =
+        cause instanceof NoteContentChangedError
+          ? failure.content
+          : await this.app.vault.cachedRead(file);
       mapFor(failedByApp, this.app).set(file.path, {
-        content: failure.content,
+        content,
         templatePath: failure.templatePath,
         title: failure.title,
+        uncertain:
+          cause instanceof NoteContentChangedError
+            ? failure.uncertain
+            : content !== failure.content,
       });
       throw new CreatedNoteTemplateError(file.path, cause);
     } finally {
@@ -251,7 +275,9 @@ export class NoteTemplateService {
     }
     await this.app.vault.process(file, (source) => {
       if (source !== expectedContent) {
-        throw new Error(`Note content changed while applying the template: ${file.path}`);
+        throw new NoteContentChangedError(
+          `Note content changed while applying the template: ${file.path}`,
+        );
       }
       return content;
     });

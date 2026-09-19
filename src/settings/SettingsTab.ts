@@ -453,21 +453,25 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   private renderTaskCreationSettings_abyssPrivate(containerEl: HTMLElement): void {
-    const taggedPrefixInUntaggedInbox =
-      this.plugin_abyssPrivate.settings.inbox.mode === 'untagged' &&
-      extractMarkdownBodyTags(this.plugin_abyssPrivate.settings.taskPrefix).length > 0;
-    new Setting(containerEl)
+    const taskPrefixDescription = (): string => {
+      const taggedPrefixInUntaggedInbox =
+        this.plugin_abyssPrivate.settings.inbox.mode === 'untagged' &&
+        extractMarkdownBodyTags(this.plugin_abyssPrivate.settings.taskPrefix).length > 0;
+      return `Prepended when adding a new task (e.g. #Task/one-off).${taggedPrefixInUntaggedInbox ? ' Tagged new tasks do not appear in an untagged inbox.' : ''}`;
+    };
+    const taskPrefixSetting = new Setting(containerEl)
       .setName('Task prefix')
-      .setDesc(
-        `Prepended when adding a new task (e.g. #Task/one-off).${taggedPrefixInUntaggedInbox ? ' Tagged new tasks do not appear in an untagged inbox.' : ''}`,
-      )
+      .setDesc(taskPrefixDescription())
       .addText((t) =>
         t
           .setPlaceholder('#Task/one-off')
           .setValue(this.plugin_abyssPrivate.settings.taskPrefix)
           .onChange(async (v) => {
+            const preserveFocus = t.inputEl.ownerDocument.activeElement === t.inputEl;
             this.plugin_abyssPrivate.settings.taskPrefix = v;
             await this.plugin_abyssPrivate.saveSettings();
+            taskPrefixSetting.setDesc(taskPrefixDescription());
+            if (preserveFocus) t.inputEl.focus();
           }),
       );
 
@@ -1062,36 +1066,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       }),
     );
 
-    if (group.mode === 'prefix') {
-      new Setting(card)
-        .setName('Prefix')
-        .setDesc('E.g. "work" matches #work and #work/dev')
-        .addText((t) =>
-          t
-            .setPlaceholder('Work')
-            .setValue(group.prefix ?? '')
-            .onChange(async (v) => {
-              await this.updateTagGroup_abyssPrivate(group, { prefix: v.trim() });
-            }),
-        );
-    } else {
-      new Setting(card)
-        .setName('Tags')
-        .setDesc('Comma-separated, e.g. #Work, #side-project')
-        .addText((t) =>
-          t
-            .setPlaceholder('#Work, #side-project')
-            .setValue((group.tags ?? []).join(', '))
-            .onChange(async (v) => {
-              await this.updateTagGroup_abyssPrivate(group, {
-                tags: v
-                  .split(',')
-                  .map((s) => s.trim())
-                  .filter(Boolean),
-              });
-            }),
-        );
-    }
+    this.renderTagGroupMatchSetting_abyssPrivate(card, group);
 
     new Setting(card).addButton((b) =>
       b
@@ -1101,6 +1076,67 @@ export class CalendarSettingsTab extends PluginSettingTab {
           this.applyTagGroupCardAction_abyssPrivate(group);
         }),
     );
+  }
+
+  private renderTagGroupMatchSetting_abyssPrivate(
+    card: HTMLElement,
+    group: EffectiveTagGroup,
+  ): void {
+    if (group.mode === 'prefix') {
+      const prefixSetting = new Setting(card)
+        .setName('Prefix')
+        .setDesc('E.g. "work" matches #work and #work/dev');
+      const feedback = prefixSetting.descEl.createDiv({ cls: 'abyss-tag-input-feedback' });
+      feedback.id = `abyss-tag-prefix-feedback-${group.id}`;
+      prefixSetting.addText((t) => {
+        t.inputEl.setAttribute('aria-describedby', feedback.id);
+        return t
+          .setPlaceholder('Work')
+          .setValue(group.prefix ?? '')
+          .onChange(async (v) => {
+            const tags = normalizeTaskTagInput(v);
+            if (tags?.length !== 1) {
+              t.inputEl.setAttribute('aria-invalid', 'true');
+              feedback.setText('Enter one tag prefix.');
+              return;
+            }
+            t.inputEl.removeAttribute('aria-invalid');
+            feedback.setText('');
+            await this.updateTagGroup_abyssPrivate(group, {
+              prefix: (tags[0] ?? '').slice(1),
+            });
+          });
+      });
+    } else {
+      const tagsSetting = new Setting(card)
+        .setName('Tags')
+        .setDesc('Comma-separated, e.g. #Work, #side-project');
+      const feedback = tagsSetting.descEl.createDiv({ cls: 'abyss-tag-input-feedback' });
+      feedback.id = `abyss-tag-list-feedback-${group.id}`;
+      tagsSetting.addText((t) => {
+        t.inputEl.setAttribute('aria-describedby', feedback.id);
+        return t
+          .setPlaceholder('#Work, #side-project')
+          .setValue((group.tags ?? []).join(', '))
+          .onChange(async (v) => {
+            const segments = v
+              .split(',')
+              .map((segment) => segment.trim())
+              .filter(Boolean);
+            const normalized = segments.map((segment) => normalizeTaskTagInput(segment));
+            if (normalized.some((tags) => tags === undefined)) {
+              t.inputEl.setAttribute('aria-invalid', 'true');
+              feedback.setText('Enter comma-separated task tags.');
+              return;
+            }
+            t.inputEl.removeAttribute('aria-invalid');
+            feedback.setText('');
+            await this.updateTagGroup_abyssPrivate(group, {
+              tags: [...new Set(normalized.flatMap((tags) => tags ?? []))],
+            });
+          });
+      });
+    }
   }
 
   private applyTagGroupCardAction_abyssPrivate(group: EffectiveTagGroup): void {

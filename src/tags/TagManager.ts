@@ -9,6 +9,7 @@ import {
   discoveredTagGroupId,
   normalizeTagPrefix,
   prefixForDiscoveredGroupId,
+  tagForDiscoveredGroupId,
   type EffectiveTagGroup,
 } from './effectiveTagGroups';
 import { normalizeTag, transformMarkdownTags, type TagRenameScope } from './markdownTagRename';
@@ -224,11 +225,11 @@ function rebaseDiscoveredGroupSelection(
   rename: TagRenameIdentity,
 ): void {
   const { oldTag, newTag, scope } = rename;
-  if (scope === 'prefix' && selected.groupId === discoveredPrefixGroupId(oldTag.slice(1))) {
+  if (scope === 'prefix' && prefixForDiscoveredGroupId(selected.groupId) === oldTag.slice(1)) {
     state.setSelectedList({ type: 'group', groupId: discoveredPrefixGroupId(newTag.slice(1)) });
     return;
   }
-  if (scope === 'exact' && selected.groupId === discoveredTagGroupId(oldTag)) {
+  if (scope === 'exact' && tagForDiscoveredGroupId(selected.groupId) === oldTag) {
     state.setSelectedList({ type: 'group', groupId: discoveredTagGroupId(newTag) });
   }
 }

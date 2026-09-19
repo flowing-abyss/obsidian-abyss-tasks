@@ -3,7 +3,12 @@ import { registerCodeBlock, resolveConfig } from '../src/code-block/registerCode
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings, CodeBlockParams } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import { localDate, type TaskApplicationApi, type TaskSnapshot } from '../src/tasks';
+import {
+  localDate,
+  type TaskApplicationApi,
+  type TaskCaptureApplicationApi,
+  type TaskSnapshot,
+} from '../src/tasks';
 import { expectDefined, objectMatching, queryApiForTasks, task, useRealMoment } from './helpers';
 
 useRealMoment();
@@ -14,6 +19,16 @@ const commentTimeContext = () => ({
   locale: 'en',
   timeZone: 'UTC',
 });
+
+function planCreate(): TaskCaptureApplicationApi['planCreate'] {
+  return vi.fn<TaskCaptureApplicationApi['planCreate']>(async () => ({
+    type: 'unavailable',
+    execute: async () => ({
+      type: 'invalid',
+      issues: [{ code: 'destination-unavailable', field: 'destination' }],
+    }),
+  }));
+}
 
 interface CapturedProcessor {
   (source: string, el: HTMLElement, ctx: { addChild: (child: unknown) => void }): void;
@@ -30,9 +45,10 @@ function setupCodeBlock(settings: CalendarSettings = DEFAULT_SETTINGS): {
     },
   };
   const queries = queryApiForTasks(() => []);
-  const tasks: TaskApplicationApi = {
+  const tasks: TaskApplicationApi & TaskCaptureApplicationApi = {
     queries,
     execute: vi.fn().mockResolvedValue({ type: 'invalid', issues: [{ code: 'invalid-target' }] }),
+    planCreate: planCreate(),
   };
   registerCodeBlock(
     fakePlugin as unknown as Parameters<typeof registerCodeBlock>[0],
@@ -113,7 +129,7 @@ describe('registerCodeBlock processor', () => {
       fakePlugin as unknown as Parameters<typeof registerCodeBlock>[0],
       DEFAULT_SETTINGS,
       queries,
-      { queries, execute },
+      { queries, execute, planCreate: planCreate() },
       new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
       commentTimeContext,
     );
@@ -152,6 +168,7 @@ describe('registerCodeBlock processor', () => {
         execute: vi
           .fn()
           .mockResolvedValue({ type: 'invalid', issues: [{ code: 'invalid-target' }] }),
+        planCreate: planCreate(),
       },
       new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
       commentTimeContext,

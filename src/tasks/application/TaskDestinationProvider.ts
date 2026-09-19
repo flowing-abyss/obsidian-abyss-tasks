@@ -7,6 +7,7 @@ export type TaskDestinationResolution =
 export interface TaskDestinationPlan {
   readonly destination: TaskDestination;
   prepare(): Promise<TaskDestinationResolution>;
+  validate?(destination: TaskDestination): Promise<boolean>;
 }
 
 /** Resolves and, when configured policy requires it, prepares the current default note. */

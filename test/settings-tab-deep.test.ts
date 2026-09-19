@@ -958,6 +958,29 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     expect(body.textContent).toContain('Tagged new tasks do not appear in an untagged inbox.');
   });
 
+  it('refreshes the task-prefix explanation after adding and removing the last tag', async () => {
+    const { tab, captured } = makeTab({
+      taskPrefix: '',
+      inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
+    });
+    activeDocument.body.append(tab.containerEl);
+    const body = openSection(tab, 0);
+    const input = expectDefined(findInput(body, 'Task prefix'));
+    const component = expectDefined(findComp(captured, 'Task prefix', 'text')).comp;
+    input.focus();
+    expect(body.textContent).not.toContain('Tagged new tasks do not appear in an untagged inbox.');
+
+    component.setValue('#work');
+    await flushMicrotasks();
+    expect(body.textContent).toContain('Tagged new tasks do not appear in an untagged inbox.');
+    expect(activeDocument.activeElement).toBe(input);
+
+    component.setValue('plain text');
+    await flushMicrotasks();
+    expect(body.textContent).not.toContain('Tagged new tasks do not appear in an untagged inbox.');
+    expect(activeDocument.activeElement).toBe(input);
+  });
+
   it('task file input reflects setting and saves on change', () => {
     const { tab, plugin, captured } = makeTab({ taskFilePath: 'inbox.md' });
     const body = openSection(tab, 0);
@@ -1551,22 +1574,22 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
     expect(findInput(body, 'Prefix')).toBeNull();
   });
 
-  it('prefix input change saves (trimmed)', () => {
+  it('prefix input normalizes one tag before saving', () => {
     const { tab, plugin, captured } = makeTab({ tagGroups: [{ ...baseGroup, prefix: '' }] });
     openSection(tab, 4);
-    expectDefined(findComp(captured, 'Prefix', 'text')).comp.setValue('  work  ');
+    expectDefined(findComp(captured, 'Prefix', 'text')).comp.setValue('  ##work  ');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(expectDefined(plugin.settings.tagGroups[0]).prefix).toBe('work');
   });
 
-  it('tags CSV input parses to array (split, trim, filter empty)', () => {
+  it('tags CSV input normalizes and deduplicates every comma-separated segment', () => {
     const { tab, plugin, captured } = makeTab({
       tagGroups: [{ ...baseGroup, mode: 'manual', tags: [] }],
     });
     openSection(tab, 4);
-    expectDefined(findComp(captured, 'Tags', 'text')).comp.setValue('a, b, c');
+    expectDefined(findComp(captured, 'Tags', 'text')).comp.setValue('a, ##b, #a #c, c');
     expect(plugin.saveSettings).toHaveBeenCalled();
-    expect(expectDefined(plugin.settings.tagGroups[0]).tags).toEqual(['a', 'b', 'c']);
+    expect(expectDefined(plugin.settings.tagGroups[0]).tags).toEqual(['#a', '#b', '#c']);
   });
 
   it('tags CSV input filters out empty values', () => {
@@ -1575,7 +1598,28 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
     });
     openSection(tab, 4);
     expectDefined(findComp(captured, 'Tags', 'text')).comp.setValue('a,, ,b');
-    expect(expectDefined(plugin.settings.tagGroups[0]).tags).toEqual(['a', 'b']);
+    expect(expectDefined(plugin.settings.tagGroups[0]).tags).toEqual(['#a', '#b']);
+  });
+
+  it.each([
+    { field: 'Tags', value: '#work #bad!', message: 'Enter comma-separated task tags.' },
+    { field: 'Prefix', value: '#work #home', message: 'Enter one tag prefix.' },
+  ])('keeps an invalid $field draft local without saving', ({ field, value, message }) => {
+    const group =
+      field === 'Tags'
+        ? { ...baseGroup, mode: 'manual' as const, tags: ['#old'] }
+        : { ...baseGroup, mode: 'prefix' as const, prefix: 'old' };
+    const { tab, plugin, captured } = makeTab({ tagGroups: [group] });
+    const body = openSection(tab, 4);
+    const input = expectDefined(findInput(body, field));
+    vi.mocked(plugin.saveSettings).mockClear();
+
+    expectDefined(findComp(captured, field, 'text')).comp.setValue(value);
+
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(body.textContent).toContain(message);
+    expect(plugin.saveSettings).not.toHaveBeenCalled();
+    expect(plugin.settings.tagGroups[0]).toEqual(group);
   });
 
   it('color picker saves on change', () => {

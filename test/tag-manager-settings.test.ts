@@ -181,6 +181,25 @@ describe('TagManager effective group archives', () => {
 
     expect(settings.archivedTagPrefixes).toEqual([]);
   });
+
+  it('archives a reused old prefix without targeting the renamed promoted group', async () => {
+    const promoted = {
+      id: 'discovered:prefix:work',
+      name: 'Focused work',
+      mode: 'prefix' as const,
+      prefix: 'focus',
+    };
+    const { tm, settings } = makeManager({ tagGroups: [promoted] });
+    const groups = resolveEffectiveTagGroups(settings, ['#focus/client', '#work/new']);
+    const reused = expectDefined(
+      groups.find((group) => group.origin === 'discovered' && group.prefix === 'work'),
+    );
+
+    await tm.archiveGroup(reused);
+
+    expect(settings.tagGroups).toEqual([promoted]);
+    expect(settings.archivedTagPrefixes).toEqual(['work']);
+  });
 });
 
 describe('TagManager effective group ordering', () => {

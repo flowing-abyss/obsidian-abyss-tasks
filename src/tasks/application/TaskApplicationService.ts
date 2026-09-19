@@ -492,8 +492,10 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
         type: 'ready',
         filePath: plan.destination.filePath,
         execute: async (ref) => {
-          prepared ??= plan.prepare();
-          return await this.executeArchiveSession_abyssPrivate(ref, plan, prepared);
+          return await this.executeArchiveSession_abyssPrivate(ref, plan, () => {
+            prepared ??= Promise.resolve().then(() => plan.prepare());
+            return prepared;
+          });
         },
       };
     } catch (error) {
@@ -512,18 +514,21 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   private async executeArchiveSession_abyssPrivate(
     ref: TaskRef,
     plan: TaskDestinationPlan,
-    prepared: Promise<TaskDestinationResolution>,
+    prepare: () => Promise<TaskDestinationResolution>,
   ): Promise<TaskCommandResult> {
     try {
       const command = { type: 'archive' as const, ref };
       const resolution = this.resolveForCommand_abyssPrivate(command, ref);
       const unavailable = this.unavailableResult_abyssPrivate(command, resolution);
       if (unavailable != null) return unavailable;
+      if (sameFilePath(ref.filePath, plan.destination.filePath)) {
+        return invalidTaskTarget('destination');
+      }
       return await this.archive_abyssPrivate(
         command,
         resolution as ProvenResolution,
         plan,
-        prepared,
+        prepare(),
       );
     } catch (error) {
       this.diagnostics_abyssPrivate(
@@ -916,19 +921,28 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       insertion: { ...plan.destination.insertion },
     };
     let preparation: Promise<TaskDestinationResolution> | undefined;
-    const prepareOnce = (): Promise<TaskDestinationResolution> => {
-      if (preparation !== undefined) return preparation;
-      const active = Promise.resolve().then(() => plan.prepare());
-      preparation = active;
-      void active.then(
-        (resolution) => {
-          if (resolution.type !== 'resolved' && preparation === active) preparation = undefined;
-        },
-        () => {
-          if (preparation === active) preparation = undefined;
-        },
-      );
-      return active;
+    const prepareOnce = async (): Promise<TaskDestinationResolution> => {
+      if (preparation === undefined) {
+        const active = Promise.resolve().then(() => plan.prepare());
+        preparation = active;
+        void active.then(
+          (resolution) => {
+            if (resolution.type !== 'resolved' && preparation === active) preparation = undefined;
+          },
+          () => {
+            if (preparation === active) preparation = undefined;
+          },
+        );
+      }
+      const resolution = await preparation;
+      if (
+        resolution.type === 'resolved' &&
+        plan.validate !== undefined &&
+        !(await plan.validate(resolution.destination))
+      ) {
+        return { type: 'unavailable' };
+      }
+      return resolution;
     };
     return {
       type: 'ready',

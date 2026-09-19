@@ -77,6 +77,16 @@ describe('evaluateQuery', () => {
     expect(validateQuerySyntax('("archive.md" OR #done')).toMatchObject({ type: 'invalid' });
     expect(validateQuerySyntax('"archive.md" trailing')).toMatchObject({ type: 'invalid' });
   });
+
+  it.each([
+    '"private/{{YYYY-MMMM}}.md"',
+    '"private/{{YYYY-MM-DD}.md"',
+    '"../private.md"',
+    '#keep AND ("private/{{YYYY-MMMM}}.md" OR #other)',
+    'NOT "../private.md"',
+  ])('rejects invalid quoted path patterns before they can change exclusions: %s', (query) => {
+    expect(validateQuerySyntax(query)).toMatchObject({ type: 'invalid' });
+  });
   it('empty query matches nothing', () => {
     expect(evaluateQuery('', 'A.md', ['#x'], fm({ status: 'active' }))).toBe(false);
     expect(evaluateQuery('   ', 'A.md', [], fm())).toBe(false);

@@ -206,10 +206,30 @@ function parseQuery(query: string): QueryNode {
   return new QueryParser(tokenize(query)).parse();
 }
 
+function validatePathNodes(node: QueryNode): void {
+  if (node.type === 'and' || node.type === 'or') {
+    validatePathNodes(node.left);
+    validatePathNodes(node.right);
+    return;
+  }
+  if (node.type === 'not') {
+    validatePathNodes(node.child);
+    return;
+  }
+  if (node.type !== 'path') return;
+  try {
+    compileNotePathPattern(node.value.endsWith('/') ? `${node.value}__folder__.md` : node.value);
+  } catch (error) {
+    throw new QuerySyntaxError(
+      error instanceof Error ? error.message : 'Invalid quoted note path.',
+    );
+  }
+}
+
 export function validateQuerySyntax(query: string): QuerySyntaxValidation {
   if (query.trim().length === 0) return { type: 'valid' };
   try {
-    parseQuery(query);
+    validatePathNodes(parseQuery(query));
     return { type: 'valid' };
   } catch (error) {
     return {
