@@ -488,10 +488,14 @@ describe('inspector tracked time badge weight', () => {
     expect(cssRuleSelectorsFor(css, '.abyss-time-badge-toggle:hover')).toContain(
       '.abyss-dep-badge-add:hover',
     );
-    // Hovering a chip beside it reaches the host's button fill, so the badge answers with the same
-    // one, and it leaves the border alone so the chip's accent is what outlines both.
+    // A chip beside it takes its hover fill from `.abyss-chip:hover`, which the badge's own
+    // rest-state fill would outrank by source order, so the badge says the same thing again. It
+    // leaves the border alone, so the chip's accent is what outlines both of them.
     const hover = cssDeclarationsFor(css, '.abyss-time-badge:hover');
-    expect(cssDeclarationValue(hover, 'background')).toBe('var(--interactive-hover)');
+    expect(cssDeclarationValue(hover, 'background')).toBe('var(--background-modifier-hover)');
+    expect(cssDeclarationValue(hover, 'background')).toBe(
+      cssDeclarationValue(cssDeclarationsFor(css, '.abyss-chip:hover'), 'background'),
+    );
     expect(cssDeclarationValue(hover, 'border-color')).toBeUndefined();
   });
 

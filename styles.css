@@ -5633,10 +5633,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 /*
  * The dependency and tracking badges are siblings in the chips row, so they wear the pill those
- * chips wear. Every one of them is a button, which the host fills with `--interactive-normal` over
- * anything a lone class asks for, and these two are spans holding buttons, so the fill is named
- * here. Nothing declares a border: the one `.abyss-chip` draws is the one they need, and a border
- * here would take its hover accent with it.
+ * chips wear. Every one of them is a button, which the host fills with `--interactive-normal` at
+ * rest over anything a lone class asks for, and these two are spans holding buttons, so the fill is
+ * named here. Hover is the chips' own and is answered below. Nothing declares a border: the one
+ * `.abyss-chip` draws is the one they need, and a border here would take its hover accent with it.
  */
 :is(.abyss-dep-badge, .abyss-time-badge).abyss-chip {
   height: 24px;
@@ -5690,10 +5690,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding-inline: 2px 10px;
 }
 
-/* What the host hands the buttons beside them. The accent outline is `.abyss-chip:hover`, which
-   these rules leave alone. */
+/* The fill `.abyss-chip:hover` gives every chip in the row, said again because the rest-state fill
+   above is declared later and ties it. The accent outline comes from that same chip rule, which
+   nothing here touches. */
 :is(.abyss-dep-badge, .abyss-time-badge):hover {
-  background: var(--interactive-hover);
+  background: var(--background-modifier-hover);
 }
 
 .abyss-dep-lock {

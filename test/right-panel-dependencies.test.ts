@@ -860,7 +860,7 @@ describe('inspector subtask row removal', () => {
     expect(value('.abyss-undo-row button:focus-visible', 'outline')).toBe(
       '2px solid var(--interactive-accent)',
     );
-    expect(value('.abyss-dep-badge:hover', 'background')).toBe('var(--interactive-hover)');
+    expect(value('.abyss-dep-badge:hover', 'background')).toBe('var(--background-modifier-hover)');
     expect(value('.abyss-dep-badge.abyss-chip', 'padding')).toBe('0');
     expect(value('.abyss-dep-badge > button', 'padding')).toBe('3px 6px');
     // The text starts where a neighbouring chip's does, which is 10px in from the pill.
@@ -2105,7 +2105,13 @@ describe('RightPanel dependency inspector', () => {
       'var(--abyss-dependency-blocked-by)',
     );
     expect(value('.abyss-dep-count-blocks', 'color')).toBe('var(--abyss-dependency-blocks)');
-    expect(value('.abyss-dep-badge:hover', 'background')).toBe('var(--interactive-hover)');
+    // The badge restates what a chip beside it takes on hover, because the rest-state fill it needs
+    // is declared later than `.abyss-chip:hover` and ties it. Reading both is what keeps the two
+    // from drifting apart again.
+    expect(value('.abyss-dep-badge:hover', 'background')).toBe('var(--background-modifier-hover)');
+    expect(value('.abyss-dep-badge:hover', 'background')).toBe(
+      value('.abyss-chip:hover', 'background'),
+    );
     // Nothing in the badge rules touches the border on hover, so the chip's accent still lands.
     expect(value('.abyss-dep-badge:hover', 'border-color')).toBeUndefined();
     expect(value('.abyss-chip:hover', 'border-color')).toBe('var(--interactive-accent)');
