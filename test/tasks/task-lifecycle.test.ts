@@ -1010,7 +1010,7 @@ describe('TaskApplicationService lifecycle routing', () => {
         type: 'create',
         destination: { type: 'explicit', destination: appendDestination },
         markdownBody: 'bad tags',
-        initial: { tags: { add: ['bad tag'] } },
+        initial: { tags: { add: ['bad!'] } },
       }),
     ).resolves.toEqual({
       type: 'invalid',
@@ -1078,8 +1078,12 @@ describe('TaskApplicationService lifecycle routing', () => {
     } satisfies TaskDestinationProvider;
     let today = localDate('2026-07-14');
     let addCreatedDate = true;
+    let taskPrefix = 'Plan #inbox';
+    let inbox = { mode: 'tag' as const, tag: '#inbox', removeTagOnAssign: true };
     const clock = vi.fn(() => today);
     const behavior = vi.fn<TaskBehaviorSettingsProvider>(() => ({
+      taskPrefix,
+      inbox,
       taskLifecycle: { addCreatedDate, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
     }));
@@ -1110,17 +1114,23 @@ describe('TaskApplicationService lifecycle routing', () => {
 
     today = localDate('2026-08-22');
     addCreatedDate = false;
-    await session.execute({ markdownBody: 'first planned task' });
+    taskPrefix = 'Changed';
+    inbox = { mode: 'tag', tag: '#changed', removeTagOnAssign: false };
+    await session.execute({
+      markdownBody: 'first planned task',
+      initial: { tags: { add: ['#work'] } },
+    });
     await session.execute({ markdownBody: 'second planned task' });
 
     expect(prepare).toHaveBeenCalledOnce();
     expect(create).toHaveBeenNthCalledWith(1, appendDestination, {
-      markdownBody: 'first planned task',
+      markdownBody: 'Plan #inbox first planned task',
+      initial: { tags: { add: ['#work'], remove: ['#inbox'] } },
       today: localDate('2026-07-14'),
       addCreatedDate: true,
     });
     expect(create).toHaveBeenNthCalledWith(2, appendDestination, {
-      markdownBody: 'second planned task',
+      markdownBody: 'Plan #inbox second planned task',
       today: localDate('2026-07-14'),
       addCreatedDate: true,
     });
@@ -1542,6 +1552,8 @@ describe('TaskApplicationService lifecycle settings', () => {
     const harness = await makeHarness('in-memory', '');
     const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
     const behavior: TaskBehaviorSettingsProvider = vi.fn<TaskBehaviorSettingsProvider>(() => ({
+      taskPrefix: '',
+      inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
       taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'before' as const, removeScheduledDate: false },
     }));
@@ -1632,6 +1644,8 @@ describe('TaskApplicationService lifecycle settings', () => {
       { today: () => localDate('2026-08-01') },
       undefined,
       () => ({
+        taskPrefix: '',
+        inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
         taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
         recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
       }),

@@ -24,6 +24,7 @@ import {
   sameTaskTreeExceptDependencies,
   type RootReconciliationBasis,
 } from '../domain/taskReconciliation';
+import { applyTaskCreationTagPolicy, type TaskInboxTagPolicy } from '../domain/taskTags';
 import { sameTaskTreeWithOwnedChanges } from '../domain/taskTreeChangeProof';
 import {
   sameTaskNodeRef,
@@ -429,7 +430,10 @@ function allocateId(
 async function createSubtask(
   context: DependencyContext,
   command: CreateDependencySubtaskCommand,
-  lifecycle: Pick<CreateDependencySubtaskRequest, 'today' | 'addCreatedDate'>,
+  lifecycle: Pick<CreateDependencySubtaskRequest, 'today' | 'addCreatedDate'> & {
+    readonly taskPrefix: string;
+    readonly inbox: TaskInboxTagPolicy;
+  },
   rebases: readonly Rebase[] = [],
 ): Promise<TaskCommandResult> {
   const resolved = resolve(context, command.current, rebases);
@@ -438,19 +442,24 @@ async function createSubtask(
   const allocation = creationId(context, current, command.direction);
   if ('result' in allocation) return allocation.result;
   const { id } = allocation;
+  const { taskPrefix, inbox, ...repositoryLifecycle } = lifecycle;
+  const effectiveCommand = {
+    ...command,
+    text: applyTaskCreationTagPolicy(taskPrefix, command.text, inbox),
+  };
   const result = await context.repository.createDependencySubtask({
     baseRoot: current.root,
     baseTarget: current.target,
     reconciliation: current.basis,
     direction: command.direction,
-    text: command.text,
+    text: effectiveCommand.text,
     ...(command.direction === 'blocks' ? { currentId: id } : { childId: id }),
-    ...lifecycle,
+    ...repositoryLifecycle,
   });
   if (result.type === 'rebased' && rebases.length === 0)
     return await createSubtask(context, command, lifecycle, [result]);
   if (result.type !== 'committed') return terminal(result);
-  return createdSubtaskResult(context, result, current, { command, id });
+  return createdSubtaskResult(context, result, current, { command: effectiveCommand, id });
 }
 
 function creationId(
@@ -913,7 +922,10 @@ export class TaskDependencyService {
 
   createSubtask(
     command: CreateDependencySubtaskCommand,
-    lifecycle: Pick<CreateDependencySubtaskRequest, 'today' | 'addCreatedDate'>,
+    lifecycle: Pick<CreateDependencySubtaskRequest, 'today' | 'addCreatedDate'> & {
+      readonly taskPrefix: string;
+      readonly inbox: TaskInboxTagPolicy;
+    },
   ): Promise<TaskCommandResult> {
     return this.serializeMutation(() => createSubtask(this.context, command, lifecycle));
   }

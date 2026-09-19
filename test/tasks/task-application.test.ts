@@ -4,6 +4,7 @@ import type {
   TaskQueryApi,
 } from '../../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
+import type { TaskBehaviorSettingsProvider } from '../../src/tasks/application/TaskBehaviorSettings';
 import type {
   TaskEditCommand,
   TaskRepository,
@@ -76,6 +77,18 @@ const statuses = new StatusCatalog([
 
 const clock = { today: vi.fn(() => localDate('2026-07-14')) };
 
+function behaviorSettings(
+  overrides: Partial<ReturnType<TaskBehaviorSettingsProvider>> = {},
+): ReturnType<TaskBehaviorSettingsProvider> {
+  return {
+    taskPrefix: '',
+    inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
+    taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
+    recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+    ...overrides,
+  };
+}
+
 function unwrapEdit(request: Parameters<TaskRepository['edit']>[0]): TaskEditCommand {
   return 'command' in request ? request.command : request;
 }
@@ -84,6 +97,7 @@ function service(
   repository: Pick<TaskRepository, 'edit'> &
     Partial<Pick<TaskRepository, 'create' | 'completeRecurrence'>>,
   taskQueries: TaskQueryApi & TaskDependencyQueryApi = queries(),
+  behaviorSettings?: TaskBehaviorSettingsProvider,
 ) {
   const originalEdit = repository.edit;
   const edit = vi.fn<TaskRepository['edit']>(async (request) => originalEdit(unwrapEdit(request)));
@@ -111,6 +125,8 @@ function service(
     },
     statuses,
     clock,
+    undefined,
+    behaviorSettings,
   );
 }
 
@@ -135,6 +151,8 @@ describe('TaskApplicationService planning commands', () => {
       clock,
       undefined,
       () => ({
+        taskPrefix: '',
+        inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
         taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
         recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
       }),
@@ -289,6 +307,111 @@ describe('TaskApplicationService planning commands', () => {
       issues: [{ code: 'invalid-title', field: 'title' }],
     });
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('applies the frozen Markdown prefix once to explicit root creation', async () => {
+    const created = snapshot();
+    const create = vi.fn<TaskRepository['create']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: created },
+      changed: true,
+    });
+    const application = service({ edit: vi.fn(), create }, queries(), () =>
+      behaviorSettings({ taskPrefix: 'Plan `#code` #work' }),
+    );
+
+    await application.execute({
+      type: 'create',
+      markdownBody: 'new root #work',
+      destination: {
+        type: 'explicit',
+        destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+      },
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      { filePath: 'tasks.md', insertion: { type: 'append' } },
+      {
+        markdownBody: 'Plan `#code` #work new root',
+        today: localDate('2026-07-14'),
+        addCreatedDate: true,
+      },
+    );
+  });
+
+  it('removes a visible Inbox tag during root creation when another visible tag is added', async () => {
+    const create = vi.fn<TaskRepository['create']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    });
+    const application = service({ edit: vi.fn(), create }, queries(), () =>
+      behaviorSettings({
+        taskPrefix: 'Plan `#inbox` #inbox',
+        inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
+      }),
+    );
+
+    await application.execute({
+      type: 'create',
+      markdownBody: 'new root #work',
+      destination: {
+        type: 'explicit',
+        destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+      },
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      { filePath: 'tasks.md', insertion: { type: 'append' } },
+      expect.objectContaining({ markdownBody: 'Plan `#inbox` new root #work' }),
+    );
+  });
+
+  it('applies the captured Markdown prefix once to ordinary subtasks', async () => {
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    });
+
+    await service({ edit }, queries(), () =>
+      behaviorSettings({ taskPrefix: 'Plan #work' }),
+    ).execute({
+      type: 'add-subtask',
+      parent: { type: 'task', ref },
+      text: 'new child',
+    });
+
+    expect(edit).toHaveBeenCalledWith({
+      type: 'add-subtask',
+      parent: { type: 'task', ref },
+      text: 'Plan #work new child',
+      today: localDate('2026-07-14'),
+      addCreatedDate: true,
+    });
+  });
+
+  it('applies Inbox removal to tags authored while creating an ordinary subtask', async () => {
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    });
+
+    await service({ edit }, queries(), () =>
+      behaviorSettings({
+        taskPrefix: 'Plan `#inbox` #inbox',
+        inbox: { mode: 'both', tag: '#inbox', removeTagOnAssign: true },
+      }),
+    ).execute({
+      type: 'add-subtask',
+      parent: { type: 'task', ref },
+      text: 'new child #work',
+    });
+
+    expect(edit).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Plan `#inbox` new child #work' }),
+    );
   });
 
   it('rejects a bare carriage return in description text before repository access', async () => {
@@ -563,6 +686,86 @@ describe('TaskApplicationService planning commands', () => {
     });
   });
 
+  it('normalizes multiple command-array tokens and rejects a mixed invalid array atomically', async () => {
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    });
+    const application = service({ edit });
+
+    await application.execute({
+      type: 'patch',
+      target: { type: 'task', ref },
+      patch: { tags: { add: ['##work #home work'] } },
+    });
+    await expect(
+      application.execute({
+        type: 'patch',
+        target: { type: 'task', ref },
+        patch: { tags: { add: ['#valid #bad!'] } },
+      }),
+    ).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target', field: 'tags' }],
+    });
+
+    expect(edit).toHaveBeenCalledOnce();
+    expect(edit).toHaveBeenCalledWith({
+      type: 'patch',
+      target: { type: 'task', ref },
+      patch: { tags: { add: ['#work', '#home'] } },
+    });
+  });
+
+  it('owns inbox removal policy for assignment while preserving self-assignment and removal-only patches', async () => {
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    });
+    const application = service({ edit }, queries(), () => ({
+      taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
+      recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+      taskPrefix: '',
+      inbox: { mode: 'both', tag: '#inbox', removeTagOnAssign: true },
+    }));
+
+    await application.execute({
+      type: 'patch',
+      target: { type: 'task', ref },
+      patch: { tags: { add: ['work'] } },
+    });
+    await application.execute({
+      type: 'patch',
+      target: { type: 'task', ref },
+      patch: { tags: { add: ['inbox'] } },
+    });
+    await application.execute({
+      type: 'patch',
+      target: { type: 'task', ref },
+      patch: { tags: { remove: ['old'] } },
+    });
+
+    expect(edit.mock.calls.map(([request]) => unwrapEdit(request))).toEqual([
+      {
+        type: 'patch',
+        target: { type: 'task', ref },
+        patch: { tags: { add: ['#work'], remove: ['#inbox'] } },
+      },
+      {
+        type: 'patch',
+        target: { type: 'task', ref },
+        patch: { tags: { add: ['#inbox'] } },
+      },
+      {
+        type: 'patch',
+        target: { type: 'task', ref },
+        patch: { tags: { remove: ['#old'] } },
+      },
+    ]);
+  });
+
   it('normalizes nested-task tag patches without changing the target reference', async () => {
     const childRef = {
       parent: { type: 'task' as const, ref },
@@ -588,7 +791,7 @@ describe('TaskApplicationService planning commands', () => {
     });
   });
 
-  it.each(['', '#', 'two words', '##double', '#bad!', '#bad\\tag'])(
+  it.each(['#bad!', '#bad\\tag', '#broken/'])(
     'rejects invalid tag %j before touching the repository',
     async (tag) => {
       const edit = vi.fn<TaskRepository['edit']>();
@@ -1340,6 +1543,8 @@ describe('TaskApplicationService recurrence completion routing', () => {
     const edit = vi.fn<TaskRepository['edit']>();
     const today = vi.fn(() => localDate('2026-07-14'));
     const behavior = vi.fn(() => ({
+      taskPrefix: '',
+      inbox: { mode: 'untagged' as const, tag: '', removeTagOnAssign: true },
       taskLifecycle: { addCreatedDate: false, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'after' as const, removeScheduledDate: true },
     }));

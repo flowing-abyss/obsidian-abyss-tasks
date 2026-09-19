@@ -6150,6 +6150,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   position: relative;
   display: inline-flex;
   flex-direction: column;
+  align-items: flex-start;
+  max-width: min(100%, 240px);
 }
 
 /* Tag picker multi-select modal */
@@ -6175,12 +6177,37 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 4px 0;
 }
 
+.abyss-tag-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 1px 6px;
+}
+
+.abyss-tag-picker-section-label,
+.abyss-tag-picker-heading {
+  padding: 6px 14px 3px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  text-align: left;
+}
+
+.abyss-tag-picker-heading {
+  border-top: 1px solid var(--background-modifier-border);
+  margin-top: 3px;
+  padding-inline-start: calc(14px + var(--abyss-tag-indent, 0px));
+}
+
 .abyss-tag-picker-modal button.abyss-tag-picker-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 14px;
-  width: calc(100% - 12px);
+  padding: 6px 8px 6px calc(8px + var(--abyss-tag-indent, 0px));
+  width: auto;
+  min-width: 0;
+  flex: 1 1 auto;
   height: auto;
   min-height: 0;
   box-sizing: border-box;
@@ -6194,8 +6221,17 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   white-space: normal;
   cursor: pointer;
   border-radius: var(--radius-s);
-  margin: 1px 6px;
+  margin: 0;
   user-select: none;
+}
+
+.abyss-tag-picker-remove {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.abyss-tag-picker-remove:is(:hover, :focus-visible) {
+  color: var(--color-red);
 }
 
 .abyss-tag-picker-modal button.abyss-tag-picker-item:hover {
@@ -6250,7 +6286,18 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-tag-picker-label {
   font-size: var(--font-ui-small);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
   color: var(--abyss-tag-picker-color, var(--tag-color, var(--text-normal)));
+}
+
+.abyss-tag-input-feedback {
+  max-width: 220px;
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+  line-height: var(--line-height-tight);
+  text-align: left;
 }
 
 .abyss-tag-picker-empty {

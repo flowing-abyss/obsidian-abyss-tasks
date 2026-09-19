@@ -102,7 +102,6 @@ function makeRenderer(
     store.taskQueries,
     { queries: store.taskQueries, execute: store.execute },
     new StatusRegistry(buildDefaultTaskStatuses()),
-    '- [ ] ',
     undefined,
     undefined,
     interactionOwnership,
@@ -207,7 +206,7 @@ describe('CalendarRenderer TaskInputModal submit', () => {
     const input = activeDocument.body.querySelector('input[type="text"]') as HTMLInputElement;
     input.value = '  Buy milk  ';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    expectCreateCommand(store, '- [ ] Buy milk');
+    expectCreateCommand(store, 'Buy milk');
     expect(store.addTask).not.toHaveBeenCalled();
   });
 
@@ -222,7 +221,7 @@ describe('CalendarRenderer TaskInputModal submit', () => {
       ),
     );
     addBtn.click();
-    expectCreateCommand(store, '- [ ] Task via button');
+    expectCreateCommand(store, 'Task via button');
   });
 
   it('empty/whitespace input sends no create command', () => {

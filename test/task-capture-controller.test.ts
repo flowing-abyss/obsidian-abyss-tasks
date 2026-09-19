@@ -41,9 +41,12 @@ function harness(
       destination: { filePath: 'Inbox.md', insertion: { type: 'append' } },
       execute,
     },
-    markdownPrefix: '#base',
-    markdownSuffixes: ['#inbox'],
-    initial: { due: { type: 'set', value: localDate('2026-08-22') } },
+    markdownPrefix: '',
+    markdownSuffixes: [],
+    initial: {
+      due: { type: 'set', value: localDate('2026-08-22') },
+      tags: { add: ['#inbox'] },
+    },
   };
   const onResult = vi.fn();
   const onRequestClose = vi.fn();
@@ -147,8 +150,11 @@ describe('TaskCaptureController', () => {
       focusEpoch: 0,
     });
     expect(execute).toHaveBeenCalledWith({
-      markdownBody: '#base exact draft #inbox',
-      initial: { due: { type: 'set', value: localDate('2026-08-22') } },
+      markdownBody: 'exact draft',
+      initial: {
+        due: { type: 'set', value: localDate('2026-08-22') },
+        tags: { add: ['#inbox'] },
+      },
     });
     pending.resolve(successfulResult());
     await submission;
@@ -440,8 +446,8 @@ describe('TaskCaptureController', () => {
 
     expect(execute).toHaveBeenCalledTimes(2);
     expect(execute.mock.calls.map(([request]) => request.markdownBody)).toEqual([
-      '#base first #inbox',
-      '#base second #inbox',
+      'first',
+      'second',
     ]);
     expect(controller.snapshot()).toMatchObject({ phase: 'idle', draft: '', focusEpoch: 2 });
     expect(onResult).toHaveBeenCalledTimes(2);

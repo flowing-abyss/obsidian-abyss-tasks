@@ -152,6 +152,8 @@ export default class TaskCalendarPlugin extends Plugin {
       ),
       destinationProvider,
       () => ({
+        taskPrefix: this.settings.taskPrefix,
+        inbox: this.settings.inbox,
         taskLifecycle: this.settings.taskLifecycle,
         recurrence: this.settings.recurrence,
       }),
@@ -273,7 +275,6 @@ export default class TaskCalendarPlugin extends Plugin {
         this.queries,
         this.tasks,
         this.statusRegistry,
-        this.settings.taskPrefix,
         this.settings.recurrence,
         commentTimeContext,
       );

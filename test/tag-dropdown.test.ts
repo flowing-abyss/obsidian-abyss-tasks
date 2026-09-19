@@ -1,4 +1,3 @@
-import type { App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { showTagDropdown } from '../src/ui/tagDropdown';
 import { expectDefined, freshContainer } from './helpers';
@@ -24,12 +23,13 @@ describe('inline tag dropdown', () => {
     const ownerDocument = expectDefined(frame.contentDocument);
     const container = freshContainer();
     ownerDocument.body.append(ownerDocument.adoptNode(container));
-    const app = {
-      metadataCache: { getTags: () => ({ '#alpha': 2, '#beta': 1 }) },
-    } as unknown as App;
-
     try {
-      showTagDropdown(container, app, () => undefined, vi.fn());
+      showTagDropdown(
+        container,
+        ['#alpha', '#beta'],
+        () => undefined,
+        vi.fn(() => 'committed' as const),
+      );
       const input = expectDefined(container.querySelector<HTMLInputElement>('.abyss-tag-input'));
       const listbox = expectDefined(container.querySelector<HTMLElement>('.abyss-tag-dropdown'));
       const options = listbox.querySelectorAll<HTMLElement>('.abyss-tag-dropdown-opt');
@@ -58,13 +58,10 @@ describe('inline tag dropdown', () => {
     const ownerDocument = expectDefined(frame.contentDocument);
     const container = freshContainer();
     ownerDocument.body.append(ownerDocument.adoptNode(container));
-    const app = {
-      metadataCache: { getTags: () => ({ '#alpha': 2, '#beta': 1 }) },
-    } as unknown as App;
-    const commit = vi.fn<(tag: string) => void>();
+    const commit = vi.fn<(tags: readonly string[]) => 'committed'>(() => 'committed');
 
     try {
-      showTagDropdown(container, app, () => undefined, commit);
+      showTagDropdown(container, ['#alpha', '#beta'], () => undefined, commit);
       const input = expectDefined(container.querySelector<HTMLInputElement>('.abyss-tag-input'));
       key(input, 'ArrowDown');
       key(input, 'ArrowDown');
@@ -89,10 +86,35 @@ describe('inline tag dropdown', () => {
       const enter = key(input, 'Enter');
       expect(enter.defaultPrevented).toBe(true);
       expect(commit).toHaveBeenCalledOnce();
-      expect(commit).toHaveBeenCalledWith('#beta');
+      expect(commit).toHaveBeenCalledWith(['#beta']);
       expect(container.querySelector('.abyss-tag-dropdown-wrap')).toBeNull();
     } finally {
       frame.remove();
     }
+  });
+
+  it('retains invalid and command-failed drafts without partially applying tags', async () => {
+    const container = freshContainer();
+    const commit = vi
+      .fn<(tags: readonly string[]) => Promise<'failed'>>()
+      .mockResolvedValue('failed');
+    showTagDropdown(container, ['#alpha'], () => undefined, commit);
+    const input = expectDefined(container.querySelector<HTMLInputElement>('.abyss-tag-input'));
+
+    input.value = '#alpha #bad!';
+    key(input, 'Enter');
+    expect(commit).not.toHaveBeenCalled();
+    expect(input.value).toBe('#alpha #bad!');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+
+    input.value = '##work #home work';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    key(input, 'Enter');
+    await vi.waitFor(() => {
+      expect(commit).toHaveBeenCalledWith(['#work', '#home']);
+    });
+    expect(container.querySelector('.abyss-tag-dropdown-wrap')).not.toBeNull();
+    expect(input.value).toBe('##work #home work');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
   });
 });

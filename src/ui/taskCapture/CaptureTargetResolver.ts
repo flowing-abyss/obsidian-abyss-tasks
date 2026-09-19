@@ -1,15 +1,17 @@
 import type { ListSelection } from '../../app/AppState';
 import { DEFAULT_SETTINGS } from '../../settings/defaults';
 import type { CalendarSettings } from '../../settings/types';
-import type {
-  CreateTaskCommandInitial,
-  LocalDate,
-  TaskCaptureApplicationApi,
-  TaskCommandResult,
-  TaskCreateSession,
-  TaskInsertionPolicy,
+import {
+  localDate,
+  normalizeTaskTagInput,
+  shiftLocalDate,
+  type CreateTaskCommandInitial,
+  type LocalDate,
+  type TaskCaptureApplicationApi,
+  type TaskCommandResult,
+  type TaskCreateSession,
+  type TaskInsertionPolicy,
 } from '../../tasks';
-import { localDate, shiftLocalDate } from '../../tasks';
 
 export type CaptureContext =
   | { readonly type: 'list'; readonly selection: ListSelection }
@@ -51,8 +53,8 @@ function cloneContext(context: CaptureContext): CaptureContext {
 }
 
 function normalizedTag(value: string): string {
-  const tag = value.trim();
-  return tag.length === 0 || tag.startsWith('#') ? tag : `#${tag}`;
+  const tags = normalizeTaskTagInput(value);
+  return tags?.length === 1 ? (tags[0] ?? '') : '';
 }
 
 function projectInsertion(settings: CalendarSettings['projects']): TaskInsertionPolicy {
@@ -88,7 +90,6 @@ export class CaptureTargetResolver {
   private async defaultTarget(
     context: Extract<CaptureContext, { type: 'default' }>,
   ): Promise<CaptureTarget> {
-    const markdownPrefix = this.settings.taskPrefix.trim();
     const calendarToday = context.source === 'calendar' ? this.today() : undefined;
     const session = await this.application.planCreate({ type: 'configured-default' });
     if (calendarToday === undefined) {
@@ -96,7 +97,7 @@ export class CaptureTargetResolver {
         label: 'Default destination',
         context,
         session,
-        markdownPrefix,
+        markdownPrefix: '',
         markdownSuffixes: [],
       };
     }
@@ -104,7 +105,7 @@ export class CaptureTargetResolver {
       label: 'Today · today',
       context,
       session,
-      markdownPrefix,
+      markdownPrefix: '',
       markdownSuffixes: [],
       initial: { due: { type: 'set', value: calendarToday } },
     };
@@ -139,7 +140,8 @@ export class CaptureTargetResolver {
       context,
       session: await this.application.planCreate({ type: 'configured-default' }),
       markdownPrefix: '',
-      markdownSuffixes: tag.length > 0 ? [tag] : [],
+      markdownSuffixes: [],
+      ...(tag.length > 0 && { initial: { tags: { add: [tag] } } }),
     };
   }
 
@@ -154,7 +156,7 @@ export class CaptureTargetResolver {
       label: upcoming ? 'Upcoming · tomorrow' : 'Today · today',
       context,
       session: await this.application.planCreate({ type: 'configured-default' }),
-      markdownPrefix: this.settings.taskPrefix.trim(),
+      markdownPrefix: '',
       markdownSuffixes: [],
       initial: { due: { type: 'set', value: due } },
     };
@@ -169,7 +171,8 @@ export class CaptureTargetResolver {
       context,
       session: await this.application.planCreate({ type: 'configured-default' }),
       markdownPrefix: '',
-      markdownSuffixes: tag.length > 0 ? [tag] : [],
+      markdownSuffixes: [],
+      ...(tag.length > 0 && { initial: { tags: { add: [tag] } } }),
     };
   }
 
@@ -197,7 +200,8 @@ export class CaptureTargetResolver {
       context,
       session: await this.application.planCreate({ type: 'configured-default' }),
       markdownPrefix: '',
-      markdownSuffixes: [tag],
+      markdownSuffixes: [],
+      initial: { tags: { add: [tag] } },
     };
   }
 

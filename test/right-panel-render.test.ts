@@ -1776,6 +1776,61 @@ describe('RightPanel popovers', () => {
     }
   });
 
+  it('keeps the inline tag draft after a command failure and closes it after retry succeeds', async () => {
+    const root = task({ title: 'Tag retry', tags: ['#existing'] });
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockResolvedValueOnce({
+        type: 'io-error',
+        cause: 'test-failure',
+        contentState: 'unchanged',
+      })
+      .mockResolvedValueOnce({
+        type: 'ok',
+        outcome: { type: 'task', task: root },
+        changed: false,
+      });
+    const { panel, state, el } = await makePanel(
+      {},
+      { queries: queryApiForTasks(() => [root]), execute },
+    );
+    activeDocument.body.append(el);
+    state.set('taskStack', [root]);
+    click(
+      expectDefined(
+        Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chip-add')).find(
+          (candidate) => candidate.textContent === '+ tag',
+        ),
+      ),
+    );
+    const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-tag-input'));
+    input.value = '##work #home work';
+
+    try {
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+      expect(execute).toHaveBeenCalledWith({
+        type: 'patch',
+        target: { type: 'task', ref: root.ref },
+        patch: { tags: { add: ['#work', '#home'] } },
+      });
+      expect(input.isConnected).toBe(true);
+      expect(input.value).toBe('##work #home work');
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(el.querySelector('.abyss-tag-dropdown-wrap')).toBeNull();
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
   it('editing the duration input sends one validated duration patch', async () => {
     const app = await createAppWithFiles({ 'f.md': '- [ ] T ⏰ 15:00' });
     const state = new AppState();

@@ -71,6 +71,7 @@ interface Scenario {
   readonly prefix?: string;
   readonly suffixes?: readonly string[];
   readonly due?: string;
+  readonly tags?: readonly string[];
   readonly destination?: TaskDestination;
   readonly unavailable?: boolean;
 }
@@ -80,7 +81,14 @@ const scenarios: readonly Scenario[] = [
     name: 'inbox-tag',
     context: { type: 'list', selection: 'inbox' },
     label: 'Inbox · #task/inbox',
-    suffixes: ['#task/inbox'],
+    tags: ['#task/inbox'],
+  },
+  {
+    name: 'normalized-inbox-tag',
+    context: { type: 'list', selection: 'inbox' },
+    settings: { inbox: { mode: 'tag', tag: '##work', removeTagOnAssign: true } },
+    label: 'Inbox · #work',
+    tags: ['#work'],
   },
   {
     name: 'inbox-untagged',
@@ -92,33 +100,31 @@ const scenarios: readonly Scenario[] = [
     name: 'today',
     context: { type: 'list', selection: 'today' },
     label: 'Today · today',
-    prefix: '#base',
     due: '2026-08-24',
   },
   {
     name: 'upcoming-tomorrow',
     context: { type: 'list', selection: 'upcoming' },
     label: 'Upcoming · tomorrow',
-    prefix: '#base',
     due: '2026-08-25',
   },
   {
     name: 'tag',
     context: { type: 'list', selection: { type: 'tag', tag: '#focus' } },
     label: '#focus',
-    suffixes: ['#focus'],
+    tags: ['#focus'],
   },
   {
     name: 'prefix-group',
     context: { type: 'list', selection: { type: 'group', groupId: 'prefix' } },
     label: 'Work · #work',
-    suffixes: ['#work'],
+    tags: ['#work'],
   },
   {
     name: 'manual-group-first-tag',
     context: { type: 'list', selection: { type: 'group', groupId: 'manual' } },
     label: 'Manual · #focus',
-    suffixes: ['#focus'],
+    tags: ['#focus'],
   },
   {
     name: 'empty-manual-group',
@@ -157,20 +163,17 @@ const scenarios: readonly Scenario[] = [
     name: 'projects-overview',
     context: { type: 'default', source: 'projects' },
     label: 'Default destination',
-    prefix: '#base',
   },
   {
     name: 'calendar',
     context: { type: 'default', source: 'calendar' },
     label: 'Today · today',
-    prefix: '#base',
     due: '2026-08-24',
   },
   {
     name: 'search',
     context: { type: 'default', source: 'search' },
     label: 'Default destination',
-    prefix: '#base',
   },
 ];
 
@@ -191,9 +194,12 @@ describe('CaptureTargetResolver', () => {
       markdownPrefix: scenario.prefix ?? '',
       markdownSuffixes: scenario.suffixes ?? [],
     });
-    if (scenario.due !== undefined && scenario.due.length > 0) {
+    if (scenario.due !== undefined || scenario.tags !== undefined) {
       expect(target.initial).toEqual({
-        due: { type: 'set', value: localDate(scenario.due) },
+        ...(scenario.due === undefined
+          ? {}
+          : { due: { type: 'set', value: localDate(scenario.due) } }),
+        ...(scenario.tags === undefined ? {} : { tags: { add: scenario.tags } }),
       });
     } else {
       expect(target.initial).toBeUndefined();
@@ -237,7 +243,7 @@ describe('CaptureTargetResolver', () => {
     mutableSettings.projects.taskInsertionSection = '## Changed';
     today = localDate('2026-09-01');
 
-    expect(commandBodyForCapture(target, '  Draft text  ')).toBe('Draft text #focus');
+    expect(commandBodyForCapture(target, '  Draft text  ')).toBe('Draft text');
     expect(target.context).toEqual({ type: 'list', selection: { type: 'tag', tag: '#focus' } });
     expect(target.session).toMatchObject({
       type: 'ready',
@@ -250,7 +256,7 @@ describe('CaptureTargetResolver', () => {
         insertion: { type: 'section', heading: '## Project tasks', position: 'top' },
       },
     });
-    expect(commandBodyForCapture(upcoming, 'Draft text')).toBe('#base Draft text');
+    expect(commandBodyForCapture(upcoming, 'Draft text')).toBe('Draft text');
     expect(upcoming.initial).toEqual({
       due: { type: 'set', value: localDate('2026-08-23') },
     });

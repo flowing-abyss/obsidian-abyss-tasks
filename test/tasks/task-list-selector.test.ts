@@ -99,6 +99,21 @@ describe('selectTaskList', () => {
     expect(titles(tasks, selection)).toEqual(expected);
   });
 
+  it('matches a normalized legacy Inbox tag setting', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.inbox = { mode: 'tag', tag: '##work', removeTagOnAssign: true };
+
+    expect(
+      selectTaskList({
+        tasks,
+        selection: 'inbox',
+        viewState: withoutStatusGroups(getListViewDefaults('inbox')),
+        settings,
+        today,
+      }).map((task) => task.title),
+    ).toEqual(['tagged']);
+  });
+
   it('applies status and property filters before sorting', () => {
     const candidates = [
       snapshot('Zulu', { priority: 'A', planning: { due: today } }),

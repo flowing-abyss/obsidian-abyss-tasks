@@ -1,4 +1,10 @@
 export interface TaskBehaviorSettings {
+  readonly taskPrefix: string;
+  readonly inbox: {
+    readonly mode: 'tag' | 'untagged' | 'both';
+    readonly tag: string;
+    readonly removeTagOnAssign: boolean;
+  };
   readonly taskLifecycle: {
     readonly addCreatedDate: boolean;
     readonly addCompletionDate: boolean;

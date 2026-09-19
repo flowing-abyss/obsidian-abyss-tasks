@@ -9,6 +9,7 @@ import {
   Setting,
   type SettingDefinitionItem,
 } from 'obsidian';
+import { extractMarkdownBodyTags } from '../markdown/markdownTagRename';
 import {
   ObsidianProjectProperties,
   type ProjectPropertyCatalog,
@@ -18,7 +19,7 @@ import { projectStatusDisplayName } from '../projects/status';
 import { StatusRegistry } from '../status/StatusRegistry';
 import { TYPE_LABELS, TYPE_ORDER } from '../status/statusConstants';
 import type { TagManager } from '../tags/TagManager';
-import type { TaskStatusType } from '../tasks';
+import { normalizeTaskTagInput, type TaskStatusType } from '../tasks';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { renderProjectTableSettings } from './projectTableSettings';
@@ -444,9 +445,14 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   private renderTaskCreationSettings_abyssPrivate(containerEl: HTMLElement): void {
+    const taggedPrefixInUntaggedInbox =
+      this.plugin_abyssPrivate.settings.inbox.mode === 'untagged' &&
+      extractMarkdownBodyTags(this.plugin_abyssPrivate.settings.taskPrefix).length > 0;
     new Setting(containerEl)
       .setName('Task prefix')
-      .setDesc('Prepended when adding a new task (e.g. #Task/one-off).')
+      .setDesc(
+        `Prepended when adding a new task (e.g. #Task/one-off).${taggedPrefixInUntaggedInbox ? ' Tagged new tasks do not appear in an untagged inbox.' : ''}`,
+      )
       .addText((t) =>
         t
           .setPlaceholder('#Task/one-off')
@@ -872,24 +878,34 @@ export class CalendarSettingsTab extends PluginSettingTab {
       );
 
     if (this.plugin_abyssPrivate.settings.inbox.mode !== 'untagged') {
-      new Setting(containerEl)
+      const inboxTagSetting = new Setting(containerEl)
         .setName('Inbox tag')
-
-        .setDesc('Tasks with this tag appear in inbox.')
-        .addText((t) =>
-          t
-            .setPlaceholder('#Task/inbox')
-            .setValue(this.plugin_abyssPrivate.settings.inbox.tag)
-            .onChange(async (v) => {
-              this.plugin_abyssPrivate.settings.inbox.tag = v.trim();
-              await this.plugin_abyssPrivate.saveSettings();
-            }),
-        );
+        .setDesc('Tasks with this tag appear in inbox.');
+      const feedback = inboxTagSetting.descEl.createDiv({ cls: 'abyss-tag-input-feedback' });
+      feedback.id = 'abyss-inbox-tag-feedback';
+      inboxTagSetting.addText((text) => {
+        text.inputEl.setAttribute('aria-describedby', feedback.id);
+        return text
+          .setPlaceholder('#Task/inbox')
+          .setValue(this.plugin_abyssPrivate.settings.inbox.tag)
+          .onChange(async (value) => {
+            const tags = normalizeTaskTagInput(value);
+            if (tags?.length !== 1) {
+              text.inputEl.setAttribute('aria-invalid', 'true');
+              feedback.setText('Enter one inbox tag.');
+              return;
+            }
+            text.inputEl.removeAttribute('aria-invalid');
+            feedback.setText('');
+            this.plugin_abyssPrivate.settings.inbox.tag = tags[0] ?? '';
+            await this.plugin_abyssPrivate.saveSettings();
+          });
+      });
     }
 
     new Setting(containerEl)
       .setName('Remove inbox tag when assigning another tag')
-      .setDesc('When you drag a task to a tag, the inbox tag is removed automatically.')
+      .setDesc('When another tag is assigned, the inbox tag is removed automatically.')
       .addToggle((t) =>
         t
           .setValue(this.plugin_abyssPrivate.settings.inbox.removeTagOnAssign)

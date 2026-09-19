@@ -20,6 +20,7 @@ import type {
 } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import { ACTIVE_STATUS_GROUPS, ALL_STATUS_GROUPS, TYPE_LABELS } from '../status/statusConstants';
+import { collectTaskTags } from '../tags/taskTagCatalog';
 import { searchTaskList, selectTaskList } from '../task-lists/TaskListSelector';
 import {
   daysBetweenLocalDates,
@@ -3009,19 +3010,18 @@ export class CenterPanel {
       await this.tasks_abyssPrivate.execute({
         type: 'patch',
         target: { type: 'task', ref },
-        patch: { tags: { add, remove } },
+        patch: {
+          tags: {
+            ...(add.length > 0 && { add }),
+            ...(remove.length > 0 && { remove }),
+          },
+        },
       }),
     );
   }
 
   private async assignTagFromInbox_abyssPrivate(task: TaskSnapshot, tag: string): Promise<void> {
-    const inboxTag = this.settings_abyssPrivate.inbox.tag;
-    const remove =
-      this.settings_abyssPrivate.inbox.removeTagOnAssign &&
-      this.getTaskTags_abyssPrivate(task).has(inboxTag)
-        ? [inboxTag]
-        : [];
-    await this.patchTaskTags_abyssPrivate(task, [tag], remove);
+    await this.patchTaskTags_abyssPrivate(task, [tag], []);
   }
 
   private openTagPicker_abyssPrivate(task: TaskSnapshot): void {
@@ -3034,6 +3034,11 @@ export class CenterPanel {
       (tag) => this.getTagColor_abyssPrivate(tag),
       currentTags,
       new Set(),
+      collectTaskTags(
+        this.tasks_abyssPrivate?.queries.listNodes() ?? [],
+        this.settings_abyssPrivate,
+        [...currentTags],
+      ),
       handleCommit,
       this.interactionOwnership_abyssPrivate,
     ).open();
@@ -3057,6 +3062,11 @@ export class CenterPanel {
       (tag) => this.getTagColor_abyssPrivate(tag),
       currentTags,
       partialTags,
+      collectTaskTags(
+        this.tasks_abyssPrivate?.queries.listNodes() ?? [],
+        this.settings_abyssPrivate,
+        [...currentTags, ...partialTags],
+      ),
       handleBulkCommit,
       this.interactionOwnership_abyssPrivate,
     ).open();

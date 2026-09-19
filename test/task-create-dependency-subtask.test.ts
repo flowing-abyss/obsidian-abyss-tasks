@@ -33,6 +33,17 @@ async function harness(
   source = '- [ ] Current\n',
   generate: TaskDependencyIdGenerator = nextTaskDependencyId,
   addCreatedDate = true,
+  behavior: {
+    readonly taskPrefix: string;
+    readonly inbox: {
+      readonly mode: 'tag' | 'untagged' | 'both';
+      readonly tag: string;
+      readonly removeTagOnAssign: boolean;
+    };
+  } = {
+    taskPrefix: '',
+    inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
+  },
 ) {
   const app = await createAppWithFiles({ 'tasks.md': `\n${source}` });
   const statuses = canonicalStatusCatalog();
@@ -61,6 +72,8 @@ async function harness(
     { today: () => localDate('2026-09-06') },
     undefined,
     () => ({
+      taskPrefix: behavior.taskPrefix,
+      inbox: behavior.inbox,
       taskLifecycle: { addCreatedDate, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
     }),
@@ -110,6 +123,18 @@ function corruptRoot(
 }
 
 describe('public atomic dependency subtask creation', () => {
+  it('applies the captured Markdown prefix once to linked child creation', async () => {
+    const h = await harness('- [ ] Current\n', undefined, false, {
+      taskPrefix: 'Plan `#inbox` #inbox',
+      inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
+    });
+
+    outcome(await h.create('blocked-by', 'Child #work'));
+    expect(await h.read()).toBe(
+      '- [ ] Current ⛔ 00000000\n  - [ ] Plan `#inbox` Child #work 🆔 00000000\n',
+    );
+  });
+
   it.each([
     ['blocked-by', '- [ ] Current ⛔ 00000000\n  - [ ] Child ➕ 2026-09-06 🆔 00000000\n'],
     ['blocks', '- [ ] Current 🆔 00000000\n  - [ ] Child ➕ 2026-09-06 ⛔ 00000000\n'],

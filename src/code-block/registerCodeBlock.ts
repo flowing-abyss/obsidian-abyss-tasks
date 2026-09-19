@@ -91,7 +91,6 @@ export function registerCodeBlock(
       queries,
       tasks,
       statusRegistry,
-      settings.taskPrefix,
       settings.recurrence,
       commentTimeContext,
     );

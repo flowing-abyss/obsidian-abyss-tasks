@@ -1117,7 +1117,7 @@ describe('LeftPanel archived tags are hidden', () => {
 });
 
 describe('LeftPanel inbox logic (new inbox object)', () => {
-  it('countInbox tag mode uses inbox.tag', () => {
+  it('countInbox tag mode uses a normalized inbox.tag', () => {
     const tasks = [
       task({
         status: 'open',
@@ -1131,7 +1131,7 @@ describe('LeftPanel inbox logic (new inbox object)', () => {
       }),
     ];
     const { el } = makePanel(tasks, {
-      inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: true },
+      inbox: { mode: 'tag', tag: '##task/inbox', removeTagOnAssign: true },
     });
     const inboxCount = el.querySelector('.abyss-left-item .abyss-left-count')?.textContent;
     expect(inboxCount).toBe('1');
@@ -1303,7 +1303,7 @@ describe('LeftPanel drop zones', () => {
         type: 'task',
         ref: objectMatching<TaskSnapshot['ref']>({ filePath: t.ref.filePath, line: t.ref.line }),
       },
-      patch: { tags: { add: ['#task/next'], remove: ['#task/inbox'] } },
+      patch: { tags: { add: ['#task/next'] } },
     });
   });
 });

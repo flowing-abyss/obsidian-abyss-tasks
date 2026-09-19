@@ -19,6 +19,7 @@ import {
   taskNodeAtSourcePath as snapshotForTarget,
 } from '../domain/taskCommandTargets';
 import { reconcileTaskNodeRef, type TaskResolution } from '../domain/taskReconciliation';
+import { applyTaskCreationTagPolicy, normalizeTaskTagInput } from '../domain/taskTags';
 import type {
   LocalDate,
   SubtaskSnapshot,
@@ -73,24 +74,53 @@ import {
   type RetryPolicy,
 } from './taskRetryPolicy';
 
-const TAG_RE = /^#[\w/-]+$/u;
-
-function normalizeTag(tag: string): string {
-  return tag.startsWith('#') ? tag : `#${tag}`;
-}
-
 function uniqueInOrder(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
 
-function normalizeTagChange(tags: NonNullable<TaskPatch['tags']>): TaskPatch['tags'] | undefined {
-  const add = uniqueInOrder((tags.add ?? []).map(normalizeTag));
-  const remove = uniqueInOrder((tags.remove ?? []).map(normalizeTag));
-  if ([...add, ...remove].some((tag) => !TAG_RE.test(tag))) return undefined;
+function normalizeTagValues(values: readonly string[]): readonly string[] | undefined {
+  const normalized: string[] = [];
+  for (const value of values) {
+    const tags = normalizeTaskTagInput(value);
+    if (tags === undefined) return undefined;
+    normalized.push(...tags);
+  }
+  return uniqueInOrder(normalized);
+}
+
+function configuredInboxTag(settings: TaskBehaviorSettings): string | undefined {
+  if (settings.inbox.mode === 'untagged') return undefined;
+  const tags = normalizeTaskTagInput(settings.inbox.tag);
+  return tags?.length === 1 ? tags[0] : undefined;
+}
+
+function automaticInboxRemoval(
+  additionsProvided: boolean,
+  additions: readonly string[],
+  explicitRemovals: readonly string[],
+  settings: TaskBehaviorSettings,
+): readonly string[] {
+  if (!additionsProvided || !settings.inbox.removeTagOnAssign) return [];
+  const inboxTag = configuredInboxTag(settings);
+  if (inboxTag === undefined || explicitRemovals.includes(inboxTag)) return [];
+  return additions.some((tag) => tag !== inboxTag) ? [inboxTag] : [];
+}
+
+function normalizeTagChange(
+  tags: NonNullable<TaskPatch['tags']>,
+  settings: TaskBehaviorSettings,
+): TaskPatch['tags'] | undefined {
+  const add = normalizeTagValues(tags.add ?? []);
+  const explicitRemove = normalizeTagValues(tags.remove ?? []);
+  if (add === undefined || explicitRemove === undefined) return undefined;
+  const remove = uniqueInOrder([
+    ...explicitRemove,
+    ...automaticInboxRemoval(tags.add !== undefined, add, explicitRemove, settings),
+  ]);
   const removed = new Set(remove);
   return {
     ...(tags.add !== undefined && { add: add.filter((tag) => !removed.has(tag)) }),
-    ...(tags.remove !== undefined && { remove }),
+    ...((tags.remove !== undefined || remove.length > 0) && { remove }),
   };
 }
 
@@ -135,6 +165,8 @@ function refKey(ref: TaskRef): string {
 
 const RECENT_OUTCOME_LIMIT = 64;
 const DEFAULT_BEHAVIOR_SETTINGS: TaskBehaviorSettings = {
+  taskPrefix: '',
+  inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
   taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
   recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
 };
@@ -311,6 +343,8 @@ function ownedDescendants(task: TaskSnapshot | SubtaskSnapshot): string {
 function snapshotBehaviorSettings(provider: TaskBehaviorSettingsProvider): TaskBehaviorSettings {
   const settings = provider();
   return {
+    taskPrefix: settings.taskPrefix,
+    inbox: { ...settings.inbox },
     taskLifecycle: { ...settings.taskLifecycle },
     recurrence: { ...settings.recurrence },
   };
@@ -338,11 +372,14 @@ function hasInvalidCreateTitle(markdownBody: string): boolean {
   );
 }
 
-function prepareCreateInitial(request: TaskCreateRequest): PreparedCreateInitial {
+function prepareCreateInitial(
+  request: TaskCreateRequest,
+  settings: TaskBehaviorSettings,
+): PreparedCreateInitial {
   const source = request.initial;
   if (source === undefined) return { type: 'valid' };
   if (source.tags === undefined) return { type: 'valid', initial: source };
-  const tags = normalizeTagChange(source.tags);
+  const tags = normalizeTagChange(source.tags, settings);
   return tags === undefined ? { type: 'invalid' } : { type: 'valid', initial: { ...source, tags } };
 }
 
@@ -507,6 +544,8 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       return this.createDependencySubtask_abyssPrivate(command, {
         today: reading.localDate,
         addCreatedDate: settings.taskLifecycle.addCreatedDate,
+        taskPrefix: settings.taskPrefix,
+        inbox: settings.inbox,
       });
     if (command.type === 'create')
       return await this.create_abyssPrivate(command, settings, reading);
@@ -809,12 +848,16 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (resolution?.type !== 'resolved') {
       return destinationUnavailableResult();
     }
-    const preparedInitial = prepareCreateInitial(request);
+    const preparedInitial = prepareCreateInitial(request, settings);
     if (preparedInitial.type === 'invalid') {
       return invalidTaskTarget('tags');
     }
     const result = await this.repository_abyssPrivate.create(resolution.destination, {
-      markdownBody: request.markdownBody,
+      markdownBody: applyTaskCreationTagPolicy(
+        settings.taskPrefix,
+        request.markdownBody,
+        settings.inbox,
+      ),
       ...(preparedInitial.initial !== undefined && { initial: preparedInitial.initial }),
       today: reading.localDate,
       addCreatedDate: settings.taskLifecycle.addCreatedDate,
@@ -925,6 +968,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       return {
         command: {
           ...command,
+          text: applyTaskCreationTagPolicy(settings.taskPrefix, command.text, settings.inbox),
           today: reading.localDate,
           addCreatedDate: settings.taskLifecycle.addCreatedDate,
         },
@@ -932,7 +976,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     }
 
     if (command.type === 'patch' && command.patch.tags !== undefined) {
-      return this.prepareTagPatch_abyssPrivate(command);
+      return this.prepareTagPatch_abyssPrivate(command, settings);
     }
 
     if (command.type === 'move-time-slot' || command.type === 'move-to-all-day') {
@@ -946,10 +990,11 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
 
   private prepareTagPatch_abyssPrivate(
     command: Extract<TaskCommand, { readonly type: 'patch' }>,
+    settings: TaskBehaviorSettings,
   ): PreparedTaskCommand {
     const sourceTags = command.patch.tags;
     if (sourceTags === undefined) return { command };
-    const tags = normalizeTagChange(sourceTags);
+    const tags = normalizeTagChange(sourceTags, settings);
     if (tags === undefined) return { result: invalidTaskTarget('tags') };
     return { command: { ...command, patch: { ...command.patch, tags } } };
   }

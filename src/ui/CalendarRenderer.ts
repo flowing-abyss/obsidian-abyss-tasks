@@ -93,7 +93,6 @@ export class CalendarRenderer {
   private readonly queries_abyssPrivate: TaskQueryApi;
   private readonly tasks_abyssPrivate: TaskApplicationApi;
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
-  private readonly taskPrefix_abyssPrivate: string;
   private readonly recurrencePolicy_abyssPrivate: RecurrencePolicy;
   private readonly interactionOwnership_abyssPrivate: InteractionOwnershipPort;
 
@@ -105,7 +104,6 @@ export class CalendarRenderer {
       queries: TaskQueryApi,
       tasks: TaskApplicationApi,
       statusRegistry: StatusRegistry,
-      taskPrefix?: string,
       recurrencePolicy?: RecurrencePolicy,
       commentTimeContext?: CommentTimeContextProvider,
       interactionOwnership?: InteractionOwnershipPort,
@@ -118,7 +116,6 @@ export class CalendarRenderer {
       queries,
       tasks,
       statusRegistry,
-      taskPrefix = '',
       recurrencePolicy = { removeScheduledDate: false },
       commentTimeContext,
       interactionOwnership = noInteractionOwnership,
@@ -129,7 +126,6 @@ export class CalendarRenderer {
     this.queries_abyssPrivate = queries;
     this.tasks_abyssPrivate = tasks;
     this.statusRegistry_abyssPrivate = statusRegistry;
-    this.taskPrefix_abyssPrivate = taskPrefix;
     this.recurrencePolicy_abyssPrivate = recurrencePolicy;
     this.interactionOwnership_abyssPrivate = interactionOwnership;
     this.projectionDiagnosticOwner_abyssPrivate = createCalendarProjectionDiagnosticOwner(
@@ -646,12 +642,11 @@ export class CalendarRenderer {
       async (text) => {
         const body = text.trim();
         if (body.length === 0) return;
-        const prefix = this.taskPrefix_abyssPrivate.trim();
         presentTaskCreationResult(
           await this.tasks_abyssPrivate.execute({
             type: 'create',
             destination: { type: 'configured-default' },
-            markdownBody: prefix.length > 0 ? `${prefix} ${body}` : body,
+            markdownBody: body,
             initial: { due: { type: 'set', value: localDate(date) } },
           }),
         );

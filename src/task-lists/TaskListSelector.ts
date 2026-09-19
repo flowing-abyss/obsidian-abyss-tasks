@@ -1,6 +1,11 @@
 import type { ListSelection } from '../app/AppState';
 import type { CalendarSettings, ListViewState, PropertyFilter } from '../settings/types';
-import type { LocalDate, TaskSnapshot, TaskStatusType } from '../tasks/domain/types';
+import {
+  normalizeTaskTagInput,
+  type LocalDate,
+  type TaskSnapshot,
+  type TaskStatusType,
+} from '../tasks';
 
 export interface TaskListSelectionInput {
   readonly tasks: readonly TaskSnapshot[];
@@ -43,7 +48,10 @@ function selectedNamedList(
 }
 
 function selectedInbox(task: TaskSnapshot, settings: CalendarSettings): boolean {
-  const tagged = settings.inbox.mode !== 'untagged' && task.tags.includes(settings.inbox.tag);
+  const normalized = normalizeTaskTagInput(settings.inbox.tag);
+  const inboxTag = normalized?.length === 1 ? normalized[0] : undefined;
+  const tagged =
+    settings.inbox.mode !== 'untagged' && inboxTag !== undefined && task.tags.includes(inboxTag);
   const untagged = settings.inbox.mode !== 'tag' && task.tags.length === 0;
   return tagged || untagged;
 }

@@ -48,6 +48,7 @@ export {
   taskReconciliationKey,
   type TaskResolution,
 } from './domain/taskReconciliation';
+export { normalizeTaskTagInput } from './domain/taskTags';
 export { sameTaskTreeWithOwnedChanges } from './domain/taskTreeChangeProof';
 export { sameTaskNodeRef } from './domain/types';
 export type {

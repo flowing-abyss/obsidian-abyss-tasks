@@ -110,7 +110,17 @@ path only when the command executes: it creates nested folders, applies a select
 and shares in-flight preparation by App and path. Project capture uses the selected note and project
 insertion policy. Overview capture follows the active Table, Kanban, or Timeline selection. Creation
 then uses the same application/repository path and reveals the indexed result without inventing
-another persisted identity.
+another persisted identity. The create session also freezes the task prefix, Inbox tag policy, and
+lifecycle settings. `TaskApplicationService` applies the Markdown prefix once for roots, ordinary
+subtasks, and linked subtasks; normalizes explicit tag input atomically; and owns Inbox-tag removal
+for creation and tag patches. Presentation sends capture tags as typed initial fields and does not
+repeat either the prefix or Inbox-removal policy.
+
+`collectTaskTags` builds the assignable picker catalog from public `TaskNodeSnapshot` values plus
+explicit tag configuration and the current selection. Picker and inspector surfaces consume that
+catalog instead of vault-wide metadata, so note-body/frontmatter tags and excluded archive-source
+tags cannot become suggestions unless they are also configured or present on a public task node.
+Selected tags remain available even when they are otherwise absent from the catalog.
 
 Archive uses the same exact-root transfer machinery as ordinary moves, but produces an `archived`
 outcome because its destination is intentionally absent from public queries. One planned archive

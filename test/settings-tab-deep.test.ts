@@ -934,6 +934,16 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     expect(plugin.settings.taskPrefix).toBe('#todo');
   });
 
+  it('explains that a tagged prefix keeps new tasks out of an untagged inbox', () => {
+    const { tab } = makeTab({
+      taskPrefix: 'Plan #work',
+      inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
+    });
+    const body = openSection(tab, 0);
+
+    expect(body.textContent).toContain('Tagged new tasks do not appear in an untagged inbox.');
+  });
+
   it('task file input reflects setting and saves on change', () => {
     const { tab, plugin, captured } = makeTab({ taskFilePath: 'inbox.md' });
     const body = openSection(tab, 0);
@@ -1347,6 +1357,35 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     expectDefined(findComp(captured, 'Inbox tag', 'text')).comp.setValue('  #new  ');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.inbox.tag).toBe('#new');
+  });
+
+  it('normalizes one inbox tag and retains an invalid multi-tag draft locally', () => {
+    const { tab, plugin, captured } = makeTab({
+      inbox: { mode: 'tag', tag: '#old', removeTagOnAssign: true },
+    });
+    const body = openSection(tab, 3);
+    const component = expectDefined(findComp(captured, 'Inbox tag', 'text')).comp;
+    const input = expectDefined(findInput(body, 'Inbox tag'));
+
+    component.setValue('##work');
+    expect(plugin.settings.inbox.tag).toBe('#work');
+    expect(input.getAttribute('aria-invalid')).toBeNull();
+
+    component.setValue('#work #home');
+    expect(plugin.settings.inbox.tag).toBe('#work');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(body.textContent).toContain('Enter one inbox tag.');
+  });
+
+  it('describes automatic Inbox removal for every tag assignment path', () => {
+    const { tab } = makeTab({
+      inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
+    });
+    const body = openSection(tab, 3);
+    const setting = expectDefined(
+      findSettingEl(body, 'Remove inbox tag when assigning another tag'),
+    );
+    expect(setting.textContent).toContain('When another tag is assigned');
   });
 
   it('add group button appends new group with timestamp id', () => {

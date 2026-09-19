@@ -8,7 +8,12 @@ import { beginSettingsSave, latestSettingsSaveRevision } from '../settings/setti
 import type { CalendarSettings, TagGroup } from '../settings/types';
 import { RenameTagModal } from '../tags/RenameTagModal';
 import type { TagManager } from '../tags/TagManager';
-import type { TaskApplicationApi, TaskQueryApi, TaskSnapshot } from '../tasks';
+import {
+  normalizeTaskTagInput,
+  type TaskApplicationApi,
+  type TaskQueryApi,
+  type TaskSnapshot,
+} from '../tasks';
 import {
   TagGroupAppearanceModal,
   type TagGroupAppearanceResult,
@@ -1090,15 +1095,11 @@ export class LeftPanel {
   }
 
   private async assignTagFromInbox_abyssPrivate(task: TaskSnapshot, tag: string): Promise<void> {
-    const inboxTag = this.settings_abyssPrivate.inbox.tag;
-    const tags = new Set(task.tags);
-    const remove =
-      this.settings_abyssPrivate.inbox.removeTagOnAssign && tags.has(inboxTag) ? [inboxTag] : [];
     presentTaskCommandResult(
       await this.tasks_abyssPrivate.execute({
         type: 'patch',
         target: { type: 'task', ref: task.ref },
-        patch: { tags: { add: [tag], remove } },
+        patch: { tags: { add: [tag] } },
       }),
     );
   }
@@ -1127,8 +1128,12 @@ export class LeftPanel {
   private countInbox_abyssPrivate(tasks: TaskSnapshot[]): number {
     const { inbox } = this.settings_abyssPrivate;
     const allOpen = tasks.filter((t) => t.status === 'open');
+    const normalized = normalizeTaskTagInput(inbox.tag);
+    const inboxTag = normalized?.length === 1 ? normalized[0] : undefined;
     const withTag =
-      inbox.mode !== 'untagged' ? allOpen.filter((t) => t.tags.includes(inbox.tag)) : [];
+      inbox.mode !== 'untagged' && inboxTag !== undefined
+        ? allOpen.filter((t) => t.tags.includes(inboxTag))
+        : [];
     const includeUntagged = inbox.mode !== 'tag';
     const untagged = includeUntagged ? allOpen.filter((t) => t.tags.length === 0) : [];
     if (withTag.length === 0) return untagged.length;

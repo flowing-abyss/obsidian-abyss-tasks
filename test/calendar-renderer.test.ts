@@ -92,7 +92,6 @@ function makeRenderer(
     store.taskQueries,
     { queries: store.taskQueries, execute: store.execute },
     store.statusRegistry,
-    '- [ ] ',
   );
 }
 
@@ -582,6 +581,8 @@ describe('CalendarRenderer', () => {
         { today: () => localDate('2026-08-03') },
         undefined,
         () => ({
+          taskPrefix: '',
+          inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
           taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
           recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
         }),
@@ -1026,7 +1027,6 @@ describe('CalendarRenderer', () => {
         configured.tasks.queries,
         configured.tasks,
         configured.statusRegistry,
-        '',
         { removeScheduledDate: false },
         undefined,
         registry,

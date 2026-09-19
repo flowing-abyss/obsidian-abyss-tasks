@@ -56,14 +56,16 @@ function makeTagPicker(
   initialize = true,
 ): TagPickerHarness {
   const app = new App();
-  (app.metadataCache as unknown as { getTags: () => Record<string, number> }).getTags = () =>
-    Object.fromEntries((opts.tags ?? ['#all', '#some', '#none']).map((tag) => [tag, 1]));
+  (app.metadataCache as unknown as { getTags: () => Record<string, number> }).getTags = () => ({
+    '#metadata-only': 1,
+  });
   const onCommit = vi.fn();
   const modal = new TagPickerModal(
     app,
     () => undefined,
     new Set(opts.currentTags ?? ['#all']),
     new Set(opts.partialTags ?? ['#some']),
+    opts.tags ?? ['#all', '#some', '#none'],
     onCommit,
   );
   if (initialize) {
@@ -95,6 +97,7 @@ describe('TagPickerModal', () => {
       () => undefined,
       new Set(),
       new Set(),
+      [],
       vi.fn(),
       interactionOwnership,
     );
@@ -117,12 +120,44 @@ describe('TagPickerModal', () => {
     expect(tagButton(modal, '#all').getAttribute('aria-pressed')).toBe('true');
     expect(tagButton(modal, '#some').getAttribute('aria-pressed')).toBe('mixed');
     expect(tagButton(modal, '#none').getAttribute('aria-pressed')).toBe('false');
+    expect(modal.contentEl.querySelector('[data-tag="#metadata-only"]')).toBeNull();
 
     search.value = 'some';
     search.dispatchEvent(new Event('input', { bubbles: true }));
 
     expect(modal.contentEl.querySelectorAll('.abyss-tag-picker-item')).toHaveLength(1);
     expect(tagButton(modal, '#some')).toBeInstanceOf(HTMLButtonElement);
+  });
+
+  it('puts selected tags absent from candidates first and removes a mixed tag in one action', () => {
+    const { modal, onCommit } = makeTagPicker({
+      currentTags: ['#selected/missing'],
+      partialTags: ['#mixed'],
+      tags: ['#work/client/deep', '#work/home'],
+    });
+    const rows = [...modal.contentEl.querySelectorAll<HTMLElement>('[data-tag]')];
+    expect(rows.map((row) => row.dataset['tag'])).toEqual([
+      '#selected/missing',
+      '#mixed',
+      '#work/client/deep',
+      '#work/home',
+    ]);
+    expect(modal.contentEl.querySelector('[data-tag="#work"]')).toBeNull();
+    expect(
+      [...modal.contentEl.querySelectorAll('.abyss-tag-picker-heading')].map(
+        (heading) => heading.textContent,
+      ),
+    ).toEqual(['#work', '#work/client']);
+
+    const remove = expectDefined(
+      modal.contentEl.querySelector<HTMLButtonElement>(
+        '.abyss-tag-picker-remove[data-remove-tag="#mixed"]',
+      ),
+    );
+    remove.click();
+    modal.onClose();
+
+    expect(onCommit).toHaveBeenCalledWith([], ['#mixed']);
   });
 
   it('keeps focus on the toggled tag as native activation rebuilds the filtered list', () => {

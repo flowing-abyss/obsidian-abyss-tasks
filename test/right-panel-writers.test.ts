@@ -54,7 +54,7 @@ const WRITER_METHODS = new Set([
   'toggleSubTask',
   'updatePriority',
   'setStatus',
-  'addTag',
+  'addTags',
   'removeTag',
   'updateTaskTitle',
   'appendToTitle',
@@ -1574,7 +1574,7 @@ describe('RightPanel.removeTag', () => {
     const process = vi.spyOn(app.vault, 'process');
 
     await call<Promise<void>>(panel, 'removeTag', root, '#work');
-    await call<Promise<void>>(panel, 'addTag', child, 'child/next');
+    await call<Promise<'committed' | 'failed'>>(panel, 'addTags', child, ['child/next']);
 
     expect(execute.mock.calls.map(([command]) => command)).toEqual([
       {
@@ -1671,7 +1671,7 @@ describe('RightPanel.removeTag', () => {
   });
 });
 
-describe('RightPanel.addTag', () => {
+describe('RightPanel.addTags', () => {
   it('without #: adds the # prefix', async () => {
     const { panel, app } = await makePanel({ 't.md': '- [ ] task' });
     const t = task({
@@ -1683,7 +1683,9 @@ describe('RightPanel.addTag', () => {
         originalBlock: '- [ ] task',
       },
     });
-    await call<Promise<void>>(panel, 'addTag', t, 'work');
+    await expect(
+      call<Promise<'committed' | 'failed'>>(panel, 'addTags', t, ['work']),
+    ).resolves.toBe('committed');
     const after = await readMd(app, 't.md');
     expect(after).toContain('#work');
   });
@@ -1699,13 +1701,15 @@ describe('RightPanel.addTag', () => {
         originalBlock: '- [ ] task',
       },
     });
-    await call<Promise<void>>(panel, 'addTag', t, '#work');
+    await expect(
+      call<Promise<'committed' | 'failed'>>(panel, 'addTags', t, ['#work']),
+    ).resolves.toBe('committed');
     const after = await readMd(app, 't.md');
     expect(after).toContain('#work');
     expect(after.match(/#/gu)).toHaveLength(1);
   });
 
-  it('file not found → no-op', async () => {
+  it('file not found reports failure to retain the draft', async () => {
     const { panel } = await makePanel({ 't.md': '- [ ] x' });
     const t = task({
       title: 'x',
@@ -1716,7 +1720,9 @@ describe('RightPanel.addTag', () => {
         originalBlock: '- [ ] x',
       },
     });
-    await expect(call<Promise<void>>(panel, 'addTag', t, 'work')).resolves.toBeUndefined();
+    await expect(
+      call<Promise<'committed' | 'failed'>>(panel, 'addTags', t, ['work']),
+    ).resolves.toBe('failed');
   });
 });
 

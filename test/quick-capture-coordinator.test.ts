@@ -426,21 +426,19 @@ describe('QuickCaptureCoordinator', () => {
     expect(h.host.querySelector('.abyss-capture-destination')?.textContent).toBe('Frozen target');
   });
 
-  it('keeps resolver settings and the Calendar context frozen across a deferred plan', async () => {
+  it('keeps the Calendar context frozen across a deferred plan', async () => {
     const planned = deferred<TaskCreateSession>();
     const execute = vi.fn<TaskCreateSession['execute']>(async () => success());
     const application: TaskCaptureApplicationApi = {
       planCreate: vi.fn(() => planned.promise),
     };
     const settings = structuredClone(DEFAULT_SETTINGS);
-    settings.taskPrefix = '#frozen-prefix';
     let today = localDate('2026-08-24');
     const resolver = new CaptureTargetResolver(application, settings, () => today);
     const h = harness((context) => resolver.resolve(context));
     h.setContext({ type: 'default', source: 'calendar' });
 
     h.coordinator.openOrFocus();
-    settings.taskPrefix = '#changed-prefix';
     today = localDate('2026-08-25');
     h.setContext({ type: 'list', selection: 'inbox' });
     planned.resolve(readySession(execute));
@@ -456,7 +454,7 @@ describe('QuickCaptureCoordinator', () => {
     await flushMicrotasks(0);
 
     expect(execute).toHaveBeenCalledWith({
-      markdownBody: '#frozen-prefix draft',
+      markdownBody: 'draft',
       initial: { due: { type: 'set', value: localDate('2026-08-24') } },
     });
     expect(h.resolveTarget).toHaveBeenCalledWith({ type: 'default', source: 'calendar' });

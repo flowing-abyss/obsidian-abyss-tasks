@@ -324,7 +324,7 @@ describe('CenterPanel drag source', () => {
 });
 
 describe('CenterPanel tag→task drop target', () => {
-  it('task card assigns a tag and removes the inbox tag in one API patch', () => {
+  it('task card delegates tag assignment policy to the application API', () => {
     const t = task({
       status: 'open',
       tags: ['#task/inbox'],
@@ -347,7 +347,7 @@ describe('CenterPanel tag→task drop target', () => {
         type: 'task',
         ref: objectMatching<TaskSnapshot['ref']>({ filePath: t.ref.filePath, line: t.ref.line }),
       },
-      patch: { tags: { add: ['#task/next'], remove: ['#task/inbox'] } },
+      patch: { tags: { add: ['#task/next'] } },
     });
   });
 
@@ -393,7 +393,7 @@ describe('CenterPanel tag→task drop target', () => {
         type: 'task',
         ref: objectMatching<TaskSnapshot['ref']>({ filePath: t.ref.filePath, line: t.ref.line }),
       },
-      patch: { tags: { add: ['#work'], remove: ['#task/inbox'] } },
+      patch: { tags: { add: ['#work'] } },
     });
   });
 });
@@ -478,7 +478,7 @@ describe('CenterPanel pinned-tag context menu', () => {
         type: 'task',
         ref: objectMatching<TaskSnapshot['ref']>({ filePath: t.ref.filePath, line: t.ref.line }),
       },
-      patch: { tags: { add: ['#work'], remove: [] } },
+      patch: { tags: { add: ['#work'] } },
     });
     addItem.mockRestore();
     show.mockRestore();

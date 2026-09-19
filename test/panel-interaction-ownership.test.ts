@@ -152,6 +152,7 @@ const categories: ReadonlyArray<{
         () => undefined,
         new Set(),
         new Set(),
+        ['#owned'],
         vi.fn(),
         registry,
       );

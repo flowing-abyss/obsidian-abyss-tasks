@@ -87,6 +87,12 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   DependencyDirection: ['src/panels/RightPanel.ts'],
   LocalDate: ['src/panels/CenterPanel.ts'],
   MoveRecovery: ['src/ui/TaskMoveRecoveryModal.ts'],
+  normalizeTaskTagInput: [
+    'src/settings/SettingsTab.ts',
+    'src/task-lists/TaskListSelector.ts',
+    'src/ui/tagDropdown.ts',
+    'src/ui/taskCapture/CaptureTargetResolver.ts',
+  ],
   PlanningTarget: ['src/panels/RightPanel.ts'],
   RecurrenceParseResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
   RecurrencePolicy: ['src/ui/recurrence/RecurrenceEditor.ts'],

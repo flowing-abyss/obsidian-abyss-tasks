@@ -4,9 +4,11 @@ import type { AppState, InspectorHistoryFrame, TaskNodeDragPayload } from '../ap
 import type { LinkToken } from '../markdown/links';
 import { formatDurationFromMinutes, parseDurationToMinutes } from '../parser/TaskParser';
 
+import { DEFAULT_SETTINGS } from '../settings/defaults';
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import { colorForTag } from '../tags/tagColor';
+import { collectTaskTags } from '../tags/taskTagCatalog';
 import {
   cloneTaskSnapshot,
   durationMinutes,
@@ -3061,11 +3063,13 @@ export class RightPanel {
     }
     const surface = showTagDropdown(
       container,
-      this.app_abyssPrivate,
+      collectTaskTags(
+        this.tasks_abyssPrivate?.queries.listNodes() ?? [],
+        this.settings_abyssPrivate ?? DEFAULT_SETTINGS,
+        task.tags,
+      ),
       (tag) => this.getTagColor_abyssPrivate(tag),
-      (tag) => {
-        runAsyncAction(this.addTag_abyssPrivate(task, tag));
-      },
+      async (tags) => await this.addTags_abyssPrivate(task, tags),
       () => {
         this.removeAnchoredSurface_abyssPrivate(surface);
       },
@@ -3467,8 +3471,12 @@ export class RightPanel {
     await this.executePlanningPatch_abyssPrivate(task, { tags: { remove: [tag] } });
   }
 
-  private async addTag_abyssPrivate(task: TaskLike, tag: string): Promise<void> {
-    await this.executePlanningPatch_abyssPrivate(task, { tags: { add: [tag] } });
+  private async addTags_abyssPrivate(
+    task: TaskLike,
+    tags: readonly string[],
+  ): Promise<'committed' | 'failed'> {
+    const result = await this.executePlanningPatch_abyssPrivate(task, { tags: { add: tags } });
+    return result.type === 'ok' ? 'committed' : 'failed';
   }
 
   private showTimePopover_abyssPrivate(anchor: HTMLElement, task: TaskLike): void {

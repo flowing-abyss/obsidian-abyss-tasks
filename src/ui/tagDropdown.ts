@@ -1,39 +1,35 @@
-import type { App } from 'obsidian';
+import { normalizeTaskTagInput } from '../tasks';
+import { runAsyncAction } from './runAsyncAction';
 
 let nextTagDropdownId = 0;
+type TagCommitOutcome = 'committed' | 'failed';
 
 interface TagDropdownContext {
   readonly sortedTags: readonly string[];
   readonly dropdownId: string;
   readonly input: HTMLInputElement;
   readonly dropdown: HTMLElement;
+  readonly feedback: HTMLElement;
   readonly getTagColor: (tag: string) => string | undefined;
-  readonly commit: (tag: string) => void;
+  readonly commit: (input: string) => void;
   activeTag: string | undefined;
 }
 
-function sortedVaultTags(app: App): readonly string[] {
-  const rawTags = Object.keys(
-    (app.metadataCache as unknown as { getTags(): Record<string, number> }).getTags(),
-  );
-  return rawTags
-    .map((tag) => (tag.startsWith('#') ? tag : `#${tag}`))
-    .sort((left, right) => {
-      const leftClean = left.slice(1);
-      const rightClean = right.slice(1);
-      const leftRoot = leftClean.split('/')[0] ?? '';
-      const rightRoot = rightClean.split('/')[0] ?? '';
-      if (leftRoot !== rightRoot) return leftRoot.localeCompare(rightRoot);
-      const leftDepth = (leftClean.match(/\//gu) ?? []).length;
-      const rightDepth = (rightClean.match(/\//gu) ?? []).length;
-      return leftDepth === rightDepth
-        ? leftClean.localeCompare(rightClean)
-        : leftDepth - rightDepth;
-    });
+function sortedCandidates(candidates: readonly string[]): readonly string[] {
+  return [...new Set(candidates)].sort((left, right) => {
+    const leftClean = left.slice(1);
+    const rightClean = right.slice(1);
+    const leftRoot = leftClean.split('/')[0] ?? '';
+    const rightRoot = rightClean.split('/')[0] ?? '';
+    if (leftRoot !== rightRoot) return leftRoot.localeCompare(rightRoot);
+    const leftDepth = (leftClean.match(/\//gu) ?? []).length;
+    const rightDepth = (rightClean.match(/\//gu) ?? []).length;
+    return leftDepth === rightDepth ? leftClean.localeCompare(rightClean) : leftDepth - rightDepth;
+  });
 }
 
 function matchingTags(tags: readonly string[], query: string): readonly string[] {
-  const normalized = query.toLowerCase().replace(/^#/u, '');
+  const normalized = query.toLowerCase().replace(/^#+/u, '');
   return normalized.length === 0
     ? tags
     : tags.filter((tag) => tag.slice(1).toLowerCase().includes(normalized));
@@ -98,6 +94,8 @@ function updateActive(context: TagDropdownContext, delta: number): void {
 
 function bindInput(context: TagDropdownContext, close: () => void): void {
   context.input.addEventListener('input', () => {
+    context.input.removeAttribute('aria-invalid');
+    context.feedback.setText('');
     renderOptions(context, context.input.value);
   });
   context.input.addEventListener('keydown', (event) => {
@@ -119,16 +117,55 @@ function bindInput(context: TagDropdownContext, close: () => void): void {
   });
 }
 
+function tagCommitHandler(options: {
+  readonly input: HTMLInputElement;
+  readonly feedback: HTMLElement;
+  readonly onCommit: (tags: readonly string[]) => TagCommitOutcome | Promise<TagCommitOutcome>;
+  readonly close: () => void;
+}): (value: string) => void {
+  const { input, feedback, onCommit, close } = options;
+  const rejectDraft = (message: string): void => {
+    input.setAttribute('aria-invalid', 'true');
+    feedback.setText(message);
+    input.focus();
+  };
+  const settle = (outcome: TagCommitOutcome): void => {
+    if (outcome === 'committed') close();
+    else rejectDraft('Could not add tags. Try again.');
+  };
+  return (value): void => {
+    const tags = normalizeTaskTagInput(value);
+    if (tags === undefined || tags.length === 0) {
+      rejectDraft('Enter one or more valid task tags.');
+      return;
+    }
+    input.removeAttribute('aria-invalid');
+    feedback.setText('');
+    const result = onCommit(tags);
+    if (!(result instanceof Promise)) {
+      settle(result);
+      return;
+    }
+    runAsyncAction(
+      result.then(settle).catch((error: unknown) => {
+        rejectDraft('Could not add tags. Try again.');
+        throw error;
+      }),
+      'Could not assign task tags',
+    );
+  };
+}
+
 export function showTagDropdown(
   ...args: [
     container: HTMLElement,
-    app: App,
+    candidates: readonly string[],
     getTagColor: (tag: string) => string | undefined,
-    onCommit: (tag: string) => void,
+    onCommit: (tags: readonly string[]) => TagCommitOutcome | Promise<TagCommitOutcome>,
     onClose?: () => void,
   ]
 ): HTMLElement {
-  const [container, app, getTagColor, onCommit, onClose] = args;
+  const [container, candidates, getTagColor, onCommit, onClose] = args;
   container.querySelector('.abyss-tag-dropdown-wrap')?.remove();
   const wrap = container.createDiv({ cls: 'abyss-tag-dropdown-wrap' });
   const dropdownId = `abyss-tag-dropdown-${nextTagDropdownId++}`;
@@ -148,6 +185,10 @@ export function showTagDropdown(
     cls: 'abyss-tag-dropdown',
     attr: { id: dropdownId, role: 'listbox', 'aria-label': 'Available tags' },
   });
+  const feedback = wrap.createDiv({
+    cls: 'abyss-tag-input-feedback',
+    attr: { role: 'status', 'aria-live': 'polite' },
+  });
   let closed = false;
   const close = (): void => {
     if (closed) return;
@@ -155,16 +196,13 @@ export function showTagDropdown(
     onClose?.();
     wrap.remove();
   };
-  const commit = (value: string): void => {
-    const tag = value.trim();
-    if (tag.length > 0) onCommit(tag);
-    close();
-  };
+  const commit = tagCommitHandler({ input, feedback, onCommit, close });
   const context: TagDropdownContext = {
-    sortedTags: sortedVaultTags(app),
+    sortedTags: sortedCandidates(candidates),
     dropdownId,
     input,
     dropdown,
+    feedback,
     getTagColor,
     commit,
     activeTag: undefined,
