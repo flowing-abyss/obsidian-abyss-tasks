@@ -367,6 +367,54 @@ describe('TaskApplicationService planning commands', () => {
     );
   });
 
+  it.each([
+    [
+      'before a duplicate assigned tag',
+      'Task #inbox #work #work final text',
+      'Task #work final text',
+    ],
+    [
+      'between duplicate assigned tags',
+      'Task #work #inbox #work final [docs](https://example.com/#fragment)',
+      'Task #work final [docs](https://example.com/#fragment)',
+    ],
+    [
+      'after a duplicate assigned tag',
+      'Task #work #work #inbox final text',
+      'Task #work final text',
+    ],
+    [
+      'when Inbox is also duplicated',
+      'Task #inbox #inbox #work trailing prose',
+      'Task #work trailing prose',
+    ],
+  ])('preserves exact Markdown when Inbox appears %s', async (_name, markdownBody, expected) => {
+    const create = vi.fn<TaskRepository['create']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    });
+    const application = service({ edit: vi.fn(), create }, queries(), () =>
+      behaviorSettings({
+        inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
+      }),
+    );
+
+    await application.execute({
+      type: 'create',
+      markdownBody,
+      destination: {
+        type: 'explicit',
+        destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+      },
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      { filePath: 'tasks.md', insertion: { type: 'append' } },
+      expect.objectContaining({ markdownBody: expected }),
+    );
+  });
+
   it('preserves Markdown link destinations while deduplicating visible creation tags', async () => {
     const create = vi.fn<TaskRepository['create']>().mockResolvedValue({
       type: 'committed',

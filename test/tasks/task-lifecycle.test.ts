@@ -1698,6 +1698,35 @@ describe('TaskApplicationService lifecycle settings', () => {
     );
   });
 
+  it('persists trailing Markdown when duplicate and Inbox tag removals overlap', async () => {
+    const harness = await makeHarness('in-memory', '');
+    const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+    const api = new TaskApplicationService(
+      queries,
+      harness.repository,
+      catalog,
+      { today: () => localDate('2026-08-01') },
+      undefined,
+      () => ({
+        taskPrefix: '',
+        inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
+        taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+        recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+      }),
+    );
+
+    await expect(
+      api.execute({
+        type: 'create',
+        destination: { type: 'explicit', destination: appendDestination },
+        markdownBody: 'Task #inbox #work #work final [docs](https://example.com/#fragment) text',
+      }),
+    ).resolves.toMatchObject({ type: 'ok' });
+    expect(await harness.read()).toBe(
+      '- [ ] Task #work final [docs](https://example.com/#fragment) text',
+    );
+  });
+
   it('normalizes supported initial tags through the real codec and rejects unsupported grammar', async () => {
     const harness = await makeHarness('in-memory', '');
     const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));

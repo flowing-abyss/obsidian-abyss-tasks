@@ -141,7 +141,7 @@ function linePolicy(
     removesInbox && !inboxAlreadyRemoved ? occurrences.filter(({ tag }) => tag === inboxTag) : [];
   const removals = [
     ...new Map([...duplicates, ...inboxOccurrences].map((item) => [item.from, item])).values(),
-  ];
+  ].sort((left, right) => left.from - right.from);
   return { markdown: removeOccurrences(source, removals), removesInbox };
 }
 
