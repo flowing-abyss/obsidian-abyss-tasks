@@ -755,7 +755,7 @@ describe('time tracking orchestration', () => {
       );
       expect(activeTitles(stack)).toEqual(['Foreign']);
       expect(diagnostics.mock.calls).toEqual([
-        [{ operation: 'close-time-entry', phase: 'close-others', cause: 'conflict' }],
+        [{ operation: 'close-time-entry', phase: 'completion-follow-up', cause: 'conflict' }],
       ]);
     } finally {
       stack.index.destroy();

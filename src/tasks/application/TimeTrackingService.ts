@@ -50,6 +50,9 @@ interface LocatedNode {
   readonly target: TaskNodeRef;
 }
 
+/** Which pass is closing entries, which is what a set-aside entry is reported under. */
+type ClosePhase = 'close-others' | 'completion-follow-up';
+
 type RootClose =
   | {
       readonly type: 'closed';
@@ -225,9 +228,7 @@ export class TimeTrackingService {
         root,
         reading,
         (candidate) => withinSubtree(candidate, path),
-        // One hand-written entry under the completed node must not hold back the timers this
-        // completion really ends, the way starting and stopping already leave it alone.
-        'skip-unwritable',
+        'completion-follow-up',
       );
       if (closed.type !== 'failed') return { discardedShortEntry: closed.discarded };
       this.diagnostics_abyssPrivate({
@@ -329,14 +330,14 @@ export class TimeTrackingService {
       const root = this.rootSnapshot_abyssPrivate(first.root, first.target);
       // A root the index can no longer address is reported like any other unwritable foreign entry.
       if (root === undefined) {
-        this.setAside_abyssPrivate({ type: 'not-found', target: first.target }, 'skip-unwritable');
+        this.setAside_abyssPrivate({ type: 'not-found', target: first.target }, 'close-others');
         continue;
       }
       const pass = await this.closeInRoot_abyssPrivate(
         root,
         reading,
         (path) => exempt?.root !== key || !samePath(path, exempt.path),
-        'skip-unwritable',
+        'close-others',
       );
       if (pass.type === 'failed') return { roots, closed, discarded, failure: pass.result };
       roots.set(key, pass.root);
@@ -351,15 +352,15 @@ export class TimeTrackingService {
    * the previous write returned. Each iteration either writes one running line away or sets it
    * aside, so the accepted set shrinks and this ends.
    *
-   * Under `skip-unwritable` a hand-written entry the plugin cannot write, such as one whose start
-   * lies ahead of the clock, is reported and left alone rather than disabling tracking vault wide.
-   * Only an I/O failure aborts, because then the file's content state is unknown.
+   * A hand-written entry the plugin cannot write, such as one whose start lies ahead of the clock,
+   * is reported under the phase the caller is in and left alone rather than holding back the timers
+   * this pass really ends. Only an I/O failure aborts, because then the content state is unknown.
    */
   private async closeInRoot_abyssPrivate(
     root: TaskSnapshot,
     reading: ClockReading,
     accepts: (path: NodePath) => boolean,
-    unwritable: 'stop' | 'skip-unwritable' = 'stop',
+    phase: ClosePhase,
   ): Promise<RootClose> {
     let current = root;
     let closed = 0;
@@ -384,22 +385,15 @@ export class TimeTrackingService {
         current = result.outcome.task;
         continue;
       }
-      if (!this.setAside_abyssPrivate(result, unwritable)) return { type: 'failed', result };
+      if (!this.setAside_abyssPrivate(result, phase)) return { type: 'failed', result };
       setAside.add(entryKey(next));
     }
   }
 
   /** True when a foreign entry the plugin cannot write may be left alone instead of aborting. */
-  private setAside_abyssPrivate(
-    result: TaskCommandResult,
-    unwritable: 'stop' | 'skip-unwritable',
-  ): boolean {
-    if (unwritable === 'stop' || result.type === 'ok' || result.type === 'io-error') return false;
-    this.diagnostics_abyssPrivate({
-      operation: 'close-time-entry',
-      phase: 'close-others',
-      cause: result.type,
-    });
+  private setAside_abyssPrivate(result: TaskCommandResult, phase: ClosePhase): boolean {
+    if (result.type === 'ok' || result.type === 'io-error') return false;
+    this.diagnostics_abyssPrivate({ operation: 'close-time-entry', phase, cause: result.type });
     return true;
   }
 
