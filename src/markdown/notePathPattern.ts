@@ -114,7 +114,7 @@ function compileFormat(format: string): Marker {
   if (tokens.length === 0) {
     throw new Error('Note path date format must contain a supported date token.');
   }
-  return { format, matcher, tokens, tokenMatcher: new RegExp(`^${tokenMatcher}$`, 'u') };
+  return { format, matcher, tokens, tokenMatcher: new RegExp(`^${tokenMatcher}$`, 'iu') };
 }
 
 function normalizedPattern(pattern: string): string {
@@ -333,7 +333,10 @@ function isMatchingDate(
   markers: readonly Marker[],
   values: readonly string[],
 ): boolean {
-  return markers.every((marker, index) => candidate.format(marker.format) === values[index]);
+  return markers.every(
+    (marker, index) =>
+      candidate.format(marker.format).toLocaleLowerCase() === values[index]?.toLocaleLowerCase(),
+  );
 }
 
 function hasMatchingDate(markers: readonly Marker[], values: readonly string[]): boolean {
@@ -357,7 +360,7 @@ export function compileNotePathPattern(pattern: string): NotePathPattern {
   const matcherSource = literals
     .map((literal, index) => matcherPart(literal, markers[index]))
     .join('');
-  const matcher = new RegExp(`^${matcherSource}$`, 'u');
+  const matcher = new RegExp(`^${matcherSource}$`, 'iu');
 
   return {
     resolve(date: string): string {

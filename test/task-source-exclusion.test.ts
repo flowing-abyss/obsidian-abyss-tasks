@@ -1,5 +1,6 @@
 import { TFile } from 'obsidian';
 import { describe, expect, it } from 'vitest';
+import { evaluateQuery } from '../src/query/evaluateQuery';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import {
@@ -69,6 +70,75 @@ describe('TaskIndex source exclusion', () => {
     await flushMicrotasks(20);
 
     expect(index.list()).toEqual([]);
+    index.destroy();
+  });
+
+  it('derives inline note tags from committed content before any public installation', async () => {
+    const { index } = await sourceIndex({ 'active.md': '- [ ] Visible\n' }, ({ tags }) =>
+      tags.includes('#private'),
+    );
+    await index.initialize();
+    const published: string[][] = [];
+    index.subscribe(() => published.push(index.list().map((task) => task.title)));
+
+    const installed = index.installCommittedContent(
+      'active.md',
+      '- [ ] Secret #private\n  - [ ] Child\n',
+    );
+    await flushMicrotasks(20);
+
+    expect(installed).toEqual([]);
+    expect(index.list()).toEqual([]);
+    expect(index.listNodes()).toEqual([]);
+    expect(published.every((titles) => titles.length === 0)).toBe(true);
+    expect(index.previewContent('active.md', '- [ ] Secret #private\n')).toHaveLength(1);
+    index.destroy();
+  });
+
+  it('uses visible Markdown tag semantics for raw source metadata', async () => {
+    const { index } = await sourceIndex({ 'active.md': '- [ ] Initial\n' }, ({ tags }) =>
+      tags.includes('#private'),
+    );
+    await index.initialize();
+
+    const syntaxOnly = [
+      '---',
+      'note: "#private"',
+      '---',
+      '`#private`',
+      '```md',
+      '#private',
+      '```',
+      '%% #private %%',
+      '- [ ] Still visible',
+      '',
+    ].join('\n');
+    expect(index.installCommittedContent('active.md', syntaxOnly)).toHaveLength(1);
+    expect(index.list().map((task) => task.title)).toEqual(['Still visible']);
+
+    expect(
+      index.installCommittedContent('active.md', '- [ ] Hidden by a real tag #private\n'),
+    ).toEqual([]);
+    expect(index.list()).toEqual([]);
+    index.destroy();
+  });
+
+  it('excludes every valid case variant of DATE marker bracket literals', async () => {
+    const query = '"archive/{{DATE:[FY]YYYY}}.md"';
+    const { index } = await sourceIndex(
+      {
+        'active.md': '- [ ] Active\n',
+        'Archive/FY2025.md': '- [ ] Past archive\n',
+        'archive/fy2026.md': '- [ ] Current archive\n',
+      },
+      ({ filePath, tags, frontmatter }) =>
+        evaluateQuery(query, filePath, [...tags], { ...frontmatter }),
+    );
+
+    await index.initialize();
+
+    expect(index.list().map((task) => task.title)).toEqual(['Active']);
+    expect(index.listNodes().map((node) => node.node.title)).toEqual(['Active']);
     index.destroy();
   });
 

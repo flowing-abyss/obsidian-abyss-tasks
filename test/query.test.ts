@@ -22,6 +22,25 @@ describe('evaluateQuery', () => {
     expect(evaluateQuery('status=active', 'A.md', [], fm({ status: 'done' }))).toBe(false);
     expect(evaluateQuery('status=', 'A.md', [], fm())).toBe(true); // unset === ''
   });
+
+  it('preserves whitespace and quoted values in frontmatter equality expressions', () => {
+    expect(evaluateQuery('status = done', 'A.md', [], fm({ status: 'done' }))).toBe(true);
+    expect(evaluateQuery('status = "in progress"', 'A.md', [], fm({ status: 'in progress' }))).toBe(
+      true,
+    );
+    expect(evaluateQuery('status = in progress', 'A.md', [], fm({ status: 'in progress' }))).toBe(
+      true,
+    );
+    expect(
+      evaluateQuery("status= 'needs review'", 'A.md', [], fm({ status: 'needs review' })),
+    ).toBe(true);
+    expect(
+      evaluateQuery('status = done AND #private', 'A.md', ['#private'], fm({ status: 'done' })),
+    ).toBe(true);
+    expect(validateQuerySyntax('status = in progress OR owner = team')).toEqual({
+      type: 'valid',
+    });
+  });
   it('supports AND / OR / NOT / parens', () => {
     expect(evaluateQuery('Projects/ AND #book', 'Projects/A.md', ['#book'], fm())).toBe(true);
     expect(evaluateQuery('Projects/ AND #book', 'Projects/A.md', [], fm())).toBe(false);
@@ -44,6 +63,10 @@ describe('evaluateQuery', () => {
     ).toBe(true);
     expect(evaluateQuery('"archive/{{YYYY}}.md"', 'archive/2025.md', [], fm())).toBe(true);
     expect(evaluateQuery('"archive/{{YYYY}}.md"', 'archive/misc.md', [], fm())).toBe(false);
+    expect(evaluateQuery('"archive/{{[FY]YYYY}}.md"', 'Archive/FY2026.md', [], fm())).toBe(true);
+    expect(evaluateQuery('"archive/{{DATE:[FY]YYYY}}.md"', 'ARCHIVE/fy2026.md', [], fm())).toBe(
+      true,
+    );
   });
 
   it('unescapes quoted paths and reports malformed source expressions', () => {

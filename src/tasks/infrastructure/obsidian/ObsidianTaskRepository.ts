@@ -519,6 +519,7 @@ interface MoveTargetInput {
   readonly targetFile: TFile;
   readonly indexedRevision: string;
   readonly archive: boolean;
+  readonly archiveSource?: TaskRef;
 }
 
 interface MoveTargetTransaction {
@@ -537,6 +538,10 @@ interface ArchiveReceipt {
   readonly targetContentBefore: string;
   readonly targetContentAfter: string;
 }
+
+type ArchiveReceiptLookup =
+  | { readonly type: 'found'; readonly receipt: ArchiveReceipt }
+  | { readonly type: 'absent' | 'ambiguous' };
 
 type MoveSourceResolution =
   | { readonly type: 'result'; readonly result: TaskRepositoryResult }
@@ -576,12 +581,18 @@ function archiveRequestParts(
 ): {
   readonly prepared: RevisionPrecondition | undefined;
   readonly ref: TaskRef;
+  readonly receiptRef: TaskRef;
   readonly destination: TaskDestination | undefined;
 } {
   if ('baseRoot' in request) {
-    return { prepared: request, ref: request.baseRoot.ref, destination: request.destination };
+    return {
+      prepared: request,
+      ref: request.baseRoot.ref,
+      receiptRef: rootRefOf(request.baseTarget),
+      destination: request.destination,
+    };
   }
-  return { prepared: undefined, ref: request, destination: legacyDestination };
+  return { prepared: undefined, ref: request, receiptRef: request, destination: legacyDestination };
 }
 
 interface RecurrenceProcessInput {
@@ -862,11 +873,19 @@ export class ObsidianTaskRepository implements TaskRepository {
     request: TaskMoveRequest | TaskRef,
     legacyDestination?: TaskDestination,
   ): Promise<TaskRepositoryResult> {
-    const { prepared, ref, destination } = archiveRequestParts(request, legacyDestination);
+    const { prepared, ref, receiptRef, destination } = archiveRequestParts(
+      request,
+      legacyDestination,
+    );
     if (destination == null || ref.filePath.toLowerCase() === destination.filePath.toLowerCase()) {
       return invalidTaskTarget('destination');
     }
-    const previous = await this.retainedArchiveResult_abyssPrivate(ref, destination);
+    const previous = await this.retainedArchiveResult_abyssPrivate(
+      receiptRef,
+      ref,
+      destination,
+      prepared?.baseRoot.source.originalBlock,
+    );
     if (previous !== undefined) return previous;
     const start = await this.beginArchive_abyssPrivate(ref, prepared, destination);
     if (start.type === 'result') return start.result;
@@ -878,21 +897,32 @@ export class ObsidianTaskRepository implements TaskRepository {
       targetFile: start.targetFile,
       indexedRevision: source.indexedRevision,
       archive: true,
+      archiveSource: receiptRef,
     });
     if (targetResult.type !== 'committed' || targetResult.outcome.type !== 'task')
       return targetResult;
-    const receipt = this.archiveReceipts_abyssPrivate.get(archiveReceiptKey(ref));
+    const receipt = this.archiveReceipts_abyssPrivate.get(archiveReceiptKey(receiptRef));
     if (receipt === undefined) return this.processError_abyssPrivate(destination.filePath);
     return await this.finishArchiveSource_abyssPrivate(source.task, receipt);
   }
 
   private async retainedArchiveResult_abyssPrivate(
-    ref: TaskRef,
+    receiptRef: TaskRef,
+    currentRef: TaskRef,
     destination: TaskDestination,
+    sourceBlock: string | undefined,
   ): Promise<TaskRepositoryResult | undefined> {
-    const retained = this.archiveReceipts_abyssPrivate.get(archiveReceiptKey(ref));
-    if (retained !== undefined) {
-      return await this.resumeArchive_abyssPrivate(ref, destination, retained);
+    const lookup = this.archiveReceiptLookup_abyssPrivate(receiptRef, sourceBlock);
+    if (lookup.type === 'found') {
+      return await this.resumeArchive_abyssPrivate(currentRef, destination, lookup.receipt);
+    }
+    if (lookup.type === 'ambiguous') {
+      return {
+        type: 'io-error',
+        cause: 'archive-recovery-ambiguous',
+        path: destination.filePath,
+        contentState: 'unchanged',
+      };
     }
     if (this.archiveReceipts_abyssPrivate.size < 64) return undefined;
     return {
@@ -901,6 +931,22 @@ export class ObsidianTaskRepository implements TaskRepository {
       path: destination.filePath,
       contentState: 'unchanged',
     };
+  }
+
+  private archiveReceiptLookup_abyssPrivate(
+    ref: TaskRef,
+    sourceBlock: string | undefined,
+  ): ArchiveReceiptLookup {
+    const exact = this.archiveReceipts_abyssPrivate.get(archiveReceiptKey(ref));
+    if (exact !== undefined) return { type: 'found', receipt: exact };
+    if (sourceBlock === undefined) return { type: 'absent' };
+    const sameSource = [...this.archiveReceipts_abyssPrivate.values()].filter(
+      (receipt) => receipt.source.filePath === ref.filePath && receipt.sourceBlock === sourceBlock,
+    );
+    const sameRevision = sameSource.filter((receipt) => receipt.source.revision === ref.revision);
+    const candidates = sameRevision.length > 0 ? sameRevision : sameSource;
+    if (candidates.length === 1) return { type: 'found', receipt: candidates[0] as ArchiveReceipt };
+    return { type: candidates.length === 0 ? 'absent' : 'ambiguous' };
   }
 
   private async beginArchive_abyssPrivate(
@@ -1206,7 +1252,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     )
       return undefined;
     return {
-      source: input.sourceTask.ref,
+      source: input.archiveSource ?? input.sourceTask.ref,
       sourceBlock: input.sourceBlock.source,
       targetPath: input.destination.filePath,
       targetBlock,

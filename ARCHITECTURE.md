@@ -83,7 +83,9 @@ the canonical `TaskMarkdownCodec` parses each candidate. The index exposes detac
 reference resolution through public queries. `src/main.ts` injects the configured source-exclusion
 predicate. The index applies it before every public publication and reconciliation transition,
 while its raw content preview remains available to repository proof. Excluded roots therefore do
-not enter task, calendar, dependency, statistics, or task-tag projections.
+not enter task, calendar, dependency, statistics, or task-tag projections. Source tags are derived
+from committed Markdown through the shared lossless tag-scanning boundary, combined with parsed
+frontmatter tags, and evaluated before the committed projection can be installed.
 `TaskApplicationService` captures the relevant clock and behavior settings, resolves a command,
 validates it, and delegates persistence through repository and destination ports.
 
@@ -114,9 +116,12 @@ Archive uses the same exact-root transfer machinery as ordinary moves, but produ
 outcome because its destination is intentionally absent from public queries. One planned archive
 session freezes the date-expanded destination and shares lazy note preparation across a batch.
 The repository proves the appended raw root before source removal, retains bounded unresolved
-receipts without eviction, and requires fresh target evidence before retrying removal. Canonical
-vault casing is reused for an existing archive file or parent folder. Ordinary capture destinations
-are rejected before provisioning when the injected exclusion predicate matches them.
+receipts without eviction, and requires fresh target evidence before retrying removal. A prepared
+archive retains the original command target as its receipt identity while the current root reference
+locates a rebased source; equivalent freshly selected roots are matched conservatively by source
+proof and ambiguous ownership is rejected. Canonical vault casing is reused for an existing archive
+file or parent folder. Ordinary capture destinations are rejected before provisioning when the
+injected exclusion predicate matches them.
 
 ### Dependencies
 

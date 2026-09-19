@@ -62,6 +62,53 @@ function atomToken(value: string): Token {
   return { type: 'atom', value };
 }
 
+function booleanOperatorAt(input: string, cursor: number): boolean {
+  const rest = input.slice(cursor);
+  return /^(?:AND|OR)(?=$|\s|[()])/iu.test(rest);
+}
+
+function nextNonWhitespace(input: string, cursor: number): number {
+  let next = cursor;
+  while (/\s/u.test(input[next] ?? '')) next++;
+  return next;
+}
+
+type EqualityScanStep =
+  | { readonly type: 'advance'; readonly next: number }
+  | { readonly type: 'end'; readonly at: number };
+
+function equalityScanStep(input: string, cursor: number): EqualityScanStep {
+  const character = input[cursor] ?? '';
+  if (character === '"' || character === "'") {
+    return { type: 'advance', next: quotedValue(input, cursor).next };
+  }
+  if (character === '(' || character === ')') return { type: 'end', at: cursor };
+  if (!/\s/u.test(character)) return { type: 'advance', next: cursor + 1 };
+  const next = nextNonWhitespace(input, cursor + 1);
+  return booleanOperatorAt(input, next) ? { type: 'end', at: cursor } : { type: 'advance', next };
+}
+
+function equalityTermEnd(input: string, start: number): number {
+  let cursor = start;
+  while (cursor < input.length) {
+    const step = equalityScanStep(input, cursor);
+    if (step.type === 'end') return step.at;
+    cursor = step.next;
+  }
+  return input.length;
+}
+
+function equalityToken(
+  input: string,
+  start: number,
+): { readonly token: Token; readonly next: number } | undefined {
+  const end = equalityTermEnd(input, start);
+  const value = input.slice(start, end).trim();
+  const equals = value.indexOf('=');
+  if (equals < 0 || value.slice(0, equals).trim().length === 0) return undefined;
+  return { token: { type: 'atom', value }, next: end };
+}
+
 function readToken(
   input: string,
   cursor: number,
@@ -75,7 +122,11 @@ function readToken(
   }
   const end = atomEnd(input, cursor);
   if (end === cursor) throw new QuerySyntaxError('Expected a query term.');
-  return { token: atomToken(input.slice(cursor, end)), next: end };
+  const atom = atomToken(input.slice(cursor, end));
+  if (atom.type !== 'atom') return { token: atom, next: end };
+  const equality = equalityToken(input, cursor);
+  if (equality !== undefined) return equality;
+  return { token: atom, next: end };
 }
 
 function tokenize(input: string): readonly Token[] {
@@ -209,14 +260,11 @@ function evaluateNode(
 }
 
 function matchesPath(pattern: string, filePath: string): boolean {
-  const normalizedPattern = pattern
-    .split(/(\{\{[^{}]+\}\})/u)
-    .map((part) => (part.startsWith('{{') ? part : part.toLocaleLowerCase()))
-    .join('');
-  const normalizedPath = filePath.toLocaleLowerCase();
-  if (normalizedPattern.endsWith('/')) return normalizedPath.startsWith(normalizedPattern);
+  if (pattern.endsWith('/')) {
+    return filePath.toLocaleLowerCase().startsWith(pattern.toLocaleLowerCase());
+  }
   try {
-    return compileNotePathPattern(normalizedPattern).matches(normalizedPath);
+    return compileNotePathPattern(pattern).matches(filePath);
   } catch {
     return false;
   }

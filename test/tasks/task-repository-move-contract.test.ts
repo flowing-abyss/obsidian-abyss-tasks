@@ -439,3 +439,53 @@ describe('Obsidian move failure state machine', () => {
     expect(await h.read('target.md')).toBe('# Target\n- [ ] task\n');
   });
 });
+
+describe('Obsidian archive recovery identity', () => {
+  it('uses the original prepared target ref after the live source line changes', async () => {
+    const original = '- [ ] Top\n- [ ] Bottom\n';
+    const h = await harness('obsidian', original, '# Target\n');
+    if (h.repository.archive === undefined) throw new Error('archive unavailable');
+    const archive = h.repository.archive.bind(h.repository);
+    const bottom = expectDefined(
+      h.snapshots('source.md', original).find((task) => task.title === 'Bottom'),
+    );
+    const originalProcess = h.app.vault.process.bind(h.app.vault);
+    vi.spyOn(h.app.vault, 'process')
+      .mockImplementationOnce(originalProcess)
+      .mockRejectedValueOnce(new Error('source failed'))
+      .mockImplementation(originalProcess);
+
+    await expect(
+      archive({
+        destination: destination(),
+        baseRoot: bottom,
+        baseTarget: { type: 'task', ref: bottom.ref },
+        reconciliation: { observed: bottom },
+      }),
+    ).resolves.toMatchObject({ type: 'partial', operation: 'archive' });
+
+    const sourceFile = h.app.vault.getAbstractFileByPath('source.md');
+    const targetFile = h.app.vault.getAbstractFileByPath('target.md');
+    if (!(sourceFile instanceof TFile) || !(targetFile instanceof TFile)) {
+      throw new Error('missing archive fixture');
+    }
+    await h.app.vault.modify(sourceFile, '- [ ] Bottom\n');
+    await h.app.vault.modify(targetFile, '# Target\n- [ ] Bottom\n- [ ] Top\n');
+    const current = expectDefined(h.snapshots('source.md', '- [ ] Bottom\n')[0]);
+
+    await expect(
+      archive({
+        destination: destination(),
+        baseRoot: current,
+        baseTarget: { type: 'task', ref: bottom.ref },
+        reconciliation: { observed: current },
+      }),
+    ).resolves.toMatchObject({
+      type: 'partial',
+      operation: 'archive',
+      recovery: { source: bottom.ref, cause: 'conflict' },
+    });
+    expect((await h.read('target.md')).match(/Bottom/gu)).toHaveLength(1);
+    expect(await h.read('source.md')).toBe('- [ ] Bottom\n');
+  });
+});

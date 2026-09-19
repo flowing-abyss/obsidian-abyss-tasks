@@ -13,7 +13,8 @@ import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockE
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
-import { createAppWithFiles, expectDefined } from './helpers';
+import { TaskArchiveRecoveryModal } from '../src/ui/TaskArchiveRecoveryModal';
+import { createAppWithFiles, expectDefined, flushMicrotasks } from './helpers';
 
 const ARCHIVE: TaskDestination = {
   filePath: 'tasks/archive.md',
@@ -321,6 +322,68 @@ describe('transactional task archive', () => {
     expect(prepare).toHaveBeenCalledOnce();
     expect(await h.read('source.md')).toBe('');
     expect(await h.read('tasks/archive.md')).toBe('# Archive\n- [ ] First\n- [ ] Second\n');
+    h.index.destroy();
+  });
+
+  it('keeps partial archive ownership when application rebasing moves the source line', async () => {
+    const h = await harness('- [ ] Top\n- [ ] Bottom\n', '# Archive\n');
+    const [top, bottom] = h.index.list({ filePath: 'source.md' }).map((task) => task.ref);
+    const destinationProvider = {
+      planArchive: vi.fn().mockResolvedValue({
+        destination: ARCHIVE,
+        prepare: vi.fn().mockResolvedValue({ type: 'resolved', destination: ARCHIVE }),
+      }),
+    } as unknown as TaskDestinationProvider;
+    const application = new TaskApplicationService(
+      h.index,
+      h.repository,
+      new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses)),
+      { today: () => localDate('2026-09-19') },
+      destinationProvider,
+    );
+    const originalProcess = h.app.vault.process.bind(h.app.vault);
+    vi.spyOn(h.app.vault, 'process')
+      .mockImplementationOnce(originalProcess)
+      .mockRejectedValueOnce(new Error('bottom source write failed'))
+      .mockImplementation(originalProcess);
+
+    const partial = await application.execute({ type: 'archive', ref: expectDefined(bottom) });
+    expect(partial).toMatchObject({ type: 'partial', operation: 'archive' });
+    await expect(
+      application.execute({ type: 'archive', ref: expectDefined(top) }),
+    ).resolves.toMatchObject({ type: 'ok', outcome: { type: 'archived' } });
+    if (partial.type !== 'partial' || partial.operation !== 'archive') {
+      throw new Error('missing archive recovery');
+    }
+    await expect(
+      application.execute({ type: 'archive', ref: partial.recovery.source }),
+    ).resolves.toMatchObject({
+      type: 'partial',
+      operation: 'archive',
+      recovery: { cause: 'conflict', source: partial.recovery.source },
+    });
+    const reselected = expectDefined(h.index.list({ filePath: 'source.md' })[0]).ref;
+    expect(reselected.line).toBe(0);
+    await expect(application.execute({ type: 'archive', ref: reselected })).resolves.toMatchObject({
+      type: 'partial',
+      operation: 'archive',
+      recovery: { cause: 'conflict', source: partial.recovery.source },
+    });
+
+    const modal = new TaskArchiveRecoveryModal(h.app, application, partial.recovery);
+    modal.onOpen();
+    const retry = [...modal.contentEl.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Verify and retry',
+    );
+    if (!(retry instanceof HTMLButtonElement)) throw new Error('missing archive retry');
+    retry.click();
+    await flushMicrotasks(30);
+
+    expect(modal.contentEl.textContent).toContain('Task was not archived');
+    expect(await h.read('source.md')).toBe('- [ ] Bottom\n');
+    expect((await h.read('tasks/archive.md')).match(/Bottom/gu)).toHaveLength(1);
+    expect((await h.read('tasks/archive.md')).match(/Top/gu)).toHaveLength(1);
+    modal.onClose();
     h.index.destroy();
   });
 

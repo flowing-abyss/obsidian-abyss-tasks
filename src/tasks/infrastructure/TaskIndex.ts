@@ -6,6 +6,7 @@ import {
   type EventRef,
   type TAbstractFile,
 } from 'obsidian';
+import { extractMarkdownBodyTags } from '../../markdown/markdownTagRename';
 import type {
   CalendarProjectionSources,
   CalendarTaskSource,
@@ -1165,7 +1166,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       )
         return false;
       const selectedCache = this.cacheWithFrontmatter_abyssPrivate(content, cache);
-      if (this.sourceIsExcluded_abyssPrivate(observation.path, selectedCache)) {
+      if (this.sourceIsExcluded_abyssPrivate(observation.path, content, selectedCache)) {
         this.options_abyssPrivate.refAuthority?.discard(observation.path);
         return this.commitEmptyObservation_abyssPrivate(observation);
       }
@@ -1192,13 +1193,18 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     return frontmatter === undefined ? selected : { ...selected, frontmatter };
   }
 
-  private sourceIsExcluded_abyssPrivate(filePath: string, cache: CachedMetadata): boolean {
+  private sourceIsExcluded_abyssPrivate(
+    filePath: string,
+    content: string,
+    cache: CachedMetadata,
+  ): boolean {
     const exclude = this.excludeSource_abyssPrivate;
     if (exclude === undefined) return false;
     const frontmatter = cache.frontmatter ?? {};
+    const frontmatterTags = getAllTags({ frontmatter }) ?? [];
     return exclude({
       filePath,
-      tags: [...(getAllTags(cache) ?? [])],
+      tags: [...new Set([...frontmatterTags, ...extractMarkdownBodyTags(content)])],
       frontmatter: { ...frontmatter },
     });
   }
@@ -1382,7 +1388,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
         },
         observedFile: this.fileGenerations_abyssPrivate.has(filePath),
       });
-      const tasks = this.sourceIsExcluded_abyssPrivate(filePath, cache) ? [] : rawTasks;
+      const tasks = this.sourceIsExcluded_abyssPrivate(filePath, content, cache) ? [] : rawTasks;
       roots.push(...tasks);
       return () => {
         if (this.replaceFile_abyssPrivate(filePath, tasks, authorityTransitions))
@@ -1517,7 +1523,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     this.advance_abyssPrivate(file, path);
     if (this.options_abyssPrivate.refAuthority?.deferObservation(path, data) === true) return;
     const selectedCache = this.cacheWithFrontmatter_abyssPrivate(data, cache);
-    if (this.sourceIsExcluded_abyssPrivate(path, selectedCache)) {
+    if (this.sourceIsExcluded_abyssPrivate(path, data, selectedCache)) {
       this.options_abyssPrivate.refAuthority?.discard(path);
       const changed = this.replaceFile_abyssPrivate(path, [], [], true);
       if (changed) this.queueChanged_abyssPrivate(path);
