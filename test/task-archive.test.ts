@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
+import type { TaskDiagnosticSink } from '../src/tasks/application/TaskDependencyService';
 import type { TaskDestinationProvider } from '../src/tasks/application/TaskDestinationProvider';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import type { TaskDestination, TaskRef } from '../src/tasks/domain/types';
@@ -63,7 +64,210 @@ async function harness(
   };
 }
 
+function archiveApplication(
+  h: Awaited<ReturnType<typeof harness>>,
+  destinationProvider?: TaskDestinationProvider,
+  diagnostics?: TaskDiagnosticSink,
+): TaskApplicationService {
+  return new TaskApplicationService(
+    h.index,
+    h.repository,
+    new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses)),
+    { today: () => localDate('2026-09-19') },
+    destinationProvider,
+    undefined,
+    undefined,
+    diagnostics,
+  );
+}
+
+function archiveProvider(
+  planArchive: TaskDestinationProvider['planArchive'],
+): TaskDestinationProvider {
+  return { planArchive } as TaskDestinationProvider;
+}
+
 describe('transactional task archive', () => {
+  it('returns an executable unavailable session when no archive destination is configured', async () => {
+    const h = await harness('- [ ] Keep active\n');
+    try {
+      const application = archiveApplication(h);
+
+      const session = await application.planArchive();
+
+      expect(session.type).toBe('unavailable');
+      await expect(session.execute(h.ref)).resolves.toEqual({
+        type: 'invalid',
+        issues: [{ code: 'destination-unavailable', field: 'destination' }],
+      });
+      expect(await h.read('source.md')).toBe('- [ ] Keep active\n');
+    } finally {
+      h.index.destroy();
+    }
+  });
+
+  it('diagnoses archive planning failures and keeps the unavailable session executable', async () => {
+    const h = await harness('- [ ] Planner failure\n');
+    const failure = new Error('archive planning failed');
+    const diagnostics = vi.fn<TaskDiagnosticSink>();
+    const provider = archiveProvider(vi.fn().mockRejectedValue(failure));
+    try {
+      const application = archiveApplication(h, provider, diagnostics);
+
+      const session = await application.planArchive();
+
+      expect(session.type).toBe('unavailable');
+      await expect(session.execute(h.ref)).resolves.toEqual({
+        type: 'invalid',
+        issues: [{ code: 'destination-unavailable', field: 'destination' }],
+      });
+      expect(diagnostics).toHaveBeenCalledWith(
+        { operation: 'archive', phase: 'unexpected', cause: 'destination-plan' },
+        failure,
+      );
+      expect(await h.read('source.md')).toBe('- [ ] Planner failure\n');
+    } finally {
+      h.index.destroy();
+    }
+  });
+
+  it('rejects a stale prepared-session ref before repository I/O', async () => {
+    const h = await harness('- [ ] Session target\n');
+    const prepare = vi.fn().mockResolvedValue({ type: 'resolved', destination: ARCHIVE });
+    const provider = archiveProvider(vi.fn().mockResolvedValue({ destination: ARCHIVE, prepare }));
+    const archive = vi.spyOn(h.repository, 'archive');
+    try {
+      const session = await archiveApplication(h, provider).planArchive();
+      if (session.type !== 'ready') throw new Error('archive session unavailable');
+
+      await expect(
+        session.execute({ ...h.ref, revision: `${h.ref.revision}:stale` }),
+      ).resolves.toMatchObject({ type: 'not-found' });
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(archive).not.toHaveBeenCalled();
+      expect(await h.read('source.md')).toBe('- [ ] Session target\n');
+    } finally {
+      h.index.destroy();
+    }
+  });
+
+  it('diagnoses a prepared-session repository failure without claiming an archive', async () => {
+    const h = await harness('- [ ] Repository failure\n');
+    const failure = new Error('archive repository failed');
+    const diagnostics = vi.fn<TaskDiagnosticSink>();
+    const provider = archiveProvider(
+      vi.fn().mockResolvedValue({
+        destination: ARCHIVE,
+        prepare: vi.fn().mockResolvedValue({ type: 'resolved', destination: ARCHIVE }),
+      }),
+    );
+    vi.spyOn(h.repository, 'archive').mockRejectedValueOnce(failure);
+    try {
+      const session = await archiveApplication(h, provider, diagnostics).planArchive();
+      if (session.type !== 'ready') throw new Error('archive session unavailable');
+
+      await expect(session.execute(h.ref)).resolves.toEqual({
+        type: 'io-error',
+        cause: 'repository-error',
+        contentState: 'unknown',
+      });
+      expect(diagnostics).toHaveBeenCalledWith(
+        { operation: 'archive', phase: 'unexpected', cause: 'repository-error' },
+        failure,
+      );
+      expect(await h.read('source.md')).toBe('- [ ] Repository failure\n');
+    } finally {
+      h.index.destroy();
+    }
+  });
+
+  it.each([
+    {
+      name: 'no plan',
+      createProvider: () => ({
+        provider: archiveProvider(vi.fn().mockResolvedValue(undefined)),
+        prepare: vi.fn(),
+      }),
+      expected: {
+        type: 'invalid',
+        issues: [{ code: 'destination-unavailable', field: 'destination' }],
+      },
+      prepareCalls: 0,
+    },
+    {
+      name: 'advertised source collision',
+      createProvider: () => {
+        const prepare = vi.fn().mockResolvedValue({ type: 'resolved', destination: ARCHIVE });
+        return {
+          provider: archiveProvider(
+            vi.fn().mockResolvedValue({
+              destination: { filePath: 'SOURCE.md', insertion: { type: 'append' } },
+              prepare,
+            }),
+          ),
+          prepare,
+        };
+      },
+      expected: {
+        type: 'invalid',
+        issues: [{ code: 'invalid-target', field: 'destination' }],
+      },
+      prepareCalls: 0,
+    },
+    {
+      name: 'unavailable preparation',
+      createProvider: () => {
+        const prepare = vi.fn().mockResolvedValue({ type: 'unavailable' });
+        return {
+          provider: archiveProvider(vi.fn().mockResolvedValue({ destination: ARCHIVE, prepare })),
+          prepare,
+        };
+      },
+      expected: {
+        type: 'invalid',
+        issues: [{ code: 'destination-unavailable', field: 'destination' }],
+      },
+      prepareCalls: 1,
+    },
+    {
+      name: 'prepared source collision',
+      createProvider: () => {
+        const prepare = vi.fn().mockResolvedValue({
+          type: 'resolved',
+          destination: { filePath: 'SOURCE.md', insertion: { type: 'append' } },
+        });
+        return {
+          provider: archiveProvider(vi.fn().mockResolvedValue({ destination: ARCHIVE, prepare })),
+          prepare,
+        };
+      },
+      expected: {
+        type: 'invalid',
+        issues: [{ code: 'invalid-target', field: 'destination' }],
+      },
+      prepareCalls: 1,
+    },
+  ])(
+    'rejects $name before archive repository I/O',
+    async ({ createProvider, expected, prepareCalls }) => {
+      const h = await harness('- [ ] Destination guard\n');
+      const { provider, prepare } = createProvider();
+      const archive = vi.spyOn(h.repository, 'archive');
+      try {
+        const application = archiveApplication(h, provider);
+
+        await expect(application.execute({ type: 'archive', ref: h.ref })).resolves.toEqual(
+          expected,
+        );
+        expect(archive).not.toHaveBeenCalled();
+        expect(prepare).toHaveBeenCalledTimes(prepareCalls);
+        expect(await h.read('source.md')).toBe('- [ ] Destination guard\n');
+      } finally {
+        h.index.destroy();
+      }
+    },
+  );
+
   it('appends the complete owned root, leaves source delimiters, and never publishes the archive root', async () => {
     const block =
       '- [x] Root 🆔 root-id ⛔ other\n  - > Description\n  - 2026-09-19: comment\n  - [ ] Child\n';
