@@ -1,5 +1,5 @@
 import type * as ObsidianModule from 'obsidian';
-import type { App } from 'obsidian';
+import type { App, CachedMetadata } from 'obsidian';
 import { Notice, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { NoteTemplateService } from '../../src/notes/NoteTemplateService';
@@ -28,9 +28,11 @@ import {
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { presentTaskCreationResult } from '../../src/ui/taskCommandResult';
 import {
+  captureChangedCallback,
   configuredTaskApplication,
   createAppWithFiles,
   expectDefined,
+  flushMicrotasks,
   methodOf,
   taskQueryApi,
   useRealMoment,
@@ -1665,6 +1667,159 @@ describe('TaskApplicationService lifecycle settings', () => {
     });
 
     expect(await harness.read()).toBe('- [x] No stamps');
+  });
+
+  it('persists semantic Markdown and independently tagged descendants through creation policy', async () => {
+    const harness = await makeHarness('in-memory', '');
+    const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+    const api = new TaskApplicationService(
+      queries,
+      harness.repository,
+      catalog,
+      { today: () => localDate('2026-08-01') },
+      undefined,
+      () => ({
+        taskPrefix: '#work',
+        inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
+        taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+        recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+      }),
+    );
+
+    await expect(
+      api.execute({
+        type: 'create',
+        destination: { type: 'explicit', destination: appendDestination },
+        markdownBody: 'Read [docs](https://example.com/#work)\n  - [ ] Child #work',
+      }),
+    ).resolves.toMatchObject({ type: 'ok' });
+    expect(await harness.read()).toBe(
+      '- [ ] #work Read [docs](https://example.com/#work)\n  - [ ] Child #work',
+    );
+  });
+
+  it('normalizes supported initial tags through the real codec and rejects unsupported grammar', async () => {
+    const harness = await makeHarness('in-memory', '');
+    const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+    const api = new TaskApplicationService(
+      queries,
+      harness.repository,
+      catalog,
+      { today: () => localDate('2026-08-01') },
+      undefined,
+      () => ({
+        taskPrefix: '',
+        inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
+        taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+        recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+      }),
+    );
+
+    await expect(
+      api.execute({
+        type: 'create',
+        destination: { type: 'explicit', destination: appendDestination },
+        markdownBody: 'Supported',
+        initial: { tags: { add: ['##work'] } },
+      }),
+    ).resolves.toMatchObject({ type: 'ok' });
+    expect(await harness.read()).toBe('- [ ] Supported #work');
+
+    await expect(
+      api.execute({
+        type: 'create',
+        destination: { type: 'explicit', destination: appendDestination },
+        markdownBody: 'Unsupported',
+        initial: { tags: { add: ['#работа'] } },
+      }),
+    ).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target', field: 'tags' }],
+    });
+    expect(await harness.read()).toBe('- [ ] Supported #work');
+  });
+});
+
+describe('repository-owned index observations', () => {
+  it('keeps a newly committed successor across a delayed empty observation', async () => {
+    const app = await createAppWithFiles({ [path]: '' });
+    const fireChanged = captureChangedCallback(app);
+    const h = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
+    await h.index.initialize();
+    try {
+      const created = taskFrom(
+        await h.tasks.execute({
+          type: 'create',
+          destination: { type: 'explicit', destination: appendDestination },
+          markdownBody: 'Root',
+        }),
+        'root not created',
+      );
+      const withChild = taskFrom(
+        await h.tasks.execute({
+          type: 'add-subtask',
+          parent: { type: 'task', ref: created.ref },
+          text: 'First child',
+        }),
+        'first child not created',
+      );
+
+      fireChanged(fileAt(app, path), '', { listItems: [] });
+      await flushMicrotasks();
+
+      await expect(
+        h.tasks.execute({
+          type: 'add-subtask',
+          parent: { type: 'task', ref: withChild.ref },
+          text: 'Second child',
+        }),
+      ).resolves.toMatchObject({ type: 'ok', changed: true });
+      expect(await app.vault.read(fileAt(app, path))).toContain('  - [ ] Second child');
+    } finally {
+      h.index.destroy();
+    }
+  });
+
+  it('invalidates a committed ref after a real external replacement', async () => {
+    const app = await createAppWithFiles({ [path]: '' });
+    const fireChanged = captureChangedCallback(app);
+    const h = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
+    await h.index.initialize();
+    try {
+      const created = taskFrom(
+        await h.tasks.execute({
+          type: 'create',
+          destination: { type: 'explicit', destination: appendDestination },
+          markdownBody: 'Root',
+        }),
+        'root not created',
+      );
+      const replacement = '- [ ] External replacement\n';
+      const file = fileAt(app, path);
+      await app.vault.modify(file, replacement);
+      fireChanged(file, replacement, {
+        listItems: [
+          {
+            task: ' ',
+            parent: -1,
+            position: { start: { line: 0 }, end: { line: 0 } },
+          },
+        ],
+      } as CachedMetadata);
+      await flushMicrotasks();
+
+      expect(h.index.list().map((task) => task.title)).toEqual(['External replacement']);
+      await expect(
+        h.tasks.execute({
+          type: 'add-subtask',
+          parent: { type: 'task', ref: created.ref },
+          text: 'Must not attach',
+        }),
+      ).resolves.not.toMatchObject({ type: 'ok' });
+      expect(await app.vault.read(file)).toBe(replacement);
+    } finally {
+      h.index.destroy();
+    }
   });
 });
 

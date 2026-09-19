@@ -78,7 +78,13 @@ interface LinkRange extends SourceRange {
 }
 
 const TASK_LINE_RE = /^[\s>]*- \[(.)\]/u;
-const TAG_RE = /#[\w/-]+/gu;
+const TASK_TAG_BODY = String.raw`[\w-]+(?:\/[\w-]+)*`;
+const TASK_TAG_ADJACENT = String.raw`(?:[#\p{L}\p{M}\p{N}\p{Pc}/-]|\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|\uFE0F|\u200D)`;
+const TASK_TAG_RE = new RegExp(String.raw`^#${TASK_TAG_BODY}$`, 'u');
+const TAG_RE = new RegExp(
+  String.raw`(?<!${TASK_TAG_ADJACENT})#${TASK_TAG_BODY}(?!${TASK_TAG_ADJACENT})`,
+  'gu',
+);
 const PRIORITY_RE = /[🔺⏫🔼🔽⏬]/gu;
 const DATE_PATTERNS: ReadonlyArray<{
   kind: 'created' | 'start' | 'scheduled' | 'due' | 'completion' | 'cancelled';
@@ -129,6 +135,11 @@ const UNKNOWN_PICTOGRAPH_RE = /\p{Extended_Pictographic}/u;
 
 export function isTaskDependencyId(value: string): boolean {
   return TASK_ID_VALUE_RE.test(value);
+}
+
+/** The tag grammar accepted by both the canonical task parser and task mutations. */
+export function isCanonicalTaskTag(value: string): boolean {
+  return TASK_TAG_RE.test(value);
 }
 
 function isEscaped(source: string, at: number): boolean {

@@ -95,6 +95,37 @@ describe('TaskIndex source exclusion', () => {
     index.destroy();
   });
 
+  it('does not republish an ignored root from a stale observation after its own commit', async () => {
+    const path = 'active.md';
+    const visible = '- [ ] Visible\n';
+    const ignored = '- [ ] Visible #private\n';
+    const { app, index } = await sourceIndex({ [path]: visible }, ({ tags }) =>
+      tags.includes('#private'),
+    );
+    await index.initialize();
+    const previous = expectDefined(index.list()[0]);
+    const file = app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) throw new Error('missing active note');
+    await app.vault.modify(file, ignored);
+
+    index.installCommittedContent(path, ignored);
+    expect(index.list()).toEqual([]);
+    app.metadataCache.trigger('changed', file, visible, {
+      listItems: [
+        {
+          task: ' ',
+          parent: -1,
+          position: { start: { line: 0 }, end: { line: 0 } },
+        },
+      ],
+    });
+    await flushMicrotasks();
+
+    expect(index.list()).toEqual([]);
+    expect(index.resolve(previous.ref).type).not.toBe('exact');
+    index.destroy();
+  });
+
   it('uses visible Markdown tag semantics for raw source metadata', async () => {
     const { index } = await sourceIndex({ 'active.md': '- [ ] Initial\n' }, ({ tags }) =>
       tags.includes('#private'),

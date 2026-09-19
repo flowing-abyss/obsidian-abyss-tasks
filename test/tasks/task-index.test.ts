@@ -372,7 +372,9 @@ describe('TaskIndex lifecycle and events', () => {
     expect(authority.observeTransition('task.md', source)?.roots ?? []).toEqual([]);
 
     const drifted = `heading\n${source}`;
+    await app.vault.modify(mdFile(app, 'task.md'), drifted);
     fireChanged(mdFile(app, 'task.md'), drifted, taskCache(1));
+    await flushMicrotasks();
 
     expect(index.list()[0]?.ref).toMatchObject({ line: 1, revision: successor });
     index.destroy();
@@ -402,12 +404,15 @@ describe('TaskIndex lifecycle and events', () => {
     index.installCommittedContent('task.md', source);
     authority.acknowledge('task.md', source);
 
-    fireChanged(mdFile(app, 'task.md'), `${source}${source}`, {
+    const duplicated = `${source}${source}`;
+    await app.vault.modify(mdFile(app, 'task.md'), duplicated);
+    fireChanged(mdFile(app, 'task.md'), duplicated, {
       listItems: [
         { task: ' ', parent: -1, position: { start: { line: 0 }, end: { line: 0 } } },
         { task: ' ', parent: -1, position: { start: { line: 1 }, end: { line: 1 } } },
       ],
     } as CachedMetadata);
+    await flushMicrotasks();
 
     expect(index.resolve({ ...initial.ref, line: 99, revision: successor })).toMatchObject({
       type: 'ambiguous',

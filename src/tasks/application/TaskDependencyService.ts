@@ -445,7 +445,7 @@ async function createSubtask(
   const { taskPrefix, inbox, ...repositoryLifecycle } = lifecycle;
   const effectiveCommand = {
     ...command,
-    text: applyTaskCreationTagPolicy(taskPrefix, command.text, inbox),
+    text: applyTaskCreationTagPolicy(taskPrefix, command.text, inbox).markdown,
   };
   const result = await context.repository.createDependencySubtask({
     baseRoot: current.root,

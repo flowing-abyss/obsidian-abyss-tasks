@@ -94,6 +94,11 @@ in the index before returning. Conflicts, invalid input, missing or ambiguous ta
 and I/O failures are structured outcomes; the initiating presentation boundary reports failures.
 The UI must not treat an earlier snapshot as continuing write authority.
 
+The index retains the latest repository-installed content as an observation barrier. A later cache
+or metadata observation with different bytes is accepted only when those bytes still match the raw
+vault file; this prevents delayed create/startup observations from replacing a committed successor
+while preserving real external edits, deletions, and source exclusion.
+
 `TaskRefAuthority` distinguishes even byte-identical occurrences without adding Markdown IDs. It
 stages proven successor references and rejects ambiguous or externally changed targets. A successor
 may preserve selection or retries, but does not grant general write authority.
@@ -113,8 +118,10 @@ then uses the same application/repository path and reveals the indexed result wi
 another persisted identity. The create session also freezes the task prefix, Inbox tag policy, and
 lifecycle settings. `TaskApplicationService` applies the Markdown prefix once for roots, ordinary
 subtasks, and linked subtasks; normalizes explicit tag input atomically; and owns Inbox-tag removal
-for creation and tag patches. Presentation sends capture tags as typed initial fields and does not
-repeat either the prefix or Inbox-removal policy.
+for creation and tag patches. Creation uses canonical task-line tag occurrences, evaluates each
+task line independently, and composes the root's typed initial tags before applying Inbox policy.
+Presentation sends capture tags as typed initial fields and does not repeat either the prefix or
+Inbox-removal policy.
 
 `collectTaskTags` builds the assignable picker catalog from public `TaskNodeSnapshot` values plus
 explicit tag configuration and the current selection. Picker and inspector surfaces consume that

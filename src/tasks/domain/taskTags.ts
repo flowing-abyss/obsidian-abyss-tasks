@@ -1,17 +1,10 @@
-const TAG_CHARACTER = String.raw`(?:[\p{L}\p{M}\p{N}\p{Pc}-]|\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|\uFE0F|\u200D)`;
-const VALID_TASK_TAG = new RegExp(String.raw`^#${TAG_CHARACTER}+(?:/${TAG_CHARACTER}+)*$`, 'u');
-const MARKDOWN_TASK_TAG = new RegExp(
-  String.raw`(?<!#)#${TAG_CHARACTER}+(?:/${TAG_CHARACTER}+)*(?!${TAG_CHARACTER}|/)`,
-  'gu',
-);
-const ALL_NUMERIC = /^\p{N}+$/u;
+import { isCanonicalTaskTag, parseTaskLineSourceModel } from './taskLineSourceModel';
 
 function normalizeToken(token: string): string | undefined {
   const body = token.replace(/^#+/u, '');
   if (body.length === 0) return undefined;
   const tag = `#${body}`;
-  if (!VALID_TASK_TAG.test(tag)) return undefined;
-  return ALL_NUMERIC.test(body.replace(/\//gu, '')) ? undefined : tag;
+  return isCanonicalTaskTag(tag) ? tag : undefined;
 }
 
 /**
@@ -44,62 +37,15 @@ interface TagOccurrence {
   readonly to: number;
 }
 
-function isEscaped(source: string, at: number): boolean {
-  let slashes = 0;
-  for (let index = at - 1; index >= 0 && source[index] === '\\'; index -= 1) slashes += 1;
-  return slashes % 2 === 1;
-}
-
-function backtickRunLength(source: string, open: number): number {
-  let length = 1;
-  while (source[open + length] === '`') length += 1;
-  return length;
-}
-
-function closingBacktickDelimiter(source: string, delimiter: string, from: number): number {
-  let close = source.indexOf(delimiter, from);
-  while (close >= 0 && (source[close - 1] === '`' || source[close + delimiter.length] === '`')) {
-    close = source.indexOf(delimiter, close + 1);
-  }
-  return close;
-}
-
-function inlineCodeRanges(
-  source: string,
-): ReadonlyArray<{ readonly from: number; readonly to: number }> {
-  const ranges: Array<{ readonly from: number; readonly to: number }> = [];
-  let cursor = 0;
-  while (cursor < source.length) {
-    const open = source.indexOf('`', cursor);
-    if (open < 0) break;
-    if (isEscaped(source, open)) {
-      cursor = open + 1;
-      continue;
-    }
-    const runLength = backtickRunLength(source, open);
-    const delimiter = '`'.repeat(runLength);
-    const close = closingBacktickDelimiter(source, delimiter, open + runLength);
-    if (close < 0) {
-      cursor = open + runLength;
-      continue;
-    }
-    ranges.push({ from: open, to: close + runLength });
-    cursor = close + runLength;
-  }
-  return ranges;
-}
-
-function tagOccurrences(source: string): readonly TagOccurrence[] {
-  const code = inlineCodeRanges(source);
-  const occurrences: TagOccurrence[] = [];
-  for (const match of source.matchAll(MARKDOWN_TASK_TAG)) {
-    const from = match.index;
-    const tag = match[0];
-    if (isEscaped(source, from) || code.some((range) => from >= range.from && from < range.to))
-      continue;
-    occurrences.push({ tag, from, to: from + tag.length });
-  }
-  return occurrences;
+function tagOccurrences(source: string, rootLine: boolean): readonly TagOccurrence[] {
+  const prefix = rootLine ? '- [ ] ' : '';
+  const model = parseTaskLineSourceModel(`${prefix}${source}`);
+  if (model === null) return [];
+  return (model.occurrences.get('tag') ?? []).map(({ from, to }) => ({
+    tag: model.original.slice(from, to),
+    from: from - prefix.length,
+    to: to - prefix.length,
+  }));
 }
 
 function removeOccurrences(source: string, occurrences: readonly TagOccurrence[]): string {
@@ -120,28 +66,117 @@ export interface TaskInboxTagPolicy {
   readonly removeTagOnAssign: boolean;
 }
 
-/** Applies prefix text and the Inbox-removal rule to authored task Markdown. */
-export function applyTaskCreationTagPolicy(
-  prefix: string,
-  markdown: string,
-  inbox: TaskInboxTagPolicy,
-): string {
-  let combined = prefixTaskMarkdown(prefix, markdown);
+export interface TaskTagChange {
+  readonly add?: readonly string[];
+  readonly remove?: readonly string[];
+}
+
+export interface TaskCreationTagPolicyResult {
+  readonly markdown: string;
+  readonly tags?: TaskTagChange;
+}
+
+function sourceLines(source: string): readonly string[] {
+  const lines: string[] = [];
+  let from = 0;
+  while (from < source.length) {
+    const newline = source.indexOf('\n', from);
+    if (newline < 0) {
+      lines.push(source.slice(from));
+      break;
+    }
+    lines.push(source.slice(from, newline + 1));
+    from = newline + 1;
+  }
+  return lines;
+}
+
+function withoutLineEnding(source: string): { readonly content: string; readonly ending: string } {
+  if (source.endsWith('\r\n')) return { content: source.slice(0, -2), ending: '\r\n' };
+  if (source.endsWith('\n')) return { content: source.slice(0, -1), ending: '\n' };
+  return { content: source, ending: '' };
+}
+
+function duplicateOccurrences(occurrences: readonly TagOccurrence[]): readonly TagOccurrence[] {
   const seen = new Set<string>();
-  const duplicates = tagOccurrences(combined).filter(({ tag }) => {
+  return occurrences.filter(({ tag }) => {
     if (seen.has(tag)) return true;
     seen.add(tag);
     return false;
   });
-  combined = removeOccurrences(combined, duplicates);
-  if (!inbox.removeTagOnAssign || inbox.mode === 'untagged') return combined;
-  const inboxTags = normalizeTaskTagInput(inbox.tag);
-  if (inboxTags?.length !== 1) return combined;
-  const inboxTag = inboxTags[0];
-  const occurrences = tagOccurrences(combined);
-  if (inboxTag === undefined || !occurrences.some(({ tag }) => tag !== inboxTag)) return combined;
-  return removeOccurrences(
-    combined,
-    occurrences.filter(({ tag }) => tag === inboxTag),
-  );
+}
+
+function configuredInboxTag(inbox: TaskInboxTagPolicy): string | undefined {
+  if (!inbox.removeTagOnAssign || inbox.mode === 'untagged') return undefined;
+  const tags = normalizeTaskTagInput(inbox.tag);
+  return tags?.length === 1 ? tags[0] : undefined;
+}
+
+function rootTagsAfterInitial(
+  occurrences: readonly TagOccurrence[],
+  initial: TaskTagChange | undefined,
+): ReadonlySet<string> {
+  const removed = new Set(initial?.remove ?? []);
+  return new Set([
+    ...occurrences.map(({ tag }) => tag).filter((tag) => !removed.has(tag)),
+    ...(initial?.add ?? []).filter((tag) => !removed.has(tag)),
+  ]);
+}
+
+function linePolicy(
+  source: string,
+  rootLine: boolean,
+  inboxTag: string | undefined,
+  initial: TaskTagChange | undefined,
+): { readonly markdown: string; readonly removesInbox: boolean } {
+  const occurrences = tagOccurrences(source, rootLine);
+  const duplicates = duplicateOccurrences(occurrences);
+  const tags = rootLine
+    ? rootTagsAfterInitial(occurrences, initial)
+    : new Set(occurrences.map(({ tag }) => tag));
+  const removesInbox = inboxTag !== undefined && [...tags].some((tag) => tag !== inboxTag);
+  const inboxAlreadyRemoved =
+    inboxTag !== undefined && initial?.remove?.includes(inboxTag) === true;
+  const inboxOccurrences =
+    removesInbox && !inboxAlreadyRemoved ? occurrences.filter(({ tag }) => tag === inboxTag) : [];
+  const removals = [
+    ...new Map([...duplicates, ...inboxOccurrences].map((item) => [item.from, item])).values(),
+  ];
+  return { markdown: removeOccurrences(source, removals), removesInbox };
+}
+
+function withoutInitialInbox(
+  initial: TaskTagChange,
+  inboxTag: string | undefined,
+  removesInbox: boolean,
+): TaskTagChange {
+  if (inboxTag === undefined || !removesInbox) return initial;
+  return {
+    ...initial,
+    ...(initial.add !== undefined && { add: initial.add.filter((tag) => tag !== inboxTag) }),
+  };
+}
+
+/** Applies prefix text, per-task deduplication, and Inbox removal to authored task Markdown. */
+export function applyTaskCreationTagPolicy(
+  prefix: string,
+  markdown: string,
+  inbox: TaskInboxTagPolicy,
+  initial?: TaskTagChange,
+): TaskCreationTagPolicyResult {
+  const combined = prefixTaskMarkdown(prefix, markdown);
+  const inboxTag = configuredInboxTag(inbox);
+  let rootRemovesInbox = false;
+  const lines = sourceLines(combined).map((line, index) => {
+    const { content, ending } = withoutLineEnding(line);
+    const result = linePolicy(content, index === 0, inboxTag, index === 0 ? initial : undefined);
+    if (index === 0) rootRemovesInbox = result.removesInbox;
+    return `${result.markdown}${ending}`;
+  });
+  return {
+    markdown: lines.join(''),
+    ...(initial !== undefined && {
+      tags: withoutInitialInbox(initial, inboxTag, rootRemovesInbox),
+    }),
+  };
 }

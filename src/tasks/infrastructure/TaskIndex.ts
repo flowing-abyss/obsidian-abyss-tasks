@@ -917,6 +917,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     readonly CalendarTaskSource[]
   >();
   private readonly fileGenerations_abyssPrivate = new Map<string, number>();
+  private readonly committedContents_abyssPrivate = new Map<string, string>();
   private readonly reconciliationTransitions_abyssPrivate = new Map<
     string,
     FileReconciliationTransition
@@ -1130,6 +1131,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     this.taskMap_abyssPrivate.clear();
     this.dependencyGraph_abyssPrivate = undefined;
     this.fileGenerations_abyssPrivate.clear();
+    this.committedContents_abyssPrivate.clear();
     this.reconciliationTransitions_abyssPrivate.clear();
     this.options_abyssPrivate.refAuthority?.clear();
     this.calendarDateIndex_abyssPrivate.clear();
@@ -1160,6 +1162,12 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
   ): Promise<boolean> {
     try {
       const content = await this.app_abyssPrivate.vault.cachedRead(observation.file);
+      if (!this.isCurrent_abyssPrivate(observation)) return false;
+      if (
+        this.observationNeedsVerification_abyssPrivate(observation.path, content) &&
+        !(await this.observationMatchesVault_abyssPrivate(observation, content))
+      )
+        return false;
       if (!this.isCurrent_abyssPrivate(observation)) return false;
       if (
         this.options_abyssPrivate.refAuthority?.deferObservation(observation.path, content) === true
@@ -1391,6 +1399,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       const tasks = this.sourceIsExcluded_abyssPrivate(filePath, content, cache) ? [] : rawTasks;
       roots.push(...tasks);
       return () => {
+        this.committedContents_abyssPrivate.set(filePath, content);
         if (this.replaceFile_abyssPrivate(filePath, tasks, authorityTransitions))
           this.queueChanged_abyssPrivate(filePath);
         if (restored) this.reconciliationTransitions_abyssPrivate.delete(filePath);
@@ -1521,6 +1530,25 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       return;
     }
     this.advance_abyssPrivate(file, path);
+    const observation = this.observe_abyssPrivate(file, path);
+    if (observation === undefined) return;
+    if (this.observationNeedsVerification_abyssPrivate(path, data)) {
+      const read = this.observationMatchesVault_abyssPrivate(observation, data).then((matches) => {
+        if (matches && this.isCurrent_abyssPrivate(observation)) {
+          this.applyMetadataChanged_abyssPrivate(path, data, cache);
+        }
+      });
+      this.trackRead_abyssPrivate(read);
+      return;
+    }
+    this.applyMetadataChanged_abyssPrivate(path, data, cache);
+  }
+
+  private applyMetadataChanged_abyssPrivate(
+    path: string,
+    data: string,
+    cache: CachedMetadata,
+  ): void {
     if (this.options_abyssPrivate.refAuthority?.deferObservation(path, data) === true) return;
     const selectedCache = this.cacheWithFrontmatter_abyssPrivate(data, cache);
     if (this.sourceIsExcluded_abyssPrivate(path, data, selectedCache)) {
@@ -1650,6 +1678,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     this.calendarDateIndex_abyssPrivate.updateFile(filePath, []);
     this.recurringSourcesByFile_abyssPrivate.delete(filePath);
     this.fileGenerations_abyssPrivate.delete(filePath);
+    this.committedContents_abyssPrivate.delete(filePath);
     this.reconciliationTransitions_abyssPrivate.delete(filePath);
     this.pendingFiles_abyssPrivate.delete(filePath);
     this.pendingReconciledFiles_abyssPrivate.delete(filePath);
@@ -1696,6 +1725,29 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
       file.extension === 'md' &&
       this.app_abyssPrivate.vault.getAbstractFileByPath(path) === file
     );
+  }
+
+  private observationNeedsVerification_abyssPrivate(path: string, content: string): boolean {
+    const committed = this.committedContents_abyssPrivate.get(path);
+    return committed !== undefined && committed !== content;
+  }
+
+  private async observationMatchesVault_abyssPrivate(
+    observation: FileObservation,
+    content: string,
+  ): Promise<boolean> {
+    const committed = this.committedContents_abyssPrivate.get(observation.path);
+    if (committed === undefined || committed === content) return true;
+    try {
+      const current = await this.app_abyssPrivate.vault.read(observation.file);
+      if (!this.isCurrent_abyssPrivate(observation)) return false;
+      if (current === committed) return false;
+      if (current !== content) return false;
+      this.committedContents_abyssPrivate.delete(observation.path);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private trackRead_abyssPrivate(read: Promise<void>): void {

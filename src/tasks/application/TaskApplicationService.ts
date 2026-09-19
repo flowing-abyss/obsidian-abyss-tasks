@@ -383,6 +383,27 @@ function prepareCreateInitial(
   return tags === undefined ? { type: 'invalid' } : { type: 'valid', initial: { ...source, tags } };
 }
 
+function preparedCreateDraft(
+  request: TaskCreateRequest,
+  preparedInitial: Extract<PreparedCreateInitial, { readonly type: 'valid' }>,
+  settings: TaskBehaviorSettings,
+): TaskCreateRequest {
+  const creationPolicy = applyTaskCreationTagPolicy(
+    settings.taskPrefix,
+    request.markdownBody,
+    settings.inbox,
+    preparedInitial.initial?.tags,
+  );
+  if (preparedInitial.initial === undefined) return { markdownBody: creationPolicy.markdown };
+  return {
+    markdownBody: creationPolicy.markdown,
+    initial: {
+      ...preparedInitial.initial,
+      ...(creationPolicy.tags !== undefined && { tags: creationPolicy.tags }),
+    },
+  };
+}
+
 function destinationUnavailableResult(): TaskCommandResult {
   return {
     type: 'invalid',
@@ -852,13 +873,9 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (preparedInitial.type === 'invalid') {
       return invalidTaskTarget('tags');
     }
+    const draft = preparedCreateDraft(request, preparedInitial, settings);
     const result = await this.repository_abyssPrivate.create(resolution.destination, {
-      markdownBody: applyTaskCreationTagPolicy(
-        settings.taskPrefix,
-        request.markdownBody,
-        settings.inbox,
-      ),
-      ...(preparedInitial.initial !== undefined && { initial: preparedInitial.initial }),
+      ...draft,
       today: reading.localDate,
       addCreatedDate: settings.taskLifecycle.addCreatedDate,
     });
@@ -968,7 +985,8 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       return {
         command: {
           ...command,
-          text: applyTaskCreationTagPolicy(settings.taskPrefix, command.text, settings.inbox),
+          text: applyTaskCreationTagPolicy(settings.taskPrefix, command.text, settings.inbox)
+            .markdown,
           today: reading.localDate,
           addCreatedDate: settings.taskLifecycle.addCreatedDate,
         },

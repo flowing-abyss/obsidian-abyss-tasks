@@ -367,6 +367,118 @@ describe('TaskApplicationService planning commands', () => {
     );
   });
 
+  it('preserves Markdown link destinations while deduplicating visible creation tags', async () => {
+    const create = vi.fn<TaskRepository['create']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    });
+    const application = service({ edit: vi.fn(), create }, queries(), () =>
+      behaviorSettings({ taskPrefix: '#work' }),
+    );
+
+    await application.execute({
+      type: 'create',
+      markdownBody: 'Read [docs](https://example.com/#work) and preserve #worké',
+      destination: {
+        type: 'explicit',
+        destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+      },
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      { filePath: 'tasks.md', insertion: { type: 'append' } },
+      expect.objectContaining({
+        markdownBody: '#work Read [docs](https://example.com/#work) and preserve #worké',
+      }),
+    );
+  });
+
+  it('scopes creation deduplication and Inbox removal to each task line', async () => {
+    const create = vi.fn<TaskRepository['create']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    });
+    const application = service({ edit: vi.fn(), create }, queries(), () =>
+      behaviorSettings({
+        inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
+      }),
+    );
+
+    await application.execute({
+      type: 'create',
+      markdownBody:
+        'Root #work\n  - [ ] Child #work\n  - > Description #work\n  - [ ] Other #inbox\n    - [ ] Grandchild #home',
+      destination: {
+        type: 'explicit',
+        destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+      },
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      { filePath: 'tasks.md', insertion: { type: 'append' } },
+      expect.objectContaining({
+        markdownBody:
+          'Root #work\n  - [ ] Child #work\n  - > Description #work\n  - [ ] Other #inbox\n    - [ ] Grandchild #home',
+      }),
+    );
+
+    create.mockClear();
+    await application.execute({
+      type: 'create',
+      markdownBody: 'Inbox root #inbox\n  - [ ] Tagged child #work',
+      destination: {
+        type: 'explicit',
+        destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+      },
+    });
+    expect(create).toHaveBeenCalledWith(
+      { filePath: 'tasks.md', insertion: { type: 'append' } },
+      expect.objectContaining({
+        markdownBody: 'Inbox root #inbox\n  - [ ] Tagged child #work',
+      }),
+    );
+  });
+
+  it.each([
+    ['tagged prefix', '#work', 'Captured', '#work Captured'],
+    ['tagged body', '', 'Captured #work', 'Captured #work'],
+  ])(
+    'composes an initial Inbox addition with a %s before applying creation policy',
+    async (_name, taskPrefix, markdownBody, expectedMarkdown) => {
+      const create = vi.fn<TaskRepository['create']>().mockResolvedValue({
+        type: 'committed',
+        outcome: { type: 'task', task: snapshot() },
+        changed: true,
+      });
+      const application = service({ edit: vi.fn(), create }, queries(), () =>
+        behaviorSettings({
+          taskPrefix,
+          inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
+        }),
+      );
+
+      await application.execute({
+        type: 'create',
+        markdownBody,
+        initial: { tags: { add: ['#inbox'] } },
+        destination: {
+          type: 'explicit',
+          destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+        },
+      });
+
+      expect(create).toHaveBeenCalledWith(
+        { filePath: 'tasks.md', insertion: { type: 'append' } },
+        expect.objectContaining({
+          markdownBody: expectedMarkdown,
+          initial: { tags: { add: [] } },
+        }),
+      );
+    },
+  );
+
   it('applies the captured Markdown prefix once to ordinary subtasks', async () => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
       type: 'committed',

@@ -23,6 +23,8 @@ describe('task tag policy', () => {
 
   it('rejects the complete input when any nonempty token is invalid', () => {
     expect(normalizeTaskTagInput('#work #bad! #home')).toBeUndefined();
+    expect(normalizeTaskTagInput('#работа')).toBeUndefined();
+    expect(normalizeTaskTagInput('#worké')).toBeUndefined();
   });
 });
 

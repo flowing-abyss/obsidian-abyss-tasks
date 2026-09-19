@@ -7,6 +7,7 @@ import {
   type RecurrenceTaskLineEditResult,
 } from '../../domain/recurrenceIteration';
 import {
+  isCanonicalTaskTag,
   isTaskDependencyId,
   parseTaskLineSourceModel,
   type TaskLineSourceModel,
@@ -404,7 +405,7 @@ function normalizedTags(tags: readonly string[]): string[] {
 }
 
 function tagsAreValid(tags: Iterable<string>): boolean {
-  return [...tags].every((tag) => /^#[\w/-]+$/u.test(tag));
+  return [...tags].every(isCanonicalTaskTag);
 }
 
 function contentWithoutTags(parsed: ParsedTaskLine, removals: ReadonlySet<string>): string {
