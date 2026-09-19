@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import type { TaskEditCommand, TaskRepository } from '../../src/tasks/application/TaskRepository';
+import { MINIMUM_TRACKED_MS } from '../../src/tasks/application/TimeTrackingService';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
 import { timeEntryRef } from '../../src/tasks/domain/timeTracking';
@@ -22,7 +23,6 @@ type Adapter = 'in-memory' | 'obsidian';
 const TRACK_START = '2026-09-18T14:05:00+03:00';
 const TRACK_END = '2026-09-18T15:05:00+03:00';
 const TRACK_SHORT_END = '2026-09-18T14:05:59+03:00';
-const MINIMUM_TRACKED_MS = 60_000;
 
 interface ContractHarness {
   readonly repository: TaskRepository;

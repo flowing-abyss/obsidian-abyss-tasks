@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   addEntryToTotal,
   entryDurationMs,
-  entryOverlapMs,
   formatTrackedDuration,
   formatTrackedDurationWithSeconds,
   groupTrackedDays,
@@ -101,22 +100,6 @@ describe('durations', () => {
       entryDurationMs(running('2026-09-17T09:00:00+03:00'), at('2026-09-17T08:00:00+03:00')),
     ).toBe(0);
     expect(entryDurationMs(broken, 10 * H)).toBe(0);
-  });
-
-  it('clips an entry to a range', () => {
-    const entry = closed('2026-09-17T23:30:00+03:00', '2026-09-18T00:15:00+03:00');
-    const midnight = at('2026-09-18T00:00:00+03:00');
-    expect(entryOverlapMs(entry, midnight - 24 * H, midnight, 0)).toBe(30 * M);
-    expect(entryOverlapMs(entry, midnight, midnight + 24 * H, 0)).toBe(15 * M);
-    expect(entryOverlapMs(entry, midnight + H, midnight + 2 * H, 0)).toBe(0);
-  });
-
-  it('clips a running entry at midnight', () => {
-    const entry = running('2026-09-17T23:30:00+03:00');
-    const midnight = at('2026-09-18T00:00:00+03:00');
-    const nowMs = at('2026-09-18T00:20:00+03:00');
-    expect(entryOverlapMs(entry, midnight - 24 * H, midnight, nowMs)).toBe(30 * M);
-    expect(entryOverlapMs(entry, midnight, midnight + 24 * H, nowMs)).toBe(20 * M);
   });
 
   it('sums a subtree and ignores broken entries', () => {

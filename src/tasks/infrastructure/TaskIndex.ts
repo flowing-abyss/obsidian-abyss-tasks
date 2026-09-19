@@ -63,7 +63,10 @@ export interface TaskIndexOptions {
   readonly dailyNoteFormat: string;
   readonly globalTaskFilter?: string;
   readonly refAuthority?: TaskRefAuthority;
-  /** Resolves a written time entry stamp that carries no offset of its own. */
+  /**
+   * Resolves a written time entry stamp that carries no offset of its own. Runtime uses the
+   * device, so this is here for the tests that project a fixed zone across a daylight saving jump.
+   */
   readonly timeZoneOffsetAt?: OffsetAt;
 }
 

@@ -2,16 +2,9 @@ import type { TaskEditCommand, TaskRepositoryResult } from '../../application/Ta
 import type { TaskCommandOutcome, TimeEntryRemovalRecovery } from '../../domain/commands';
 import type { SubtaskSnapshot, TaskNodeRef, TaskSnapshot } from '../../domain/types';
 import type { TaskBlockEditResult } from './TaskBlockEditor';
+import { freeze } from './subtaskRemovalRecovery';
 
 type TaskOutcome = Extract<TaskCommandOutcome, { readonly type: 'task' }>;
-
-function freeze<T>(value: T): T {
-  if (value !== null && typeof value === 'object') {
-    for (const child of Object.values(value)) freeze(child);
-    Object.freeze(value);
-  }
-  return value;
-}
 
 /**
  * The owner of a removed entry line keeps its position in the committed root, because every

@@ -65,19 +65,6 @@ function clampedSpanMs(startMs: number, endMs: number, fromMs: number, toMs: num
   return Math.max(0, Math.min(endMs, toMs) - Math.max(startMs, fromMs));
 }
 
-/** The part of an entry that falls inside `[fromMs, toMs)`, which is how a day clips at midnight. */
-export function entryOverlapMs(
-  entry: TimeEntrySnapshot,
-  fromMs: number,
-  toMs: number,
-  nowMs: number,
-): number {
-  const startMs = measurableStartMs(entry);
-  const endMs = measurableEndMs(entry, nowMs);
-  if (startMs === undefined || endMs === undefined) return 0;
-  return clampedSpanMs(startMs, endMs, fromMs, toMs);
-}
-
 export function totalMs(total: TrackedTotal, nowMs: number): number {
   let sum = total.closedMs;
   for (const startMs of total.openStartsMs) sum += Math.max(0, nowMs - startMs);

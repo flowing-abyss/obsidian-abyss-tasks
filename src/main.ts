@@ -124,7 +124,7 @@ export default class TaskCalendarPlugin extends Plugin {
       () => dailyNotes.planDailyNoteDestination(),
     );
     const diagnostics: TaskDiagnosticSink = (diagnostic, error) => {
-      console.error('[abyss-tasks] task dependency operation failed', diagnostic, error);
+      console.error('[abyss-tasks] task operation failed', diagnostic, error);
     };
     this.tasks = new TaskApplicationService(
       this.taskIndex,
@@ -132,7 +132,7 @@ export default class TaskCalendarPlugin extends Plugin {
       this.statusCatalog,
       systemClock(
         () => Date.now(),
-        (epochMs) => -new Date(epochMs).getTimezoneOffset(),
+        DEVICE_OFFSET_AT,
         (epochMs) => localDate(window.moment(epochMs).format('YYYY-MM-DD')),
       ),
       destinationProvider,
