@@ -307,7 +307,9 @@ describe('PanelView', () => {
     it('says so when a tracked task is no longer in its note', () => {
       const internals = view as unknown as {
         openTrackedTask_abyssPrivate(target: TaskNodeRef): void;
+        panelNavigation_abyssPrivate: { openTasks(): void };
       };
+      const openTasks = vi.spyOn(internals.panelNavigation_abyssPrivate, 'openTasks');
       let noticeMessage: unknown;
       const notice = vi.spyOn(
         Notice.prototype as unknown as {
@@ -328,6 +330,8 @@ describe('PanelView', () => {
       expect(notice).toHaveBeenCalledOnce();
       expect(noticeMessage).toBe('That tracked task is no longer in its note');
       expect(log).toHaveBeenCalledOnce();
+      // A click that reaches nothing leaves the reader in the mode they were in.
+      expect(openTasks).not.toHaveBeenCalled();
     });
 
     it('owns one stable out-of-flow creation feedback host inside the layout', () => {

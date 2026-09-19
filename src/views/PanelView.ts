@@ -535,7 +535,6 @@ export class PanelView extends ItemView {
    * becomes the inspector selection, which at a compact width is what opens the details pane.
    */
   private openTrackedTask_abyssPrivate(target: TaskNodeRef): void {
-    this.panelNavigation_abyssPrivate.openTasks();
     const address = taskNodeAddress(target);
     const node = this.tasks_abyssPrivate.queries
       .listNodes({ filePath: rootTaskNodeRef(target).filePath })
@@ -548,6 +547,7 @@ export class PanelView extends ItemView {
       console.warn('[abyss-tasks] The tracked task is no longer in its note', address);
       return;
     }
+    this.panelNavigation_abyssPrivate.openTasks();
     this.state_abyssPrivate.openInspectorDependency(node);
   }
 
