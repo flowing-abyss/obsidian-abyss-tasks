@@ -9,7 +9,7 @@ import {
 } from '../src/settings/taskStorageSettings';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import { TaskIndex, type TaskSourceMetadata } from '../src/tasks/infrastructure/TaskIndex';
-import { createAppWithFiles, expectDefined, flushMicrotasks } from './helpers';
+import { createAppWithFiles, expectDefined, flushMicrotasks, seedTaskCache } from './helpers';
 
 function catalog(): StatusCatalog {
   return new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
@@ -33,6 +33,74 @@ function sourceIndex(
 }
 
 describe('TaskIndex source exclusion', () => {
+  it.each([
+    {
+      name: 'frontmatter field',
+      content: [
+        '---',
+        'private: true',
+        '---',
+        '- [ ] Hidden',
+        '  - 2026-09-19T10:00:00+00:00 →',
+        '',
+      ].join('\n'),
+      excludes: ({ frontmatter }: TaskSourceMetadata) => frontmatter['private'] === true,
+    },
+    {
+      name: 'frontmatter tag',
+      content: [
+        '---',
+        'tags:',
+        '  - private',
+        '---',
+        '- [ ] Hidden',
+        '  - 2026-09-19T10:00:00+00:00 →',
+        '',
+      ].join('\n'),
+      excludes: ({ tags }: TaskSourceMetadata) => tags.includes('#private'),
+    },
+  ])(
+    'uses current $name bytes instead of a stale visible cache at every public install boundary',
+    async ({ content, excludes }) => {
+      const path = 'active.md';
+      const { app, index } = await sourceIndex({ [path]: content }, excludes);
+      seedTaskCache(app, path, [{ task: ' ', parent: -1, line: 4 }], {});
+
+      await index.initialize();
+
+      expect(index.list()).toEqual([]);
+      expect(index.listNodes()).toEqual([]);
+      expect(index.activeEntries()).toEqual([]);
+      expect(index.installCommittedContent(path, content)).toEqual([]);
+
+      await index.refreshSourceExclusion(excludes);
+
+      expect(index.list()).toEqual([]);
+      expect(index.activeEntries()).toEqual([]);
+      index.destroy();
+    },
+  );
+
+  it.each([
+    { name: 'absent frontmatter', content: '- [ ] Visible\n' },
+    { name: 'invalid frontmatter', content: '---\nprivate: [\n---\n- [ ] Visible\n' },
+    { name: 'visible frontmatter', content: '---\nprivate: false\n---\n- [ ] Visible\n' },
+  ])('does not let a stale hidden cache exclude current $name bytes', async ({ content }) => {
+    const path = 'active.md';
+    const excludes = ({ frontmatter }: TaskSourceMetadata): boolean =>
+      frontmatter['private'] === true;
+    const { app, index } = await sourceIndex({ [path]: '- [ ] Placeholder\n' }, excludes);
+    app.vault.cachedRead = async () => content;
+    seedTaskCache(app, path, [{ task: ' ', parent: -1, line: content.split('\n').length - 2 }], {
+      private: true,
+    });
+
+    await index.initialize();
+
+    expect(index.list().map((task) => task.title)).toEqual(['Visible']);
+    index.destroy();
+  });
+
   it('keeps raw archive preview available while excluding archive roots and dependencies publicly', async () => {
     const { index } = await sourceIndex(
       {

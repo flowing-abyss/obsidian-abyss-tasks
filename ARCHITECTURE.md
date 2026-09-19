@@ -111,12 +111,15 @@ lifecycle settings in a retained `TaskCaptureApplicationApi` session. Sidebar ca
 without writing; `NoteTemplateService` prepares the note when the command executes and coordinates
 concurrent preparation of the same path. Project capture uses the selected note and project
 insertion policy. Overview capture follows the active Table, Kanban, or Timeline selection. Creation
-uses the application/repository path and reveals the indexed result.
+uses the application/repository path. Both panel capture routes select the query-resolved root
+through shared `AppState` before running the existing reveal presentation.
 
 `TaskApplicationService` owns prefix and Inbox-tag policy for roots, subtasks, and linked subtasks.
 It validates explicit tags atomically, combines the root's initial tags with its Markdown tags, and
 evaluates each created task line independently. Tag patches use the same Inbox policy. Presentation
-supplies typed fields and does not duplicate these policies.
+supplies typed fields and does not duplicate these policies. `planCreate` accepts transient Inbox
+intent, which freezes a session without the global prefix while keeping the same authored-tag and
+Inbox policy. The intent is not persisted.
 
 Tag pickers use `collectTaskTags`, which combines public task-node tags, configured tags, and the
 current selection. Note-only tags and excluded sources do not supply suggestions. Selected tags and

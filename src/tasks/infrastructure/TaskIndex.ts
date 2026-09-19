@@ -1203,7 +1203,7 @@ export class TaskIndex
       )
         return false;
       const selectedCache = this.cacheWithFrontmatter_abyssPrivate(content, cache);
-      if (this.sourceIsExcluded_abyssPrivate(observation.path, content, selectedCache)) {
+      if (this.sourceIsExcluded_abyssPrivate(observation.path, content)) {
         this.options_abyssPrivate.refAuthority?.discard(observation.path);
         return this.commitEmptyObservation_abyssPrivate(observation);
       }
@@ -1230,14 +1230,10 @@ export class TaskIndex
     return frontmatter === undefined ? selected : { ...selected, frontmatter };
   }
 
-  private sourceIsExcluded_abyssPrivate(
-    filePath: string,
-    content: string,
-    cache: CachedMetadata,
-  ): boolean {
+  private sourceIsExcluded_abyssPrivate(filePath: string, content: string): boolean {
     const exclude = this.excludeSource_abyssPrivate;
     if (exclude === undefined) return false;
-    const frontmatter = cache.frontmatter ?? {};
+    const frontmatter = frontmatterFromContent(content) ?? {};
     const frontmatterTags = getAllTags({ frontmatter }) ?? [];
     return exclude({
       filePath,
@@ -1427,7 +1423,7 @@ export class TaskIndex
         },
         observedFile: this.fileGenerations_abyssPrivate.has(filePath),
       });
-      const tasks = this.sourceIsExcluded_abyssPrivate(filePath, content, cache) ? [] : rawTasks;
+      const tasks = this.sourceIsExcluded_abyssPrivate(filePath, content) ? [] : rawTasks;
       roots.push(...tasks);
       return () => {
         this.committedContents_abyssPrivate.set(filePath, content);
@@ -1583,7 +1579,7 @@ export class TaskIndex
   ): void {
     if (this.options_abyssPrivate.refAuthority?.deferObservation(path, data) === true) return;
     const selectedCache = this.cacheWithFrontmatter_abyssPrivate(data, cache);
-    if (this.sourceIsExcluded_abyssPrivate(path, data, selectedCache)) {
+    if (this.sourceIsExcluded_abyssPrivate(path, data)) {
       this.options_abyssPrivate.refAuthority?.discard(path);
       const changed = this.replaceFile_abyssPrivate(path, [], [], true);
       if (changed) this.queueChanged_abyssPrivate(path);

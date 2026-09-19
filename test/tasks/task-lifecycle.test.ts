@@ -1968,6 +1968,95 @@ describe('ObsidianTaskDestinationProvider', () => {
 });
 
 describe('configured destination end-to-end lifecycle', () => {
+  const inboxCaptureCases = (['tag', 'untagged', 'both'] as const).flatMap((mode) =>
+    [true, false].flatMap((removeTagOnAssign) =>
+      [
+        { authored: 'plain prose', body: 'Captured', authoredTags: [] as const },
+        { authored: 'same Inbox tag', body: 'Captured #inbox', authoredTags: ['#inbox'] as const },
+        {
+          authored: 'other tag beside inline code',
+          body: 'Captured `#code` #work',
+          authoredTags: ['#work'] as const,
+        },
+      ].map(({ authored, body, authoredTags }) => ({
+        name: `${mode}, remove=${String(removeTagOnAssign)}, ${authored}`,
+        mode,
+        removeTagOnAssign,
+        body,
+        expectedTags:
+          mode !== 'untagged' && (!body.includes('#work') || !removeTagOnAssign)
+            ? ([...authoredTags, '#inbox'] as const)
+            : authoredTags,
+      })),
+    ),
+  );
+
+  it.each(inboxCaptureCases)(
+    'applies the explicit Inbox contract for $name',
+    async ({ mode, removeTagOnAssign, body, expectedTags }) => {
+      const inboxPath = 'tasks/active.md';
+      const app = await createAppWithFiles({ [inboxPath]: '' });
+      const settings: CalendarSettings = {
+        ...structuredClone(DEFAULT_SETTINGS),
+        taskFilePath: inboxPath,
+        taskPrefix: 'Prefix #task',
+        inbox: { mode, tag: '#inbox', removeTagOnAssign },
+        taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+      };
+      const application = applicationFor(app, settings);
+      const resolver = new CaptureTargetResolver(application, settings, () =>
+        localDate('2026-07-14'),
+      );
+
+      const target = await resolver.resolve({ type: 'list', selection: 'inbox' });
+      const result = await target.session.execute({
+        markdownBody: commandBodyForCapture(target, body),
+        ...(target.initial === undefined ? {} : { initial: target.initial }),
+      });
+
+      expect(result).toMatchObject({ type: 'ok' });
+      const expectedSuffix = expectedTags
+        .filter((tag) => !body.includes(tag))
+        .map((tag) => ` ${tag}`)
+        .join('');
+      expect(await app.vault.cachedRead(fileAt(app, inboxPath))).toBe(
+        `- [ ] ${body}${expectedSuffix}`,
+      );
+    },
+  );
+
+  it('freezes explicit Inbox intent and Inbox settings across retained-session executions', async () => {
+    const inboxPath = 'tasks/active.md';
+    const app = await createAppWithFiles({ [inboxPath]: '' });
+    const settings: CalendarSettings = {
+      ...structuredClone(DEFAULT_SETTINGS),
+      taskFilePath: inboxPath,
+      taskPrefix: 'Frozen prefix #task',
+      inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: false },
+      taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+    };
+    const application = applicationFor(app, settings);
+    const resolver = new CaptureTargetResolver(application, settings, () =>
+      localDate('2026-07-14'),
+    );
+    const target = await resolver.resolve({ type: 'list', selection: 'inbox' });
+
+    settings.taskPrefix = 'Changed prefix #changed';
+    settings.inbox = { mode: 'tag', tag: '#changed-inbox', removeTagOnAssign: true };
+    await target.session.execute({
+      markdownBody: 'first',
+      ...(target.initial === undefined ? {} : { initial: target.initial }),
+    });
+    await target.session.execute({
+      markdownBody: 'second #work',
+      ...(target.initial === undefined ? {} : { initial: target.initial }),
+    });
+
+    expect(await app.vault.cachedRead(fileAt(app, inboxPath))).toBe(
+      '- [ ] first #inbox\n- [ ] second #work #inbox',
+    );
+  });
+
   it('keeps Q capture on the real project section when a fenced example repeats its heading', async () => {
     const projectPath = 'projects/Abyss Tasks.md';
     const inboxPath = 'tasks/active.md';

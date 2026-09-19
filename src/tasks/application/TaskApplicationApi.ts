@@ -99,6 +99,10 @@ interface TaskCreateRequest {
   readonly initial?: CreateTaskCommandInitial;
 }
 
+export interface TaskCreatePlanOptions {
+  readonly intent?: 'inbox';
+}
+
 export type TaskCreateSession =
   | {
       readonly type: 'ready';
@@ -111,5 +115,8 @@ export type TaskCreateSession =
     };
 
 export interface TaskCaptureApplicationApi {
-  planCreate(destination: CreateTaskCommandDestination): Promise<TaskCreateSession>;
+  planCreate(
+    destination: CreateTaskCommandDestination,
+    options?: TaskCreatePlanOptions,
+  ): Promise<TaskCreateSession>;
 }

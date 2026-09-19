@@ -10,6 +10,8 @@ import type { ShortcutActionId } from '../settings/shortcuts';
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TagManager } from '../tags/TagManager';
+import { prefixForDiscoveredGroupId, resolveEffectiveTagGroups } from '../tags/effectiveTagGroups';
+import { collectTaskNodeTags } from '../tags/taskTagCatalog';
 import type {
   CommentTimeContextProvider,
   TaskApplicationApi,
@@ -32,7 +34,7 @@ import {
   type CaptureContext,
 } from '../ui/taskCapture/CaptureTargetResolver';
 import { QuickCaptureCoordinator } from '../ui/taskCapture/QuickCaptureCoordinator';
-import { presentTaskCommandResult } from '../ui/taskCommandResult';
+import { presentTaskCommandResult, type CreationResultDescription } from '../ui/taskCommandResult';
 import {
   rebuildTaskSelection,
   renamedRootSelection,
@@ -313,7 +315,10 @@ export class PanelView extends ItemView {
   private createSelectionTasks_abyssPrivate(): TaskApplicationApi & TaskCaptureApplicationApi {
     return {
       queries: this.tasks_abyssPrivate.queries,
-      planCreate: (destination) => this.tasks_abyssPrivate.planCreate(destination),
+      planCreate: (destination, options) =>
+        options === undefined
+          ? this.tasks_abyssPrivate.planCreate(destination)
+          : this.tasks_abyssPrivate.planCreate(destination, options),
       ...(this.tasks_abyssPrivate.planArchive === undefined
         ? {}
         : {
@@ -436,7 +441,9 @@ export class PanelView extends ItemView {
       selectionTasks,
       this.commentTimeContext_abyssPrivate,
       selectionTasks,
-      (result, description) => this.creationPresentation_abyssPrivate?.present(result, description),
+      (result, description) => {
+        this.presentCreationResult_abyssPrivate(result, description);
+      },
       (root) => this.creationPresentation_abyssPrivate?.afterRender(root),
       this.interactionRegistry_abyssPrivate,
       this.panelNavigation_abyssPrivate,
@@ -598,7 +605,7 @@ export class PanelView extends ItemView {
       resolveTarget: (context) => captureTargets.resolve(context),
       interactionOwnership: interactionRegistry,
       onResult: (result, description) => {
-        this.creationPresentation_abyssPrivate?.present(result, description);
+        this.presentCreationResult_abyssPrivate(result, description);
         const pendingPane = this.pendingCompactPane_abyssPrivate;
         this.pendingCompactPane_abyssPrivate = undefined;
         if (description.kind === 'success' && pendingPane != null) {
@@ -618,6 +625,20 @@ export class PanelView extends ItemView {
     });
   }
 
+  private presentCreationResult_abyssPrivate(
+    result: TaskCommandResult,
+    description: CreationResultDescription,
+  ): void {
+    if (result.type === 'ok' && result.outcome.type === 'task') {
+      const resolution = this.queries_abyssPrivate.resolve(result.outcome.task.ref);
+      if (resolution.type === 'exact' || resolution.type === 'rebased') {
+        const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+        this.state_abyssPrivate.set('taskStack', [current]);
+      }
+    }
+    this.creationPresentation_abyssPrivate?.present(result, description);
+  }
+
   private subscribeToState_abyssPrivate(layout: HTMLElement): void {
     this.modeUnsub_abyssPrivate = this.state_abyssPrivate.on('mode', (mode) => {
       layout.className = `abyss-layout abyss-layout--${mode}`;
@@ -634,6 +655,25 @@ export class PanelView extends ItemView {
     this.selectionUnsub_abyssPrivate = this.state_abyssPrivate.on('taskStack', (stack) => {
       this.handleTaskStackChange_abyssPrivate(stack);
     });
+  }
+
+  private rebaseRetiredDiscoveredPrefix_abyssPrivate(): void {
+    const selected = this.state_abyssPrivate.get('selectedList');
+    if (
+      typeof selected !== 'object' ||
+      selected.type !== 'group' ||
+      this.settings_abyssPrivate.tagGroups.some((group) => group.id === selected.groupId)
+    ) {
+      return;
+    }
+    const prefix = prefixForDiscoveredGroupId(selected.groupId);
+    if (prefix === undefined) return;
+    const observedTags = collectTaskNodeTags(this.tasks_abyssPrivate.queries.listNodes());
+    const groups = resolveEffectiveTagGroups(this.settings_abyssPrivate, observedTags);
+    if (groups.some((group) => group.id === selected.groupId)) return;
+    const rootTag = `#${prefix}`;
+    if (!observedTags.includes(rootTag)) return;
+    this.panelNavigation_abyssPrivate.rebaseListIdentity({ type: 'tag', tag: rootTag });
   }
 
   private handleTaskStackChange_abyssPrivate(stack: readonly TaskSelectionNode[]): void {
@@ -668,6 +708,7 @@ export class PanelView extends ItemView {
 
   private subscribeToQueries_abyssPrivate(): void {
     this.queryUnsub_abyssPrivate = this.queries_abyssPrivate.subscribe((event) => {
+      this.rebaseRetiredDiscoveredPrefix_abyssPrivate();
       this.left_abyssPrivate.refresh();
       if (this.state_abyssPrivate.get('mode') !== 'calendar') this.center_abyssPrivate.refresh();
       const stack = this.state_abyssPrivate.get('taskStack');

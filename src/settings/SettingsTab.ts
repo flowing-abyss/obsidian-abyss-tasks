@@ -457,7 +457,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       const taggedPrefixInUntaggedInbox =
         this.plugin_abyssPrivate.settings.inbox.mode === 'untagged' &&
         extractMarkdownBodyTags(this.plugin_abyssPrivate.settings.taskPrefix).length > 0;
-      return `Prepended when adding a new task (e.g. #Task/one-off).${taggedPrefixInUntaggedInbox ? ' Tagged new tasks do not appear in an untagged inbox.' : ''}`;
+      return `Prepended when adding a new task (e.g. #Task/one-off). Tasks added from Inbox skip this prefix.${taggedPrefixInUntaggedInbox ? ' Tasks created elsewhere with this prefix do not appear in an untagged inbox.' : ''}`;
     };
     const taskPrefixSetting = new Setting(containerEl)
       .setName('Task prefix')
@@ -651,7 +651,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .addOptions({
             append: 'End of file',
             prepend: 'Start of file',
-            section: 'Under section heading',
+            section: 'In section',
           })
           .setValue(this.plugin_abyssPrivate.settings.taskInsertionMode)
           .onChange(async (value) => {
@@ -871,7 +871,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private renderInboxSettings_abyssPrivate(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName('Inbox source')
-      .setDesc('What appears in your inbox list.')
+      .setDesc('What appears in your inbox list. Tasks added from inbox follow this rule.')
       .addDropdown((d) =>
         d
           .addOptions({
@@ -881,7 +881,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
           })
           .setValue(this.plugin_abyssPrivate.settings.inbox.mode)
           .onChange(async (v) => {
-            this.plugin_abyssPrivate.settings.inbox.mode = v as 'tag' | 'untagged' | 'both';
+            const mode = v as 'tag' | 'untagged' | 'both';
+            this.plugin_abyssPrivate.settings.inbox.mode = mode;
+            if (mode !== 'untagged') {
+              const tags = normalizeTaskTagInput(this.plugin_abyssPrivate.settings.inbox.tag);
+              this.plugin_abyssPrivate.settings.inbox.tag =
+                tags?.length === 1 ? (tags[0] ?? '#inbox') : '#inbox';
+            }
             await this.plugin_abyssPrivate.saveSettings();
             this.render_abyssPrivate();
           }),
@@ -911,19 +917,18 @@ export class CalendarSettingsTab extends PluginSettingTab {
             await this.plugin_abyssPrivate.saveSettings();
           });
       });
+      new Setting(containerEl)
+        .setName('Remove inbox tag when assigning another tag')
+        .setDesc('When another tag is assigned, the inbox tag is removed automatically.')
+        .addToggle((t) =>
+          t
+            .setValue(this.plugin_abyssPrivate.settings.inbox.removeTagOnAssign)
+            .onChange(async (v) => {
+              this.plugin_abyssPrivate.settings.inbox.removeTagOnAssign = v;
+              await this.plugin_abyssPrivate.saveSettings();
+            }),
+        );
     }
-
-    new Setting(containerEl)
-      .setName('Remove inbox tag when assigning another tag')
-      .setDesc('When another tag is assigned, the inbox tag is removed automatically.')
-      .addToggle((t) =>
-        t
-          .setValue(this.plugin_abyssPrivate.settings.inbox.removeTagOnAssign)
-          .onChange(async (v) => {
-            this.plugin_abyssPrivate.settings.inbox.removeTagOnAssign = v;
-            await this.plugin_abyssPrivate.saveSettings();
-          }),
-      );
   }
 
   private renderTagGroupSettings_abyssPrivate(containerEl: HTMLElement): void {
@@ -1329,7 +1334,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .addOptions({
             append: 'End of note',
             prepend: 'Start of note',
-            section: 'Under section heading',
+            section: 'In section',
           })
           .setValue(projects.taskInsertionMode)
           .onChange(async (v) => {

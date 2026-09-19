@@ -15,6 +15,7 @@ import {
   CaptureTargetResolver,
   commandBodyForCapture,
   type CaptureContext,
+  type CaptureTarget,
 } from '../src/ui/taskCapture/CaptureTargetResolver';
 import { expectDefined, methodOf } from './helpers';
 
@@ -76,6 +77,7 @@ interface Scenario {
   readonly tags?: readonly string[];
   readonly destination?: TaskDestination;
   readonly unavailable?: boolean;
+  readonly intent?: 'inbox';
 }
 
 const scenarios: readonly Scenario[] = [
@@ -84,6 +86,7 @@ const scenarios: readonly Scenario[] = [
     context: { type: 'list', selection: 'inbox' },
     label: 'Inbox · #task/inbox',
     tags: ['#task/inbox'],
+    intent: 'inbox',
   },
   {
     name: 'normalized-inbox-tag',
@@ -91,12 +94,14 @@ const scenarios: readonly Scenario[] = [
     settings: { inbox: { mode: 'tag', tag: '##work', removeTagOnAssign: true } },
     label: 'Inbox · #work',
     tags: ['#work'],
+    intent: 'inbox',
   },
   {
     name: 'inbox-untagged',
     context: { type: 'list', selection: 'inbox' },
     settings: { inbox: { mode: 'untagged', tag: '#ignored', removeTagOnAssign: true } },
     label: 'Inbox · untagged',
+    intent: 'inbox',
   },
   {
     name: 'today',
@@ -179,6 +184,43 @@ const scenarios: readonly Scenario[] = [
   },
 ];
 
+function expectScenarioInitial(target: CaptureTarget, scenario: Scenario): void {
+  if (scenario.due === undefined && scenario.tags === undefined) {
+    expect(target.initial).toBeUndefined();
+    return;
+  }
+  expect(target.initial).toEqual({
+    ...(scenario.due === undefined ? {} : { due: { type: 'set', value: localDate(scenario.due) } }),
+    ...(scenario.tags === undefined ? {} : { tags: { add: scenario.tags } }),
+  });
+}
+
+async function expectScenarioPlan(
+  target: CaptureTarget,
+  captureApplication: ReturnType<typeof application>,
+  scenario: Scenario,
+): Promise<void> {
+  if (scenario.unavailable === true) {
+    expect(target.session.type).toBe('unavailable');
+    expect(methodOf(captureApplication, 'planCreate')).not.toHaveBeenCalled();
+    await expect(target.session.execute({ markdownBody: 'draft' })).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'destination-unavailable', field: 'destination' }],
+    });
+    return;
+  }
+  expect(target.session).toMatchObject({
+    type: 'ready',
+    destination: scenario.destination ?? configuredDestination,
+  });
+  expect(methodOf(captureApplication, 'planCreate')).toHaveBeenCalledWith(
+    scenario.destination != null
+      ? { type: 'explicit', destination: scenario.destination }
+      : { type: 'configured-default' },
+    ...(scenario.intent === undefined ? [] : [{ intent: scenario.intent }]),
+  );
+}
+
 describe('CaptureTargetResolver', () => {
   it.each(scenarios)('resolves the frozen $name target', async (scenario) => {
     const captureApplication = application();
@@ -196,35 +238,28 @@ describe('CaptureTargetResolver', () => {
       markdownPrefix: scenario.prefix ?? '',
       markdownSuffixes: scenario.suffixes ?? [],
     });
-    if (scenario.due !== undefined || scenario.tags !== undefined) {
-      expect(target.initial).toEqual({
-        ...(scenario.due === undefined
-          ? {}
-          : { due: { type: 'set', value: localDate(scenario.due) } }),
-        ...(scenario.tags === undefined ? {} : { tags: { add: scenario.tags } }),
-      });
-    } else {
-      expect(target.initial).toBeUndefined();
-    }
-    if (scenario.unavailable === true) {
-      expect(target.session.type).toBe('unavailable');
-      expect(methodOf(captureApplication, 'planCreate')).not.toHaveBeenCalled();
-      await expect(target.session.execute({ markdownBody: 'draft' })).resolves.toEqual({
-        type: 'invalid',
-        issues: [{ code: 'destination-unavailable', field: 'destination' }],
-      });
-      return;
-    }
-    expect(target.session).toMatchObject({
-      type: 'ready',
-      destination: scenario.destination ?? configuredDestination,
-    });
-    expect(methodOf(captureApplication, 'planCreate')).toHaveBeenCalledWith(
-      scenario.destination != null
-        ? { type: 'explicit', destination: scenario.destination }
-        : { type: 'configured-default' },
-    );
+    expectScenarioInitial(target, scenario);
+    await expectScenarioPlan(target, captureApplication, scenario);
   });
+
+  it.each(['tag', 'both'] as const)(
+    'keeps a malformed loaded %s Inbox unavailable instead of silently capturing as untagged',
+    async (mode) => {
+      const captureApplication = application();
+      const resolver = new CaptureTargetResolver(
+        captureApplication,
+        settings({ inbox: { mode, tag: 'not a valid tag', removeTagOnAssign: true } }),
+      );
+
+      const target = await resolver.resolve({ type: 'list', selection: 'inbox' });
+
+      expect(target).toMatchObject({
+        label: 'Inbox · unavailable',
+        session: { type: 'unavailable' },
+      });
+      expect(methodOf(captureApplication, 'planCreate')).not.toHaveBeenCalled();
+    },
+  );
 
   it('keeps context, markdown transforms, date, and session destination frozen', async () => {
     const captureApplication = application();

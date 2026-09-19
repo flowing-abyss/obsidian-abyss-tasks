@@ -4,6 +4,8 @@ import { type AppState, type ListSelection } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
+import { discoveredPrefixGroupId, resolveEffectiveTagGroups } from '../src/tags/effectiveTagGroups';
+import { collectTaskNodeTags } from '../src/tags/taskTagCatalog';
 import type {
   TaskApplicationApi,
   TaskCaptureApplicationApi,
@@ -19,6 +21,7 @@ import type { InteractionRegistry } from '../src/ui/interactionOwnership';
 import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
 import type { QuickCaptureCoordinator } from '../src/ui/taskCapture/QuickCaptureCoordinator';
 import { requestTaskCompletion } from '../src/ui/taskCommandResult';
+import { renderedTaskNodeElements, taskPresentationKey } from '../src/ui/taskPresentationIdentity';
 import { taskNodeLine, type TaskSelectionNode } from '../src/ui/taskSelection';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
@@ -1172,45 +1175,159 @@ describe('PanelView', () => {
       );
     });
 
-    it('routes Center creation results to the stable host without a Notice', async () => {
-      const created = task({ source: { filePath: 'capture.md', line: 0 } });
-      const result: TaskCommandResult = {
-        type: 'ok',
-        changed: true,
-        outcome: { type: 'task', task: created },
+    it.each([
+      { name: 'Inbox', selection: 'inbox' as const, suffix: '' },
+      {
+        name: 'Today',
+        selection: 'today' as const,
+        dated: true,
+      },
+    ])(
+      'selects a $name task created from Center and routes feedback without a Notice',
+      async (scenario) => {
+        const { selection } = scenario;
+        const suffix = 'dated' in scenario ? ` 📅 ${window.moment().format('YYYY-MM-DD')}` : '';
+        const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+        state.set('selectedList', selection);
+        let created: ReturnType<typeof task> | undefined;
+        const sessionExecute = vi.fn(async () => {
+          created = expectDefined(
+            taskApplication.index.installCommittedContent(
+              'capture.md',
+              `- [ ] Captured${suffix}\n`,
+            )[0],
+          );
+          return {
+            type: 'ok',
+            changed: true,
+            outcome: { type: 'task', task: created },
+          } satisfies TaskCommandResult;
+        });
+        const captureApplication = taskApplication.tasks as TaskApplicationApi &
+          TaskCaptureApplicationApi;
+        const planCreate = vi.spyOn(captureApplication, 'planCreate').mockResolvedValue({
+          type: 'ready',
+          destination: { filePath: 'capture.md', insertion: { type: 'append' } },
+          execute: sessionExecute,
+        });
+        const notice = vi.spyOn(
+          Notice.prototype as unknown as {
+            constructor__(message: string | DocumentFragment, duration?: number): void;
+          },
+          'constructor__',
+        );
+        view.contentEl.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
+        await flushMicrotasks();
+        const input = expectDefined(
+          view.contentEl.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+        );
+        input.value = 'captured task';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+        );
+        await flushMicrotasks();
+
+        expect(planCreate).toHaveBeenCalledOnce();
+        expect(sessionExecute).toHaveBeenCalledOnce();
+        expect(view.contentEl.querySelector('.abyss-creation-feedback')?.textContent).toBe(
+          'Task added to capture.md',
+        );
+        expect(state.get('taskStack')).toEqual([created]);
+        expect(
+          view.contentEl.querySelector<HTMLElement>('.abyss-task-card.is-selected')?.dataset[
+            'abyssTaskRefKey'
+          ],
+        ).toBe(created == null ? undefined : taskPresentationKey(created.ref));
+        expect(notice).not.toHaveBeenCalled();
+      },
+    );
+
+    it('keeps a captured calendar task selected after a later calendar patch', async () => {
+      document.body.appendChild(view.containerEl);
+      workspaceState(app).activeLeaf = leaf;
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        quickCapture_abyssPrivate: QuickCaptureCoordinator;
+        creationPresentation_abyssPrivate: CreationPresentationController;
       };
-      const sessionExecute = vi.fn(async () => result);
-      const captureApplication = taskApplication.tasks as TaskApplicationApi &
-        TaskCaptureApplicationApi;
-      const planCreate = vi.spyOn(captureApplication, 'planCreate').mockResolvedValue({
-        type: 'ready',
-        destination: { filePath: 'capture.md', insertion: { type: 'append' } },
-        execute: sessionExecute,
+      (
+        internals.creationPresentation_abyssPrivate as unknown as {
+          options: { reducedMotion: () => boolean };
+        }
+      ).options.reducedMotion = () => false;
+      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+        configurable: true,
+        value: vi.fn(),
       });
-      const notice = vi.spyOn(
-        Notice.prototype as unknown as {
-          constructor__(message: string | DocumentFragment, duration?: number): void;
-        },
-        'constructor__',
+      const today = window.moment().format('YYYY-MM-DD');
+      const previous = expectDefined(
+        taskApplication.index.installCommittedContent(
+          'capture.md',
+          `- [ ] Previous 📅 ${today}\n`,
+        )[0],
       );
-      view.contentEl.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
       await flushMicrotasks();
+      internals.state_abyssPrivate.set('taskStack', [previous]);
+      internals.state_abyssPrivate.set('mode', 'calendar');
+      let created: ReturnType<typeof task> | undefined;
+      const execute = vi.fn(async () => {
+        created = expectDefined(
+          taskApplication.index
+            .installCommittedContent(
+              'capture.md',
+              `- [ ] Previous 📅 ${today}\n- [ ] Captured 📅 ${today}\n`,
+            )
+            .find((candidate) => candidate.title === 'Captured'),
+        );
+        return {
+          type: 'ok',
+          changed: true,
+          outcome: { type: 'task', task: created },
+        } satisfies TaskCommandResult;
+      });
+      const options = (
+        internals.quickCapture_abyssPrivate as unknown as {
+          options: { resolveTarget: () => Promise<CaptureTarget> };
+        }
+      ).options;
+      options.resolveTarget = async () => panelCaptureTarget(execute);
+
+      internals.quickCapture_abyssPrivate.openOrFocus();
+      await flushMicrotasks(0);
       const input = expectDefined(
         view.contentEl.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
       );
-      input.value = 'captured task';
+      input.value = 'Captured';
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
       );
       await flushMicrotasks();
 
-      expect(planCreate).toHaveBeenCalledOnce();
-      expect(sessionExecute).toHaveBeenCalledOnce();
-      expect(view.contentEl.querySelector('.abyss-creation-feedback')?.textContent).toBe(
-        'Task added to capture.md',
+      expect(internals.state_abyssPrivate.get('taskStack')).toEqual([created]);
+      const selectedBeforePatch = expectDefined(
+        view.contentEl.querySelector<HTMLElement>('.abyss-calendar-item.is-selected'),
       );
-      expect(notice).not.toHaveBeenCalled();
+      expect(view.contentEl.querySelectorAll('.abyss-calendar-item.is-selected')).toHaveLength(1);
+      expect(
+        created == null
+          ? []
+          : renderedTaskNodeElements(view.contentEl, { type: 'task', ref: created.ref }),
+      ).toContain(selectedBeforePatch);
+
+      emitQueryEvent(taskApplication.index, { type: 'changed', files: ['capture.md'] });
+
+      const selectedAfterPatch = expectDefined(
+        view.contentEl.querySelector<HTMLElement>('.abyss-calendar-item.is-selected'),
+      );
+      expect(view.contentEl.querySelectorAll('.abyss-calendar-item.is-selected')).toHaveLength(1);
+      expect(
+        created == null
+          ? []
+          : renderedTaskNodeElements(view.contentEl, { type: 'task', ref: created.ref }),
+      ).toContain(selectedAfterPatch);
+      expect(document.activeElement).toBe(input);
     });
 
     it('destroys creation presentation ownership on close', async () => {
@@ -1403,6 +1520,74 @@ describe('PanelView', () => {
       await tagManager.renameTagPrefix('#work', '#focus');
 
       expect(state.get('selectedList')).toBe(selection);
+    });
+
+    it('rebases a retired collision-suffixed discovered prefix to its surviving exact tag', async () => {
+      settings.tagGroups.push({
+        id: discoveredPrefixGroupId('work'),
+        name: 'Configured focus',
+        mode: 'prefix',
+        prefix: 'focus',
+      });
+      view.refreshProjectSettings();
+      taskApplication.index.installCommittedContent(
+        'tasks.md',
+        '- [ ] Root #work\n- [ ] Descendant #work/client\n',
+      );
+      await flushMicrotasks();
+      const discovered = expectDefined(
+        resolveEffectiveTagGroups(
+          settings,
+          collectTaskNodeTags(taskApplication.index.listNodes()),
+        ).find(
+          (group) =>
+            group.origin === 'discovered' && group.mode === 'prefix' && group.prefix === 'work',
+        ),
+      );
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        panelNavigation_abyssPrivate: PanelNavigator;
+      };
+      expect(discovered.id).not.toBe(discoveredPrefixGroupId('work'));
+      internals.panelNavigation_abyssPrivate.openList({
+        type: 'group',
+        groupId: discovered.id,
+      });
+
+      taskApplication.index.installCommittedContent('tasks.md', '- [ ] Root #work\n');
+      await flushMicrotasks();
+
+      expect(internals.state_abyssPrivate.get('selectedList')).toEqual({
+        type: 'tag',
+        tag: '#work',
+      });
+      expect(internals.state_abyssPrivate.get('mode')).toBe('tasks');
+    });
+
+    it('does not retire a configured prefix group when its last descendant disappears', async () => {
+      settings.tagGroups.push({
+        id: 'configured-work',
+        name: 'Work',
+        mode: 'prefix',
+        prefix: 'work',
+      });
+      view.refreshProjectSettings();
+      taskApplication.index.installCommittedContent(
+        'tasks.md',
+        '- [ ] Root #work\n- [ ] Descendant #work/client\n',
+      );
+      await flushMicrotasks();
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        panelNavigation_abyssPrivate: PanelNavigator;
+      };
+      const selection = { type: 'group', groupId: 'configured-work' } as const;
+      internals.panelNavigation_abyssPrivate.openList(selection);
+
+      taskApplication.index.installCommittedContent('tasks.md', '- [ ] Root #work\n');
+      await flushMicrotasks();
+
+      expect(internals.state_abyssPrivate.get('selectedList')).toEqual(selection);
     });
 
     it('detaches the selected-list rename boundary when the panel closes', async () => {
@@ -1642,6 +1827,70 @@ describe('PanelView', () => {
 
       expect(open.defaultPrevented).toBe(true);
       expect(planCreate).toHaveBeenCalledExactlyOnceWith({ type: 'configured-default' });
+    });
+
+    it('selects a project task created by Q and preserves capture input focus', async () => {
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        quickCapture_abyssPrivate: QuickCaptureCoordinator;
+      };
+      internals.state_abyssPrivate.set('projectsPanel', {
+        view: 'dashboard',
+        path: 'Projects/B.md',
+      });
+      let created: ReturnType<typeof task> | undefined;
+      const execute = vi.fn(async () => {
+        created = expectDefined(
+          taskApplication.index
+            .installCommittedContent(
+              'Projects/B.md',
+              [
+                '---',
+                'status: planned',
+                'start: 2026-09-02',
+                '---',
+                '',
+                '## Project tasks',
+                '- [ ] Captured project task',
+                '',
+              ].join('\n'),
+            )
+            .find((candidate) => candidate.title === 'Captured project task'),
+        );
+        return {
+          type: 'ok',
+          changed: true,
+          outcome: { type: 'task', task: created },
+        } satisfies TaskCommandResult;
+      });
+      const options = (
+        internals.quickCapture_abyssPrivate as unknown as {
+          options: { resolveTarget: () => Promise<CaptureTarget> };
+        }
+      ).options;
+      options.resolveTarget = async () => panelCaptureTarget(execute);
+
+      internals.quickCapture_abyssPrivate.openOrFocus();
+      await flushMicrotasks(0);
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+      );
+      input.value = 'Captured project task';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+
+      expect(internals.state_abyssPrivate.get('taskStack')).toEqual([created]);
+      const selected = expectDefined(
+        view.contentEl.querySelector<HTMLElement>('.abyss-task-card.is-selected'),
+      );
+      expect(view.contentEl.querySelectorAll('.abyss-task-card.is-selected')).toHaveLength(1);
+      expect(selected.dataset['abyssTaskRefKey']).toBe(
+        created == null ? undefined : taskPresentationKey(created.ref),
+      );
+      expect(document.activeElement).toBe(input);
     });
 
     it('leaves Q in a project cell editor instead of opening Quick Capture', () => {

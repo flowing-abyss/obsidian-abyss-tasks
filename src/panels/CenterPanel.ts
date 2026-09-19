@@ -1471,6 +1471,7 @@ export class CenterPanel {
   ): void {
     context.projectionDiagnosticOwner.update(context.viewContainer, issues);
     this.remountActiveCapture_abyssPrivate();
+    this.updateTaskStackSelection_abyssPrivate();
     this.onRenderComplete_abyssPrivate(context.viewContainer);
     this.deferTimedBlockFocus_abyssPrivate(context.viewContainer, renderGeneration);
   }

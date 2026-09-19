@@ -948,14 +948,16 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     expect(plugin.settings.taskPrefix).toBe('#todo');
   });
 
-  it('explains that a tagged prefix keeps new tasks out of an untagged inbox', () => {
+  it('explains that a tagged prefix keeps tasks created elsewhere out of an untagged inbox', () => {
     const { tab } = makeTab({
       taskPrefix: 'Plan #work',
       inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
     });
     const body = openSection(tab, 0);
 
-    expect(body.textContent).toContain('Tagged new tasks do not appear in an untagged inbox.');
+    expect(body.textContent).toContain(
+      'Tasks created elsewhere with this prefix do not appear in an untagged inbox.',
+    );
   });
 
   it('refreshes the task-prefix explanation after adding and removing the last tag', async () => {
@@ -968,16 +970,22 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     const input = expectDefined(findInput(body, 'Task prefix'));
     const component = expectDefined(findComp(captured, 'Task prefix', 'text')).comp;
     input.focus();
-    expect(body.textContent).not.toContain('Tagged new tasks do not appear in an untagged inbox.');
+    expect(body.textContent).not.toContain(
+      'Tasks created elsewhere with this prefix do not appear in an untagged inbox.',
+    );
 
     component.setValue('#work');
     await flushMicrotasks();
-    expect(body.textContent).toContain('Tagged new tasks do not appear in an untagged inbox.');
+    expect(body.textContent).toContain(
+      'Tasks created elsewhere with this prefix do not appear in an untagged inbox.',
+    );
     expect(activeDocument.activeElement).toBe(input);
 
     component.setValue('plain text');
     await flushMicrotasks();
-    expect(body.textContent).not.toContain('Tagged new tasks do not appear in an untagged inbox.');
+    expect(body.textContent).not.toContain(
+      'Tasks created elsewhere with this prefix do not appear in an untagged inbox.',
+    );
     expect(activeDocument.activeElement).toBe(input);
   });
 
@@ -999,7 +1007,9 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     pending.resolve();
     await flushMicrotasks();
 
-    expect(body.textContent).toContain('Tagged new tasks do not appear in an untagged inbox.');
+    expect(body.textContent).toContain(
+      'Tasks created elsewhere with this prefix do not appear in an untagged inbox.',
+    );
     expect(activeDocument.activeElement).toBe(other);
     other.remove();
   });
@@ -1380,14 +1390,43 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     expect(options).toContain('untagged');
   });
 
-  it('inbox source switch to tag saves and re-renders', () => {
+  it('inbox source switch to tag atomically initializes the tag and re-renders dependent rows', async () => {
     const { tab, plugin, captured } = makeTab({
       inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
     });
     openSection(tab, 3);
+    expect(tab.containerEl.textContent).not.toContain(
+      'Remove inbox tag when assigning another tag',
+    );
+
     expectDefined(findComp(captured, 'Inbox source', 'dropdown')).comp.setValue('tag');
-    expect(plugin.saveSettings).toHaveBeenCalled();
+    await flushMicrotasks();
+
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
     expect(plugin.settings.inbox.mode).toBe('tag');
+    expect(plugin.settings.inbox.tag).toBe('#inbox');
+    expect(tab.containerEl.textContent).toContain('Inbox tag');
+    expect(tab.containerEl.textContent).toContain('Remove inbox tag when assigning another tag');
+  });
+
+  it('retains a valid saved Inbox tag and hidden removal preference when enabling both sources', async () => {
+    const { tab, plugin, captured } = makeTab({
+      inbox: { mode: 'untagged', tag: '#saved/inbox', removeTagOnAssign: false },
+    });
+    openSection(tab, 3);
+    expect(tab.containerEl.textContent).not.toContain(
+      'Remove inbox tag when assigning another tag',
+    );
+
+    expectDefined(findComp(captured, 'Inbox source', 'dropdown')).comp.setValue('both');
+    await flushMicrotasks();
+
+    expect(plugin.settings.inbox).toEqual({
+      mode: 'both',
+      tag: '#saved/inbox',
+      removeTagOnAssign: false,
+    });
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
   });
 
   it('inbox tag field visible when inboxMode is tag', () => {
@@ -1401,12 +1440,18 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
   });
 
   it('inbox tag field hidden when inboxMode is untagged', () => {
-    const { tab } = makeTab({
-      inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
+    const { tab, plugin } = makeTab({
+      inbox: { mode: 'untagged', tag: '#saved', removeTagOnAssign: false },
     });
     const body = openSection(tab, 3);
     const input = findInput(body, 'Inbox tag');
     expect(input).toBeNull();
+    expect(findSettingEl(body, 'Remove inbox tag when assigning another tag')).toBeNull();
+    expect(plugin.settings.inbox).toEqual({
+      mode: 'untagged',
+      tag: '#saved',
+      removeTagOnAssign: false,
+    });
   });
 
   it('inbox tag change saves (trimmed)', () => {
@@ -1446,6 +1491,22 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
       findSettingEl(body, 'Remove inbox tag when assigning another tag'),
     );
     expect(setting.textContent).toContain('When another tag is assigned');
+  });
+
+  it('explains that Inbox capture skips the general task prefix', () => {
+    const { tab } = makeTab({
+      taskPrefix: '#task',
+      inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
+    });
+    const general = openSection(tab, 0);
+    const inbox = openSection(tab, 3);
+
+    expect(expectDefined(findSettingEl(general, 'Task prefix')).textContent).toContain(
+      'Tasks added from Inbox skip this prefix.',
+    );
+    expect(expectDefined(findSettingEl(inbox, 'Inbox source')).textContent).toContain(
+      'Tasks added from inbox follow this rule.',
+    );
   });
 
   it('add group button appends new group with timestamp id', () => {

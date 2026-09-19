@@ -45,6 +45,16 @@ function unavailableSession(): TaskCreateSession {
   };
 }
 
+function unavailableTarget(context: CaptureContext, label: string): CaptureTarget {
+  return {
+    label,
+    context,
+    session: unavailableSession(),
+    markdownPrefix: '',
+    markdownSuffixes: [],
+  };
+}
+
 function cloneContext(context: CaptureContext): CaptureContext {
   if (context.type === 'project-dashboard' || context.type === 'project-table')
     return { ...context };
@@ -137,12 +147,18 @@ export class CaptureTargetResolver {
   private async inboxTarget(
     context: Extract<CaptureContext, { type: 'list' }>,
   ): Promise<CaptureTarget> {
-    const tag =
-      this.settings.inbox.mode === 'untagged' ? '' : normalizedTag(this.settings.inbox.tag);
+    const tagged = this.settings.inbox.mode !== 'untagged';
+    const tag = tagged ? normalizedTag(this.settings.inbox.tag) : '';
+    if (tagged && tag.length === 0) {
+      return unavailableTarget(context, 'Inbox · unavailable');
+    }
     return {
       label: tag.length > 0 ? `Inbox · ${tag}` : 'Inbox · untagged',
       context,
-      session: await this.application.planCreate({ type: 'configured-default' }),
+      session: await this.application.planCreate(
+        { type: 'configured-default' },
+        { intent: 'inbox' },
+      ),
       markdownPrefix: '',
       markdownSuffixes: [],
       ...(tag.length > 0 && { initial: { tags: { add: [tag] } } }),
@@ -191,13 +207,7 @@ export class CaptureTargetResolver {
     const groupName = group?.name ?? 'Group';
     const tag = group === undefined ? undefined : effectiveGroupCaptureTag(group);
     if (tag === undefined || tag.length === 0) {
-      return {
-        label: `${groupName} · unavailable`,
-        context,
-        session: unavailableSession(),
-        markdownPrefix: '',
-        markdownSuffixes: [],
-      };
+      return unavailableTarget(context, `${groupName} · unavailable`);
     }
     return {
       label: `${groupName} · ${tag}`,

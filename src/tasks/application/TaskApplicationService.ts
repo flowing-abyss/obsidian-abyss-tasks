@@ -42,6 +42,7 @@ import type {
   TaskApplicationApi,
   TaskArchiveSession,
   TaskCaptureApplicationApi,
+  TaskCreatePlanOptions,
   TaskCreateSession,
   TaskDependencyQueryApi,
   TaskQueryApi,
@@ -506,8 +507,12 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     });
   }
 
-  async planCreate(destination: CreateTaskCommandDestination): Promise<TaskCreateSession> {
-    const settings = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
+  async planCreate(
+    destination: CreateTaskCommandDestination,
+    options?: TaskCreatePlanOptions,
+  ): Promise<TaskCreateSession> {
+    const snapshot = snapshotBehaviorSettings(this.behaviorSettings_abyssPrivate);
+    const settings = options?.intent === 'inbox' ? { ...snapshot, taskPrefix: '' } : snapshot;
     const reading = captureClock(this.clock_abyssPrivate);
     try {
       const plan = await this.destinationPlan_abyssPrivate(destination);
