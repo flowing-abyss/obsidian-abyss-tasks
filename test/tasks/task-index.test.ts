@@ -1246,6 +1246,24 @@ describe('TaskIndex lifecycle and events', () => {
     index.destroy();
   });
 
+  it('publishes a committed insertion after leaving a blockquote fence container', async () => {
+    const path = 'boundaries.md';
+    const original = '> ```md\n> example\n# Tasks\n- [ ] Old\n';
+    const committed = '> ```md\n> example\n# Tasks\n- [ ] New\n- [ ] Old\n';
+    const app = await createAppWithFiles({ [path]: original });
+    const index = new TaskIndex(app, {
+      statusCatalog: canonicalStatusCatalog(),
+      dailyNoteFormat: 'YYYY-MM-DD',
+    });
+    await index.initialize();
+
+    const installed = index.installCommittedContent(path, committed);
+
+    expect(installed.map((task) => task.title)).toEqual(['New', 'Old']);
+    expect(index.list().map((task) => task.title)).toEqual(['New', 'Old']);
+    index.destroy();
+  });
+
   it('keeps a delete that arrives during a blocked initial read', async () => {
     const { app, index } = await setup({ 'blocked.md': '- [ ] stale' });
     const read = blockRead(app, 'blocked.md', '- [ ] stale');
