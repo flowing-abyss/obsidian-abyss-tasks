@@ -9,7 +9,6 @@ import { RenameTagModal } from '../tags/RenameTagModal';
 import type { TagManager } from '../tags/TagManager';
 import {
   isTagNavigationArchived,
-  normalizeTagPrefix,
   prefixForDiscoveredGroupId,
   resolveEffectiveTagGroups,
   tagMatchesGroup,
@@ -897,10 +896,12 @@ export class LeftPanel {
   }
 
   private async archiveTagNavigation_abyssPrivate(tag: string): Promise<void> {
-    await this.archiveWithNotice_abyssPrivate(
+    const saved = await this.runTagSettingsAction_abyssPrivate(
       this.tagManager_abyssPrivate.archiveTag(tag),
-      'Tag archive',
+      'archive tag',
+      () => !this.settings_abyssPrivate.archivedTags.includes(tag),
     );
+    if (!saved) return;
     const selected = this.state_abyssPrivate.get('selectedList');
     if (typeof selected === 'object' && selected.type === 'tag' && selected.tag === tag) {
       this.navigation_abyssPrivate.openList('today');
@@ -908,26 +909,44 @@ export class LeftPanel {
   }
 
   private async archiveGroupNavigation_abyssPrivate(group: EffectiveTagGroup): Promise<void> {
-    await this.archiveWithNotice_abyssPrivate(
+    const saved = await this.runTagSettingsAction_abyssPrivate(
       this.tagManager_abyssPrivate.archiveGroup(group),
-      'Tag group archive',
+      'archive tag group',
+      () => !this.isEffectiveGroupArchived_abyssPrivate(group.id),
     );
+    if (!saved) return;
     const selected = this.state_abyssPrivate.get('selectedList');
     if (this.selectionMatchesGroup_abyssPrivate(selected, group)) {
       this.navigation_abyssPrivate.openList('today');
     }
   }
 
-  private async archiveWithNotice_abyssPrivate(
+  private async runTagSettingsAction_abyssPrivate(
     operation: Promise<void>,
-    label: string,
-  ): Promise<void> {
+    description: string,
+    rolledBack: () => boolean,
+  ): Promise<boolean> {
     try {
       await operation;
+      return true;
     } catch (error) {
-      new Notice(`${label} was not saved. Your changes were rolled back.`);
-      throw error;
+      console.error(`[abyss-tasks] Could not ${description}`, error);
+      new Notice(
+        rolledBack()
+          ? `Could not ${description}. Your changes were rolled back.`
+          : `Could not save an earlier ${description}. Newer changes were kept.`,
+      );
+      return false;
     }
+  }
+
+  private isEffectiveGroupArchived_abyssPrivate(groupId: string): boolean {
+    return (
+      resolveEffectiveTagGroups(
+        this.settings_abyssPrivate,
+        collectTaskNodeTags(this.tasks_abyssPrivate.queries.listNodes()),
+      ).find((group) => group.id === groupId)?.archived === true
+    );
   }
 
   private selectionMatchesGroup_abyssPrivate(
@@ -980,25 +999,23 @@ export class LeftPanel {
       ...(result.name === undefined ? {} : { name: result.name }),
       ...(result.color === undefined ? {} : { color: result.color ?? undefined }),
     };
-    void this.tagManager_abyssPrivate
-      .updateGroup(group, update)
-      .then(() => {
+    runAsyncAction(
+      this.runTagSettingsAction_abyssPrivate(
+        this.tagManager_abyssPrivate.updateGroup(group, update),
+        'save tag group appearance',
+        () => {
+          const current = this.settings_abyssPrivate.tagGroups.find(
+            (candidate) => candidate.id === group.id,
+          );
+          return (
+            current === undefined ||
+            (current.name === previous.name && current.color === previous.color)
+          );
+        },
+      ).then(() => {
         this.render_abyssPrivate();
-      })
-      .catch(() => {
-        const current = this.settings_abyssPrivate.tagGroups.find(
-          (candidate) => candidate.id === group.id,
-        );
-        const rolledBack =
-          current === undefined ||
-          (current.name === previous.name && current.color === previous.color);
-        new Notice(
-          rolledBack
-            ? 'Tag group appearance was not saved. Your changes were rolled back.'
-            : 'An earlier tag group appearance change was not saved. Newer changes were kept.',
-        );
-        this.render_abyssPrivate();
-      });
+      }),
+    );
   }
 
   private makeTagOp_abyssPrivate(op: () => Promise<void>): () => void {
@@ -1051,7 +1068,12 @@ export class LeftPanel {
       this.settings_abyssPrivate,
       collectTaskNodeTags(this.tasks_abyssPrivate.queries.listNodes()),
     ).filter((group) => !group.archived);
-    await this.tagManager_abyssPrivate.reorderGroups(draggedId, targetId, groups);
+    const previousOrder = this.settings_abyssPrivate.tagGroups.map(({ id }) => id).join('\0');
+    await this.runTagSettingsAction_abyssPrivate(
+      this.tagManager_abyssPrivate.reorderGroups(draggedId, targetId, groups),
+      'reorder tag groups',
+      () => this.settings_abyssPrivate.tagGroups.map(({ id }) => id).join('\0') === previousOrder,
+    );
     this.render_abyssPrivate();
   }
 
@@ -1189,8 +1211,7 @@ export class LeftPanel {
   }
 
   private isClaimedAutomaticChild_abyssPrivate(group: EffectiveTagGroup, tag: string): boolean {
-    const prefix = normalizeTagPrefix(group.prefix ?? '');
-    if (prefix === undefined || prefixForDiscoveredGroupId(group.id) !== prefix) return false;
+    if (prefixForDiscoveredGroupId(group.id) === undefined) return false;
     return this.settings_abyssPrivate.tagGroups.some(
       (candidate) => candidate.id !== group.id && tagMatchesGroup(tag, candidate),
     );

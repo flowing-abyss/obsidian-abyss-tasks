@@ -6,7 +6,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { RenameTagModal } from '../src/tags/RenameTagModal';
 import { TagManager } from '../src/tags/TagManager';
-import { discoveredPrefixGroupId } from '../src/tags/effectiveTagGroups';
+import { discoveredPrefixGroupId, discoveredTagGroupId } from '../src/tags/effectiveTagGroups';
 import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
 import { TagGroupAppearanceModal } from '../src/ui/TagGroupAppearanceModal';
 import {
@@ -676,58 +676,65 @@ describe('LeftPanel effective tag groups', () => {
   });
 
   it.each([
-    ['before promotion', false],
-    ['after appearance promotion', true],
-  ])('keeps full prefix counts but hides explicitly claimed child rows %s', (_label, promoted) => {
-    const automatic = promoted
-      ? [
-          {
-            id: discoveredPrefixGroupId('work'),
-            name: 'Focused work',
-            mode: 'prefix' as const,
-            prefix: 'work',
-            color: '#ff0000',
-          },
-        ]
-      : [];
-    const { el } = makePanel(
-      [
-        task({ title: 'Exact', tags: ['#work'] }),
-        task({ title: 'Claimed child', tags: ['#work/client'] }),
-        task({ title: 'Free child', tags: ['#work/other'] }),
-      ],
-      {
-        tagGroups: [
-          { id: 'nested', name: 'Client', mode: 'prefix', prefix: 'work/client' },
-          { id: 'exact', name: 'Work root', mode: 'manual', tags: ['#work'] },
-          ...automatic,
+    ['before promotion', false, false],
+    ['after appearance promotion', true, false],
+    ['after promoted prefix rename', true, true],
+  ])(
+    'keeps full prefix counts but hides explicitly claimed child rows %s',
+    (_label, promoted, renamed) => {
+      const prefix = renamed ? 'focus' : 'work';
+      const automatic = promoted
+        ? [
+            {
+              id: discoveredPrefixGroupId('work'),
+              name: 'Focused work',
+              mode: 'prefix' as const,
+              prefix,
+              color: '#ff0000',
+            },
+          ]
+        : [];
+      const { el } = makePanel(
+        [
+          task({ title: 'Exact', tags: [`#${prefix}`] }),
+          task({ title: 'Claimed child', tags: [`#${prefix}/client`] }),
+          task({ title: 'Free child', tags: [`#${prefix}/other`] }),
         ],
-      },
-    );
-    const expectedName = promoted ? 'Focused work' : 'work';
-    const group = expectDefined(
-      Array.from(el.querySelectorAll<HTMLElement>('.abyss-tag-group')).find(
-        (candidate) =>
-          candidate.querySelector('.abyss-tag-group-header .abyss-left-label')?.textContent ===
-          expectedName,
-      ),
-    );
+        {
+          tagGroups: [
+            { id: 'nested', name: 'Client', mode: 'prefix', prefix: `${prefix}/client` },
+            { id: 'exact', name: 'Work root', mode: 'manual', tags: [`#${prefix}`] },
+            ...automatic,
+          ],
+        },
+      );
+      const expectedName = promoted ? 'Focused work' : 'work';
+      const group = expectDefined(
+        Array.from(el.querySelectorAll<HTMLElement>('.abyss-tag-group')).find(
+          (candidate) =>
+            candidate.querySelector('.abyss-tag-group-header .abyss-left-label')?.textContent ===
+            expectedName,
+        ),
+      );
 
-    expect(group.querySelector('.abyss-tag-group-header .abyss-left-count')?.textContent).toBe('3');
-    expectDefined(group.querySelector<HTMLElement>('.abyss-group-arrow')).click();
-    const expanded = expectDefined(
-      Array.from(el.querySelectorAll<HTMLElement>('.abyss-tag-group')).find(
-        (candidate) =>
-          candidate.querySelector('.abyss-tag-group-header .abyss-left-label')?.textContent ===
-          expectedName,
-      ),
-    );
-    expect(
-      Array.from(expanded.querySelectorAll('.abyss-tag-child .abyss-left-label')).map(
-        (label) => label.textContent,
-      ),
-    ).toEqual(['other']);
-  });
+      expect(group.querySelector('.abyss-tag-group-header .abyss-left-count')?.textContent).toBe(
+        '3',
+      );
+      expectDefined(group.querySelector<HTMLElement>('.abyss-group-arrow')).click();
+      const expanded = expectDefined(
+        Array.from(el.querySelectorAll<HTMLElement>('.abyss-tag-group')).find(
+          (candidate) =>
+            candidate.querySelector('.abyss-tag-group-header .abyss-left-label')?.textContent ===
+            expectedName,
+        ),
+      );
+      expect(
+        Array.from(expanded.querySelectorAll('.abyss-tag-child .abyss-left-label')).map(
+          (label) => label.textContent,
+        ),
+      ).toEqual(['other']);
+    },
+  );
 });
 
 describe('LeftPanel top-level tag group menus', () => {
@@ -841,6 +848,7 @@ describe('LeftPanel top-level tag group menus', () => {
   it('rolls back appearance and reports a rejected settings save', async () => {
     renderOpenedModalsInDocument();
     const items = captureMenu();
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { el, merged, save } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#ff0000' }],
     });
@@ -863,11 +871,17 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(merged.tagGroups[0]?.name).toBe('Work');
     expect(merged.tagGroups[0]?.color).toBe('#ff0000');
     expect(Notice).toHaveBeenCalledOnce();
-    expect(firstNoticeText()).toContain('not saved');
+    expect(firstNoticeText()).toContain('Could not save');
     expect(firstNoticeText()).toContain('rolled back');
+    expect(errorLog).toHaveBeenCalledWith(
+      '[abyss-tasks] Could not save tag group appearance',
+      expect.any(Error),
+    );
+    errorLog.mockRestore();
   });
 
   it('does not let an older rejected appearance save overwrite a newer saved appearance', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { panel, merged, save } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#ff0000' }],
     });
@@ -908,6 +922,71 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(Notice).toHaveBeenCalledOnce();
     expect(firstNoticeText()).toContain('Newer changes were kept');
     expect(firstNoticeText()).not.toContain('rolled back');
+    expect(errorLog).toHaveBeenCalledOnce();
+    errorLog.mockRestore();
+  });
+
+  it('reports a failed reorder once and renders the rolled-back order', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { panel, merged, save } = makePanel([task({ tags: ['#a'] }), task({ tags: ['#b'] })]);
+    save.mockRejectedValueOnce(new Error('settings storage unavailable'));
+    const reorder = (
+      panel as unknown as {
+        reorderTagGroups_abyssPrivate(draggedId: string, targetId: string): Promise<void>;
+      }
+    ).reorderTagGroups_abyssPrivate.bind(panel);
+
+    await reorder(discoveredTagGroupId('#b'), discoveredTagGroupId('#a'));
+
+    expect(merged.tagGroups).toEqual([]);
+    expect(Notice).toHaveBeenCalledOnce();
+    expect(firstNoticeText()).toContain('rolled back');
+    expect(errorLog).toHaveBeenCalledWith(
+      '[abyss-tasks] Could not reorder tag groups',
+      expect.any(Error),
+    );
+    errorLog.mockRestore();
+  });
+
+  it('reports a failed archive truthfully when a newer settings edit is preserved', async () => {
+    const items = captureMenu();
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let rejectArchive!: (error: Error) => void;
+    let markArchiveStarted!: () => void;
+    const archiveStarted = new Promise<void>((resolve) => {
+      markArchiveStarted = resolve;
+    });
+    const archiveSave = new Promise<void>((_resolve, reject) => {
+      rejectArchive = reject;
+    });
+    const { el, merged, save, tm } = makePanel([], {
+      tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
+    });
+    save
+      .mockImplementationOnce(() => {
+        markArchiveStarted();
+        return archiveSave;
+      })
+      .mockResolvedValueOnce(undefined);
+
+    openContextMenu(expectDefined(el.querySelector('.abyss-tag-group-header')));
+    expectDefined(items.find((item) => item.title === 'Archive')).click();
+    await archiveStarted;
+    await tm.pinTag('#newer');
+    rejectArchive(new Error('older archive save rejected'));
+    await flushMicrotasks();
+
+    expect(merged.tagGroups[0]?.archived).toBe(true);
+    expect(merged.pinnedTags).toEqual(['#newer']);
+    expect(Notice).toHaveBeenCalledOnce();
+    expect(firstNoticeText()).toContain('Newer changes were kept');
+    expect(firstNoticeText()).not.toContain('rolled back');
+    expect(el.textContent).not.toContain('Work');
+    expect(errorLog).toHaveBeenCalledWith(
+      '[abyss-tasks] Could not archive tag group',
+      expect.any(Error),
+    );
+    errorLog.mockRestore();
   });
 
   it('prefix vault rename confirmation shows both scopes and reports the changed-file count', async () => {

@@ -6,7 +6,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import { SHORTCUT_ACTION_IDS } from '../src/settings/shortcuts';
 import type { CalendarSettings } from '../src/settings/types';
-import { discoveredTagGroupId } from '../src/tags/effectiveTagGroups';
+import { discoveredPrefixGroupId, discoveredTagGroupId } from '../src/tags/effectiveTagGroups';
 import { TagManager } from '../src/tags/TagManager';
 import type { TaskSnapshot } from '../src/tasks';
 import {
@@ -1464,6 +1464,34 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     ]);
   });
 
+  it('archives and restores a promoted group through its stale discovered settings card', async () => {
+    const id = discoveredPrefixGroupId('work');
+    const { tab, plugin, captured } = makeTab(
+      { tagGroups: [] },
+      { tasks: [task({ tags: ['#work/client'] })], expandedTagGroupIds: [id] },
+    );
+    openSection(tab, 4);
+
+    expectDefined(findComp(captured, 'Group name', 'text')).comp.setValue('Focused work');
+    await flushMicrotasks();
+    const restore = patchSetting(captured);
+    expectDefined(capturedButton(captured, 'Archive', 'Tags').clickHandler)();
+    await flushMicrotasks();
+    restore();
+
+    expect(plugin.settings.tagGroups).toEqual([
+      expect.objectContaining({ id, name: 'Focused work', archived: true }),
+    ]);
+    expect(plugin.settings.archivedTagPrefixes).toEqual([]);
+    expectDefined(capturedButton(captured, 'Unarchive', 'Tags').clickHandler)();
+    await flushMicrotasks();
+
+    expect(plugin.settings.tagGroups).toEqual([
+      expect.objectContaining({ id, name: 'Focused work', archived: false }),
+    ]);
+    expect(tab.containerEl.textContent).toContain('Focused work');
+  });
+
   it('reports a failed automatic-group promotion once and renders the rolled-back state', async () => {
     vi.mocked(Notice).mockClear();
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -2083,11 +2111,12 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(projectStatusOrder(tab)).toEqual(plugin.settings.projects.statuses.map(({ id }) => id));
   });
 
-  it('renders a tag-group addition immediately and keeps it after save failure', async () => {
+  it('renders a tag-group addition immediately and rolls back the latest failed save', async () => {
     vi.mocked(Notice).mockClear();
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { tab, plugin, captured } = makeTab(
       { tagGroups: [] },
-      { saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
+      { tasks: [], saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
     );
     openSection(tab, 4);
     attachSettingsScroller(tab, 513);
@@ -2096,17 +2125,20 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
     expect(plugin.settings.tagGroups).toHaveLength(1);
     expect(cardNamed(tab.containerEl, 'New group').isConnected).toBe(true);
-    await Promise.resolve();
-    await Promise.resolve();
-    expect((vi.mocked(Notice).mock.calls[0]?.[0] as DocumentFragment).textContent).toContain(
-      'Changes are kept in this session',
-    );
+    await flushMicrotasks();
+    expect(plugin.settings.tagGroups).toEqual([]);
+    expect(tab.containerEl.textContent).not.toContain('New group');
+    expect(vi.mocked(Notice).mock.calls[0]?.[0]).toContain('rolled back');
+    expect(errorLog).toHaveBeenCalledOnce();
+    errorLog.mockRestore();
   });
 
-  it('renders a tag-group deletion immediately and keeps it after save failure', async () => {
+  it('renders a tag-group deletion immediately and rolls back the latest failed save', async () => {
+    vi.mocked(Notice).mockClear();
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { tab, plugin, captured } = makeTab(
       { tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }] },
-      { saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
+      { tasks: [], saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
     );
     openSection(tab, 4);
     attachSettingsScroller(tab, 513);
@@ -2115,9 +2147,14 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
     expect(plugin.settings.tagGroups).toHaveLength(0);
     expect(tab.containerEl.textContent).not.toContain('Work');
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(Notice).toHaveBeenCalled();
+    await flushMicrotasks();
+    expect(plugin.settings.tagGroups).toEqual([
+      { id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' },
+    ]);
+    expect(tab.containerEl.textContent).toContain('Work');
+    expect(vi.mocked(Notice).mock.calls[0]?.[0]).toContain('rolled back');
+    expect(errorLog).toHaveBeenCalledOnce();
+    errorLog.mockRestore();
   });
 
   it('renders project-status add and delete drafts before persistence settles', async () => {

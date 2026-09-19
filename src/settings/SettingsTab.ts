@@ -54,6 +54,11 @@ interface TaskCalendarPlugin extends Plugin {
   renameProjectStatus(id: string, name: string, expectedName: string): Promise<void>;
 }
 
+interface TagSettingsActionCallbacks {
+  readonly onSuccess?: () => void;
+  readonly onFailure?: () => void;
+}
+
 function dailyNoteFormatDescription(): DocumentFragment {
   const description = createFragment();
   description.appendText('Format for calendar links and date parsing, e.g. ');
@@ -966,16 +971,31 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .setButtonText('+ add group')
         .setCta()
         .onClick(() => {
-          const id = `group-${Date.now()}`;
-          this.plugin_abyssPrivate.settings.tagGroups.push({
-            id,
-            name: 'New group',
-            mode: 'prefix',
-            prefix: '',
-          });
-          this.expandedCards_abyssPrivate.add(id);
-          this.commitDraft_abyssPrivate('add tag group');
+          this.addTagGroup_abyssPrivate();
         }),
+    );
+  }
+
+  private addTagGroup_abyssPrivate(): void {
+    const id = `group-${Date.now()}`;
+    const group = { id, name: 'New group', mode: 'prefix' as const, prefix: '' };
+    const tagManager = this.plugin_abyssPrivate.tagManager;
+    if (tagManager === undefined) {
+      this.plugin_abyssPrivate.settings.tagGroups.push(group);
+      this.expandedCards_abyssPrivate.add(id);
+      this.commitDraft_abyssPrivate('add tag group');
+      return;
+    }
+    const action = tagManager.addGroup(group);
+    this.expandedCards_abyssPrivate.add(id);
+    this.render_abyssPrivate();
+    runAsyncAction(
+      this.runTagSettingsAction_abyssPrivate(
+        action,
+        'add tag group',
+        () => !this.hasConfiguredTagGroup_abyssPrivate(id),
+        { onFailure: () => this.expandedCards_abyssPrivate.delete(id) },
+      ),
     );
   }
 
@@ -1078,24 +1098,50 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .setButtonText(group.origin === 'configured' ? 'Delete group' : 'Archive')
         .setClass('mod-warning')
         .onClick(() => {
-          if (group.origin === 'discovered') {
-            const tagManager = this.plugin_abyssPrivate.tagManager;
-            if (tagManager === undefined) return;
-            runAsyncAction(
-              this.runTagSettingsAction_abyssPrivate(
-                tagManager.archiveGroup(group),
-                'archive tag group',
-                () => !this.isEffectiveGroupArchived_abyssPrivate(group.id),
-              ),
-            );
-            return;
-          }
-          const configured = this.plugin_abyssPrivate.settings.tagGroups;
-          const index = configured.findIndex((candidate) => candidate.id === group.id);
-          const removed = index < 0 ? undefined : configured.splice(index, 1)[0];
-          if (removed != null) this.expandedCards_abyssPrivate.delete(removed.id);
-          this.commitDraft_abyssPrivate('delete tag group');
+          this.applyTagGroupCardAction_abyssPrivate(group);
         }),
+    );
+  }
+
+  private applyTagGroupCardAction_abyssPrivate(group: EffectiveTagGroup): void {
+    const tagManager = this.plugin_abyssPrivate.tagManager;
+    if (group.origin === 'discovered') {
+      if (tagManager === undefined) return;
+      const current =
+        this.effectiveTagGroups_abyssPrivate().find((candidate) => candidate.id === group.id) ??
+        group;
+      runAsyncAction(
+        this.runTagSettingsAction_abyssPrivate(
+          tagManager.archiveGroup(current),
+          'archive tag group',
+          () => !this.isEffectiveGroupArchived_abyssPrivate(group.id),
+        ),
+      );
+      return;
+    }
+    if (tagManager === undefined) {
+      const configured = this.plugin_abyssPrivate.settings.tagGroups;
+      const index = configured.findIndex((candidate) => candidate.id === group.id);
+      const removed = index < 0 ? undefined : configured.splice(index, 1)[0];
+      if (removed != null) this.expandedCards_abyssPrivate.delete(removed.id);
+      this.commitDraft_abyssPrivate('delete tag group');
+      return;
+    }
+    const action = tagManager.deleteGroup(group.id);
+    this.render_abyssPrivate();
+    runAsyncAction(
+      this.runTagSettingsAction_abyssPrivate(
+        action,
+        'delete tag group',
+        () => this.hasConfiguredTagGroup_abyssPrivate(group.id),
+        { onSuccess: () => this.expandedCards_abyssPrivate.delete(group.id) },
+      ),
+    );
+  }
+
+  private hasConfiguredTagGroup_abyssPrivate(groupId: string): boolean {
+    return this.plugin_abyssPrivate.settings.tagGroups.some(
+      (candidate) => candidate.id === groupId,
     );
   }
 
@@ -1148,12 +1194,15 @@ export class CalendarSettingsTab extends PluginSettingTab {
     action: Promise<void>,
     description: string,
     rolledBack: () => boolean,
+    callbacks: TagSettingsActionCallbacks = {},
   ): Promise<void> {
     try {
       await action;
+      callbacks.onSuccess?.();
     } catch (error) {
       console.error(`[abyss-tasks] Could not ${description}`, error);
       new Notice(this.tagSettingsFailureMessage_abyssPrivate(description, rolledBack()));
+      callbacks.onFailure?.();
     }
     this.render_abyssPrivate();
   }

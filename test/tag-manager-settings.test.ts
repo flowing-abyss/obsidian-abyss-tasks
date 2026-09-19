@@ -196,3 +196,46 @@ describe('TagManager effective group ordering', () => {
     ).toEqual(['a', 'c', 'b']);
   });
 });
+
+describe('TagManager configured group mutations', () => {
+  const first = { id: 'first', name: 'First', mode: 'prefix' as const, prefix: 'first' };
+  const second = { id: 'second', name: 'Second', mode: 'prefix' as const, prefix: 'second' };
+
+  it('rolls back latest failed additions and deletions', async () => {
+    const add = makeManager({ tagGroups: [] });
+    add.save.mockRejectedValueOnce(new Error('storage unavailable'));
+    await expect(add.tm.addGroup(first)).rejects.toThrow('storage unavailable');
+    expect(add.settings.tagGroups).toEqual([]);
+
+    const remove = makeManager({ tagGroups: [first] });
+    remove.save.mockRejectedValueOnce(new Error('storage unavailable'));
+    await expect(remove.tm.deleteGroup(first.id)).rejects.toThrow('storage unavailable');
+    expect(remove.settings.tagGroups).toEqual([first]);
+  });
+
+  it('preserves newer configured-group edits when an older save fails', async () => {
+    let rejectAdd!: (error: Error) => void;
+    const pendingAdd = new Promise<void>((_resolve, reject) => {
+      rejectAdd = reject;
+    });
+    const add = makeManager({ tagGroups: [] });
+    add.save.mockReturnValueOnce(pendingAdd).mockResolvedValueOnce(undefined);
+    const olderAdd = add.tm.addGroup(first);
+    await add.tm.addGroup(second);
+    rejectAdd(new Error('older save failed'));
+    await expect(olderAdd).rejects.toThrow('older save failed');
+    expect(add.settings.tagGroups).toEqual([first, second]);
+
+    let rejectDelete!: (error: Error) => void;
+    const pendingDelete = new Promise<void>((_resolve, reject) => {
+      rejectDelete = reject;
+    });
+    const remove = makeManager({ tagGroups: [first] });
+    remove.save.mockReturnValueOnce(pendingDelete).mockResolvedValueOnce(undefined);
+    const olderDelete = remove.tm.deleteGroup(first.id);
+    await remove.tm.addGroup(second);
+    rejectDelete(new Error('older save failed'));
+    await expect(olderDelete).rejects.toThrow('older save failed');
+    expect(remove.settings.tagGroups).toEqual([second]);
+  });
+});

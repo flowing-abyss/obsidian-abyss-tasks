@@ -2,7 +2,7 @@
 import type { App, TFile } from 'obsidian';
 import type { ListSelection } from '../app/AppState';
 import { beginSettingsSave, latestSettingsSaveRevision } from '../settings/settingsSaveRevision';
-import type { CalendarSettings } from '../settings/types';
+import type { CalendarSettings, TagGroup } from '../settings/types';
 import { normalizeTaskTagInput } from '../tasks';
 import {
   discoveredPrefixGroupId,
@@ -134,7 +134,6 @@ function updateTagGroups(context: TagGroupRenameContext, rollbacks: Array<() => 
   }
 }
 
-type TagGroup = CalendarSettings['tagGroups'][number];
 export interface TagGroupUpdate {
   readonly name?: string;
   readonly color?: string | undefined;
@@ -388,8 +387,27 @@ export class TagManager {
     let id = base;
     let n = 2;
     while (this.settings.tagGroups.some((g) => g.id === id)) id = `${base}-${n++}`;
-    this.settings.tagGroups.push({ id, name: label, mode: 'manual', tags: [tag] });
-    await this.persistSettings();
+    await this.addGroup({ id, name: label, mode: 'manual', tags: [tag] });
+  }
+
+  async addGroup(group: TagGroup): Promise<void> {
+    if (this.settings.tagGroups.some((candidate) => candidate.id === group.id)) return;
+    const previous = this.settings.tagGroups;
+    const applied = [...previous, group];
+    this.settings.tagGroups = applied;
+    await this.persistMutation(() => {
+      if (this.settings.tagGroups === applied) this.settings.tagGroups = previous;
+    });
+  }
+
+  async deleteGroup(groupId: string): Promise<void> {
+    if (!this.settings.tagGroups.some((candidate) => candidate.id === groupId)) return;
+    const previous = this.settings.tagGroups;
+    const applied = previous.filter((candidate) => candidate.id !== groupId);
+    this.settings.tagGroups = applied;
+    await this.persistMutation(() => {
+      if (this.settings.tagGroups === applied) this.settings.tagGroups = previous;
+    });
   }
 
   async pinTag(tag: string): Promise<void> {
@@ -440,12 +458,15 @@ export class TagManager {
   }
 
   async archiveGroup(group: EffectiveTagGroup): Promise<void> {
-    if (group.origin === 'configured') {
-      const configured = this.settings.tagGroups.find((candidate) => candidate.id === group.id);
-      if (configured === undefined || configured.archived === true) return;
+    const configured = this.settings.tagGroups.find((candidate) => candidate.id === group.id);
+    if (configured !== undefined) {
+      if (configured.archived === true) return;
+      const previous = configured.archived;
       configured.archived = true;
       await this.persistMutation(() => {
-        if (configured.archived === true) delete configured.archived;
+        if (configured.archived !== true) return;
+        if (previous === undefined) delete configured.archived;
+        else configured.archived = previous;
       });
       return;
     }
