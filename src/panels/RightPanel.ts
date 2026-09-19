@@ -2900,7 +2900,7 @@ export class RightPanel {
     let keyboardDraft = false;
     let committed = false;
     const commit = (): void => {
-      if (committed) return;
+      if (committed || input.value === '' || input.validity.badInput) return;
       committed = true;
       runAsyncAction(this.updateDate_abyssPrivate(task, field, input.value));
       this.removeAnchoredSurface_abyssPrivate(pop);

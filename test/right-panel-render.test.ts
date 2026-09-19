@@ -1473,6 +1473,99 @@ describe('RightPanel popovers', () => {
     outside.remove();
   });
 
+  it('keeps an incomplete keyboard date editable on Enter without dispatching an error', async () => {
+    const selected = task({ title: 'Incomplete date', planning: { due: '2026-09-20' } });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'io-error',
+      cause: 'test',
+      contentState: 'unchanged',
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { panel, state, el } = await makePanel(
+      {},
+      { queries: queryApiForTasks(() => [selected]), execute },
+    );
+    state.set('taskStack', [selected]);
+    const chip = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')).find(
+        (candidate) => candidate.textContent.startsWith('📅'),
+      ),
+    );
+    click(chip);
+    await tick();
+    const input = expectDefined(
+      el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input'),
+    );
+    vi.spyOn(input, 'validity', 'get').mockReturnValue({ badInput: true } as ValidityState);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true }));
+    input.value = '';
+
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(el.querySelector('.abyss-date-popover')).not.toBeNull();
+    expect(input.value).toBe('');
+    panel.destroy();
+  });
+
+  it('cancels an incomplete keyboard date after focus leaves the whole popover', async () => {
+    const selected = task({ title: 'Cancel incomplete', planning: { due: '2026-09-20' } });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'io-error',
+      cause: 'test',
+      contentState: 'unchanged',
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { panel, state, el } = await makePanel(
+      {},
+      { queries: queryApiForTasks(() => [selected]), execute },
+    );
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = expectDefined(frame.contentDocument);
+    ownerDocument.body.append(ownerDocument.adoptNode(el));
+    const outside = appendElement(ownerDocument, 'button');
+    vi.useFakeTimers();
+    state.set('taskStack', [selected]);
+    const chip = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')).find(
+        (candidate) => candidate.textContent.startsWith('📅'),
+      ),
+    );
+    click(chip);
+    vi.runOnlyPendingTimers();
+    const input = expectDefined(
+      el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input'),
+    );
+    const clear = expectDefined(
+      el.querySelector<HTMLButtonElement>('.abyss-date-popover [aria-label="Clear date"]'),
+    );
+    vi.spyOn(input, 'validity', 'get').mockReturnValue({ badInput: true } as ValidityState);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true }));
+    input.value = '';
+
+    input.focus();
+    clear.focus();
+    vi.advanceTimersByTime(201);
+    expect(el.querySelector('.abyss-date-popover')).not.toBeNull();
+    outside.focus();
+    vi.advanceTimersByTime(201);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(selected.planning.due).toBe('2026-09-20');
+    expect(el.querySelector('.abyss-date-popover')).toBeNull();
+    panel.destroy();
+    el.remove();
+    outside.remove();
+    frame.remove();
+  });
+
   it('owns Escape in the mounted document and restores focus from the date popover', async () => {
     const { panel, state, el } = await makePanel();
     const frame = activeDocument.body.createEl('iframe');
