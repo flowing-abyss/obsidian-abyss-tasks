@@ -18,6 +18,32 @@ export function taskNodeRef(node: TaskSelectionNode): TaskNodeRef {
     : { type: 'task', ref: node.ref };
 }
 
+export function taskSelectionPath(
+  root: TaskSnapshot,
+  node: TaskSelectionNode,
+): TaskSelectionNode[] | undefined {
+  const descendants: TaskNodeRef[] = [];
+  let ref = taskNodeRef(node);
+  while (ref.type === 'subtask') {
+    descendants.push(ref);
+    ref = ref.ref.parent;
+  }
+  if (!sameTaskNodeRef(ref, taskNodeRef(root))) return undefined;
+
+  const stack: TaskSelectionNode[] = [root];
+  let parent: TaskSelectionNode = root;
+  descendants.reverse();
+  for (const childRef of descendants) {
+    const matches: readonly SubtaskSnapshot[] = parent.subtasks.filter((candidate) =>
+      sameTaskNodeRef(taskNodeRef(candidate), childRef),
+    );
+    if (matches.length !== 1 || matches[0] === undefined) return undefined;
+    parent = matches[0];
+    stack.push(parent);
+  }
+  return stack;
+}
+
 export function rootTaskRef(node: TaskSelectionNode): TaskRef {
   let ref = taskNodeRef(node);
   while (ref.type === 'subtask') ref = ref.ref.parent;

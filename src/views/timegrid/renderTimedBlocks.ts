@@ -301,8 +301,8 @@ function renderTimedBlock(input: TimedBlockRenderInput): void {
   applyTimedBlockColor(block, task, tagGroups);
   renderTimedBlockContent(block, task, blockLayout, occurrence, terminal, callbacks);
   bindMaterializedInteractions(occurrence, (target) => {
-    if (target.type !== 'task') return;
     bindTaskSelection(block, task, callbacks.onTaskSelect);
+    if (target.type !== 'task') return;
     attachTimedBlockControls({
       block,
       hourColumnEl,

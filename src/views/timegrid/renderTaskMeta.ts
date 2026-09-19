@@ -14,7 +14,11 @@ import {
 } from '../../ui/recurrence/renderRecurrenceBadge';
 import { closeStatusPopovers, registerStatusPopoverClose } from '../../ui/statusMenu';
 import { taskCardVisualStyle } from '../../ui/TaskCard';
-import { applyTaskPresentationIdentity } from '../../ui/taskPresentationIdentity';
+import {
+  applyTaskNodePresentationIdentity,
+  applyTaskPresentationIdentity,
+  clearTaskNodePresentationIdentity,
+} from '../../ui/taskPresentationIdentity';
 import {
   calendarOccurrenceForRender,
   type CalendarOccurrence,
@@ -80,8 +84,10 @@ export function applyOccurrenceDomState(
   element.setAttribute('data-segment-identity', `${occurrence.key}:${spanRole}`);
   if (occurrence.kind === 'materialized') {
     applyTaskPresentationIdentity(element, occurrence.source.root.ref);
+    applyTaskNodePresentationIdentity(element, occurrence.source.target);
   } else {
     element.removeAttribute('data-abyss-task-ref-key');
+    clearTaskNodePresentationIdentity(element);
   }
   element.setAttribute(
     'data-control-slot',

@@ -383,10 +383,10 @@ function attachSegmentInteractions(
 ): void {
   const occurrence = context.callbacks.occurrenceFor(segment.task);
   bindMaterializedInteractions(occurrence, (target) => {
-    if (target.type !== 'task') return;
     if (segment.kind === 'ghost') {
       bindTaskSelection(body, segment.task, context.callbacks.onTaskSelect);
     }
+    if (target.type !== 'task') return;
     body.setAttribute('tabindex', '0');
     const exposesRangeProxy = context.indexByDate.size > 1 && segment.kind === 'ghost';
     attachSpanInteractions({

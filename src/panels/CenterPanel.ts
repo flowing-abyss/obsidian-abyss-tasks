@@ -39,6 +39,7 @@ import {
   type TaskArchiveSession,
   type TaskCaptureApplicationApi,
   type TaskCommandResult,
+  type TaskNodeSnapshot,
   type TaskPriority,
   type TaskQueryApi,
   type TaskRef,
@@ -91,9 +92,9 @@ import { openInFile } from '../ui/taskNavigation';
 import { startTaskNodeDrag } from '../ui/taskNodeDrag';
 import {
   applyTaskPresentationIdentity,
-  renderedTaskElements,
+  renderedTaskNodeElements,
 } from '../ui/taskPresentationIdentity';
-import { rootTaskRef, taskNodeLine } from '../ui/taskSelection';
+import { rootTaskRef, taskNodeLine, taskNodeRef, taskSelectionPath } from '../ui/taskSelection';
 import { TimedBlockKeyboardQueue } from '../ui/timedBlockKeyboardQueue';
 import { MonthGridView } from '../views/MonthGridView';
 import { TodayView } from '../views/TodayView';
@@ -566,9 +567,9 @@ export class CenterPanel {
     this.el.querySelectorAll<HTMLElement>('.abyss-calendar-item.is-selected').forEach((item) => {
       item.classList.remove('is-selected');
     });
-    if (root !== undefined) {
-      renderedTaskElements(this.el, rootTaskRef(root)).forEach((item) => {
-        if (item.classList.contains('abyss-calendar-item')) item.classList.add('is-selected');
+    if (current !== undefined) {
+      renderedTaskNodeElements(this.el, taskNodeRef(current)).forEach((item) => {
+        item.classList.add('is-selected');
       });
     }
   }
@@ -814,11 +815,12 @@ export class CenterPanel {
   /** Renders a project's tasks (reusing the card component) plus an add bar that writes into the note. */
   private renderProjectTasks_abyssPrivate(host: HTMLElement, path: string): void {
     const tasks = [...this.queries_abyssPrivate.list({ filePath: path })];
+    const tagGroups = this.effectiveTagGroups_abyssPrivate();
     const scroll = host.createDiv({ cls: 'abyss-center-scroll abyss-project-tasks-scroll' });
     if (tasks.length === 0) {
       scroll.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
     } else {
-      for (const task of tasks) this.renderTaskCard_abyssPrivate(scroll, task);
+      for (const task of tasks) this.renderTaskCard_abyssPrivate(scroll, task, tagGroups);
     }
 
     const bar = host.createDiv({ cls: 'abyss-add-task-bar' });
@@ -1001,8 +1003,9 @@ export class CenterPanel {
     const scrollLeft = scroll.scrollLeft;
     const staging = scroll.cloneNode(false) as HTMLElement;
     const tasks = this.getFilteredTasks_abyssPrivate();
+    const tagGroups = this.effectiveTagGroups_abyssPrivate();
     if (tasks.length === 0) staging.createDiv({ cls: 'abyss-center-empty', text: 'No tasks' });
-    else this.renderWithGrouping_abyssPrivate(staging, tasks);
+    else this.renderWithGrouping_abyssPrivate(staging, tasks, tagGroups);
     scroll.replaceChildren(...staging.childNodes);
     if (scrollTop !== 0) {
       scroll.scrollTop = Math.min(
@@ -1618,11 +1621,12 @@ export class CenterPanel {
       onTaskSelect: (task) => {
         const occurrence = calendarOccurrenceForTask(task);
         if (occurrence?.kind === 'forecast') return;
-        if (occurrence == null || occurrence.source.root === occurrence.source.node) {
-          this.state_abyssPrivate.set('taskStack', [occurrence?.source.root ?? task]);
+        if (occurrence == null) {
+          this.state_abyssPrivate.set('taskStack', [task]);
           return;
         }
-        this.state_abyssPrivate.set('taskStack', [occurrence.source.root, occurrence.source.node]);
+        const path = taskSelectionPath(occurrence.source.root, occurrence.source.node);
+        if (path !== undefined) this.state_abyssPrivate.set('taskStack', path);
       },
       onForecastClick: (source, referenceDate) => {
         this.openForecastTask_abyssPrivate(source, referenceDate);
@@ -2275,7 +2279,7 @@ export class CenterPanel {
       this.completeTaskCardRender_abyssPrivate();
       return;
     }
-    this.renderFlat_abyssPrivate(host, matchingTasks);
+    this.renderFlat_abyssPrivate(host, matchingTasks, this.effectiveTagGroups_abyssPrivate());
 
     // Navigate to task in tasks mode when clicking a search result
     host.querySelectorAll<HTMLElement>('.abyss-task-card').forEach((cardEl, idx) => {
@@ -2304,13 +2308,17 @@ export class CenterPanel {
     this.completeTaskCardRender_abyssPrivate();
   }
 
-  private renderWithGrouping_abyssPrivate(container: HTMLElement, tasks: TaskSnapshot[]): void {
+  private renderWithGrouping_abyssPrivate(
+    container: HTMLElement,
+    tasks: TaskSnapshot[],
+    tagGroups: readonly EffectiveTagGroup[] = this.effectiveTagGroups_abyssPrivate(),
+  ): void {
     const vs = this.state_abyssPrivate.get('centerListViewState');
     const today = localDate(window.moment().format('YYYY-MM-DD'));
     const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
 
     if (vs.groupBy === 'none') {
-      this.renderFlat_abyssPrivate(container, tasks);
+      this.renderFlat_abyssPrivate(container, tasks, tagGroups);
       return;
     }
 
@@ -2324,7 +2332,7 @@ export class CenterPanel {
         : 'abyss-group-header';
       container.createDiv({ cls, text: `${group.label}  ${group.tasks.length}` });
       firstGroup = false;
-      for (const task of group.tasks) this.renderTaskCard_abyssPrivate(container, task);
+      for (const task of group.tasks) this.renderTaskCard_abyssPrivate(container, task, tagGroups);
     }
   }
 
@@ -2340,11 +2348,19 @@ export class CenterPanel {
     return groupTasksByTag(tasks);
   }
 
-  private renderFlat_abyssPrivate(container: HTMLElement, tasks: TaskSnapshot[]): void {
-    for (const task of tasks) this.renderTaskCard_abyssPrivate(container, task);
+  private renderFlat_abyssPrivate(
+    container: HTMLElement,
+    tasks: TaskSnapshot[],
+    tagGroups: readonly EffectiveTagGroup[] = this.effectiveTagGroups_abyssPrivate(),
+  ): void {
+    for (const task of tasks) this.renderTaskCard_abyssPrivate(container, task, tagGroups);
   }
 
-  private renderTaskCard_abyssPrivate(container: HTMLElement, task: TaskSnapshot): void {
+  private renderTaskCard_abyssPrivate(
+    container: HTMLElement,
+    task: TaskSnapshot,
+    tagGroups: readonly EffectiveTagGroup[] = this.effectiveTagGroups_abyssPrivate(),
+  ): void {
     const isSelected = this.isTaskCardSelected_abyssPrivate(task);
     const card = container.createDiv({
       cls: `abyss-task-card${isSelected ? ' is-selected' : ''}`,
@@ -2357,7 +2373,7 @@ export class CenterPanel {
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
     this.renderTaskStatus_abyssPrivate(mainRow, task);
     this.renderTaskCardBody_abyssPrivate(mainRow, card, task);
-    this.renderTaskCardMetadata_abyssPrivate(mainRow, task);
+    this.renderTaskCardMetadata_abyssPrivate(mainRow, task, tagGroups);
     this.mountTaskCardInteractions_abyssPrivate(card, task);
     this.syncTaskDeleteButton_abyssPrivate(
       card,
@@ -2467,7 +2483,11 @@ export class CenterPanel {
     });
   }
 
-  private renderTaskCardMetadata_abyssPrivate(mainRow: HTMLElement, task: TaskSnapshot): void {
+  private renderTaskCardMetadata_abyssPrivate(
+    mainRow: HTMLElement,
+    task: TaskSnapshot,
+    tagGroups: readonly EffectiveTagGroup[],
+  ): void {
     const today = localDate(window.moment().format('YYYY-MM-DD'));
     const sel = this.state_abyssPrivate.get('selectedList');
     const d = task.planning.due ?? task.planning.scheduled;
@@ -2492,7 +2512,7 @@ export class CenterPanel {
       });
     }
     for (const tag of tags.slice(0, 2))
-      this.renderTaskTagMetadata_abyssPrivate(metaRight, task, tag);
+      this.renderTaskTagMetadata_abyssPrivate(metaRight, task, tag, tagGroups);
   }
 
   private renderTaskDateMetadata_abyssPrivate(
@@ -2545,9 +2565,10 @@ export class CenterPanel {
     host: HTMLElement,
     task: TaskSnapshot,
     tag: string,
+    tagGroups: readonly EffectiveTagGroup[],
   ): void {
     const element = host.createSpan({ cls: 'abyss-task-tag abyss-cursor-pointer', text: tag });
-    const color = this.getTagColor_abyssPrivate(tag);
+    const color = this.getTagColor_abyssPrivate(tag, tagGroups);
     if (color !== undefined && color !== '') {
       element.setCssProps({ '--abyss-tag-color': color });
       element.addClass('abyss-task-tag--colored');
@@ -3061,19 +3082,16 @@ export class CenterPanel {
 
   private openTagPicker_abyssPrivate(task: TaskSnapshot): void {
     const currentTags = this.getTaskTags_abyssPrivate(task);
+    const catalog = this.taskTagCatalog_abyssPrivate();
     const handleCommit = (toAdd: string[], toRemove: string[]): void => {
       runAsyncAction(this.patchTaskTags_abyssPrivate(task, toAdd, toRemove));
     };
     new TagPickerModal(
       this.app_abyssPrivate,
-      (tag) => this.getTagColor_abyssPrivate(tag),
+      (tag) => this.getTagColor_abyssPrivate(tag, catalog.groups),
       currentTags,
       new Set(),
-      collectTaskTags(
-        this.tasks_abyssPrivate?.queries.listNodes() ?? [],
-        this.settings_abyssPrivate,
-        [...currentTags],
-      ),
+      collectTaskTags(catalog.nodes, this.settings_abyssPrivate, [...currentTags]),
       handleCommit,
       this.interactionOwnership_abyssPrivate,
     ).open();
@@ -3085,6 +3103,7 @@ export class CenterPanel {
     const hasAll = (tag: string): boolean => tagSets.every((s) => s.has(tag));
     const currentTags = new Set([...allTags].filter(hasAll));
     const partialTags = new Set([...allTags].filter((tag) => !hasAll(tag)));
+    const catalog = this.taskTagCatalog_abyssPrivate();
     const handleBulkCommit = (toAdd: string[], toRemove: string[]): void => {
       runAsyncAction(
         Promise.all(
@@ -3094,14 +3113,10 @@ export class CenterPanel {
     };
     new TagPickerModal(
       this.app_abyssPrivate,
-      (tag) => this.getTagColor_abyssPrivate(tag),
+      (tag) => this.getTagColor_abyssPrivate(tag, catalog.groups),
       currentTags,
       partialTags,
-      collectTaskTags(
-        this.tasks_abyssPrivate?.queries.listNodes() ?? [],
-        this.settings_abyssPrivate,
-        [...currentTags, ...partialTags],
-      ),
+      collectTaskTags(catalog.nodes, this.settings_abyssPrivate, [...currentTags, ...partialTags]),
       handleBulkCommit,
       this.interactionOwnership_abyssPrivate,
     ).open();
@@ -3983,18 +3998,29 @@ export class CenterPanel {
     return '';
   }
 
-  private getTagColor_abyssPrivate(tag: string): string | undefined {
-    for (const group of this.effectiveTagGroups_abyssPrivate()) {
+  private getTagColor_abyssPrivate(
+    tag: string,
+    tagGroups: readonly EffectiveTagGroup[] = this.effectiveTagGroups_abyssPrivate(),
+  ): string | undefined {
+    for (const group of tagGroups) {
       if (tagMatchesGroup(tag, group)) return group.color;
     }
     return undefined;
   }
 
   private effectiveTagGroups_abyssPrivate(): readonly EffectiveTagGroup[] {
-    return resolveEffectiveTagGroups(
-      this.settings_abyssPrivate,
-      collectTaskNodeTags(this.tasks_abyssPrivate?.queries.listNodes() ?? []),
-    );
+    return this.taskTagCatalog_abyssPrivate().groups;
+  }
+
+  private taskTagCatalog_abyssPrivate(): {
+    readonly nodes: readonly TaskNodeSnapshot[];
+    readonly groups: readonly EffectiveTagGroup[];
+  } {
+    const nodes = this.tasks_abyssPrivate?.queries.listNodes() ?? [];
+    return {
+      nodes,
+      groups: resolveEffectiveTagGroups(this.settings_abyssPrivate, collectTaskNodeTags(nodes)),
+    };
   }
 
   private async rescheduleTask_abyssPrivate(dragData: string, targetDate: string): Promise<void> {

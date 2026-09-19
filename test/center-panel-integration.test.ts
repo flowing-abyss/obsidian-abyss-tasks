@@ -1,4 +1,13 @@
-import { addIcon, MarkdownRenderer, Menu, moment, removeIcon, TFile, type App } from 'obsidian';
+import {
+  addIcon,
+  MarkdownRenderer,
+  Menu,
+  Modal,
+  moment,
+  removeIcon,
+  TFile,
+  type App,
+} from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
@@ -6,6 +15,7 @@ import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
+import { discoveredPrefixGroupId } from '../src/tags/effectiveTagGroups';
 import type {
   LocalDate,
   TaskApplicationApi,
@@ -40,6 +50,7 @@ import {
   freshContainer,
   methodOf,
   seedTaskCache,
+  subtask,
   task,
   taskQueryApi,
   useRealMoment,
@@ -3092,6 +3103,245 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     }
   });
 
+  it('paints only the selected materialized recurring node while preserving all of its segments', () => {
+    const rootBase = task({
+      title: 'Recurring family',
+      planning: { due: TODAY },
+      ref: { filePath: 'family.md', line: 4, revision: 'family-revision' },
+      source: { filePath: 'family.md', line: 4 },
+    });
+    const first = subtask({
+      title: 'First recurring child',
+      recurrence: 'every day',
+      planning: { due: TODAY, time: localTime('11:00') },
+      ref: {
+        parent: { type: 'task', ref: rootBase.ref },
+        relativeLine: 1,
+        originalBlock: '  - [ ] First recurring child',
+      },
+    });
+    const second = subtask({
+      title: 'Second recurring child',
+      recurrence: 'every day',
+      planning: { due: TODAY, time: localTime('13:00') },
+      ref: {
+        parent: { type: 'task', ref: rootBase.ref },
+        relativeLine: 2,
+        originalBlock: '  - [ ] Second recurring child',
+      },
+    });
+    const intermediateBase = subtask({
+      title: 'Intermediate child',
+      ref: {
+        parent: { type: 'task', ref: rootBase.ref },
+        relativeLine: 3,
+        originalBlock: '  - [ ] Intermediate child',
+      },
+    });
+    const grandchild = subtask({
+      title: 'Recurring grandchild',
+      recurrence: 'every day',
+      planning: { due: TODAY, time: localTime('15:00') },
+      ref: {
+        parent: { type: 'subtask', ref: intermediateBase.ref },
+        relativeLine: 1,
+        originalBlock: '    - [ ] Recurring grandchild',
+      },
+    });
+    const intermediate = { ...intermediateBase, subtasks: [grandchild] };
+    const root = { ...rootBase, subtasks: [first, second, intermediate] };
+    const sources = [
+      { root, node: root, target: { type: 'task' as const, ref: root.ref } },
+      { root, node: first, target: { type: 'subtask' as const, ref: first.ref } },
+      { root, node: second, target: { type: 'subtask' as const, ref: second.ref } },
+      { root, node: grandchild, target: { type: 'subtask' as const, ref: grandchild.ref } },
+    ];
+    const queries = taskQueryApi({
+      list: () => [root],
+      forCalendarProjection: () => ({ materialized: sources, recurringSources: [] }),
+    });
+    const state = new AppState();
+    const panel = new CenterPanel(
+      state,
+      {} as App,
+      DEFAULT_SETTINGS,
+      queries,
+      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      undefined,
+      null,
+      null,
+      {
+        queries,
+        execute: vi.fn().mockResolvedValue({
+          type: 'invalid',
+          issues: [{ code: 'invalid-target' }],
+        }),
+      },
+    );
+    const el = freshContainer();
+    panel.mount(el);
+    (panel as unknown as { calDate_abyssPrivate: moment.Moment }).calDate_abyssPrivate =
+      moment(TODAY);
+    state.set('mode', 'calendar');
+
+    const item = (title: string): HTMLElement =>
+      expectDefined(
+        Array.from(el.querySelectorAll<HTMLElement>('.abyss-calendar-item')).find((candidate) =>
+          candidate.textContent.includes(title),
+        ),
+      );
+    const selectedTitles = (): string[] =>
+      Array.from(el.querySelectorAll<HTMLElement>('.abyss-calendar-item.is-selected')).map(
+        (candidate) => candidate.textContent,
+      );
+
+    item(first.title).click();
+    expect(state.get('taskStack')).toEqual([root, first]);
+    expect(selectedTitles()).toEqual([expect.stringContaining(first.title)]);
+
+    item(second.title).click();
+    expect(state.get('taskStack')).toEqual([root, second]);
+    expect(selectedTitles()).toEqual([expect.stringContaining(second.title)]);
+
+    item(grandchild.title).click();
+    expect(state.get('taskStack')).toEqual([root, intermediate, grandchild]);
+    expect(selectedTitles()).toEqual([expect.stringContaining(grandchild.title)]);
+
+    item(root.title).click();
+    expect(state.get('taskStack')).toEqual([root]);
+    expect(selectedTitles()).toEqual([expect.stringContaining(root.title)]);
+
+    clickCalendarView(el, 'Week');
+    item(first.title).click();
+    expect(state.get('taskStack')).toEqual([root, first]);
+    expect(selectedTitles()).toEqual([expect.stringContaining(first.title)]);
+
+    item(grandchild.title).click();
+    expect(state.get('taskStack')).toEqual([root, intermediate, grandchild]);
+    expect(selectedTitles()).toEqual([expect.stringContaining(grandchild.title)]);
+
+    panel.destroy();
+  });
+
+  it('derives tag colors once per dense task-card render and preserves promoted group color', () => {
+    const tasks = Array.from({ length: 128 }, (_, index) =>
+      task({
+        title: `Dense task ${index}`,
+        ref: { filePath: 'dense.md', line: index, revision: `dense-${index}` },
+        source: { filePath: 'dense.md', line: index },
+        planning: { due: TODAY },
+        tags: ['#work/client', `#row-${index}`],
+      }),
+    );
+    const settings: CalendarSettings = {
+      ...DEFAULT_SETTINGS,
+      tagGroups: [
+        {
+          id: discoveredPrefixGroupId('work'),
+          name: 'Focused work',
+          color: '#ff0000',
+          mode: 'prefix',
+          prefix: 'work',
+        },
+      ],
+    };
+    const queries = queryApiForSnapshots(() => tasks);
+    const listNodes = vi.fn(queries.listNodes.bind(queries));
+    queries.listNodes = listNodes;
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const panel = new CenterPanel(
+      state,
+      {} as App,
+      settings,
+      queries,
+      new StatusRegistry(settings.taskStatuses),
+      undefined,
+      null,
+      null,
+      {
+        queries,
+        execute: vi.fn().mockResolvedValue({
+          type: 'invalid',
+          issues: [{ code: 'invalid-target' }],
+        }),
+      },
+    );
+    const el = freshContainer();
+
+    panel.mount(el);
+
+    expect(el.querySelectorAll('.abyss-task-card')).toHaveLength(tasks.length);
+    expect(listNodes).toHaveBeenCalledTimes(1);
+    const firstTag = expectDefined(el.querySelector<HTMLElement>('.abyss-task-tag'));
+    expect(firstTag.textContent).toBe('#work/client');
+    expect(firstTag.classList.contains('abyss-task-tag--colored')).toBe(true);
+    expect(firstTag.style.getPropertyValue('--abyss-tag-color')).toBe('#ff0000');
+
+    panel.destroy();
+  });
+
+  it('uses one fresh tag-catalog snapshot for every single and bulk picker opening', () => {
+    const tasks = Array.from({ length: 32 }, (_, index) =>
+      task({
+        title: `Picker task ${index}`,
+        ref: { filePath: 'picker.md', line: index, revision: `picker-${index}` },
+        source: { filePath: 'picker.md', line: index },
+        tags: ['#work/client', `#choice-${index}`],
+      }),
+    );
+    const settings: CalendarSettings = {
+      ...DEFAULT_SETTINGS,
+      tagGroups: [
+        {
+          id: discoveredPrefixGroupId('work'),
+          name: 'Focused work',
+          color: '#ff0000',
+          mode: 'prefix',
+          prefix: 'work',
+        },
+      ],
+    };
+    const queries = queryApiForSnapshots(() => tasks);
+    const listNodes = vi.fn(queries.listNodes.bind(queries));
+    queries.listNodes = listNodes;
+    const panel = new CenterPanel(
+      new AppState(),
+      {} as App,
+      settings,
+      queries,
+      new StatusRegistry(settings.taskStatuses),
+      undefined,
+      null,
+      null,
+      {
+        queries,
+        execute: vi.fn().mockResolvedValue({
+          type: 'invalid',
+          issues: [{ code: 'invalid-target' }],
+        }),
+      },
+    );
+    const open = vi.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
+      const opening = this.onOpen();
+      if (opening instanceof Promise) throw new Error('Expected synchronous tag picker open');
+    });
+
+    try {
+      const single = call<void>(panel, 'openTagPicker', expectDefined(tasks[0]));
+      if (single instanceof Promise) throw new Error('Expected synchronous single tag picker');
+      expect(listNodes).toHaveBeenCalledTimes(1);
+
+      listNodes.mockClear();
+      const bulk = call<void>(panel, 'openBulkTagPicker', tasks.slice(0, 2));
+      if (bulk instanceof Promise) throw new Error('Expected synchronous bulk tag picker');
+      expect(listNodes).toHaveBeenCalledTimes(1);
+    } finally {
+      open.mockRestore();
+      panel.destroy();
+    }
+  });
+
   it('renders forecast occurrences as inert, non-draggable calendar items', () => {
     const root = task({
       title: 'Repeat source',
@@ -3284,10 +3534,11 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     });
 
     clickCalendarView(el, 'Day');
-    const timedBlock = el.querySelector<HTMLElement>('.abyss-tg-block');
-    expect(timedBlock).not.toBeNull();
-    expect(timedBlock?.getAttribute('tabindex')).toBeNull();
-    expect(timedBlock?.querySelector('[data-resize-edge]')).toBeNull();
+    const timedBlock = expectDefined(el.querySelector<HTMLElement>('.abyss-tg-block'));
+    expect(timedBlock.getAttribute('tabindex')).toBe('0');
+    timedBlock.click();
+    expect(state.get('taskStack')).toEqual([root, child]);
+    expect(timedBlock.querySelector('[data-resize-edge]')).toBeNull();
   });
 
   it('keeps direct RightPanel and modal completion on the same exact application target seam', async () => {
