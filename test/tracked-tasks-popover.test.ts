@@ -462,6 +462,19 @@ describe('tracked tasks popover', () => {
     );
   });
 
+  it('fills the play and pause glyphs while the finished check stays an outline', () => {
+    for (const control of [
+      '.abyss-time-badge-toggle',
+      '.abyss-rail-tracking-toggle',
+      '.abyss-tracked-row-toggle',
+    ]) {
+      expect(cssDeclarationValue(cssDeclarationsFor(css, `${control} svg`), 'fill')).toBe(
+        'currentcolor',
+      );
+    }
+    expect(cssDeclarationsFor(css, '.abyss-tracked-row-done svg')).not.toContain('fill');
+  });
+
   it('takes the keyboard into the list and hands it back on Escape', async () => {
     const harness = await widgetFor(WORKING_WEEK);
     const day = taskTotal(harness.host);

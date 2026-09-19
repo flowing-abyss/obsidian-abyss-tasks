@@ -3905,6 +3905,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-shrink: 0;
 }
 
+/* The crown of the lucide timer takes the top of its box, which leaves the circle a pixel below
+   the digits and every other glyph in the row. The lift puts it back on their axis. */
+.abyss-task-time-badge svg {
+  transform: translateY(-1px);
+}
+
 /* Task time badge (in title row, kept for list view compatibility) */
 .abyss-task-time {
   font-size: 10px;
@@ -9928,6 +9934,15 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 .abyss-time-badge > .abyss-time-badge-toggle svg {
   width: 12px;
   height: 12px;
+}
+
+/*
+ * A play or a pause is a shape rather than a drawing, and the Lucide outline of one reads hollow
+ * beside the rest of the plugin. Filling it with the colour it already carries is the whole fix.
+ * The check of a finished row and the menu icons stay outlines, because they are drawings.
+ */
+:is(.abyss-time-badge-toggle, .abyss-rail-tracking-toggle, .abyss-tracked-row-toggle) svg {
+  fill: currentcolor;
 }
 
 .abyss-time-badge:is(.is-tracking, .is-stale) > .abyss-time-badge-toggle,
