@@ -1246,6 +1246,44 @@ describe('TaskIndex lifecycle and events', () => {
     index.destroy();
   });
 
+  it('indexes a real task after a CRLF closing fence during initialization', async () => {
+    const path = 'crlf-boundaries.md';
+    const content = '```md\r\n- [ ] fenced fake\r\n```\r\n- [ ] real\r\n';
+    const app = await createAppWithFiles({ [path]: content });
+    seedTaskCache(app, path, [
+      { task: ' ', parent: -1, line: 1 },
+      { task: ' ', parent: -1, line: 3 },
+    ]);
+    const index = new TaskIndex(app, {
+      statusCatalog: canonicalStatusCatalog(),
+      dailyNoteFormat: 'YYYY-MM-DD',
+    });
+
+    await index.initialize();
+
+    expect(index.list().map((task) => task.title)).toEqual(['real']);
+    index.destroy();
+  });
+
+  it('indexes a real task after a CRLF closing fence in committed content', async () => {
+    const path = 'crlf-boundaries.md';
+    const app = await createAppWithFiles({ [path]: '- [ ] Before\r\n' });
+    const index = new TaskIndex(app, {
+      statusCatalog: canonicalStatusCatalog(),
+      dailyNoteFormat: 'YYYY-MM-DD',
+    });
+    await index.initialize();
+
+    const installed = index.installCommittedContent(
+      path,
+      '```md\r\n- [ ] fenced fake\r\n```\r\n- [ ] real\r\n',
+    );
+
+    expect(installed.map((task) => task.title)).toEqual(['real']);
+    expect(index.list().map((task) => task.title)).toEqual(['real']);
+    index.destroy();
+  });
+
   it('publishes a committed insertion after leaving a blockquote fence container', async () => {
     const path = 'boundaries.md';
     const original = '> ```md\n> example\n# Tasks\n- [ ] Old\n';

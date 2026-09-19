@@ -59,17 +59,18 @@ export function consumeMarkdownFenceLine(
   active: MarkdownFence | undefined,
   line: string,
 ): MarkdownFenceLine {
-  const depth = quoteDepth(line);
+  const markdownLine = line.endsWith('\r') ? line.slice(0, -1) : line;
+  const depth = quoteDepth(markdownLine);
   const retained = retainedFence(active, depth);
   if (retained !== undefined) {
     return {
-      fence: closesFence(retained, line, depth) ? undefined : retained,
+      fence: closesFence(retained, markdownLine, depth) ? undefined : retained,
       isContent: false,
       opened: false,
     };
   }
 
-  const token = FENCE_OPEN_RE.exec(line)?.[1];
+  const token = FENCE_OPEN_RE.exec(markdownLine)?.[1];
   const marker = fenceMarker(token);
   if (token === undefined || marker === undefined) {
     return { fence: undefined, isContent: true, opened: false };
