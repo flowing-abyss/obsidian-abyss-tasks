@@ -5,6 +5,7 @@ import { beginSettingsSave, latestSettingsSaveRevision } from '../settings/setti
 import type { CalendarSettings, TagGroup } from '../settings/types';
 import { normalizeTaskTagInput } from '../tasks';
 import {
+  collisionFreeDiscoveredGroupId,
   discoveredPrefixGroupId,
   discoveredTagGroupId,
   normalizeTagPrefix,
@@ -220,17 +221,24 @@ interface TagRenameIdentity {
 }
 
 function rebaseDiscoveredGroupSelection(
+  settings: CalendarSettings,
   state: SelectedListState,
   selected: Extract<ListSelection, { readonly type: 'group' }>,
   rename: TagRenameIdentity,
 ): void {
   const { oldTag, newTag, scope } = rename;
   if (scope === 'prefix' && prefixForDiscoveredGroupId(selected.groupId) === oldTag.slice(1)) {
-    state.setSelectedList({ type: 'group', groupId: discoveredPrefixGroupId(newTag.slice(1)) });
+    state.setSelectedList({
+      type: 'group',
+      groupId: collisionFreeDiscoveredGroupId(settings, discoveredPrefixGroupId(newTag.slice(1))),
+    });
     return;
   }
   if (scope === 'exact' && tagForDiscoveredGroupId(selected.groupId) === oldTag) {
-    state.setSelectedList({ type: 'group', groupId: discoveredTagGroupId(newTag) });
+    state.setSelectedList({
+      type: 'group',
+      groupId: collisionFreeDiscoveredGroupId(settings, discoveredTagGroupId(newTag)),
+    });
   }
 }
 
@@ -706,7 +714,7 @@ export class TagManager {
         rebaseTagSelection(state, selected, rename);
       } else if (selected.type === 'group') {
         if (this.settings.tagGroups.some((group) => group.id === selected.groupId)) continue;
-        rebaseDiscoveredGroupSelection(state, selected, rename);
+        rebaseDiscoveredGroupSelection(this.settings, state, selected, rename);
       }
     }
   }

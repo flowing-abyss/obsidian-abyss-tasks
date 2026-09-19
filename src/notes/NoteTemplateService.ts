@@ -2,7 +2,7 @@ import { normalizePath, TFile, TFolder, type App } from 'obsidian';
 import { TemplaterAdapter, type TemplaterSession } from './TemplaterAdapter';
 
 interface FailedPreparation {
-  readonly content: string;
+  readonly content: string | undefined;
   readonly templatePath: string;
   readonly title: string;
   readonly uncertain: boolean;
@@ -134,6 +134,12 @@ export class NoteTemplateService {
     title: string,
   ): Promise<TFile> {
     const failed = mapFor(failedByApp, this.app);
+    if (priorFailure.content === undefined) {
+      throw new CreatedNoteTemplateError(
+        file.path,
+        new Error(`Template preparation left unresolved content in ${file.path}.`),
+      );
+    }
     const content = await this.app.vault.cachedRead(file);
     if (content !== priorFailure.content) {
       failed.delete(file.path);
@@ -200,13 +206,7 @@ export class NoteTemplateService {
       return file;
     } catch (cause) {
       if (file !== undefined) {
-        const content = await this.app.vault.cachedRead(file);
-        mapFor(failedByApp, this.app).set(path, {
-          content,
-          templatePath,
-          title,
-          uncertain: content !== '',
-        });
+        await this.recordFailedPreparation(file, templatePath, title, '');
         throw new CreatedNoteTemplateError(path, cause);
       }
       throw cause;
@@ -224,34 +224,59 @@ export class NoteTemplateService {
       mapFor(failedByApp, this.app).delete(file.path);
       return file;
     }
+    const expectedContent = failure.content;
+    if (expectedContent === undefined) {
+      throw new CreatedNoteTemplateError(
+        file.path,
+        new Error(`Template preparation left unresolved content in ${file.path}.`),
+      );
+    }
     const session = this.templater()?.begin(file.path);
     try {
       await this.applyTemplate({
         file,
         template,
         title: failure.title,
-        expectedContent: failure.content,
+        expectedContent,
         session,
       });
       mapFor(failedByApp, this.app).delete(file.path);
       return file;
     } catch (cause) {
-      const content =
-        cause instanceof NoteContentChangedError
-          ? failure.content
-          : await this.app.vault.cachedRead(file);
-      mapFor(failedByApp, this.app).set(file.path, {
-        content,
-        templatePath: failure.templatePath,
-        title: failure.title,
-        uncertain:
-          cause instanceof NoteContentChangedError
-            ? failure.uncertain
-            : content !== failure.content,
-      });
+      if (cause instanceof NoteContentChangedError) {
+        mapFor(failedByApp, this.app).set(file.path, failure);
+      } else {
+        await this.recordFailedPreparation(
+          file,
+          failure.templatePath,
+          failure.title,
+          expectedContent,
+        );
+      }
       throw new CreatedNoteTemplateError(file.path, cause);
     } finally {
       await session?.finish();
+    }
+  }
+
+  private async recordFailedPreparation(
+    file: TFile,
+    templatePath: string,
+    title: string,
+    expectedContent: string,
+  ): Promise<void> {
+    const failed = mapFor(failedByApp, this.app);
+    failed.set(file.path, { content: undefined, templatePath, title, uncertain: true });
+    try {
+      const content = await this.app.vault.cachedRead(file);
+      failed.set(file.path, {
+        content,
+        templatePath,
+        title,
+        uncertain: content !== expectedContent,
+      });
+    } catch {
+      // The unknown snapshot remains conservatively blocked under the owned failure record.
     }
   }
 

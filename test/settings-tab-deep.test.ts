@@ -981,6 +981,29 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     expect(activeDocument.activeElement).toBe(input);
   });
 
+  it('does not reclaim focus when a delayed task-prefix save settles', async () => {
+    const pending = deferred<void>();
+    const saveSettings = vi.fn(() => pending.promise);
+    const { tab, captured } = makeTab(
+      { taskPrefix: '', inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true } },
+      { saveSettings },
+    );
+    activeDocument.body.append(tab.containerEl);
+    const body = openSection(tab, 0);
+    const input = expectDefined(findInput(body, 'Task prefix'));
+    const other = activeDocument.body.createEl('button');
+    input.focus();
+
+    expectDefined(findComp(captured, 'Task prefix', 'text')).comp.setValue('#work');
+    other.focus();
+    pending.resolve();
+    await flushMicrotasks();
+
+    expect(body.textContent).toContain('Tagged new tasks do not appear in an untagged inbox.');
+    expect(activeDocument.activeElement).toBe(other);
+    other.remove();
+  });
+
   it('task file input reflects setting and saves on change', () => {
     const { tab, plugin, captured } = makeTab({ taskFilePath: 'inbox.md' });
     const body = openSection(tab, 0);

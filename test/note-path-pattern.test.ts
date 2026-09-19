@@ -45,6 +45,35 @@ describe('compileNotePathPattern', () => {
     expect(pattern.matches(path)).toBe(true);
   });
 
+  it.each([
+    ['archive/{{YYYY}}-{{M}}{{D}}-{{DD}}', '2026-11-01', 'archive/2026-111-02.md'],
+    ['archive/{{M}}{{D}}-{{DD}}', '2026-11-01', 'archive/111-02.md'],
+    ['archive/{{YYYY}}-{{M}}{{D}}-{{DDD}}', '2026-11-01', 'archive/2026-111-304.md'],
+    ['archive/{{GGGG}}-{{M}}{{D}}-{{WW}}', '2026-11-01', 'archive/2026-111-43.md'],
+    ['archive/{{DDD}}-{{MM-DD}}', '2025-03-01', 'archive/60-03-02.md'],
+    ['archive/{{M}}{{YYYY}}{{D}}-{{YY}}', '2012-11-01', 'archive/1120121-13.md'],
+  ])(
+    'round-trips ambiguous fields using independent calendar constraints: %s',
+    (source, date, invalidNeighbor) => {
+      const pattern = compileNotePathPattern(source);
+      expect(pattern.matches(pattern.resolve(date))).toBe(true);
+      expect(pattern.matches(invalidNeighbor)).toBe(false);
+    },
+  );
+
+  it('bounds repeated ambiguous marker and token partitions', () => {
+    const adjacentMarkers = compileNotePathPattern(`archive/${'{{M}}'.repeat(24)}`);
+    expect(adjacentMarkers.matches(`archive/${'1'.repeat(36)}.md`)).toBe(false);
+
+    const adjacentTokens = compileNotePathPattern(`archive/{{${'MD'.repeat(12)}}}`);
+    expect(adjacentTokens.matches(`archive/${'1'.repeat(30)}.md`)).toBe(false);
+  });
+
+  it('preserves source offsets when Unicode literal case folding changes length', () => {
+    const pattern = compileNotePathPattern('İ/{{YYYY-MM-DD}}');
+    expect(pattern.matches(pattern.resolve('2012-11-01'))).toBe(true);
+  });
+
   it('matches partial and mixed calendar and ISO-week paths against one candidate date', () => {
     const partial = compileNotePathPattern('archive/{{MM-DD}}.md');
     expect(partial.matches('archive/02-29.md')).toBe(true);

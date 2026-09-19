@@ -301,6 +301,66 @@ describe('NoteTemplateService', () => {
     expect(renders).toBe(1);
   });
 
+  it('keeps initial partial output blocked when the post-failure snapshot read rejects', async () => {
+    const path = 'tasks/unread-partial.md';
+    const app = await createAppWithFiles({ 'templates/task.md': '<% partial %>\n' });
+    let renders = 0;
+    installTemplater(app, async () => {
+      renders += 1;
+      await app.vault.modify(fileAt(app, path), 'partly prepared\n');
+      throw new Error('template failed after writing the target');
+    });
+    vi.spyOn(app.vault, 'cachedRead').mockRejectedValueOnce(new Error('transient read failure'));
+    const service = new NoteTemplateService(app);
+
+    const first: unknown = await service
+      .ensureNote(path, 'templates/task.md', 'Partial')
+      .catch((error: unknown): unknown => error);
+    const second: unknown = await service
+      .ensureNote(path, 'templates/task.md', 'Partial')
+      .catch((error: unknown): unknown => error);
+
+    expect(first).toBeInstanceOf(CreatedNoteTemplateError);
+    expect((first as CreatedNoteTemplateError).createdPath).toBe(path);
+    expect(second).toBeInstanceOf(CreatedNoteTemplateError);
+    expect(renders).toBe(1);
+    expect(await app.vault.read(fileAt(app, path))).toBe('partly prepared\n');
+  });
+
+  it('keeps retry partial output blocked when its post-failure snapshot read rejects', async () => {
+    const path = 'tasks/unread-retry-partial.md';
+    const app = await createAppWithFiles({ 'templates/task.md': '<% partial %>\n' });
+    let renders = 0;
+    installTemplater(app, async () => {
+      renders += 1;
+      if (renders === 1) throw new Error('initial render failure');
+      await app.vault.modify(fileAt(app, path), 'retry partly prepared\n');
+      throw new Error('retry failed after writing the target');
+    });
+    const cachedRead = app.vault.cachedRead.bind(app.vault);
+    let targetReads = 0;
+    vi.spyOn(app.vault, 'cachedRead').mockImplementation(async (file) => {
+      if (file.path === path && ++targetReads === 3) throw new Error('transient read failure');
+      return await cachedRead(file);
+    });
+    const service = new NoteTemplateService(app);
+
+    await expect(service.ensureNote(path, 'templates/task.md', 'Partial')).rejects.toBeInstanceOf(
+      CreatedNoteTemplateError,
+    );
+    const retry: unknown = await service
+      .ensureNote(path, 'templates/task.md', 'Partial')
+      .catch((error: unknown): unknown => error);
+    const blocked: unknown = await service
+      .ensureNote(path, 'templates/task.md', 'Partial')
+      .catch((error: unknown): unknown => error);
+
+    expect(retry).toBeInstanceOf(CreatedNoteTemplateError);
+    expect(blocked).toBeInstanceOf(CreatedNoteTemplateError);
+    expect(renders).toBe(2);
+    expect(await app.vault.read(fileAt(app, path))).toBe('retry partly prepared\n');
+  });
+
   it('does not adopt or overwrite external content changed while a retry is rendering', async () => {
     const app = await createAppWithFiles({ 'templates/task.md': '<% broken %>\n' });
     let attempt = 0;

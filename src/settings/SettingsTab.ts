@@ -467,11 +467,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .setPlaceholder('#Task/one-off')
           .setValue(this.plugin_abyssPrivate.settings.taskPrefix)
           .onChange(async (v) => {
-            const preserveFocus = t.inputEl.ownerDocument.activeElement === t.inputEl;
             this.plugin_abyssPrivate.settings.taskPrefix = v;
             await this.plugin_abyssPrivate.saveSettings();
             taskPrefixSetting.setDesc(taskPrefixDescription());
-            if (preserveFocus) t.inputEl.focus();
           }),
       );
 

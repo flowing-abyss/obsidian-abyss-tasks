@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ListSelection } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
-import { discoveredPrefixGroupId, discoveredTagGroupId } from '../src/tags/effectiveTagGroups';
+import {
+  discoveredPrefixGroupId,
+  discoveredTagGroupId,
+  resolveEffectiveTagGroups,
+} from '../src/tags/effectiveTagGroups';
 import { transformMarkdownTags } from '../src/tags/markdownTagRename';
 import { TagManager } from '../src/tags/TagManager';
 import { createAppWithFiles, expectDefined } from './helpers';
@@ -838,6 +842,85 @@ describe('TagManager exact and prefix vault rename', () => {
     await tm.renameTagExact('#old', '#new');
     expect(selected).toEqual({ type: 'group', groupId: discoveredTagGroupId('#new') });
   });
+
+  it.each([
+    {
+      scope: 'prefix' as const,
+      oldTag: '#work',
+      newTag: '#new',
+      selectedId: `${discoveredPrefixGroupId('work')}::1`,
+      expectedId: `${discoveredPrefixGroupId('new')}::1`,
+      observed: '#new/child',
+      configured: [
+        {
+          id: discoveredPrefixGroupId('work'),
+          name: 'Focus',
+          mode: 'prefix' as const,
+          prefix: 'focus',
+        },
+        {
+          id: discoveredPrefixGroupId('new'),
+          name: 'Other',
+          mode: 'prefix' as const,
+          prefix: 'other',
+        },
+      ],
+    },
+    {
+      scope: 'exact' as const,
+      oldTag: '#home',
+      newTag: '#new',
+      selectedId: `${discoveredTagGroupId('#home')}::1`,
+      expectedId: `${discoveredTagGroupId('#new')}::1`,
+      observed: '#new',
+      configured: [
+        {
+          id: discoveredTagGroupId('#home'),
+          name: 'House',
+          mode: 'manual' as const,
+          tags: ['#house'],
+        },
+        {
+          id: discoveredTagGroupId('#new'),
+          name: 'Other',
+          mode: 'manual' as const,
+          tags: ['#other'],
+        },
+      ],
+    },
+  ])(
+    'rebases a suffixed $scope discovery to the collision-free renamed identity',
+    async ({ scope, oldTag, newTag, selectedId, expectedId, observed, configured }) => {
+      const { tm, settings } = await makeManager();
+      settings.tagGroups.push(...configured);
+      let selected: ListSelection = { type: 'group', groupId: selectedId };
+      tm.registerSelectedListState({
+        getSelectedList: () => selected,
+        setSelectedList: (next) => {
+          selected = next;
+        },
+      });
+
+      const result =
+        scope === 'prefix'
+          ? await tm.renameTagPrefix(oldTag, newTag)
+          : await tm.renameTagExact(oldTag, newTag);
+      const effective = resolveEffectiveTagGroups(settings, [observed]);
+      const selectedGroupId = selected.groupId;
+      const selectedGroup = effective.find((group) => group.id === selectedGroupId);
+
+      expect(result).toEqual({ type: 'ok', changedFiles: [] });
+      expect(selected).toEqual({ type: 'group', groupId: expectedId });
+      expect(selectedGroup).toMatchObject({ origin: 'discovered' });
+      if (scope === 'prefix') expect(selectedGroup).toMatchObject({ prefix: 'new' });
+      else expect(selectedGroup).toMatchObject({ tags: ['#new'] });
+
+      if (selectedGroup === undefined) throw new Error('Expected selected effective group');
+      await tm.archiveGroup(selectedGroup);
+      if (scope === 'prefix') expect(settings.archivedTagPrefixes).toContain('new');
+      else expect(settings.archivedTags).toContain('#new');
+    },
+  );
 
   it('preserves the active stable id when a promoted prefix group is renamed', async () => {
     const { tm, settings } = await makeManager();

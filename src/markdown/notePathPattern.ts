@@ -8,8 +8,13 @@ export interface NotePathPattern {
 interface Marker {
   readonly format: string;
   readonly matcher: string;
-  readonly tokens: readonly DateToken[];
-  readonly tokenMatcher: RegExp;
+  readonly parts: readonly FormatPart[];
+  readonly valueMatcher: RegExp;
+}
+
+interface FormatPart {
+  readonly token: DateToken | undefined;
+  readonly matcher: RegExp;
 }
 
 type DateToken = (typeof FORMAT_TOKENS)[number];
@@ -48,6 +53,21 @@ const TOKEN_MATCHERS: Readonly<Record<(typeof FORMAT_TOKENS)[number], string>> =
   D: '(?:[1-9]|[12]\\d|3[01])',
   Q: '[1-4]',
   W: '(?:[1-9]|[1-4]\\d|5[0-3])',
+};
+
+const TOKEN_MAX_WIDTH: Readonly<Record<DateToken, number>> = {
+  GGGG: 4,
+  YYYY: 4,
+  DDDD: 3,
+  DDD: 3,
+  YY: 2,
+  MM: 2,
+  DD: 2,
+  WW: 2,
+  M: 2,
+  D: 2,
+  Q: 1,
+  W: 2,
 };
 
 function escapeRegex(value: string): string {
@@ -101,20 +121,28 @@ function compiledFormatPart(
 function compileFormat(format: string): Marker {
   if (format.length === 0) throw new Error('Note path date format cannot be empty.');
   let matcher = '';
-  let tokenMatcher = '';
   let cursor = 0;
-  const tokens: DateToken[] = [];
+  let hasToken = false;
+  const parts: FormatPart[] = [];
   while (cursor < format.length) {
     const part = compiledFormatPart(format, cursor);
     matcher += part.matcher;
-    tokenMatcher += part.token === undefined ? part.matcher : `(${part.matcher})`;
-    if (part.token !== undefined) tokens.push(part.token);
+    if (part.token !== undefined) hasToken = true;
+    parts.push({
+      token: part.token,
+      matcher: new RegExp(`^(?:${part.matcher})$`, 'iu'),
+    });
     cursor = part.next;
   }
-  if (tokens.length === 0) {
+  if (!hasToken) {
     throw new Error('Note path date format must contain a supported date token.');
   }
-  return { format, matcher, tokens, tokenMatcher: new RegExp(`^${tokenMatcher}$`, 'iu') };
+  return {
+    format,
+    matcher,
+    parts,
+    valueMatcher: new RegExp(`^(?:${matcher})$`, 'iu'),
+  };
 }
 
 function normalizedPattern(pattern: string): string {
@@ -200,7 +228,63 @@ const FIELD_FOR_TOKEN: Readonly<Record<DateToken, keyof DateFields>> = {
   WW: 'isoWeeks',
 };
 
-function capturedFields(markers: readonly Marker[], values: readonly string[]): DateFields {
+function captureMarkerFields(
+  marker: Marker,
+  value: string,
+  fields: Record<keyof DateFields, number[]>,
+): void {
+  const matchingPartEnds = (part: FormatPart, cursor: number): readonly number[] => {
+    const lastEnd =
+      part.token === undefined
+        ? value.length
+        : Math.min(value.length, cursor + TOKEN_MAX_WIDTH[part.token]);
+    const ends: number[] = [];
+    for (let end = cursor; end <= lastEnd; end += 1) {
+      if (part.matcher.test(value.slice(cursor, end))) ends.push(end);
+    }
+    return ends;
+  };
+  const memo = new Map<string, boolean>();
+  const canFinish = (partIndex: number, cursor: number): boolean => {
+    const key = `${partIndex}:${cursor}`;
+    const known = memo.get(key);
+    if (known !== undefined) return known;
+    if (partIndex === marker.parts.length) {
+      const complete = cursor === value.length;
+      memo.set(key, complete);
+      return complete;
+    }
+    const part = marker.parts[partIndex];
+    if (part === undefined) return false;
+    for (const end of matchingPartEnds(part, cursor)) {
+      if (!canFinish(partIndex + 1, end)) continue;
+      memo.set(key, true);
+      return true;
+    }
+    memo.set(key, false);
+    return false;
+  };
+  const visited = new Set<string>();
+  const collect = (partIndex: number, cursor: number): void => {
+    const key = `${partIndex}:${cursor}`;
+    if (visited.has(key)) return;
+    visited.add(key);
+    const part = marker.parts[partIndex];
+    if (part === undefined) return;
+    for (const end of matchingPartEnds(part, cursor)) {
+      const candidate = value.slice(cursor, end);
+      if (!canFinish(partIndex + 1, end)) continue;
+      if (part.token !== undefined) fields[FIELD_FOR_TOKEN[part.token]].push(Number(candidate));
+      collect(partIndex + 1, end);
+    }
+  };
+  if (canFinish(0, 0)) collect(0, 0);
+}
+
+function capturedFields(
+  markers: readonly Marker[],
+  valuesByMarker: ReadonlyArray<readonly string[]>,
+): DateFields {
   const fields: Record<keyof DateFields, number[]> = {
     calendarYears: [],
     twoDigitYears: [],
@@ -212,14 +296,87 @@ function capturedFields(markers: readonly Marker[], values: readonly string[]): 
     isoWeeks: [],
   };
   for (const [index, marker] of markers.entries()) {
-    const captures = marker.tokenMatcher.exec(values[index] ?? '')?.slice(1) ?? [];
-    for (const [tokenIndex, token] of marker.tokens.entries()) {
-      const value = captures[tokenIndex];
-      if (value === undefined) continue;
-      fields[FIELD_FOR_TOKEN[token]].push(Number(value));
-    }
+    for (const value of valuesByMarker[index] ?? []) captureMarkerFields(marker, value, fields);
   }
   return fields;
+}
+
+function matchingLiteralEnd(
+  filePath: string,
+  cursor: number,
+  markerIndex: number,
+  literalMatchers: readonly RegExp[],
+): number | undefined {
+  const matcher = literalMatchers[markerIndex];
+  if (matcher === undefined) return undefined;
+  const match = matcher.exec(filePath.slice(cursor));
+  return match === null ? undefined : cursor + match[0].length;
+}
+
+function matchingMarkerEnds(
+  filePath: string,
+  valueStart: number,
+  marker: Marker,
+): readonly number[] {
+  const ends: number[] = [];
+  for (let valueEnd = valueStart + 1; valueEnd <= filePath.length; valueEnd += 1) {
+    if (marker.valueMatcher.test(filePath.slice(valueStart, valueEnd))) ends.push(valueEnd);
+  }
+  return ends;
+}
+
+function markerValuesByPosition(
+  filePath: string,
+  literals: readonly string[],
+  markers: readonly Marker[],
+): ReadonlyArray<readonly string[]> {
+  const literalMatchers = literals.map(
+    (literal) => new RegExp(`^(?:${escapeRegex(literal)})`, 'iu'),
+  );
+  const memo = new Map<string, boolean>();
+  const canFinish = (markerIndex: number, cursor: number): boolean => {
+    const key = `${markerIndex}:${cursor}`;
+    const known = memo.get(key);
+    if (known !== undefined) return known;
+    const valueStart = matchingLiteralEnd(filePath, cursor, markerIndex, literalMatchers);
+    if (valueStart === undefined) {
+      memo.set(key, false);
+      return false;
+    }
+    if (markerIndex === markers.length) {
+      const complete = valueStart === filePath.length;
+      memo.set(key, complete);
+      return complete;
+    }
+    const marker = markers[markerIndex];
+    if (marker === undefined) return false;
+    for (const valueEnd of matchingMarkerEnds(filePath, valueStart, marker)) {
+      if (!canFinish(markerIndex + 1, valueEnd)) continue;
+      memo.set(key, true);
+      return true;
+    }
+    memo.set(key, false);
+    return false;
+  };
+  const values = markers.map(() => new Set<string>());
+  const visited = new Set<string>();
+  const collect = (markerIndex: number, cursor: number): void => {
+    const key = `${markerIndex}:${cursor}`;
+    if (visited.has(key)) return;
+    visited.add(key);
+    const valueStart = matchingLiteralEnd(filePath, cursor, markerIndex, literalMatchers);
+    if (valueStart === undefined) return;
+    const marker = markers[markerIndex];
+    const captured = values[markerIndex];
+    if (marker === undefined || captured === undefined) return;
+    for (const valueEnd of matchingMarkerEnds(filePath, valueStart, marker)) {
+      if (!canFinish(markerIndex + 1, valueEnd)) continue;
+      captured.add(filePath.slice(valueStart, valueEnd));
+      collect(markerIndex + 1, valueEnd);
+    }
+  };
+  if (canFinish(0, 0)) collect(0, 0);
+  return values.map((captured) => [...captured]);
 }
 
 function consecutiveDates(
@@ -319,7 +476,7 @@ function calendarCandidateYears(fields: DateFields): readonly number[] {
   if (fields.twoDigitYears.length > 0) {
     return Array.from({ length: 400 }, (_value, index) => 2000 + index);
   }
-  return [2000];
+  return [2000, 2001];
 }
 
 function candidateDates(fields: DateFields): ReadonlyArray<ReturnType<typeof moment>> {
@@ -341,26 +498,13 @@ function candidateDates(fields: DateFields): ReadonlyArray<ReturnType<typeof mom
   return years.flatMap((year) => datesForCalendarYear(year, fields, fields.isoYears.length > 0));
 }
 
-function isMatchingDate(
-  candidate: ReturnType<typeof moment>,
-  markers: readonly Marker[],
-  values: readonly string[],
-): boolean {
-  return markers.every(
-    (marker, index) =>
-      candidate.format(marker.format).toLocaleLowerCase() === values[index]?.toLocaleLowerCase(),
-  );
-}
-
 function hasMatchingDate(
   markers: readonly Marker[],
-  values: readonly string[],
+  valuesByMarker: ReadonlyArray<readonly string[]>,
   matchesResolvedPath: (candidate: ReturnType<typeof moment>) => boolean,
 ): boolean {
-  const fields = capturedFields(markers, values);
-  return candidateDates(fields).some(
-    (candidate) => isMatchingDate(candidate, markers, values) || matchesResolvedPath(candidate),
-  );
+  const fields = capturedFields(markers, valuesByMarker);
+  return candidateDates(fields).some(matchesResolvedPath);
 }
 
 export function compileNotePathPattern(pattern: string): NotePathPattern {
@@ -397,8 +541,8 @@ export function compileNotePathPattern(pattern: string): NotePathPattern {
       const match = matcher.exec(filePath);
       if (match === null) return false;
       if (markers.length === 0) return true;
-      const values = match.slice(1);
-      return hasMatchingDate(markers, values, (candidate) => {
+      const valuesByMarker = markerValuesByPosition(filePath, literals, markers);
+      return hasMatchingDate(markers, valuesByMarker, (candidate) => {
         let resolved = literals[0] ?? '';
         for (const [index, marker] of markers.entries()) {
           resolved += candidate.format(marker.format) + (literals[index + 1] ?? '');

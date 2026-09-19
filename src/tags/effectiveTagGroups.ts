@@ -138,6 +138,13 @@ function uniqueDiscoveredId(preferred: string, occupied: Set<string>): string {
   return `${preferred}::${suffix}`;
 }
 
+export function collisionFreeDiscoveredGroupId(
+  settings: Pick<CalendarSettings, 'tagGroups'>,
+  preferred: string,
+): string {
+  return uniqueDiscoveredId(preferred, new Set(settings.tagGroups.map(({ id }) => id)));
+}
+
 function reserveDiscoveredId(
   candidate: DiscoveredCandidate,
   occupied: Set<string>,
