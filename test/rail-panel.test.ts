@@ -4,6 +4,7 @@ import { RailPanel } from '../src/panels/RailPanel';
 import type { PanelNavigationActions } from '../src/views/panelNavigation';
 import {
   cssDeclarationsFor,
+  cssDeclarationValue,
   expectDefined,
   freshContainer,
   loadPluginStyles,
@@ -431,6 +432,24 @@ describe('RailPanel', () => {
     expect(rule).toContain('margin-top: 6px');
     expect(rule).toContain('width: 20px');
     expect(rule).toContain('height: 1px');
+  });
+
+  it('gives the tracking number a target a pointer can find', () => {
+    const number = cssDeclarationsFor(css, '.abyss-rail-tracking .abyss-rail-tracking-task');
+
+    // `1m` is about 14px of text, which is next to nothing to aim at in a 48px rail.
+    expect(cssDeclarationValue(number, 'min-width')).toBe('36px');
+    // The 11px line and this padding make a 17px box that clears the 28px toggle above it, and the
+    // negative margin takes the whole of that padding back out of the column, so nothing moves.
+    expect(cssDeclarationValue(number, 'padding')).toBe('3px 0');
+    expect(cssDeclarationValue(number, 'margin-block')).toBe('-2px');
+    // `23h 59m` is wider than the target and leaves no room beside it, so the ring goes inside.
+    expect(
+      cssDeclarationValue(
+        cssDeclarationsFor(css, '.abyss-rail-tracking .abyss-rail-tracking-task:focus-visible'),
+        'outline-offset',
+      ),
+    ).toBe('-1px');
   });
 
   it('collapses the host the widget hides itself with', () => {

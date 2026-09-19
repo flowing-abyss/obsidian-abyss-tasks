@@ -10146,16 +10146,20 @@ body.is-phone.is-mobile .abyss-creation-feedback {
  * The number reads as a number first, so its button carries no chrome of its own and takes the
  * widget's colour. It gives up the theme's input height, which would put a band of dead space
  * between the control above it and the hairline below, and buys its own target back with padding
- * the negative margin takes out of the layout again, so an 11px line still answers a pointer over
- * 21px while every gap in the column stays where it was.
+ * the negative margin takes out of the layout again, so an 11px line answers a pointer over a 36px
+ * by 17px rectangle while every gap in the column stays where it was. Those 3px above the digits
+ * are what the target has: a taller box would have to start inside the 28px toggle, which owns the
+ * whole of its own square.
  */
 .abyss-rail-tracking .abyss-rail-tracking-task {
+  /* `1m` is 14px of text, far too little to aim at, so the short labels take the width instead. */
+  min-width: 36px;
   height: auto;
   min-height: 0;
-  margin-block: -4px;
+  margin-block: -2px;
 
   /* No padding beside the digits: `23h 59m` fills the rail, and a gap there belongs to the rail. */
-  padding: 5px 0;
+  padding: 3px 0;
   border: none;
   border-radius: var(--radius-s);
   background: transparent;
