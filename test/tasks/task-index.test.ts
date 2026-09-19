@@ -1264,6 +1264,24 @@ describe('TaskIndex lifecycle and events', () => {
     index.destroy();
   });
 
+  it('keeps a committed insertion that arrives during a blocked initial read', async () => {
+    const path = 'boundaries.md';
+    const original = '> ```md\n> example\n# Tasks\n- [ ] Old\n';
+    const committed = '> ```md\n> example\n# Tasks\n- [ ] New\n- [ ] Old\n';
+    const { app, index } = await setup({ [path]: original });
+    const read = blockRead(app, path, original);
+
+    const initializing = index.initialize();
+    await read.started;
+    index.installCommittedContent(path, committed);
+    expect(index.list().map((task) => task.title)).toEqual(['New', 'Old']);
+    read.release();
+    await initializing;
+
+    expect(index.list().map((task) => task.title)).toEqual(['New', 'Old']);
+    index.destroy();
+  });
+
   it('keeps a delete that arrives during a blocked initial read', async () => {
     const { app, index } = await setup({ 'blocked.md': '- [ ] stale' });
     const read = blockRead(app, 'blocked.md', '- [ ] stale');

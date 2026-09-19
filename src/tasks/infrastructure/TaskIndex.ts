@@ -1314,6 +1314,7 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     prove: (roots: readonly TaskSnapshot[]) => void,
   ): readonly TaskSnapshot[] {
     const roots: TaskSnapshot[] = [];
+    for (const filePath of contents.keys()) this.invalidatePendingRead_abyssPrivate(filePath);
     const prepared = [...contents].map(([filePath, content]) => {
       let restored = false;
       const cache = cacheWithContentFallback(content, null);
@@ -1340,6 +1341,12 @@ export class TaskIndex implements TaskQueryApi, TaskDependencyQueryApi, TaskSnap
     prove(roots);
     for (const publish of prepared) publish();
     return roots.map(cloneTaskSnapshot);
+  }
+
+  private invalidatePendingRead_abyssPrivate(filePath: string): void {
+    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof TFile) || file.extension !== 'md') return;
+    this.advance_abyssPrivate(file, filePath);
   }
 
   private reconciledRevision_abyssPrivate(input: ReconciledRevisionInput): string {
