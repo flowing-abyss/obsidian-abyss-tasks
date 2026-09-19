@@ -487,5 +487,18 @@ describe('Obsidian archive recovery identity', () => {
     });
     expect((await h.read('target.md')).match(/Bottom/gu)).toHaveLength(1);
     expect(await h.read('source.md')).toBe('- [ ] Bottom\n');
+
+    await h.app.vault.modify(targetFile, '# Target\n');
+    await expect(
+      archive({
+        destination: destination(),
+        baseRoot: current,
+        baseTarget: { type: 'task', ref: bottom.ref },
+        reconciliation: { observed: current },
+      }),
+    ).resolves.toMatchObject({ type: 'committed', outcome: { type: 'archived' } });
+    await expect(archive(bottom.ref, destination())).resolves.toMatchObject({
+      type: 'not-found',
+    });
   });
 });

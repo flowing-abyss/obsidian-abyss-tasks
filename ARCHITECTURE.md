@@ -118,10 +118,10 @@ session freezes the date-expanded destination and shares lazy note preparation a
 The repository proves the appended raw root before source removal, retains bounded unresolved
 receipts without eviction, and requires fresh target evidence before retrying removal. A prepared
 archive retains the original command target as its receipt identity while the current root reference
-locates a rebased source; equivalent freshly selected roots are matched conservatively by source
-proof and ambiguous ownership is rejected. Canonical vault casing is reused for an existing archive
-file or parent folder. Ordinary capture destinations are rejected before provisioning when the
-injected exclusion predicate matches them.
+locates a rebased source; equivalent freshly selected roots resume only with the same authority
+revision. Raw-block equality without revision continuity is ambiguous and rejected. Canonical vault
+casing is reused for an existing archive file or parent folder. Ordinary capture destinations are
+rejected before provisioning when the injected exclusion predicate matches them.
 
 ### Dependencies
 

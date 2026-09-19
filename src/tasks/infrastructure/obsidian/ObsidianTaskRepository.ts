@@ -944,9 +944,10 @@ export class ObsidianTaskRepository implements TaskRepository {
       (receipt) => receipt.source.filePath === ref.filePath && receipt.sourceBlock === sourceBlock,
     );
     const sameRevision = sameSource.filter((receipt) => receipt.source.revision === ref.revision);
-    const candidates = sameRevision.length > 0 ? sameRevision : sameSource;
-    if (candidates.length === 1) return { type: 'found', receipt: candidates[0] as ArchiveReceipt };
-    return { type: candidates.length === 0 ? 'absent' : 'ambiguous' };
+    if (sameRevision.length === 1) {
+      return { type: 'found', receipt: sameRevision[0] as ArchiveReceipt };
+    }
+    return { type: sameSource.length === 0 ? 'absent' : 'ambiguous' };
   }
 
   private async beginArchive_abyssPrivate(
@@ -985,7 +986,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     const targetProof = await this.proveArchiveTarget_abyssPrivate(receipt);
     if (targetProof.type === 'result') return targetProof.result;
     if (targetProof.type === 'absent') {
-      this.archiveReceipts_abyssPrivate.delete(archiveReceiptKey(ref));
+      this.archiveReceipts_abyssPrivate.delete(archiveReceiptKey(receipt.source));
       return await this.archiveOnce_abyssPrivate(ref, destination);
     }
     return await this.resumeArchiveSource_abyssPrivate(ref, receipt);
@@ -1022,7 +1023,7 @@ export class ObsidianTaskRepository implements TaskRepository {
   ): Promise<TaskRepositoryResult> {
     const source = this.app_abyssPrivate.vault.getAbstractFileByPath(ref.filePath);
     if (!(source instanceof TFile)) {
-      this.archiveReceipts_abyssPrivate.delete(archiveReceiptKey(ref));
+      this.archiveReceipts_abyssPrivate.delete(archiveReceiptKey(receipt.source));
       return this.committedArchive_abyssPrivate(ref, receipt.targetPath);
     }
     const sourceContent = await this.readMoveSource_abyssPrivate(source, ref.filePath);

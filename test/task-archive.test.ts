@@ -387,6 +387,50 @@ describe('transactional task archive', () => {
     h.index.destroy();
   });
 
+  it('rejects raw-identical source text from a different authority occurrence', async () => {
+    const h = await harness('- [ ] Identical\n', '# Archive\n');
+    const destinationProvider = {
+      planArchive: vi.fn().mockResolvedValue({
+        destination: ARCHIVE,
+        prepare: vi.fn().mockResolvedValue({ type: 'resolved', destination: ARCHIVE }),
+      }),
+    } as unknown as TaskDestinationProvider;
+    const application = new TaskApplicationService(
+      h.index,
+      h.repository,
+      new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses)),
+      { today: () => localDate('2026-09-19') },
+      destinationProvider,
+    );
+    const originalProcess = h.app.vault.process.bind(h.app.vault);
+    vi.spyOn(h.app.vault, 'process')
+      .mockImplementationOnce(originalProcess)
+      .mockRejectedValueOnce(new Error('source write failed'))
+      .mockImplementation(originalProcess);
+
+    const partial = await application.execute({ type: 'archive', ref: h.ref });
+    expect(partial).toMatchObject({ type: 'partial', operation: 'archive' });
+    const source = h.app.vault.getAbstractFileByPath('source.md');
+    if (!(source instanceof TFile)) throw new Error('source missing');
+    await h.app.vault.modify(source, '');
+    h.index.installCommittedContent('source.md', '');
+    await h.app.vault.modify(source, '- [ ] Identical\n');
+    const replacement = expectDefined(
+      h.index.installCommittedContent('source.md', '- [ ] Identical\n')[0],
+    );
+    expect(replacement.ref.revision).not.toBe(h.ref.revision);
+
+    await expect(application.execute({ type: 'archive', ref: replacement.ref })).resolves.toEqual({
+      type: 'io-error',
+      cause: 'archive-recovery-ambiguous',
+      path: 'tasks/archive.md',
+      contentState: 'unchanged',
+    });
+    expect(await h.read('source.md')).toBe('- [ ] Identical\n');
+    expect((await h.read('tasks/archive.md')).match(/Identical/gu)).toHaveLength(1);
+    h.index.destroy();
+  });
+
   it('rejects new writes when retained recovery ownership reaches its bound', async () => {
     const files: Record<string, string> = { 'tasks/archive.md': '# Archive\n' };
     for (let index = 0; index < 65; index += 1) {
