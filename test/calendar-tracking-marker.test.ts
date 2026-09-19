@@ -201,11 +201,8 @@ describe('sidebar calendar running marker', () => {
     expect(items.filter((item) => item.classList.contains('is-tracking'))).toEqual([]);
   });
 
-  it('accents a running item through the outline token every item already resolves', (context) => {
-    if (!Platform.isDesktop) {
-      context.skip();
-      return;
-    }
+  it('accents a running item through the outline token every item already resolves', () => {
+    if (!Platform.isDesktop) throw new Error('CSS fixture requires the desktop test runtime');
 
     expect(cssDeclarationsFor(css, '.abyss-calendar-item.is-tracking')).toContain(
       '--abyss-calendar-border: var(--interactive-accent)',
