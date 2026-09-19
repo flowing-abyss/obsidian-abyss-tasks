@@ -9,6 +9,7 @@ import {
   type SubtaskSnapshot,
   type TaskNodeRef,
   type TaskSnapshot,
+  type TimeEntryRemovalRecovery,
   type TimeEntrySnapshot,
 } from '../../tasks';
 import { openAnchoredPopover, type AnchoredPopover } from '../anchoredPopover';
@@ -308,15 +309,19 @@ async function removeSession(
   // under by the time the write lands and the list is rebuilt. The hold is this attempt's own,
   // because another removal can be writing alongside it and they answer one at a time.
   session.removingDays.push(dayKey);
-  const recovery = await actions.remove(timeEntryRef(current.parent, current.entry));
-  releaseRemovingDay(session, dayKey);
-  if (recovery === undefined || session.closed) {
-    dropEmptiedDay(session, dayKey);
-    return;
+  let recovery: TimeEntryRemovalRecovery | undefined;
+  try {
+    recovery = await actions.remove(timeEntryRef(current.parent, current.entry));
+  } finally {
+    releaseRemovingDay(session, dayKey);
+    // A write that broke leaves through the action boundary rather than through the return below,
+    // so every removal that wrote nothing lets its day go here, where both endings pass.
+    if (recovery === undefined) dropEmptiedDay(session, dayKey);
   }
+  if (recovery === undefined || session.closed) return;
   // The offer is numbered before it takes the day, so the offer it replaces, which `show` ends on
-  // its way in, reads a number that is no longer its own and leaves the day alone. The redraw the
-  // hold runs is what drops that offer's emptied heading, which nothing else is holding now.
+  // its way in, reads a number that is no longer its own and leaves the day alone. Taking the day
+  // is what lets that offer's emptied heading go, which nothing else is holding now.
   const offer = (session.undoOffer += 1);
   holdUndoDay(session, dayKey);
   session.undo.show(
@@ -340,11 +345,27 @@ async function removeSession(
   );
 }
 
-/** Holds a day open for an undo row, or lets the last one go, and redraws past the memo. */
+/**
+ * Holds a day open for an undo row, or lets the last one go, and rebuilds the list only where what
+ * it shows has to change: a day that is not on screen has to be drawn, and a day being let go is
+ * dropped only once it has nothing left under it. A list that already reads right keeps the rows a
+ * reader is looking at and whatever the keyboard is on.
+ */
 function holdUndoDay(session: PopoverSession, key: string | undefined): void {
-  if (session.closed || session.undoDayKey === key) return;
+  if (session.closed) return;
+  const previous = session.undoDayKey;
+  if (previous === key) return;
   session.undoDayKey = key;
-  redraw(session);
+  if (
+    key !== undefined &&
+    session.shell.element.querySelector(`[data-${DAY_KEY}="${key}"]`) === null
+  ) {
+    // The day the row is about to be filed under has no section of its own, so the list is drawn
+    // again with it, past the memo, and that rebuild settles the day being let go as well.
+    redraw(session);
+    return;
+  }
+  if (previous !== undefined) dropEmptiedDay(session, previous);
 }
 
 /** Rebuilds the list whatever the memo of the last one says, for a list known to be out of date. */

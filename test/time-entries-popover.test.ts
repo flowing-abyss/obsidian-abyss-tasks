@@ -40,6 +40,13 @@ const SESSIONS = [
   '',
 ].join('\n');
 
+/** The whole tracked time of a task in one line, for the list that has a single day to lose. */
+const SOLE_SESSION = [
+  '- [ ] Current',
+  '  - 2026-09-18T09:12:00+03:00 → 2026-09-18T10:32:00+03:00',
+  '',
+].join('\n');
+
 /** The same sessions with nothing running, for the popover no tick is driving. */
 const IDLE_SESSIONS = [
   '- [ ] Current',
@@ -1011,6 +1018,94 @@ describe('tracked sessions popover', () => {
   });
 
   /**
+   * A removal whose write breaks rather than answers leaves through the action boundary, and the
+   * day it was holding has to go with it: a hold nothing releases would outlive every later offer.
+   */
+  it('lets go of the day a removal that threw was holding', async () => {
+    const harness = await inspector();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      open(harness.el);
+      vi.spyOn(harness.app.vault, 'process').mockRejectedValueOnce(new Error('disk full'));
+      // The refused write is reported, and the reader of that report is what breaks here.
+      vi.spyOn(harness.reported, 'push').mockImplementationOnce(() => {
+        throw new Error('nowhere to report');
+      });
+      const yesterday = expectDefined(rows(harness.el)[3], 'Missing the Yesterday row');
+      expect(rowShape(yesterday).range).toBe('18:40 → 18:55');
+      expectDefined(yesterday.querySelector<HTMLButtonElement>('.abyss-time-row-remove')).click();
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(error).toHaveBeenCalledWith(
+        '[abyss-tasks] Could not remove a tracked session',
+        expect.any(Error),
+      );
+
+      // The same row goes for good on the next attempt, whose own hold is the only one left.
+      expectDefined(
+        rows(harness.el)[3]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+      ).click();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(undoPlace(harness.el)).toEqual({ day: 'Yesterday', index: 1 });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(popover(harness.el).querySelector('.abyss-undo-row')).toBeNull();
+      expect(headings(harness.el)).toEqual(['Today', 'Needs attention']);
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * An offer over a day that still has sessions changes nothing about what the list shows, so it
+   * may not take that list apart: the rows a reader is looking at and the control the keyboard is
+   * on are both worth more than a rebuild that would draw the same thing again.
+   */
+  it('keeps the rows and the focus when an offer over a day that still has rows ends', async () => {
+    const harness = await inspector();
+    vi.useFakeTimers();
+    try {
+      open(harness.el);
+      expectDefined(
+        rows(harness.el)[1]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+      ).click();
+      await vi.advanceTimersByTimeAsync(10);
+      const kept = expectDefined(rows(harness.el)[1], 'Missing the row that stayed');
+      const remove = expectDefined(kept.querySelector<HTMLButtonElement>('.abyss-time-row-remove'));
+      remove.focus();
+
+      // The offer runs out over a day that never lost its last session.
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(popover(harness.el).querySelector('.abyss-undo-row')).toBeNull();
+      expect(kept.isConnected).toBe(true);
+      expect(activeDocument.activeElement).toBe(remove);
+      expect(headings(harness.el)).toEqual(['Today', 'Yesterday', 'Needs attention']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('draws the list once for a removal the index has already reported', async () => {
+    const harness = await inspector();
+    const surface = open(harness.el);
+    const drawn = vi.spyOn(surface, 'empty');
+
+    expectDefined(
+      rows(harness.el)[1]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+    ).click();
+    await flushMicrotasks();
+
+    // The write is reported by the index, which rebuilds the list; taking the day for the undo row
+    // that goes into it must not build the same list a second time.
+    expect(drawn).toHaveBeenCalledTimes(1);
+    expect(undoPlace(harness.el)).toEqual({ day: 'Today', index: 2 });
+  });
+
+  /**
    * The day a removal is writing and the day under the undo row already on screen are two
    * different days, so a rebuild that lands while that write is unanswered has to keep both. The
    * midnight tick is such a rebuild, and it needs no write of its own to arrive first.
@@ -1143,6 +1238,88 @@ describe('tracked sessions popover', () => {
 
     expect(headings(harness.el)).toEqual(['Today', 'Needs attention']);
     expect(undoPlace(harness.el)).toEqual({ day: 'Today', index: 1 });
+  });
+
+  /**
+   * The last session of a whole task takes the only day of the list with it, so the list may not
+   * call the task untracked while the row that would bring it back is still on screen.
+   */
+  it('holds the only day of a list open until its undo offer is over', async () => {
+    const harness = await inspector(SOLE_SESSION);
+    const before = await harness.read();
+    vi.useFakeTimers();
+    try {
+      open(harness.el);
+      expectDefined(
+        rows(harness.el)[0]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+      ).click();
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(headings(harness.el)).toEqual(['Today']);
+      expect(popover(harness.el).textContent).not.toContain('No tracked time yet');
+      expect(undoPlace(harness.el)).toEqual({ day: 'Today', index: 1 });
+
+      // The offer is taken, so the one session comes back into the day that was held for it.
+      expectDefined(
+        popover(harness.el).querySelector<HTMLButtonElement>('.abyss-undo-row button'),
+      ).click();
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(popover(harness.el).querySelector('.abyss-undo-row')).toBeNull();
+      expect(listed(harness.el)).toEqual([
+        ['day', 'Today'],
+        ['row', '09:12 → 10:32', '', '1h 20m'],
+      ]);
+
+      // Removed again and left alone, the day goes when the offer does and the list says so.
+      expectDefined(
+        rows(harness.el)[0]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+      ).click();
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(headings(harness.el)).toEqual([]);
+      expect(popover(harness.el).textContent).toContain('No tracked time yet');
+      expect(await harness.read()).not.toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * Two removals from the one day, the first offered and the second refused: the offer on screen is
+   * still the first one's, in the place it was filed, and the day both came from keeps its rows.
+   */
+  it('keeps the first undo row in its place when a removal from the same day fails', async () => {
+    const harness = await inspector();
+    vi.useFakeTimers();
+    try {
+      open(harness.el);
+      expectDefined(
+        rows(harness.el)[1]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
+      ).click();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(undoPlace(harness.el)).toEqual({ day: 'Today', index: 2 });
+
+      vi.spyOn(harness.app.vault, 'process').mockRejectedValueOnce(new Error('disk full'));
+      const same = expectDefined(rows(harness.el)[1], 'Missing the second row of the day');
+      expect(rowShape(same).range).toBe('09:12 → 10:32');
+      expectDefined(same.querySelector<HTMLButtonElement>('.abyss-time-row-remove')).click();
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(popover(harness.el).querySelectorAll('.abyss-undo-row')).toHaveLength(1);
+      expect(undoPlace(harness.el)).toEqual({ day: 'Today', index: 2 });
+      expect(harness.reported.map((result) => result.type)).toEqual(['io-error']);
+
+      // The offer runs out, and the day neither removal emptied is still standing with its rows.
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(popover(harness.el).querySelector('.abyss-undo-row')).toBeNull();
+      expect(headings(harness.el)).toEqual(['Today', 'Yesterday', 'Needs attention']);
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
   });
 });
 
