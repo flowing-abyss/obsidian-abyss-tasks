@@ -2807,19 +2807,25 @@ export class CenterPanel {
     showMenuAtMouseEventWithFocus(menu, event);
   }
 
+  /**
+   * Obsidian orders the sections by where each one was first asked for, not by where its items
+   * were added, so the order of these calls is the order of the menu: the due presets, tracking on
+   * its own, then everything that edits the task.
+   */
   private createTaskContextMenu_abyssPrivate(card: HTMLElement, task: TaskSnapshot): Menu {
     const today = localDate(window.moment().format('YYYY-MM-DD'));
     const menu = new Menu();
-    this.addTaskDateMenuItems_abyssPrivate(menu, card, task, today);
+    this.addTaskDuePresetMenuItems_abyssPrivate(menu, task, today);
+    this.addTrackingMenuItem_abyssPrivate(menu, task);
+    this.addTaskDatePickerMenuItem_abyssPrivate(menu, card, task);
     this.addTaskTagMenuItems_abyssPrivate(menu, task);
     this.addTaskPropertyMenuItems_abyssPrivate(menu, task);
     this.addTaskActionMenuItems_abyssPrivate(menu, card, task);
     return menu;
   }
 
-  private addTaskDateMenuItems_abyssPrivate(
+  private addTaskDuePresetMenuItems_abyssPrivate(
     menu: Menu,
-    card: HTMLElement,
     task: TaskSnapshot,
     today: LocalDate,
   ): void {
@@ -2847,6 +2853,13 @@ export class CenterPanel {
           }),
       );
     }
+  }
+
+  private addTaskDatePickerMenuItem_abyssPrivate(
+    menu: Menu,
+    card: HTMLElement,
+    task: TaskSnapshot,
+  ): void {
     menu.addItem((item) =>
       item
         .setTitle('Set date…')
@@ -2942,8 +2955,6 @@ export class CenterPanel {
         });
     });
 
-    this.addTrackingMenuItem_abyssPrivate(menu, task);
-
     menu.addItem((item) =>
       item
         .setTitle('Open in note')
@@ -2966,9 +2977,13 @@ export class CenterPanel {
   }
 
   /**
-   * Start or pause the timer on the card the menu was opened from. A forecast occurrence has no
-   * line to write to, and a finished node is refused unless something under it is still running,
-   * which is the one case that still needs a way to stop.
+   * Start or pause the timer on the card the menu was opened from. It stands in a section of its
+   * own under the due presets because it is the one item here that sets something running rather
+   * than editing the task, and it only ever means one card, which is why the bulk menu has none.
+   * The section is registered by the item, so a menu without it shows no empty band.
+   *
+   * A forecast occurrence has no line to write to, and a finished node is refused unless something
+   * under it is still running, which is the one case that still needs a way to stop.
    */
   private addTrackingMenuItem_abyssPrivate(menu: Menu, task: TaskSnapshot): void {
     const tracking = this.timeTracking_abyssPrivate;
@@ -2980,7 +2995,7 @@ export class CenterPanel {
       item
         .setTitle(running ? 'Pause tracking' : 'Start tracking')
         .setIcon(running ? 'pause' : 'play')
-        .setSection('actions')
+        .setSection('tracking')
         .onClick(() => {
           runAsyncAction(
             running ? tracking.actions.pause() : tracking.actions.start(target),

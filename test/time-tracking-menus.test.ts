@@ -88,6 +88,7 @@ function fakeTickWindow(): { readonly win: Window; tick(): void; running(): bool
 
 interface CapturedMenuItem {
   icon__: string;
+  menu__: Menu;
   onClick__: ((event: MouseEvent) => unknown) | null;
   section__: string;
   title__: string;
@@ -99,6 +100,7 @@ function captureMenu(): CapturedMenuItem[] {
     const item = {
       dom: createDiv(),
       icon__: '',
+      menu__: this,
       onClick__: null as ((event: MouseEvent) => unknown) | null,
       section__: '',
       title__: '',
@@ -139,6 +141,16 @@ function captureMenu(): CapturedMenuItem[] {
     return this;
   });
   return items;
+}
+
+/**
+ * The items the opened menu added itself. A submenu is a menu of its own, and the priority and
+ * status levels under it are recorded in the same list, so they are told apart by the menu each
+ * item was added to. `Today` is the first item the card menu adds, which names that menu.
+ */
+function ownItems(items: readonly CapturedMenuItem[]): CapturedMenuItem[] {
+  const menu = items.find((item) => item.title__ === 'Today')?.menu__;
+  return items.filter((item) => item.menu__ === menu);
 }
 
 function trackingItem(items: readonly CapturedMenuItem[]): CapturedMenuItem | undefined {
@@ -347,7 +359,7 @@ describe('task card tracking menu item', () => {
     const item = expectDefined(trackingItem(openCardMenu(cardFor(harness.el, 'Beta'))));
     expect(item.title__).toBe('Start tracking');
     expect(item.icon__).toBe('play');
-    expect(item.section__).toBe('actions');
+    expect(item.section__).toBe('tracking');
 
     item.onClick__?.(new MouseEvent('click'));
     await flushMicrotasks();
@@ -371,10 +383,39 @@ describe('task card tracking menu item', () => {
     expect(harness.reported).toEqual([]);
   });
 
+  it('stands alone between the due presets and the rest of the menu', async () => {
+    const harness = await center(UNTRACKED);
+
+    const items = openCardMenu(cardFor(harness.el, 'Beta'));
+
+    // Obsidian groups the menu by section and orders the sections by where each one was first
+    // asked for, so what arranges the menu is the order the items were added together with the
+    // section each named. The mock records both and reorders neither, so both are read here.
+    expect(ownItems(items).map((item) => [item.title__, item.section__])).toEqual([
+      ['Today', 'today'],
+      ['Tomorrow', 'today'],
+      ['Start tracking', 'tracking'],
+      ['Set date…', 'actions'],
+      ['Priority', 'priority'],
+      ['Status', 'priority'],
+      ['Filter by this priority', 'priority'],
+      ['Filter by this status', 'priority'],
+      ['Set tag…', 'actions'],
+      ['Edit repeat…', 'actions'],
+      ['Open in note', 'actions'],
+      ['Delete', 'danger'],
+    ]);
+  });
+
   it('leaves a finished task alone', async () => {
     const harness = await center('- [x] Alpha\n');
 
-    expect(trackingItem(openCardMenu(cardFor(harness.el, 'Alpha')))).toBeUndefined();
+    const items = openCardMenu(cardFor(harness.el, 'Alpha'));
+
+    expect(trackingItem(items)).toBeUndefined();
+    // An empty section would still draw its separator, so the section exists only where the item
+    // does.
+    expect(items.some((item) => item.section__ === 'tracking')).toBe(false);
   });
 
   it('still offers to pause a finished task whose sub-task is running', async () => {
@@ -397,6 +438,21 @@ describe('task card tracking menu item', () => {
 
     expect(items.some((item) => item.title__ === '2 tasks selected')).toBe(true);
     expect(trackingItem(items)).toBeUndefined();
+  });
+
+  it('stays out of the bulk menu while one of the selected tasks is running', async () => {
+    const harness = await center(RUNNING_SESSION);
+    for (const card of cards(harness.el)) {
+      card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    }
+
+    const items = openCardMenu(cardFor(harness.el, 'Alpha'));
+
+    // A timer belongs to one task, so the bulk menu offers neither half of the pair, and the
+    // section it would sit in is never registered either.
+    expect(items.some((item) => item.title__ === '2 tasks selected')).toBe(true);
+    expect(trackingItem(items)).toBeUndefined();
+    expect(items.some((item) => item.section__ === 'tracking')).toBe(false);
   });
 });
 
