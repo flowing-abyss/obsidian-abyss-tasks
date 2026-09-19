@@ -2937,6 +2937,7 @@ export class RightPanel {
     }, 0);
 
     this.renderPopoverClear_abyssPrivate(inputRow, 'Clear date', () => {
+      committed = true;
       if (field === 'due') runAsyncAction(this.clearDate_abyssPrivate(task));
       else runAsyncAction(this.clearPlanningDate_abyssPrivate(task, field));
       this.removeAnchoredSurface_abyssPrivate(pop);
@@ -2945,6 +2946,7 @@ export class RightPanel {
     this.dismissMenuOnOutsideClick_abyssPrivate(pop, anchor, undefined, {
       focusLeaveDelay: 200,
       onCleanup: () => {
+        committed = true;
         if (previousPopupRole !== null && previousPopupRole !== '') {
           anchor.setAttribute('aria-haspopup', previousPopupRole);
         } else anchor.removeAttribute('aria-haspopup');

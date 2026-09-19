@@ -1365,8 +1365,11 @@ describe('RightPanel popovers', () => {
     panel.destroy();
   });
 
-  it('cancels a keyboard date draft on Escape without persisting it', async () => {
-    const selected = task({ title: 'Escape date' });
+  it('cancels a keyboard date draft on Escape before focused removal can persist it', async () => {
+    const selected = task({
+      title: 'Escape date',
+      planning: { due: '2026-09-21' },
+    });
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
       type: 'io-error',
       cause: 'test',
@@ -1388,12 +1391,21 @@ describe('RightPanel popovers', () => {
     );
     click(chip);
     await tick();
-    const input = expectDefined(
-      el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input'),
-    );
+    const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-date-popover'));
+    const input = expectDefined(popover.querySelector<HTMLInputElement>('.abyss-date-input'));
     input.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true }));
-    input.value = '0002-09-21';
+    input.value = '2026-09-22';
     input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.focus();
+    const remove = popover.remove.bind(popover);
+    let removeCalls = 0;
+    vi.spyOn(popover, 'remove').mockImplementation(() => {
+      removeCalls += 1;
+      if (removeCalls === 1) {
+        input.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: chip }));
+      }
+      if (popover.isConnected) remove();
+    });
 
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
@@ -1401,6 +1413,67 @@ describe('RightPanel popovers', () => {
     await flushMicrotasks();
 
     expect(execute).not.toHaveBeenCalled();
+    expect(removeCalls).toBe(1);
+    expect(el.querySelector('.abyss-date-popover')).toBeNull();
+    panel.destroy();
+    el.remove();
+    frame.remove();
+  });
+
+  it('clears once without committing a valid keyboard draft during focused removal', async () => {
+    const selected = task({
+      title: 'Clear date',
+      planning: { due: '2026-09-21' },
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'io-error',
+      cause: 'test',
+      contentState: 'unchanged',
+    });
+    const { panel, state, el } = await makePanel(
+      {},
+      { queries: queryApiForTasks(() => [selected]), execute },
+    );
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = expectDefined(frame.contentDocument);
+    ownerDocument.body.append(ownerDocument.adoptNode(el));
+    state.set('taskStack', [selected]);
+    const chip = expectDefined(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')).find(
+        (candidate) => candidate.textContent.startsWith('📅'),
+      ),
+    );
+    click(chip);
+    await tick();
+    const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-date-popover'));
+    const input = expectDefined(popover.querySelector<HTMLInputElement>('.abyss-date-input'));
+    const clear = expectDefined(
+      popover.querySelector<HTMLButtonElement>('[aria-label="Clear date"]'),
+    );
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true }));
+    input.value = '2026-09-22';
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.focus();
+    const remove = popover.remove.bind(popover);
+    let removeCalls = 0;
+    vi.spyOn(popover, 'remove').mockImplementation(() => {
+      removeCalls += 1;
+      if (removeCalls === 1) {
+        input.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: chip }));
+      }
+      if (popover.isConnected) remove();
+    });
+
+    click(clear);
+    await flushMicrotasks();
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith({
+      type: 'patch',
+      target: { type: 'task', ref: selected.ref },
+      patch: { due: { type: 'clear' } },
+    });
+    expect(removeCalls).toBe(1);
     expect(el.querySelector('.abyss-date-popover')).toBeNull();
     panel.destroy();
     el.remove();
