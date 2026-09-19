@@ -1,8 +1,14 @@
 import type { ListSelection } from '../app/AppState';
 import type { CalendarSettings, ListViewState, PropertyFilter } from '../settings/types';
 import {
+  resolveEffectiveTagGroups,
+  tagMatchesGroup,
+  type EffectiveTagGroup,
+} from '../tags/effectiveTagGroups';
+import {
   normalizeTaskTagInput,
   type LocalDate,
+  type SubtaskSnapshot,
   type TaskSnapshot,
   type TaskStatusType,
 } from '../tasks';
@@ -20,19 +26,43 @@ function dateOf(task: TaskSnapshot): string | undefined {
   return task.planning.due ?? task.planning.scheduled ?? task.planning.start;
 }
 
-function selected(
-  task: TaskSnapshot,
-  selection: ListSelection,
-  settings: CalendarSettings,
-  today: LocalDate,
-): boolean {
+interface SelectionContext {
+  readonly selection: ListSelection;
+  readonly settings: CalendarSettings;
+  readonly today: LocalDate;
+  readonly groups: readonly EffectiveTagGroup[];
+}
+
+function selected(task: TaskSnapshot, context: SelectionContext): boolean {
+  const { selection, settings, today, groups } = context;
   if (selection === 'inbox' || selection === 'today' || selection === 'upcoming') {
     return selectedNamedList(task, selection, settings, today);
   }
   if (typeof selection === 'string') return true;
-  if (selection.type === 'tag') return task.tags.includes(selection.tag);
+  if (selection.type === 'tag') return taskTreeHasTag(task, selection.tag);
   if (selection.type === 'project') return task.source.filePath === selection.path;
-  return selectedTagGroup(task, selection.groupId, settings);
+  return selectedTagGroup(task, selection.groupId, groups);
+}
+
+function visitTaskTags(
+  node: Pick<TaskSnapshot | SubtaskSnapshot, 'tags' | 'subtasks'>,
+  visit: (tag: string) => boolean,
+): boolean {
+  if (node.tags.some(visit)) return true;
+  return node.subtasks.some((child) => visitTaskTags(child, visit));
+}
+
+function taskTreeHasTag(task: TaskSnapshot, tag: string): boolean {
+  return visitTaskTags(task, (candidate) => candidate === tag);
+}
+
+function taskTreeTags(task: TaskSnapshot): readonly string[] {
+  const tags: string[] = [];
+  visitTaskTags(task, (tag) => {
+    tags.push(tag);
+    return false;
+  });
+  return tags;
 }
 
 function selectedNamedList(
@@ -67,15 +97,11 @@ function selectedToday(task: TaskSnapshot, today: LocalDate): boolean {
 function selectedTagGroup(
   task: TaskSnapshot,
   groupId: string,
-  settings: CalendarSettings,
+  groups: readonly EffectiveTagGroup[],
 ): boolean {
-  const group = settings.tagGroups.find((candidate) => candidate.id === groupId);
+  const group = groups.find((candidate) => candidate.id === groupId);
   if (group == null) return false;
-  if (group.mode === 'prefix' && group.prefix !== undefined && group.prefix.length > 0) {
-    const root = `#${group.prefix}`;
-    return task.tags.some((tag) => tag === root || tag.startsWith(`${root}/`));
-  }
-  return (group.tags ?? []).some((tag) => task.tags.includes(tag));
+  return visitTaskTags(task, (tag) => tagMatchesGroup(tag, group));
 }
 
 function statusTypeOf(task: TaskSnapshot): TaskStatusType {
@@ -131,8 +157,9 @@ function compare(left: TaskSnapshot, right: TaskSnapshot, input: TaskListSelecti
 export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnapshot[] {
   const allowed = input.viewState.statusGroups;
   const query = input.textQuery?.toLowerCase() ?? '';
+  const groups = resolveEffectiveTagGroups(input.settings, input.tasks.flatMap(taskTreeTags));
   return input.tasks
-    .filter((task) => selected(task, input.selection, input.settings, input.today))
+    .filter((task) => selected(task, { ...input, groups }))
     .filter(
       (task) =>
         allowed == null ||

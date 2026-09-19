@@ -20,7 +20,12 @@ import type {
 } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import { ACTIVE_STATUS_GROUPS, ALL_STATUS_GROUPS, TYPE_LABELS } from '../status/statusConstants';
-import { collectTaskTags } from '../tags/taskTagCatalog';
+import {
+  resolveEffectiveTagGroups,
+  tagMatchesGroup,
+  type EffectiveTagGroup,
+} from '../tags/effectiveTagGroups';
+import { collectTaskNodeTags, collectTaskTags } from '../tags/taskTagCatalog';
 import { searchTaskList, selectTaskList } from '../task-lists/TaskListSelector';
 import {
   daysBetweenLocalDates,
@@ -391,7 +396,12 @@ export class CenterPanel {
     this.captureApplication_abyssPrivate = captureApplication ?? null;
     this.captureTargets_abyssPrivate =
       this.captureApplication_abyssPrivate != null
-        ? new CaptureTargetResolver(this.captureApplication_abyssPrivate, settings)
+        ? new CaptureTargetResolver(
+            this.captureApplication_abyssPrivate,
+            settings,
+            undefined,
+            () => this.tasks_abyssPrivate?.queries.listNodes() ?? [],
+          )
         : null;
     this.navigation_abyssPrivate = this.createNavigation_abyssPrivate(navigation);
     this.keyboardQueue_abyssPrivate = this.createKeyboardQueue_abyssPrivate(tasks);
@@ -1235,7 +1245,7 @@ export class CenterPanel {
       onSetPriority: handlers.onSetPriority,
       interactionOwnership: this.interactionOwnership_abyssPrivate,
       statusRegistry: this.statusRegistry_abyssPrivate,
-      tagGroups: this.settings_abyssPrivate.tagGroups,
+      tagGroups: [...this.effectiveTagGroups_abyssPrivate()],
     });
   }
 
@@ -1273,7 +1283,7 @@ export class CenterPanel {
       onSetPriority: handlers.onSetPriority,
       interactionOwnership: this.interactionOwnership_abyssPrivate,
       statusRegistry: this.statusRegistry_abyssPrivate,
-      tagGroups: this.settings_abyssPrivate.tagGroups,
+      tagGroups: [...this.effectiveTagGroups_abyssPrivate()],
     });
   }
 
@@ -1303,7 +1313,7 @@ export class CenterPanel {
       },
       interactionOwnership: this.interactionOwnership_abyssPrivate,
       statusRegistry: this.statusRegistry_abyssPrivate,
-      tagGroups: this.settings_abyssPrivate.tagGroups,
+      tagGroups: [...this.effectiveTagGroups_abyssPrivate()],
     });
   }
 
@@ -3870,7 +3880,6 @@ export class CenterPanel {
     let query: { filePath: string } | { tag: string } | undefined;
     if (typeof selection === 'object') {
       if (selection.type === 'project') query = { filePath: selection.path };
-      else if (selection.type === 'tag') query = { tag: selection.tag };
     }
     return [
       ...selectTaskList({
@@ -3916,7 +3925,7 @@ export class CenterPanel {
       case 'project':
         return selection.path === undefined ? 'Tasks' : projectNameFromPath(selection.path);
       case 'group': {
-        const group = this.settings_abyssPrivate.tagGroups.find(
+        const group = this.effectiveTagGroups_abyssPrivate().find(
           (candidate) => candidate.id === selection.groupId,
         );
         return group?.name ?? 'Group';
@@ -3950,25 +3959,16 @@ export class CenterPanel {
   }
 
   private getTagColor_abyssPrivate(tag: string): string | undefined {
-    const noHash = tag.replace(/^#/, '');
-    for (const group of this.settings_abyssPrivate.tagGroups) {
-      if (this.tagMatchesGroup_abyssPrivate(tag, noHash, group)) return group.color;
+    for (const group of this.effectiveTagGroups_abyssPrivate()) {
+      if (tagMatchesGroup(tag, group)) return group.color;
     }
     return undefined;
   }
 
-  private tagMatchesGroup_abyssPrivate(
-    tag: string,
-    noHash: string,
-    group: CalendarSettings['tagGroups'][number],
-  ): boolean {
-    if (group.mode === 'prefix' && group.prefix !== '') {
-      return noHash === group.prefix || noHash.startsWith(`${group.prefix}/`);
-    }
-    return (
-      group.mode === 'manual' &&
-      group.tags != null &&
-      (group.tags.includes(tag) || group.tags.includes(noHash))
+  private effectiveTagGroups_abyssPrivate(): readonly EffectiveTagGroup[] {
+    return resolveEffectiveTagGroups(
+      this.settings_abyssPrivate,
+      collectTaskNodeTags(this.tasks_abyssPrivate?.queries.listNodes() ?? []),
     );
   }
 

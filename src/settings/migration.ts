@@ -439,6 +439,7 @@ export function migrateSettings(raw: Record<string, unknown>): SettingsMigration
   migrateInbox(raw);
   if (!('pinnedTags' in raw)) raw['pinnedTags'] = [];
   if (!('archivedTags' in raw)) raw['archivedTags'] = [];
+  if (!('archivedTagPrefixes' in raw)) raw['archivedTagPrefixes'] = [];
   if (!('taskArchivePath' in raw)) raw['taskArchivePath'] = 'tasks/archive.md';
   if (!('taskIgnoreQuery' in raw)) raw['taskIgnoreQuery'] = '';
   migrateProjects(raw, result);

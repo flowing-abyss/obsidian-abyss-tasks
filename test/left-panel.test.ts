@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { RenameTagModal } from '../src/tags/RenameTagModal';
 import { TagManager } from '../src/tags/TagManager';
+import { discoveredPrefixGroupId } from '../src/tags/effectiveTagGroups';
 import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
 import { TagGroupAppearanceModal } from '../src/ui/TagGroupAppearanceModal';
 import {
@@ -640,6 +641,95 @@ describe('LeftPanel tag groups (manual mode)', () => {
   });
 });
 
+describe('LeftPanel effective tag groups', () => {
+  it('renders standalone and nested task tags without copying them into settings', () => {
+    const { el, merged } = makePanel([
+      task({ tags: ['#home'] }),
+      task({
+        source: { filePath: 'tasks.md', line: 1 },
+        tags: ['#work/client', '#work/client/urgent'],
+      }),
+    ]);
+
+    expect(
+      Array.from(el.querySelectorAll('.abyss-left-section--tags .abyss-left-label')).map(
+        (label) => label.textContent,
+      ),
+    ).toEqual(['home', 'work']);
+    expect(merged.tagGroups).toEqual([]);
+  });
+
+  it('counts a subtask-only tag as one root and opens a nonempty root list', () => {
+    const root = task({
+      title: 'Root',
+      subtasks: [subtask({ tags: ['#work/subtask'] })],
+    });
+    const { el, state } = makePanel([root]);
+    const group = expectDefined(el.querySelector<HTMLElement>('.abyss-tag-group'));
+
+    expect(group.querySelector('.abyss-left-count')?.textContent).toBe('1');
+    expectDefined(group.querySelector<HTMLElement>('.abyss-group-arrow')).click();
+    const child = expectDefined(el.querySelector<HTMLElement>('.abyss-tag-child'));
+    expect(child.querySelector('.abyss-left-count')?.textContent).toBe('1');
+    child.click();
+    expect(state.get('selectedList')).toEqual({ type: 'tag', tag: '#work/subtask' });
+  });
+
+  it.each([
+    ['before promotion', false],
+    ['after appearance promotion', true],
+  ])('keeps full prefix counts but hides explicitly claimed child rows %s', (_label, promoted) => {
+    const automatic = promoted
+      ? [
+          {
+            id: discoveredPrefixGroupId('work'),
+            name: 'Focused work',
+            mode: 'prefix' as const,
+            prefix: 'work',
+            color: '#ff0000',
+          },
+        ]
+      : [];
+    const { el } = makePanel(
+      [
+        task({ title: 'Exact', tags: ['#work'] }),
+        task({ title: 'Claimed child', tags: ['#work/client'] }),
+        task({ title: 'Free child', tags: ['#work/other'] }),
+      ],
+      {
+        tagGroups: [
+          { id: 'nested', name: 'Client', mode: 'prefix', prefix: 'work/client' },
+          { id: 'exact', name: 'Work root', mode: 'manual', tags: ['#work'] },
+          ...automatic,
+        ],
+      },
+    );
+    const expectedName = promoted ? 'Focused work' : 'work';
+    const group = expectDefined(
+      Array.from(el.querySelectorAll<HTMLElement>('.abyss-tag-group')).find(
+        (candidate) =>
+          candidate.querySelector('.abyss-tag-group-header .abyss-left-label')?.textContent ===
+          expectedName,
+      ),
+    );
+
+    expect(group.querySelector('.abyss-tag-group-header .abyss-left-count')?.textContent).toBe('3');
+    expectDefined(group.querySelector<HTMLElement>('.abyss-group-arrow')).click();
+    const expanded = expectDefined(
+      Array.from(el.querySelectorAll<HTMLElement>('.abyss-tag-group')).find(
+        (candidate) =>
+          candidate.querySelector('.abyss-tag-group-header .abyss-left-label')?.textContent ===
+          expectedName,
+      ),
+    );
+    expect(
+      Array.from(expanded.querySelectorAll('.abyss-tag-child .abyss-left-label')).map(
+        (label) => label.textContent,
+      ),
+    ).toEqual(['other']);
+  });
+});
+
 describe('LeftPanel top-level tag group menus', () => {
   it('prefix header menu separates appearance from an explicit across-vault prefix rename', () => {
     const items = captureMenu();
@@ -655,6 +745,7 @@ describe('LeftPanel top-level tag group menus', () => {
       'Rename display name…',
       'Change color…',
       'Rename prefix across vault…',
+      'Archive',
     ]);
     expect(state.get('selectedList')).toEqual(selectedBefore);
     expect(state.get('draggingTag')).toBeNull();
@@ -674,6 +765,7 @@ describe('LeftPanel top-level tag group menus', () => {
       'Change color…',
       'Rename #client across vault…',
       'Rename #client/ops across vault…',
+      'Archive',
     ]);
   });
 

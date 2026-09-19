@@ -132,6 +132,7 @@ export const DEFAULT_SETTINGS: CalendarSettings = {
   },
   pinnedTags: [],
   archivedTags: [],
+  archivedTagPrefixes: [],
   tagGroups: [],
   taskInsertionMode: 'append',
   taskInsertionSection: '## Tasks',

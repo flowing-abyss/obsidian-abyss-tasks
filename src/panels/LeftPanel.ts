@@ -4,13 +4,22 @@ import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
 import { projectStatusDisplayName } from '../projects/status';
-import { beginSettingsSave, latestSettingsSaveRevision } from '../settings/settingsSaveRevision';
-import type { CalendarSettings, TagGroup } from '../settings/types';
+import type { CalendarSettings } from '../settings/types';
 import { RenameTagModal } from '../tags/RenameTagModal';
 import type { TagManager } from '../tags/TagManager';
 import {
+  isTagNavigationArchived,
+  normalizeTagPrefix,
+  prefixForDiscoveredGroupId,
+  resolveEffectiveTagGroups,
+  tagMatchesGroup,
+  type EffectiveTagGroup,
+} from '../tags/effectiveTagGroups';
+import { collectTaskNodeTags } from '../tags/taskTagCatalog';
+import {
   normalizeTaskTagInput,
   type TaskApplicationApi,
+  type TaskNodeSnapshot,
   type TaskQueryApi,
   type TaskSnapshot,
 } from '../tasks';
@@ -41,9 +50,9 @@ type LeftPanelConstructorArgs = [
 ];
 
 interface TagGroupRenderContext {
-  readonly group: TagGroup;
+  readonly group: EffectiveTagGroup;
   readonly tags: readonly string[];
-  readonly allTasks: readonly TaskSnapshot[];
+  readonly allNodes: readonly TaskNodeSnapshot[];
   readonly isExpanded: boolean;
   readonly isGroupActive: boolean;
 }
@@ -65,7 +74,6 @@ export class LeftPanel {
   private readonly app_abyssPrivate: App;
   private readonly queries_abyssPrivate: TaskQueryApi;
   private readonly tasks_abyssPrivate: TaskApplicationApi;
-  private readonly onSaveSettings_abyssPrivate: () => Promise<void>;
   private readonly onSaveViewState_abyssPrivate: () => Promise<void>;
   private readonly projectStore_abyssPrivate: ProjectStore | null;
   private readonly projectManager_abyssPrivate: ProjectManager | null;
@@ -87,7 +95,7 @@ export class LeftPanel {
       app,
       queries,
       tasks,
-      onSaveSettings = async () => {},
+      ,
       projectStore = null,
       projectManager = null,
       navigation,
@@ -99,7 +107,6 @@ export class LeftPanel {
     this.app_abyssPrivate = app;
     this.queries_abyssPrivate = queries;
     this.tasks_abyssPrivate = tasks;
-    this.onSaveSettings_abyssPrivate = onSaveSettings;
     this.onSaveViewState_abyssPrivate = onSaveViewState;
     this.projectStore_abyssPrivate = projectStore;
     this.projectManager_abyssPrivate = projectManager;
@@ -188,6 +195,7 @@ export class LeftPanel {
     if (mode === 'search' || mode === 'projects') return;
 
     const allTasks = [...this.queries_abyssPrivate.list()];
+    const allNodes = this.tasks_abyssPrivate.queries.listNodes();
     const today = window.moment().format('YYYY-MM-DD');
 
     this.el_abyssPrivate.createDiv({ cls: 'abyss-left-section' }, (section) => {
@@ -220,7 +228,8 @@ export class LeftPanel {
         addAction: null,
         body: (body) => {
           for (const tag of this.settings_abyssPrivate.pinnedTags) {
-            this.renderPinnedTag_abyssPrivate(body, tag, allTasks);
+            if (isTagNavigationArchived(this.settings_abyssPrivate, tag)) continue;
+            this.renderPinnedTag_abyssPrivate(body, tag, allNodes);
           }
         },
       });
@@ -231,7 +240,10 @@ export class LeftPanel {
 
     // Tag groups (collapsible; archived tags filtered out). The section always
     // renders so the "+" (zero-friction tag entry) stays discoverable.
-    const groups = this.settings_abyssPrivate.tagGroups;
+    const groups = resolveEffectiveTagGroups(
+      this.settings_abyssPrivate,
+      collectTaskNodeTags(allNodes),
+    ).filter((group) => !group.archived);
     this.renderCollapsibleSection_abyssPrivate('tags', 'Tags', {
       addAction: (): void => {
         this.startInlineAdd_abyssPrivate('tags', 'Tag name…', (name) =>
@@ -240,7 +252,7 @@ export class LeftPanel {
       },
       body: (body) => {
         for (const group of groups) {
-          this.renderTagGroup_abyssPrivate(body, group, allTasks);
+          this.renderTagGroup_abyssPrivate(body, group, allNodes);
         }
       },
     });
@@ -501,11 +513,13 @@ export class LeftPanel {
   private renderPinnedTag_abyssPrivate(
     parent: HTMLElement,
     tag: string,
-    allTasks: TaskSnapshot[],
+    allNodes: readonly TaskNodeSnapshot[],
   ): void {
     const sel = this.state_abyssPrivate.get('selectedList');
     const isActive = typeof sel === 'object' && sel.type === 'tag' && sel.tag === tag;
-    const count = allTasks.filter((t) => isActiveTask(t) && t.tags.includes(tag)).length;
+    const count = this.countMatchingRoots_abyssPrivate(allNodes, ({ node }) =>
+      node.tags.includes(tag),
+    );
 
     const row = parent.createDiv({
       cls: `abyss-left-item abyss-pinned-tag${isActive ? ' is-active' : ''}`,
@@ -533,13 +547,15 @@ export class LeftPanel {
   /** A flat, non-expandable tag row (used for manual single-tag groups). */
   private renderTagLeaf_abyssPrivate(
     parent: HTMLElement,
-    group: TagGroup,
+    group: EffectiveTagGroup,
     tag: string,
-    allTasks: TaskSnapshot[],
+    allNodes: readonly TaskNodeSnapshot[],
   ): void {
     const sel = this.state_abyssPrivate.get('selectedList');
     const isActive = typeof sel === 'object' && sel.type === 'tag' && sel.tag === tag;
-    const count = allTasks.filter((t) => isActiveTask(t) && t.tags.includes(tag)).length;
+    const count = this.countMatchingRoots_abyssPrivate(allNodes, ({ node }) =>
+      node.tags.includes(tag),
+    );
 
     const row = parent.createDiv({
       cls: `abyss-left-item abyss-tag-leaf${isActive ? ' is-active' : ''}`,
@@ -594,15 +610,15 @@ export class LeftPanel {
 
   private renderTagGroup_abyssPrivate(
     parent: HTMLElement,
-    group: TagGroup,
-    allTasks: TaskSnapshot[],
+    group: EffectiveTagGroup,
+    allNodes: readonly TaskNodeSnapshot[],
   ): void {
-    if (this.renderSingleTagGroup_abyssPrivate(parent, group, allTasks)) return;
+    if (this.renderSingleTagGroup_abyssPrivate(parent, group, allNodes)) return;
     const sel = this.state_abyssPrivate.get('selectedList');
     const isGroupActive =
       typeof sel === 'object' && sel.type === 'group' && sel.groupId === group.id;
-    const tags = this.resolveGroupTags_abyssPrivate(group, allTasks).filter(
-      (t) => !this.settings_abyssPrivate.archivedTags.includes(t),
+    const tags = this.resolveGroupTags_abyssPrivate(group, allNodes).filter(
+      (tag) => !isTagNavigationArchived(this.settings_abyssPrivate, tag),
     );
     const hasActiveChild = tags.some(
       (t) => typeof sel === 'object' && sel.type === 'tag' && sel.tag === t,
@@ -610,20 +626,20 @@ export class LeftPanel {
     this.expandActiveTagGroup_abyssPrivate(group.id, hasActiveChild);
     const isExpanded = this.expandedGroups_abyssPrivate.has(group.id);
     const container = parent.createDiv({ cls: 'abyss-tag-group' });
-    const context = { group, tags, allTasks, isExpanded, isGroupActive };
+    const context = { group, tags, allNodes, isExpanded, isGroupActive };
     this.renderTagGroupHeader_abyssPrivate(container, context);
     if (isExpanded) this.renderTagGroupChildren_abyssPrivate(container, context);
   }
 
   private renderSingleTagGroup_abyssPrivate(
     parent: HTMLElement,
-    group: TagGroup,
-    allTasks: TaskSnapshot[],
+    group: EffectiveTagGroup,
+    allNodes: readonly TaskNodeSnapshot[],
   ): boolean {
     const soleTag = group.mode === 'manual' && group.tags?.length === 1 ? group.tags[0] : undefined;
     if (soleTag === undefined) return false;
     if (!this.settings_abyssPrivate.archivedTags.includes(soleTag)) {
-      this.renderTagLeaf_abyssPrivate(parent, group, soleTag, allTasks);
+      this.renderTagLeaf_abyssPrivate(parent, group, soleTag, allNodes);
     }
     return true;
   }
@@ -643,7 +659,7 @@ export class LeftPanel {
     container: HTMLElement,
     context: TagGroupRenderContext,
   ): void {
-    const { group, tags, allTasks, isExpanded, isGroupActive } = context;
+    const { group, allNodes, isExpanded, isGroupActive } = context;
     const header = container.createDiv({
       cls: `abyss-tag-group-header${isGroupActive ? ' is-active' : ''}`,
     });
@@ -664,7 +680,7 @@ export class LeftPanel {
     header.createSpan({ cls: 'abyss-left-label', text: group.name });
     this.appendCustomDot_abyssPrivate(header, { type: 'group', groupId: group.id });
 
-    const groupCount = this.tagGroupTaskCount_abyssPrivate(group, tags, allTasks);
+    const groupCount = this.tagGroupTaskCount_abyssPrivate(group, allNodes);
     if (groupCount > 0) {
       header.createSpan({ cls: 'abyss-left-count', text: String(groupCount) });
     }
@@ -679,15 +695,12 @@ export class LeftPanel {
   }
 
   private tagGroupTaskCount_abyssPrivate(
-    group: TagGroup,
-    tags: readonly string[],
-    allTasks: readonly TaskSnapshot[],
+    group: EffectiveTagGroup,
+    allNodes: readonly TaskNodeSnapshot[],
   ): number {
-    const prefix = group.mode === 'prefix' ? group.prefix : undefined;
-    const allGroupTags = prefix !== undefined && prefix.length > 0 ? [`#${prefix}`, ...tags] : tags;
-    return allTasks.filter(
-      (task) => isActiveTask(task) && allGroupTags.some((tag) => task.tags.includes(tag)),
-    ).length;
+    return this.countMatchingRoots_abyssPrivate(allNodes, ({ node }) =>
+      node.tags.some((tag) => tagMatchesGroup(tag, group)),
+    );
   }
 
   private toggleTagGroup_abyssPrivate(groupId: string): void {
@@ -706,22 +719,24 @@ export class LeftPanel {
   ): void {
     const children = container.createDiv({ cls: 'abyss-tag-group-children' });
     for (const tag of context.tags) {
-      this.renderTagGroupChild_abyssPrivate(children, context.group, tag, context.allTasks);
+      this.renderTagGroupChild_abyssPrivate(children, context.group, tag, context.allNodes);
     }
   }
 
   private renderTagGroupChild_abyssPrivate(
     parent: HTMLElement,
-    group: TagGroup,
+    group: EffectiveTagGroup,
     tag: string,
-    allTasks: readonly TaskSnapshot[],
+    allNodes: readonly TaskNodeSnapshot[],
   ): void {
     const prefix = group.mode === 'prefix' ? group.prefix : undefined;
     const label = prefix !== undefined && prefix.length > 0 ? tag.replace(`#${prefix}/`, '') : tag;
     const selected = this.state_abyssPrivate.get('selectedList');
     const isActive =
       typeof selected === 'object' && selected.type === 'tag' && selected.tag === tag;
-    const count = allTasks.filter((task) => task.tags.includes(tag) && isActiveTask(task)).length;
+    const count = this.countMatchingRoots_abyssPrivate(allNodes, ({ node }) =>
+      node.tags.includes(tag),
+    );
     const child = parent.createDiv({
       cls: `abyss-left-item abyss-tag-child${isActive ? ' is-active' : ''}`,
     });
@@ -755,7 +770,7 @@ export class LeftPanel {
       item
         .setTitle('Archive')
         .setIcon('archive')
-        .onClick(this.makeTagOp_abyssPrivate(() => this.tagManager_abyssPrivate.archiveTag(tag))),
+        .onClick(this.makeTagOp_abyssPrivate(() => this.archiveTagNavigation_abyssPrivate(tag))),
     );
     menu.addItem((item) =>
       item
@@ -789,7 +804,7 @@ export class LeftPanel {
       item
         .setTitle('Archive')
         .setIcon('archive')
-        .onClick(this.makeTagOp_abyssPrivate(() => this.tagManager_abyssPrivate.archiveTag(tag))),
+        .onClick(this.makeTagOp_abyssPrivate(() => this.archiveTagNavigation_abyssPrivate(tag))),
     );
     menu.addItem((item) =>
       item
@@ -806,7 +821,7 @@ export class LeftPanel {
 
   private showTagGroupMenu_abyssPrivate(
     e: MouseEvent,
-    group: TagGroup,
+    group: EffectiveTagGroup,
     flattenedTag?: string,
   ): void {
     const menu = new Menu();
@@ -869,18 +884,64 @@ export class LeftPanel {
             ),
           ),
       );
-      menu.addItem((item) =>
-        item
-          .setTitle('Archive')
-          .setIcon('archive')
-          .onClick(
-            this.makeTagOp_abyssPrivate(() =>
-              this.tagManager_abyssPrivate.archiveTag(flattenedTag),
-            ),
-          ),
-      );
     }
+    menu.addItem((item) =>
+      item
+        .setTitle('Archive')
+        .setIcon('archive')
+        .onClick(
+          this.makeTagOp_abyssPrivate(() => this.archiveGroupNavigation_abyssPrivate(group)),
+        ),
+    );
     showMenuAtMouseEventWithFocus(menu, e);
+  }
+
+  private async archiveTagNavigation_abyssPrivate(tag: string): Promise<void> {
+    await this.archiveWithNotice_abyssPrivate(
+      this.tagManager_abyssPrivate.archiveTag(tag),
+      'Tag archive',
+    );
+    const selected = this.state_abyssPrivate.get('selectedList');
+    if (typeof selected === 'object' && selected.type === 'tag' && selected.tag === tag) {
+      this.navigation_abyssPrivate.openList('today');
+    }
+  }
+
+  private async archiveGroupNavigation_abyssPrivate(group: EffectiveTagGroup): Promise<void> {
+    await this.archiveWithNotice_abyssPrivate(
+      this.tagManager_abyssPrivate.archiveGroup(group),
+      'Tag group archive',
+    );
+    const selected = this.state_abyssPrivate.get('selectedList');
+    if (this.selectionMatchesGroup_abyssPrivate(selected, group)) {
+      this.navigation_abyssPrivate.openList('today');
+    }
+  }
+
+  private async archiveWithNotice_abyssPrivate(
+    operation: Promise<void>,
+    label: string,
+  ): Promise<void> {
+    try {
+      await operation;
+    } catch (error) {
+      new Notice(`${label} was not saved. Your changes were rolled back.`);
+      throw error;
+    }
+  }
+
+  private selectionMatchesGroup_abyssPrivate(
+    selected: ListSelection,
+    group: EffectiveTagGroup,
+  ): boolean {
+    if (typeof selected !== 'object') return false;
+    if (selected.type === 'group') return selected.groupId === group.id;
+    return (
+      selected.type === 'tag' &&
+      group.mode === 'manual' &&
+      group.tags?.length === 1 &&
+      selected.tag === group.tags[0]
+    );
   }
 
   private openTagGroupPrefixRename_abyssPrivate(prefix: string): void {
@@ -895,7 +956,10 @@ export class LeftPanel {
     ).open();
   }
 
-  private openTagGroupAppearance_abyssPrivate(group: TagGroup, field: 'name' | 'color'): void {
+  private openTagGroupAppearance_abyssPrivate(
+    group: EffectiveTagGroup,
+    field: 'name' | 'color',
+  ): void {
     new TagGroupAppearanceModal(
       this.app_abyssPrivate,
       { name: group.name, ...(group.color !== undefined && { color: group.color }) },
@@ -907,34 +971,27 @@ export class LeftPanel {
   }
 
   private applyTagGroupAppearance_abyssPrivate(
-    group: TagGroup,
+    group: EffectiveTagGroup,
     result: TagGroupAppearanceResult,
   ): void {
     if (result.name === undefined && result.color === undefined) return;
     const previous = { name: group.name, color: group.color };
-    if (result.name !== undefined) group.name = result.name;
-    if (result.color !== undefined) {
-      if (result.color === null) delete group.color;
-      else group.color = result.color;
-    }
-    const applied = { name: group.name, color: group.color };
-    beginSettingsSave(this.settings_abyssPrivate);
-    const save = this.onSaveSettings_abyssPrivate();
-    const saveRevision = latestSettingsSaveRevision(this.settings_abyssPrivate);
-    void save
+    const update = {
+      ...(result.name === undefined ? {} : { name: result.name }),
+      ...(result.color === undefined ? {} : { color: result.color ?? undefined }),
+    };
+    void this.tagManager_abyssPrivate
+      .updateGroup(group, update)
       .then(() => {
         this.render_abyssPrivate();
       })
       .catch(() => {
-        let rolledBack = false;
-        if (latestSettingsSaveRevision(this.settings_abyssPrivate) === saveRevision) {
-          if (group.name === applied.name) group.name = previous.name;
-          if (group.color === applied.color) {
-            if (previous.color === undefined) delete group.color;
-            else group.color = previous.color;
-          }
-          rolledBack = true;
-        }
+        const current = this.settings_abyssPrivate.tagGroups.find(
+          (candidate) => candidate.id === group.id,
+        );
+        const rolledBack =
+          current === undefined ||
+          (current.name === previous.name && current.color === previous.color);
         new Notice(
           rolledBack
             ? 'Tag group appearance was not saved. Your changes were rolled back.'
@@ -990,13 +1047,11 @@ export class LeftPanel {
   }
 
   private async reorderTagGroups_abyssPrivate(draggedId: string, targetId: string): Promise<void> {
-    const groups = this.settings_abyssPrivate.tagGroups;
-    const from = groups.findIndex((g) => g.id === draggedId);
-    const to = groups.findIndex((g) => g.id === targetId);
-    if (from < 0 || to < 0) return;
-    const [item] = groups.splice(from, 1);
-    if (item != null) groups.splice(to, 0, item);
-    await this.onSaveSettings_abyssPrivate();
+    const groups = resolveEffectiveTagGroups(
+      this.settings_abyssPrivate,
+      collectTaskNodeTags(this.tasks_abyssPrivate.queries.listNodes()),
+    ).filter((group) => !group.archived);
+    await this.tagManager_abyssPrivate.reorderGroups(draggedId, targetId, groups);
     this.render_abyssPrivate();
   }
 
@@ -1104,25 +1159,55 @@ export class LeftPanel {
     );
   }
 
-  private resolveGroupTags_abyssPrivate(group: TagGroup, allTasks: TaskSnapshot[]): string[] {
+  private resolveGroupTags_abyssPrivate(
+    group: EffectiveTagGroup,
+    allNodes: readonly TaskNodeSnapshot[],
+  ): string[] {
     if (group.mode === 'prefix' && group.prefix !== undefined && group.prefix.length > 0) {
-      return this.collectPrefixTags_abyssPrivate(group.prefix, allTasks);
+      return this.collectPrefixTags_abyssPrivate(group, allNodes);
     }
     return group.tags ?? [];
   }
 
   private collectPrefixTags_abyssPrivate(
-    prefix: string,
-    allTasks: readonly TaskSnapshot[],
+    group: EffectiveTagGroup,
+    allNodes: readonly TaskNodeSnapshot[],
   ): string[] {
     const found = new Set<string>();
-    const nestedPrefix = `#${prefix}/`;
-    for (const task of allTasks) {
-      for (const tag of task.tags) {
-        if (tag.startsWith(nestedPrefix)) found.add(tag);
+    for (const { node } of allNodes) {
+      for (const tag of node.tags) {
+        if (
+          tag.includes('/') &&
+          tagMatchesGroup(tag, group) &&
+          !this.isClaimedAutomaticChild_abyssPrivate(group, tag)
+        ) {
+          found.add(tag);
+        }
       }
     }
     return Array.from(found).sort((left, right) => left.localeCompare(right));
+  }
+
+  private isClaimedAutomaticChild_abyssPrivate(group: EffectiveTagGroup, tag: string): boolean {
+    const prefix = normalizeTagPrefix(group.prefix ?? '');
+    if (prefix === undefined || prefixForDiscoveredGroupId(group.id) !== prefix) return false;
+    return this.settings_abyssPrivate.tagGroups.some(
+      (candidate) => candidate.id !== group.id && tagMatchesGroup(tag, candidate),
+    );
+  }
+
+  private countMatchingRoots_abyssPrivate(
+    allNodes: readonly TaskNodeSnapshot[],
+    matches: (node: TaskNodeSnapshot) => boolean,
+  ): number {
+    const roots = new Set<string>();
+    for (const candidate of allNodes) {
+      if (!isActiveTask(candidate.root) || !matches(candidate)) continue;
+      roots.add(
+        `${candidate.root.source.filePath}:${candidate.root.source.line}:${candidate.root.ref.revision}`,
+      );
+    }
+    return roots.size;
   }
 
   private countInbox_abyssPrivate(tasks: TaskSnapshot[]): number {

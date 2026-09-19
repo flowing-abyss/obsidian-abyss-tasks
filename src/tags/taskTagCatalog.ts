@@ -20,6 +20,14 @@ function addGroup(target: string[], seen: Set<string>, group: TagGroup): void {
   for (const tag of group.tags ?? []) addInput(target, seen, tag);
 }
 
+/** Collects canonical tags from public root and subtask snapshots in source order. */
+export function collectTaskNodeTags(nodes: readonly TaskNodeSnapshot[]): readonly string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const { node } of nodes) for (const tag of node.tags) addInput(result, seen, tag);
+  return result;
+}
+
 /** Builds the assignable catalog strictly from public task snapshots and explicit configuration. */
 export function collectTaskTags(
   nodes: readonly TaskNodeSnapshot[],
@@ -29,9 +37,10 @@ export function collectTaskTags(
   const result: string[] = [];
   const seen = new Set<string>();
   for (const tag of selected) addInput(result, seen, tag);
-  for (const { node } of nodes) for (const tag of node.tags) addInput(result, seen, tag);
+  for (const tag of collectTaskNodeTags(nodes)) addInput(result, seen, tag);
   for (const tag of settings.pinnedTags) addInput(result, seen, tag);
   for (const tag of settings.archivedTags) addInput(result, seen, tag);
+  for (const prefix of settings.archivedTagPrefixes) addInput(result, seen, prefix);
   for (const group of settings.tagGroups) addGroup(result, seen, group);
   for (const tag of extractMarkdownBodyTags(settings.taskPrefix)) addInput(result, seen, tag);
   if (settings.inbox.mode !== 'untagged') addInput(result, seen, settings.inbox.tag);

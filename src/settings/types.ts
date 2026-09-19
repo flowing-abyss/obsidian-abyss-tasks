@@ -41,6 +41,7 @@ export interface TagGroup {
   id: string;
   name: string;
   color?: string;
+  archived?: boolean;
   mode: 'prefix' | 'manual';
   prefix?: string; // prefix mode: 'work' matches #work and #work/*
   tags?: string[]; // manual mode: explicit tag list
@@ -99,6 +100,7 @@ export interface CalendarSettings {
   inbox: InboxSettings;
   pinnedTags: string[];
   archivedTags: string[];
+  archivedTagPrefixes: string[];
   tagGroups: TagGroup[];
   taskInsertionMode: 'append' | 'prepend' | 'section';
   taskInsertionSection: string;

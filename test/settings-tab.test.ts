@@ -190,7 +190,7 @@ describe('CalendarSettingsTab sections', () => {
       'Desktop',
       'Mobile',
       'Inbox',
-      'Tag groups',
+      'Tags',
       'Projects',
       'Custom statuses',
       'Hotkeys',

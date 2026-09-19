@@ -1399,6 +1399,18 @@ describe('PanelView', () => {
       expect(refresh).toHaveBeenCalledOnce();
     });
 
+    it('refreshes the selected group title after static tag settings change', () => {
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      settings.tagGroups.push({ id: 'work', name: 'Work', mode: 'prefix', prefix: 'work' });
+      state.set('selectedList', { type: 'group', groupId: 'work' });
+      expect(view.contentEl.querySelector('.abyss-center-title')?.textContent).toBe('Work');
+
+      expectDefined(settings.tagGroups[0]).name = 'Focused work';
+      view.refreshProjectSettings();
+
+      expect(view.contentEl.querySelector('.abyss-center-title')?.textContent).toBe('Focused work');
+    });
+
     it('lets CenterPanel own the sole calendar patch while PanelView refreshes only LeftPanel', () => {
       const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const panels = view as unknown as {

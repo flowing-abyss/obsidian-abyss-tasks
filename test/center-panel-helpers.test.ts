@@ -5,6 +5,7 @@ import { AppState } from '../src/app/AppState';
 import { type CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { CalendarSettings, TagGroup } from '../src/settings/types';
+import { discoveredPrefixGroupId } from '../src/tags/effectiveTagGroups';
 import type { TaskSnapshot } from '../src/tasks';
 import { PanelNavigator } from '../src/views/panelNavigation';
 import {
@@ -12,6 +13,7 @@ import {
   fixedToday,
   makeCenterPanelForTest,
   makeStubStore,
+  subtask,
   task,
   useRealMoment,
 } from './helpers';
@@ -279,6 +281,24 @@ describe('CenterPanel pure helpers', () => {
       expect(result.map((t) => t.title)).toEqual(['work']);
     });
 
+    it('{type:"tag"} includes a root whose matching tag exists only on a subtask', () => {
+      const tasks = [
+        task({ title: 'Root tag', tags: ['#work/subtask'] }),
+        task({
+          title: 'Subtask tag',
+          source: { filePath: 'subtask.md' },
+          subtasks: [subtask({ tags: ['#work/subtask'] })],
+        }),
+      ];
+      const { panel, state } = makePanel(tasks);
+      state.set('selectedList', { type: 'tag', tag: '#work/subtask' });
+
+      expect(call<TaskSnapshot[]>(panel, 'getFilteredTasks').map(({ title }) => title)).toEqual([
+        'Root tag',
+        'Subtask tag',
+      ]);
+    });
+
     it('{type:"group"} prefix mode matches rawText includes #prefix', () => {
       const group: TagGroup = {
         id: 'g1',
@@ -488,6 +508,12 @@ describe('CenterPanel pure helpers', () => {
       const { panel, state } = makePanel([], settings);
       state.set('selectedList', { type: 'group', groupId: 'g1' });
       expect(call<string>(panel, 'getTitle')).toBe('Work');
+    });
+
+    it('{type:"group"} resolves an automatic prefix group title', () => {
+      const { panel, state } = makePanel([task({ tags: ['#work/client'] })]);
+      state.set('selectedList', { type: 'group', groupId: discoveredPrefixGroupId('work') });
+      expect(call<string>(panel, 'getTitle')).toBe('work');
     });
 
     it('{type:"group"} with missing group → "Group"', () => {

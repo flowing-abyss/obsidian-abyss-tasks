@@ -6,6 +6,9 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import { SHORTCUT_ACTION_IDS } from '../src/settings/shortcuts';
 import type { CalendarSettings } from '../src/settings/types';
+import { discoveredTagGroupId } from '../src/tags/effectiveTagGroups';
+import { TagManager } from '../src/tags/TagManager';
+import type { TaskSnapshot } from '../src/tasks';
 import {
   DataTransferStub,
   deferred,
@@ -13,6 +16,8 @@ import {
   flushMicrotasks,
   loadPluginStyles,
   objectMatching,
+  queryApiForTasks,
+  task,
   useRealMoment,
 } from './helpers';
 
@@ -39,6 +44,8 @@ interface StubPlugin {
   refreshProjectTableSettings: Mock<() => void>;
   renameProjectStatus: Mock<(id: string, name: string, expectedName: string) => Promise<void>>;
   rebuildTaskStatusSemantics: Mock<() => void>;
+  tagManager?: TagManager;
+  queries?: ReturnType<typeof queryApiForTasks>;
 }
 
 function expandAllSettingsCards(settings: CalendarSettings, expanded: Set<string>): void {
@@ -104,6 +111,8 @@ function makeTab(
     saveSettings?: StubPlugin['saveSettings'];
     saveViewState?: StubPlugin['saveViewState'];
     projectProperties?: ProjectPropertyCatalog;
+    tasks?: readonly TaskSnapshot[];
+    expandedTagGroupIds?: readonly string[];
   } = {},
 ): {
   tab: CalendarSettingsTab;
@@ -141,6 +150,10 @@ function makeTab(
     renameProjectStatus,
     rebuildTaskStatusSemantics: vi.fn<() => void>(),
   };
+  if (opts.tasks !== undefined) {
+    plugin.queries = queryApiForTasks(() => opts.tasks ?? []);
+    plugin.tagManager = new TagManager(app, settings, saveSettings);
+  }
   const captured: CapturedComp[] = [];
   const restore = patchSetting(captured);
   const tab = new CalendarSettingsTab(
@@ -154,6 +167,7 @@ function makeTab(
     const expanded = (tab as unknown as { expandedCards_abyssPrivate: Set<string> })
       .expandedCards_abyssPrivate;
     expandAllSettingsCards(settings, expanded);
+    for (const id of opts.expandedTagGroupIds ?? []) expanded.add(id);
   }
   (tab as unknown as { display(): void }).display();
   restore();
@@ -1406,6 +1420,73 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     expect(expectDefined(plugin.settings.tagGroups[0]).id).toMatch(/^group-\d+$/);
     expect(plugin.saveSettings).toHaveBeenCalled();
   });
+
+  it('shows automatic groups and restores zero-task archives in the same Tags section', async () => {
+    const { tab, plugin, captured } = makeTab(
+      {
+        archivedTags: ['#gone'],
+        archivedTagPrefixes: ['zero'],
+        tagGroups: [
+          { id: 'configured', name: 'Configured', mode: 'manual', tags: ['#configured'] },
+          { id: 'sleeping', name: 'Sleeping', mode: 'manual', tags: ['#sleep'], archived: true },
+        ],
+      },
+      { tasks: [task({ tags: ['#auto', '#work/client'] })] },
+    );
+
+    const body = openSection(tab, 4);
+    expect(body.textContent).toContain('Configured');
+    expect(body.textContent).toContain('auto');
+    expect(body.textContent).toContain('work');
+    expect(body.textContent).toContain('Sleeping');
+    expect(body.textContent).toContain('zero');
+    expect(body.textContent).toContain('#gone');
+
+    expectDefined(
+      captured.find((entry) => entry.type === 'button' && entry.name === 'zero'),
+    ).comp.clickHandler?.();
+    await flushMicrotasks();
+    expect(plugin.settings.archivedTagPrefixes).toEqual([]);
+  });
+
+  it('promotes an automatic group under its stable id when appearance changes', () => {
+    const id = discoveredTagGroupId('#auto');
+    const { tab, plugin, captured } = makeTab(
+      { tagGroups: [] },
+      { tasks: [task({ tags: ['#auto'] })], expandedTagGroupIds: [id] },
+    );
+    openSection(tab, 4);
+
+    expectDefined(findComp(captured, 'Group name', 'text')).comp.setValue('Automatic renamed');
+
+    expect(plugin.settings.tagGroups).toEqual([
+      expect.objectContaining({ id, name: 'Automatic renamed', tags: ['#auto'] }),
+    ]);
+  });
+
+  it('reports a failed automatic-group promotion once and renders the rolled-back state', async () => {
+    vi.mocked(Notice).mockClear();
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const id = discoveredTagGroupId('#auto');
+    const { tab, plugin, captured } = makeTab(
+      { tagGroups: [] },
+      {
+        tasks: [task({ tags: ['#auto'] })],
+        expandedTagGroupIds: [id],
+        saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')),
+      },
+    );
+    openSection(tab, 4);
+
+    expectDefined(findComp(captured, 'Group name', 'text')).comp.setValue('Unsaved name');
+    await flushMicrotasks();
+
+    expect(plugin.settings.tagGroups).toEqual([]);
+    expect(Notice).toHaveBeenCalledOnce();
+    expect(vi.mocked(Notice).mock.calls[0]?.[0]).toContain('rolled back');
+    expect(errorLog).toHaveBeenCalledOnce();
+    errorLog.mockRestore();
+  });
 });
 
 describe('CalendarSettingsTab renderTagGroupCard', () => {
@@ -2011,7 +2092,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     openSection(tab, 4);
     attachSettingsScroller(tab, 513);
 
-    expectDefined(capturedButton(captured, '+ add group', 'Tag groups').clickHandler)();
+    expectDefined(capturedButton(captured, '+ add group', 'Tags').clickHandler)();
 
     expect(plugin.settings.tagGroups).toHaveLength(1);
     expect(cardNamed(tab.containerEl, 'New group').isConnected).toBe(true);
@@ -2030,7 +2111,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     openSection(tab, 4);
     attachSettingsScroller(tab, 513);
 
-    expectDefined(capturedButton(captured, 'Delete group', 'Tag groups').clickHandler)();
+    expectDefined(capturedButton(captured, 'Delete group', 'Tags').clickHandler)();
 
     expect(plugin.settings.tagGroups).toHaveLength(0);
     expect(tab.containerEl.textContent).not.toContain('Work');

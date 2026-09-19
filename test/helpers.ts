@@ -26,6 +26,7 @@ import { TaskApplicationService } from '../src/tasks/application/TaskApplication
 import { systemClock } from '../src/tasks/domain/clock';
 import type { CommentTimestamp } from '../src/tasks/domain/commentTimestamp';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
+import { enumerateTaskNodes } from '../src/tasks/domain/taskDependencies';
 import { localDate } from '../src/tasks/domain/validation';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
@@ -146,6 +147,13 @@ export function queryApiForTasks(
   onSubscribe?: (listener: (event: TaskIndexEvent) => void) => () => void,
 ): TaskQueryApi & TaskDependencyQueryApi {
   return taskQueryApi({
+    listNodes: (query) =>
+      enumerateTaskNodes(getTasks()).filter(
+        ({ root }) =>
+          (query?.filePath === undefined || root.source.filePath === query.filePath) &&
+          (query?.folder === undefined || root.source.filePath.startsWith(query.folder)) &&
+          (query?.statuses === undefined || query.statuses.includes(root.status)),
+      ),
     list: (query) =>
       getTasks()
         .filter((task) => query?.filePath === undefined || task.source.filePath === query.filePath)

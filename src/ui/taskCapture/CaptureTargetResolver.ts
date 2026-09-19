@@ -1,6 +1,8 @@
 import type { ListSelection } from '../../app/AppState';
 import { DEFAULT_SETTINGS } from '../../settings/defaults';
 import type { CalendarSettings } from '../../settings/types';
+import { effectiveGroupCaptureTag, resolveEffectiveTagGroups } from '../../tags/effectiveTagGroups';
+import { collectTaskNodeTags } from '../../tags/taskTagCatalog';
 import {
   localDate,
   normalizeTaskTagInput,
@@ -11,6 +13,7 @@ import {
   type TaskCommandResult,
   type TaskCreateSession,
   type TaskInsertionPolicy,
+  type TaskNodeSnapshot,
 } from '../../tasks';
 
 export type CaptureContext =
@@ -74,6 +77,7 @@ export class CaptureTargetResolver {
     private readonly application: TaskCaptureApplicationApi,
     private readonly settings: CalendarSettings = DEFAULT_SETTINGS,
     private readonly today: () => LocalDate = () => localDate(window.moment().format('YYYY-MM-DD')),
+    private readonly taskNodes: () => readonly TaskNodeSnapshot[] = () => [],
   ) {}
 
   async resolve(context: CaptureContext): Promise<CaptureTarget> {
@@ -180,13 +184,13 @@ export class CaptureTargetResolver {
     context: Extract<CaptureContext, { type: 'list' }>,
     groupId: string,
   ): Promise<CaptureTarget> {
-    const group = this.settings.tagGroups.find((candidate) => candidate.id === groupId);
+    const group = resolveEffectiveTagGroups(
+      this.settings,
+      collectTaskNodeTags(this.taskNodes()),
+    ).find((candidate) => candidate.id === groupId);
     const groupName = group?.name ?? 'Group';
-    const tag =
-      group?.mode === 'prefix'
-        ? normalizedTag(group.prefix ?? '')
-        : normalizedTag(group?.tags?.[0] ?? '');
-    if (tag.length === 0) {
+    const tag = group === undefined ? undefined : effectiveGroupCaptureTag(group);
+    if (tag === undefined || tag.length === 0) {
       return {
         label: `${groupName} · unavailable`,
         context,

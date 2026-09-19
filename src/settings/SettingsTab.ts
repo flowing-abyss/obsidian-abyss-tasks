@@ -18,8 +18,10 @@ import { sameProjectPropertyName } from '../projects/projectPropertyNames';
 import { projectStatusDisplayName } from '../projects/status';
 import { StatusRegistry } from '../status/StatusRegistry';
 import { TYPE_LABELS, TYPE_ORDER } from '../status/statusConstants';
-import type { TagManager } from '../tags/TagManager';
-import { normalizeTaskTagInput, type TaskStatusType } from '../tasks';
+import { type TagGroupUpdate, type TagManager } from '../tags/TagManager';
+import { type EffectiveTagGroup, resolveEffectiveTagGroups } from '../tags/effectiveTagGroups';
+import { collectTaskNodeTags } from '../tags/taskTagCatalog';
+import { normalizeTaskTagInput, type TaskDependencyQueryApi, type TaskStatusType } from '../tasks';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { renderProjectTableSettings } from './projectTableSettings';
@@ -42,7 +44,8 @@ import type { CalendarSettings, ProjectStatus, TaskStatusDef } from './types';
 
 interface TaskCalendarPlugin extends Plugin {
   settings: CalendarSettings;
-  tagManager: TagManager;
+  tagManager?: TagManager;
+  queries?: Pick<TaskDependencyQueryApi, 'listNodes'>;
   rebuildTaskStatusSemantics(): void;
   saveSettings(): Promise<void>;
   saveTaskStorageSettings?(draft: TaskStorageSettings): Promise<void>;
@@ -366,7 +369,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     this.addSection_abyssPrivate(nextContainer, 'Inbox', 'inbox', (body) => {
       this.renderInboxSettings_abyssPrivate(body);
     });
-    this.addSection_abyssPrivate(nextContainer, 'Tag groups', 'tags', (body) => {
+    this.addSection_abyssPrivate(nextContainer, 'Tags', 'tags', (body) => {
       this.renderTagGroupSettings_abyssPrivate(body);
     });
     this.addSection_abyssPrivate(nextContainer, 'Projects', 'folder-kanban', (body) => {
@@ -917,7 +920,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   private renderTagGroupSettings_abyssPrivate(containerEl: HTMLElement): void {
-    const groups = this.plugin_abyssPrivate.settings.tagGroups;
+    const groups = this.effectiveTagGroups_abyssPrivate().filter((group) => !group.archived);
     this.renderCardList_abyssPrivate(containerEl, groups, {
       listKey: 'tag-groups',
       id: (g) => g.id,
@@ -925,28 +928,38 @@ export class CalendarSettingsTab extends PluginSettingTab {
       accent: (g) => g.color,
       badge: (g) => (g.mode === 'prefix' ? 'prefix' : 'manual'),
       body: (bodyEl, group) => {
-        this.renderTagGroupCard_abyssPrivate(bodyEl, group.id);
+        this.renderTagGroupCard_abyssPrivate(bodyEl, group);
       },
-      onReorder: (draggedId, targetId) =>
-        this.reorderItems_abyssPrivate(groups, draggedId, targetId, [
-          (group) => group.id,
-          () => this.plugin_abyssPrivate.saveSettings(),
-          'reorder tag groups',
-        ]),
+      onReorder: (draggedId, targetId) => {
+        const tagManager = this.plugin_abyssPrivate.tagManager;
+        if (tagManager !== undefined) {
+          if (draggedId === targetId) return false;
+          const previousOrder = this.plugin_abyssPrivate.settings.tagGroups.map(({ id }) => id);
+          runAsyncAction(
+            this.runTagSettingsAction_abyssPrivate(
+              tagManager.reorderGroups(draggedId, targetId, groups),
+              'reorder tags',
+              () =>
+                previousOrder.join('\0') ===
+                this.plugin_abyssPrivate.settings.tagGroups.map(({ id }) => id).join('\0'),
+            ),
+          );
+          return true;
+        }
+        return this.reorderItems_abyssPrivate(
+          this.plugin_abyssPrivate.settings.tagGroups,
+          draggedId,
+          targetId,
+          [
+            (group) => group.id,
+            () => this.plugin_abyssPrivate.saveSettings(),
+            'reorder tag groups',
+          ],
+        );
+      },
     });
 
-    const archived = this.plugin_abyssPrivate.settings.archivedTags;
-    if (archived.length > 0) {
-      new Setting(containerEl).setName('Archived tags').setHeading();
-      for (const tag of archived) {
-        new Setting(containerEl).setName(tag).addButton((b) =>
-          b.setButtonText('Unarchive').onClick(async () => {
-            await this.plugin_abyssPrivate.tagManager.unarchiveTag(tag);
-            this.render_abyssPrivate();
-          }),
-        );
-      }
-    }
+    this.renderArchivedTags_abyssPrivate(containerEl);
 
     new Setting(containerEl).addButton((b) =>
       b
@@ -966,15 +979,50 @@ export class CalendarSettingsTab extends PluginSettingTab {
     );
   }
 
-  private renderTagGroupCard_abyssPrivate(card: HTMLElement, groupId: string): void {
-    const groups = this.plugin_abyssPrivate.settings.tagGroups;
-    const group = groups.find((candidate) => candidate.id === groupId);
-    if (group == null) return;
+  private renderArchivedTags_abyssPrivate(containerEl: HTMLElement): void {
+    const archivedGroups = this.effectiveTagGroups_abyssPrivate().filter(
+      (group) => group.archived && (group.origin === 'configured' || group.mode === 'prefix'),
+    );
+    const archivedTags = this.plugin_abyssPrivate.settings.archivedTags;
+    if (archivedGroups.length > 0 || archivedTags.length > 0) {
+      new Setting(containerEl).setName('Archived').setHeading();
+      for (const group of archivedGroups) {
+        new Setting(containerEl).setName(group.name).addButton((button) =>
+          button.setButtonText('Unarchive').onClick(() => {
+            const tagManager = this.plugin_abyssPrivate.tagManager;
+            if (tagManager === undefined) return;
+            runAsyncAction(
+              this.runTagSettingsAction_abyssPrivate(
+                tagManager.unarchiveGroup(group.id),
+                'unarchive tag group',
+                () => this.isEffectiveGroupArchived_abyssPrivate(group.id),
+              ),
+            );
+          }),
+        );
+      }
+      for (const tag of archivedTags) {
+        new Setting(containerEl).setName(tag).addButton((b) =>
+          b.setButtonText('Unarchive').onClick(() => {
+            const tagManager = this.plugin_abyssPrivate.tagManager;
+            if (tagManager === undefined) return;
+            runAsyncAction(
+              this.runTagSettingsAction_abyssPrivate(
+                tagManager.unarchiveTag(tag),
+                'unarchive tag',
+                () => this.plugin_abyssPrivate.settings.archivedTags.includes(tag),
+              ),
+            );
+          }),
+        );
+      }
+    }
+  }
 
+  private renderTagGroupCard_abyssPrivate(card: HTMLElement, group: EffectiveTagGroup): void {
     new Setting(card).setName('Group name').addText((t) =>
       t.setValue(group.name).onChange(async (v) => {
-        group.name = v;
-        await this.plugin_abyssPrivate.saveSettings();
+        await this.updateTagGroup_abyssPrivate(group, { name: v });
       }),
     );
 
@@ -983,16 +1031,14 @@ export class CalendarSettingsTab extends PluginSettingTab {
         .addOptions({ prefix: 'Prefix', manual: 'Manual' })
         .setValue(group.mode)
         .onChange(async (v) => {
-          group.mode = v as 'prefix' | 'manual';
-          await this.plugin_abyssPrivate.saveSettings();
+          await this.updateTagGroup_abyssPrivate(group, { mode: v as 'prefix' | 'manual' });
           this.render_abyssPrivate();
         }),
     );
 
     new Setting(card).setName('Color').addColorPicker((cp) =>
       cp.setValue(group.color ?? '#888888').onChange(async (v) => {
-        group.color = v;
-        await this.plugin_abyssPrivate.saveSettings();
+        await this.updateTagGroup_abyssPrivate(group, { color: v });
       }),
     );
 
@@ -1005,8 +1051,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
             .setPlaceholder('Work')
             .setValue(group.prefix ?? '')
             .onChange(async (v) => {
-              group.prefix = v.trim();
-              await this.plugin_abyssPrivate.saveSettings();
+              await this.updateTagGroup_abyssPrivate(group, { prefix: v.trim() });
             }),
         );
     } else {
@@ -1018,26 +1063,105 @@ export class CalendarSettingsTab extends PluginSettingTab {
             .setPlaceholder('#Work, #side-project')
             .setValue((group.tags ?? []).join(', '))
             .onChange(async (v) => {
-              group.tags = v
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean);
-              await this.plugin_abyssPrivate.saveSettings();
+              await this.updateTagGroup_abyssPrivate(group, {
+                tags: v
+                  .split(',')
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+              });
             }),
         );
     }
 
     new Setting(card).addButton((b) =>
       b
-        .setButtonText('Delete group')
+        .setButtonText(group.origin === 'configured' ? 'Delete group' : 'Archive')
         .setClass('mod-warning')
         .onClick(() => {
-          const index = groups.findIndex((candidate) => candidate.id === group.id);
-          const removed = index < 0 ? undefined : groups.splice(index, 1)[0];
+          if (group.origin === 'discovered') {
+            const tagManager = this.plugin_abyssPrivate.tagManager;
+            if (tagManager === undefined) return;
+            runAsyncAction(
+              this.runTagSettingsAction_abyssPrivate(
+                tagManager.archiveGroup(group),
+                'archive tag group',
+                () => !this.isEffectiveGroupArchived_abyssPrivate(group.id),
+              ),
+            );
+            return;
+          }
+          const configured = this.plugin_abyssPrivate.settings.tagGroups;
+          const index = configured.findIndex((candidate) => candidate.id === group.id);
+          const removed = index < 0 ? undefined : configured.splice(index, 1)[0];
           if (removed != null) this.expandedCards_abyssPrivate.delete(removed.id);
           this.commitDraft_abyssPrivate('delete tag group');
         }),
     );
+  }
+
+  private effectiveTagGroups_abyssPrivate(): readonly EffectiveTagGroup[] {
+    return resolveEffectiveTagGroups(
+      this.plugin_abyssPrivate.settings,
+      collectTaskNodeTags(this.plugin_abyssPrivate.queries?.listNodes() ?? []),
+    );
+  }
+
+  private isEffectiveGroupArchived_abyssPrivate(groupId: string): boolean {
+    return (
+      this.effectiveTagGroups_abyssPrivate().find((group) => group.id === groupId)?.archived ===
+      true
+    );
+  }
+
+  private async updateTagGroup_abyssPrivate(
+    group: EffectiveTagGroup,
+    update: TagGroupUpdate,
+  ): Promise<void> {
+    const tagManager = this.plugin_abyssPrivate.tagManager;
+    if (tagManager !== undefined) {
+      const previous = this.plugin_abyssPrivate.settings.tagGroups.find(
+        (candidate) => candidate.id === group.id,
+      );
+      const previousSnapshot = previous === undefined ? undefined : structuredClone(previous);
+      try {
+        await tagManager.updateGroup(group, update);
+      } catch (error) {
+        console.error('[abyss-tasks] Could not update tag group', error);
+        const current = this.plugin_abyssPrivate.settings.tagGroups.find(
+          (candidate) => candidate.id === group.id,
+        );
+        const rolledBack = JSON.stringify(current) === JSON.stringify(previousSnapshot);
+        new Notice(this.tagSettingsFailureMessage_abyssPrivate('update tag group', rolledBack));
+        this.render_abyssPrivate();
+      }
+      return;
+    }
+    const configured = this.plugin_abyssPrivate.settings.tagGroups.find(
+      (candidate) => candidate.id === group.id,
+    );
+    if (configured === undefined) return;
+    Object.assign(configured, update);
+    await this.plugin_abyssPrivate.saveSettings();
+  }
+
+  private async runTagSettingsAction_abyssPrivate(
+    action: Promise<void>,
+    description: string,
+    rolledBack: () => boolean,
+  ): Promise<void> {
+    try {
+      await action;
+    } catch (error) {
+      console.error(`[abyss-tasks] Could not ${description}`, error);
+      new Notice(this.tagSettingsFailureMessage_abyssPrivate(description, rolledBack()));
+    }
+    this.render_abyssPrivate();
+  }
+
+  private tagSettingsFailureMessage_abyssPrivate(description: string, rolledBack: boolean): string {
+    return rolledBack
+      ? `Could not ${description}. Your changes were rolled back.`
+      : `Could not save an earlier ${description}. Newer changes were kept.`;
   }
 
   private renderProjectsSettings_abyssPrivate(containerEl: HTMLElement): void {

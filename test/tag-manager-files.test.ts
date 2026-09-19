@@ -1,7 +1,9 @@
 // test/tag-manager-files.test.ts
 import { describe, expect, it, vi } from 'vitest';
+import type { ListSelection } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
+import { discoveredPrefixGroupId, discoveredTagGroupId } from '../src/tags/effectiveTagGroups';
 import { transformMarkdownTags } from '../src/tags/markdownTagRename';
 import { TagManager } from '../src/tags/TagManager';
 import { createAppWithFiles, expectDefined } from './helpers';
@@ -11,6 +13,7 @@ async function makeManager(files: Record<string, string> = {}) {
     ...DEFAULT_SETTINGS,
     pinnedTags: [...DEFAULT_SETTINGS.pinnedTags],
     archivedTags: [...DEFAULT_SETTINGS.archivedTags],
+    archivedTagPrefixes: [...DEFAULT_SETTINGS.archivedTagPrefixes],
     tagGroups: DEFAULT_SETTINGS.tagGroups.map((group) => ({
       ...group,
       ...(group.tags === undefined ? {} : { tags: [...group.tags] }),
@@ -772,24 +775,84 @@ describe('TagManager exact and prefix vault rename', () => {
 
   it('prefix rename updates subtree settings references and the owning prefix selector', async () => {
     const { tm, settings } = await makeManager();
-    settings.pinnedTags.push('#work', '#work/dev', '#workplace', '#focus/dev');
+    settings.pinnedTags.push('#work', '#work/dev', '##work/legacy', '#workplace', '#focus/dev');
     settings.archivedTags.push('#work/ops', '#focus/ops');
+    settings.archivedTagPrefixes.push('work', 'work/client', 'workplace', 'focus/client');
+    settings.inbox = { mode: 'tag', tag: '#work/inbox', removeTagOnAssign: true };
+    settings.taskPrefix = 'Visible #work/client, literal `#work/code`, and #workplace.';
     settings.tagGroups.push(
       { id: 'prefix', name: 'Work', mode: 'prefix', prefix: 'work' },
+      { id: 'nested-prefix', name: 'Legacy nested', mode: 'prefix', prefix: '##work/client' },
       {
         id: 'manual',
         name: 'Manual',
         mode: 'manual',
-        tags: ['#work', '#work/dev', '#workplace', '#focus/dev'],
+        tags: ['#work', '#work/dev', 'work/legacy', '#workplace', '#focus/dev'],
       },
     );
 
     await tm.renameTagPrefix('work', 'focus');
 
-    expect(settings.pinnedTags).toEqual(['#focus', '#focus/dev', '#workplace']);
+    expect(settings.pinnedTags).toEqual(['#focus', '#focus/dev', '#focus/legacy', '#workplace']);
     expect(settings.archivedTags).toEqual(['#focus/ops']);
+    expect(settings.archivedTagPrefixes).toEqual(['focus', 'focus/client', 'workplace']);
+    expect(settings.inbox.tag).toBe('#focus/inbox');
+    expect(settings.taskPrefix).toBe(
+      'Visible #focus/client, literal `#work/code`, and #workplace.',
+    );
     expect(settings.tagGroups[0]?.prefix).toBe('focus');
-    expect(settings.tagGroups[1]?.tags).toEqual(['#focus', '#focus/dev', '#workplace']);
+    expect(settings.tagGroups[1]?.prefix).toBe('focus/client');
+    expect(settings.tagGroups[2]?.tags).toEqual([
+      '#focus',
+      '#focus/dev',
+      '#focus/legacy',
+      '#workplace',
+    ]);
+  });
+
+  it('rebases stable discovered group selections after exact and prefix rename', async () => {
+    const { tm } = await makeManager();
+    let selected: ListSelection = {
+      type: 'group',
+      groupId: discoveredPrefixGroupId('work'),
+    };
+    tm.registerSelectedListState({
+      getSelectedList: () => selected,
+      setSelectedList: (next) => {
+        selected = next;
+      },
+    });
+
+    await tm.renameTagPrefix('#work', '#focus');
+    expect(selected).toEqual({ type: 'group', groupId: discoveredPrefixGroupId('focus') });
+
+    selected = { type: 'group', groupId: discoveredTagGroupId('#home') };
+    await tm.renameTagExact('#home', '#house');
+    expect(selected).toEqual({ type: 'group', groupId: discoveredTagGroupId('#house') });
+  });
+
+  it('preserves the active stable id when a promoted prefix group is renamed', async () => {
+    const { tm, settings } = await makeManager();
+    const id = discoveredPrefixGroupId('work');
+    settings.tagGroups.push({
+      id,
+      name: 'Focused work',
+      color: '#ff0000',
+      mode: 'prefix',
+      prefix: 'work',
+    });
+    let selected: ListSelection = { type: 'group', groupId: id };
+    tm.registerSelectedListState({
+      getSelectedList: () => selected,
+      setSelectedList: (next) => {
+        selected = next;
+      },
+    });
+
+    await tm.renameTagPrefix('#work', '#focus');
+
+    expect(settings.tagGroups[0]?.prefix).toBe('focus');
+    expect(selected).toEqual({ type: 'group', groupId: id });
   });
 
   it('returns a settings failure and rolls back in-memory references when persistence rejects', async () => {

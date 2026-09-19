@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ListSelection } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
+import { discoveredPrefixGroupId } from '../src/tags/effectiveTagGroups';
+import type { TaskNodeSnapshot } from '../src/tasks';
 import type {
   CreateTaskCommandDestination,
   TaskCaptureApplicationApi,
@@ -279,6 +281,28 @@ describe('CaptureTargetResolver', () => {
         filePath: 'Projects/Prepended.md',
         insertion: { type: 'prepend' },
       },
+    });
+  });
+
+  it('targets the prefix of a discovered group through the existing create operation', async () => {
+    const captureApplication = application();
+    const nodes = [{ node: { tags: ['#work/client'] } }] as unknown as TaskNodeSnapshot[];
+    const resolver = new CaptureTargetResolver(
+      captureApplication,
+      settings({ tagGroups: [] }),
+      () => localDate('2026-08-24'),
+      () => nodes,
+    );
+
+    const target = await resolver.resolve({
+      type: 'list',
+      selection: { type: 'group', groupId: discoveredPrefixGroupId('work') },
+    });
+
+    expect(target.label).toBe('work · #work');
+    expect(target.initial).toEqual({ tags: { add: ['#work'] } });
+    expect(methodOf(captureApplication, 'planCreate')).toHaveBeenCalledWith({
+      type: 'configured-default',
     });
   });
 });

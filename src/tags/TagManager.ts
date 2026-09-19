@@ -3,6 +3,14 @@ import type { App, TFile } from 'obsidian';
 import type { ListSelection } from '../app/AppState';
 import { beginSettingsSave, latestSettingsSaveRevision } from '../settings/settingsSaveRevision';
 import type { CalendarSettings } from '../settings/types';
+import { normalizeTaskTagInput } from '../tasks';
+import {
+  discoveredPrefixGroupId,
+  discoveredTagGroupId,
+  normalizeTagPrefix,
+  prefixForDiscoveredGroupId,
+  type EffectiveTagGroup,
+} from './effectiveTagGroups';
 import { normalizeTag, transformMarkdownTags, type TagRenameScope } from './markdownTagRename';
 
 export type VaultTagRenameResult =
@@ -36,6 +44,32 @@ function replaceSettingTag(
     return `${newTag}${value.slice(oldTag.length)}`;
   }
   return value;
+}
+
+function replaceConfiguredTag(
+  value: string,
+  oldTag: string,
+  newTag: string,
+  scope: TagRenameScope,
+): string {
+  const normalized = normalizeTaskTagInput(value);
+  const tag = normalized?.length === 1 ? normalized[0] : undefined;
+  if (tag === undefined) return value;
+  const updated = replaceSettingTag(tag, oldTag, newTag, scope);
+  return updated === tag ? value : updated;
+}
+
+function replaceConfiguredPrefix(
+  value: string,
+  oldTag: string,
+  newTag: string,
+  scope: TagRenameScope,
+): string {
+  const prefix = normalizeTagPrefix(value);
+  if (prefix === undefined) return value;
+  const tag = `#${prefix}`;
+  const updated = replaceSettingTag(tag, oldTag, newTag, scope);
+  return updated === tag ? value : updated.slice(1);
 }
 
 function uniqueInOrder(values: readonly string[]): string[] {
@@ -85,19 +119,129 @@ function updateSettingList(context: SettingListUpdate): void {
   });
 }
 
-function updateTagGroups(
-  settings: CalendarSettings,
-  replace: (value: string) => string,
-  scope: TagRenameScope,
-  rollbacks: Array<() => void>,
-): void {
+interface TagGroupRenameContext {
+  readonly settings: CalendarSettings;
+  readonly replace: (value: string) => string;
+  readonly replacePrefix: (value: string) => string;
+  readonly scope: TagRenameScope;
+}
+
+function updateTagGroups(context: TagGroupRenameContext, rollbacks: Array<() => void>): void {
+  const { settings, replace, replacePrefix, scope } = context;
   for (const group of settings.tagGroups) {
     if (updateManualTagGroup(group, replace, rollbacks)) continue;
-    updatePrefixTagGroup(group, replace, scope, rollbacks);
+    updatePrefixTagGroup(group, replacePrefix, scope, rollbacks);
   }
 }
 
 type TagGroup = CalendarSettings['tagGroups'][number];
+export interface TagGroupUpdate {
+  readonly name?: string;
+  readonly color?: string | undefined;
+  readonly mode?: TagGroup['mode'];
+  readonly prefix?: string | undefined;
+  readonly tags?: string[] | undefined;
+}
+
+interface TagGroupSnapshot {
+  readonly name: string;
+  readonly color: string | undefined;
+  readonly mode: TagGroup['mode'];
+  readonly prefix: string | undefined;
+  readonly tags: string[] | undefined;
+}
+
+function tagGroupFromEffective(group: EffectiveTagGroup): TagGroup {
+  return {
+    id: group.id,
+    name: group.name,
+    mode: group.mode,
+    ...(group.color === undefined ? {} : { color: group.color }),
+    ...(group.prefix === undefined ? {} : { prefix: group.prefix }),
+    ...(group.tags === undefined ? {} : { tags: [...group.tags] }),
+  };
+}
+
+function snapshotTagGroup(group: TagGroup): TagGroupSnapshot {
+  return {
+    name: group.name,
+    color: group.color,
+    mode: group.mode,
+    prefix: group.prefix,
+    tags: group.tags === undefined ? undefined : [...group.tags],
+  };
+}
+
+function applyTagGroupUpdate(group: TagGroup, update: TagGroupUpdate): void {
+  Object.assign(group, update);
+  if ('color' in update && update.color === undefined) delete group.color;
+  if ('prefix' in update && update.prefix === undefined) delete group.prefix;
+  if ('tags' in update && update.tags === undefined) delete group.tags;
+  else if (update.tags !== undefined) group.tags = [...update.tags];
+}
+
+function restoreOptionalString(
+  group: TagGroup,
+  key: 'color' | 'prefix',
+  expected: string | undefined,
+  previous: string | undefined,
+): void {
+  if (group[key] !== expected) return;
+  if (previous === undefined) delete group[key];
+  else group[key] = previous;
+}
+
+function rollbackTagGroupUpdate(
+  group: TagGroup,
+  update: TagGroupUpdate,
+  previous: TagGroupSnapshot,
+): void {
+  if (update.name !== undefined && group.name === update.name) group.name = previous.name;
+  if ('color' in update) restoreOptionalString(group, 'color', update.color, previous.color);
+  if (update.mode !== undefined && group.mode === update.mode) group.mode = previous.mode;
+  if ('prefix' in update) restoreOptionalString(group, 'prefix', update.prefix, previous.prefix);
+  rollbackTagGroupTags(group, update.tags, previous.tags);
+}
+
+function rollbackTagGroupTags(
+  group: TagGroup,
+  expected: string[] | undefined,
+  previous: string[] | undefined,
+): void {
+  if (expected === undefined || !sameValues(group.tags ?? [], expected)) return;
+  if (previous === undefined) delete group.tags;
+  else group.tags = previous;
+}
+
+interface TagRenameIdentity {
+  readonly oldTag: string;
+  readonly newTag: string;
+  readonly scope: TagRenameScope;
+}
+
+function rebaseDiscoveredGroupSelection(
+  state: SelectedListState,
+  selected: Extract<ListSelection, { readonly type: 'group' }>,
+  rename: TagRenameIdentity,
+): void {
+  const { oldTag, newTag, scope } = rename;
+  if (scope === 'prefix' && selected.groupId === discoveredPrefixGroupId(oldTag.slice(1))) {
+    state.setSelectedList({ type: 'group', groupId: discoveredPrefixGroupId(newTag.slice(1)) });
+    return;
+  }
+  if (scope === 'exact' && selected.groupId === discoveredTagGroupId(oldTag)) {
+    state.setSelectedList({ type: 'group', groupId: discoveredTagGroupId(newTag) });
+  }
+}
+
+function rebaseTagSelection(
+  state: SelectedListState,
+  selected: Extract<ListSelection, { readonly type: 'tag' }>,
+  rename: TagRenameIdentity,
+): void {
+  const tag = replaceSettingTag(selected.tag, rename.oldTag, rename.newTag, rename.scope);
+  if (tag !== selected.tag) state.setSelectedList({ type: 'tag', tag });
+}
 
 function updateManualTagGroup(
   group: TagGroup,
@@ -118,7 +262,7 @@ function updateManualTagGroup(
 
 function updatePrefixTagGroup(
   group: TagGroup,
-  replace: (value: string) => string,
+  replacePrefix: (value: string) => string,
   scope: TagRenameScope,
   rollbacks: Array<() => void>,
 ): void {
@@ -131,7 +275,7 @@ function updatePrefixTagGroup(
     return;
   }
   const previous = group.prefix;
-  const updated = replace(`#${previous}`).slice(1);
+  const updated = replacePrefix(previous);
   if (updated === previous) return;
   group.prefix = updated;
   rollbacks.push(() => {
@@ -146,13 +290,18 @@ function updateTagSettings(
   scope: TagRenameScope,
 ): SettingsRenameUpdate {
   const replaceReference = (value: string): string =>
-    replaceSettingTag(value, oldTag, newTag, scope);
+    replaceConfiguredTag(value, oldTag, newTag, scope);
+  const replacePrefix = (value: string): string =>
+    replaceConfiguredPrefix(value, oldTag, newTag, scope);
   const rollbacks: Array<() => void> = [];
   const applyPinnedTags = (values: string[]): void => {
     settings.pinnedTags = values;
   };
   const applyArchivedTags = (values: string[]): void => {
     settings.archivedTags = values;
+  };
+  const applyArchivedTagPrefixes = (values: string[]): void => {
+    settings.archivedTagPrefixes = values;
   };
 
   updateSettingList({
@@ -169,7 +318,32 @@ function updateTagSettings(
     replace: replaceReference,
     rollbacks,
   });
-  updateTagGroups(settings, replaceReference, scope, rollbacks);
+  updateSettingList({
+    current: settings.archivedTagPrefixes,
+    apply: applyArchivedTagPrefixes,
+    latest: () => settings.archivedTagPrefixes,
+    replace: (prefix) => replaceConfiguredPrefix(prefix, oldTag, newTag, scope),
+    rollbacks,
+  });
+  updateTagGroups({ settings, replace: replaceReference, replacePrefix, scope }, rollbacks);
+
+  const previousInboxTag = settings.inbox.tag;
+  const nextInboxTag = replaceReference(previousInboxTag);
+  if (nextInboxTag !== previousInboxTag) {
+    settings.inbox.tag = nextInboxTag;
+    rollbacks.push(() => {
+      if (settings.inbox.tag === nextInboxTag) settings.inbox.tag = previousInboxTag;
+    });
+  }
+
+  const previousTaskPrefix = settings.taskPrefix;
+  const nextTaskPrefix = transformMarkdownTags(previousTaskPrefix, oldTag, newTag, scope);
+  if (nextTaskPrefix !== previousTaskPrefix) {
+    settings.taskPrefix = nextTaskPrefix;
+    rollbacks.push(() => {
+      if (settings.taskPrefix === nextTaskPrefix) settings.taskPrefix = previousTaskPrefix;
+    });
+  }
 
   return {
     changed: rollbacks.length > 0,
@@ -220,31 +394,163 @@ export class TagManager {
 
   async pinTag(tag: string): Promise<void> {
     if (this.settings.pinnedTags.includes(tag)) return;
-    this.settings.pinnedTags.push(tag);
-    await this.persistSettings();
+    const previous = this.settings.pinnedTags;
+    const applied = [...previous, tag];
+    this.settings.pinnedTags = applied;
+    await this.persistMutation(() => {
+      if (this.settings.pinnedTags === applied) this.settings.pinnedTags = previous;
+    });
   }
 
   async unpinTag(tag: string): Promise<void> {
     const idx = this.settings.pinnedTags.indexOf(tag);
     if (idx < 0) return;
-    this.settings.pinnedTags.splice(idx, 1);
-    await this.persistSettings();
+    const previous = this.settings.pinnedTags;
+    const applied = previous.filter((_, index) => index !== idx);
+    this.settings.pinnedTags = applied;
+    await this.persistMutation(() => {
+      if (this.settings.pinnedTags === applied) this.settings.pinnedTags = previous;
+    });
   }
 
   async archiveTag(tag: string): Promise<void> {
     if (this.settings.archivedTags.includes(tag)) return;
-    this.settings.archivedTags.push(tag);
-    // also unpin
-    const pi = this.settings.pinnedTags.indexOf(tag);
-    if (pi >= 0) this.settings.pinnedTags.splice(pi, 1);
-    await this.persistSettings();
+    const previousArchived = this.settings.archivedTags;
+    const previousPinned = this.settings.pinnedTags;
+    const appliedArchived = [...previousArchived, tag];
+    const appliedPinned = previousPinned.filter((candidate) => candidate !== tag);
+    this.settings.archivedTags = appliedArchived;
+    this.settings.pinnedTags = appliedPinned;
+    await this.persistMutation(() => {
+      if (this.settings.archivedTags === appliedArchived)
+        this.settings.archivedTags = previousArchived;
+      if (this.settings.pinnedTags === appliedPinned) this.settings.pinnedTags = previousPinned;
+    });
   }
 
   async unarchiveTag(tag: string): Promise<void> {
     const idx = this.settings.archivedTags.indexOf(tag);
     if (idx < 0) return;
-    this.settings.archivedTags.splice(idx, 1);
-    await this.persistSettings();
+    const previous = this.settings.archivedTags;
+    const applied = previous.filter((_, index) => index !== idx);
+    this.settings.archivedTags = applied;
+    await this.persistMutation(() => {
+      if (this.settings.archivedTags === applied) this.settings.archivedTags = previous;
+    });
+  }
+
+  async archiveGroup(group: EffectiveTagGroup): Promise<void> {
+    if (group.origin === 'configured') {
+      const configured = this.settings.tagGroups.find((candidate) => candidate.id === group.id);
+      if (configured === undefined || configured.archived === true) return;
+      configured.archived = true;
+      await this.persistMutation(() => {
+        if (configured.archived === true) delete configured.archived;
+      });
+      return;
+    }
+    if (group.mode === 'manual') {
+      const tag = group.tags?.[0];
+      if (tag !== undefined) await this.archiveTag(tag);
+      return;
+    }
+    const prefix = group.prefix;
+    if (
+      prefix === undefined ||
+      this.settings.archivedTagPrefixes.some(
+        (candidate) => normalizeTagPrefix(candidate) === prefix,
+      )
+    ) {
+      return;
+    }
+    const previous = this.settings.archivedTagPrefixes;
+    const applied = [...previous, prefix];
+    this.settings.archivedTagPrefixes = applied;
+    await this.persistMutation(() => {
+      if (this.settings.archivedTagPrefixes === applied)
+        this.settings.archivedTagPrefixes = previous;
+    });
+  }
+
+  async unarchiveGroup(groupId: string): Promise<void> {
+    const configured = this.settings.tagGroups.find((candidate) => candidate.id === groupId);
+    if (configured !== undefined) {
+      if (configured.archived !== true) return;
+      configured.archived = false;
+      await this.persistMutation(() => {
+        if (configured.archived === false) configured.archived = true;
+      });
+      return;
+    }
+    const prefix = prefixForDiscoveredGroupId(groupId);
+    if (prefix === undefined) return;
+    const previous = this.settings.archivedTagPrefixes;
+    const applied = previous.filter((candidate) => normalizeTagPrefix(candidate) !== prefix);
+    if (applied.length === previous.length) return;
+    this.settings.archivedTagPrefixes = applied;
+    await this.persistMutation(() => {
+      if (this.settings.archivedTagPrefixes === applied)
+        this.settings.archivedTagPrefixes = previous;
+    });
+  }
+
+  async updateGroup(group: EffectiveTagGroup, update: TagGroupUpdate): Promise<void> {
+    const previousGroups = this.settings.tagGroups;
+    const existing = previousGroups.find((candidate) => candidate.id === group.id);
+    const target = existing ?? tagGroupFromEffective(group);
+    const previous = snapshotTagGroup(target);
+    applyTagGroupUpdate(target, update);
+    const promoted = existing === undefined;
+    const appliedGroups = promoted ? [...previousGroups, target] : previousGroups;
+    if (promoted) this.settings.tagGroups = appliedGroups;
+    await this.persistMutation(() => {
+      if (promoted) {
+        if (this.settings.tagGroups === appliedGroups) this.settings.tagGroups = previousGroups;
+        return;
+      }
+      rollbackTagGroupUpdate(target, update, previous);
+    });
+  }
+
+  async reorderGroups(
+    draggedId: string,
+    targetId: string,
+    effective: readonly EffectiveTagGroup[],
+  ): Promise<void> {
+    if (draggedId === targetId) return;
+    const from = effective.findIndex((group) => group.id === draggedId);
+    const to = effective.findIndex((group) => group.id === targetId);
+    if (from < 0 || to < 0) return;
+    const previous = this.settings.tagGroups;
+    const desired = [...effective];
+    const [dragged] = desired.splice(from, 1);
+    if (dragged === undefined) return;
+    desired.splice(to, 0, dragged);
+
+    const configuredIds = new Set(previous.map((group) => group.id));
+    let persistedEnd = desired.findIndex((group) => group.id === draggedId);
+    for (let index = 0; index < desired.length; index++) {
+      const group = desired[index];
+      if (group !== undefined && configuredIds.has(group.id)) {
+        persistedEnd = Math.max(persistedEnd, index);
+      }
+    }
+    const persistedIds = new Set(desired.slice(0, persistedEnd + 1).map((group) => group.id));
+    const next = [
+      ...desired.slice(0, persistedEnd + 1).map((group) => ({
+        id: group.id,
+        name: group.name,
+        mode: group.mode,
+        ...(group.color === undefined ? {} : { color: group.color }),
+        ...(group.prefix === undefined ? {} : { prefix: group.prefix }),
+        ...(group.tags === undefined ? {} : { tags: [...group.tags] }),
+      })),
+      ...previous.filter((group) => !persistedIds.has(group.id)),
+    ];
+    this.settings.tagGroups = next;
+    await this.persistMutation(() => {
+      if (this.settings.tagGroups === next) this.settings.tagGroups = previous;
+    });
   }
 
   async renameTagExact(oldTag: string, newTag: string): Promise<VaultTagRenameResult> {
@@ -269,6 +575,18 @@ export class TagManager {
   private persistSettings(): Promise<void> {
     beginSettingsSave(this.settings);
     return this.saveSettings();
+  }
+
+  private async persistMutation(rollback: () => void): Promise<void> {
+    let saveRevision = latestSettingsSaveRevision(this.settings);
+    try {
+      const pendingSave = this.persistSettings();
+      saveRevision = latestSettingsSaveRevision(this.settings);
+      await pendingSave;
+    } catch (error) {
+      if (latestSettingsSaveRevision(this.settings) === saveRevision) rollback();
+      throw error;
+    }
   }
 
   private async prepareVaultRenames(
@@ -358,11 +676,16 @@ export class TagManager {
   }
 
   private rebaseSelectedLists(oldTag: string, newTag: string, scope: TagRenameScope): void {
+    const rename = { oldTag, newTag, scope };
     for (const state of this.selectedListStates) {
       const selected = state.getSelectedList();
-      if (typeof selected !== 'object' || selected.type !== 'tag') continue;
-      const tag = replaceSettingTag(selected.tag, oldTag, newTag, scope);
-      if (tag !== selected.tag) state.setSelectedList({ type: 'tag', tag });
+      if (typeof selected === 'string') continue;
+      if (selected.type === 'tag') {
+        rebaseTagSelection(state, selected, rename);
+      } else if (selected.type === 'group') {
+        if (this.settings.tagGroups.some((group) => group.id === selected.groupId)) continue;
+        rebaseDiscoveredGroupSelection(state, selected, rename);
+      }
     }
   }
 }

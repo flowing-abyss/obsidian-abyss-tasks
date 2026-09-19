@@ -2,6 +2,7 @@ import { expectDefined } from './helpers';
 // test/tag-manager-settings.test.ts
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { resolveEffectiveTagGroups } from '../src/tags/effectiveTagGroups';
 import { TagManager } from '../src/tags/TagManager';
 
 function makeManager(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
@@ -9,6 +10,9 @@ function makeManager(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
     ...DEFAULT_SETTINGS,
     pinnedTags: [...(overrides.pinnedTags ?? DEFAULT_SETTINGS.pinnedTags)],
     archivedTags: [...(overrides.archivedTags ?? DEFAULT_SETTINGS.archivedTags)],
+    archivedTagPrefixes: [
+      ...(overrides.archivedTagPrefixes ?? DEFAULT_SETTINGS.archivedTagPrefixes),
+    ],
     ...overrides,
   };
   const save = vi.fn().mockResolvedValue(undefined);
@@ -106,5 +110,89 @@ describe('TagManager.unarchiveTag', () => {
     const { tm, save } = makeManager();
     await tm.unarchiveTag('#task/next');
     expect(save).not.toHaveBeenCalled();
+  });
+});
+
+describe('TagManager effective group archives', () => {
+  it('archives a discovered prefix durably without materializing the group', async () => {
+    const { tm, settings, save } = makeManager({ tagGroups: [], pinnedTags: ['#work/pinned'] });
+
+    await tm.archiveGroup({
+      id: 'discovered:prefix:work',
+      name: 'work',
+      mode: 'prefix',
+      prefix: 'work',
+      origin: 'discovered',
+      archived: false,
+    });
+
+    expect(settings.archivedTagPrefixes).toEqual(['work']);
+    expect(settings.tagGroups).toEqual([]);
+    expect(settings.pinnedTags).toEqual(['#work/pinned']);
+    expect(save).toHaveBeenCalledOnce();
+  });
+
+  it('archives and restores a configured manual group without losing its metadata', async () => {
+    const group = {
+      id: 'manual',
+      name: 'Manual',
+      color: '#ff0000',
+      mode: 'manual' as const,
+      tags: ['#only', '#shared'],
+    };
+    const { tm, settings } = makeManager({ tagGroups: [group] });
+
+    await tm.archiveGroup({ ...group, origin: 'configured', archived: false });
+    expect(settings.tagGroups[0]).toEqual({ ...group, archived: true });
+    await tm.unarchiveGroup('manual');
+    expect(settings.tagGroups[0]).toEqual({ ...group, archived: false });
+  });
+
+  it('rolls back only its archive mutation when saving fails and preserves a newer edit', async () => {
+    let rejectSave!: (error: Error) => void;
+    const failed = new Promise<void>((_resolve, reject) => {
+      rejectSave = reject;
+    });
+    const { tm, settings, save } = makeManager();
+    save.mockReturnValueOnce(failed).mockResolvedValueOnce(undefined);
+
+    const archive = tm.archiveTag('#first');
+    await tm.pinTag('#newer');
+    rejectSave(new Error('storage unavailable'));
+    await expect(archive).rejects.toThrow('storage unavailable');
+
+    expect(settings.archivedTags).toEqual(['#first']);
+    expect(settings.pinnedTags).toEqual(['#newer']);
+  });
+
+  it('rolls back an archive mutation when its save is still the latest revision', async () => {
+    const { tm, settings, save } = makeManager();
+    save.mockRejectedValueOnce(new Error('storage unavailable'));
+
+    await expect(tm.archiveTag('#first')).rejects.toThrow('storage unavailable');
+
+    expect(settings.archivedTags).toEqual([]);
+  });
+
+  it('restores a hash-prefixed archived branch without requiring canonical stored spelling', async () => {
+    const { tm, settings } = makeManager({ archivedTagPrefixes: ['#work'] });
+
+    await tm.unarchiveGroup('discovered:prefix:work');
+
+    expect(settings.archivedTagPrefixes).toEqual([]);
+  });
+});
+
+describe('TagManager effective group ordering', () => {
+  it('preserves preceding discovered groups when one is moved before another', async () => {
+    const { tm, settings } = makeManager({ tagGroups: [] });
+    const effective = resolveEffectiveTagGroups(settings, ['#a', '#b', '#c']);
+    const ids = effective.map((group) => group.id);
+
+    await tm.reorderGroups(expectDefined(ids[2]), expectDefined(ids[1]), effective);
+
+    expect(
+      resolveEffectiveTagGroups(settings, ['#a', '#b', '#c']).map((group) => group.name),
+    ).toEqual(['a', 'c', 'b']);
   });
 });

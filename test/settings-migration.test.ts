@@ -89,11 +89,12 @@ describe('migrateSettings', () => {
     });
   });
 
-  it('adds missing pinnedTags and archivedTags arrays', () => {
+  it('adds missing pinnedTags and tag archive arrays', () => {
     const raw: Record<string, unknown> = {};
     migrateSettings(raw);
     expect(raw['pinnedTags']).toEqual([]);
     expect(raw['archivedTags']).toEqual([]);
+    expect(raw['archivedTagPrefixes']).toEqual([]);
   });
 
   it('converts old inboxMode=tag + inboxTag to inbox object', () => {

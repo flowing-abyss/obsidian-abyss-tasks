@@ -127,7 +127,23 @@ Inbox-removal policy.
 explicit tag configuration and the current selection. Picker and inspector surfaces consume that
 catalog instead of vault-wide metadata, so note-body/frontmatter tags and excluded archive-source
 tags cannot become suggestions unless they are also configured or present on a public task node.
-Selected tags remain available even when they are otherwise absent from the catalog.
+Selected tags and archived prefix roots remain available even when they are otherwise absent from
+the catalog.
+
+`resolveEffectiveTagGroups` is the shared navigation catalog for the sidebar, list selection,
+calendar presentation, capture, and settings. It combines configured groups with canonical tags
+from public root and subtask snapshots. Unclaimed standalone tags become deterministic exact
+groups; nested tags become deterministic top-prefix groups. Discovery is derived and is never
+copied into settings on task-index events. A user appearance or reorder action promotes the needed
+discovered identities into `tagGroups` without changing their IDs.
+
+Tag navigation archives remain static preferences in `data.json`: `archivedTags` excludes exact
+navigation entries, `archivedTagPrefixes` excludes discovered branches and future descendants, and
+`TagGroup.archived` preserves configured group metadata while hiding it. These preferences never
+change task Markdown or remove tasks from Today, Inbox, project, or other matching group views.
+`TagManager` owns revision-aware saves and rollback for archive, promotion, appearance, and order;
+the Tags settings section renders active derived/configured groups and zero-task archived entries
+through that same manager.
 
 Archive uses the same exact-root transfer machinery as ordinary moves, but produces an `archived`
 outcome because its destination is intentionally absent from public queries. One planned archive

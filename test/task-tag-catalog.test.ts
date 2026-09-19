@@ -35,6 +35,7 @@ describe('task tag catalog', () => {
       inbox: { mode: 'tag', tag: 'inbox', removeTagOnAssign: true },
       pinnedTags: ['#pinned'],
       archivedTags: ['#archived-navigation'],
+      archivedTagPrefixes: ['#zero-prefix'],
       tagGroups: [
         { id: 'prefix', name: 'Work', mode: 'prefix', prefix: 'work' },
         { id: 'manual', name: 'Manual', mode: 'manual', tags: ['#manual', '#task'] },
@@ -53,6 +54,7 @@ describe('task tag catalog', () => {
       '#subtask-only',
       '#pinned',
       '#archived-navigation',
+      '#zero-prefix',
       '#work',
       '#manual',
       '#prefix',

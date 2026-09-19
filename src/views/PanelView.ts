@@ -261,8 +261,9 @@ export class PanelView extends ItemView {
 
   refreshProjectSettings(): void {
     const result = this.projectStore_abyssPrivate?.refreshSettings();
+    this.left_abyssPrivate.refresh();
+    this.center_abyssPrivate.refresh();
     if (result === 'presentation') {
-      this.left_abyssPrivate.refreshProjectSettings();
       if (this.state_abyssPrivate.get('mode') === 'projects') this.refreshProjectTableSettings();
     }
   }
@@ -503,7 +504,12 @@ export class PanelView extends ItemView {
     const interactionRegistry = this.interactionRegistry_abyssPrivate;
     if (interactionRegistry === undefined)
       throw new Error('Panel interaction registry is unavailable');
-    const captureTargets = new CaptureTargetResolver(selectionTasks, this.settings_abyssPrivate);
+    const captureTargets = new CaptureTargetResolver(
+      selectionTasks,
+      this.settings_abyssPrivate,
+      undefined,
+      () => selectionTasks.queries.listNodes(),
+    );
     this.quickCapture_abyssPrivate = new QuickCaptureCoordinator({
       host: elements.quickCaptureHost,
       context: () => this.quickCaptureContext_abyssPrivate(),

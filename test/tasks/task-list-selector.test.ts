@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { ListSelection } from '../../src/app/AppState';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../../src/settings/defaults';
 import type { ListViewState } from '../../src/settings/types';
+import { discoveredPrefixGroupId } from '../../src/tags/effectiveTagGroups';
 import { searchTaskList, selectTaskList } from '../../src/task-lists/TaskListSelector';
-import type { LocalDate, TaskSnapshot } from '../../src/tasks';
+import type { LocalDate, SubtaskSnapshot, TaskSnapshot } from '../../src/tasks';
 
 function snapshot(
   title: string,
@@ -112,6 +113,40 @@ describe('selectTaskList', () => {
         today,
       }).map((task) => task.title),
     ).toEqual(['tagged']);
+  });
+
+  it('opens the unique root whose subtask owns a selected discovered tag or prefix group', () => {
+    const rootRef = snapshot('root').ref;
+    const child = {
+      ...snapshot('child'),
+      ref: {
+        parent: { type: 'task' as const, ref: rootRef },
+        relativeLine: 1,
+        originalBlock: '  - [ ] child #work/client',
+      },
+      tags: ['#work/client'],
+    } as unknown as SubtaskSnapshot;
+    const root = snapshot('root', { subtasks: [child] });
+    const configured = structuredClone(DEFAULT_SETTINGS);
+
+    expect(
+      selectTaskList({
+        tasks: [root],
+        selection: { type: 'tag', tag: '#work/client' },
+        viewState: withoutStatusGroups(getListViewDefaults('tag:#work/client')),
+        settings: configured,
+        today,
+      }).map((task) => task.title),
+    ).toEqual(['root']);
+    expect(
+      selectTaskList({
+        tasks: [root],
+        selection: { type: 'group', groupId: discoveredPrefixGroupId('work') },
+        viewState: withoutStatusGroups(getListViewDefaults('group:work')),
+        settings: configured,
+        today,
+      }).map((task) => task.title),
+    ).toEqual(['root']);
   });
 
   it('applies status and property filters before sorting', () => {

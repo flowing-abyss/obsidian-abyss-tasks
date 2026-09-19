@@ -392,7 +392,7 @@ describe('CenterPanel task-card primary row', () => {
 });
 
 describe('CenterPanel list selection', () => {
-  it('requests the exact tag boundary before applying the existing list selector', () => {
+  it('lets the recursive list selector apply the exact tag boundary across roots and subtasks', () => {
     const state = new AppState();
     state.set('selectedList', { type: 'tag', tag: '#work' });
     const exact = task({ title: 'exact', tags: ['#work'] });
@@ -408,7 +408,7 @@ describe('CenterPanel list selection', () => {
 
     const selected = call<TaskSnapshot[]>(panel, 'getFilteredTasks') as TaskSnapshot[];
 
-    expect(list).toHaveBeenCalledWith({ tag: '#work' });
+    expect(list).toHaveBeenCalledWith(undefined);
     expect(selected.map(({ title }) => title)).toEqual(['exact']);
   });
 
