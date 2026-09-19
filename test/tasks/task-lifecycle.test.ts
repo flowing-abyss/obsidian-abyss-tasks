@@ -652,12 +652,10 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
 
       const result = await harness.repository.create(destination, { markdownBody: 'duplicate' });
 
-      expect(await harness.read()).toBe(
-        '# Project\n- [ ] duplicate\n\n## Tasks\n- [ ] duplicate\n',
-      );
+      expect(await harness.read()).toBe('## Tasks\n- [ ] duplicate\n# Project\n- [ ] duplicate\n');
       expect(result).toMatchObject({
         type: 'committed',
-        outcome: { type: 'task', task: { source: { line: 4 } } },
+        outcome: { type: 'task', task: { source: { line: 1 } } },
       });
     });
 

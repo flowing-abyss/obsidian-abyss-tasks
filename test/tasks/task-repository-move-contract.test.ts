@@ -21,6 +21,7 @@ interface Harness {
   readonly repository: TaskRepository;
   readonly snapshots: (path: string, content: string) => readonly TaskSnapshot[];
   readonly read: (path: string) => Promise<string>;
+  readonly writeRaw: (path: string, content: string) => Promise<void>;
 }
 
 async function harness(
@@ -50,6 +51,9 @@ async function harness(
       repository,
       snapshots,
       read: async (path) => repository.content(path) ?? '',
+      writeRaw: async (path, content) => {
+        repository.setContent(path, content);
+      },
     };
   }
   const repository = new ObsidianTaskRepository(app, {
@@ -66,6 +70,15 @@ async function harness(
       const file = app.vault.getAbstractFileByPath(path);
       if (!(file instanceof TFile)) throw new Error(`missing ${path}`);
       return app.vault.cachedRead(file);
+    },
+    writeRaw: async (path, content) => {
+      await app.vault.adapter.write(path, content);
+      vi.spyOn(app.vault, 'process').mockImplementation(async (file, transform, options) => {
+        const current = await app.vault.adapter.read(file.path);
+        const next = transform(current);
+        await app.vault.adapter.write(file.path, next, options);
+        return next;
+      });
     },
   };
 }
@@ -171,7 +184,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       {
         name: 'creates a missing section with target-native boundaries',
         insertion: { type: 'section' as const, heading: '## Tasks' },
-        expected: '# Project\r\nbody\r\n\r\n## Tasks\r\n- [ ] task',
+        expected: '## Tasks\r\n- [ ] task\r\n# Project\r\nbody',
       },
       {
         name: 'treats a blank section heading as append',
@@ -188,6 +201,29 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       expect(await h.read('target.md')).toBe(expected);
       expect(await h.read('source.md')).toBe('');
     });
+
+    it.each([
+      { type: 'prepend' } as const,
+      { type: 'append' } as const,
+      { type: 'section', heading: '# Tasks' } as const,
+    ])(
+      'rejects create and move into malformed frontmatter with $type insertion',
+      async (insertion) => {
+        const source = '- [ ] task\n';
+        const malformed = '---\nstatus: [\n---\nBody\n';
+        const h = await harness(adapter, source, 'Body\n');
+        await h.writeRaw('target.md', malformed);
+
+        await expect(
+          h.repository.create(destination(insertion), { markdownBody: 'created' }),
+        ).resolves.toEqual({ type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] });
+        await expect(
+          h.repository.move(sourceRef(h, source), destination(insertion)),
+        ).resolves.toEqual({ type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] });
+        expect(await h.read('source.md')).toBe(source);
+        expect(await h.read('target.md')).toBe(malformed);
+      },
+    );
   });
 }
 

@@ -600,6 +600,10 @@ export class InMemoryTaskRepository implements TaskRepository {
     return this.files.get(path);
   }
 
+  setContent(path: string, content: string): void {
+    this.files.set(path, content);
+  }
+
   async create(destination: TaskDestination, draft: TaskDraft): Promise<TaskRepositoryResult> {
     const content = this.files.get(destination.filePath);
     if (content === undefined) {

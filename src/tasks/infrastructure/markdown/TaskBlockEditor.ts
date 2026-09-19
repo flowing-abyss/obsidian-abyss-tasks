@@ -7,7 +7,12 @@ import {
 import type { DependencyDirection } from '../../domain/taskDependencies';
 import type { LocalDate, TaskInsertionPolicy } from '../../domain/types';
 import { createLinkedTaskLines } from './createTaskLine';
-import { isTaskBlockBlankLine } from './taskBlockSyntax';
+import {
+  consumeMarkdownFenceLine,
+  isTaskBlockBlankLine,
+  parseMarkdownFrontmatter,
+  type MarkdownFence,
+} from './taskBlockSyntax';
 import type { TaskMarkdownCodec } from './TaskMarkdownCodec';
 
 const TASK_RE = /^[\s>]*- \[(.)\]/u;
@@ -425,7 +430,6 @@ function rootInsertionIndex(
     lines,
     heading: insertion.heading,
     contentStart,
-    unsafeTail: semantic.unsafeTail,
     ending,
   });
 }
@@ -434,30 +438,13 @@ interface MissingSectionInsertion {
   readonly lines: SourceLine[];
   readonly heading: string;
   readonly contentStart: number;
-  readonly unsafeTail: boolean;
   readonly ending: '\n' | '\r\n';
 }
 
 function insertMissingSection(input: MissingSectionInsertion): number {
-  const { lines, heading, contentStart, unsafeTail, ending } = input;
-  if (lines.every((line) => line.text.trim().length === 0)) {
-    insertAt(lines, lines.length, insertedLines([heading], ending), ending);
-    return lines.length;
-  }
-  if (unsafeTail) {
-    insertAt(lines, contentStart, insertedLines([heading], ending), ending);
-    return contentStart + 1;
-  }
-  if (lines[lines.length - 1]?.text.trim().length !== 0) {
-    insertAt(lines, lines.length, insertedLines([''], ending), ending);
-  }
-  insertAt(lines, lines.length, insertedLines([heading], ending), ending);
-  return lines.length;
-}
-
-interface MarkdownFence {
-  readonly marker: '`' | '~';
-  readonly length: number;
+  const { lines, heading, contentStart, ending } = input;
+  insertAt(lines, contentStart, insertedLines([heading], ending), ending);
+  return contentStart + 1;
 }
 
 interface SemanticScanState {
@@ -471,24 +458,14 @@ interface SemanticLine {
 }
 
 function frontmatterContentStart(lines: readonly SourceLine[]): number | undefined {
-  if (lines[0]?.text.trim() !== '---') return 0;
-  const closing = lines.findIndex((line, index) => index > 0 && line.text.trim() === '---');
-  return closing < 0 ? undefined : closing + 1;
-}
-
-function fenceToken(line: string): string | undefined {
-  return /^[\s>]*(`{3,}|~{3,})/u.exec(line)?.[1];
+  const frontmatter = parseMarkdownFrontmatter(lines.map(({ text }) => text));
+  return frontmatter.type === 'invalid' ? undefined : frontmatter.contentStart;
 }
 
 function consumeSemanticFence(state: SemanticScanState, text: string): SemanticLine | undefined {
-  const token = fenceToken(text);
-  if (state.fence !== undefined) {
-    const closes = token?.[0] === state.fence.marker && token.length >= state.fence.length;
-    return { state: { ...state, fence: closes ? undefined : state.fence }, isContent: false };
-  }
-  const marker = token?.[0];
-  if (token === undefined || (marker !== '`' && marker !== '~')) return undefined;
-  return { state: { ...state, fence: { marker, length: token.length } }, isContent: false };
+  const consumed = consumeMarkdownFenceLine(state.fence, text);
+  if (consumed.isContent) return undefined;
+  return { state: { ...state, fence: consumed.fence }, isContent: false };
 }
 
 function consumeSemanticLine(state: SemanticScanState, text: string): SemanticLine {
@@ -508,17 +485,17 @@ function semanticHeading(
   lines: readonly SourceLine[],
   contentStart: number,
   heading: string,
-): { readonly line: number; readonly state: SemanticScanState; readonly unsafeTail: boolean } {
+): { readonly line: number; readonly state: SemanticScanState } {
   let state: SemanticScanState = { fence: undefined, comment: false };
   for (let index = contentStart; index < lines.length; index++) {
     const text = lines[index]?.text ?? '';
     const consumed = consumeSemanticLine(state, text);
     state = consumed.state;
     if (consumed.isContent && text.trim() === heading) {
-      return { line: index, state, unsafeTail: false };
+      return { line: index, state };
     }
   }
-  return { line: -1, state, unsafeTail: state.fence !== undefined || state.comment };
+  return { line: -1, state };
 }
 
 function markdownHeadingLevel(text: string): number | undefined {

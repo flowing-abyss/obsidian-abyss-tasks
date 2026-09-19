@@ -158,6 +158,16 @@ describe('TaskBlockEditor', () => {
     expect(editor.insertRoot('', '- [ ] root', { type: 'append' })?.content).toBe('- [ ] root');
   });
 
+  it.each([
+    { type: 'prepend' } as const,
+    { type: 'append' } as const,
+    { type: 'section', heading: '# Tasks' } as const,
+  ])('rejects delimiter-complete malformed frontmatter for $type insertion', (insertion) => {
+    const source = '---\nstatus: [\n---\nBody\n';
+
+    expect(new TaskBlockEditor().insertRoot(source, '- [ ] New', insertion)).toBeUndefined();
+  });
+
   it('rejects empty recurrence subtree replacements without touching the block', () => {
     const editor = new TaskBlockEditor();
     const source = '- [ ] root\n  - [ ] child';
@@ -203,13 +213,13 @@ describe('TaskBlockEditor', () => {
     ).toBeUndefined();
   });
 
-  it('creates a missing section after blank content without adding a second spacer', () => {
+  it('creates a missing section before blank content without adding a second spacer', () => {
     expect(
       new TaskBlockEditor().insertRootBlock('\n', '- [ ] task', {
         type: 'section',
         heading: '## Tasks',
       })?.content,
-    ).toBe('\n## Tasks\n- [ ] task\n');
+    ).toBe('## Tasks\n- [ ] task\n\n');
   });
 
   it('prepends after complete frontmatter and inserts first inside a commented section', () => {
@@ -301,7 +311,7 @@ describe('TaskBlockEditor', () => {
 
     expect(
       editor.insertRoot(fenced, '- [ ] New', { type: 'section', heading: '# Tasks' })?.content,
-    ).toBe('---\nstatus: inbox\n---\n```md\n# Tasks\n```\nBody\n\n# Tasks\n- [ ] New\n');
+    ).toBe('---\nstatus: inbox\n---\n# Tasks\n- [ ] New\n```md\n# Tasks\n```\nBody\n');
     expect(
       editor.insertRoot('```md\n# Tasks\n', '- [ ] New', {
         type: 'section',
@@ -311,6 +321,44 @@ describe('TaskBlockEditor', () => {
     expect(
       editor.insertRoot('---\nstatus: inbox\nBody\n', '- [ ] New', { type: 'prepend' }),
     ).toBeUndefined();
+  });
+
+  it.each([
+    ['ordinary body', 'Body\n', '# Tasks\n- [ ] New\nBody\n'],
+    [
+      'valid frontmatter and body',
+      '---\nstatus: inbox\n---\nBody\n',
+      '---\nstatus: inbox\n---\n# Tasks\n- [ ] New\nBody\n',
+    ],
+  ])('creates a missing section after frontmatter for %s', (_case, source, expected) => {
+    expect(
+      new TaskBlockEditor().insertRoot(source, '- [ ] New', {
+        type: 'section',
+        heading: '# Tasks',
+      })?.content,
+    ).toBe(expected);
+  });
+
+  it('keeps a suffixed fence marker inside the fence when finding a section', () => {
+    const source = '```md\n```example\n# Tasks\n- [ ] Fake\n```\nBody\n';
+
+    expect(
+      new TaskBlockEditor().insertRoot(source, '- [ ] New', {
+        type: 'section',
+        heading: '# Tasks',
+      })?.content,
+    ).toBe('# Tasks\n- [ ] New\n```md\n```example\n# Tasks\n- [ ] Fake\n```\nBody\n');
+  });
+
+  it('ends a quoted fence when its blockquote container ends', () => {
+    const source = '> ```md\n> example\n# Tasks\n- [ ] Old\n';
+
+    expect(
+      new TaskBlockEditor().insertRoot(source, '- [ ] New', {
+        type: 'section',
+        heading: '# Tasks',
+      })?.content,
+    ).toBe('> ```md\n> example\n# Tasks\n- [ ] New\n- [ ] Old\n');
   });
 
   it('removes the preceding line ending with a final root that has no ending', () => {
@@ -340,7 +388,7 @@ describe('TaskBlockEditor', () => {
       '# Note\nbody',
       '- [ ] task',
       { type: 'section', heading: '## Tasks' } as const,
-      '# Note\nbody\n\n## Tasks\n- [ ] task',
+      '## Tasks\n- [ ] task\n# Note\nbody',
     ],
     [
       'a blank section name falling back to append',

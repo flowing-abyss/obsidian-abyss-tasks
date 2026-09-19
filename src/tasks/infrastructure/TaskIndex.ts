@@ -1,11 +1,4 @@
-import {
-  parseYaml,
-  TFile,
-  type App,
-  type CachedMetadata,
-  type EventRef,
-  type TAbstractFile,
-} from 'obsidian';
+import { TFile, type App, type CachedMetadata, type EventRef, type TAbstractFile } from 'obsidian';
 import type {
   CalendarProjectionSources,
   CalendarTaskSource,
@@ -44,6 +37,11 @@ import {
 } from '../domain/types';
 import { localDate } from '../domain/validation';
 import { TaskBlockEditor } from './markdown/TaskBlockEditor';
+import {
+  consumeMarkdownFenceLine,
+  parseMarkdownFrontmatter,
+  type MarkdownFence,
+} from './markdown/taskBlockSyntax';
 import { TaskLocator } from './markdown/TaskLocator';
 import { TaskMarkdownCodec } from './markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from './markdown/TaskSnapshotProjector';
@@ -252,14 +250,8 @@ interface FallbackListAncestor {
   readonly indent: number;
 }
 
-interface FallbackFence {
-  readonly marker: '`' | '~';
-  readonly length: number;
-  readonly quoteDepth: number;
-}
-
 interface FallbackFenceTransition {
-  readonly active: FallbackFence | undefined;
+  readonly active: MarkdownFence | undefined;
   readonly skip: boolean;
   readonly opening: boolean;
 }
@@ -269,7 +261,7 @@ interface FallbackScanState {
   readonly ancestorsByQuoteDepth: Map<number, FallbackListAncestor[]>;
   offset: number;
   frontmatter: boolean;
-  fence: FallbackFence | undefined;
+  fence: MarkdownFence | undefined;
   previousQuoteDepth: number | undefined;
 }
 
@@ -282,43 +274,14 @@ interface FallbackListLine {
 
 const FALLBACK_LIST_ITEM_RE = /^([\s>]*)(?:[-*+]|\d+[.)])\s+/u;
 const FALLBACK_TASK_RE = /^[\s>]*- \[(.)\]/u;
-const FALLBACK_FENCE_RE = /^[\s>]*(`{3,}|~{3,})/u;
 const FALLBACK_PREFIX_RE = /^([\s>]*)/u;
-
-function closesFallbackFence(
-  active: FallbackFence,
-  quoteDepth: number,
-  token: string | undefined,
-): boolean {
-  return (
-    quoteDepth === active.quoteDepth &&
-    token?.[0] === active.marker &&
-    token.length >= active.length
-  );
-}
 
 function fallbackFenceState(
   line: string,
-  quoteDepth: number,
-  active: FallbackFence | undefined,
+  active: MarkdownFence | undefined,
 ): FallbackFenceTransition {
-  const token = FALLBACK_FENCE_RE.exec(line)?.[1];
-  if (active != null && quoteDepth >= active.quoteDepth) {
-    return {
-      active: closesFallbackFence(active, quoteDepth, token) ? undefined : active,
-      skip: true,
-      opening: false,
-    };
-  }
-  if (token === undefined) return { active: undefined, skip: false, opening: false };
-  const marker = token[0];
-  return marker === '`' || marker === '~'
-    ? {
-        active: { marker, length: token.length, quoteDepth },
-        skip: true,
-        opening: true,
-      }
-    : { active: undefined, skip: false, opening: false };
+  const consumed = consumeMarkdownFenceLine(active, line);
+  return { active: consumed.fence, skip: !consumed.isContent, opening: consumed.opened };
 }
 
 function transitionFallbackQuoteDepth(
@@ -389,7 +352,7 @@ function consumeFallbackFence(
   quoteDepth: number,
   prefix: string,
 ): boolean {
-  const transition = fallbackFenceState(line, quoteDepth, state.fence);
+  const transition = fallbackFenceState(line, state.fence);
   state.fence = transition.active;
   if (!transition.skip) return false;
   if (transition.opening) transitionFallbackBoundary(state, quoteDepth, prefix);
@@ -484,18 +447,8 @@ function cacheWithContentFallback(
 }
 
 function frontmatterFromContent(data: string): Record<string, unknown> | undefined {
-  const lines = data.split(/\r?\n/u);
-  if (lines[0]?.replace(/^\uFEFF/u, '').trim() !== '---') return undefined;
-  const closing = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
-  if (closing < 0) return undefined;
-  try {
-    const parsed: unknown = parseYaml(lines.slice(1, closing).join('\n'));
-    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : undefined;
-  } catch {
-    return undefined;
-  }
+  const frontmatter = parseMarkdownFrontmatter(data.split(/\r?\n/u));
+  return frontmatter.type === 'valid' ? frontmatter.value : undefined;
 }
 
 function extensionOf(path: string): string {

@@ -1215,6 +1215,37 @@ describe('TaskIndex lifecycle and events', () => {
     index.destroy();
   });
 
+  it.each([
+    {
+      name: 'a fence marker with a non-whitespace suffix',
+      content: ['```md', '```example', '# Tasks', '- [ ] fenced fake', '```', '- [ ] real'].join(
+        '\n',
+      ),
+      cachedLines: [3, 5],
+    },
+    {
+      name: 'leaving a blockquote fence container',
+      content: ['> ```md', '> - [ ] fenced fake', '# Tasks', '- [ ] real'].join('\n'),
+      cachedLines: [1, 3],
+    },
+  ])('uses valid container-aware boundaries for $name', async ({ content, cachedLines }) => {
+    const app = await createAppWithFiles({ 'boundaries.md': content });
+    seedTaskCache(
+      app,
+      'boundaries.md',
+      cachedLines.map((line) => ({ task: ' ', parent: -1, line })),
+    );
+    const index = new TaskIndex(app, {
+      statusCatalog: canonicalStatusCatalog(),
+      dailyNoteFormat: 'YYYY-MM-DD',
+    });
+
+    await index.initialize();
+
+    expect(index.list().map((task) => task.title)).toEqual(['real']);
+    index.destroy();
+  });
+
   it('keeps a delete that arrives during a blocked initial read', async () => {
     const { app, index } = await setup({ 'blocked.md': '- [ ] stale' });
     const read = blockRead(app, 'blocked.md', '- [ ] stale');
