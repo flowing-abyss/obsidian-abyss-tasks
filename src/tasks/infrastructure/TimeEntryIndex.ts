@@ -168,6 +168,16 @@ function frozenTotal(total: FileCollection['total']): TrackedTotal {
 /** What one file puts into one epoch-UTC day, kept apart so removing it never rebuilds the day. */
 type DayBucket = Map<string, readonly TrackedEntry[]>;
 
+function bucketDay(
+  byDay: Map<number, TrackedEntry[]>,
+  dayKey: number,
+  tracked: TrackedEntry,
+): void {
+  const entries = byDay.get(dayKey);
+  if (entries === undefined) byDay.set(dayKey, [tracked]);
+  else entries.push(tracked);
+}
+
 /** The days one file's closed entries cross, gathered before any of them reaches a shared bucket. */
 function bucketClosedSpan(span: ClosedSpan, byDay: Map<number, TrackedEntry[]>): void {
   const firstKey = Math.floor(span.startMs / MS_PER_DAY);
@@ -175,10 +185,11 @@ function bucketClosedSpan(span: ClosedSpan, byDay: Map<number, TrackedEntry[]>):
   const spannedKey = Math.floor((span.endMs - 1) / MS_PER_DAY);
   const lastKey = Math.min(Math.max(firstKey, spannedKey), firstKey + MAX_DAY_KEYS - 1);
   for (let dayKey = firstKey; dayKey <= lastKey; dayKey += 1) {
-    const entries = byDay.get(dayKey);
-    if (entries === undefined) byDay.set(dayKey, [span.tracked]);
-    else entries.push(span.tracked);
+    bucketDay(byDay, dayKey, span.tracked);
   }
+  // A capped span still keeps the day it ends on, so a mistyped year is found by the reader looking
+  // at either end of it rather than only by the one looking at where it began.
+  if (spannedKey > lastKey) bucketDay(byDay, spannedKey, span.tracked);
 }
 
 /**

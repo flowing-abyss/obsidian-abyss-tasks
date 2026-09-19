@@ -329,18 +329,42 @@ describe('time entry index', () => {
     expect(
       index.entriesOverlapping(startMs + 399 * MS_PER_DAY, startMs + 400 * MS_PER_DAY),
     ).toHaveLength(1);
-    // Past the cap the entry is no longer bucketed, which is what keeps one absurd span cheap.
+    // Between the cap and the day it ends on the entry is not bucketed, which is what keeps one
+    // absurd span cheap.
     expect(
       index.entriesOverlapping(startMs + 400 * MS_PER_DAY, startMs + 401 * MS_PER_DAY),
     ).toEqual([]);
     expect(index.fileTotal('long.md').closedMs).toBe(500 * MS_PER_DAY);
   });
 
+  it('finds a span past the cap on the day it ends as well as the day it starts', () => {
+    const index = new TimeEntryIndex();
+    // A year hand-typed as 2062 instead of 2026 leaves an entry running for decades, and whoever
+    // has to notice it is reading the day it ends on.
+    index.updateFile('typo.md', [
+      task({
+        title: 'Mistyped year',
+        source: { filePath: 'typo.md', line: 0 },
+        timeEntries: [closedEntry('2026-09-17T09:12:00Z', '2062-09-17T10:42:00Z', 1)],
+      }),
+    ]);
+    const lastDayMs = dayKeyOf('2062-09-17') * MS_PER_DAY;
+
+    expect(index.entriesOverlapping(RANGE_FROM_MS, RANGE_TO_MS)).toHaveLength(1);
+    expect(index.entriesOverlapping(lastDayMs, lastDayMs + MS_PER_DAY)).toHaveLength(1);
+
+    index.removeFile('typo.md');
+
+    expect(index.entriesOverlapping(lastDayMs, lastDayMs + MS_PER_DAY)).toEqual([]);
+    expect(dayBuckets(index).size).toBe(0);
+  });
+
   it('empties every bucket a capped span filled when its file is removed', () => {
     const index = new TimeEntryIndex();
     const startMs = Date.parse('2026-01-01T00:00:00Z');
     index.updateFile('long.md', [longSpanRoot(startMs)]);
-    expect(dayBuckets(index).size).toBe(MAX_DAY_KEYS);
+    // The capped run of days plus the single day the span ends on.
+    expect(dayBuckets(index).size).toBe(MAX_DAY_KEYS + 1);
 
     index.removeFile('long.md');
 
