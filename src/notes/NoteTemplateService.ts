@@ -200,7 +200,10 @@ export class NoteTemplateService {
     let file: TFile | undefined;
     try {
       file = await this.app.vault.create(path, '');
-      if (template === undefined) return file;
+      if (template === undefined) {
+        mapFor(failedByApp, this.app).delete(path);
+        return file;
+      }
       await this.applyTemplate({ file, template, title, expectedContent: '', session });
       mapFor(failedByApp, this.app).delete(path);
       return file;

@@ -327,6 +327,32 @@ describe('NoteTemplateService', () => {
     expect(await app.vault.read(fileAt(app, path))).toBe('partly prepared\n');
   });
 
+  it('releases unknown failure ownership after the target is deleted and freshly recreated', async () => {
+    const path = 'tasks/recreated-after-unread-partial.md';
+    const app = await createAppWithFiles({ 'templates/task.md': '<% partial %>\n' });
+    installTemplater(app, async () => {
+      await app.vault.modify(fileAt(app, path), 'partly prepared\n');
+      throw new Error('template failed after writing the target');
+    });
+    vi.spyOn(app.vault, 'cachedRead').mockRejectedValueOnce(new Error('transient read failure'));
+    const service = new NoteTemplateService(app);
+
+    await expect(service.ensureNote(path, 'templates/task.md', 'Partial')).rejects.toBeInstanceOf(
+      CreatedNoteTemplateError,
+    );
+    await expect(service.ensureNote(path, 'templates/task.md', 'Partial')).rejects.toBeInstanceOf(
+      CreatedNoteTemplateError,
+    );
+    await app.fileManager.trashFile(fileAt(app, path));
+
+    const recreated = await service.ensureNote(path, '', 'Fresh');
+    await app.vault.modify(recreated, '- [ ] Captured after recreation\n');
+    const retained = await service.ensureNote(path, '', 'Fresh');
+
+    expect(retained).toBe(recreated);
+    expect(await app.vault.read(retained)).toBe('- [ ] Captured after recreation\n');
+  });
+
   it('keeps retry partial output blocked when its post-failure snapshot read rejects', async () => {
     const path = 'tasks/unread-retry-partial.md';
     const app = await createAppWithFiles({ 'templates/task.md': '<% partial %>\n' });
