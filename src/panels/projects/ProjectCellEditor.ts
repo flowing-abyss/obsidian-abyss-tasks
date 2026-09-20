@@ -662,7 +662,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     if (this.ownedPointerActive_abyssPrivate) {
       return;
     }
-    queueMicrotask(() => {
+    const finish = (): void => {
       if (this.closed_abyssPrivate) return;
       const active = this.element.ownerDocument.activeElement;
       if (active instanceof Node && this.element.contains(active)) return;
@@ -671,7 +671,10 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
         'preserve-focus',
         next instanceof HTMLElement ? next : undefined,
       );
-    });
+    };
+    const ownerWindow = this.element.ownerDocument.defaultView;
+    if (ownerWindow === null) finish();
+    else ownerWindow.queueMicrotask(finish);
   };
 
   private readonly onDocumentPointerDown_abyssPrivate = (event: PointerEvent): void => {
@@ -688,8 +691,15 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     this.ownedPointerCleanup_abyssPrivate?.();
     this.ownedPointerActive_abyssPrivate = true;
     const ownerDocument = this.element.ownerDocument;
+    const ownerWindow = ownerDocument.defaultView;
+    let timeout: number | undefined;
     const release = (): void => {
-      window.setTimeout(() => {
+      if (ownerWindow === null) {
+        this.clearOwnedPointer_abyssPrivate();
+        return;
+      }
+      ownerWindow.clearTimeout(timeout);
+      timeout = ownerWindow.setTimeout(() => {
         this.clearOwnedPointer_abyssPrivate();
       }, 0);
     };
@@ -697,6 +707,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
       this.clearOwnedPointer_abyssPrivate();
     };
     this.ownedPointerCleanup_abyssPrivate = () => {
+      ownerWindow?.clearTimeout(timeout);
       ownerDocument.removeEventListener('pointerup', release);
       ownerDocument.removeEventListener('pointercancel', cancel);
       this.ownedPointerCleanup_abyssPrivate = undefined;

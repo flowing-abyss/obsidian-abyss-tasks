@@ -70,7 +70,11 @@ function mount(
   const mountedView: { current?: ProjectsTimelineView<Cell> } = {};
   const view = new ProjectsTimelineView<Cell>(host, {
     settings: () => settings,
-    modelInput: () => ({ fields, statuses: DEFAULT_SETTINGS.projects.statuses }),
+    modelInput: () => ({
+      nowMs: Date.UTC(2026, 8, 20),
+      fields,
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+    }),
     renderCell: ({ host: cellHost, project: item, field, column, occurrenceId, existing }) => {
       const cell = existing ?? {
         element: cellHost,

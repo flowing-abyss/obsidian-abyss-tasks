@@ -1,17 +1,22 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { planProjectGroupDrop } from '../src/panels/projects/projectTableDrag';
 import type {
   ProjectField,
   ProjectFieldCatalogItem,
   ProjectTableSettings,
 } from '../src/projects/projectFields';
+import { buildProjectKanbanModel } from '../src/projects/projectKanbanModel';
+import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import type { ProjectPropertyDefinition } from '../src/projects/projectPropertyDefinitions';
+import type { ProjectTableModelInput } from '../src/projects/projectTableModel';
 import {
   buildProjectTableModel,
   projectProgress,
   projectTableDisplayValues,
   projectTableGroupLinkIdentity,
 } from '../src/projects/projectTableModel';
+import { buildProjectTimelineModel } from '../src/projects/projectTimelineModel';
+import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import type { ProjectStatus } from '../src/settings/types';
 import { expectDefined } from './helpers';
@@ -109,6 +114,7 @@ describe('buildProjectTableModel', () => {
     const projects = [project('Zulu'), project('Alpha')];
 
     const model = buildProjectTableModel({
+      nowMs: NOW_MS,
       projects,
       fields,
       statuses: [],
@@ -199,6 +205,7 @@ describe('buildProjectTableModel', () => {
       statusId: 'active',
     });
     const statusModel = buildProjectTableModel({
+      nowMs: NOW_MS,
       projects: [activeProject],
       fields,
       statuses: presentedStatuses,
@@ -244,6 +251,7 @@ describe('buildProjectTableModel', () => {
     ];
 
     const result = buildProjectTableModel({
+      nowMs: NOW_MS,
       projects,
       fields: readOnlyFields,
       statuses,
@@ -296,6 +304,7 @@ describe('buildProjectTableModel', () => {
       }),
     ];
     const result = buildProjectTableModel({
+      nowMs: NOW_MS,
       projects,
       fields,
       statuses,
@@ -347,6 +356,7 @@ describe('buildProjectTableModel', () => {
   it('normalizes internal resolver inputs while preserving raw representative links', () => {
     const resolverInputs: Array<readonly [string, string]> = [];
     const result = buildProjectTableModel({
+      nowMs: NOW_MS,
       projects: [
         project('Plain', { frontmatter: { owners: '[[../People/Anna Smith]]' } }),
         project('Encoded', {
@@ -388,6 +398,7 @@ describe('buildProjectTableModel', () => {
   it('groups identical absolute URLs independently of source path without folding URL case', () => {
     const url = 'https://Example.com/CaseSensitive?Token=AbC#Part';
     const result = buildProjectTableModel({
+      nowMs: NOW_MS,
       projects: [
         project('One', { frontmatter: { owners: `[First](${url})` } }),
         project('Two', { frontmatter: { owners: `[Second](${url})` } }),
@@ -424,6 +435,7 @@ describe('buildProjectTableModel', () => {
       project('Two', { path: 'Projects/Two/Plan.md', frontmatter: { owners: '[[Team]]' } }),
     ];
     const result = buildProjectTableModel({
+      nowMs: NOW_MS,
       projects,
       fields,
       statuses,
@@ -677,4 +689,46 @@ describe('projectProgress', () => {
       percent: null,
     });
   });
+});
+
+it('requires one explicit instant across Table, Kanban and Timeline tracked sorting', () => {
+  expectTypeOf<ProjectTableModelInput>().toExtend<{ nowMs: number }>();
+  const settings = table({ sortBy: { field: 'tracked', dir: 'asc' } });
+  const input = {
+    projects: [timed('Running', 0, [NOW_MS - 10 * MINUTE]), timed('Closed', 5)],
+    fields,
+    statuses,
+    nowMs: NOW_MS,
+    settings,
+  };
+  const ambient = vi.spyOn(Date, 'now').mockImplementation(() => {
+    throw new Error('ambient clock');
+  });
+  try {
+    const tableResult = buildProjectTableModel(input);
+    const kanban = buildProjectKanbanModel({
+      ...input,
+      settings: buildDefaultProjectKanbanSettings(settings),
+    });
+    const timeline = buildProjectTimelineModel({
+      ...input,
+      settings: buildDefaultProjectTimelineSettings(settings),
+    });
+    expect(tableResult.groups.flatMap(({ projects }) => projects.map(({ name }) => name))).toEqual([
+      'Closed',
+      'Running',
+    ]);
+    expect(
+      kanban.columns.flatMap(({ groups }) =>
+        groups.flatMap(({ projects }) => projects.map(({ name }) => name)),
+      ),
+    ).toEqual(['Closed', 'Running']);
+    expect(timeline.groups.flatMap(({ rows }) => rows.map(({ project }) => project.name))).toEqual([
+      'Closed',
+      'Running',
+    ]);
+    expect(ambient).not.toHaveBeenCalled();
+  } finally {
+    ambient.mockRestore();
+  }
 });

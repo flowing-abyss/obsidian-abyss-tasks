@@ -30,14 +30,18 @@ export class ProjectCreationPresentation {
   private readonly pending_abyssPrivate: PendingProjectPresentation[] = [];
   private destroyed_abyssPrivate = false;
 
-  constructor(private readonly options_abyssPrivate: ProjectCreationPresentationOptions) {}
+  private readonly ownerWindow_abyssPrivate: Window | null;
+
+  constructor(private readonly options_abyssPrivate: ProjectCreationPresentationOptions) {
+    this.ownerWindow_abyssPrivate = options_abyssPrivate.host.ownerDocument.defaultView;
+  }
 
   enqueue(request: {
     readonly path: string;
     readonly expectedStatus?: string;
     readonly ownsFocus?: () => boolean;
   }): void {
-    if (this.destroyed_abyssPrivate) return;
+    if (this.destroyed_abyssPrivate || this.ownerWindow_abyssPrivate === null) return;
     const entry: PendingProjectPresentation = {
       path: request.path,
       expectedStatus: request.expectedStatus,
@@ -142,12 +146,10 @@ export class ProjectCreationPresentation {
   }
 
   private setTimeout_abyssPrivate(callback: () => void, delay: number): number {
-    const ownerWindow = this.options_abyssPrivate.host.ownerDocument.defaultView;
-    return (ownerWindow ?? window).setTimeout(callback, delay);
+    return this.ownerWindow_abyssPrivate?.setTimeout(callback, delay) ?? 0;
   }
 
   private clearTimeout_abyssPrivate(timeout: number): void {
-    const ownerWindow = this.options_abyssPrivate.host.ownerDocument.defaultView;
-    (ownerWindow ?? window).clearTimeout(timeout);
+    this.ownerWindow_abyssPrivate?.clearTimeout(timeout);
   }
 }

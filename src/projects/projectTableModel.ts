@@ -66,7 +66,7 @@ export interface ProjectTableModelInput {
   resolveLink?: (target: string, sourcePath: string) => string | undefined;
   propertyDefinitions?: Readonly<Record<string, ProjectPropertyDefinition>>;
   /** The instant every running timer is measured against, so one pass reads one clock. */
-  nowMs?: number;
+  nowMs: number;
 }
 
 type ProjectTableLinkResolver = (target: string, sourcePath: string) => string | undefined;
@@ -460,7 +460,7 @@ function makeGroups(input: MakeGroupsInput): ProjectTableGroup[] {
 
 export function buildProjectTableModel(input: ProjectTableModelInput): ProjectTableModel {
   // One clock for the whole pass, so every running timer is compared and shown at the same instant.
-  const nowMs = input.nowMs ?? Date.now();
+  const nowMs = input.nowMs;
   const availableStatusGroups = orderedGroups([...input.statuses], [...input.projects]);
   const hidden = new Set(input.settings.hiddenStatuses);
   const visibleFields = input.settings.columns

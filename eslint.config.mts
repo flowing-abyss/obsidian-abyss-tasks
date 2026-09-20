@@ -6,6 +6,7 @@ import sonarjs from 'eslint-plugin-sonarjs';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import * as globals from 'globals';
 import tseslint from 'typescript-eslint';
+import { projectAmbientRule } from './eslint-project-policy.mts';
 
 const testFiles = ['test/**/*.ts', 'vitest.config.ts', 'vitest.bench.config.ts'];
 const metadataIncompatibleRules = Object.fromEntries(
@@ -59,6 +60,7 @@ export default defineConfig(
         projectService: {
           allowDefaultProject: [
             'eslint.config.mts',
+            'eslint-project-policy.mts',
             'manifest.json',
             'commitlint.config.mjs',
             'dependency-cruiser.config.cjs',
@@ -378,6 +380,24 @@ export default defineConfig(
       ...metadataIncompatibleRules,
       'obsidianmd/validate-license': 'error',
     },
+  },
+  {
+    plugins: { 'project-policy': { rules: { ambient: projectAmbientRule } } },
+  },
+  {
+    files: ['src/panels/projects/**/*.ts'],
+    rules: { 'project-policy/ambient': ['error', 'owner'] },
+  },
+  {
+    files: [
+      'src/projects/projectTableModel.ts',
+      'src/projects/projectKanbanModel.ts',
+      'src/projects/projectTimelineModel.ts',
+      'src/projects/projectTimelineAxis.ts',
+      'src/projects/projectTimelineEdits.ts',
+      'src/panels/projects/projectTableViewport.ts',
+    ],
+    rules: { 'project-policy/ambient': ['error', 'pure'] },
   },
   prettier,
 );

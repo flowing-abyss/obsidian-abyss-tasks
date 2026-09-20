@@ -187,7 +187,7 @@ function insertionLineTop(
 
 /** Owns the native board drag lifecycle, visual forecast, hover overlay, and scrolling cleanup. */
 export class ProjectKanbanDragController {
-  private readonly window_abyssPrivate: Window;
+  private readonly window_abyssPrivate: Window | null;
   private provisional_abyssPrivate: ProvisionalGesture | undefined;
   private provisionalTabIndex_abyssPrivate: string | null | undefined;
   private active_abyssPrivate: ActiveDrag | undefined;
@@ -205,7 +205,7 @@ export class ProjectKanbanDragController {
     private readonly scroll_abyssPrivate: HTMLElement,
     private readonly adapter_abyssPrivate: ProjectKanbanDragAdapter,
   ) {
-    this.window_abyssPrivate = root_abyssPrivate.ownerDocument.defaultView ?? window;
+    this.window_abyssPrivate = root_abyssPrivate.ownerDocument.defaultView;
     root_abyssPrivate.addEventListener('pointerdown', this.pointerDown_abyssPrivate, true);
     root_abyssPrivate.addEventListener('dragstart', this.dragStart_abyssPrivate);
     root_abyssPrivate.addEventListener('dragover', this.dragOver_abyssPrivate);
@@ -219,7 +219,7 @@ export class ProjectKanbanDragController {
       this.documentDragOver_abyssPrivate,
       true,
     );
-    this.window_abyssPrivate.addEventListener('blur', this.windowBlur_abyssPrivate);
+    this.window_abyssPrivate?.addEventListener('blur', this.windowBlur_abyssPrivate);
   }
 
   destroy(): void {
@@ -241,7 +241,7 @@ export class ProjectKanbanDragController {
       this.documentDragOver_abyssPrivate,
       true,
     );
-    this.window_abyssPrivate.removeEventListener('blur', this.windowBlur_abyssPrivate);
+    this.window_abyssPrivate?.removeEventListener('blur', this.windowBlur_abyssPrivate);
   }
 
   clearPreview(): void {
@@ -251,6 +251,7 @@ export class ProjectKanbanDragController {
   private readonly pointerDown_abyssPrivate = (event: Event): void => {
     this.releaseProvisional_abyssPrivate();
     this.suppressClickPath_abyssPrivate = undefined;
+    if (this.window_abyssPrivate === null) return;
     const pointer = event as PointerEvent;
     if (pointer.button !== 0) return;
     const card = cardFromEvent(event);
@@ -469,7 +470,7 @@ export class ProjectKanbanDragController {
       return;
     this.cancelOverlay_abyssPrivate();
     this.hoverColumn_abyssPrivate = column;
-    this.hoverTimer_abyssPrivate = this.window_abyssPrivate.setTimeout(() => {
+    this.hoverTimer_abyssPrivate = this.window_abyssPrivate?.setTimeout(() => {
       this.hoverTimer_abyssPrivate = undefined;
       if (plan.allowed) this.openOverlay_abyssPrivate(column, plan);
     }, 450);
@@ -622,9 +623,9 @@ export class ProjectKanbanDragController {
       this.scrollAtEdge_abyssPrivate(this.scroll_abyssPrivate, point.x, true);
       const vertical = this.verticalScroller_abyssPrivate;
       if (vertical !== undefined) this.scrollAtEdge_abyssPrivate(vertical, point.y, false);
-      this.frame_abyssPrivate = this.window_abyssPrivate.requestAnimationFrame(tick);
+      this.frame_abyssPrivate = this.window_abyssPrivate?.requestAnimationFrame(tick);
     };
-    this.frame_abyssPrivate = this.window_abyssPrivate.requestAnimationFrame(tick);
+    this.frame_abyssPrivate = this.window_abyssPrivate?.requestAnimationFrame(tick);
   }
 
   private scrollAtEdge_abyssPrivate(
@@ -644,7 +645,7 @@ export class ProjectKanbanDragController {
 
   private cancelOverlay_abyssPrivate(): void {
     if (this.hoverTimer_abyssPrivate !== undefined) {
-      this.window_abyssPrivate.clearTimeout(this.hoverTimer_abyssPrivate);
+      this.window_abyssPrivate?.clearTimeout(this.hoverTimer_abyssPrivate);
       this.hoverTimer_abyssPrivate = undefined;
     }
     this.hoverColumn_abyssPrivate = undefined;
@@ -656,7 +657,7 @@ export class ProjectKanbanDragController {
     this.clearPreview_abyssPrivate();
     this.cancelOverlay_abyssPrivate();
     if (this.frame_abyssPrivate !== undefined) {
-      this.window_abyssPrivate.cancelAnimationFrame(this.frame_abyssPrivate);
+      this.window_abyssPrivate?.cancelAnimationFrame(this.frame_abyssPrivate);
       this.frame_abyssPrivate = undefined;
     }
     this.point_abyssPrivate = undefined;

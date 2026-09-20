@@ -58,6 +58,7 @@ describe('buildProjectKanbanModel', () => {
     const settings = buildDefaultProjectKanbanSettings(table());
     settings.groupBy = 'status';
     const result = buildProjectKanbanModel({
+      nowMs: Date.UTC(2026, 8, 20),
       projects: [
         project('Planned project', { statusId: 'planned' }),
         project('Active project'),
@@ -77,6 +78,7 @@ describe('buildProjectKanbanModel', () => {
     expect(result.uniqueVisibleCount).toBe(3);
 
     const withoutDone = buildProjectKanbanModel({
+      nowMs: Date.UTC(2026, 8, 20),
       projects: [project('Active project')],
       fields,
       statuses,
@@ -95,6 +97,7 @@ describe('buildProjectKanbanModel', () => {
   it('adds raw and no-status columns only when the source has matching projects', () => {
     const settings = buildDefaultProjectKanbanSettings(table());
     const result = buildProjectKanbanModel({
+      nowMs: Date.UTC(2026, 8, 20),
       projects: [
         project('Visible'),
         project('Unknown', { statusId: null, rawStatus: 'Waiting' }),
@@ -129,6 +132,7 @@ describe('buildProjectKanbanModel', () => {
     const settings = buildDefaultProjectKanbanSettings(table());
     settings.hiddenStatuses = ['id:done', 'none'];
     const result = buildProjectKanbanModel({
+      nowMs: Date.UTC(2026, 8, 20),
       projects: [
         project('Visible match'),
         project('Filtered by search'),
@@ -153,6 +157,7 @@ describe('buildProjectKanbanModel', () => {
     settings.groupBy = 'property:owners';
     settings.sortBy = { field: 'name', dir: 'asc' };
     const result = buildProjectKanbanModel({
+      nowMs: Date.UTC(2026, 8, 20),
       projects: [
         project('Shared', { frontmatter: { owners: ['Ada', 'Lin', 'Ada'] } }),
         project('Solo', { frontmatter: { owners: ['Lin'] } }),
@@ -182,7 +187,13 @@ describe('buildProjectKanbanModel', () => {
     const settings = buildDefaultProjectKanbanSettings(table());
     settings.groupBy = 'none';
     settings.sortBy = { field: 'property:budget', dir: 'asc' };
-    const sorted = buildProjectKanbanModel({ projects, fields, statuses, settings });
+    const sorted = buildProjectKanbanModel({
+      nowMs: Date.UTC(2026, 8, 20),
+      projects,
+      fields,
+      statuses,
+      settings,
+    });
 
     expect(sorted.columns[1]?.groups[0]?.projects.map(({ name }) => name)).toEqual([
       'Two A',
@@ -194,7 +205,13 @@ describe('buildProjectKanbanModel', () => {
     settings.manualOrder = {
       'id:active': ['Projects/Two B.md', 'Projects/Ten.md'],
     };
-    const manual = buildProjectKanbanModel({ projects, fields, statuses, settings });
+    const manual = buildProjectKanbanModel({
+      nowMs: Date.UTC(2026, 8, 20),
+      projects,
+      fields,
+      statuses,
+      settings,
+    });
     expect(manual.columns[1]?.groups[0]?.projects.map(({ name }) => name)).toEqual([
       'Two B',
       'Ten',
@@ -208,7 +225,7 @@ describe('buildProjectKanbanModel', () => {
     settings.groupBy = 'property:owners';
     const before = structuredClone({ projects, fields, statuses, settings });
 
-    buildProjectKanbanModel({ projects, fields, statuses, settings });
+    buildProjectKanbanModel({ nowMs: Date.UTC(2026, 8, 20), projects, fields, statuses, settings });
 
     expect({ projects, fields, statuses, settings }).toEqual(before);
   });

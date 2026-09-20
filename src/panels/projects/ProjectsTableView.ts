@@ -1491,6 +1491,7 @@ export class ProjectsTableView {
 
   private singletonVisible_abyssPrivate(project: Project, search: string): boolean {
     const common = {
+      nowMs: this.trackedNowMs_abyssPrivate,
       projects: [project],
       fields: this.fields_abyssPrivate,
       statuses: this.context_abyssPrivate.settings.projects.statuses,
@@ -1711,6 +1712,7 @@ export class ProjectsTableView {
     const timeline = new ProjectsTimelineView<RenderedCellContext>(this.root_abyssPrivate, {
       settings: () => this.ensureTimelineSettings_abyssPrivate(),
       modelInput: () => ({
+        nowMs: this.trackedNowMs_abyssPrivate,
         fields: this.fields_abyssPrivate,
         statuses: this.context_abyssPrivate.settings.projects.statuses,
         propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,
@@ -1764,6 +1766,7 @@ export class ProjectsTableView {
       beginDrag: () => this.beginProjectDrag_abyssPrivate(),
       settings: () => this.ensureKanbanSettings_abyssPrivate(),
       modelInput: () => ({
+        nowMs: this.trackedNowMs_abyssPrivate,
         fields: this.fields_abyssPrivate,
         statuses: this.context_abyssPrivate.settings.projects.statuses,
         propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,

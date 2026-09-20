@@ -50,6 +50,7 @@ function project(name: string, startValue: string, owner: string): Project {
 
 function input(dir: 'asc' | 'desc' = 'asc'): ProjectTableModelInput {
   return {
+    nowMs: Date.UTC(2026, 8, 20),
     projects: [
       project('A', '2026-09-25', 'A'),
       project('B', '2026-09-20', 'B'),

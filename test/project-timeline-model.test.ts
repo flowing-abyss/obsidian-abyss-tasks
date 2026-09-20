@@ -41,6 +41,7 @@ function project(path: string, frontmatter: Record<string, unknown>): Project {
 function input(projects: Project[]) {
   const table = buildDefaultProjectTableSettings();
   return {
+    nowMs: Date.UTC(2026, 8, 20),
     projects,
     fields,
     statuses: DEFAULT_SETTINGS.projects.statuses,

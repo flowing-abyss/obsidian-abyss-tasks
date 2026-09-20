@@ -214,12 +214,46 @@ function bindColumnMenu(
   });
 }
 
+/** Defers the synthetic click guard on the same window that owns the gesture. */
+function sortRelease(
+  host: HTMLElement,
+  suppressSort: (value: boolean) => void,
+): {
+  release(): void;
+  cancel(): void;
+  destroy(): void;
+} {
+  const ownerWindow = host.ownerDocument.defaultView;
+  let timeout: number | undefined;
+  let destroyed = false;
+  const cancel = (): void => {
+    ownerWindow?.clearTimeout(timeout);
+    timeout = undefined;
+    suppressSort(false);
+  };
+  return {
+    cancel,
+    destroy: () => {
+      destroyed = true;
+      cancel();
+    },
+    release: () => {
+      if (destroyed) return;
+      ownerWindow?.clearTimeout(timeout);
+      if (ownerWindow === null) cancel();
+      else timeout = ownerWindow.setTimeout(cancel, 0);
+    },
+  };
+}
+
 function bindResize(options: BindResizeOptions): () => void {
   const { handle, th, columnId, onResize, onResizePreview, suppressSort } = options;
   let cleanup: (() => void) | undefined;
+  const sort = sortRelease(handle, suppressSort);
   const start = (event: PointerEvent): void => {
     event.preventDefault();
     event.stopPropagation();
+    sort.cancel();
     suppressSort(true);
     cleanup?.();
     const ownerDocument = handle.ownerDocument;
@@ -240,11 +274,6 @@ function bindResize(options: BindResizeOptions): () => void {
     let previewWidths: ProjectTableColumnResize['visibleWidths'] = renderedWidths;
     let savedWidths: ProjectTableColumnResize['visibleWidths'] = configuredWidths;
     let changed = false;
-    const releaseSort = (): void => {
-      window.setTimeout(() => {
-        suppressSort(false);
-      }, 0);
-    };
     const move = (moveEvent: PointerEvent): void => {
       const requested = Math.round(startWidth + moveEvent.clientX - startX);
       width = Math.max(minimumWidth, requested);
@@ -258,13 +287,13 @@ function bindResize(options: BindResizeOptions): () => void {
       cleanup?.();
       cleanup = undefined;
       if (changed) onResize({ columnId, width, visibleWidths: savedWidths });
-      releaseSort();
+      sort.release();
     };
     const cancel = (): void => {
       cleanup?.();
       cleanup = undefined;
       applyLiveColumnWidths(th, renderedWidths);
-      releaseSort();
+      sort.release();
     };
     const cancelOnEscape = (keyEvent: KeyboardEvent): void => {
       if (keyEvent.key !== 'Escape') return;
@@ -288,6 +317,7 @@ function bindResize(options: BindResizeOptions): () => void {
   handle.addEventListener('pointerdown', start);
   return () => {
     handle.removeEventListener('pointerdown', start);
+    sort.destroy();
     cleanup?.();
   };
 }
@@ -355,12 +385,14 @@ interface BindColumnDragOptions {
 function bindColumnDrag(options: BindColumnDragOptions): () => void {
   const { th, columnId, session, onMove, suppressSort } = options;
   const row = th.parentElement as HTMLTableRowElement;
+  const sort = sortRelease(th, suppressSort);
   const draggedColumn = (event: DragEvent): string | undefined => {
     if (event.dataTransfer?.types.includes(PROJECT_COLUMN_DRAG_TYPE) !== true) return undefined;
     const moved = session.sourceId ?? event.dataTransfer.getData(PROJECT_COLUMN_DRAG_TYPE);
     return session.movableColumnIds.has(moved) ? moved : undefined;
   };
   const start = (event: DragEvent): void => {
+    sort.cancel();
     suppressSort(true);
     session.sourceId = columnId;
     event.dataTransfer?.setData(PROJECT_COLUMN_DRAG_TYPE, columnId);
@@ -370,9 +402,7 @@ function bindColumnDrag(options: BindColumnDragOptions): () => void {
     session.sourceId = undefined;
     clearColumnDropMarkers(row);
     th.removeClass('is-dragging');
-    window.setTimeout(() => {
-      suppressSort(false);
-    }, 0);
+    sort.release();
   };
   const over = (event: DragEvent): void => {
     const moved = draggedColumn(event);
@@ -405,6 +435,7 @@ function bindColumnDrag(options: BindColumnDragOptions): () => void {
   th.addEventListener('dragleave', leave);
   th.addEventListener('drop', drop);
   return () => {
+    sort.destroy();
     if (session.sourceId === columnId) session.sourceId = undefined;
     clearColumnDropMarkers(row);
     th.removeClass('is-dragging');

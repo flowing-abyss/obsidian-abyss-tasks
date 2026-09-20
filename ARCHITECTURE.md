@@ -245,17 +245,20 @@ projections, and editors. See [field tests](test/project-fields.test.ts) and
 `projectTableModel` is the DOM-free source of search, typed sorting, status filtering, grouping,
 and unique visible counts. Link groups use resolved note paths as identity while retaining raw
 values and source paths for rendering and edits; external targets keep source-independent identity.
-A render pass reads one clock and hands it to the model, so tracked totals sort and display at one
-instant and none ticks on its own. Kanban and Timeline models reuse this projection. Their settings
-modules own independent saved presentation and organization, initialized from Table only when first
-requested.
+The overview captures one render instant and supplies the required `ProjectTableModelInput.nowMs`
+to Table, Kanban, Timeline, and their preview projections. Tracked totals sort and display at that
+instant; the pure models never read ambient time. Kanban and Timeline models reuse this projection.
+Their settings modules own independent saved presentation and organization, initialized from Table
+only when first requested.
 
 `ProjectsPanel` owns a long-lived [overview controller](src/panels/projects/ProjectsTableView.ts) and
 property-catalog subscription. The controller shares the toolbar, field renderer, editor boundary, mutation queues,
 receipt projection, and history across Table, Kanban, and Timeline. Each surface retains its own
 search, selection, organization, and viewport. Switching hides inactive surfaces instead of
-rebuilding them. A dashboard temporarily detaches the overview and invalidates Timeline interaction
-authority; reattachment preserves the session but cannot revive an old queued gesture.
+rebuilding them. Project gesture and creation timers use the owning window and release pending
+callbacks on disposal. A document without a window releases short gesture guards synchronously and does not
+retain creation requests or arm Kanban dragging. A dashboard temporarily detaches the overview and
+invalidates Timeline interaction authority; reattachment preserves the session but cannot revive an old queued gesture.
 
 Table owns a full expanded logical row/cell projection for selection, keyboard navigation, and
 clipboard commands, independently of mounted DOM. Its local `projectTableViewport` owns measured

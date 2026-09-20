@@ -61,6 +61,7 @@ function planInput(
   board = settings(),
 ): ProjectKanbanDropInput {
   return {
+    nowMs: Date.UTC(2026, 8, 20),
     project: source,
     projects: all,
     fields,
