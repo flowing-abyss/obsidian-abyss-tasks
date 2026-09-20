@@ -1297,6 +1297,89 @@ describe('project Kanban overview', () => {
     card.dispatchEvent(dragEvent('dragend', data));
   });
 
+  it.each([
+    ['Table', '.abyss-project-table-cell[data-column-id="start"]', '.abyss-project-table-scroll'],
+    [
+      'Kanban',
+      '.abyss-project-kanban-cell[data-column-id="start"]',
+      '.abyss-project-kanban-column-body',
+    ],
+    [
+      'Timeline',
+      '.abyss-project-timeline-cell[data-column-id="start"]',
+      '.abyss-project-timeline-scroll',
+    ],
+  ] as const)(
+    'clears the %s logical and DOM selection when its blank canvas is clicked',
+    (mode, cellSelector, backgroundSelector) => {
+      const { host, view, applyEdits } = mountView();
+      clickView(host, mode);
+      const cell = expectDefined(host.querySelector<HTMLElement>(cellSelector));
+      const background = expectDefined(host.querySelector<HTMLElement>(backgroundSelector));
+      cell.click();
+
+      expect(cell.classList.contains('is-selected')).toBe(true);
+      expect(view.selectedProjectPath()).toBe('Projects/A.md');
+      background.click();
+
+      expect(host.querySelector('.abyss-project-table-cell.is-selected')).toBeNull();
+      expect(host.querySelector('.abyss-project-table-cell.is-selection-focus')).toBeNull();
+      expect(host.querySelector('.abyss-project-kanban-card.is-selected')).toBeNull();
+      expect(host.querySelector('.abyss-project-timeline-row.is-selected')).toBeNull();
+      expect(view.selectedProjectPath()).toBeUndefined();
+      expect(activeDocument.activeElement).toBe(
+        expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll')),
+      );
+      expect(applyEdits).not.toHaveBeenCalled();
+    },
+  );
+
+  it('saves a dirty editor before a blank canvas clears selection and takes focus', async () => {
+    const { host, applyEdits } = mountView();
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const background = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-scroll'),
+    );
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
+    input.value = '2026-09-02';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    background.click();
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
+    expect(host.querySelector('.abyss-project-table-cell.is-selected')).toBeNull();
+    expect(activeDocument.activeElement).toBe(background);
+  });
+
+  it('keeps a failed editor and its selection when blank canvas commit is rejected', async () => {
+    const applyEdits = vi.fn().mockRejectedValue(new ProjectEditValidationError('Conflict'));
+    const { host } = mountView(undefined, { applyEdits });
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+    );
+    const background = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-scroll'),
+    );
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
+    input.value = '2026-09-02';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    background.click();
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(host.querySelector('.abyss-project-cell-editor')).not.toBeNull();
+    expect(start.classList.contains('is-selected')).toBe(true);
+    expect(activeDocument.activeElement).toBe(input);
+    expect(host.querySelector('.abyss-project-editor-error')?.textContent).toContain('Conflict');
+  });
+
   it('leaves protected links and editors alone while preserving plain title and metadata clicks', () => {
     const openProject = vi.fn();
     const { host } = mountView(undefined, { openProject });

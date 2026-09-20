@@ -1,6 +1,7 @@
 import { Notice, type App } from 'obsidian';
 import { exactLinkToken } from '../../markdown/links';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
+import { parseProjectDate, projectCalendarDayFromParsed } from '../../projects/projectDateValue';
 import { isProjectEditValidationError } from '../../projects/projectEditError';
 import type { ProjectFieldCatalogItem, ProjectPropertyType } from '../../projects/projectFields';
 import { projectPropertyPresetIdentity } from '../../projects/projectPropertyPresets';
@@ -272,14 +273,43 @@ interface TemporalControlOptions {
   readonly events: EditorEvents;
 }
 
+function padTemporalPart(value: number, width = 2): string {
+  return String(value).padStart(width, '0');
+}
+
+function localDatetimeDraft(value: string, parsed: Date): string {
+  const date = [
+    padTemporalPart(parsed.getFullYear(), 4),
+    padTemporalPart(parsed.getMonth() + 1),
+    padTemporalPart(parsed.getDate()),
+  ].join('-');
+  const time = [padTemporalPart(parsed.getHours()), padTemporalPart(parsed.getMinutes())].join(':');
+  const seconds = /T\d{2}:\d{2}:\d{2}/u.test(value);
+  if (!seconds) return `${date}T${time}`;
+  const base = `${date}T${time}:${padTemporalPart(parsed.getSeconds())}`;
+  const precision = /\.(\d{1,3})/u.exec(value)?.[1]?.length ?? 0;
+  if (precision === 0) return base;
+  return `${base}.${padTemporalPart(parsed.getMilliseconds(), 3).slice(0, precision)}`;
+}
+
+function temporalDraftValue(type: TemporalControlOptions['type'], value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const parsed = parseProjectDate(value);
+  if (parsed === undefined) return value;
+  if (type === 'date') return projectCalendarDayFromParsed(parsed);
+  if (parsed.kind === 'date') return `${projectCalendarDayFromParsed(parsed)}T00:00`;
+  if (!/(?:Z|[+-]\d{2}:\d{2})$/u.test(value)) return value;
+  return localDatetimeDraft(value, parsed.value);
+}
+
 function temporalControl(options: TemporalControlOptions): EditorControl {
   const { root, type, label, value, events } = options;
   let keyboardEditing = false;
   const input = root.createEl('input', {
     cls: 'abyss-project-editor-input',
-    attr: { type, 'aria-label': label },
+    attr: { type, 'aria-label': label, ...(type === 'datetime-local' ? { step: 'any' } : {}) },
   });
-  input.value = typeof value === 'string' ? value : '';
+  input.value = temporalDraftValue(type, value);
   input.addEventListener('input', () => {
     events.changed();
   });

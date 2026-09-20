@@ -2515,6 +2515,20 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
     var(--abyss-tag-color, var(--interactive-accent));
 }
 
+:is(.abyss-span-move-preview, .abyss-span-boundary-preview)[data-density='regular']
+  > .abyss-calendar-preview-shell {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--size-2-1);
+}
+
+:is(.abyss-span-move-preview, .abyss-span-boundary-preview)
+  > .abyss-calendar-preview-shell
+  > :is(.abyss-calendar-preview-title, .abyss-calendar-preview-subtitle) {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .abyss-calendar-preview-title,
 .abyss-calendar-preview-subtitle,
 .abyss-calendar-preview-time {
@@ -8525,7 +8539,9 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-kanban-field-value {
+  box-sizing: border-box;
   min-width: 0;
+  padding: var(--size-2-1);
   font-size: var(--font-ui-smaller);
 }
 
@@ -8903,7 +8919,9 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-timeline-field-value {
+  box-sizing: border-box;
   flex: 1 1 auto;
+  padding: var(--size-2-1);
   line-height: 1.2;
 }
 

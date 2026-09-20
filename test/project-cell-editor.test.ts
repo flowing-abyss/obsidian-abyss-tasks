@@ -35,6 +35,21 @@ function keydown(element: HTMLElement, key: string): void {
   element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
 }
 
+function localDatetimeInputValue(source: string): string {
+  const value = new Date(source);
+  const date = [
+    String(value.getFullYear()).padStart(4, '0'),
+    String(value.getMonth() + 1).padStart(2, '0'),
+    String(value.getDate()).padStart(2, '0'),
+  ].join('-');
+  const time = [
+    String(value.getHours()).padStart(2, '0'),
+    String(value.getMinutes()).padStart(2, '0'),
+    String(value.getSeconds()).padStart(2, '0'),
+  ].join(':');
+  return `${date}T${time}.${String(value.getMilliseconds()).padStart(3, '0')}`;
+}
+
 function pickerInput(container: HTMLElement): HTMLInputElement {
   return expectDefined(container.querySelector<HTMLInputElement>('[role="combobox"]'));
 }
@@ -880,6 +895,101 @@ describe('mountProjectCellEditor', () => {
 
     expect(save).toHaveBeenCalledWith(value);
     expect(onClose).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
+  });
+
+  it('projects an offset datetime into a date draft without rewriting the untouched source', async () => {
+    const container = freshContainer();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const close = vi.fn();
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'start', property: 'start', label: 'Start', type: 'date' },
+      value: '2026-09-06T13:09:22+07:00',
+      catalog: catalog([], 'date'),
+      save,
+      onClose: close,
+    });
+    const input = expectDefined(container.querySelector<HTMLInputElement>('input[type="date"]'));
+
+    expect(input.value).toBe('2026-09-06');
+    await expect(handle.commit()).resolves.toBe(true);
+    expect(save).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
+  });
+
+  it('clears an offset datetime through the existing native date change lifecycle', async () => {
+    const container = freshContainer();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const close = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'start', property: 'start', label: 'Start', type: 'date' },
+      value: '2026-09-06T13:09:22+07:00',
+      catalog: catalog([], 'date'),
+      save,
+      onClose: close,
+    });
+    const input = expectDefined(container.querySelector<HTMLInputElement>('input[type="date"]'));
+
+    input.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith('');
+    expect(close).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
+  });
+
+  it('projects an offset datetime into a precise local datetime draft without rewriting it', async () => {
+    const container = freshContainer();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const source = '2026-09-06T13:09:22.125+07:00';
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Later', property: 'Later', label: 'Later', type: 'datetime' },
+      value: source,
+      catalog: catalog([], 'datetime'),
+      save,
+      onClose: vi.fn(),
+    });
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('input[type="datetime-local"]'),
+    );
+
+    expect(input.value).toBe(localDatetimeInputValue(source));
+    await expect(handle.commit()).resolves.toBe(true);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('clears an offset datetime through the native datetime-local change lifecycle', async () => {
+    const container = freshContainer();
+    const save = vi.fn().mockResolvedValue(undefined);
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Later', property: 'Later', label: 'Later', type: 'datetime' },
+      value: '2026-09-06T13:09:22+07:00',
+      catalog: catalog([], 'datetime'),
+      save,
+      onClose: vi.fn(),
+    });
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('input[type="datetime-local"]'),
+    );
+
+    input.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith('');
   });
 
   it.each([

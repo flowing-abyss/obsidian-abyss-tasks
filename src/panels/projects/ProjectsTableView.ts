@@ -764,6 +764,7 @@ export class ProjectsTableView {
     });
     this.ownerWindow_abyssPrivate = this.root_abyssPrivate.ownerDocument.defaultView ?? undefined;
     this.scroll_abyssPrivate.addEventListener('scroll', this.renderTableWindow_abyssPrivate);
+    this.listenForOverviewBackgroundClick_abyssPrivate();
     this.listenForOwnerWindowF2_abyssPrivate();
     this.listenForRelativeDates_abyssPrivate();
     this.tableHost_abyssPrivate = this.scroll_abyssPrivate.createDiv({
@@ -1108,6 +1109,17 @@ export class ProjectsTableView {
       'focusin',
       this.handleDocumentFocusIn_abyssPrivate,
       true,
+    );
+    this.root_abyssPrivate.removeEventListener(
+      'click',
+      this.handleOverviewBackgroundClick_abyssPrivate,
+    );
+  }
+
+  private listenForOverviewBackgroundClick_abyssPrivate(): void {
+    this.root_abyssPrivate.addEventListener(
+      'click',
+      this.handleOverviewBackgroundClick_abyssPrivate,
     );
   }
 
@@ -3445,6 +3457,30 @@ export class ProjectsTableView {
     cell.element.focus({ preventScroll: true });
     this.syncSelection_abyssPrivate();
   }
+
+  private readonly handleOverviewBackgroundClick_abyssPrivate = (event: MouseEvent): void => {
+    if (!(event.target instanceof Element)) return;
+    if (
+      !event.target.matches(
+        [
+          '.abyss-project-table-scroll',
+          '.abyss-project-table-host',
+          '.abyss-project-kanban-scroll',
+          '.abyss-project-kanban-column-body',
+          '.abyss-project-kanban-group-body',
+          '.abyss-project-timeline-scroll',
+          '.abyss-project-timeline-groups',
+          '.abyss-project-timeline-group-body',
+        ].join(', '),
+      )
+    )
+      return;
+    this.finishEditorBeforeAction(() => {
+      this.selection_abyssPrivate.clear();
+      this.syncSelection_abyssPrivate();
+      this.scroll_abyssPrivate.focus({ preventScroll: true });
+    });
+  };
 
   private focusSelectionCell_abyssPrivate(
     identity: ProjectTableSelectableCell,
