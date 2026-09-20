@@ -100,7 +100,7 @@ function mount(
   });
   vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(geometry(10, 100));
   vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(geometry(0, 120));
-  const captured = source(range);
+  let captured = source(range);
   const commitRangeEdit = vi.fn().mockResolvedValue({ applied: [], failed: [] });
   const reportRangeFailure = vi.fn();
   const selected: HTMLElement[] = [];
@@ -117,7 +117,19 @@ function mount(
     },
     reportRangeFailure,
   });
-  return { root, scroll, track, bar, interaction, commitRangeEdit, reportRangeFailure, selected };
+  return {
+    root,
+    scroll,
+    track,
+    bar,
+    interaction,
+    commitRangeEdit,
+    reportRangeFailure,
+    selected,
+    setCapturedRange: (nextRange: FrozenProjectTimelineRangeSource['range']) => {
+      captured = source(nextRange);
+    },
+  };
 }
 
 function deferredResult(): {
@@ -213,6 +225,81 @@ describe('ProjectTimelinePointerInteraction', () => {
     expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
       initialLeft,
     );
+  });
+
+  it('keeps the 2026-02-20 start anchor through a successful End commit to 2026-06-23', async () => {
+    const range = { kind: 'open-end', startDay: '2026-02-20' } as const;
+    const committedRange = {
+      kind: 'closed',
+      startDay: '2026-02-20',
+      endDay: '2026-06-23',
+    } as const;
+    const window = {
+      startDay: '2025-01-01',
+      endDay: '2028-12-31',
+      dayCount: 1461,
+      scale: 'year',
+    } as const;
+    const mounted = mount(range, window);
+    applyProjectTimelineBarGeometry(
+      mounted.bar,
+      range,
+      expectDefined(projectTimelineBarGeometry(range, window)),
+    );
+    const initialLeft = mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left');
+    const held = deferredResult();
+    mounted.commitRangeEdit.mockReturnValueOnce(held.promise);
+
+    mounted.bar
+      .querySelector<HTMLElement>('[data-timeline-part="end"]')
+      ?.dispatchEvent(pointerEvent('pointerdown', 38.44));
+    await flushMicrotasks();
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 46.86));
+    mounted.track.dispatchEvent(pointerEvent('pointerup', 46.86));
+
+    expect(mounted.commitRangeEdit).toHaveBeenCalledWith({
+      kind: 'pointer',
+      source: source(range),
+      intent: { type: 'resizeEnd', day: '2026-06-23' },
+    });
+    expect(mounted.bar.classList).toContain('is-previewing');
+    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
+      initialLeft,
+    );
+
+    held.resolve({
+      applied: [
+        {
+          path: 'Projects/A.md',
+          field: { id: 'end', label: 'End', type: 'date', property: 'end' },
+          value: '2026-06-23',
+          expectedValue: undefined,
+          expectedExists: false,
+          valueExists: true,
+          sourceProperty: 'end',
+          sourceKey: 'end',
+          previousValue: undefined,
+          previousExists: false,
+          appliedExists: true,
+        },
+      ],
+      failed: [],
+    });
+    await flushMicrotasks();
+
+    mounted.setCapturedRange(committedRange);
+    applyProjectTimelineBarGeometry(
+      mounted.bar,
+      committedRange,
+      expectDefined(projectTimelineBarGeometry(committedRange, window)),
+    );
+    mounted.interaction.reconcileAfterRender();
+
+    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
+      initialLeft,
+    );
+    expect(mounted.bar.classList).not.toContain('is-one-date');
+    expect(mounted.bar.classList).not.toContain('is-previewing');
   });
 
   it('previews a bar move and commits its frozen pointer intent only on release', async () => {
