@@ -3037,7 +3037,7 @@ export class CenterPanel {
       item
         .setTitle('Archive')
         .setIcon('archive')
-        .setSection('actions')
+        .setSection('danger')
         .onClick(() => {
           runAsyncAction(this.archiveTasks_abyssPrivate([task]));
         }),
@@ -3147,16 +3147,45 @@ export class CenterPanel {
   private async archiveTasks_abyssPrivate(selectedTasks: readonly TaskSnapshot[]): Promise<void> {
     const tasks = this.tasks_abyssPrivate;
     if (tasks == null) return;
+    const pending = selectedTasks.map((task) => ({
+      task,
+      selected: this.selectedTaskKeys_abyssPrivate.has(this.taskKey_abyssPrivate(task)),
+    }));
     const session: TaskArchiveSession | undefined = await tasks.planArchive?.();
-    for (const task of selectedTasks) {
+    for (let next = pending[0]; next !== undefined; next = pending[0]) {
+      const { task } = next;
       const result =
         session?.type === 'ready'
           ? await session.execute(task.ref)
           : await tasks.execute({ type: 'archive', ref: task.ref });
       presentTaskArchiveResult(this.app_abyssPrivate, tasks, result);
       this.removeArchivedSelection_abyssPrivate(task, result);
+      const archived = result.type === 'ok' && result.outcome.type === 'archived';
+      if (archived) pending.shift();
+      this.refreshArchiveSelection_abyssPrivate(pending, tasks.queries);
+      if (!archived) break;
     }
     this.updateSelectionVisuals_abyssPrivate();
+  }
+
+  private refreshArchiveSelection_abyssPrivate(
+    pending: Array<{ task: TaskSnapshot; selected: boolean }>,
+    queries: TaskQueryApi,
+  ): void {
+    // Each removal can shift every remaining root in the file. Consume the proven
+    // transition now, before the next write replaces that reconciliation evidence.
+    this.selectedTaskKeys_abyssPrivate.clear();
+    for (const remaining of pending) {
+      const resolution = queries.resolve(remaining.task.ref);
+      if (resolution.type === 'exact') remaining.task = resolution.task;
+      else if (resolution.type === 'rebased') remaining.task = resolution.current;
+      else continue;
+      if (remaining.selected)
+        this.selectedTaskKeys_abyssPrivate.add(this.taskKey_abyssPrivate(remaining.task));
+    }
+    const firstSelected = this.selectedTaskKeys_abyssPrivate.values().next().value ?? null;
+    this.selectionAnchorKey_abyssPrivate = firstSelected;
+    this.selectionFocusKey_abyssPrivate = firstSelected;
   }
 
   private removeArchivedSelection_abyssPrivate(
@@ -3386,7 +3415,7 @@ export class CenterPanel {
       item
         .setTitle('Archive all')
         .setIcon('archive')
-        .setSection('actions')
+        .setSection('danger')
         .onClick(() => {
           runAsyncAction(this.archiveTasks_abyssPrivate(selectedTasks));
         }),

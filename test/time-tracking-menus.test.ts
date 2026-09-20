@@ -403,7 +403,7 @@ describe('task card tracking menu item', () => {
       ['Set tag…', 'actions'],
       ['Edit repeat…', 'actions'],
       ['Open in note', 'actions'],
-      ['Archive', 'actions'],
+      ['Archive', 'danger'],
       ['Delete', 'danger'],
     ]);
   });

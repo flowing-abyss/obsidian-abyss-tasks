@@ -1,12 +1,15 @@
 import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import { AppState } from '../src/app/AppState';
+import { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
+import { StatusRegistry } from '../src/status/StatusRegistry';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
 import type { TaskDiagnosticSink } from '../src/tasks/application/TaskDependencyService';
 import type { TaskDestinationProvider } from '../src/tasks/application/TaskDestinationProvider';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
-import type { TaskDestination, TaskRef } from '../src/tasks/domain/types';
+import type { TaskDestination, TaskRef, TaskSnapshot } from '../src/tasks/domain/types';
 import { localDate } from '../src/tasks/domain/validation';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
@@ -15,7 +18,15 @@ import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { TaskArchiveRecoveryModal } from '../src/ui/TaskArchiveRecoveryModal';
-import { createAppWithFiles, expectDefined, flushMicrotasks } from './helpers';
+import {
+  createAppWithFiles,
+  expectDefined,
+  flushMicrotasks,
+  freshContainer,
+  useRealMoment,
+} from './helpers';
+
+useRealMoment();
 
 const ARCHIVE: TaskDestination = {
   filePath: 'tasks/archive.md',
@@ -87,7 +98,164 @@ function archiveProvider(
   return { planArchive } as TaskDestinationProvider;
 }
 
+async function archiveSelection(
+  h: Awaited<ReturnType<typeof harness>>,
+  selected: readonly TaskSnapshot[],
+  afterArchive?: (el: HTMLElement) => void,
+): Promise<readonly string[]> {
+  const application = archiveApplication(
+    h,
+    archiveProvider(async () => ({
+      destination: ARCHIVE,
+      prepare: async () => ({ type: 'resolved', destination: ARCHIVE }),
+    })),
+  );
+  const state = new AppState();
+  state.set('selectedList', 'inbox');
+  const panel = new CenterPanel(
+    state,
+    h.app,
+    DEFAULT_SETTINGS,
+    h.index,
+    new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    async () => {},
+    null,
+    null,
+    application,
+  );
+  const el = freshContainer();
+  panel.mount(el);
+  for (const task of selected) {
+    el.querySelector<HTMLElement>(`.abyss-task-card[data-line="${task.ref.line}"]`)?.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
+    );
+  }
+  try {
+    await (
+      panel as unknown as {
+        archiveTasks_abyssPrivate(tasks: readonly TaskSnapshot[]): Promise<void>;
+      }
+    ).archiveTasks_abyssPrivate(selected);
+    state.batch(() => {});
+    afterArchive?.(el);
+    return [...el.querySelectorAll<HTMLElement>('.abyss-multi-selected')].map(
+      (card) =>
+        h.index.list().find((task) => task.ref.line === Number(card.dataset['line']))?.title ?? '',
+    );
+  } finally {
+    panel.destroy();
+  }
+}
+
 describe('transactional task archive', () => {
+  it.each([
+    { order: [0, 1, 2, 3], archived: '- [ ] First\n- [ ] Second\n- [ ] Third\n- [ ] Fourth\n' },
+    { order: [3, 0, 2, 1], archived: '- [ ] Fourth\n- [ ] First\n- [ ] Third\n- [ ] Second\n' },
+  ])(
+    'archives the entire selection despite repeated line shifts ($order)',
+    async ({ order, archived }) => {
+      const h = await harness(
+        '- [ ] First\n- [ ] Second\n- [ ] Third\n- [ ] Fourth\n',
+        '# Archive\n',
+      );
+      try {
+        const roots = h.index.list({ filePath: 'source.md' });
+        await archiveSelection(
+          h,
+          order.map((index) => expectDefined(roots[index])),
+        );
+        expect(await h.read('source.md')).toBe('');
+        expect(await h.read('tasks/archive.md')).toBe(`# Archive\n${archived}`);
+      } finally {
+        h.index.destroy();
+      }
+    },
+  );
+
+  it('stops on ambiguous identical roots without moving the remaining unique task', async () => {
+    const block = '- [x] Same\n  Description\n  - [ ] Child\n';
+    const source = `# Tasks\n${block.repeat(4)}- [ ] Keep\n`;
+    const h = await harness(source, '# Archive\n');
+    try {
+      await archiveSelection(h, h.index.list({ filePath: 'source.md' }));
+      expect(await h.read('source.md')).toBe(source);
+      expect(await h.read('tasks/archive.md')).toBe('# Archive\n');
+    } finally {
+      h.index.destroy();
+    }
+  });
+
+  it('stops the batch on partial failure so remaining tasks and recovery evidence stay intact', async () => {
+    const source = '- [ ] First\n- [ ] Second\n- [ ] Third\n';
+    const h = await harness(source, '# Archive\n');
+    const process = h.app.vault.process.bind(h.app.vault);
+    vi.spyOn(h.app.vault, 'process')
+      .mockImplementationOnce(process)
+      .mockRejectedValueOnce(new Error('source removal failed'))
+      .mockImplementation(process);
+    try {
+      await archiveSelection(h, h.index.list({ filePath: 'source.md' }));
+      expect(await h.read('source.md')).toBe(source);
+      expect(await h.read('tasks/archive.md')).toBe('# Archive\n- [ ] First\n');
+    } finally {
+      h.index.destroy();
+    }
+  });
+
+  it('keeps only failed and unattempted tasks selected after a successful removal shifts their lines', async () => {
+    const h = await harness('- [ ] First\n- [ ] Second\n- [ ] Third\n- [ ] Keep\n', '# Archive\n');
+    const process = h.app.vault.process.bind(h.app.vault);
+    let removals = 0;
+    vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, transform) => {
+      if (file.path === 'source.md' && ++removals === 2) throw new Error('second removal failed');
+      return await process(file, transform);
+    });
+    try {
+      const selected = await archiveSelection(
+        h,
+        h.index.list({ filePath: 'source.md' }).slice(0, 3),
+        (el) => {
+          expect(
+            [...el.querySelectorAll<HTMLElement>('.abyss-multi-selected')].map(
+              (card) => card.dataset['line'],
+            ),
+          ).toEqual(['0', '1']);
+          expectDefined(
+            el.querySelector<HTMLElement>('.abyss-task-card[data-line="0"]'),
+          ).dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+        },
+      );
+      expect(await h.read('source.md')).toBe('- [ ] Second\n- [ ] Third\n- [ ] Keep\n');
+      expect(await h.read('tasks/archive.md')).toBe('# Archive\n- [ ] First\n- [ ] Second\n');
+      expect(selected).toEqual(['Second']);
+    } finally {
+      h.index.destroy();
+    }
+  });
+
+  it('stops when an external edit replaces a pending task instead of archiving the replacement', async () => {
+    const h = await harness('- [ ] First\n- [ ] Second\n- [ ] Third\n', '# Archive\n');
+    const process = h.app.vault.process.bind(h.app.vault);
+    vi.spyOn(h.app.vault, 'process').mockImplementation(async (file, transform) => {
+      const result = await process(file, transform);
+      if (file.path === 'tasks/archive.md') {
+        const source = h.app.vault.getAbstractFileByPath('source.md');
+        if (!(source instanceof TFile)) throw new Error('missing source');
+        const changed = (await h.app.vault.read(source)).replace('Second', 'External replacement');
+        await h.app.vault.modify(source, changed);
+        h.index.installCommittedContent('source.md', changed);
+      }
+      return result;
+    });
+    try {
+      await archiveSelection(h, h.index.list({ filePath: 'source.md' }));
+      expect(await h.read('source.md')).toBe('- [ ] External replacement\n- [ ] Third\n');
+      expect(await h.read('tasks/archive.md')).toBe('# Archive\n- [ ] First\n');
+    } finally {
+      h.index.destroy();
+    }
+  });
+
   it('returns an executable unavailable session when no archive destination is configured', async () => {
     const h = await harness('- [ ] Keep active\n');
     try {

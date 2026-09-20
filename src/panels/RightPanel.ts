@@ -3681,6 +3681,7 @@ export class RightPanel {
       },
     );
 
+    this.addTrackingMenuItem_abyssPrivate(menu, task);
     const contextTarget = taskNodeRef(task);
     if (contextTarget.type === 'task') {
       this.createContextMenuItem_abyssPrivate(menu, 'abyss-context-item', 'Archive', () => {
@@ -3688,8 +3689,6 @@ export class RightPanel {
         runAsyncAction(this.archiveRootTask_abyssPrivate(contextTarget.ref));
       });
     }
-    this.addTrackingMenuItem_abyssPrivate(menu, task);
-
     this.createContextMenuItem_abyssPrivate(
       menu,
       'abyss-context-item abyss-context-danger',
