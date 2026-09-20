@@ -4252,6 +4252,40 @@ describe('project Kanban overview', () => {
     expect(progress.hidden).toBe(false);
   });
 
+  it.each([
+    ['Novel', 'NOVEL'],
+    ['Résumé', 'RE\u0301SUME\u0301'],
+  ])('renders raw Kanban dates for configured %s with equivalent saved %s', (configured, saved) => {
+    const raw = '2026-09-10';
+    const { host, settings, view } = mountView([project({ frontmatter: { [configured]: raw } })]);
+    settings.projects.propertyDefinitionsVersion = 1;
+    settings.projects.propertyDefinitions[`property:${configured}`] = { type: 'date' };
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.fields = [
+      {
+        id: `property:${saved}`,
+        visible: true,
+        label: 'Saved date label',
+        dateDisplay: 'raw',
+      },
+    ];
+    const savedFields = structuredClone(settings.projects.kanban.fields);
+    view.refreshFields();
+    clickView(host, 'Kanban');
+
+    const value = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban .abyss-project-kanban-field-value[data-column-id="property:${configured}"]`,
+      ),
+    );
+    expect(value.textContent).toBe(raw);
+    expect(value.querySelector('.abyss-project-pretty-date')).toBeNull();
+    expect(host.querySelector('.abyss-project-kanban-field-label')?.textContent).toBe(
+      'Saved date label',
+    );
+    expect(settings.projects.kanban.fields).toEqual(savedFields);
+  });
+
   it('renders card dates as Pretty by default and preserves explicit Raw values', () => {
     const startRaw = '2026-09-10';
     const endRaw = '2026-09-11T00:30:00-10:00';

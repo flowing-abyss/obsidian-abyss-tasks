@@ -908,8 +908,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
       label.setText(item.label);
       let value = row.querySelector<HTMLElement>('.abyss-project-kanban-field-value');
       value ??= row.createDiv({ cls: 'abyss-project-kanban-field-value' });
-      const column = settings.fields.find(({ id }) => id === item.field.id);
-      const cell = this.reconcileCell_abyssPrivate(card, value, item.field, column);
+      const cell = this.reconcileCell_abyssPrivate(card, value, item.field, item.column);
       context.visibleCells.push(cell);
       desiredFields.push(row);
     }
