@@ -1,4 +1,5 @@
 import {
+  findProjectFieldById,
   isGroupableProjectField,
   type ProjectFieldCatalogItem,
 } from '../../projects/projectFields';
@@ -6,6 +7,7 @@ import {
   buildDefaultProjectKanbanSettings,
   type ProjectKanbanSettings,
 } from '../../projects/projectKanbanSettings';
+import { sameProjectPropertyName } from '../../projects/projectPropertyNames';
 import type { ViewOption, ViewOptionsRow } from '../../ui/ViewOptionsPopover';
 import { projectCardFieldsOptionsRow } from './projectCardFields';
 
@@ -31,11 +33,15 @@ async function applyMutation(
 function labelFor(context: ProjectKanbanOptionsContext, fieldId: string): string {
   if (fieldId === 'none') return 'None';
   return (
-    context.settings().fields.find(({ id }) => id === fieldId)?.label ??
-    context.tableSettings().columns.find(({ id }) => id === fieldId)?.label ??
-    context.fields().find(({ id }) => id === fieldId)?.label ??
+    context.settings().fields.find(({ id }) => sameProjectPropertyName(id, fieldId))?.label ??
+    context.tableSettings().columns.find(({ id }) => sameProjectPropertyName(id, fieldId))?.label ??
+    findProjectFieldById(context.fields(), fieldId)?.label ??
     fieldId
   );
+}
+
+function optionFieldId(context: ProjectKanbanOptionsContext, fieldId: string): string {
+  return findProjectFieldById(context.fields(), fieldId)?.id ?? fieldId;
 }
 
 function setBoolean(
@@ -165,7 +171,7 @@ function groupRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
       effectiveSettings(context).groupBy === 'status'
         ? 'Status columns'
         : labelFor(context, effectiveSettings(context).groupBy),
-    activeValue: () => effectiveSettings(context).groupBy,
+    activeValue: () => optionFieldId(context, effectiveSettings(context).groupBy),
     options: [
       { value: 'none', label: 'None' },
       { value: 'status', label: 'Status columns', isDefault: true },
@@ -183,7 +189,7 @@ function updateSort(settings: ProjectKanbanSettings, field: string): void {
     settings.sortBy = { field: 'none', dir: 'asc' };
     return;
   }
-  if (settings.sortBy.field !== field) {
+  if (!sameProjectPropertyName(settings.sortBy.field, field)) {
     settings.sortBy = { field, dir: 'asc' };
     return;
   }
@@ -201,7 +207,7 @@ function sortRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
       const arrow = settings.sortBy.dir === 'asc' ? '↑' : '↓';
       return settings.sortBy.field === 'none' ? 'Manual' : `${label} ${arrow}`;
     },
-    activeValue: () => effectiveSettings(context).sortBy.field,
+    activeValue: () => optionFieldId(context, effectiveSettings(context).sortBy.field),
     options: [
       { value: 'none', label: 'Manual' },
       ...context.fields().map((field) => ({
@@ -210,7 +216,7 @@ function sortRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
           const settings = effectiveSettings(context);
           const label = labelFor(context, field.id);
           const arrow = settings.sortBy.dir === 'asc' ? '↑' : '↓';
-          return `${label} ${settings.sortBy.field === field.id ? arrow : ''}`.trim();
+          return `${label} ${sameProjectPropertyName(settings.sortBy.field, field.id) ? arrow : ''}`.trim();
         },
       })),
     ],

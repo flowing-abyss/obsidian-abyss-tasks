@@ -323,6 +323,8 @@ export class ProjectsTableToolbar {
     const currentFields = this.options_abyssPrivate.fields;
     const selectable = fields;
     const groupable = selectable.filter((field) => isGroupableProjectField(field));
+    const optionFieldId = (id: string): string =>
+      findProjectFieldById(currentFields(), id)?.id ?? id;
     const sortArrow = (): string => (effective().sortBy.dir === 'asc' ? '↑' : '↓');
     const sortDisplay = (): string =>
       effective().sortBy.field === 'none'
@@ -335,7 +337,7 @@ export class ProjectsTableToolbar {
         icon: 'layout-list',
         label: 'Group by',
         displayValue: () => fieldLabel(currentFields(), current(), effective().groupBy),
-        activeValue: () => effective().groupBy,
+        activeValue: () => optionFieldId(effective().groupBy),
         options: [
           { value: 'none', label: 'None' },
           ...groupable.map((field) => ({
@@ -351,13 +353,13 @@ export class ProjectsTableToolbar {
         icon: 'arrow-up-down',
         label: 'Sort by',
         displayValue: sortDisplay,
-        activeValue: () => effective().sortBy.field,
+        activeValue: () => optionFieldId(effective().sortBy.field),
         options: [
           { value: 'none', label: 'None' },
           ...selectable.map((field) => ({
             value: field.id,
             label: () =>
-              `${fieldLabel(currentFields(), current(), field.id)} ${effective().sortBy.field === field.id ? sortArrow() : ''}`.trim(),
+              `${fieldLabel(currentFields(), current(), field.id)} ${optionFieldId(effective().sortBy.field) === field.id ? sortArrow() : ''}`.trim(),
             isDefault: field.id === defaultSortField,
           })),
         ],

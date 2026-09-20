@@ -2869,7 +2869,8 @@ export class ProjectsTableView {
   private transitionTableSort_abyssPrivate(field: string): void {
     const table = this.context_abyssPrivate.settings.projects.table;
     if (field === 'none') table.sortBy = { field: 'none', dir: 'asc' };
-    else if (table.sortBy.field !== field) table.sortBy = { field, dir: 'asc' };
+    else if (!sameProjectPropertyName(table.sortBy.field, field))
+      table.sortBy = { field, dir: 'asc' };
     else if (table.sortBy.dir === 'asc') table.sortBy = { field, dir: 'desc' };
     else table.sortBy = { field: 'none', dir: 'asc' };
   }

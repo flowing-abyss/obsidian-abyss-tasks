@@ -1,8 +1,10 @@
 import {
+  findProjectFieldById,
   isGroupableProjectField,
   type ProjectFieldCatalogItem,
   type ProjectTableSettings,
 } from '../../projects/projectFields';
+import { sameProjectPropertyName } from '../../projects/projectPropertyNames';
 import {
   buildDefaultProjectTimelineSettings,
   projectTimelineDescriptionLines,
@@ -28,16 +30,21 @@ function effectiveSettings(context: ProjectTimelineOptionsContext): ProjectTimel
 function labelFor(context: ProjectTimelineOptionsContext, id: string): string {
   if (id === 'none') return 'None';
   return (
-    context.settings().fields?.find((field) => field.id === id)?.label ??
-    context.tableSettings().columns.find((column) => column.id === id)?.label ??
-    context.fields().find((field) => field.id === id)?.label ??
+    context.settings().fields?.find((field) => sameProjectPropertyName(field.id, id))?.label ??
+    context.tableSettings().columns.find((column) => sameProjectPropertyName(column.id, id))
+      ?.label ??
+    findProjectFieldById(context.fields(), id)?.label ??
     id
   );
 }
 
+function optionFieldId(context: ProjectTimelineOptionsContext, id: string): string {
+  return findProjectFieldById(context.fields(), id)?.id ?? id;
+}
+
 function updateSort(settings: ProjectTimelineSettings, field: string): void {
-  if (settings.sortBy.field === field) {
-    settings.sortBy.dir = settings.sortBy.dir === 'asc' ? 'desc' : 'asc';
+  if (sameProjectPropertyName(settings.sortBy.field, field)) {
+    settings.sortBy = { field, dir: settings.sortBy.dir === 'asc' ? 'desc' : 'asc' };
   } else {
     settings.sortBy = { field, dir: 'asc' };
   }
@@ -71,7 +78,7 @@ function sortDisplay(context: ProjectTimelineOptionsContext): string {
 
 function sortOptionLabel(context: ProjectTimelineOptionsContext, option: ViewOption): string {
   const settings = effectiveSettings(context);
-  if (settings.sortBy.field !== option.value) return String(option.label);
+  if (!sameProjectPropertyName(settings.sortBy.field, option.value)) return String(option.label);
   return `${String(option.label)} ${settings.sortBy.dir === 'asc' ? '↑' : '↓'}`;
 }
 
@@ -253,7 +260,7 @@ export function projectTimelineOptionsRows(
       icon: 'layout-list',
       label: 'Group by',
       displayValue: () => labelFor(context, effectiveSettings(context).groupBy),
-      activeValue: () => effectiveSettings(context).groupBy,
+      activeValue: () => optionFieldId(context, effectiveSettings(context).groupBy),
       options: groupingOptions,
       mutate: (value) => {
         context.settings().groupBy = value;
@@ -264,7 +271,7 @@ export function projectTimelineOptionsRows(
       icon: 'arrow-up-down',
       label: 'Sort by',
       displayValue: () => sortDisplay(context),
-      activeValue: () => effectiveSettings(context).sortBy.field,
+      activeValue: () => optionFieldId(context, effectiveSettings(context).sortBy.field),
       options: sortingOptions.map((option) => ({
         ...option,
         label: () => sortOptionLabel(context, option),

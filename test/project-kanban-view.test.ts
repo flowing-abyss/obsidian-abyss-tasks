@@ -19,6 +19,7 @@ import {
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import type { ProjectsSettings } from '../src/settings/types';
 import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
 
 interface TestTransfer {
@@ -335,6 +336,14 @@ function viewOptionRow(host: HTMLElement, label: string): HTMLElement {
       (row) => row.querySelector('.abyss-view-state-row-label')?.textContent === label,
     ),
   );
+}
+
+function organizationSettings(
+  projects: ProjectsSettings,
+  mode: 'Table' | 'Kanban' | 'Timeline',
+): { groupBy: string; sortBy: { field: string; dir: 'asc' | 'desc' } } {
+  if (mode === 'Table') return projects.table;
+  return mode === 'Kanban' ? expectDefined(projects.kanban) : expectDefined(projects.timeline);
 }
 
 describe('project Kanban overview', () => {
@@ -1165,6 +1174,68 @@ describe('project Kanban overview', () => {
         expect(cards).not.toContain('Dangling');
         for (const reserved of ['Name', 'Description', 'Progress', 'Time'])
           expect(cards).not.toContain(reserved);
+      }
+    },
+  );
+
+  it.each([
+    ['case-equivalent', 'Novel', 'NOVEL'],
+    ['Unicode-equivalent', 'Café', 'Cafe\u0301'],
+  ] as const)(
+    'resolves %s saved organization aliases in every overview option surface',
+    async (_equivalence, configuredName, savedName) => {
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      const configuredId = `property:${configuredName}`;
+      const savedId = `property:${savedName}`;
+      settings.projects.propertyDefinitions[configuredId] = { type: 'text' };
+      settings.projects.table.groupBy = savedId;
+      settings.projects.table.sortBy = { field: savedId, dir: 'asc' };
+      settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+      settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+      const { host } = mountView(undefined, { settings });
+
+      for (const mode of ['Table', 'Kanban', 'Timeline'] as const) {
+        clickView(host, mode);
+        expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+        const group = viewOptionRow(host, 'Group by');
+        const sort = viewOptionRow(host, 'Sort by');
+        expect(group.querySelector('.abyss-view-state-row-value')?.textContent).toBe(
+          configuredName,
+        );
+        expect(sort.querySelector('.abyss-view-state-row-value')?.textContent).toBe(
+          `${configuredName} ↑`,
+        );
+
+        expectDefined(group.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+        const activeGroup = Array.from(
+          group.querySelectorAll<HTMLButtonElement>(
+            '.abyss-view-state-option[aria-pressed="true"]',
+          ),
+        );
+        expect(activeGroup).toHaveLength(1);
+        expect(activeGroup[0]?.querySelector('.abyss-view-state-option-label')?.textContent).toBe(
+          configuredName,
+        );
+
+        expectDefined(sort.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+        const activeSort = Array.from(
+          sort.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option[aria-pressed="true"]'),
+        );
+        expect(activeSort).toHaveLength(1);
+        expect(activeSort[0]?.querySelector('.abyss-view-state-option-label')?.textContent).toBe(
+          `${configuredName} ↑`,
+        );
+
+        const organization = organizationSettings(settings.projects, mode);
+        expect(organization.groupBy).toBe(savedId);
+        expect(organization.sortBy).toEqual({ field: savedId, dir: 'asc' });
+        expectDefined(activeSort[0]).click();
+        await flushMicrotasks();
+        expect(organization.sortBy).toEqual({ field: configuredId, dir: 'desc' });
+        expect(
+          viewOptionRow(host, 'Sort by').querySelector('.abyss-view-state-row-value')?.textContent,
+        ).toBe(`${configuredName} ↓`);
+        expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
       }
     },
   );
