@@ -4,18 +4,19 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
 
 ## Commands
 
-| Command                        | Purpose                                       |
-| ------------------------------ | --------------------------------------------- |
-| `pnpm dev`                     | Watch build                                   |
-| `pnpm build`                   | Typecheck + esbuild production                |
-| `pnpm lint`                    | Type-aware ESLint + Obsidian rules            |
-| `pnpm lint:css`                | Stylelint                                     |
-| `pnpm test`                    | Vitest unit suite                             |
-| `pnpm verify:task`             | Fast lint + typecheck + unit gate             |
-| `pnpm verify`                  | Canonical full local/CI/pre-push quality gate |
-| `pnpm format` / `format:check` | Prettier                                      |
-| `pnpm deadcode`                | Knip unused code/dependencies                 |
-| `pnpm release patch`           | Verify, bump, commit, tag, and push a release |
+| Command                        | Purpose                                        |
+| ------------------------------ | ---------------------------------------------- |
+| `pnpm dev`                     | Watch build                                    |
+| `pnpm build`                   | Typecheck + esbuild production                 |
+| `pnpm lint`                    | Type-aware ESLint + Obsidian rules             |
+| `pnpm lint:css`                | Authored CSS correctness, scope, and tokens    |
+| `pnpm lint:css:artifact`       | Shipped CSS policy after artifact generation   |
+| `pnpm test`                    | Vitest unit suite                              |
+| `pnpm verify:task`             | Fast lint + CSS + types + architecture + tests |
+| `pnpm verify`                  | Canonical full local/CI/pre-push quality gate  |
+| `pnpm format` / `format:check` | Prettier                                       |
+| `pnpm deadcode`                | Knip unused code/dependencies                  |
+| `pnpm release patch`           | Verify, bump, commit, tag, and push a release  |
 
 ## Conventions
 
@@ -31,6 +32,23 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
   parallel mechanism.
 - Fix dependency-cruiser and architecture-test violations at their source; never weaken a rule or
   add a blanket exception.
+- `pnpm verify` is the authoritative local, CI, and pre-push gate; `verify:task` is the fast
+  iteration gate. Keep source CSS checks and the post-build artifact CSS check in the full gate.
+- Text writes stay with the exact file/owner/API authorities in
+  `test/architecture/storageAuthority.ts`. Presentation uses public commands. A new acquisition
+  needs a narrow reason and accepting/rejecting coverage, not a blanket authorization.
+- Classify new `CalendarSettings` and `ProjectsSettings` keys in
+  `test/architecture/settingsOwnership.ts`; verify static/view routing through the real persistence
+  coordinator. Preserve unknown persisted extensions and keep session state transient.
+- Pure project models receive explicit time and data. Enroll new pure modules in the exact roster
+  in `eslint.config.mts`; project surfaces use their owning document/window and dispose pending
+  work. The ambient rule guards references, not transitive purity or native lifecycle behavior.
+- Scope styles to plugin-owned surfaces and use semantic host tokens. `tooling/css-contracts.mjs`
+  owns token provenance, required fallbacks, finite runtime-variable families, and exact reasoned
+  exceptions. Enroll new dynamic CSS producers/consumers there with source-backed tests; static
+  checks do not prove cascade, contrast, or layout under every theme.
+- Import host Moment through `src/obsidianMoment.ts`; keep its callable-type correction confined
+  to that boundary and preserve the external Obsidian instance.
 - Read `ARCHITECTURE.md` before planning or implementing a cross-cutting change. Use CodeGraph and
   the source code to verify the current implementation.
 - Update `ARCHITECTURE.md` in the same commit when component ownership, a public boundary,

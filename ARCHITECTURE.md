@@ -3,7 +3,7 @@
 Abyss Tasks manages Markdown tasks through an Obsidian sidebar. Markdown is the durable record.
 The plugin builds read models over the vault and writes user changes through application commands.
 
-This document describes the implemented architecture on `master`: ownership, sources of truth,
+This document describes the implemented architecture: ownership, sources of truth,
 dependency direction, and critical data flows. Follow the source and test links for behavior details;
 use CodeGraph to inspect current call paths. Proposed architecture belongs in an ignored design spec.
 
@@ -428,6 +428,29 @@ internals for that conversion; new task behavior belongs in `src/tasks/`.
 source instead of weakening boundaries. New views reuse established commands, menus, state
 semantics, and UI primitives.
 
+The typed [storage authority audit](test/storage-authority.test.ts) checks acquisition of Obsidian
+text-write APIs against exact file/owner/API entries with reasons. It covers aliases and literal
+property extraction, but does not follow capabilities passed through ports or dynamic property
+names. [Settings ownership](test/architecture/settingsOwnership.ts) requires a classification for
+every known settings key; [coordinator tests](test/settings-persistence.test.ts) verify the actual
+static/view split and preservation of unknown extensions. New write acquisitions and settings keys
+must extend these checks without creating another persistence path.
+
+[Project ESLint policy](eslint-project-policy.mts) rejects ambient capabilities in the pure-module
+roster in [eslint.config.mts](eslint.config.mts) and global document/window scheduling in project
+surfaces. Enroll new pure modules in that roster and supply explicit time; native surfaces retain
+their owning window and dispose pending work. These lexical checks complement
+[owner-lifecycle tests](test/project-owner-lifecycle.test.ts); they do not establish transitive
+purity or native popout behavior.
+
+Authored and shipped CSS share the [CSS policy](tooling/css-policy.mjs) and Stylelint correctness
+rules. Styles stay scoped to plugin-owned surfaces and use semantic host tokens.
+[CSS contracts](tooling/css-contracts.mjs) record token provenance, required compatibility
+fallbacks, runtime-variable families, and exact reasoned exceptions. New dynamic producers and
+consumers need finite contracts and tests tied to their source owners. Historical documentation
+supports minimum-version token decisions; it is not evidence of running that Obsidian version.
+The checks cover declared contracts, not computed inheritance, theme contrast, or native layout.
+
 Update this document in the implementing commit when ownership, a public boundary, dependency
 direction, a critical data flow, persisted authority/migration, or a compatibility seam changes.
 Private renames, local helpers, and styling do not require architecture prose. Record any necessary
@@ -438,7 +461,11 @@ pnpm arch
 pnpm verify
 ```
 
-The repository gate covers architecture, formatting, lint, types, coverage, artifacts, release
-metadata, and dependency health. UI changes also require native `dev-vault-tasks` interaction,
+`pnpm verify` is the authoritative local, CI, and pre-push gate for architecture, formatting,
+lint, types, coverage, artifacts, release metadata, and dependency health. `pnpm verify:task`
+provides the fast lint, source CSS, types, architecture, and unit checks. The full gate checks
+authored `styles.css` with `pnpm lint:css`, then checks freshly generated `dist/styles.css` with
+`pnpm lint:css:artifact` after build and artifact generation. UI changes also require native
+`dev-vault-tasks` interaction,
 screenshots, DOM evidence, and captured runtime errors, including constrained widths for layout
 changes. Follow [AGENTS.md](AGENTS.md) for the development-vault and integration workflow.
