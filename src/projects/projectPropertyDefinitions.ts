@@ -3,6 +3,12 @@ import type { ProjectPropertyCatalog } from './ObsidianProjectProperties';
 import type { ProjectFieldCatalogItem, ProjectPropertyType } from './projectFields';
 import { sameProjectPropertyName } from './projectPropertyNames';
 
+export const PROJECT_PROPERTY_DEFINITIONS_VERSION = 1;
+
+export function hasAuthoritativeProjectPropertyDefinitions(projects: ProjectsSettings): boolean {
+  return projects.propertyDefinitionsVersion === PROJECT_PROPERTY_DEFINITIONS_VERSION;
+}
+
 export interface ProjectValuePresentation {
   displayName?: string;
   color?: string;
@@ -154,6 +160,11 @@ export function setProjectPropertyDefinitionType(
   fieldId: string,
   type: ProjectPropertyType,
 ): boolean {
+  if (
+    projects.propertyDefinitionsVersion !== undefined &&
+    !hasAuthoritativeProjectPropertyDefinitions(projects)
+  )
+    return false;
   if (!fieldId.startsWith(PROPERTY_PREFIX)) return false;
   const property = fieldId.slice(PROPERTY_PREFIX.length);
   if (!projectPropertyTypeChoices(property).includes(type)) return false;
@@ -168,6 +179,7 @@ export function setProjectPropertyDefinitionType(
     ...(isRecord(current) ? current : {}),
     type,
   };
+  projects.propertyDefinitionsVersion = PROJECT_PROPERTY_DEFINITIONS_VERSION;
   return true;
 }
 
@@ -289,6 +301,7 @@ export function captureMissingProjectPropertyDefinitions(
   projects: ProjectsSettings,
   catalog: ProjectPropertyCatalog,
 ): Record<string, ProjectPropertyDefinition> {
+  if (projects.propertyDefinitionsVersion !== undefined) return {};
   const captured: Record<string, ProjectPropertyDefinition> = {};
   for (const fieldId of savedCustomFieldIds(projects)) {
     if (alreadyDefined(projects, fieldId)) continue;

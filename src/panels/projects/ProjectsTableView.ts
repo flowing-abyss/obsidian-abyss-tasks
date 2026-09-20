@@ -18,6 +18,7 @@ import {
   type ProjectEditResult,
 } from '../../projects/projectEdits';
 import {
+  buildConfiguredProjectFieldCatalog,
   buildProjectFieldCatalog,
   findFrontmatterProperty,
   findProjectFieldById,
@@ -40,6 +41,7 @@ import {
 } from '../../projects/projectKanbanSettings';
 import type { ProjectValuePresentation } from '../../projects/projectPropertyDefinitions';
 import {
+  hasAuthoritativeProjectPropertyDefinitions,
   projectPropertyTypeChoices,
   resolveConfiguredProjectField,
   setProjectPropertyDefinitionType,
@@ -64,6 +66,7 @@ import {
 } from '../../projects/projectTableModel';
 import {
   buildDefaultProjectTableSettings,
+  effectiveConfiguredProjectViewSettings,
   effectiveProjectTableDateDisplay,
   setProjectTableColumnDateDisplay,
 } from '../../projects/projectTableSettings';
@@ -850,7 +853,7 @@ export class ProjectsTableView {
       settings: () => this.activeViewSettings_abyssPrivate(),
       tableSettings: () => this.context_abyssPrivate.settings.projects.table,
       mode: () => this.overviewMode_abyssPrivate,
-      fields: () => this.fields_abyssPrivate,
+      fields: () => buildConfiguredProjectFieldCatalog(this.context_abyssPrivate.settings.projects),
       onSearch: (query) => {
         this.finishEditorBeforeAction(() => {
           this.searches_abyssPrivate[this.overviewMode_abyssPrivate] = query;
@@ -1479,7 +1482,7 @@ export class ProjectsTableView {
   }
 
   private timelineProjectIsUnscheduled_abyssPrivate(project: Project): boolean {
-    const timeline = this.ensureTimelineSettings_abyssPrivate();
+    const timeline = this.effectiveTimelineSettings_abyssPrivate();
     const model = buildProjectTimelineModel({
       ...this.projectTableModelInput_abyssPrivate(),
       projects: [project],
@@ -1494,7 +1497,7 @@ export class ProjectsTableView {
     const common = {
       nowMs: this.trackedNowMs_abyssPrivate,
       projects: [project],
-      fields: this.fields_abyssPrivate,
+      fields: this.renderFields_abyssPrivate(),
       statuses: this.context_abyssPrivate.settings.projects.statuses,
       propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,
       search,
@@ -1505,7 +1508,7 @@ export class ProjectsTableView {
       return (
         buildProjectKanbanModel({
           ...common,
-          settings: this.ensureKanbanSettings_abyssPrivate(),
+          settings: this.effectiveKanbanSettings_abyssPrivate(),
         }).uniqueVisibleCount > 0
       );
     }
@@ -1513,7 +1516,7 @@ export class ProjectsTableView {
       return (
         buildProjectTimelineModel({
           ...common,
-          settings: this.ensureTimelineSettings_abyssPrivate(),
+          settings: this.effectiveTimelineSettings_abyssPrivate(),
           tableSettings: this.context_abyssPrivate.settings.projects.table,
         }).uniqueVisibleCount > 0
       );
@@ -1521,7 +1524,7 @@ export class ProjectsTableView {
     return (
       buildProjectTableModel({
         ...common,
-        settings: this.context_abyssPrivate.settings.projects.table,
+        settings: this.effectiveTableSettings_abyssPrivate(),
       }).uniqueVisibleCount > 0
     );
   }
@@ -1548,7 +1551,10 @@ export class ProjectsTableView {
 
     const tableSettings = this.context_abyssPrivate.settings.projects.table;
     enforceProjectTableColumnInvariants(tableSettings);
-    const columns = visibleColumns(this.context_abyssPrivate.settings, this.fields_abyssPrivate);
+    const columns = visibleColumns(
+      this.context_abyssPrivate.settings,
+      this.renderFields_abyssPrivate(),
+    );
     this.syncRelativeDateTimer_abyssPrivate(columns, tableSettings.dateDisplay);
     this.compiledPresets_abyssPrivate = new Map(
       columns.map(({ field }) => [
@@ -1629,12 +1635,40 @@ export class ProjectsTableView {
     }
   }
 
+  private renderFields_abyssPrivate(): readonly ProjectFieldCatalogItem[] {
+    const projects = this.context_abyssPrivate.settings.projects;
+    return hasAuthoritativeProjectPropertyDefinitions(projects)
+      ? buildConfiguredProjectFieldCatalog(projects)
+      : this.fields_abyssPrivate;
+  }
+
+  private effectiveTableSettings_abyssPrivate(): ProjectTableSettings {
+    const projects = this.context_abyssPrivate.settings.projects;
+    return effectiveConfiguredProjectViewSettings(projects, projects.table);
+  }
+
+  private effectiveKanbanSettings_abyssPrivate(): ProjectKanbanSettings {
+    return effectiveConfiguredProjectViewSettings(
+      this.context_abyssPrivate.settings.projects,
+      this.ensureKanbanSettings_abyssPrivate(),
+      this.effectiveTableSettings_abyssPrivate(),
+    );
+  }
+
+  private effectiveTimelineSettings_abyssPrivate(): ProjectTimelineSettings {
+    return effectiveConfiguredProjectViewSettings(
+      this.context_abyssPrivate.settings.projects,
+      this.ensureTimelineSettings_abyssPrivate(),
+      this.effectiveTableSettings_abyssPrivate(),
+    );
+  }
+
   private projectTableModelInput_abyssPrivate(): ProjectTableModelInput {
     return {
       projects: this.projectedProjects_abyssPrivate(),
-      fields: this.fields_abyssPrivate,
+      fields: this.renderFields_abyssPrivate(),
       statuses: this.context_abyssPrivate.settings.projects.statuses,
-      settings: this.context_abyssPrivate.settings.projects.table,
+      settings: this.effectiveTableSettings_abyssPrivate(),
       propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,
       search: this.searches_abyssPrivate.table,
       nowMs: this.trackedNowMs_abyssPrivate,
@@ -1711,10 +1745,10 @@ export class ProjectsTableView {
 
   private createTimelineView_abyssPrivate(): ProjectsTimelineView<RenderedCellContext> {
     const timeline = new ProjectsTimelineView<RenderedCellContext>(this.root_abyssPrivate, {
-      settings: () => this.ensureTimelineSettings_abyssPrivate(),
+      settings: () => this.effectiveTimelineSettings_abyssPrivate(),
       modelInput: () => ({
         nowMs: this.trackedNowMs_abyssPrivate,
-        fields: this.fields_abyssPrivate,
+        fields: this.renderFields_abyssPrivate(),
         statuses: this.context_abyssPrivate.settings.projects.statuses,
         propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,
         tableSettings: this.context_abyssPrivate.settings.projects.table,
@@ -1765,10 +1799,10 @@ export class ProjectsTableView {
   private createKanbanView_abyssPrivate(): ProjectsKanbanView<RenderedCellContext> {
     const board = new ProjectsKanbanView<RenderedCellContext>(this.root_abyssPrivate, {
       beginDrag: () => this.beginProjectDrag_abyssPrivate(),
-      settings: () => this.ensureKanbanSettings_abyssPrivate(),
+      settings: () => this.effectiveKanbanSettings_abyssPrivate(),
       modelInput: () => ({
         nowMs: this.trackedNowMs_abyssPrivate,
-        fields: this.fields_abyssPrivate,
+        fields: this.renderFields_abyssPrivate(),
         statuses: this.context_abyssPrivate.settings.projects.statuses,
         propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,
         resolveLink: (target, sourcePath) =>
@@ -2825,6 +2859,12 @@ export class ProjectsTableView {
     if (this.context_abyssPrivate.saveStatic === undefined || !columnId.startsWith('property:')) {
       return [];
     }
+    const projects = this.context_abyssPrivate.settings.projects;
+    if (
+      projects.propertyDefinitionsVersion !== undefined &&
+      !hasAuthoritativeProjectPropertyDefinitions(projects)
+    )
+      return [];
     const property = columnId.slice('property:'.length);
     if (isReservedProjectProperty(this.context_abyssPrivate.settings.projects, property)) return [];
     const matches = Object.keys(
@@ -4243,7 +4283,7 @@ export class ProjectsTableView {
     const visibleProject = sourceCell.project;
     const groupField = findProjectFieldById(
       this.fields_abyssPrivate,
-      this.context_abyssPrivate.settings.projects.table.groupBy,
+      this.effectiveTableSettings_abyssPrivate().groupBy,
     );
     if (groupField === undefined) throw new Error('Project grouping field is unavailable');
     const effective = this.effectiveField_abyssPrivate(visibleProject, groupField);

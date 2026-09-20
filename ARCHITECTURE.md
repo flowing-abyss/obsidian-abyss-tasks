@@ -240,10 +240,18 @@ Time is derived from the note's time entries. `ProjectStore` reads the index's p
 it re-evaluates the note; a project never walks entries itself. Both derived fields are read-only
 wherever a field can be written. Time's curated column is hidden by default.
 Curated types are fixed. Custom types and preset presentation in `projects.propertyDefinitions`
-remain authoritative when Obsidian's registry changes or is unavailable. A custom definition whose
-source is assigned to a curated role stays saved but inactive until that role moves away.
+form the static configured inventory, independent of native discovery and Table column visibility.
+The shared configured catalog supplies Table, Kanban, and Timeline choices in definition order;
+Time can be sorted but cannot name groups. A custom definition whose source is assigned to a curated
+role stays saved but inactive until that role moves away.
 
-Malformed, ambiguous, unconfigured, or unsupported custom sources remain visible but unavailable.
+Projects settings renders configured property cards even without a Table preference. Freeform Add
+creates a text property unless a supported native suggestion supplies its type; Tags has its fixed
+type. A view action creates an absent column preference. Hide retains the schema and presets;
+Remove deletes one unambiguous custom definition and prunes its known references from initialized
+views, leaving note metadata untouched.
+
+Malformed, ambiguous, unconfigured, or unsupported custom sources remain available for recovery.
 Curated source collisions preserve metadata and spelling while making the roles read-only. The
 native property adapter discovers and suggests values/types; it never writes Obsidian's registry.
 `projectPropertyPresets` supplies shared typed identity, validation, and presentation to settings,
@@ -411,7 +419,9 @@ the shared settings revision coordinator.
 Migration captures untouched legacy data, writes and verifies the versioned state envelope with an
 exact recovery snapshot, then removes moved static keys. Recognized state wins when both copies
 exist. Corrupt, unreadable, or future-version state stays untouched: view writes suspend and runtime
-uses temporary defaults. Static saves preserve unmarked legacy view fields until recovery is
+uses temporary defaults. Missing or unavailable state derives fresh Table columns from the static
+configured inventory; recognized views retain their own normalized order and visibility without
+appending schema-only fields. Static saves preserve unmarked legacy view fields until recovery is
 verified. Unknown static/nested view values survive; detached write snapshots queue in order,
 unchanged writes deduplicate, and rejection does not stop later operations.
 
@@ -421,9 +431,25 @@ controller when needed. Task-status changes rebuild the catalog, registry, and i
 together. ProjectStore rescans only for membership/status inputs; presentation changes reuse its
 snapshots and update retained views.
 
-Initial custom-property type capture fills only missing static definitions, before view registration,
-with bounded metadata/layout follow-ups. Failed saves retain the current draft for Retry, including
-later user edits. Settings UI lifecycles preserve active drafts across rebuilds and dispose listeners.
+Initial custom-property type capture fills only supported missing static definitions, before view
+registration, with bounded metadata/layout follow-ups. Available discovery, including an empty
+catalog, finalizes `projects.propertyDefinitionsVersion = 1` in the same static save. Unavailable
+discovery leaves legacy capture pending. Explicit schema edits also finalize that marker, so later
+callbacks cannot recreate deleted definitions. Unknown marker versions preserve their schema and
+disable schema editing with an update notice; malformed definition recovery remains intact.
+
+Schema Add and Remove save static definitions and the marker before view state. Static failure
+prevents the view write. A failed view cleanup leaves durable deletion authoritative and offers a
+retry against the current draft. After restart, stale references may remain because the scalar
+marker cannot distinguish deleted fields from unresolved legacy fields. Version-1 Settings cards
+come from configured definitions; active views filter through the configured catalog and derive
+safe grouping/sorting without erasing those references. Freeform Add can explicitly repair a name.
+A retained deletion draft retries cleanup; no two-file transaction or restart cleanup is implied.
+Rollback to an older binary preserves deletion after both saves, but may recapture from stale views
+after partial failure because old binaries ignore the marker.
+
+Failed saves retain the current draft for Retry, including later user edits. Settings UI lifecycles
+preserve active drafts across rebuilds and dispose listeners.
 Legacy project status migration preserves recoverable conflicts and requires explicit source
 selection or discard; loading never rewrites vault notes. Any persisted-contract change needs a
 compatibility/migration design. See [persistence tests](test/settings-persistence.test.ts).

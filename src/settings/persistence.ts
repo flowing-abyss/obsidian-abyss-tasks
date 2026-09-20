@@ -2,7 +2,10 @@ import {
   isMalformedProjectKanbanSettings,
   normalizeProjectKanbanSettings,
 } from '../projects/projectKanbanSettings';
-import { normalizeProjectTableSettings } from '../projects/projectTableSettings';
+import {
+  buildDefaultConfiguredProjectTableSettings,
+  normalizeProjectTableSettings,
+} from '../projects/projectTableSettings';
 import {
   isMalformedProjectTimelineSettings,
   normalizeProjectTimelineSettings,
@@ -717,11 +720,17 @@ export class SettingsPersistenceCoordinator {
         this.guardedLegacyStatic = detached(rawStatic);
       }
       const composed = composeSettings(rawStatic, decodeViews({}, defaults), defaults);
+      composed.settings.projects.table = buildDefaultConfiguredProjectTableSettings(
+        composed.settings.projects,
+      );
       this.lastStaticSerialized = serialize(this.staticDocument(composed.settings));
       return { ...composed, issues: [state.issue] };
     }
     if (rawStatic[STATIC_SAVED_VIEW_STATE_MARKER] === SAVED_VIEW_STATE_SCHEMA_VERSION) {
       const composed = composeSettings(rawStatic, decodeViews({}, defaults), defaults);
+      composed.settings.projects.table = buildDefaultConfiguredProjectTableSettings(
+        composed.settings.projects,
+      );
       this.lastStaticSerialized = serialize(createStaticDocument(composed.settings));
       return { ...composed, issues: [] };
     }

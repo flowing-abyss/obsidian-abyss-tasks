@@ -373,59 +373,75 @@ describe('TaskCalendarPlugin onload', () => {
     expect(save).toHaveBeenCalledTimes(2);
   });
 
-  it('uses one layout and one resolved opportunity only for definitions still missing', async () => {
-    const projects = buildDefaultProjectsSettings();
-    const table = structuredClone(projects.table);
-    table.columns.push(
-      { id: 'property:First', visible: false },
-      { id: 'property:Second', visible: false },
-    );
-    delete (projects as unknown as Record<string, unknown>)['table'];
-    const plugin = makePlugin({
-      projects,
-      [STATIC_SAVED_VIEW_STATE_MARKER]: SAVED_VIEW_STATE_SCHEMA_VERSION,
-    });
-    plugin.stateFiles__.set(
-      '.test-config/plugins/abyss-tasks/state.json',
-      JSON.stringify({
-        schemaVersion: SAVED_VIEW_STATE_SCHEMA_VERSION,
-        views: {
-          sectionCollapse: DEFAULT_SETTINGS.sectionCollapse,
-          projects: { table },
-        },
-      }),
-    );
-    let names: string[] = [];
-    Object.defineProperty(plugin.app, 'metadataTypeManager', {
-      configurable: true,
-      value: {
-        getAllProperties: () =>
-          Object.fromEntries(names.map((name) => [name.toLocaleLowerCase(), { name }])),
-        getTypeInfo: (name: string) => ({
-          expected: { type: name === 'First' ? 'text' : 'number' },
+  it.each(['startup', 'layout', 'resolved'] as const)(
+    'finalizes capture at available %s discovery and ignores later callbacks',
+    async (phase) => {
+      const projects = buildDefaultProjectsSettings();
+      const table = structuredClone(projects.table);
+      table.columns.push(
+        { id: 'property:First', visible: false },
+        { id: 'property:Second', visible: false },
+      );
+      delete (projects as unknown as Record<string, unknown>)['table'];
+      const plugin = makePlugin({
+        projects,
+        [STATIC_SAVED_VIEW_STATE_MARKER]: SAVED_VIEW_STATE_SCHEMA_VERSION,
+      });
+      plugin.stateFiles__.set(
+        '.test-config/plugins/abyss-tasks/state.json',
+        JSON.stringify({
+          schemaVersion: SAVED_VIEW_STATE_SCHEMA_VERSION,
+          views: {
+            sectionCollapse: DEFAULT_SETTINGS.sectionCollapse,
+            projects: { table },
+          },
         }),
-        getAssignedWidget: () => null,
-        on: () => ({ id: 'property-capture' }),
-        offref: () => {},
-      },
-    });
+      );
+      let names: string[] | null = phase === 'startup' ? [] : null;
+      Object.defineProperty(plugin.app, 'metadataTypeManager', {
+        configurable: true,
+        value: {
+          getAllProperties: () =>
+            names === null
+              ? null
+              : Object.fromEntries(names.map((name) => [name.toLocaleLowerCase(), { name }])),
+          getTypeInfo: (name: string) => ({
+            expected: { type: name === 'First' ? 'text' : 'number' },
+          }),
+          getAssignedWidget: () => null,
+          on: () => ({ id: 'property-capture' }),
+          offref: () => {},
+        },
+      });
 
-    await plugin.onload();
-    names = ['First'];
-    plugin.app.workspace.setLayoutReady__();
-    await flushMicrotasks();
-    expect(plugin.settings.projects.propertyDefinitions).toEqual({
-      'property:First': { type: 'text' },
-    });
+      await plugin.onload();
+      expect(plugin.settings.projects.propertyDefinitionsVersion).toBe(
+        phase === 'startup' ? 1 : undefined,
+      );
+      names = phase === 'resolved' ? null : ['First'];
+      plugin.app.workspace.setLayoutReady__();
+      await flushMicrotasks();
+      expect(plugin.settings.projects.propertyDefinitions).toEqual(
+        phase === 'layout' ? { 'property:First': { type: 'text' } } : {},
+      );
 
-    names = ['First', 'Second'];
-    plugin.app.metadataCache.trigger('resolved');
-    await flushMicrotasks();
-    expect(plugin.settings.projects.propertyDefinitions).toEqual({
-      'property:First': { type: 'text' },
-      'property:Second': { type: 'number' },
-    });
-  });
+      names = ['First', 'Second'];
+      plugin.app.metadataCache.trigger('resolved');
+      await flushMicrotasks();
+      const captured = {
+        startup: {},
+        layout: { 'property:First': { type: 'text' } },
+        resolved: { 'property:First': { type: 'text' }, 'property:Second': { type: 'number' } },
+      }[phase];
+      expect(plugin.settings.projects.propertyDefinitions).toEqual(captured);
+      expect(plugin.settings.projects.propertyDefinitionsVersion).toBe(1);
+      delete plugin.settings.projects.propertyDefinitions['property:First'];
+      plugin.app.metadataCache.trigger('resolved');
+      await flushMicrotasks();
+      expect(plugin.settings.projects.propertyDefinitions['property:First']).toBeUndefined();
+      expect(plugin.settings.projects.propertyDefinitionsVersion).toBe(1);
+    },
+  );
 
   it('constructs the shared TaskIndex', async () => {
     const plugin = makePlugin();

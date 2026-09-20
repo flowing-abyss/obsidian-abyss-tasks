@@ -1,10 +1,19 @@
+import type { ProjectsSettings } from '../settings/types';
 import type {
   ProjectColumn,
   ProjectColumnAlignment,
   ProjectDateDisplay,
   ProjectTableSettings,
 } from './projectFields';
-import { findProjectFieldById, type ProjectFieldCatalogItem } from './projectFields';
+import {
+  buildConfiguredProjectFieldCatalog,
+  findProjectFieldById,
+  type ProjectFieldCatalogItem,
+} from './projectFields';
+import {
+  hasAuthoritativeProjectPropertyDefinitions,
+  resolveConfiguredProjectField,
+} from './projectPropertyDefinitions';
 
 const DEFAULT_COLUMNS: readonly ProjectColumn[] = [
   { id: 'name', visible: true },
@@ -62,6 +71,33 @@ export function buildDefaultProjectTableSettings(): ProjectTableSettings {
     sortBy: { field: 'start', dir: 'asc' },
     hiddenStatuses: [],
   };
+}
+
+/** Fresh views include the configured schema in definition insertion order. */
+export function buildDefaultConfiguredProjectTableSettings(
+  projects: ProjectsSettings,
+): ProjectTableSettings {
+  const table = buildDefaultProjectTableSettings();
+  for (const field of buildConfiguredProjectFieldCatalog(projects)) {
+    if (field.id.startsWith('property:')) table.columns.push({ id: field.id, visible: true });
+  }
+  return table;
+}
+
+/** Projects organization through the authoritative schema without erasing saved recovery references. */
+export function effectiveConfiguredProjectViewSettings<
+  T extends Pick<ProjectTableSettings, 'groupBy' | 'sortBy'>,
+>(
+  projects: ProjectsSettings,
+  view: T,
+  defaults: Pick<ProjectTableSettings, 'groupBy' | 'sortBy'> = buildDefaultProjectTableSettings(),
+): T {
+  if (!hasAuthoritativeProjectPropertyDefinitions(projects)) return view;
+  const missing = (id: string): boolean =>
+    id.startsWith('property:') && resolveConfiguredProjectField(projects, id)?.type == null;
+  const groupBy = missing(view.groupBy) ? defaults.groupBy : view.groupBy;
+  const sortBy = missing(view.sortBy.field) ? defaults.sortBy : view.sortBy;
+  return groupBy === view.groupBy && sortBy === view.sortBy ? view : { ...view, groupBy, sortBy };
 }
 
 function isLegacyDescriptionId(id: string): boolean {

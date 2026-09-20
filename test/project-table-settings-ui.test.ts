@@ -8,6 +8,7 @@ import { compatibleProjectPropertyPresets } from '../src/projects/projectPropert
 import { buildDefaultProjectsSettings } from '../src/settings/defaults';
 import {
   addProjectPropertyColumn,
+  removeConfiguredProjectProperty,
   renderProjectTableSettings,
 } from '../src/settings/projectTableSettings';
 import { editSettingControl, expectDefined } from './helpers';
@@ -112,6 +113,269 @@ function expandProperty(container: HTMLElement, columnId: string): void {
 }
 
 describe('renderProjectTableSettings', () => {
+  it('creates a never-seen property without native metadata', () => {
+    const projects = buildDefaultProjectsSettings();
+    expect(addProjectPropertyColumn(projects, [], '  Novel  ')).toBe('added');
+    expect(projects.propertyDefinitions['property:Novel']).toEqual({ type: 'text' });
+    expect(projects.propertyDefinitionsVersion).toBe(1);
+    expect(projects.table.columns).toContainEqual({ id: 'property:Novel', visible: true });
+    expect(addProjectPropertyColumn(projects, [], 'novel')).toBe('duplicate');
+    expect(addProjectPropertyColumn(projects, [], '   ')).toBe('missing');
+    expect(addProjectPropertyColumn(projects, [], 'STATUS')).toBe('reserved');
+    expect(addProjectPropertyColumn(projects, [], 'Tags')).toBe('added');
+    expect(projects.propertyDefinitions['property:Tags']).toEqual({ type: 'tags' });
+  });
+
+  it('edits configured schema without a Table column and materializes only view actions', async () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.propertyDefinitions['property:Novel'] = { type: 'text', presets: [{ value: 'one' }] };
+    const columns = structuredClone(projects.table.columns);
+    const container = document.body.createDiv();
+    const saveStatic = vi.fn(async () => {});
+    const saveViewState = vi.fn(async () => {});
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([]),
+      saveStatic,
+      saveViewState,
+      refresh: vi.fn(),
+    });
+    const card = container.querySelector<HTMLElement>(
+      '[data-card-id="project-property:property:Novel"]',
+    );
+    expect(card).not.toBeNull();
+    expect(projects.table.columns).toEqual(columns);
+    expect(saveStatic).not.toHaveBeenCalled();
+    expect(saveViewState).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLButtonElement>('.abyss-project-column-add')?.disabled).toBe(
+      false,
+    );
+    expandProperty(container, 'property:Novel');
+    const type = expectDefined(
+      card?.querySelector<HTMLSelectElement>('[aria-label="Type for Novel"]'),
+    );
+    type.value = 'list';
+    type.dispatchEvent(new Event('change'));
+    await settle();
+    expect(projects.propertyDefinitions['property:Novel'].type).toBe('list');
+    expect(saveStatic).toHaveBeenCalledOnce();
+    expect(projects.table.columns).toEqual(columns);
+    const visible = expectDefined(
+      card?.querySelector<HTMLInputElement>('[aria-label="Show Novel"]'),
+    );
+    visible.checked = true;
+    visible.dispatchEvent(new Event('change'));
+    await settle();
+    expect(projects.table.columns).toContainEqual({ id: 'property:Novel', visible: true });
+    expect(saveViewState).toHaveBeenCalledOnce();
+  });
+
+  it('removes one configured identity and matching view references without changing unrelated preferences', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.propertyDefinitions = {
+      'property:Novel': { type: 'text', presets: [{ value: 'one' }] },
+      'property:Keep': { type: 'number' },
+    };
+    projects.table.columns.push({ id: 'property:NOVEL', visible: false });
+    projects.table.groupBy = 'property:novel';
+    projects.table.sortBy = { field: 'property:Keep', dir: 'desc' };
+    expect(removeConfiguredProjectProperty(projects, 'property:novel')).toBe(true);
+    expect(projects.propertyDefinitions).toEqual({ 'property:Keep': { type: 'number' } });
+    expect(projects.table.columns.some(({ id }) => id === 'property:NOVEL')).toBe(false);
+    expect(projects.table.groupBy).toBe('status');
+    expect(projects.table.sortBy).toEqual({ field: 'property:Keep', dir: 'desc' });
+    expect(projects.propertyDefinitionsVersion).toBe(1);
+    expect(projects.kanban).toBeUndefined();
+    expect(projects.timeline).toBeUndefined();
+    expect(removeConfiguredProjectProperty(projects, 'status')).toBe(false);
+    expect(removeConfiguredProjectProperty(projects, 'property:Unknown')).toBe(false);
+    projects.propertyDefinitions['property:KEEP'] = { type: 'text' };
+    expect(removeConfiguredProjectProperty(projects, 'property:Keep')).toBe(false);
+  });
+
+  it('keeps schema and presets when a configured field is hidden', async () => {
+    const projects = buildDefaultProjectsSettings();
+    addProjectPropertyColumn(projects, [], 'Novel');
+    projects.propertyDefinitions['property:Novel'] = { type: 'text', presets: [{ value: 'one' }] };
+    const definitions = structuredClone(projects.propertyDefinitions);
+    const container = document.body.createDiv();
+    const saveStatic = vi.fn(async () => {});
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([]),
+      saveStatic,
+      saveViewState: async () => {},
+      refresh: vi.fn(),
+    });
+    const visible = expectDefined(
+      container.querySelector<HTMLInputElement>('[aria-label="Show Novel"]'),
+    );
+    visible.checked = false;
+    visible.dispatchEvent(new Event('change'));
+    await settle();
+    expect(projects.propertyDefinitions).toEqual(definitions);
+    expect(saveStatic).not.toHaveBeenCalled();
+  });
+
+  it.each(['static', 'view'])(
+    'retries property removal from the current draft after a %s failure',
+    async (failure) => {
+      const projects = buildDefaultProjectsSettings();
+      addProjectPropertyColumn(projects, [], 'Novel');
+      const container = document.body.createDiv();
+      const order: string[] = [];
+      let failed = false;
+      let persistedDefinitions: unknown;
+      const saveStatic = async (): Promise<void> => {
+        order.push('static');
+        if (failure === 'static' && !failed) {
+          failed = true;
+          throw new Error('static unavailable');
+        }
+        persistedDefinitions = structuredClone(projects.propertyDefinitions);
+      };
+      const saveViewState = async (): Promise<void> => {
+        order.push('view');
+        if (failure === 'view' && !failed) {
+          failed = true;
+          throw new Error('state unavailable');
+        }
+      };
+      vi.mocked(Notice).mockClear();
+      renderProjectTableSettings({
+        app: new App(),
+        container,
+        projects,
+        catalog: catalog([]),
+        saveStatic,
+        saveViewState,
+        refresh: vi.fn(),
+      });
+      expectDefined(
+        container.querySelector<HTMLButtonElement>('[aria-label="Remove Novel property"]'),
+      ).click();
+      await settle();
+      expect(order).toEqual(failure === 'static' ? ['static'] : ['static', 'view']);
+      expect(persistedDefinitions).toEqual(failure === 'static' ? undefined : {});
+      expect(projects.propertyDefinitionsVersion).toBe(1);
+      expect(projects.propertyDefinitions).toEqual({});
+      projects.propertyDefinitions['property:Later'] = { type: 'number' };
+      const notice = vi.mocked(Notice).mock.calls[0]?.[0] as DocumentFragment;
+      expect(notice.textContent).toContain('Could not remove project property');
+      expectDefined(notice.querySelector('button')).click();
+      await settle();
+      expect(order.slice(-2)).toEqual(['static', 'view']);
+      expect(persistedDefinitions).toEqual({ 'property:Later': { type: 'number' } });
+    },
+  );
+
+  it('disables schema edits for unknown versions and preserves known readable definitions', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.propertyDefinitionsVersion = 99;
+    projects.propertyDefinitions['property:Novel'] = { type: 'text', presets: [{ value: 'one' }] };
+    const container = document.body.createDiv();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([]),
+      saveStatic: async () => {},
+      saveViewState: async () => {},
+      refresh: vi.fn(),
+    });
+    expect(container.textContent).toContain('Update the plugin');
+    expect(container.querySelector<HTMLButtonElement>('.abyss-project-column-add')?.disabled).toBe(
+      true,
+    );
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Remove Novel property"]')?.disabled,
+    ).toBe(true);
+    expandProperty(container, 'property:Novel');
+    expect(
+      container.querySelector<HTMLSelectElement>('[aria-label="Type for Novel"]')?.disabled,
+    ).toBe(true);
+    expect(addProjectPropertyColumn(projects, [], 'New')).toBe('unsupported');
+    expect(removeConfiguredProjectProperty(projects, 'property:Novel')).toBe(false);
+    expect(projects.propertyDefinitionsVersion).toBe(99);
+    expect(projects.propertyDefinitions['property:Novel'].presets).toEqual([{ value: 'one' }]);
+  });
+
+  it('keeps freeform Add enabled when native discovery is unavailable', () => {
+    const projects = buildDefaultProjectsSettings();
+    const container = document.body.createDiv();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: { ...catalog([]), list: () => null },
+      saveStatic: async () => {},
+      saveViewState: async () => {},
+      refresh: vi.fn(),
+    });
+    expect(container.querySelector<HTMLButtonElement>('.abyss-project-column-add')?.disabled).toBe(
+      false,
+    );
+    const input = expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
+    );
+    input.value = 'Novel';
+    expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-column-add')).click();
+    expect(projects.propertyDefinitions['property:Novel']).toEqual({ type: 'text' });
+  });
+
+  it('does not present authoritative dangling references as configured cards', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.propertyDefinitionsVersion = 1;
+    projects.table.columns.push({ id: 'property:Removed', visible: true });
+    const container = document.body.createDiv();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([{ name: 'Removed', type: 'text' }]),
+      saveStatic: async () => {},
+      saveViewState: async () => {},
+      refresh: vi.fn(),
+    });
+    expect(
+      container.querySelector('[data-card-id="project-property:property:Removed"]'),
+    ).toBeNull();
+    expect(projects.table.columns).toContainEqual({ id: 'property:Removed', visible: true });
+    expect(addProjectPropertyColumn(projects, [], 'Removed')).toBe('added');
+    expect(projects.propertyDefinitions['property:Removed']).toEqual({ type: 'text' });
+  });
+
+  it('offers an unavailable legacy field referenced only by another view for explicit repair', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.timeline = {
+      groupBy: 'property:Legacy',
+      sortBy: { field: 'start', dir: 'asc' },
+      hiddenStatuses: [],
+      scale: 'month',
+      showMetadata: true,
+      progress: 'full',
+      showUnscheduled: true,
+    };
+    const container = document.body.createDiv();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([]),
+      saveStatic: async () => {},
+      saveViewState: async () => {},
+      refresh: vi.fn(),
+    });
+    const card = container.querySelector('[data-card-id="project-property:property:Legacy"]');
+    expect(card).not.toBeNull();
+    expect(projects.table.columns.some(({ id }) => id === 'property:Legacy')).toBe(false);
+    expect(projects.propertyDefinitions).toEqual({});
+  });
+
   it('persists alignment in view state and reset removes the saved key', async () => {
     const projects = buildDefaultProjectsSettings();
     const saveViewState = vi.fn().mockResolvedValue(undefined);
@@ -452,7 +716,7 @@ describe('renderProjectTableSettings', () => {
     expect(saveStatic).toHaveBeenCalledOnce();
   });
 
-  it('saves a missing definition before view state and retains it after column removal', async () => {
+  it('saves schema before view state for Add and Remove', async () => {
     const projects = buildDefaultProjectsSettings();
     const order: string[] = [];
     const saveStatic = vi.fn(async () => {
@@ -497,13 +761,14 @@ describe('renderProjectTableSettings', () => {
     });
     expectDefined(
       renderedAgain.querySelector<HTMLButtonElement>(
-        '[data-column-id="property:Budget"] [aria-label="Remove Budget column"]',
+        '[data-column-id="property:Budget"] [aria-label="Remove Budget property"]',
       ),
     ).click();
     await settle();
 
     expect(projects.table.columns.some(({ id }) => id === 'property:Budget')).toBe(false);
-    expect(projects.propertyDefinitions['property:Budget']).toEqual({ type: 'number' });
+    expect(projects.propertyDefinitions['property:Budget']).toBeUndefined();
+    expect(order).toEqual(['static', 'view', 'static', 'view']);
   });
 
   it('does not save view state when the definition save for a new column fails', async () => {

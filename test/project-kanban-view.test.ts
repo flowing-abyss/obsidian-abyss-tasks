@@ -988,6 +988,187 @@ describe('project Kanban overview', () => {
     expect(settings.projects.table.hiddenStatuses).not.toContain(`id:${other.id}`);
   });
 
+  it.each([false, true])(
+    'edits configured date preferences with existing alias=%s',
+    async (existing) => {
+      const { host, settings, view } = mountView();
+      settings.projects.propertyDefinitions['property:Novel'] = { type: 'date' };
+      if (existing) settings.projects.table.columns.push({ id: 'property:NOVEL', visible: true });
+      view.refreshFields();
+      const show = renderShownMenuInDocument();
+      expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+      expectDefined(
+        viewOptionRow(host, 'Table').querySelector<HTMLButtonElement>('.abyss-view-state-row-main'),
+      ).click();
+      const columns = viewOptionRow(host, 'Columns');
+      expectDefined(columns.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+      expectDefined(
+        optionRow(columns, 'Novel').querySelector<HTMLButtonElement>(
+          '.abyss-view-state-option-action',
+        ),
+      ).click();
+      clickRenderedMenuItem(lastShownMenu(show), 'Raw');
+      await flushMicrotasks();
+      expect(
+        settings.projects.table.columns.filter(({ id }) => id.toLowerCase() === 'property:novel'),
+      ).toEqual([
+        {
+          id: existing ? 'property:NOVEL' : 'property:Novel',
+          visible: existing,
+          dateDisplay: 'raw',
+        },
+      ]);
+      if (existing) {
+        expectDefined(
+          columns.querySelector<HTMLButtonElement>('[aria-label="Move Novel up"]'),
+        ).click();
+        await flushMicrotasks();
+        const ids = settings.projects.table.columns.map(({ id }) => id);
+        expect(ids.indexOf('property:NOVEL')).toBeLessThan(ids.indexOf('end'));
+      }
+    },
+  );
+
+  it.each(['Table', 'Kanban', 'Timeline'] as const)(
+    'toggles the existing case-equivalent %s preference instead of duplicating it',
+    async (mode) => {
+      const { host, settings, view } = mountView();
+      settings.projects.propertyDefinitions['property:Novel'] = { type: 'text' };
+      settings.projects.table.columns.push({
+        id: 'property:NOVEL',
+        visible: false,
+        label: 'Alias',
+      });
+      settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+      settings.projects.kanban.fields.push({
+        id: 'property:NOVEL',
+        visible: false,
+        label: 'Alias',
+      });
+      settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+      settings.projects.timeline.fields?.push({
+        id: 'property:NOVEL',
+        visible: false,
+        label: 'Alias',
+      });
+      view.refreshFields();
+      clickView(host, mode);
+      expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+      const row = { Table: 'Columns', Kanban: 'Card fields', Timeline: 'Metadata fields' }[mode];
+      chooseViewOption(host, row, 'Alias');
+      await flushMicrotasks();
+      const columns = {
+        Table: settings.projects.table.columns,
+        Kanban: settings.projects.kanban.fields,
+        Timeline: settings.projects.timeline.fields,
+      }[mode];
+      expect(columns?.filter(({ id }) => id.toLowerCase() === 'property:novel')).toEqual([
+        { id: 'property:NOVEL', visible: true, label: 'Alias' },
+      ]);
+    },
+  );
+
+  it.each(['Table', 'Kanban', 'Timeline'] as const)(
+    'keeps authoritative stale references non-operative in %s after restart',
+    (mode) => {
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      settings.projects.propertyDefinitionsVersion = 1;
+      settings.projects.table.columns.push({ id: 'property:Removed', visible: true });
+      settings.projects.table.groupBy = 'property:Removed';
+      settings.projects.table.sortBy = { field: 'property:Removed', dir: 'desc' };
+      settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+      settings.projects.kanban.fields.push({ id: 'property:Removed', visible: true });
+      settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+      settings.projects.timeline.fields?.push({ id: 'property:Removed', visible: true });
+      const stale = structuredClone(settings.projects);
+      const { host } = mountView(
+        [
+          project({
+            frontmatter: {
+              start: '2026-09-01',
+              end: '2026-09-03',
+              Removed: 'deleted-schema-value',
+            },
+          }),
+        ],
+        { settings, catalog: catalog([{ name: 'Removed', type: 'text' }]) },
+      );
+      clickView(host, mode);
+      const surface = {
+        Table: '.abyss-project-table',
+        Kanban: '.abyss-project-kanban',
+        Timeline: '.abyss-project-timeline',
+      }[mode];
+      expect(host.querySelector(`${surface} [data-column-id="property:Removed"]`)).toBeNull();
+      expect(
+        Array.from(
+          host.querySelectorAll(`${surface} .abyss-projects-group-label`),
+          ({ textContent }) => textContent,
+        ).join('|'),
+      ).not.toContain('deleted-schema-value');
+      expect(settings.projects.table).toEqual(stale.table);
+      expect(settings.projects.kanban.fields).toEqual(expectDefined(stale.kanban).fields);
+      expect(settings.projects.timeline.fields).toEqual(expectDefined(stale.timeline).fields);
+    },
+  );
+
+  it.each(['Table', 'Kanban', 'Timeline'] as const)(
+    'uses configured schema for %s choices independently of table membership',
+    async (mode) => {
+      const { host, settings, view } = mountView(undefined, {
+        catalog: catalog([{ name: 'VaultOnly', type: 'text' }]),
+      });
+      settings.projects.propertyDefinitions['property:Novel'] = { type: 'text' };
+      settings.projects.table.columns.push(
+        { id: 'property:Dangling', visible: false },
+        { id: 'property:Budget', visible: false },
+      );
+      view.refreshFields();
+      clickView(host, mode);
+      expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+      const labels = (rowLabel: string): string[] => {
+        const row = viewOptionRow(host, rowLabel);
+        expectDefined(row.querySelector<HTMLButtonElement>('.abyss-view-state-row-main')).click();
+        return Array.from(
+          row.querySelectorAll<HTMLElement>('.abyss-view-state-option-label'),
+          ({ textContent }) => textContent.trim(),
+        );
+      };
+      const group = labels('Group by');
+      expect(group).toContain('Novel');
+      expect(group).toContain('Budget');
+      expect(group).not.toContain('VaultOnly');
+      expect(group).not.toContain('Dangling');
+      expect(group).not.toContain('Time');
+      const sort = labels('Sort by');
+      expect(sort).toContain('Novel');
+      expect(sort).not.toContain('VaultOnly');
+      expect(sort).not.toContain('Dangling');
+      expect(sort).toContain('Time');
+      if (mode === 'Table') {
+        labels('Table');
+        expect(labels('Columns')).toContain('Novel');
+        expect(settings.projects.table.columns.some(({ id }) => id === 'property:Novel')).toBe(
+          false,
+        );
+        chooseViewOption(host, 'Columns', 'Novel');
+        await flushMicrotasks();
+        expect(settings.projects.table.columns).toContainEqual({
+          id: 'property:Novel',
+          visible: true,
+        });
+      } else {
+        labels(mode);
+        const cards = labels(mode === 'Kanban' ? 'Card fields' : 'Metadata fields');
+        expect(cards).toContain('Novel');
+        expect(cards).not.toContain('VaultOnly');
+        expect(cards).not.toContain('Dangling');
+        for (const reserved of ['Name', 'Description', 'Progress', 'Time'])
+          expect(cards).not.toContain(reserved);
+      }
+    },
+  );
+
   it('offers Time for sorting but never for grouping on any overview surface', () => {
     const { host } = mountView();
     const optionLabels = (rowLabel: string): string[] => {

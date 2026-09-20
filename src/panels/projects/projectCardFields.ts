@@ -7,6 +7,7 @@ import {
   type ProjectFieldCatalogItem,
   type ProjectTableSettings,
 } from '../../projects/projectFields';
+import { sameProjectPropertyName } from '../../projects/projectPropertyNames';
 import type { Project } from '../../projects/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import type { ViewOption, ViewOptionAction, ViewOptionsRow } from '../../ui/ViewOptionsPopover';
@@ -106,8 +107,8 @@ function labelFor<TSettings extends ProjectCardFieldSettings>(
   fieldId: string,
 ): string {
   return (
-    configuredFields(context, []).find(({ id }) => id === fieldId)?.label ??
-    context.tableSettings().columns.find(({ id }) => id === fieldId)?.label ??
+    configuredFields(context, []).find(({ id }) => sameProjectPropertyName(id, fieldId))?.label ??
+    context.tableSettings().columns.find(({ id }) => sameProjectPropertyName(id, fieldId))?.label ??
     findProjectFieldById(context.fields(), fieldId)?.label ??
     fieldId
   );
@@ -129,10 +130,12 @@ function setFieldDateDisplay<TSettings extends ProjectCardFieldSettings>(
   display: ProjectDateDisplay,
 ): void {
   const fields = ensureFields(context, fallbackFields);
-  let configured = fields.find(({ id }) => id === fieldId);
+  let configured = fields.find(({ id }) => sameProjectPropertyName(id, fieldId));
   if (configured === undefined) {
     configured = {
-      ...(context.tableSettings().columns.find(({ id }) => id === fieldId) ?? { id: fieldId }),
+      ...(context
+        .tableSettings()
+        .columns.find(({ id }) => sameProjectPropertyName(id, fieldId)) ?? { id: fieldId }),
       id: fieldId,
       visible: false,
     };
@@ -148,8 +151,9 @@ function fieldDateAction<TSettings extends ProjectCardFieldSettings>(
 ): ViewOptionAction | undefined {
   if (field.type !== 'date' && field.type !== 'datetime') return undefined;
   const active = (): ProjectDateDisplay =>
-    configuredFields(context, fallbackFields).find(({ id }) => id === field.id)?.dateDisplay ??
-    'pretty';
+    configuredFields(context, fallbackFields).find(({ id }) =>
+      sameProjectPropertyName(id, field.id),
+    )?.dateDisplay ?? 'pretty';
   return {
     label: () => projectDateDisplayLabel(active()),
     ariaLabel: `Date display for ${labelFor(context, field.id)}`,
@@ -189,10 +193,12 @@ function toggleField<TSettings extends ProjectCardFieldSettings>(
   fieldId: string,
 ): void {
   const fields = ensureFields(context, fallbackFields);
-  const configured = fields.find(({ id }) => id === fieldId);
+  const configured = fields.find(({ id }) => sameProjectPropertyName(id, fieldId));
   if (configured === undefined) {
     fields.push({
-      ...(context.tableSettings().columns.find(({ id }) => id === fieldId) ?? { id: fieldId }),
+      ...(context
+        .tableSettings()
+        .columns.find(({ id }) => sameProjectPropertyName(id, fieldId)) ?? { id: fieldId }),
       id: fieldId,
       visible: true,
     });
@@ -206,8 +212,8 @@ function moveField<TSettings extends ProjectCardFieldSettings>(
   targetId: string,
 ): void {
   const fields = ensureFields(context, fallbackFields);
-  const index = fields.findIndex(({ id }) => id === fieldId);
-  const target = fields.findIndex(({ id }) => id === targetId);
+  const index = fields.findIndex(({ id }) => sameProjectPropertyName(id, fieldId));
+  const target = fields.findIndex(({ id }) => sameProjectPropertyName(id, targetId));
   if (index < 0 || target < 0 || target >= fields.length) return;
   const [field] = fields.splice(index, 1);
   if (field !== undefined) fields.splice(target, 0, field);
@@ -222,7 +228,10 @@ export function projectCardFieldsOptionsRow<TSettings extends ProjectCardFieldSe
   const selected = (): string[] =>
     configuredFields(context, fallbackFields)
       .filter(({ visible }) => visible)
-      .map(({ id }) => id);
+      .flatMap(({ id }) => {
+        const field = findProjectFieldById(context.fields(), id);
+        return field === undefined ? [] : [field.id];
+      });
   const fieldOptions: ViewOption[] = selectableFields(context.fields()).map((field) => {
     const option = { value: field.id, label: () => labelFor(context, field.id) };
     const action = fieldDateAction(context, fallbackFields, field);

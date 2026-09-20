@@ -37,6 +37,7 @@ export const PROJECT_SETTINGS_OWNERS = {
   startProperty: 'static',
   endProperty: 'static',
   propertyDefinitions: 'static',
+  propertyDefinitionsVersion: 'static',
   statuses: 'static',
   statusMigration: 'static',
   defaultStatusId: 'static',

@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  buildConfiguredProjectFieldCatalog,
   buildProjectFieldCatalog,
   findFrontmatterProperty,
   findProjectFieldById,
+  isGroupableProjectField,
   projectFieldValue,
   type ProjectPropertyInfo,
 } from '../src/projects/projectFields';
 import {
   applyProjectTableDateDisplay,
+  buildDefaultConfiguredProjectTableSettings,
+  effectiveConfiguredProjectViewSettings,
   effectiveProjectTableDateDisplay,
   normalizeProjectTableSettings,
   setProjectTableColumnDateDisplay,
@@ -480,5 +484,76 @@ describe('normalizeProjectTableSettings', () => {
     expect(result.groupBy).toBe('property:ActualKey');
     expect(result.sortBy).toEqual({ field: 'property:ActualKey', dir: 'desc' });
     expect(result.hiddenStatuses).toEqual(['id:done']);
+  });
+});
+
+describe('configured field projection', () => {
+  it('selects only valid unique configured fields independently of saved columns and discovery', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.table.columns.push({ id: 'property:Dangling', visible: true });
+    projects.propertyDefinitions = {
+      'property:Novel': { type: 'text' },
+      'property:Hidden': { type: 'number' },
+      'property:Équipe': { type: 'text' },
+      'property:E\u0301QUIPE': { type: 'number' },
+    };
+    Object.assign(projects.propertyDefinitions, { 'property:Broken': { type: 'future' } });
+    const fields = buildConfiguredProjectFieldCatalog(projects);
+    expect(fields.map(({ id }) => id)).toEqual([
+      'name',
+      'status',
+      'progress',
+      'tracked',
+      'start',
+      'end',
+      'description',
+      'property:Novel',
+      'property:Hidden',
+    ]);
+    const time = fields.find(({ id }) => id === 'tracked');
+    expect(time).toBeDefined();
+    if (time !== undefined) expect(isGroupableProjectField(time)).toBe(false);
+    expect(
+      buildProjectFieldCatalog(projects, [{ name: 'VaultOnly', type: 'text' }]).find(
+        ({ id }) => id === 'property:VaultOnly',
+      )?.type,
+    ).toBeNull();
+  });
+});
+
+describe('authoritative configured view projection', () => {
+  it('uses definition spelling and insertion order even when saved views refer to Unicode-equivalent names', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.propertyDefinitions = {
+      'property:First': { type: 'text' },
+      'property:Résumé': { type: 'text' },
+    };
+    projects.table.columns.push(
+      { id: 'property:RE\u0301SUME\u0301', visible: false },
+      { id: 'property:First', visible: true },
+    );
+    expect(
+      buildConfiguredProjectFieldCatalog(projects)
+        .filter(({ id }) => id.startsWith('property:'))
+        .map(({ id }) => id),
+    ).toEqual(['property:First', 'property:Résumé']);
+    expect(buildDefaultConfiguredProjectTableSettings(projects).columns.slice(-2)).toEqual([
+      { id: 'property:First', visible: true },
+      { id: 'property:Résumé', visible: true },
+    ]);
+  });
+
+  it('falls back from marked dangling organization without changing saved references or unknown versions', () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.propertyDefinitionsVersion = 1;
+    projects.table.groupBy = 'property:Removed';
+    projects.table.sortBy = { field: 'property:Removed', dir: 'desc' };
+    const projected = effectiveConfiguredProjectViewSettings(projects, projects.table);
+    expect(projected.groupBy).toBe('status');
+    expect(projected.sortBy).toEqual({ field: 'start', dir: 'asc' });
+    expect(projects.table.groupBy).toBe('property:Removed');
+    expect(projects.table.sortBy).toEqual({ field: 'property:Removed', dir: 'desc' });
+    projects.propertyDefinitionsVersion = 99;
+    expect(effectiveConfiguredProjectViewSettings(projects, projects.table)).toBe(projects.table);
   });
 });

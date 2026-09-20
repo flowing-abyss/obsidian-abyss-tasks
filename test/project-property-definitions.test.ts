@@ -259,6 +259,60 @@ describe('project property definitions', () => {
 });
 
 describe('captureMissingProjectPropertyDefinitions', () => {
+  it('does not resurrect a removed authoritative definition from stale view references', async () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.propertyDefinitionsVersion = 1;
+    projects.table.columns.push({ id: 'property:Removed', visible: true });
+    const save = vi.fn(async () => {});
+    await initializeProjectPropertyDefinitions({
+      projects,
+      catalog: catalog([{ name: 'Removed', type: 'text' }]),
+      save,
+    });
+    expect(projects.propertyDefinitions).toEqual({});
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('preserves unknown authoritative versions and disables type mutation', async () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.propertyDefinitionsVersion = 99;
+    projects.table.columns.push({ id: 'property:Removed', visible: true });
+    const save = vi.fn(async () => {});
+    await initializeProjectPropertyDefinitions({
+      projects,
+      catalog: catalog([{ name: 'Removed', type: 'text' }]),
+      save,
+    });
+    expect(projects.propertyDefinitions).toEqual({});
+    expect(projects.propertyDefinitionsVersion).toBe(99);
+    expect(save).not.toHaveBeenCalled();
+    expect(setProjectPropertyDefinitionType(projects, 'property:Novel', 'text')).toBe(false);
+    const raw = { projects: structuredClone(projects) };
+    expect(
+      migrateSettings(raw).notices.some((notice) => notice.includes('Update Abyss Tasks')),
+    ).toBe(true);
+    expect(raw.projects.propertyDefinitionsVersion).toBe(99);
+  });
+
+  it('finalizes discovery once, including empty discovery, and waits when unavailable', async () => {
+    const projects = buildDefaultProjectsSettings();
+    const save = vi.fn(async () => {});
+    await initializeProjectPropertyDefinitions({ projects, catalog: catalog(null), save });
+    expect(projects.propertyDefinitionsVersion).toBeUndefined();
+    expect(save).not.toHaveBeenCalled();
+    await initializeProjectPropertyDefinitions({ projects, catalog: catalog([]), save });
+    expect(projects.propertyDefinitionsVersion).toBe(1);
+    expect(save).toHaveBeenCalledOnce();
+    projects.table.columns.push({ id: 'property:Late', visible: true });
+    await initializeProjectPropertyDefinitions({
+      projects,
+      catalog: catalog([{ name: 'Late', type: 'text' }]),
+      save,
+    });
+    expect(projects.propertyDefinitions).toEqual({});
+    expect(save).toHaveBeenCalledOnce();
+  });
+
   it('captures custom fields referenced only by initialized Kanban settings', () => {
     const projects = buildDefaultProjectsSettings();
     projects.kanban = {

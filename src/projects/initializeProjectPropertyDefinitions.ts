@@ -1,6 +1,9 @@
 import type { ProjectsSettings } from '../settings/types';
 import type { ProjectPropertyCatalog } from './ObsidianProjectProperties';
-import { captureMissingProjectPropertyDefinitions } from './projectPropertyDefinitions';
+import {
+  captureMissingProjectPropertyDefinitions,
+  PROJECT_PROPERTY_DEFINITIONS_VERSION,
+} from './projectPropertyDefinitions';
 import { sameProjectPropertyName } from './projectPropertyNames';
 
 interface InitializeProjectPropertyDefinitionsOptions {
@@ -21,12 +24,14 @@ function hasDefinition(projects: ProjectsSettings, fieldId: string): boolean {
 export async function initializeProjectPropertyDefinitions(
   options: InitializeProjectPropertyDefinitionsOptions,
 ): Promise<boolean> {
+  if (options.projects.propertyDefinitionsVersion !== undefined || options.catalog.list() === null)
+    return false;
   const missing = captureMissingProjectPropertyDefinitions(options.projects, options.catalog);
   const definitions = options.projects.propertyDefinitions;
   for (const [fieldId, definition] of Object.entries(missing)) {
     if (!hasDefinition(options.projects, fieldId)) definitions[fieldId] = definition;
   }
-  if (Object.keys(missing).length === 0) return false;
+  options.projects.propertyDefinitionsVersion = PROJECT_PROPERTY_DEFINITIONS_VERSION;
   await options.save();
   return true;
 }

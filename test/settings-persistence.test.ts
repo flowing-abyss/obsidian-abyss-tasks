@@ -1,5 +1,7 @@
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
+import { initializeProjectPropertyDefinitions } from '../src/projects/initializeProjectPropertyDefinitions';
+import { buildConfiguredProjectFieldCatalog } from '../src/projects/projectFields';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -9,6 +11,7 @@ import {
   SettingsPersistenceCoordinator,
   type SettingsPersistencePort,
 } from '../src/settings/persistence';
+import { removeConfiguredProjectProperty } from '../src/settings/projectTableSettings';
 import {
   CALENDAR_SETTINGS_OWNERS,
   PROJECT_SETTINGS_OWNERS,
@@ -80,6 +83,130 @@ function stateEnvelope(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe('SettingsPersistenceCoordinator migration', () => {
+  it('rebuilds missing view defaults from static configured properties without discovery', async () => {
+    const data = markedStatic();
+    const projects = data['projects'] as Record<string, unknown>;
+    const definitions = {
+      'property:Novel': { type: 'text', presets: [{ value: 'one', displayName: 'First' }] },
+    };
+    projects['propertyDefinitions'] = definitions;
+    projects['propertyDefinitionsVersion'] = 1;
+    const port = memoryPort(data, undefined);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(settings.projects.propertyDefinitions).toEqual(definitions);
+    expect(settings.projects.table.columns).toContainEqual({ id: 'property:Novel', visible: true });
+    expect(port.writes).toEqual([]);
+    await coordinator.saveViewState(settings);
+    expect(port.staticData).toEqual(data);
+    const reloaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(reloaded.settings.projects.propertyDefinitions).toEqual(definitions);
+  });
+
+  it('retains recognized column order and visibility without appending configured properties', async () => {
+    const data = markedStatic();
+    (data['projects'] as Record<string, unknown>)['propertyDefinitions'] = {
+      'property:Novel': { type: 'text' },
+      'property:Absent': { type: 'number' },
+    };
+    const columns = [
+      { id: 'name', visible: true },
+      { id: 'property:Novel', visible: false },
+      { id: 'end', visible: false },
+      { id: 'status', visible: true },
+      { id: 'progress', visible: true },
+      { id: 'tracked', visible: false },
+      { id: 'start', visible: true },
+    ];
+    const port = memoryPort(data, stateEnvelope({ projects: { table: { columns } } }));
+    const { settings } = await new SettingsPersistenceCoordinator(port).loadSettings(
+      DEFAULT_SETTINGS,
+    );
+    expect(settings.projects.table.columns).toEqual(columns);
+    expect(port.writes).toEqual([]);
+  });
+
+  it.each(['{bad json', JSON.stringify({ schemaVersion: 99, views: {} })])(
+    'uses configured temporary defaults without replacing unavailable state %s',
+    async (raw) => {
+      const data = markedStatic();
+      (data['projects'] as Record<string, unknown>)['propertyDefinitions'] = {
+        'property:Novel': { type: 'text' },
+      };
+      const port = memoryPort(data, undefined);
+      port.stateText = raw;
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      expect(settings.projects.table.columns).toContainEqual({
+        id: 'property:Novel',
+        visible: true,
+      });
+      await expect(coordinator.saveViewState(settings)).rejects.toThrow('suspended');
+      expect(port.stateText).toBe(raw);
+      expect(port.writes).toEqual([]);
+    },
+  );
+
+  it('keeps static deletion authoritative when view cleanup fails and retries after reload', async () => {
+    const data = markedStatic();
+    const rawProjects = data['projects'] as Record<string, unknown>;
+    rawProjects['propertyDefinitions'] = {
+      'property:Removed': { type: 'text', presets: [{ value: 'one' }] },
+    };
+    const table = structuredClone(DEFAULT_SETTINGS.projects.table);
+    table.columns.push({ id: 'property:REMOVED', visible: true });
+    table.groupBy = 'property:Removed';
+    table.sortBy = { field: 'property:removed', dir: 'desc' };
+    const kanban = buildDefaultProjectKanbanSettings(table);
+    kanban.fields.push({ id: 'property:Removed', visible: true });
+    const timeline = buildDefaultProjectTimelineSettings(table);
+    timeline.fields?.push({ id: 'property:removed', visible: true });
+    const port = memoryPort(
+      data,
+      stateEnvelope({ projects: { table, kanban, timeline, future: { keep: true } } }),
+    );
+    const rawState = port.stateText;
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(removeConfiguredProjectProperty(settings.projects, 'property:removed')).toBe(true);
+    expect(settings.projects.kanban?.groupBy).toBe('status');
+    expect(settings.projects.timeline?.sortBy).toEqual({ field: 'start', dir: 'asc' });
+    await coordinator.saveSettings(settings);
+    const write = port.state.write;
+    port.state.write = vi.fn().mockRejectedValue(new Error('disk full'));
+    await expect(coordinator.saveViewState(settings)).rejects.toThrow('disk full');
+    expect(port.stateText).toBe(rawState);
+    const reloader = new SettingsPersistenceCoordinator(port);
+    const { settings: reloaded } = await reloader.loadSettings(DEFAULT_SETTINGS);
+    await initializeProjectPropertyDefinitions({
+      projects: reloaded.projects,
+      catalog: {
+        list: () => [{ name: 'Removed', type: 'text' }],
+        inspect: () => ({ kind: 'unavailable' }),
+        values: () => [],
+        onChange: () => () => {},
+      },
+      save: () => reloader.saveSettings(reloaded),
+    });
+    expect(reloaded.projects.propertyDefinitions).toEqual({});
+    expect(reloaded.projects.propertyDefinitionsVersion).toBe(1);
+    expect(
+      buildConfiguredProjectFieldCatalog(reloaded.projects).some(
+        ({ id }) => id === 'property:Removed',
+      ),
+    ).toBe(false);
+    expect(port.stateText).toBe(rawState);
+    port.state.write = write;
+    await coordinator.saveViewState(settings);
+    const saved = JSON.parse(port.stateText ?? '') as {
+      views: { projects: { table: { columns: Array<{ id: string }> }; future: unknown } };
+    };
+    expect(saved.views.projects.table.columns.some(({ id }) => id === 'property:REMOVED')).toBe(
+      false,
+    );
+    expect(saved.views.projects.future).toEqual({ keep: true });
+  });
+
   it('loads a legacy version-1 envelope without initializing Kanban preferences', async () => {
     const port = memoryPort(markedStatic(), stateEnvelope());
     const coordinator = new SettingsPersistenceCoordinator(port);

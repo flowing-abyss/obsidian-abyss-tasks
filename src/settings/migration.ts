@@ -2,6 +2,7 @@ import { normalizeProjectKanbanSettings } from '../projects/projectKanbanSetting
 import {
   hasMalformedProjectPropertyDefinitionPresentation,
   isProjectPropertyDefinition,
+  PROJECT_PROPERTY_DEFINITIONS_VERSION,
 } from '../projects/projectPropertyDefinitions';
 import { sameProjectPropertyName } from '../projects/projectPropertyNames';
 import { normalizeProjectTableSettings } from '../projects/projectTableSettings';
@@ -40,6 +41,7 @@ interface MigratedProjectSettings {
   startProperty?: string;
   endProperty?: string;
   propertyDefinitions?: unknown;
+  propertyDefinitionsVersion?: unknown;
   propertyDefinitionMigration?: unknown;
   statuses?: unknown[];
   statusMigration?: unknown;
@@ -281,6 +283,14 @@ function normalizeProjectSettings(
   normalizeProjectSources(projects, defaults);
   normalizeDefaultProjectStatus(projects);
   normalizeProjectPropertyDefinitions(projects, result);
+  if (
+    projects.propertyDefinitionsVersion !== undefined &&
+    projects.propertyDefinitionsVersion !== PROJECT_PROPERTY_DEFINITIONS_VERSION
+  ) {
+    result.notices.push(
+      'Project properties use an unsupported schema version. Update Abyss Tasks before editing properties; the saved schema is preserved.',
+    );
+  }
   normalizeProjectInsertionSettings(projects, defaults);
 
   const table = normalizeProjectTableSettings(projects.table);

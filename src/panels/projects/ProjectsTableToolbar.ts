@@ -1,5 +1,6 @@
 import { Menu, setIcon } from 'obsidian';
 import {
+  findProjectFieldById,
   isGroupableProjectField,
   type ProjectDateDisplay,
   type ProjectFieldCatalogItem,
@@ -10,6 +11,7 @@ import type {
   ProjectKanbanSettings,
   ProjectOverviewMode,
 } from '../../projects/projectKanbanSettings';
+import { sameProjectPropertyName } from '../../projects/projectPropertyNames';
 import {
   applyProjectTableDateDisplay,
   buildDefaultProjectTableSettings,
@@ -54,8 +56,8 @@ function fieldLabel(
 ): string {
   if (id === 'none') return 'None';
   return (
-    settings.columns.find((column) => column.id === id)?.label ??
-    fields.find((field) => field.id === id)?.label ??
+    settings.columns.find((column) => sameProjectPropertyName(column.id, id))?.label ??
+    findProjectFieldById(fields, id)?.label ??
     id
   );
 }
@@ -264,7 +266,7 @@ export class ProjectsTableToolbar {
     const settings = this.options_abyssPrivate.settings();
     const fields = this.options_abyssPrivate.fields();
     let rows: ViewOptionsRow[];
-    if (isTableSettings(settings)) rows = this.tableRows_abyssPrivate(settings, fields);
+    if (isTableSettings(settings)) rows = this.tableRows_abyssPrivate(fields);
     else if (isTimelineSettings(settings)) {
       rows = projectTimelineOptionsRows({
         settings: () => {
@@ -303,16 +305,10 @@ export class ProjectsTableToolbar {
     this.popoverCleanup_abyssPrivate = close;
   }
 
-  private tableRows_abyssPrivate(
-    settings: ProjectTableSettings,
-    fields: readonly ProjectFieldCatalogItem[],
-  ): ViewOptionsRow[] {
+  private tableRows_abyssPrivate(fields: readonly ProjectFieldCatalogItem[]): ViewOptionsRow[] {
     const current = this.options_abyssPrivate.tableSettings;
     const currentFields = this.options_abyssPrivate.fields;
-    const configured = new Set(settings.columns.map(({ id }) => id));
-    configured.add(settings.groupBy);
-    configured.add(settings.sortBy.field);
-    const selectable = fields.filter((field) => configured.has(field.id));
+    const selectable = fields;
     const groupable = selectable.filter((field) => isGroupableProjectField(field));
     const sortArrow = (): string => (current().sortBy.dir === 'asc' ? '↑' : '↓');
     const sortDisplay = (): string =>
@@ -360,7 +356,7 @@ export class ProjectsTableToolbar {
         label: 'Table',
         displayValue: '4 options',
         rows: [
-          this.tableColumnsRow_abyssPrivate(settings, fields),
+          this.tableColumnsRow_abyssPrivate(fields),
           this.tableDescriptionRow_abyssPrivate(),
           this.tableProgressRow_abyssPrivate(),
           this.tableDateDisplayRow_abyssPrivate(),
@@ -369,16 +365,23 @@ export class ProjectsTableToolbar {
     ];
   }
 
-  private tableColumnsRow_abyssPrivate(
-    settings: ProjectTableSettings,
-    fields: readonly ProjectFieldCatalogItem[],
-  ): ViewOptionsRow {
+  private tableColumnsRow_abyssPrivate(fields: readonly ProjectFieldCatalogItem[]): ViewOptionsRow {
     const selected = (): string[] =>
       this.options_abyssPrivate
         .tableSettings()
         .columns.filter(({ visible }) => visible)
-        .map(({ id }) => id);
-    const options: ViewOption[] = settings.columns.map((column) => {
+        .flatMap(({ id }) => {
+          const field = findProjectFieldById(this.options_abyssPrivate.fields(), id);
+          return field === undefined ? [] : [field.id];
+        });
+    const columns = this.options_abyssPrivate.tableSettings().columns;
+    const ordered = [
+      ...columns.flatMap(({ id }) =>
+        fields.filter((field) => sameProjectPropertyName(field.id, id)),
+      ),
+      ...fields.filter((field) => !columns.some(({ id }) => sameProjectPropertyName(id, field.id))),
+    ].filter(({ id }) => id !== 'description');
+    const options: ViewOption[] = ordered.map((column) => {
       const label = (): string =>
         fieldLabel(
           this.options_abyssPrivate.fields(),
@@ -407,14 +410,22 @@ export class ProjectsTableToolbar {
       onToggle: (columnId) =>
         this.applyViewMutation_abyssPrivate(() => {
           const current = this.options_abyssPrivate.tableSettings();
-          const column = current.columns.find(({ id }) => id === columnId);
+          const column = current.columns.find(({ id }) => sameProjectPropertyName(id, columnId));
           if (column !== undefined) {
-            setProjectColumnVisibility(current, columnId, !column.visible);
+            setProjectColumnVisibility(current, column.id, !column.visible);
+          } else {
+            current.columns.push({ id: columnId, visible: true });
           }
         }),
       onMove: (columnId, _direction, targetColumnId) =>
         this.applyViewMutation_abyssPrivate(() => {
-          moveProjectColumn(this.options_abyssPrivate.tableSettings(), columnId, targetColumnId);
+          const table = this.options_abyssPrivate.tableSettings();
+          const source = table.columns.find(({ id }) => sameProjectPropertyName(id, columnId));
+          const target = table.columns.find(({ id }) =>
+            sameProjectPropertyName(id, targetColumnId),
+          );
+          if (source !== undefined && target !== undefined)
+            moveProjectColumn(table, source.id, target.id);
         }),
     };
   }
@@ -494,7 +505,9 @@ export class ProjectsTableToolbar {
     const active = (): ProjectDateDisplay =>
       effectiveProjectTableDateDisplay(
         this.options_abyssPrivate.tableSettings(),
-        this.options_abyssPrivate.tableSettings().columns.find(({ id }) => id === columnId),
+        this.options_abyssPrivate
+          .tableSettings()
+          .columns.find(({ id }) => sameProjectPropertyName(id, columnId)),
       );
     return {
       label: () => projectDateDisplayLabel(active()),
@@ -534,10 +547,16 @@ export class ProjectsTableToolbar {
     display: ProjectDateDisplay,
   ): Promise<void> {
     return this.applyViewMutation_abyssPrivate(() => {
+      const table = this.options_abyssPrivate.tableSettings();
+      let column = table.columns.find(({ id }) => sameProjectPropertyName(id, columnId));
+      if (column === undefined) {
+        column = { id: columnId, visible: false };
+        table.columns.push(column);
+      }
       setProjectTableColumnDateDisplay(
-        this.options_abyssPrivate.tableSettings(),
+        table,
         this.options_abyssPrivate.fields(),
-        columnId,
+        column.id,
         display,
       );
     });

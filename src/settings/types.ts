@@ -59,6 +59,8 @@ export interface ProjectsSettings {
   startProperty: string;
   endProperty: string;
   propertyDefinitions: Record<string, ProjectPropertyDefinition>;
+  /** Version 1 makes configured definitions authoritative over saved views. */
+  propertyDefinitionsVersion?: number;
   statuses: ProjectStatus[];
   statusMigration?: ProjectStatusMigration;
   defaultStatusId: string;

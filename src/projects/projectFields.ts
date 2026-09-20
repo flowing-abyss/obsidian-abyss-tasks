@@ -72,15 +72,17 @@ export function isReservedProjectProperty(settings: ProjectsSettings, property: 
   ].some((configured) => configured.length > 0 && sameProjectPropertyName(configured, property));
 }
 
+function configuredCustomFieldIds(settings: ProjectsSettings): string[] {
+  const definitions: unknown = settings.propertyDefinitions;
+  return definitions !== null && typeof definitions === 'object' && !Array.isArray(definitions)
+    ? Object.keys(definitions).filter((id) => id.startsWith('property:'))
+    : [];
+}
+
 function customFieldIds(
   settings: ProjectsSettings,
   properties: readonly ProjectPropertyInfo[],
 ): string[] {
-  const definitions: unknown = settings.propertyDefinitions;
-  const definitionIds =
-    definitions !== null && typeof definitions === 'object' && !Array.isArray(definitions)
-      ? Object.keys(definitions)
-      : [];
   return [
     ...settings.table.columns.map(({ id }) => id),
     settings.table.groupBy,
@@ -96,7 +98,7 @@ function customFieldIds(
           settings.timeline.groupBy,
           settings.timeline.sortBy.field,
         ]),
-    ...definitionIds,
+    ...configuredCustomFieldIds(settings),
     ...properties.map(({ name }) => `property:${name}`),
   ];
 }
@@ -161,6 +163,19 @@ export function buildProjectFieldCatalog(
     appendCustomField(fields, seen, settings, fieldId);
   }
   return fields;
+}
+
+/** Configured choices have no dependency on native discovery or saved view membership. */
+export function buildConfiguredProjectFieldCatalog(projects: ProjectsSettings): ProjectField[] {
+  const curated = buildProjectFieldCatalog(projects, null).filter(
+    (field): field is ProjectField =>
+      !field.id.startsWith('property:') && isAvailableProjectField(field),
+  );
+  const custom = configuredCustomFieldIds(projects).flatMap((id) => {
+    const field = resolveConfiguredProjectField(projects, id);
+    return field !== undefined && isAvailableProjectField(field) ? [field] : [];
+  });
+  return [...curated, ...custom];
 }
 
 export function isAvailableProjectField(field: ProjectFieldCatalogItem): field is ProjectField {

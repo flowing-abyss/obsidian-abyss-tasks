@@ -6,13 +6,18 @@ import type {
   ProjectPropertyInfo,
   ProjectTableSettings,
 } from '../projects/projectFields';
-import { isReservedProjectProperty } from '../projects/projectFields';
+import { buildProjectFieldCatalog, isReservedProjectProperty } from '../projects/projectFields';
+import { buildDefaultProjectKanbanSettings } from '../projects/projectKanbanSettings';
 import type { ProjectPropertyDefinition } from '../projects/projectPropertyDefinitions';
 import {
+  hasAuthoritativeProjectPropertyDefinitions,
   isProjectPropertyDefinition,
+  PROJECT_PROPERTY_DEFINITIONS_VERSION,
   setProjectPropertyDefinitionType,
 } from '../projects/projectPropertyDefinitions';
 import { sameProjectPropertyName } from '../projects/projectPropertyNames';
+import { buildDefaultProjectTableSettings } from '../projects/projectTableSettings';
+import { buildDefaultProjectTimelineSettings } from '../projects/projectTimelineSettings';
 import { ProjectPropertySuggest } from '../ui/ProjectPropertySuggest';
 import { renderProjectPropertyOptions } from './projectPropertyOptions';
 import { renderSettingsCard } from './settingsCard';
@@ -161,11 +166,25 @@ export function moveProjectColumn(
   return true;
 }
 
-function selectedProperty(settings: ProjectTableSettings, property: string): boolean {
-  return settings.columns.some((column) => {
-    const source = sourceProperty(column);
-    return source !== undefined && sameProjectPropertyName(source, property);
-  });
+function schemaEditable(projects: ProjectsSettings): boolean {
+  return (
+    projects.propertyDefinitionsVersion === undefined ||
+    hasAuthoritativeProjectPropertyDefinitions(projects)
+  );
+}
+
+function showAddedProperty(table: ProjectTableSettings, fieldId: string): void {
+  const existing = table.columns.find(({ id }) => sameProjectPropertyName(id, fieldId));
+  if (existing === undefined) table.columns.push({ id: fieldId, visible: true });
+  else existing.visible = true;
+  enforceProjectTableColumnInvariants(table);
+}
+
+function suggestedPropertyType(
+  name: string,
+  info: ProjectPropertyInfo | undefined,
+): ProjectPropertyDefinition['type'] {
+  return sameProjectPropertyName(name, 'tags') ? 'tags' : (info?.type ?? 'text');
 }
 
 export function addProjectPropertyColumn(
@@ -173,27 +192,57 @@ export function addProjectPropertyColumn(
   properties: readonly ProjectPropertyInfo[],
   property: string,
 ): 'added' | 'duplicate' | 'reserved' | 'unsupported' | 'missing' {
-  const info = properties.find(({ name }) => sameProjectPropertyName(name, property.trim()));
-  if (info === undefined) return 'missing';
-  if (isReservedProjectProperty(projects, info.name)) return 'reserved';
-  if (selectedProperty(projects.table, info.name)) return 'duplicate';
-  const fieldId = `property:${info.name}`;
-  if (definitionEntry(projects, fieldId) === undefined) {
-    const type = sameProjectPropertyName(info.name, 'tags') ? 'tags' : (info.type ?? 'text');
-    projects.propertyDefinitions[fieldId] = { type };
-  }
-  projects.table.columns.push({ id: fieldId, visible: true });
-  enforceProjectTableColumnInvariants(projects.table);
+  if (!schemaEditable(projects)) return 'unsupported';
+  const entered = property.trim();
+  if (entered.length === 0) return 'missing';
+  const info = properties.find(({ name }) => sameProjectPropertyName(name, entered));
+  const name = info?.name ?? entered;
+  if (isReservedProjectProperty(projects, name)) return 'reserved';
+  const fieldId = `property:${name}`;
+  if (
+    Object.keys(projects.propertyDefinitions).some((key) => sameProjectPropertyName(key, fieldId))
+  )
+    return 'duplicate';
+  const type = suggestedPropertyType(name, info);
+  if (type === 'tags' && !sameProjectPropertyName(name, 'tags')) return 'unsupported';
+  projects.propertyDefinitions[fieldId] = { type };
+  projects.propertyDefinitionsVersion = PROJECT_PROPERTY_DEFINITIONS_VERSION;
+  showAddedProperty(projects.table, fieldId);
   return 'added';
 }
 
-function removeProjectColumn(settings: ProjectTableSettings, columnId: string): boolean {
-  if (!columnId.startsWith('property:')) return false;
-  const index = settings.columns.findIndex(({ id }) => id === columnId);
-  if (index < 0) return false;
-  settings.columns.splice(index, 1);
-  if (settings.groupBy === columnId) settings.groupBy = 'status';
-  if (settings.sortBy.field === columnId) settings.sortBy = { field: 'start', dir: 'asc' };
+/** Removes the schema identity and its known presentation references from this draft. */
+export function removeConfiguredProjectProperty(
+  projects: ProjectsSettings,
+  fieldId: string,
+): boolean {
+  if (!schemaEditable(projects) || !fieldId.startsWith('property:')) return false;
+  const matches = Object.keys(projects.propertyDefinitions).filter((key) =>
+    sameProjectPropertyName(key, fieldId),
+  );
+  const key = matches[0];
+  if (matches.length !== 1 || key?.startsWith('property:') !== true) return false;
+  delete projects.propertyDefinitions[key];
+  projects.propertyDefinitionsVersion = PROJECT_PROPERTY_DEFINITIONS_VERSION;
+  const matchesId = (id: string): boolean => sameProjectPropertyName(id, key);
+  const cleanSortAndGroup = (
+    view: Pick<ProjectTableSettings, 'groupBy' | 'sortBy'>,
+    defaults: Pick<ProjectTableSettings, 'groupBy' | 'sortBy'>,
+  ): void => {
+    if (matchesId(view.groupBy)) view.groupBy = defaults.groupBy;
+    if (matchesId(view.sortBy.field)) view.sortBy = { ...defaults.sortBy };
+  };
+  projects.table.columns = projects.table.columns.filter(({ id }) => !matchesId(id));
+  cleanSortAndGroup(projects.table, buildDefaultProjectTableSettings());
+  if (projects.kanban !== undefined) {
+    projects.kanban.fields = projects.kanban.fields.filter(({ id }) => !matchesId(id));
+    cleanSortAndGroup(projects.kanban, buildDefaultProjectKanbanSettings(projects.table));
+  }
+  if (projects.timeline !== undefined) {
+    if (projects.timeline.fields !== undefined)
+      projects.timeline.fields = projects.timeline.fields.filter(({ id }) => !matchesId(id));
+    cleanSortAndGroup(projects.timeline, buildDefaultProjectTimelineSettings(projects.table));
+  }
   return true;
 }
 
@@ -214,13 +263,25 @@ interface ColumnRenderContext extends ColumnRowContext {
 
 type ProjectTablePersist = (refresh?: boolean) => void;
 
-function createRemoveColumnAction(row: HTMLElement, label: string, onClick: () => void): void {
+function createRemoveColumnAction(
+  row: HTMLElement,
+  label: string,
+  onClick: () => void,
+  disabled: boolean,
+): void {
   const button = row.createEl('button', {
     cls: 'clickable-icon abyss-project-column-action',
     attr: { type: 'button', 'aria-label': label, title: label },
   });
+  button.disabled = disabled;
   setIcon(button, 'x');
   button.addEventListener('click', onClick);
+}
+
+function materializeColumn(context: ColumnRowContext): void {
+  if (!context.options.projects.table.columns.includes(context.column)) {
+    context.options.projects.table.columns.push(context.column);
+  }
 }
 
 function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext): void {
@@ -239,6 +300,8 @@ function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext)
   });
   label.value = column.label ?? '';
   const commitLabel = (): void => {
+    if (label.value === (column.label ?? '')) return;
+    materializeColumn(context);
     const previous = column.label;
     if (
       setProjectColumnLabel(options.projects.table, column.id, label.value) &&
@@ -256,6 +319,7 @@ function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext)
   visible.checked = column.visible;
   visible.disabled = column.id === 'name';
   visible.addEventListener('change', () => {
+    materializeColumn(context);
     if (setProjectColumnVisibility(options.projects.table, column.id, visible.checked)) persist();
   });
   if (!column.id.startsWith('property:')) {
@@ -265,12 +329,23 @@ function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext)
     });
     return;
   }
-  createRemoveColumnAction(summary, `Remove ${source} column`, () => {
-    if (!removeProjectColumn(options.projects.table, column.id)) return;
-    expanded.delete(cardId);
-    persist();
-    options.refresh();
-  });
+  createRemoveColumnAction(
+    summary,
+    `Remove ${source} property`,
+    () => {
+      if (!removeConfiguredProjectProperty(options.projects, column.id)) return;
+      expanded.delete(cardId);
+      saveSettingsDraft({
+        action: 'remove project property',
+        save: async () => {
+          await options.saveStatic();
+          await options.saveViewState();
+          options.refresh();
+        },
+      });
+    },
+    !schemaEditable(options.projects),
+  );
 }
 
 function reservedOwner(projects: ProjectsSettings, property: string): string {
@@ -334,6 +409,7 @@ function renderColumnBody(body: HTMLElement, context: ColumnRenderContext): void
           },
         }),
     onAlignmentChange: (alignment) => {
+      materializeColumn(context);
       if (setProjectColumnAlignment(options.projects.table, column.id, alignment)) persist();
     },
     onDefinitionChange: () => {
@@ -343,6 +419,15 @@ function renderColumnBody(body: HTMLElement, context: ColumnRenderContext): void
     ...(options.valueCommit === undefined ? {} : { valueCommit: options.valueCommit }),
   });
   renderCuratedColumnSettings(body, context);
+  if (!schemaEditable(options.projects)) {
+    body
+      .querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>(
+        'input, select, button',
+      )
+      .forEach((control) => {
+        control.disabled = true;
+      });
+  }
 }
 
 function renderColumnRow(base: ColumnRowContext): void {
@@ -484,11 +569,11 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
         },
       });
     } else if (result === 'duplicate') {
-      feedback.setText('That property is already a table column.');
+      feedback.setText('That property is already configured.');
     } else if (result === 'reserved') {
       feedback.setText('That property is reserved for a curated project field or status.');
     } else {
-      feedback.setText('Choose an existing configured or vault property.');
+      feedback.setText('Enter a property name to add.');
     }
   };
   add.addEventListener('click', () => {
@@ -511,8 +596,10 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
       choose(property);
     },
   });
-  if (available.length === 0) {
-    feedback.setText('This vault has no supported properties to add.');
+  if (!schemaEditable(options.projects)) {
+    feedback.setText(
+      'This project schema uses an unsupported version. Update the plugin before editing properties.',
+    );
     input.disabled = true;
     add.disabled = true;
   }
@@ -521,11 +608,50 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
   };
 }
 
+function projectPropertySuggestions(
+  options: RenderProjectTableSettingsOptions,
+): ProjectPropertyInfo[] {
+  const catalogProperties = options.catalog.list() ?? [];
+  const configuredProperties = Object.entries(options.projects.propertyDefinitions).flatMap(
+    ([fieldId, definition]): ProjectPropertyInfo[] => {
+      if (!fieldId.startsWith('property:') || !isProjectPropertyDefinition(definition)) return [];
+      return [{ name: fieldId.slice('property:'.length), type: definition.type }];
+    },
+  );
+  const available = [...catalogProperties];
+  for (const configured of configuredProperties) {
+    if (!available.some(({ name }) => sameProjectPropertyName(name, configured.name)))
+      available.push(configured);
+  }
+
+  return available;
+}
+
+function projectPropertyRows(projects: ProjectsSettings): ProjectColumn[] {
+  const authoritative = hasAuthoritativeProjectPropertyDefinitions(projects);
+  const definitionIds = Object.keys(projects.propertyDefinitions);
+  const columns = projects.table.columns.filter(
+    ({ id }) =>
+      !authoritative ||
+      id in CURATED_LABELS ||
+      definitionIds.some((key) => sameProjectPropertyName(key, id)),
+  );
+  const recoveryIds = authoritative
+    ? []
+    : buildProjectFieldCatalog(projects, null)
+        .filter(({ id }) => id.startsWith('property:'))
+        .map(({ id }) => id);
+  for (const id of [...Object.keys(CURATED_LABELS), ...definitionIds, ...recoveryIds]) {
+    if (!columns.some((column) => sameProjectPropertyName(column.id, id)))
+      columns.push({ id, visible: false });
+  }
+  return columns;
+}
+
 /** Renders the shared project-column preference editor and returns its suggestion cleanup. */
 export function renderProjectTableSettings(options: RenderProjectTableSettingsOptions): () => void {
-  enforceProjectTableColumnInvariants(options.projects.table);
   const section = options.container.createDiv({ cls: 'abyss-project-table-settings' });
-  section.createEl('h4', { text: 'Table columns' });
+  section.createEl('h4', { text: 'Project properties' });
   const feedback = section.createDiv({
     cls: 'abyss-project-table-settings-error',
     attr: { role: 'status', 'aria-live': 'polite' },
@@ -544,6 +670,8 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
   };
 
   const persistStatic: ProjectTablePersist = (refresh = false): void => {
+    if (!schemaEditable(options.projects)) return;
+    options.projects.propertyDefinitionsVersion = PROJECT_PROPERTY_DEFINITIONS_VERSION;
     persist(options.saveStatic, refresh);
   };
   const persistViewState: ProjectTablePersist = (refresh = false): void => {
@@ -568,7 +696,7 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
   for (const label of ['', 'Source', 'Display name', 'Show', '', '']) {
     headings.createSpan({ text: label, attr: label.length === 0 ? { 'aria-hidden': 'true' } : {} });
   }
-  options.projects.table.columns.forEach((column) => {
+  projectPropertyRows(options.projects).forEach((column) => {
     renderColumnRow({
       host: rows,
       column,
@@ -578,23 +706,10 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
     });
   });
 
-  const catalogProperties = options.catalog.list() ?? [];
-  const configuredProperties = Object.entries(options.projects.propertyDefinitions).flatMap(
-    ([fieldId, definition]): ProjectPropertyInfo[] => {
-      if (!fieldId.startsWith('property:') || !isProjectPropertyDefinition(definition)) return [];
-      return [{ name: fieldId.slice('property:'.length), type: definition.type }];
-    },
-  );
-  const available = [...catalogProperties];
-  for (const configured of configuredProperties) {
-    if (!available.some(({ name }) => sameProjectPropertyName(name, configured.name)))
-      available.push(configured);
-  }
-
   return renderAddPropertyControl({
     section,
     feedback,
-    available,
+    available: projectPropertySuggestions(options),
     options,
   });
 }
