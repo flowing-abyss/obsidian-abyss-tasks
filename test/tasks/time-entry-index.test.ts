@@ -1,4 +1,4 @@
-import { TFile, type CachedMetadata } from 'obsidian';
+import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import {
@@ -9,7 +9,6 @@ import {
 import type { SubtaskSnapshot, TaskSnapshot } from '../../src/tasks/domain/types';
 import { TimeEntryIndex } from '../../src/tasks/infrastructure/TimeEntryIndex';
 import {
-  captureChangedCallback,
   configuredTaskApplication,
   createAppWithFiles,
   expectDefined,
@@ -179,12 +178,6 @@ const TRACKED_CONTENT = [
 ].join('\n');
 
 const RUNNING_CONTENT = [TRACKED_CONTENT, '    - 2026-09-18T14:05:00+03:00 →'].join('\n');
-
-function rootCache(): CachedMetadata {
-  return {
-    listItems: [{ task: ' ', parent: -1, position: { start: { line: 0 }, end: { line: 0 } } }],
-  } as CachedMetadata;
-}
 
 function markdownFile(app: Awaited<ReturnType<typeof createAppWithFiles>>, path: string): TFile {
   const file = app.vault.getAbstractFileByPath(path);
@@ -499,7 +492,6 @@ describe('time entry index', () => {
   it('follows vault edits, renames and deletions through the task queries', async () => {
     const app = await createAppWithFiles({ 'track.md': TRACKED_CONTENT });
     seedTaskCache(app, 'track.md', [{ task: ' ', parent: -1, line: 0 }]);
-    const fireChanged = captureChangedCallback(app);
     const stack = configuredTaskApplication(app, DEFAULT_SETTINGS);
     await stack.index.initialize();
     expect(stack.tasks.queries.activeEntries()).toEqual([]);
@@ -511,7 +503,6 @@ describe('time entry index', () => {
     });
     const file = markdownFile(app, 'track.md');
     await app.vault.modify(file, RUNNING_CONTENT);
-    fireChanged(file, RUNNING_CONTENT, rootCache());
     await flushMicrotasks();
 
     expect(changed).toContainEqual(['track.md']);

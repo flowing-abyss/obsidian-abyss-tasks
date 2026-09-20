@@ -18,7 +18,7 @@ import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlo
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
-import { captureChangedCallback, createAppWithFiles, flushMicrotasks } from '../helpers';
+import { createAppWithFiles, flushMicrotasks, metadataChangedEmitter } from '../helpers';
 import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
 import { expectDefined } from './../helpers';
 
@@ -52,7 +52,7 @@ async function makeHarness(
   const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
   const codec = new TaskMarkdownCodec(statusCatalog);
   const authority = new TaskRefAuthority(options.session ?? `${adapter}-session`);
-  const fireChanged = captureChangedCallback(app);
+  const fireChanged = metadataChangedEmitter(app);
   const index = new TaskIndex(app, {
     statusCatalog,
 

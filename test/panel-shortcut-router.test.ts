@@ -84,7 +84,7 @@ function harness(): RouterHarness {
   let active = true;
   const router = new PanelShortcutRouter({
     ownerDocument: document,
-    isActive: () => active && panel.isConnected && !panel.hidden,
+    isActive: () => active && panel.isConnected && panel.hidden === false,
     settings: () => settings,
     platform: { mod: 'ctrl' },
     actions,

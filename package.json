@@ -65,10 +65,10 @@
     "type": "git",
     "url": "git@github.com:flowing-abyss/obsidian-abyss-tasks.git"
   },
-  "packageManager": "pnpm@11.25.0",
+  "packageManager": "pnpm@12.5.1",
   "engines": {
-    "node": "^22.22.2 || ^24.15.0 || >=26.0.0",
-    "pnpm": ">=11"
+    "node": "^22.22.3 || ^24.15.0 || >=26.0.0",
+    "pnpm": ">=12"
   },
   "dependencies": {
     "rrule": "2.8.1"
@@ -82,33 +82,33 @@
     "@eslint/json": "^0.14.0",
     "@projectwallace/stylelint-plugin": "0.7.0",
     "@types/jsdom": "30.0.0",
-    "@types/node": "^24.13.3",
-    "@vitest/coverage-v8": "5.0.0",
-    "cssnano": "8.0.10",
-    "dependency-cruiser": "18.2.0",
+    "@types/node": "24.13.6",
+    "@vitest/coverage-v8": "5.0.1",
+    "cssnano": "9.0.5",
+    "dependency-cruiser": "18.3.1",
     "esbuild": "0.28.2",
     "eslint": "9.39.5",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-obsidianmd": "0.4.2",
-    "eslint-plugin-sonarjs": "^4.2.0",
+    "eslint-plugin-sonarjs": "4.2.1",
     "globals": "17.12.0",
     "husky": "^9.1.7",
     "jiti": "^2.7.0",
-    "jsdom": "^30.0.1",
-    "knip": "6.34.0",
+    "jsdom": "30.1.0",
+    "knip": "6.37.0",
     "nano-staged": "^1.0.2",
     "obsidian": "1.13.1",
-    "obsidian-test-mocks": "5.0.0",
-    "postcss": "8.5.26",
-    "postcss-selector-parser": "7.1.5",
+    "obsidian-test-mocks": "5.2.0",
+    "postcss": "8.5.28",
+    "postcss-selector-parser": "7.1.6",
     "postcss-value-parser": "4.2.0",
-    "prettier": "^3.9.6",
+    "prettier": "3.9.8",
     "prettier-plugin-organize-imports": "^4.3.0",
-    "stylelint": "^17.14.1",
+    "stylelint": "17.15.0",
     "stylelint-config-standard": "^40.0.0",
     "stylelint-declaration-block-no-ignored-properties": "3.0.0",
-    "typescript": "5.9.3",
-    "typescript-eslint": "8.69.0",
-    "vitest": "5.0.0"
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.1"
   }
 }

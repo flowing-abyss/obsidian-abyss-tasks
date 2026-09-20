@@ -30,7 +30,7 @@
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "esModuleInterop": false,
+    "esModuleInterop": true,
     "skipLibCheck": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts", "vitest.bench.config.ts"]

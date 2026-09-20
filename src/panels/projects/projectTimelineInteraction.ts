@@ -155,7 +155,7 @@ interface ActivePointerGesture {
   moved: boolean;
   readonly barSnapshot?: {
     readonly className: string;
-    readonly hidden: boolean;
+    readonly hidden: HTMLElement['hidden'];
     readonly left: string;
     readonly width: string;
     readonly oneDateCenter: string;

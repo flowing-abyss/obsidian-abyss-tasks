@@ -418,3 +418,37 @@ it('preserves case-sensitive custom-property identities while checking filter pr
     ).map(({ ruleId }) => ruleId),
   ).toEqual(['abyss/known-variable', 'abyss/unused-variable']);
 });
+
+it.each([
+  [
+    '.abyss-project-timeline-bar:not(.is-one-date)',
+    'max(0px,min(var(--abyss-project-timeline-range-left),100% - 40px))',
+  ],
+  [
+    '.abyss-project-timeline-bar.is-one-date',
+    'clamp(0px,-20px + var(--abyss-project-timeline-one-date-center),100% - 40px)',
+  ],
+])('keeps the exact optimized Timeline geometry contract for %s', (selector, value) => {
+  const options = {
+    file: 'dist/fixture.css',
+    contracts: {
+      ...fixtureContracts,
+      runtime: {
+        produced: [
+          '--abyss-project-timeline-range-left',
+          '--abyss-project-timeline-one-date-center',
+        ],
+        consumed: [],
+      },
+      exceptions: contracts.exceptions.filter(
+        (entry) => entry.selector === selector && entry.property === 'left',
+      ),
+    },
+  };
+  expect(analyzeCss(`${selector}{left:${value}!important}`, options)).toEqual([]);
+  expect(
+    analyzeCss(`${selector}{left:${value.replace('40px', '41px')}!important}`, options).map(
+      (entry) => entry.ruleId,
+    ),
+  ).toEqual(['abyss/important', 'abyss/stale-exception']);
+});

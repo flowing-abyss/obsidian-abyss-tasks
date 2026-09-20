@@ -28,11 +28,11 @@ import {
 } from '../../src/ui/taskCapture/CaptureTargetResolver';
 import { presentTaskCreationResult } from '../../src/ui/taskCommandResult';
 import {
-  captureChangedCallback,
   configuredTaskApplication,
   createAppWithFiles,
   expectDefined,
   flushMicrotasks,
+  metadataChangedEmitter,
   methodOf,
   taskQueryApi,
   useRealMoment,
@@ -1783,7 +1783,7 @@ describe('TaskApplicationService lifecycle settings', () => {
 describe('repository-owned index observations', () => {
   it('keeps a newly committed successor across a delayed empty observation', async () => {
     const app = await createAppWithFiles({ [path]: '' });
-    const fireChanged = captureChangedCallback(app);
+    const fireChanged = metadataChangedEmitter(app);
     const h = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
     await h.index.initialize();
     try {
@@ -1822,7 +1822,7 @@ describe('repository-owned index observations', () => {
 
   it('invalidates a committed ref after a real external replacement', async () => {
     const app = await createAppWithFiles({ [path]: '' });
-    const fireChanged = captureChangedCallback(app);
+    const fireChanged = metadataChangedEmitter(app);
     const h = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
     await h.index.initialize();
     try {

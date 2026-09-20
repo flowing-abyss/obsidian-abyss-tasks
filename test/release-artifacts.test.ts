@@ -1,5 +1,5 @@
 import { selectorSpecificity } from '@csstools/selector-specificity';
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { execFileSync, spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -215,5 +215,43 @@ describe('release stylesheet checker', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('release:check passed.');
     expect(result.stderr).toBe('');
+  });
+});
+
+describe('host Moment bundle boundary', () => {
+  it('uses only the externally supplied Obsidian instance in its production bundle', () => {
+    // esbuild runs in its supported Node realm, rather than jsdom's split typed-array realm.
+    const output = execFileSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `
+      import assert from 'node:assert/strict';
+      import { runInNewContext } from 'node:vm';
+      import { build } from 'esbuild';
+      const result = await build({
+        entryPoints: ['src/obsidianMoment.ts'], bundle: true, write: false,
+        metafile: true, format: 'cjs', target: 'es2021', external: ['obsidian'],
+      });
+      assert.deepEqual(Object.keys(result.metafile.inputs), ['src/obsidianMoment.ts']);
+      assert.deepEqual(Object.values(result.metafile.outputs).flatMap(entry => entry.imports),
+        [{ path: 'obsidian', kind: 'require-call', external: true }]);
+      const suppliedHost = function moment() {};
+      const module = { exports: {} };
+      runInNewContext(result.outputFiles[0].text, {
+        module,
+        require(name) {
+          assert.equal(name, 'obsidian');
+          return { moment: suppliedHost };
+        },
+      });
+      assert.equal(module.exports.moment, suppliedHost);
+      console.log('external host identity preserved');
+    `,
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(output.trim()).toBe('external host identity preserved');
   });
 });

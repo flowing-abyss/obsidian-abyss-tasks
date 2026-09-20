@@ -1,7 +1,6 @@
 import { TFile } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import {
-  captureChangedCallback,
   createAppWithFiles,
   expectDefined,
   flushMicrotasks,
@@ -34,20 +33,6 @@ describe('store test helpers', () => {
     expect(cache?.listItems?.[0]?.parent).toBe(-1);
     expect(cache?.listItems?.[0]?.task).toBe(' ');
     expect(cache?.frontmatter?.['color']).toBe('#abc');
-  });
-
-  it('captureChangedCallback captures the changed handler and lets it be invoked', async () => {
-    const app = await createAppWithFiles({ 't.md': '- [ ] x' });
-    seedTaskCache(app, 't.md', [{ task: ' ', parent: -1, line: 0 }]);
-    const fireChanged = captureChangedCallback(app);
-    // register a no-op changed listener to exercise the capture
-    app.metadataCache.on('changed', () => {});
-    const file = app.vault.getAbstractFileByPath('t.md');
-    // fireChanged should not throw; it invokes the captured handler
-    expect(() => {
-      if (!(file instanceof TFile)) throw new Error('not a TFile');
-      fireChanged(file, '- [ ] x', { listItems: [] });
-    }).not.toThrow();
   });
 
   it('flushMicrotasks awaits a short timeout', async () => {

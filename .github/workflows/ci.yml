@@ -16,7 +16,7 @@ jobs:
 
     strategy:
       matrix:
-        # jsdom 30 (used by the test suite) requires Node >=22.22 / >=24.15 / >=26, so 20.x is excluded.
+        # cssnano 9 and jsdom 30 require Node ^22.22.3 / ^24.15.0 / >=26.
         # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
         node-version: [22.x, 24.x]
 

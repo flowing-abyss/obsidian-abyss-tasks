@@ -1,6 +1,7 @@
-import { Component, Menu, moment, Notice, setIcon, TFile, type App } from 'obsidian';
+import { Component, Menu, Notice, setIcon, TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import { exactLinkToken, parseLinks } from '../../markdown/links';
+import { moment } from '../../obsidianMoment';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
 import { isProjectCreationError, type ProjectCreateRequest } from '../../projects/projectCreation';
 import {
@@ -1374,7 +1375,7 @@ export class ProjectsTableView {
     return (
       this.mounted_abyssPrivate &&
       this.root_abyssPrivate.isConnected &&
-      !this.root_abyssPrivate.hidden &&
+      this.root_abyssPrivate.hidden === false &&
       this.context_abyssPrivate.state.get('projectsPanel').view === 'table' &&
       !this.mutationActive_abyssPrivate &&
       this.activeEditor_abyssPrivate === undefined &&
@@ -1882,7 +1883,7 @@ export class ProjectsTableView {
     if (
       !this.mounted_abyssPrivate ||
       !this.root_abyssPrivate.isConnected ||
-      this.root_abyssPrivate.hidden ||
+      Boolean(this.root_abyssPrivate.hidden) ||
       this.context_abyssPrivate.state.get('projectsPanel').view !== 'table' ||
       this.overviewMode_abyssPrivate !== 'timeline' ||
       this.timelineView_abyssPrivate?.root.hidden === true

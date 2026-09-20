@@ -379,6 +379,14 @@ and [creation presentation tests](test/project-creation-presentation.test.ts).
 
 ## Settings and compatibility
 
+[`src/obsidianMoment.ts`](src/obsidianMoment.ts) is the single compatibility boundary for
+Obsidian's named host Moment export. Its namespace declaration loses call signatures under
+TypeScript ES module interop; the boundary restores Moment's own complete callable type without
+wrapping or replacing the runtime instance. Consumers import through this boundary, and the
+bundle keeps `obsidian` external. Remove the correction when upstream publishes compatible
+callable declarations. [Boundary tests](test/obsidian-moment.test.ts) verify callable overloads,
+strict parsing, static identity, and the external provider in the generated bundle.
+
 [`SettingsPersistenceCoordinator`](src/settings/persistence.ts) serializes two documents through
 Obsidian's public vault adapter. `data.json` owns static configuration; adjacent versioned
 `state.json` owns list/section state and project Table, Kanban, Timeline, and active-view preferences.

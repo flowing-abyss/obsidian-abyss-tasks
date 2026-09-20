@@ -1,7 +1,8 @@
-import { moment, type App } from 'obsidian';
+import { type App } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import type { ListSelection } from '../src/app/AppState';
 import { AppState } from '../src/app/AppState';
+import { moment } from '../src/obsidianMoment';
 import { type CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { CalendarSettings, TagGroup } from '../src/settings/types';

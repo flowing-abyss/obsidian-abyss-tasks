@@ -132,7 +132,7 @@ function isImeKeyboardEvent(event: KeyboardEvent): boolean {
 function hasVisibleAncestors(element: HTMLElement, ownerWindow: Window | null): boolean {
   let current: HTMLElement | null = element;
   while (current != null) {
-    if (current.hidden) return false;
+    if (current.hidden !== false) return false;
     const style = ownerWindow?.getComputedStyle(current);
     if (style?.display === 'none' || style?.visibility === 'hidden') return false;
     current = current.parentElement;

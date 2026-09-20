@@ -1,7 +1,8 @@
-import { moment, App as ObsidianApp, Platform, type CachedMetadata, type TFile } from 'obsidian';
+import { App as ObsidianApp, Platform, type CachedMetadata, type TFile } from 'obsidian';
 import { afterEach, beforeEach, expect, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import { NoteTemplateService } from '../src/notes/NoteTemplateService';
+import { moment } from '../src/obsidianMoment';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { LeftPanel } from '../src/panels/LeftPanel';
 import type { ProjectManager } from '../src/projects/ProjectManager';
@@ -655,20 +656,17 @@ export function taskComment(overrides: TaskCommentFixtureInput = {}): TaskCommen
   };
 }
 
-/** Create a fresh App with pre-populated files and flushed async metadata parsing. */
-export async function createAppWithFiles(files: Record<string, string>): Promise<ObsidianApp> {
+/** Create a fresh App whose configured files have synchronously parsed metadata. */
+export function createAppWithFiles(files: Record<string, string>): Promise<ObsidianApp> {
   const app = (
     ObsidianApp as unknown as {
       createConfigured__: (params: { files: Record<string, string> }) => ObsidianApp;
     }
   ).createConfigured__({ files });
-  // Flush the mock's async parseFileMetadata for each file
-  await Promise.all(app.vault.getMarkdownFiles().map((f) => app.vault.cachedRead(f)));
-  await flushMicrotasks();
-  return app;
+  return Promise.resolve(app);
 }
 
-/** Wait for the mock's async metadata parsing to settle. */
+/** Let scheduled application work settle after a fixture interaction. */
 export async function flushMicrotasks(ms = 10): Promise<void> {
   await new Promise<void>((resolve) => {
     window.setTimeout(resolve, ms);
@@ -699,29 +697,14 @@ export function seedTaskCache(
   ).setCache__(path, cache);
 }
 
-/**
- * Capture the `changed` callback the task index registers on metadataCache, so tests can invoke it
- * directly with a crafted (TFile, content, CachedMetadata). Needed because setCache__ fires
- * `changed` with zero args (which would crash the handler). Call before index initialization
- * so registerEvents's metadataCache.on('changed', cb) is captured.
+/** Inject a crafted metadata observation for stale, malformed, or reconciliation scenarios.
+ * Ordinary cache seeding uses setCache__, which emits the real file/content/cache event.
  */
-export function captureChangedCallback(
+export function metadataChangedEmitter(
   app: ObsidianApp,
 ): (file: TFile, content: string, cache: CachedMetadata) => void {
-  let captured: ((file: TFile, content: string, cache: CachedMetadata) => void) | null = null;
-  const origOn = app.metadataCache.on.bind(app.metadataCache) as (
-    name: string,
-    cb: (...args: unknown[]) => void,
-  ) => unknown;
-  app.metadataCache.on = ((name: string, cb: (...args: unknown[]) => void) => {
-    if (name === 'changed') {
-      captured = cb;
-    }
-    return origOn(name, cb);
-  }) as typeof app.metadataCache.on;
-  return (file: TFile, content: string, cache: CachedMetadata) => {
-    if (captured == null) throw new Error('captureChangedCallback: no changed handler registered');
-    captured(file, content, cache);
+  return (file, content, cache) => {
+    app.metadataCache.trigger('changed', file, content, cache);
   };
 }
 

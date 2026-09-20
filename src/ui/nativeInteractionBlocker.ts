@@ -28,7 +28,9 @@ function intersectsViewport(rect: DOMRect, ownerWindow: Window): boolean {
 }
 
 function elementIsHidden(element: HTMLElement): boolean {
-  return element.hidden || element.getAttribute('aria-hidden')?.trim().toLowerCase() === 'true';
+  return (
+    Boolean(element.hidden) || element.getAttribute('aria-hidden')?.trim().toLowerCase() === 'true'
+  );
 }
 
 function styleIsHidden(style: CSSStyleDeclaration | undefined): boolean {

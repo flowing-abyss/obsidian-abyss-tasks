@@ -1,8 +1,9 @@
 import { selectorSpecificity as calculateSpecificity } from '@csstools/selector-specificity';
-import { moment, Platform, type App } from 'obsidian';
+import { Platform, type App } from 'obsidian';
 import selectorParser from 'postcss-selector-parser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import { moment } from '../src/obsidianMoment';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';

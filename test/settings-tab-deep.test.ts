@@ -1854,8 +1854,8 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     const draft = expectDefined(
       firstRow.querySelector<HTMLInputElement>('.abyss-project-value-raw'),
     );
-    draft.value = 'unfinished status draft';
     draft.focus();
+    draft.value = 'unfinished status draft';
     draft.setSelectionRange(10, 10);
 
     dragProjectValueRow(secondRow, firstRow);

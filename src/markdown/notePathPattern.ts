@@ -1,4 +1,4 @@
-import { moment } from 'obsidian';
+import { moment } from '../obsidianMoment';
 
 export interface NotePathPattern {
   resolve(date: string): string;

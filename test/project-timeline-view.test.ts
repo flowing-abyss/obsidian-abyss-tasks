@@ -442,7 +442,7 @@ describe('ProjectsTimelineView', () => {
       ),
     );
     expect(compactRule.style.left.replace(/\s+/gu, ' ')).toBe(
-      'max(0px, min(var(--abyss-project-timeline-range-left), calc(100% - 40px)))',
+      'max(0px, min(var(--abyss-project-timeline-range-left), 100% - 40px))',
     );
     const trackWidth = 640;
     const sourceLeft = (Number.parseFloat(bar.style.left) / 100) * trackWidth;

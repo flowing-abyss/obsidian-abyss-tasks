@@ -8,8 +8,6 @@ strictPeerDependencies: true
 peerDependencyRules:
   allowedVersions:
     'eslint-plugin-obsidianmd@0.4.2>obsidian': '1.13.1'
-overrides:
-  'eslint-plugin-sonarjs@4.2.0>typescript': '5.9.3'
 allowedDeprecatedVersions:
   eslint: '9.39.5'
 

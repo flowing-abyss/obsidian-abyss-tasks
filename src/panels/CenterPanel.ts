@@ -758,7 +758,14 @@ export class CenterPanel {
       ownerDocument.removeEventListener('pointerdown', onPointerDown, true);
     });
     const ownerWindow = ownerDocument.defaultView;
-    const onOwnerWindowBlur = (): void => {
+    const onOwnerWindowBlur = (event: Event): void => {
+      const nextTarget = (event as FocusEvent).relatedTarget;
+      if (
+        isRealmHTMLElement(nextTarget) &&
+        nextTarget.isConnected &&
+        nextTarget.ownerDocument === ownerDocument
+      )
+        return;
       this.abandonTaskDateFocus_abyssPrivate();
       if (this.pendingTimedBlockFocus_abyssPrivate != null)
         this.cancelKeyboardInteraction_abyssPrivate();

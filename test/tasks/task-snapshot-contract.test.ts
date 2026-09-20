@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import {
   canonicalStatusCatalog,
-  captureChangedCallback,
   createAppWithFiles,
+  metadataChangedEmitter,
   seedTaskCache,
   useRealMoment,
 } from '../helpers';
@@ -29,7 +29,7 @@ async function snapshotIndex(content: string): Promise<{
 }> {
   const app = await createAppWithFiles({ 'tasks.md': content });
   seedTaskCache(app, 'tasks.md', [{ task: ' ', parent: -1, line: 0 }]);
-  const fireChanged = captureChangedCallback(app);
+  const fireChanged = metadataChangedEmitter(app);
   const index = new TaskIndex(app, {
     statusCatalog: canonicalStatusCatalog(),
   });

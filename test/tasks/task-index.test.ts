@@ -10,9 +10,9 @@ import {
 } from '../../src/tasks/infrastructure/TaskRefAuthority';
 import {
   canonicalStatusCatalog,
-  captureChangedCallback,
   createAppWithFiles,
   flushMicrotasks,
+  metadataChangedEmitter,
   seedTaskCache,
   useRealMoment,
 } from '../helpers';
@@ -54,7 +54,7 @@ async function setup(
   const app = await createAppWithFiles(files);
   for (const path of Object.keys(files))
     seedTaskCache(app, path, [{ task: ' ', parent: -1, line: 0 }]);
-  const fireChanged = captureChangedCallback(app);
+  const fireChanged = metadataChangedEmitter(app);
   const index = new TaskIndex(app, {
     statusCatalog: canonicalStatusCatalog(),
 

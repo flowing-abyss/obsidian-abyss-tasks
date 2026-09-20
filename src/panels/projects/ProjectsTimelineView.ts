@@ -758,7 +758,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     const row = this.findRow_abyssPrivate(focusedRange.projectPath);
     let replacement = this.root;
     if (row !== undefined) {
-      replacement = focusedRange.part === 'bar' && !row.bar.hidden ? row.bar : row.track;
+      replacement = focusedRange.part === 'bar' && row.bar.hidden === false ? row.bar : row.track;
     }
     replacement.focus({ preventScroll: true });
   }

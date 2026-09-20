@@ -378,7 +378,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
       focus.revision === this.dragFocusRevision_abyssPrivate &&
       this.mounted_abyssPrivate &&
       this.root.isConnected &&
-      !this.root.hidden
+      this.root.hidden === false
     );
   }
 

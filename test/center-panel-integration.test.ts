@@ -1,15 +1,7 @@
-import {
-  addIcon,
-  MarkdownRenderer,
-  Menu,
-  Modal,
-  moment,
-  removeIcon,
-  TFile,
-  type App,
-} from 'obsidian';
+import { addIcon, MarkdownRenderer, Menu, Modal, removeIcon, TFile, type App } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import { moment } from '../src/obsidianMoment';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -239,7 +231,7 @@ function returnToTasksMode(state: AppState): void {
 
 function visibleChildren(element: HTMLElement): HTMLElement[] {
   return [...element.children].filter(
-    (child): child is HTMLElement => child.instanceOf(HTMLElement) && !child.hidden,
+    (child): child is HTMLElement => child.instanceOf(HTMLElement) && child.hidden === false,
   );
 }
 
@@ -5391,28 +5383,36 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     }
   });
 
-  it('cancels pending keyboard ownership when the mounted window blurs', async () => {
-    const pending = deferredResult();
-    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
-    const original = keyboardSnapshot(TODAY);
-    const tomorrow = moment(TODAY).add(1, 'day').format('YYYY-MM-DD');
-    const updated = keyboardSnapshot(tomorrow, '09:00', original.source.filePath, 'revision-2');
-    const h = keyboardPanelHarness([original], execute);
-    clickCalendarView(h.el, 'Day');
-    const block = timedBlock(h.el);
-    block.focus();
-    press(block, 'ArrowRight');
+  it.each(['window loss', 'detached target', 'foreign document'])(
+    'cancels pending keyboard ownership on blur to %s',
+    async (destination) => {
+      const pending = deferredResult();
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+      const original = keyboardSnapshot(TODAY);
+      const tomorrow = moment(TODAY).add(1, 'day').format('YYYY-MM-DD');
+      const updated = keyboardSnapshot(tomorrow, '09:00', original.source.filePath, 'revision-2');
+      const h = keyboardPanelHarness([original], execute);
+      clickCalendarView(h.el, 'Day');
+      const block = timedBlock(h.el);
+      block.focus();
+      press(block, 'ArrowRight');
 
-    expectDefined(h.el.ownerDocument.defaultView).dispatchEvent(new Event('blur'));
-    h.setSnapshots([updated]);
-    h.emit();
-    pending.resolve(okTask(updated));
-    await flushMicrotasks();
+      const ownerWindow = expectDefined(h.el.ownerDocument.defaultView);
+      let relatedTarget: EventTarget | null = null;
+      if (destination === 'detached target') relatedTarget = ownerWindow.createEl('button');
+      else if (destination === 'foreign document')
+        relatedTarget = h.el.ownerDocument.implementation.createHTMLDocument().body;
+      ownerWindow.dispatchEvent(new ownerWindow.FocusEvent('blur', { relatedTarget }));
+      h.setSnapshots([updated]);
+      h.emit();
+      pending.resolve(okTask(updated));
+      await flushMicrotasks();
 
-    expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
-    expect(h.el.ownerDocument.activeElement).not.toBe(block);
-    expect(h.el.ownerDocument.activeElement?.classList.contains('abyss-tg-block')).not.toBe(true);
-  });
+      expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+      expect(h.el.ownerDocument.activeElement).not.toBe(block);
+      expect(h.el.ownerDocument.activeElement?.classList.contains('abyss-tg-block')).not.toBe(true);
+    },
+  );
 
   it('retains a special-path locator across two remounts and focuses only the newest connected block', async () => {
     const pending = deferredResult();

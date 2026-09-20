@@ -216,7 +216,7 @@ export const contracts = {
       ruleId: 'abyss/important',
       selector: '.abyss-project-timeline-bar:not(.is-one-date)',
       property: 'left',
-      value: 'max(0px, min(var(--abyss-project-timeline-range-left), calc(100% - 40px)))',
+      value: 'max(0px, min(var(--abyss-project-timeline-range-left), 100% - 40px))',
       context: [],
       reason:
         'Clamp live inline Timeline preview geometry to the visible track; CSS owns the constrained preview.',
@@ -225,8 +225,7 @@ export const contracts = {
       ruleId: 'abyss/important',
       selector: '.abyss-project-timeline-bar.is-one-date',
       property: 'left',
-      value:
-        'clamp(\n    0px,\n    calc(var(--abyss-project-timeline-one-date-center) - 20px),\n    calc(100% - 40px)\n  )',
+      value: 'clamp(0px, -20px + var(--abyss-project-timeline-one-date-center), 100% - 40px)',
       context: [],
       reason:
         'Clamp live inline Timeline preview geometry to the visible track; CSS owns the constrained preview.',

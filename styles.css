@@ -7618,15 +7618,11 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-timeline-bar:not(.is-one-date) {
-  left: max(0px, min(var(--abyss-project-timeline-range-left), calc(100% - 40px))) !important;
+  left: max(0px, min(var(--abyss-project-timeline-range-left), 100% - 40px)) !important;
 }
 
 .abyss-project-timeline-bar.is-one-date {
-  left: clamp(
-    0px,
-    calc(var(--abyss-project-timeline-one-date-center) - 20px),
-    calc(100% - 40px)
-  ) !important;
+  left: clamp(0px, -20px + var(--abyss-project-timeline-one-date-center), 100% - 40px) !important;
   width: 0 !important;
   border-inline-style: dashed;
 }

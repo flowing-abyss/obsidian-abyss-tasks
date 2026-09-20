@@ -4145,7 +4145,7 @@ describe('project Kanban overview', () => {
       host.querySelectorAll<HTMLButtonElement>('.abyss-project-kanban-column-create'),
     );
 
-    expect(pluses.filter(({ hidden }) => !hidden)).toHaveLength(
+    expect(pluses.filter(({ hidden }) => hidden === false)).toHaveLength(
       DEFAULT_SETTINGS.projects.statuses.length,
     );
     pluses[0]?.click();

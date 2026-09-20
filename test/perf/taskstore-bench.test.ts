@@ -8,8 +8,9 @@
  *
  * Prints metrics to the test output in both human-readable and JSON form.
  */
-import { moment, App as ObsidianApp } from 'obsidian';
+import { App as ObsidianApp } from 'obsidian';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { moment } from '../../src/obsidianMoment';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import type { LocalDate } from '../../src/tasks';
 import { configuredTaskApplication } from '../helpers';
