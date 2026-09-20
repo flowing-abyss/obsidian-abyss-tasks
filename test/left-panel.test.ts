@@ -211,7 +211,7 @@ describe('LeftPanel smart lists', () => {
     const tasks = [
       task({ status: 'open', planning: { due: t } }),
       task({ status: 'open', planning: { scheduled: t } }),
-      task({ status: 'open', presentation: { dailyNoteDate: t } }),
+      task({ status: 'open', presentation: {} }),
       task({ status: 'open', planning: { due: '2020-01-01' } }),
       task({ status: 'done', planning: { due: t } }),
     ];
@@ -225,7 +225,7 @@ describe('LeftPanel smart lists', () => {
     const tasks = [
       task({ status: 'open', planning: { due: '2099-12-31' } }),
       task({ status: 'open', planning: { scheduled: '2099-01-01' } }),
-      task({ status: 'open', presentation: { dailyNoteDate: '2099-06-01' } }),
+      task({ status: 'open', presentation: {} }),
       task({ status: 'open', planning: { due: '2020-01-01' } }),
       task({ status: 'done', planning: { due: '2099-12-31' } }),
     ];

@@ -62,7 +62,7 @@ async function harness(
   const authority = new TaskRefAuthority('inspector-dependencies');
   const index = new TaskIndex(app, {
     statusCatalog: statuses,
-    dailyNoteFormat: 'YYYY-MM-DD',
+
     refAuthority: authority,
   });
   await index.initialize();

@@ -26,7 +26,7 @@ async function setup(source: string) {
   const app = await createAppWithFiles({ 'tasks.md': source });
   const editor = new TaskBlockEditor();
   const locator = new TaskLocator();
-  const index = new TaskIndex(app, { statusCatalog: catalog, dailyNoteFormat: 'YYYY-MM-DD' });
+  const index = new TaskIndex(app, { statusCatalog: catalog });
   const repository = new ObsidianTaskRepository(app, {
     codec: new TaskMarkdownCodec(catalog),
     editor,
@@ -149,7 +149,6 @@ async function liveCatalogHarness(mutableType: 'in-progress' | 'done' = 'in-prog
   const liveCatalog = new StatusCatalog(toStatusRules(settings.taskStatuses));
   const index = new TaskIndex(app, {
     statusCatalog: liveCatalog,
-    dailyNoteFormat: settings.desktop.dailyNoteFormat,
   });
   await index.initialize();
   const indexed = expectDefined(index.list()[0]);

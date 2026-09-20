@@ -35,7 +35,6 @@ const privateOwners = new Set([
   'PanelView',
   'CalendarSettingsTab',
   'ObsidianTaskRepository',
-  'CalendarRenderer',
   'RecurrenceEditorController',
   'AnchoredRecurrenceEditorController',
   'LeftPanel',
@@ -275,9 +274,7 @@ describe('production JavaScript artifact', () => {
       expect(plugin.queries.listNodes()).toEqual([]);
       expect(plugin.settings.taskStatuses.length).toBeGreaterThan(0);
       expect(typeof plugin.tasks.execute).toBe('function');
-      expect((window as unknown as Record<string, unknown>)['renderCalendar']).toBeTypeOf(
-        'function',
-      );
+      expect((window as unknown as Record<string, unknown>)['renderCalendar']).toBeUndefined();
     } finally {
       plugin.onunload();
     }

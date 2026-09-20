@@ -17,7 +17,6 @@ describe('subtask snapshot tree', () => {
     const app = await createAppWithFiles({ 'tasks.md': source });
     const index = new TaskIndex(app, {
       statusCatalog: new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses)),
-      dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
     });
     const root = expectDefined(index.snapshotsFromContent('tasks.md', source)[0]);
     const secondNested = expectDefined(expectDefined(root.subtasks[1]).subtasks[0]);

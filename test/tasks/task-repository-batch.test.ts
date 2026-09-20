@@ -38,7 +38,7 @@ async function harness(adapter: Adapter, source: string, current = source) {
   const authority = new TaskRefAuthority('batch-contract');
   const index = new TaskIndex(app, {
     statusCatalog,
-    dailyNoteFormat: 'YYYY-MM-DD',
+
     refAuthority: authority,
   });
   await index.initialize();

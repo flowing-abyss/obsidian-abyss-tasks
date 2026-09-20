@@ -36,7 +36,7 @@ async function harness(
   const authority = new TaskRefAuthority('dependency-commands');
   const index = new TaskIndex(app, {
     statusCatalog: statuses,
-    dailyNoteFormat: 'YYYY-MM-DD',
+
     refAuthority: authority,
   });
   indexes.push(index);

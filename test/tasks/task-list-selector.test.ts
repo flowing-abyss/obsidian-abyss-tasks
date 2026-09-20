@@ -349,7 +349,7 @@ describe('selectTaskList', () => {
     const daily = snapshot('daily', {
       line: 1,
       planning: { due: '2026-07-20' as LocalDate },
-      presentation: { linkCount: 0, dailyNoteDate: today },
+      presentation: { linkCount: 0 },
     });
     expect(titles([scheduled, daily], 'today')).toEqual(['scheduled']);
   });
@@ -357,11 +357,11 @@ describe('selectTaskList', () => {
   it('uses only planning dates for list membership, date filters, and date sorting', () => {
     const dailyOnly = snapshot('daily only', {
       line: 1,
-      presentation: { linkCount: 0, dailyNoteDate: today },
+      presentation: { linkCount: 0 },
     });
     const tomorrowDailyOnly = snapshot('tomorrow daily only', {
       line: 2,
-      presentation: { linkCount: 0, dailyNoteDate: '2026-07-14' as LocalDate },
+      presentation: { linkCount: 0 },
     });
     const dueToday = snapshot('due today', { line: 3, planning: { due: today } });
     const scheduledToday = snapshot('scheduled today', {

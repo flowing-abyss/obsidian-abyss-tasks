@@ -17,24 +17,9 @@ export interface TaskStatusDef {
   core: boolean; // symbol+type locked, not deletable
 }
 
-export interface ViewConfig {
-  defaultView: 'month' | 'week' | 'list';
+export interface ResolvedConfig {
   firstDayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6;
-  dailyNoteFolder: string;
-  dailyNoteFormat: string; // moment format, e.g. 'YYYY-MM-DD'
-  upcomingDays: number;
-  style: string; // CSS class, e.g. 'style1'–'style11'
-  globalTaskFilter: string; // tag to strip, e.g. '#task' or ''
-  startPosition: string; // month 'YYYY-MM', exact week start 'YYYY-MM-DD', legacy week 'YYYY-ww', or ''
-  tag: string; // scope to vault tag or ''
-  folder: string; // scope to vault folder prefix or ''
-}
-
-// Fully resolved view config — produced by merging defaults → platform settings → code-block params
-export interface ResolvedConfig extends ViewConfig {
-  isMobile: boolean;
-  sourceNoteDisplay: 'never' | 'always' | 'non-default';
-  taskFilePath: string;
+  startPosition: string;
 }
 
 export interface TagGroup {
@@ -90,8 +75,7 @@ export interface ProjectsSettings {
 }
 
 export interface CalendarSettings {
-  desktop: ViewConfig;
-  mobile: ViewConfig;
+  firstDayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6;
   taskPrefix: string;
   taskFilePath: string;
   taskArchivePath: string;
@@ -146,20 +130,6 @@ export interface SavedViewStateRecovery {
     projectTimeline?: unknown;
     projectOverviewView?: unknown;
   };
-}
-
-// Params parsed from a task-calendar code block (all optional overrides of ViewConfig)
-export interface CodeBlockParams {
-  view?: 'month' | 'week' | 'list';
-  firstDayOfWeek?: number;
-  dailyNoteFolder?: string;
-  dailyNoteFormat?: string;
-  upcomingDays?: number;
-  style?: string;
-  globalTaskFilter?: string;
-  startPosition?: string;
-  tag?: string;
-  folder?: string;
 }
 
 export type PropertyFilter =

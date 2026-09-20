@@ -43,7 +43,6 @@ async function harness(
   const locator = new TaskLocator();
   const index = new TaskIndex(app, {
     statusCatalog,
-    dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
   });
   const snapshotsFromContent =
     snapshotsOverride ??
@@ -99,7 +98,7 @@ describe('ObsidianTaskRepository planning contract', () => {
     const codec = new TaskMarkdownCodec(statusCatalog);
     const index = new TaskIndex(app, {
       statusCatalog,
-      dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
+
       refAuthority: authority,
     });
     await index.initialize();

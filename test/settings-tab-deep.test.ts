@@ -340,7 +340,7 @@ describe('CalendarSettingsTab project value commits', () => {
     const { tab, plugin } = makeTab();
     document.body.append(tab.containerEl);
     try {
-      const body = openSection(tab, 5);
+      const body = openSection(tab, 3);
       const status = expectDefined(plugin.settings.projects.statuses[0]);
       const row = projectStatusRowNamed(body, status.name);
       const alias = expectDefined(
@@ -401,7 +401,7 @@ describe('CalendarSettingsTab project value commits', () => {
     );
     document.body.append(tab.containerEl);
     try {
-      const body = openSection(tab, 5);
+      const body = openSection(tab, 3);
       const raw = expectDefined(
         body.querySelector<HTMLInputElement>(
           '[data-column-id="property:Priority"] .abyss-project-value-raw',
@@ -456,7 +456,7 @@ describe('CalendarSettingsTab project value commits', () => {
     );
     document.body.append(tab.containerEl);
     try {
-      const body = openSection(tab, 5);
+      const body = openSection(tab, 3);
       const rows = Array.from(
         body.querySelectorAll<HTMLElement>(
           '[data-column-id="property:Priority"] .abyss-project-value-row',
@@ -529,7 +529,7 @@ describe('CalendarSettingsTab project value commits', () => {
     );
     document.body.append(tab.containerEl);
     try {
-      const body = openSection(tab, 5);
+      const body = openSection(tab, 3);
       const firstRow = expectDefined(
         body.querySelector<HTMLElement>(
           '[data-column-id="property:Priority"] .abyss-project-value-row',
@@ -594,7 +594,7 @@ describe('CalendarSettingsTab project value commits', () => {
     );
     document.body.append(tab.containerEl);
     try {
-      let body = openSection(tab, 5);
+      let body = openSection(tab, 3);
       expectDefined(
         body.querySelector<HTMLButtonElement>(
           '[data-column-id="property:Priority"] .abyss-project-preset-add',
@@ -659,7 +659,7 @@ describe('CalendarSettingsTab project value commits', () => {
     const { tab, plugin } = makeTab({ projects });
     document.body.append(tab.containerEl);
     try {
-      const body = openSection(tab, 5);
+      const body = openSection(tab, 3);
       const input = expectDefined(
         body.querySelector<HTMLInputElement>(
           '[data-column-id="property:Budget"] .abyss-project-value-raw',
@@ -776,7 +776,7 @@ describe('CalendarSettingsTab project value commits', () => {
       },
     );
     try {
-      const body = openSection(tab, 5);
+      const body = openSection(tab, 3);
       const color = expectDefined(
         body.querySelector<HTMLInputElement>(
           '[data-column-id="property:Priority"] .abyss-project-value-color',
@@ -804,7 +804,7 @@ describe('CalendarSettingsTab project value commits', () => {
     const { tab, plugin } = makeTab();
     document.body.append(tab.containerEl);
     try {
-      const body = openSection(tab, 5);
+      const body = openSection(tab, 3);
       const input = expectDefined(
         projectStatusRowNamed(body, 'inbox').querySelector<HTMLInputElement>(
           '.abyss-project-value-raw',
@@ -839,7 +839,7 @@ describe('CalendarSettingsTab project value commits', () => {
     plugin.renameProjectStatus.mockImplementation(() => pendingRename.promise);
     let hidden = false;
     try {
-      const body = openSection(tab, 5);
+      const body = openSection(tab, 3);
       const input = expectDefined(
         projectStatusRowNamed(body, 'inbox').querySelector<HTMLInputElement>(
           '.abyss-project-value-raw',
@@ -874,7 +874,7 @@ describe('CalendarSettingsTab project value commits', () => {
       status.name = name;
     });
     try {
-      const body = openSection(tab, 5);
+      const body = openSection(tab, 3);
       const input = expectDefined(
         projectStatusRowNamed(body, 'inbox').querySelector<HTMLInputElement>(
           '.abyss-project-value-raw',
@@ -906,7 +906,7 @@ describe('CalendarSettingsTab project value commits', () => {
     document.body.append(tab.containerEl);
     plugin.renameProjectStatus.mockImplementation(() => pendingRename);
     try {
-      const body = openSection(tab, 5);
+      const body = openSection(tab, 3);
       const input = expectDefined(
         projectStatusRowNamed(body, 'inbox').querySelector<HTMLInputElement>(
           '.abyss-project-value-raw',
@@ -1078,7 +1078,7 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     projects.taskInsertionMode = 'section';
     projects.taskInsertionSectionPosition = 'bottom';
     const { tab, plugin, captured } = makeTab({ projects });
-    openSection(tab, 5);
+    openSection(tab, 3);
 
     const position = expectDefined(findComp(captured, 'Task section position', 'dropdown'));
     expect(position.comp.getValue?.()).toBe('bottom');
@@ -1091,7 +1091,7 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
 
 describe('CalendarSettingsTab Hotkeys', () => {
   function hotkeysBody(tab: CalendarSettingsTab): HTMLElement {
-    return openSection(tab, 7);
+    return openSection(tab, 5);
   }
 
   function shortcutInput(body: HTMLElement, action: string): HTMLInputElement {
@@ -1120,7 +1120,7 @@ describe('CalendarSettingsTab Hotkeys', () => {
   it('keeps collapsed Hotkeys inputs out of sequential focus and exposes disclosure state', () => {
     const { tab } = makeTab();
     const section = expectDefined(
-      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section')[7],
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section')[5],
     );
     const header = expectDefined(
       section.querySelector<HTMLButtonElement>('.abyss-settings-section-header'),
@@ -1382,7 +1382,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     const { tab } = makeTab({
       inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
     });
-    const body = openSection(tab, 3);
+    const body = openSection(tab, 1);
     const dd = findDropdown(body, 'Inbox source');
     expect(dd).not.toBeNull();
     const options = Array.from(expectDefined(dd).options).map((o) => o.value);
@@ -1394,7 +1394,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     const { tab, plugin, captured } = makeTab({
       inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
     });
-    openSection(tab, 3);
+    openSection(tab, 1);
     expect(tab.containerEl.textContent).not.toContain(
       'Remove inbox tag when assigning another tag',
     );
@@ -1413,7 +1413,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     const { tab, plugin, captured } = makeTab({
       inbox: { mode: 'untagged', tag: '#saved/inbox', removeTagOnAssign: false },
     });
-    openSection(tab, 3);
+    openSection(tab, 1);
     expect(tab.containerEl.textContent).not.toContain(
       'Remove inbox tag when assigning another tag',
     );
@@ -1433,7 +1433,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     const { tab } = makeTab({
       inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
     });
-    const body = openSection(tab, 3);
+    const body = openSection(tab, 1);
     const input = findInput(body, 'Inbox tag');
     expect(input).not.toBeNull();
     expect(expectDefined(input).value).toBe('#inbox');
@@ -1443,7 +1443,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     const { tab, plugin } = makeTab({
       inbox: { mode: 'untagged', tag: '#saved', removeTagOnAssign: false },
     });
-    const body = openSection(tab, 3);
+    const body = openSection(tab, 1);
     const input = findInput(body, 'Inbox tag');
     expect(input).toBeNull();
     expect(findSettingEl(body, 'Remove inbox tag when assigning another tag')).toBeNull();
@@ -1458,7 +1458,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     const { tab, plugin, captured } = makeTab({
       inbox: { mode: 'tag', tag: '#old', removeTagOnAssign: true },
     });
-    openSection(tab, 3);
+    openSection(tab, 1);
     expectDefined(findComp(captured, 'Inbox tag', 'text')).comp.setValue('  #new  ');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.inbox.tag).toBe('#new');
@@ -1468,7 +1468,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     const { tab, plugin, captured } = makeTab({
       inbox: { mode: 'tag', tag: '#old', removeTagOnAssign: true },
     });
-    const body = openSection(tab, 3);
+    const body = openSection(tab, 1);
     const component = expectDefined(findComp(captured, 'Inbox tag', 'text')).comp;
     const input = expectDefined(findInput(body, 'Inbox tag'));
 
@@ -1486,7 +1486,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     const { tab } = makeTab({
       inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
     });
-    const body = openSection(tab, 3);
+    const body = openSection(tab, 1);
     const setting = expectDefined(
       findSettingEl(body, 'Remove inbox tag when assigning another tag'),
     );
@@ -1499,7 +1499,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
       inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
     });
     const general = openSection(tab, 0);
-    const inbox = openSection(tab, 3);
+    const inbox = openSection(tab, 1);
 
     expect(expectDefined(findSettingEl(general, 'Task prefix')).textContent).toContain(
       'Tasks added from Inbox skip this prefix.',
@@ -1511,7 +1511,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
 
   it('add group button appends new group with timestamp id', () => {
     const { tab, plugin, captured } = makeTab({ tagGroups: [] });
-    openSection(tab, 4);
+    openSection(tab, 2);
     // Add group button is the only button with empty name (no setName called)
     const addBtn = captured.find((c) => c.type === 'button' && c.name === '');
     expect(addBtn).toBeDefined();
@@ -1541,7 +1541,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
       { tasks: [task({ tags: ['#auto', '#work/client'] })] },
     );
 
-    const body = openSection(tab, 4);
+    const body = openSection(tab, 2);
     expect(body.textContent).toContain('Configured');
     expect(body.textContent).toContain('auto');
     expect(body.textContent).toContain('work');
@@ -1562,7 +1562,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
       { tagGroups: [] },
       { tasks: [task({ tags: ['#auto'] })], expandedTagGroupIds: [id] },
     );
-    openSection(tab, 4);
+    openSection(tab, 2);
 
     expectDefined(findComp(captured, 'Group name', 'text')).comp.setValue('Automatic renamed');
 
@@ -1577,7 +1577,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
       { tagGroups: [] },
       { tasks: [task({ tags: ['#work/client'] })], expandedTagGroupIds: [id] },
     );
-    openSection(tab, 4);
+    openSection(tab, 2);
 
     expectDefined(findComp(captured, 'Group name', 'text')).comp.setValue('Focused work');
     await flushMicrotasks();
@@ -1611,7 +1611,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
         saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')),
       },
     );
-    openSection(tab, 4);
+    openSection(tab, 2);
 
     expectDefined(findComp(captured, 'Group name', 'text')).comp.setValue('Unsaved name');
     await flushMicrotasks();
@@ -1629,7 +1629,7 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
 
   it('group name input saves on change', () => {
     const { tab, plugin, captured } = makeTab({ tagGroups: [{ ...baseGroup }] });
-    openSection(tab, 4);
+    openSection(tab, 2);
     expectDefined(findComp(captured, 'Group name', 'text')).comp.setValue('Personal');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(expectDefined(plugin.settings.tagGroups[0]).name).toBe('Personal');
@@ -1637,7 +1637,7 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
 
   it('mode dropdown has prefix/manual options', () => {
     const { tab } = makeTab({ tagGroups: [{ ...baseGroup }] });
-    const body = openSection(tab, 4);
+    const body = openSection(tab, 2);
     const dd = findDropdown(body, 'Mode');
     expect(dd).not.toBeNull();
     const options = Array.from(expectDefined(dd).options).map((o) => o.value);
@@ -1646,21 +1646,21 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
 
   it('prefix mode shows Prefix input', () => {
     const { tab } = makeTab({ tagGroups: [{ ...baseGroup, mode: 'prefix', prefix: 'work' }] });
-    const body = openSection(tab, 4);
+    const body = openSection(tab, 2);
     expect(findInput(body, 'Prefix')).not.toBeNull();
     expect(findInput(body, 'Tags')).toBeNull();
   });
 
   it('manual mode shows Tags input', () => {
     const { tab } = makeTab({ tagGroups: [{ ...baseGroup, mode: 'manual', tags: ['#a', '#b'] }] });
-    const body = openSection(tab, 4);
+    const body = openSection(tab, 2);
     expect(findInput(body, 'Tags')).not.toBeNull();
     expect(findInput(body, 'Prefix')).toBeNull();
   });
 
   it('prefix input normalizes one tag before saving', () => {
     const { tab, plugin, captured } = makeTab({ tagGroups: [{ ...baseGroup, prefix: '' }] });
-    openSection(tab, 4);
+    openSection(tab, 2);
     expectDefined(findComp(captured, 'Prefix', 'text')).comp.setValue('  ##work  ');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(expectDefined(plugin.settings.tagGroups[0]).prefix).toBe('work');
@@ -1670,7 +1670,7 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
     const { tab, plugin, captured } = makeTab({
       tagGroups: [{ ...baseGroup, mode: 'manual', tags: [] }],
     });
-    openSection(tab, 4);
+    openSection(tab, 2);
     expectDefined(findComp(captured, 'Tags', 'text')).comp.setValue('a, ##b, #a #c, c');
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(expectDefined(plugin.settings.tagGroups[0]).tags).toEqual(['#a', '#b', '#c']);
@@ -1680,7 +1680,7 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
     const { tab, plugin, captured } = makeTab({
       tagGroups: [{ ...baseGroup, mode: 'manual', tags: [] }],
     });
-    openSection(tab, 4);
+    openSection(tab, 2);
     expectDefined(findComp(captured, 'Tags', 'text')).comp.setValue('a,, ,b');
     expect(expectDefined(plugin.settings.tagGroups[0]).tags).toEqual(['#a', '#b']);
   });
@@ -1694,7 +1694,7 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
         ? { ...baseGroup, mode: 'manual' as const, tags: ['#old'] }
         : { ...baseGroup, mode: 'prefix' as const, prefix: 'old' };
     const { tab, plugin, captured } = makeTab({ tagGroups: [group] });
-    const body = openSection(tab, 4);
+    const body = openSection(tab, 2);
     const input = expectDefined(findInput(body, field));
     vi.mocked(plugin.saveSettings).mockClear();
 
@@ -1708,7 +1708,7 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
 
   it('color picker saves on change', () => {
     const { tab, plugin, captured } = makeTab({ tagGroups: [{ ...baseGroup, color: '#ff0000' }] });
-    const body = openSection(tab, 4);
+    const body = openSection(tab, 2);
     const colorInput = findColorInput(body, 'Color');
     expect(colorInput).not.toBeNull();
     expectDefined(findComp(captured, 'Color', 'color')).comp.setValue('#00ff00');
@@ -1720,7 +1720,7 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
     const { tab, plugin, captured } = makeTab({
       tagGroups: [{ ...baseGroup }, { ...baseGroup, id: 'g2', name: 'Other' }],
     });
-    const body = openSection(tab, 4);
+    const body = openSection(tab, 2);
     const cards = body.querySelectorAll('.abyss-settings-card');
     expect(cards).toHaveLength(2);
     // Each card has its own "Delete group" warning button.
@@ -1741,93 +1741,38 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
   });
 });
 
-describe('CalendarSettingsTab renderViewConfigSettings', () => {
-  it('default view dropdown has month/week/list', () => {
+describe('shared calendar preference', () => {
+  it('offers one shared first day setting and saves its value', () => {
+    const { tab, plugin, captured } = makeTab();
+    const body = openSection(tab, 0);
+    const names = Array.from(tab.containerEl.querySelectorAll('div'))
+      .filter((el) => el.children.length === 0)
+      .map((el) => el.textContent);
+    expect(names.filter((name) => name === 'First day of week')).toHaveLength(1);
+    expect(findDropdown(body, 'First day of week')?.value).toBe('1');
+    expectDefined(findComp(captured, 'First day of week', 'dropdown')).comp.setValue('6');
+    expect(plugin.settings.firstDayOfWeek).toBe(6);
+    expect(plugin.saveSettings).toHaveBeenCalled();
+  });
+  it('omits obsolete controls and platform sections', () => {
     const { tab } = makeTab();
-    const body = openSection(tab, 1); // Desktop
-    const dd = findDropdown(body, 'Default view');
-    expect(dd).not.toBeNull();
-    const options = Array.from(expectDefined(dd).options).map((o) => o.value);
-    expect(options).toEqual(['month', 'week', 'list']);
-  });
-
-  it('default view change saves', () => {
-    const { tab, plugin, captured } = makeTab();
-    openSection(tab, 1);
-    expectDefined(findComp(captured, 'Default view', 'dropdown')).comp.setValue('week');
-    expect(plugin.saveSettings).toHaveBeenCalled();
-    expect(plugin.settings.desktop.defaultView).toBe('week');
-  });
-
-  it('does not render a legacy "Default style" dropdown (desktop)', () => {
-    const { tab } = makeTab();
-    const body = openSection(tab, 1);
-    expect(findDropdown(body, 'Default style')).toBeNull();
-  });
-
-  it('first day of week dropdown parses int on change', () => {
-    const { tab, plugin, captured } = makeTab();
-    openSection(tab, 1);
-    expectDefined(findComp(captured, 'First day of week', 'dropdown')).comp.setValue('1');
-    expect(plugin.saveSettings).toHaveBeenCalled();
-    expect(plugin.settings.desktop.firstDayOfWeek).toBe(1);
-  });
-
-  it('daily note folder input saves', () => {
-    const { tab, plugin, captured } = makeTab();
-    openSection(tab, 1);
-    expectDefined(findComp(captured, 'Daily note folder', 'text')).comp.setValue('notes/daily');
-    expect(plugin.saveSettings).toHaveBeenCalled();
-    expect(plugin.settings.desktop.dailyNoteFolder).toBe('notes/daily');
-  });
-
-  it('daily note format input saves', () => {
-    const { tab, plugin, captured } = makeTab();
-    openSection(tab, 1);
-    expectDefined(findComp(captured, 'Daily note format', 'text')).comp.setValue('DD-MM-YYYY');
-    expect(plugin.saveSettings).toHaveBeenCalled();
-    expect(plugin.settings.desktop.dailyNoteFormat).toBe('DD-MM-YYYY');
-  });
-
-  it('daily note folder and format remain available for calendar configuration', () => {
-    const { tab } = makeTab();
-    const body = openSection(tab, 1);
-    expect(findInput(body, 'Daily note folder')).not.toBeNull();
-    expect(findInput(body, 'Daily note format')).not.toBeNull();
-  });
-
-  it('global task filter input saves', () => {
-    const { tab, plugin, captured } = makeTab();
-    openSection(tab, 1);
-    expectDefined(findComp(captured, 'Global task filter', 'text')).comp.setValue('#task');
-    expect(plugin.saveSettings).toHaveBeenCalled();
-    expect(plugin.settings.desktop.globalTaskFilter).toBe('#task');
-  });
-
-  it('upcoming days valid number saves', () => {
-    const { tab, plugin, captured } = makeTab();
-    openSection(tab, 1);
-    expectDefined(findComp(captured, 'Upcoming days', 'text')).comp.setValue('14');
-    expect(plugin.saveSettings).toHaveBeenCalled();
-    expect(plugin.settings.desktop.upcomingDays).toBe(14);
-  });
-
-  it.each(['abc', '-5', '0'])('upcoming days invalid input %s does not save', (invalidValue) => {
-    const { tab, plugin, captured } = makeTab({
-      desktop: { ...DEFAULT_SETTINGS.desktop, upcomingDays: 7 },
-    });
-    openSection(tab, 1);
-    expectDefined(findComp(captured, 'Upcoming days', 'text')).comp.setValue(invalidValue);
-    expect(plugin.saveSettings).not.toHaveBeenCalled();
-    expect(plugin.settings.desktop.upcomingDays).toBe(7);
-  });
-
-  it('mobile section has same view config settings, and no "Default style" dropdown', () => {
-    const { tab } = makeTab();
-    const body = openSection(tab, 2); // Mobile
-    expect(findDropdown(body, 'Default view')).not.toBeNull();
-    expect(findDropdown(body, 'Default style')).toBeNull();
-    expect(findInput(body, 'Daily note folder')).not.toBeNull();
+    const names = Array.from(tab.containerEl.querySelectorAll('div'))
+      .filter((el) => el.children.length === 0)
+      .map((el) => el.textContent);
+    for (const name of [
+      'Default view',
+      'Daily note folder',
+      'Daily note format',
+      'Global task filter',
+      'Upcoming days',
+    ])
+      expect(names).not.toContain(name);
+    const sections = tab.containerEl.querySelectorAll('.abyss-settings-section-header');
+    expect(
+      Array.from(sections)
+        .map((el) => el.textContent)
+        .join(' '),
+    ).not.toMatch(/Desktop|Mobile/);
   });
 });
 
@@ -1881,8 +1826,8 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
   it('rejects a tag-group card payload dropped on the project-status list', () => {
     const tagGroups = [{ id: 'group-work', name: 'Work', mode: 'prefix' as const, prefix: 'work' }];
     const { tab, plugin } = makeTab({ tagGroups });
-    const tagBody = openSection(tab, 4);
-    const projectBody = openSection(tab, 5);
+    const tagBody = openSection(tab, 2);
+    const projectBody = openSection(tab, 3);
     const beforeStatuses = plugin.settings.projects.statuses.map(({ id }) => id);
 
     dragCard(
@@ -1897,7 +1842,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
   it('keeps the focused draft and current identities through repeated project-status drops', () => {
     const { tab, plugin } = makeTab();
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const scroller = attachSettingsScroller(tab, 513);
     const [first, second, third] = plugin.settings.projects.statuses;
     const firstStatus = expectDefined(first);
@@ -1945,7 +1890,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       onChange: () => () => {},
     };
     const { tab } = makeTab({ projects }, { projectProperties });
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     attachSettingsScroller(tab, 513);
     const rows = Array.from(
       body.querySelectorAll<HTMLElement>(
@@ -1981,7 +1926,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
   it('owns a nested project-status drag without bubbling it into the property card', () => {
     const { tab, plugin } = makeTab();
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const statusProperty = expectDefined(
       body.querySelector<HTMLElement>('[data-card-id="project-property:status"]'),
     );
@@ -2001,7 +1946,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
   it('preserves focused draft context when display rebuilds an open settings tab', () => {
     const { tab, plugin } = makeTab();
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const scroller = attachSettingsScroller(tab, 513);
     const status = expectDefined(plugin.settings.projects.statuses[0]);
     const before = expectDefined(
@@ -2031,7 +1976,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
   it('updates status labels in place and restores a draft after the display name changes', () => {
     const { tab, plugin } = makeTab();
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     attachSettingsScroller(tab, 513);
     const status = expectDefined(plugin.settings.projects.statuses[0]);
     const row = projectStatusRowNamed(body, status.name);
@@ -2088,7 +2033,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expectDefined(
       plugin.settings.projects.table.columns.find(({ id }) => id === 'progress'),
     ).width = 260;
-    openSection(tab, 5);
+    openSection(tab, 3);
 
     (tab as unknown as { display(): void }).display();
 
@@ -2101,7 +2046,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
   it('expands one card without replacing an unrelated focused settings control', () => {
     const { tab } = makeTab({}, { expand: false });
     const general = openSection(tab, 0);
-    const projects = openSection(tab, 5);
+    const projects = openSection(tab, 3);
     attachSettingsScroller(tab, 513);
     const taskPrefix = expectDefined(findInput(general, 'Task prefix'));
     taskPrefix.value = '#unfinished';
@@ -2131,7 +2076,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       },
     };
     const { tab, plugin } = makeTab({}, { projectProperties });
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const scroller = attachSettingsScroller(tab, 513);
     const status = expectDefined(plugin.settings.projects.statuses[0]);
     const input = expectDefined(
@@ -2171,7 +2116,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       .mockRejectedValueOnce(new Error('disk unavailable'))
       .mockResolvedValue(undefined);
     const { tab, plugin } = makeTab({}, { saveSettings });
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const before = plugin.settings.projects.statuses.map(({ id }) => id);
     const first = projectStatusRowNamed(
       body,
@@ -2218,7 +2163,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       .mockImplementationOnce(() => firstSave)
       .mockResolvedValue(undefined);
     const { tab, plugin } = makeTab({}, { saveSettings });
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const [first, second, third] = plugin.settings.projects.statuses;
     const firstStatus = expectDefined(first);
     const secondStatus = expectDefined(second);
@@ -2246,7 +2191,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       { tagGroups: [] },
       { tasks: [], saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
     );
-    openSection(tab, 4);
+    openSection(tab, 2);
     attachSettingsScroller(tab, 513);
 
     expectDefined(capturedButton(captured, '+ add group', 'Tags').clickHandler)();
@@ -2268,7 +2213,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       { tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }] },
       { tasks: [], saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
     );
-    openSection(tab, 4);
+    openSection(tab, 2);
     attachSettingsScroller(tab, 513);
 
     expectDefined(capturedButton(captured, 'Delete group', 'Tags').clickHandler)();
@@ -2288,7 +2233,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
   it('renders project-status add and delete drafts before persistence settles', async () => {
     const pending = deferred<void>();
     const { tab, plugin } = makeTab({}, { saveSettings: vi.fn(() => pending.promise) });
-    openSection(tab, 5);
+    openSection(tab, 3);
     attachSettingsScroller(tab, 513);
 
     expectDefined(
@@ -2329,7 +2274,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       { taskStatuses: [...structuredClone(DEFAULT_SETTINGS.taskStatuses), custom] },
       { saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
     );
-    openSection(tab, 6);
+    openSection(tab, 4);
     attachSettingsScroller(tab, 513);
 
     expectDefined(capturedButton(captured, '+ add status', 'Custom statuses').clickHandler)();
@@ -2458,7 +2403,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
   it('renders project statuses as always-visible shared compact rows', () => {
     const { tab } = makeTab({}, { expand: false });
-    const body = openSection(tab, 5); // Projects
+    const body = openSection(tab, 3); // Projects
     const statusProperty = expectDefined(
       body.querySelector<HTMLElement>('[data-card-id="project-property:status"]'),
     );
@@ -2488,7 +2433,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     });
     const storedColors = projects.statuses.map(({ color }) => color);
     const { tab, plugin } = makeTab({ projects }, { expand: false });
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const statusProperty = expectDefined(
       body.querySelector<HTMLElement>('[data-card-id="project-property:status"]'),
     );
@@ -2509,7 +2454,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     projects.statuses = [expectDefined(projects.statuses[0])];
     projects.defaultStatusId = expectDefined(projects.statuses[0]).id;
     const { tab, plugin } = makeTab({ projects });
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const row = projectStatusRowNamed(body, expectDefined(projects.statuses[0]).name);
     const leftPanel = expectDefined(
       row.querySelector<HTMLInputElement>('.abyss-project-value-left-panel'),
@@ -2529,7 +2474,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
   it('a single Default status dropdown lists all statuses and sets defaultStatusId', () => {
     const { tab, plugin, captured } = makeTab();
-    openSection(tab, 5);
+    openSection(tab, 3);
     const dd = captured.find((c) => c.name === 'Default status' && c.type === 'dropdown');
     expect(dd).toBeTruthy();
     const plannedId = expectDefined(plugin.settings.projects.statuses[1]).id;
@@ -2541,7 +2486,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
   it('renders project status appearance with native dropdown presentation', () => {
     const { tab, plugin } = makeTab();
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const appearance = expectDefined(
       projectStatusRowNamed(body, 'inbox').querySelector<HTMLSelectElement>(
         '.abyss-project-value-appearance',
@@ -2567,7 +2512,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     plugin.settings.projects.defaultStatusId = expectDefined(
       plugin.settings.projects.statuses[0],
     ).id;
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const survivorId = expectDefined(plugin.settings.projects.statuses[1]).id;
     expectDefined(
       projectStatusRowNamed(body, 'inbox').querySelector<HTMLButtonElement>(
@@ -2586,7 +2531,7 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
         { id: 'm', name: 'Man', mode: 'manual', tags: ['#x'] },
       ],
     });
-    const body = openSection(tab, 4);
+    const body = openSection(tab, 2);
     const badges = Array.from(body.querySelectorAll('.abyss-settings-card-badge')).map(
       (b) => b.textContent,
     );
@@ -2596,7 +2541,7 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
 
   it('status rows have one shared property source and no per-status source badge', () => {
     const { tab } = makeTab();
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const badges = Array.from(body.querySelectorAll('.abyss-settings-card-badge')).map(
       (b) => b.textContent,
     );
@@ -2611,7 +2556,7 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
 
   it('commits a status rename on blur rather than on each input event', async () => {
     const { tab, plugin } = makeTab();
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const input = expectDefined(
       projectStatusRowNamed(body, 'inbox').querySelector<HTMLInputElement>(
         '.abyss-project-value-raw',
@@ -2630,7 +2575,7 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
 
   it('nests status and curated date controls inside their property cards', () => {
     const { tab } = makeTab();
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const text = body.textContent;
     expect(text).not.toContain('Statuses');
     expect(text.indexOf('Status property')).toBeGreaterThan(text.indexOf('Table columns'));
@@ -2661,7 +2606,7 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
       onChange: () => () => {},
     };
     const { tab, plugin } = makeTab({ projects }, { projectProperties });
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const status = expectDefined(findInput(body, 'Status property'));
     const start = expectDefined(findDropdown(body, 'Start property'));
     expect(status.value).toBe('Статус');
@@ -2692,7 +2637,7 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
       };
 
       const { tab, plugin } = makeTab({ projects }, { projectProperties });
-      const body = openSection(tab, 5);
+      const body = openSection(tab, 3);
       if (commitEvent === 'Enter') attachSettingsScroller(tab, 513);
       const input = expectDefined(findInput(body, 'Status property'));
 
@@ -2727,7 +2672,7 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
   ])('rejects a $label status property and resets the draft', ({ draft }) => {
     vi.mocked(Notice).mockClear();
     const { tab, plugin } = makeTab();
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const input = expectDefined(findInput(body, 'Status property'));
 
     input.value = draft;
@@ -2741,7 +2686,7 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
 
   it('does not save the existing trimmed status property on Enter', async () => {
     const { tab, plugin } = makeTab();
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     const scroller = attachSettingsScroller(tab, 513);
     const input = expectDefined(findInput(body, 'Status property'));
     input.value = '  STATUS  ';
@@ -2774,7 +2719,7 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
       propertyCandidates: ['status', 'phase'],
     };
     const { tab, plugin, captured } = makeTab({ projects });
-    const body = openSection(tab, 5);
+    const body = openSection(tab, 3);
     expect(findDropdown(body, 'Status migration needs attention')).not.toBeNull();
     const resolution = expectDefined(
       captured.find(

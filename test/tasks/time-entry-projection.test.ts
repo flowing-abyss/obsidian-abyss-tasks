@@ -73,7 +73,7 @@ async function offsetIndex(timeZoneOffsetAt?: TimeEntryModule.OffsetAt): Promise
   seedTaskCache(app, FILE, [{ task: ' ', parent: -1, line: 0 }]);
   const index = new TaskIndex(app, {
     statusCatalog: canonicalStatusCatalog(),
-    dailyNoteFormat: 'YYYY-MM-DD',
+
     ...(timeZoneOffsetAt === undefined ? {} : { timeZoneOffsetAt }),
   });
   await index.initialize();

@@ -36,7 +36,7 @@ function renderDayHeaders(
   const row = root.createDiv({ cls: 'abyss-tg-header-row' });
   row.createDiv({ cls: 'abyss-tg-header-gutter' });
   for (const date of dates) {
-    const cell = row.createDiv({
+    const cell = row.createEl(onDayHeaderClick === undefined ? 'div' : 'button', {
       cls: `abyss-tg-header-cell${date === today ? ' is-today' : ''}${onDayHeaderClick === undefined ? '' : ' is-clickable'}`,
     });
     cell.createSpan({ cls: 'abyss-tg-header-weekday', text: window.moment(date).format('ddd') });
@@ -45,6 +45,8 @@ function renderDayHeaders(
       text: window.moment(date).format('D'),
     });
     if (onDayHeaderClick !== undefined) {
+      cell.setAttribute('type', 'button');
+      cell.setAttribute('aria-label', date);
       cell.addEventListener('click', () => {
         onDayHeaderClick(date);
       });

@@ -440,10 +440,10 @@ describe('TaskCalendarPlugin onload', () => {
     expect(plugin.views__.get(PANEL_VIEW_TYPE)).toBeTypeOf('function');
   });
 
-  it('registers the task-calendar code-block processor', async () => {
+  it('does not register an embedded calendar processor', async () => {
     const plugin = makePlugin();
     await plugin.onload();
-    expect(plugin.markdownCodeBlockProcessors__.get('task-calendar')).toBeTypeOf('function');
+    expect(plugin.markdownCodeBlockProcessors__.size).toBe(0);
   });
 
   it('adds the open-panel command', async () => {
@@ -479,36 +479,10 @@ describe('TaskCalendarPlugin onload', () => {
     expect(spy).toHaveBeenCalledOnce();
   });
 
-  it('installs window.renderCalendar shim', async () => {
+  it('does not install window.renderCalendar shim', async () => {
     const plugin = makePlugin();
     await plugin.onload();
-    expect((window as unknown as Record<string, unknown>)['renderCalendar']).toBeTypeOf('function');
-  });
-});
-
-describe('TaskCalendarPlugin renderCalendar shim', () => {
-  it('warns and returns when dv has no container', async () => {
-    const plugin = makePlugin();
-    await plugin.onload();
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    (window as unknown as { renderCalendar: (dv: unknown, params: unknown) => void })[
-      'renderCalendar'
-    ]({}, {});
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no Dataview container'));
-    warnSpy.mockRestore();
-  });
-
-  it('mounts CalendarRenderer into the container when dv.container is present', async () => {
-    const plugin = makePlugin();
-    await plugin.onload();
-    const container = createFragment().createDiv();
-    (
-      window as unknown as {
-        renderCalendar: (dv: { container?: HTMLElement }, params: unknown) => void;
-      }
-    )['renderCalendar']({ container }, {});
-    // CalendarRenderer adds the configured style class to the root element (the container itself)
-    expect(container.classList.contains('style1')).toBe(true);
+    expect((window as unknown as Record<string, unknown>)['renderCalendar']).toBeUndefined();
   });
 });
 
@@ -646,14 +620,6 @@ describe('TaskCalendarPlugin onunload', () => {
     const spy = vi.spyOn(plugin.taskIndex, 'destroy');
     plugin.onunload();
     expect(spy).toHaveBeenCalledOnce();
-  });
-
-  it('deletes window.renderCalendar', async () => {
-    const plugin = makePlugin();
-    await plugin.onload();
-    expect((window as unknown as Record<string, unknown>)['renderCalendar']).toBeDefined();
-    plugin.onunload();
-    expect((window as unknown as Record<string, unknown>)['renderCalendar']).toBeUndefined();
   });
 });
 

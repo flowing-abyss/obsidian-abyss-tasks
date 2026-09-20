@@ -11,7 +11,7 @@ import type { LinkToken } from '../markdown/links';
 import { PRIORITY_LEVELS } from '../priority';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
-import { DEFAULT_VIEW_CONFIG, getListViewDefaults } from '../settings/defaults';
+import { getListViewDefaults } from '../settings/defaults';
 import type {
   CalendarSettings,
   ListViewState,
@@ -1236,13 +1236,9 @@ export class CenterPanel {
   }
 
   private calendarConfig_abyssPrivate(): ResolvedConfig {
-    const firstDayOfWeek = this.settings_abyssPrivate.desktop.firstDayOfWeek;
+    const firstDayOfWeek = this.settings_abyssPrivate.firstDayOfWeek;
     return {
-      ...DEFAULT_VIEW_CONFIG,
-      ...this.settings_abyssPrivate.desktop,
-      isMobile: false,
-      sourceNoteDisplay: this.settings_abyssPrivate.sourceNoteDisplay,
-      taskFilePath: this.settings_abyssPrivate.taskFilePath,
+      firstDayOfWeek,
       startPosition: this.calendarStartPosition_abyssPrivate(firstDayOfWeek),
     };
   }
@@ -2211,7 +2207,7 @@ export class CenterPanel {
         : (updated.planning.scheduled ?? updated.planning.due);
     const followDate = nextSegmentDate ?? anchor;
     if (followDate === undefined || followDate === '') return;
-    const firstDayOfWeek = this.settings_abyssPrivate.desktop.firstDayOfWeek;
+    const firstDayOfWeek = this.settings_abyssPrivate.firstDayOfWeek;
     const outsideWeek = !visibleCalendarDates(
       'week',
       this.calDate_abyssPrivate,

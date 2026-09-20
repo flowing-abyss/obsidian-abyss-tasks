@@ -16,14 +16,12 @@ const ROOT = resolve(import.meta.dirname, '../..');
 
 const FINAL_CONSUMERS = [
   'src/main.ts',
-  'src/code-block/registerCodeBlock.ts',
   'src/settings/SettingsTab.ts',
   'src/projects/ProjectStore.ts',
   'src/views/PanelView.ts',
   'src/panels/CenterPanel.ts',
   'src/panels/LeftPanel.ts',
   'src/panels/RightPanel.ts',
-  'src/ui/CalendarRenderer.ts',
   'src/ui/TaskModal.ts',
 ] as const;
 
@@ -34,7 +32,6 @@ const LEGACY_TESTS = [
   'test/task-date-index.test.ts',
   'test/blockquote-tasks.test.ts',
   'test/panel-view.test.ts',
-  'test/register-code-block-deep.test.ts',
   'test/center-panel-integration.test.ts',
 ] as const;
 
@@ -66,10 +63,7 @@ const PARSER_GRAMMAR_TESTS = new Set([
   'test/task-parser-deep.test.ts',
 ]);
 
-const CALENDAR_PROJECTION_CONSUMERS = new Set([
-  'src/panels/CenterPanel.ts',
-  'src/ui/CalendarRenderer.ts',
-]);
+const CALENDAR_PROJECTION_CONSUMERS = new Set(['src/panels/CenterPanel.ts']);
 
 function source(path: string): string {
   return node.fs.readFileSync(resolve(ROOT, path), 'utf8');

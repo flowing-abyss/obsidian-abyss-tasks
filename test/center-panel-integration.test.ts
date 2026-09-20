@@ -107,12 +107,9 @@ function queryApiForSnapshots(
       .filter((item) => query?.statuses === undefined || query.statuses.includes(item.status))
       .filter((item) => {
         if (query?.dateRange === undefined) return true;
-        const dates = [
-          item.planning.due,
-          item.planning.scheduled,
-          item.planning.start,
-          item.presentation.dailyNoteDate,
-        ].filter((date): date is LocalDate => date !== undefined);
+        const dates = [item.planning.due, item.planning.scheduled, item.planning.start].filter(
+          (date): date is LocalDate => date !== undefined,
+        );
         return dates.some(
           (date) =>
             date >= expectDefined(query.dateRange).from &&
@@ -126,12 +123,9 @@ function queryApiForSnapshots(
       const wanted = new Set(dates);
       const materialized = getTasks()
         .filter((item) => {
-          const exactDate = [
-            item.planning.due,
-            item.planning.scheduled,
-            item.planning.start,
-            item.presentation.dailyNoteDate,
-          ].some((date) => date !== undefined && wanted.has(date));
+          const exactDate = [item.planning.due, item.planning.scheduled, item.planning.start].some(
+            (date) => date !== undefined && wanted.has(date),
+          );
           if (exactDate) return true;
           return (
             item.planning.start !== undefined &&
@@ -443,13 +437,13 @@ describe('CenterPanel list selection', () => {
     const dailyOnly = task({
       title: 'daily-only',
       source,
-      presentation: { dailyNoteDate: TODAY },
+      presentation: {},
     });
     const planned = task({
       title: 'planned',
       source: { ...source, line: 1 },
       planning: { due: TODAY },
-      presentation: { dailyNoteDate: TODAY },
+      presentation: {},
     });
     const panel = makeStaticPanel(state, [dailyOnly, planned]);
 
@@ -2164,9 +2158,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
   });
 
   it('renders a daily-note-only task in No date rather than Today', () => {
-    const container = renderWithGroupingByDate([
-      task({ title: 'daily-only', presentation: { dailyNoteDate: '2026-06-25' } }),
-    ]);
+    const container = renderWithGroupingByDate([task({ title: 'daily-only', presentation: {} })]);
     expect(
       Array.from(container.querySelectorAll('.abyss-group-header')).map(
         (header) => header.textContent,
@@ -2583,7 +2575,7 @@ describe('CenterPanel.renderSearch', () => {
   });
 
   it('routes a daily-note-only search result to inbox', () => {
-    const t = task({ title: 'daily-only', presentation: { dailyNoteDate: '2026-06-25' } });
+    const t = task({ title: 'daily-only', presentation: {} });
     const state = new AppState();
     state.set('mode', 'search');
     state.set('searchQuery', 'daily');
@@ -2618,7 +2610,7 @@ describe('CenterPanel source note chip', () => {
       title: 'daily task',
       planning: { due: '2026-06-25' },
       source: { filePath: 'periodic/daily/2026-06-25.md' },
-      presentation: { dailyNoteDate: '2026-06-25' },
+      presentation: {},
     });
     const panel = makeSearchPanel([t], { sourceNoteDisplay: 'always' });
     expect(panel['el'].querySelector('.abyss-task-source-note')).not.toBeNull();
@@ -2650,15 +2642,17 @@ describe('CenterPanel source note chip', () => {
     panel.destroy();
   });
 
-  it('sourceNoteDisplay non-default → no chip for daily note task', () => {
+  it('sourceNoteDisplay non-default → chip shown for dated note outside taskFilePath', () => {
     const t = task({
       title: 'daily task',
       planning: { due: '2026-06-25' },
       source: { filePath: 'periodic/daily/2026-06-25.md' },
-      presentation: { dailyNoteDate: '2026-06-25' },
+      presentation: {},
     });
     const panel = makeSearchPanel([t], { sourceNoteDisplay: 'non-default' });
-    expect(panel['el'].querySelector('.abyss-task-source-note')).toBeNull();
+    expect(panel['el'].querySelector('.abyss-task-source-note')?.textContent).toContain(
+      '2026-06-25',
+    );
     panel.destroy();
   });
 

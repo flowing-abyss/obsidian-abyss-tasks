@@ -1015,3 +1015,30 @@ describe('SettingsPersistenceCoordinator write queue', () => {
     expect((savedStatic['projects'] as Record<string, unknown>)['table']).toBeUndefined();
   });
 });
+
+describe('shared week preference', () => {
+  it.each([-1, 7, 1.5, '6', null])(
+    'defaults invalid week preference %s to Monday',
+    async (firstDayOfWeek) => {
+      const coordinator = new SettingsPersistenceCoordinator(
+        memoryPort(markedStatic({ firstDayOfWeek }), undefined),
+      );
+      const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      expect(loaded.settings.firstDayOfWeek).toBe(1);
+    },
+  );
+  it('uses the shared value without consulting obsolete platform settings', async () => {
+    const coordinator = new SettingsPersistenceCoordinator(
+      memoryPort(
+        markedStatic({
+          firstDayOfWeek: 6,
+          desktop: { firstDayOfWeek: 0 },
+          mobile: { firstDayOfWeek: 3 },
+        }),
+        undefined,
+      ),
+    );
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(loaded.settings.firstDayOfWeek).toBe(6);
+  });
+});

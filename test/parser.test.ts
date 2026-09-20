@@ -215,11 +215,10 @@ describe('parseTask', () => {
     expect(t?.text).not.toContain('https://');
   });
 
-  it('strips globalTaskFilter tag', () => {
+  it('separates a nested tag from the displayed task title', () => {
     const t = parseTask('- [ ] #task/one-off Buy milk', {
       filePath: 'f.md',
       line: 0,
-      globalTaskFilter: '#task/one-off',
     });
     expect(t?.text).toBe('Buy milk');
     expect(t?.text).not.toContain('#task/one-off');
@@ -228,15 +227,6 @@ describe('parseTask', () => {
   it('strips all other hashtags', () => {
     const t = parseTask('- [ ] Buy #shopping milk', { filePath: 'f.md', line: 0 });
     expect(t?.text).toBe('Buy milk');
-  });
-
-  it('preserves dailyNoteDate from context', () => {
-    const t = parseTask('- [ ] Something', {
-      filePath: 'periodic/daily/2026-06-22.md',
-      line: 0,
-      dailyNoteDate: '2026-06-22',
-    });
-    expect(t?.dailyNoteDate).toBe('2026-06-22');
   });
 
   it('preserves rawText unchanged', () => {
@@ -361,7 +351,6 @@ describe('parseTask', () => {
     const t = parseTask('- [ ] #task/x Buy', {
       filePath: 'f.md',
       line: 0,
-      globalTaskFilter: '#task',
     });
     expect(t?.text).toBe('Buy');
     expect(t?.markdownText).toBe('Buy');
@@ -520,7 +509,6 @@ describe('markdownText preserves link markup', () => {
     const t = expectDefined(
       parseTask('- [ ] Task `#task` #real #real', {
         ...ctx,
-        globalTaskFilter: '#task',
       }),
     );
 

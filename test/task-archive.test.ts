@@ -37,7 +37,7 @@ async function harness(
   const authority = new TaskRefAuthority('archive-contract');
   const index = new TaskIndex(app, {
     statusCatalog,
-    dailyNoteFormat: 'YYYY-MM-DD',
+
     refAuthority: authority,
     excludeSource: ({ filePath }) => filePath.toLowerCase() === 'tasks/archive.md',
   });
@@ -732,7 +732,7 @@ describe('transactional task archive', () => {
     const authority = new TaskRefAuthority('archive-capacity');
     const index = new TaskIndex(app, {
       statusCatalog,
-      dailyNoteFormat: 'YYYY-MM-DD',
+
       refAuthority: authority,
       excludeSource: ({ filePath }) => filePath === 'tasks/archive.md',
     });

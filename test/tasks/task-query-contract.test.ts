@@ -25,7 +25,6 @@ async function queryIndex(files: Record<string, string>): Promise<TaskIndex> {
   }
   const index = new TaskIndex(app, {
     statusCatalog: canonicalStatusCatalog(),
-    dailyNoteFormat: 'YYYY-MM-DD',
   });
   await index.initialize();
   return index;

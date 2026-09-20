@@ -32,7 +32,6 @@ async function snapshotIndex(content: string): Promise<{
   const fireChanged = captureChangedCallback(app);
   const index = new TaskIndex(app, {
     statusCatalog: canonicalStatusCatalog(),
-    dailyNoteFormat: 'YYYY-MM-DD',
   });
   await index.initialize();
   const file = app.vault.getAbstractFileByPath('tasks.md');

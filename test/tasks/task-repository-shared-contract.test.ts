@@ -37,7 +37,6 @@ async function makeHarness(adapter: Adapter, source: string): Promise<ContractHa
   const codec = new TaskMarkdownCodec(statusCatalog);
   const index = new TaskIndex(app, {
     statusCatalog,
-    dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
   });
   const snapshots = (content: string) => index.snapshotsFromContent(path, content);
   if (adapter === 'in-memory') {

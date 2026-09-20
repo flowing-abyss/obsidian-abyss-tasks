@@ -1,26 +1,7 @@
 import { buildDefaultProjectTableSettings } from '../projects/projectTableSettings';
 import { ACTIVE_STATUS_GROUPS } from '../status/statusConstants';
 import { defaultShortcuts } from './shortcuts';
-import type {
-  CalendarSettings,
-  ListViewState,
-  ProjectsSettings,
-  TaskStatusDef,
-  ViewConfig,
-} from './types';
-
-export const DEFAULT_VIEW_CONFIG: ViewConfig = {
-  defaultView: 'month',
-  firstDayOfWeek: 1,
-  dailyNoteFolder: 'periodic/daily',
-  dailyNoteFormat: 'YYYY-MM-DD',
-  upcomingDays: 7,
-  style: 'style1',
-  globalTaskFilter: '',
-  startPosition: '',
-  tag: '',
-  folder: '',
-};
+import type { CalendarSettings, ListViewState, ProjectsSettings, TaskStatusDef } from './types';
 
 export function buildDefaultProjectsSettings(): ProjectsSettings {
   let n = 0;
@@ -118,8 +99,7 @@ export function buildDefaultTaskStatuses(): TaskStatusDef[] {
 }
 
 export const DEFAULT_SETTINGS: CalendarSettings = {
-  desktop: { ...DEFAULT_VIEW_CONFIG },
-  mobile: { ...DEFAULT_VIEW_CONFIG, defaultView: 'list' },
+  firstDayOfWeek: 1,
   taskPrefix: '',
   taskFilePath: 'tasks/active.md',
   taskArchivePath: 'tasks/archive.md',

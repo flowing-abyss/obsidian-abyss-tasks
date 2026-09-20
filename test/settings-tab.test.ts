@@ -115,9 +115,9 @@ describe('CalendarSettingsTab sections', () => {
   it('renders a Hotkeys section with one row per supported action', () => {
     const tab = makeTab();
     const sections = tab.containerEl.querySelectorAll('.abyss-settings-section');
-    expect(sections).toHaveLength(8);
+    expect(sections).toHaveLength(6);
 
-    const hotkeys = expectDefined(sections[7]);
+    const hotkeys = expectDefined(sections[5]);
     expectDefined(hotkeys.querySelector<HTMLElement>('.abyss-settings-section-header')).click();
     expect(hotkeys.textContent).toContain('Hotkeys');
     expect(hotkeys.querySelectorAll('.abyss-shortcut-row')).toHaveLength(SHORTCUT_ACTIONS.length);
@@ -185,28 +185,19 @@ describe('CalendarSettingsTab sections', () => {
     const labels = Array.from(
       tab.containerEl.querySelectorAll('.abyss-settings-section-label'),
     ).map((el) => el.textContent);
-    expect(labels).toEqual([
-      'General',
-      'Desktop',
-      'Mobile',
-      'Inbox',
-      'Tags',
-      'Projects',
-      'Custom statuses',
-      'Hotkeys',
-    ]);
+    expect(labels).toEqual(['General', 'Inbox', 'Tags', 'Projects', 'Custom statuses', 'Hotkeys']);
   });
 
   it('each section header has an icon element', () => {
     const tab = makeTab();
     const icons = tab.containerEl.querySelectorAll('.abyss-settings-section-icon');
-    expect(icons).toHaveLength(8);
+    expect(icons).toHaveLength(6);
   });
 
   it('each section header has a chevron element', () => {
     const tab = makeTab();
     const chevrons = tab.containerEl.querySelectorAll('.abyss-settings-section-chevron');
-    expect(chevrons).toHaveLength(8);
+    expect(chevrons).toHaveLength(6);
   });
 
   it('open sections stay open after display() re-render', () => {
@@ -214,8 +205,8 @@ describe('CalendarSettingsTab sections', () => {
     const headers = Array.from(
       tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
     );
-    expectDefined(headers[1]).click(); // open Desktop (index 1)
-    expectDefined(headers[2]).click(); // open Mobile (index 2)
+    expectDefined(headers[1]).click(); // open Inbox (index 1)
+    expectDefined(headers[2]).click(); // open Tags (index 2)
     (tab as unknown as { display(): void }).display();
     const sections = Array.from(tab.containerEl.querySelectorAll('.abyss-settings-section'));
     expect(expectDefined(sections[0]).classList.contains('is-open')).toBe(false);

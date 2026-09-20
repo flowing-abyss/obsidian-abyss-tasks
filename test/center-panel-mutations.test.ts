@@ -81,7 +81,6 @@ async function makePanel(
   const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
   const index = new TaskIndex(app, {
     statusCatalog,
-    dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
   });
   for (const current of extraTasks) {
     const snapshot = index

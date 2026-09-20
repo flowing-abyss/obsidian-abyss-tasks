@@ -128,7 +128,6 @@ interface TaskSource {
 
 interface TaskPresentationMetadata {
   readonly linkCount: number;
-  readonly dailyNoteDate?: LocalDate;
   readonly noteColor?: string;
   readonly noteTextColor?: string;
   readonly noteIcon?: string;

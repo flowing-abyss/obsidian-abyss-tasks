@@ -71,10 +71,9 @@ function legacyPlanningFields(parsed: ParsedTaskLine): Partial<Task> {
   };
 }
 
-function legacyContextFields(ctx: ParseContext, recurrence: string | undefined): Partial<Task> {
+function legacyContextFields(recurrence: string | undefined): Partial<Task> {
   return {
     ...(recurrence !== undefined && { recurrence }),
-    ...(ctx.dailyNoteDate !== undefined && { dailyNoteDate: ctx.dailyNoteDate }),
   };
 }
 
@@ -98,7 +97,7 @@ export function legacyTaskFromParsed(
     status,
     statusSymbol: parsed.statusSymbol,
     ...legacyPlanningFields(parsed),
-    ...legacyContextFields(ctx, recurrence),
+    ...legacyContextFields(recurrence),
     onCompletion: parsed.onCompletion,
     onCompletionExplicit: parsed.onCompletionExplicit,
     priority: parsed.priority,

@@ -84,7 +84,7 @@ describe('CenterPanel pure helpers', () => {
         task({
           title: 'dnToday',
           source: { originalMarkdown: '- [ ] dnToday', originalBlock: '- [ ] dnToday' },
-          presentation: { dailyNoteDate: TODAY },
+          presentation: {},
         }),
       ];
       const { panel, state } = makePanel(tasks);
@@ -112,7 +112,7 @@ describe('CenterPanel pure helpers', () => {
       expect(result.map((t) => t.title)).toEqual(['overdue']);
     });
 
-    it('today does NOT include overdue via scheduled/dailyNoteDate only (CURRENT BEHAVIOR: only due<today counts as overdue, follow-up: FU-31)', () => {
+    it('today excludes past scheduled dates and undated tasks', () => {
       const tasks = [
         task({
           title: 'sched-overdue',
@@ -123,14 +123,14 @@ describe('CenterPanel pure helpers', () => {
           title: 'dn-overdue',
           planning: {},
           source: { originalMarkdown: '- [ ] dn-overdue', originalBlock: '- [ ] dn-overdue' },
-          presentation: { dailyNoteDate: '2026-06-20' },
+          presentation: {},
         }),
       ];
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', 'today');
       fixedToday('2026-06-25');
       const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-      // FU-31: only t.due < today triggers overdue inclusion; scheduled/dailyNoteDate overdue are NOT included
+      // Only past due dates trigger overdue inclusion.
       expect(result).toHaveLength(0);
     });
 
@@ -207,10 +207,9 @@ describe('CenterPanel pure helpers', () => {
       expect(result.map((t) => t.title)).toEqual(['near', 'far']);
     });
 
-    it('upcoming uses due or scheduled dates, not daily-note metadata', () => {
+    it('upcoming includes scheduled tasks and excludes undated tasks', () => {
       // Dates relative to "now" so the test stays correct as real time passes.
       const sched = moment().add(3, 'days').format('YYYY-MM-DD');
-      const dn = moment().add(4, 'days').format('YYYY-MM-DD');
       const tasks = [
         task({
           title: 'sched',
@@ -220,7 +219,7 @@ describe('CenterPanel pure helpers', () => {
         task({
           title: 'dn',
           source: { originalMarkdown: '- [ ] dn', originalBlock: '- [ ] dn' },
-          presentation: { dailyNoteDate: dn },
+          presentation: {},
         }),
       ];
       const { panel, state } = makePanel(tasks);
@@ -941,7 +940,7 @@ describe('getFilteredTasks respects property filters', () => {
     const { panel, state } = makePanel([
       task({ title: 'due', status: 'open', planning: { due: '2026-01-10' } }),
       task({ title: 'sched', status: 'open', planning: { scheduled: '2026-01-10' } }),
-      task({ title: 'daily', status: 'open', presentation: { dailyNoteDate: '2026-01-10' } }),
+      task({ title: 'daily', status: 'open', presentation: {} }),
       task({ title: 'other', status: 'open', planning: { due: '2026-01-11' } }),
     ]);
     state.set('centerListViewState', {

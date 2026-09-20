@@ -55,7 +55,7 @@ async function makeHarness(
   const fireChanged = captureChangedCallback(app);
   const index = new TaskIndex(app, {
     statusCatalog,
-    dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
+
     refAuthority: authority,
   });
   await index.initialize();

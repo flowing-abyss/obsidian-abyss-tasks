@@ -148,7 +148,6 @@ async function makePanel(
   const statusCatalog = new StatusCatalog(toStatusRules(settings.taskStatuses));
   const index = new TaskIndex(app, {
     statusCatalog,
-    dailyNoteFormat: settings.desktop.dailyNoteFormat,
   });
   const tasks = new TaskApplicationService(
     index,

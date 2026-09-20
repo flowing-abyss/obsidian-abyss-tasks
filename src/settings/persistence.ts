@@ -420,6 +420,15 @@ function hasMovedFields(raw: Record<string, unknown>): boolean {
   );
 }
 
+function normalizeFirstDayOfWeek(
+  value: unknown,
+  fallback: CalendarSettings['firstDayOfWeek'],
+): CalendarSettings['firstDayOfWeek'] {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 6
+    ? (value as CalendarSettings['firstDayOfWeek'])
+    : fallback;
+}
+
 function composeSettings(
   rawStatic: Record<string, unknown>,
   decoded: DecodedViews,
@@ -429,6 +438,10 @@ function composeSettings(
   stripMovedFields(staticData);
   const migration = migrateSettings(staticData);
   const settings = Object.assign(detached(defaults), staticData) as CalendarSettings;
+  settings.firstDayOfWeek = normalizeFirstDayOfWeek(
+    staticData['firstDayOfWeek'],
+    defaults.firstDayOfWeek,
+  );
   if (decoded.views.listViewStates === undefined) delete settings.listViewStates;
   else settings.listViewStates = decoded.views.listViewStates;
   settings.sectionCollapse = decoded.views.sectionCollapse;

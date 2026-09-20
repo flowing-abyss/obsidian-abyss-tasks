@@ -94,8 +94,8 @@ describe('getTaskDateCategory', () => {
     expect(getTaskDateCategory(task({ planning: { start: TOMORROW } }), TODAY)).toBe('upcoming');
   });
 
-  it('treats dailyNoteDate-only metadata as no date', () => {
-    expect(getTaskDateCategory(task({ presentation: { dailyNoteDate: YESTERDAY } }), TODAY)).toBe(
+  it('treats tasks in dated filenames as unscheduled', () => {
+    expect(getTaskDateCategory(task({ source: { filePath: '2026-06-26.md' } }), TODAY)).toBe(
       'noDate',
     );
   });
@@ -120,7 +120,7 @@ import { groupTasksByDate } from '../src/views/taskGrouping';
 
 describe('groupTasksByDate – noDate bucket fix', () => {
   it('task with no date falls into "No date" group, not Overdue', () => {
-    const noDateTask = task({ status: 'open' }); // no due/scheduled/start/dailyNoteDate
+    const noDateTask = task({ status: 'open' }); // no due/scheduled/start
     const groups = groupTasksByDate([noDateTask], TODAY, TOMORROW);
     const labels = groups.map((g) => g.label);
     expect(labels).not.toContain('Overdue');

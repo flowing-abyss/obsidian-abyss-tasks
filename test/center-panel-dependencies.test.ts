@@ -5,8 +5,6 @@ import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { localDate, type TaskCommand, type TaskSnapshot } from '../src/tasks';
-import { CalendarRenderer } from '../src/ui/CalendarRenderer';
-import { createTaskCard } from '../src/ui/TaskCard';
 import { presentTaskCommandResult } from '../src/ui/taskCommandResult';
 import {
   calendarMutationTarget,
@@ -14,7 +12,6 @@ import {
   projectCalendarOccurrences,
   taskSnapshotForCalendarOccurrence,
 } from '../src/views/calendarOccurrences';
-import { ListView } from '../src/views/ListView';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { renderAllDayCell } from '../src/views/timegrid/renderAllDay';
 import { renderTimedBlocksForDay } from '../src/views/timegrid/renderTimedBlocks';
@@ -269,8 +266,6 @@ const surfaceNames = [
   'all-day',
   'deadline',
   'timed',
-  'legacy-card',
-  'list',
   'inspector',
   'inspector-subtask',
 ] as const;
@@ -304,18 +299,13 @@ function mountCalendarSurface(
   surface: Exclude<Surface, 'center' | 'search' | 'inspector' | 'inspector-subtask'>,
   task: TaskSnapshot,
 ): HTMLElement {
-  if (surface === 'legacy-card') {
-    const card = createTaskCard(task, 'due', h.callbacks);
-    h.el.append(card);
-    return card;
-  }
-  if (surface === 'list' || surface === 'month') {
-    const view = surface === 'list' ? new ListView(h.callbacks) : new MonthGridView(h.callbacks);
+  if (surface === 'month') {
+    const view = new MonthGridView(h.callbacks);
     view.render(h.el, [task], resolvedConfig({ startPosition: '2026-09' }));
     cleanups.push(() => {
       view.destroy();
     });
-    return element(h.el, surface === 'list' ? '.abyss-list-task' : '.abyss-calendar-item');
+    return element(h.el, '.abyss-calendar-item');
   }
   if (surface === 'timed') {
     renderTimedBlocksForDay(h.el, [task], h.callbacks);
@@ -349,27 +339,14 @@ describe('strict dependency checkbox surfaces', () => {
     expect(h.messages).toEqual([]);
   });
 
-  it.each(['center', 'inspector', 'standalone'] as const)(
+  it.each(['center', 'inspector'] as const)(
     '%s preserves recurrence deletion confirmation and then reports the application blocked result',
     async (surface) => {
       const h = await harness(
         '- [ ] Current ⛔ schema 🔁 tomorrow 🏁 delete 📅 2026-09-05\n- [ ] Write schema 🆔 schema\n',
       );
       expect(h.node('Current').node.onCompletion).toBe('delete');
-      if (surface === 'standalone') {
-        const renderer = new CalendarRenderer(
-          h.el,
-          resolvedConfig({ defaultView: 'month', startPosition: '2026-09' }),
-          h.app,
-          h.index,
-          h.tasks,
-          h.statusRegistry,
-        );
-        renderer.mount();
-        cleanups.push(() => {
-          renderer.destroy();
-        });
-      } else mountSurface(h, surface);
+      mountSurface(h, surface);
       const control = element(h.el, '[role="checkbox"]');
       control.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
@@ -434,7 +411,7 @@ describe('strict dependency checkbox surfaces', () => {
     },
   );
 
-  it.each(['month', 'all-day', 'deadline', 'timed', 'legacy-card', 'list'] as const)(
+  it.each(['month', 'all-day', 'deadline', 'timed'] as const)(
     '%s omits dependency queries and strict semantics for forecasts',
     async (surface) => {
       const h = await harness(
@@ -462,7 +439,7 @@ describe('strict dependency checkbox surfaces', () => {
     },
   );
 
-  it.each(['month', 'all-day', 'deadline', 'timed', 'legacy-card', 'list'] as const)(
+  it.each(['month', 'all-day', 'deadline', 'timed'] as const)(
     '%s uses a materialized subtask endpoint instead of its root',
     async (surface) => {
       const h = await harness(
@@ -625,80 +602,5 @@ describe('strict dependency checkbox surfaces', () => {
     expect(h.execute).toHaveBeenCalledTimes(1);
     expect(h.node('Current').node.status).toBe('done');
     expect(h.messages).toEqual([]);
-  });
-
-  it.each(['month', 'week', 'list'] as const)(
-    'wires dependency queries through standalone CalendarRenderer %s',
-    async (defaultView) => {
-      const h = await harness(markdownFor('center'));
-      const renderer = new CalendarRenderer(
-        h.el,
-        resolvedConfig({
-          defaultView,
-          startPosition: defaultView === 'week' ? '2026-08-31' : '2026-09',
-        }),
-        h.app,
-        h.index,
-        h.tasks,
-        h.statusRegistry,
-      );
-      renderer.mount();
-      cleanups.push(() => {
-        renderer.destroy();
-      });
-      const indicator = element(h.el, '.abyss-dep-indicator');
-      const control = expectDefined(indicator.previousElementSibling) as HTMLElement;
-      expect(control.getAttribute('aria-disabled')).toBe('true');
-      physicalActivation(control, 'touch');
-      await flushMicrotasks();
-      expect(h.execute).not.toHaveBeenCalled();
-      await h.tasks.execute({
-        type: 'set-status',
-        target: h.node('Write schema').target,
-        symbol: 'x',
-      });
-      await flushMicrotasks();
-      expect(h.el.querySelector('.abyss-dep-indicator')).toBeNull();
-      const enabled = element(h.el, '[role="checkbox"]');
-      expect(enabled.getAttribute('aria-disabled')).not.toBe('true');
-      h.execute.mockClear();
-      enabled.click();
-      await flushMicrotasks();
-      expect(h.execute).toHaveBeenCalledTimes(1);
-      expect(h.node('Current').node.status).toBe('done');
-      expect(h.messages).toEqual([]);
-    },
-  );
-
-  it.each([
-    { ids: 'schema', expected: 'Complete “Write schema” or remove the dependency first' },
-    {
-      ids: 'schema, duplicate',
-      expected: 'Complete “Write schema” or remove the dependency first (+1 more)',
-    },
-    {
-      ids: 'schema, duplicate, third',
-      expected: 'Complete “Write schema” or remove the dependency first (+2 more)',
-    },
-    {
-      ids: 'duplicate',
-      expected: 'Resolve duplicate dependency ID “duplicate” or remove the dependency first',
-    },
-    {
-      ids: 'duplicate, schema, third',
-      expected:
-        'Resolve duplicate dependency ID “duplicate” or remove the dependency first (+2 more)',
-    },
-  ])('uses the first declared active blocker for $ids', async ({ ids, expected }) => {
-    const h = await harness(
-      `- [ ] Current ⛔ missing, ${ids}\n- [ ] Write schema 🆔 schema\n- [ ] Arbitrary first candidate 🆔 duplicate\n- [x] Arbitrary second candidate 🆔 duplicate\n- [ ] Third 🆔 third\n`,
-    );
-    const result = await h.tasks.execute({
-      type: 'toggle-completion',
-      target: h.node('Current').target,
-    });
-    expect(result.type).toBe('blocked');
-    presentTaskCommandResult(result);
-    expect(h.messages).toEqual([expected]);
   });
 });

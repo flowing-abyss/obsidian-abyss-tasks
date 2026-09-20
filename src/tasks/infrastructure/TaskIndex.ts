@@ -46,7 +46,6 @@ import {
   type TaskRef,
   type TaskSnapshot,
 } from '../domain/types';
-import { localDate } from '../domain/validation';
 import { TaskBlockEditor } from './markdown/TaskBlockEditor';
 import {
   consumeMarkdownFenceLine,
@@ -66,8 +65,6 @@ import { TimeEntryIndex } from './TimeEntryIndex';
 
 export interface TaskIndexOptions {
   readonly statusCatalog: StatusCatalog;
-  readonly dailyNoteFormat: string;
-  readonly globalTaskFilter?: string;
   readonly refAuthority?: TaskRefAuthority;
   readonly excludeSource?: (source: TaskSourceMetadata) => boolean;
   /**
@@ -117,36 +114,6 @@ interface FileReconciliationTransition {
   readonly toGeneration: number;
   readonly writable: ReadonlyMap<string, WritableReconciliationTransition>;
   readonly visual: ReadonlyMap<string, VisualReconciliationTransition>;
-}
-
-function momentToRegex(format: string): RegExp {
-  const escaped = format
-    .replace(/\./g, '\\.')
-    .replace(/,/g, '\\,')
-    .replace(/-/g, '\\-')
-    .replace(/:/g, '\\:')
-    .replace(/ /g, '\\s')
-    .replace('dddd', '\\w{4,}')
-    .replace('ddd', '\\w{1,3}')
-    .replace('dd', '\\w{2}')
-    .replace('YYYY', '\\d{4}')
-    .replace('YY', '\\d{2}')
-    .replace('MMMM', '\\w{4,}')
-    .replace('MMM', '\\w{3}')
-    .replace('MM', '\\d{2}')
-    .replace('DD', '\\d{2}')
-    .replace('D', '\\d{1,2}')
-    .replace('ww', '\\d{1,2}');
-  return new RegExp(`^(${escaped})$`);
-}
-
-function asLocalDate(value: string | undefined): LocalDate | undefined {
-  if (value === undefined) return undefined;
-  try {
-    return localDate(value);
-  } catch {
-    return undefined;
-  }
 }
 
 function cloneCandidate(task: TaskSnapshot): TaskResolutionCandidate {
@@ -484,13 +451,6 @@ function extensionOf(path: string): string {
   return dot >= 0 ? name.slice(dot + 1) : '';
 }
 
-function dailyNoteDateForPath(filePath: string, format: string): LocalDate | undefined {
-  const filename = filePath.replace(/^.*\//u, '').replace(/\.[^.]*$/u, '');
-  return momentToRegex(format).test(filename)
-    ? asLocalDate(window.moment(filename, format).format('YYYY-MM-DD'))
-    : undefined;
-}
-
 type MetadataListItem = NonNullable<CachedMetadata['listItems']>[number];
 
 interface ParseFileInput {
@@ -622,22 +582,17 @@ function frontmatterText(
 }
 
 function taskPresentation(
-  filePath: string,
-  dailyNoteFormat: string,
   frontmatter: CachedMetadata['frontmatter'],
 ): TaskSnapshot['presentation'] {
-  const dailyNoteDate = dailyNoteDateForPath(filePath, dailyNoteFormat);
   const noteColor = frontmatterText(frontmatter, 'color');
   const noteTextColor = frontmatterText(frontmatter, 'textColor');
   const noteIcon = frontmatterText(frontmatter, 'icon');
   const presentation: {
     linkCount: number;
-    dailyNoteDate?: LocalDate;
     noteColor?: string;
     noteTextColor?: string;
     noteIcon?: string;
   } = { linkCount: 0 };
-  if (nonEmpty(dailyNoteDate)) presentation.dailyNoteDate = dailyNoteDate;
   if (nonEmpty(noteColor)) presentation.noteColor = noteColor;
   if (nonEmpty(noteTextColor)) presentation.noteTextColor = noteTextColor;
   if (nonEmpty(noteIcon)) presentation.noteIcon = noteIcon;
@@ -681,11 +636,7 @@ function relocateSubtask(task: SubtaskSnapshot, parent: TaskNodeRef): SubtaskSna
   };
 }
 
-function relocateSnapshot(
-  task: TaskSnapshot,
-  filePath: string,
-  dailyNoteDate: LocalDate | undefined,
-): TaskSnapshot {
+function relocateSnapshot(task: TaskSnapshot, filePath: string): TaskSnapshot {
   const ref = { ...task.ref, filePath };
   const node: TaskNodeRef = { type: 'task', ref };
   const { linkCount, noteColor, noteTextColor, noteIcon } = task.presentation;
@@ -700,7 +651,6 @@ function relocateSnapshot(
     })),
     presentation: {
       linkCount,
-      ...(dailyNoteDate != null && { dailyNoteDate }),
       ...(Boolean(noteColor) && { noteColor }),
       ...(Boolean(noteTextColor) && { noteTextColor }),
       ...(Boolean(noteIcon) && { noteIcon }),
@@ -1293,11 +1243,7 @@ export class TaskIndex
       blockByLine,
       sourceCounts,
       codec: new TaskMarkdownCodec(this.statusCatalog_abyssPrivate),
-      presentation: taskPresentation(
-        filePath,
-        this.options_abyssPrivate.dailyNoteFormat,
-        cache.frontmatter,
-      ),
+      presentation: taskPresentation(cache.frontmatter),
       itemByLine: metadataItemsByLine(cache.listItems ?? []),
       offsetAt: this.options_abyssPrivate.timeZoneOffsetAt ?? deviceOffsetAt,
       revision: {
@@ -1660,26 +1606,21 @@ export class TaskIndex
       this.scheduleRenameLoad_abyssPrivate(file, oldPath, newPath);
       return;
     }
-    const dailyNoteDate = dailyNoteDateForPath(newPath, this.options_abyssPrivate.dailyNoteFormat);
     this.replaceFile_abyssPrivate(
       newPath,
-      tasks.map((task) => this.relocateRenamedTask_abyssPrivate(task, newPath, dailyNoteDate)),
+      tasks.map((task) => this.relocateRenamedTask_abyssPrivate(task, newPath)),
     );
     this.publish_abyssPrivate({ type: 'renamed', oldPath, newPath });
   }
 
-  private relocateRenamedTask_abyssPrivate(
-    task: TaskSnapshot,
-    newPath: string,
-    dailyNoteDate: LocalDate | undefined,
-  ): TaskSnapshot {
-    const relocated = relocateSnapshot(task, newPath, dailyNoteDate);
+  private relocateRenamedTask_abyssPrivate(task: TaskSnapshot, newPath: string): TaskSnapshot {
+    const relocated = relocateSnapshot(task, newPath);
     const revision = this.options_abyssPrivate.refAuthority?.mintRevision(
       relocated.source.originalBlock,
     );
     if (!nonEmpty(revision)) return relocated;
     const revised = { ...relocated, ref: { ...relocated.ref, revision } };
-    return relocateSnapshot(revised, newPath, dailyNoteDate);
+    return relocateSnapshot(revised, newPath);
   }
 
   private scheduleRenameLoad_abyssPrivate(file: TFile, oldPath: string, newPath: string): void {

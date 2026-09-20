@@ -78,7 +78,6 @@ async function makeHarness(adapter: Adapter, source: string): Promise<Harness> {
   const codec = new TaskMarkdownCodec(catalog);
   const index = new TaskIndex(app, {
     statusCatalog: catalog,
-    dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
   });
   const snapshots = (content: string) => index.snapshotsFromContent(path, content);
   if (adapter === 'in-memory') {
@@ -115,7 +114,6 @@ function applicationFor(
   const codec = new TaskMarkdownCodec(catalog);
   const index = new TaskIndex(app, {
     statusCatalog: catalog,
-    dailyNoteFormat: settings.desktop.dailyNoteFormat,
   });
   const repository = new ObsidianTaskRepository(app, {
     codec,

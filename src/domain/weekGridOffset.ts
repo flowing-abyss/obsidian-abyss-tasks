@@ -3,8 +3,7 @@
  * configured first-day-of-week (same 0-6 numbering), returns the (always <= 0) day offset
  * from the anchor to the start of the "firstDayOfWeek-aligned" week that contains it.
  *
- * Every week/month grid in this codebase (WeekTimeGridView, MonthGridView, WeekView,
- * MonthView, visibleCalendarDates) needs to turn an arbitrary anchor date into a run of 7
+ * The week and month grids (WeekTimeGridView, MonthGridView, visibleCalendarDates) needs to turn an arbitrary anchor date into a run of 7
  * (or 7*6, for months) consecutive days that both starts on `firstDayOfWeek` and genuinely
  * contains the anchor. The naive `firstDayOfWeek - weekday` (no wraparound) is only correct
  * when `weekday >= firstDayOfWeek`; when the anchor's weekday is numerically *before*

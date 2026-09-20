@@ -59,16 +59,6 @@ interface TagSettingsActionCallbacks {
   readonly onFailure?: () => void;
 }
 
-function dailyNoteFormatDescription(): DocumentFragment {
-  const description = createFragment();
-  description.appendText('Format for calendar links and date parsing, e.g. ');
-  description.createEl('code', {
-    text: ['Y', 'Y', 'Y', 'Y', '-', 'M', 'M', '-', 'D', 'D'].join(''),
-  });
-  description.appendText('.');
-  return description;
-}
-
 interface CardListOptions<T> {
   listKey: string;
   id: (item: T) => string;
@@ -365,12 +355,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
     this.addSection_abyssPrivate(nextContainer, 'General', 'sliders-horizontal', (body) => {
       this.renderGeneralSettings_abyssPrivate(body);
     });
-    this.addSection_abyssPrivate(nextContainer, 'Desktop', 'monitor', (body) => {
-      this.renderViewConfigSettings_abyssPrivate(body, 'desktop');
-    });
-    this.addSection_abyssPrivate(nextContainer, 'Mobile', 'smartphone', (body) => {
-      this.renderViewConfigSettings_abyssPrivate(body, 'mobile');
-    });
     this.addSection_abyssPrivate(nextContainer, 'Inbox', 'inbox', (body) => {
       this.renderInboxSettings_abyssPrivate(body);
     });
@@ -446,6 +430,25 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   private renderGeneralSettings_abyssPrivate(containerEl: HTMLElement): void {
+    new Setting(containerEl).setName('First day of week').addDropdown((dropdown) =>
+      dropdown
+        .addOptions({
+          '0': 'Sunday',
+          '1': 'Monday',
+          '2': 'Tuesday',
+          '3': 'Wednesday',
+          '4': 'Thursday',
+          '5': 'Friday',
+          '6': 'Saturday',
+        })
+        .setValue(String(this.plugin_abyssPrivate.settings.firstDayOfWeek))
+        .onChange(async (value) => {
+          this.plugin_abyssPrivate.settings.firstDayOfWeek = Number(
+            value,
+          ) as CalendarSettings['firstDayOfWeek'];
+          await this.plugin_abyssPrivate.saveSettings();
+        }),
+    );
     this.renderTaskCreationSettings_abyssPrivate(containerEl);
     this.renderTaskDestinationSettings_abyssPrivate(containerEl);
     this.renderTaskLifecycleSettings_abyssPrivate(containerEl);
@@ -1664,73 +1667,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
         save: () => this.plugin_abyssPrivate.saveSettings(),
       });
     });
-  }
-
-  private renderViewConfigSettings_abyssPrivate(
-    container: HTMLElement,
-    platform: 'desktop' | 'mobile',
-  ): void {
-    const cfg = this.plugin_abyssPrivate.settings[platform];
-
-    new Setting(container).setName('Default view').addDropdown((d) =>
-      d
-        .addOptions({ month: 'Month', week: 'Week', list: 'List' })
-        .setValue(cfg.defaultView)
-        .onChange(async (v) => {
-          cfg.defaultView = v as typeof cfg.defaultView;
-          await this.plugin_abyssPrivate.saveSettings();
-        }),
-    );
-
-    new Setting(container).setName('First day of week').addDropdown((d) =>
-      d
-        .addOptions({ '0': 'Sunday', '1': 'Monday', '6': 'Saturday' })
-        .setValue(String(cfg.firstDayOfWeek))
-        .onChange(async (v) => {
-          cfg.firstDayOfWeek = parseInt(v) as typeof cfg.firstDayOfWeek;
-          await this.plugin_abyssPrivate.saveSettings();
-        }),
-    );
-
-    new Setting(container).setName('Daily note folder').addText((t) =>
-      t.setValue(cfg.dailyNoteFolder).onChange(async (v) => {
-        cfg.dailyNoteFolder = v;
-        await this.plugin_abyssPrivate.saveSettings();
-      }),
-    );
-
-    new Setting(container)
-      .setName('Daily note format')
-      .setDesc(dailyNoteFormatDescription())
-      .addText((t) =>
-        t.setValue(cfg.dailyNoteFormat).onChange(async (v) => {
-          cfg.dailyNoteFormat = v;
-          await this.plugin_abyssPrivate.saveSettings();
-        }),
-      );
-
-    new Setting(container)
-      .setName('Global task filter')
-      .setDesc('Tag to strip from task display text, e.g. #Task.')
-      .addText((t) =>
-        t.setValue(cfg.globalTaskFilter).onChange(async (v) => {
-          cfg.globalTaskFilter = v;
-          await this.plugin_abyssPrivate.saveSettings();
-        }),
-      );
-
-    new Setting(container)
-      .setName('Upcoming days')
-      .setDesc('Number of days shown in list view.')
-      .addText((text) =>
-        text.setValue(String(cfg.upcomingDays)).onChange(async (value) => {
-          const n = parseInt(value, 10);
-          if (!isNaN(n) && n > 0) {
-            cfg.upcomingDays = n;
-            await this.plugin_abyssPrivate.saveSettings();
-          }
-        }),
-      );
   }
 
   /** Persists a taskStatuses mutation and rebuilds the store's registry so open panels update. */

@@ -217,7 +217,7 @@ export class MonthGridView extends BaseView {
       cls: `abyss-mg-cell${currentDate === context.today ? ' is-today' : ''}${inCurrentMonth ? '' : ' is-outside-month'}`,
     });
     cell.setAttribute('data-mg-date', currentDate);
-    this.renderCellControls(cell, currentDate, day.format('D'), context.config.dailyNoteFolder);
+    this.renderCellControls(cell, currentDate, day.format('D'));
     const items = cell.createDiv({ cls: 'abyss-mg-cell-items' });
     this.renderCompactCell(
       items,
@@ -229,19 +229,13 @@ export class MonthGridView extends BaseView {
     this.bindCellInteractions(cell, currentDate, inCurrentMonth);
   }
 
-  private renderCellControls(
-    cell: HTMLElement,
-    currentDate: string,
-    dayLabel: string,
-    dailyNoteFolder: string,
-  ): void {
-    const path = dailyNoteFolder !== '' ? `${dailyNoteFolder}/${currentDate}` : currentDate;
-    const link = cell.createEl('a', {
-      cls: 'internal-link abyss-mg-day-label',
-      href: path,
+  private renderCellControls(cell: HTMLElement, currentDate: string, dayLabel: string): void {
+    const dayButton = cell.createEl('button', {
+      cls: 'abyss-mg-day-label',
+      attr: { type: 'button', 'aria-label': currentDate },
       text: dayLabel,
     });
-    link.addEventListener('click', (event) => {
+    dayButton.addEventListener('click', (event) => {
       event.stopPropagation();
       this.callbacks.onDayClick(currentDate);
     });
@@ -337,12 +331,7 @@ export class MonthGridView extends BaseView {
   }
 
   private buildSkeletonKey(month: string, config: ResolvedConfig): string {
-    return [
-      month,
-      config.firstDayOfWeek,
-      config.dailyNoteFolder,
-      window.moment().format('YYYY-MM-DD'),
-    ].join('|');
+    return [month, config.firstDayOfWeek, window.moment().format('YYYY-MM-DD')].join('|');
   }
 
   private buildSpanCallbacks(

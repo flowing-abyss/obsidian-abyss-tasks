@@ -50,7 +50,7 @@ async function harness(
   const authority = new TaskRefAuthority('create-linked');
   const index = new TaskIndex(app, {
     statusCatalog: statuses,
-    dailyNoteFormat: 'YYYY-MM-DD',
+
     refAuthority: authority,
   });
   indexes.push(index);

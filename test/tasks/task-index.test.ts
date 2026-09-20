@@ -57,7 +57,7 @@ async function setup(
   const fireChanged = captureChangedCallback(app);
   const index = new TaskIndex(app, {
     statusCatalog: canonicalStatusCatalog(),
-    dailyNoteFormat: 'YYYY-MM-DD',
+
     ...(refAuthority === undefined ? {} : { refAuthority }),
   });
   return { app, index, fireChanged };
@@ -1054,7 +1054,6 @@ describe('TaskIndex lifecycle and events', () => {
     app.metadataCache.getFileCache = (): null => null;
     const index = new TaskIndex(app, {
       statusCatalog: canonicalStatusCatalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
     });
     const fireCreate = captureCreateCallback(app);
     await index.initialize();
@@ -1081,7 +1080,6 @@ describe('TaskIndex lifecycle and events', () => {
     app.metadataCache.getFileCache = (): null => null;
     const index = new TaskIndex(app, {
       statusCatalog: canonicalStatusCatalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
     });
     const fireCreate = captureCreateCallback(app);
     await index.initialize();
@@ -1105,7 +1103,6 @@ describe('TaskIndex lifecycle and events', () => {
     app.metadataCache.getFileCache = (): null => null;
     const index = new TaskIndex(app, {
       statusCatalog: canonicalStatusCatalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
     });
     const fireCreate = captureCreateCallback(app);
     await index.initialize();
@@ -1127,7 +1124,6 @@ describe('TaskIndex lifecycle and events', () => {
     app.metadataCache.getFileCache = (): null => null;
     const index = new TaskIndex(app, {
       statusCatalog: canonicalStatusCatalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
     });
     const fireCreate = captureCreateCallback(app);
     await index.initialize();
@@ -1153,7 +1149,6 @@ describe('TaskIndex lifecycle and events', () => {
     app.metadataCache.getFileCache = (): null => null;
     const index = new TaskIndex(app, {
       statusCatalog: canonicalStatusCatalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
     });
     const fireCreate = captureCreateCallback(app);
     await index.initialize();
@@ -1211,7 +1206,6 @@ describe('TaskIndex lifecycle and events', () => {
     ]);
     const index = new TaskIndex(app, {
       statusCatalog: canonicalStatusCatalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
     });
 
     await index.initialize();
@@ -1242,7 +1236,6 @@ describe('TaskIndex lifecycle and events', () => {
     );
     const index = new TaskIndex(app, {
       statusCatalog: canonicalStatusCatalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
     });
 
     await index.initialize();
@@ -1261,7 +1254,6 @@ describe('TaskIndex lifecycle and events', () => {
     ]);
     const index = new TaskIndex(app, {
       statusCatalog: canonicalStatusCatalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
     });
 
     await index.initialize();
@@ -1275,7 +1267,6 @@ describe('TaskIndex lifecycle and events', () => {
     const app = await createAppWithFiles({ [path]: '- [ ] Before\r\n' });
     const index = new TaskIndex(app, {
       statusCatalog: canonicalStatusCatalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
     });
     await index.initialize();
 
@@ -1296,7 +1287,6 @@ describe('TaskIndex lifecycle and events', () => {
     const app = await createAppWithFiles({ [path]: original });
     const index = new TaskIndex(app, {
       statusCatalog: canonicalStatusCatalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
     });
     await index.initialize();
 
@@ -1430,13 +1420,14 @@ describe('TaskIndex lifecycle and events', () => {
     index.destroy();
   });
 
-  it('recomputes the daily-note date after a markdown rename', async () => {
+  it('keeps renamed dated notes unscheduled', async () => {
     const { app, index } = await setup({ '2026-07-01.md': '- [ ] daily task' });
     await index.initialize();
 
     await app.vault.rename(mdFile(app, '2026-07-01.md'), '2026-07-02.md');
 
-    expect(index.list()[0]?.presentation.dailyNoteDate).toBe('2026-07-02');
+    expect(index.list()[0]?.planning).toEqual({});
+    expect(index.forCalendarProjection([localDate('2026-07-02')]).materialized).toEqual([]);
     index.destroy();
   });
 
@@ -1506,7 +1497,6 @@ describe('TaskIndex lifecycle and events', () => {
     app.metadataCache.getFileCache = (): null => null;
     const index = new TaskIndex(app, {
       statusCatalog: canonicalStatusCatalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
     });
     await index.initialize();
     const file = app.vault.getAbstractFileByPath('examples.txt');
@@ -1531,7 +1521,6 @@ describe('TaskIndex lifecycle and events', () => {
     app.metadataCache.getFileCache = (): null => null;
     const index = new TaskIndex(app, {
       statusCatalog: canonicalStatusCatalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
     });
     await index.initialize();
     const file = app.vault.getAbstractFileByPath('examples.txt');
@@ -1558,7 +1547,6 @@ describe('TaskIndex lifecycle and events', () => {
     app.metadataCache.getFileCache = (): null => null;
     const index = new TaskIndex(app, {
       statusCatalog: canonicalStatusCatalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
     });
     await index.initialize();
     const file = app.vault.getAbstractFileByPath('examples.txt');

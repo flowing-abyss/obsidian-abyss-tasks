@@ -1,6 +1,5 @@
 import { Platform, setIcon } from 'obsidian';
 import { describe, expect, it } from 'vitest';
-import type { CalendarSettings } from '../src/settings/types';
 import { subtask, task, useRealMoment, withMobile } from './helpers';
 
 describe('test helpers', () => {
@@ -52,14 +51,6 @@ describe('test helpers', () => {
     it('resolves imports from obsidian via obsidian-test-mocks', () => {
       // setIcon is a function from the mocked obsidian module
       expect(typeof setIcon).toBe('function');
-    });
-    it('lets src modules that import from obsidian load (resolveConfig reaches obsidian)', async () => {
-      const { resolveConfig } = await import('../src/code-block/registerCodeBlock');
-      const cfg = resolveConfig(
-        { desktop: { defaultView: 'month', firstDayOfWeek: 1 } } as unknown as CalendarSettings,
-        {},
-      );
-      expect(cfg.isMobile).toBe(false);
     });
   });
 });

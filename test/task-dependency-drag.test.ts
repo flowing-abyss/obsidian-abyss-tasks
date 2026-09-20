@@ -37,7 +37,7 @@ async function harness(markdown: string, selected = 'B', additionalFiles = {}) {
   const authority = new TaskRefAuthority('dependency-drag');
   const index = new TaskIndex(app, {
     statusCatalog: statuses,
-    dailyNoteFormat: 'YYYY-MM-DD',
+
     refAuthority: authority,
   });
   await index.initialize();

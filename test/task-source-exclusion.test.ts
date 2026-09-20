@@ -26,7 +26,7 @@ function sourceIndex(
     app,
     index: new TaskIndex(app, {
       statusCatalog: catalog(),
-      dailyNoteFormat: 'YYYY-MM-DD',
+
       ...(excludeSource === undefined ? {} : { excludeSource }),
     }),
   }));

@@ -34,7 +34,7 @@ async function harness(files: Record<string, string>, writable = true) {
   const authority = new TaskRefAuthority('reversal');
   const index = new TaskIndex(app, {
     statusCatalog: statuses,
-    dailyNoteFormat: 'YYYY-MM-DD',
+
     refAuthority: authority,
   });
   indexes.push(index);

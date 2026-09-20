@@ -13,15 +13,11 @@ const LEGACY_BRIDGE_FILES = [
   'src/mutation/validateMutatedLine.ts',
 ] as const;
 
-const CALENDAR_COMPOSITION_ROOTS = [
-  'src/panels/CenterPanel.ts',
-  'src/ui/CalendarRenderer.ts',
-] as const;
+const CALENDAR_COMPOSITION_ROOTS = ['src/panels/CenterPanel.ts'] as const;
 
 const RECURRENCE_EDITOR_WRITE_CONSUMERS = [
   'src/panels/CenterPanel.ts',
   'src/panels/RightPanel.ts',
-  'src/ui/CalendarRenderer.ts',
 ] as const;
 
 interface AllowedWriter {
@@ -122,7 +118,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskNodeSnapshot: ['src/ui/dependencySearch.ts'],
   TaskRef: ['src/projects/ProjectManager.ts'],
   TaskResolution: ['src/views/PanelView.ts'],
-  TaskSnapshot: ['src/ui/TaskCard.ts'],
+  TaskSnapshot: ['src/panels/CenterPanel.ts'],
   TaskStatusType: ['src/settings/SettingsTab.ts'],
   TaskTextTarget: ['src/panels/RightPanel.ts'],
   TimeEntryRef: ['src/ui/timeTracking/trackingActions.ts'],
@@ -176,7 +172,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/ui/timeTracking/formatTracked.ts',
     'src/ui/timeTracking/RailTrackingWidget.ts',
   ],
-  subtreeRunning: ['src/ui/TaskCard.ts', 'src/panels/CenterPanel.ts', 'src/panels/RightPanel.ts'],
+  subtreeRunning: ['src/panels/CenterPanel.ts', 'src/panels/RightPanel.ts'],
   subtreeTotal: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/CenterPanel.ts'],
   taskReconciliationKey: ['src/ui/taskPresentationIdentity.ts'],
   timeEntryRef: ['src/ui/timeTracking/TimeEntriesPopover.ts'],
@@ -193,11 +189,7 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
   'TaskQueryApi.subscribeReconciled': 'src/projects/ProjectStore.ts',
   'TaskDependencyQueryApi.listNodes': 'src/panels/RightPanel.ts',
-  'TaskDependencyQueryApi.dependencies': [
-    'src/panels/RightPanel.ts',
-    'src/panels/CenterPanel.ts',
-    'src/ui/CalendarRenderer.ts',
-  ],
+  'TaskDependencyQueryApi.dependencies': ['src/panels/RightPanel.ts', 'src/panels/CenterPanel.ts'],
   'TaskDependencyQueryApi.dependencyEligibility': 'src/panels/RightPanel.ts',
 };
 
@@ -922,8 +914,6 @@ describe('task architecture boundaries', () => {
       'src/panels/CenterPanel.ts:TaskApplicationApi.execute',
       'src/panels/CenterPanel.ts:TaskApplicationApi.execute',
       'src/panels/RightPanel.ts:executePlanningPatch',
-      'src/ui/CalendarRenderer.ts:TaskApplicationApi.execute',
-      'src/ui/CalendarRenderer.ts:TaskApplicationApi.execute',
     ]);
     expect(
       memberApplicationExecuteCount(

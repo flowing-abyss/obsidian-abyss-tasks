@@ -28,7 +28,6 @@ export interface Task {
   description?: string;
   subtaskRange?: { from: number; to: number };
   linkCount?: number; // count of links (files/notes) in title+description+comments, precomputed by the task index
-  dailyNoteDate?: string; // YYYY-MM-DD precomputed by the task index for daily-note files
   noteColor?: string; // from file frontmatter `color`
   noteTextColor?: string; // from file frontmatter `textColor`
   noteIcon?: string; // from file frontmatter `icon`
@@ -69,7 +68,5 @@ export interface TaskComment {
 export interface ParseContext {
   filePath: string;
   line: number;
-  dailyNoteDate?: string; // pre-computed by store; parser stores it verbatim if provided
-  globalTaskFilter?: string; // tag to strip, e.g. '#task'
   statusCatalog: StatusCatalog;
 }

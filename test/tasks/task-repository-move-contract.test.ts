@@ -36,7 +36,6 @@ async function harness(
   const codec = new TaskMarkdownCodec(statusCatalog);
   const index = new TaskIndex(app, {
     statusCatalog,
-    dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
   });
   const snapshots = (path: string, content: string) =>
     snapshotsOverride?.(path, content) ?? index.snapshotsFromContent(path, content);
@@ -277,7 +276,6 @@ describe('Obsidian move failure state machine', () => {
       const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
       const appIndex = new TaskIndex(h.app, {
         statusCatalog: catalog,
-        dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
       });
       return appIndex.snapshotsFromContent(path, content);
     };

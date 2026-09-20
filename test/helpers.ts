@@ -6,7 +6,7 @@ import { CenterPanel } from '../src/panels/CenterPanel';
 import { LeftPanel } from '../src/panels/LeftPanel';
 import type { ProjectManager } from '../src/projects/ProjectManager';
 import type { ProjectStore } from '../src/projects/ProjectStore';
-import { buildDefaultTaskStatuses, DEFAULT_VIEW_CONFIG } from '../src/settings/defaults';
+import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import type { CalendarSettings, ResolvedConfig } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -182,11 +182,7 @@ export function queryApiForTasks(
         .filter((task) => query?.statuses === undefined || query.statuses.includes(task.status))
         .filter((task) => {
           if (query?.dateRange == null) return true;
-          const date =
-            task.planning.due ??
-            task.planning.scheduled ??
-            task.planning.start ??
-            task.presentation.dailyNoteDate;
+          const date = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
           return date !== undefined && date >= query.dateRange.from && date <= query.dateRange.to;
         }),
     forCalendarProjection: (dates) => {
@@ -201,9 +197,7 @@ export function queryApiForTasks(
           const { start, scheduled, due } = node.planning;
           if (start != null && due != null)
             return dates.some((date) => date >= start && date <= due);
-          return [scheduled, due, rootDailyNoteDate(node)].some(
-            (date) => date !== undefined && wanted.has(date),
-          );
+          return [scheduled, due].some((date) => date !== undefined && wanted.has(date));
         }),
         recurringSources: sources.filter(
           ({ node }) =>
@@ -222,10 +216,6 @@ export function queryApiForTasks(
     },
     ...(onSubscribe === undefined ? {} : { subscribe: onSubscribe }),
   });
-}
-
-function rootDailyNoteDate(task: TaskSnapshot): TaskSnapshot['presentation']['dailyNoteDate'] {
-  return task.presentation.dailyNoteDate;
 }
 
 /** Every query capability a test double has to supply, matching `TaskApplicationApi.queries`. */
@@ -419,9 +409,7 @@ export type TaskFixtureInput = Omit<
     readonly time?: string;
     readonly duration?: number;
   };
-  readonly presentation?: Omit<Partial<TaskSnapshot['presentation']>, 'dailyNoteDate'> & {
-    readonly dailyNoteDate?: string;
-  };
+  readonly presentation?: Partial<TaskSnapshot['presentation']>;
   readonly ref?: Partial<TaskSnapshot['ref']>;
   readonly source?: Partial<TaskSnapshot['source']>;
 };
@@ -466,7 +454,7 @@ export function task(overrides: TaskFixtureInput = {}): TaskSnapshot {
     ref,
     source,
     planning: { ...overrides.planning } as TaskSnapshot['planning'],
-    presentation: { linkCount: 0, ...overrides.presentation } as TaskSnapshot['presentation'],
+    presentation: { linkCount: 0, ...overrides.presentation },
     tags: [...(overrides.tags ?? [])],
     subtasks: [...(overrides.subtasks ?? [])],
     comments: [...(overrides.comments ?? [])],
@@ -740,10 +728,8 @@ export function captureChangedCallback(
 /** Build a full ResolvedConfig with sane defaults; overrides win. */
 export function resolvedConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
-    ...DEFAULT_VIEW_CONFIG,
-    isMobile: false,
-    sourceNoteDisplay: 'non-default',
-    taskFilePath: 'tasks/active.md',
+    firstDayOfWeek: 1,
+    startPosition: '',
     ...overrides,
   };
 }
@@ -850,10 +836,7 @@ export function configuredTaskApplication(
     options.authority === true ? new TaskRefAuthority('configured-test-session') : undefined;
   const index = new TaskIndex(app, {
     statusCatalog,
-    dailyNoteFormat: settings.desktop.dailyNoteFormat,
-    ...(settings.desktop.globalTaskFilter.length > 0 && {
-      globalTaskFilter: settings.desktop.globalTaskFilter,
-    }),
+
     ...(refAuthority === undefined ? {} : { refAuthority }),
   });
   const repository = new ObsidianTaskRepository(app, {

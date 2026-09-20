@@ -10,7 +10,6 @@ import {
   type TaskIndexEvent,
   type TaskSnapshot,
 } from '../src/tasks';
-import { CalendarRenderer } from '../src/ui/CalendarRenderer';
 import {
   calendarOccurrenceForTask,
   projectCalendarOccurrences,
@@ -20,7 +19,6 @@ import {
 } from '../src/views/calendarOccurrences';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { layoutVisibleMonth, layoutVisibleMonthWithReplacement } from '../src/views/monthLayout';
-import { MonthView } from '../src/views/MonthView';
 import { layoutVisibleSpans, layoutVisibleSpansWithReplacement } from '../src/views/spanLayout';
 import { layoutTimedDay, taskLayoutIdentity } from '../src/views/timegrid/layout';
 import {
@@ -31,9 +29,7 @@ import {
 import { toTimedBlockInputs } from '../src/views/timegrid/renderTimedBlocks';
 import { previewTimedPositionFor, TodayView } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
-import { WeekView } from '../src/views/WeekView';
 import {
-  createAppWithFiles,
   cssRuleParts,
   expectDefined,
   freshContainer,
@@ -360,154 +356,6 @@ function monthCallbacks() {
   };
 }
 
-function legacyCallbacks() {
-  return {
-    app: fakeApp,
-    onToggle: vi.fn(),
-    onCellClick: vi.fn(),
-    onWeekClick: vi.fn(),
-    onTaskClick: vi.fn(),
-    onDrop: vi.fn(),
-    onOpenNote: vi.fn(),
-    onContextMenu: vi.fn(),
-    statusRegistry: registry,
-    ...forecastCallbacks(),
-  };
-}
-
-interface LegacyVisualFixture {
-  readonly root: HTMLElement;
-  readonly style: HTMLStyleElement;
-  readonly ordinary: HTMLElement;
-  readonly recurring: HTMLElement;
-  readonly forecast: HTMLElement;
-}
-
-function renderLegacyVisualFixture(view: 'week' | 'month'): LegacyVisualFixture {
-  const visibleDate = localDate('2026-08-05');
-  const ordinarySource = rootSource({
-    title: 'Legacy ordinary',
-    planning: { due: visibleDate },
-    filePath: 'Ordinary.md',
-    presentation: { noteColor: '#225588' },
-  });
-  const recurringSource = rootSource({
-    title: 'Legacy materialized repeat',
-    recurrence: 'every week',
-    planning: { due: visibleDate },
-    filePath: 'Materialized.md',
-    presentation: { noteColor: '#884422' },
-  });
-  const forecastSource = rootSource({
-    title: 'Legacy colored forecast',
-    recurrence: 'every week',
-    planning: { due: localDate('2026-07-29') },
-    filePath: 'Forecast.md',
-    presentation: { noteColor: '#336699', noteTextColor: '#f5f5f5' },
-  });
-  const ordinary = materialized(ordinarySource).task;
-  const recurring = materialized(recurringSource).task;
-  const forecast = expectDefined(forecasts(forecastSource, visibleDate, visibleDate)[0]).task;
-  const root = freshContainer();
-  root.className = 'tasksCalendar';
-  root.dataset['abyssLegacyVisualFixture'] = 'true';
-  root.setAttribute('view', view);
-  activeDocument.body.appendChild(root);
-  const style = installCalendarStyles();
-  const tasks = [forecast, recurring, ordinary];
-  if (view === 'week') {
-    new WeekView(legacyCallbacks()).render(
-      root,
-      tasks,
-      resolvedConfig({ startPosition: '2026-08-03', firstDayOfWeek: 1 }),
-    );
-  } else {
-    new MonthView(legacyCallbacks()).render(
-      root,
-      tasks,
-      resolvedConfig({ startPosition: '2026-08', firstDayOfWeek: 1 }),
-    );
-  }
-  const card = (title: string): HTMLElement =>
-    expectDefined(
-      Array.from(root.querySelectorAll<HTMLElement>('.task')).find(
-        (candidate) => candidate.dataset['taskText'] === title,
-      ),
-    );
-  return {
-    root,
-    style,
-    ordinary: card('Legacy ordinary'),
-    recurring: card('Legacy materialized repeat'),
-    forecast: card('Legacy colored forecast'),
-  };
-}
-
-function expectLegacyVisualContract(fixture: LegacyVisualFixture): void {
-  const { root, style, ordinary, recurring, forecast } = fixture;
-  const host = getComputedStyle(root);
-  for (const token of [
-    '--abyss-calendar-surface',
-    '--abyss-calendar-surface-forecast',
-    '--abyss-calendar-border',
-    '--abyss-calendar-border-forecast',
-    '--abyss-calendar-foreground',
-    '--abyss-calendar-now',
-    '--abyss-calendar-border-width',
-  ]) {
-    expect(host.getPropertyValue(token).trim(), `${token} on legacy host`).not.toBe('');
-  }
-
-  expect(forecast.style.getPropertyValue('--task-color')).toBe('#336699');
-  const forecastStyle = getComputedStyle(forecast);
-  expect(forecastStyle.getPropertyValue('--abyss-tag-color')).toContain('--task-color');
-  expect(forecastStyle.getPropertyValue('--abyss-calendar-surface-forecast')).toContain(
-    'color-mix',
-  );
-  expect(winningDeclaration(style, forecast, 'border-inline-start')?.value).toContain(
-    '--abyss-tag-color',
-  );
-
-  expect(forecast.dataset['controlSlot']).toBe('reserved');
-  expect(forecast.querySelector('.abyss-status-marker')).toBeNull();
-  expect(forecast.querySelector('input[type="checkbox"]')).toBeNull();
-  expect(forecast.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
-  const forecastInner = expectDefined(forecast.querySelector<HTMLElement>(':scope > .inner'));
-  expect(winningDeclaration(style, forecastInner, 'content', 'before')).toBeUndefined();
-
-  for (const materialized of [ordinary, recurring]) {
-    expect(materialized.dataset['controlSlot']).toBe('occupied');
-    expect(materialized.querySelectorAll('.abyss-status-marker')).toHaveLength(1);
-    const inner = expectDefined(materialized.querySelector<HTMLElement>(':scope > .inner'));
-    expect(winningDeclaration(style, inner, 'content', 'before')).toBeUndefined();
-  }
-  expect(recurring.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
-
-  const forecastBackground = winningDeclaration(style, forecast, 'background');
-  expect(forecastBackground).toMatchObject({
-    selector: ".abyss-calendar-item[data-occurrence-state='forecast']",
-    value: 'var(--abyss-calendar-surface-forecast)',
-    specificity: [0, 2, 0],
-  });
-  expect(winningDeclaration(style, forecast, 'background', 'hover')).toEqual(forecastBackground);
-  expect(winningDeclaration(style, forecast, 'color')?.value).toBe(
-    'var(--abyss-calendar-foreground)',
-  );
-  expect(winningDeclaration(style, forecast, 'outline')?.value).toBe(
-    'var(--abyss-calendar-border-width) dotted var(--abyss-calendar-border-forecast)',
-  );
-  expect(winningDeclaration(style, forecast, 'opacity')).toBeUndefined();
-  expect(forecastStyle.opacity).not.toBe('0.8');
-
-  for (const property of ['padding', 'border-radius', 'font-size', 'line-height']) {
-    const values = [ordinary, recurring, forecast].map(
-      (card) => winningDeclaration(style, card, property)?.value,
-    );
-    expect(new Set(values).size, `${property} geometry`).toBe(1);
-    expect(values[0], `${property} geometry`).toBeTruthy();
-  }
-}
-
 function expectAxes(
   element: HTMLElement,
   state: 'materialized' | 'forecast',
@@ -575,93 +423,6 @@ describe('forecast rendering contract', () => {
       expectAxes(block, 'forecast', 'single', 'true');
       expect(block.getAttribute('data-occurrence-key')).toBe(fixture.occurrence.key);
       expectForecastInert(block);
-    }
-  });
-
-  it('renders forecast rows in legacy Week and Month without materialized controls', () => {
-    const source = rootSource({
-      title: 'Legacy forecast',
-      recurrence: 'every day',
-      planning: { due: localDate('2026-08-02') },
-    });
-    const weekForecasts = forecasts(source, '2026-08-03', '2026-08-09');
-    const week = freshContainer();
-    const month = freshContainer();
-
-    new WeekView(legacyCallbacks()).render(
-      week,
-      weekForecasts.map(({ task: snapshot }) => snapshot),
-      resolvedConfig({ startPosition: '2026-08-03', firstDayOfWeek: 1 }),
-    );
-    new MonthView(legacyCallbacks()).render(
-      month,
-      weekForecasts.map(({ task: snapshot }) => snapshot),
-      resolvedConfig({ startPosition: '2026-08' }),
-    );
-
-    for (const root of [week, month]) {
-      const cards = Array.from(root.querySelectorAll<HTMLElement>('.task'));
-      expect(cards).toHaveLength(7);
-      for (const card of cards) {
-        expect(card.textContent).toContain('Legacy forecast');
-        expect(card.querySelector('[data-recurrence-forecast="true"]')).not.toBeNull();
-        expectAxes(card, 'forecast', 'single', 'true');
-        expectForecastInert(card);
-      }
-    }
-  });
-
-  it('reports legacy multi-day forecast start and middle cards as continuations and the due card as terminal', () => {
-    const source = rootSource({
-      title: 'Legacy forecast range',
-      recurrence: 'every week',
-      planning: {
-        start: localDate('2026-07-31'),
-        due: localDate('2026-08-02'),
-      },
-    });
-    const [forecast] = forecasts(source, '2026-08-07', '2026-08-09');
-    expect(expectDefined(forecast).task.planning).toEqual({
-      start: localDate('2026-08-07'),
-      due: localDate('2026-08-09'),
-    });
-    const week = freshContainer();
-    const month = freshContainer();
-
-    new WeekView(legacyCallbacks()).render(
-      week,
-      [expectDefined(forecast).task],
-      resolvedConfig({ startPosition: '2026-08-03', firstDayOfWeek: 1 }),
-    );
-    new MonthView(legacyCallbacks()).render(
-      month,
-      [expectDefined(forecast).task],
-      resolvedConfig({ startPosition: '2026-08', firstDayOfWeek: 1 }),
-    );
-
-    for (const root of [week, month]) {
-      const start = root.querySelector<HTMLElement>(
-        '.task.start[data-occurrence-state="forecast"]',
-      );
-      const continuations = Array.from(
-        root.querySelectorAll<HTMLElement>('.task.process[data-occurrence-state="forecast"]'),
-      );
-      const terminal = root.querySelector<HTMLElement>(
-        '.task.recurrence[data-occurrence-state="forecast"]',
-      );
-
-      expect(start?.getAttribute('data-continuity')).toBe('continuation');
-      expect(continuations.length).toBeGreaterThan(0);
-      expect(continuations.every((card) => card.dataset['continuity'] === 'continuation')).toBe(
-        true,
-      );
-      expect(terminal?.getAttribute('data-continuity')).toBe('terminal');
-      for (const card of [expectDefined(start), ...continuations, expectDefined(terminal)]) {
-        expect(card.getAttribute('data-occurrence-key')).toBe(
-          expectDefined(forecast).occurrence.key,
-        );
-        expectForecastInert(card);
-      }
     }
   });
 
@@ -833,14 +594,6 @@ describe('forecast rendering contract', () => {
 });
 
 describe('forecast visual system', () => {
-  it('keeps legacy Week forecast cards on the complete shared DOM and winning cascade contract', () => {
-    expectLegacyVisualContract(renderLegacyVisualFixture('week'));
-  });
-
-  it('keeps legacy Month forecast cards on the complete shared DOM and winning cascade contract', () => {
-    expectLegacyVisualContract(renderLegacyVisualFixture('month'));
-  });
-
   it('reserves one control and recurrence slot for ordinary, recurring, and forecast month items', () => {
     const ordinary = task({
       title: 'Ordinary item',
@@ -1174,50 +927,6 @@ describe('forecast visual system', () => {
     panel.destroy();
     expect(diagnostic.isConnected).toBe(false);
     expect(root.querySelector('.abyss-calendar-projection-diagnostic')).toBeNull();
-  });
-
-  it('keeps the CalendarRenderer live region stable across query patches and tears it down', () => {
-    const limitSource = task({
-      title: 'Legacy stable diagnostic source',
-      recurrence: 'every month',
-      planning: { due: '1000-01-31' },
-      source: { filePath: 'Legacy-stable.md', line: 0 },
-    });
-    let sources: TaskSnapshot[] = [limitSource];
-    let notify: ((event: TaskIndexEvent) => void) | undefined;
-    const queries = queryApiForTasks(
-      () => sources,
-      (listener) => {
-        notify = listener;
-        return () => {
-          if (notify === listener) notify = undefined;
-        };
-      },
-    );
-    const root = freshContainer();
-    const renderer = new CalendarRenderer(
-      root,
-      resolvedConfig({ defaultView: 'month', startPosition: '1400-08' }),
-      fakeApp,
-      queries,
-      { queries, execute: vi.fn() },
-      registry,
-    );
-    renderer.mount();
-    const diagnostic = expectDefined(
-      root.querySelector<HTMLElement>('.abyss-calendar-projection-diagnostic'),
-    );
-
-    notify?.({ type: 'changed', files: ['Legacy-stable.md'] });
-    expect(root.querySelector('.abyss-calendar-projection-diagnostic')).toBe(diagnostic);
-
-    sources = [];
-    notify?.({ type: 'changed', files: ['Legacy-stable.md'] });
-    expect(root.querySelector('.abyss-calendar-projection-diagnostic')).toBe(diagnostic);
-    expect(diagnostic.textContent).toBe('');
-
-    renderer.destroy();
-    expect(diagnostic.isConnected).toBe(false);
   });
 });
 
@@ -1667,51 +1376,6 @@ describe('forecast interaction contract', () => {
     anchor.remove();
   });
 
-  it('CalendarRenderer patches and destroy close its owned forecast menu', () => {
-    const sourceRoot = task({
-      title: 'Legacy lifecycle source',
-      recurrence: 'every day',
-      planning: { due: '2026-08-08' },
-      source: { filePath: 'Legacy.md', line: 4 },
-    });
-    let notify: ((event: TaskIndexEvent) => void) | undefined;
-    const queries = queryApiForTasks(
-      () => [sourceRoot],
-      (listener) => {
-        notify = listener;
-        return () => {
-          if (notify === listener) notify = undefined;
-        };
-      },
-    );
-    const root = freshContainer();
-    const renderer = new CalendarRenderer(
-      root,
-      resolvedConfig({ defaultView: 'month', startPosition: '2026-08' }),
-      fakeApp,
-      queries,
-      { queries, execute: vi.fn() },
-      registry,
-    );
-    renderer.mount();
-    const openMenu = (): void => {
-      expectDefined(
-        root.querySelector<HTMLElement>(
-          '.task[data-occurrence-state="forecast"][data-due="2026-08-09"]',
-        ),
-      ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    };
-
-    openMenu();
-    expect(activeDocument.querySelector('.abyss-forecast-context-menu')).not.toBeNull();
-    notify?.({ type: 'changed', files: ['Legacy.md'] });
-    expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
-
-    openMenu();
-    renderer.destroy();
-    expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
-  });
-
   it('CenterPanel patches and destroy close its owned forecast menu', () => {
     const sourceRoot = task({
       title: 'Modern lifecycle source',
@@ -1763,63 +1427,6 @@ describe('forecast interaction contract', () => {
     panel.destroy();
     expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
   });
-
-  it.each(['month', 'week'] as const)(
-    'opens a legacy %s forecast source modal with the visible literal date context',
-    async (defaultView) => {
-      const app = await createAppWithFiles({
-        'Recurring.md': '- [ ] Daily source 🔁 every day 📅 2026-08-01',
-      });
-      const sourceRoot = task({
-        title: 'Daily source',
-        recurrence: 'every day',
-        planning: { due: '2026-08-01' },
-        source: { filePath: 'Recurring.md', line: 0 },
-      });
-      const queries = queryApiForTasks(() => [sourceRoot]);
-      const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
-        type: 'invalid',
-        issues: [{ code: 'invalid-target' }],
-      });
-      const root = freshContainer();
-      const renderer = new CalendarRenderer(
-        root,
-        resolvedConfig({
-          defaultView,
-          startPosition: defaultView === 'month' ? '2026-08' : '2026-07-27',
-          firstDayOfWeek: 1,
-        }),
-        app,
-        queries,
-        { queries, execute },
-        registry,
-      );
-      renderer.mount();
-      const forecast = expectDefined(
-        root.querySelector<HTMLElement>(
-          '.task[data-occurrence-state="forecast"][data-due="2026-08-02"]',
-        ),
-      );
-
-      forecast.click();
-      const sourceModal = activeDocument.querySelector<HTMLElement>('.abyss-modal');
-      expect(sourceModal?.textContent).toContain('Daily source');
-      expect(sourceModal?.querySelector('.abyss-forecast-source-context')?.textContent).toBe(
-        'Forecast for 2026-08-02',
-      );
-
-      forecast.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      expectDefined(
-        activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu-edit-repeat'),
-      ).click();
-      expect(activeDocument.querySelector<HTMLInputElement>('.abyss-recurrence-raw')?.value).toBe(
-        'every day',
-      );
-
-      renderer.destroy();
-      activeDocument.querySelector<HTMLElement>('.abyss-modal-close-btn')?.click();
-    },
-  );
 
   it('forecast right-click exposes only Edit repeat', () => {
     const sourceRoot = task({

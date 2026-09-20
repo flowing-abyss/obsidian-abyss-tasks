@@ -423,6 +423,7 @@ describe('renderHourGrid', () => {
     const headers = Array.from(container.querySelectorAll('.abyss-tg-header-cell'));
     (headers[1] as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(onDayHeaderClick).toHaveBeenCalledWith('2026-07-11');
+    expect(headers[1]?.tagName).toBe('BUTTON');
     expect(handles.days).toHaveLength(2); // sanity: handles still line up with dates
     // Clickable headers advertise the affordance (pointer/hover is CSS-gated on is-clickable).
     expect((headers[0] as HTMLElement).classList.contains('is-clickable')).toBe(true);

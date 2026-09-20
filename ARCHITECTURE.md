@@ -1,8 +1,7 @@
 # Architecture
 
-Abyss Tasks manages Markdown tasks through an Obsidian sidebar and native `task-calendar` code
-blocks. Markdown is the durable record. The plugin builds read models over the vault and writes
-user changes through application commands.
+Abyss Tasks manages Markdown tasks through an Obsidian sidebar. Markdown is the durable record.
+The plugin builds read models over the vault and writes user changes through application commands.
 
 This document describes the implemented architecture on `master`: ownership, sources of truth,
 dependency direction, and critical data flows. Follow the source and test links for behavior details;
@@ -12,7 +11,7 @@ use CodeGraph to inspect current call paths. Proposed architecture belongs in an
 
 ```mermaid
 flowchart LR
-  Person[User] -->|interacts with| UI[Sidebar and code blocks]
+  Person[User] -->|interacts with| UI[Sidebar]
   UI -->|reads through| Query[TaskQueryApi]
   Query -->|is implemented by| Index[TaskIndex]
   Index -->|reads and watches| Vault[Obsidian Markdown vault]
@@ -51,14 +50,13 @@ It loads settings, creates the status catalog and task adapters, wires applicati
 registers views and commands, and starts and stops the index. Concrete Obsidian task adapters are
 wired here; consumers receive interfaces instead of constructing alternate repositories or indexes.
 
-| Boundary                                                  | Responsibility                                                                              | Dependency direction                                                     |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| [Task public API](src/tasks/index.ts)                     | Query, dependency query, commands, and capture planning                                     | Presentation imports this boundary                                       |
-| [Task domain](src/tasks/domain/)                          | Immutable values, references, commands, status, recurrence, dates, and time                 | Domain and deterministic `rrule` boundary only                           |
-| [Task application](src/tasks/application/)                | Resolve and validate use cases; coordinate repository and destination ports                 | Domain and application ports; no concrete infrastructure or presentation |
-| [Task infrastructure](src/tasks/infrastructure/)          | Obsidian adapters, index, canonical codec, block editing, location, and reference authority | Application, domain, shared Markdown helpers, and Obsidian; no UI        |
-| [Sidebar shell](src/views/PanelView.ts)                   | AppState, responsive panels, navigation, shortcuts, and collaborator lifetimes              | Public task capabilities                                                 |
-| [Native code blocks](src/code-block/registerCodeBlock.ts) | Resolve block settings and mount CalendarRenderer                                           | Same query, command, and status capabilities as the sidebar              |
+| Boundary                                         | Responsibility                                                                              | Dependency direction                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| [Task public API](src/tasks/index.ts)            | Query, dependency query, commands, and capture planning                                     | Presentation imports this boundary                                       |
+| [Task domain](src/tasks/domain/)                 | Immutable values, references, commands, status, recurrence, dates, and time                 | Domain and deterministic `rrule` boundary only                           |
+| [Task application](src/tasks/application/)       | Resolve and validate use cases; coordinate repository and destination ports                 | Domain and application ports; no concrete infrastructure or presentation |
+| [Task infrastructure](src/tasks/infrastructure/) | Obsidian adapters, index, canonical codec, block editing, location, and reference authority | Application, domain, shared Markdown helpers, and Obsidian; no UI        |
+| [Sidebar shell](src/views/PanelView.ts)          | AppState, responsive panels, navigation, shortcuts, and collaborator lifetimes              | Public task capabilities                                                 |
 
 The public task capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TimeTrackingQueryApi`,
 `TaskApplicationApi`, and `TaskCaptureApplicationApi`. Application queries supply all three query
@@ -68,7 +66,7 @@ or settings UI.
 
 `PanelView` owns `RailPanel` for mode changes, `LeftPanel` for navigation, `CenterPanel` for selected
 content, and `RightPanel` for the task inspector. Panels share transient navigation through
-`AppState`. The native code block render child owns cleanup when Obsidian removes its block.
+`AppState`.
 
 Navigation finishes the active project editor before changing mode. A rejected draft leaves the
 current mode and projection intact. Inspector history stores structural task paths for its session;
@@ -106,8 +104,8 @@ also covers accepted metadata events with unchanged tasks, including notes witho
 `ProjectStore` waits for these barriers before combining frontmatter with matching task statistics.
 
 Task creation freezes its destination, local date, template, insertion policy, prefix, tags, and
-lifecycle settings in a retained `TaskCaptureApplicationApi` session. Sidebar capture and the native
-`task-calendar` modal reuse that session for retries. Planning expands the configured `taskFilePath`
+lifecycle settings in a retained `TaskCaptureApplicationApi` session. Sidebar capture reuses that
+session for retries. Planning expands the configured `taskFilePath`
 without writing; `NoteTemplateService` prepares the note when the command executes and coordinates
 concurrent preparation of the same path. Project capture uses the selected note and project
 insertion policy. Overview capture follows the active Table, Kanban, or Timeline selection. Creation
@@ -409,12 +407,8 @@ Legacy project status migration preserves recoverable conflicts and requires exp
 selection or discard; loading never rewrites vault notes. Any persisted-contract change needs a
 compatibility/migration design. See [persistence tests](test/settings-persistence.test.ts).
 
-Two compatibility boundaries remain explicit:
-
-- [`src/parser/`](src/parser/) adapts canonical task data to legacy presentation. It may use codec
-  internals for that conversion; new task behavior belongs in `src/tasks/`.
-- `window.renderCalendar` is the legacy Dataview bridge installed and removed by `src/main.ts`.
-  Native `task-calendar` code blocks are the maintained integration.
+[`src/parser/`](src/parser/) adapts canonical task data to legacy presentation. It may use codec
+internals for that conversion; new task behavior belongs in `src/tasks/`.
 
 ## Changes and verification
 

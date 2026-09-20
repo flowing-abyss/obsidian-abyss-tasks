@@ -12,17 +12,17 @@ describe('shouldShowSourceNote', () => {
   it("'always' always returns true", () => {
     const t = task({
       source: { filePath: 'periodic/daily/2026-06-25.md' },
-      presentation: { dailyNoteDate: '2026-06-25' },
+      presentation: {},
     });
     expect(shouldShowSourceNote(t, 'always', '')).toBe(true);
   });
 
-  it("'non-default' hides for daily note (dailyNoteDate set)", () => {
+  it("'non-default' shows dated notes outside the configured task destination", () => {
     const t = task({
       source: { filePath: 'periodic/daily/2026-06-25.md' },
-      presentation: { dailyNoteDate: '2026-06-25' },
+      presentation: {},
     });
-    expect(shouldShowSourceNote(t, 'non-default', '')).toBe(false);
+    expect(shouldShowSourceNote(t, 'non-default', 'Inbox/tasks.md')).toBe(true);
   });
 
   it("'non-default' hides when filePath matches taskFilePath", () => {

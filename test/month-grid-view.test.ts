@@ -971,18 +971,15 @@ describe('MonthGridView', () => {
     expect(cbs.onDayClick).not.toHaveBeenCalled();
   });
 
-  it('each day cell keeps a daily-note internal-link (href), and clicking the day-number label also fires onDayClick (Task 32)', () => {
+  it('day label is a navigation button that invokes the calendar callback', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const view = new MonthGridView(cbs);
-    view.render(
-      container,
-      [],
-      resolvedConfig({ startPosition: '2026-07', dailyNoteFolder: 'Daily' }),
-    );
+    view.render(container, [], resolvedConfig({ startPosition: '2026-07' }));
     const cell = container.querySelector('[data-mg-date="2026-07-15"]') as HTMLElement;
-    const link = cell.querySelector('a.internal-link') as HTMLAnchorElement;
-    expect(link.getAttribute('href')).toBe('Daily/2026-07-15');
+    const link = cell.querySelector('button.abyss-mg-day-label') as HTMLButtonElement;
+    expect(cell.querySelector('a.internal-link')).toBeNull();
+    expect(link).not.toBeNull();
     const click = new MouseEvent('click', { bubbles: true, cancelable: true });
     click.preventDefault();
     link.dispatchEvent(click);

@@ -1,5 +1,4 @@
 import { getAllTags, normalizePath, Notice, Plugin, TFile, type TAbstractFile } from 'obsidian';
-import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
 import { extractMarkdownBodyTags } from './markdown/markdownTagRename';
 import { NoteTemplateService } from './notes/NoteTemplateService';
 import { initializeProjectPropertyDefinitions } from './projects/initializeProjectPropertyDefinitions';
@@ -23,7 +22,7 @@ import {
   validateTaskStorageDraft,
   type TaskStorageSettings,
 } from './settings/taskStorageSettings';
-import type { CalendarSettings, CodeBlockParams } from './settings/types';
+import type { CalendarSettings } from './settings/types';
 import { StatusRegistry } from './status/StatusRegistry';
 import { TagManager } from './tags/TagManager';
 import {
@@ -54,7 +53,6 @@ import { ObsidianTaskDestinationProvider } from './tasks/infrastructure/obsidian
 import { ObsidianTaskRepository } from './tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { TaskIndex, type TaskSourceMetadata } from './tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from './tasks/infrastructure/TaskRefAuthority';
-import { CalendarRenderer } from './ui/CalendarRenderer';
 import { presentTaskCommandResult } from './ui/taskCommandResult';
 import { createTrackingActions } from './ui/timeTracking/trackingActions';
 import { PANEL_VIEW_TYPE, PanelView } from './views/PanelView';
@@ -94,18 +92,9 @@ export default class TaskCalendarPlugin extends Plugin {
     this.initializeTaskServices();
     const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
     this.registerPanel(commentTimeContext);
-    registerCodeBlock(
-      this,
-      this.settings,
-      this.queries,
-      this.tasks,
-      this.statusRegistry,
-      commentTimeContext,
-    );
     this.registerCommands();
     this.addSettingTab(new CalendarSettingsTab(this.app, this));
     this.initializeIndexWhenReady();
-    this.installLegacyCalendarShim(commentTimeContext);
   }
 
   private initializeTaskServices(): void {
@@ -118,10 +107,6 @@ export default class TaskCalendarPlugin extends Plugin {
     };
     this.taskIndex = new TaskIndex(this.app, {
       statusCatalog: this.statusCatalog,
-      dailyNoteFormat: this.settings.desktop.dailyNoteFormat,
-      ...(this.settings.desktop.globalTaskFilter.length > 0
-        ? { globalTaskFilter: this.settings.desktop.globalTaskFilter }
-        : {}),
       refAuthority,
       excludeSource: (source) => this.isTaskSourceExcluded(source),
     });
@@ -293,34 +278,8 @@ export default class TaskCalendarPlugin extends Plugin {
     }
   }
 
-  private installLegacyCalendarShim(commentTimeContext: CommentTimeContextProvider): void {
-    // Legacy Dataview shim — remove after users migrate to native `task-calendar` code blocks
-    (window as unknown as Record<string, unknown>)['renderCalendar'] = (
-      dv: unknown,
-      params: CodeBlockParams,
-    ) => {
-      const container = (dv as { container?: HTMLElement } | null)?.container ?? null;
-      if (container == null) {
-        console.warn('[abyss-tasks] renderCalendar: no Dataview container found');
-        return;
-      }
-      const renderer = new CalendarRenderer(
-        container,
-        resolveConfig(this.settings, params),
-        this.app,
-        this.queries,
-        this.tasks,
-        this.statusRegistry,
-        this.settings.recurrence,
-        commentTimeContext,
-      );
-      renderer.mount();
-    };
-  }
-
   override onunload(): void {
     this.taskIndex.destroy();
-    delete (window as unknown as Record<string, unknown>)['renderCalendar'];
   }
 
   async loadSettings(): Promise<void> {

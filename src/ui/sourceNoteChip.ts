@@ -15,8 +15,7 @@ export function shouldShowSourceNote(
   } catch {
     isConfiguredTaskFile = false;
   }
-  const isDefault = task.presentation.dailyNoteDate !== undefined || isConfiguredTaskFile;
-  return !isDefault;
+  return !isConfiguredTaskFile;
 }
 
 export function renderSourceNoteChip(

@@ -7,13 +7,11 @@ import {
   noInteractionOwnership,
   type InteractionOwnershipPort,
 } from '../../ui/interactionOwnership';
-import { plainGhostTaskTitle } from '../../ui/plainGhostTaskTitle';
 import {
   recurrenceBadgeInput,
   renderRecurrenceBadge,
 } from '../../ui/recurrence/renderRecurrenceBadge';
 import { closeStatusPopovers, registerStatusPopoverClose } from '../../ui/statusMenu';
-import { taskCardVisualStyle } from '../../ui/TaskCard';
 import {
   applyTaskNodePresentationIdentity,
   applyTaskPresentationIdentity,
@@ -391,41 +389,6 @@ export function bindForecastInteractions(
     event.stopPropagation();
     callbacks.forecastMenuOwner?.open(element, event, occurrence, callbacks);
   });
-}
-
-export function createForecastTaskCard(
-  task: TaskSnapshot,
-  taskClass: string,
-  occurrence: Extract<CalendarOccurrence, { readonly kind: 'forecast' }>,
-  context: {
-    readonly renderedDate: LocalDate;
-    readonly callbacks: ForecastInteractionCallbacks;
-  },
-): HTMLElement {
-  const { renderedDate, callbacks } = context;
-  const card = createFragment().createDiv();
-  card.className = `task ${taskClass} noNoteIcon`;
-  card.setAttribute('style', taskCardVisualStyle(task));
-  card.setAttribute('data-task-text', task.title);
-  card.setAttribute('title', task.title);
-  if (task.planning.due != null) card.setAttribute('data-due', task.planning.due);
-  const inner = card.createDiv({ cls: 'inner' });
-  const content = inner.createDiv({ cls: 'inner-link' });
-  const icon = content.createDiv({ cls: 'icon' });
-  if (task.recurrence !== undefined && task.recurrence.length > 0) {
-    renderRecurrenceBadge(icon, recurrenceBadgeInput(task.recurrence, true));
-  }
-  content.createDiv({ cls: 'description', text: plainGhostTaskTitle(task) });
-  const spanRole = taskClass === 'scheduled' ? 'scheduled-body' : `${taskClass}-body`;
-  const multiDay = task.planning.start !== undefined && task.planning.due !== undefined;
-  const terminalRole = taskClass === 'due' || taskClass === 'recurrence';
-  let continuity: CalendarContinuity = 'single';
-  if (multiDay) {
-    continuity = renderedDate === task.planning.due || terminalRole ? 'terminal' : 'continuation';
-  }
-  applyOccurrenceDomState(card, occurrence, continuity, spanRole);
-  bindForecastInteractions(card, occurrence, callbacks);
-  return card;
 }
 
 /** Reads up to `max` canonical semantic tags from the task index projection. */
