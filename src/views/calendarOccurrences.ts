@@ -513,6 +513,20 @@ function calendarShiftFields(planning: TaskPlanning): ReadonlyArray<'start' | 's
   return [planning.scheduled != null ? 'scheduled' : 'due'];
 }
 
+export function calendarShiftPlanning(
+  planning: TaskPlanning,
+  days: number,
+): TaskPlanning | undefined {
+  const shiftedPlanning = { ...planning };
+  for (const field of calendarShiftFields(planning)) {
+    const value = planning[field];
+    const shifted = value == null ? undefined : shiftLocalDate(value, days);
+    if (shifted == null) return undefined;
+    shiftedPlanning[field] = shifted;
+  }
+  return shiftedPlanning;
+}
+
 export function calendarShiftScheduleCommand(
   task: TaskSnapshot,
   days: number,
@@ -520,13 +534,13 @@ export function calendarShiftScheduleCommand(
   const target = calendarMutationTarget(task);
   if (target == null || !Number.isSafeInteger(days) || days === 0) return undefined;
   if (target.type === 'task') return { type: 'shift-schedule', ref: target.ref, days };
+  const planning = calendarShiftPlanning(task.planning, days);
+  if (planning == null) return undefined;
   const fields = calendarShiftFields(task.planning);
   const patch: Partial<Record<'start' | 'scheduled' | 'due', NonNullable<TaskPatch['due']>>> = {};
   for (const field of fields) {
-    const value = task.planning[field];
-    const shifted = value == null ? undefined : shiftLocalDate(value, days);
-    if (shifted == null) return undefined;
-    patch[field] = { type: 'set', value: shifted };
+    const value = planning[field];
+    if (value != null) patch[field] = { type: 'set', value };
   }
   return calendarPatchCommand(task, patch);
 }

@@ -1,10 +1,5 @@
-import {
-  daysBetweenLocalDates,
-  localDate,
-  shiftLocalDate,
-  type LocalDate,
-  type TaskSnapshot,
-} from '../tasks';
+import { daysBetweenLocalDates, localDate, type LocalDate, type TaskSnapshot } from '../tasks';
+import { calendarShiftPlanning } from './calendarOccurrences';
 import type { VisibleSpanLayout } from './spanLayout';
 import { populateCalendarPreview } from './timegrid/calendarPreview';
 import { resolveBoundaryTarget, type SpanBoundaryTarget } from './timegrid/dragGeometry';
@@ -435,12 +430,12 @@ class SpanDragSession {
   private renderMovePreview(target: SpanMoveTarget): boolean {
     this.clearPreview();
     const { binding, columns } = this;
-    const actualStart = binding.task.planning.start ?? localDate(binding.segmentStart);
-    const actualDue = binding.task.planning.due ?? localDate(binding.segmentEnd);
-    const shiftedStart = shiftLocalDate(actualStart, target.days);
-    const shiftedEnd = shiftLocalDate(actualDue, target.days);
+    const planning = calendarShiftPlanning(binding.task.planning, target.days);
+    if (planning == null) return false;
+    const isSpan = planning.start != null && planning.due != null;
+    const shiftedStart = isSpan ? planning.start : (planning.scheduled ?? planning.due);
+    const shiftedEnd = isSpan ? planning.due : shiftedStart;
     if (shiftedStart == null || shiftedEnd == null) return false;
-    const planning = { ...binding.task.planning, start: shiftedStart, due: shiftedEnd };
     this.previews = renderSpanRangePreview({
       source: binding.source,
       task: binding.task,

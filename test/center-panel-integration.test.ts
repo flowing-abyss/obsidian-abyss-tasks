@@ -6507,6 +6507,18 @@ describe('calendar child day gestures persist on the child', () => {
     },
     {
       method: 'commitSpanMove',
+      planning: '⏳ 2026-07-08 📅 2026-07-12',
+      target: { grabbedDate: '2026-07-08', targetDate: '2026-07-10', days: 2 },
+      want: ['⏳ 2026-07-10', '📅 2026-07-12'],
+    },
+    {
+      method: 'commitSpanMove',
+      planning: '⏳ 2026-07-08',
+      target: { grabbedDate: '2026-07-08', targetDate: '2026-07-10', days: 2 },
+      want: ['⏳ 2026-07-10'],
+    },
+    {
+      method: 'commitSpanMove',
       planning: '🛫 2026-07-08 📅 2026-07-10',
       target: { grabbedDate: '2026-07-09', targetDate: '2026-07-11', days: 2 },
       want: ['🛫 2026-07-10', '📅 2026-07-12'],
@@ -6533,7 +6545,7 @@ describe('calendar child day gestures persist on the child', () => {
       const lines = (await h.app.vault.read(file)).split('\n');
       expect(lines[0]).toBe(parent);
       expect(lines[2]).toBe('  - [ ] Sibling');
-      for (const carrier of want) expect(lines[1]).toContain(carrier);
+      expect(lines[1]).toBe(`  - [ ] Child ${want.join(' ')}`);
       h.panel.destroy();
     },
   );

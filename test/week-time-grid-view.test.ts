@@ -1690,6 +1690,62 @@ describe('WeekTimeGridView', () => {
 });
 
 describe('materialized child all-day movement', () => {
+  it.each([undefined, '2026-07-12'])(
+    'previews a plain child scheduled move without shifting its due date (%s)',
+    (due) => {
+      const root = task({
+        subtasks: [
+          subtask({ planning: { scheduled: '2026-07-08', ...(due != null ? { due } : {}) } }),
+        ],
+      });
+      const child = expectDefined(root.subtasks[0]);
+      const projected = taskSnapshotForCalendarOccurrence({
+        kind: 'materialized',
+        key: 'child',
+        source: { root, node: child, target: { type: 'subtask', ref: child.ref } },
+        planning: child.planning,
+        recurring: false,
+      });
+      const container = freshContainer();
+      const view = new WeekTimeGridView(callbacks());
+      view.render(
+        container,
+        [projected],
+        resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+      );
+      const restore = measureAllDayCells(container);
+      const layouts = vi.spyOn(spanLayout, 'layoutVisibleSpansWithReplacement');
+      try {
+        const body = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-plain'));
+        body.dispatchEvent(
+          new PointerEvent('pointerdown', {
+            bubbles: true,
+            pointerId: 19,
+            clientX: 250,
+            clientY: 50,
+          }),
+        );
+        window.dispatchEvent(
+          new PointerEvent('pointermove', { pointerId: 19, clientX: 450, clientY: 50 }),
+        );
+        const previewPlanning = expectDefined(layouts.mock.calls[layouts.mock.calls.length - 1])[3];
+        expect(previewPlanning).toEqual({
+          scheduled: '2026-07-10',
+          ...(due != null ? { due } : {}),
+        });
+        expect(
+          Array.from(container.querySelectorAll<HTMLElement>('.abyss-span-move-preview')).map(
+            (el) => el.style.gridColumn,
+          ),
+        ).toEqual(['5 / 6']);
+      } finally {
+        view.destroy();
+        restore();
+        layouts.mockRestore();
+      }
+    },
+  );
+
   it.each([false, true])('moves the exact child occurrence (span=%s)', (span) => {
     const root = task({
       subtasks: [
