@@ -138,6 +138,44 @@ function bindingSymbol(node: ts.BindingElement, checker: ts.TypeChecker): ts.Sym
   return undefined;
 }
 
+function assignmentPropertyName(name: ts.PropertyName): string | undefined {
+  if (ts.isComputedPropertyName(name)) {
+    return ts.isStringLiteralLike(name.expression) ? name.expression.text : undefined;
+  }
+  return ts.isIdentifier(name) || ts.isStringLiteralLike(name) ? name.text : undefined;
+}
+
+// Only walk the local assignment pattern to its RHS, never variable dataflow.
+function assignmentSourceType(
+  pattern: ts.ObjectLiteralExpression,
+  checker: ts.TypeChecker,
+): ts.Type | undefined {
+  const parent = pattern.parent;
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.left === pattern
+  ) {
+    return checker.getTypeAtLocation(parent.right);
+  }
+  if (ts.isPropertyAssignment(parent)) {
+    const symbol = assignmentSymbol(parent, checker);
+    if (symbol !== undefined) return checker.getTypeOfSymbolAtLocation(symbol, parent);
+  }
+  return undefined;
+}
+
+function assignmentSymbol(
+  node: ts.PropertyAssignment | ts.ShorthandPropertyAssignment,
+  checker: ts.TypeChecker,
+): ts.Symbol | undefined {
+  if (!ts.isObjectLiteralExpression(node.parent)) return undefined;
+  const sourceType = assignmentSourceType(node.parent, checker);
+  const name = assignmentPropertyName(node.name);
+  if (sourceType === undefined || name === undefined) return undefined;
+  return checker.getPropertyOfType(sourceType, name);
+}
+
 function referenceSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefined {
   if (ts.isPropertyAccessExpression(node)) return checker.getSymbolAtLocation(node.name);
   if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
@@ -147,6 +185,8 @@ function referenceSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | un
     );
   }
   if (ts.isBindingElement(node)) return bindingSymbol(node, checker);
+  if (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node))
+    return assignmentSymbol(node, checker);
   return undefined;
 }
 

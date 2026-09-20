@@ -39,6 +39,22 @@ const denied = [
     'Vault.modify',
   ],
 ] as const;
+const assignmentExtractions = [
+  ["let write: NoteVault['modify'];\n({ modify: write } = app.vault);", 'Vault.modify', 4],
+  [
+    "const writer = app.vault; let create: NoteVault['create'];\n({ ['create']: create } = writer);",
+    'Vault.create',
+    4,
+  ],
+  ["let append: NoteVault['append'];\n({ append } = app.vault);", 'Vault.append', 4],
+  [
+    "let write: App['vault']['adapter']['write'];\n({ write } = app.vault.adapter);",
+    'DataAdapter.write',
+    4,
+  ],
+  ["let save: Plugin['saveData'];\n({ ['saveData']: save } = plugin);", 'Plugin.saveData', 4],
+  ["let write: NoteVault['modify'];\n({ vault: { modify: write } } = app);", 'Vault.modify', 13],
+] as const;
 const safe = `
 await app.vault.cachedRead(file);
 await app.vault.adapter.read('a.md');
@@ -52,6 +68,14 @@ const tasks = { execute: async (_command: { type: 'delete' }) => {} };
 await tasks.execute({ type: 'delete' });
 const element = document.createElement('div'); element.append('text');
 new Map<string, string>().delete('key');
+let read: NoteVault['read']; ({ read } = app.vault);
+let create: () => void; ({ ['create']: create } = transformer);
+let write: (path: string, data: string) => Promise<void>;
+const portAlias = port; ({ write } = portAlias);
+const unrelated = { nested: transformer }; ({ nested: { create } } = unrelated);
+const ordinaryObject = { modify: 'not an assignment pattern' };
+void ordinaryObject;
+
 `;
 // These source-shaped fixtures independently enumerate the audited operation owners.
 const allowed = [
@@ -99,6 +123,10 @@ for (const [index, [source]] of denied.entries()) {
   sourceMap.set(repoFile(`src/ui/storage-probe-${index}.ts`), prelude + source);
 }
 sourceMap.set(repoFile('src/ui/storage-safe.ts'), prelude + safe);
+for (const [index, [source]] of assignmentExtractions.entries()) {
+  sourceMap.set(repoFile(`src/ui/storage-assignment-${index}.ts`), prelude + source);
+}
+
 // Use each real class name once, with all authorized methods grouped in it.
 for (const [file, className] of allowed) {
   const methods = allowed
@@ -143,6 +171,17 @@ describe('resolved Obsidian storage authority', () => {
       expect(storageAuthorityViolations(found, [])).toHaveLength(1);
     },
   );
+
+  it.each(
+    assignmentExtractions.map(([source, api, column], index) => ({ source, api, column, index })),
+  )('rejects assignment extraction $api in $source', ({ api, column, index }) => {
+    const file = `src/ui/storage-assignment-${index}.ts`;
+    const found = accesses(file);
+    expect(found).toEqual([{ file, api, owner: '<module>', line: 4, column }]);
+    expect(storageAuthorityViolations(found, [])).toEqual([
+      `storage/unauthorized ${file}:4:${column} <module> ${api}`,
+    ]);
+  });
 
   it('reports a stable source span and diagnostic ID', () => {
     const found = accesses('src/ui/storage-probe-0.ts');
