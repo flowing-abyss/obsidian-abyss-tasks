@@ -1,3 +1,4 @@
+import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
@@ -8,6 +9,10 @@ import {
   SettingsPersistenceCoordinator,
   type SettingsPersistencePort,
 } from '../src/settings/persistence';
+import {
+  CALENDAR_SETTINGS_OWNERS,
+  PROJECT_SETTINGS_OWNERS,
+} from './architecture/settingsOwnership';
 import priorSerializerFixture from './fixtures/settings-persistence/cc84b5d-property-definitions-roundtrip.json';
 import { expectDefined } from './helpers';
 
@@ -1040,5 +1045,152 @@ describe('shared week preference', () => {
     );
     const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
     expect(loaded.settings.firstDayOfWeek).toBe(6);
+  });
+});
+
+describe('complete known settings ownership', () => {
+  it.each(['CalendarSettings', 'ProjectsSettings'] as const)(
+    'requires classification when a known %s key is added',
+    (interfaceName) => {
+      const root = ts.sys.resolvePath(`${import.meta.dirname}/..`);
+      const ownershipPath = `${root}/test/architecture/settingsOwnership.ts`;
+      const typesPath = `${root}/src/settings/types.ts`;
+      const options: ts.CompilerOptions = {
+        target: ts.ScriptTarget.ES2021,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        strict: true,
+        skipLibCheck: true,
+        types: ['node'],
+      };
+      const host = ts.createCompilerHost(options);
+      const getSourceFile = host.getSourceFile.bind(host);
+      const baseline = ts.createProgram([ownershipPath], options, host);
+      expect(ts.getPreEmitDiagnostics(baseline)).toEqual([]);
+      host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
+        const source = getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile);
+        return fileName === typesPath && source !== undefined
+          ? ts.createSourceFile(
+              fileName,
+              `${source.text}\nexport interface ${interfaceName} { futurePreference: boolean }`,
+              languageVersion,
+              true,
+            )
+          : source;
+      };
+      const mutated = ts.createProgram([ownershipPath], options, host);
+      const diagnostics = ts.getPreEmitDiagnostics(mutated);
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]?.code).toBe(1360);
+      expect(diagnostics[0]?.file?.fileName).toBe(ownershipPath);
+      expect(
+        ts.flattenDiagnosticMessageText(expectDefined(diagnostics[0]).messageText, '\n'),
+      ).toContain("Property 'futurePreference' is missing");
+    },
+    20_000,
+  );
+
+  it('routes every populated known view root to state and preserves extensions across independent saves', async () => {
+    // Deliberately literal expectations: adding/changing a classified view root
+    // requires enrolling a populated fixture here, independently of stripMovedFields.
+    expect(
+      Object.entries(CALENDAR_SETTINGS_OWNERS)
+        .filter(([, owner]) => owner === 'view')
+        .map(([key]) => key),
+    ).toEqual(['listViewStates', 'sectionCollapse']);
+    expect(
+      Object.entries(CALENDAR_SETTINGS_OWNERS)
+        .filter(([, owner]) => owner === 'partitioned')
+        .map(([key]) => key),
+    ).toEqual(['projects']);
+    expect(
+      Object.entries(PROJECT_SETTINGS_OWNERS)
+        .filter(([, owner]) => owner === 'view')
+        .map(([key]) => key),
+    ).toEqual(['table', 'kanban', 'timeline', 'overviewView']);
+
+    const staticInput = markedStatic({ taskPrefix: '#before', futureStatic: { retained: true } });
+    const projectStatic = staticInput['projects'] as Record<string, unknown>;
+    projectStatic['futureProjectStatic'] = 42;
+    const port = memoryPort(staticInput, {
+      ...stateEnvelope(),
+      futureEnvelope: 'keep',
+      views: {
+        futureViews: 'keep',
+        listViewStates: {
+          today: {
+            groupBy: 'tag',
+            sortBy: { field: 'title', dir: 'desc' },
+            filters: [],
+            futureList: 8,
+          },
+        },
+        sectionCollapse: { pinned: true, projects: false, tags: true },
+        projects: {
+          futureProjects: 'keep',
+          table: {
+            ...structuredClone(DEFAULT_SETTINGS.projects.table),
+            groupBy: 'status',
+            futureTable: 1,
+          },
+          kanban: {
+            ...buildDefaultProjectKanbanSettings(DEFAULT_SETTINGS.projects.table),
+            descriptionLines: 2,
+            futureKanban: 2,
+          },
+          timeline: {
+            ...buildDefaultProjectTimelineSettings(DEFAULT_SETTINGS.projects.table),
+            scale: 'quarter',
+            futureTimeline: 3,
+          },
+          overviewView: 'timeline',
+        },
+      },
+    });
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const staticBefore = structuredClone(port.staticData);
+    settings.sectionCollapse.projects = true;
+    await coordinator.saveViewState(settings);
+    expect(port.staticData).toEqual(staticBefore);
+    expect(port.writes).toEqual([STATE_PATH]);
+    expect(JSON.parse(port.stateText ?? '')).toMatchObject({
+      schemaVersion: 1,
+      futureEnvelope: 'keep',
+      views: {
+        futureViews: 'keep',
+        listViewStates: {
+          today: {
+            groupBy: 'tag',
+            sortBy: { field: 'title', dir: 'desc' },
+            filters: [],
+            futureList: 8,
+          },
+        },
+        sectionCollapse: { pinned: true, projects: true, tags: true },
+        projects: {
+          futureProjects: 'keep',
+          table: { groupBy: 'status', futureTable: 1 },
+          kanban: { descriptionLines: 2, futureKanban: 2 },
+          timeline: { scale: 'quarter', futureTimeline: 3 },
+          overviewView: 'timeline',
+        },
+      },
+    });
+    const stateBefore = port.stateText;
+    settings.taskPrefix = '#after';
+    await coordinator.saveSettings(settings);
+    expect(port.stateText).toBe(stateBefore);
+    expect(port.writes).toEqual([STATE_PATH, 'data.json']);
+    expect(port.staticData).toMatchObject({
+      taskPrefix: '#after',
+      futureStatic: { retained: true },
+      projects: { futureProjectStatic: 42 },
+    });
+    const staticOutput = port.staticData as Record<string, unknown>;
+    for (const key of ['listViewStates', 'sectionCollapse'])
+      expect(staticOutput).not.toHaveProperty(key);
+    for (const key of ['table', 'kanban', 'timeline', 'overviewView'])
+      expect(staticOutput['projects']).not.toHaveProperty(key);
   });
 });
