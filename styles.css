@@ -391,13 +391,18 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
    so it must not show a pointer-cursor/hover it can't honor. */
 .abyss-tg-header-cell.is-clickable {
   background: transparent;
-  box-shadow: none;
   border-top: 0;
   border-right: 0;
   border-bottom: 0;
   border-radius: 0;
   height: auto;
   cursor: pointer;
+}
+
+/* Keep date buttons flat while leaving the keyboard focus ring to Obsidian and the theme. */
+.abyss-tg-header-cell.is-clickable:not(:focus-visible),
+.abyss-mg-cell button.abyss-mg-day-label:not(:focus-visible) {
+  box-shadow: none;
 }
 
 .abyss-tg-header-cell.is-clickable:hover {
@@ -1623,7 +1628,6 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   text-align: left;
   background: transparent;
   border: 0;
-  box-shadow: none;
   height: auto;
   padding: 0;
   cursor: pointer;

@@ -146,7 +146,6 @@ describe('month date-button native cascade', () => {
       'appearance: none',
       'background: transparent',
       'border: 0',
-      'box-shadow: none',
       'width: fit-content',
       'min-width: 0',
       'align-self: flex-start',
