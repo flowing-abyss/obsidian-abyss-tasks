@@ -134,7 +134,7 @@ function literalColor(node, property) {
     if (/^#[\da-f]{3,8}$/i.test(node.value)) return true;
     return (
       /^(--|.*color$|background|border|outline|.*shadow$|fill$|stroke$|text-decoration|column-rule|(?:-webkit-)?(?:backdrop-)?filter$)/.test(
-        property,
+        property.startsWith('--') ? property : property.toLowerCase(),
       ) && namedColors.has(node.value.toLowerCase())
     );
   }

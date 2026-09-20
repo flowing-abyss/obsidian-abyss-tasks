@@ -357,6 +357,10 @@ describe('filter shadow color policy', () => {
   it.each([
     ['filter', 31],
     ['backdrop-filter', 40],
+    ['FILTER', 31],
+    ['Backdrop-Filter', 40],
+    ['-WEBKIT-FILTER', 39],
+    ['-WebKit-Backdrop-Filter', 48],
   ])('rejects named shadow colors in %s at their source span', (property, column) => {
     const css = `.abyss-x {\n  ${property}: drop-shadow(0 0 2px red);\n}`;
     expect(analyze(css)).toEqual([
@@ -378,16 +382,20 @@ describe('filter shadow color policy', () => {
     ]);
   });
 
-  it.each(['filter', 'backdrop-filter'])(
-    'accepts host-derived and currentColor shadows in %s',
-    (property) => {
-      expect(
-        analyze(
-          `.abyss-x { ${property}: drop-shadow(0 0 2px var(--text-normal)) drop-shadow(0 0 1px currentColor); }`,
-        ),
-      ).toEqual([]);
-    },
-  );
+  it.each([
+    'filter',
+    'backdrop-filter',
+    'FILTER',
+    'Backdrop-Filter',
+    '-WEBKIT-FILTER',
+    '-WebKit-Backdrop-Filter',
+  ])('accepts host-derived and currentColor shadows in %s', (property) => {
+    expect(
+      analyze(
+        `.abyss-x { ${property}: drop-shadow(0 0 2px var(--text-normal)) drop-shadow(0 0 1px currentColor); }`,
+      ),
+    ).toEqual([]);
+  });
 
   it('ignores color words in filter URLs and quoted text', () => {
     expect(
@@ -396,4 +404,17 @@ describe('filter shadow color policy', () => {
       ),
     ).toEqual([]);
   });
+});
+
+it('preserves case-sensitive custom-property identities while checking filter property names', () => {
+  expect(
+    analyze(
+      '.abyss-x { --abyss-Shadow: currentColor; FILTER: drop-shadow(0 0 2px var(--abyss-Shadow)); }',
+    ),
+  ).toEqual([]);
+  expect(
+    analyze(
+      '.abyss-x { --abyss-Shadow: currentColor; FILTER: drop-shadow(0 0 2px var(--abyss-shadow)); }',
+    ).map(({ ruleId }) => ruleId),
+  ).toEqual(['abyss/known-variable', 'abyss/unused-variable']);
 });
