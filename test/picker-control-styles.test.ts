@@ -134,3 +134,32 @@ describe('native picker button visual reset', () => {
     expect(css.indexOf(removingHover)).toBeGreaterThan(css.indexOf(hover));
   });
 });
+
+describe('month date-button native cascade', () => {
+  it('keeps date labels intrinsic and left aligned above native button defaults', () => {
+    const selector = '.abyss-mg-cell button.abyss-mg-day-label';
+    const declarations = declarationsFor(selector);
+    expect(
+      compareSpecificity(specificity(selector), specificity(OBSIDIAN_BUTTON_SELECTOR)),
+    ).toBeGreaterThan(0);
+    for (const declaration of [
+      'appearance: none',
+      'background: transparent',
+      'border: 0',
+      'box-shadow: none',
+      'width: fit-content',
+      'min-width: 0',
+      'align-self: flex-start',
+      'justify-content: flex-start',
+      'text-align: left',
+      'height: auto',
+      'padding: 0',
+    ])
+      expect(declarations).toContain(declaration);
+    const hover = `${selector}:hover`;
+    expect(
+      compareSpecificity(specificity(hover), specificity(`${OBSIDIAN_BUTTON_SELECTOR}:hover`)),
+    ).toBeGreaterThan(0);
+    expect(declarationsFor(hover)).toContain('background: transparent');
+  });
+});

@@ -797,7 +797,7 @@
   min-width: 0;
 }
 
-/* Task 38: same strikethrough convention as .abyss-list-task-title.is-done/.is-cancelled — a
+/* Terminal task titles share the sidebar strikethrough convention — a
    completed/cancelled timed task stays a full, visible block; this is what communicates its
    completion instead of the task disappearing from the grid. */
 :is(.abyss-tg-block-title, .abyss-tg-block-continuation-title).is-done {
@@ -1620,7 +1620,13 @@
   opacity: 0.4;
 }
 
-.abyss-mg-day-label {
+.abyss-mg-cell button.abyss-mg-day-label {
+  appearance: none;
+  width: fit-content;
+  min-width: 0;
+  align-self: flex-start;
+  justify-content: flex-start;
+  text-align: left;
   background: transparent;
   border: 0;
   box-shadow: none;
@@ -1629,6 +1635,10 @@
   cursor: pointer;
   font-size: 0.75em;
   color: var(--text-muted);
+}
+
+.abyss-mg-cell button.abyss-mg-day-label:hover {
+  background: transparent;
 }
 
 /* Task 21: checkbox + title share one flex row (same root cause/fix as
@@ -3110,73 +3120,12 @@
   line-height: var(--line-height-tight);
 }
 
-/* ── List View ────────────────────────────────────────── */
-.abyss-list-view {
-  padding: 8px 0;
-}
-
-.abyss-list-section {
-  margin-bottom: 16px;
-}
-
-.abyss-list-date-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 12px 8px;
-  cursor: pointer;
-}
-
-.abyss-list-date-label {
-  font-size: var(--font-ui-small);
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.abyss-list-overdue-header .abyss-list-date-label,
-.abyss-list-overdue-header {
-  color: var(--color-red, #e74c3c);
-}
-
-.abyss-list-date-count,
 .abyss-right-section-count {
   font-size: var(--font-ui-small);
   color: var(--text-faint);
   background: var(--background-modifier-hover);
   border-radius: 10px;
   padding: 0 6px;
-}
-
-.abyss-list-task {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  cursor: pointer;
-  transition: background 0.1s;
-}
-
-.abyss-list-task:hover {
-  background: var(--background-modifier-hover);
-}
-
-.abyss-list-task-title {
-  flex: 1;
-  font-size: var(--font-ui-medium);
-}
-
-.abyss-list-task-title.is-done {
-  text-decoration: line-through;
-  color: var(--text-muted);
-}
-
-.abyss-list-task-meta {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
 }
 
 /* ---- Right Panel ---- */

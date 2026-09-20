@@ -603,4 +603,36 @@ describe('strict dependency checkbox surfaces', () => {
     expect(h.node('Current').node.status).toBe('done');
     expect(h.messages).toEqual([]);
   });
+
+  it.each([
+    { ids: 'schema', expected: 'Complete “Write schema” or remove the dependency first' },
+    {
+      ids: 'schema, duplicate',
+      expected: 'Complete “Write schema” or remove the dependency first (+1 more)',
+    },
+    {
+      ids: 'schema, duplicate, third',
+      expected: 'Complete “Write schema” or remove the dependency first (+2 more)',
+    },
+    {
+      ids: 'duplicate',
+      expected: 'Resolve duplicate dependency ID “duplicate” or remove the dependency first',
+    },
+    {
+      ids: 'duplicate, schema, third',
+      expected:
+        'Resolve duplicate dependency ID “duplicate” or remove the dependency first (+2 more)',
+    },
+  ])('uses the first declared active blocker for $ids', async ({ ids, expected }) => {
+    const h = await harness(
+      `- [ ] Current ⛔ missing, ${ids}\n- [ ] Write schema 🆔 schema\n- [ ] Arbitrary first candidate 🆔 duplicate\n- [x] Arbitrary second candidate 🆔 duplicate\n- [ ] Third 🆔 third\n`,
+    );
+    const result = await h.tasks.execute({
+      type: 'toggle-completion',
+      target: h.node('Current').target,
+    });
+    expect(result.type).toBe('blocked');
+    presentTaskCommandResult(result);
+    expect(h.messages).toEqual([expected]);
+  });
 });
