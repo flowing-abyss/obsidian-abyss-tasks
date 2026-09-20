@@ -388,10 +388,13 @@ function valuePickerControl(
     options.field.type === 'number'
       ? (query: string): number => numberPickerLiteral(options, query)
       : (query: string): string => query;
+  const multiple = options.field.type === 'list' || options.field.type === 'tags';
   return mountProjectCellValuePicker({
+    app: options.app,
     root,
+    sourcePath: options.sourcePath ?? '',
     label: options.field.label,
-    multiple: options.field.type === 'list' || options.field.type === 'tags',
+    multiple,
     value: options.value,
     suggestions,
     ...(appearance === undefined ? {} : { appearance }),
@@ -401,7 +404,7 @@ function valuePickerControl(
       events.changed();
     },
     onCommit: () => {
-      events.commit(false);
+      events.commit(!multiple);
     },
     onInvalid: (message) => {
       events.invalid(message);

@@ -40,6 +40,7 @@ interface CapturedMenuItem {
   checked__: boolean | null;
   icon__: string;
   onClick__: ((event: MouseEvent) => unknown) | null;
+  section__: string;
   title__: string;
 }
 
@@ -51,6 +52,7 @@ function captureMenu(): CapturedMenuItem[] {
       dom: createDiv(),
       icon__: '',
       onClick__: null as ((event: MouseEvent) => unknown) | null,
+      section__: '',
       title__: '',
       onClick(value: (event: MouseEvent) => unknown) {
         this.onClick__ = value;
@@ -67,7 +69,8 @@ function captureMenu(): CapturedMenuItem[] {
         this.icon__ = value;
         return this;
       },
-      setSection() {
+      setSection(value: string) {
+        this.section__ = value;
         return this;
       },
       setSubmenu() {
@@ -543,6 +546,26 @@ describe('CenterPanel task date context menus', () => {
     openMenu(expectDefined(el.querySelector<HTMLElement>('.abyss-task-card')));
 
     expect(relevantDateTitles(items)).toEqual(['Today', 'Tomorrow', 'Set date…', 'Set tag…']);
+  });
+
+  it('places pinned tags before the edit group without creating an empty section', () => {
+    const items = captureMenu();
+    const { el } = makeCenter([first], {}, ['#focus']);
+
+    openMenu(expectDefined(el.querySelector<HTMLElement>('.abyss-task-card')));
+
+    expect(
+      items
+        .filter(({ title__ }) =>
+          ['#focus', 'Set date…', 'Set tag…', 'Edit repeat…'].includes(title__),
+        )
+        .map(({ title__, section__ }) => [title__, section__]),
+    ).toEqual([
+      ['#focus', 'tags'],
+      ['Set date…', 'edit'],
+      ['Set tag…', 'edit'],
+      ['Edit repeat…', 'edit'],
+    ]);
   });
 
   it('keeps repeat editing in the native task menu', () => {

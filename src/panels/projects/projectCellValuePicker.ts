@@ -1,4 +1,4 @@
-import { setIcon } from 'obsidian';
+import { Component, setIcon, type App } from 'obsidian';
 import type { ProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
 import { renderProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
 import {
@@ -7,7 +7,9 @@ import {
 } from '../../ui/projectPropertyValuePresentation';
 
 export interface ProjectCellValuePickerOptions {
+  readonly app: App;
   readonly root: HTMLElement;
+  readonly sourcePath: string;
   readonly label: string;
   readonly multiple: boolean;
   readonly value: unknown;
@@ -97,12 +99,14 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
   private readonly availableGroup_abyssPrivate: HTMLElement;
   private readonly availableRows_abyssPrivate: HTMLElement;
   private readonly actionHost_abyssPrivate: HTMLElement;
+  private readonly renderComponent_abyssPrivate = new Component();
   private readonly sequence_abyssPrivate = ++pickerSequence;
   private activeKey_abyssPrivate: string | undefined;
   private editIndex_abyssPrivate: number | undefined;
   private choiceSequence_abyssPrivate = 0;
 
   constructor(private readonly options_abyssPrivate: ProjectCellValuePickerOptions) {
+    this.renderComponent_abyssPrivate.load();
     this.selected_abyssPrivate = initialValues(
       options_abyssPrivate.value,
       options_abyssPrivate.multiple,
@@ -146,6 +150,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
   }
 
   destroy(): void {
+    this.renderComponent_abyssPrivate.unload();
     this.picker_abyssPrivate.remove();
   }
 
@@ -338,7 +343,11 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
       attr: { 'aria-hidden': 'true' },
     });
     const presentation = element.createDiv({ cls: 'abyss-project-value-picker-presentation' });
-    renderProjectPropertySuggestion(choice.suggestion, presentation);
+    renderProjectPropertySuggestion(choice.suggestion, presentation, {
+      app: this.options_abyssPrivate.app,
+      sourcePath: this.options_abyssPrivate.sourcePath,
+      component: this.renderComponent_abyssPrivate,
+    });
     const edit = element.createEl('button', {
       cls: 'abyss-project-value-picker-edit',
       attr: {
@@ -349,7 +358,11 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
       },
     });
     setIcon(edit, 'pencil');
-    element.addEventListener('click', () => {
+    element.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (event.target instanceof Element && event.target.closest('a') !== null) {
+        event.preventDefault();
+      }
       this.mutate_abyssPrivate(choice.value, this.editIndex_abyssPrivate !== undefined);
     });
     edit.addEventListener('click', (event) => {

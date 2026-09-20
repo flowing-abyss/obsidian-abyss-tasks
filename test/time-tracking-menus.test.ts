@@ -395,14 +395,14 @@ describe('task card tracking menu item', () => {
       ['Today', 'today'],
       ['Tomorrow', 'today'],
       ['Start tracking', 'tracking'],
-      ['Set date…', 'actions'],
+      ['Set date…', 'edit'],
+      ['Set tag…', 'edit'],
+      ['Edit repeat…', 'edit'],
       ['Priority', 'priority'],
       ['Status', 'priority'],
       ['Filter by this priority', 'priority'],
       ['Filter by this status', 'priority'],
-      ['Set tag…', 'actions'],
-      ['Edit repeat…', 'actions'],
-      ['Open in note', 'actions'],
+      ['Open in note', 'open'],
       ['Archive', 'danger'],
       ['Delete', 'danger'],
     ]);
@@ -511,6 +511,18 @@ function inspectorItem(el: HTMLElement, text: string): HTMLElement | undefined {
 }
 
 describe('inspector context menu tracking item', () => {
+  it('places Open in note immediately before archive and delete actions', async () => {
+    const harness = await inspector(UNTRACKED);
+
+    expect(inspectorMenuItems(harness.el).map((item) => item.textContent)).toEqual([
+      'Edit repeat…',
+      'Start tracking',
+      'Open in note',
+      'Archive',
+      'Delete task',
+    ]);
+  });
+
   it('starts tracking the selected task', async () => {
     const harness = await inspector(UNTRACKED);
 

@@ -10,6 +10,41 @@ afterEach(() => {
 });
 
 describe('renderTaskText link occurrence pairing', () => {
+  it('renders an exact link label without installing interactive link behavior', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+      const anchor = holder.createEl('a', { text: 'Rendered label' });
+      anchor.addClass('internal-link');
+      anchor.setAttribute('data-href', 'Projects/Alpha');
+    });
+    const openLinkText = vi.fn().mockResolvedValue(undefined);
+    const trigger = vi.fn();
+    const onEditLink = vi.fn();
+    const host = document.body.createDiv();
+
+    renderTaskText(host, '[[Projects/Alpha|Raw label]]', {
+      app: { workspace: { openLinkText, trigger } } as unknown as App,
+      sourcePath: 'Projects/Current.md',
+      component: new Component(),
+      exactLinkLabel: 'Picker label',
+      interactiveLinks: false,
+      onEditLink,
+    });
+    await vi.runAllTimersAsync();
+    const anchor = expectDefined(host.querySelector<HTMLAnchorElement>('a.internal-link'));
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true });
+
+    anchor.dispatchEvent(click);
+    anchor.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    anchor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+
+    expect(anchor.textContent).toBe('Picker label');
+    expect(openLinkText).not.toHaveBeenCalled();
+    expect(trigger).not.toHaveBeenCalled();
+    expect(onEditLink).not.toHaveBeenCalled();
+  });
+
   it('cancels pending link wiring when its row component is unloaded', () => {
     vi.useFakeTimers();
     vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);

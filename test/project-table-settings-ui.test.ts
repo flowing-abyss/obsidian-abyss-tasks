@@ -11,7 +11,7 @@ import {
   removeConfiguredProjectProperty,
   renderProjectTableSettings,
 } from '../src/settings/projectTableSettings';
-import { editSettingControl, expectDefined } from './helpers';
+import { editSettingControl, expectDefined, methodOf } from './helpers';
 
 vi.mock('obsidian', async () => {
   const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
@@ -803,6 +803,14 @@ describe('renderProjectTableSettings', () => {
     const projects = buildDefaultProjectsSettings();
     const saveViewState = vi.fn().mockResolvedValue(undefined);
     const container = document.body.createDiv();
+    let nativeToggle: ObsidianModule.ToggleComponent | undefined;
+    const addToggle = methodOf(Setting.prototype, 'addToggle');
+    vi.spyOn(Setting.prototype, 'addToggle').mockImplementation(function (this: Setting, callback) {
+      return addToggle.call(this, (toggle) => {
+        callback(toggle);
+        nativeToggle = toggle;
+      });
+    });
     renderProjectTableSettings({
       app: new App(),
       container,
@@ -813,15 +821,18 @@ describe('renderProjectTableSettings', () => {
       refresh: vi.fn(),
     });
     const toggle = expectDefined(
-      container.querySelector<HTMLInputElement>('.abyss-project-show-description'),
+      container.querySelector<HTMLElement>('.abyss-project-show-description'),
     );
 
-    expect(toggle.checked).toBe(true);
+    expect(toggle.tagName).not.toBe('INPUT');
+    expect(toggle.getAttribute('aria-label')).toBe('Show project descriptions');
+    expect(toggle.classList.contains('is-enabled')).toBe(true);
     expect(container.querySelector('[data-column-id="description"]')).toBeNull();
-    toggle.click();
+    expectDefined(nativeToggle).onClick();
     await settle();
 
     expect(projects.table.showDescription).toBe(false);
+    expect(toggle.classList.contains('is-enabled')).toBe(false);
     expect(saveViewState).toHaveBeenCalledOnce();
   });
 

@@ -1,10 +1,11 @@
-import { AbstractInputSuggest, Scope, type App } from 'obsidian';
+import { AbstractInputSuggest, Component, Scope, type App } from 'obsidian';
 import type { ProjectValuePresentation } from '../projects/projectPropertyDefinitions';
 import {
   projectPropertyValuePresentation,
   projectPropertyValuePresentations,
   projectTagLabel,
 } from './projectPropertyValuePresentation';
+import { renderTaskText } from './renderTaskText';
 
 export interface ProjectPropertySuggestion {
   readonly kind?: 'value';
@@ -28,6 +29,13 @@ export interface ProjectPropertySuggestOptions {
   readonly onOpen?: () => void;
   readonly onClose?: () => void;
   readonly browseOnOpen?: boolean;
+  readonly renderingContext?: ProjectPropertySuggestionRenderingContext;
+}
+
+export interface ProjectPropertySuggestionRenderingContext {
+  readonly app: App;
+  readonly sourcePath: string;
+  readonly component: Component;
 }
 
 function matches(value: string | number, query: string): boolean {
@@ -78,6 +86,7 @@ function suggestionsForValues(
 export function renderProjectPropertySuggestion(
   suggestion: ProjectPropertySuggestion,
   element: HTMLElement,
+  renderingContext?: ProjectPropertySuggestionRenderingContext,
 ): void {
   const presentation = projectPropertyValuePresentation(String(suggestion.value));
   const isTag = suggestion.appearance === 'tag';
@@ -86,7 +95,17 @@ export function renderProjectPropertySuggestion(
     cls: suggestionTitleClass(suggestion, presentation.link !== undefined, isTag),
   });
   const valueElement = isTag ? title.createSpan({ cls: 'tag', text: suggestion.label }) : title;
-  if (!isTag) title.setText(suggestion.label);
+  if (!isTag) {
+    if (presentation.link === undefined || renderingContext === undefined) {
+      title.setText(suggestion.label);
+    } else {
+      renderTaskText(title, String(suggestion.value), {
+        ...renderingContext,
+        exactLinkLabel: suggestion.label,
+        interactiveLinks: false,
+      });
+    }
+  }
   if (isDot) valueElement.addClass('is-dot');
   applySuggestionColor(valueElement, suggestion, isDot);
   if (suggestion.detail !== undefined) {
@@ -101,6 +120,7 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
   private readonly options_abyssPrivate: ProjectPropertySuggestOptions;
   private browse_abyssPrivate: boolean;
   private open_abyssPrivate = false;
+  private renderGeneration_abyssPrivate: Component | undefined;
 
   private readonly onInput_abyssPrivate = (): void => {
     this.browse_abyssPrivate = false;
@@ -112,6 +132,7 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
 
   constructor(options: ProjectPropertySuggestOptions) {
     super(options.app, options.input);
+    this.renderGeneration_abyssPrivate = undefined;
     if (options.onEscape !== undefined) {
       this.scope = new Scope(this.scope);
       this.scope.register([], 'Escape', (event) => {
@@ -139,12 +160,14 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
 
   override close(): void {
     super.close();
+    this.clearRenderGeneration_abyssPrivate();
     if (!this.open_abyssPrivate) return;
     this.open_abyssPrivate = false;
     this.options_abyssPrivate.onClose?.();
   }
 
   getSuggestions(query: string): ProjectPropertySuggestion[] {
+    this.clearRenderGeneration_abyssPrivate();
     const available = this.suggestions_abyssPrivate.filter(
       ({ value }) => this.options_abyssPrivate.exclude?.(value) !== true,
     );
@@ -156,7 +179,16 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
   }
 
   renderSuggestion(suggestion: ProjectPropertySuggestion, element: HTMLElement): void {
-    renderProjectPropertySuggestion(suggestion, element);
+    const renderingContext = this.options_abyssPrivate.renderingContext;
+    if (renderingContext === undefined) {
+      renderProjectPropertySuggestion(suggestion, element);
+      return;
+    }
+    this.renderGeneration_abyssPrivate ??= renderingContext.component.addChild(new Component());
+    renderProjectPropertySuggestion(suggestion, element, {
+      ...renderingContext,
+      component: this.renderGeneration_abyssPrivate,
+    });
   }
 
   override selectSuggestion(
@@ -167,5 +199,14 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
     event?.stopPropagation();
     this.onPick_abyssPrivate(suggestion.value);
     this.close();
+  }
+
+  private clearRenderGeneration_abyssPrivate(): void {
+    const renderingContext = this.options_abyssPrivate.renderingContext;
+    const generation = this.renderGeneration_abyssPrivate;
+    this.renderGeneration_abyssPrivate = undefined;
+    if (renderingContext !== undefined && generation !== undefined) {
+      renderingContext.component.removeChild(generation);
+    }
   }
 }

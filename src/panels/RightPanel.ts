@@ -3685,6 +3685,12 @@ export class RightPanel {
 
     this.addTrackingMenuItem_abyssPrivate(menu, task);
     const contextTarget = taskNodeRef(task);
+    this.createContextMenuItem_abyssPrivate(menu, 'abyss-context-item', 'Open in note', () => {
+      this.removeAnchoredSurface_abyssPrivate(menu);
+      const root = this.state_abyssPrivate.get('taskStack')[0];
+      if (root != null && 'source' in root)
+        runAsyncAction(openInFile(this.app_abyssPrivate, root, taskNodeLine(root, task)));
+    });
     if (contextTarget.type === 'task') {
       this.createContextMenuItem_abyssPrivate(menu, 'abyss-context-item', 'Archive', () => {
         this.removeAnchoredSurface_abyssPrivate(menu);
@@ -3700,13 +3706,6 @@ export class RightPanel {
         runAsyncAction(this.deleteTask_abyssPrivate(task));
       },
     );
-
-    this.createContextMenuItem_abyssPrivate(menu, 'abyss-context-item', 'Open in file', () => {
-      this.removeAnchoredSurface_abyssPrivate(menu);
-      const root = this.state_abyssPrivate.get('taskStack')[0];
-      if (root != null && 'source' in root)
-        runAsyncAction(openInFile(this.app_abyssPrivate, root, taskNodeLine(root, task)));
-    });
 
     this.positionAnchoredSurface_abyssPrivate(menu, anchor, 'below-end');
     this.dismissMenuOnOutsideClick_abyssPrivate(menu, anchor);

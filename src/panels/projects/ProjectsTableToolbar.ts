@@ -33,10 +33,14 @@ import { isProjectKanbanCustomized, projectKanbanOptionsRows } from './ProjectKa
 import { applyProjectStatusPresentation } from './projectStatusPresentation';
 import { isProjectTimelineCustomized, projectTimelineOptionsRows } from './ProjectTimelineOptions';
 
+type ProjectViewSettings = ProjectTableSettings | ProjectKanbanSettings | ProjectTimelineSettings;
+
 export interface ProjectsTableToolbarOptions {
   readonly host: HTMLElement;
-  readonly settings: () => ProjectTableSettings | ProjectKanbanSettings | ProjectTimelineSettings;
+  readonly settings: () => ProjectViewSettings;
+  readonly effectiveSettings: () => ProjectViewSettings;
   readonly tableSettings: () => ProjectTableSettings;
+  readonly effectiveTableSettings: () => ProjectTableSettings;
   readonly mode: () => ProjectOverviewMode;
   readonly fields: () => readonly ProjectFieldCatalogItem[];
   readonly onSearch: (query: string) => void;
@@ -273,6 +277,10 @@ export class ProjectsTableToolbar {
           const current = this.options_abyssPrivate.settings();
           return !isTableSettings(current) && isTimelineSettings(current) ? current : settings;
         },
+        effectiveSettings: () => {
+          const current = this.options_abyssPrivate.effectiveSettings();
+          return !isTableSettings(current) && isTimelineSettings(current) ? current : settings;
+        },
         tableSettings: this.options_abyssPrivate.tableSettings,
         fields: this.options_abyssPrivate.fields,
         onChange: this.options_abyssPrivate.onViewOptionChange,
@@ -282,6 +290,10 @@ export class ProjectsTableToolbar {
       rows = projectKanbanOptionsRows({
         settings: () => {
           const current = this.options_abyssPrivate.settings();
+          return !isTableSettings(current) && !isTimelineSettings(current) ? current : settings;
+        },
+        effectiveSettings: () => {
+          const current = this.options_abyssPrivate.effectiveSettings();
           return !isTableSettings(current) && !isTimelineSettings(current) ? current : settings;
         },
         tableSettings: this.options_abyssPrivate.tableSettings,
@@ -307,22 +319,23 @@ export class ProjectsTableToolbar {
 
   private tableRows_abyssPrivate(fields: readonly ProjectFieldCatalogItem[]): ViewOptionsRow[] {
     const current = this.options_abyssPrivate.tableSettings;
+    const effective = this.options_abyssPrivate.effectiveTableSettings;
     const currentFields = this.options_abyssPrivate.fields;
     const selectable = fields;
     const groupable = selectable.filter((field) => isGroupableProjectField(field));
-    const sortArrow = (): string => (current().sortBy.dir === 'asc' ? '↑' : '↓');
+    const sortArrow = (): string => (effective().sortBy.dir === 'asc' ? '↑' : '↓');
     const sortDisplay = (): string =>
-      current().sortBy.field === 'none'
+      effective().sortBy.field === 'none'
         ? 'None'
-        : `${fieldLabel(currentFields(), current(), current().sortBy.field)} ${sortArrow()}`;
+        : `${fieldLabel(currentFields(), current(), effective().sortBy.field)} ${sortArrow()}`;
     const defaultSortField = buildDefaultProjectTableSettings().sortBy.field;
     return [
       {
         kind: 'single',
         icon: 'layout-list',
         label: 'Group by',
-        displayValue: () => fieldLabel(currentFields(), current(), current().groupBy),
-        activeValue: () => current().groupBy,
+        displayValue: () => fieldLabel(currentFields(), current(), effective().groupBy),
+        activeValue: () => effective().groupBy,
         options: [
           { value: 'none', label: 'None' },
           ...groupable.map((field) => ({
@@ -338,13 +351,13 @@ export class ProjectsTableToolbar {
         icon: 'arrow-up-down',
         label: 'Sort by',
         displayValue: sortDisplay,
-        activeValue: () => current().sortBy.field,
+        activeValue: () => effective().sortBy.field,
         options: [
           { value: 'none', label: 'None' },
           ...selectable.map((field) => ({
             value: field.id,
             label: () =>
-              `${fieldLabel(currentFields(), current(), field.id)} ${current().sortBy.field === field.id ? sortArrow() : ''}`.trim(),
+              `${fieldLabel(currentFields(), current(), field.id)} ${effective().sortBy.field === field.id ? sortArrow() : ''}`.trim(),
             isDefault: field.id === defaultSortField,
           })),
         ],

@@ -2472,6 +2472,14 @@ describe('ProjectsTableView', () => {
   });
 
   it('uses native link and tag labels for dot preset editor chips without display names', async () => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+      const label = markdown.includes('|')
+        ? markdown.slice(markdown.lastIndexOf('|') + 1, -2)
+        : markdown;
+      const anchor = holder.createEl('a', { text: label });
+      anchor.addClass('internal-link');
+      anchor.setAttribute('data-href', markdown.slice(2, markdown.indexOf('|')));
+    });
     const config = settings();
     config.projects.table.columns.push(
       { id: 'property:creator', visible: true },
@@ -2514,6 +2522,9 @@ describe('ProjectsTableView', () => {
       ),
     );
     creator.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 0);
+    });
 
     const creatorChip = expectDefined(
       pickerOption(host, '[[People Demo/Анна Смирнова|Анна]]').querySelector<HTMLElement>(
@@ -4072,6 +4083,55 @@ describe('ProjectsTableView', () => {
     expectDefined(none).click();
     await flushMicrotasks();
     expect(config.projects.table.sortBy).toEqual({ field: 'none', dir: 'asc' });
+  });
+
+  it('shows effective organization when saved view references are no longer configured', () => {
+    const config = settings();
+    config.projects.propertyDefinitionsVersion = 1;
+    config.projects.table.groupBy = 'property:Removed';
+    config.projects.table.sortBy = { field: 'property:Removed', dir: 'desc' };
+    config.projects.kanban = buildDefaultProjectKanbanSettings(config.projects.table);
+    config.projects.kanban.groupBy = 'property:Removed';
+    config.projects.kanban.sortBy = { field: 'property:Removed', dir: 'desc' };
+    config.projects.timeline = buildDefaultProjectTimelineSettings(config.projects.table);
+    config.projects.timeline.groupBy = 'property:Removed';
+    config.projects.timeline.sortBy = { field: 'property:Removed', dir: 'desc' };
+    const { host } = mount([project({})], { settings: config });
+    const viewButton = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-view-state-btn'),
+    );
+    const assertOrganization = (groupLabel: string): void => {
+      viewButton.click();
+      const groupRow = viewOptionsRow(host, 'Group by');
+      const sortRow = viewOptionsRow(host, 'Sort by');
+      expect(groupRow.querySelector('.abyss-view-state-row-value')?.textContent).toBe(groupLabel);
+      expect(sortRow.querySelector('.abyss-view-state-row-value')?.textContent).toBe('Start ↑');
+      expectDefined(
+        groupRow.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+      ).click();
+      expect(viewOption(groupRow, groupLabel).getAttribute('aria-pressed')).toBe('true');
+      expectDefined(
+        sortRow.querySelector<HTMLButtonElement>(':scope > .abyss-view-state-row-main'),
+      ).click();
+      expect(viewOption(sortRow, 'Start ↑').getAttribute('aria-pressed')).toBe('true');
+      viewButton.click();
+    };
+
+    assertOrganization('Status');
+    expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-overview-mode--kanban'),
+    ).click();
+    assertOrganization('Status columns');
+    expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-overview-mode--timeline'),
+    ).click();
+    assertOrganization('Status');
+    expect(config.projects.table.groupBy).toBe('property:Removed');
+    expect(config.projects.table.sortBy).toEqual({ field: 'property:Removed', dir: 'desc' });
+    expect(config.projects.kanban.groupBy).toBe('property:Removed');
+    expect(config.projects.kanban.sortBy).toEqual({ field: 'property:Removed', dir: 'desc' });
+    expect(config.projects.timeline.groupBy).toBe('property:Removed');
+    expect(config.projects.timeline.sortBy).toEqual({ field: 'property:Removed', dir: 'desc' });
   });
 
   it('repeats a project in each distinct list-value group while reporting one unique project', () => {

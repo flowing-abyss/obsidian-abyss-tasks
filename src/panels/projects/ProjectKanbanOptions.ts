@@ -11,9 +11,14 @@ import { projectCardFieldsOptionsRow } from './projectCardFields';
 
 interface ProjectKanbanOptionsContext {
   readonly settings: () => ProjectKanbanSettings;
+  readonly effectiveSettings?: () => ProjectKanbanSettings;
   readonly tableSettings: () => Parameters<typeof buildDefaultProjectKanbanSettings>[0];
   readonly fields: () => readonly ProjectFieldCatalogItem[];
   readonly onChange: (mutation: () => void) => Promise<boolean>;
+}
+
+function effectiveSettings(context: ProjectKanbanOptionsContext): ProjectKanbanSettings {
+  return context.effectiveSettings?.() ?? context.settings();
 }
 
 async function applyMutation(
@@ -157,10 +162,10 @@ function groupRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
     icon: 'layout-list',
     label: 'Group by',
     displayValue: () =>
-      context.settings().groupBy === 'status'
+      effectiveSettings(context).groupBy === 'status'
         ? 'Status columns'
-        : labelFor(context, context.settings().groupBy),
-    activeValue: () => context.settings().groupBy,
+        : labelFor(context, effectiveSettings(context).groupBy),
+    activeValue: () => effectiveSettings(context).groupBy,
     options: [
       { value: 'none', label: 'None' },
       { value: 'status', label: 'Status columns', isDefault: true },
@@ -191,18 +196,18 @@ function sortRow(context: ProjectKanbanOptionsContext): ViewOptionsRow {
     icon: 'arrow-up-down',
     label: 'Sort by',
     displayValue: () => {
-      const settings = context.settings();
+      const settings = effectiveSettings(context);
       const label = labelFor(context, settings.sortBy.field);
       const arrow = settings.sortBy.dir === 'asc' ? '↑' : '↓';
       return settings.sortBy.field === 'none' ? 'Manual' : `${label} ${arrow}`;
     },
-    activeValue: () => context.settings().sortBy.field,
+    activeValue: () => effectiveSettings(context).sortBy.field,
     options: [
       { value: 'none', label: 'Manual' },
       ...context.fields().map((field) => ({
         value: field.id,
         label: () => {
-          const settings = context.settings();
+          const settings = effectiveSettings(context);
           const label = labelFor(context, field.id);
           const arrow = settings.sortBy.dir === 'asc' ? '↑' : '↓';
           return `${label} ${settings.sortBy.field === field.id ? arrow : ''}`.trim();

@@ -1,4 +1,4 @@
-import { App, Notice, Scope, TFile } from 'obsidian';
+import { App, Component, MarkdownRenderer, Notice, Scope, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import {
   mountProjectCellEditor,
@@ -29,6 +29,12 @@ function catalog(
 async function settle(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
+}
+
+async function settleRender(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
 }
 
 function keydown(element: HTMLElement, key: string): void {
@@ -415,6 +421,145 @@ describe('mountProjectCellEditor', () => {
     expect(save).toHaveBeenCalledWith('raw-phase');
   });
 
+  it('closes a scalar picker only after its selected preset is persisted', async () => {
+    let finishSave: (() => void) | undefined;
+    const pendingSave = new Promise<void>((resolve) => {
+      finishSave = resolve;
+    });
+    const container = freshContainer();
+    const save = vi.fn().mockReturnValue(pendingSave);
+    const onClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'normal',
+      catalog: catalog(['normal', 'high']),
+      save,
+      onClose,
+    });
+
+    pickerOption(container, 'high').click();
+    await settle();
+
+    expect(save).toHaveBeenCalledWith('high');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(container.contains(pickerInput(container))).toBe(true);
+
+    expectDefined(finishSave)();
+    await settle();
+
+    expect(onClose).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
+  });
+
+  it('does not steal focus when a scalar save succeeds after outside dismissal', async () => {
+    let finishSave: (() => void) | undefined;
+    const pendingSave = new Promise<void>((resolve) => {
+      finishSave = resolve;
+    });
+    const container = document.body.createDiv();
+    const outside = document.body.createEl('button');
+    const onClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'normal',
+      catalog: catalog(['normal', 'high']),
+      save: vi.fn().mockReturnValue(pendingSave),
+      onClose,
+    });
+
+    pickerOption(container, 'high').click();
+    outside.focus();
+    await settle();
+    expectDefined(finishSave)();
+    await settle();
+
+    expect(activeDocument.activeElement).toBe(outside);
+    expect(onClose).toHaveBeenCalledWith('committed', {
+      navigation: 'preserve-focus',
+      focusTarget: outside,
+    });
+  });
+
+  it('keeps a list picker open after persisting a selected preset', async () => {
+    const container = freshContainer();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owners', type: 'list' },
+      value: [],
+      catalog: catalog(['Mina'], 'list'),
+      save,
+      onClose,
+    });
+
+    pickerOption(container, 'Mina').click();
+    await settle();
+
+    expect(save).toHaveBeenCalledWith(['Mina']);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(container.contains(pickerInput(container))).toBe(true);
+  });
+
+  it('retains a scalar picker draft and error when its selected preset fails to persist', async () => {
+    let failSave: ((error: Error) => void) | undefined;
+    const pendingSave = new Promise<void>((_resolve, reject) => {
+      failSave = reject;
+    });
+    const container = freshContainer();
+    const onClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'normal',
+      catalog: catalog(['normal', 'high']),
+      save: vi.fn().mockReturnValue(pendingSave),
+      onClose,
+    });
+
+    pickerOption(container, 'high').click();
+    expectDefined(failSave)(new ProjectEditValidationError('Conflict'));
+    await settle();
+    await settle();
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(container.contains(pickerInput(container))).toBe(true);
+    expect(pickerOption(container, 'high').getAttribute('aria-selected')).toBe('true');
+    expect(container.querySelector('.abyss-project-editor-error')?.textContent).toContain(
+      'Conflict',
+    );
+  });
+
+  it('closes a scalar picker after keyboard selection persists', async () => {
+    const container = freshContainer();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'normal',
+      catalog: catalog(['normal', 'high']),
+      save,
+      onClose,
+    });
+    const input = pickerInput(container);
+    input.value = 'high';
+    input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+
+    keydown(input, 'ArrowDown');
+    keydown(input, 'Enter');
+    await settle();
+
+    expect(save).toHaveBeenCalledWith('high');
+    expect(onClose).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
+  });
+
   it('excludes a preset immediately after it is picked into a list', async () => {
     const container = document.body.createDiv();
     mountProjectCellEditor({
@@ -486,7 +631,12 @@ describe('mountProjectCellEditor', () => {
     ]);
   });
 
-  it('shows one dot marker with the configured label for an existing exact preset list value', () => {
+  it('shows one dot marker with the configured label for an existing exact preset list value', async () => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+      const anchor = holder.createEl('a', { text: markdown });
+      anchor.addClass('internal-link');
+      anchor.setAttribute('data-href', 'People/Anna');
+    });
     const container = document.body.createDiv();
     mountProjectCellEditor({
       app: new App(),
@@ -506,6 +656,7 @@ describe('mountProjectCellEditor', () => {
       save: vi.fn().mockResolvedValue(undefined),
       onClose: vi.fn(),
     });
+    await settleRender();
 
     const chip = pickerOption(container, '[[People/Anna]]');
     const presentation = expectDefined(chip.querySelector<HTMLElement>('.abyss-suggest-title'));
@@ -605,6 +756,61 @@ describe('mountProjectCellEditor', () => {
 
     expect(save).toHaveBeenCalledOnce();
     expect(save).toHaveBeenCalledWith('[Anna](People/Anna-Jones.md)');
+  });
+
+  it('selects a rendered link anchor once without navigating, including modifier clicks', async () => {
+    const app = new App();
+    const openLinkText = vi.spyOn(app.workspace, 'openLinkText');
+    const render = vi
+      .spyOn(MarkdownRenderer, 'render')
+      .mockImplementation(async (_app, markdown, holder) => {
+        const anchor = holder.createEl('a', { text: 'Renderer label' });
+        anchor.addClass('internal-link');
+        anchor.setAttribute('data-href', markdown.slice(2, -2));
+      });
+    const container = document.body.createDiv();
+    const save = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    const handle = mountProjectCellEditor({
+      app,
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Owner', type: 'text' },
+      value: '',
+      catalog: catalog(['[[People/Anna Smith|Anna]]']),
+      sourcePath: 'Projects/Current.md',
+      save,
+      onClose,
+    });
+    await settleRender();
+    const anchor = expectDefined(
+      pickerOption(container, '[[People/Anna Smith|Anna]]').querySelector<HTMLAnchorElement>(
+        'a.internal-link',
+      ),
+    );
+    const click = new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      metaKey: true,
+    });
+
+    anchor.dispatchEvent(click);
+    await settle();
+
+    expect(render).toHaveBeenCalledWith(
+      app,
+      '[[People/Anna Smith|Anna]]',
+      expect.any(HTMLElement),
+      'Projects/Current.md',
+      expect.any(Component),
+    );
+    expect(anchor.textContent).toBe('Anna');
+    expect(click.defaultPrevented).toBe(true);
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith('[[People/Anna Smith|Anna]]');
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(openLinkText).not.toHaveBeenCalled();
+
+    handle.destroy();
   });
 
   it('offers and assigns a scalar catalog link with a new alias for the same note', async () => {
@@ -720,6 +926,11 @@ describe('mountProjectCellEditor', () => {
   });
 
   it('shows a selected raw link with readable details in the vertical picker', async () => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+      const anchor = holder.createEl('a', { text: markdown });
+      anchor.addClass('internal-link');
+      anchor.setAttribute('data-href', 'People/Anna Smith');
+    });
     const container = document.body.createDiv();
     const save = vi.fn().mockResolvedValue(undefined);
     const raw = '[[People/Anna Smith|Anna]]';
@@ -732,6 +943,7 @@ describe('mountProjectCellEditor', () => {
       save,
       onClose: vi.fn(),
     });
+    await settleRender();
 
     const selected = pickerOption(container, raw);
     expect(selected.textContent).toContain('Anna');
@@ -1350,6 +1562,41 @@ describe('mountProjectCellEditor', () => {
 });
 
 describe('ProjectPropertySuggest', () => {
+  it('replaces and unloads owned link-render generations', async () => {
+    const parent = new Component();
+    parent.load();
+    const removeChild = vi.spyOn(parent, 'removeChild');
+    const render = vi
+      .spyOn(MarkdownRenderer, 'render')
+      .mockImplementation(async (_app, markdown, holder) => {
+        const anchor = holder.createEl('a', { text: markdown });
+        anchor.addClass('internal-link');
+        anchor.setAttribute('data-href', 'People/Anna');
+      });
+    const app = new App();
+    const suggest = new ProjectPropertySuggest({
+      app,
+      input: document.body.createEl('input'),
+      values: ['[[People/Anna|Anna]]'],
+      onPick: vi.fn(),
+      renderingContext: { app, sourcePath: 'Projects/Current.md', component: parent },
+    });
+    const first = expectDefined(suggest.getSuggestions('Anna')[0]);
+    suggest.renderSuggestion(first, document.body.createDiv());
+    const firstComponent = expectDefined(render.mock.calls[0]?.[4]);
+
+    suggest.getSuggestions('People');
+
+    expect(removeChild).toHaveBeenCalledWith(firstComponent);
+    const second = expectDefined(suggest.getSuggestions('Anna')[0]);
+    suggest.renderSuggestion(second, document.body.createDiv());
+    const secondComponent = expectDefined(render.mock.calls[1]?.[4]);
+    suggest.close();
+
+    expect(removeChild).toHaveBeenCalledWith(secondComponent);
+    parent.unload();
+  });
+
   it('browses alternatives for an unchanged populated value, then filters after actual input', () => {
     const input = document.body.createEl('input');
     input.value = 'Infrastructure';

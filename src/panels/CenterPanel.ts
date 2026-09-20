@@ -2882,20 +2882,18 @@ export class CenterPanel {
     showMenuAtMouseEventWithFocus(menu, event);
   }
 
-  /**
-   * Obsidian orders the sections by where each one was first asked for, not by where its items
-   * were added, so the order of these calls is the order of the menu: the due presets, tracking on
-   * its own, then everything that edits the task.
-   */
+  /** Obsidian orders sections by their first registered item, so helper order is menu group order. */
   private createTaskContextMenu_abyssPrivate(card: HTMLElement, task: TaskSnapshot): Menu {
     const today = localDate(window.moment().format('YYYY-MM-DD'));
     const menu = new Menu();
     this.addTaskDuePresetMenuItems_abyssPrivate(menu, task, today);
     this.addTrackingMenuItem_abyssPrivate(menu, task);
-    this.addTaskDatePickerMenuItem_abyssPrivate(menu, card, task);
     this.addTaskTagMenuItems_abyssPrivate(menu, task);
+    this.addTaskDatePickerMenuItem_abyssPrivate(menu, card, task);
+    this.addTaskEditMenuItems_abyssPrivate(menu, card, task);
     this.addTaskPropertyMenuItems_abyssPrivate(menu, task);
-    this.addTaskActionMenuItems_abyssPrivate(menu, card, task);
+    this.addTaskOpenMenuItem_abyssPrivate(menu, task);
+    this.addTaskDangerMenuItems_abyssPrivate(menu, task);
     return menu;
   }
 
@@ -2939,7 +2937,7 @@ export class CenterPanel {
       item
         .setTitle('Set date…')
         .setIcon('calendar-cog')
-        .setSection('actions')
+        .setSection('edit')
         .onClick(() => {
           this.openTaskDatePicker_abyssPrivate(card, [task]);
         }),
@@ -3005,7 +3003,7 @@ export class CenterPanel {
     );
   }
 
-  private addTaskActionMenuItems_abyssPrivate(
+  private addTaskEditMenuItems_abyssPrivate(
     menu: Menu,
     card: HTMLElement,
     task: TaskSnapshot,
@@ -3014,7 +3012,7 @@ export class CenterPanel {
       item
         .setTitle('Set tag…')
         .setIcon('hash')
-        .setSection('actions')
+        .setSection('edit')
         .onClick(() => {
           this.openTagPicker_abyssPrivate(task);
         }),
@@ -3024,22 +3022,26 @@ export class CenterPanel {
       item
         .setTitle('Edit repeat…')
         .setIcon('repeat-2')
-        .setSection('actions')
+        .setSection('edit')
         .onClick(() => {
           this.openRecurrenceEditor_abyssPrivate(card, task);
         });
     });
+  }
 
+  private addTaskOpenMenuItem_abyssPrivate(menu: Menu, task: TaskSnapshot): void {
     menu.addItem((item) =>
       item
         .setTitle('Open in note')
         .setIcon('file-text')
-        .setSection('actions')
+        .setSection('open')
         .onClick(() => {
           runAsyncAction(openInFile(this.app_abyssPrivate, task));
         }),
     );
+  }
 
+  private addTaskDangerMenuItems_abyssPrivate(menu: Menu, task: TaskSnapshot): void {
     menu.addItem((item) =>
       item
         .setTitle('Archive')

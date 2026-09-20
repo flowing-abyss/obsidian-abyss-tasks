@@ -198,9 +198,8 @@ describe('openViewOptionsPopover', () => {
 
     expect(popover.style.getPropertyValue('--abyss-view-state-max-width')).toBe('184px');
     expect(popover.style.getPropertyValue('--abyss-view-state-max-height')).toBe('164px');
-    expect(cssDeclarationValue(declarations, 'min-width')).toBe(
-      'min(240px, var(--abyss-view-state-max-width))',
-    );
+    expect(cssDeclarationValue(declarations, 'min-width')).toBe('0');
+    expect(cssDeclarationValue(declarations, 'width')).toBeDefined();
     expect(cssDeclarationValue(declarations, 'max-width')).toBe(
       'var(--abyss-view-state-max-width)',
     );

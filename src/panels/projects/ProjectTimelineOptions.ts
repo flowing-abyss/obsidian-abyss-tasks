@@ -14,10 +14,15 @@ import { projectCardFieldsOptionsRow } from './projectCardFields';
 
 export interface ProjectTimelineOptionsContext {
   readonly settings: () => ProjectTimelineSettings;
+  readonly effectiveSettings?: () => ProjectTimelineSettings;
   readonly tableSettings: () => ProjectTableSettings;
   readonly fields: () => readonly ProjectFieldCatalogItem[];
   readonly onChange: (mutation: () => void) => Promise<boolean>;
   readonly onScaleChange: (scale: ProjectTimelineSettings['scale']) => Promise<boolean>;
+}
+
+function effectiveSettings(context: ProjectTimelineOptionsContext): ProjectTimelineSettings {
+  return context.effectiveSettings?.() ?? context.settings();
 }
 
 function labelFor(context: ProjectTimelineOptionsContext, id: string): string {
@@ -58,14 +63,14 @@ function sortOptions(context: ProjectTimelineOptionsContext): ViewOption[] {
 }
 
 function sortDisplay(context: ProjectTimelineOptionsContext): string {
-  const { field, dir } = context.settings().sortBy;
+  const { field, dir } = effectiveSettings(context).sortBy;
   if (field === 'none') return 'None';
   const arrow = dir === 'asc' ? '↑' : '↓';
   return `${labelFor(context, field)} ${arrow}`;
 }
 
 function sortOptionLabel(context: ProjectTimelineOptionsContext, option: ViewOption): string {
-  const settings = context.settings();
+  const settings = effectiveSettings(context);
   if (settings.sortBy.field !== option.value) return String(option.label);
   return `${String(option.label)} ${settings.sortBy.dir === 'asc' ? '↑' : '↓'}`;
 }
@@ -247,8 +252,8 @@ export function projectTimelineOptionsRows(
       kind: 'single',
       icon: 'layout-list',
       label: 'Group by',
-      displayValue: () => labelFor(context, context.settings().groupBy),
-      activeValue: () => context.settings().groupBy,
+      displayValue: () => labelFor(context, effectiveSettings(context).groupBy),
+      activeValue: () => effectiveSettings(context).groupBy,
       options: groupingOptions,
       mutate: (value) => {
         context.settings().groupBy = value;
@@ -259,7 +264,7 @@ export function projectTimelineOptionsRows(
       icon: 'arrow-up-down',
       label: 'Sort by',
       displayValue: () => sortDisplay(context),
-      activeValue: () => context.settings().sortBy.field,
+      activeValue: () => effectiveSettings(context).sortBy.field,
       options: sortingOptions.map((option) => ({
         ...option,
         label: () => sortOptionLabel(context, option),

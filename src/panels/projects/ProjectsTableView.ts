@@ -854,7 +854,9 @@ export class ProjectsTableView {
     return new ProjectsTableToolbar({
       host: this.root_abyssPrivate,
       settings: () => this.activeViewSettings_abyssPrivate(),
+      effectiveSettings: () => this.effectiveActiveViewSettings_abyssPrivate(),
       tableSettings: () => this.context_abyssPrivate.settings.projects.table,
+      effectiveTableSettings: () => this.effectiveTableSettings_abyssPrivate(),
       mode: () => this.overviewMode_abyssPrivate,
       fields: () => buildConfiguredProjectFieldCatalog(this.context_abyssPrivate.settings.projects),
       onSearch: (query) => {
@@ -954,6 +956,15 @@ export class ProjectsTableView {
     return this.overviewMode_abyssPrivate === 'kanban'
       ? this.ensureKanbanSettings_abyssPrivate()
       : this.ensureTimelineSettings_abyssPrivate();
+  }
+
+  private effectiveActiveViewSettings_abyssPrivate():
+    ProjectTableSettings | ProjectKanbanSettings | ProjectTimelineSettings {
+    if (this.overviewMode_abyssPrivate === 'table')
+      return this.effectiveTableSettings_abyssPrivate();
+    return this.overviewMode_abyssPrivate === 'kanban'
+      ? this.effectiveKanbanSettings_abyssPrivate()
+      : this.effectiveTimelineSettings_abyssPrivate();
   }
 
   private ensureKanbanSettings_abyssPrivate(): ProjectKanbanSettings {

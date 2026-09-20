@@ -1515,7 +1515,7 @@ describe('RightPanel popovers', () => {
 
     click(expectDefined(el.querySelector<HTMLElement>('[aria-label="More actions"]')));
     const openItem = Array.from(el.querySelectorAll<HTMLElement>('.abyss-context-item')).find(
-      (item) => item.textContent === 'Open in file',
+      (item) => item.textContent === 'Open in note',
     );
     click(expectDefined(openItem));
     await flushMicrotasks();

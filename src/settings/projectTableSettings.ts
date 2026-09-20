@@ -1,4 +1,4 @@
-import { Notice, setIcon, Setting, type App } from 'obsidian';
+import { Component, Notice, setIcon, Setting, type App } from 'obsidian';
 import type { ProjectPropertyCatalog } from '../projects/ObsidianProjectProperties';
 import type {
   ProjectColumn,
@@ -584,6 +584,8 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
     event.preventDefault();
     choose(input.value);
   });
+  const suggestionComponent = new Component();
+  suggestionComponent.load();
   const suggest = new ProjectPropertySuggest({
     app: options.app,
     input,
@@ -595,6 +597,11 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
       input.value = property;
       choose(property);
     },
+    renderingContext: {
+      app: options.app,
+      sourcePath: '',
+      component: suggestionComponent,
+    },
   });
   if (!schemaEditable(options.projects)) {
     feedback.setText(
@@ -605,6 +612,7 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
   }
   return () => {
     suggest.close();
+    suggestionComponent.unload();
   };
 }
 
@@ -678,18 +686,17 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
     persist(options.saveViewState, refresh);
   };
 
-  const descriptionSetting = new Setting(section)
+  new Setting(section)
     .setName('Show description')
-    .setDesc('Display the description property beneath each project name.');
-  const descriptionToggle = descriptionSetting.controlEl.createEl('input', {
-    cls: 'abyss-project-show-description',
-    attr: { type: 'checkbox', 'aria-label': 'Show project descriptions' },
-  });
-  descriptionToggle.checked = options.projects.table.showDescription;
-  descriptionToggle.addEventListener('change', () => {
-    options.projects.table.showDescription = descriptionToggle.checked;
-    persistViewState();
-  });
+    .setDesc('Display the description property beneath each project name.')
+    .addToggle((toggle) => {
+      toggle.toggleEl.addClass('abyss-project-show-description');
+      toggle.toggleEl.setAttribute('aria-label', 'Show project descriptions');
+      toggle.setValue(options.projects.table.showDescription).onChange((value) => {
+        options.projects.table.showDescription = value;
+        persistViewState();
+      });
+    });
 
   const rows = section.createDiv({ cls: 'abyss-project-column-settings' });
   const headings = rows.createDiv({ cls: 'abyss-project-column-settings-header' });

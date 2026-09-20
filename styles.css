@@ -5224,10 +5224,11 @@ body.abyss-modal-open .popover.hover-popover {
   position: absolute;
   box-sizing: border-box;
   z-index: 100;
-  min-width: min(240px, var(--abyss-view-state-max-width));
+  width: min(360px, var(--abyss-view-state-max-width));
+  min-width: 0;
   max-width: var(--abyss-view-state-max-width);
   max-height: min(420px, var(--abyss-view-state-max-height));
-  overflow-y: auto;
+  overflow: hidden auto;
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
@@ -5268,12 +5269,17 @@ body.abyss-modal-open .popover.hover-popover {
 
 .abyss-view-state-row-label {
   flex: 1;
+  min-width: 0;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .abyss-view-state-row-value {
+  min-width: 0;
   font-size: 12px;
   color: var(--text-muted);
+  overflow-wrap: anywhere;
+  text-align: end;
 }
 
 .abyss-view-state-row-chevron {
@@ -5287,6 +5293,7 @@ body.abyss-modal-open .popover.hover-popover {
 }
 
 .abyss-view-state-sublist {
+  min-width: 0;
   padding: var(--size-4-1) 0;
 }
 
@@ -5330,6 +5337,8 @@ body.abyss-modal-open .popover.hover-popover {
 
 .abyss-view-state-option-label {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .abyss-view-state-option-default {
@@ -7839,6 +7848,7 @@ button.abyss-project-table-status-pill {
 /* Project table settings */
 .abyss-project-table-settings {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--size-4-2);
   margin-top: var(--size-4-3);
 }
@@ -7849,6 +7859,7 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-column-settings {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   gap: var(--size-2-3);
 }
