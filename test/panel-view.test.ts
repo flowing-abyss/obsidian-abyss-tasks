@@ -18,6 +18,7 @@ import type {
 } from '../src/tasks';
 import type { CreationPresentationController } from '../src/ui/creation/CreationPresentationController';
 import type { InteractionRegistry } from '../src/ui/interactionOwnership';
+import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
 import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
 import type { QuickCaptureCoordinator } from '../src/ui/taskCapture/QuickCaptureCoordinator';
 import { requestTaskCompletion } from '../src/ui/taskCommandResult';
@@ -47,6 +48,8 @@ function makeTagManager(app: App, settings: CalendarSettings = DEFAULT_SETTINGS)
 }
 
 useRealMoment();
+
+type EventWindow = Window & Pick<typeof window, 'KeyboardEvent' | 'Event'>;
 
 function panelCaptureTarget(execute: TaskCreateSession['execute']): CaptureTarget {
   return {
@@ -262,6 +265,8 @@ describe('PanelView', () => {
     let view: PanelView;
     let tagManager: TagManager;
     let settings: CalendarSettings;
+    let notifyWindowMigration: (owner: Window) => void;
+    let unsubscribeWindowMigration: () => void;
 
     beforeEach(async () => {
       app = await createAppWithFiles({});
@@ -282,6 +287,13 @@ describe('PanelView', () => {
       vi.spyOn(app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
         type === PanelView && workspaceState(app).activeLeaf === leaf ? view : null,
       );
+      // test-mocks leaves the documented host migration subscription as a no-op.
+      notifyWindowMigration = () => undefined;
+      unsubscribeWindowMigration = vi.fn();
+      vi.spyOn(view.contentEl, 'onWindowMigrated').mockImplementation((listener) => {
+        notifyWindowMigration = listener;
+        return unsubscribeWindowMigration;
+      });
       await view.onOpen();
       setGeometry(view.containerEl, rect(20, 20, 640, 480));
       setGeometry(view.contentEl, rect(20, 20, 640, 480));
@@ -826,6 +838,220 @@ describe('PanelView', () => {
         }),
       );
       expect(openQuickCapture).toHaveBeenCalledOnce();
+    });
+
+    it('moves shortcut ownership with the same view and releases it on close', async () => {
+      const internals = view as unknown as { panelNavigation_abyssPrivate: PanelNavigator };
+      const openQuickCapture = vi
+        .spyOn(internals.panelNavigation_abyssPrivate, 'openQuickCapture')
+        .mockImplementation(() => undefined);
+      document.body.append(view.containerEl);
+      workspaceState(app).activeLeaf = leaf;
+      const frame = document.body.createEl('iframe');
+      const destination = expectDefined(frame.contentWindow) as EventWindow;
+      const destroyRouter = vi.spyOn(PanelShortcutRouter.prototype, 'destroy');
+      const destinationListeners = vi.spyOn(destination.document, 'addEventListener');
+      const pressQ = (owner: EventWindow): KeyboardEvent => {
+        const event = new owner.KeyboardEvent('keydown', {
+          key: 'q',
+          code: 'KeyQ',
+          bubbles: true,
+          cancelable: true,
+        });
+        owner.document.body.dispatchEvent(event);
+        return event;
+      };
+      try {
+        expect(pressQ(window).defaultPrevented).toBe(true);
+        expect(openQuickCapture).toHaveBeenCalledTimes(1);
+
+        // Adopt the retained view's main-realm nodes, preserving Obsidian DOM helpers.
+        destination.document.body.append(view.containerEl);
+        notifyWindowMigration(destination);
+        expect(view.contentEl.ownerDocument).toBe(destination.document);
+        expect(pressQ(destination).defaultPrevented).toBe(true);
+        expect(openQuickCapture).toHaveBeenCalledTimes(2);
+        expect(pressQ(window).defaultPrevented).toBe(false);
+        expect(openQuickCapture).toHaveBeenCalledTimes(2);
+
+        notifyWindowMigration(destination);
+        expect(pressQ(destination).defaultPrevented).toBe(true);
+        expect(openQuickCapture).toHaveBeenCalledTimes(3);
+        expect(destroyRouter).toHaveBeenCalledTimes(1);
+        expect(destinationListeners.mock.calls.filter(([type]) => type === 'keydown')).toHaveLength(
+          1,
+        );
+        const menu = document.body.createDiv({ cls: 'menu' });
+        setGeometry(menu, rect(20, 20, 180, 80));
+        destination.document.body.append(menu);
+        expect(pressQ(destination).defaultPrevented).toBe(false);
+        expect(openQuickCapture).toHaveBeenCalledTimes(3);
+        menu.remove();
+
+        document.body.append(view.containerEl);
+        notifyWindowMigration(window);
+        expect(pressQ(destination).defaultPrevented).toBe(false);
+        expect(pressQ(window).defaultPrevented).toBe(true);
+        expect(openQuickCapture).toHaveBeenCalledTimes(4);
+
+        await view.onClose();
+        await view.onClose();
+        expect(unsubscribeWindowMigration).toHaveBeenCalledOnce();
+        expect(destroyRouter).toHaveBeenCalledTimes(3);
+        destination.document.body.append(view.containerEl);
+        notifyWindowMigration(destination);
+        expect(pressQ(destination).defaultPrevented).toBe(false);
+        expect(pressQ(window).defaultPrevented).toBe(false);
+        expect(openQuickCapture).toHaveBeenCalledTimes(4);
+      } finally {
+        document.body.append(view.containerEl);
+        frame.remove();
+      }
+    });
+
+    it('creates through Q after moving the same view and expires feedback in its new window', async () => {
+      document.body.append(view.containerEl);
+      workspaceState(app).activeLeaf = leaf;
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        quickCapture_abyssPrivate: QuickCaptureCoordinator;
+        creationPresentation_abyssPrivate: CreationPresentationController;
+      };
+      const retainedState = internals.state_abyssPrivate;
+      const retainedCapture = internals.quickCapture_abyssPrivate;
+      const retainedPresentation = internals.creationPresentation_abyssPrivate;
+      const feedback = expectDefined(
+        view.contentEl.querySelector<HTMLElement>('.abyss-creation-feedback'),
+      );
+      internals.state_abyssPrivate.set('selectedList', 'inbox');
+      const execute = vi.fn(
+        async () =>
+          ({
+            type: 'ok',
+            changed: true,
+            outcome: {
+              type: 'task',
+              task: expectDefined(
+                taskApplication.index.installCommittedContent('capture.md', '- [ ] Captured\n')[0],
+              ),
+            },
+          }) satisfies TaskCommandResult,
+      );
+      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      vi.spyOn(application, 'planCreate').mockResolvedValue({
+        type: 'ready',
+        destination: { filePath: 'capture.md', insertion: { type: 'append' } },
+        execute,
+      });
+      const frame = document.body.createEl('iframe');
+      const destination = expectDefined(frame.contentWindow) as EventWindow;
+      const timers = new Map<number, { delay: number; run: () => void }>();
+      // Native Obsidian installs its DOM helpers in every window; test-mocks only
+      // installs them in the main realm. Adopt new descendants from that realm too.
+      vi.spyOn(destination.document, 'createElement').mockImplementation((tag, options) =>
+        destination.document.adoptNode(document.createElement(tag, options)),
+      );
+      const scroll = expectDefined(view.contentEl.querySelector('.abyss-center-scroll'));
+      vi.spyOn(scroll, 'cloneNode').mockImplementation((deep) =>
+        destination.document.adoptNode(document.importNode(scroll, deep)),
+      );
+      (
+        internals.creationPresentation_abyssPrivate as unknown as {
+          options: { reducedMotion: () => boolean };
+        }
+      ).options.reducedMotion = () => false;
+      let nextTimer = 1;
+      let now = Date.now();
+      vi.spyOn(Date, 'now').mockImplementation(() => now);
+      vi.spyOn(destination, 'setTimeout').mockImplementation((callback, delay) => {
+        if (typeof callback !== 'function') throw new Error('Expected timer callback');
+        const id = nextTimer++;
+        timers.set(id, {
+          delay: delay ?? 0,
+          run: () => {
+            (callback as () => void)();
+          },
+        });
+        return id;
+      });
+      vi.spyOn(destination, 'clearTimeout').mockImplementation((id) => {
+        if (id !== undefined) timers.delete(id);
+      });
+      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+        configurable: true,
+        value: vi.fn(),
+      });
+      try {
+        destination.document.body.append(view.containerEl);
+        notifyWindowMigration(destination);
+        const q = new destination.KeyboardEvent('keydown', {
+          key: 'q',
+          code: 'KeyQ',
+          bubbles: true,
+          cancelable: true,
+        });
+        destination.document.body.dispatchEvent(q);
+        await flushMicrotasks(0);
+        expect(q.defaultPrevented).toBe(true);
+        const input = expectDefined(
+          view.contentEl.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+        );
+        input.value = 'Captured';
+        input.dispatchEvent(new destination.Event('input', { bubbles: true }));
+        input.dispatchEvent(
+          new destination.KeyboardEvent('keydown', {
+            key: 'Enter',
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        await flushMicrotasks();
+
+        expect(execute).toHaveBeenCalledOnce();
+        expect(view.contentEl.querySelector('.abyss-creation-feedback')).toBe(feedback);
+        expect(feedback.textContent).toBe('Task added to capture.md');
+        expect(internals.state_abyssPrivate).toBe(retainedState);
+        expect(internals.quickCapture_abyssPrivate).toBe(retainedCapture);
+        expect(internals.creationPresentation_abyssPrivate).toBe(retainedPresentation);
+        const card = expectDefined(
+          view.contentEl.querySelector('.abyss-task-card.is-just-created'),
+        );
+        const highlight = expectDefined(
+          [...timers.entries()].find(([, timer]) => timer.delay === 1100),
+        );
+        const announcement = expectDefined(
+          [...timers.entries()].find(([, timer]) => timer.delay === 4000),
+        );
+        now += 1100;
+        timers.delete(highlight[0]);
+        highlight[1].run();
+        expect(card.classList.contains('is-just-created')).toBe(false);
+        now += 2900;
+        timers.delete(announcement[0]);
+        announcement[1].run();
+        expect(feedback.textContent).toBe('');
+
+        // A second post-move creation leaves owner-window timers for close to cancel.
+        input.value = 'Captured';
+        input.dispatchEvent(new destination.Event('input', { bubbles: true }));
+        input.dispatchEvent(
+          new destination.KeyboardEvent('keydown', {
+            key: 'Enter',
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        await flushMicrotasks();
+        expect(execute).toHaveBeenCalledTimes(2);
+        expect([...timers.values()].some((timer) => timer.delay === 1100)).toBe(true);
+        expect([...timers.values()].some((timer) => timer.delay === 4000)).toBe(true);
+        await view.onClose();
+        expect(timers.size).toBe(0);
+      } finally {
+        await view.onClose();
+        document.body.append(view.containerEl);
+        frame.remove();
+      }
     });
 
     it('gives the recurrence-delete alertdialog modal precedence in the live panel router', async () => {

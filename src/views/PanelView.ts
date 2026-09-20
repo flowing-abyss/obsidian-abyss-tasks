@@ -176,7 +176,9 @@ export class PanelView extends ItemView {
   private ownedWriteRef_abyssPrivate: TaskRef | undefined = undefined;
   private interactionRegistry_abyssPrivate: InteractionRegistry<ShortcutActionId> | undefined;
   private quickCapture_abyssPrivate: QuickCaptureCoordinator | undefined;
-  private shortcutRouter_abyssPrivate: PanelShortcutRouter | undefined;
+  private shortcutRouter_abyssPrivate: PanelShortcutRouter | undefined = undefined;
+  private shortcutDocument_abyssPrivate: Document | undefined = undefined;
+  private shortcutMigrationCleanup_abyssPrivate: (() => void) | undefined = undefined;
   private panelNavigation_abyssPrivate!: PanelNavigator;
   private compactPaneElements_abyssPrivate: CompactPaneAccessElements | undefined;
   private compactPaneCleanup_abyssPrivate: (() => void) | undefined;
@@ -615,7 +617,17 @@ export class PanelView extends ItemView {
         }
       },
     });
-    const ownerDocument = elements.layout.ownerDocument;
+    this.bindPanelShortcuts_abyssPrivate();
+    this.shortcutMigrationCleanup_abyssPrivate = this.contentEl.onWindowMigrated(() => {
+      this.bindPanelShortcuts_abyssPrivate();
+    });
+  }
+
+  private bindPanelShortcuts_abyssPrivate(): void {
+    const interactionRegistry = this.interactionRegistry_abyssPrivate;
+    const ownerDocument = this.contentEl.ownerDocument;
+    if (interactionRegistry == null || ownerDocument === this.shortcutDocument_abyssPrivate) return;
+    this.shortcutRouter_abyssPrivate?.destroy();
     this.shortcutRouter_abyssPrivate = new PanelShortcutRouter({
       ownerDocument,
       isActive: () => this.ownsPanelShortcuts_abyssPrivate(),
@@ -625,6 +637,7 @@ export class PanelView extends ItemView {
       registry: interactionRegistry,
       nativeHostBlocks: () => nativeInteractionBlocksPanelShortcuts(ownerDocument),
     });
+    this.shortcutDocument_abyssPrivate = ownerDocument;
   }
 
   private presentCreationResult_abyssPrivate(
@@ -755,8 +768,11 @@ export class PanelView extends ItemView {
   }
 
   private destroyInteractionControllers_abyssPrivate(): void {
+    this.shortcutMigrationCleanup_abyssPrivate?.();
+    this.shortcutMigrationCleanup_abyssPrivate = undefined;
     this.shortcutRouter_abyssPrivate?.destroy();
     this.shortcutRouter_abyssPrivate = undefined;
+    this.shortcutDocument_abyssPrivate = undefined;
     this.quickCapture_abyssPrivate?.destroy();
     this.quickCapture_abyssPrivate = undefined;
     this.interactionRegistry_abyssPrivate?.destroy();

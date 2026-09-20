@@ -68,6 +68,10 @@ or settings UI.
 content, and `RightPanel` for the task inspector. Panels share transient navigation through
 `AppState`.
 
+When a panel moves between windows, `PanelView` rebinds its shortcut router and native interaction
+blocker to the current document, retains its state and capture coordinator, and releases the
+migration subscription and router on close.
+
 Navigation finishes the active project editor before changing mode. A rejected draft leaves the
 current mode and projection intact. Inspector history stores structural task paths for its session;
 only proven successor references survive writes, and history never becomes persisted task identity.
