@@ -29,6 +29,8 @@ import {
   type ProjectKanbanDropTarget,
 } from './projectKanbanDrop';
 
+let kanbanSurfaceAccessibilitySequence = 0;
+
 interface ProjectKanbanCellIdentity {
   readonly occurrenceId: string;
   readonly projectPath: string;
@@ -187,9 +189,14 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     private readonly context_abyssPrivate: ProjectsKanbanViewContext<TCell>,
   ) {
     this.root = host.createDiv({ cls: 'abyss-project-kanban', attr: { tabindex: '-1' } });
+    const surfaceName = this.root.createSpan({
+      cls: 'abyss-sr-only',
+      text: 'Project Kanban board',
+    });
+    surfaceName.id = `abyss-project-kanban-surface-${String(++kanbanSurfaceAccessibilitySequence)}`;
     this.scroll = this.root.createDiv({
       cls: 'abyss-project-kanban-scroll',
-      attr: { 'aria-label': 'Project Kanban board', tabindex: '0' },
+      attr: { 'aria-labelledby': surfaceName.id, tabindex: '0' },
     });
     this.drag_abyssPrivate = new ProjectKanbanDragController(this.root, this.scroll, {
       begin: () => this.context_abyssPrivate.beginDrag(),

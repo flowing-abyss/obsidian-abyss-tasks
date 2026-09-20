@@ -534,7 +534,7 @@ it.each([
   ],
   [
     '.abyss-project-timeline-bar.is-one-date',
-    'clamp(0px,-20px + var(--abyss-project-timeline-one-date-center),100% - 40px)',
+    'max(0px,min(var(--abyss-project-timeline-range-left),100% - 40px))',
   ],
 ])('keeps the exact optimized Timeline geometry contract for %s', (selector, value) => {
   const options = {
@@ -542,10 +542,7 @@ it.each([
     contracts: {
       ...fixtureContracts,
       runtime: {
-        produced: [
-          '--abyss-project-timeline-range-left',
-          '--abyss-project-timeline-one-date-center',
-        ],
+        produced: ['--abyss-project-timeline-range-left'],
         consumed: [],
       },
       exceptions: contracts.exceptions.filter(

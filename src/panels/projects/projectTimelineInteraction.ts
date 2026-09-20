@@ -158,7 +158,7 @@ interface ActivePointerGesture {
     readonly hidden: HTMLElement['hidden'];
     readonly left: string;
     readonly width: string;
-    readonly oneDateCenter: string;
+    readonly rangeLeft: string;
   };
 }
 
@@ -202,7 +202,7 @@ function barSnapshot(bar: HTMLElement | null): ActivePointerGesture['barSnapshot
         hidden: bar.hidden,
         left: bar.style.left,
         width: bar.style.width,
-        oneDateCenter: bar.style.getPropertyValue('--abyss-project-timeline-one-date-center'),
+        rangeLeft: bar.style.getPropertyValue('--abyss-project-timeline-range-left'),
       };
 }
 
@@ -223,17 +223,14 @@ export function applyProjectTimelineBarGeometry(
   bar.className = `abyss-project-timeline-bar is-${range.kind}`;
   bar.style.left = `${geometry.leftPercent}%`;
   bar.style.width = `${geometry.widthPercent}%`;
-  setRangeLeft(bar, bar.style.left);
   const oneDate = isOneDateRange(range);
   bar.toggleClass('is-one-date', oneDate);
-  if (oneDate) {
-    bar.style.setProperty(
-      '--abyss-project-timeline-one-date-center',
-      `${geometry.leftPercent + geometry.widthPercent / 2}%`,
-    );
-  } else {
-    bar.style.removeProperty('--abyss-project-timeline-one-date-center');
-  }
+  setRangeLeft(
+    bar,
+    range.kind === 'open-start'
+      ? `calc(${geometry.leftPercent + geometry.widthPercent}% - 40px)`
+      : bar.style.left,
+  );
 }
 
 function resizedDay(sourceDay: string, deltaDays: number): string | undefined {
@@ -392,15 +389,7 @@ export class ProjectTimelinePointerInteraction {
       bar.hidden = active.barSnapshot.hidden;
       bar.style.left = active.barSnapshot.left;
       bar.style.width = active.barSnapshot.width;
-      setRangeLeft(bar, active.barSnapshot.left);
-      if (active.barSnapshot.oneDateCenter === '') {
-        bar.style.removeProperty('--abyss-project-timeline-one-date-center');
-      } else {
-        bar.style.setProperty(
-          '--abyss-project-timeline-one-date-center',
-          active.barSnapshot.oneDateCenter,
-        );
-      }
+      setRangeLeft(bar, active.barSnapshot.rangeLeft);
     }
     if (active !== undefined) this.releasePointerCapture_abyssPrivate(active);
   }
@@ -427,12 +416,7 @@ export class ProjectTimelinePointerInteraction {
     bar.hidden = snapshot.hidden;
     bar.style.left = snapshot.left;
     bar.style.width = snapshot.width;
-    setRangeLeft(bar, snapshot.left);
-    if (snapshot.oneDateCenter === '') {
-      bar.style.removeProperty('--abyss-project-timeline-one-date-center');
-    } else {
-      bar.style.setProperty('--abyss-project-timeline-one-date-center', snapshot.oneDateCenter);
-    }
+    setRangeLeft(bar, snapshot.rangeLeft);
   }
 
   private releasePointerCapture_abyssPrivate(active: ActivePointerGesture): void {

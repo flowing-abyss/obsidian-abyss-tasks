@@ -181,6 +181,28 @@ function mockTimelineGeometry(
 }
 
 describe('ProjectsTimelineView', () => {
+  it('names simultaneous Timeline scroll surfaces without native hover labels', () => {
+    const first = mount([]);
+    const second = mount([]);
+    const scrolls = [first.host, second.host].map((host) =>
+      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-scroll')),
+    );
+    const labelIds = scrolls.map((scroll) => expectDefined(scroll.getAttribute('aria-labelledby')));
+
+    expect(new Set(labelIds).size).toBe(2);
+    for (const scroll of scrolls) {
+      expect(scroll.hasAttribute('aria-label')).toBe(false);
+      expect(scroll.hasAttribute('title')).toBe(false);
+      expect(
+        scroll.ownerDocument.getElementById(expectDefined(scroll.getAttribute('aria-labelledby')))
+          ?.textContent,
+      ).toBe('Project Timeline');
+      expect(scroll.getAttribute('aria-describedby')).toMatch(
+        /^abyss-project-timeline-axis-range-/u,
+      );
+    }
+  });
+
   it('retains all navigation controls inside the sticky axis corner as its range changes', () => {
     const projects = [
       project('Projects/Early.md', '2026-09-10', '2026-09-10'),
@@ -372,6 +394,11 @@ describe('ProjectsTimelineView', () => {
     expect(
       expectDefined(bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-end')).hidden,
     ).toBe(false);
+    if (_kind === 'open-start') {
+      expect(bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toMatch(
+        /^calc\(.+% - 40px\)$/u,
+      );
+    }
   });
 
   it('uses a compact bounded marker for a one-date range', async () => {
@@ -393,7 +420,8 @@ describe('ProjectsTimelineView', () => {
     );
 
     expect(bar.classList).toContain('is-one-date');
-    expect(bar.style.getPropertyValue('--abyss-project-timeline-one-date-center')).toBe('25%');
+    expect(bar.style.getPropertyValue('--abyss-project-timeline-one-date-center')).toBe('');
+    expect(bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(bar.style.left);
     expect(Number.parseFloat(activeWindow.getComputedStyle(bar).minWidth)).toBe(40);
     expect(Number.parseFloat(activeWindow.getComputedStyle(start).width)).toBeGreaterThanOrEqual(
       14,

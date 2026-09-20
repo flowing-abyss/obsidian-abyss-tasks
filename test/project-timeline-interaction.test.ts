@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  applyProjectTimelineBarGeometry,
   ProjectTimelinePointerInteraction,
   type FrozenProjectTimelineRangeSource,
 } from '../src/panels/projects/projectTimelineInteraction';
 import type { ProjectEditResult } from '../src/projects/projectEdits';
-import type { ProjectTimelineWindow } from '../src/projects/projectTimelineModel';
-import { flushMicrotasks, freshContainer } from './helpers';
+import {
+  projectTimelineBarGeometry,
+  type ProjectTimelineWindow,
+} from '../src/projects/projectTimelineModel';
+import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
 
 function pointerEvent(type: string, clientX: number, pointerId = 1): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
@@ -140,6 +144,77 @@ afterEach(() => {
 });
 
 describe('ProjectTimelinePointerInteraction', () => {
+  it.each([
+    ['start-only', { kind: 'open-end', startDay: '2026-09-02' }],
+    ['same-day', { kind: 'closed', startDay: '2026-09-02', endDay: '2026-09-02' }],
+  ] as const)(
+    'keeps a %s End resize anchored through threshold, preview, and cancel',
+    async (_label, range) => {
+      const mounted = mount(range);
+      applyProjectTimelineBarGeometry(
+        mounted.bar,
+        range,
+        expectDefined(projectTimelineBarGeometry(range, defaultWindow)),
+      );
+      const initialLeft = mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left');
+      const endHandle = mounted.bar.querySelector<HTMLElement>('[data-timeline-part="end"]');
+
+      endHandle?.dispatchEvent(pointerEvent('pointerdown', 25));
+      await flushMicrotasks();
+      mounted.track.dispatchEvent(pointerEvent('pointermove', 27));
+      expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
+        initialLeft,
+      );
+      expect(mounted.bar.classList).toContain('is-one-date');
+
+      mounted.track.dispatchEvent(pointerEvent('pointermove', 55));
+      expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
+        initialLeft,
+      );
+      expect(mounted.bar.classList).not.toContain('is-one-date');
+
+      mounted.root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
+        initialLeft,
+      );
+      expect(mounted.bar.classList).toContain('is-one-date');
+      expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps the start anchor while an End resize is pending and restores the marker on failure', async () => {
+    const range = { kind: 'open-end', startDay: '2026-09-02' } as const;
+    const mounted = mount(range);
+    applyProjectTimelineBarGeometry(
+      mounted.bar,
+      range,
+      expectDefined(projectTimelineBarGeometry(range, defaultWindow)),
+    );
+    const initialLeft = mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left');
+    const held = deferredResult();
+    mounted.commitRangeEdit.mockReturnValueOnce(held.promise);
+
+    mounted.bar
+      .querySelector<HTMLElement>('[data-timeline-part="end"]')
+      ?.dispatchEvent(pointerEvent('pointerdown', 25));
+    await flushMicrotasks();
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 55));
+    mounted.track.dispatchEvent(pointerEvent('pointerup', 55));
+
+    expect(mounted.bar.classList).toContain('is-previewing');
+    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
+      initialLeft,
+    );
+    held.resolve({ applied: [], failed: [{ path: 'Projects/A.md', message: 'Conflict' }] });
+    await flushMicrotasks();
+
+    expect(mounted.bar.classList).toContain('is-one-date');
+    expect(mounted.bar.classList).not.toContain('is-previewing');
+    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
+      initialLeft,
+    );
+  });
+
   it('previews a bar move and commits its frozen pointer intent only on release', async () => {
     const mounted = mount();
 

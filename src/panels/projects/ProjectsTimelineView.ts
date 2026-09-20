@@ -42,6 +42,8 @@ import {
   type ProjectTimelineRangeCommitter,
 } from './projectTimelineInteraction';
 
+let timelineSurfaceAccessibilitySequence = 0;
+
 export interface ProjectTimelineCellContext {
   readonly element: HTMLElement;
   readonly identity: {
@@ -311,9 +313,14 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     this.anchor_abyssPrivate = new Date((context_abyssPrivate.now ?? (() => new Date()))());
     this.renderedScale_abyssPrivate = context_abyssPrivate.settings().scale;
     this.root = host.createDiv({ cls: 'abyss-project-timeline', attr: { tabindex: '-1' } });
+    const surfaceName = this.root.createSpan({
+      cls: 'abyss-sr-only',
+      text: 'Project Timeline',
+    });
+    surfaceName.id = `abyss-project-timeline-surface-${String(++timelineSurfaceAccessibilitySequence)}`;
     this.scroll = this.root.createDiv({
       cls: 'abyss-project-timeline-scroll',
-      attr: { tabindex: '0', 'aria-label': 'Project Timeline' },
+      attr: { tabindex: '0', 'aria-labelledby': surfaceName.id },
     });
     this.axis_abyssPrivate = this.scroll.createDiv({ cls: 'abyss-project-timeline-axis' });
     this.axisSummary_abyssPrivate = this.axis_abyssPrivate.createDiv({

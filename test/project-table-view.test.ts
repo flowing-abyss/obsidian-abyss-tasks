@@ -81,6 +81,13 @@ function pressTimelineArrow(bar: HTMLElement, shiftKey = false): void {
   );
 }
 
+function spyOnNotices() {
+  const prototype = Notice.prototype as unknown as {
+    constructor__(message: unknown, duration?: number): void;
+  };
+  return vi.spyOn(prototype, 'constructor__').mockImplementation(() => {});
+}
+
 function labelledText(element: HTMLElement): string {
   const id = expectDefined(element.getAttribute('aria-labelledby'));
   return expectDefined(element.ownerDocument.getElementById(id)).textContent;
@@ -963,6 +970,7 @@ describe('ProjectsTableView', () => {
   });
 
   it('cancels a range after a failed editor save and leaves a corrected retry queue live', async () => {
+    const noticeSpy = spyOnNotices();
     const config = settings();
     config.projects.overviewView = 'timeline';
     let calls = 0;
@@ -999,8 +1007,9 @@ describe('ProjectsTableView', () => {
     await flushMicrotasks();
 
     expect(applyEdits).toHaveBeenCalledOnce();
-    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain(
-      'active project edit must finish',
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
+    expect(noticeSpy.mock.calls[noticeSpy.mock.calls.length - 1]?.[0]).toEqual(
+      expect.stringContaining('active project edit must finish'),
     );
     expect(input.isConnected).toBe(true);
 
@@ -1217,6 +1226,7 @@ describe('ProjectsTableView', () => {
   );
 
   it('rejects a queued Timeline edit after switching away from its occurrence', async () => {
+    const noticeSpy = spyOnNotices();
     const config = settings();
     config.projects.overviewView = 'timeline';
     let releaseFirst: (() => void) | undefined;
@@ -1256,12 +1266,14 @@ describe('ProjectsTableView', () => {
     await flushMicrotasks();
 
     expect(applyEdits).toHaveBeenCalledOnce();
-    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain(
-      'no longer visible',
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
+    expect(noticeSpy.mock.calls[noticeSpy.mock.calls.length - 1]?.[0]).toEqual(
+      expect.stringContaining('no longer visible'),
     );
   });
 
   it('does not revive a queued Timeline edit after a dashboard round trip', async () => {
+    const noticeSpy = spyOnNotices();
     const config = settings();
     config.projects.overviewView = 'timeline';
     const state = new AppState();
@@ -1312,8 +1324,9 @@ describe('ProjectsTableView', () => {
 
     expect(applyEdits).toHaveBeenCalledOnce();
     expect(scroll.scrollLeft).toBe(47);
-    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain(
-      'no longer visible',
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
+    expect(noticeSpy.mock.calls[noticeSpy.mock.calls.length - 1]?.[0]).toEqual(
+      expect.stringContaining('no longer visible'),
     );
     expect(
       labelledText(expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'))),
@@ -1366,6 +1379,7 @@ describe('ProjectsTableView', () => {
   });
 
   it('rejects a queued Timeline edit after its retained group collapses', async () => {
+    const noticeSpy = spyOnNotices();
     const config = settings();
     config.projects.overviewView = 'timeline';
     config.projects.table.groupBy = 'status';
@@ -1412,8 +1426,9 @@ describe('ProjectsTableView', () => {
       expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-group-body')).hidden,
     ).toBe(true);
     expect(applyEdits).toHaveBeenCalledOnce();
-    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain(
-      'no longer visible',
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
+    expect(noticeSpy.mock.calls[noticeSpy.mock.calls.length - 1]?.[0]).toEqual(
+      expect.stringContaining('no longer visible'),
     );
     expect(history.canUndo).toBe(true);
     await history.undo();
@@ -1422,6 +1437,7 @@ describe('ProjectsTableView', () => {
   });
 
   it('rejects a frozen pointer edit when the opposite endpoint changes before release', async () => {
+    const noticeSpy = spyOnNotices();
     const config = settings();
     config.projects.overviewView = 'timeline';
     const item = project({
@@ -1441,8 +1457,9 @@ describe('ProjectsTableView', () => {
     await flushMicrotasks();
 
     expect(applyEdits).not.toHaveBeenCalled();
-    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain(
-      'changed after this Timeline edit started',
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
+    expect(noticeSpy.mock.calls[noticeSpy.mock.calls.length - 1]?.[0]).toEqual(
+      expect.stringContaining('changed after this Timeline edit started'),
     );
   });
 
@@ -1645,28 +1662,80 @@ describe('ProjectsTableView', () => {
     expect(applyEdits).not.toHaveBeenCalled();
   });
 
-  it('keeps datetime ranges readable while disabling lossy gesture editing', () => {
+  it.each(['pointer', 'keyboard'] as const)(
+    'keeps datetime ranges readable and reports a blocked %s edit through one Notice',
+    async (input) => {
+      const config = settings();
+      config.projects.overviewView = 'timeline';
+      const applyEdits = vi.fn(async () => ({ applied: [], failed: [] }));
+      const noticeSpy = spyOnNotices();
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { host } = mount(
+        [
+          project({
+            frontmatter: {
+              status: 'active',
+              start: '2026-09-01T09:30',
+              end: '2026-09-30',
+            },
+          }),
+        ],
+        { settings: config, applyEdits },
+      );
+      const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+      if (input === 'pointer') {
+        vi.spyOn(
+          expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track')),
+          'getBoundingClientRect',
+        ).mockReturnValue(rectangle(0, 0, 100, 30));
+        bar.dispatchEvent(timelinePointerEvent('pointerdown', 20));
+      } else {
+        pressTimelineArrow(bar);
+      }
+      await flushMicrotasks();
+
+      expect(bar.getAttribute('aria-disabled')).toBe('true');
+      expect(bar.getAttribute('title')).toBeNull();
+      expect(describedText(bar)).toContain('Start contains a date and time');
+      expect(host.querySelector('[data-column-id="start"]')).not.toBeNull();
+      expect(applyEdits).not.toHaveBeenCalled();
+      expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
+      expect(noticeSpy).toHaveBeenCalledOnce();
+      expect(noticeSpy.mock.calls[0]?.[0]).toEqual(
+        expect.stringContaining('contains a date and time'),
+      );
+      expect(errorSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [
+      'unexpected',
+      new Error('disk stopped'),
+      'Could not update project Timeline dates: disk stopped',
+    ],
+    [
+      'partial',
+      { applied: [], failed: [{ path: 'Projects/A.md', message: 'source changed' }] },
+      'Could not update project Timeline dates: 0 updated; 1 failed: source changed',
+    ],
+  ] as const)('logs and notifies once for an %s Timeline failure', (_kind, failure, message) => {
+    const noticeSpy = spyOnNotices();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const config = settings();
     config.projects.overviewView = 'timeline';
-    const applyEdits = vi.fn(async () => ({ applied: [], failed: [] }));
-    const { host } = mount(
-      [
-        project({
-          frontmatter: {
-            status: 'active',
-            start: '2026-09-01T09:30',
-            end: '2026-09-30',
-          },
-        }),
-      ],
-      { settings: config, applyEdits },
-    );
-    const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+    const { host, view } = mount([], { settings: config });
 
-    expect(bar.getAttribute('aria-disabled')).toBe('true');
-    expect(bar.getAttribute('title')).toBeNull();
-    expect(describedText(bar)).toContain('Start contains a date and time');
-    expect(host.querySelector('[data-column-id="start"]')).not.toBeNull();
+    (
+      view as unknown as {
+        reportTimelineRangeFailure_abyssPrivate(value: unknown): void;
+      }
+    ).reportTimelineRangeFailure_abyssPrivate(failure);
+
+    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(noticeSpy).toHaveBeenCalledOnce();
+    expect(noticeSpy.mock.calls[0]?.[0]).toBe(message);
   });
 
   it('exposes reversed Timeline ranges as disabled with a field-recovery explanation', () => {

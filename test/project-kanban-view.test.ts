@@ -338,6 +338,27 @@ function viewOptionRow(host: HTMLElement, label: string): HTMLElement {
 }
 
 describe('project Kanban overview', () => {
+  it('names simultaneous Kanban scroll surfaces without native hover labels', () => {
+    const first = mountView();
+    const second = mountView();
+    clickView(first.host, 'Kanban');
+    clickView(second.host, 'Kanban');
+    const scrolls = [first.host, second.host].map((host) =>
+      expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-scroll')),
+    );
+    const labelIds = scrolls.map((scroll) => expectDefined(scroll.getAttribute('aria-labelledby')));
+
+    expect(new Set(labelIds).size).toBe(2);
+    for (const scroll of scrolls) {
+      expect(scroll.hasAttribute('aria-label')).toBe(false);
+      expect(scroll.hasAttribute('title')).toBe(false);
+      expect(
+        scroll.ownerDocument.getElementById(expectDefined(scroll.getAttribute('aria-labelledby')))
+          ?.textContent,
+      ).toBe('Project Kanban board');
+    }
+  });
+
   it('compares Kanban preferences while ignoring populated manual ranks', () => {
     const table = structuredClone(DEFAULT_SETTINGS.projects.table);
     const defaults = buildDefaultProjectKanbanSettings(table);

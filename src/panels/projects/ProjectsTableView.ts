@@ -2044,15 +2044,15 @@ export class ProjectsTableView {
       const first = result.failed[0];
       const detail = first === undefined ? '' : `: ${first.message}`;
       const message = `${result.applied.length} updated; ${result.failed.length} failed${detail}`;
-      this.feedback_abyssPrivate.setText(message);
       console.error(`[abyss-tasks] ${label}`, { result });
       new Notice(`${label}: ${message}`);
       return;
     }
     const message = failure instanceof Error ? failure.message : String(failure);
-    this.feedback_abyssPrivate.setText(message);
-    if (typeof failure === 'string') return;
-    if (isProjectEditValidationError(failure)) return;
+    if (typeof failure === 'string' || isProjectEditValidationError(failure)) {
+      new Notice(message);
+      return;
+    }
     console.error(`[abyss-tasks] ${label}`, { cause: failure });
     new Notice(`${label}: ${message}`);
   }
