@@ -27,7 +27,11 @@ import {
   type InteractiveSpanBoundaryTarget,
   type SpanMoveTarget,
 } from './spanInteractions';
-import { renderAllDaySpanLayer, type AllDayCallbacks } from './timegrid/renderAllDay';
+import {
+  renderAllDaySpanLayer,
+  renderPlainTaskResizeHandle,
+  type AllDayCallbacks,
+} from './timegrid/renderAllDay';
 import {
   applyOccurrenceDomState,
   bindForecastInteractions,
@@ -218,7 +222,8 @@ export class MonthGridView extends BaseView {
     this.renderCompactCell(
       items,
       monthRow.compactByDate.get(currentDate) ?? [],
-      context.occurrenceFor,
+      context.spanCallbacks,
+      currentDate,
     );
     cell.style.setProperty('--abyss-span-lane-count', String(monthRow.slotCount));
     this.bindCellInteractions(cell, currentDate, inCurrentMonth);
@@ -310,7 +315,12 @@ export class MonthGridView extends BaseView {
       const items = cell?.querySelector<HTMLElement>(':scope > .abyss-mg-cell-items');
       if (cell === null || items === undefined || items === null) continue;
       items.empty();
-      this.renderCompactCell(items, monthRow.compactByDate.get(date) ?? [], context.occurrenceFor);
+      this.renderCompactCell(
+        items,
+        monthRow.compactByDate.get(date) ?? [],
+        context.spanCallbacks,
+        date,
+      );
       cell.style.setProperty('--abyss-span-lane-count', String(monthRow.slotCount));
     }
     const layer = row.querySelector<HTMLElement>(':scope > .abyss-mg-span-layer');
@@ -394,8 +404,10 @@ export class MonthGridView extends BaseView {
   private renderCompactCell(
     cell: HTMLElement,
     entries: readonly MonthCompactSlot[],
-    occurrenceFor: CalendarOccurrenceLookup,
+    callbacks: AllDayCallbacks,
+    date: string,
   ): void {
+    const occurrenceFor = callbacks.occurrenceFor;
     const tagGroups = this.callbacks.tagGroups ?? [];
 
     for (const { task: t, kind, slot } of entries) {
@@ -426,7 +438,10 @@ export class MonthGridView extends BaseView {
           e.stopPropagation();
           this.callbacks.onTaskClick(t);
         });
-        if (kind !== 'deadline') this.makeDraggable(item, t, occurrence.source.target.type);
+        if (kind !== 'deadline') {
+          this.makeDraggable(item, t, occurrence.source.target.type);
+          renderPlainTaskResizeHandle({ cellEl: cell, date, callbacks, tagGroups }, item, t);
+        }
       });
       bindForecastInteractions(item, occurrence, this.callbacks);
     }

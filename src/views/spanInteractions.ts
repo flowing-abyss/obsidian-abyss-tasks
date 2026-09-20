@@ -200,18 +200,20 @@ function columnAtPoint(
   columns: readonly MeasuredSpanColumn[],
   allowXFallback = true,
 ): MeasuredSpanColumn | undefined {
+  const right = Math.max(...columns.map((column) => column.right));
+  const bottom = Math.max(...columns.map((column) => column.bottom));
+  const containsX = (column: MeasuredSpanColumn): boolean =>
+    pointer.clientX >= column.left &&
+    (pointer.clientX < column.right || (column.right === right && pointer.clientX === right));
   const byRect = columns.filter(
     (column) =>
-      pointer.clientX >= column.left &&
-      pointer.clientX <= column.right &&
+      containsX(column) &&
       pointer.clientY >= column.top &&
-      pointer.clientY <= column.bottom,
+      (pointer.clientY < column.bottom || (column.bottom === bottom && pointer.clientY === bottom)),
   );
   if (byRect.length === 1) return byRect[0];
   if (!allowXFallback) return undefined;
-  const byX = columns.filter(
-    (column) => pointer.clientX >= column.left && pointer.clientX <= column.right,
-  );
+  const byX = columns.filter(containsX);
   return byX.length === 1 ? byX[0] : undefined;
 }
 

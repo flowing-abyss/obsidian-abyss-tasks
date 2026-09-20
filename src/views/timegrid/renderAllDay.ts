@@ -382,11 +382,10 @@ function attachSegmentInteractions(
   context: AllDaySpanSegmentRenderContext,
 ): void {
   const occurrence = context.callbacks.occurrenceFor(segment.task);
-  bindMaterializedInteractions(occurrence, (target) => {
+  bindMaterializedInteractions(occurrence, () => {
     if (segment.kind === 'ghost') {
       bindTaskSelection(body, segment.task, context.callbacks.onTaskSelect);
     }
-    if (target.type !== 'task') return;
     body.setAttribute('tabindex', '0');
     const exposesRangeProxy = context.indexByDate.size > 1 && segment.kind === 'ghost';
     attachSpanInteractions({
@@ -676,7 +675,7 @@ function renderCellPlainTasks(
   }
 }
 
-function renderPlainTaskResizeHandle(
+export function renderPlainTaskResizeHandle(
   context: AllDayCellRenderContext,
   chip: HTMLElement,
   task: TaskSnapshot,
@@ -698,11 +697,11 @@ function renderPlainTaskResizeHandle(
     owner,
     previewLayoutFor: callbacks.spanPreviewLayoutFor,
     boundaryHandles: [{ element: rightEdge, boundary: 'create-span' }],
-    onMove: () => undefined,
+    onMove: (targetTask, target) => callbacks.onSpanMove?.(targetTask, target),
     onBoundary: (targetTask, target) => {
       callbacks.onExtendToSpan(targetTask, target.date);
     },
-    enableMove: false,
+    enableMove: callbacks.occurrenceFor(task).source.target.type === 'subtask',
   });
 }
 

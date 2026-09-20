@@ -3,8 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { firstVisibleWeekDate } from '../src/domain/weekGridOffset';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
+import { taskSnapshotForCalendarOccurrence } from '../src/views/calendarOccurrences';
 import * as spanLayout from '../src/views/spanLayout';
+import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
 import {
   expectDefined,
   fixedToday,
@@ -12,6 +13,7 @@ import {
   methodOf,
   parseJson,
   resolvedConfig,
+  subtask,
   task,
   useRealMoment,
 } from './helpers';
@@ -1684,5 +1686,50 @@ describe('WeekTimeGridView', () => {
       expect(container.querySelector('.abyss-tg-span')).not.toBeNull();
       expect(container.querySelector('.abyss-tg-block-continuation')).toBeNull();
     });
+  });
+});
+
+describe('materialized child all-day movement', () => {
+  it.each([false, true])('moves the exact child occurrence (span=%s)', (span) => {
+    const root = task({
+      subtasks: [
+        subtask({
+          planning: span ? { start: '2026-07-08', due: '2026-07-09' } : { due: '2026-07-08' },
+        }),
+      ],
+    });
+    const child = expectDefined(root.subtasks[0]);
+    const projected = taskSnapshotForCalendarOccurrence({
+      kind: 'materialized',
+      key: 'child',
+      source: { root, node: child, target: { type: 'subtask', ref: child.ref } },
+      planning: child.planning,
+      recurring: false,
+    });
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new WeekTimeGridView(cbs);
+    view.render(
+      container,
+      [projected],
+      resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+    );
+    const restore = measureAllDayCells(container);
+    const body = expectDefined(
+      container.querySelector<HTMLElement>(span ? '.abyss-span-piece' : '.abyss-tg-plain'),
+    );
+    body.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, pointerId: 18, clientX: 250, clientY: 50 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { pointerId: 18, clientX: 450, clientY: 50 }),
+    );
+    expect(cbs.onSpanMove).toHaveBeenCalledWith(projected, {
+      grabbedDate: '2026-07-08',
+      targetDate: '2026-07-10',
+      days: 2,
+    });
+    view.destroy();
+    restore();
   });
 });

@@ -422,3 +422,66 @@ describe('span interaction geometry', () => {
     }
   });
 });
+
+describe('span release cell ownership', () => {
+  it.each([
+    { x: 100, y: 50, want: '2026-07-07' },
+    { x: 50, y: 100, want: '2026-07-13' },
+    { x: 100, y: 100, want: '2026-07-14' },
+    { x: 200, y: 200, want: '2026-07-14' },
+    { x: 201, y: 50, want: undefined },
+    { x: 95, y: 50, want: undefined },
+  ])('resolves a Month release at $x,$y without losing a valid seam target', ({ x, y, want }) => {
+    const root = createDiv({ cls: 'abyss-mg-grid' });
+    document.body.append(root);
+    const dates = [
+      ['2026-07-06', '2026-07-07'],
+      ['2026-07-13', '2026-07-14'],
+    ];
+    for (const [rowIndex, rowDates] of dates.entries()) {
+      const row = root.createDiv({ cls: 'abyss-mg-row' });
+      row.createDiv({ cls: 'abyss-mg-span-layer' });
+      for (const [colIndex, date] of rowDates.entries()) {
+        const cell = row.createDiv({ cls: 'abyss-mg-cell' });
+        cell.dataset['mgDate'] = date;
+        vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(
+          new DOMRect(
+            colIndex * 100 - (x === 95 && colIndex === 1 ? 10 : 0),
+            rowIndex * 100,
+            100,
+            100,
+          ),
+        );
+      }
+    }
+    const source = expectDefined(root.querySelector('.abyss-mg-cell')).createDiv();
+    const handle = source.createDiv();
+    const onBoundary = vi.fn();
+    const owner = createSpanInteractionOwner();
+    attachSpanInteractions({
+      source,
+      task: task({ planning: { due: '2026-07-06' } }),
+      segmentStart: '2026-07-06',
+      segmentEnd: '2026-07-06',
+      owner,
+      boundaryHandles: [{ element: handle, boundary: 'create-span' }],
+      onMove: vi.fn(),
+      onBoundary,
+    });
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 50, clientY: 50, pointerId: 8 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 150, clientY: 50, pointerId: 8 }),
+    );
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, pointerId: 8 }));
+    if (want === undefined) expect(onBoundary).not.toHaveBeenCalled();
+    else
+      expect(onBoundary).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ boundary: 'create-span', date: want }),
+      );
+    owner.disposeActive();
+    root.remove();
+  });
+});

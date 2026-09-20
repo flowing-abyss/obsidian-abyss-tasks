@@ -112,7 +112,9 @@ import {
   calendarOccurrenceForTask,
   calendarPatchCommand,
   calendarRootTaskRef,
+  calendarShiftScheduleCommand,
   calendarSourcePatchCommand,
+  calendarSpanBoundaryCommand,
   hasOtherCalendarRecurrenceOwner,
   isForecastCalendarTask,
   projectCalendarOccurrences,
@@ -4293,14 +4295,12 @@ export class CenterPanel {
     task: TaskSnapshot,
     target: SpanMoveTarget,
   ): Promise<void> {
-    const ref = calendarRootTaskRef(task);
-    if (this.tasks_abyssPrivate == null || ref == null || target.days === 0) return;
+    if (this.tasks_abyssPrivate == null) return;
     try {
-      presentTaskCommandResult(
-        await this.tasks_abyssPrivate.execute({ type: 'shift-schedule', ref, days: target.days }),
-      );
+      const command = calendarShiftScheduleCommand(task, target.days);
+      if (command != null) presentTaskCommandResult(await this.tasks_abyssPrivate.execute(command));
     } catch {
-      // The shared resolver validates the exact frozen delta again at the command boundary.
+      // Calendar geometry supplies the target; malformed gesture input remains a no-op.
     }
   }
 
@@ -4308,21 +4308,12 @@ export class CenterPanel {
     task: TaskSnapshot,
     target: TimedBoundaryTarget,
   ): Promise<void> {
-    const ref = calendarRootTaskRef(task);
-    if (this.tasks_abyssPrivate == null || ref == null) return;
+    if (this.tasks_abyssPrivate == null) return;
     try {
-      const command: Parameters<TaskApplicationApi['execute']>[0] =
-        target.boundary === 'create-span'
-          ? { type: 'extend-span', ref, due: localDate(target.date) }
-          : {
-              type: 'set-span-boundary',
-              ref,
-              boundary: target.boundary,
-              date: localDate(target.date),
-            };
-      presentTaskCommandResult(await this.tasks_abyssPrivate.execute(command));
+      const command = calendarSpanBoundaryCommand(task, target.boundary, localDate(target.date));
+      if (command != null) presentTaskCommandResult(await this.tasks_abyssPrivate.execute(command));
     } catch {
-      // Boundary geometry is validated again by the application command.
+      // Calendar geometry supplies the target; malformed gesture input remains a no-op.
     }
   }
 
@@ -4392,18 +4383,14 @@ export class CenterPanel {
     }
   }
 
-  // The semantic command freezes the effective scheduled/due anchor when start is absent and
-  // validates the final span atomically; presentation supplies only the dragged-to edge.
+  // Root commands and child patches preserve the same anchor and validate the final span atomically.
   private async extendTaskToSpan_abyssPrivate(task: TaskSnapshot, newDue: string): Promise<void> {
-    if ((task.planning.start ?? task.planning.scheduled ?? task.planning.due) == null) return;
-    const ref = calendarRootTaskRef(task);
-    if (ref == null || this.tasks_abyssPrivate == null) return;
+    if (this.tasks_abyssPrivate == null) return;
     try {
-      presentTaskCommandResult(
-        await this.tasks_abyssPrivate.execute({ type: 'extend-span', ref, due: localDate(newDue) }),
-      );
+      const command = calendarSpanBoundaryCommand(task, 'create-span', localDate(newDue));
+      if (command != null) presentTaskCommandResult(await this.tasks_abyssPrivate.execute(command));
     } catch {
-      // Calendar controls supply the boundary; malformed input remains a no-op.
+      // Calendar geometry supplies the target; malformed gesture input remains a no-op.
     }
   }
 

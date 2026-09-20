@@ -483,6 +483,54 @@ export function calendarSourcePatchCommand(
   return { type: 'patch', target: source.target, patch };
 }
 
+/** Date gestures preserve the occurrence's node target, including materialized children. */
+export function calendarSpanBoundaryCommand(
+  task: TaskSnapshot,
+  boundary: 'start' | 'due' | 'create-span',
+  date: LocalDate,
+): TaskCommand | undefined {
+  const target = calendarMutationTarget(task);
+  if (target == null) return undefined;
+  if (target.type === 'task') {
+    return boundary === 'create-span'
+      ? { type: 'extend-span', ref: target.ref, due: date }
+      : { type: 'set-span-boundary', ref: target.ref, boundary, date };
+  }
+  if (boundary !== 'create-span') {
+    return calendarPatchCommand(task, { [boundary]: { type: 'set', value: date } });
+  }
+  const start = task.planning.start ?? task.planning.scheduled ?? task.planning.due;
+  return start == null
+    ? undefined
+    : calendarPatchCommand(task, {
+        start: { type: 'set', value: start },
+        due: { type: 'set', value: date },
+      });
+}
+
+function calendarShiftFields(planning: TaskPlanning): ReadonlyArray<'start' | 'scheduled' | 'due'> {
+  if (planning.start != null && planning.due != null) return ['start', 'due'];
+  return [planning.scheduled != null ? 'scheduled' : 'due'];
+}
+
+export function calendarShiftScheduleCommand(
+  task: TaskSnapshot,
+  days: number,
+): TaskCommand | undefined {
+  const target = calendarMutationTarget(task);
+  if (target == null || !Number.isSafeInteger(days) || days === 0) return undefined;
+  if (target.type === 'task') return { type: 'shift-schedule', ref: target.ref, days };
+  const fields = calendarShiftFields(task.planning);
+  const patch: Partial<Record<'start' | 'scheduled' | 'due', NonNullable<TaskPatch['due']>>> = {};
+  for (const field of fields) {
+    const value = task.planning[field];
+    const shifted = value == null ? undefined : shiftLocalDate(value, days);
+    if (shifted == null) return undefined;
+    patch[field] = { type: 'set', value: shifted };
+  }
+  return calendarPatchCommand(task, patch);
+}
+
 export function calendarRootTaskRef(task: TaskSnapshot): TaskRef | undefined {
   const target = calendarMutationTarget(task);
   return target?.type === 'task' ? target.ref : undefined;

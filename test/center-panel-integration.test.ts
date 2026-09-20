@@ -6484,3 +6484,57 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     },
   );
 });
+
+describe('calendar child day gestures persist on the child', () => {
+  it.each([
+    {
+      method: 'extendTaskToSpan',
+      planning: '📅 2026-07-08',
+      target: '2026-07-10',
+      want: ['🛫 2026-07-08', '📅 2026-07-10'],
+    },
+    {
+      method: 'commitTimedBoundary',
+      planning: '🛫 2026-07-08 📅 2026-07-10',
+      target: { boundary: 'start', date: '2026-07-07', dayDelta: -1 },
+      want: ['🛫 2026-07-07', '📅 2026-07-10'],
+    },
+    {
+      method: 'commitTimedBoundary',
+      planning: '🛫 2026-07-08 📅 2026-07-10',
+      target: { boundary: 'due', date: '2026-07-11', dayDelta: 1 },
+      want: ['🛫 2026-07-08', '📅 2026-07-11'],
+    },
+    {
+      method: 'commitSpanMove',
+      planning: '🛫 2026-07-08 📅 2026-07-10',
+      target: { grabbedDate: '2026-07-09', targetDate: '2026-07-11', days: 2 },
+      want: ['🛫 2026-07-10', '📅 2026-07-12'],
+    },
+  ])(
+    '$method changes only the exact child planning',
+    async ({ method, planning, target, want }) => {
+      const parent = '- [ ] Parent 📅 2026-07-01';
+      const h = await makePanel({
+        'child.md': `${parent}\n  - [ ] Child ${planning}\n  - [ ] Sibling\n`,
+      });
+      const root = expectDefined(h.index.list()[0]);
+      const child = expectDefined(root.subtasks[0]);
+      const projected = taskSnapshotForCalendarOccurrence({
+        kind: 'materialized',
+        key: 'child',
+        source: { root, node: child, target: { type: 'subtask', ref: child.ref } },
+        planning: child.planning,
+        recurring: false,
+      });
+      await call<Promise<void>>(h.panel, method, projected, target);
+      const file = h.app.vault.getAbstractFileByPath('child.md');
+      if (!(file instanceof TFile)) throw new Error('Missing fixture');
+      const lines = (await h.app.vault.read(file)).split('\n');
+      expect(lines[0]).toBe(parent);
+      expect(lines[2]).toBe('  - [ ] Sibling');
+      for (const carrier of want) expect(lines[1]).toContain(carrier);
+      h.panel.destroy();
+    },
+  );
+});

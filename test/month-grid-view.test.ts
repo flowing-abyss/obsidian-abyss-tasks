@@ -1983,3 +1983,43 @@ describe('MonthGridView', () => {
     });
   });
 });
+
+describe('Month compact date range gestures', () => {
+  it.each([
+    { due: '2026-07-08' },
+    { scheduled: '2026-07-08' },
+    { due: '2026-07-08', time: '09:00', duration: 60 },
+  ])('extends an ordinary compact task using day dates: %j', (planning) => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new MonthGridView(cbs);
+    const t = task({ planning });
+    view.render(container, [t], resolvedConfig({ startPosition: '2026-07', firstDayOfWeek: 1 }));
+    const cells = [...container.querySelectorAll<HTMLElement>('.abyss-mg-cell')];
+    for (const [index, cell] of cells.entries())
+      vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(
+        new DOMRect((index % 7) * 100, Math.floor(index / 7) * 100, 100, 100),
+      );
+    const cell = expectDefined(container.querySelector<HTMLElement>('[data-mg-date="2026-07-08"]'));
+    const handle = expectDefined(cell.querySelector<HTMLElement>('[data-boundary="create-span"]'));
+    expect(winningCssDeclaration(handle, 'inset-inline')).toBe('auto 0');
+    const target = expectDefined(
+      cells.find((e) => e.dataset['mgDate'] === '2026-07-10'),
+    ).getBoundingClientRect();
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, pointerId: 4, clientX: 250, clientY: 150 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointerup', {
+        pointerId: 4,
+        clientX: target.x + 50,
+        clientY: target.y + 50,
+      }),
+    );
+    expect(cbs.onSpanBoundary).toHaveBeenCalledWith(
+      t,
+      expect.objectContaining({ boundary: 'create-span', date: '2026-07-10' }),
+    );
+    view.destroy();
+  });
+});

@@ -2395,7 +2395,9 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   inset-inline: 0 auto;
 }
 
-.abyss-tg-body > .abyss-tg-span-edge--right {
+.abyss-tg-body > .abyss-tg-span-edge--right,
+.abyss-mg-plain > .abyss-tg-span-edge--right,
+.abyss-mg-block-dot > .abyss-tg-span-edge--right {
   inset-inline: auto 0;
 }
 
@@ -2899,6 +2901,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .abyss-mg-block-dot,
 .abyss-mg-span-segment,
 .abyss-mg-deadline-marker {
+  position: relative;
   font-size: var(--abyss-calendar-item-font-size);
   border-radius: var(--abyss-calendar-item-radius);
   padding: 2px var(--abyss-calendar-item-pad-inline);
