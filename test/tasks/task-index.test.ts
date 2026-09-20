@@ -915,13 +915,12 @@ describe('TaskIndex lifecycle and events', () => {
   });
 
   it('handles create, rename with oldPath, and delete after applying each change', async () => {
-    const { app, index, fireChanged } = await setup({ 'old.md': '- [ ] old' });
+    const { app, index } = await setup({ 'old.md': '- [ ] old' });
     await index.initialize();
     const events: unknown[] = [];
     index.subscribe((event) => events.push(event));
 
     const created = await app.vault.create('created.md', '- [ ] created');
-    fireChanged(created, '- [ ] created', taskCache());
     expect(index.list({ filePath: 'created.md' })).toHaveLength(1);
     await flushMicrotasks();
     expect(index.list({ filePath: 'created.md' })).toHaveLength(1);

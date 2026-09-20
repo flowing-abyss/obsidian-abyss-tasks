@@ -1,5 +1,5 @@
 import type * as ObsidianModule from 'obsidian';
-import type { App, CachedMetadata } from 'obsidian';
+import type { App } from 'obsidian';
 import { Notice, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { NoteTemplateService } from '../../src/notes/NoteTemplateService';
@@ -1822,7 +1822,6 @@ describe('repository-owned index observations', () => {
 
   it('invalidates a committed ref after a real external replacement', async () => {
     const app = await createAppWithFiles({ [path]: '' });
-    const fireChanged = metadataChangedEmitter(app);
     const h = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
     await h.index.initialize();
     try {
@@ -1837,15 +1836,6 @@ describe('repository-owned index observations', () => {
       const replacement = '- [ ] External replacement\n';
       const file = fileAt(app, path);
       await app.vault.modify(file, replacement);
-      fireChanged(file, replacement, {
-        listItems: [
-          {
-            task: ' ',
-            parent: -1,
-            position: { start: { line: 0 }, end: { line: 0 } },
-          },
-        ],
-      } as CachedMetadata);
       await flushMicrotasks();
 
       expect(h.index.list().map((task) => task.title)).toEqual(['External replacement']);
