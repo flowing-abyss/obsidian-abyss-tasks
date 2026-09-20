@@ -94,6 +94,7 @@ const SINKS = new Set([
   'FileManager.processFrontMatter',
   'Plugin.saveData',
 ]);
+const SINK_NAMES = new Set([...SINKS].map((api) => api.slice(api.indexOf('.') + 1)));
 
 function arrowOwner(node: ts.ArrowFunction): string {
   const parent = node.parent;
@@ -133,7 +134,7 @@ function bindingSymbol(node: ts.BindingElement, checker: ts.TypeChecker): ts.Sym
   if (!ts.isObjectBindingPattern(node.parent)) return undefined;
   const name = node.propertyName ?? node.name;
   const key = ts.isComputedPropertyName(name) ? name.expression : name;
-  if (ts.isIdentifier(key) || ts.isStringLiteralLike(key))
+  if ((ts.isIdentifier(key) || ts.isStringLiteralLike(key)) && SINK_NAMES.has(key.text))
     return checker.getPropertyOfType(checker.getTypeAtLocation(node.parent), key.text);
   return undefined;
 }
@@ -176,17 +177,32 @@ function assignmentSymbol(
   return checker.getPropertyOfType(sourceType, name);
 }
 
-function referenceSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefined {
-  if (ts.isPropertyAccessExpression(node)) return checker.getSymbolAtLocation(node.name);
-  if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
+function elementSymbol(
+  node: ts.ElementAccessExpression,
+  checker: ts.TypeChecker,
+): ts.Symbol | undefined {
+  const key = node.argumentExpression;
+  if (ts.isStringLiteralLike(key) && SINK_NAMES.has(key.text)) {
     return checker.getPropertyOfType(
       checker.getNonNullableType(checker.getTypeAtLocation(node.expression)),
-      node.argumentExpression.text,
+      key.text,
     );
   }
+  return undefined;
+}
+
+function referenceSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol | undefined {
+  // Names only prefilter candidates; declaration identity below still proves authority.
+  if (ts.isPropertyAccessExpression(node) && SINK_NAMES.has(node.name.text))
+    return checker.getSymbolAtLocation(node.name);
+  if (ts.isElementAccessExpression(node)) return elementSymbol(node, checker);
   if (ts.isBindingElement(node)) return bindingSymbol(node, checker);
-  if (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node))
-    return assignmentSymbol(node, checker);
+  if (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) {
+    const name = assignmentPropertyName(node.name);
+    // Keep recursive assignmentSymbol resolution unfiltered: ancestors such as
+    // `vault` in ({ vault: { modify } } = app) need not themselves be sinks.
+    if (name !== undefined && SINK_NAMES.has(name)) return assignmentSymbol(node, checker);
+  }
   return undefined;
 }
 

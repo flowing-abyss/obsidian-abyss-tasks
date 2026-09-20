@@ -1,5 +1,5 @@
 import ts from 'typescript';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   collectStorageAccesses,
   STORAGE_AUTHORIZATIONS,
@@ -126,6 +126,31 @@ sourceMap.set(repoFile('src/ui/storage-safe.ts'), prelude + safe);
 for (const [index, [source]] of assignmentExtractions.entries()) {
   sourceMap.set(repoFile(`src/ui/storage-assignment-${index}.ts`), prelude + source);
 }
+
+// Unrelated property traffic must not trigger whole-program semantic resolution.
+const workProbe = `${prelude}let write: NoteVault['modify'];
+({ vault: { modify: write } } = app);
+`;
+sourceMap.set(repoFile('src/ui/storage-work-base.ts'), workProbe);
+sourceMap.set(
+  repoFile('src/ui/storage-work-noisy.ts'),
+  workProbe +
+    Array.from(
+      { length: 40 },
+      () => `{
+        const { vault: reader } = app;
+        const { cachedRead: read } = reader;
+        void reader.cachedRead;
+        void reader['read'];
+        let vault: NoteVault;
+        ({ vault } = app);
+        let cachedRead: NoteVault['cachedRead'];
+        ({ vault: { cachedRead } } = app);
+        const value = { nested: { label: 'ignored' } };
+        void value.nested.label;
+      }`,
+    ).join('\n'),
+);
 
 // Use each real class name once, with all authorized methods grouped in it.
 for (const [file, className] of allowed) {
@@ -258,6 +283,27 @@ describe('resolved Obsidian storage authority', () => {
       fixtureProgram(new Map([[repoFile('test/broken-storage.ts'), 'const = ;']])),
     ).toThrow();
   }, 20_000);
+
+  it('bounds semantic work independently of unrelated property traffic', () => {
+    const checker = program.getTypeChecker();
+    const lookups = [
+      vi.spyOn(checker, 'getSymbolAtLocation'),
+      vi.spyOn(checker, 'getPropertyOfType'),
+      vi.spyOn(checker, 'getTypeAtLocation'),
+      vi.spyOn(checker, 'getTypeOfSymbolAtLocation'),
+      vi.spyOn(checker, 'getNonNullableType'),
+    ];
+    const work = ['base', 'noisy'].map((variant) => {
+      for (const lookup of lookups) lookup.mockClear();
+      const file = `src/ui/storage-work-${variant}.ts`;
+      expect(accesses(file)).toEqual([
+        { file, api: 'Vault.modify', owner: '<module>', line: 4, column: 13 },
+      ]);
+      return lookups.reduce((total, lookup) => total + lookup.mock.calls.length, 0);
+    });
+    expect(work[0]).toBeGreaterThan(0);
+    expect(work[1]).toBe(work[0]);
+  });
 
   it('keeps the real source inventory exact and reasoned', () => {
     const files = ts.sys.readDirectory(repoFile('src'), ['.ts']);
