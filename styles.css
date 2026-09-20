@@ -235,9 +235,10 @@
   }
 
   .abyss-layout--tasks .abyss-center-controls {
-    flex: 1 1 100%;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
     min-inline-size: 0;
-    margin-inline-start: 0;
+    justify-content: flex-end;
   }
 
   .abyss-layout--tasks .abyss-center-search {
