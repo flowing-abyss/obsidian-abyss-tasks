@@ -194,7 +194,8 @@ describe('openViewOptionsPopover', () => {
 
     const cleanup = openViewOptionsPopover({ host, anchor, rows: [] });
     const popover = expectDefined(host.querySelector<HTMLElement>('.abyss-view-state-popover'));
-    const declarations = cssDeclarationsFor(await loadPluginStyles(), '.abyss-view-state-popover');
+    const styles = await loadPluginStyles();
+    const declarations = cssDeclarationsFor(styles, '.abyss-view-state-popover');
 
     expect(popover.style.getPropertyValue('--abyss-view-state-max-width')).toBe('184px');
     expect(popover.style.getPropertyValue('--abyss-view-state-max-height')).toBe('164px');
@@ -209,6 +210,15 @@ describe('openViewOptionsPopover', () => {
     expect(cssDeclarationValue(declarations, 'top')).toBeUndefined();
     expect(cssDeclarationValue(declarations, 'right')).toBeUndefined();
     expect(cssDeclarationValue(declarations, 'margin-top')).toBeUndefined();
+    for (const selector of [
+      '.abyss-view-state-popover button.abyss-view-state-row-main',
+      '.abyss-view-state-popover button.abyss-view-state-option',
+    ]) {
+      const buttonDeclarations = cssDeclarationsFor(styles, selector);
+      expect(cssDeclarationValue(buttonDeclarations, 'white-space')).toBe('normal');
+      expect(cssDeclarationValue(buttonDeclarations, 'height')).toBe('auto');
+      expect(cssDeclarationValue(buttonDeclarations, 'min-height')).toBe('0');
+    }
 
     cleanup();
     host.remove();

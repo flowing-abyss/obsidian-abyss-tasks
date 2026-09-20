@@ -5007,6 +5007,12 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: var(--background-modifier-hover);
 }
 
+.abyss-context-separator {
+  height: 1px;
+  margin: var(--size-4-1) 0;
+  background: var(--background-modifier-border);
+}
+
 .abyss-context-item.abyss-context-danger {
   color: var(--text-error);
 }
@@ -5246,6 +5252,8 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-view-state-popover button.abyss-view-state-row-main {
   display: flex;
   width: 100%;
+  min-height: 0;
+  height: auto;
   align-items: center;
   gap: var(--size-4-2);
   padding: 10px 14px;
@@ -5256,6 +5264,7 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-normal);
   cursor: pointer;
   text-align: left;
+  white-space: normal;
 }
 
 .abyss-view-state-popover button.abyss-view-state-row-main:hover {
@@ -5307,6 +5316,8 @@ body.abyss-modal-open .popover.hover-popover {
   align-items: center;
   gap: var(--size-2-3);
   width: 100%;
+  min-height: 0;
+  height: auto;
   padding: 7px var(--size-4-3) 7px 14px;
   text-align: left;
   background: none;
@@ -5314,6 +5325,7 @@ body.abyss-modal-open .popover.hover-popover {
   cursor: pointer;
   font-size: 13px;
   color: var(--text-normal);
+  white-space: normal;
 }
 
 .abyss-view-state-popover button.abyss-view-state-option:hover {
@@ -8139,6 +8151,41 @@ button.abyss-project-table-status-pill {
     min-width: var(--checkbox-size, 15px);
     max-width: var(--checkbox-size, 15px);
     flex: 0 0 var(--checkbox-size, 15px);
+  }
+}
+
+@media (width <= 520px) {
+  .abyss-project-column-settings-header {
+    display: none;
+  }
+
+  .abyss-project-property-details > .abyss-project-property-single-line-setting {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .abyss-project-property-details
+    > .abyss-project-property-single-line-setting
+    > .setting-item-info {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .abyss-project-property-details
+    > .abyss-project-property-single-line-setting
+    > .setting-item-control {
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
+    align-self: stretch;
+    justify-content: flex-start;
+  }
+
+  .abyss-project-property-details
+    > .abyss-project-property-single-line-setting
+    > .setting-item-control
+    > select {
+    width: 100%;
   }
 }
 

@@ -11,7 +11,14 @@ import {
   removeConfiguredProjectProperty,
   renderProjectTableSettings,
 } from '../src/settings/projectTableSettings';
-import { editSettingControl, expectDefined, methodOf } from './helpers';
+import {
+  cssDeclarationsFor,
+  cssRuleParts,
+  editSettingControl,
+  expectDefined,
+  loadPluginStyles,
+  methodOf,
+} from './helpers';
 
 vi.mock('obsidian', async () => {
   const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
@@ -113,6 +120,29 @@ function expandProperty(container: HTMLElement, columnId: string): void {
 }
 
 describe('renderProjectTableSettings', () => {
+  it('stacks expanded property controls and omits redundant headings at narrow widths', async () => {
+    const styles = await loadPluginStyles();
+    const declarationsFor = (selector: string): string =>
+      cssRuleParts(styles)
+        .filter((rule) => rule.selector.replace(/\s+/gu, ' ') === selector)
+        .map((rule) => rule.declarations)
+        .join('\n');
+    const details = cssDeclarationsFor(
+      styles,
+      '.abyss-project-property-details > .abyss-project-property-single-line-setting',
+    );
+    const controls = declarationsFor(
+      '.abyss-project-property-details > .abyss-project-property-single-line-setting > .setting-item-control',
+    );
+
+    expect(details).toContain('flex-direction: column');
+    expect(controls).toContain('min-width: 0');
+    expect(controls).toContain('width: 100%');
+    expect(cssDeclarationsFor(styles, '.abyss-project-column-settings-header')).toContain(
+      'display: none',
+    );
+  });
+
   it('creates a never-seen property without native metadata', () => {
     const projects = buildDefaultProjectsSettings();
     expect(addProjectPropertyColumn(projects, [], '  Novel  ')).toBe('added');

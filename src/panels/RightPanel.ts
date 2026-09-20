@@ -2683,6 +2683,13 @@ export class RightPanel {
     return item;
   }
 
+  private createContextMenuSeparator_abyssPrivate(menu: HTMLElement): void {
+    menu.createDiv({
+      cls: 'abyss-context-separator',
+      attr: { role: 'separator' },
+    });
+  }
+
   private renderPriorityChip_abyssPrivate(container: HTMLElement, task: TaskLike): void {
     const labels: Record<string, string> = {
       A: '🚩 Highest',
@@ -3685,12 +3692,14 @@ export class RightPanel {
 
     this.addTrackingMenuItem_abyssPrivate(menu, task);
     const contextTarget = taskNodeRef(task);
+    this.createContextMenuSeparator_abyssPrivate(menu);
     this.createContextMenuItem_abyssPrivate(menu, 'abyss-context-item', 'Open in note', () => {
       this.removeAnchoredSurface_abyssPrivate(menu);
       const root = this.state_abyssPrivate.get('taskStack')[0];
       if (root != null && 'source' in root)
         runAsyncAction(openInFile(this.app_abyssPrivate, root, taskNodeLine(root, task)));
     });
+    this.createContextMenuSeparator_abyssPrivate(menu);
     if (contextTarget.type === 'task') {
       this.createContextMenuItem_abyssPrivate(menu, 'abyss-context-item', 'Archive', () => {
         this.removeAnchoredSurface_abyssPrivate(menu);

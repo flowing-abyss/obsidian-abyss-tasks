@@ -511,16 +511,27 @@ function inspectorItem(el: HTMLElement, text: string): HTMLElement | undefined {
 }
 
 describe('inspector context menu tracking item', () => {
-  it('places Open in note immediately before archive and delete actions', async () => {
+  it('separates Open in note from root edit and danger groups', async () => {
     const harness = await inspector(UNTRACKED);
+    const items = inspectorMenuItems(harness.el);
+    const menu = expectDefined(items[0]?.parentElement);
 
-    expect(inspectorMenuItems(harness.el).map((item) => item.textContent)).toEqual([
-      'Edit repeat…',
-      'Start tracking',
-      'Open in note',
-      'Archive',
-      'Delete task',
-    ]);
+    expect([...menu.children].map((item) => [item.getAttribute('role'), item.textContent])).toEqual(
+      [
+        ['menuitem', 'Edit repeat…'],
+        ['menuitem', 'Start tracking'],
+        ['separator', ''],
+        ['menuitem', 'Open in note'],
+        ['separator', ''],
+        ['menuitem', 'Archive'],
+        ['menuitem', 'Delete task'],
+      ],
+    );
+    expect(
+      [...menu.querySelectorAll<HTMLElement>('[role="separator"]')].every(
+        (separator) => separator.tabIndex === -1,
+      ),
+    ).toBe(true);
   });
 
   it('starts tracking the selected task', async () => {
@@ -534,8 +545,21 @@ describe('inspector context menu tracking item', () => {
 
   it('starts tracking the selected sub-task', async () => {
     const harness = await inspector('- [ ] Alpha\n  - [ ] Child\n', 'Child');
+    const items = inspectorMenuItems(harness.el);
+    const menu = expectDefined(items[0]?.parentElement);
 
-    expectDefined(inspectorItem(harness.el, 'Start tracking')).click();
+    expect([...menu.children].map((item) => [item.getAttribute('role'), item.textContent])).toEqual(
+      [
+        ['menuitem', 'Edit repeat…'],
+        ['menuitem', 'Start tracking'],
+        ['separator', ''],
+        ['menuitem', 'Open in note'],
+        ['separator', ''],
+        ['menuitem', 'Delete sub-task'],
+      ],
+    );
+
+    expectDefined(items.find((item) => item.textContent === 'Start tracking')).click();
     await flushMicrotasks();
 
     expect(await harness.read()).toBe(`- [ ] Alpha\n  - [ ] Child\n  \t- ${NOW_ATOM} →\n`);
