@@ -2230,9 +2230,11 @@ export class RightPanel {
     ta.value = task.markdownTitle;
     this.enablePaste_abyssPrivate(ta, task);
     // Auto-grow to content, but never below the stretched height.
+    let autoHeight = '';
     const grow = (): void => {
       ta.setCssStyles({ height: 'auto' });
       ta.setCssStyles({ height: `${Math.max(ta.scrollHeight, startHeight)}px` });
+      autoHeight = ta.style.height;
     };
     ta.addEventListener('input', grow);
     window.setTimeout(() => {
@@ -2245,8 +2247,7 @@ export class RightPanel {
       if (!lifecycle.begin()) return;
       // Let any in-flight paste insert its link into the value before we save/remove.
       await whenPasteSettled(ta);
-      // Carry the current height back to the read-mode block so the stretch persists.
-      view.setCssStyles({ height: `${ta.offsetHeight}px` });
+      const resizedHeight = ta.style.height !== autoHeight ? ta.offsetHeight : undefined;
       if (save && ta.value !== task.markdownTitle) {
         const saved = await this.saveTaskTitle_abyssPrivate(task, ta.value.trim());
         if (!saved) {
@@ -2256,6 +2257,7 @@ export class RightPanel {
         }
       }
       lifecycle.close();
+      if (resizedHeight !== undefined) view.setCssStyles({ height: `${resizedHeight}px` });
       ta.remove();
       view.show();
       renderView();

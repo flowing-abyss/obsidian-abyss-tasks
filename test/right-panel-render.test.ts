@@ -309,6 +309,15 @@ function click(el: HTMLElement): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 }
 
+function measuredHeight(element: HTMLElement, fallback: number): number {
+  const height = Number.parseFloat(element.style.height);
+  return Number.isFinite(height) && height > 0 ? height : fallback;
+}
+
+function setTextareaValue(textarea: HTMLTextAreaElement, value: string): void {
+  textarea.value = value;
+}
+
 function rect(left: number, top: number, width: number, height: number): DOMRect {
   return new DOMRect(left, top, width, height);
 }
@@ -937,6 +946,236 @@ describe('RightPanel.renderTask', () => {
     expect(written).toContain('Updated task');
     expect(el.querySelector('.abyss-right-title-edit')).toBeNull();
     expect(el.querySelector('.abyss-right-title-view')).not.toBeNull();
+  });
+
+  it.each(['blur', 'Escape'] as const)(
+    'returns a title auto-grown for raw Markdown to its natural display height on %s',
+    async (finish) => {
+      vi.useFakeTimers();
+      const markdownTitle = `[Short link label](https://example.test/${'long-url-segment/'.repeat(25)})`;
+      const { panel, state, el } = await makePanel();
+      activeDocument.body.append(el);
+      state.set('taskStack', [task({ title: 'Short link label', markdownTitle })]);
+      const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
+      Object.defineProperty(view, 'offsetHeight', {
+        configurable: true,
+        get: () => measuredHeight(view, 48),
+      });
+
+      try {
+        click(view);
+        const editor = expectDefined(
+          el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+        );
+        Object.defineProperty(editor, 'scrollHeight', { configurable: true, get: () => 420 });
+        Object.defineProperty(editor, 'offsetHeight', {
+          configurable: true,
+          get: () => measuredHeight(editor, 420),
+        });
+        await vi.runOnlyPendingTimersAsync();
+        expect(editor.style.height).toBe('420px');
+
+        if (finish === 'blur') editor.dispatchEvent(new FocusEvent('blur'));
+        else
+          editor.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+          );
+        await vi.runOnlyPendingTimersAsync();
+
+        expect(el.querySelector('.abyss-right-title-edit')).toBeNull();
+        expect(view.style.height).toBe('');
+
+        click(view);
+        const shortenedEditor = expectDefined(
+          el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+        );
+        let shortenedScrollHeight = 420;
+        Object.defineProperty(shortenedEditor, 'scrollHeight', {
+          configurable: true,
+          get: () => shortenedScrollHeight,
+        });
+        Object.defineProperty(shortenedEditor, 'offsetHeight', {
+          configurable: true,
+          get: () => measuredHeight(shortenedEditor, shortenedScrollHeight),
+        });
+        await vi.runOnlyPendingTimersAsync();
+        setTextareaValue(shortenedEditor, 'Shortened title');
+        shortenedScrollHeight = 48;
+        shortenedEditor.dispatchEvent(new Event('input', { bubbles: true }));
+        expect(shortenedEditor.style.height).toBe('48px');
+        shortenedEditor.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+        );
+        await vi.runOnlyPendingTimersAsync();
+        expect(view.style.height).toBe('');
+      } finally {
+        panel.destroy();
+        el.remove();
+      }
+    },
+  );
+
+  it.each(['blur', 'Enter'] as const)(
+    'does not retain raw-editor auto-height after a successful title save through %s',
+    async (finish) => {
+      vi.useFakeTimers();
+      const current = task({ title: 'Short link label' });
+      const updated = task({ ...current, title: 'Updated title', markdownTitle: 'Updated title' });
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: updated },
+      });
+      const { panel, state, el } = await makePanel(
+        {},
+        { queries: taskQueryApi({ list: () => [updated] }), execute },
+      );
+      activeDocument.body.append(el);
+      state.set('taskStack', [current]);
+      const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
+      Object.defineProperty(view, 'offsetHeight', { configurable: true, get: () => 48 });
+
+      try {
+        click(view);
+        const editor = expectDefined(
+          el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+        );
+        Object.defineProperty(editor, 'scrollHeight', { configurable: true, get: () => 420 });
+        Object.defineProperty(editor, 'offsetHeight', {
+          configurable: true,
+          get: () => measuredHeight(editor, 420),
+        });
+        await vi.runOnlyPendingTimersAsync();
+        setTextareaValue(editor, 'Updated title');
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+
+        if (finish === 'blur') editor.dispatchEvent(new FocusEvent('blur'));
+        else
+          editor.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+          );
+        await vi.runOnlyPendingTimersAsync();
+
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(view.style.height).toBe('');
+      } finally {
+        panel.destroy();
+        el.remove();
+      }
+    },
+  );
+
+  it('keeps an explicit title display resize, while carrying a manual editor resize across close', async () => {
+    vi.useFakeTimers();
+    const markdownTitle = `[Short link label](https://example.test/${'long-url-segment/'.repeat(25)})`;
+    const { panel, state, el } = await makePanel();
+    activeDocument.body.append(el);
+    state.set('taskStack', [task({ title: 'Short link label', markdownTitle })]);
+    const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
+    view.setCssStyles({ height: '88px' });
+    Object.defineProperty(view, 'offsetHeight', {
+      configurable: true,
+      get: () => measuredHeight(view, 48),
+    });
+
+    try {
+      click(view);
+      const editor = expectDefined(
+        el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+      );
+      Object.defineProperty(editor, 'scrollHeight', { configurable: true, get: () => 420 });
+      Object.defineProperty(editor, 'offsetHeight', {
+        configurable: true,
+        get: () => measuredHeight(editor, 420),
+      });
+      await vi.runOnlyPendingTimersAsync();
+      expect(editor.style.height).toBe('420px');
+      editor.dispatchEvent(new FocusEvent('blur'));
+      await vi.runOnlyPendingTimersAsync();
+      expect(view.style.height).toBe('88px');
+
+      click(view);
+      const resizedEditor = expectDefined(
+        el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+      );
+      Object.defineProperty(resizedEditor, 'scrollHeight', {
+        configurable: true,
+        get: () => 420,
+      });
+      Object.defineProperty(resizedEditor, 'offsetHeight', {
+        configurable: true,
+        get: () => measuredHeight(resizedEditor, 420),
+      });
+      await vi.runOnlyPendingTimersAsync();
+      resizedEditor.setCssStyles({ height: '275px' });
+      resizedEditor.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(view.style.height).toBe('275px');
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('keeps a failed title-save draft focused and leaves the hidden display height unchanged', async () => {
+    vi.useFakeTimers();
+    const current = task({ title: 'Short link label' });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'conflict',
+      current,
+    });
+    const { panel, state, el } = await makePanel(
+      {},
+      { queries: taskQueryApi({ list: () => [current] }), execute },
+    );
+    activeDocument.body.append(el);
+    state.set('taskStack', [current]);
+    const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
+    Object.defineProperty(view, 'offsetHeight', { configurable: true, get: () => 48 });
+
+    try {
+      click(view);
+      const editor = expectDefined(
+        el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+      );
+      Object.defineProperty(editor, 'scrollHeight', { configurable: true, get: () => 420 });
+      Object.defineProperty(editor, 'offsetHeight', {
+        configurable: true,
+        get: () => measuredHeight(editor, 420),
+      });
+      await vi.runOnlyPendingTimersAsync();
+      setTextareaValue(editor, 'Changed title');
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+      editor.focus();
+      editor.setSelectionRange(2, 7);
+      editor.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await vi.runOnlyPendingTimersAsync();
+
+      const retained = expectDefined(
+        el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+      );
+      expect(retained.value).toBe('Changed title');
+      expect(retained.style.height).toBe('420px');
+      expect(retained.selectionStart).toBe(2);
+      expect(retained.selectionEnd).toBe(7);
+      expect(activeDocument.activeElement).toBe(retained);
+      expect(view.style.height).toBe('');
+
+      retained.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+      await vi.runOnlyPendingTimersAsync();
+      expect(el.querySelector('.abyss-right-title-edit')).toBeNull();
+      expect(view.style.height).toBe('');
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
   });
 
   it('date chip renders (non-empty) when task.due is present', async () => {
