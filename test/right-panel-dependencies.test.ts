@@ -7,7 +7,6 @@ import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import type { TaskStatusDef } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import {
-  localDate,
   type SubtaskSnapshot,
   type TaskApplicationApi,
   type TaskCommandResult,
@@ -18,13 +17,14 @@ import {
   TaskDependencyService,
   type TaskDiagnosticSink,
 } from '../src/tasks/application/TaskDependencyService';
+import { clockFrom } from '../src/tasks/domain/clock';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
-import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
-import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
+import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 import { TaskModal } from '../src/ui/TaskModal';
 import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
 import {
@@ -78,14 +78,20 @@ async function harness(
     snapshotState: index,
   });
   const diagnostics = vi.fn<TaskDiagnosticSink>();
+  let generated = 0;
   const application = new TaskApplicationService(
     index,
     repository,
     statuses,
-    { today: () => localDate('2026-09-05') },
+    clockFrom(Date.parse('2026-09-05T12:00:00Z'), 0),
     undefined,
     undefined,
-    new TaskDependencyService(index, repository, () => 'generate', diagnostics),
+    new TaskDependencyService(
+      index,
+      repository,
+      () => (++generated === 1 ? 'generate' : `gen${String(generated).padStart(5, '0')}`),
+      diagnostics,
+    ),
     diagnostics,
   );
   const api: TaskApplicationApi = {
@@ -1791,6 +1797,9 @@ describe('RightPanel dependency inspector', () => {
       const remove = vi.spyOn(h.el.ownerDocument, 'removeEventListener');
       button(h.el, '.abyss-dep-badge-body').click();
       const input = search(h.el, 'Candidate');
+      const owned = add.mock.calls.filter(([type]) =>
+        ['scroll', 'focusin', 'pointerdown'].includes(type),
+      );
       if (mode === 'focus') activeDocument.body.createEl('button').focus();
       if (mode === 'destroy') h.panel.destroy();
       if (mode === 'selection') h.state.set('taskStack', [h.node('Candidate').root]);
@@ -1798,15 +1807,14 @@ describe('RightPanel dependency inspector', () => {
         button(h.el, '[data-direction="blocks"]').click();
         button(h.el, '[role="option"]').click();
         await flushMicrotasks(50);
+        expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       }
       if (mode === 'refresh') {
         h.state.set('taskStack', [h.node('Current').root]);
         expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       }
-      const owned = add.mock.calls.filter(([type]) =>
-        ['scroll', 'focusin', 'pointerdown'].includes(type),
-      );
       expect(owned.length).toBeGreaterThan(0);
       for (const [type, listener] of owned)
         expect(
@@ -2081,7 +2089,8 @@ describe('RightPanel dependency inspector', () => {
       expect(await h.read()).toBe(
         '- [ ] Current 🆔 generate\n\t- [ ] Brand new ➕ 2026-09-05 ⛔ generate\n',
       );
-      expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
+      expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
+      expect(input.value).toBe('');
       expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Current']);
       expect(captured).toHaveLength(0);
     },
@@ -2463,7 +2472,8 @@ describe('RightPanel dependency inspector', () => {
       expect(await h.read()).toContain(
         direction === 'blocked-by' ? 'Current ⛔ generate' : 'Candidate ⛔ generate',
       );
-      expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
+      expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
+      expect(input.value).toBe('');
       expect(h.el.querySelectorAll('.abyss-dep-section')).toHaveLength(2);
       expect(h.el.querySelector('.abyss-dep-row')?.textContent).toBe('Candidate');
       expect(captured).toHaveLength(0);
@@ -2555,4 +2565,151 @@ describe('RightPanel dependency inspector', () => {
     expect(h.el.querySelector('.abyss-dep-search input')).toHaveProperty('value', 'Candidate');
     expect(h.el.querySelectorAll('.abyss-dep-row')).toHaveLength(0);
   });
+});
+
+function subscribeInspectorReconciliation(h: Awaited<ReturnType<typeof harness>>): () => void {
+  return h.index.subscribe(() => {
+    const stack = h.state.get('taskStack');
+    const root = expectDefined(stack[0]);
+    const resolution = h.index.resolve(rootTaskRef(root));
+    if (resolution.type !== 'exact' && resolution.type !== 'rebased') return;
+    const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+    const ownedRef =
+      resolution.type === 'rebased' && resolution.evidence === 'authority-transition'
+        ? resolution.previous.ref
+        : undefined;
+    const ownedSelection = h.panel.selectionForOwnedTransition(ownedRef, current, stack);
+    const draft =
+      ownedRef === undefined
+        ? h.panel.captureDraftState()
+        : h.panel.captureDraftStateForOwnedTransition(ownedRef, current.ref);
+    h.state.updateInspectorSelection(
+      ownedSelection ??
+        rebuildTaskSelection(current, stack, { preserveDependencyChanges: ownedRef !== undefined }),
+    );
+    h.panel.restoreDraftState(draft, current);
+  });
+}
+
+describe('continuous dependency entry', () => {
+  it.each(
+    (['subtask', 'comment'] as const).flatMap((kind) =>
+      [false, true].map((modalSurface) => ({ kind, modalSurface })),
+    ),
+  )('continues real deep $kind writes in modal=$modalSurface', async ({ kind, modalSurface }) => {
+    const h = await harness(
+      '- [ ] Tabbed parent\n\t- [ ] Nested owner\n\t\t- [ ] Grandchild ⛔ blocker\n- [ ] Blocker 🆔 blocker\n',
+      'Grandchild',
+    );
+    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    cleanups.unshift(() => {
+      modal.close();
+    });
+    if (modalSurface) {
+      modal.open(h.node('Tabbed parent').root);
+      button(activeDocument.body, '.abyss-modal-body .abyss-subtask-label').click();
+      button(activeDocument.body, '.abyss-modal-body .abyss-subtask-label').click();
+    } else cleanups.push(subscribeInspectorReconciliation(h));
+    const el = modalSurface ? button(activeDocument.body, '.abyss-modal-body') : h.el;
+    const execute = vi.spyOn(h.api, 'execute');
+    if (kind === 'subtask') button(el, '.abyss-subtask-section .abyss-subtask-add-row').click();
+    const selector = kind === 'subtask' ? '.abyss-subtask-new-input' : '.abyss-comment-input';
+    for (const text of ['First', 'Second']) {
+      const input = expectDefined(
+        el.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector),
+      );
+      input.focus();
+      input.value = text;
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks(40);
+      expect(await execute.mock.results[execute.mock.results.length - 1]?.value).toMatchObject({
+        type: 'ok',
+        changed: true,
+      });
+      const replacement = expectDefined(
+        el.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector),
+      );
+      expect(replacement.value).toBe('');
+      expect(replacement.isConnected).toBe(true);
+      expect(activeDocument.activeElement).toBe(replacement);
+      expect(el.querySelector('.abyss-right-title-view')?.textContent).toBe('Grandchild');
+    }
+    const current = h.node('Grandchild').node;
+    expect(
+      kind === 'subtask'
+        ? current.subtasks.map((child) => child.title)
+        : current.comments.map((comment) => comment.text),
+    ).toEqual(['First', 'Second']);
+    expect(await h.read()).toContain('\t\t\t- ');
+    expect(el.querySelector('.abyss-dep-search')).toBeNull();
+  });
+
+  it.each(
+    (['blocked-by', 'blocks'] as const).flatMap((direction) =>
+      [false, true].flatMap((modalSurface) =>
+        [false, true].map((scoped) => ({ direction, modalSurface, scoped })),
+      ),
+    ),
+  )(
+    'continues nested $direction entry with modal=$modalSurface scoped=$scoped',
+    async ({ direction, modalSurface, scoped }) => {
+      const h = await harness(
+        '- [ ] Root\n\t- [ ] Nested owner\n\t\t- [ ] Grandchild\n- [ ] Candidate one\n- [ ] Candidate two\n',
+        'Nested owner',
+      );
+      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      cleanups.unshift(() => {
+        modal.close();
+      });
+      if (modalSurface) {
+        modal.open(h.node('Root').root);
+        button(activeDocument.body, '.abyss-modal-body .abyss-subtask-label').click();
+      }
+      const el = modalSurface ? button(activeDocument.body, '.abyss-modal-body') : h.el;
+      if (!modalSurface) cleanups.push(subscribeInspectorReconciliation(h));
+
+      if (scoped) {
+        button(el, '.abyss-dep-badge-add').click();
+        button(el, `[data-dependency-direction="${direction}"] .abyss-dep-add`).click();
+      } else {
+        button(el, '.abyss-dep-badge-body').click();
+        if (direction === 'blocks') button(el, '[data-direction="blocks"]').click();
+      }
+      const execute = vi.spyOn(h.api, 'execute');
+      const input = search(el, 'First created');
+      for (const text of ['First created', 'Second created', 'Candidate one', 'Candidate two']) {
+        search(el, text);
+        if (text.startsWith('Candidate'))
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await flushMicrotasks(40);
+        expect(el.querySelector('.abyss-dep-search input')).toBe(input);
+        expect(input.isConnected).toBe(true);
+        expect(
+          await execute.mock.results[execute.mock.results.length - 1]?.value,
+          `${modalSurface} ${scoped} ${text}`,
+        ).toMatchObject({ type: 'ok' });
+        expect(input.value, `${modalSurface} ${scoped} ${text}`).toBe('');
+        expect(activeDocument.activeElement).toBe(input);
+        expect(el.querySelector('.abyss-right-title-view')?.textContent).toBe('Nested owner');
+        expect(
+          [...el.querySelectorAll('.abyss-dep-search-option[role="option"]')].map(
+            (option) => option.querySelector('.abyss-dep-search-title')?.textContent,
+          ),
+          `${modalSurface} ${scoped} ${text}`,
+        ).not.toContain(text);
+      }
+      expect(h.node('Nested owner').node.subtasks.map((child) => child.title)).toEqual([
+        'Grandchild',
+        'First created',
+        'Second created',
+      ]);
+      expect(await h.read()).toContain('\t\t- [ ] First created');
+      expect(await h.read()).toContain('\t\t- [ ] Second created');
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(el.querySelector('.abyss-dep-search')).toBeNull();
+      modal.close();
+      h.panel.destroy();
+    },
+  );
 });

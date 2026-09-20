@@ -102,6 +102,70 @@ describe('dependency search options', () => {
 });
 
 describe('dependency search keyboard controller', () => {
+  it('rechecks an explicit candidate at Enter even without a refresh notification', async () => {
+    let candidates = dependencySearchOptions({
+      ...fixture(),
+      query: 'candidate',
+      direction: 'blocked-by',
+    });
+    const selectExisting = vi.fn(async () => ({ type: 'committed' as const }));
+    const createNew = vi.fn(async () => ({ type: 'committed' as const }));
+    const handle = mountDependencySearch(activeDocument.body, {
+      direction: 'blocked-by',
+      canChangeDirection: false,
+      options: () => candidates,
+      selectExisting,
+      createNew,
+      onClose: () => {},
+    });
+    const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
+    input.value = 'candidate';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    candidates = candidates.slice(1);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks(20);
+    expect(selectExisting).not.toHaveBeenCalled();
+    expect(createNew).not.toHaveBeenCalled();
+    expect(input.value).toBe('candidate');
+    expect(handle.element.querySelector('.abyss-dep-search-error')?.textContent).toContain(
+      'Task changed',
+    );
+    handle.destroy();
+  });
+
+  it.each(['blocks', 'blocked-by'] as const)(
+    'keeps successive %s creation focused and open',
+    async (direction) => {
+      const createNew = vi.fn(async () => ({ type: 'committed' as const }));
+      const onClose = vi.fn();
+      const handle = mountDependencySearch(activeDocument.body, {
+        direction,
+        canChangeDirection: false,
+        options: () => [],
+        selectExisting: createNew,
+        createNew,
+        onClose,
+      });
+      const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
+      for (const text of ['First', 'Second']) {
+        input.value = text;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await flushMicrotasks(20);
+        expect(input.isConnected).toBe(true);
+        expect(input.value).toBe('');
+        expect(activeDocument.activeElement).toBe(input);
+      }
+      expect(createNew.mock.calls).toEqual([
+        ['First', direction],
+        ['Second', direction],
+      ]);
+      expect(onClose).not.toHaveBeenCalled();
+      handle.destroy();
+    },
+  );
+
   it.each([
     {
       canChangeDirection: true,
@@ -212,7 +276,8 @@ describe('dependency search keyboard controller', () => {
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks();
     expect(writes).toEqual(['Local candidate:blocks']);
-    expect(handle.element.isConnected).toBe(false);
+    expect(handle.element.isConnected).toBe(true);
+    handle.destroy();
   });
 
   it('releases controller ownership and document listeners only once when destroyed repeatedly', () => {
@@ -500,7 +565,8 @@ describe('dependency search keyboard controller', () => {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       await flushMicrotasks();
       expect(writes).toEqual([`${title}:blocked-by`]);
-      expect(handle.element.isConnected).toBe(false);
+      expect(handle.element.isConnected).toBe(true);
+      handle.destroy();
     },
   );
 
@@ -668,7 +734,7 @@ describe('dependency search keyboard controller', () => {
     handle.destroy();
   });
 
-  it.each(['Escape', 'success'] as const)(
+  it.each(['Escape', 'success then Escape'] as const)(
     '%s restores invoking focus and releases ownership',
     async (mode) => {
       const anchor = activeDocument.body.createEl('button');
@@ -695,6 +761,10 @@ describe('dependency search keyboard controller', () => {
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
         await flushMicrotasks();
+        expect(closeArguments).toEqual([]);
+        expect(release).not.toHaveBeenCalled();
+        expect(activeDocument.activeElement).toBe(input);
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       }
       expect(closeArguments).toEqual([true]);
       expect(release).toHaveBeenCalledOnce();

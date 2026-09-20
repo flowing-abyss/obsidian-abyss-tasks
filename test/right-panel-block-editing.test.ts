@@ -5,8 +5,13 @@ import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskApplicationApi, TaskCommandResult, TaskSnapshot } from '../src/tasks';
 import type { TaskRef } from '../src/tasks/domain/types';
+import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { projectTaskSnapshot } from '../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
+import { taskNodeRef } from '../src/ui/taskSelection';
 import {
+  canonicalStatusCatalog,
   createAppWithFiles,
+  deferred,
   expectDefined,
   flushMicrotasks,
   freshContainer,
@@ -148,6 +153,7 @@ async function panelWith(
   initial: TaskSnapshot,
   execute: TaskApplicationApi['execute'],
   acknowledge?: (ref?: TaskRef) => void,
+  settings = DEFAULT_SETTINGS,
 ) {
   const app = await createAppWithFiles({ 'tasks.md': '- [ ] root\n' });
   const state = new AppState();
@@ -156,14 +162,524 @@ async function panelWith(
     state,
     app,
     testStatusRegistry(),
-    DEFAULT_SETTINGS,
+    settings,
     acknowledge,
     api(execute),
   );
   return { app, state, panel };
 }
 
+function sourceSnapshot(markdown: string, revision: string): TaskSnapshot {
+  const statuses = canonicalStatusCatalog();
+  return expectDefined(
+    projectTaskSnapshot({
+      codec: new TaskMarkdownCodec(statuses),
+      statusCatalog: statuses,
+      filePath: 'tasks.md',
+      lines: markdown.split('\n'),
+      line: 0,
+      exactBlock: markdown,
+      ref: { filePath: 'tasks.md', line: 0, revision },
+      presentation: { linkCount: 0 },
+      offsetAt: () => 0,
+    }),
+  );
+}
+
+function entrySelector(kind: 'subtask' | 'comment'): string {
+  return kind === 'subtask' ? '.abyss-subtask-new-input' : '.abyss-comment-input';
+}
+function entryParent(root: TaskSnapshot, path: readonly number[]) {
+  return path.reduce<TaskSnapshot | TaskSnapshot['subtasks'][number]>(
+    (node, index) => expectDefined(node.subtasks[index]),
+    root,
+  );
+}
+
 describe('RightPanel block editing', () => {
+  it('removes temporary entry document listeners when Escape ends the editor', async () => {
+    const { panel } = await panelWith(snapshot('before'), vi.fn<TaskApplicationApi['execute']>());
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    const add = vi.spyOn(activeDocument, 'addEventListener');
+    const remove = vi.spyOn(activeDocument, 'removeEventListener');
+    try {
+      expectDefined(
+        container.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+      ).click();
+      const input = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+      );
+      const listeners = add.mock.calls.filter(
+        ([type]) => type === 'focusin' || type === 'pointerdown',
+      );
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      for (const [type, listener] of listeners)
+        expect(
+          remove.mock.calls.filter(
+            ([removedType, removedListener]) =>
+              removedType === type && removedListener === listener,
+          ),
+        ).toHaveLength(1);
+    } finally {
+      panel.destroy();
+      add.mockRestore();
+      remove.mockRestore();
+    }
+  });
+
+  it('keeps the creation policy captured before a pending submission', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.taskPrefix = '#original';
+    const initial = sourceSnapshot('- [ ] Root\n  - [ ] Owner', 'before');
+    const pending = deferred<TaskCommandResult>();
+    const { panel, state } = await panelWith(initial, () => pending.promise, undefined, settings);
+    state.set('taskStack', [initial, expectDefined(initial.subtasks[0])]);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      expectDefined(
+        container.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+      ).click();
+      const input = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+      );
+      input.value = 'Added';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      settings.taskPrefix = '#changed';
+      pending.resolve({
+        type: 'ok',
+        changed: true,
+        outcome: {
+          type: 'task',
+          task: sourceSnapshot('- [ ] Root\n  - [ ] Owner\n    - [ ] #original Added', 'after'),
+        },
+      });
+      await flushMicrotasks(20);
+      const replacement = container.querySelector<HTMLInputElement>('.abyss-subtask-new-input');
+      expect(replacement?.isConnected).toBe(true);
+      expect(replacement?.value).toBe('');
+      expect(activeDocument.activeElement).toBe(replacement);
+    } finally {
+      panel.destroy();
+    }
+  });
+
+  it('restores the exact parent when adding a child makes it byte-identical to its sibling', async () => {
+    const initial = sourceSnapshot(
+      '- [ ] Root\n  - [ ] Same\n  - [ ] Same\n    - [ ] Child',
+      'before',
+    );
+    const current = sourceSnapshot(
+      '- [ ] Root\n  - [ ] Same\n    - [ ] Child\n  - [ ] Same\n    - [ ] Child',
+      'after',
+    );
+    const { panel, state } = await panelWith(initial, async () => ({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'task', task: current },
+    }));
+    state.set('taskStack', [initial, expectDefined(initial.subtasks[0])]);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      expectDefined(
+        container.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+      ).click();
+      const input = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+      );
+      input.value = 'Child';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks(20);
+      const replacement = container.querySelector<HTMLInputElement>('.abyss-subtask-new-input');
+      expect(replacement?.isConnected).toBe(true);
+      expect(replacement?.value).toBe('');
+      expect(activeDocument.activeElement).toBe(replacement);
+      expect(state.get('taskStack')[1]?.ref).toEqual(current.subtasks[0]?.ref);
+    } finally {
+      panel.destroy();
+    }
+  });
+
+  it.each(['subtask', 'comment'] as const)(
+    'does not recover a dismissed %s continuation after an index-first failure',
+    async (kind) => {
+      const initial = sourceSnapshot('- [ ] Root\n  - [ ] Owner', 'before');
+      const current = sourceSnapshot(
+        `${initial.source.originalBlock}\n    ${kind === 'subtask' ? '- [ ]' : '- 2026-09-20T12:00:00+07:00:'} Submitted`,
+        'after',
+      );
+      const pending = deferred<TaskCommandResult>();
+      const { panel, state } = await panelWith(initial, () => pending.promise);
+      state.set('taskStack', [initial, expectDefined(initial.subtasks[0])]);
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      panel.mount(container);
+      const outside = activeDocument.body.createEl('button');
+      try {
+        if (kind === 'subtask')
+          expectDefined(
+            container.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+          ).click();
+        const input = expectDefined(
+          container.querySelector<HTMLInputElement | HTMLTextAreaElement>(entrySelector(kind)),
+        );
+        input.focus();
+        input.value = 'Submitted';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        const selection = panel.selectionForOwnedTransition(
+          initial.ref,
+          current,
+          state.get('taskStack'),
+        );
+        const bundle = panel.captureDraftStateForOwnedTransition(initial.ref, current.ref);
+        state.updateInspectorSelection(expectDefined(selection));
+        panel.restoreDraftState(bundle, current);
+        const replacement = expectDefined(
+          container.querySelector<HTMLInputElement | HTMLTextAreaElement>(entrySelector(kind)),
+        );
+        replacement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        outside.focus();
+        pending.resolve({ type: 'io-error', cause: 'repository-error', contentState: 'unknown' });
+        await flushMicrotasks(20);
+        expect(container.querySelector('.abyss-detached-draft')).toBeNull();
+        expect(activeDocument.activeElement).toBe(outside);
+        expect(
+          container.querySelector<HTMLInputElement | HTMLTextAreaElement>(entrySelector(kind))
+            ?.value ?? '',
+        ).toBe('');
+      } finally {
+        panel.destroy();
+        outside.remove();
+      }
+    },
+  );
+
+  it.each(['subtask', 'comment'] as const)(
+    'keeps failed %s text retryable and respects navigation during a pending retry',
+    async (kind) => {
+      const initial = sourceSnapshot('- [ ] Root', 'before');
+      const first = deferred<TaskCommandResult>();
+      const second = deferred<TaskCommandResult>();
+      const execute = vi
+        .fn<TaskApplicationApi['execute']>()
+        .mockImplementationOnce(() => first.promise)
+        .mockImplementationOnce(() => second.promise);
+      const { panel, state } = await panelWith(initial, execute);
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      panel.mount(container);
+      try {
+        if (kind === 'subtask')
+          expectDefined(
+            container.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+          ).click();
+        const input = expectDefined(
+          container.querySelector<HTMLInputElement | HTMLTextAreaElement>(entrySelector(kind)),
+        );
+        input.focus();
+        input.value = '  exact text  ';
+        input.setSelectionRange(2, 7);
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        first.resolve({ type: 'io-error', cause: 'repository-error', contentState: 'unchanged' });
+        await flushMicrotasks(20);
+        expect(input.value).toBe('  exact text  ');
+        expect([input.selectionStart, input.selectionEnd]).toEqual([2, 7]);
+        expect(activeDocument.activeElement).toBe(input);
+        expect(execute).toHaveBeenCalledOnce();
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        state.set('taskStack', [sourceSnapshot('- [ ] Other', 'other')]);
+        const other = expectDefined(
+          container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+        );
+        other.value = 'Other draft';
+        other.focus();
+        second.resolve({
+          type: 'ok',
+          changed: true,
+          outcome: {
+            type: 'task',
+            task: sourceSnapshot(
+              `- [ ] Root\n  ${kind === 'subtask' ? '- [ ]' : '- 2026-09-20T12:00:00+07:00:'} exact text`,
+              'after',
+            ),
+          },
+        });
+        await flushMicrotasks(20);
+        expect(container.querySelector('.abyss-right-title-view')?.textContent).toBe('Other');
+        expect(other.value).toBe('Other draft');
+        expect(activeDocument.activeElement).toBe(other);
+        expect(execute).toHaveBeenCalledTimes(2);
+      } finally {
+        panel.destroy();
+      }
+    },
+  );
+
+  it('never follows a same-root sibling after an unproven ordinary insertion receipt', async () => {
+    const initial = sourceSnapshot('- [ ] Root\n  - [ ] Owner\n  - [ ] Owner', 'before');
+    const current = sourceSnapshot(
+      '- [ ] Root\n  - [ ] Foreign\n  - [ ] Owner\n    - [ ] Added',
+      'after',
+    );
+    const { panel, state } = await panelWith(initial, async () => ({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'task', task: current },
+    }));
+    state.set('taskStack', [initial, expectDefined(initial.subtasks[0])]);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      expectDefined(
+        container.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+      ).click();
+      const input = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+      );
+      input.value = 'Added';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks(20);
+      expect(state.get('taskStack').map((node) => node.title)).toEqual(['Root']);
+      expect(container.querySelector('.abyss-subtask-new-input')).toBeNull();
+      expect(container.querySelector('.abyss-detached-draft')).toBeNull();
+    } finally {
+      panel.destroy();
+    }
+  });
+
+  it.each(['subtask', 'comment'] as const)(
+    'preserves newer %s text and caret across a changed result',
+    async (kind) => {
+      const initial = sourceSnapshot(
+        '- [ ] Root\n\t- [ ] Nested owner\n\t\t- [ ] Grandchild',
+        'before',
+      );
+      const pending = deferred<TaskCommandResult>();
+      const { panel, state } = await panelWith(initial, () => pending.promise);
+      state.set('taskStack', [initial, expectDefined(initial.subtasks[0])]);
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      panel.mount(container);
+      try {
+        if (kind === 'subtask')
+          expectDefined(
+            container.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+          ).click();
+        const selector = kind === 'subtask' ? '.abyss-subtask-new-input' : '.abyss-comment-input';
+        const input = expectDefined(
+          container.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector),
+        );
+        input.focus();
+        input.value = 'Submitted';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        input.value = 'Newer unfinished';
+        input.setSelectionRange(3, 7);
+        pending.resolve({
+          type: 'ok',
+          changed: true,
+          outcome: {
+            type: 'task',
+            task: sourceSnapshot(
+              `${initial.source.originalBlock}\n\t\t${kind === 'subtask' ? '- [ ]' : '- 2026-09-20T12:00:00+07:00:'} Submitted`,
+              'after',
+            ),
+          },
+        });
+        await flushMicrotasks(20);
+        const restored = expectDefined(
+          container.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector),
+        );
+        expect(restored.value).toBe('Newer unfinished');
+        expect([restored.selectionStart, restored.selectionEnd]).toEqual([3, 7]);
+        expect(activeDocument.activeElement).toBe(restored);
+        expect(container.querySelector('.abyss-detached-draft')).toBeNull();
+      } finally {
+        panel.destroy();
+      }
+    },
+  );
+
+  it.each(['subtask', 'comment'] as const)(
+    'ignores IME and whitespace %s Enter and never writes on outside dismissal',
+    async (kind) => {
+      const initial = sourceSnapshot('- [ ] Root', 'before');
+      const execute = vi.fn<TaskApplicationApi['execute']>();
+      const { panel } = await panelWith(initial, execute);
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      panel.mount(container);
+      const outside = activeDocument.body.createEl('button');
+      try {
+        if (kind === 'subtask')
+          expectDefined(
+            container.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+          ).click();
+        const input = expectDefined(
+          container.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+            kind === 'subtask' ? '.abyss-subtask-new-input' : '.abyss-comment-input',
+          ),
+        );
+        input.focus();
+        input.value = 'Composing';
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true }),
+        );
+        input.value = '   ';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        input.value = 'Unfinished';
+        if (kind === 'comment') {
+          const event = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          });
+          input.dispatchEvent(event);
+          expect(event.defaultPrevented).toBe(false);
+        }
+        outside.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        outside.focus();
+        await flushMicrotasks(20);
+        expect(execute).not.toHaveBeenCalled();
+        expect(activeDocument.activeElement).toBe(outside);
+        if (kind === 'subtask')
+          expect(container.querySelector('.abyss-subtask-new-input')).toBeNull();
+      } finally {
+        panel.destroy();
+        outside.remove();
+      }
+    },
+  );
+
+  it.each(['result-first', 'index-first'] as const)(
+    'continues root and nested entry through %s owned reconciliation',
+    async (order) => {
+      for (const nested of [false, true])
+        for (const kind of ['subtask', 'comment'] as const)
+          await verifyContinuousEntry(order, nested, kind);
+    },
+  );
+
+  async function verifyContinuousEntry(
+    order: 'result-first' | 'index-first',
+    nested: boolean,
+    kind: 'subtask' | 'comment',
+  ): Promise<void> {
+    const selectedPath = nested ? [0] : [];
+    const isSubtask = kind === 'subtask';
+    let markdown = nested ? '- [ ] Root\n\t- [ ] Nested owner\n\t\t- [ ] Grandchild' : '- [ ] Root';
+    let current = sourceSnapshot(markdown, 'initial');
+    const execute = vi.fn<TaskApplicationApi['execute']>(async (command) => {
+      expect(command.type).toBe(`add-${kind}`);
+      if (command.type !== 'add-subtask' && command.type !== 'add-comment')
+        throw new Error('Unexpected command');
+      const parent = entryParent(current, selectedPath);
+      expect(command.parent).toEqual(taskNodeRef(parent));
+      markdown += `${nested ? '\n\t\t' : '\n\t'}${kind === 'subtask' ? '- [ ]' : '- 2026-09-20T12:00:00+07:00:'} ${command.text}`;
+      const next = sourceSnapshot(markdown, command.text);
+      if (order === 'index-first') {
+        const selection = panel.selectionForOwnedTransition(
+          current.ref,
+          next,
+          state.get('taskStack'),
+        );
+        const draft = panel.captureDraftStateForOwnedTransition(current.ref, next.ref);
+        state.updateInspectorSelection(selection ?? [next]);
+        panel.restoreDraftState(draft, next);
+      }
+      current = next;
+      return { type: 'ok', changed: true, outcome: { type: 'task', task: next } };
+    });
+    const { panel, state } = await panelWith(current, execute);
+    if (nested) state.set('taskStack', [current, expectDefined(current.subtasks[0])]);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      if (isSubtask)
+        expectDefined(
+          container.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+        ).click();
+      for (const text of ['First', 'Second']) {
+        const input = expectDefined(
+          container.querySelector<HTMLInputElement | HTMLTextAreaElement>(entrySelector(kind)),
+        );
+        input.focus();
+        input.value = text;
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await flushMicrotasks(20);
+        const replacement = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+          entrySelector(kind),
+        );
+        expect(expectDefined(replacement).isConnected).toBe(true);
+        expect(expectDefined(replacement).value).toBe('');
+        expect(activeDocument.activeElement).toBe(replacement);
+        expect(expectDefined(state.get('taskStack')[state.get('taskStack').length - 1]).title).toBe(
+          nested ? 'Nested owner' : 'Root',
+        );
+      }
+      const parent = entryParent(current, selectedPath);
+      const entries =
+        kind === 'subtask'
+          ? parent.subtasks.map((child) => child.title)
+          : parent.comments.map((comment) => comment.text);
+      expect(entries.slice(-2)).toEqual(['First', 'Second']);
+      expect(entries).toHaveLength(selectedPath.length > 0 && isSubtask ? 3 : 2);
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(container.querySelector('.abyss-detached-draft')).toBeNull();
+    } finally {
+      panel.destroy();
+    }
+  }
+
+  it.each(['Escape', 'outside'] as const)(
+    'dismisses pending new subtask on %s without late focus or another write',
+    async (dismissal) => {
+      const initial = sourceSnapshot('- [ ] Root', 'before');
+      const pending = deferred<TaskCommandResult>();
+      const execute = vi.fn<TaskApplicationApi['execute']>(() => pending.promise);
+      const { panel } = await panelWith(initial, execute);
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      panel.mount(container);
+      const outside = activeDocument.body.createEl('button');
+      try {
+        expectDefined(
+          container.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+        ).click();
+        const input = expectDefined(
+          container.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+        );
+        input.value = 'First';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        if (dismissal === 'Escape')
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        outside.focus();
+        expect(container.querySelector('.abyss-subtask-new-input')).toBeNull();
+        pending.resolve({
+          type: 'ok',
+          changed: true,
+          outcome: { type: 'task', task: sourceSnapshot('- [ ] Root\n  - [ ] First', 'after') },
+        });
+        await flushMicrotasks(20);
+        expect(container.querySelector('.abyss-subtask-new-input')).toBeNull();
+        expect(activeDocument.activeElement).toBe(outside);
+        expect(execute).toHaveBeenCalledOnce();
+      } finally {
+        panel.destroy();
+        outside.remove();
+      }
+    },
+  );
+
   it('offers Undo after subtask deletion and restores the inspector through its committed parent', async () => {
     const initial = snapshotWithChildren('old', ['selected', 'sibling']);
     const afterDelete = snapshotWithChildren('deleted', ['sibling']);

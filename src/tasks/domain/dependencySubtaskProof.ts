@@ -1,8 +1,19 @@
 import type { CreateDependencySubtaskCommand } from './commands';
 import { parseTaskLineSourceModel, type TaskLineSourceModel } from './taskLineSourceModel';
+import { applyTaskCreationTagPolicy, type TaskInboxTagPolicy } from './taskTags';
 import type { SubtaskSnapshot, TaskSnapshot } from './types';
 
-function submittedContent(model: TaskLineSourceModel, omitCreated: boolean): string {
+export interface TaskCreationProofPolicy {
+  readonly taskPrefix: string;
+  readonly inbox: TaskInboxTagPolicy;
+  readonly addCreatedDate: boolean;
+}
+
+function submittedContent(
+  model: TaskLineSourceModel,
+  omitCreated: boolean,
+  linked: boolean,
+): string {
   return JSON.stringify(
     model.spans
       .filter(
@@ -10,8 +21,7 @@ function submittedContent(model: TaskLineSourceModel, omitCreated: boolean): str
           ![
             'prefix',
             'separator',
-            'task-id',
-            'depends-on',
+            ...(linked ? ['task-id', 'depends-on'] : []),
             ...(omitCreated ? ['created'] : []),
           ].includes(span.kind),
       )
@@ -24,6 +34,7 @@ export function dependencySubtaskChild(
   before: TaskSnapshot | SubtaskSnapshot,
   after: TaskSnapshot | SubtaskSnapshot,
   command: Pick<CreateDependencySubtaskCommand, 'direction' | 'text'>,
+  policy?: TaskCreationProofPolicy,
 ): SubtaskSnapshot | undefined {
   const child = after.subtasks[before.subtasks.length];
   if (
@@ -34,21 +45,33 @@ export function dependencySubtaskChild(
     child.description !== undefined
   )
     return undefined;
-  return matchesSubmittedChild(child, command.text) &&
+  return matchesSubmittedChild(child, command.text, policy, true) &&
     matchesCreatedEdge(before, after, child, command.direction)
     ? child
     : undefined;
 }
 
-function matchesSubmittedChild(child: SubtaskSnapshot, text: string): boolean {
-  const input = parseTaskLineSourceModel(`- [ ] ${text}`);
+export function matchesSubmittedChild(
+  child: SubtaskSnapshot,
+  text: string,
+  policy?: TaskCreationProofPolicy,
+  linked = false,
+): boolean {
+  const prepared =
+    policy === undefined
+      ? text
+      : applyTaskCreationTagPolicy(policy.taskPrefix, text, policy.inbox).markdown;
+  const input = parseTaskLineSourceModel(`- [ ] ${prepared}`);
   const actual = parseTaskLineSourceModel(child.ref.originalBlock);
+  if (input === null || actual === null) return false;
   return (
-    input !== null &&
-    actual?.statusSymbol === ' ' &&
-    !/[\r\n🆔⛔]/u.test(text) &&
-    submittedContent(input, false) ===
-      submittedContent(actual, input.planning.created === undefined)
+    validSubmittedLine(input, actual, text, linked) &&
+    submittedContent(input, false, linked) ===
+      submittedContent(
+        actual,
+        input.planning.created === undefined && (policy?.addCreatedDate ?? true),
+        linked,
+      )
   );
 }
 
@@ -71,5 +94,19 @@ function matchesCreatedEdge(
     after.dependencyId === before.dependencyId &&
     JSON.stringify([child.dependsOn, after.dependsOn]) ===
       JSON.stringify([[], [...before.dependsOn, child.dependencyId]])
+  );
+}
+
+function validSubmittedLine(
+  input: TaskLineSourceModel,
+  actual: TaskLineSourceModel,
+  text: string,
+  linked: boolean,
+): boolean {
+  return (
+    input.statusSymbol === ' ' &&
+    actual.statusSymbol === ' ' &&
+    !/[\r\n]/u.test(text) &&
+    (!linked || !/[🆔⛔]/u.test(text))
   );
 }

@@ -28,6 +28,124 @@ const target = { type: 'subtask' as const, ref: expectDefined(before.subtasks[1]
 const selection = [before, expectDefined(before.subtasks[1])];
 
 describe('owned non-structural inspector selection', () => {
+  it.each(['\n', '\r\n'])(
+    'proves one insertion with preserved %j line endings and quote prefixes',
+    (ending) => {
+      const original = snapshot(['> - [ ] Root', '> \t- [ ] Owner'].join(ending), 'before');
+      const current = snapshot(
+        ['> - [ ] Root', '> \t- [ ] Owner', '> \t\t- [ ] Added'].join(ending),
+        'after',
+      );
+      const parent = expectDefined(original.subtasks[0]);
+      expect(
+        rebuildOwnedTaskSelection(current, [original, parent], {
+          type: 'add-subtask',
+          parent: { type: 'subtask', ref: parent.ref },
+          text: 'Added',
+        })?.[1]?.ref,
+      ).toEqual(current.subtasks[0]?.ref);
+    },
+  );
+
+  it.each([
+    { text: 'Added #inbox #work #work', actual: '#prefix Added #work', addCreatedDate: false },
+    { text: 'Added', actual: '#prefix Added ➕ 2026-09-20', addCreatedDate: true },
+    { text: 'Added ➕ 2026-09-01', actual: '#prefix Added ➕ 2026-09-01', addCreatedDate: true },
+  ])(
+    'proves configured ordinary and linked creation: $actual',
+    ({ text, actual, addCreatedDate }) => {
+      const original = snapshot('- [ ] Root\n  - [ ] Owner', 'before');
+      const parent = expectDefined(original.subtasks[0]);
+      const policy = {
+        taskPrefix: '#prefix',
+        inbox: { mode: 'tag' as const, tag: 'inbox', removeTagOnAssign: true },
+        addCreatedDate,
+      };
+      for (const linked of [false, true]) {
+        const current = snapshot(
+          `- [ ] Root\n  - [ ] Owner${linked ? ' ⛔ generated' : ''}\n    - [ ] ${actual}${linked ? ' 🆔 generated' : ''}`,
+          'after',
+        );
+        const command: TaskCommand = linked
+          ? {
+              type: 'create-dependency-subtask',
+              current: { type: 'subtask', ref: parent.ref },
+              text,
+              direction: 'blocked-by',
+            }
+          : { type: 'add-subtask', parent: { type: 'subtask', ref: parent.ref }, text };
+        expect(
+          rebuildOwnedTaskSelection(current, [original, parent], command, policy)?.[1]?.ref,
+        ).toEqual(current.subtasks[0]?.ref);
+        const foreign = snapshot(
+          current.source.originalBlock.replace('Added', 'Foreign'),
+          'foreign',
+        );
+        expect(
+          rebuildOwnedTaskSelection(foreign, [original, parent], command, policy),
+        ).toBeUndefined();
+        if (text.includes('2026-09-01')) {
+          expect(
+            rebuildOwnedTaskSelection(
+              snapshot(current.source.originalBlock.replace('2026-09-01', '2026-09-02'), 'changed'),
+              [original, parent],
+              command,
+              policy,
+            ),
+          ).toBeUndefined();
+        }
+      }
+    },
+  );
+
+  it('rejects a generated creation date when the captured policy forbids it', () => {
+    const original = snapshot('- [ ] Root', 'before');
+    const current = snapshot('- [ ] Root\n  - [ ] Added ➕ 2026-09-20', 'after');
+    expect(
+      rebuildOwnedTaskSelection(
+        current,
+        [original],
+        { type: 'add-subtask', parent: { type: 'task', ref: original.ref }, text: 'Added' },
+        {
+          taskPrefix: '',
+          inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
+          addCreatedDate: false,
+        },
+      ),
+    ).toBeUndefined();
+  });
+
+  it.each(['add-subtask', 'add-comment'] as const)(
+    'proves one exact ordinary %s insertion under a duplicate nested parent',
+    (type) => {
+      const original = snapshot(
+        '- [ ] Root\n\t- [ ] Same\n\t\t- [ ] Child\n\t- [ ] Same\n\t\t- [ ] Child',
+        'before',
+      );
+      const parent = expectDefined(original.subtasks[1]);
+      const added =
+        type === 'add-subtask' ? '\t\t- [ ] Added' : '\t\t- 2026-09-20T12:00:00+07:00: Added';
+      const current = snapshot(`${original.source.originalBlock}\n${added}`, 'after');
+      const command = {
+        type,
+        parent: { type: 'subtask' as const, ref: parent.ref },
+        text: 'Added',
+      };
+      expect(rebuildOwnedTaskSelection(current, [original, parent], command)?.[1]?.ref).toEqual(
+        current.subtasks[1]?.ref,
+      );
+      for (const source of [
+        current.source.originalBlock.replace('Added', 'Foreign'),
+        current.source.originalBlock.replace('Root', 'Changed'),
+        current.source.originalBlock.replace('Child', 'Child ^changed'),
+      ]) {
+        expect(
+          rebuildOwnedTaskSelection(snapshot(source, 'foreign'), [original, parent], command),
+        ).toBeUndefined();
+      }
+    },
+  );
+
   it('retains a parent that becomes byte-identical to its sibling after deleting its only child', () => {
     const original = snapshot(
       '- [ ] Root\n  - [ ] Parent\n    - [ ] Only\n  - [ ] Parent',

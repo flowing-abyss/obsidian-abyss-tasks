@@ -108,6 +108,14 @@ published write.
 stages proven successor references and rejects ambiguous or externally changed targets. A successor
 may preserve selection or retries, but does not grant general write authority.
 
+`RightPanel` uses the pending command's selection proof for continuous subtask, comment, and
+linked-subtask entry in both the sidebar and `TaskModal`. An ordinary insertion must add exactly
+one direct child or comment and preserve every existing source byte. The domain proof checks the
+submitted text with the prefix, Inbox, and creation-date policy captured before submission.
+Only that proven successor can receive an empty focused continuation; newer text stays intact.
+Escape, outside interaction, navigation, and teardown end the session. Dependency search keeps its
+ownership lease across successful writes, then resets the query and reads current candidates.
+
 Vault and metadata events reconcile external and plugin edits through the same index path.
 `TaskIndexEvent.changed` identifies changed task projections. A separate reconciled-file signal
 also covers accepted metadata events with unchanged tasks, including notes without tasks.

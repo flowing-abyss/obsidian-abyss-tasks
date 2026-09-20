@@ -131,6 +131,15 @@ function rebaseNode(
   let node: TaskNode = root;
   let ref: TaskNodeRef = { type: 'task', ref: root.ref };
   for (const staleChild of childPath(stale, context)) {
+    // Owned continuation already carries this snapshot's exact ref; no source guess is needed.
+    const exact: SubtaskSnapshot | undefined = node.subtasks.find(
+      (child) => child.ref === staleChild,
+    );
+    if (exact !== undefined) {
+      node = exact;
+      ref = { type: 'subtask', ref: exact.ref };
+      continue;
+    }
     let index = context.children.get(node);
     if (index == null) {
       index = uniqueIndex(node.subtasks, (candidate) => candidate.ref.originalBlock);

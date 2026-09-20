@@ -1,3 +1,4 @@
+import { matchesSubmittedChild, type TaskCreationProofPolicy } from './dependencySubtaskProof';
 import type { SubtaskSnapshot, TaskSnapshot } from './types';
 
 type Node = TaskSnapshot | SubtaskSnapshot;
@@ -50,19 +51,19 @@ export function sameTaskTreeWithOwnedChanges(
     readonly fields: ReadonlySet<string>;
     readonly append?: boolean;
     readonly remove?: number;
+    readonly insertion?: {
+      readonly type: 'add-subtask' | 'add-comment';
+      readonly text: string;
+      readonly policy?: TaskCreationProofPolicy;
+    };
   },
 ): boolean {
+  if (!validInsertion(before, after, path, change.insertion)) return false;
   const children = comparisonChildren(before, path, change.remove);
   if (children.length + addedChildCount(path, change.append) !== after.subtasks.length)
     return false;
   if (changedRemovalParent(before, after, path, change.remove)) return false;
-  if (
-    path === undefined &&
-    !('source' in before) &&
-    !('source' in after) &&
-    before.ref.originalBlock !== after.ref.originalBlock
-  )
-    return false;
+  if (changedUneditedSource(before, after, path)) return false;
   const omitted = new Set([
     'subtasks',
     'source',
@@ -85,6 +86,19 @@ export function sameTaskTreeWithOwnedChanges(
   });
 }
 
+function changedUneditedSource(
+  before: Node,
+  after: Node,
+  path: readonly number[] | undefined,
+): boolean {
+  return (
+    path === undefined &&
+    !('source' in before) &&
+    !('source' in after) &&
+    before.ref.originalBlock !== after.ref.originalBlock
+  );
+}
+
 function comparisonChildren(
   node: Node,
   path: readonly number[] | undefined,
@@ -97,4 +111,80 @@ function comparisonChildren(
 
 function addedChildCount(path: readonly number[] | undefined, append: boolean | undefined): number {
   return append === true && path?.length === 0 ? 1 : 0;
+}
+
+type Insertion = NonNullable<Parameters<typeof sameTaskTreeWithOwnedChanges>[3]['insertion']>;
+
+function validInsertion(
+  before: Node,
+  after: Node,
+  path: readonly number[] | undefined,
+  insertion: Insertion | undefined,
+): boolean {
+  return (
+    path === undefined ||
+    insertion === undefined ||
+    insertionSourceMatches(before, after, path, insertion)
+  );
+}
+
+/** A single new line at the exact edited parent; every pre-existing source byte stays put. */
+function insertionSourceMatches(
+  before: Node,
+  after: Node,
+  path: readonly number[],
+  insertion: NonNullable<Parameters<typeof sameTaskTreeWithOwnedChanges>[3]['insertion']>,
+): boolean {
+  let previous = before;
+  let current = after;
+  let offset = 0;
+  for (const index of path) {
+    const oldChild: SubtaskSnapshot | undefined = previous.subtasks[index];
+    const newChild: SubtaskSnapshot | undefined = current.subtasks[index];
+    if (oldChild === undefined || newChild === undefined) return false;
+    offset += newChild.ref.relativeLine;
+    previous = oldChild;
+    current = newChild;
+  }
+  const inserted = insertedLine(previous, current, insertion);
+  if (inserted === undefined) return false;
+  const { source } = inserted;
+  const line = offset + inserted.line;
+  const lines = sourceBlock(after).split('\n');
+  if (lines[line]?.replace(/\r$/u, '') !== source.replace(/\r$/u, '') || source.includes('\n'))
+    return false;
+  const last = line === lines.length - 1;
+  lines.splice(line, 1);
+  const retained = lines.join('\n');
+  return retained === sourceBlock(before) || (last && retained === `${sourceBlock(before)}\r`);
+}
+
+function insertedLine(
+  before: Node,
+  after: Node,
+  insertion: Insertion,
+): { line: number; source: string } | undefined {
+  if (insertion.type === 'add-subtask') {
+    const child = after.subtasks[before.subtasks.length];
+    if (
+      after.subtasks.length !== before.subtasks.length + 1 ||
+      child === undefined ||
+      !plainSubmittedChild(child, insertion)
+    )
+      return undefined;
+    return { line: child.ref.relativeLine, source: child.ref.originalBlock };
+  }
+  const comment = after.comments[before.comments.length];
+  if (after.comments.length !== before.comments.length + 1 || comment?.text !== insertion.text)
+    return undefined;
+  return { line: comment.ref.relativeLine, source: comment.ref.originalMarkdown };
+}
+
+function plainSubmittedChild(child: SubtaskSnapshot, insertion: Insertion): boolean {
+  return (
+    child.subtasks.length === 0 &&
+    child.comments.length === 0 &&
+    child.description === undefined &&
+    matchesSubmittedChild(child, insertion.text, insertion.policy)
+  );
 }

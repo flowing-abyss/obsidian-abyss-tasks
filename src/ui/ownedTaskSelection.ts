@@ -92,9 +92,10 @@ function editedFields(
   before: TaskSelectionNode,
   after: TaskSelectionNode,
   command: ContentCommand | Extract<TaskCommand, { type: 'create-dependency-subtask' }>,
+  policy?: Parameters<typeof dependencySubtaskChild>[3],
 ): Set<string> | undefined {
   if (command.type === 'create-dependency-subtask')
-    return dependencySubtaskChild(before, after, command) === undefined
+    return dependencySubtaskChild(before, after, command, policy) === undefined
       ? undefined
       : new Set(['dependencyId', 'dependsOn']);
   if (command.type === 'patch') return patchFields(after, command.patch);
@@ -146,16 +147,20 @@ export function rebuildOwnedTaskSelection(
   current: TaskSnapshot,
   selection: readonly TaskSelectionNode[],
   command: TaskCommand,
+  policy?: Parameters<typeof dependencySubtaskChild>[3],
 ): TaskSelectionNode[] | undefined {
   if (command.type === 'delete-subtask' || command.type === 'restore-subtask')
     return rebuildRemovalSelection(current, selection, command);
-  return rebuildContentSelection(current, selection, command);
+  if (command.type === 'add-subtask' || command.type === 'add-comment')
+    return rebuildInsertionSelection(current, selection, command, policy);
+  return rebuildContentSelection(current, selection, command, policy);
 }
 
 function rebuildContentSelection(
   current: TaskSnapshot,
   selection: readonly TaskSelectionNode[],
   command: TaskCommand,
+  policy?: Parameters<typeof dependencySubtaskChild>[3],
 ): TaskSelectionNode[] | undefined {
   if (
     ![
@@ -176,7 +181,7 @@ function rebuildContentSelection(
   const beforeEdit = follow(before, editedPath, !append)?.[editedPath.length];
   const afterEdit = follow(current, editedPath, !append)?.[editedPath.length];
   if (beforeEdit === undefined || afterEdit === undefined) return undefined;
-  const fields = editedFields(beforeEdit, afterEdit, edit);
+  const fields = editedFields(beforeEdit, afterEdit, edit, policy);
   if (
     fields === undefined ||
     !sameTaskTreeWithOwnedChanges(before, current, editedPath, { fields, append })
@@ -241,4 +246,28 @@ function spliceSelectionPath(
     if (!restore && selectedChild === index) selectedPath.splice(depth);
     else if (selectedChild >= index) selectedPath[depth] = selectedChild + (restore ? 1 : -1);
   }
+}
+
+function rebuildInsertionSelection(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+  command: Extract<TaskCommand, { type: 'add-subtask' | 'add-comment' }>,
+  policy?: Parameters<typeof dependencySubtaskChild>[3],
+): TaskSelectionNode[] | undefined {
+  const paths = selectionPaths(current, selection, command.parent, false);
+  if (paths === undefined) return undefined;
+  const { before, selectedPath, editedPath } = paths;
+  if (
+    !sameTaskTreeWithOwnedChanges(before, current, editedPath, {
+      fields: new Set(command.type === 'add-comment' ? ['comments'] : []),
+      append: command.type === 'add-subtask',
+      insertion: {
+        type: command.type,
+        text: command.text,
+        ...(policy === undefined ? {} : { policy }),
+      },
+    })
+  )
+    return undefined;
+  return follow(current, selectedPath, false);
 }

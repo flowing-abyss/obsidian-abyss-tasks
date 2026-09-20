@@ -202,7 +202,7 @@ export function mountDependencySearch(
     blocksShortcuts: true,
   });
   let closed = false;
-  const actions = createSearchActions(view, callbacks, close, () => closed);
+  const actions = createSearchActions(view, callbacks, () => closed);
   const outside = (event: Event): void => {
     if (!element.contains(event.target as Node)) close(false);
   };
@@ -308,14 +308,20 @@ interface SearchActions {
 function createSearchActions(
   view: SearchElements,
   callbacks: DependencySearchOptions,
-  close: () => void,
   isClosed: () => boolean,
 ): SearchActions {
-  const { input, list, error, directionControls } = view;
+  const { input, list, error } = view;
   let options: readonly DependencySearchOption[] = [];
   let direction = callbacks.direction;
   let selected: TaskNodeRef | undefined;
-  const commit = createSearchCommitter(view, close, isClosed);
+  const commit = createSearchCommitter(
+    view,
+    () => {
+      input.value = '';
+      reset();
+    },
+    isClosed,
+  );
   const activeIndex = (): number =>
     options.findIndex(
       (option) =>
@@ -323,20 +329,20 @@ function createSearchActions(
         sameTaskNodeRef(option.task.target, selected) &&
         isEligible(direction, option),
     );
-  const select = (option: DependencySearchOption): void => {
-    if (!isEligible(direction, option)) return;
-    selected = option.task.target;
-    updateActive(list, input, activeIndex());
-    commit.run(() => callbacks.selectExisting(option, direction));
-  };
+  const select = createSearchSelector(view, callbacks, {
+    commit,
+    isClosed,
+    getDirection: () => direction,
+    selectRef: (ref) => {
+      selected = ref;
+      updateActive(list, input, activeIndex());
+    },
+  });
   const refresh = (): void => {
     if (isClosed()) return;
     options = callbacks.options(input.value, direction);
-    const active = activeIndex();
-    if (selected !== undefined && active === -1) showError(error, changedSelection);
-    else if (error.textContent === changedSelection) clearError(error);
     renderSearchOptions(view, options, direction, select);
-    updateActive(list, input, active);
+    refreshSearchSelection(view, activeIndex(), selected);
     setBusy(view.element, input, commit.busy());
   };
   const reset = (): void => {
@@ -354,11 +360,8 @@ function createSearchActions(
   const choose = (chosen: DependencyDirection): void => {
     if (commit.busy() || direction === chosen) return;
     direction = chosen;
-    directionControls?.querySelectorAll<HTMLButtonElement>('[data-direction]').forEach((button) => {
-      button.setAttribute('aria-pressed', String(button.dataset['direction'] === direction));
-    });
+    showSearchDirection(view, direction);
     reset();
-    focusWithoutScroll(input);
   };
   const key = (event: KeyboardEvent): void => {
     if (commit.busy() || event.isComposing) return;
@@ -366,18 +369,15 @@ function createSearchActions(
     event.preventDefault();
     event.stopPropagation();
     if (event.key === 'Enter') {
+      refresh();
       const option = options[activeIndex()];
       if (option !== undefined) select(option);
       else if (selected !== undefined) showError(error, changedSelection);
       else create();
       return;
     }
-    const next = moveSelection(
-      options,
-      direction,
-      activeIndex(),
-      event.key === 'ArrowDown' ? 1 : -1,
-    );
+    const delta = event.key === 'ArrowDown' ? 1 : -1;
+    const next = moveSelection(options, direction, activeIndex(), delta);
     if (next === undefined) return;
     selected = next.task.target;
     clearError(error);
@@ -386,9 +386,58 @@ function createSearchActions(
   return { refresh, reset, create, choose, key };
 }
 
+function refreshSearchSelection(
+  view: SearchElements,
+  active: number,
+  selected: TaskNodeRef | undefined,
+): void {
+  if (selected !== undefined && active === -1) showError(view.error, changedSelection);
+  else if (view.error.textContent === changedSelection) clearError(view.error);
+  updateActive(view.list, view.input, active);
+}
+
+function showSearchDirection(view: SearchElements, direction: DependencyDirection): void {
+  focusWithoutScroll(view.input);
+  view.directionControls
+    ?.querySelectorAll<HTMLButtonElement>('[data-direction]')
+    .forEach((button) => {
+      button.setAttribute('aria-pressed', String(button.dataset['direction'] === direction));
+    });
+}
+
+function createSearchSelector(
+  { input, error }: SearchElements,
+  callbacks: DependencySearchOptions,
+  {
+    commit,
+    isClosed,
+    selectRef,
+    getDirection,
+  }: {
+    readonly commit: ReturnType<typeof createSearchCommitter>;
+    readonly isClosed: () => boolean;
+    readonly selectRef: (ref: TaskNodeRef) => void;
+    readonly getDirection: () => DependencyDirection;
+  },
+): (option: DependencySearchOption) => void {
+  return (option) => {
+    if (commit.busy() || isClosed()) return;
+    const direction = getDirection();
+    const fresh = callbacks
+      .options(input.value, direction)
+      .find((candidate) => sameTaskNodeRef(candidate.task.target, option.task.target));
+    selectRef(option.task.target);
+    if (!isEligible(direction, fresh)) {
+      showError(error, changedSelection);
+      return;
+    }
+    commit.run(() => callbacks.selectExisting(fresh, direction));
+  };
+}
+
 function createSearchCommitter(
   view: SearchElements,
-  close: () => void,
+  reset: () => void,
   isClosed: () => boolean,
 ): {
   busy(): boolean;
@@ -399,7 +448,8 @@ function createSearchCommitter(
   const commit = async (action: () => Promise<DependencyPickerCommitResult>): Promise<void> => {
     try {
       const result = await action();
-      if (result.type === 'committed') close();
+      if (isClosed()) return;
+      if (result.type === 'committed') reset();
       else if (result.type === 'validation-error') showError(error, result.message);
     } finally {
       busy = false;
